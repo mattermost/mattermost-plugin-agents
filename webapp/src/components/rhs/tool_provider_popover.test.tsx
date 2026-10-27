@@ -51,8 +51,6 @@ const mockGetUserMCPTools = getUserMCPTools as jest.MockedFunction<typeof getUse
 const mockRefreshUserMCPTools = refreshUserMCPTools as jest.MockedFunction<typeof refreshUserMCPTools>;
 const mockUpdateUserToolPreferences = updateUserToolPreferences as jest.MockedFunction<typeof updateUserToolPreferences>;
 
-const unavailableTooltip = /not available to this agent/;
-
 const saOnlyServer: UserMCPServerInfo = {
     name: 'n8n',
     serverOrigin: 'https://n8n.example.com/mcp',
@@ -115,11 +113,36 @@ describe('ToolProviderPopover', () => {
         jest.clearAllMocks();
     });
 
-    test('refresh button forces a user tools refresh', async () => {
+    test('the Tools dropdown opens a menu of provider rows', async () => {
+        renderComponent([initialServer]);
+
+        const trigger = screen.getByRole('button', {name: 'Tools'});
+        expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
+        expect(trigger.getAttribute('aria-expanded')).toBe('false');
+        await openToolsMenu();
+
+        expect(trigger.getAttribute('aria-expanded')).toBe('true');
+        expect(screen.getByRole('menu', {name: 'Tool Providers'})).not.toBeNull();
+        const row = await screen.findByRole('menuitemcheckbox', {name: 'Initial Server'});
+        expect(row.getAttribute('aria-checked')).toBe('true');
+    });
+
+    test('a row toggles its provider', async () => {
+        const {onDisabledServersChange} = renderComponent([initialServer]);
+        mockUpdateUserToolPreferences.mockResolvedValue({disabled_servers: [initialServer.serverOrigin]});
+
+        await openToolsMenu();
+        fireEvent.click(await screen.findByRole('menuitemcheckbox', {name: 'Initial Server'}));
+
+        await waitFor(() => expect(mockUpdateUserToolPreferences).toHaveBeenCalledWith({disabled_servers: [initialServer.serverOrigin]}));
+        expect(onDisabledServersChange).toHaveBeenCalledWith([initialServer.serverOrigin]);
+    });
+
+    test('refresh forces a user tools refresh', async () => {
         renderComponent();
 
         fireEvent.click(screen.getByRole('button', {name: 'Tools'}));
-        fireEvent.click(await screen.findByRole('button', {name: 'Refresh tool providers'}));
+        fireEvent.click(await screen.findByRole('menuitem', {name: 'Refresh tool providers'}));
 
         await waitFor(() => expect(mockRefreshUserMCPTools).toHaveBeenCalledTimes(1));
         expect(screen.getByText('Refreshed Server')).not.toBeNull();
@@ -133,13 +156,12 @@ describe('ToolProviderPopover', () => {
         await screen.findByText('n8n');
 
         expect(screen.getByText('Unavailable')).not.toBeNull();
-        expect(screen.getByText(unavailableTooltip)).not.toBeNull();
-        expect(screen.queryByRole('button', {name: 'Connect'})).toBeNull();
+        expect(screen.queryByRole('menuitem', {name: /Connect/})).toBeNull();
         expect(screen.queryByText('Not connected')).toBeNull();
 
-        const toggle = screen.getByRole('switch');
-        expect((toggle as HTMLInputElement).checked).toBe(false);
-        expect((toggle as HTMLInputElement).disabled).toBe(true);
+        const row = screen.getByRole('menuitemcheckbox', {name: /n8n/}) as HTMLButtonElement;
+        expect(row.getAttribute('aria-checked')).toBe('false');
+        expect(row.disabled).toBe(true);
         expect(mockUpdateUserToolPreferences).not.toHaveBeenCalled();
         expect(onDisabledServersChange).not.toHaveBeenCalled();
     });
@@ -161,9 +183,8 @@ describe('ToolProviderPopover', () => {
         await openToolsMenu();
         await screen.findByText('OAuth Server');
 
-        expect(screen.getByRole('button', {name: 'Connect'})).not.toBeNull();
+        expect(screen.getByRole('menuitem', {name: /OAuth Server/})).toHaveProperty('textContent', expect.stringContaining('Connect'));
         expect(screen.queryByText('Unavailable')).toBeNull();
-        expect(screen.queryByText(unavailableTooltip)).toBeNull();
     });
 
     test.each([
@@ -188,8 +209,8 @@ describe('ToolProviderPopover', () => {
 
         await openToolsMenu();
         await screen.findByText('OAuth Server');
-        expect(screen.queryByRole('button', {name: 'Connect'})).toBeNull();
-        expect(screen.queryByRole('button', {name: 'Disconnect'}) !== null).toBe(expectDisconnect);
+        expect(screen.queryByRole('menuitem', {name: /Connect$/})).toBeNull();
+        expect(screen.queryByRole('menuitem', {name: /^Disconnect/}) !== null).toBe(expectDisconnect);
         useIsLicensedFor.mockReturnValue(true);
     });
 
@@ -210,9 +231,9 @@ describe('ToolProviderPopover', () => {
         await screen.findByText('n8n');
 
         expect(screen.queryByText('Unavailable')).toBeNull();
-        const toggle = screen.getByRole('switch');
-        expect((toggle as HTMLInputElement).checked).toBe(true);
-        expect((toggle as HTMLInputElement).disabled).toBe(false);
+        const row = screen.getByRole('menuitemcheckbox', {name: /n8n/}) as HTMLButtonElement;
+        expect(row.getAttribute('aria-checked')).toBe('true');
+        expect(row.disabled).toBe(false);
     });
 });
 

@@ -1,0 +1,166 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+import React from 'react';
+import {useIntl} from 'react-intl';
+import styled from 'styled-components';
+import RefreshIcon from '@mattermost/compass-icons/components/refresh';
+
+import {MenuItem} from '@mattermost/compass-ui/components/menu-item';
+import {PopoverMenuDivider, PopoverMenuGroup} from '@mattermost/compass-ui/components/popover-menu';
+import {Switch} from '@mattermost/compass-ui/components/switch';
+
+import type {ToolProviders} from '@/components/rhs/tool_provider_popover';
+import {mcpServerStatus} from '@/utils/mcp_availability';
+
+import {ErrorRow, LoadingRow, StatusRow, menuIcon} from './composer_menu_parts';
+import type {ToolPreferencesStatus} from './use_composer_tool_preferences';
+
+export interface ToolProviderMenuBodyProps {
+
+    // The preferences' load state: an error offers a retry instead of rows (the toggles would
+    // otherwise show every provider as enabled).
+    status: ToolPreferencesStatus;
+    onRetry: () => void;
+    disabledServers: string[];
+    providers: ToolProviders;
+    onError: (message: string) => void;
+}
+
+// The tool providers as compass menu rows. The composer's Tools submenu and the RHS Tools
+// dropdown show the same rows through the same useToolProviders data and actions.
+const ToolProviderMenuBody = ({status, onRetry, disabledServers, providers, onError}: ToolProviderMenuBodyProps) => {
+    const intl = useIntl();
+    const {servers, loading, error, remoteMcpLicensed, fetchServers, toggle, connect, disconnect} = providers;
+    const refreshLabel = intl.formatMessage({defaultMessage: 'Refresh tool providers'});
+
+    if (status === 'error') {
+        return (
+            <>
+                <ErrorRow role='alert'>
+                    {intl.formatMessage({defaultMessage: 'Couldn\'t load your tool settings.'})}
+                </ErrorRow>
+                <MenuItem
+                    role='menuitem'
+                    label={intl.formatMessage({defaultMessage: 'Try again'})}
+                    leadingElement={true}
+                    leadingVisual={menuIcon(<RefreshIcon/>)}
+                    onClick={onRetry}
+                />
+            </>
+        );
+    }
+    if (status === 'loading' || (loading && servers.length === 0)) {
+        return <LoadingRow label={intl.formatMessage({defaultMessage: 'Loading providers...'})}/>;
+    }
+
+    const disconnectable = servers.filter((s) => s.authenticated && s.needsOAuth && mcpServerStatus(s, false) !== 'sa-only-unavailable');
+    return (
+        <>
+            {error && (
+                <ErrorRow role='alert'>
+                    {intl.formatMessage({defaultMessage: 'Couldn\'t load tool providers.'})}
+                </ErrorRow>
+            )}
+            {!error && servers.length === 0 && (
+                <StatusRow role='status'>
+                    {intl.formatMessage({defaultMessage: 'No tool providers available'})}
+                </StatusRow>
+            )}
+            {servers.length > 0 && (
+                <PopoverMenuGroup aria-label={intl.formatMessage({defaultMessage: 'Tool providers'})}>
+                    {servers.map((server) => {
+                        const unavailable = mcpServerStatus(server, false) === 'sa-only-unavailable';
+                        const showConnect = remoteMcpLicensed && !server.authenticated && server.needsOAuth && !unavailable;
+                        if (showConnect) {
+                            return (
+                                <MenuItem
+                                    key={server.serverOrigin}
+                                    role='menuitem'
+                                    label={server.name}
+                                    secondaryLabel={intl.formatMessage({defaultMessage: 'Connect'})}
+                                    secondaryLabelPosition='inline'
+                                    leadingElement={false}
+                                    disabled={!server.authURL}
+                                    onClick={() => server.authURL && connect(server.authURL)}
+                                />
+                            );
+                        }
+                        const enabled = !unavailable && !disabledServers.includes(server.serverOrigin);
+                        return (
+                            <MenuItem
+                                key={server.serverOrigin}
+                                role='menuitemcheckbox'
+                                aria-checked={enabled}
+                                label={server.name}
+                                {...(unavailable ? {secondaryLabel: intl.formatMessage({defaultMessage: 'Unavailable'})} : {})}
+                                secondaryLabelPosition='inline'
+                                leadingElement={false}
+                                trailingElement={true}
+                                trailingVisual={(
+                                    <RowSwitch
+                                        size='small'
+                                        checked={enabled}
+                                        disabled={unavailable}
+                                        readOnly={true}
+                                        tabIndex={-1}
+                                        aria-hidden={true}
+                                    />
+                                )}
+                                disabled={unavailable}
+                                onClick={async () => {
+                                    const saved = await toggle(server.serverOrigin, !enabled);
+                                    if (!saved) {
+                                        onError(intl.formatMessage({defaultMessage: 'Couldn\'t update {name}. Try again.'}, {name: server.name}));
+                                    }
+                                }}
+                            />
+                        );
+                    })}
+                </PopoverMenuGroup>
+            )}
+            <PopoverMenuDivider/>
+            <PopoverMenuGroup>
+                {disconnectable.map((server) => (
+                    <MenuItem
+                        key={server.serverOrigin}
+                        role='menuitem'
+                        label={intl.formatMessage({defaultMessage: 'Disconnect {name}'}, {name: server.name})}
+                        leadingElement={false}
+                        destructive={true}
+                        onClick={async () => {
+                            const done = await disconnect(server.name);
+                            if (!done) {
+                                onError(intl.formatMessage({defaultMessage: 'Couldn\'t disconnect {name}. Try again.'}, {name: server.name}));
+                            }
+                        }}
+                    />
+                ))}
+                <MenuItem
+                    role='menuitem'
+                    label={refreshLabel}
+                    leadingElement={true}
+                    leadingVisual={menuIcon(<RefreshIcon/>)}
+                    onClick={() => {
+                        if (!loading) {
+                            fetchServers({showLoading: true, forceRefresh: true});
+                        }
+                    }}
+                />
+            </PopoverMenuGroup>
+        </>
+    );
+};
+
+export default ToolProviderMenuBody;
+
+// The menu row is the control (role=menuitemcheckbox, aria-checked, click toggles); the switch on
+// the right only shows its state, so it is out of the tab order and does not take pointer events.
+const RowSwitch = styled(Switch)`
+    && {
+        width: auto;
+        flex-shrink: 0;
+        align-self: center;
+        pointer-events: none;
+    }
+`;

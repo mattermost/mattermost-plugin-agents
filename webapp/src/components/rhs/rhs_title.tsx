@@ -139,7 +139,10 @@ const RHSTitle = () => {
     // as do loading, no agents, and an unresolved active agent.
     if (onHistory || !bots || bots.length === 0 || !activeBot) {
         return (
-            <Container data-testid='rhs-title'>
+            <Container
+                data-testid='rhs-title'
+                $hasBack={Boolean(back)}
+            >
                 {back}
                 <FallbackIcon
                     src={aiIcon}
@@ -153,7 +156,10 @@ const RHSTitle = () => {
 
     if (bots.length === 1) {
         return (
-            <Container data-testid='rhs-title'>
+            <Container
+                data-testid='rhs-title'
+                $hasBack={Boolean(back)}
+            >
                 {back}
                 <AgentAvatar bot={activeBot}/>
                 <Name title={activeBot.displayName}>{activeBot.displayName}</Name>
@@ -164,7 +170,10 @@ const RHSTitle = () => {
 
     const label = intl.formatMessage({defaultMessage: '{name}, choose agent'}, {name: activeBot.displayName});
     return (
-        <Container data-testid='rhs-title'>
+        <Container
+            data-testid='rhs-title'
+            $hasBack={Boolean(back)}
+        >
             {back}
             <AgentAvatar bot={activeBot}/>
             <Dropdown
@@ -212,15 +221,16 @@ const RHSTitle = () => {
     );
 };
 
+// The Back button sits flush with the header's start; without it the title is inset.
 // min-width: 0 all the way down lets a long name ellipsize instead of pushing the
 // host's expand, popout and close buttons out of the header.
-const Container = styled.span`
+const Container = styled.span<{$hasBack: boolean}>`
     display: flex;
     flex: 1 1 auto;
     min-width: 0;
     align-items: center;
     gap: var(--spacing-xs);
-    margin-left: var(--spacing-xs);
+    margin-left: ${({$hasBack}) => ($hasBack ? '0' : 'var(--spacing-xs)')};
 `;
 
 const Actions = styled.span`

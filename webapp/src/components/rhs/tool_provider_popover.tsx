@@ -1,27 +1,23 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState, useCallback, useEffect, useRef} from 'react';
+import React, {useState, useCallback, useEffect, useId, useRef} from 'react';
+import {useIntl} from 'react-intl';
 import styled from 'styled-components';
-import {FormattedMessage, useIntl} from 'react-intl';
-import {ChevronDownIcon, RefreshIcon} from '@mattermost/compass-icons/components';
 
-import {Button} from '@mattermost/compass-ui/components/button';
-import {Icon} from '@mattermost/compass-ui/components/icon';
-import {IconButton} from '@mattermost/compass-ui/components/icon-button';
-import {PopoverMenuTitle} from '@mattermost/compass-ui/components/popover-menu';
-import {Spinner} from '@mattermost/compass-ui/components/spinner';
-import {WithTooltip} from '@mattermost/shared/components/tooltip';
+import {Dropdown as CompassDropdown} from '@mattermost/compass-ui/components/dropdown';
+import {PopoverMenu, PopoverMenuTitle} from '@mattermost/compass-ui/components/popover-menu';
 
 import {disconnectMCPOAuth, getUserMCPTools, refreshUserMCPTools, updateUserToolPreferences, type UserMCPServerInfo} from '@/client';
 import {EnabledMCPTool} from '@/bots';
 import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
-import {mcpServerStatus} from '@/utils/mcp_availability';
+import {useMenuTransition} from '@/hooks/use_menu_transition';
 import {useIsLicensedFor} from '@/license';
 
-import DotMenu, {DotMenuButton, DropdownMenu} from '../dot_menu';
-import MCPUnavailableBadge from '../mcp_unavailable_badge';
-import {ToggleSwitch} from '../toggle_switch';
+import {focusFirstItem, handleMenuNavigation} from '../agent_chat/composer_menu_keyboard';
+import {ErrorRow} from '../agent_chat/composer_menu_parts';
+import ToolProviderMenuBody from '../agent_chat/tool_provider_menu_body';
+import Dropdown from '../dropdown';
 
 export type {UserMCPServerInfo};
 
@@ -186,219 +182,92 @@ export function useToolProviders({disabledServers, onDisabledServersChange, prel
     return {servers, loading, error, remoteMcpLicensed, fetchServers, toggle, connect, disconnect};
 }
 
+// The Tools dropdown of the RHS header: a compass Dropdown trigger opening a menu of the tool
+// providers (the same rows as the composer's "+" menu).
 const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloadedServers, enabledMCPTools, autoEnableNewMCPTools}: ToolProviderPopoverProps) => {
     const intl = useIntl();
-    const refreshLabel = intl.formatMessage({defaultMessage: 'Refresh tool providers'});
-    const {servers, loading, remoteMcpLicensed, fetchServers, toggle: handleToggle, connect: handleConnect, disconnect: handleDisconnect} = useToolProviders({
+    const providers = useToolProviders({
         disabledServers,
         onDisabledServersChange,
         preloadedServers,
         enabledMCPTools,
         autoEnableNewMCPTools,
     });
+    const {fetchServers} = providers;
+    const [open, setOpen] = useState(false);
+    const menu = useMenuTransition(open);
+    const [errorMessage, setErrorMessage] = useState('');
+    const menuId = `tool-providers-${useId().replace(/:/g, '')}`;
 
-    return (
-        <DotMenu
-            icon={
-                <ToolProviderButtonContent>
-                    <FormattedMessage defaultMessage='Tools'/>
-                    <ChevronDownIcon size={12}/>
-                </ToolProviderButtonContent>
+    const setMenuOpen = useCallback((next: boolean) => {
+        setOpen(next);
+        if (next) {
+            setErrorMessage('');
+            fetchServers();
+        }
+    }, [fetchServers]);
+
+    // The Dropdown's focus manager moves focus in on mount; a reopen during the exit
+    // transition keeps it mounted, so move focus here too.
+    useEffect(() => {
+        if (!open) {
+            return () => null;
+        }
+        const frame = requestAnimationFrame(() => {
+            const el = document.getElementById(menuId);
+            if (el && !el.contains(document.activeElement)) {
+                focusFirstItem(el);
             }
-            dotMenuButton={ToolProviderButton}
-            dropdownMenu={ProviderDropdownMenu}
-            portal={false}
+        });
+        return () => cancelAnimationFrame(frame);
+    }, [open, menuId]);
+
+    const title = intl.formatMessage({defaultMessage: 'Tool Providers'});
+    return (
+        <Dropdown
+            isOpen={menu.rendered}
+            onOpenChange={setMenuOpen}
             placement='bottom-end'
-            onOpenChange={(isOpen) => {
-                if (isOpen) {
-                    fetchServers();
-                }
-            }}
-            closeOnClick={false}
-        >
-            <PopoverHeader>
-                <PopoverHeaderTitle>
-                    <FormattedMessage defaultMessage='Tool Providers'/>
-                </PopoverHeaderTitle>
-                <WithTooltip title={refreshLabel}>
-                    <IconButton
+            target={(
+                <TriggerWrap>
+                    <CompassDropdown
                         size='x-small'
-                        icon={<Icon glyph={<RefreshIcon/>}/>}
-                        aria-label={refreshLabel}
-                        loading={loading}
-                        onMouseDown={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                        }}
-                        onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            fetchServers({showLoading: true, forceRefresh: true});
-                        }}
-                    />
-                </WithTooltip>
-            </PopoverHeader>
-            {loading && servers.length === 0 && (
-                <LoadingRow>
-                    <Spinner size='16'/>
-                    <FormattedMessage defaultMessage='Loading providers...'/>
-                </LoadingRow>
-            )}
-            {!loading && servers.length === 0 && (
-                <EmptyRow>
-                    <FormattedMessage defaultMessage='No tool providers available'/>
-                </EmptyRow>
-            )}
-            {servers.map((server) => {
-                const status = mcpServerStatus(server, false);
-                const unavailable = status === 'sa-only-unavailable';
-                const showConnect = remoteMcpLicensed && !server.authenticated && server.needsOAuth && !unavailable;
-                return (
-                    <ProviderRow
-                        key={server.serverOrigin}
-                        $unavailable={unavailable}
+                        isOpen={open}
+                        aria-haspopup='menu'
+                        aria-expanded={open}
+                        onClick={() => setMenuOpen(!open)}
                     >
-                        <ProviderAvatar>
-                            {server.name.charAt(0).toUpperCase()}
-                        </ProviderAvatar>
-                        <ProviderName>{server.name}</ProviderName>
-                        {showConnect ? (
-                            <Button
-                                emphasis='primary'
-                                size='x-small'
-                                onClick={() => server.authURL && handleConnect(server.authURL)}
-                                disabled={!server.authURL}
-                            >
-                                <FormattedMessage defaultMessage='Connect'/>
-                            </Button>
-                        ) : (
-                            <ProviderActions>
-                                {unavailable && <MCPUnavailableBadge/>}
-                                {!unavailable && server.authenticated && server.needsOAuth && (
-                                    <Button
-                                        emphasis='link'
-                                        destructive={true}
-                                        size='x-small'
-                                        onClick={() => handleDisconnect(server.name)}
-                                    >
-                                        <FormattedMessage defaultMessage='Disconnect'/>
-                                    </Button>
-                                )}
-                                <ToggleSwitch
-                                    checked={!unavailable && !disabledServers.includes(server.serverOrigin)}
-                                    disabled={unavailable}
-                                    onChange={(checked) => handleToggle(server.serverOrigin, checked)}
-                                />
-                            </ProviderActions>
-                        )}
-                    </ProviderRow>
-                );
-            })}
-        </DotMenu>
+                        {intl.formatMessage({defaultMessage: 'Tools'})}
+                    </CompassDropdown>
+                </TriggerWrap>
+            )}
+        >
+            <PopoverMenu
+                id={menuId}
+                open={open}
+                onExited={menu.onExited}
+                role='menu'
+                aria-label={title}
+                data-testid='dropdownmenu'
+                onKeyDown={handleMenuNavigation}
+            >
+                <PopoverMenuTitle>{title}</PopoverMenuTitle>
+                {errorMessage && <ErrorRow role='alert'>{errorMessage}</ErrorRow>}
+                <ToolProviderMenuBody
+                    status='ready'
+                    onRetry={fetchServers}
+                    disabledServers={disabledServers}
+                    providers={providers}
+                    onError={setErrorMessage}
+                />
+            </PopoverMenu>
+        </Dropdown>
     );
 };
 
-const ToolProviderButton = styled(DotMenuButton)<{$isActive: boolean}>`
-    display: flex;
-    align-items: center;
-    padding: 2px 4px 2px 6px;
-    border-radius: 4px;
-    height: 20px;
-    width: auto;
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 16px;
-    color: ${(props) => (props.$isActive ? 'var(--button-bg)' : 'var(--center-channel-color-rgb)')};
-    background-color: ${(props) => (props.$isActive ? 'rgba(var(--button-bg-rgb), 0.16)' : 'rgba(var(--center-channel-color-rgb), 0.08)')};
-
-    &:hover {
-        color: ${(props) => (props.$isActive ? 'var(--button-bg)' : 'var(--center-channel-color-rgb)')};
-        background-color: ${(props) => (props.$isActive ? 'rgba(var(--button-bg-rgb), 0.16)' : 'rgba(var(--center-channel-color-rgb), 0.16)')};
-    }
+// The floating reference needs an element that takes a ref; the compass Dropdown does not.
+const TriggerWrap = styled.span`
+    display: inline-flex;
 `;
-
-const ToolProviderButtonContent = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 4px;
-`;
-
-const ProviderDropdownMenu = styled(DropdownMenu)`
-    && {
-        width: 262px;
-    }
-`;
-
-const PopoverHeader = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding-right: 8px;
-`;
-
-const PopoverHeaderTitle = styled(PopoverMenuTitle)`
-    && {
-        padding-bottom: var(--spacing-xxs);
-    }
-`;
-
-const ProviderRow = styled.div<{$unavailable?: boolean}>`
-    display: grid;
-    grid-template-columns: 24px minmax(0, 1fr) auto;
-    align-items: center;
-    column-gap: 8px;
-    padding: 6px 16px;
-    opacity: ${(p) => (p.$unavailable ? 0.64 : 1)};
-
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
-    }
-`;
-
-const ProviderAvatar = styled.div`
-    width: 24px;
-    height: 24px;
-    border-radius: 4px;
-    background: rgba(var(--center-channel-color-rgb), 0.08);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    font-size: 11px;
-    font-weight: 600;
-    flex-shrink: 0;
-`;
-
-const ProviderName = styled.div`
-    min-width: 0;
-    font-size: 14px;
-    font-weight: 400;
-    color: var(--center-channel-color);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-`;
-
-const ProviderActions = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 8px;
-    flex-shrink: 0;
-    box-sizing: border-box;
-    height: 24px;
-`;
-
-const LoadingRow = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 12px 16px;
-    font-size: 12px;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-`;
-
-const EmptyRow = styled(LoadingRow)``;
 
 export default ToolProviderPopover;
