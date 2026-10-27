@@ -184,7 +184,6 @@ const Text = styled.div`
     min-width: 0;
     flex: 1 1 auto;
     flex-direction: column;
-    gap: var(--spacing-xxxs);
 `;
 
 const Heading = styled.div`
@@ -208,8 +207,10 @@ const Preview = styled.div`
     -webkit-line-clamp: 2;
 `;
 
+// The meta line keeps its space from the text above; the title and the preview sit together.
 const Meta = styled.div`
     display: flex;
+    margin-top: var(--spacing-xxxs);
     min-width: 0;
     align-items: center;
     gap: var(--spacing-xs);
