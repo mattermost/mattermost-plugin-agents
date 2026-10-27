@@ -56,28 +56,37 @@ func (c *hookNotificationsClient) KVGet(key string, value any) error {
 	return json.Unmarshal(raw, value)
 }
 
-func (c *hookNotificationsClient) KVSetWithExpiry(key string, value any, _ time.Duration) error {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	c.kv[key] = raw
-	return nil
-}
-
+// KVCompareAndSet follows the server: a nil oldValue requires the key to be
+// absent, and a nil newValue deletes it.
 func (c *hookNotificationsClient) KVCompareAndSet(key string, oldValue, newValue any) (bool, error) {
-	oldRaw, err := json.Marshal(oldValue)
-	if err != nil {
-		return false, err
-	}
-	if current, ok := c.kv[key]; !ok || string(current) != string(oldRaw) {
-		return false, nil
+	current, ok := c.kv[key]
+	if oldValue == nil {
+		if ok {
+			return false, nil
+		}
+	} else {
+		oldRaw, err := json.Marshal(oldValue)
+		if err != nil {
+			return false, err
+		}
+		if !ok || string(current) != string(oldRaw) {
+			return false, nil
+		}
 	}
 	if newValue == nil {
 		delete(c.kv, key)
 		return true, nil
 	}
-	return true, c.KVSetWithExpiry(key, newValue, 0)
+	raw, err := json.Marshal(newValue)
+	if err != nil {
+		return false, err
+	}
+	c.kv[key] = raw
+	return true, nil
+}
+
+func (c *hookNotificationsClient) KVCompareAndSetWithExpiry(key string, oldValue, newValue any, _ time.Duration) (bool, error) {
+	return c.KVCompareAndSet(key, oldValue, newValue)
 }
 
 func (c *hookNotificationsClient) GetPost(id string) (*model.Post, error) { return c.posts[id], nil }

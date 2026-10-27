@@ -48,34 +48,43 @@ func (c *viewingKVClient) KVGet(key string, value any) error {
 	return json.Unmarshal(raw, value)
 }
 
+// KVCompareAndSet follows the server: a nil oldValue requires the key to be
+// absent, and a nil newValue deletes it.
 func (c *viewingKVClient) KVCompareAndSet(key string, oldValue, newValue any) (bool, error) {
-	oldRaw, err := json.Marshal(oldValue)
-	if err != nil {
-		return false, err
-	}
-	if current, ok := c.kv[key]; !ok || string(current) != string(oldRaw) {
-		return false, nil
+	return c.KVCompareAndSetWithExpiry(key, oldValue, newValue, 0)
+}
+
+func (c *viewingKVClient) KVCompareAndSetWithExpiry(key string, oldValue, newValue any, ttl time.Duration) (bool, error) {
+	current, ok := c.kv[key]
+	if oldValue == nil {
+		if ok {
+			return false, nil
+		}
+	} else {
+		oldRaw, err := json.Marshal(oldValue)
+		if err != nil {
+			return false, err
+		}
+		if !ok || string(current) != string(oldRaw) {
+			return false, nil
+		}
 	}
 	if newValue == nil {
 		delete(c.kv, key)
 		delete(c.ttl, key)
 		return true, nil
 	}
-	return true, c.KVSetWithExpiry(key, newValue, 0)
+	raw, err := json.Marshal(newValue)
+	if err != nil {
+		return false, err
+	}
+	c.kv[key] = raw
+	c.ttl[key] = ttl
+	return true, nil
 }
 
 func (c *viewingKVClient) GetPreferenceForUser(string, string, string) (model.Preference, error) {
 	return model.Preference{}, errors.New("not used")
-}
-
-func (c *viewingKVClient) KVSetWithExpiry(key string, value any, ttl time.Duration) error {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	c.kv[key] = raw
-	c.ttl[key] = ttl
-	return nil
 }
 
 func (c *viewingKVClient) GetChannelMember(string, string) (*model.ChannelMember, error) {
@@ -105,15 +114,18 @@ func TestHandleViewing(t *testing.T) {
 		canRead       bool
 		alreadyViewed bool
 		viewedByTab   string
-		body          string
-		wantStatus    int
-		wantViewing   bool
+		// alsoViewedByTab is a second tab that reported viewing after viewedByTab.
+		alsoViewedByTab string
+		body            string
+		wantStatus      int
+		wantViewing     bool
 	}{
 		{name: "viewing true records the viewer", postUserID: testBotUserID, canRead: true, body: `{"viewing":true}`, wantStatus: http.StatusOK, wantViewing: true},
 		{name: "viewing false clears the viewer", postUserID: testBotUserID, canRead: true, alreadyViewed: true, body: `{"viewing":false}`, wantStatus: http.StatusOK},
 		{name: "viewing true from a tab records the viewer", postUserID: testBotUserID, canRead: true, body: `{"viewing":true,"tab_id":"tab-A_1"}`, wantStatus: http.StatusOK, wantViewing: true},
 		{name: "viewing false from the viewing tab clears the viewer", postUserID: testBotUserID, canRead: true, alreadyViewed: true, viewedByTab: "tabA", body: `{"viewing":false,"tab_id":"tabA"}`, wantStatus: http.StatusOK},
 		{name: "viewing false from another tab keeps the viewer", postUserID: testBotUserID, canRead: true, alreadyViewed: true, viewedByTab: "tabA", body: `{"viewing":false,"tab_id":"tabB"}`, wantStatus: http.StatusOK, wantViewing: true},
+		{name: "viewing false from the latest tab keeps an earlier tab viewing", postUserID: testBotUserID, canRead: true, alreadyViewed: true, viewedByTab: "tabA", alsoViewedByTab: "tabB", body: `{"viewing":false,"tab_id":"tabB"}`, wantStatus: http.StatusOK, wantViewing: true},
 		{name: "tab id with other characters is rejected", postUserID: testBotUserID, canRead: true, body: `{"viewing":true,"tab_id":"tab/../x"}`, wantStatus: http.StatusBadRequest},
 		{name: "overlong tab id is rejected", postUserID: testBotUserID, canRead: true, body: `{"viewing":true,"tab_id":"` + strings.Repeat("a", 65) + `"}`, wantStatus: http.StatusBadRequest},
 		{name: "non-string tab id is rejected", postUserID: testBotUserID, canRead: true, body: `{"viewing":true,"tab_id":7}`, wantStatus: http.StatusBadRequest},
@@ -136,6 +148,9 @@ func TestHandleViewing(t *testing.T) {
 			e.api.SetNotifications(service)
 			if tc.alreadyViewed {
 				require.NoError(t, service.SetViewing(postID, testUserID, tc.viewedByTab, true))
+			}
+			if tc.alsoViewedByTab != "" {
+				require.NoError(t, service.SetViewing(postID, testUserID, tc.alsoViewedByTab, true))
 			}
 
 			e.mockAPI.On("GetPost", postID).Return(&model.Post{Id: postID, UserId: tc.postUserID, ChannelId: channelID}, nil)

@@ -132,19 +132,14 @@ func (f *fakeClient) KVCompareAndSet(key string, oldValue, newValue any) (bool, 
 	return true, nil
 }
 
-func (f *fakeClient) KVSetWithExpiry(key string, value any, ttl time.Duration) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.kvErr != nil {
-		return f.kvErr
+func (f *fakeClient) KVCompareAndSetWithExpiry(key string, oldValue, newValue any, ttl time.Duration) (bool, error) {
+	written, err := f.KVCompareAndSet(key, oldValue, newValue)
+	if written && newValue != nil {
+		f.mu.Lock()
+		f.kvTTL[key] = ttl
+		f.mu.Unlock()
 	}
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	f.kv[key] = raw
-	f.kvTTL[key] = ttl
-	return nil
+	return written, err
 }
 
 func (f *fakeClient) GetPreferenceForUser(userID, category, name string) (model.Preference, error) {

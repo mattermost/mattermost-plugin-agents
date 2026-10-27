@@ -22,8 +22,8 @@ import (
 type Client interface {
 	DeliverPostNotifications(postID string, options *model.DeliverPostNotificationsOptions) error
 	KVGet(key string, value any) error
-	KVSetWithExpiry(key string, value any, ttl time.Duration) error
 	KVCompareAndSet(key string, oldValue, newValue any) (bool, error)
+	KVCompareAndSetWithExpiry(key string, oldValue, newValue any, ttl time.Duration) (bool, error)
 	GetPost(postID string) (*model.Post, error)
 	GetUser(userID string) (*model.User, error)
 	GetUserStatus(userID string) (*model.Status, error)

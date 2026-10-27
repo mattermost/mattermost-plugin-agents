@@ -5,6 +5,7 @@ package notifications
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -425,7 +426,9 @@ func TestViewing(t *testing.T) {
 		{"a tab viewing", []report{{testTabID, true}}, true},
 		{"a tab that stopped viewing", []report{{testTabID, true}, {testTabID, false}}, false},
 		{"another tab still viewing", []report{{testTabID, true}, {testOtherTabID, true}, {testTabID, false}}, true},
-		{"the latest tab stopped viewing", []report{{testTabID, true}, {testOtherTabID, true}, {testOtherTabID, false}}, false},
+		{"the latest tab stopped viewing", []report{{testTabID, true}, {testOtherTabID, true}, {testOtherTabID, false}}, true},
+		{"every tab stopped viewing", []report{{testTabID, true}, {testOtherTabID, true}, {testOtherTabID, false}, {testTabID, false}}, false},
+		{"a stop from a tab that never reported", []report{{testTabID, true}, {testOtherTabID, false}}, true},
 		{"a report without a tab", []report{{"", true}}, true},
 		{"a stop without a tab", []report{{"", true}, {"", false}}, false},
 	}
@@ -448,6 +451,25 @@ func TestViewing(t *testing.T) {
 			assert.False(t, other, "viewing is per user")
 		})
 	}
+}
+
+func TestViewingLapsedLease(t *testing.T) {
+	client := newFakeClient()
+	s := NewService(client, i18n.Init(), true)
+	key := viewingKey(testPostID, testRequesterID)
+	lapsed, err := json.Marshal(viewingLeases{testTabID: time.Now().Add(-time.Second).UnixMilli()})
+	require.NoError(t, err)
+	client.kv[key] = lapsed
+
+	viewing, err := s.IsViewing(testPostID, testRequesterID)
+	require.NoError(t, err)
+	assert.False(t, viewing, "a tab whose heartbeats stopped no longer counts")
+
+	require.NoError(t, s.SetViewing(testPostID, testRequesterID, testOtherTabID, true))
+	var stored viewingLeases
+	require.NoError(t, json.Unmarshal(client.kv[key], &stored))
+	assert.NotContains(t, stored, testTabID, "lapsed leases are dropped on the next write")
+	assert.Contains(t, stored, testOtherTabID)
 }
 
 func TestViewingLookupFailure(t *testing.T) {

@@ -4,7 +4,9 @@
 package notifications
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -21,35 +23,89 @@ const ViewingTTL = 25 * time.Second
 
 const viewingKeyPrefix = "notif_viewing_"
 
+// viewingUpdateAttempts bounds the compare-and-set retries when reports from
+// several tabs of one user race.
+const viewingUpdateAttempts = 5
+
 func viewingKey(postID, userID string) string {
 	return viewingKeyPrefix + postID + "_" + userID
 }
 
+// viewingLeases maps each browser tab that has a post on screen to when its
+// report lapses, in Unix milliseconds.
+type viewingLeases map[string]int64
+
 // SetViewing records whether userID has postID on screen in a focused window
-// of the browser tab tabID. Each report replaces the previous one; a report
-// that the tab stopped viewing clears the state only if that tab made the
-// latest report, so another tab, or a late report from the same tab, still
-// counts as viewing.
+// of the browser tab tabID. Each tab holds its own lease, so a tab that stops
+// viewing does not end viewing reported by another tab or device.
 func (s *Service) SetViewing(postID, userID, tabID string, viewing bool) error {
 	key := viewingKey(postID, userID)
-	if viewing {
-		return s.client.KVSetWithExpiry(key, tabID, ViewingTTL)
+	for range viewingUpdateAttempts {
+		raw, leases, err := s.getViewingLeases(key)
+		if err != nil {
+			return err
+		}
+		if viewing {
+			leases[tabID] = time.Now().Add(ViewingTTL).UnixMilli()
+		} else {
+			if _, ok := leases[tabID]; !ok {
+				return nil
+			}
+			delete(leases, tabID)
+		}
+
+		var oldValue any
+		if raw != nil {
+			oldValue = json.RawMessage(raw)
+		}
+		var written bool
+		if len(leases) == 0 {
+			written, err = s.client.KVCompareAndSet(key, oldValue, nil)
+		} else {
+			written, err = s.client.KVCompareAndSetWithExpiry(key, oldValue, leases, ViewingTTL)
+		}
+		if err != nil {
+			return err
+		}
+		if written {
+			return nil
+		}
 	}
-	_, err := s.client.KVCompareAndSet(key, tabID, nil)
-	return err
+	return fmt.Errorf("viewing state for post %s kept changing during %d updates", postID, viewingUpdateAttempts)
 }
 
 // IsViewing reports whether userID has postID on screen in a focused window.
 func (s *Service) IsViewing(postID, userID string) (bool, error) {
-	var tab []byte
-	err := s.client.KVGet(viewingKey(postID, userID), &tab)
-	if errors.Is(err, mmapi.ErrKVNotFound) {
-		return false, nil
-	}
+	_, leases, err := s.getViewingLeases(viewingKey(postID, userID))
 	if err != nil {
 		return false, err
 	}
-	return len(tab) > 0, nil
+	return len(leases) > 0, nil
+}
+
+// getViewingLeases returns the stored value of key, nil when absent, and its
+// leases that have not lapsed.
+func (s *Service) getViewingLeases(key string) ([]byte, viewingLeases, error) {
+	var raw []byte
+	err := s.client.KVGet(key, &raw)
+	if errors.Is(err, mmapi.ErrKVNotFound) {
+		return nil, viewingLeases{}, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	var stored viewingLeases
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return nil, nil, fmt.Errorf("failed to decode viewing state: %w", err)
+	}
+	now := time.Now().UnixMilli()
+	leases := viewingLeases{}
+	for tab, expiresAt := range stored {
+		if expiresAt > now {
+			leases[tab] = expiresAt
+		}
+	}
+	return raw, leases, nil
 }
 
 // RecipientIsViewing is IsViewing for notification paths: a failed lookup is
