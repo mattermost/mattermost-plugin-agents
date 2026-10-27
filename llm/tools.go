@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -67,6 +68,11 @@ type Tool struct {
 	// scheduling a later resume). Only honored for tools with an empty
 	// ServerOrigin — MCP tools must never auto-execute through this flag.
 	AutoExecute bool
+
+	// ScopedOptIn marks a built-in tool that a scoped channel turn, which runs
+	// every tool without asking, offers only when the agent's allowlist names
+	// it under BuiltinToolsOrigin.
+	ScopedOptIn bool
 }
 
 // UserInteractionSelect identifies tools answered by the user picking from a
@@ -774,6 +780,25 @@ func (s *ToolStore) RemoveToolsByServerOrigin(disabledOrigins []string) {
 	if len(s.unloadedMCPTools) == 0 {
 		s.unloadedMCPTools = nil
 	}
+}
+
+// BuiltinToolsOrigin is the allowlist origin under which EnabledMCPTools name
+// built-in tools. The tools themselves have an empty ServerOrigin.
+const BuiltinToolsOrigin = "builtin://mattermost-agents"
+
+// FilterScopedOptInTools drops the built-in tools marked ScopedOptIn that the
+// allowlist does not name under BuiltinToolsOrigin. Only an exact name
+// matches; a wildcard entry opts in nothing.
+func FilterScopedOptInTools(tools []Tool, allowlist []EnabledMCPTool) []Tool {
+	named := make(map[string]bool)
+	for _, entry := range allowlist {
+		if NormalizeMCPServerOrigin(entry.ServerOrigin) == BuiltinToolsOrigin {
+			named[entry.ToolName] = true
+		}
+	}
+	return slices.DeleteFunc(slices.Clone(tools), func(tool Tool) bool {
+		return tool.ScopedOptIn && !named[tool.Name]
+	})
 }
 
 // MCPServerToolWildcard in EnabledMCPTool.ToolName means every tool from that ServerOrigin is allowed.
