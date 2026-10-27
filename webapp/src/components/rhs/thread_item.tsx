@@ -13,9 +13,8 @@ import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
 import {Timestamp} from '@/mm_webapp';
 
-// No compass token for the translucent hover fill (the Agents chat header's name button uses a
-// stronger one of the same kind).
-const HOVER_PERCENT = '4%';
+// No compass token for the translucent hover fill (the Agents chat header's name button uses the same).
+const HOVER_PERCENT = '8%';
 
 // No compass token for the muted text strength of the meta line.
 const META_COLOR = 'rgba(var(--center-channel-color-rgb), 0.64)';
