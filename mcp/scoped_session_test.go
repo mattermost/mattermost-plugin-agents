@@ -164,6 +164,11 @@ func TestScopedCatalog(t *testing.T) {
 	require.NoError(t, run.Close())
 	require.NoError(t, run.Close())
 	assert.Equal(t, []string{run.Session().Id}, minter.revokedIDs(), "closing a run revokes its session exactly once")
+
+	access := m.GetCatalogAccess(context.Background(), ScopedCatalogRequest(run, requesterID))
+	require.ErrorIs(t, errors.Join(access.Errors.Errors...), ErrCatalogScopedRunInvalid, "a closed run cannot build a catalog")
+	assert.Empty(t, access.Tools)
+	assert.True(t, access.Unavailable(), "a closed run's access policy counts as unevaluated")
 	_, err = scopedsession.ScopeFromContext(scopedConnCtx)
 	require.ErrorIs(t, err, scopedsession.ErrRunEnded, "reads still in flight on the scoped connection are refused")
 }
