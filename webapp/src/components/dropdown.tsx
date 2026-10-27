@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {ComponentProps, cloneElement, useState} from 'react';
+import React, {ComponentProps, cloneElement, useLayoutEffect, useState} from 'react';
 import styled from 'styled-components';
 
 import {
@@ -68,7 +68,12 @@ const TooltipTrigger = styled.span`
 `;
 
 type DropdownProps = {
-    target: React.JSX.Element;
+
+    /** The trigger the menu opens from; or pass `anchor` when something else opened it. */
+    target?: React.JSX.Element;
+
+    /** An element that is already on the page (e.g. a button inside another component) to open the menu next to. */
+    anchor?: HTMLElement | null;
     children: React.ReactNode;
     placement?: Placement;
     offset?: Parameters<typeof offset>[0];
@@ -102,6 +107,14 @@ const Dropdown = (props: DropdownProps) => {
         whileElementsMounted: autoUpdate,
         strategy: 'fixed',
     });
+
+    // Positions the menu at an element the Dropdown does not render itself.
+    const anchor = props.anchor;
+    useLayoutEffect(() => {
+        if (anchor) {
+            reference(anchor);
+        }
+    }, [anchor, reference]);
 
     const {getReferenceProps, getFloatingProps} = useInteractions([
         useRole(context),
@@ -144,7 +157,7 @@ const Dropdown = (props: DropdownProps) => {
     // Attach floating-ui reference props first. When a tooltip is present, wrap
     // the trigger in a span so WithTooltip's aria-describedby lands on the
     // wrapper — icon-only triggers already expose their name via aria-label.
-    const trigger = cloneElement(props.target, getReferenceProps({ref: reference, ...props.target.props}));
+    const trigger = props.target ? cloneElement(props.target, getReferenceProps({ref: reference, ...props.target.props})) : null;
     const triggerWithTooltip = props.tooltip ? (
         <TooltipAboveModals
             title={props.tooltip}

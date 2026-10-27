@@ -24,6 +24,7 @@ import type {AIThread} from '@/types/ai_thread';
 import AgentChatDropZone from '../agent_chat/agent_chat_drop_zone';
 import AgentChatThreadView from '../agent_chat/agent_chat_thread_view';
 
+import ChatActionsPopover from './chat_actions_popover';
 import ThreadItem from './thread_item';
 
 import RHSNewTab from './rhs_new_tab';
@@ -95,6 +96,9 @@ export default function RHS() {
     // The chat the history's hover actions are archiving, once confirmed.
     const [archiveTarget, setArchiveTarget] = useState<AIThread | null>(null);
     const [renameTarget, setRenameTarget] = useState<AIThread | null>(null);
+
+    // The history item whose actions menu is open, and the button it opened from.
+    const [menuFor, setMenuFor] = useState<{thread: AIThread; anchor: HTMLElement} | null>(null);
     const renameThread = useCallback(async (title: string) => {
         if (!renameTarget) {
             return;
@@ -231,7 +235,8 @@ export default function RHS() {
                     {navigableThreads.map((p) => (
                         <ThreadItem
                             key={p.id}
-                            preview={previews[p.root_post_id!]?.message || p.title}
+                            title={p.title}
+                            preview={previews[p.root_post_id!]?.message ?? ''}
                             replyCount={previews[p.root_post_id!]?.replyCount}
                             authorName={chatAuthorName(currentUser)}
                             authorAvatarUrl={getProfilePictureUrl(currentUserId, currentUser?.last_picture_update ?? 0)}
@@ -239,11 +244,7 @@ export default function RHS() {
                             agentAvatarUrl={getProfilePictureUrl(p.bot_id, bots.find((bot) => bot.id === p.bot_id)?.lastIconUpdate ?? 0)}
                             lastActivityDate={p.update_at}
                             onClick={() => selectPost(p.root_post_id!)}
-                            onRename={() => setRenameTarget(p)}
-                            onArchive={() => {
-                                setArchiveFailed(false);
-                                setArchiveTarget(p);
-                            }}
+                            onMenuClick={(anchor) => setMenuFor({thread: p, anchor})}
                         />))}
                 </ThreadsList>
             );
@@ -267,6 +268,17 @@ export default function RHS() {
             {dropZone ? (
                 <AgentChatDropZone testId='rhs-file-drop-zone'>{content}</AgentChatDropZone>
             ) : content}
+            <ChatActionsPopover
+                anchor={menuFor?.anchor ?? null}
+                onClose={() => setMenuFor(null)}
+                onRename={() => menuFor && setRenameTarget(menuFor.thread)}
+                onArchive={() => {
+                    if (menuFor) {
+                        setArchiveFailed(false);
+                        setArchiveTarget(menuFor.thread);
+                    }
+                }}
+            />
             <AgentChatRenameDialog
                 show={renameTarget !== null}
                 initialTitle={renameTarget?.title ?? ''}

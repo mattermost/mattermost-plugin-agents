@@ -10,10 +10,6 @@ jest.mock('@/mm_webapp', () => ({
     Timestamp: () => null,
 }));
 
-jest.mock('@mattermost/shared/components/tooltip', () => ({
-    WithTooltip: ({children}: {children: React.ReactNode}) => <>{children}</>,
-}));
-
 jest.mock('react-intl', () => ({
     useIntl: () => ({
         formatMessage: ({defaultMessage}: {defaultMessage: string}, values?: {count: number}) => (
@@ -23,9 +19,10 @@ jest.mock('react-intl', () => ({
 }));
 
 const renderItem = (props: Partial<React.ComponentProps<typeof ThreadItem>> = {}) => {
-    const onClick = jest.fn();
+    const handlers = {onClick: jest.fn(), onMenuClick: jest.fn()};
     render(
         <ThreadItem
+            title='Survival tips'
             preview='Can you give me some survival tips'
             authorName='Systems Administrator'
             authorAvatarUrl='/users/me/image'
@@ -33,39 +30,21 @@ const renderItem = (props: Partial<React.ComponentProps<typeof ThreadItem>> = {}
             agentAvatarUrl='/users/bot/image'
             lastActivityDate={0}
             replyCount={1}
-            onClick={onClick}
-            onRename={jest.fn()}
-            onArchive={jest.fn()}
+            {...handlers}
             {...props}
         />,
     );
-    return onClick;
+    return handlers;
 };
 
-describe('ThreadItem actions', () => {
-    test.each([
-        {label: 'Rename chat', callback: 'onRename'},
-        {label: 'Archive chat', callback: 'onArchive'},
-    ] as const)('the hover actions open the same menu as the Agents sidebar; $label runs it without opening the chat', async ({label, callback}) => {
-        const handlers = {onRename: jest.fn(), onArchive: jest.fn()};
-        const onClick = renderItem(handlers);
-
-        fireEvent.click(screen.getByRole('button', {name: 'Chat actions'}));
-        expect(await screen.findByText('Rename chat')).toBeTruthy();
-        expect(screen.getByText('Archive chat')).toBeTruthy();
-        fireEvent.click(screen.getByText(label));
-
-        expect(handlers[callback]).toHaveBeenCalledTimes(1);
-        expect(onClick).not.toHaveBeenCalled();
-    });
-});
-
 describe('ThreadItem', () => {
-    test('shows the author, the agent, the first message and the reply count', () => {
+    test('is the compass Thread List Item: author, agent tag, title, first message and reply count', () => {
         renderItem();
 
-        expect(screen.getByText('Systems Administrator')).toBeTruthy();
-        expect(screen.getByText('Wilson')).toBeTruthy();
+        // The names also label the participants' avatars, hence all matches.
+        expect(screen.getAllByText('Systems Administrator').length).toBeGreaterThan(0);
+        expect(screen.getAllByText('Wilson').length).toBeGreaterThan(0);
+        expect(screen.getByText('Survival tips')).toBeTruthy();
         expect(screen.getByText('Can you give me some survival tips')).toBeTruthy();
         expect(screen.getByText('1 reply')).toBeTruthy();
     });
@@ -79,27 +58,46 @@ describe('ThreadItem', () => {
         expect(screen.getByText(text)).toBeTruthy();
     });
 
-    test('omits the reply count until it is known', () => {
+    test('shows no reply count until it is known', () => {
         // eslint-disable-next-line no-undefined -- the prop is absent until the root post loads
         renderItem({replyCount: undefined});
 
         expect(screen.queryByText(/repl/)).toBeNull();
     });
 
-    test('falls back to a generic label for an empty message', () => {
-        renderItem({preview: '  '});
+    test.each([
+        {name: 'a title is shown above the message', title: 'Survival tips', preview: 'First message', expected: ['Survival tips', 'First message']},
+        {name: 'a blank title is not shown', title: '  ', preview: 'First message', expected: ['First message']},
+    ])('$name', ({title, preview, expected}) => {
+        renderItem({title, preview});
+
+        expected.forEach((text) => expect(screen.getByText(text)).toBeTruthy());
+        expect(screen.queryByText('Conversation with Agents')).toBeNull();
+    });
+
+    test('falls back to a generic label with neither a title nor a message', () => {
+        renderItem({title: '', preview: ''});
 
         expect(screen.getByText('Conversation with Agents')).toBeTruthy();
     });
 
-    test.each(['Enter', ' '])('opens the thread from the keyboard with %p', (key) => {
-        const onClick = renderItem();
+    test('opens the chat on click and from the keyboard', () => {
+        const {onClick} = renderItem();
 
-        const item = screen.getByRole('button', {name: /survival tips/});
-        item.focus();
-        expect(document.activeElement).toBe(item);
+        const item = screen.getByRole('button', {name: /Survival tips/});
+        fireEvent.click(item);
+        fireEvent.keyDown(item, {key: 'Enter'});
 
-        fireEvent.keyDown(item, {key});
-        expect(onClick).toHaveBeenCalledTimes(1);
+        expect(onClick).toHaveBeenCalledTimes(2);
+    });
+
+    test('the hover actions button asks the list to open its menu next to it, without opening the chat', () => {
+        const {onClick, onMenuClick} = renderItem();
+
+        const button = screen.getByRole('button', {name: 'Chat actions'});
+        fireEvent.click(button);
+
+        expect(onMenuClick).toHaveBeenCalledWith(button);
+        expect(onClick).not.toHaveBeenCalled();
     });
 });

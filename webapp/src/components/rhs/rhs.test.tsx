@@ -89,12 +89,11 @@ jest.mock('./thread_item', () => {
 
     return {
         __esModule: true,
-        default: (props: {preview: string; replyCount?: number; onRename: () => void; onArchive: () => void}) => ReactActual.createElement(
+        default: (props: {title: string; preview: string; replyCount?: number; onMenuClick: (anchor: HTMLElement) => void}) => ReactActual.createElement(
             'div',
             {'data-testid': 'rhs-thread-item'},
-            `${props.preview}|${props.replyCount ?? 'none'}`,
-            ReactActual.createElement('button', {type: 'button', onClick: props.onRename}, `rename ${props.preview}`),
-            ReactActual.createElement('button', {type: 'button', onClick: props.onArchive}, `archive ${props.preview}`),
+            `${props.title}|${props.preview}|${props.replyCount ?? 'none'}`,
+            ReactActual.createElement('button', {type: 'button', onClick: (e: React.MouseEvent<HTMLButtonElement>) => props.onMenuClick(e.currentTarget)}, `menu ${props.title}`),
         ),
     };
 });
@@ -219,12 +218,12 @@ describe('RHS', () => {
         {
             name: 'shows the first message and reply count once the root posts load',
             posts: () => Promise.resolve([{id: 'root1', message: 'First message', reply_count: 2}]),
-            expected: ['First message|2', 'Title two|none'],
+            expected: ['Title one|First message|2', 'Title two||none'],
         },
         {
             name: 'keeps the chat titles when the root posts cannot be loaded',
             posts: () => Promise.reject(new Error('boom')),
-            expected: ['Title one|none', 'Title two|none'],
+            expected: ['Title one||none', 'Title two||none'],
         },
     ])('chat history $name', async ({posts, expected}) => {
         const errorLog = jest.spyOn(console, 'error').mockImplementation(() => null);
@@ -260,25 +259,27 @@ describe('RHS', () => {
             mockRenameConversation.mockResolvedValue(true);
             await openHistory();
 
-            fireEvent.click(screen.getByRole('button', {name: 'rename Title one'}));
+            fireEvent.click(screen.getByRole('button', {name: 'menu Title one'}));
+            fireEvent.click(await screen.findByText('Rename chat'));
             const input = await screen.findByLabelText('Chat name');
             expect((input as HTMLInputElement).value).toBe('Title one');
             fireEvent.change(input, {target: {value: 'Renamed'}});
             fireEvent.click(screen.getByRole('button', {name: 'Save'}));
 
             await waitFor(() => expect(mockRenameConversation).toHaveBeenCalledWith('c1', 'Renamed'));
-            await waitFor(() => expect(screen.getAllByTestId('rhs-thread-item').map((el) => el.firstChild?.textContent)).toEqual(['Renamed|none', 'Title two|none']));
+            await waitFor(() => expect(screen.getAllByTestId('rhs-thread-item').map((el) => el.firstChild?.textContent)).toEqual(['Renamed||none', 'Title two||none']));
         });
 
         test('Archive chat confirms, archives that chat and removes it from the list', async () => {
             mockArchiveConversation.mockResolvedValue(true);
             await openHistory();
 
-            fireEvent.click(screen.getByRole('button', {name: 'archive Title two'}));
+            fireEvent.click(screen.getByRole('button', {name: 'menu Title two'}));
+            fireEvent.click(await screen.findByText('Archive chat'));
             fireEvent.click(await screen.findByRole('button', {name: 'Archive'}));
 
             await waitFor(() => expect(mockArchiveConversation).toHaveBeenCalledWith('c2'));
-            await waitFor(() => expect(screen.getAllByTestId('rhs-thread-item').map((el) => el.firstChild?.textContent)).toEqual(['Title one|none']));
+            await waitFor(() => expect(screen.getAllByTestId('rhs-thread-item').map((el) => el.firstChild?.textContent)).toEqual(['Title one||none']));
         });
 
         test('a failed archive keeps the chat and shows an error', async () => {
@@ -286,7 +287,8 @@ describe('RHS', () => {
             mockArchiveConversation.mockRejectedValue(new Error('nope'));
             await openHistory();
 
-            fireEvent.click(screen.getByRole('button', {name: 'archive Title one'}));
+            fireEvent.click(screen.getByRole('button', {name: 'menu Title one'}));
+            fireEvent.click(await screen.findByText('Archive chat'));
             fireEvent.click(await screen.findByRole('button', {name: 'Archive'}));
 
             expect((await screen.findByRole('alert')).textContent).toContain('Couldn\'t archive this chat');
