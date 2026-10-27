@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import {
     OpenAIMockContainer,
@@ -95,11 +96,15 @@ async function botPostsIn(channelID: string, exceptRootID = '') {
     return Object.values(posts.posts).filter((post) => post.user_id === bot.id && (!exceptRootID || post.root_id !== exceptRootID)).length;
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigContainerForScopedAgents());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 test.describe.serial('Scoped channel mode (Mocked LLM)', () => {
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        mattermost = await RunToolConfigContainerForScopedAgents();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
 
         const adminClient = await mattermost.getAdminClient();
         serverSupported = await serverSupportsScopedSessions(adminClient.getToken());
@@ -132,11 +137,6 @@ test.describe.serial('Scoped channel mode (Mocked LLM)', () => {
 
     test.beforeEach(() => {
         test.skip(!serverSupported, 'this Mattermost server cannot create scoped sessions');
-    });
-
-    test.afterAll(async () => {
-        await openAIMock?.stop();
-        await mattermost?.stop();
     });
 
     test('the agent, on no team, reads a public channel on an open team without asking', async () => {
