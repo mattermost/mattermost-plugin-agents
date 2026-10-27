@@ -75,7 +75,7 @@ export default function ThreadItem(props: Props) {
                     alt=''
                     aria-hidden='true'
                     name={props.agentName}
-                    size='40'
+                    size='32'
                 />
                 <Text>
                     <Heading>{heading}</Heading>
@@ -167,9 +167,9 @@ const Text = styled.div`
 const Heading = styled.div`
     overflow: hidden;
     color: var(--center-channel-color);
-    font-size: var(--font-size-200);
+    font-size: var(--font-size-100);
     font-weight: var(--font-weight-semibold);
-    line-height: var(--line-height-200);
+    line-height: var(--line-height-100);
     text-overflow: ellipsis;
     white-space: nowrap;
 `;
