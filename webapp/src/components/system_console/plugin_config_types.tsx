@@ -28,6 +28,7 @@ export type PluginConfig = {
     allowUnsafeLinks: boolean,
     enableHTMLArtifacts?: boolean,
     enableChannelMentionToolCalling: boolean,
+    enableAmbientAutoReply?: boolean,
     allowNativeWebSearchInChannels: boolean,
     embeddingSearchConfig: EmbeddingSearchConfig,
     mcp: MCPConfig,

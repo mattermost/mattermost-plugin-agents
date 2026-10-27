@@ -81,11 +81,12 @@ func TestStoreSetAndGet(t *testing.T) {
 	s := NewStore(dbClient)
 
 	setting := Setting{
-		ChannelID: model.NewId(),
-		BotID:     model.NewId(),
-		Mode:      ModeRootPosts,
-		UpdatedBy: model.NewId(),
-		UpdateAt:  1234567890123,
+		ChannelID:    model.NewId(),
+		BotID:        model.NewId(),
+		Mode:         ModeRootPosts,
+		UpdatedBy:    model.NewId(),
+		UpdateAt:     1234567890123,
+		Instructions: "keep answers short",
 	}
 
 	require.NoError(t, s.Set(setting))
@@ -111,18 +112,20 @@ func TestStoreSetUpsert(t *testing.T) {
 
 	channelID := model.NewId()
 	first := Setting{
-		ChannelID: channelID,
-		BotID:     model.NewId(),
-		Mode:      ModeRootPosts,
-		UpdatedBy: model.NewId(),
-		UpdateAt:  1000,
+		ChannelID:    channelID,
+		BotID:        model.NewId(),
+		Mode:         ModeRootPosts,
+		UpdatedBy:    model.NewId(),
+		UpdateAt:     1000,
+		Instructions: "first instructions",
 	}
 	second := Setting{
-		ChannelID: channelID,
-		BotID:     model.NewId(),
-		Mode:      ModeThreads,
-		UpdatedBy: model.NewId(),
-		UpdateAt:  2000,
+		ChannelID:    channelID,
+		BotID:        model.NewId(),
+		Mode:         ModeAmbient,
+		UpdatedBy:    model.NewId(),
+		UpdateAt:     2000,
+		Instructions: "second instructions",
 	}
 
 	require.NoError(t, s.Set(first))
@@ -190,9 +193,9 @@ func TestStoreListAll(t *testing.T) {
 		{
 			name: "three settings for three channels are all returned",
 			settings: []Setting{
-				{ChannelID: model.NewId(), BotID: model.NewId(), Mode: ModeRootPosts, UpdatedBy: model.NewId(), UpdateAt: 1},
+				{ChannelID: model.NewId(), BotID: model.NewId(), Mode: ModeRootPosts, UpdatedBy: model.NewId(), UpdateAt: 1, Instructions: "a"},
 				{ChannelID: model.NewId(), BotID: model.NewId(), Mode: ModeThreads, UpdatedBy: model.NewId(), UpdateAt: 2},
-				{ChannelID: model.NewId(), BotID: model.NewId(), Mode: ModeRootPosts, UpdatedBy: model.NewId(), UpdateAt: 3},
+				{ChannelID: model.NewId(), BotID: model.NewId(), Mode: ModeAmbient, UpdatedBy: model.NewId(), UpdateAt: 3, Instructions: "c"},
 			},
 		},
 	}

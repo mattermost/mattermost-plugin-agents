@@ -38,6 +38,7 @@ const AnalyzedChannelIDProp = "analyzed_channel_id"
 type ConfigProvider interface {
 	EnableChannelMentionToolCalling() bool
 	AllowNativeWebSearchInChannels() bool
+	EnableAmbientAutoReply() bool
 	MCP() mcp.Config
 }
 
@@ -57,6 +58,7 @@ type Conversations struct {
 	mutexAPI          cluster.MutexPluginAPI
 	convService       *conversation.Service
 	autoReplySettings AutoReplySettings
+	ambientLimiter    *ambientLimiter
 }
 
 // MeetingsService defines the interface for meetings functionality needed by conversations
@@ -92,6 +94,7 @@ func New(
 		meetingsService:   meetingsService,
 		configProvider:    configProvider,
 		toolPolicyChecker: toolPolicyChecker,
+		ambientLimiter:    newAmbientLimiter(),
 	}
 }
 
@@ -347,6 +350,12 @@ func (c *Conversations) withProviderWebSearchLicense(opts []llm.LanguageModelOpt
 // tool calling for channel mentions.
 func (c *Conversations) channelMentionToolCallingEnabled() bool {
 	return c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling()
+}
+
+// ambientAutoReplyEnabled reports whether the admin config allows the
+// experimental ambient auto-reply modes.
+func (c *Conversations) ambientAutoReplyEnabled() bool {
+	return c.configProvider != nil && c.configProvider.EnableAmbientAutoReply()
 }
 
 // isAutoExecuteBuiltIn reports whether the tool is a built-in flagged to run

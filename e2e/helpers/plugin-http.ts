@@ -73,6 +73,11 @@ export class PluginAdminConfigApi {
         const settleMs = options?.settleMs ?? DEFAULT_PUT_SETTLE_MS;
         await new Promise((resolve) => setTimeout(resolve, settleMs));
     }
+
+    /** Overwrites the given top-level fields, preserving the rest of the config. */
+    async patch(changes: Record<string, unknown>, options?: { settleMs?: number }): Promise<void> {
+        await this.put({...(await this.get()), ...changes}, options);
+    }
 }
 
 export function pluginAdminConfigApiFromClient(

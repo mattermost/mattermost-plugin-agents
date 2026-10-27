@@ -38,6 +38,7 @@ type Config struct {
 	AllowUnsafeLinks                bool                             `json:"allowUnsafeLinks"`
 	EnableHTMLArtifacts             bool                             `json:"enableHTMLArtifacts"`
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
+	EnableAmbientAutoReply          bool                             `json:"enableAmbientAutoReply"`
 	AllowNativeWebSearchInChannels  bool                             `json:"allowNativeWebSearchInChannels"`
 	EmbeddingSearchConfig           embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
 	MCP                             MCPConfig                        `json:"mcp"`
@@ -199,6 +200,12 @@ func (c *Container) EnableHTMLArtifacts() bool {
 
 func (c *Container) EnableChannelMentionToolCalling() bool {
 	return c.Config().EnableChannelMentionToolCalling
+}
+
+// EnableAmbientAutoReply reports whether the experimental ambient channel
+// auto-reply modes may be configured and may fire.
+func (c *Container) EnableAmbientAutoReply() bool {
+	return c.Config().EnableAmbientAutoReply
 }
 
 func (c *Container) AllowNativeWebSearchInChannels() bool {
