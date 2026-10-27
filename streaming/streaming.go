@@ -60,7 +60,10 @@ const WebSearchContextProp = "web_search_context"
 
 type Service interface {
 	StreamToNewPost(ctx context.Context, botID string, requesterUserID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string) error
-	StreamToNewDM(ctx context.Context, botID string, stream *llm.TextStreamResult, userID string, post *model.Post, respondingToPostID string) error
+	// StreamToNewDM creates post as a DM from the bot to userID and streams
+	// into it. onFinish, when set, runs once the stream into the created post
+	// ends, so callers can stop the work producing a stream nobody reads.
+	StreamToNewDM(ctx context.Context, botID string, stream *llm.TextStreamResult, userID string, post *model.Post, respondingToPostID string, onFinish func()) error
 	StreamToPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, userLocale string, requesterUserID string)
 
 	// StreamContinuationToPost streams a follow-up round onto a post that
@@ -199,7 +202,7 @@ func (p *MMPostStreamService) SetNotifier(n notifications.Notifier) {
 }
 
 func (p *MMPostStreamService) StreamToNewPost(ctx context.Context, botID string, requesterUserID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string) error {
-	return p.streamToCreatedPost(ctx, botID, requesterUserID, stream, post, respondingToPostID, func() error {
+	return p.streamToCreatedPost(ctx, botID, requesterUserID, stream, post, respondingToPostID, nil, func() error {
 		if err := p.mmClient.CreatePost(post); err != nil {
 			return fmt.Errorf("unable to create post: %w", err)
 		}
@@ -207,8 +210,8 @@ func (p *MMPostStreamService) StreamToNewPost(ctx context.Context, botID string,
 	})
 }
 
-func (p *MMPostStreamService) StreamToNewDM(ctx context.Context, botID string, stream *llm.TextStreamResult, userID string, post *model.Post, respondingToPostID string) error {
-	return p.streamToCreatedPost(ctx, botID, userID, stream, post, respondingToPostID, func() error {
+func (p *MMPostStreamService) StreamToNewDM(ctx context.Context, botID string, stream *llm.TextStreamResult, userID string, post *model.Post, respondingToPostID string, onFinish func()) error {
+	return p.streamToCreatedPost(ctx, botID, userID, stream, post, respondingToPostID, onFinish, func() error {
 		if err := p.mmClient.DM(botID, userID, post); err != nil {
 			return fmt.Errorf("failed to post DM: %w", err)
 		}
@@ -218,8 +221,10 @@ func (p *MMPostStreamService) StreamToNewDM(ctx context.Context, botID string, s
 
 // streamToCreatedPost creates the post via createPost and streams into it,
 // using the user's locale only for a 1-1 DM between the user and the bot;
-// everything else gets the server default locale.
-func (p *MMPostStreamService) streamToCreatedPost(ctx context.Context, botID string, userID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string, createPost func() error) error {
+// everything else gets the server default locale. onFinish, when set, runs
+// once streaming into the created post ends; it is not called when this
+// returns an error.
+func (p *MMPostStreamService) streamToCreatedPost(ctx context.Context, botID string, userID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string, onFinish func(), createPost func() error) error {
 	// We use ModifyPostForBot directly here to add the responding to post ID
 	ModifyPostForBot(botID, userID, post, respondingToPostID)
 	if p.notifier != nil {
@@ -252,6 +257,9 @@ func (p *MMPostStreamService) streamToCreatedPost(ctx context.Context, botID str
 	ctx = streamCtx
 
 	go func() {
+		if onFinish != nil {
+			defer onFinish()
+		}
 		defer p.FinishStreaming(post.Id)
 		user, err := p.mmClient.GetUser(userID)
 		locale := *p.mmClient.GetConfig().LocalizationSettings.DefaultServerLocale

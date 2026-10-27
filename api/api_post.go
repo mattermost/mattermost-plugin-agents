@@ -198,7 +198,7 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 	// Create thread analyzer with conversation service
 	botUserID := bot.GetMMBot().UserId
 	analyzer := threads.New(bot.LLM(), a.prompts, a.mmClient, a.convService)
-	runCtx := detachedRequestContext(c)
+	runCtx, cancelRun := context.WithCancel(detachedRequestContext(c))
 	var analyzeResult *threads.AnalyzeResult
 	var title string
 	switch data.AnalysisType {
@@ -213,13 +213,15 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 		analyzeResult, err = analyzer.FindOpenQuestions(runCtx, post.Id, llmContext, botUserID, userID)
 	}
 	if err != nil {
+		cancelRun()
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to analyze thread: %w", err))
 		return
 	}
 
 	// Create analysis post with conversation ID
 	analysisPost := makeAnalysisPost(post.Id, data.AnalysisType, analyzeResult.ConversationID)
-	if err := a.streamingService.StreamToNewDM(runCtx, botUserID, analyzeResult.Stream, user.Id, analysisPost, post.Id); err != nil {
+	if err := a.streamingService.StreamToNewDM(runCtx, botUserID, analyzeResult.Stream, user.Id, analysisPost, post.Id, cancelRun); err != nil {
+		cancelRun()
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}

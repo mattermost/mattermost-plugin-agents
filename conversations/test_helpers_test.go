@@ -357,7 +357,7 @@ func (s *fakeStreamingService) StreamToNewPost(_ context.Context, _ string, _ st
 	return nil
 }
 
-func (s *fakeStreamingService) StreamToNewDM(context.Context, string, *llm.TextStreamResult, string, *model.Post, string) error {
+func (s *fakeStreamingService) StreamToNewDM(context.Context, string, *llm.TextStreamResult, string, *model.Post, string, func()) error {
 	return nil
 }
 

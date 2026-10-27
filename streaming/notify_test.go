@@ -299,7 +299,7 @@ func TestNewPostDuringShutdownNotifiesRequester(t *testing.T) {
 			stream := &llm.TextStreamResult{Stream: make(chan llm.TextStreamEvent)}
 			var err error
 			if tc.newDM {
-				err = service.StreamToNewDM(context.Background(), "bot-id", stream, userID, post, "")
+				err = service.StreamToNewDM(context.Background(), "bot-id", stream, userID, post, "", nil)
 			} else {
 				err = service.StreamToNewPost(context.Background(), "bot-id", userID, stream, post, "")
 			}
@@ -379,7 +379,7 @@ func TestStreamToNewPostMarksDeferred(t *testing.T) {
 
 			post := &model.Post{Id: model.NewId(), ChannelId: channelID}
 			if tc.newDM {
-				require.NoError(t, service.StreamToNewDM(context.Background(), botID, &llm.TextStreamResult{Stream: stream}, userID, post, ""))
+				require.NoError(t, service.StreamToNewDM(context.Background(), botID, &llm.TextStreamResult{Stream: stream}, userID, post, "", nil))
 			} else {
 				require.NoError(t, service.StreamToNewPost(context.Background(), botID, userID, &llm.TextStreamResult{Stream: stream}, post, ""))
 			}

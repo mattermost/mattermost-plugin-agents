@@ -35,7 +35,7 @@ type regenNoopStreaming struct{}
 func (regenNoopStreaming) StreamToNewPost(context.Context, string, string, *llm.TextStreamResult, *model.Post, string) error {
 	return nil
 }
-func (regenNoopStreaming) StreamToNewDM(context.Context, string, *llm.TextStreamResult, string, *model.Post, string) error {
+func (regenNoopStreaming) StreamToNewDM(context.Context, string, *llm.TextStreamResult, string, *model.Post, string, func()) error {
 	return nil
 }
 func (regenNoopStreaming) StreamToPost(context.Context, *llm.TextStreamResult, *model.Post, string, string) {

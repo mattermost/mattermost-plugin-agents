@@ -191,12 +191,14 @@ func TestAnalysisRoutesSurviveRequestCancellation(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				require.FailNow(t, "the analysis never finished")
 			}
-			assert.Equal(t, notifications.OutcomeCompleted, end.Outcome, "the analysis DM must get the answer")
+			// requestBoundLLM answers nothing on a context canceled by then, so
+			// a completed answer shows the request's cancel did not reach it.
+			assert.Equal(t, notifications.OutcomeCompleted, end.Outcome, "canceling the request must not cancel the LLM call it started")
 
 			llmCtxs := provider.recorded()
 			require.Len(t, llmCtxs, 1)
-			assert.NoError(t, llmCtxs[0].Err(), "canceling the request must not cancel the LLM call it started")
 			assert.Equal(t, sessionID, auth.SessionIDFromContext(llmCtxs[0]), "the LLM call keeps the requester's session for tool and file policy checks")
+			assert.Eventually(t, func() bool { return llmCtxs[0].Err() != nil }, 5*time.Second, 10*time.Millisecond, "the run's context ends with its stream")
 		})
 	}
 }

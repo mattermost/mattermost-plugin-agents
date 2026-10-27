@@ -4,6 +4,7 @@
 package api
 
 import (
+	stdcontext "context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -157,9 +158,10 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 		"Prompt":       data.Prompt,
 	}
 
-	runCtx := detachedRequestContext(c)
+	runCtx, cancelRun := stdcontext.WithCancel(detachedRequestContext(c))
 	result, err := analyzer.AnalyzeChannel(runCtx, llmContext, channel.Id, userID, bot.GetMMBot().UserId, analysisData)
 	if err != nil {
+		cancelRun()
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to analyze channel: %w", err))
 		return
 	}
@@ -167,7 +169,8 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 	// Create analysis post with conversation ID for streaming turn persistence
 	analysisPost := makeChannelAnalysisPost(channel.Id, data.AnalysisType, result.ConversationID)
 
-	if err := a.streamingService.StreamToNewDM(runCtx, bot.GetMMBot().UserId, result.Stream, user.Id, analysisPost, ""); err != nil {
+	if err := a.streamingService.StreamToNewDM(runCtx, bot.GetMMBot().UserId, result.Stream, user.Id, analysisPost, "", cancelRun); err != nil {
+		cancelRun()
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
@@ -288,11 +291,12 @@ func (a *API) handleInterval(c *gin.Context) {
 	}
 
 	// Call channels interval processing with conversation entity
-	runCtx := detachedRequestContext(c)
+	runCtx, cancelRun := stdcontext.WithCancel(detachedRequestContext(c))
 	result, err := channels.New(bot.LLM(), a.prompts, a.mmClient, a.dbClient, a.convService).Interval(
 		runCtx, context, channel.Id, userID, bot.GetMMBot().UserId, data.StartTime, data.EndTime, promptPreset,
 	)
 	if err != nil {
+		cancelRun()
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
@@ -304,7 +308,8 @@ func (a *API) handleInterval(c *gin.Context) {
 	post.AddProp(conversations.AnalyzedChannelIDProp, channel.Id)
 
 	// Stream result to new DM
-	if err := a.streamingService.StreamToNewDM(runCtx, bot.GetMMBot().UserId, result.Stream, user.Id, post, ""); err != nil {
+	if err := a.streamingService.StreamToNewDM(runCtx, bot.GetMMBot().UserId, result.Stream, user.Id, post, "", cancelRun); err != nil {
+		cancelRun()
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
