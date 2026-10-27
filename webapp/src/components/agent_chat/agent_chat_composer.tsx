@@ -724,12 +724,16 @@ const ComposerColumn = styled.div`
 `;
 
 // Half the pill's single-line outer height (one 32px line + xs padding above
-// and below + the 1px --border-dark on each side = 50px), so one line reads as
+// and below + the 1px border on each side = 50px), so one line reads as
 // a full pill while a taller, multi-line box keeps the same corners instead of
 // the stretched capsule --radius-pill would draw. No compass radius token is
 // that large (--radius-xl is 16px). Update it with the Shell's padding or
 // border, or with TEXTAREA_ONE_LINE_HEIGHT.
 const COMPOSER_RADIUS = `calc(${TEXTAREA_ONE_LINE_HEIGHT} / 2 + var(--spacing-xs) + 1px)`;
+
+// No compass or host token for the focused border: the resting border is --border-default and the
+// hover one --border-dark; focus raises the opacity above both, to 24% of the text color.
+const BORDER_FOCUS = 'rgba(var(--center-channel-color-rgb), 0.24)';
 
 // The prototype's ComposerShell row: "+", text, send, xs apart inside xs
 // padding. Items sit on the bottom row so the buttons stay by the last line as
@@ -759,13 +763,20 @@ const Shell = styled.div<{$hasLeadingAction: boolean; $hostTextbox: boolean}>`
             ${({$hasLeadingAction}) => ($hasLeadingAction ? "'plus . send'" : "'. . send'")};
     }
     padding: var(--spacing-xs) var(--spacing-xs) var(--spacing-xs) ${({$hasLeadingAction}) => ($hasLeadingAction ? 'var(--spacing-xs)' : 'var(--spacing-l)')};
-    border: var(--border-dark);
+    border: var(--border-default);
     border-radius: ${COMPOSER_RADIUS};
     background: var(--center-channel-bg);
     box-shadow: var(--elevation-4);
-    transition: box-shadow var(--duration-quick) var(--ease-transition);
+    transition: box-shadow var(--duration-quick) var(--ease-transition), border-color var(--duration-quick) var(--ease-transition);
+
+    /* Hover and focus raise the border's opacity. */
+    &:hover {
+        border: var(--border-dark);
+    }
 
     &:focus-within {
+        border: var(--border-dark);
+        border-color: ${BORDER_FOCUS};
         box-shadow: var(--elevation-5);
     }
 
