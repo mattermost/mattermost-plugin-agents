@@ -34,6 +34,7 @@ function isMissingThreadMembershipError(error: unknown) {
 const ThreadsList = styled.div`
     flex: 1;
     min-height: 0;
+    padding: var(--spacing-xs) 0;
     overflow-y: auto;
 `;
 

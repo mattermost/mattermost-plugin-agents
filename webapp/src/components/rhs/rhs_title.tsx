@@ -20,10 +20,9 @@ import aiIcon from '../../../../assets/bot_icon.png';
 
 import {useBotlist, type LLMBot} from '@/bots';
 import {getProfilePictureUrl, getUserMCPTools} from '@/client';
-import {BotDropdownMenu, BotMenuContent} from '@/components/bot_selector';
+import AgentChatNameMenu from '@/components/agents/agent_chat_name_menu';
+import {useAgentsRoute} from '@/components/agents/use_agents_route';
 import {useComposerToolPreferences} from '@/components/agent_chat/use_composer_tool_preferences';
-import Dropdown from '@/components/dropdown';
-import {useMenuTransition} from '@/hooks/use_menu_transition';
 import manifest from '@/manifest';
 import type {RHSTab} from '@/redux';
 
@@ -45,9 +44,10 @@ const AgentAvatar = ({bot}: {bot: LLMBot}) => (
     />
 );
 
-// The RHS header title: Back to the chat history, the active agent (which opens the agent list
-// when there is more than one), and at the end the tools button on a new chat, or the context
-// usage ring and New chat everywhere else.
+// The RHS header title: Back to the chat history, the chat (or the agent, in a new chat) with the
+// same menu as the Agents product's chat header (recent chats, new, rename, archive, view all
+// agents) plus a Switch agent submenu, and at the end the tools button on a new chat, or the
+// context usage ring and New chat everywhere else.
 // The host wraps the title in its own heading landmark (a span#rhsPanelTitle), so none is added here.
 const RHSTitle = () => {
     const intl = useIntl();
@@ -60,6 +60,13 @@ const RHSTitle = () => {
     const onNewChat = !threadOpen && listTab === 'new';
     const onHistory = !threadOpen && listTab === 'threads';
     const activeConversationId = useConversationIdForThread(pluginState?.selectedPostId);
+    const {toAll} = useAgentsRoute();
+
+    // The agent of the open chat: the DM partner, or the root's author for chats an agent started
+    // (as the RHS body finds it). It can differ from the active agent that new chats use.
+    const selectedRoot = useSelector((state: any) => (
+        (pluginState?.selectedPostId && state.entities?.posts?.posts?.[pluginState.selectedPostId]) || null
+    ));
 
     // The tools button's data: the same per-user preferences and server list the RHS body used
     // to load; a toggle here is published to the composer's tools menu too.
@@ -71,16 +78,15 @@ const RHSTitle = () => {
 
     // Switching agents behaves like starting a new chat with the new agent (leave the open
     // thread and show the new-chat tab); choosing the current agent changes nothing.
-    const switchAgent = useCallback((bot: LLMBot | null) => {
-        if (!bot || bot.id === activeBot?.id) {
-            return;
-        }
+    const switchAgent = useCallback((bot: LLMBot) => {
         setActiveBot(bot);
         dispatch({type: 'SELECT_AI_POST', postId: ''});
         dispatch({type: 'AI_RHS_NEW_CHAT'});
-    }, [activeBot?.id, setActiveBot, dispatch]);
-    const [open, setOpen] = useState(false);
-    const menu = useMenuTransition(open);
+    }, [setActiveBot, dispatch]);
+    const startNewChat = useCallback(() => {
+        dispatch({type: 'SELECT_AI_POST', postId: ''});
+        dispatch({type: 'AI_RHS_SET_TAB', tab: 'new'});
+    }, [dispatch]);
 
     const backLabel = intl.formatMessage({defaultMessage: 'Back to chat history'});
     const back = onHistory ? null : (
@@ -123,10 +129,7 @@ const RHSTitle = () => {
                     leadingIcon={<Icon glyph={<PencilOutlineIcon/>}/>}
                     data-testid='new-chat'
                     className='new-button'
-                    onClick={() => {
-                        dispatch({type: 'SELECT_AI_POST', postId: ''});
-                        dispatch({type: 'AI_RHS_SET_TAB', tab: 'new'});
-                    }}
+                    onClick={startNewChat}
                 >
                     <FormattedMessage defaultMessage='New chat'/>
                 </Button>
@@ -154,68 +157,40 @@ const RHSTitle = () => {
         );
     }
 
-    if (bots.length === 1) {
-        return (
-            <Container
-                data-testid='rhs-title'
-                $hasBack={Boolean(back)}
-            >
-                {back}
-                <AgentAvatar bot={activeBot}/>
-                <Name title={activeBot.displayName}>{activeBot.displayName}</Name>
-                {end}
-            </Container>
-        );
-    }
-
-    const label = intl.formatMessage({defaultMessage: '{name}, choose agent'}, {name: activeBot.displayName});
+    const menuBot = (threadOpen && bots.find((b) => (selectedRoot?.channel_id && b.dmChannelID === selectedRoot.channel_id) || b.id === selectedRoot?.user_id)) || activeBot;
     return (
         <Container
             data-testid='rhs-title'
             $hasBack={Boolean(back)}
         >
             {back}
-            <AgentAvatar bot={activeBot}/>
-            <Dropdown
-                isOpen={menu.rendered}
-                onOpenChange={setOpen}
-                placement='bottom-start'
-                target={(
+            <AgentAvatar bot={menuBot}/>
+            <AgentChatNameMenu
+                bot={menuBot}
+                rootId={pluginState?.selectedPostId || ''}
+                agents={{bots, onSwitch: switchAgent}}
+                onSelectChat={(rootId) => dispatch({type: 'SELECT_AI_POST', postId: rootId})}
+                onNewChat={startNewChat}
+                onArchived={startNewChat}
+                onViewAll={toAll}
+                renderTrigger={({ariaLabel, label, expanded, onClick}) => (
                     <TitleButton
                         type='button'
-                        aria-label={label}
-                        title={activeBot.displayName}
+                        aria-label={ariaLabel}
+                        title={label}
                         aria-haspopup='menu'
-                        aria-expanded={open}
+                        aria-expanded={expanded}
                         data-testid='bot-selector-rhs'
-                        onClick={() => setOpen(!open)}
+                        onClick={onClick}
                     >
-                        <Name>{activeBot.displayName}</Name>
+                        <Name>{label}</Name>
                         <Icon
                             glyph={<ChevronDownIcon/>}
                             size='16'
                         />
                     </TitleButton>
                 )}
-            >
-                <BotDropdownMenu
-                    open={open}
-                    onExited={menu.onExited}
-                    role='menu'
-                    aria-label={label}
-                    onClick={(e: React.MouseEvent) => {
-                        e.stopPropagation();
-                        setOpen(false);
-                    }}
-                >
-                    <BotMenuContent
-                        bots={bots}
-                        activeBot={activeBot}
-                        setActiveBot={switchAgent}
-                        itemRole='menuitem'
-                    />
-                </BotDropdownMenu>
-            </Dropdown>
+            />
             {end}
         </Container>
     );

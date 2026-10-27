@@ -119,7 +119,8 @@ export class AIPlugin {
 
   async switchBot(botName: string) {
     await this.page.getByTestId('bot-selector-rhs').click();
-    await this.page.getByRole('menuitem', { name: botName }).click();
+    await this.page.getByRole('menuitem', { name: 'Switch agent' }).click();
+    await this.page.getByRole('menu', { name: 'Switch agent' }).getByRole('menuitem', { name: botName }).click();
   }
 
   /**
@@ -127,10 +128,11 @@ export class AIPlugin {
    */
   async switchBotWhenListed(botDisplayName: string): Promise<void> {
     const selector = this.page.getByTestId('bot-selector-rhs');
-    const option = this.page.getByRole('menuitem', { name: botDisplayName });
+    const option = this.page.getByRole('menu', { name: 'Switch agent' }).getByRole('menuitem', { name: botDisplayName });
     await expect(async () => {
       await this.page.keyboard.press('Escape');
       await selector.click();
+      await this.page.getByRole('menuitem', { name: 'Switch agent' }).click();
       await expect(option).toBeVisible({ timeout: 3000 });
       await option.click();
     }).toPass({ timeout: 45000, intervals: [500, 1000, 2000] });

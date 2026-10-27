@@ -1,47 +1,24 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useId, useMemo, useRef, useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
-import AccountMultipleOutlineIcon from '@mattermost/compass-icons/components/account-multiple-outline';
-import ArchiveOutlineIcon from '@mattermost/compass-icons/components/archive-outline';
 import ChevronDownIcon from '@mattermost/compass-icons/components/chevron-down';
-import MessagePlusOutlineIcon from '@mattermost/compass-icons/components/message-plus-outline';
-import MessageTextOutlineIcon from '@mattermost/compass-icons/components/message-text-outline';
 import PlusIcon from '@mattermost/compass-icons/components/plus';
-import PencilOutlineIcon from '@mattermost/compass-icons/components/pencil-outline';
-import SettingsOutlineIcon from '@mattermost/compass-icons/components/settings-outline';
 
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
-import {MenuItem} from '@mattermost/compass-ui/components/menu-item';
-import {PopoverMenu, PopoverMenuDivider, PopoverMenuGroup, PopoverMenuScroll} from '@mattermost/compass-ui/components/popover-menu';
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
-import {archiveConversation, getProfilePictureUrl, getUserMCPTools, getUserToolPreferences, renameConversation} from '@/client';
+import {getProfilePictureUrl, getUserMCPTools, getUserToolPreferences} from '@/client';
 import type {LLMBot} from '@/bots';
-import ComposerSubmenu from '@/components/agent_chat/composer_submenu';
-import {focusFirstItem, handleMenuNavigation} from '@/components/agent_chat/composer_menu_keyboard';
-import ConfirmationDialog from '@/components/confirmation_dialog';
-import Dropdown from '@/components/dropdown';
 import ToolProviderPopover, {type UserMCPServerInfo} from '@/components/rhs/tool_provider_popover';
-import {useAgentThreads} from '@/hooks/use_agent_threads';
-import {useConversation} from '@/hooks/use_conversation';
-import {useConversationIdForThread} from '@/hooks/use_conversation_id_for_thread';
-import {useMenuTransition} from '@/hooks/use_menu_transition';
-import {isValidId} from '@/utils/ids';
-import {onAgentThreadsRefreshRequested, requestAgentThreadsRefresh, subscribeToAllPostUpdates} from '@/websocket';
 
-import AgentChatRenameDialog from './agent_chat_rename_dialog';
+import AgentChatNameMenu from './agent_chat_name_menu';
 import {useAgentsRoute} from './use_agents_route';
 
-// Same layer as the sidebar's archive confirmation.
-const DIALOG_Z_INDEX = 2000;
-
-// No compass token for these two: the prototype's chat list max-height (200px) and its
-// translucent hover fill (rgba(center-channel-color-rgb, 0.08)).
-const CHATS_LIST_MAX_HEIGHT = 200;
+// No compass token for the prototype's translucent hover fill (rgba(center-channel-color-rgb, 0.08)).
 const HOVER_PERCENT = '8%';
 
 // Caps the name button so a long chat title never pushes the tools button and the new-chat button
@@ -64,40 +41,6 @@ interface AgentChatHeaderProps {
 const AgentChatHeader = ({bot, rootId, onOpenSettings, onNewChat, onArchived}: AgentChatHeaderProps) => {
     const intl = useIntl();
     const {toChat, toAll} = useAgentsRoute();
-    const [nameMenuOpen, setNameMenuOpen] = useState(false);
-    const nameMenu = useMenuTransition(nameMenuOpen);
-    const [chatsSubmenu, setChatsSubmenu] = useState<{focus: boolean} | null>(null);
-    const nameMenuId = `agent-chat-menu-${useId().replace(/:/g, '')}`;
-    const setMenuOpen = useCallback((next: boolean) => {
-        setNameMenuOpen(next);
-        if (!next) {
-            setChatsSubmenu(null);
-        }
-    }, []);
-    const [renameOpen, setRenameOpen] = useState(false);
-    const [archiveOpen, setArchiveOpen] = useState(false);
-    const [archiving, setArchiving] = useState(false);
-    const [archiveFailed, setArchiveFailed] = useState(false);
-    const [renamedTitle, setRenamedTitle] = useState<string | null>(null);
-
-    // This agent's DM chats, the same data the sidebar lists.
-    const botList = useMemo(() => [bot], [bot]);
-    const {threadsByBot, refresh, refreshWithTitleRetry} = useAgentThreads(botList);
-    const chats = threadsByBot[bot.id] ?? [];
-    useEffect(() => subscribeToAllPostUpdates((msg) => {
-        if (msg.data.control === 'end') {
-            refresh();
-        }
-    }), [refresh]);
-    useEffect(() => onAgentThreadsRefreshRequested(refreshWithTitleRetry), [refreshWithTitleRetry]);
-
-    // The conversation id comes from a bot post in the store; until one is there (a reply that
-    // failed or has not loaded) the open chat's row in this agent's DM list carries it too.
-    const openThread = rootId ? chats.find((t) => t.root_post_id === rootId) : null;
-    const postConversationId = useConversationIdForThread(rootId);
-    const conversationId = postConversationId || (isValidId(openThread?.id) ? openThread.id : '');
-    const {conversation} = useConversation(conversationId);
-    const currentTitle = renamedTitle ?? conversation?.title ?? '';
 
     // Tool providers: fed exactly as the RHS feeds its popover.
     const [disabledServers, setDisabledServers] = useState<string[]>([]);
@@ -107,289 +50,73 @@ const AgentChatHeader = ({bot, rootId, onOpenSettings, onNewChat, onArchived}: A
         getUserMCPTools().then((response) => setPreloadedServers(response.servers)).catch(() => null);
     }, []);
 
-    // The Dropdown's focus manager moves focus in on mount; a reopen during the exit
-    // transition keeps it mounted, so move focus here too.
-    useEffect(() => {
-        if (!nameMenuOpen) {
-            return () => null;
-        }
-        const frame = requestAnimationFrame(() => {
-            const el = document.getElementById(nameMenuId);
-            if (el && !el.contains(document.activeElement)) {
-                focusFirstItem(el);
-            }
-        });
-        return () => cancelAnimationFrame(frame);
-    }, [nameMenuOpen, nameMenuId]);
-
-    const mounted = useRef(true);
-    useEffect(() => {
-        mounted.current = true;
-        return () => {
-            mounted.current = false;
-        };
-    }, []);
-
-    useEffect(() => {
-        setRenamedTitle(null);
-    }, [conversationId]);
-
-    const hasChat = Boolean(rootId && conversationId);
-
-    const rename = async (title: string) => {
-        await renameConversation(conversationId, title);
-        if (!mounted.current) {
-            return;
-        }
-        setRenamedTitle(title);
-        setRenameOpen(false);
-        requestAgentThreadsRefresh();
-    };
-
-    const confirmArchive = async () => {
-        if (archiving || !conversationId) {
-            return;
-        }
-        setArchiving(true);
-        setArchiveFailed(false);
-        try {
-            await archiveConversation(conversationId);
-            if (!mounted.current) {
-                return;
-            }
-            setArchiveOpen(false);
-            requestAgentThreadsRefresh();
-            onArchived();
-        } catch (e) {
-            console.error('Failed to archive agent chat:', e); // eslint-disable-line no-console
-            if (mounted.current) {
-                setArchiveFailed(true);
-            }
-        } finally {
-            if (mounted.current) {
-                setArchiving(false);
-            }
-        }
-    };
-
-    // An open chat is named by its title; the agent's name labels the new-chat state.
-    const chatTitle = rootId ? ((renamedTitle ?? conversation?.title ?? openThread?.title ?? '').trim() || intl.formatMessage({defaultMessage: 'New chat'})) : '';
-    const nameLabel = rootId ? chatTitle : bot.displayName;
-    const nameMenuLabel = rootId ? intl.formatMessage({defaultMessage: '{title}, {name} options'}, {title: chatTitle, name: bot.displayName}) : intl.formatMessage({defaultMessage: '{name} options'}, {name: bot.displayName});
     const newChatLabel = intl.formatMessage({defaultMessage: 'New chat'});
-    const chatsLabel = intl.formatMessage({defaultMessage: 'Recent chats'});
-
-    // Every item closes the whole menu; the chats submenu row opens its child instead.
-    const closing = (action: () => void) => () => {
-        setMenuOpen(false);
-        action();
-    };
 
     // Like the RHS: the tools button is for the new-chat state, and not for service
     // account agents (no per-user connections or preferences to manage).
     const showTools = !rootId && bot.useServiceAccountAuth !== true;
 
     return (
-        <>
-            <Root aria-label={bot.displayName}>
-                <Title>
-                    <UserAvatar
-                        src={getProfilePictureUrl(bot.id, bot.lastIconUpdate)}
-                        alt=''
-                        aria-hidden='true'
-                        name={bot.displayName}
-                        size='24'
-                    />
-                    <Dropdown
-                        isOpen={nameMenu.rendered}
-                        onOpenChange={setMenuOpen}
-                        placement='bottom-start'
-                        target={(
-                            <TitleButton
-                                type='button'
-                                aria-label={nameMenuLabel}
-                                title={nameLabel}
-                                aria-haspopup='menu'
-                                aria-expanded={nameMenuOpen}
-                                data-testid='agent-chat-menu-button'
-                                onClick={() => setMenuOpen(!nameMenuOpen)}
-                            >
-                                <Name>{nameLabel}</Name>
-                                <Icon
-                                    glyph={<ChevronDownIcon/>}
-                                    size='16'
-                                />
-                            </TitleButton>
-                        )}
-                    >
-                        <PopoverMenu
-                            id={nameMenuId}
-                            open={nameMenuOpen}
-                            onExited={nameMenu.onExited}
-                            role='menu'
-                            aria-label={nameMenuLabel}
-                            onKeyDown={handleMenuNavigation}
+        <Root aria-label={bot.displayName}>
+            <Title>
+                <UserAvatar
+                    src={getProfilePictureUrl(bot.id, bot.lastIconUpdate)}
+                    alt=''
+                    aria-hidden='true'
+                    name={bot.displayName}
+                    size='24'
+                />
+                <AgentChatNameMenu
+                    bot={bot}
+                    rootId={rootId}
+                    onOpenSettings={onOpenSettings}
+                    onSelectChat={(chatRootId) => toChat(bot.id, chatRootId)}
+                    onNewChat={onNewChat}
+                    onViewAll={toAll}
+                    onArchived={onArchived}
+                    renderTrigger={({ariaLabel, label, expanded, onClick}) => (
+                        <TitleButton
+                            type='button'
+                            aria-label={ariaLabel}
+                            title={label}
+                            aria-haspopup='menu'
+                            aria-expanded={expanded}
+                            data-testid='agent-chat-menu-button'
+                            onClick={onClick}
                         >
-                            {chats.length > 0 && (
-                                <>
-                                    <PopoverMenuGroup>
-                                        <ComposerSubmenu
-                                            label={chatsLabel}
-                                            icon={<MessageTextOutlineIcon/>}
-                                            menuLabel={chatsLabel}
-                                            grow='down'
-                                            open={chatsSubmenu !== null}
-                                            focusOnOpen={chatsSubmenu?.focus ?? false}
-                                            onOpen={(focus) => setChatsSubmenu({focus})}
-                                            onClose={() => setChatsSubmenu(null)}
-                                            data-testid='agent-chat-recent-chats'
-                                        >
-                                            <PopoverMenuScroll maxHeight={CHATS_LIST_MAX_HEIGHT}>
-                                                <PopoverMenuGroup>
-                                                    {chats.map((thread) => {
-                                                        const active = thread.root_post_id === rootId;
-                                                        return (
-                                                            <ChatMenuItem
-                                                                key={thread.id}
-                                                                icon={<MessageTextOutlineIcon/>}
-                                                                label={thread.title.trim() || newChatLabel}
-                                                                active={active}
-                                                                trailingElement={active}
-                                                                {...(active && {'aria-current': true})}
-                                                                onClick={closing(() => {
-                                                                    if (!active && thread.root_post_id) {
-                                                                        toChat(bot.id, thread.root_post_id);
-                                                                    }
-                                                                })}
-                                                            />
-                                                        );
-                                                    })}
-                                                </PopoverMenuGroup>
-                                            </PopoverMenuScroll>
-                                        </ComposerSubmenu>
-                                    </PopoverMenuGroup>
-                                    <PopoverMenuDivider/>
-                                </>
-                            )}
-                            {rootId && (
-                                <>
-                                    <PopoverMenuGroup>
-                                        <ChatMenuItem
-                                            icon={<MessagePlusOutlineIcon/>}
-                                            label={intl.formatMessage({defaultMessage: 'New chat'})}
-                                            onClick={closing(onNewChat)}
-                                        />
-                                        <ChatMenuItem
-                                            icon={<PencilOutlineIcon/>}
-                                            label={intl.formatMessage({defaultMessage: 'Rename chat'})}
-                                            disabled={!hasChat}
-                                            onClick={closing(() => setRenameOpen(true))}
-                                        />
-                                        <ChatMenuItem
-                                            icon={<ArchiveOutlineIcon/>}
-                                            label={intl.formatMessage({defaultMessage: 'Archive chat'})}
-                                            destructive={true}
-                                            disabled={!hasChat}
-                                            onClick={closing(() => {
-                                                setArchiveFailed(false);
-                                                setArchiveOpen(true);
-                                            })}
-                                        />
-                                    </PopoverMenuGroup>
-                                    <PopoverMenuDivider/>
-                                </>
-                            )}
-                            <PopoverMenuGroup>
-                                {onOpenSettings && (
-                                    <ChatMenuItem
-                                        icon={<SettingsOutlineIcon/>}
-                                        label={intl.formatMessage({defaultMessage: 'Agent settings'})}
-                                        onClick={closing(onOpenSettings)}
-                                    />
-                                )}
-                                <ChatMenuItem
-                                    icon={<AccountMultipleOutlineIcon/>}
-                                    label={intl.formatMessage({defaultMessage: 'View all agents'})}
-                                    onClick={closing(toAll)}
-                                />
-                            </PopoverMenuGroup>
-                        </PopoverMenu>
-                    </Dropdown>
-                </Title>
-                <Actions>
-                    {showTools && (
-                        <ToolProviderPopover
-                            disabledServers={disabledServers}
-                            onDisabledServersChange={setDisabledServers}
-                            preloadedServers={preloadedServers}
-                            enabledMCPTools={bot.enabledMCPTools}
-                            autoEnableNewMCPTools={bot.autoEnableNewMCPTools}
-                        />
+                            <Name>{label}</Name>
+                            <Icon
+                                glyph={<ChevronDownIcon/>}
+                                size='16'
+                            />
+                        </TitleButton>
                     )}
-                    <IconButton
-                        size='small'
-                        padding='compact'
-                        icon={<Icon glyph={<PlusIcon/>}/>}
-                        aria-label={newChatLabel}
-                        title={rootId ? newChatLabel : intl.formatMessage({defaultMessage: 'You\'re already in a new chat'})}
-                        disabled={!rootId}
-                        data-testid='agent-chat-new-chat-button'
-                        onClick={onNewChat}
+                />
+            </Title>
+            <Actions>
+                {showTools && (
+                    <ToolProviderPopover
+                        disabledServers={disabledServers}
+                        onDisabledServersChange={setDisabledServers}
+                        preloadedServers={preloadedServers}
+                        enabledMCPTools={bot.enabledMCPTools}
+                        autoEnableNewMCPTools={bot.autoEnableNewMCPTools}
                     />
-                </Actions>
-            </Root>
-            <AgentChatRenameDialog
-                show={renameOpen}
-                initialTitle={currentTitle}
-                onSubmit={rename}
-                onClose={() => setRenameOpen(false)}
-            />
-            <ConfirmationDialog
-                show={archiveOpen}
-                titleId='agent-chat-archive-dialog-title'
-                title={intl.formatMessage({defaultMessage: 'Archive chat'})}
-                message={(
-                    <>
-                        <p>
-                            {intl.formatMessage({defaultMessage: 'Archive this chat? It will be removed from your chats and can no longer be opened from here.'})}
-                        </p>
-                        {archiveFailed && (
-                            <ErrorText role='alert'>
-                                {intl.formatMessage({defaultMessage: 'Couldn\'t archive this chat. Try again.'})}
-                            </ErrorText>
-                        )}
-                    </>
                 )}
-                confirmButtonText={intl.formatMessage({defaultMessage: 'Archive'})}
-                onConfirm={confirmArchive}
-                onCancel={() => {
-                    if (!archiving) {
-                        setArchiveOpen(false);
-                    }
-                }}
-                isDestructive={true}
-                confirmPending={archiving}
-                managedAccessibility={true}
-                zIndex={DIALOG_Z_INDEX}
-            />
-        </>
+                <IconButton
+                    size='small'
+                    padding='compact'
+                    icon={<Icon glyph={<PlusIcon/>}/>}
+                    aria-label={newChatLabel}
+                    title={rootId ? newChatLabel : intl.formatMessage({defaultMessage: 'You\'re already in a new chat'})}
+                    disabled={!rootId}
+                    data-testid='agent-chat-new-chat-button'
+                    onClick={onNewChat}
+                />
+            </Actions>
+        </Root>
     );
 };
-
-// The prototype's MenuItem usage: menu semantics and a 16px leading icon.
-const ChatMenuItem = ({icon, ...props}: Omit<React.ComponentProps<typeof MenuItem>, 'leadingVisual'> & {icon: React.ReactNode}) => (
-    <MenuItem
-        role='menuitem'
-        leadingElement={true}
-        leadingVisual={(
-            <Icon
-                glyph={icon}
-                size='16'
-            />
-        )}
-        {...props}
-    />
-);
 
 // The prototype's agent-chat header: 56px bar (spacing-m padding around a 32px row).
 const Root = styled.header`
@@ -460,11 +187,6 @@ const Actions = styled.div`
     flex: 0 0 auto;
     align-items: center;
     gap: var(--spacing-xxs);
-`;
-
-const ErrorText = styled.p`
-    margin: 0;
-    color: var(--error-text);
 `;
 
 export default AgentChatHeader;

@@ -4,7 +4,7 @@
 import React from 'react';
 import {Provider} from 'react-redux';
 import {createStore} from 'redux';
-import {act, fireEvent, render, screen} from '@testing-library/react';
+import {act, fireEvent, render, screen, within} from '@testing-library/react';
 
 import manifest from '@/manifest';
 import {PREFERENCE_CATEGORY_AGENTS, PREFERENCE_NAME_SELECTED_AGENT} from '@/bots';
@@ -28,6 +28,20 @@ jest.mock('@mattermost/shared/components/tooltip', () => ({
 jest.mock('./tool_provider_popover', () => ({
     __esModule: true,
     default: () => <button type='button'>{'Tools'}</button>,
+}));
+
+// The name menu's own data: this agent's chats and the open chat's conversation.
+let mockThreads: Array<{id: string; root_post_id: string; title: string}> = [];
+jest.mock('@/hooks/use_agent_threads', () => ({
+    useAgentThreads: (bots: Array<{id: string}>) => ({threadsByBot: {[bots[0].id]: mockThreads}, refresh: jest.fn(), refreshWithTitleRetry: jest.fn()}),
+}));
+jest.mock('@/hooks/use_conversation', () => ({
+    useConversation: () => ({conversation: null}),
+}));
+jest.mock('@/websocket', () => ({
+    subscribeToAllPostUpdates: () => () => null,
+    onAgentThreadsRefreshRequested: () => () => null,
+    requestAgentThreadsRefresh: jest.fn(),
 }));
 
 jest.mock('@/hooks/use_conversation_id_for_thread', () => ({
@@ -95,6 +109,7 @@ describe('RHSTitle', () => {
         mockSavePreferences.mockReset();
         mockSavePreferences.mockResolvedValue(true);
         dispatched.length = 0;
+        mockThreads = [];
     });
 
     const rhsActions = () => dispatched.filter((a) => a.type === 'SELECT_AI_POST' || a.type === 'AI_RHS_NEW_CHAT');
@@ -106,49 +121,64 @@ describe('RHSTitle', () => {
         renderTitle(bots, '');
 
         expect(screen.getByText('Agents')).not.toBeNull();
-        expect(screen.queryByRole('button', {name: /choose agent/})).toBeNull();
+        expect(screen.queryByRole('button', {name: /options$/})).toBeNull();
     });
 
-    test('a single agent is a plain title without a menu', () => {
-        renderTitle([makeBot('a', 'Alpha')], '');
+    test.each([
+        {name: 'a single agent', bots: [makeBot('a', 'Alpha')], selected: 'a', label: 'Alpha', switchOffered: false},
+        {name: 'several agents', bots: two, selected: 'b', label: 'Beta', switchOffered: true},
+    ])('$name: the title is the agent\'s menu button (the product chat header\'s menu)', ({bots, selected, label, switchOffered}) => {
+        renderTitle(bots, selected);
 
-        expect(screen.getByText('Alpha')).not.toBeNull();
-        expect(screen.queryByRole('button', {name: /choose agent/})).toBeNull();
-        expect(screen.queryByText('Agents')).toBeNull();
-    });
-
-    test('with several agents shows the active agent as a labelled menu button', () => {
-        renderTitle(two, 'b');
-
-        const button = screen.getByRole('button', {name: 'Beta, choose agent'});
-        expect(button.textContent).toBe('Beta');
+        const button = screen.getByRole('button', {name: `${label} options`});
+        expect(button.textContent).toBe(label);
         expect(button.getAttribute('aria-haspopup')).toBe('menu');
         expect(button.getAttribute('aria-expanded')).toBe('false');
+        expect(screen.queryByText('Agents')).toBeNull();
         expect(document.querySelector('h1,h2,h3')).toBeNull();
+
+        fireEvent.click(button);
+        expect(button.getAttribute('aria-expanded')).toBe('true');
+        expect(screen.queryByRole('menuitem', {name: 'Switch agent'}) !== null).toBe(switchOffered);
+        expect(screen.getByRole('menuitem', {name: 'View all agents'})).not.toBeNull();
     });
 
-    test('lists the agents, and choosing one saves it and updates the title', () => {
+    test('a new chat\'s menu lists recent chats and has no chat actions; an open chat adds them', () => {
+        mockThreads = [{id: 'c1', root_post_id: 'root1', title: 'Quarterly plan'}];
+
+        const {unmount} = renderTitle(two, 'a');
+        fireEvent.click(screen.getByTestId('bot-selector-rhs'));
+        expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Switch agent', 'Recent chats', 'View all agents']);
+        unmount();
+
+        renderTitle(two, 'a', {selectedPostId: 'root1'});
+        fireEvent.click(screen.getByTestId('bot-selector-rhs'));
+        expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Switch agent', 'Recent chats', 'New chat', 'Rename chat', 'Archive chat', 'View all agents']);
+    });
+
+    test('choosing a recent chat opens it in the RHS', () => {
+        mockThreads = [{id: 'c1', root_post_id: 'root1', title: 'Quarterly plan'}];
         renderTitle(two, 'a');
 
-        fireEvent.click(screen.getByRole('button', {name: 'Alpha, choose agent'}));
-        expect(screen.getByTestId('bot-selector-rhs').getAttribute('aria-expanded')).toBe('true');
-        expect(screen.getByRole('menu')).not.toBeNull();
-        expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Alpha', 'Beta']);
+        fireEvent.click(screen.getByTestId('bot-selector-rhs'));
+        fireEvent.click(screen.getByRole('menuitem', {name: 'Recent chats'}));
+        fireEvent.click(screen.getByRole('menuitem', {name: 'Quarterly plan'}));
 
-        fireEvent.click(screen.getByRole('menuitem', {name: 'Beta'}));
+        expect(dispatched.filter((a) => a.type === 'SELECT_AI_POST')).toEqual([{type: 'SELECT_AI_POST', postId: 'root1'}]);
+    });
+
+    test('Switch agent lists the agents, and choosing one saves it and starts a new chat with it', () => {
+        renderTitle(two, 'a');
+
+        fireEvent.click(screen.getByTestId('bot-selector-rhs'));
+        fireEvent.click(screen.getByRole('menuitem', {name: 'Switch agent'}));
+        const submenu = screen.getByRole('menu', {name: 'Switch agent'});
+        expect(within(submenu).getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Alpha', 'Beta']);
+
+        fireEvent.click(within(submenu).getByRole('menuitem', {name: 'Beta'}));
 
         expect(mockSavePreferences).toHaveBeenCalledWith('me', [expect.objectContaining({name: PREFERENCE_NAME_SELECTED_AGENT, value: 'b'})]);
         expect(screen.getByTestId('bot-selector-rhs').textContent).toBe('Beta');
-        expect(screen.getByTestId('bot-selector-rhs').getAttribute('aria-expanded')).toBe('false');
-    });
-
-    test('switching to another agent behaves like starting a new chat with it', () => {
-        renderTitle(two, 'a');
-
-        fireEvent.click(screen.getByRole('button', {name: 'Alpha, choose agent'}));
-        fireEvent.click(screen.getByRole('menuitem', {name: 'Beta'}));
-
-        expect(mockSavePreferences).toHaveBeenCalledTimes(1);
         expect(rhsActions()).toEqual([
             {type: 'SELECT_AI_POST', postId: ''},
             {type: 'AI_RHS_NEW_CHAT'},
@@ -158,17 +188,30 @@ describe('RHSTitle', () => {
     test('choosing the current agent changes nothing and just closes the menu', () => {
         renderTitle(two, 'a');
 
-        fireEvent.click(screen.getByRole('button', {name: 'Alpha, choose agent'}));
-        fireEvent.click(screen.getByRole('menuitem', {name: 'Alpha'}));
+        fireEvent.click(screen.getByTestId('bot-selector-rhs'));
+        fireEvent.click(screen.getByRole('menuitem', {name: 'Switch agent'}));
+        fireEvent.click(within(screen.getByRole('menu', {name: 'Switch agent'})).getByRole('menuitem', {name: 'Alpha'}));
 
         expect(mockSavePreferences).not.toHaveBeenCalled();
         expect(rhsActions()).toEqual([]);
         expect(screen.getByTestId('bot-selector-rhs').getAttribute('aria-expanded')).toBe('false');
     });
 
+    test('New chat in the menu leaves the open chat for a fresh one', () => {
+        renderTitle(two, 'a', {selectedPostId: 'root1'});
+
+        fireEvent.click(screen.getByTestId('bot-selector-rhs'));
+        fireEvent.click(screen.getByRole('menuitem', {name: 'New chat'}));
+
+        expect(dispatched.filter((a) => a.type === 'SELECT_AI_POST' || a.type === 'AI_RHS_SET_TAB')).toEqual([
+            {type: 'SELECT_AI_POST', postId: ''},
+            {type: 'AI_RHS_SET_TAB', tab: 'new'},
+        ]);
+    });
+
     test('opens from the keyboard and closes with Escape', async () => {
         renderTitle(two, 'a');
-        const button = screen.getByRole('button', {name: 'Alpha, choose agent'});
+        const button = screen.getByRole('button', {name: 'Alpha options'});
 
         // A native button turns Enter/Space into a click; the click is the keyboard path.
         button.focus();
@@ -181,6 +224,7 @@ describe('RHSTitle', () => {
         });
         expect(button.getAttribute('aria-expanded')).toBe('false');
     });
+
     describe('Back and tools', () => {
         const backButton = () => screen.queryByRole('button', {name: 'Back to chat history'});
         const toolsButton = () => screen.queryByRole('button', {name: 'Tools'});
@@ -222,7 +266,7 @@ describe('RHSTitle', () => {
             renderTitle(two, 'a', {rhsTab: 'threads'});
 
             expect(screen.getByText('Agents')).not.toBeNull();
-            expect(screen.queryByRole('button', {name: /choose agent/})).toBeNull();
+            expect(screen.queryByRole('button', {name: /options$/})).toBeNull();
             expect(screen.queryByText('Alpha')).toBeNull();
             expect(screen.queryByText('Chat history')).toBeNull();
         });
