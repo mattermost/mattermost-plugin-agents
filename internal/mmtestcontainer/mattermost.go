@@ -93,7 +93,7 @@ func (c *MattermostContainer) GetAdminClient(ctx context.Context) (*model.Client
 		return nil, err
 	}
 	client := model.NewAPIv4Client(url)
-	_, _, err = client.Login(context.Background(), c.username, c.password)
+	_, _, err = client.Login(ctx, c.username, c.password)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +107,7 @@ func (c *MattermostContainer) GetClient(ctx context.Context, username, password 
 		return nil, err
 	}
 	client := model.NewAPIv4Client(url)
-	_, _, err = client.Login(context.Background(), username, password)
+	_, _, err = client.Login(ctx, username, password)
 	if err != nil {
 		return nil, err
 	}
@@ -291,7 +291,7 @@ func (c *MattermostContainer) init(ctx context.Context, req MattermostContainerR
 		}
 	}
 
-	if err := c.setSiteURL(context.Background()); err != nil {
+	if err := c.setSiteURL(ctx); err != nil {
 		return err
 	}
 
