@@ -252,7 +252,7 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
     .post ${BUBBLE} [${BUBBLE_CONTROLS_ATTRIBUTE}='${BUBBLE_CONTROLS_BELOW}'] {
         position: absolute;
         top: calc(100% + ${CONTROLS_BAR_GAP});
-        left: var(--spacing-l);
+        left: var(--spacing-s);
         margin-top: 0;
     }
 

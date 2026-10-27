@@ -120,6 +120,6 @@ describe('hostThreadChatStyles controls below the bubble', () => {
         const rule = ruleFor(text, `${bubble} [data-bubble-controls='below']`);
         expect(rule).toContain('position: absolute');
         expect(rule).toContain('top: calc(100% + var(--spacing-xxxxs))');
-        expect(rule).toContain('left: var(--spacing-l)');
+        expect(rule).toContain('left: var(--spacing-s)');
     });
 });
