@@ -213,7 +213,7 @@ const Meta = styled.div`
     margin-top: var(--spacing-xxxxs);
     min-width: 0;
     align-items: center;
-    gap: var(--spacing-xs);
+    gap: var(--spacing-xxs);
     color: ${META_COLOR};
     font-size: var(--font-size-75);
     line-height: var(--line-height-75);
@@ -227,7 +227,7 @@ const Dot = styled.span`
 const Replies = styled.span`
     display: inline-flex;
     align-items: center;
-    gap: var(--spacing-xxxs);
+    gap: var(--spacing-xxxxs);
 `;
 
 // Hover (or focus) reveals the actions button at the item's top right.
