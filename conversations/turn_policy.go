@@ -50,7 +50,11 @@ type turnPolicy struct {
 	c *Conversations
 	turnRequest
 
-	isDM         bool
+	isDM bool
+	// initiator is the post that started the run: the trigger of a new turn,
+	// or the run's recorded initiating post when resuming one. Nil when a
+	// resumed run has no recorded initiator.
+	initiator    *model.Post
 	toolsEnabled bool
 	// interactive means the requester is present to answer user-interaction
 	// tools and connection requests.
@@ -107,6 +111,7 @@ func (c *Conversations) resolveTurnPolicy(ctx context.Context, req turnRequest) 
 			return nil, err
 		}
 	}
+	p.initiator = initiator
 	if isDM {
 		p.toolsEnabled = true
 		p.interactive = initiator != nil && initiatingUser != nil && !isAutomatedInvoker(initiator, initiatingUser)
@@ -291,6 +296,7 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 		}))
 	}
 	opts = append(opts, p.c.conversationToolOptions(p.bot, p.conv)...)
+	opts = append(opts, p.c.attachmentToolOptions(p.bot, p.initiator)...)
 	opts = append(opts, extraOpts...)
 
 	llmContext := p.c.buildConversationContextWithTools(ctx, p.bot, p.user, p.channel, prefsLogMessage, opts...)

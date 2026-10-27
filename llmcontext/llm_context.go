@@ -206,9 +206,10 @@ func (b *Builder) WithLLMContextMCPToolFilter(keep func(llm.Tool) bool) llm.Cont
 // WithLLMContextPreloadedMCPTools requests exact-or-bare MCP tools for internal
 // predefined flows. The selected tools are still constrained by the normal
 // authorized MCP catalog and must be configured before default tools are built.
+// Requests accumulate, so independent flows can each preload what they need.
 func (b *Builder) WithLLMContextPreloadedMCPTools(tools []llm.EnabledMCPTool) llm.ContextOption {
 	return func(c *llm.Context) {
-		c.ToolCatalog.PreloadedMCPTools = slices.Clone(tools)
+		c.ToolCatalog.PreloadedMCPTools = slices.Concat(c.ToolCatalog.PreloadedMCPTools, tools)
 	}
 }
 
