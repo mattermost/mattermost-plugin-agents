@@ -134,7 +134,7 @@ const Item = styled.div`
         right: var(--spacing-m);
         bottom: 0;
         left: var(--spacing-m);
-        border-bottom: var(--border-default);
+        border-bottom: var(--border-light);
         content: '';
         pointer-events: none;
         transition: opacity var(--duration-quick) var(--ease-transition);
