@@ -10,6 +10,7 @@ import {CloseIcon, RefreshIcon, SendIcon} from '@mattermost/compass-icons/compon
 import {Button} from '@mattermost/compass-ui/components/button';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 interface ControlsBarComponentProps {
     showStopGeneratingButton: boolean;
@@ -56,14 +57,17 @@ export const ControlsBarComponent: React.FC<ControlsBarComponentProps> = ({
                 </Button>
             )}
             {showRegenerate && (
-                <IconButton
-                    size='x-small'
-                    icon={<Icon glyph={<RefreshIcon/>}/>}
-                    aria-label={regenerateLabel}
-                    title={regenerateLabel}
-                    data-testid='regenerate-button'
-                    onClick={onRegenerate}
-                />
+                <WithTooltip title={regenerateLabel}>
+                    <TooltipTrigger>
+                        <IconButton
+                            size='x-small'
+                            icon={<Icon glyph={<RefreshIcon/>}/>}
+                            aria-label={regenerateLabel}
+                            data-testid='regenerate-button'
+                            onClick={onRegenerate}
+                        />
+                    </TooltipTrigger>
+                </WithTooltip>
             )}
         </ControlsBar>
     );
@@ -76,4 +80,9 @@ const ControlsBar = styled.div`
 	height: 28px;
 	margin-top: 8px;
 	gap: 4px;
+`;
+
+// WithTooltip needs a single element that takes a ref and mouse/focus handlers.
+const TooltipTrigger = styled.span`
+	display: inline-flex;
 `;
