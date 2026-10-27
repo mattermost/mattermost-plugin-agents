@@ -13,6 +13,8 @@ import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 
 import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
+import {Timestamp} from '@/mm_webapp';
+
 import {BUBBLE_CONTROLS_ATTRIBUTE, BUBBLE_CONTROLS_BELOW, CONTROLS_BAR_HEIGHT} from '../agent_chat/agent_chat_host_styles';
 
 interface ControlsBarComponentProps {
@@ -25,6 +27,10 @@ interface ControlsBarComponentProps {
 
     // Agent chat views place the bar under the bubble (agent_chat_host_styles.ts).
     belowBubble?: boolean;
+
+    // The post's creation time, shown first in the bar below the bubble (the host's message
+    // header, with the agent's name and tag, is hidden there; agent_chat_host_styles.ts).
+    createAt?: number;
     onStopGenerating: () => void;
     onPostSummary: () => void;
     onRegenerate: () => void;
@@ -36,6 +42,7 @@ export const ControlsBarComponent: React.FC<ControlsBarComponentProps> = ({
     showRegenerate,
     copyText = null,
     belowBubble = false,
+    createAt,
     onStopGenerating,
     onPostSummary,
     onRegenerate,
@@ -45,6 +52,14 @@ export const ControlsBarComponent: React.FC<ControlsBarComponentProps> = ({
 
     return (
         <ControlsBar {...(belowBubble ? {[BUBBLE_CONTROLS_ATTRIBUTE]: BUBBLE_CONTROLS_BELOW} : {})}>
+            {belowBubble && typeof createAt === 'number' && (
+                <Time data-testid='controls-bar-time'>
+                    <Timestamp
+                        value={createAt}
+                        useDate={false}
+                    />
+                </Time>
+            )}
             {showStopGeneratingButton && (
                 <Button
                     emphasis='tertiary'
@@ -231,6 +246,14 @@ const ControlsBar = styled.div`
 	height: ${CONTROLS_BAR_HEIGHT};
 	margin-top: 8px;
 	gap: 4px;
+`;
+
+const Time = styled.span`
+	margin-inline-end: var(--spacing-xs);
+	color: rgba(var(--center-channel-color-rgb), 0.64);
+	font-size: var(--font-size-75);
+	line-height: var(--line-height-75);
+	white-space: nowrap;
 `;
 
 // WithTooltip needs a single element that takes a ref and mouse/focus handlers.

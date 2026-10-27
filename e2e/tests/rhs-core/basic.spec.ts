@@ -85,7 +85,8 @@ test.describe('RHS Bot Interactions', () => {
     await aiPlugin.switchBot('Second Bot');
 
     await aiPlugin.sendMessage('Hello!');
-    await expect(page.getByRole('button', { name: 'second', exact: true })).toBeVisible();
+    // The reply is authored by the second bot (its name is hidden in the chat's post header).
+    await expect(page.getByRole('button', { name: 'second', exact: true, includeHidden: true })).toBeAttached();
     await aiPlugin.waitForBotResponse(responseTestText);
   });
 });

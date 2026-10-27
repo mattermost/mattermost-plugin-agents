@@ -40,8 +40,8 @@ describe('hostThreadChatStyles', () => {
         // Date separators leave more room under the line than the host's own 1em.
         expect(text).toContain('margin-bottom: var(--spacing-xxl)');
 
-        // Your own bubbles leave 12px (--spacing-m) of room below them.
-        expect(ruleFor(text, '.post.current--user .post__content > .post__img + div')).toContain('margin-bottom: var(--spacing-m)');
+        // Your own bubbles reserve the controls bar's row below them, for the time.
+        expect(ruleFor(text, '.post.current--user .post__content > .post__img + div')).toContain('margin-bottom: calc(28px + var(--spacing-xxxxs))');
 
         // Posts and separators share one column where there is a cap, and the full width otherwise.
         const column = `max-width: ${CHAT_CONTENT_MAX_WIDTH}`;
@@ -96,7 +96,7 @@ describe('hostThreadChatStyles bubble fit', () => {
         const rule = ruleFor(text, `${bubble}:has([data-bubble-fit='hug'])`);
         expect(rule).toContain('flex: 0 1 auto');
         expect(rule).toContain('width: fit-content');
-        expect(rule).toContain(`max-width: calc(${HUG_MAX_FRACTION} * (100% - var(--icon-size-32) - var(--spacing-xs)))`);
+        expect(rule).toContain(`max-width: calc(${HUG_MAX_FRACTION} * 100%)`);
     });
 
     // The fit is decided from the bubble's measured width: a width mid-transition
@@ -122,10 +122,37 @@ describe('hostThreadChatStyles controls below the bubble', () => {
         expect(ruleFor(text, bubble)).not.toContain('margin-bottom');
     });
 
-    test('the marked bar is placed absolutely under the bubble, aligned with its text', () => {
+    test('the marked bar is placed absolutely under the reply, aligned with its text', () => {
         const rule = ruleFor(text, `${bubble} [data-bubble-controls='below']`);
         expect(rule).toContain('position: absolute');
         expect(rule).toContain('top: calc(100% + var(--spacing-xxxxs))');
-        expect(rule).toContain('left: var(--spacing-s)');
+        expect(rule).toContain('left: var(--spacing-l)');
+    });
+});
+
+describe('hostThreadChatStyles message look', () => {
+    const text = cssText(hostThreadChatStyles());
+    const ownBubble = '.post.current--user .post__content > .post__img + div';
+
+    test('neither the agent nor the user shows an avatar', () => {
+        expect(ruleFor(text, '.post .post__content > .post__img')).toContain('display: none');
+    });
+
+    test('the agent\'s reply keeps the bubble shape, tinted only on hover, and hides its header except the toolbar', () => {
+        const rule = ruleFor(text, '.post .post__content > .post__img + div');
+        expect(rule).toContain('padding: var(--spacing-m) var(--spacing-l)');
+        expect(rule).toContain('background: transparent');
+        expect(ruleFor(text, '.post .post__content > .post__img + div:hover')).toContain('background: rgba(var(--center-channel-color-rgb), 0.08)');
+        expect(ruleFor(text, '.post:not(.current--user) .post__header > :not(.post-menu)')).toContain('display: none !important');
+    });
+
+    test('your own bubble reverses the colors, hides your name and puts the time under the bubble', () => {
+        const rule = ruleFor(text, ownBubble);
+        expect(rule).toContain('background: var(--center-channel-color)');
+        expect(rule).toContain('color: var(--center-channel-bg)');
+        expect(ruleFor(text, '.post.current--user .post__header .col__name')).toContain('display: none');
+        const time = ruleFor(text, '.post.current--user .post__header .badges-wrapper');
+        expect(time).toContain('position: absolute');
+        expect(time).toContain('top: calc(100% + var(--spacing-xxxxs))');
     });
 });

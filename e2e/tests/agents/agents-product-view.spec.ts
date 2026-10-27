@@ -306,7 +306,7 @@ test.describe('Agents product view', () => {
         await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}$`));
     });
 
-    test('thread renders as chat bubbles in a centered column, own messages differentiated', async ({page}) => {
+    test('thread renders in a centered column: plain agent replies, reversed own bubbles with the time outside', async ({page}) => {
         await login(page);
         await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}/${rootId}`, {waitUntil: 'domcontentloaded'});
         const thread = page.getByTestId('agent-chat-thread');
@@ -319,20 +319,38 @@ test.describe('Agents product view', () => {
             const post = content.closest('.post') as HTMLElement;
             return {background: style.backgroundColor, color: style.color, left: bubble.getBoundingClientRect().left, postWidth: post.getBoundingClientRect().width};
         });
-        const buttonBg = await page.evaluate(() => {
+        const resolveColor = (variable: string) => page.evaluate((v) => {
             const probe = document.createElement('div');
-            probe.style.backgroundColor = 'var(--button-bg)';
+            probe.style.backgroundColor = `var(${v})`;
             document.body.appendChild(probe);
             const value = getComputedStyle(probe).backgroundColor;
             probe.remove();
             return value;
-        });
+        }, variable);
 
+        // Your bubble reverses the colors; the agent's reply has no bubble at all.
         const own = await bubbleStyle(FIRST_PROMPT);
         const agent = await bubbleStyle(FIRST_REPLY);
-        expect(own.background).toBe(buttonBg);
-        expect(agent.background).not.toBe(buttonBg);
-        expect(agent.background).not.toBe('rgba(0, 0, 0, 0)');
+        expect(own.background).toBe(await resolveColor('--center-channel-color'));
+        expect(own.color).toBe(await resolveColor('--center-channel-bg'));
+        expect(agent.background).toBe('rgba(0, 0, 0, 0)');
+
+        // No avatars; the agent's name and header time are hidden, its time is in the controls bar.
+        const ownPost = thread.locator('.post').filter({hasText: FIRST_PROMPT}).first();
+        const replyPost = thread.locator('.post').filter({hasText: FIRST_REPLY}).first();
+        await expect(ownPost.locator('.post__img')).toBeHidden();
+        await expect(replyPost.locator('.post__img')).toBeHidden();
+        await expect(replyPost.locator('.post__header .col__name')).toBeHidden();
+        await expect(replyPost.locator('.post__header .badges-wrapper')).toBeHidden();
+        await expect(replyPost.getByTestId('controls-bar-time')).toBeVisible();
+        expect(await replyPost.getByTestId('controls-bar-time').evaluate((el) => el.parentElement?.firstElementChild === el)).toBe(true);
+
+        // Your name is hidden and your time sits below the bubble.
+        await expect(ownPost.locator('.post__header .col__name')).toBeHidden();
+        const ownTime = ownPost.locator('.post__header .badges-wrapper');
+        await expect(ownTime).toBeVisible();
+        const ownBubbleBox = (await ownPost.locator('.post__content > .post__img + div').boundingBox())!;
+        expect((await ownTime.boundingBox())!.y).toBeGreaterThanOrEqual(ownBubbleBox.y + ownBubbleBox.height);
 
         // Own bubble sits to the right of the agent's (row-reversed).
         expect(own.left).toBeGreaterThan(agent.left);
@@ -346,7 +364,7 @@ test.describe('Agents product view', () => {
         // The host reply box is replaced, not shown alongside.
         await expect(thread.getByTestId('comment-create')).toBeHidden();
 
-        // Hover: only the bubble reacts, and the toolbar shows only over the bubble.
+        // Hover: only the reply's bubble shape tints, and the toolbar shows only over it.
         const agentPost = thread.locator('.post').filter({hasText: FIRST_REPLY}).first();
         const agentBubble = agentPost.locator('.post__content > .post__img + div');
         const toolbar = agentPost.locator('[data-testid^="post-menu-"]');
@@ -362,7 +380,7 @@ test.describe('Agents product view', () => {
         await page.mouse.move(0, 0);
         const idle = await state();
 
-        // Empty row space: the avatar column left of the agent bubble, below the avatar.
+        // Empty row space: the post's side padding left of the reply.
         const rowBox = (await agentPost.boundingBox())!;
         const bubbleBox = (await agentBubble.boundingBox())!;
         await page.mouse.move(rowBox.x + 4, bubbleBox.y + bubbleBox.height - 4);

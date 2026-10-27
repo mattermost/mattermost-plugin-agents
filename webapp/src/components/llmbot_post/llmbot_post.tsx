@@ -889,6 +889,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 showRegenerate={showRegenerate}
                 copyText={showCopy ? answerMarkdown : null}
                 belowBubble={controlsBelowBubble}
+                createAt={props.post.create_at}
                 onStopGenerating={stopGenerating}
                 onPostSummary={postSummary}
                 onRegenerate={regnerate}

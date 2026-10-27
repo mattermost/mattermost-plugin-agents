@@ -12,10 +12,11 @@ import {css} from 'styled-components';
 //     `.post`             every post row (PostAriaLabelDiv className)
 //     `.current--user`    on `.post` when post.user_id is the current user (not system messages)
 //     `.post__content`    [data-testid="postContent"], row holding the avatar and the body column
-//     `.post__img`        first child of `.post__content`: avatar slot
+//     `.post__img`        first child of `.post__content`: avatar slot, hidden here
 //                         (the body column is its unnamed sibling `div`)
-//     `.post__header`, `.post__time`, `.user-popover`, `.post-message__text`
-//                         header and text inside the body column
+//     `.post__header`, `.badges-wrapper` (holds `.post__time`), `.post-message__text`
+//                         header, time and text inside the body column
+//     components/post/user_profile.tsx: `.col__name`, the author name and bot tag in the header
 // - components/root_post_divider/root_post_divider.tsx: `.root-post__divider`,
 //     the "N replies" line rendered in the root post's row (thread_viewer_row.tsx)
 // - components/post_view/date_separator/date_separator.tsx renders
@@ -59,8 +60,6 @@ import {css} from 'styled-components';
 // No compass token covers content widths.
 export const CHAT_CONTENT_MAX_WIDTH = '800px';
 
-const AVATAR_SLOT = 'var(--icon-size-32)';
-
 // The body column of a post, which becomes the bubble.
 const BUBBLE = '.post__content > .post__img + div';
 
@@ -70,8 +69,8 @@ export const BUBBLE_HEADER_SELECTOR = '.post__header';
 export const BUBBLE_TOOLBAR_SELECTOR = '.post-menu';
 export const BUBBLE_WIDE_HOST_CONTENT_SELECTOR = '.post-code, .post-image__columns, .file-view--single, .attachment, .post__embed-container, .PostAttachmentOpenGraph';
 
-// An agent bubble hugs its content when its natural width is under this share
-// of the row (the row minus the avatar slot), and spans the row otherwise.
+// A reply hugs its content when its natural width is under this share
+// of the row, and spans the row otherwise.
 export const HUG_MAX_FRACTION = 0.75;
 
 // Set by LLMBotPost on its own wrapper inside the bubble.
@@ -167,9 +166,9 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         gap: var(--spacing-xs);
     }
 
+    /* No avatars: neither the agent's nor the user's. */
     .post .post__content > .post__img {
-        flex: 0 0 auto;
-        width: ${AVATAR_SLOT};
+        display: none;
     }
 
     /*
@@ -186,15 +185,15 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         background: transparent;
     }
 
-    /* The body column (header + message) becomes the bubble. */
+    /* The body column (header + message). */
     .post ${BUBBLE} {
-        /* Anchors the host toolbar (absolute, top right) to the bubble, not the row. */
+        /* Anchors the host toolbar (absolute, top right) to the body, not the row. */
         position: relative;
         flex: 1 1 auto;
         min-width: 0;
         padding: var(--spacing-m) var(--spacing-l);
         border-radius: 0 var(--radius-xl) var(--radius-xl) var(--radius-xl);
-        background: rgba(var(--center-channel-color-rgb), 0.04);
+        background: transparent;
         transition: background var(--duration-quick) var(--ease-transition);
 
         @media (prefers-reduced-motion: reduce) {
@@ -202,8 +201,18 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         }
     }
 
+    /* The agent's reply shows its bubble shape only while the user is on it. */
     ${activeBubble('.post')} {
         background: rgba(var(--center-channel-color-rgb), 0.08);
+    }
+
+    /*
+     * The agent's host header (author name, bot tag, time) is hidden except for the hover toolbar;
+     * the plugin's controls bar shows the time. !important because the host's \`.d-flex\` utility
+     * on the badges wrapper is !important too.
+     */
+    .post:not(.current--user) .post__header > :not(.post-menu) {
+        display: none !important;
     }
 
     /*
@@ -239,7 +248,7 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
     .post ${BUBBLE}:has([${BUBBLE_FIT_ATTRIBUTE}='hug']) {
         flex: 0 1 auto;
         width: fit-content;
-        max-width: calc(${HUG_MAX_FRACTION} * (100% - ${AVATAR_SLOT} - var(--spacing-xs)));
+        max-width: calc(${HUG_MAX_FRACTION} * 100%);
     }
 
     /*
@@ -258,29 +267,40 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
     .post ${BUBBLE} [${BUBBLE_CONTROLS_ATTRIBUTE}='${BUBBLE_CONTROLS_BELOW}'] {
         position: absolute;
         top: calc(100% + ${CONTROLS_BAR_GAP});
-        left: var(--spacing-s);
+        /* The bubble's text inset, so the time (first in the bar) lines up with the text above. */
+        left: var(--spacing-l);
         margin-top: 0;
     }
 
-    /* Own messages: right-aligned, primary-colored bubble. */
+    /*
+     * Own messages: right-aligned bubble with the colors reversed (text color as the background,
+     * the center channel background as the text). No avatar or name; the time sits under the
+     * bubble, in the space the bubble reserves.
+     */
     .post.current--user .post__content {
         flex-direction: row-reverse;
     }
 
     .post.current--user ${BUBBLE} {
         flex: 0 1 auto;
-        max-width: calc(100% - ${AVATAR_SLOT} - var(--spacing-xs));
+        max-width: 100%;
+        padding: var(--spacing-m) var(--spacing-l);
 
-        /* Room under your own messages before the agent's reply. */
-        margin-bottom: var(--spacing-m);
+        /* Room for the time under the bubble, and before the agent's reply. */
+        margin-bottom: calc(${CONTROLS_BAR_HEIGHT} + ${CONTROLS_BAR_GAP});
         border-radius: var(--radius-xl) 0 var(--radius-xl) var(--radius-xl);
-        background: var(--button-bg);
-        color: var(--button-color);
+        background: var(--center-channel-color);
+        color: var(--center-channel-bg);
+        transition: background var(--duration-quick) var(--ease-transition);
+
+        @media (prefers-reduced-motion: reduce) {
+            transition: none;
+        }
     }
 
-    /* Shade the primary color toward the text color: darker on light themes, lighter on dark. */
+    /* Shade the background toward the text color's opposite: lighter on light themes, darker on dark. */
     ${activeBubble('.post.current--user')} {
-        background: linear-gradient(rgba(var(--center-channel-color-rgb), 0.12), rgba(var(--center-channel-color-rgb), 0.12)), var(--button-bg);
+        background: linear-gradient(rgba(var(--center-channel-bg-rgb), 0.12), rgba(var(--center-channel-bg-rgb), 0.12)), var(--center-channel-color);
     }
 
     /* While editing, the host editor sits in the bubble: use the neutral bubble. */
@@ -289,17 +309,27 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         color: var(--center-channel-color);
     }
 
-    .post.current--user .post__header {
-        justify-content: flex-end;
+    .post.current--user .post__header .col__name {
+        display: none;
     }
 
-    .post.current--user .post__header .user-popover,
-    .post.current--user .post-message__text,
-    .post.current--user .post-message__text a {
-        color: var(--button-color);
+    /* The time: in a row below the bubble, at its right edge (the agent's is in its controls bar). */
+    .post.current--user .post__header .badges-wrapper {
+        position: absolute;
+        top: calc(100% + ${CONTROLS_BAR_GAP});
+        right: var(--spacing-l);
+        height: ${CONTROLS_BAR_HEIGHT};
+        align-items: center;
     }
 
     .post.current--user .post__time {
-        color: rgba(var(--button-color-rgb), 0.72);
+        color: rgba(var(--center-channel-color-rgb), 0.64);
+        font-size: var(--font-size-75);
+        line-height: var(--line-height-75);
+    }
+
+    .post.current--user .post-message__text,
+    .post.current--user .post-message__text a {
+        color: var(--center-channel-bg);
     }
 `;
