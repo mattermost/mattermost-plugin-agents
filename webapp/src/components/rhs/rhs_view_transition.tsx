@@ -140,7 +140,8 @@ const motion = (name: ReturnType<typeof keyframes>, easing: string) => css`
 `;
 
 // The layers stack in the stage and each fills it, so a view lays out exactly as it did alone. The
-// stage clips the sliding views to the pane.
+// stage clips the sliding views to the pane. The layer sliding over the other (the entering view
+// going forward, the leaving one going back) has elevation-2 while it moves.
 const Stage = styled.div`
     position: relative;
     display: flex;
@@ -169,6 +170,7 @@ const Layer = styled.div`
 
     &[data-state='enter'][data-direction='forward'] {
         ${motion(slideInFromRight, 'var(--ease-entrance)')}
+        box-shadow: var(--elevation-2);
     }
 
     &[data-state='exit'][data-direction='forward'] {
@@ -184,6 +186,7 @@ const Layer = styled.div`
     &[data-state='exit'][data-direction='back'] {
         z-index: 1;
         ${motion(slideOutToRight, 'var(--ease-exit)')}
+        box-shadow: var(--elevation-2);
     }
 
     &[data-state='enter'][data-direction='none'] {
