@@ -317,4 +317,22 @@ export class AIPlugin {
     await expect(rhsContainer).toBeVisible({ timeout: 10000 });
   }
 
+  /**
+   * Waits until the pill composer inside `container` can attach files: its
+   * "+" (Add to message) menu offers Upload files. Closes the menu again.
+   */
+  async expectComposerUploadsReady(container: Locator): Promise<void> {
+    const menu = this.page.getByRole('menu', { name: 'Add to message' });
+    await expect(async () => {
+      // A menu opened before the channel was ready lacks the item: reopen it.
+      if (await menu.count() > 0) {
+        await this.page.keyboard.press('Escape');
+        await expect(menu).toHaveCount(0);
+      }
+      await container.getByRole('button', { name: 'Add to message' }).click();
+      await expect(menu.getByRole('menuitem', { name: 'Upload files' })).toBeVisible({ timeout: 2000 });
+    }).toPass({ timeout: 30000 });
+    await this.page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+  }
 }

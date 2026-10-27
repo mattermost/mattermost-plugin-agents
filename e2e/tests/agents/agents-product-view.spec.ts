@@ -96,10 +96,10 @@ const newChatComposer = (page: Page) => page.getByTestId('agent-chat-new-compose
 // The plugin's pill reply composer under the thread (the host reply box is hidden).
 const replyComposer = (page: Page) => page.getByTestId('agent-chat-thread').getByRole('textbox', {name: `Reply to ${botDisplayName}`});
 
-// The pill's text metrics: one 20px line plus 10px block padding = 40px, the
-// height of the "+" and send buttons.
+// The pill's text metrics: one 20px line plus 6px block padding = 32px, the
+// height of the (small compass) "+" and send buttons.
 const LINE_PX = 20;
-const ONE_LINE_PX = 40;
+const ONE_LINE_PX = 32;
 
 // Expanded (multi-line), the text box is inset by --spacing-xs on every side.
 const EXPANDED_INSET_PX = 8;
@@ -730,7 +730,7 @@ test.describe('Agents product view', () => {
             const style = getComputedStyle(shell);
             const inner = shell.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
             const text = el.getBoundingClientRect();
-            const buttons = ['Attach files', 'Send message'].map((name) => shell.querySelector(`button[aria-label="${name}"]`)!.getBoundingClientRect());
+            const buttons = ['Add to message', 'Send message'].map((name) => shell.querySelector(`button[aria-label="${name}"]`)!.getBoundingClientRect());
             const textStyle = getComputedStyle(el);
             return {
                 expanded: shell.dataset.expanded,
@@ -769,8 +769,8 @@ test.describe('Agents product view', () => {
 
         // Round, the "+" button's size; the post leaves Stop to the composer.
         const box = await stop.boundingBox();
-        expect(box?.width).toBe(40);
-        expect(box?.height).toBe(40);
+        expect(box?.width).toBe(ONE_LINE_PX);
+        expect(box?.height).toBe(ONE_LINE_PX);
         expect(await stop.evaluate((el) => getComputedStyle(el).borderTopLeftRadius)).not.toBe('0px');
 
         // The standard (neutral) icon button, not Send's primary fill.
@@ -785,7 +785,7 @@ test.describe('Agents product view', () => {
         await expect(stoppedPost).not.toContainText(STOP_TAIL);
     });
 
-    test('a file attached with the "+" picker uploads and goes out with the first message', async ({page}) => {
+    test('a file attached through the "+" menu uploads and goes out with the first message', async ({page}) => {
         await login(page);
         await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
 
@@ -793,8 +793,9 @@ test.describe('Agents product view', () => {
         const textbox = composer.getByRole('textbox');
         await expect(textbox).toBeEnabled({timeout: 30000});
 
+        await composer.getByRole('button', {name: 'Add to message'}).click();
         const chooser = page.waitForEvent('filechooser');
-        await composer.getByRole('button', {name: 'Attach files'}).click();
+        await page.getByRole('menuitem', {name: 'Upload files'}).click();
         await (await chooser).setFiles({name: ATTACH_FILE, mimeType: 'text/plain', buffer: Buffer.from('attached from the product view')});
 
         // Uploaded (removable, no longer cancellable) before the message goes out.

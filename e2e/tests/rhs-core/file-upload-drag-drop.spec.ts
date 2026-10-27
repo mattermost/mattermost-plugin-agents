@@ -63,7 +63,7 @@ test.describe('Agents RHS drag-and-drop file upload', () => {
         const composer = rhs.getByTestId('agent-chat-new-composer');
 
         // The pill composer offers attachments once the bot DM channel is ready.
-        await expect(composer.getByRole('button', {name: 'Attach files'})).toBeVisible({timeout: 30000});
+        await aiPlugin.expectComposerUploadsReady(composer);
 
         await dispatchFileDrop(
             page,
@@ -90,7 +90,7 @@ test.describe('Agents RHS drag-and-drop file upload', () => {
     test('a drag that carries no files shows no drop overlay', async ({page}) => {
         const {aiPlugin} = await setupTestPage(page);
         const rhs = aiPlugin.getRhsContainer();
-        await expect(rhs.getByRole('button', {name: 'Attach files'})).toBeVisible({timeout: 30000});
+        await aiPlugin.expectComposerUploadsReady(rhs);
 
         const dataTransfer = await page.evaluateHandle(() => {
             const dt = new DataTransfer();
