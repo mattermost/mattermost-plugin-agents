@@ -728,6 +728,58 @@ func TestWebSearchSourceWhitelist(t *testing.T) {
 	})
 }
 
+func TestWebSearchSourceToolNeedsSearchResultAllowlist(t *testing.T) {
+	const pageURL = "https://attacker.example/collect"
+
+	tests := []struct {
+		name       string
+		parameters map[string]any
+		wantFetch  bool
+	}{
+		{name: "no parameters, as in a channel turn before any search", parameters: nil},
+		{name: "no allowlist", parameters: map[string]any{}},
+		{name: "allowlist of the wrong type", parameters: map[string]any{WebSearchAllowedURLsKey: []any{pageURL}}},
+		{name: "URL not in the allowlist", parameters: map[string]any{WebSearchAllowedURLsKey: []string{"https://allowed.example/page"}}},
+		{name: "URL from search results", parameters: map[string]any{WebSearchAllowedURLsKey: []string{pageURL}}, wantFetch: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fetched := false
+			client := &http.Client{Transport: &mockTransport{RoundTripFunc: func(req *http.Request) (*http.Response, error) {
+				fetched = true
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(bytes.NewBufferString("<html><body>page</body></html>")),
+					Header:     make(http.Header),
+				}, nil
+			}}}
+			service := NewWebSearchService(func() *config.Config {
+				return &config.Config{WebSearch: config.WebSearchConfig{
+					Enabled:  true,
+					Provider: "google",
+					Google:   config.WebSearchGoogleConfig{APIKey: "key", SearchEngineID: "engine"},
+				}}
+			}, &mockLogger{}, client, enterprisetest.CheckerAt(enterprise.LevelEnterprise))
+			bot := bots.NewBot(llm.BotConfig{Name: "mockbot"}, llm.ServiceConfig{Type: "mock"}, &model.Bot{Username: "mockbot"}, &mockLanguageModel{})
+
+			tool := service.SourceTool(bot)
+			require.NotNil(t, tool)
+			_, err := tool.Resolver(context.Background(), &llm.Context{Parameters: tt.parameters}, func(v any) error {
+				v.(*WebSearchSourceArgs).URL = pageURL
+				return nil
+			})
+
+			require.Equal(t, tt.wantFetch, fetched)
+			if tt.wantFetch {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+}
+
 type mockLanguageModel struct{}
 
 func (m *mockLanguageModel) ChatCompletion(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
