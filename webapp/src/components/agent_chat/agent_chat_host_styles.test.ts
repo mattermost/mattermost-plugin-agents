@@ -9,7 +9,7 @@ import {
     composerTextStyles,
     hostTextboxPillStyles,
 } from './agent_chat_composer_host_styles';
-import {CHAT_COLUMN_PADDING, CHAT_CONTENT_MAX_WIDTH, HUG_MAX_FRACTION, hostThreadChatStyles} from './agent_chat_host_styles';
+import {CHAT_COLUMN_PADDING, CHAT_CONTENT_MAX_WIDTH, CHAT_PANEL_PADDING, HUG_MAX_FRACTION, hostThreadChatStyles} from './agent_chat_host_styles';
 
 // jsdom never applies stylesheets, so check the generated rules instead.
 const cssText = (value: unknown): string => {
@@ -66,7 +66,7 @@ describe('hostThreadChatStyles', () => {
             expect(text).not.toContain('scrollbar-gutter');
 
             // The rows still share the composer's side padding, with no cap or inset.
-            expect(ruleFor(text, '.innerList')).toBe(`box-sizing: border-box; padding-inline: ${CHAT_COLUMN_PADDING};`);
+            expect(ruleFor(text, '.innerList')).toBe(`box-sizing: border-box; padding-inline: ${CHAT_PANEL_PADDING};`);
             expect(ruleFor(text, '&&& .post')).toContain('padding-inline: 0');
             expect(text).not.toContain('2 * var(--spacing-m)');
         }

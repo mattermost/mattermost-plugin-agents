@@ -13,7 +13,7 @@ import JumpToLatest from './jump_to_latest';
 import {useThreadGenerating} from './use_thread_generating';
 import {useThreadScroll} from './use_thread_scroll';
 import {AGENT_CHAT_SURFACE, AgentChatSurfaceContext} from './agent_chat_surface_context';
-import {CHAT_COLUMN_PADDING, CHAT_CONTENT_MAX_WIDTH, hostThreadChatStyles} from './agent_chat_host_styles';
+import {CHAT_COLUMN_PADDING, CHAT_CONTENT_MAX_WIDTH, CHAT_PANEL_PADDING, hostThreadChatStyles} from './agent_chat_host_styles';
 import type {AgentNewChatLayout} from './agent_new_chat';
 
 interface AgentChatThreadViewProps {
@@ -125,7 +125,7 @@ const ViewerArea = styled.div`
 const ComposerArea = styled.div<{$layout: AgentNewChatLayout}>`
     flex: 0 0 auto;
     width: 100%;
-    padding: var(--spacing-xs) var(--spacing-xxl) var(--spacing-xxl);
+    padding: 0 ${CHAT_PANEL_PADDING} ${CHAT_PANEL_PADDING} ${CHAT_PANEL_PADDING};
 
     ${({$layout}) => $layout === 'page' && css`
         box-sizing: border-box;
@@ -135,9 +135,7 @@ const ComposerArea = styled.div<{$layout: AgentNewChatLayout}>`
         max-width: ${CHAT_CONTENT_MAX_WIDTH};
         margin-inline: auto;
         padding-inline: ${CHAT_COLUMN_PADDING};
-
-        /* The messages above already end with their own spacing. */
-        padding-top: 0;
+        padding-bottom: var(--spacing-xxl);
     `}
 `;
 

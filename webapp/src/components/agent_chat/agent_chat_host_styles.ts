@@ -124,6 +124,9 @@ const HOST_POST_INLINE_PADDING = '1.5em 0.5em';
 // pads its composer area the same), so the message content and the composer line up.
 export const CHAT_COLUMN_PADDING = 'var(--spacing-xxl)';
 
+// The same for the RHS, where the panel's content and the composer under it are padded by 20px.
+export const CHAT_PANEL_PADDING = 'var(--spacing-xl)';
+
 // Center the column the prototype uses, inset by --spacing-m (12px) on each side and padded like the
 // composer under it. The cap and padding are on the host list's inner wrapper (`.innerList`, which
 // holds the rows), so the scroller, and with it the scrollbar, stays full width. The rows
@@ -159,7 +162,7 @@ const centeredColumn = (maxWidth: string) => css`
 const paddedRows = css`
     .innerList {
         box-sizing: border-box;
-        padding-inline: ${CHAT_COLUMN_PADDING};
+        padding-inline: ${CHAT_PANEL_PADDING};
     }
 
     &&& .post,

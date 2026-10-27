@@ -60,7 +60,7 @@ test.describe('Direct Channel Creation', () => {
     await aiPlugin.sendMessage(`Testing new channel`);
 
     // Should see a response in the newly created channel
-    await expect(page.getByText(responseTestText)).toBeVisible({ timeout: 10000 });
+    await expect(aiPlugin.getRhsContainer().getByTestId('posttext').getByText(responseTestText)).toBeVisible({ timeout: 10000 });
 
     // Verify channel creation was requested
     expect(channelCreationRequested).toBe(true);
