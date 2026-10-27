@@ -1,4 +1,4 @@
-# Schema Migration Review: 000013 — Add scoped channel mode to Agents_UserAgents
+# Schema Migration Review: 000014 — Add scoped channel mode to Agents_UserAgents
 
 > **Context:** Persists the per-agent scoped channel mode: when set, the agent's channel turns run their tools on a short-lived, server-scoped session for its bot, without approval. `ScopedExtraChannelIDs` holds the admin-picked channels such turns may also read, as a JSON array of channel IDs. `Agents_UserAgents` is admin-configured and bounded (typically tens of rows).
 
