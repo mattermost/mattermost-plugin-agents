@@ -39,6 +39,7 @@ import {
 } from './turn_content_utils';
 import {deriveActivity, isTerminalToolStatus} from './activity_items';
 import {ControlsBarComponent} from './controls_bar';
+import {getCopyableText} from './copyable_text';
 import {extractPermalinkData} from './permalink_data';
 import {FoldingText, useFoldingText} from './folding_text';
 import {RoundView} from './round_view';
@@ -144,7 +145,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const [isReasoningLoading, setIsReasoningLoading] = useState(false);
 
     // In the agent chat views the composer's send button is the Stop control.
-    const {composerHandlesStop, showThinkingIndicator, smoothStreaming, hugShortBubbles, controlsBelowBubble} = useContext(AgentChatSurfaceContext);
+    const {composerHandlesStop, showThinkingIndicator, smoothStreaming, hugShortBubbles, controlsBelowBubble, showCopyButton} = useContext(AgentChatSurfaceContext);
 
     // Streamed text is revealed at a steady pace where the surface asks for
     // it. A stop, cancel or error shows what arrived at once.
@@ -630,7 +631,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser && !composerHandlesStop;
     const hasContent = renderedRounds.length > 0;
-    const showControlsBar = ((showRegenerate || showPostbackButton) && hasContent) || showStopGeneratingButton;
 
     // Only the anchor round gets a real approval stage: the latest persisted
     // round when nothing live follows it, or a live round with calls awaiting
@@ -727,6 +727,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // Answer text that turns out to be narration folds away instead of
     // vanishing. Expanded, the round just moves into the stack in place.
     const answerText = activity.answerRounds.map((round) => round.text).filter((text) => text !== '').join('\n\n');
+
+    // Copy needs a finished answer with text; a tool-only post has nothing to copy.
+    const answerMarkdown = useMemo(() => getCopyableText(activity.answerRounds), [activity.answerRounds]);
+    const showCopy = showCopyButton && hasContent && !isGenerationInProgress && answerMarkdown !== '';
+    const showControlsBar = ((showRegenerate || showPostbackButton || showCopy) && hasContent) || showStopGeneratingButton;
     const foldingText = useFoldingText(answerText, activity.items.length > 0 && !activityExpanded);
 
     // An onlooker's waiting round keeps its real stage so its cards can show
@@ -883,6 +888,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 showStopGeneratingButton={showStopGeneratingButton}
                 showPostbackButton={showPostbackButton}
                 showRegenerate={showRegenerate}
+                copyText={showCopy ? answerMarkdown : null}
                 belowBubble={controlsBelowBubble}
                 onStopGenerating={stopGenerating}
                 onPostSummary={postSummary}

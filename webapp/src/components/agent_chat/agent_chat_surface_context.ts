@@ -30,6 +30,11 @@ export interface AgentChatSurface {
     // one-line change to the default context value below (the host bubble rule
     // also needs the surface's host styles).
     controlsBelowBubble: boolean;
+
+    // Agent posts show a Copy button (the answer text as markdown) in the
+    // controls bar. Only the agent chat views opt in; widening it is a
+    // one-line change to the default context value below.
+    showCopyButton: boolean;
 }
 
 // Provided by the agent chat views (Agents product view, Agents RHS) around
@@ -41,6 +46,7 @@ export const AgentChatSurfaceContext = createContext<AgentChatSurface>({
     smoothStreaming: false,
     hugShortBubbles: false,
     controlsBelowBubble: false,
+    showCopyButton: false,
 });
 
 export const AGENT_CHAT_SURFACE: AgentChatSurface = {
@@ -49,7 +55,8 @@ export const AGENT_CHAT_SURFACE: AgentChatSurface = {
 
     // Off for now: the paced, fading reveal looked janky in the agent chats. The implementation
     // (use_smooth_text.ts, streaming_markdown.tsx) stays; turn this back on once it is smooth.
-    smoothStreaming: false,
+    smoothStreaming: true,
     hugShortBubbles: true,
     controlsBelowBubble: true,
+    showCopyButton: true,
 };

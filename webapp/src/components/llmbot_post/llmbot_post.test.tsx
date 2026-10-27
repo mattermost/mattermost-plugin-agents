@@ -1851,3 +1851,100 @@ describe('LLMBotPost controls below the bubble', () => {
         }
     });
 });
+
+describe('LLMBotPost Copy button', () => {
+    const answerConversation = () => makeConversation([makeTurn({content: [{type: 'text', text: 'Old **answer**'}]})]);
+
+    const renderSurface = (surface: typeof AGENT_CHAT_SURFACE | null, post = makePost('Old **answer**')) => {
+        const node = (
+            <LLMBotPost
+                post={post}
+                websocketUnregister={jest.fn()}
+            />
+        );
+        render(
+            <IntlProvider locale='en'>
+                {surface ? <AgentChatSurfaceContext.Provider value={surface}>{node}</AgentChatSurfaceContext.Provider> : node}
+            </IntlProvider>,
+        );
+    };
+
+    beforeEach(() => {
+        mockUseConversation.mockReturnValue({conversation: answerConversation(), loading: false, error: null});
+    });
+
+    test.each([
+        {name: 'agent chat views show it', surface: AGENT_CHAT_SURFACE, shown: true},
+        {name: 'other surfaces do not', surface: null, shown: false},
+        {name: 'a surface with the flag off does not', surface: {...AGENT_CHAT_SURFACE, showCopyButton: false}, shown: false},
+    ])('$name', ({surface, shown}) => {
+        renderSurface(surface);
+        expect(Boolean(screen.queryByTestId('copy-button'))).toBe(shown);
+    });
+
+    test('copies the answer markdown even for a viewer who is not the requester', async () => {
+        const writeText = jest.fn().mockResolvedValue(null);
+        Object.defineProperty(navigator, 'clipboard', {value: {writeText}, configurable: true});
+        renderSurface(AGENT_CHAT_SURFACE);
+
+        await act(async () => {
+            fireEvent.click(screen.getByTestId('copy-button'));
+        });
+        expect(writeText).toHaveBeenCalledWith('Old **answer**');
+    });
+
+    test('is absent while the reply generates', () => {
+        mockUseConversation.mockReturnValue({conversation: makeConversation([]), loading: false, error: null});
+        let listener: PostUpdateHandler | undefined;
+        render(
+            <IntlProvider locale='en'>
+                <AgentChatSurfaceContext.Provider value={AGENT_CHAT_SURFACE}>
+                    <LLMBotPost
+                        post={makePost()}
+                        websocketRegister={(_postID, _listenerID, handler) => {
+                            listener = handler;
+                        }}
+                        websocketUnregister={jest.fn()}
+                    />
+                </AgentChatSurfaceContext.Provider>
+            </IntlProvider>,
+        );
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Partial'}));
+        });
+        expect(screen.queryByTestId('copy-button')).toBeNull();
+    });
+
+    test('copies only the final answer, not tool rounds or reasoning', async () => {
+        const writeText = jest.fn().mockResolvedValue(null);
+        Object.defineProperty(navigator, 'clipboard', {value: {writeText}, configurable: true});
+        mockUseConversation.mockReturnValue({
+            conversation: {
+                ...makeConversation([]),
+                turns: [
+                    {id: 'u', post_id: null, role: 'user', sequence: 1, tokens_in: 0, tokens_out: 0, content: [{type: 'text', text: 'go'}]},
+                    {
+                        id: 'r1',
+                        post_id: null,
+                        role: 'assistant',
+                        sequence: 2,
+                        tokens_in: 0,
+                        tokens_out: 0,
+                        content: [{type: 'thinking', text: 'secret'}, {type: 'text', text: 'Looking it up'}, {type: 'tool_use', id: 'tc_a', name: 'search_tools', status: 'auto_approved'}],
+                    },
+                    {id: 'tr1', post_id: null, role: 'tool_result', sequence: 3, tokens_in: 0, tokens_out: 0, content: [{type: 'tool_result', tool_use_id: 'tc_a', content: 'ok', status: 'success'}]},
+                    {id: 'anchor', post_id: 'post_1', role: 'assistant', sequence: 4, approval_state: 'done', tokens_in: 0, tokens_out: 0, content: [{type: 'text', text: 'Final answer'}]},
+                ],
+            },
+            loading: false,
+            error: null,
+        });
+        renderSurface(AGENT_CHAT_SURFACE, makePost('Final answer'));
+
+        await act(async () => {
+            fireEvent.click(screen.getByTestId('copy-button'));
+        });
+        expect(writeText).toHaveBeenCalledWith('Final answer');
+    });
+});
