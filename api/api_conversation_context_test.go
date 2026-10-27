@@ -306,6 +306,7 @@ func TestHandleGetConversationContextPassesSessionToFilePolicy(t *testing.T) {
 	fileID := model.NewId()
 	sessionID := model.NewId()
 	channelID := testChannelID
+	fileChannelID := model.NewId()
 
 	fileBlocks := mustMarshalBlocks(t, []conversation.ContentBlock{
 		{Type: conversation.BlockTypeText, Text: "see attached"},
@@ -313,22 +314,32 @@ func TestHandleGetConversationContextPassesSessionToFilePolicy(t *testing.T) {
 	})
 
 	tests := []struct {
-		name          string
-		allowed       bool
-		wantFileBody  bool
-		wantAdminRead bool
+		name                string
+		allowed             bool
+		fileChannelReadable bool
+		wantFileBody        bool
+		wantAdminRead       bool
 	}{
 		{
-			name:          "allowed session inlines stored file content",
-			allowed:       true,
-			wantFileBody:  true,
-			wantAdminRead: true,
+			name:                "allowed session inlines stored file content",
+			allowed:             true,
+			fileChannelReadable: true,
+			wantFileBody:        true,
+			wantAdminRead:       true,
 		},
 		{
-			name:          "denied session omits stored file content",
-			allowed:       false,
-			wantFileBody:  false,
-			wantAdminRead: false,
+			name:                "denied session omits stored file content",
+			allowed:             false,
+			fileChannelReadable: true,
+			wantFileBody:        false,
+			wantAdminRead:       false,
+		},
+		{
+			name:                "owner without read access to the file's channel omits stored file content",
+			allowed:             true,
+			fileChannelReadable: false,
+			wantFileBody:        false,
+			wantAdminRead:       true,
 		},
 	}
 
@@ -370,9 +381,10 @@ func TestHandleGetConversationContextPassesSessionToFilePolicy(t *testing.T) {
 			mmClient.EXPECT().GetFileInfo(fileID).
 				Run(func(string) { adminReadCalled = true }).
 				Return(&model.FileInfo{
-					Id: fileID, Name: "notes.txt", MimeType: "text/plain", Size: int64(len(fileBody)), Content: fileBody,
+					Id: fileID, ChannelId: fileChannelID, Name: "notes.txt", MimeType: "text/plain", Size: int64(len(fileBody)), Content: fileBody,
 				}, nil).
 				Maybe()
+			mmClient.On("HasPermissionToChannel", testUserID, fileChannelID, model.PermissionReadChannel).Return(tt.fileChannelReadable).Maybe()
 			mmClient.On("LogError", mock.Anything, mock.Anything).Maybe()
 			e.api.mmClient = mmClient
 

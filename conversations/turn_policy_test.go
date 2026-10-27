@@ -445,7 +445,6 @@ func (env *policyEnv) seedAnalysis(t *testing.T, source analysisSource, withConv
 	}
 	env.mmClient.posts[analysisPost.Id] = analysisPost
 	if !withConversation {
-		analysisPost.AddProp(streaming.LLMRequesterUserIDProp, autoReplyUserID)
 		return analysisPost
 	}
 
@@ -550,7 +549,7 @@ func TestAnalysisFollowUpRechecksSourceAccess(t *testing.T) {
 		{name: "thread follow-up when the thread cannot be looked up", source: analyzedThread, lookupFails: true, wantPlaceholder: genericLLMErrorEN},
 		{name: "thread regenerate after losing access to the thread", source: analyzedThread, unreadable: true, regenerate: true, wantErr: conversations.ErrAnalysisSourceUnavailable},
 		{name: "thread regenerate when the thread cannot be looked up", source: analyzedThread, lookupFails: true, regenerate: true},
-		{name: "legacy thread regenerate after losing access to the thread", source: analyzedThread, noConversation: true, unreadable: true, regenerate: true, wantErr: conversations.ErrAnalysisSourceUnavailable},
+		{name: "legacy thread regenerate without a conversation", source: analyzedThread, noConversation: true, unreadable: true, regenerate: true},
 		{name: "legacy thread follow-up after losing access to the thread", source: analyzedThread, noConversation: true, unreadable: true, wantPlaceholder: analysisSourceDeniedEN},
 		{name: "later legacy thread follow-up while the thread is readable", source: analyzedThread, noConversation: true, repliedBefore: true, wantAnswered: true},
 		{name: "later legacy thread follow-up after losing access to the thread", source: analyzedThread, noConversation: true, repliedBefore: true, unreadable: true, wantPlaceholder: analysisSourceDeniedEN},
@@ -559,7 +558,7 @@ func TestAnalysisFollowUpRechecksSourceAccess(t *testing.T) {
 		{name: "channel follow-up while the channel is readable", source: analyzedChannel, wantAnswered: true},
 		{name: "channel follow-up after losing access to the channel", source: analyzedChannel, unreadable: true, wantPlaceholder: analysisSourceDeniedEN},
 		{name: "follow-up of an analysis that records no source", source: analyzedNothingRecorded, wantPlaceholder: analysisSourceDeniedEN},
-		{name: "channel regenerate of the analysis", source: analyzedChannel, regenerate: true, wantErr: conversations.ErrNotRegenerable},
+		{name: "channel regenerate of the analysis after losing access", source: analyzedChannel, unreadable: true, regenerate: true, wantErr: conversations.ErrAnalysisSourceUnavailable},
 		{name: "channel regenerate of a follow-up answer after losing access", source: analyzedChannel, unreadable: true, regenerate: true, regenerateFollowUp: true, wantErr: conversations.ErrAnalysisSourceUnavailable},
 	}
 

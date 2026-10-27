@@ -377,8 +377,7 @@ func TestHandleIntervalSetsConversationRootPostID(t *testing.T) {
 // TestChannelAnalysisPostsRecordTheAnalyzedChannel pins that the posts
 // answering a channel analysis or interval summary record which channel they
 // analyzed, so continuing them can re-check the requester's access to it, and
-// are marked non-regenerable so the UI does not offer a regenerate that the
-// server rejects.
+// that only interval summaries are marked non-regenerable.
 func TestChannelAnalysisPostsRecordTheAnalyzedChannel(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -389,6 +388,7 @@ func TestChannelAnalysisPostsRecordTheAnalyzedChannel(t *testing.T) {
 		body     string
 		mcpTools []llm.Tool
 		setup    func(mmClient *mmapimocks.MockClient)
+		noRegen  bool
 	}{
 		{
 			name: "channel analysis",
@@ -400,9 +400,10 @@ func TestChannelAnalysisPostsRecordTheAnalyzedChannel(t *testing.T) {
 			},
 		},
 		{
-			name: "interval summary",
-			path: "/channel/" + testChannelID + "/interval",
-			body: `{"start_time":1,"end_time":0,"preset_prompt":"summarize_range"}`,
+			name:    "interval summary",
+			path:    "/channel/" + testChannelID + "/interval",
+			noRegen: true,
+			body:    `{"start_time":1,"end_time":0,"preset_prompt":"summarize_range"}`,
 			setup: func(mmClient *mmapimocks.MockClient) {
 				channelPost := &model.Post{Id: "post-1", ChannelId: testChannelID, UserId: testOtherUserID, Message: "hello", CreateAt: 2}
 				mmClient.On("GetPostsSince", testChannelID, int64(1)).Return(&model.PostList{
@@ -438,7 +439,7 @@ func TestChannelAnalysisPostsRecordTheAnalyzedChannel(t *testing.T) {
 			post := streamingService.dmPosts[0]
 			assert.Equal(t, testChannelID, post.GetProp(conversations.AnalyzedChannelIDProp))
 			assert.Nil(t, post.GetProp(conversations.ThreadIDProp), "a channel analysis analyzed no thread")
-			assert.NotNil(t, post.GetProp(streaming.NoRegen), "a channel analysis cannot be regenerated")
+			assert.Equal(t, tc.noRegen, post.GetProp(streaming.NoRegen) != nil, "only interval summaries are non-regenerable")
 		})
 	}
 }

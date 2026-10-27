@@ -210,7 +210,7 @@ func (s *fakeConvStore) DeleteResponseTurns(conversationID, postID string) error
 
 	keep := turns[:0]
 	for _, t := range turns {
-		if t.Sequence > userSeq && t.Sequence < anchorSeq {
+		if t.Sequence > userSeq && t.Sequence <= anchorSeq {
 			delete(s.allTurns, t.ID)
 			continue
 		}
@@ -505,7 +505,6 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 		nil, // db
 		licenseChecker,
 		i18nBundle,
-		nil, // meetings
 		&testToolCallingConfig{},
 		policyChecker,
 	)

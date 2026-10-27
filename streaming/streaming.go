@@ -202,7 +202,7 @@ func (p *MMPostStreamService) StreamToNewDM(ctx context.Context, botID string, s
 // everything else gets the server default locale.
 func (p *MMPostStreamService) streamToCreatedPost(ctx context.Context, botID string, userID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string, createPost func() error) error {
 	// We use ModifyPostForBot directly here to add the responding to post ID
-	ModifyPostForBot(botID, userID, post, respondingToPostID)
+	ModifyPostForBot(botID, post, respondingToPostID)
 
 	if err := createPost(); err != nil {
 		return err

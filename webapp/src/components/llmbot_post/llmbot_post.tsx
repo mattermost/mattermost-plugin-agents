@@ -102,14 +102,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     }
     const knownConversation = conversation ?? (lastConversationRef.current?.id === conversationId ? lastConversationRef.current : null);
 
-    // Meeting summarization posts have no conversation entity yet; fall back to
-    // the legacy llm_requester_user_id prop.
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
-    const legacyRequester: string | undefined = props.post.props?.llm_requester_user_id;
-    const requesterIsCurrentUser = Boolean(
-        (knownConversation && knownConversation.user_id === currentUserId) ||
-        (!conversationId && legacyRequester && legacyRequester === currentUserId),
-    );
+    const requesterIsCurrentUser = Boolean(knownConversation && knownConversation.user_id === currentUserId);
 
     const channel = useSelector<GlobalState, {type?: string} | undefined>(
         (state) => state.entities.channels.channels[props.post.channel_id],
@@ -597,7 +591,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     const showRegenerate = isDM && !isGenerationInProgress && requesterIsCurrentUser && !isNoShowRegen;
     const meetingsLicensed = useIsLicensedFor('meetings');
-    const showPostbackButton = meetingsLicensed && !isGenerationInProgress && requesterIsCurrentUser && isTranscriptionResult;
+
+    // The server authorizes postback by DM membership, not conversation ownership.
+    const showPostbackButton = meetingsLicensed && !isGenerationInProgress && isDM && isTranscriptionResult;
     const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser;
     const hasContent = renderedRounds.length > 0;
     const showControlsBar = ((showRegenerate || showPostbackButton) && hasContent) || showStopGeneratingButton;
@@ -634,7 +630,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     // Onlookers owe no decision, but should see that the requester does instead
     // of an empty post. Tool calls reach them redacted; only statuses are used.
-    const requesterUserId = knownConversation?.user_id ?? (conversationId ? undefined : legacyRequester); // eslint-disable-line no-undefined
+    const requesterUserId = knownConversation?.user_id;
     const isOnlooker = Boolean(requesterUserId) && requesterUserId !== currentUserId;
     const isLivePending = lastRendered?.id === LIVE_ROUND_ID &&
         selectDecisionToolCalls(lastRendered.toolCalls, 'call', true).length > 0;

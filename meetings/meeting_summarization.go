@@ -13,10 +13,13 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -46,11 +49,6 @@ func GetCaptionsFileIDFromProps(post *model.Post) (fileID string, err error) {
 
 	// Calls will only ever have one for now.
 	return captions[0].(map[string]any)["file_id"].(string), nil
-}
-
-// GetCaptionsFileIDFromProps is a wrapper method to make the function available via the Service
-func (s *Service) GetCaptionsFileIDFromProps(post *model.Post) (fileID string, err error) {
-	return GetCaptionsFileIDFromProps(post)
 }
 
 func (s *Service) createTranscription(mm mmapi.Client, recordingFileID string) (*subtitles.Subtitles, error) {
@@ -111,7 +109,7 @@ func (s *Service) createTranscription(mm mmapi.Client, recordingFileID string) (
 	return transcription, nil
 }
 
-func (s *Service) newCallRecordingThread(bot *bots.Bot, requestingUser *model.User, recordingPost *model.Post, channel *model.Channel, fileID string, mm mmapi.Client) (*model.Post, error) {
+func (s *Service) newCallRecordingThread(bot *bots.Bot, requestingUser *model.User, recordingPost *model.Post, channel *model.Channel, fileID string, mm mmapi.Client, sessionID string) (*model.Post, error) {
 	siteURL := s.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL
 	T := i18n.LocalizerFunc(s.i18n, requestingUser.Locale)
 	surePost := &model.Post{
@@ -122,14 +120,14 @@ func (s *Service) newCallRecordingThread(bot *bots.Bot, requestingUser *model.Us
 		return nil, err
 	}
 
-	if err := s.summarizeCallRecording(bot, surePost.Id, requestingUser, fileID, channel, mm); err != nil {
+	if err := s.summarizeCallRecording(bot, surePost.Id, requestingUser, fileID, channel, mm, sessionID); err != nil {
 		return nil, err
 	}
 
 	return surePost, nil
 }
 
-func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUser *model.User, transcriptionPost *model.Post, channel *model.Channel, mm mmapi.Client) (*model.Post, error) {
+func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUser *model.User, transcriptionPost *model.Post, channel *model.Channel, mm mmapi.Client, sessionID string) (*model.Post, error) {
 	if len(transcriptionPost.FileIds) != 1 {
 		return nil, errors.New("unexpected number of files in calls post")
 	}
@@ -166,33 +164,12 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 		if err != nil {
 			return fmt.Errorf("unable to get transcription file id: %w", err)
 		}
-		transcriptionFileInfo, err := mm.GetFileInfo(transcriptionFileID)
+		text, transcriptionFilePost, err := readTranscript(mm, transcriptionFileID)
 		if err != nil {
-			return fmt.Errorf("unable to get transcription file info: %w", err)
-		}
-		transcriptionFilePost, err := s.pluginAPI.Post.GetPost(transcriptionFileInfo.PostId)
-		if err != nil {
-			return fmt.Errorf("unable to get transcription file post: %w", err)
+			return err
 		}
 		if transcriptionFilePost.ChannelId != channel.Id {
 			return errors.New("strange configuration of calls transcription file")
-		}
-		transcriptionFileReader, err := mm.GetFile(transcriptionFileID)
-		if err != nil {
-			return fmt.Errorf("unable to read calls file: %w", err)
-		}
-
-		var text *subtitles.Subtitles
-		if transcriptionFilePost.Type == "custom_zoom_chat" {
-			text, err = subtitles.NewSubtitlesFromZoomChat(transcriptionFileReader)
-			if err != nil {
-				return fmt.Errorf("unable to parse transcription file: %w", err)
-			}
-		} else {
-			text, err = subtitles.NewSubtitlesFromVTT(transcriptionFileReader)
-			if err != nil {
-				return fmt.Errorf("unable to parse transcription file: %w", err)
-			}
 		}
 
 		requestContext := s.contextBuilder.BuildLLMContextUserRequest(
@@ -201,7 +178,12 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 			channel,
 			s.contextBuilder.WithLLMContextNoTools(),
 		)
-		summaryStream, err := s.SummarizeTranscription(stdcontext.Background(), bot, text, requestContext)
+		summary, err := s.SummarizeTranscription(stdcontext.Background(), bot, text, requestContext, SummaryParams{
+			UserID:           requestingUser.Id,
+			RootPostID:       surePost.Id,
+			TranscriptFileID: transcriptionFileID,
+			SessionID:        sessionID,
+		})
 		if err != nil {
 			return fmt.Errorf("unable to summarize transcription: %w", err)
 		}
@@ -212,7 +194,8 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 			Message:   "",
 		}
 		summaryPost.AddProp(ReferencedTranscriptPostID, transcriptionPost.Id)
-		if err := s.streamingService.StreamToNewPost(stdcontext.Background(), bot.GetMMBot().UserId, requestingUser.Id, summaryStream, summaryPost, transcriptionPost.Id); err != nil {
+		summaryPost.AddProp(streaming.ConversationIDProp, summary.ConversationID)
+		if err := s.streamingService.StreamToNewPost(stdcontext.Background(), bot.GetMMBot().UserId, requestingUser.Id, summary.Stream, summaryPost, transcriptionPost.Id); err != nil {
 			return fmt.Errorf("unable to stream result to post: %w", err)
 		}
 
@@ -222,7 +205,7 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 	return surePost, nil
 }
 
-func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestingUser *model.User, recordingFileID string, channel *model.Channel, mm mmapi.Client) error {
+func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestingUser *model.User, recordingFileID string, channel *model.Channel, mm mmapi.Client, sessionID string) error {
 	if err := s.checkMeetingsLicense(); err != nil {
 		return err
 	}
@@ -265,18 +248,33 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 			return fmt.Errorf("unable to upload transcript: %w", err)
 		}
 
+		// The summary conversation references the transcript file, which
+		// must be attached to its post before it can be stored and re-read.
+		if err = s.attachFile(transcriptPost, transcriptFileInfo); err != nil {
+			return fmt.Errorf("unable to attach transcript: %w", err)
+		}
+
 		llmContext := s.contextBuilder.BuildLLMContextUserRequest(
 			bot,
 			requestingUser,
 			channel,
 			s.contextBuilder.WithLLMContextNoTools(),
 		)
-		summaryStream, err := s.SummarizeTranscription(stdcontext.Background(), bot, transcription, llmContext)
+		summary, err := s.SummarizeTranscription(stdcontext.Background(), bot, transcription, llmContext, SummaryParams{
+			UserID:           requestingUser.Id,
+			RootPostID:       rootID,
+			TranscriptFileID: transcriptFileInfo.Id,
+			SessionID:        sessionID,
+		})
 		if err != nil {
 			return fmt.Errorf("unable to summarize transcription: %w", err)
 		}
 
-		if err = s.updatePostWithFile(transcriptPost, transcriptFileInfo); err != nil {
+		// Persist the conversation before streaming so the error path also
+		// leaves a conversation-backed post.
+		transcriptPost.AddProp(streaming.ConversationIDProp, summary.ConversationID)
+		transcriptPost.Message = ""
+		if err = s.pluginAPI.Post.UpdatePost(transcriptPost); err != nil {
 			return fmt.Errorf("unable to update transcript post: %w", err)
 		}
 
@@ -286,7 +284,7 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 		}
 		defer s.streamingService.FinishStreaming(transcriptPost.Id)
 
-		s.streamingService.StreamToPost(ctx, summaryStream, transcriptPost, requestingUser.Locale, requestingUser.Id)
+		s.streamingService.StreamToPost(ctx, summary.Stream, transcriptPost, requestingUser.Locale, requestingUser.Id)
 
 		return nil
 	}() //nolint:errcheck
@@ -294,11 +292,176 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 	return nil
 }
 
-func (s *Service) SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, transcription *subtitles.Subtitles, context *llm.Context) (*llm.TextStreamResult, error) {
+// readTranscript reads and parses a transcript file through mm, returning the
+// post it is attached to. Zoom chat exports are parsed by their post type;
+// everything else is WebVTT.
+func readTranscript(mm mmapi.Client, fileID string) (*subtitles.Subtitles, *model.Post, error) {
+	fileInfo, err := mm.GetFileInfo(fileID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to get transcription file info: %w", err)
+	}
+	filePost, err := mm.GetPost(fileInfo.PostId)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to get transcription file post: %w", err)
+	}
+	reader, err := mm.GetFile(fileID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to read transcription file: %w", err)
+	}
+	defer reader.Close()
+
+	var text *subtitles.Subtitles
+	if filePost.Type == "custom_zoom_chat" {
+		text, err = subtitles.NewSubtitlesFromZoomChat(reader)
+	} else {
+		text, err = subtitles.NewSubtitlesFromVTT(reader)
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to parse transcription file: %w", err)
+	}
+	return text, filePost, nil
+}
+
+// SummaryResult is the result of starting a meeting summary.
+type SummaryResult struct {
+	Stream         *llm.TextStreamResult
+	ConversationID string
+}
+
+// SummaryParams identifies the owner, thread and transcript file of a meeting
+// summary conversation.
+type SummaryParams struct {
+	UserID     string
+	RootPostID string
+	// TranscriptFileID is the transcript file the conversation references;
+	// it is re-read on regenerate.
+	TranscriptFileID string
+	// SessionID is the requester's session, used to store the file reference.
+	SessionID string
+}
+
+// summaryUserMessage is the stored first user turn of a meeting summary
+// conversation; the transcript itself is attached as a file.
+const summaryUserMessage = "Summarize the attached meeting transcript."
+
+// SummarizeTranscription creates a meeting summary conversation owned by
+// params.UserID, rooted at params.RootPostID, whose user turn references the
+// transcript file, and starts streaming the summary of transcription.
+func (s *Service) SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, transcription *subtitles.Subtitles, context *llm.Context, params SummaryParams) (*SummaryResult, error) {
 	if err := s.checkMeetingsLicense(); err != nil {
 		return nil, err
 	}
 
+	// The stored turn silently drops attachments it cannot read, which
+	// would leave a summary that can never be regenerated.
+	if _, err := mmapi.WithFilePolicy(s.mmClient, params.SessionID).GetFileInfo(params.TranscriptFileID); err != nil {
+		return nil, fmt.Errorf("unable to access transcript file: %w", err)
+	}
+
+	request, err := s.buildSummaryRequest(ctx, bot, transcription, context)
+	if err != nil {
+		return nil, err
+	}
+
+	convParams := conversation.CreateConversationParams{
+		UserID:       params.UserID,
+		SessionID:    params.SessionID,
+		BotID:        bot.GetMMBot().UserId,
+		RootPostID:   &params.RootPostID,
+		Operation:    llm.OperationMeetingSummary,
+		SystemPrompt: request.Posts[0].Message,
+		UserMessage:  summaryUserMessage,
+		FileIDs:      []string{params.TranscriptFileID},
+	}
+	convResult, err := s.convService.CreateConversation(convParams)
+	if errors.Is(err, store.ErrConversationConflict) {
+		// The user replied in the thread while the transcript was being
+		// processed, which created a regular conversation for it first.
+		// Keep the summary in its own unthreaded conversation rather than failing.
+		convParams.RootPostID = nil
+		convResult, err = s.convService.CreateConversation(convParams)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("unable to create meeting summary conversation: %w", err)
+	}
+	if titleErr := s.convService.UpdateConversationTitle(convResult.ConversationID, TitleMeetingSummary); titleErr != nil {
+		s.pluginAPI.Log.Error("Failed to set meeting summary conversation title", "error", titleErr, "conversation_id", convResult.ConversationID)
+	}
+
+	summaryStream, err := bot.LLM().ChatCompletion(ctx, *request, llm.WithToolsDisabled())
+	if err != nil {
+		return nil, fmt.Errorf("unable to get meeting summary: %w", err)
+	}
+
+	return &SummaryResult{
+		Stream:         summaryStream,
+		ConversationID: convResult.ConversationID,
+	}, nil
+}
+
+// RegenerateSummary re-runs the meeting summary answered by postID. The
+// transcript is re-read, with the requester's file policy, from the file
+// referenced by the conversation's first user turn, and the prior response
+// turns anchored to postID are scrubbed.
+func (s *Service) RegenerateSummary(ctx stdcontext.Context, bot *bots.Bot, llmContext *llm.Context, conv *store.Conversation, postID string) (*llm.TextStreamResult, error) {
+	if err := s.checkMeetingsLicense(); err != nil {
+		return nil, err
+	}
+
+	fileID, err := s.transcriptFileID(conv.ID)
+	if err != nil {
+		return nil, err
+	}
+	mm := mmapi.WithFilePolicy(s.mmClient, auth.SessionIDFromContext(ctx))
+	transcription, filePost, err := readTranscript(mm, fileID)
+	if err != nil {
+		return nil, err
+	}
+	if !s.mmClient.HasPermissionToChannel(conv.UserID, filePost.ChannelId, model.PermissionReadChannel) {
+		return nil, errors.New("user doesn't have permission to read the meeting transcript's channel")
+	}
+
+	request, err := s.buildSummaryRequest(ctx, bot, transcription, llmContext)
+	if err != nil {
+		return nil, err
+	}
+	request.OperationSubType = llm.SubTypeRegenerate
+
+	if err := s.convService.DeleteResponseTurns(conv.ID, postID); err != nil {
+		return nil, fmt.Errorf("unable to scrub prior meeting summary: %w", err)
+	}
+
+	return bot.LLM().ChatCompletion(ctx, *request, llm.WithToolsDisabled())
+}
+
+// transcriptFileID returns the transcript file referenced by the first user
+// turn of the meeting summary conversation.
+func (s *Service) transcriptFileID(conversationID string) (string, error) {
+	turns, err := s.convService.GetTurns(conversationID)
+	if err != nil {
+		return "", fmt.Errorf("unable to get meeting summary turns: %w", err)
+	}
+	for _, turn := range turns {
+		if turn.Role != "user" {
+			continue
+		}
+		blocks, err := conversation.UnmarshalBlocks(turn.Content)
+		if err != nil {
+			return "", fmt.Errorf("unable to read meeting summary turn: %w", err)
+		}
+		for _, block := range blocks {
+			if block.Type == conversation.BlockTypeFile && block.FileID != "" {
+				return block.FileID, nil
+			}
+		}
+		break
+	}
+	return "", errors.New("meeting summary conversation has no transcript file")
+}
+
+// buildSummaryRequest builds the meeting summary request for transcription,
+// summarizing it in chunks first when it exceeds the model's input budget.
+func (s *Service) buildSummaryRequest(ctx stdcontext.Context, bot *bots.Bot, transcription *subtitles.Subtitles, context *llm.Context) (*llm.CompletionRequest, error) {
 	llmFormattedTranscription := transcription.FormatForLLM()
 	tokens := llm.EstimateTokens(llmFormattedTranscription)
 	inputLimit := bot.LLM().InputTokenLimit()
@@ -361,35 +524,22 @@ func (s *Service) SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, 
 		operationSubType = llm.SubTypeChunkedTrue
 	}
 
-	completionRequest := llm.CompletionRequest{
+	return &llm.CompletionRequest{
 		Posts: []llm.Post{
-			{
-				Role:    llm.PostRoleSystem,
-				Message: systemPrompt,
-			},
-			{
-				Role:    llm.PostRoleUser,
-				Message: llmFormattedTranscription,
-			},
+			{Role: llm.PostRoleSystem, Message: systemPrompt},
+			{Role: llm.PostRoleUser, Message: llmFormattedTranscription},
 		},
 		Context:          context,
 		Operation:        llm.OperationMeetingSummary,
 		OperationSubType: operationSubType,
-	}
-
-	summaryStream, err := bot.LLM().ChatCompletion(ctx, completionRequest, llm.WithToolsDisabled())
-	if err != nil {
-		return nil, fmt.Errorf("unable to get meeting summary: %w", err)
-	}
-
-	return summaryStream, nil
+	}, nil
 }
 
-func (s *Service) updatePostWithFile(post *model.Post, fileinfo *model.FileInfo) error {
+// attachFile attaches fileinfo to post.
+func (s *Service) attachFile(post *model.Post, fileinfo *model.FileInfo) error {
 	// The server's UpdatePost attaches the still-unattached file (uploaded
 	// via the plugin API, CreatorId "nouser") when it appears in FileIds.
 	post.FileIds = []string{fileinfo.Id}
-	post.Message = ""
 	if err := s.pluginAPI.Post.UpdatePost(post); err != nil {
 		return fmt.Errorf("unable to update post: %w", err)
 	}
@@ -398,7 +548,7 @@ func (s *Service) updatePostWithFile(post *model.Post, fileinfo *model.FileInfo)
 }
 
 func (s *Service) botDMNonResponse(botid string, userID string, post *model.Post) error {
-	streaming.ModifyPostForBot(botid, userID, post, "")
+	streaming.ModifyPostForBot(botid, post, "")
 
 	if err := s.pluginAPI.Post.DM(botid, userID, post); err != nil {
 		return fmt.Errorf("failed to post DM: %w", err)

@@ -13,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 const DefaultMaxFileSize = int64(5 * 1024 * 1024)
@@ -46,9 +47,23 @@ var unsharedToolUseArgumentsRedaction = json.RawMessage("{}")
 type PostConversionOptions struct {
 	RedactUnshared bool
 	MMClient       mmapi.Client
-	EnableVision   bool
-	MaxFileSize    int64
-	ToolStore      *llm.ToolStore
+	// UserID is the user whose channel read access gates every file and image
+	// block. An empty UserID withholds all of them.
+	UserID       string
+	EnableVision bool
+	MaxFileSize  int64
+	ToolStore    *llm.ToolStore
+}
+
+// canReadFileChannel reports whether opts.UserID may read the channel the file
+// was posted in. Attachments can come from a channel other than the
+// conversation's own (e.g. a meeting's captions file), so access is re-checked
+// on every replay.
+func canReadFileChannel(opts PostConversionOptions, fileInfo *model.FileInfo) bool {
+	if opts.UserID == "" || fileInfo.ChannelId == "" {
+		return false
+	}
+	return opts.MMClient.HasPermissionToChannel(opts.UserID, fileInfo.ChannelId, model.PermissionReadChannel)
 }
 
 // BlocksToPost converts a slice of content blocks and a role string into an llm.Post.
@@ -170,6 +185,9 @@ func BlocksToPost(
 				notices = append(notices, format.UnavailableAttachment(fileInfo.Name, format.AttachmentImageInputDisabled))
 				continue
 			}
+			if !canReadFileChannel(opts, fileInfo) {
+				continue
+			}
 			if !llm.IsSupportedImageMimeType(fileInfo.MimeType) {
 				post.Files = append(post.Files, llm.File{
 					MimeType: fileInfo.MimeType,
@@ -205,6 +223,9 @@ func BlocksToPost(
 			fileInfo, err := opts.MMClient.GetFileInfo(block.FileID)
 			if err != nil || fileInfo == nil {
 				notices = append(notices, attachmentLoadNotice(opts.MMClient, block, err, "failed to get file info for file attachment"))
+				continue
+			}
+			if !canReadFileChannel(opts, fileInfo) {
 				continue
 			}
 

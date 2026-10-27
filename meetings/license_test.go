@@ -9,6 +9,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/require"
@@ -43,13 +44,20 @@ func TestMeetingsServiceLicenseGate(t *testing.T) {
 		{
 			name: "summarizeCallRecording",
 			call: func(s *Service) error {
-				return s.summarizeCallRecording(nil, "root", &model.User{}, "file", nil, nil)
+				return s.summarizeCallRecording(nil, "root", &model.User{}, "file", nil, nil, "")
 			},
 		},
 		{
 			name: "SummarizeTranscription",
 			call: func(s *Service) error {
-				_, err := s.SummarizeTranscription(t.Context(), nil, &subtitles.Subtitles{}, nil)
+				_, err := s.SummarizeTranscription(t.Context(), nil, &subtitles.Subtitles{}, nil, SummaryParams{UserID: "user", RootPostID: "root"})
+				return err
+			},
+		},
+		{
+			name: "RegenerateSummary",
+			call: func(s *Service) error {
+				_, err := s.RegenerateSummary(t.Context(), nil, nil, &store.Conversation{}, "post")
 				return err
 			},
 		},

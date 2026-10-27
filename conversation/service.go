@@ -239,6 +239,24 @@ func (s *Service) DeleteResponseTurns(conversationID, postID string) error {
 	return s.store.DeleteResponseTurns(conversationID, postID)
 }
 
+// BuildRegenerateRequest builds the request that regenerates postID's
+// response from the turns before it, then scrubs that prior response so the
+// new stream runs like a first one.
+func (s *Service) BuildRegenerateRequest(conv *store.Conversation, context *llm.Context, postID string, opts BuildOptions) (*llm.CompletionRequest, error) {
+	// Build before scrubbing: ExcludeAfterPostID needs the anchor.
+	opts.ExcludeAfterPostID = postID
+	req, err := s.BuildCompletionRequest(conv, context, opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build completion request for regen: %w", err)
+	}
+	req.OperationSubType = llm.SubTypeRegenerate
+
+	if err := s.DeleteResponseTurns(conv.ID, postID); err != nil {
+		return nil, fmt.Errorf("failed to scrub prior response turns on regen: %w", err)
+	}
+	return req, nil
+}
+
 // UpdateConversationRootPostID sets the RootPostID on a conversation.
 // Used when the post ID is only known after post creation (e.g., thread analysis DM posts).
 func (s *Service) UpdateConversationRootPostID(id string, rootPostID string) error {
@@ -494,6 +512,7 @@ func AssembleRequest(
 	conversionOpts := PostConversionOptions{
 		RedactUnshared: redactUnshared,
 		MMClient:       mmClient,
+		UserID:         conv.UserID,
 		EnableVision:   enableVision,
 		MaxFileSize:    maxFileSize,
 	}
@@ -963,6 +982,7 @@ func (s *Service) BuildChannelMentionRequest(
 	conversionOpts := PostConversionOptions{
 		RedactUnshared: redactUnshared,
 		MMClient:       mmClient,
+		UserID:         conv.UserID,
 		EnableVision:   enableVision,
 		MaxFileSize:    maxFileSize,
 	}
@@ -1033,7 +1053,7 @@ func (s *Service) BuildChannelMentionRequest(
 				username = user.Username
 			}
 			blocks := userBlocksWithAttachments(format.AuthoredPost(threadPost, username), threadPost.FileIds, mmClient)
-			posts = append(posts, BlocksToPost(blocks, "user", PostConversionOptions{RedactUnshared: redactUnshared, MMClient: mmClient, EnableVision: enableVision, MaxFileSize: maxFileSize}))
+			posts = append(posts, BlocksToPost(blocks, "user", PostConversionOptions{RedactUnshared: redactUnshared, MMClient: mmClient, UserID: conv.UserID, EnableVision: enableVision, MaxFileSize: maxFileSize}))
 		}
 		if latestPostLinkedRole == "user" && threadPost.Id == latestPostLinkedPostID {
 			break

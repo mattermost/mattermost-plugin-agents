@@ -206,7 +206,7 @@ func (s *loadedStateFlowStore) DeleteResponseTurns(conversationID, postID string
 
 	keep := turns[:0]
 	for _, t := range turns {
-		if t.Sequence > userSeq && t.Sequence < anchorSeq {
+		if t.Sequence > userSeq && t.Sequence <= anchorSeq {
 			delete(s.allTurns, t.ID)
 			continue
 		}

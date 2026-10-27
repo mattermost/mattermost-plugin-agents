@@ -134,7 +134,7 @@ func TestHandleLoopInAgentNilCheckerFailsClosed(t *testing.T) {
 		post,
 	}...)
 
-	nilConv := conversations.New(nil, fix.client, nil, nil, fix.botService, nil, nil, nil, nil, nil, newDMPolicyChecker())
+	nilConv := conversations.New(nil, fix.client, nil, nil, fix.botService, nil, nil, nil, nil, newDMPolicyChecker())
 	bot := fix.botService.GetBotByID(reminderBotID)
 	require.NotNil(t, bot)
 
@@ -148,7 +148,7 @@ func TestHandleLoopInAgentNilCheckerFailsClosed(t *testing.T) {
 
 func TestChannelMentionNilCheckerFailsClosed(t *testing.T) {
 	env := setupAutoReplyTestEnv(t, []llm.BotConfig{autoReplyBotConfig()}, dmMakeTextStream("canned reply"))
-	nilConv := conversations.New(nil, env.mmClient, nil, nil, env.botService, nil, nil, nil, nil, nil, env.checker)
+	nilConv := conversations.New(nil, env.mmClient, nil, nil, env.botService, nil, nil, nil, nil, env.checker)
 
 	post := env.rootPost(autoReplyUserID, "@"+autoReplyBotUsername+" help me")
 	nilConv.MessageHasBeenPosted(nil, post)

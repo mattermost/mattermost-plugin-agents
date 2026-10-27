@@ -165,7 +165,7 @@ func (s *inMemoryStore) DeleteResponseTurns(conversationID, postID string) error
 		if !ok {
 			continue
 		}
-		if t.Sequence > userSeq && t.Sequence < anchorSeq {
+		if t.Sequence > userSeq && t.Sequence <= anchorSeq {
 			delete(s.turns, id)
 			continue
 		}
@@ -814,4 +814,77 @@ func TestIntervalWithRequestConversationID(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, result.ConversationID, conv.ID)
 	assert.Equal(t, llm.OperationChannelInterval, conv.Operation)
+}
+
+func TestRegenerateAnalysisReusesConversation(t *testing.T) {
+	promptsObj, err := llm.NewPrompts(prompts.PromptsFolder)
+	require.NoError(t, err)
+
+	memStore := newInMemoryStore()
+	convSvc := setupConvSvc(memStore)
+	fakeLM := &fakeLLM{
+		calls: [][]llm.TextStreamEvent{
+			toolCallStreamEvents("tc1", "read_channel", json.RawMessage(`{}`)),
+			textStreamEvents("First summary."),
+			toolCallStreamEvents("tc2", "read_channel", json.RawMessage(`{"channel_id":"attacker-controlled"}`)),
+			textStreamEvents("Second summary."),
+		},
+	}
+
+	var readChannelID string
+	newContext := func() *llm.Context {
+		tools := llm.NewToolStore()
+		tools.AddTools([]llm.Tool{
+			makeChannelIDCaptureTool("mattermost__read_channel", "posts", &readChannelID),
+			makeChannelIDCaptureTool("mattermost__get_channel_info", "info", new(string)),
+		})
+		ctx := llm.NewContext()
+		ctx.Channel = &model.Channel{Id: "chanBound", DisplayName: "Bound Channel", Type: model.ChannelTypeOpen}
+		ctx.RequestingUser = &model.User{Id: "user-bound"}
+		ctx.Tools = tools
+		return ctx
+	}
+
+	ch := New(fakeLM, promptsObj, nil, nil, convSvc)
+	result, err := ch.AnalyzeChannel(context.Background(), newContext(), "chanBound", "user-bound", "bot-bound", map[string]any{"AnalysisType": "summary"})
+	require.NoError(t, err)
+	_, err = result.Stream.ReadAll()
+	require.NoError(t, err)
+
+	// Simulate the streaming layer anchoring the response to the post.
+	postID := "analysis-post"
+	require.NoError(t, memStore.CreateTurnAutoSequence(&store.Turn{
+		ID:             "first-anchor",
+		ConversationID: result.ConversationID,
+		PostID:         &postID,
+		Role:           "assistant",
+		Content:        json.RawMessage(`[{"type":"text","text":"First summary."}]`),
+	}))
+	conv, err := convSvc.GetConversation(result.ConversationID)
+	require.NoError(t, err)
+
+	readChannelID = ""
+	stream, err := ch.RegenerateAnalysis(context.Background(), newContext(), conv, "chanBound", postID, "")
+	require.NoError(t, err)
+	text, err := stream.ReadAll()
+	require.NoError(t, err)
+	require.Equal(t, "Second summary.", text)
+
+	require.Equal(t, "chanBound", readChannelID, "regenerated tools must stay bound to the analyzed channel")
+	require.Len(t, memStore.conversations, 1, "regenerate must not create a new conversation")
+
+	// The regenerated request starts from the stored system prompt and user turn only.
+	regenReq := fakeLM.requests[2]
+	require.Len(t, regenReq.Posts, 2)
+	require.Equal(t, conv.SystemPrompt, regenReq.Posts[0].Message)
+	require.Equal(t, llm.SubTypeRegenerate, regenReq.OperationSubType)
+
+	turns, err := convSvc.GetTurns(result.ConversationID)
+	require.NoError(t, err)
+	for _, turn := range turns {
+		require.NotEqual(t, "first-anchor", turn.ID, "the old response anchor must be scrubbed")
+	}
+	// User turn plus the regenerated tool round (assistant tool_use + tool_result).
+	require.Len(t, turns, 3)
+	require.Equal(t, "user", turns[0].Role)
 }

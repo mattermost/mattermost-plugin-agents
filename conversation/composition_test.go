@@ -27,11 +27,11 @@ func TestBuildCompletionRequestComposition(t *testing.T) {
 	mmClient := mmapimocks.NewMockClient(t)
 
 	mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
-		Id: "img1", Name: "diagram.png", MimeType: "image/png", Size: 100,
+		ChannelId: attachmentTestChannelID, Id: "img1", Name: "diagram.png", MimeType: "image/png", Size: 100,
 	}, nil)
 	mmClient.On("GetFile", "img1").Return(io.NopCloser(strings.NewReader("PNGDATA")), nil)
 	mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-		Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
+		ChannelId: attachmentTestChannelID, Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
 	}, nil)
 	mmClient.On("GetFile", "doc1").Return(io.NopCloser(strings.NewReader("hello world")), nil)
 

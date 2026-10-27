@@ -306,10 +306,11 @@ func TestToolApprovalAuditRecords(t *testing.T) {
 		endpoint string
 		event    string
 		// conversationOwner seeds a conversation entity owned by that user.
-		// When empty, ownership passes via the legacy requester prop and the
-		// service rejects the missing conversation_id with a controlled 400
-		// after the handler and service enrichment already ran.
+		// When empty, the requester owns the conversation. It has no tool
+		// turns, so the service rejects a tool_call click as stale and treats
+		// a tool_result click as an already-recorded no-op.
 		conversationOwner   string
+		omitConversation    bool
 		body                string
 		expectedStatus      int
 		expectedAcceptedIDs []string
@@ -332,11 +333,20 @@ func TestToolApprovalAuditRecords(t *testing.T) {
 			expectedAcceptedIDs: []string{"tool-use-1"},
 		},
 		{
+			name:                "tool_call on a post whose conversation is missing fails closed",
+			endpoint:            "/post/" + postID + "/tool_call",
+			event:               AuditEventToolCallApproval,
+			omitConversation:    true,
+			body:                `{"accepted_tool_ids":["tool-use-1"]}`,
+			expectedStatus:      http.StatusInternalServerError,
+			expectedAcceptedIDs: []string{"tool-use-1"},
+		},
+		{
 			name:                "tool_result reaching the service records the decision objects",
 			endpoint:            "/post/" + postID + "/tool_result",
 			event:               AuditEventToolResultApproval,
 			body:                `{"accepted_tool_ids":["tool-use-1"]}`,
-			expectedStatus:      http.StatusBadRequest,
+			expectedStatus:      http.StatusOK,
 			expectedAcceptedIDs: []string{"tool-use-1"},
 		},
 	}
@@ -354,17 +364,18 @@ func TestToolApprovalAuditRecords(t *testing.T) {
 			e.OverrideLicense(&model.License{SkuShortName: "advanced"})
 
 			post := &model.Post{Id: postID, UserId: testBotUserID, ChannelId: channelID}
-			if test.conversationOwner == "" {
-				post.AddProp(streaming.LLMRequesterUserIDProp, testUserID)
-			} else {
-				post.AddProp(streaming.ConversationIDProp, conversationID)
+			owner := test.conversationOwner
+			if owner == "" {
+				owner = testUserID
+			}
+			post.AddProp(streaming.ConversationIDProp, conversationID)
+			if !test.omitConversation {
 				require.NoError(t, convStore.CreateConversation(&store.Conversation{
 					ID:     conversationID,
-					UserID: test.conversationOwner,
+					UserID: owner,
 					BotID:  testBotUserID,
 				}))
 			}
-
 			e.mockAPI.On("GetPost", postID).Return(post, nil)
 			e.mockAPI.On("GetChannel", channelID).Return(&model.Channel{
 				Id:   channelID,
@@ -372,6 +383,7 @@ func TestToolApprovalAuditRecords(t *testing.T) {
 				Type: model.ChannelTypeDirect,
 			}, nil)
 			e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
+			e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Locale: "en"}, nil).Maybe()
 
 			req := httptest.NewRequest(http.MethodPost, test.endpoint, strings.NewReader(test.body))
 			req.Header.Add("Mattermost-User-Id", testUserID)
@@ -390,8 +402,12 @@ func TestToolApprovalAuditRecords(t *testing.T) {
 			assert.Equal(t, testBotUserID, rec.EventData.Parameters[audit.KeyAgentID])
 			assert.Equal(t, test.expectedAcceptedIDs, rec.EventData.Parameters["accepted_tool_ids"])
 
-			assert.Equal(t, model.AuditStatusFail, rec.Status)
-			assert.Equal(t, test.expectedStatus, rec.Error.Code)
+			if test.expectedStatus == http.StatusOK {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+			} else {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, test.expectedStatus, rec.Error.Code)
+			}
 		})
 	}
 }
@@ -514,7 +530,7 @@ func (e *TestEnvironment) useConversations() *mockConvServiceStore {
 	client := mmapi.NewClient(e.client)
 	convStore := newMockConvServiceStore()
 	convService := conversation.NewService(convStore, e.api.prompts, client, e.bots)
-	svc := conversations.New(e.api.prompts, client, e.api.streamingService, e.api.contextBuilder, e.bots, nil, enterprise.NewLicenseChecker(e.client), nil, nil, e.config, askForEveryTool)
+	svc := conversations.New(e.api.prompts, client, e.api.streamingService, e.api.contextBuilder, e.bots, nil, enterprise.NewLicenseChecker(e.client), nil, e.config, askForEveryTool)
 	svc.SetConversationService(convService)
 	e.api.conversationsService = svc
 	e.api.SetConversationService(convService)
@@ -694,7 +710,6 @@ func TestRegenerateAnalysisRechecksTheAnalyzedSource(t *testing.T) {
 		{name: "thread lookup fails", threadErr: model.NewAppError("GetPost", "app.post.get.app_error", nil, "", http.StatusInternalServerError), wantStatus: http.StatusInternalServerError},
 		{name: "requester can no longer read the thread", threadHidden: true, wantStatus: http.StatusForbidden},
 		{name: "channel analysis", channelAnalysis: true, noRegen: true, wantStatus: http.StatusBadRequest},
-		{name: "channel analysis created before it was tagged no_regen", channelAnalysis: true, wantStatus: http.StatusBadRequest},
 		{name: "meeting summary", meetingSummary: true, noRegen: true, wantStatus: http.StatusBadRequest},
 	}
 
@@ -710,7 +725,8 @@ func TestRegenerateAnalysisRechecksTheAnalyzedSource(t *testing.T) {
 			operation := llm.OperationThreadAnalysis
 			switch {
 			case tc.meetingSummary:
-				post.AddProp(streaming.LLMRequesterUserIDProp, testUserID)
+				operation = llm.OperationMeetingSummary
+				post.AddProp(streaming.ConversationIDProp, convID)
 			case tc.channelAnalysis:
 				operation = llm.OperationChannelSummary
 				post.AddProp(streaming.ConversationIDProp, convID)

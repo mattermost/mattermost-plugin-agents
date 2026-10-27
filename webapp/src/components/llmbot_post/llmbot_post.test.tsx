@@ -1504,6 +1504,11 @@ describe('LLMBotPost meetings license gating', () => {
 
     beforeEach(() => {
         useIsLicensedFor.mockReturnValue(true);
+        mockUseConversation.mockReturnValue({
+            conversation: makeConversation([]),
+            loading: false,
+            error: null,
+        });
         mockUseSelector.mockImplementation((selector) => selector({
             entities: {
                 channels: {
@@ -1524,20 +1529,34 @@ describe('LLMBotPost meetings license gating', () => {
     });
 
     test('shows Post summary for a transcription result at Enterprise', () => {
-        renderPost(makePost('Call summary', {
-            conversation_id: '',
-            llm_requester_user_id: 'user_1',
-        }));
+        renderPost(makePost('Call summary'));
 
         expect(screen.getByText('Post summary')).not.toBeNull();
     });
 
     test('hides Post summary below Enterprise', () => {
         useIsLicensedFor.mockReturnValue(false);
-        renderPost(makePost('Call summary', {
-            conversation_id: '',
-            llm_requester_user_id: 'user_1',
+        renderPost(makePost('Call summary'));
+
+        expect(screen.queryByText('Post summary')).toBeNull();
+    });
+
+    test('shows Post summary for a summary posted without a conversation', () => {
+        mockUseConversation.mockReturnValue({conversation: null, loading: false, error: null});
+        renderPost(makePost('Call summary', {conversation_id: ''}));
+
+        expect(screen.getByText('Post summary')).not.toBeNull();
+    });
+
+    test('hides Post summary outside a DM', () => {
+        mockUseSelector.mockImplementation((selector) => selector({
+            entities: {
+                channels: {channels: {channel_1: {type: 'O'}}},
+                posts: {posts: {root_1: {props: {referenced_transcript_post_id: 'transcript_1'}}}},
+                users: {currentUserId: 'user_1'},
+            },
         }));
+        renderPost(makePost('Call summary'));
 
         expect(screen.queryByText('Post summary')).toBeNull();
     });
