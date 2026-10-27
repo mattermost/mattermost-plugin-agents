@@ -39,9 +39,14 @@ export interface ComposerSubmenuProps {
     'data-testid'?: string;
 }
 
+// How long the pointer may be outside the row and its child menu before a menu that hover opened
+// closes (covers the gap between them and a quick slip). No compass token for this.
+const HOVER_CLOSE_DELAY_MS = 150;
+
 // A parent menu row with a cascading child menu, as the host's AI actions menu
 // has: it opens on click, Enter, Space, ArrowRight or hover, and ArrowLeft or
-// Escape close it again. The child renders inside the parent menu's floating
+// Escape close it again. A menu that hover opened also closes when the pointer
+// leaves the row and the child menu; one opened by click or keyboard stays until closed. The child renders inside the parent menu's floating
 // element (not a second portal), so the parent's outside-click dismissal and
 // focus trap treat it as part of the menu.
 const ComposerSubmenu = ({label, icon, secondaryLabel, disabled, menuLabel, open, grow = 'up', focusOnOpen, onOpen, onClose, children, ...rest}: ComposerSubmenuProps) => {
@@ -79,6 +84,22 @@ const ComposerSubmenu = ({label, icon, secondaryLabel, disabled, menuLabel, open
         rowRef.current?.focus();
     };
 
+    const hoverCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const cancelHoverClose = () => {
+        if (hoverCloseTimer.current) {
+            clearTimeout(hoverCloseTimer.current);
+            hoverCloseTimer.current = null;
+        }
+    };
+    useEffect(() => cancelHoverClose, []);
+    const handleEntryMouseLeave = () => {
+        if (!open || focusOnOpen) {
+            return;
+        }
+        cancelHoverClose();
+        hoverCloseTimer.current = setTimeout(onClose, HOVER_CLOSE_DELAY_MS);
+    };
+
     const handleRowKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
         if (e.key === 'ArrowRight' && !disabled) {
             e.preventDefault();
@@ -101,7 +122,10 @@ const ComposerSubmenu = ({label, icon, secondaryLabel, disabled, menuLabel, open
     };
 
     return (
-        <Entry>
+        <Entry
+            onMouseEnter={cancelHoverClose}
+            onMouseLeave={handleEntryMouseLeave}
+        >
             <MenuItem
                 ref={rowRef}
                 role='menuitem'
