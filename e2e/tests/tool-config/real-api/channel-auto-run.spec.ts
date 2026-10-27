@@ -1,4 +1,5 @@
-import { test, expect, type Locator, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
@@ -69,6 +70,14 @@ async function closeRHSIfOpen(page: Page): Promise<void> {
     }
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigAIMockContainer([
+        { name: readChannelConfigName, policy: 'auto_run_in_dm', enabled: true },
+    ]));
+    const aimock = own(await RunAIMockSidecar(mattermost.network));
+    return { mattermost, aimock };
+});
+
 test.describe('Channel Auto Run Policy (Aimock)', () => {
     test.describe.configure({ mode: 'serial' });
 
@@ -76,37 +85,29 @@ test.describe('Channel Auto Run Policy (Aimock)', () => {
     let aimock: AIMockContainer;
     let townSquareChannelID: string;
 
-    test.beforeAll(async () => {
+    test.beforeAll(async ({ containers }) => {
+        // setFixtures can fall back to restarting aimock, which outlasts the default hook timeout.
         test.setTimeout(180000);
-        mattermost = await RunToolConfigAIMockContainer([
-            { name: readChannelConfigName, policy: 'auto_run_in_dm', enabled: true },
-        ]);
+        ({ mattermost, aimock } = containers);
         await setupRegularTestUser(mattermost);
         townSquareChannelID = await getTownSquareChannelID(mattermost);
-        aimock = await RunAIMockSidecar(mattermost.network, {
-            fixtures: mergeFixtureFiles(
-                buildToolCallAndTextResponse({
-                    userMessage: dmOnlyUserMessage,
-                    toolCallId: 'call_aimock_channel_dm_only_read_channel',
-                    toolName: embeddedReadChannelTool,
-                    toolArguments: { channel_id: townSquareChannelID, limit: 5 },
-                    finalContent: dmOnlyContinuationText,
-                    title: 'Aimock channel dm-only',
-                }),
-                buildToolCallAndTextResponse({
-                    userMessage: everywhereUserMessage,
-                    toolCallId: 'call_aimock_channel_everywhere_read_channel',
-                    toolName: embeddedReadChannelTool,
-                    toolArguments: { channel_id: townSquareChannelID, limit: 5 },
-                    finalContent: everywhereContinuationText,
-                }),
-            ),
-        });
-    });
-
-    test.afterAll(async () => {
-        await aimock?.stop();
-        await mattermost?.stop();
+        await aimock.setFixtures(mergeFixtureFiles(
+            buildToolCallAndTextResponse({
+                userMessage: dmOnlyUserMessage,
+                toolCallId: 'call_aimock_channel_dm_only_read_channel',
+                toolName: embeddedReadChannelTool,
+                toolArguments: { channel_id: townSquareChannelID, limit: 5 },
+                finalContent: dmOnlyContinuationText,
+                title: 'Aimock channel dm-only',
+            }),
+            buildToolCallAndTextResponse({
+                userMessage: everywhereUserMessage,
+                toolCallId: 'call_aimock_channel_everywhere_read_channel',
+                toolName: embeddedReadChannelTool,
+                toolArguments: { channel_id: townSquareChannelID, limit: 5 },
+                finalContent: everywhereContinuationText,
+            }),
+        ));
     });
 
     test('auto_run_in_dm in channel requires call approval and then share approval', async ({ page }) => {

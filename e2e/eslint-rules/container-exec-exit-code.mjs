@@ -11,8 +11,21 @@ function isContainerExec(call) {
     return typeof name === 'string' && /container$/i.test(name);
 }
 
+// withDeadline(step, ms, () => container.exec(...)) resolves to the exec result,
+// so the exit code has to be read where the withDeadline call lands.
+function passedThroughDeadline(call) {
+    const arrow = call.parent;
+    const outer = arrow.parent;
+    return arrow.type === 'ArrowFunctionExpression' && arrow.body === call &&
+        outer.type === 'CallExpression' && outer.callee.type === 'Identifier' && outer.callee.name === 'withDeadline' &&
+        outer.arguments.at(-1) === arrow;
+}
+
 // Before the await, exitCode would be read off the pending promise.
 function readsExitCode(call, sourceCode) {
+    if (passedThroughDeadline(call)) {
+        return readsExitCode(call.parent.parent, sourceCode);
+    }
     if (call.parent.type !== 'AwaitExpression') {
         return false;
     }

@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import { AIMockHarness, RunAIMockHarness, setupAimockTestPage } from 'helpers/aimock-harness';
 
@@ -16,30 +17,32 @@ const PHASE3_REASONING_COMPLETE_PROMPT = 'phase3-reasoning-complete-001';
 const PHASE3_REASONING_MULTI_FIRST_PROMPT = 'phase3-reasoning-multi-first-001';
 const PHASE3_REASONING_MULTI_SECOND_PROMPT = 'phase3-reasoning-multi-second-001';
 
-test.describe('Reasoning Display - aimock', () => {
-    test.describe.configure({ mode: 'serial', retries: 1 });
+const harnessTest = () => containerTest(async (own) => {
+    const harness = own(await RunAIMockHarness({
+        fixtureFile: 'llmbot-reasoning-display.json',
+        bot: {
+            reasoningEnabled: true,
+            reasoningEffort: 'high',
+            thinkingBudget: 0,
+            enabledNativeTools: [],
+        },
+    }));
+    return { harness };
+});
+
+const reasoningDisplayTest = harnessTest();
+
+reasoningDisplayTest.describe('Reasoning Display - aimock', () => {
+    reasoningDisplayTest.describe.configure({ mode: 'serial', retries: 1 });
 
     let harness: AIMockHarness;
 
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        harness = await RunAIMockHarness({
-            fixtureFile: 'llmbot-reasoning-display.json',
-            bot: {
-                reasoningEnabled: true,
-                reasoningEffort: 'high',
-                thinkingBudget: 0,
-                enabledNativeTools: [],
-            },
-        });
+    reasoningDisplayTest.beforeAll(async ({ containers }) => {
+        ({ harness } = containers);
     });
 
-    test.afterAll(async () => {
-        await harness?.stop();
-    });
-
-    test('Reasoning Display - Renders from aimock', async ({ page }) => {
-        test.setTimeout(120000);
+    reasoningDisplayTest('Reasoning Display - Renders from aimock', async ({ page }) => {
+        reasoningDisplayTest.setTimeout(120000);
 
         const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
@@ -56,8 +59,8 @@ test.describe('Reasoning Display - aimock', () => {
         await llmBotHelper.expectReasoningText(PHASE3_REASONING_RENDER_REASONING);
     });
 
-    test('Reasoning Toggle - Expand and Collapse', async ({ page }) => {
-        test.setTimeout(120000);
+    reasoningDisplayTest('Reasoning Toggle - Expand and Collapse', async ({ page }) => {
+        reasoningDisplayTest.setTimeout(120000);
 
         const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
@@ -77,8 +80,8 @@ test.describe('Reasoning Display - aimock', () => {
         await expect(llmBotHelper.getReasoningLabel()).toBeVisible();
     });
 
-    test('Reasoning States - Complete State', async ({ page }) => {
-        test.setTimeout(120000);
+    reasoningDisplayTest('Reasoning States - Complete State', async ({ page }) => {
+        reasoningDisplayTest.setTimeout(120000);
 
         const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
@@ -94,8 +97,8 @@ test.describe('Reasoning Display - aimock', () => {
         await llmBotHelper.expectReasoningVisible(true);
     });
 
-    test('Multiple Posts with Reasoning', async ({ page }) => {
-        test.setTimeout(180000);
+    reasoningDisplayTest('Multiple Posts with Reasoning', async ({ page }) => {
+        reasoningDisplayTest.setTimeout(180000);
 
         const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
@@ -123,28 +126,17 @@ test.describe('Reasoning Display - aimock', () => {
     });
 });
 
-test.describe('Reasoning Persistence After Refresh - aimock', () => {
+const reasoningPersistenceTest = harnessTest();
+
+reasoningPersistenceTest.describe('Reasoning Persistence After Refresh - aimock', () => {
     let harness: AIMockHarness;
 
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        harness = await RunAIMockHarness({
-            fixtureFile: 'llmbot-reasoning-display.json',
-            bot: {
-                reasoningEnabled: true,
-                reasoningEffort: 'high',
-                thinkingBudget: 0,
-                enabledNativeTools: [],
-            },
-        });
+    reasoningPersistenceTest.beforeAll(async ({ containers }) => {
+        ({ harness } = containers);
     });
 
-    test.afterAll(async () => {
-        await harness?.stop();
-    });
-
-    test('Reasoning Persistence After Refresh', async ({ page }) => {
-        test.setTimeout(120000);
+    reasoningPersistenceTest('Reasoning Persistence After Refresh', async ({ page }) => {
+        reasoningPersistenceTest.setTimeout(120000);
 
         const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 

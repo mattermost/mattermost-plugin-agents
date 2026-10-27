@@ -1,4 +1,5 @@
-import { test, expect, type Page, type Locator } from '@playwright/test';
+import { expect, type Page, type Locator } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { expandToolActivity, expectToolActivityCurrent, toolCard } from 'helpers/llmbot-post';
@@ -47,15 +48,15 @@ async function mentionBotAndOpenThread(page: Page, mmPage: MattermostPage, botNa
     await openThreadForPost(post, timeout);
 }
 
-test.describe('Dynamic MCP Tool Approval (Mocked LLM)', () => {
-    test.beforeAll(async () => {
-        mattermost = await RunToolConfigContainerWithDynamicPolicies();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
-    });
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigContainerWithDynamicPolicies());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
 
-    test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
+test.describe('Dynamic MCP Tool Approval (Mocked LLM)', () => {
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test('ask policy applies after search_tools and load_tool materialize the business tool', async ({ page }) => {
