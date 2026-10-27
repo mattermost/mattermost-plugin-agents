@@ -153,7 +153,17 @@ describe('RHSTitle', () => {
 
         renderTitle(two, 'a', {selectedPostId: 'root1'});
         fireEvent.click(screen.getByTestId('bot-selector-rhs'));
-        expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Switch agent', 'Recent chats', 'New chat', 'Rename chat', 'Archive chat', 'View all agents']);
+
+        // In an open chat the agent picker is the New chat row, in place of Switch agent.
+        expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['New chat', 'Recent chats', 'Rename chat', 'Archive chat', 'View all agents']);
+    });
+
+    test('with a single agent an open chat has the plain New chat item', () => {
+        renderTitle([makeBot('a', 'Alpha')], 'a', {selectedPostId: 'root1'});
+
+        fireEvent.click(screen.getByTestId('bot-selector-rhs'));
+
+        expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['New chat', 'Rename chat', 'Archive chat', 'View all agents']);
     });
 
     test('choosing a recent chat opens it in the RHS', () => {
@@ -197,15 +207,19 @@ describe('RHSTitle', () => {
         expect(screen.getByTestId('bot-selector-rhs').getAttribute('aria-expanded')).toBe('false');
     });
 
-    test('New chat in the menu leaves the open chat for a fresh one', () => {
+    test.each([
+        {name: 'another agent', pick: 'Beta'},
+        {name: 'the same agent', pick: 'Alpha'},
+    ])('in an open chat, New chat > $name starts a new chat with it', ({pick}) => {
         renderTitle(two, 'a', {selectedPostId: 'root1'});
 
         fireEvent.click(screen.getByTestId('bot-selector-rhs'));
         fireEvent.click(screen.getByRole('menuitem', {name: 'New chat'}));
+        fireEvent.click(within(screen.getByRole('menu', {name: 'New chat'})).getByRole('menuitem', {name: pick}));
 
-        expect(dispatched.filter((a) => a.type === 'SELECT_AI_POST' || a.type === 'AI_RHS_SET_TAB')).toEqual([
+        expect(rhsActions()).toEqual([
             {type: 'SELECT_AI_POST', postId: ''},
-            {type: 'AI_RHS_SET_TAB', tab: 'new'},
+            {type: 'AI_RHS_NEW_CHAT'},
         ]);
     });
 

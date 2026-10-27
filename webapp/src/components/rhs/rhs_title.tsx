@@ -7,9 +7,7 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import styled from 'styled-components';
 import ArrowLeftIcon from '@mattermost/compass-icons/components/arrow-left';
 import ChevronDownIcon from '@mattermost/compass-icons/components/chevron-down';
-import PencilOutlineIcon from '@mattermost/compass-icons/components/pencil-outline';
-
-import {Button} from '@mattermost/compass-ui/components/button';
+import PlusIcon from '@mattermost/compass-icons/components/plus';
 
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
@@ -88,6 +86,7 @@ const RHSTitle = () => {
         dispatch({type: 'AI_RHS_SET_TAB', tab: 'new'});
     }, [dispatch]);
 
+    const newChatLabel = intl.formatMessage({defaultMessage: 'New chat'});
     const backLabel = intl.formatMessage({defaultMessage: 'Back to chat history'});
     const back = onHistory ? null : (
         <IconButton
@@ -123,16 +122,15 @@ const RHSTitle = () => {
         actions = (
             <>
                 {activeConversationId && <ContextUsageIndicator conversationId={activeConversationId}/>}
-                <Button
-                    emphasis='tertiary'
-                    size='x-small'
-                    leadingIcon={<Icon glyph={<PencilOutlineIcon/>}/>}
+                <IconButton
+                    size='small'
+                    padding='compact'
+                    icon={<Icon glyph={<PlusIcon/>}/>}
+                    aria-label={newChatLabel}
+                    title={newChatLabel}
                     data-testid='new-chat'
-                    className='new-button'
                     onClick={startNewChat}
-                >
-                    <FormattedMessage defaultMessage='New chat'/>
-                </Button>
+                />
             </>
         );
     }

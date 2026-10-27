@@ -60,7 +60,9 @@ interface AgentChatNameMenuProps {
     // Called after the open chat was archived.
     onArchived: () => void;
 
-    // Offers a "Switch agent" submenu (the RHS, which has no agent list of its own).
+    // Offers a submenu to pick an agent (the RHS, which has no agent list of its own): "Switch
+    // agent" in a new chat, and "New chat" in an open chat (a new chat with the agent picked,
+    // the open chat's own included). `onSwitch` starts a new chat with that agent.
     agents?: {bots: LLMBot[]; onSwitch: (bot: LLMBot) => void};
 
     // The surface draws its own title button; this menu opens from it.
@@ -180,7 +182,11 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
     const nameMenuLabel = rootId ? intl.formatMessage({defaultMessage: '{title}, {name} options'}, {title: chatTitle, name: bot.displayName}) : intl.formatMessage({defaultMessage: '{name} options'}, {name: bot.displayName});
     const newChatLabel = intl.formatMessage({defaultMessage: 'New chat'});
     const chatsLabel = intl.formatMessage({defaultMessage: 'Recent chats'});
-    const agentsLabel = intl.formatMessage({defaultMessage: 'Switch agent'});
+    const switchable = agents && agents.bots.length > 1 ? agents : null;
+
+    // In an open chat the agent picker is the New chat row itself, so the plain item is left out.
+    const newChatPicker = Boolean(rootId && switchable);
+    const agentsLabel = newChatPicker ? newChatLabel : intl.formatMessage({defaultMessage: 'Switch agent'});
 
     // Every item closes the whole menu; the submenu rows open their child instead.
     const closing = (action: () => void) => () => {
@@ -193,7 +199,6 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
         onOpen: (focus: boolean) => setSubmenu({kind, focus}),
         onClose: () => setSubmenu(null),
     });
-    const switchable = agents && agents.bots.length > 1 ? agents : null;
 
     return (
         <>
@@ -222,7 +227,7 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                 {switchable && (
                                     <ComposerSubmenu
                                         label={agentsLabel}
-                                        icon={<SyncIcon/>}
+                                        icon={newChatPicker ? <MessagePlusOutlineIcon/> : <SyncIcon/>}
                                         menuLabel={agentsLabel}
                                         grow='down'
                                         data-testid='agent-chat-switch-agent'
@@ -231,7 +236,8 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                         <PopoverMenuScroll maxHeight={CHATS_LIST_MAX_HEIGHT}>
                                             <PopoverMenuGroup>
                                                 {switchable.bots.map((other) => {
-                                                    const active = other.id === bot.id;
+                                                    // Picking the current agent switches nothing, but still starts a new chat.
+                                                    const active = !newChatPicker && other.id === bot.id;
                                                     return (
                                                         <MenuItem
                                                             key={other.id}
@@ -251,7 +257,7 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                                             trailingElement={active}
                                                             {...(active && {'aria-current': true})}
                                                             onClick={closing(() => {
-                                                                if (!active) {
+                                                                if (newChatPicker || !active) {
                                                                     switchable.onSwitch(other);
                                                                 }
                                                             })}
@@ -302,11 +308,13 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                     {rootId && (
                         <>
                             <PopoverMenuGroup>
-                                <ChatMenuItem
-                                    icon={<MessagePlusOutlineIcon/>}
-                                    label={newChatLabel}
-                                    onClick={closing(onNewChat)}
-                                />
+                                {!newChatPicker && (
+                                    <ChatMenuItem
+                                        icon={<MessagePlusOutlineIcon/>}
+                                        label={newChatLabel}
+                                        onClick={closing(onNewChat)}
+                                    />
+                                )}
                                 <ChatMenuItem
                                     icon={<PencilOutlineIcon/>}
                                     label={intl.formatMessage({defaultMessage: 'Rename chat'})}
