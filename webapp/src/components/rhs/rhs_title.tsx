@@ -141,9 +141,7 @@ const RHSTitle = () => {
     // as do loading, no agents, and an unresolved active agent.
     if (onHistory || !bots || bots.length === 0 || !activeBot) {
         return (
-            <Container
-                data-testid='rhs-title'
-            >
+            <Container data-testid='rhs-title'>
                 {back}
                 <FallbackIcon
                     src={aiIcon}
@@ -159,6 +157,7 @@ const RHSTitle = () => {
     return (
         <Container
             data-testid='rhs-title'
+            $tight={true}
         >
             {back}
             <AgentAvatar bot={menuBot}/>
@@ -204,12 +203,14 @@ const RHSTitle = () => {
 // mirrors host CSS.
 const HOST_TITLE_INLINE_PADDING = '1.6rem';
 
-const Container = styled.span`
+// `tight` is the chat views' title (a new chat and an open chat): its elements sit closer than the
+// chat history's generic title.
+const Container = styled.span<{$tight?: boolean}>`
     display: flex;
     flex: 1 1 auto;
     min-width: 0;
     align-items: center;
-    gap: var(--spacing-xxxs);
+    gap: ${({$tight}) => ($tight ? 'var(--spacing-xxxs)' : 'var(--spacing-xs)')};
     margin-left: calc(-1 * ${HOST_TITLE_INLINE_PADDING} + var(--spacing-m));
     margin-right: calc(-1 * ${HOST_TITLE_INLINE_PADDING} + var(--spacing-xxxs));
 `;
