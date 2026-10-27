@@ -101,7 +101,7 @@ const HTMLArtifactFullscreen = ({fileId, fileName, startedByClick = false, onClo
             data-testid='html-artifact-fullscreen'
         >
             <FocusSentinel
-                tabIndex={0}
+                tabIndex={0} // eslint-disable-line agents/no-noninteractive-tabindex -- focus-trap sentinel that wraps Tab back into the dialog
                 data-focus-sentinel='start'
                 data-testid='html-artifact-fullscreen-sentinel-start'
                 onFocus={focusLast}
@@ -157,7 +157,7 @@ const HTMLArtifactFullscreen = ({fileId, fileName, startedByClick = false, onClo
                 />
             </Body>
             <FocusSentinel
-                tabIndex={0}
+                tabIndex={0} // eslint-disable-line agents/no-noninteractive-tabindex -- focus-trap sentinel that wraps Tab back into the dialog
                 data-focus-sentinel='end'
                 data-testid='html-artifact-fullscreen-sentinel-end'
                 onFocus={focusFirst}

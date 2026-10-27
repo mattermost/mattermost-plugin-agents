@@ -150,6 +150,11 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		c.AbortWithError(http.StatusBadRequest, err)
 		return
 	}
+
+	if cfg.AgentVersionsToKeep < 0 {
+		c.AbortWithError(http.StatusBadRequest, errors.New("agentVersionsToKeep must be 0 (keep every version) or more"))
+		return
+	}
 	resolvedAgentNames := a.resolveAgentReferenceUsernames(cfg)
 
 	// Read-previous → identity checks → mint empty IDs → save runs atomically

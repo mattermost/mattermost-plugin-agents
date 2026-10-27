@@ -7,7 +7,8 @@
     "test": "playwright test",
     "test:headed": "playwright test --headed",
     "test:debug": "playwright test --debug",
-    "test:ui": "playwright test --ui"
+    "test:ui": "playwright test --ui",
+    "lint": "eslint . && node --test 'eslint-rules/*.test.mjs'"
   },
   "keywords": [],
   "author": "",
@@ -18,8 +19,11 @@
     "@playwright/test": "1.62.1",
     "@testcontainers/postgresql": "12.1.0",
     "@types/node": "26.1.2",
+    "@typescript-eslint/parser": "8.66.0",
+    "eslint": "10.13.0",
     "pg": "8.22.0",
     "playwright": "1.62.1",
-    "testcontainers": "12.1.0"
+    "testcontainers": "12.1.0",
+    "typescript": "5.9.3"
   }
 }

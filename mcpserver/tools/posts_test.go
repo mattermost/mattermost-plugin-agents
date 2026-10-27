@@ -19,11 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// boolPtr returns a pointer to b for use in optional *bool args.
-func boolPtr(b bool) *bool {
-	return &b
-}
-
 func TestStampAIGenerated(t *testing.T) {
 	botID := model.NewId()
 	fallbackID := model.NewId()
@@ -183,13 +178,13 @@ func TestReadPostIncludeThread(t *testing.T) {
 		},
 		{
 			name:          "true includes the thread",
-			includeThread: boolPtr(true),
+			includeThread: new(true),
 			wantThreadHit: true,
 			wantSingleHit: false,
 		},
 		{
 			name:          "false fetches only the single post",
-			includeThread: boolPtr(false),
+			includeThread: new(false),
 			wantThreadHit: false,
 			wantSingleHit: true,
 		},
@@ -273,7 +268,7 @@ func TestToolCreatePostWithInlineFiles(t *testing.T) {
 			})
 			mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
 				postHit = true
-				require.NoError(t, json.NewDecoder(r.Body).Decode(&postedPost))
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&postedPost))
 				postedPost.Id = model.NewId()
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(&postedPost)
@@ -433,7 +428,7 @@ func TestPostToolsCombinedAttachmentCap(t *testing.T) {
 				})
 				mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
 					postHit = true
-					require.NoError(t, json.NewDecoder(r.Body).Decode(&postedPost))
+					assert.NoError(t, json.NewDecoder(r.Body).Decode(&postedPost))
 					postedPost.Id = model.NewId()
 					encode(w, &postedPost)
 				})
@@ -492,7 +487,7 @@ func TestToolDMWithInlineFiles(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(&model.FileUploadResponse{FileInfos: []*model.FileInfo{{Id: id}}})
 	})
 	mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&postedPost))
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&postedPost))
 		postedPost.Id = model.NewId()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(&postedPost)
@@ -609,7 +604,7 @@ func TestToolCreatePostDisplayNameValidation(t *testing.T) {
 			mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
 				postHit = true
 				var post model.Post
-				require.NoError(t, json.NewDecoder(r.Body).Decode(&post))
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&post))
 				post.Id = model.NewId()
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(&post)
@@ -713,7 +708,7 @@ func TestUserLookupAcceptsUserID(t *testing.T) {
 	})
 	mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
 		var post model.Post
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&post))
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&post))
 		post.Id = model.NewId()
 		writeJSON(w, &post)
 	})
@@ -787,7 +782,7 @@ func TestCreatePostAcceptsGetChannelInfoNames(t *testing.T) {
 			})
 			mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
 				var post model.Post
-				require.NoError(t, json.NewDecoder(r.Body).Decode(&post))
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&post))
 				post.Id = model.NewId()
 				writeJSON(w, &post)
 			})

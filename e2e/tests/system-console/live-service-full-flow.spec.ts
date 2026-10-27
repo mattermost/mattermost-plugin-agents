@@ -1,7 +1,8 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {test, expect, Locator, Page} from '@playwright/test';
+import {expect, Locator, Page} from '@playwright/test';
+import {containerTest} from 'helpers/container-fixture';
 
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {buildTextResponse, buildTitleFixture, mergeFixtureFiles, stubAimockModelFetch} from 'helpers/aimock-fixtures';
@@ -134,16 +135,13 @@ async function selectModelFromDropdown(
     await expect(dropdownInput).toBeVisible({timeout: 90000});
     await dropdownInput.click();
 
-    const options = page.getByRole('listbox').getByRole('option');
-    await expect(options.first()).toBeVisible({timeout: 90000});
+    // The listbox first shows the built-in model list and is replaced once the fetched
+    // models arrive, so wait for the preferred option instead of indexing a snapshot.
+    const option = page.getByRole('listbox').getByRole('option', {name: preferredModel}).first();
+    await expect(option).toBeVisible({timeout: 90000});
 
-    const optionTexts = (await options.allTextContents()).map((text) => text.trim());
-    const preferredIndex = optionTexts.findIndex((text) => text.toLowerCase().includes(preferredModel.toLowerCase()));
-    const selectedIndex = preferredIndex >= 0 ? preferredIndex : 0;
-    const model = optionTexts[selectedIndex] || preferredModel;
-
-    expect(model.length).toBeGreaterThan(0);
-    await options.nth(selectedIndex).click();
+    const model = (await option.textContent())?.trim() || preferredModel;
+    await option.click();
 
     return model;
 }
@@ -171,26 +169,22 @@ async function ensureLoggedOut(page: Page, baseURL: string): Promise<void> {
     await expect(page.getByText('Log in to your account')).toBeVisible({timeout: 30000});
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunSystemConsoleContainer({
+        services: [],
+        bots: [],
+        enableChannelMentionToolCalling: true,
+    }));
+    const aimock = own(await RunAIMockSidecar(mattermost.network, {
+        fixtures: {fixtures: [buildTitleFixture('System console bootstrap')]},
+    }));
+    return { mattermost, aimock };
+});
+
 test.describe.serial('System Console Aimock Live Service Full Flow', () => {
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-
-        mattermost = await RunSystemConsoleContainer({
-            services: [],
-            bots: [],
-            enableChannelMentionToolCalling: true,
-        });
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, aimock } = containers);
         await setupRegularUser(mattermost);
-        aimock = await RunAIMockSidecar(mattermost.network, {
-            fixtures: {fixtures: [buildTitleFixture('System console bootstrap')]},
-        });
-    });
-
-    test.afterAll(async () => {
-        await aimock?.stop();
-        if (mattermost) {
-            await mattermost.stop();
-        }
     });
 
     test('should install plugin, configure aimock service+agent, and validate DM + channel mention', async ({page}) => {

@@ -21,7 +21,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
-	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"go.opentelemetry.io/otel/attribute"
@@ -70,20 +69,6 @@ func isBotActivateAI(post *model.Post, postingUser *model.User) bool {
 		return true
 	}
 	return post.GetProp(FromBotProp) != nil
-}
-
-// computeAllowToolsInChannel returns whether tools should be allowed for a channel mention,
-// given the config flag and whether the invoker is automated. Bot activate_ai requires a
-// tool policy checker: without it, strict filtering and MCP auto-approval are no-ops and tools
-// must stay disabled so automated invokers cannot strand pending approvals.
-func computeAllowToolsInChannel(configEnabled bool, post *model.Post, postingUser *model.User, hasToolPolicyChecker bool) bool {
-	if !configEnabled {
-		return false
-	}
-	if isBotActivateAI(post, postingUser) {
-		return hasToolPolicyChecker
-	}
-	return !isAutomatedInvoker(post, postingUser)
 }
 
 func (c *Conversations) userMCPPreferenceContextOptions(userID string, logMessage string) []llm.ContextOption {
@@ -225,14 +210,15 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) er
 		return fmt.Errorf("not responding to other bots: %w", ErrNoResponse)
 	}
 
-	// Check we are mentioned like @ai
-	if bot := c.bots.GetBotMentioned(post.Message); bot != nil {
+	// Mentioning the agent a DM is with is still a DM turn; mentioning a
+	// different agent there is a mention of that agent.
+	dmBot := c.bots.GetBotForDMChannel(channel)
+	if bot := c.bots.GetBotMentioned(post.Message); bot != nil && (dmBot == nil || bot.GetMMBot().UserId != dmBot.GetMMBot().UserId) {
 		return c.handleMentions(ctx, bot, post, postingUser, channel)
 	}
 
-	// Check if this is post in the DM channel with any bot
-	if bot := c.bots.GetBotForDMChannel(channel); bot != nil {
-		return c.handleDMs(ctx, bot, channel, postingUser, post)
+	if dmBot != nil {
+		return c.handleDMs(ctx, dmBot, channel, postingUser, post)
 	}
 
 	// Per-channel auto-reply handles the no-mention fall-through, and the two
@@ -257,22 +243,14 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) er
 }
 
 func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post *model.Post, postingUser *model.User, channel *model.Channel) (err error) {
-	if restrictionErr := c.bots.CheckUsageRestrictions(ctx, postingUser.Id, bot, channel); restrictionErr != nil {
-		return restrictionErr
-	}
-
-	if !mmapi.IsDMWith(bot.GetMMBot().UserId, channel) {
-		if licErr := c.licenseChecker.Check(enterprise.CapMultiplayerChannels); licErr != nil {
+	policy, policyErr := c.resolveTurnPolicy(ctx, turnRequest{bot: bot, user: postingUser, channel: channel, trigger: post})
+	if policyErr != nil {
+		if _, ok := errors.AsType[*enterprise.LicenseError](policyErr); ok {
 			c.postMultiplayerChannelsUnavailable(bot, channel, post)
-			return fmt.Errorf("%w: %w", licErr, ErrNoResponse)
+			return fmt.Errorf("%w: %w", policyErr, ErrNoResponse)
 		}
+		return policyErr
 	}
-
-	// Check config to determine if tools should be allowed in channel mentions
-	configEnabled := c.channelMentionToolCallingEnabled()
-	hasToolPolicyChecker := c.toolPolicyChecker != nil
-	allowToolsInChannel := computeAllowToolsInChannel(configEnabled, post, postingUser, hasToolPolicyChecker)
-	channelToolsAutoRunEverywhereOnly := configEnabled && isBotActivateAI(post, postingUser) && hasToolPolicyChecker
 
 	responseRootID := post.Id
 	if post.RootId != "" {
@@ -295,53 +273,24 @@ func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post 
 		}
 	}()
 
-	return c.handleMentionViaConversation(ctx, bot, post, postingUser, channel, allowToolsInChannel, channelToolsAutoRunEverywhereOnly, responsePost, progress)
+	return c.handleMentionViaConversation(ctx, policy, post, responsePost, progress)
 }
 
 // handleMentionViaConversation processes a channel mention using the conversation entity model.
 // It creates/continues a conversation for (RootPostID, BotID), runs the ToolRunner for
 // auto-run tools, writes intermediate tool turns, and streams the final response.
-// When channelToolsAutoRunEverywhereOnly is true (bot activate_ai), only MCP tools with
-// auto_run_everywhere policy are kept.
 func (c *Conversations) handleMentionViaConversation(
 	ctx context.Context,
-	bot *bots.Bot,
+	policy *turnPolicy,
 	post *model.Post,
-	postingUser *model.User,
-	channel *model.Channel,
-	allowToolsInChannel bool,
-	channelToolsAutoRunEverywhereOnly bool,
 	responsePost *model.Post,
 	progress *responseProgressReporter,
 ) error {
-	var extraOpts []llm.ContextOption
-	if channelToolsAutoRunEverywhereOnly {
-		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextMCPToolFilter(func(tool llm.Tool) bool {
-			return botChannelAutoEverywhereKeepTool(c.toolPolicyChecker, tool)
-		}))
-	}
-	// User-interaction tools need someone who can answer them: a human invoker
-	// with channel tool calling enabled. Bot activate_ai flows run unattended.
-	if allowToolsInChannel && !channelToolsAutoRunEverywhereOnly {
-		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextInteractive())
-	}
-	// Unconditional: disabled-tools contexts are already gated by the
-	// toolsDisabled machinery below.
-	extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextResponseFiles())
+	bot, postingUser, channel := policy.bot, policy.user, policy.channel
 	// Build the context once WITH tools so the system prompt can reference
-	// .Tools and .DisabledToolsInfo.
-	llmContext := c.buildConversationContextWithTools(
-		ctx,
-		bot, postingUser, channel,
-		"Failed to load user tool preferences",
-		extraOpts...,
-	)
+	// .Tools and .DisabledTools.
+	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences")
 	progress.Advance(responseProgressLoadingConversation)
-
-	toolsDisabled := applyToolAvailability(llmContext, false, allowToolsInChannel)
-	if channelToolsAutoRunEverywhereOnly {
-		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
-	}
 
 	systemPrompt, fmtErr := c.prompts.Format(prompts.PromptDirectMessageQuestionSystem, llmContext)
 	if fmtErr != nil {
@@ -349,7 +298,7 @@ func (c *Conversations) handleMentionViaConversation(
 	}
 
 	userPostID := post.Id
-	convResult, convErr := c.convService.GetOrCreateConversation(conversation.GetOrCreateParams{
+	convResult, convErr := c.getOrCreateConversation(conversation.GetOrCreateParams{
 		UserID:       postingUser.Id,
 		SessionID:    auth.SessionIDFromContext(ctx),
 		BotID:        bot.GetMMBot().UserId,
@@ -368,9 +317,7 @@ func (c *Conversations) handleMentionViaConversation(
 	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
 		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
 	}
-	if channelToolsAutoRunEverywhereOnly {
-		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
-	}
+	llmContext.ResponsePostID = responsePost.Id
 
 	ctx, runSpan := c.startAgentRunSpan(ctx, agentRunInfo{
 		convID:     convResult.Conversation.ID,
@@ -409,21 +356,8 @@ func (c *Conversations) handleMentionViaConversation(
 		return fmt.Errorf("failed to build completion request: %w", reqErr)
 	}
 
-	opts := c.toolsDisabledLLMOptions(bot, toolsDisabled)
-
-	// Channel mention: isDM=false gates auto-exec to auto_run_everywhere only.
-	autoExec := c.shouldAutoExecuteTool(llmContext, false)
 	progress.Advance(responseProgressConnectingProvider)
-	result, runErr := c.runToolLoop(ctx, bot.LLM(), bot.GetConfig().EffectiveMaxToolTurns(), *completionRequest,
-		func(tc llm.ToolCall) bool {
-			if !allowToolsInChannel {
-				return false
-			}
-			return autoExec(tc)
-		},
-		convResult.Conversation.ID,
-		func(turns []toolrunner.ToolTurn) bool { return c.allToolsAutoRunEverywhere(turns, llmContext) },
-		opts, "Failed to write tool turns")
+	result, runErr := policy.runToolLoop(ctx, llmContext, convResult.Conversation.ID, *completionRequest, "Failed to write tool turns")
 
 	if runErr != nil {
 		return fmt.Errorf("tool runner failed: %w", runErr)
@@ -456,8 +390,9 @@ func (c *Conversations) handleMentionViaConversation(
 }
 
 func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) (err error) {
-	if restrictionErr := c.bots.CheckUsageRestrictionsForUser(ctx, bot, postingUser.Id); restrictionErr != nil {
-		return restrictionErr
+	policy, policyErr := c.resolveTurnPolicy(ctx, turnRequest{bot: bot, user: postingUser, channel: channel, trigger: post})
+	if errors.Is(policyErr, bots.ErrUsageRestriction) {
+		return policyErr
 	}
 
 	responseRootID := post.Id
@@ -474,59 +409,58 @@ func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *m
 	progress := newResponseProgressReporter(ctx, c.mmClient, responsePost)
 	defer progress.Flush()
 	progress.Advance(responseProgressCheckingMCP)
+	if errors.Is(policyErr, ErrAnalysisSourceUnavailable) {
+		c.setPlaceholderMessage(responsePost, postingUser.Locale, "agents.analysis_source_unavailable",
+			"I can't continue this conversation because you no longer have access to what it is about.")
+		return fmt.Errorf("%w: %w", policyErr, ErrNoResponse)
+	}
 	defer func() {
 		if err != nil {
 			c.failResponsePlaceholder(responsePost, postingUser.Locale)
 		}
 	}()
+	if policyErr != nil {
+		return policyErr
+	}
 
-	return c.handleDMViaConversation(ctx, bot, channel, postingUser, post, responsePost, progress)
+	return c.handleDMViaConversation(ctx, policy, post, responsePost, progress)
 }
 
 // handleDMViaConversation processes a DM message using the conversation entity model.
-func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post, responsePost *model.Post, progress *responseProgressReporter) error {
-	extraOpts := []llm.ContextOption{
-		c.contextBuilder.WithLLMContextInteractive(),
-		c.contextBuilder.WithLLMContextResponseFiles(),
-	}
+func (c *Conversations) handleDMViaConversation(ctx context.Context, policy *turnPolicy, post, responsePost *model.Post, progress *responseProgressReporter) error {
+	var extraOpts []llm.ContextOption
 	if webSearchParams := c.extractWebSearchContext(post); len(webSearchParams) > 0 {
 		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 	}
-	extraOpts = append(extraOpts, c.threadConversationToolOptions(bot, postingUser, post)...)
 	// Build the context once WITH tools so the system prompt can reference them.
-	llmContext := c.buildConversationContextWithTools(
-		ctx,
-		bot, postingUser, channel,
-		"Failed to load user tool preferences",
-		extraOpts...,
-	)
+	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences", extraOpts...)
 	progress.Advance(responseProgressLoadingConversation)
 
-	convResult, err := c.createOrGetDMConversation(auth.SessionIDFromContext(ctx), bot.GetMMBot().UserId, postingUser, channel, post, llmContext)
+	convResult, err := c.createOrGetDMConversation(auth.SessionIDFromContext(ctx), policy.bot.GetMMBot().UserId, policy.user, policy.channel, post, llmContext)
 	if err != nil {
 		return fmt.Errorf("unable to create DM conversation: %w", err)
 	}
 
-	return c.streamDMConversation(ctx, bot, channel, postingUser, post, responsePost, progress, llmContext, convResult)
+	return c.streamDMConversation(ctx, policy, post, responsePost, progress, llmContext, convResult)
 }
 
 // streamDMConversation runs the tool loop for the conversation's latest user
 // turn and streams the answer onto responsePost.
 func (c *Conversations) streamDMConversation(
 	ctx context.Context,
-	bot *bots.Bot,
-	channel *model.Channel,
-	postingUser *model.User,
+	policy *turnPolicy,
 	post, responsePost *model.Post,
 	progress *responseProgressReporter,
 	llmContext *llm.Context,
 	convResult *DMConversationResult,
 ) error {
+	bot, channel, postingUser := policy.bot, policy.channel, policy.user
 	ensureDMWebSearchTracking(llmContext)
 	responsePost.AddProp(streaming.ConversationIDProp, convResult.ConversationID)
 	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
 		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
 	}
+	llmContext.ResponsePostID = responsePost.Id
 
 	ctx, runSpan := c.startAgentRunSpan(ctx, agentRunInfo{
 		convID:     convResult.ConversationID,
@@ -545,7 +479,7 @@ func (c *Conversations) streamDMConversation(
 	}()
 
 	progress.Advance(responseProgressPreparingRequest)
-	dmStream, err := c.processDMRequest(ctx, convResult.ConversationID, bot.LLM(), llmContext, bot.GetConfig().EffectiveMaxToolTurns(), func() {
+	dmStream, err := c.processDMRequest(ctx, convResult.ConversationID, policy, llmContext, func() {
 		progress.Advance(responseProgressConnectingProvider)
 	})
 	if err != nil {

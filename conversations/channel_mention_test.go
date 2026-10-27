@@ -14,6 +14,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
@@ -52,6 +53,7 @@ func TestMain(m *testing.M) {
 		fmt.Printf("Failed to get connection string: %v\n", err)
 		os.Exit(1)
 	}
+	conversations.PostgresTestConnStr = channelMentionTestConnStr
 
 	code := m.Run()
 

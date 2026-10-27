@@ -1,6 +1,10 @@
-import { test, expect } from '@playwright/test';
+import { expect, Page } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import { AIMockHarness, RunAIMockHarness, setupAimockTestPage } from 'helpers/aimock-harness';
+import { MattermostPage } from 'helpers/mm';
+import MattermostContainer from 'helpers/mmcontainer';
+import { AIMOCK_BOT_NAME } from 'helpers/plugincontainer';
 
 const PHASE3_STREAMING_CURSOR_PROMPT = 'phase3-streaming-cursor-001';
 const PHASE3_STREAMING_CURSOR_MARKER = 'Streaming cursor marker part one two three complete.';
@@ -17,27 +21,54 @@ const PHASE3_STOP_GENERATING_PROMPT = 'phase3-stop-generating-001';
 const PHASE3_STOP_GENERATING_PREFIX = 'Stop generating prefix marker';
 const PHASE3_STOP_GENERATING_TAIL = 'large scale application development.';
 
-test.describe('Streaming and Persistence - aimock', () => {
-    test.describe.configure({ mode: 'serial' });
+const REQUESTER_USERNAME = 'regularuser';
+const ONLOOKER_USERNAME = 'seconduser';
+const REQUESTER_STOPPED_NOTICE = 'You stopped generating this response.';
+const ONLOOKER_STOPPED_NOTICE = `${REQUESTER_USERNAME} stopped generating this response.`;
+
+async function openReplyThread(page: Page): Promise<void> {
+    const replyIndicator = page.getByText(/\d+ repl/).last();
+    await expect(replyIndicator).toBeVisible({ timeout: 60000 });
+    await replyIndicator.click();
+    await expect(page.locator('#rhsContainer')).toBeVisible({ timeout: 10000 });
+}
+
+// The standard harness skips onboarding only for regularuser.
+async function skipOnlookerOnboarding(mattermost: MattermostContainer): Promise<void> {
+    const client = await mattermost.getClient(ONLOOKER_USERNAME, ONLOOKER_USERNAME);
+    const me = await client.getMe();
+    await client.savePreferences(me.id, [
+        { user_id: me.id, category: 'tutorial_step', name: me.id, value: '999' },
+        { user_id: me.id, category: 'onboarding_task_list', name: 'onboarding_task_list_show', value: 'false' },
+        { user_id: me.id, category: 'onboarding_task_list', name: 'onboarding_task_list_open', value: 'false' },
+        { user_id: me.id, category: 'drafts', name: 'drafts_tour_tip_showed', value: JSON.stringify({ drafts_tour_tip_showed: true }) },
+        { user_id: me.id, category: 'crt_thread_pane_step', name: me.id, value: '999' },
+    ]);
+}
+
+const harnessTest = () => containerTest(async (own) => {
+    const harness = own(await RunAIMockHarness({
+        fixtureFile: 'llmbot-streaming-persistence.json',
+        bot: {
+            enabledNativeTools: [],
+        },
+    }));
+    return { harness };
+});
+
+const streamingTest = harnessTest();
+
+streamingTest.describe('Streaming and Persistence - aimock', () => {
+    streamingTest.describe.configure({ mode: 'serial' });
 
     let harness: AIMockHarness;
 
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        harness = await RunAIMockHarness({
-            fixtureFile: 'llmbot-streaming-persistence.json',
-            bot: {
-                enabledNativeTools: [],
-            },
-        });
+    streamingTest.beforeAll(async ({ containers }) => {
+        ({ harness } = containers);
     });
 
-    test.afterAll(async () => {
-        await harness?.stop();
-    });
-
-    test('Streaming Cursor Display', async ({ page }) => {
-        test.setTimeout(120000);
+    streamingTest('Streaming Cursor Display', async ({ page }) => {
+        streamingTest.setTimeout(120000);
 
         const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
@@ -46,8 +77,8 @@ test.describe('Streaming and Persistence - aimock', () => {
         await llmBotHelper.expectPostText(PHASE3_STREAMING_CURSOR_MARKER);
     });
 
-    test('Streaming Complete Lifecycle', async ({ page }) => {
-        test.setTimeout(120000);
+    streamingTest('Streaming Complete Lifecycle', async ({ page }) => {
+        streamingTest.setTimeout(120000);
 
         const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
@@ -62,8 +93,8 @@ test.describe('Streaming and Persistence - aimock', () => {
         await expect(stopButton).not.toBeVisible();
     });
 
-    test('Navigation Persistence', async ({ page }) => {
-        test.setTimeout(120000);
+    streamingTest('Navigation Persistence', async ({ page }) => {
+        streamingTest.setTimeout(120000);
 
         const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
@@ -85,8 +116,8 @@ test.describe('Streaming and Persistence - aimock', () => {
         expect(contentAfter).toContain(PHASE3_NAV_PERSISTENCE_MARKER);
     });
 
-    test('Thread View Persistence', async ({ page }) => {
-        test.setTimeout(120000);
+    streamingTest('Thread View Persistence', async ({ page }) => {
+        streamingTest.setTimeout(120000);
 
         const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
@@ -110,25 +141,18 @@ test.describe('Streaming and Persistence - aimock', () => {
     });
 });
 
-test.describe('Stop Generating Button - aimock', () => {
+const stopGeneratingTest = harnessTest();
+
+stopGeneratingTest.describe('Stop Generating Button - aimock', () => {
     let harness: AIMockHarness;
 
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        harness = await RunAIMockHarness({
-            fixtureFile: 'llmbot-streaming-persistence.json',
-            bot: {
-                enabledNativeTools: [],
-            },
-        });
+    stopGeneratingTest.beforeAll(async ({ containers }) => {
+        ({ harness } = containers);
+        await skipOnlookerOnboarding(harness.mattermost);
     });
 
-    test.afterAll(async () => {
-        await harness?.stop();
-    });
-
-    test('Stop Generating Button', async ({ page }) => {
-        test.setTimeout(120000);
+    stopGeneratingTest('Stop Generating Button', async ({ page }) => {
+        stopGeneratingTest.setTimeout(120000);
 
         const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
@@ -149,5 +173,49 @@ test.describe('Stop Generating Button - aimock', () => {
         const content = await postText.textContent();
         expect(content).toContain(PHASE3_STOP_GENERATING_PREFIX);
         expect(content).not.toContain(PHASE3_STOP_GENERATING_TAIL);
+        await expect(page.getByTestId('llm-bot-generation-stopped')).toHaveText(REQUESTER_STOPPED_NOTICE);
+    });
+
+    stopGeneratingTest('Stop in a channel is shown to the requester and onlookers', async ({ browser }) => {
+        stopGeneratingTest.setTimeout(180000);
+
+        const baseUrl = harness.mattermost.url();
+        const channelUrl = `${baseUrl}/test/channels/off-topic`;
+        const requesterContext = await browser.newContext();
+        const onlookerContext = await browser.newContext();
+
+        try {
+            const requesterPage = await requesterContext.newPage();
+            const onlookerPage = await onlookerContext.newPage();
+            const requester = new MattermostPage(requesterPage);
+            await requester.login(baseUrl, REQUESTER_USERNAME, REQUESTER_USERNAME);
+            await new MattermostPage(onlookerPage).login(baseUrl, ONLOOKER_USERNAME, ONLOOKER_USERNAME);
+            await requesterPage.goto(channelUrl);
+            await onlookerPage.goto(channelUrl);
+
+            await requester.mentionBot(AIMOCK_BOT_NAME, PHASE3_STOP_GENERATING_PROMPT);
+            await openReplyThread(requesterPage);
+            await openReplyThread(onlookerPage);
+
+            const requesterPost = requesterPage.locator('#rhsContainer [data-testid="llm-bot-post"]').last();
+            const onlookerPost = onlookerPage.locator('#rhsContainer [data-testid="llm-bot-post"]').last();
+            await expect(requesterPost).toContainText(PHASE3_STOP_GENERATING_PREFIX, { timeout: 60000 });
+            await expect(onlookerPost).toContainText(PHASE3_STOP_GENERATING_PREFIX, { timeout: 30000 });
+            await expect(onlookerPost.getByTestId('stop-generating-button')).toHaveCount(0);
+
+            await requesterPost.getByTestId('stop-generating-button').click();
+
+            await expect(requesterPost.getByTestId('llm-bot-generation-stopped')).toHaveText(REQUESTER_STOPPED_NOTICE, { timeout: 15000 });
+            await expect(onlookerPost.getByTestId('llm-bot-generation-stopped')).toHaveText(ONLOOKER_STOPPED_NOTICE, { timeout: 15000 });
+            await expect(onlookerPost).not.toContainText(PHASE3_STOP_GENERATING_TAIL);
+            // The stop is persisted on the post, so a later visit still explains the cut-off reply.
+            await onlookerPage.reload();
+            await openReplyThread(onlookerPage);
+            await expect(onlookerPage.locator('#rhsContainer [data-testid="llm-bot-post"]').last().getByTestId('llm-bot-generation-stopped'))
+                .toHaveText(ONLOOKER_STOPPED_NOTICE, { timeout: 30000 });
+        } finally {
+            await requesterContext.close();
+            await onlookerContext.close();
+        }
     });
 });

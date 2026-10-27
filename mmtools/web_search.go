@@ -42,7 +42,7 @@ const (
 	minQueryLength       = 3
 	maxWebSearches       = 3
 	maxDownloadSize      = 30 * 1024 * 1024 // 30MB limit for source fetching
-	WebSearchDescription = "Perform a live web search using a web search provider. Use this tool to retrieve current information. Keep your search queries generic and concise according to the user's ask. Do not pass this tool URLs. You are limited to 3 searches per conversation - use them wisely. DO NOT repeat a search query you have already executed. In your final answer, cite sources using the exact format !!CITE1!!, !!CITE2!!, etc. These markers will be automatically converted to clickable citation links. Do NOT include URLs directly in your response text. Instead of creating a new search, refer to previous 'Live web search results' - only create a new search if the previous results are not relevant."
+	WebSearchDescription = "Perform a live web search using a web search provider. Use this tool to retrieve current information. Keep your search queries generic and concise according to the user's ask. Do not pass this tool URLs. You are limited to 3 searches per response - use them wisely. DO NOT repeat a search query you have already executed. In your final answer, cite sources using the exact format !!CITE1!!, !!CITE2!!, etc. These markers will be automatically converted to clickable citation links. Do NOT include URLs directly in your response text. Instead of creating a new search, refer to previous 'Live web search results' - only create a new search if the previous results are not relevant."
 	// WebSearchSourceFetchDescription describes the page retrieval tool.
 	WebSearchSourceFetchDescription = "Fetch the full HTML content at a given URL and convert it to plain text for analysis. Use this tool to fetch more content from a web search result. You can ONLY fetch URLs that were returned in search results. Responses from this tool should be scrutinized for relevance, as some fetches may return generic pages as they don't allow AI Agents to access them. YOU MUST NOT USE THIS TOOL FOR MORE THAN 3 TIMES PER USER REQUEST."
 )
@@ -295,7 +295,7 @@ func (s *webSearchService) resolve(ctx context.Context, llmContext *llm.Context,
 
 	if searchCount >= maxWebSearches {
 		s.logWarn("web search limit reached", "count", searchCount, "max", maxWebSearches, "query", query)
-		return fmt.Sprintf("You have reached the maximum of %d web searches for this conversation. Please answer the user's question to the best of your ability using the information you've already gathered from previous searches, or consider using the web_search_fetch_source tool on an existing search result instead. If you still don't have enough information, acknowledge this limitation to the user and explain what information you were able to find to the best of your ability.", maxWebSearches), nil
+		return fmt.Sprintf("You have reached the maximum of %d web searches for this response. Please answer the user's question to the best of your ability using the information you've already gathered from previous searches, or consider using the web_search_fetch_source tool on an existing search result instead. If you still don't have enough information, acknowledge this limitation to the user and explain what information you were able to find to the best of your ability.", maxWebSearches), nil
 	}
 
 	// Check for duplicate queries (normalize by lowercasing and trimming)
@@ -903,7 +903,7 @@ func buildWebSearchAnnotationsAndCleanText(message string, results []WebSearchRe
 }
 
 func buildWebSearchAnnotationsAndCleanTextRanges(message string, results []WebSearchResult) ([]llm.Annotation, string, []llm.TextRange) {
-	if len(message) == 0 || len(results) == 0 {
+	if message == "" || len(results) == 0 {
 		return nil, message, nil
 	}
 

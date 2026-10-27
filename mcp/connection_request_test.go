@@ -114,7 +114,6 @@ func TestResolveConnectionRequest(t *testing.T) {
 		authErrors    []llm.ToolAuthError
 		origins       map[string]string
 		dynamic       bool
-		usable        func(llm.Tool) bool
 		wantConnected bool
 		wantInMessage string
 	}{
@@ -130,20 +129,6 @@ func TestResolveConnectionRequest(t *testing.T) {
 			dynamic:       true,
 			wantConnected: true,
 			wantInMessage: "call search_tools to find the ones you need, then load_tool",
-		},
-		{
-			name:          "connected server whose tools the conversation cannot use says so",
-			loaded:        append(append([]llm.Tool{}, jiraTools...), githubTools...),
-			usable:        func(tool llm.Tool) bool { return tool.ServerOrigin == githubTestOrigin },
-			wantConnected: true,
-			wantInMessage: "none of its tools can be used in this conversation",
-		},
-		{
-			name:          "connected server with one usable tool reports it available",
-			loaded:        jiraTools,
-			usable:        func(tool llm.Tool) bool { return tool.Name == "jira__search" },
-			wantConnected: true,
-			wantInMessage: "Its tools are now available in this conversation",
 		},
 		{
 			name:          "tools from a server whose URL differs only by trailing slashes do not count",
@@ -184,7 +169,7 @@ func TestResolveConnectionRequest(t *testing.T) {
 				},
 			}
 
-			raw, err := ResolveConnectionRequest(json.RawMessage(`{"server":"Jira","reason":"Find issues"}`), llmContext, tt.usable)
+			raw, err := ResolveConnectionRequest(json.RawMessage(`{"server":"Jira","reason":"Find issues"}`), llmContext)
 			require.NoError(t, err)
 
 			var result RequestConnectionResult
@@ -197,6 +182,20 @@ func TestResolveConnectionRequest(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestConnectionRequestUnusableResult(t *testing.T) {
+	raw, err := ConnectionRequestUnusableResult(json.RawMessage(`{"server":"Jira","reason":"Find issues"}`))
+	require.NoError(t, err)
+
+	var result RequestConnectionResult
+	require.NoError(t, json.Unmarshal([]byte(raw), &result))
+	assert.Equal(t, "Jira", result.Server)
+	assert.False(t, result.Connected, "the run cannot tell whether the user connected")
+	assert.Contains(t, result.Message, "None of Jira's tools can be used in this conversation")
+
+	_, err = ConnectionRequestUnusableResult(json.RawMessage(`not json`))
+	assert.Error(t, err)
 }
 
 func TestConnectionRequestDeclinedResult(t *testing.T) {

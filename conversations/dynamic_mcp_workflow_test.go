@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -137,12 +139,13 @@ func TestDynamicMCPStrictSearchLoadCallDerivesLoadedTools(t *testing.T) {
 			bot := loadedStateBot(lm)
 			llmContext := builder.BuildLLMContextUserRequest(
 				bot,
-				&model.User{Id: "user-id", Username: "user", Locale: "en"},
-				&model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"},
+				&model.User{Id: testRequesterID, Username: "user", Locale: "en"},
+				&model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__" + testRequesterID},
 				builder.WithLLMContextTools(context.Background(), bot),
 			)
 			c := &Conversations{
-				convService: conversation.NewService(convStore, nil, nil, nil),
+				convService:    conversation.NewService(convStore, nil, nil, nil),
+				licenseChecker: enterprisetest.CheckerAt(enterprise.LevelEnterprise),
 				toolPolicyChecker: mapPolicyChecker{
 					origin: {
 						"get_issue": {policy: tt.policy, enabled: true},
@@ -150,7 +153,7 @@ func TestDynamicMCPStrictSearchLoadCallDerivesLoadedTools(t *testing.T) {
 				},
 			}
 
-			streamResult, err := c.ProcessDMRequest(context.Background(), conv.ID, lm, llmContext, 0)
+			streamResult, err := c.processDMRequest(context.Background(), conv.ID, testDMTurnPolicy(c, bot), llmContext, nil)
 			require.NoError(t, err)
 
 			text := ""
@@ -219,7 +222,7 @@ func TestDynamicMCPMetaToolsBypassApproval(t *testing.T) {
 		{Name: mcp.LoadToolName, Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) { return "{}", nil }},
 		{Name: "jira__transition_issue", ServerOrigin: "https://jira.example.com", Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) { return "ok", nil }},
 	})
-	shouldExecute := (&Conversations{}).shouldAutoExecuteTool(&llm.Context{Tools: store}, true)
+	shouldExecute := testTurnPolicy(&Conversations{}, true).autoExecute(&llm.Context{Tools: store})
 
 	cases := []struct {
 		name           string

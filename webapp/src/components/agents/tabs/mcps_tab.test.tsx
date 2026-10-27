@@ -37,11 +37,15 @@ jest.mock('@/hooks/use_mcp_connection_events', () => ({
     useMCPConnectionEvents: jest.fn(),
 }));
 
-// OverlayTrigger renders the overlay alongside children so tests can assert the tooltip text.
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
+// WithTooltip renders its title alongside children so tests can assert the tooltip text.
+jest.mock('@mattermost/shared/components/tooltip', () => ({
+    WithTooltip: ({children, title}: {children: React.ReactNode; title?: React.ReactNode}) => (
+        <>
+            {children}
+            <div>{title}</div>
+        </>
+    ),
+}));
 
 const mockedGetUserMCPTools = getUserMCPTools as unknown as jest.Mock;
 

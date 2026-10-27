@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
@@ -22,6 +23,7 @@ import (
 	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
+	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/stretchr/testify/assert"
@@ -52,6 +54,7 @@ func (p *noToolsTestContextConfigProvider) GetServiceByID(string) (llm.ServiceCo
 
 type noToolsStreamingService struct {
 	newDMCalls int
+	dmPosts    []*model.Post
 }
 
 func (s *noToolsStreamingService) StreamToNewPost(context.Context, string, string, *llm.TextStreamResult, *model.Post, string) error {
@@ -60,6 +63,7 @@ func (s *noToolsStreamingService) StreamToNewPost(context.Context, string, strin
 
 func (s *noToolsStreamingService) StreamToNewDM(_ context.Context, botID string, _ *llm.TextStreamResult, _ string, post *model.Post, _ string) error {
 	s.newDMCalls++
+	s.dmPosts = append(s.dmPosts, post)
 	post.Id = "response-post-id"
 	post.ChannelId = model.GetDMNameFromIds("user12345678901234567890ab", botID)
 	return nil
@@ -368,4 +372,73 @@ func TestHandleIntervalSetsConversationRootPostID(t *testing.T) {
 		"interval summary must set RootPostID so the RHS history can navigate to it; without this, the RHS filter drops the entry")
 	assert.Equal(t, "response-post-id", *conv.RootPostID,
 		"RootPostID should match the post ID assigned by the streaming service")
+}
+
+// TestChannelAnalysisPostsRecordTheAnalyzedChannel pins that the posts
+// answering a channel analysis or interval summary record which channel they
+// analyzed, so continuing them can re-check the requester's access to it, and
+// are marked non-regenerable so the UI does not offer a regenerate that the
+// server rejects.
+func TestChannelAnalysisPostsRecordTheAnalyzedChannel(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name     string
+		path     string
+		body     string
+		mcpTools []llm.Tool
+		setup    func(mmClient *mmapimocks.MockClient)
+	}{
+		{
+			name: "channel analysis",
+			path: "/channel/" + testChannelID + "/analyze",
+			body: `{"analysis_type":"custom","prompt":"summarize this channel"}`,
+			mcpTools: []llm.Tool{
+				{Name: "mattermost__read_channel", ServerOrigin: mcp.EmbeddedClientKey},
+				{Name: "mattermost__get_channel_info", ServerOrigin: mcp.EmbeddedClientKey},
+			},
+		},
+		{
+			name: "interval summary",
+			path: "/channel/" + testChannelID + "/interval",
+			body: `{"start_time":1,"end_time":0,"preset_prompt":"summarize_range"}`,
+			setup: func(mmClient *mmapimocks.MockClient) {
+				channelPost := &model.Post{Id: "post-1", ChannelId: testChannelID, UserId: testOtherUserID, Message: "hello", CreateAt: 2}
+				mmClient.On("GetPostsSince", testChannelID, int64(1)).Return(&model.PostList{
+					Order: []string{"post-1"},
+					Posts: map[string]*model.Post{"post-1": channelPost},
+				}, nil)
+				mmClient.On("GetUser", testOtherUserID).Return(&model.User{Id: testOtherUserID, Username: "author"}, nil)
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mmClient := mmapimocks.NewMockClient(t)
+			e, streamingService, _ := setupNoToolsAPI(t, &noToolsTestMCPProvider{tools: tc.mcpTools}, mmClient)
+			defer e.Cleanup(t)
+
+			e.mockAPI.On("GetChannel", testChannelID).Return(&model.Channel{Id: testChannelID, Type: model.ChannelTypeOpen, TeamId: "teamid"}, nil)
+			e.mockAPI.On("GetTeam", "teamid").Return(&model.Team{Id: "teamid", Name: "team"}, nil)
+			e.mockAPI.On("HasPermissionToChannel", testUserID, testChannelID, model.PermissionReadChannel).Return(true)
+			e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Username: "requester", Locale: "en"}, nil)
+			if tc.setup != nil {
+				tc.setup(mmClient)
+			}
+
+			request := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
+			request.Header.Add("Mattermost-User-ID", testUserID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+
+			require.Equal(t, http.StatusOK, recorder.Result().StatusCode, recorder.Body.String())
+			require.Len(t, streamingService.dmPosts, 1)
+			post := streamingService.dmPosts[0]
+			assert.Equal(t, testChannelID, post.GetProp(conversations.AnalyzedChannelIDProp))
+			assert.Nil(t, post.GetProp(conversations.ThreadIDProp), "a channel analysis analyzed no thread")
+			assert.NotNil(t, post.GetProp(streaming.NoRegen), "a channel analysis cannot be regenerated")
+		})
+	}
 }

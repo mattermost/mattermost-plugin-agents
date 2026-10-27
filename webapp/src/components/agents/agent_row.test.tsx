@@ -29,10 +29,14 @@ jest.mock('@/client', () => ({
     getProfilePictureUrl: () => 'http://example.com/avatar.png',
 }));
 
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
+jest.mock('@mattermost/shared/components/tooltip', () => ({
+    WithTooltip: ({children, title}: {children: React.ReactNode; title?: React.ReactNode}) => (
+        <>
+            {children}
+            <div>{title}</div>
+        </>
+    ),
+}));
 
 function makeAgent(): UserAgent {
     return {
@@ -121,6 +125,7 @@ describe('AgentRow inactive badge', () => {
                 canManage={false}
                 onEdit={noop}
                 onDelete={noop}
+                onExport={noop}
             />,
         );
 
@@ -143,6 +148,7 @@ describe('AgentRow inactive badge', () => {
                 canManage={true}
                 onEdit={noop}
                 onDelete={noop}
+                onExport={noop}
             />,
         );
 
@@ -152,11 +158,13 @@ describe('AgentRow inactive badge', () => {
 
 describe('AgentRow actions menu', () => {
     test.each([
-        {action: 'Edit', expectEdit: 1, expectDelete: 0},
-        {action: 'Delete', expectEdit: 0, expectDelete: 1},
-    ])('$action runs only its own callback', ({action, expectEdit, expectDelete}) => {
+        {action: 'Edit', expectEdit: 1, expectDelete: 0, expectExport: 0},
+        {action: 'Export', expectEdit: 0, expectDelete: 0, expectExport: 1},
+        {action: 'Delete', expectEdit: 0, expectDelete: 1, expectExport: 0},
+    ])('$action runs only its own callback', ({action, expectEdit, expectDelete, expectExport}) => {
         const onEdit = jest.fn();
         const onDelete = jest.fn();
+        const onExport = jest.fn();
         render(
             <AgentRow
                 agent={makeAgent()}
@@ -165,6 +173,7 @@ describe('AgentRow actions menu', () => {
                 canManage={true}
                 onEdit={onEdit}
                 onDelete={onDelete}
+                onExport={onExport}
             />,
         );
 
@@ -173,6 +182,7 @@ describe('AgentRow actions menu', () => {
 
         expect(onEdit).toHaveBeenCalledTimes(expectEdit);
         expect(onDelete).toHaveBeenCalledTimes(expectDelete);
+        expect(onExport).toHaveBeenCalledTimes(expectExport);
     });
 
     test('Enter on the actions button opens the menu without editing the agent', () => {
@@ -185,11 +195,29 @@ describe('AgentRow actions menu', () => {
                 canManage={true}
                 onEdit={onEdit}
                 onDelete={noop}
+                onExport={noop}
             />,
         );
 
         fireEvent.keyDown(screen.getByRole('button', {name: 'Agent actions'}), {key: 'Enter'});
 
         expect(onEdit).not.toHaveBeenCalled();
+    });
+
+    test('has no actions menu, and so no Export, for read-only rows', () => {
+        render(
+            <AgentRow
+                agent={makeAgent()}
+                services={[availableService]}
+                servicesLoaded={true}
+                canManage={false}
+                onEdit={noop}
+                onDelete={noop}
+                onExport={noop}
+            />,
+        );
+
+        expect(screen.queryByRole('button', {name: 'Agent actions'})).toBeNull();
+        expect(screen.queryByRole('button', {name: 'Export'})).toBeNull();
     });
 });

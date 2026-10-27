@@ -99,6 +99,6 @@ func TestHandleSummarizeTranscriptionDeniedByFilePolicy(t *testing.T) {
 	select {
 	case <-workerDone:
 	case <-time.After(2 * time.Second):
-		t.Fatal("denied-path UpdatePost was not called; the transcription worker never finished")
+		require.FailNow(t, "denied-path UpdatePost was not called; the transcription worker never finished")
 	}
 }

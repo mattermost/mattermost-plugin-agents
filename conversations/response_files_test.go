@@ -161,7 +161,7 @@ func TestDecorateStreamAttachesSandboxFilesOnlyFromActiveContext(t *testing.T) {
 
 	client := mocks.NewMockClient(t)
 	client.On("GetConfig").Return(&model.Config{}).Twice()
-	client.On("HasPermissionToChannel", "user-id", channelID, model.PermissionUploadFile).Return(true).Once()
+	client.On("HasPermissionToChannel", testRequesterID, channelID, model.PermissionUploadFile).Return(true).Once()
 	client.On("UploadFile", mock.Anything, "active.txt", channelID).
 		Return(&model.FileInfo{Id: "mm-active", Name: "active.txt"}, nil).Once()
 
@@ -176,7 +176,7 @@ func TestDecorateStreamAttachesSandboxFilesOnlyFromActiveContext(t *testing.T) {
 
 	activeContext := &llm.Context{
 		Channel:        &model.Channel{Id: channelID},
-		RequestingUser: &model.User{Id: "user-id"},
+		RequestingUser: &model.User{Id: testRequesterID},
 	}
 	activeContext.AddSandboxFiles(llm.ProviderFileReference{ID: "active", ProviderRoute: "anthropic"})
 

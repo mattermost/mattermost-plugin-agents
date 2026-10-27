@@ -745,7 +745,9 @@ describe('LLMBotPost rounds awaiting a decision', () => {
         mockUseSelector.mockImplementation((selector) => selector({
             entities: {
                 channels: {channels: {channel_1: {type: 'O'}}},
+                general: {config: {}, license: {}},
                 posts: {posts: {}},
+                preferences: {myPreferences: {}},
                 users: {currentUserId: 'user_1', profiles: {requester_1: {username: 'alice'}}},
             },
         }));
@@ -1384,6 +1386,116 @@ describe('LLMBotPost conversation_id prop handling', () => {
         expect(() => renderPost(makePost('', {conversation_id: value}))).not.toThrow();
 
         expect(mockUseConversation).toHaveBeenCalledWith(void 0); // eslint-disable-line no-void
+    });
+});
+
+describe('LLMBotPost stopped generation notice', () => {
+    function inChannelWithRequester(teammateNameDisplay = 'username') {
+        mockUseSelector.mockImplementation((selector) => selector({
+            entities: {
+                channels: {channels: {channel_1: {type: 'O'}}},
+                general: {config: {TeammateNameDisplay: teammateNameDisplay}, license: {}},
+                posts: {posts: {}},
+                preferences: {myPreferences: {}},
+                users: {
+                    currentUserId: 'user_1',
+                    profiles: {requester_1: {username: 'alice', nickname: '', first_name: 'Alice', last_name: 'Smith'}},
+                },
+            },
+        }));
+    }
+
+    function stoppedNotice() {
+        return screen.queryByTestId('llm-bot-generation-stopped')?.textContent ?? null;
+    }
+
+    test.each([
+        {name: 'the requester', requester: 'user_1', nameDisplay: 'username', expected: 'You stopped generating this response.'},
+        {name: 'an onlooker', requester: 'requester_1', nameDisplay: 'username', expected: 'alice stopped generating this response.'},
+        {name: 'an onlooker who shows full names', requester: 'requester_1', nameDisplay: 'full_name', expected: 'Alice Smith stopped generating this response.'},
+        {name: 'an onlooker without the requester profile', requester: 'requester_2', nameDisplay: 'username', expected: 'The requester stopped generating this response.'},
+    ])('tells $name that the response was stopped', ({requester, nameDisplay, expected}) => {
+        inChannelWithRequester(nameDisplay);
+        mockUseConversation.mockReturnValue({conversation: makeConversation([], requester), loading: false, error: null});
+
+        renderPost(makePost('Partial answer', {generation_stopped: true}));
+
+        expect(stoppedNotice()).toBe(expected);
+        expect(screen.getByText('Partial answer')).toBeTruthy();
+    });
+
+    test('shows no notice on a response that was not stopped', () => {
+        inChannelWithRequester();
+        mockUseConversation.mockReturnValue({conversation: makeConversation([], 'requester_1'), loading: false, error: null});
+
+        renderPost(makePost('Full answer'));
+
+        expect(stoppedNotice()).toBeNull();
+    });
+
+    test('shows the stop instead of Working... when it came before any text', () => {
+        inChannelWithRequester();
+        mockUseConversation.mockReturnValue({conversation: makeConversation([], 'requester_1'), loading: false, error: null});
+
+        renderPost(makePost('', {generation_stopped: true}));
+
+        expect(stoppedNotice()).toBe('alice stopped generating this response.');
+        expect(screen.queryByText('Working...')).toBeNull();
+    });
+
+    test('hides the notice while a new run streams onto the post', () => {
+        mockUseConversation.mockReturnValue({conversation: makeConversation([]), loading: false, error: null});
+        let listener: PostUpdateHandler | undefined;
+        renderPost(makePost('Partial answer', {generation_stopped: true}), (postID, listenerID, handler) => {
+            listener = handler;
+        });
+        expect(stoppedNotice()).not.toBeNull();
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'New answer'}));
+        });
+
+        expect(stoppedNotice()).toBeNull();
+    });
+
+    test('tells the requester right away when they press Stop Generating', () => {
+        mockUseConversation.mockReturnValue({conversation: makeConversation([]), loading: false, error: null});
+        let listener: PostUpdateHandler | undefined;
+        renderPost(makePost(), (postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Partial'}));
+        });
+        expect(stoppedNotice()).toBeNull();
+
+        fireEvent.click(screen.getByTestId('stop-generating-button'));
+
+        expect(stoppedNotice()).toBe('You stopped generating this response.');
+    });
+
+    test('tells the requester right away when they stop a regenerate', () => {
+        mockUseConversation.mockReturnValue({
+            conversation: makeConversation([makeTurn({content: [{type: 'text', text: 'Old answer'}]})]),
+            loading: false,
+            error: null,
+        });
+        let listener: PostUpdateHandler | undefined;
+        renderPost(makePost('Old answer'), (postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        fireEvent.click(screen.getByTestId('regenerate-button'));
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'New partial'}));
+        });
+        fireEvent.click(screen.getByTestId('stop-generating-button'));
+
+        expect(stoppedNotice()).toBe('You stopped generating this response.');
     });
 });
 

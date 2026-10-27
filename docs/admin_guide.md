@@ -78,6 +78,16 @@ Enter a comma-separated list of hostnames, for example `mattermost.atlassian.net
 
 A link to a domain that isn't on the allowlist is shown as plain text followed by its destination (for example, `Sign in : https://unlisted.example/login`). Users can still see where the link points, but it isn't clickable.
 
+### Agent version history limit
+
+Every save of an agent records a version in its history. By default every version is kept.
+
+- **System Console labels**: **Limit agent version history** and **Versions to keep per agent**
+- **Configuration key**: `agentVersionsToKeep` (`0` keeps every version)
+- **Default value**: `0`
+
+When a limit is set, each agent keeps only its most recent versions, including the current one. Saving the setting deletes older versions of every agent, and each later save of an agent deletes the versions that fall outside the limit. Deleted versions can't be recovered. Agent managers can also delete versions themselves; see [Deleting versions](features/managing_agents.md#deleting-versions).
+
 ### Service configuration
 
 Configure an LLM provider (Service) for your Agents integration. Services manage the connection to the LLM provider, including authentication, model defaults, and optional fallback behavior. You can create multiple services for different providers or configurations, and share them across multiple agents.
@@ -166,7 +176,7 @@ If you have unsaved changes and try to leave the agent configuration view by sel
 | **Agent Avatar** | Custom image for the agent |
 | **Service** | Select a configured Service from the dropdown |
 | **Model** | (Optional) Override the service's default model for this agent |
-| **Max tool turns** | Maximum consecutive tool-call/execute rounds per response. Default **30**, range **1–250**. Lower for smaller models that loop on tool calls; raise for agents that chain many MCP tools per turn. |
+| **Max tool turns** | Maximum consecutive tool-call/execute rounds per response; after the last round the agent answers without tools. Default **30**, range **1–250**. Lower for smaller models that loop on tool calls; raise for agents that chain many MCP tools per turn. |
 | **Custom Instructions** | Custom instructions that define the agent's personality and capabilities |
 | **Enable Vision** | Enable Vision to allow the agent to process images. Requires a compatible model and service. |
 | **Enable Tools** | Enables tool use for integrations and other tool-based capabilities. Disable this only for models or use cases where tool calling shouldn't be available. Some features won't work without tools. |
@@ -315,8 +325,8 @@ To obtain Google Custom Search credentials:
 
 #### Usage and limitations
 
-- Agents are limited to **3 web searches per conversation** to manage API costs and prevent LLMs from looping indefinitely
-- Agents cannot repeat the same search query within a conversation
+- Agents are limited to **3 web searches per response** to manage API costs and prevent LLMs from looping indefinitely
+- Agents cannot repeat the same search query within a response
 - Search results include clickable citations that link back to source websites
 - Domain denylisting applies to all providers and is enforced for _web page fetching only_. 
 

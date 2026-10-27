@@ -31,7 +31,7 @@ func newSanitizingLogger(inner schemas.Logger, apiKeys ...string) schemas.Logger
 func newBifrostClient(account schemas.Account, apiKeys ...string) (*bifrostcore.Bifrost, error) {
 	return bifrostcore.Init(context.Background(), schemas.BifrostConfig{
 		Account:    account,
-		LLMPlugins: []schemas.LLMPlugin{reasoningHopPlugin{}},
+		LLMPlugins: []schemas.LLMPlugin{hopRequestPlugin{}},
 		Logger:     newSanitizingLogger(bifrostcore.NewDefaultLogger(schemas.LogLevelInfo), apiKeys...),
 		Tracer:     newOTelTracer(),
 	})

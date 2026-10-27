@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 )
@@ -31,7 +32,7 @@ func newRevocationServer(t *testing.T, probe *revocationProbe) *httptest.Server 
 		probe.status = http.StatusOK
 	}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.NoError(t, r.ParseForm())
+		assert.NoError(t, r.ParseForm())
 		probe.hit.Store(true)
 		probe.token.Store(r.Form.Get("token"))
 		probe.hint.Store(r.Form.Get("token_type_hint"))

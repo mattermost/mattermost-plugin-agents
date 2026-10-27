@@ -18,6 +18,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
@@ -531,10 +532,126 @@ type mockAgentStore struct {
 
 	// updateErrs, when non-empty, pops errors on consecutive UpdateAgent calls.
 	updateErrs []error
+
+	// versions holds each agent's versions, oldest first, recorded with the
+	// same rules as the real store.
+	versions map[string][]store.AgentVersionDetail
 }
 
 func newMockAgentStore() *mockAgentStore {
-	return &mockAgentStore{agents: make(map[string]*llm.BotConfig)}
+	return &mockAgentStore{
+		agents:   make(map[string]*llm.BotConfig),
+		versions: make(map[string][]store.AgentVersionDetail),
+	}
+}
+
+func mockVersionSnapshot(cfg *llm.BotConfig) llm.BotConfig {
+	snap := *cloneBotConfig(cfg)
+	snap.BotUserID = ""
+	snap.CreatorID = ""
+	snap.CreateAt, snap.UpdateAt, snap.DeleteAt = 0, 0, 0
+	nilIfEmpty := func(s []string) []string {
+		if len(s) == 0 {
+			return nil
+		}
+		return s
+	}
+	snap.ChannelIDs = nilIfEmpty(snap.ChannelIDs)
+	snap.UserIDs = nilIfEmpty(snap.UserIDs)
+	snap.TeamIDs = nilIfEmpty(snap.TeamIDs)
+	snap.AdminUserIDs = nilIfEmpty(snap.AdminUserIDs)
+	snap.EnabledNativeTools = nilIfEmpty(snap.EnabledNativeTools)
+	if len(snap.EnabledMCPTools) == 0 {
+		snap.EnabledMCPTools = nil
+	}
+	return snap
+}
+
+// recordVersion appends cfg as the next version of its agent. Agents seeded
+// directly into agents (no versions yet) first get prev recorded as version 1.
+func (m *mockAgentStore) recordVersion(cfg, prev *llm.BotConfig, meta store.AgentVersionMeta) {
+	history := m.versions[cfg.ID]
+	if len(history) == 0 && prev != nil {
+		history = append(history, store.AgentVersionDetail{
+			Version:       1,
+			Source:        store.AgentVersionSourceInitial,
+			CreateAt:      prev.UpdateAt,
+			ChangedFields: []string{},
+			Config:        mockVersionSnapshot(prev),
+		})
+	}
+	snap := mockVersionSnapshot(cfg)
+	changed := []string{}
+	if len(history) > 0 {
+		changed = audit.ChangedJSONKeys(history[len(history)-1].Config, snap)
+	}
+	history = append(history, store.AgentVersionDetail{
+		Version:             mockLatestVersion(history) + 1,
+		CreatedBy:           meta.ActorID,
+		CreateAt:            cfg.UpdateAt,
+		Source:              meta.Source,
+		RestoredFromVersion: meta.RestoredFromVersion,
+		ChangedFields:       changed,
+		Config:              snap,
+	})
+	m.versions[cfg.ID] = history
+}
+
+func (m *mockAgentStore) ListAgentVersions(agentID string, before, limit int) (store.AgentVersionPage, error) {
+	if limit < 1 {
+		return store.AgentVersionPage{}, fmt.Errorf("invalid agent version page size %d", limit)
+	}
+	history := m.versions[agentID]
+	page := store.AgentVersionPage{CurrentVersion: mockLatestVersion(history), Versions: []store.AgentVersion{}}
+	for _, h := range slices.Backward(history) {
+		if before > 0 && h.Version >= before {
+			continue
+		}
+		if len(page.Versions) == limit {
+			page.HasMore = true
+			break
+		}
+		page.Versions = append(page.Versions, h.AgentVersion)
+	}
+	return page, nil
+}
+
+func (m *mockAgentStore) GetAgentVersion(agentID string, version int) (*store.AgentVersionDetail, error) {
+	for _, detail := range m.versions[agentID] {
+		if detail.Version == version {
+			detail.Config = *cloneBotConfig(&detail.Config)
+			return &detail, nil
+		}
+	}
+	return nil, nil
+}
+
+func mockLatestVersion(history []store.AgentVersionDetail) int {
+	if len(history) == 0 {
+		return 0
+	}
+	return history[len(history)-1].Version
+}
+
+func (m *mockAgentStore) DeleteAgentVersions(agentID string, versions []int) (int64, error) {
+	history := m.versions[agentID]
+	if slices.Contains(versions, mockLatestVersion(history)) {
+		return 0, store.ErrCurrentAgentVersion
+	}
+	kept := slices.DeleteFunc(slices.Clone(history), func(v store.AgentVersionDetail) bool {
+		return slices.Contains(versions, v.Version)
+	})
+	m.versions[agentID] = kept
+	return int64(len(history) - len(kept)), nil
+}
+
+func (m *mockAgentStore) DeletePreviousAgentVersions(agentID string) (int64, error) {
+	history := m.versions[agentID]
+	if len(history) == 0 {
+		return 0, nil
+	}
+	m.versions[agentID] = history[len(history)-1:]
+	return int64(len(history) - 1), nil
 }
 
 // cloneBotConfig returns a deep copy so API callers cannot mutate mock store internals via returned pointers.
@@ -564,7 +681,7 @@ func cloneBotConfig(src *llm.BotConfig) *llm.BotConfig {
 	return &dst
 }
 
-func (m *mockAgentStore) CreateAgent(cfg *llm.BotConfig) error {
+func (m *mockAgentStore) CreateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error {
 	if m.createErr != nil {
 		return m.createErr
 	}
@@ -573,6 +690,7 @@ func (m *mockAgentStore) CreateAgent(cfg *llm.BotConfig) error {
 	cfg.CreateAt = now
 	cfg.UpdateAt = now
 	m.agents[cfg.ID] = cloneBotConfig(cfg)
+	m.recordVersion(cfg, nil, meta)
 	return nil
 }
 
@@ -617,7 +735,7 @@ func (m *mockAgentStore) CountActiveAgents() (int, error) {
 	return count, nil
 }
 
-func (m *mockAgentStore) UpdateAgent(cfg *llm.BotConfig) error {
+func (m *mockAgentStore) UpdateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error {
 	if len(m.updateErrs) > 0 {
 		err := m.updateErrs[0]
 		m.updateErrs = m.updateErrs[1:]
@@ -634,6 +752,7 @@ func (m *mockAgentStore) UpdateAgent(cfg *llm.BotConfig) error {
 	}
 	cfg.UpdateAt = time.Now().UnixMilli()
 	m.agents[cfg.ID] = cloneBotConfig(cfg)
+	m.recordVersion(cfg, existing, meta)
 	return nil
 }
 
@@ -643,6 +762,7 @@ func (m *mockAgentStore) DeleteAgent(id string) error {
 		return fmt.Errorf("agent %q not found or already deleted", id)
 	}
 	cfg.DeleteAt = time.Now().UnixMilli()
+	delete(m.versions, id)
 	return nil
 }
 
@@ -772,6 +892,10 @@ func (e *TestEnvironment) setBots(registry ...*bots.Bot) {
 	e.bots.SetBotsForTesting(registry)
 }
 
+// askForEveryTool is a tool policy checker that never lets a tool run
+// without approval.
+var askForEveryTool = mcp.ToolPolicyFunc(func(string, string) (string, bool) { return mcp.ToolPolicyAsk, false })
+
 func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	mockAPI := &plugintest.API{}
 	noopMetrics := &metrics.NoopMetrics{}
@@ -821,6 +945,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		nil,
 		nil,
 		cfg,
+		askForEveryTool,
 	)
 
 	api := New(
@@ -983,10 +1108,6 @@ func TestBotRequiredRoutesAcceptBotID(t *testing.T) {
 		"analyze post":            "/post/postid/analyze",
 		"transcribe":              "/post/postid/transcribe/file/fileid",
 		"summarize_transcription": "/post/postid/summarize_transcription",
-		"stop":                    "/post/postid/stop",
-		"regenerate":              "/post/postid/regenerate",
-		"tool_call":               "/post/postid/tool_call",
-		"tool_result":             "/post/postid/tool_result",
 		"postback_summary":        "/post/postid/postback_summary",
 		"loop_in_agent":           "/post/postid/loop_in_agent",
 		"analyze channel":         "/channel/channelid/analyze",
@@ -1202,6 +1323,11 @@ func TestPostRouter(t *testing.T) {
 				},
 			},
 		} {
+			// The agent-post routes check access to the post's agent in the
+			// service; TestPostResumeRoutesUseThePostsAgent covers them.
+			if name == "user not allowed" && (urlName == "stop" || urlName == "regenerate") {
+				continue
+			}
 			t.Run(urlName+" "+name, func(t *testing.T) {
 				e := SetupTestEnvironment(t)
 				defer e.Cleanup(t)
@@ -1210,7 +1336,10 @@ func TestPostRouter(t *testing.T) {
 
 				e.setupTestBot(test.botconfig)
 
+				// The agent-post routes resolve the agent from the post's
+				// author; the others ignore it.
 				e.mockAPI.On("GetPost", "postid").Return(&model.Post{
+					UserId:    testBotUserID,
 					ChannelId: "channelid",
 				}, nil)
 				e.mockAPI.On("LogError", mock.Anything).Maybe()
@@ -1357,7 +1486,7 @@ func TestEmptyBodyCheckerInApi(t *testing.T) {
 			defer e.Cleanup(t)
 
 			e.mockAPI.On("LogDebug", "Request rejected", "method", http.MethodPost, "path", mock.Anything, "status", http.StatusBadRequest, "error", "request body must be empty")
-			e.mockAPI.On("GetPost", mock.Anything).Return(&model.Post{}, nil).Maybe()
+			e.mockAPI.On("GetPost", mock.Anything).Return(&model.Post{UserId: testBotUserID}, nil).Maybe()
 			e.mockAPI.On("GetChannel", mock.Anything).Return(&model.Channel{}, nil).Maybe()
 			e.mockAPI.On("HasPermissionToChannel", mock.Anything, mock.Anything, model.PermissionReadChannel).Return(true).Maybe()
 			e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageSystem).Return(true).Maybe()

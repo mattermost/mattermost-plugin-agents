@@ -24,6 +24,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
@@ -484,6 +485,50 @@ func (a *API) refreshBotsAndNotify(agentID string) error {
 	return ensureErr
 }
 
+// requestFieldsFromConfig returns the request fields that reproduce cfg's
+// request-controlled configuration when applied.
+func requestFieldsFromConfig(cfg *llm.BotConfig) AgentRequestFields {
+	return AgentRequestFields{
+		DisplayName:             cfg.DisplayName,
+		ServiceID:               cfg.ServiceID,
+		CustomInstructions:      cfg.CustomInstructions,
+		ChannelAccessLevel:      int(cfg.ChannelAccessLevel),
+		ChannelIDs:              cfg.ChannelIDs,
+		UserAccessLevel:         int(cfg.UserAccessLevel),
+		UserIDs:                 cfg.UserIDs,
+		TeamIDs:                 cfg.TeamIDs,
+		AdminUserIDs:            cfg.AdminUserIDs,
+		EnabledMCPTools:         cfg.EnabledMCPTools,
+		AutoEnableNewMCPTools:   cfg.AutoEnableNewMCPTools,
+		MCPDynamicToolLoading:   cfg.MCPDynamicToolLoading,
+		UseServiceAccountAuth:   cfg.UseServiceAccountAuth,
+		Model:                   cfg.Model,
+		EnableVision:            cfg.EnableVision,
+		DisableTools:            cfg.DisableTools,
+		EnabledNativeTools:      cfg.EnabledNativeTools,
+		ReasoningEnabled:        cfg.ReasoningEnabled,
+		ReasoningEffort:         cfg.ReasoningEffort,
+		ThinkingBudget:          cfg.ThinkingBudget,
+		StructuredOutputEnabled: cfg.StructuredOutputEnabled, //nolint:staticcheck // deprecated field is still persisted verbatim
+		MaxToolTurns:            cfg.MaxToolTurns,
+	}
+}
+
+// bindAgentRequestJSON binds the JSON body, capped at MaxAgentRequestBodyBytes,
+// into dst. It writes the abort response (413 or 400) and returns false on failure.
+func bindAgentRequestJSON(c *gin.Context, dst any) bool {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxAgentRequestBodyBytes)
+	if err := c.ShouldBindJSON(dst); err != nil {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			abortAgentRequest(c, http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
+			return false
+		}
+		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return false
+	}
+	return true
+}
+
 // handleCreateAgent handles POST /agents: creates the bot user and persisted agent config.
 func (a *API) handleCreateAgent(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
@@ -497,15 +542,8 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxAgentRequestBodyBytes)
-
 	var req CreateAgentRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			abortAgentRequest(c, http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
-			return
-		}
-		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+	if !bindAgentRequestJSON(c, &req) {
 		return
 	}
 
@@ -563,7 +601,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 
 	agent := buildAgentConfigForCreate(req, userID, mmBot.UserId)
 
-	if err := a.agentStore.CreateAgent(agent); err != nil {
+	if err := a.agentStore.CreateAgent(agent, store.AgentVersionMeta{ActorID: userID, Source: store.AgentVersionSourceCreate}); err != nil {
 		a.discardUnusedBot(mmBot.UserId)
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to persist agent: %w", err))
 		return
@@ -719,18 +757,23 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxAgentRequestBodyBytes)
-
 	var req UpdateAgentRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			abortAgentRequest(c, http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
-			return
-		}
-		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+	if !bindAgentRequestJSON(c, &req) {
 		return
 	}
 
+	updated, ok := a.updateAgent(c, userID, cfg, req, store.AgentVersionMeta{ActorID: userID, Source: store.AgentVersionSourceUpdate})
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, updated)
+}
+
+// updateAgent validates req against the stored agent cfg (already loaded
+// through loadManageableAgent) and persists the update as a new version
+// recorded with meta. It writes the abort response and returns false on
+// failure; on success bots are refreshed and the caller writes the response.
+func (a *API) updateAgent(c *gin.Context, userID string, cfg *llm.BotConfig, req UpdateAgentRequest, meta store.AgentVersionMeta) (*llm.BotConfig, bool) {
 	// Shallow copy is safe: applyAgentUpdateRequest replaces slice headers rather than mutating elements.
 	proposed := *cfg
 	displayNameChanged := applyAgentUpdateRequest(&proposed, req)
@@ -741,26 +784,26 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 
 	if serviceAccountChangeNeedsAdmin(*cfg, proposed) && !isSystemAdmin(a.pluginAPI, userID) {
 		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
-		return
+		return nil, false
 	}
 
 	if usernameChanged {
 		audit.AddParam(auditRec(c), "new_agent_name", audit.TruncateID(req.Username))
 		if !validUsernameRe.MatchString(req.Username) {
 			abortAgentRequest(c, http.StatusBadRequest, errInvalidAgentUsername)
-			return
+			return nil, false
 		}
 		if cfg.BotUserID == "" {
 			abortAgentRequest(c, http.StatusBadRequest, errors.New("this agent has no bot account to rename"))
-			return
+			return nil, false
 		}
 	}
 	if _, ok := a.validateAgentServiceID(c, req.ServiceID); !ok {
-		return
+		return nil, false
 	}
 
 	if !a.checkAgentLicenseGates(c, proposed, cfg) {
-		return
+		return nil, false
 	}
 
 	// Snapshot the stored config for the audit field diff, then adopt the
@@ -776,12 +819,12 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 
 	if err := cfg.Validate(); err != nil {
 		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))
-		return
+		return nil, false
 	}
 
 	if err := a.accessChecker.ValidateAgentWrite(c.Request.Context(), userID, cfg, &prev); err != nil {
 		abortAgentRequest(c, statusForAccessErr(err), err)
-		return
+		return nil, false
 	}
 
 	// The bot account is renamed first so a taken username fails the request
@@ -792,11 +835,11 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 	if usernameChanged {
 		if err := a.bindAgentConfigReferences(cfg.BotUserID, prev.Name); err != nil {
 			abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to point settings at the agent before renaming it: %w", err))
-			return
+			return nil, false
 		}
 		renamed, ok := a.renameAgentBot(c, cfg.BotUserID, cfg.Name)
 		if !ok {
-			return
+			return nil, false
 		}
 		// From here a failure can leave the bot account, the stored agent, and
 		// the registries disagreeing on the name (a rollback or the revert can
@@ -819,10 +862,10 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		}
 	}
 
-	if err := a.agentStore.UpdateAgent(cfg); err != nil {
+	if err := a.agentStore.UpdateAgent(cfg, meta); err != nil {
 		revertRename()
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to update agent: %w", err))
-		return
+		return nil, false
 	}
 
 	// Switching away from attribute-based access: delete the agent policy.
@@ -835,13 +878,13 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		auditPolicyMutation(c, accesscontrol.ResourceTypeAgent, cfg.ID)
 
 		if err := a.accessChecker.DeletePolicy(c.Request.Context(), userID, accesscontrol.ResourceTypeAgent, cfg.ID); err != nil && !errors.Is(err, accesscontrol.ErrPolicyNotFound) {
-			if rollbackErr := a.agentStore.UpdateAgent(&prev); rollbackErr != nil {
+			if rollbackErr := a.agentStore.UpdateAgent(&prev, store.SystemAgentVersionMeta()); rollbackErr != nil {
 				a.pluginAPI.Log.Error("Failed to rollback agent after access policy deletion failure", "agent_id", cfg.ID, "rollback_error", rollbackErr.Error(), "delete_error", err.Error())
 			} else {
 				revertRename()
 			}
 			abortPolicyRequest(c, fmt.Errorf("failed to delete access policy: %w", err))
-			return
+			return nil, false
 		}
 	}
 
@@ -856,7 +899,7 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, cfg)
+	return cfg, true
 }
 
 // handleDeleteAgent handles DELETE /agents/:agentid (soft-delete and deactivate bot).

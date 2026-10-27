@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { OpenAIMockContainer, RunOpenAIMocks, responseTest } from 'helpers/openai-mock';
@@ -14,19 +15,19 @@ import { adminUsername, adminPassword } from 'helpers/system-console-container';
  * via the tool provider popover, and that the preference persists.
  */
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
 test.describe('User Provider Toggle', () => {
-    test.beforeAll(async () => {
-        mattermost = await RunToolConfigContainer();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
         await openAIMock.addCompletionMock(responseTest);
-    });
-
-    test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
     });
 
     test('should persist user provider preference via API', async ({ page }) => {

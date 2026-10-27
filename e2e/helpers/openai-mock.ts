@@ -1,5 +1,7 @@
 import {StartedTestContainer, GenericContainer, StartedNetwork, Network, Wait} from "testcontainers";
 
+import { withDeadline } from "./deadline";
+
 /**
  * Smocker matches request paths exactly. Bifrost may POST to /v1/chat/completions or /chat/completions.
  * Use a single path regex so we do not register two mocks with the same body matchers (which would
@@ -68,12 +70,13 @@ export class OpenAIMockContainer {
 	container: StartedTestContainer;
 
 	start = async (network: StartedNetwork) => {
-		this.container = await new GenericContainer(SMOCKER_IMAGE)
+		this.container = await withDeadline("Starting the Smocker container", 5 * 60000, () => new GenericContainer(SMOCKER_IMAGE)
 			.withExposedPorts(8081)
 			.withNetwork(network)
 			.withNetworkAliases("openai")
 			.withWaitStrategy(Wait.forHttp("/version", 8081))
-			.start()
+			.withStartupTimeout(120000)
+			.start())
 
 		await this.resetMocks();
 	}
@@ -101,6 +104,7 @@ export class OpenAIMockContainer {
 		try {
 			await fetch(`http://localhost:${this.container.getMappedPort(8081)}/reset`, {
 				method: "POST",
+				signal: AbortSignal.timeout(10000),
 			});
 		} catch (error) {
 			if (attempt >= maxAttempts - 1) {

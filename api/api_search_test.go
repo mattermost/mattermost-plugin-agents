@@ -47,7 +47,13 @@ func enabledSearchService(t *testing.T) *search.Search {
 // useSearchConversations swaps in a conversations service backed by client so
 // requests that pass validation reach the Mattermost client.
 func (e *TestEnvironment) useSearchConversations(client mmapi.Client) {
-	e.api.conversationsService = conversations.New(e.api.prompts, client, nil, e.api.contextBuilder, e.bots, nil, nil, nil, nil, e.config)
+	e.api.conversationsService = conversations.New(e.api.prompts, client, nil, e.api.contextBuilder, e.bots, nil, nil, nil, nil, e.config, askForEveryTool)
+}
+
+const searchDMChannelID = "searchdmchannel00000000000"
+
+func searchDMChannel() *model.Channel {
+	return &model.Channel{Id: searchDMChannelID, Type: model.ChannelTypeDirect, Name: model.GetDMNameFromIds(testBotUserID, testUserID)}
 }
 
 func postSearchRun(e *TestEnvironment, body []byte, botUsername string) *http.Response {
@@ -115,6 +121,7 @@ func TestHandleRunSearch(t *testing.T) {
 				e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID}, nil)
 
 				client := mmapimocks.NewMockClient(t)
+				client.On("GetDirectChannel", testUserID, testBotUserID).Return(searchDMChannel(), nil)
 				client.On("DM", testUserID, mock.Anything, mock.Anything).Return(errors.New("DM failed"))
 				e.useSearchConversations(client)
 			},
@@ -165,14 +172,13 @@ func TestHandleRunSearchWithoutEmbeddingSearch(t *testing.T) {
 			e.setupTestBot(llm.BotConfig{Name: "test-bot", DisplayName: "Test Bot"})
 			e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID}, nil)
 
-			const dmChannelID = "searchdmchannel00000000000"
 			client := mmapimocks.NewMockClient(t)
+			client.On("GetDirectChannel", testUserID, testBotUserID).Return(searchDMChannel(), nil)
 			client.On("DM", testUserID, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 				post := args.Get(2).(*model.Post)
 				post.Id = model.NewId()
-				post.ChannelId = dmChannelID
+				post.ChannelId = searchDMChannelID
 			}).Return(nil)
-			client.On("GetChannel", dmChannelID).Return(&model.Channel{Id: dmChannelID, Type: model.ChannelTypeDirect}, nil)
 			// Stop the background answer at its first step; this test only
 			// covers whether the search starts.
 			client.On("CreatePost", mock.Anything).Return(errors.New("stop"))
@@ -188,13 +194,13 @@ func TestHandleRunSearchWithoutEmbeddingSearch(t *testing.T) {
 			require.Equal(t, http.StatusOK, resp.StatusCode)
 			var body map[string]string
 			require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-			require.Equal(t, dmChannelID, body["channelid"])
+			require.Equal(t, searchDMChannelID, body["channelid"])
 			require.NotEmpty(t, body["postid"])
 
 			select {
 			case <-backgroundDone:
 			case <-time.After(10 * time.Second):
-				t.Fatal("background search never ran")
+				require.FailNow(t, "background search never ran")
 			}
 		})
 	}
@@ -261,6 +267,8 @@ func TestHandleRunSearchMissingUserHeader(t *testing.T) {
 	}
 }
 
+// A requester the agent blocks is refused before the search posts their
+// question in the agent's DM.
 func TestHandleRunSearchEnforcesUsageRestrictions(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -275,9 +283,14 @@ func TestHandleRunSearchEnforcesUsageRestrictions(t *testing.T) {
 		UserAccessLevel: llm.UserAccessLevelBlock,
 		UserIDs:         []string{testUserID},
 	})
+	e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID}, nil).Maybe()
+	client := mmapimocks.NewMockClient(t)
+	client.On("GetDirectChannel", testUserID, testBotUserID).Return(searchDMChannel(), nil).Maybe()
+	e.useSearchConversations(client)
 
 	bodyBytes, err := json.Marshal(SearchRequest{Query: "test query"})
 	require.NoError(t, err)
 
 	require.Equal(t, http.StatusForbidden, postSearchRun(e, bodyBytes, "restricted-bot").StatusCode)
+	client.AssertNotCalled(t, "DM", mock.Anything, mock.Anything, mock.Anything)
 }

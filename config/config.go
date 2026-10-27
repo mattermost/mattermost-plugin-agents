@@ -52,6 +52,9 @@ type Config struct {
 	// key=value pairs (e.g. "Authorization=Basic ..."). It is a credential:
 	// never log it or put it in spans or audit records.
 	OpenTelemetryHeaders string `json:"openTelemetryHeaders"`
+	// AgentVersionsToKeep is how many versions of each agent's history are
+	// kept; older versions are deleted. 0 keeps every version.
+	AgentVersionsToKeep int `json:"agentVersionsToKeep"`
 }
 
 type WebSearchConfig struct {

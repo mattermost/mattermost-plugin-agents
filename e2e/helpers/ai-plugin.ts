@@ -267,6 +267,10 @@ export class AIPlugin {
 
   async openChannelAnalysisPopover() {
     const popover = this.page.locator('.channel-summarize-popover');
+
+    // A popover that was just submitted stays visible while it fades out (it drops the
+    // `in` class first); treating it as open would act on a popover about to unmount.
+    await expect(this.page.locator('.channel-summarize-popover:not(.in)')).toHaveCount(0, { timeout: 10000 });
     if (await popover.isVisible().catch(() => false)) {
       return;
     }

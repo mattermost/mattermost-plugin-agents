@@ -110,7 +110,7 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 		ua.EnabledMCPTools = nil
 		ua.MCPDynamicToolLoading = bc.MCPDynamicToolLoading
 
-		if createErr := st.CreateAgent(&ua); createErr != nil {
+		if createErr := st.CreateAgent(&ua, store.SystemAgentVersionMeta()); createErr != nil {
 			return false, fmt.Errorf("failed to create user agent for legacy bot %q: %w", bc.Name, createErr)
 		}
 		byUsername[bc.Name] = struct{}{}

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,10 +26,10 @@ func TestGoogleProvider(t *testing.T) {
 	t.Run("successful search returns results", func(t *testing.T) {
 		// Mock Google API server
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			require.Equal(t, "GET", r.Method)
-			require.Equal(t, "test-key", r.URL.Query().Get("key"))
-			require.Equal(t, "test-cx", r.URL.Query().Get("cx"))
-			require.Equal(t, "golang programming", r.URL.Query().Get("q"))
+			assert.Equal(t, "GET", r.Method)
+			assert.Equal(t, "test-key", r.URL.Query().Get("key"))
+			assert.Equal(t, "test-cx", r.URL.Query().Get("cx"))
+			assert.Equal(t, "golang programming", r.URL.Query().Get("q"))
 
 			response := googleSearchResponse{
 				Items: []struct {
@@ -104,7 +105,7 @@ func TestGoogleProvider(t *testing.T) {
 	t.Run("respects result limit", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			limit := r.URL.Query().Get("num")
-			require.Equal(t, "3", limit, "Should send correct limit to API")
+			assert.Equal(t, "3", limit, "Should send correct limit to API")
 
 			response := googleSearchResponse{
 				Items: []struct {

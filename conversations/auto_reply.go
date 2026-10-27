@@ -5,9 +5,11 @@ package conversations
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -59,18 +61,16 @@ func (c *Conversations) handleAutoReply(ctx context.Context, setting *autoreply.
 		return fmt.Errorf("channel agent auto-reply is available at Enterprise Advanced and above: %w", ErrNoResponse)
 	}
 
-	// Re-check the bot still exists and is allowed: the bot may have been
-	// deleted or restricted after the setting was written. No-op quietly.
-	// handleMentions re-runs CheckUsageRestrictions, but a restriction failure
-	// surfaced from there would be logged at error level; the pre-check
-	// converts the expected "setting went stale" cases into quiet no-ops.
+	// The bot may have been deleted or restricted after the setting was
+	// written; both are expected staleness and decline quietly.
 	bot := c.bots.GetBotByID(setting.BotID)
 	if bot == nil {
 		return fmt.Errorf("auto-reply bot no longer exists: %w", ErrNoResponse)
 	}
-	if err := c.bots.CheckUsageRestrictions(ctx, post.UserId, bot, channel); err != nil {
+
+	err := c.handleMentions(ctx, bot, cloneWithAgentMention(post, bot.GetMMBot().Username), postingUser, channel)
+	if errors.Is(err, bots.ErrUsageRestriction) {
 		return fmt.Errorf("auto-reply bot unavailable for user/channel: %v: %w", err, ErrNoResponse)
 	}
-
-	return c.handleMentions(ctx, bot, cloneWithAgentMention(post, bot.GetMMBot().Username), postingUser, channel)
+	return err
 }

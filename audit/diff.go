@@ -6,7 +6,7 @@ package audit
 import (
 	"bytes"
 	"encoding/json"
-	"sort"
+	"slices"
 )
 
 // ChangedJSONKeys returns the sorted top-level JSON keys whose values differ
@@ -42,6 +42,6 @@ func ChangedJSONKeys(prev, next any) []string {
 			changed = append(changed, key)
 		}
 	}
-	sort.Strings(changed)
+	slices.Sort(changed)
 	return changed
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
@@ -29,7 +30,7 @@ import (
 const plantedRejectionArg = "SECRET-TOOL-ARG-do-not-share"
 
 func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
-	dmChannel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
+	dmChannel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__" + testRequesterID}
 	openChannel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
 
 	pendingJira := func(id string, shared bool) conversation.ContentBlock {
@@ -166,15 +167,15 @@ func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
 			approvalPost := &model.Post{Id: approvalPostID, UserId: "bot-id"}
 			approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
 
-			require.NoError(t, c.HandleToolCall(context.Background(), "user-id", approvalPost, tc.channel, tc.acceptedIDs, nil))
+			require.NoError(t, c.HandleToolCall(context.Background(), testRequesterID, approvalPost, tc.channel, tc.acceptedIDs, nil))
 			streamingService.waitForStreaming()
 
 			turns, turnsErr := convStore.GetTurnsForConversation(conv.ID)
 			require.NoError(t, turnsErr)
-			require.GreaterOrEqual(t, len(turns), 4)
+			require.GreaterOrEqual(t, len(turns), 5)
 
 			var updatedBlocks []conversation.ContentBlock
-			require.NoError(t, json.Unmarshal(turns[2].Content, &updatedBlocks))
+			require.NoError(t, json.Unmarshal(turns[3].Content, &updatedBlocks))
 			require.Len(t, updatedBlocks, len(tc.wantToolUseShared))
 			for i, wantShared := range tc.wantToolUseShared {
 				require.NotNil(t, updatedBlocks[i].Shared)
@@ -182,7 +183,7 @@ func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
 			}
 
 			var resultBlocks []conversation.ContentBlock
-			require.NoError(t, json.Unmarshal(turns[3].Content, &resultBlocks))
+			require.NoError(t, json.Unmarshal(turns[4].Content, &resultBlocks))
 			require.Len(t, resultBlocks, len(tc.wantResultContents))
 			for i, wantContent := range tc.wantResultContents {
 				assert.Equal(t, wantContent, resultBlocks[i].Content)
@@ -291,13 +292,13 @@ func TestHandleToolCallMixedChannelRejectionGuidanceAfterShare(t *testing.T) {
 			approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
 			channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
 
-			require.NoError(t, c.HandleToolCall(context.Background(), "user-id", approvalPost, channel, []string{"tool-use-1"}, nil))
+			require.NoError(t, c.HandleToolCall(context.Background(), testRequesterID, approvalPost, channel, []string{"tool-use-1"}, nil))
 			assert.Empty(t, lm.requests, "mixed channel batch must wait for the share decision")
 
 			turns, err := convStore.GetTurnsForConversation(conv.ID)
 			require.NoError(t, err)
 			var resultBlocks []conversation.ContentBlock
-			require.NoError(t, json.Unmarshal(turns[3].Content, &resultBlocks))
+			require.NoError(t, json.Unmarshal(turns[4].Content, &resultBlocks))
 			require.Len(t, resultBlocks, 2)
 			assert.Nil(t, resultBlocks[0].DecidedAt)
 			assert.False(t, *resultBlocks[0].Shared)
@@ -305,7 +306,7 @@ func TestHandleToolCallMixedChannelRejectionGuidanceAfterShare(t *testing.T) {
 			assert.True(t, *resultBlocks[1].Shared)
 			assert.Equal(t, tc.wantResult, resultBlocks[1].Content)
 
-			require.NoError(t, c.HandleToolResult(context.Background(), "user-id", approvalPost, channel, []string{"tool-use-1"}))
+			require.NoError(t, c.HandleToolResult(context.Background(), testRequesterID, approvalPost, channel, []string{"tool-use-1"}))
 			streamingService.waitForStreaming()
 
 			require.Len(t, lm.requests, 1)
@@ -369,7 +370,7 @@ func TestHandleToolResultRejectedOnlyDoesNotFollowUp(t *testing.T) {
 	clickedPost.AddProp(streaming.ConversationIDProp, conv.ID)
 	channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
 
-	require.NoError(t, c.HandleToolResult(context.Background(), "user-id", clickedPost, channel, nil))
+	require.NoError(t, c.HandleToolResult(context.Background(), testRequesterID, clickedPost, channel, nil))
 	assert.Empty(t, lm.requests, "rejected-only share-stage must not start a follow-up")
 }
 
@@ -399,8 +400,9 @@ func newRejectionFollowUpConversations(
 	botsService.SetBotsForTesting([]*bots.Bot{loadedStateBot(lm)})
 
 	mmClient := mocks.NewMockClient(t)
+	seedRequesterInitiator(t, convStore, "conv-id", mmClient)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
-	mmClient.On("GetUser", "user-id").Maybe().Return(&model.User{Id: "user-id", Username: "user"}, nil)
+	mmClient.On("GetUser", testRequesterID).Maybe().Return(&model.User{Id: testRequesterID, Username: "user"}, nil)
 	mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
 	mmClient.On("GetConfig").Maybe().Return(&model.Config{})
 
@@ -414,9 +416,11 @@ func newRejectionFollowUpConversations(
 	}
 
 	return &Conversations{
+		configProvider:   &channelFollowUpTestConfig{enableChannelMentionToolCalling: true},
 		mmClient:         mmClient,
 		contextBuilder:   newChannelFollowUpTestBuilder(t, tools, &channelFollowUpTestConfig{}),
 		bots:             botsService,
+		licenseChecker:   enterprisetest.CheckerAt(enterprise.LevelProfessional),
 		convService:      conversation.NewService(convStore, nil, nil, nil),
 		streamingService: streamingService,
 	}

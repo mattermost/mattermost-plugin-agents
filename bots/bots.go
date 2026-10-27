@@ -828,7 +828,7 @@ func (b *MMBots) wrapLLM(base llm.LanguageModel, serviceConfig llm.ServiceConfig
 	// calls only: a direct service call carries user_id for attribution, not
 	// as a principal, so its fallback chain is never trimmed per user.
 	if botConfig != nil {
-		result = newFallbackAccessLLM(result, b, serviceConfig.ID)
+		result = newFallbackAccessLLM(result, b, serviceConfig.ID, effectiveModelFor(serviceConfig, botConfig), fallbackServices)
 	}
 
 	return result
