@@ -25,7 +25,8 @@ type Props = {
 };
 
 const ScopedChannelModeSection = ({scopedChannelMode, scopedExtraChannelIds, autoEnableNewMCPTools, hasAllToolsGrants, editable, onChange}: Props) => {
-    const serverSupported = useServerSupportsScopedSessions();
+    const serverSupport = useServerSupportsScopedSessions();
+    const serverSupported = serverSupport === true;
     const canTurnOn = editable && serverSupported && !autoEnableNewMCPTools && !hasAllToolsGrants;
 
     return (
@@ -45,10 +46,10 @@ const ScopedChannelModeSection = ({scopedChannelMode, scopedExtraChannelIds, aut
                     </CheckboxHint>
                 </CheckboxText>
             </Checkbox>
-            {!serverSupported && (
+            {serverSupport === false && (
                 <SectionNotice
                     type='info'
-                    title={<FormattedMessage defaultMessage='This setting needs Mattermost Server 12.2 or later.'/>}
+                    title={<FormattedMessage defaultMessage='This setting needs a Mattermost server version that supports scoped sessions. Upgrade Mattermost to use it.'/>}
                 />
             )}
             {serverSupported && autoEnableNewMCPTools && !scopedChannelMode && (

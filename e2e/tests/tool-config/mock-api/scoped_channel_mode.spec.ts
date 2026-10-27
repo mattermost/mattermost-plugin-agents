@@ -19,14 +19,13 @@ import { adminUsername, adminPassword } from 'helpers/system-console-container';
  * follow-up only once the tool result reaches it, so a reply proves the tool
  * ran without anyone approving it; mock history shows what the tool could read.
  *
- * Scoped sessions need a Mattermost server that can mint them (12.2+); on an
- * older server every test is skipped.
+ * Scoped sessions need a Mattermost server that can mint them; on a server the
+ * plugin finds cannot, every test is skipped.
  */
 
 const botUsername = 'scopedagent';
 const readChannelTool = 'mattermost__read_channel';
 const searchPostsTool = 'mattermost__search_posts';
-const minServerVersion = [12, 2, 0];
 
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
@@ -34,20 +33,15 @@ let serverSupported = false;
 let teamID: string;
 let townSquareID: string;
 
-function versionAtLeast(version: string, minimum: number[]): boolean {
-    const match = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(version);
-    if (!match) {
-        return false;
-    }
-    const parts = match.slice(1, 4).map((part) => parseInt(part ?? '0', 10));
-    for (let i = 0; i < minimum.length; i++) {
-        if (parts[i] !== minimum[i]) {
-            return parts[i] > minimum[i];
-        }
-    }
-
-    // A prerelease of the minimum version predates it.
-    return !match[4];
+// serverSupportsScopedSessions asks the plugin whether its activation probe
+// found that the server can create scoped sessions.
+async function serverSupportsScopedSessions(token: string): Promise<boolean> {
+    const response = await fetch(`${mattermost.url()}/plugins/mattermost-ai/ai_bots`, {
+        headers: {Authorization: `Bearer ${token}`},
+    });
+    expect(response.ok).toBe(true);
+    const body = await response.json();
+    return body.scopedSessionsSupported === true;
 }
 
 async function createChannelWithPost(name: string, type: 'O' | 'P', message: string) {
@@ -108,8 +102,7 @@ test.describe.serial('Scoped channel mode (Mocked LLM)', () => {
         openAIMock = await RunOpenAIMocks(mattermost.network);
 
         const adminClient = await mattermost.getAdminClient();
-        const config = await adminClient.getClientConfig();
-        serverSupported = versionAtLeast(config.Version ?? '', minServerVersion);
+        serverSupported = await serverSupportsScopedSessions(adminClient.getToken());
         if (!serverSupported) {
             return;
         }
@@ -138,7 +131,7 @@ test.describe.serial('Scoped channel mode (Mocked LLM)', () => {
     });
 
     test.beforeEach(() => {
-        test.skip(!serverSupported, 'scoped sessions need Mattermost Server 12.2 or later');
+        test.skip(!serverSupported, 'this Mattermost server cannot create scoped sessions');
     });
 
     test.afterAll(async () => {

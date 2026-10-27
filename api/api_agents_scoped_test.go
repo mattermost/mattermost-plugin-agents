@@ -7,16 +7,62 @@ import (
 	"encoding/json"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
-	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+// enableScopedSessions gives e the context builder of a node whose server
+// passed the scoped session probe at activation.
+func enableScopedSessions(t *testing.T, e *TestEnvironment) {
+	t.Helper()
+	e.mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
+	manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, e.client.Log, e.client, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
+	t.Cleanup(manager.Close)
+	manager.SetScopedSessions(&scopedBridgeMinter{})
+	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(e.client, &testLLMContextToolProvider{}, manager, &testLLMContextConfigProvider{})
+}
+
+func TestAIBotsReportsScopedSessionSupport(t *testing.T) {
+	tests := []struct {
+		name      string
+		supported bool
+	}{
+		{name: "server can create scoped sessions", supported: true},
+		{name: "server cannot create scoped sessions"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			if tt.supported {
+				enableScopedSessions(t, e)
+			}
+			e.setBots(bots.NewBot(llm.BotConfig{Name: "ai", DisplayName: "Agent"}, llm.ServiceConfig{}, &model.Bot{UserId: model.NewId(), Username: "ai"}, nil))
+			e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{}).Maybe()
+
+			request := httptest.NewRequest(http.MethodGet, "/ai_bots", nil)
+			request.Header.Add("Mattermost-User-ID", testUserID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+
+			require.Equal(t, http.StatusOK, recorder.Code)
+			var response map[string]any
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+			assert.Equal(t, tt.supported, response["scopedSessionsSupported"])
+		})
+	}
+}
 
 func TestAgentScopedChannelModeSave(t *testing.T) {
 	publicID, privateID, dmID, archivedID, missingID := model.NewId(), model.NewId(), model.NewId(), model.NewId(), model.NewId()
@@ -24,15 +70,15 @@ func TestAgentScopedChannelModeSave(t *testing.T) {
 	wildcard := []llm.EnabledMCPTool{{ServerOrigin: "https://jira.example.com", ToolName: llm.MCPServerToolWildcard}}
 
 	tests := []struct {
-		name          string
-		stored        llm.BotConfig
-		overrides     map[string]any
-		systemAdmin   bool
-		serverVersion string
-		wantStatus    int
-		wantErr       string
-		wantScoped    bool
-		wantExtras    []string
+		name        string
+		stored      llm.BotConfig
+		overrides   map[string]any
+		systemAdmin bool
+		noScoped    bool
+		wantStatus  int
+		wantErr     string
+		wantScoped  bool
+		wantExtras  []string
 	}{
 		{
 			name:        "admin turns it on with extra channels",
@@ -98,13 +144,13 @@ func TestAgentScopedChannelModeSave(t *testing.T) {
 			wantScoped:  true,
 		},
 		{
-			name:          "older servers cannot turn it on",
-			stored:        llm.BotConfig{UseServiceAccountAuth: true, EnabledMCPTools: allowlist},
-			overrides:     map[string]any{"scopedChannelMode": true},
-			systemAdmin:   true,
-			serverVersion: "12.1.0",
-			wantStatus:    http.StatusBadRequest,
-			wantErr:       "requires Mattermost server",
+			name:        "a server that cannot create scoped sessions cannot turn it on",
+			stored:      llm.BotConfig{UseServiceAccountAuth: true, EnabledMCPTools: allowlist},
+			overrides:   map[string]any{"scopedChannelMode": true},
+			systemAdmin: true,
+			noScoped:    true,
+			wantStatus:  http.StatusBadRequest,
+			wantErr:     "can create scoped sessions",
 		},
 		{
 			name:        "a DM cannot be an extra channel",
@@ -146,11 +192,9 @@ func TestAgentScopedChannelModeSave(t *testing.T) {
 			defer e.Cleanup(t)
 
 			mockLicensed(e.mockAPI)
-			serverVersion := tt.serverVersion
-			if serverVersion == "" {
-				serverVersion = scopedsession.MinServerVersion
+			if !tt.noScoped {
+				enableScopedSessions(t, e)
 			}
-			e.mockAPI.On("GetServerVersion").Return(serverVersion).Maybe()
 			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true).Maybe()
 			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(tt.systemAdmin).Maybe()
 			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
@@ -238,7 +282,7 @@ func TestRestoreAgentVersionKeepsScopedChannelMode(t *testing.T) {
 
 	channelID := model.NewId()
 	mockLicensed(e.mockAPI)
-	e.mockAPI.On("GetServerVersion").Return(scopedsession.MinServerVersion).Maybe()
+	enableScopedSessions(t, e)
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(true).Maybe()
 	e.mockAPI.On("GetChannel", channelID).Return(&model.Channel{Id: channelID, Type: model.ChannelTypeOpen}, nil).Maybe()
 

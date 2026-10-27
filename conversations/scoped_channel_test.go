@@ -28,7 +28,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
-	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -185,7 +184,6 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	defaultLocale := "en"
 	mockAPI.On("GetConfig").Return(&model.Config{LocalizationSettings: model.LocalizationSettings{DefaultServerLocale: &defaultLocale}}).Maybe()
 	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
-	mockAPI.On("GetServerVersion").Return(scopedsession.MinServerVersion).Maybe()
 	mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: scopedTeamID, Name: "team"}, nil).Maybe()
 	mockAPI.On("GetBotUsers").Return(nil, nil).Maybe()
 	mockAPI.On("HasPermissionToChannel", mock.Anything, mock.Anything, model.PermissionReadChannel).Return(true).Maybe()

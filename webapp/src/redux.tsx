@@ -27,6 +27,7 @@ export async function setupRedux(registry: any, store: WebappStore) {
         selectedPostId,
         linkPolicy,
         htmlArtifactsEnabled,
+        scopedSessionsSupported,
         customPrompts,
         pinnedPromptIds,
         showCustomPromptsModal,
@@ -91,6 +92,15 @@ function htmlArtifactsEnabled(state = false, action: any) {
     switch (action.type) {
     case 'SET_HTML_ARTIFACTS_ENABLED':
         return action.htmlArtifactsEnabled;
+    default:
+        return state;
+    }
+}
+
+function scopedSessionsSupported(state: boolean | null = null, action: any) {
+    switch (action.type) {
+    case 'SET_SCOPED_SESSIONS_SUPPORTED':
+        return action.scopedSessionsSupported;
     default:
         return state;
     }
