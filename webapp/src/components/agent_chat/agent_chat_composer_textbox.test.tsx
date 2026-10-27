@@ -175,7 +175,7 @@ describe('AgentChatComposer with the host Textbox', () => {
         type(textbox, value);
         expect(pill().getAttribute('data-expanded')).toBe(String(expanded));
         expect(tabOrder()).toEqual(inline);
-        expect(inline).toEqual(['Attach files', 'Message Matty', 'Send message']);
+        expect(inline).toEqual(['Add to message', 'Message Matty', 'Send message']);
     });
 
     test('expanded collapses only once the text fits one inline line again', () => {

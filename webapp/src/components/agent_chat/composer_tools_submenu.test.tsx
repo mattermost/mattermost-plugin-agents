@@ -1,9 +1,10 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {fireEvent, screen, waitFor, within} from '@testing-library/react';
+import {act, fireEvent, screen, waitFor, within} from '@testing-library/react';
 
 import type {UserMCPServerInfo} from '@/client';
+import {publishDisabledServers} from '@/components/rhs/tool_provider_popover';
 
 import {bot, openSubmenu, renderMenu} from './composer_plus_menu_test_harness';
 
@@ -168,5 +169,32 @@ describe('ComposerPlusMenu Tools', () => {
         fireEvent.click(await within(menu).findByRole('menuitem', {name: 'Refresh tool providers'}));
         await waitFor(() => expect(checkbox(menu, 'Fresh')).toBeTruthy());
         expect(mockClient.refreshUserMCPTools).toHaveBeenCalledTimes(1);
+    });
+
+    test('a toggle made in another control (the header popover) shows here without a reload', async () => {
+        renderMenu();
+        const menu = await openSubmenu('Tools');
+        await waitFor(() => expect(checkbox(menu, 'Jira').getAttribute('aria-checked')).toBe('false'));
+
+        act(() => publishDisabledServers([github.serverOrigin], Symbol('header')));
+
+        expect(checkbox(menu, 'GitHub').getAttribute('aria-checked')).toBe('false');
+        expect(checkbox(menu, 'Jira').getAttribute('aria-checked')).toBe('true');
+        expect(mockClient.getUserToolPreferences).toHaveBeenCalledTimes(1);
+    });
+
+    test('a change published while the preferences load wins over the older response', async () => {
+        let respond!: (value: {disabled_servers: string[]}) => void;
+        mockClient.getUserToolPreferences.mockReturnValue(new Promise((resolve) => {
+            respond = resolve;
+        }));
+        renderMenu();
+        const menu = await openSubmenu('Tools');
+
+        act(() => publishDisabledServers([], Symbol('header')));
+        await act(async () => respond({disabled_servers: [github.serverOrigin, jira.serverOrigin]}));
+
+        await waitFor(() => expect(checkbox(menu, 'GitHub').getAttribute('aria-checked')).toBe('true'));
+        expect(checkbox(menu, 'Jira').getAttribute('aria-checked')).toBe('true');
     });
 });

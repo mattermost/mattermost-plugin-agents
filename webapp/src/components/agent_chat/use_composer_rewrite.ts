@@ -8,7 +8,7 @@ import {getAgentsBridgeStatus, rewriteMessage, type RewriteAction} from '@/clien
 export type RewriteAvailability = 'checking' | 'available' | 'unavailable' | 'error';
 
 // Whether the core server can run AI Rewrite through this plugin, as the host
-// checks before showing it. Checked once per mount.
+// checks before showing it. Checked once, when `enabled` first turns true.
 export function useRewriteAvailability(enabled: boolean): RewriteAvailability {
     const [availability, setAvailability] = useState<RewriteAvailability>('checking');
     useEffect(() => {

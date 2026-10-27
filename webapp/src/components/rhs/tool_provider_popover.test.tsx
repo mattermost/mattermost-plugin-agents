@@ -7,7 +7,7 @@ import {IntlProvider} from 'react-intl';
 
 import {getUserMCPTools, refreshUserMCPTools, updateUserToolPreferences} from '@/client';
 
-import ToolProviderPopover, {UserMCPServerInfo, useToolProviders} from './tool_provider_popover';
+import ToolProviderPopover, {UserMCPServerInfo, publishDisabledServers, useToolProviders} from './tool_provider_popover';
 
 jest.mock('@/client', () => ({
     disconnectMCPOAuth: jest.fn(),
@@ -276,5 +276,45 @@ describe('useToolProviders', () => {
 
         expect(saved).toBe(false);
         expect(onDisabledServersChange.mock.calls).toEqual([[[initialServer.serverOrigin]], [[]]]);
+    });
+});
+
+describe('useToolProviders preference sync', () => {
+    afterEach(() => {
+        jest.clearAllMocks();
+    });
+
+    const twoCopies = () => {
+        const onA = jest.fn();
+        const onB = jest.fn();
+        const a = renderHook(() => useToolProviders({disabledServers: [], onDisabledServersChange: onA, autoEnableNewMCPTools: true}));
+        const b = renderHook(() => useToolProviders({disabledServers: [], onDisabledServersChange: onB, autoEnableNewMCPTools: true}));
+        return {onA, onB, a, b};
+    };
+
+    test.each([
+        {name: 'a saved toggle reaches the other copy', fail: false, expectedB: [[[initialServer.serverOrigin]]]},
+        {name: 'a failed toggle reaches it, then its revert', fail: true, expectedB: [[[initialServer.serverOrigin]], [[]]]},
+    ])('$name, never echoing back to its own copy', async ({fail, expectedB}) => {
+        if (fail) {
+            mockUpdateUserToolPreferences.mockRejectedValueOnce(new Error('nope'));
+        } else {
+            mockUpdateUserToolPreferences.mockResolvedValueOnce({disabled_servers: [initialServer.serverOrigin]});
+        }
+        const {onA, onB, a} = twoCopies();
+
+        await act(async () => {
+            await a.result.current.toggle(initialServer.serverOrigin, false);
+        });
+
+        expect(onB.mock.calls).toEqual(expectedB);
+        expect(onA.mock.calls).toEqual(expectedB);
+    });
+
+    test('an unmounted copy stops listening', () => {
+        const {onB, b} = twoCopies();
+        b.unmount();
+        act(() => publishDisabledServers(['x'], Symbol('elsewhere')));
+        expect(onB).not.toHaveBeenCalled();
     });
 });

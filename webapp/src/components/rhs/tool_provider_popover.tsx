@@ -69,6 +69,26 @@ export interface ToolProviders {
     disconnect: (serverName: string) => Promise<boolean>;
 }
 
+// The disabled-provider list is one per-user preference, but several controls
+// hold a copy (the RHS and Agents header popovers, the composer's "+" menu).
+// A toggle in one is published here so every other mounted copy follows
+// without a reload. In memory only; the server stays the source of truth.
+type DisabledServersListener = (servers: string[], source: symbol) => void;
+const disabledServersListeners = new Set<DisabledServersListener>();
+
+export function publishDisabledServers(servers: string[], source: symbol) {
+    for (const listener of Array.from(disabledServersListeners)) {
+        listener(servers, source);
+    }
+}
+
+export function subscribeDisabledServers(listener: DisabledServersListener): () => void {
+    disabledServersListeners.add(listener);
+    return () => {
+        disabledServersListeners.delete(listener);
+    };
+}
+
 // The tool provider data and actions behind ToolProviderPopover, shared with
 // the agent chat composer's "+" menu so both behave the same.
 export function useToolProviders({disabledServers, onDisabledServersChange, preloadedServers, enabledMCPTools, autoEnableNewMCPTools}: UseToolProvidersArgs): ToolProviders {
@@ -116,6 +136,16 @@ export function useToolProviders({disabledServers, onDisabledServersChange, prel
         fetchServers({showLoading: false});
     }, [fetchServers]));
 
+    // Other copies' changes land here; this copy's own are not echoed back.
+    const [source] = useState(() => Symbol('tool-providers'));
+    const onChangeRef = useRef(onDisabledServersChange);
+    onChangeRef.current = onDisabledServersChange;
+    useEffect(() => subscribeDisabledServers((servers, from) => {
+        if (from !== source) {
+            onChangeRef.current(servers);
+        }
+    }), [source]);
+
     const toggle = useCallback(async (serverOrigin: string, enabled: boolean) => {
         let updatedDisabled: string[];
         if (enabled) {
@@ -124,6 +154,7 @@ export function useToolProviders({disabledServers, onDisabledServersChange, prel
             updatedDisabled = [...disabledServers, serverOrigin];
         }
         onDisabledServersChange(updatedDisabled);
+        publishDisabledServers(updatedDisabled, source);
 
         try {
             await updateUserToolPreferences({disabled_servers: updatedDisabled});
@@ -131,9 +162,10 @@ export function useToolProviders({disabledServers, onDisabledServersChange, prel
         } catch {
             // Revert on error
             onDisabledServersChange(disabledServers);
+            publishDisabledServers(disabledServers, source);
             return false;
         }
-    }, [disabledServers, onDisabledServersChange]);
+    }, [disabledServers, onDisabledServersChange, source]);
 
     const connect = useCallback((authURL: string) => {
         window.open(authURL, '_blank', 'noopener,noreferrer');

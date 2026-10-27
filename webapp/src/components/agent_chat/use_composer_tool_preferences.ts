@@ -19,8 +19,16 @@ export interface ComposerToolPreferences {
 // error: the toggles would otherwise show every provider as enabled.
 export function useComposerToolPreferences(): ComposerToolPreferences {
     const [status, setStatus] = useState<ToolPreferencesStatus>('loading');
-    const [disabledServers, setDisabledServers] = useState<string[]>([]);
+    const [disabledServers, setServers] = useState<string[]>([]);
     const latest = useRef(0);
+
+    // A toggle here or one published by another control supersedes a load
+    // still in flight, so its older response cannot undo the change.
+    const setDisabledServers = useCallback((servers: string[]) => {
+        latest.current++;
+        setServers(servers);
+        setStatus('ready');
+    }, []);
 
     const reload = useCallback(async () => {
         const id = ++latest.current;
@@ -28,7 +36,7 @@ export function useComposerToolPreferences(): ComposerToolPreferences {
         try {
             const prefs = await getUserToolPreferences();
             if (id === latest.current) {
-                setDisabledServers(prefs.disabled_servers || []);
+                setServers(prefs.disabled_servers || []);
                 setStatus('ready');
             }
         } catch (e) {

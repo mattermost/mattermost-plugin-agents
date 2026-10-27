@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React, {useState} from 'react';
-import {useIntl, type MessageDescriptor, defineMessages} from 'react-intl';
+import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 import AiSummarizeIcon from '@mattermost/compass-icons/components/ai-summarize';
 import AutoFixIcon from '@mattermost/compass-icons/components/auto-fix';
@@ -24,25 +24,37 @@ import ComposerSubmenu from './composer_submenu';
 import {LoadingRow, menuIcon} from './composer_menu_parts';
 import type {ComposerRewrite, RewriteAvailability} from './use_composer_rewrite';
 
-const labels = defineMessages({
-    shorten: {defaultMessage: 'Shorten'},
-    elaborate: {defaultMessage: 'Elaborate'},
-    improveWriting: {defaultMessage: 'Improve writing'},
-    fixSpelling: {defaultMessage: 'Fix spelling and grammar'},
-    simplify: {defaultMessage: 'Simplify'},
-    summarize: {defaultMessage: 'Summarize'},
-});
-
 // The host composer's rewrite actions (advanced_text_editor/rewrite_menu.tsx
-// menuItems), in its order and with its labels and icons.
-export const REWRITE_ACTIONS: Array<{action: Exclude<RewriteAction, 'custom'>; label: MessageDescriptor; icon: React.ReactNode}> = [
-    {action: 'shorten', label: labels.shorten, icon: <TextShortIcon/>},
-    {action: 'elaborate', label: labels.elaborate, icon: <TextLongIcon/>},
-    {action: 'improve_writing', label: labels.improveWriting, icon: <AutoFixIcon/>},
-    {action: 'fix_spelling', label: labels.fixSpelling, icon: <SpellcheckIcon/>},
-    {action: 'simplify', label: labels.simplify, icon: <CreationOutlineIcon/>},
-    {action: 'summarize', label: labels.summarize, icon: <AiSummarizeIcon/>},
+// menuItems), in its order and with its labels and icons. Labels resolve at
+// render (formatMessage literals, so i18n extraction sees them).
+export const REWRITE_ACTIONS: Array<{action: Exclude<RewriteAction, 'custom'>; icon: React.ReactNode}> = [
+    {action: 'shorten', icon: <TextShortIcon/>},
+    {action: 'elaborate', icon: <TextLongIcon/>},
+    {action: 'improve_writing', icon: <AutoFixIcon/>},
+    {action: 'fix_spelling', icon: <SpellcheckIcon/>},
+    {action: 'simplify', icon: <CreationOutlineIcon/>},
+    {action: 'summarize', icon: <AiSummarizeIcon/>},
 ];
+
+const useRewriteActionLabel = () => {
+    const intl = useIntl();
+    return (action: Exclude<RewriteAction, 'custom'>): string => {
+        switch (action) {
+        case 'shorten':
+            return intl.formatMessage({defaultMessage: 'Shorten'});
+        case 'elaborate':
+            return intl.formatMessage({defaultMessage: 'Elaborate'});
+        case 'improve_writing':
+            return intl.formatMessage({defaultMessage: 'Improve writing'});
+        case 'fix_spelling':
+            return intl.formatMessage({defaultMessage: 'Fix spelling and grammar'});
+        case 'simplify':
+            return intl.formatMessage({defaultMessage: 'Simplify'});
+        default:
+            return intl.formatMessage({defaultMessage: 'Summarize'});
+        }
+    };
+};
 
 interface Props {
     availability: RewriteAvailability;
@@ -59,6 +71,7 @@ interface Props {
 
 const ComposerRewriteSubmenu = ({availability, rewriter, text, open, focusOnOpen, onOpen, onClose, onDone}: Props) => {
     const intl = useIntl();
+    const actionLabel = useRewriteActionLabel();
     const [prompt, setPrompt] = useState('');
     const label = intl.formatMessage({defaultMessage: 'AI Rewrite'});
     const hasText = text.trim().length > 0;
@@ -134,7 +147,7 @@ const ComposerRewriteSubmenu = ({availability, rewriter, text, open, focusOnOpen
                             <MenuItem
                                 key={item.action}
                                 role='menuitem'
-                                label={intl.formatMessage(item.label)}
+                                label={actionLabel(item.action)}
                                 leadingElement={true}
                                 leadingVisual={menuIcon(item.icon)}
                                 disabled={!hasText}

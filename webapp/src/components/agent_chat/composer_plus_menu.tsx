@@ -72,7 +72,7 @@ type Submenu = 'tools' | 'prompts' | 'rewrite';
 
 const RETURN_FOCUS_OFF = {returnFocus: false};
 
-// The composer's "+" fill (its AttachButton): no compass token for the 8%
+// The composer's "+" fill (as the old attach button): no compass token for the 8%
 // center-channel wash on a neutral round IconButton.
 const PLUS_FILL = 'rgba(var(--center-channel-color-rgb), 0.08)';
 
@@ -113,7 +113,15 @@ const ComposerPlusMenu = ({bot, channelId, rootId = '', uploadEnabled, onUploadF
     const rewriteError = useCallback((serverMessage: string) => {
         onError(serverMessage || intl.formatMessage({defaultMessage: 'Couldn\'t rewrite your message. Try again.'}));
     }, [onError, intl]);
-    const availability = useRewriteAvailability(Boolean(bot));
+
+    // Checked on the first open, not on every composer mount.
+    const [everOpened, setEverOpened] = useState(false);
+    useEffect(() => {
+        if (open) {
+            setEverOpened(true);
+        }
+    }, [open]);
+    const availability = useRewriteAvailability(Boolean(bot) && everOpened);
     const rewriter = useComposerRewrite({agentId: bot?.id ?? '', rootId, getText, setText, onError: rewriteError});
 
     useEffect(() => {
@@ -173,7 +181,7 @@ const ComposerPlusMenu = ({bot, channelId, rootId = '', uploadEnabled, onUploadF
             target={(
                 <PlusButton
                     id={triggerId}
-                    size='medium'
+                    size='small'
                     rounded={true}
                     icon={<Icon glyph={<PlusIcon/>}/>}
                     aria-label={label}
@@ -244,7 +252,7 @@ const ComposerPlusMenu = ({bot, channelId, rootId = '', uploadEnabled, onUploadF
     );
 };
 
-// The composer's round, faintly filled 40px "+" (its AttachButton), placed by
+// The composer's round, faintly filled 32px "+" (a small IconButton), placed by
 // the composer's leading slot.
 const PlusButton = styled(IconButton)`
     &&:not(:disabled):not(:hover):not(:active):not([aria-expanded='true']) {

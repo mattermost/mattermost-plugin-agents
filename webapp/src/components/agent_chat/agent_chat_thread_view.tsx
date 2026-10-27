@@ -5,6 +5,7 @@ import React from 'react';
 import {useIntl} from 'react-intl';
 import styled, {css, keyframes} from 'styled-components';
 
+import type {LLMBot} from '@/bots';
 import {ThreadViewer as UnstyledThreadViewer} from '@/mm_webapp';
 
 import AgentChatComposer from './agent_chat_composer';
@@ -18,6 +19,9 @@ interface AgentChatThreadViewProps {
     channelId: string;
     rootId: string;
     agentName: string;
+
+    // The thread's agent, for the composer's "+" menu; null when none is known.
+    bot?: LLMBot | null;
 
     // 'page': the product view's centered 800px column. 'panel': fills the RHS.
     layout: AgentNewChatLayout;
@@ -33,7 +37,7 @@ export const isThreadViewerAvailable = Boolean(UnstyledThreadViewer);
 // One agent thread as a chat: the host ThreadViewer renders the posts (as
 // bubbles, through hostThreadChatStyles) and the plugin's pill composer,
 // pinned below it, replaces the host reply box.
-const AgentChatThreadView = ({channelId, rootId, agentName, layout, isThreadView, testId, viewerTestId}: AgentChatThreadViewProps) => {
+const AgentChatThreadView = ({channelId, rootId, agentName, bot, layout, isThreadView, testId, viewerTestId}: AgentChatThreadViewProps) => {
     const intl = useIntl();
 
     if (!ThreadViewer) {
@@ -63,6 +67,7 @@ const AgentChatThreadView = ({channelId, rootId, agentName, layout, isThreadView
                             channelId={channelId}
                             rootId={rootId}
                             agentName={agentName}
+                            bot={bot}
                         />
                     </ComposerArea>
                 )}

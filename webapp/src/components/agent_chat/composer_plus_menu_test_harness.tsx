@@ -35,7 +35,7 @@ export function makeStore() {
         {registerReducer: (r: Reducer) => {
             pluginReducer = r;
         }},
-        {getState: () => ({entities: {general: {license: {}}}}), dispatch: () => null} as never,
+        {getState: () => ({entities: {general: {config: {}, license: {}}}}), dispatch: () => null} as never,
     );
     const entities = {general: {config: {}, license: {}}, users: {currentUserId: 'user1'}};
     return createStore(combineReducers({

@@ -87,6 +87,7 @@ const AgentNewChat = ({bot, channelId, onCreated, layout, children}: AgentNewCha
             <AgentChatComposer
                 channelId={channelId}
                 agentName={bot.displayName}
+                bot={bot}
                 onCreated={onCreated}
             />
             {children}

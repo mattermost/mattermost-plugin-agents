@@ -4,18 +4,29 @@
 import React from 'react';
 import {Provider} from 'react-redux';
 import {createStore} from 'redux';
-import {act, fireEvent, render, screen} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
+
+import type {LLMBot} from '@/bots';
 
 import AgentChatComposer from './agent_chat_composer';
+import {makeStore as makePluginStore} from './composer_plus_menu_test_harness';
 import AgentChatDropZone from './agent_chat_drop_zone';
 
 const mockCreatePost = jest.fn();
 const mockUploadFile = jest.fn();
+const mockGetCustomPrompts = jest.fn();
+const mockRenderCustomPrompt = jest.fn();
+const mockRewriteMessage = jest.fn();
 jest.mock('@/client', () => {
     class FileUploadAbortedError extends Error {}
     return {
         createPost: (...args: unknown[]) => mockCreatePost(...args),
         uploadFile: (...args: unknown[]) => mockUploadFile(...args),
+        getCustomPrompts: () => mockGetCustomPrompts(),
+        getCustomPromptPins: () => Promise.resolve([]),
+        renderCustomPrompt: (...args: unknown[]) => mockRenderCustomPrompt(...args),
+        rewriteMessage: (...args: unknown[]) => mockRewriteMessage(...args),
+        getAgentsBridgeStatus: () => Promise.resolve({available: true}),
         getFileThumbnailUrl: (id: string) => `/api/v4/files/${id}/thumbnail`,
         FileUploadAbortedError,
     };
@@ -275,6 +286,18 @@ const pick = async (...files: File[]) => {
 
 const cards = () => screen.queryAllByTestId('agent-chat-attachment');
 
+// While the "+" menu is open its focus manager hides the rest of the page.
+const plusButton = () => screen.getByTestId('composer-plus-menu-button');
+const openPlusMenu = async () => {
+    fireEvent.click(plusButton());
+    await screen.findByRole('menu', {name: 'Add to message'});
+};
+const chooseUploadFiles = async () => {
+    await openPlusMenu();
+    fireEvent.click(screen.getByRole('menuitem', {name: 'Upload files'}));
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+};
+
 const attachModes = [
     {mode: 'new chat', rootId: ''},
     {mode: 'reply', rootId: 'root0'},
@@ -293,31 +316,34 @@ describe('AgentChatComposer attachments', () => {
 
     test.each(attachModes)('$mode: the pill is "+", then the textbox, then send', ({rootId}) => {
         renderComposer({rootId});
-        const attach = screen.getByRole('button', {name: 'Attach files'});
+        const attach = screen.getByRole('button', {name: 'Add to message'});
         const textbox = screen.getByRole('textbox');
         const send = screen.getByRole('button', {name: 'Send message'});
-        expect(attach.parentElement).toBe(textbox.parentElement?.parentElement);
+        expect(attach.getAttribute('aria-haspopup')).toBe('menu');
+        expect(attach.closest('[data-testid="agent-chat-composer-pill"]')).toBe(textbox.closest('[data-testid="agent-chat-composer-pill"]'));
         expect(attach.compareDocumentPosition(textbox) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
         expect(textbox.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
-    test('the "+" button opens the file picker', () => {
+    test('"Upload files" in the "+" menu opens the file picker', async () => {
         renderComposer();
         const input = screen.getByTestId('agent-chat-file-input') as HTMLInputElement;
         expect(input.type).toBe('file');
         expect(input.multiple).toBe(true);
         const click = jest.spyOn(input, 'click').mockImplementation(() => null);
-        fireEvent.click(screen.getByRole('button', {name: 'Attach files'}));
+        await chooseUploadFiles();
         expect(click).toHaveBeenCalledTimes(1);
     });
 
     test.each([
         {name: 'the DM channel is not known yet', channelId: '', config: {EnableFileAttachments: 'true', MaxFileSize: '1000'}},
         {name: 'the server disables file attachments', channelId: 'dm1', config: {EnableFileAttachments: 'false', MaxFileSize: '1000'}},
-    ])('no attaching while $name', ({channelId, config}) => {
+    ])('no attaching while $name', async ({channelId, config}) => {
         renderComposer({channelId, config});
-        expect(screen.queryByRole('button', {name: 'Attach files'})).toBeNull();
         expect(screen.queryByTestId('agent-chat-file-input')).toBeNull();
+        await openPlusMenu();
+        expect(screen.queryByRole('menuitem', {name: 'Upload files'})).toBeNull();
+        expect(screen.getByRole('menuitem', {name: 'Custom prompts'})).toBeTruthy();
     });
 
     test.each(attachModes)('$mode: a picked file uploads with progress, holds Send, then posts its file id and clears', async ({rootId}) => {
@@ -472,7 +498,7 @@ describe('AgentChatComposer attachments', () => {
         // The "+" refuses to open the picker while the post is full.
         const input = screen.getByTestId('agent-chat-file-input') as HTMLInputElement;
         const click = jest.spyOn(input, 'click').mockImplementation(() => null);
-        fireEvent.click(screen.getByRole('button', {name: 'Attach files'}));
+        await chooseUploadFiles();
         expect(click).not.toHaveBeenCalled();
     });
 
@@ -527,5 +553,90 @@ describe('AgentChatComposer attachments', () => {
         expect(screen.queryByTestId('agent-chat-drop-overlay')).toBeNull();
         expect(fireEvent.drop(zone, {dataTransfer})).toBe(true);
         expect(mockUploadFile).not.toHaveBeenCalled();
+    });
+});
+
+describe('AgentChatComposer "+" menu text', () => {
+    const bot = {id: 'bot1', username: 'matty', displayName: 'Matty', dmChannelID: 'dm1', lastIconUpdate: 0, enabledMCPTools: null, autoEnableNewMCPTools: true} as unknown as LLMBot;
+    const renderWithBot = (rootId = 'root0') => {
+        // The plugin's reducers, so fetched custom prompts reach the menu.
+        render(
+            <Provider store={makePluginStore()}>
+                <AgentChatComposer
+                    channelId='dm1'
+                    agentName='Matty'
+                    rootId={rootId}
+                    bot={bot}
+                />
+            </Provider>,
+        );
+        return screen.getByRole('textbox') as HTMLTextAreaElement;
+    };
+    const pickSubmenuItem = async (submenu: string, item: string) => {
+        await openPlusMenu();
+        fireEvent.click(screen.getByRole('menuitem', {name: new RegExp(`^${submenu}`)}));
+        fireEvent.click(await screen.findByRole('menuitem', {name: item}));
+        await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    };
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        window.sessionStorage.clear();
+        mockGetCustomPrompts.mockResolvedValue([{id: 'p1', name: 'Standup'}]);
+        jest.spyOn(console, 'error').mockImplementation(() => null);
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    test('a custom prompt replaces the text like an edit: draft kept, box focused, Send enabled', async () => {
+        mockRenderCustomPrompt.mockResolvedValue({rendered: 'Write my standup\nfor today'});
+        const textbox = renderWithBot();
+        fireEvent.change(textbox, {target: {value: 'old'}});
+
+        await pickSubmenuItem('Custom prompts', 'Standup');
+
+        await waitFor(() => expect(textbox.value).toBe('Write my standup\nfor today'));
+        await waitFor(() => expect(document.activeElement).toBe(textbox));
+        expect(screen.getByTestId('agent-chat-composer-pill').dataset.expanded).toBe('true');
+        expect((screen.getByRole('button', {name: 'Send message'}) as HTMLButtonElement).disabled).toBe(false);
+        expect(JSON.stringify(Object.values(window.sessionStorage))).toContain('Write my standup');
+    });
+
+    test('a failed menu action shows inline under the pill and clears on the next edit', async () => {
+        mockRenderCustomPrompt.mockRejectedValue(new Error('nope'));
+        const textbox = renderWithBot();
+        await pickSubmenuItem('Custom prompts', 'Standup');
+
+        const alert = await screen.findByRole('alert');
+        expect(alert.textContent).toBe('Couldn\'t insert the custom prompt. Try again.');
+        expect(textbox.getAttribute('aria-describedby')).toBe(alert.id);
+
+        fireEvent.change(textbox, {target: {value: 'x'}});
+        expect(screen.queryByRole('alert')).toBeNull();
+    });
+
+    test('while a rewrite runs the box is read-only, Send waits and the status says so', async () => {
+        let finish!: (text: string) => void;
+        mockRewriteMessage.mockReturnValue(new Promise((resolve) => {
+            finish = resolve;
+        }));
+        const textbox = renderWithBot();
+        fireEvent.change(textbox, {target: {value: 'hello there'}});
+        await pickSubmenuItem('AI Rewrite', 'Shorten');
+
+        await waitFor(() => expect(textbox.readOnly).toBe(true));
+        const send = screen.getByRole('button', {name: 'Send message'}) as HTMLButtonElement;
+        expect(send.disabled).toBe(true);
+        expect(screen.getByRole('status').textContent).toBe('Rewriting…');
+        fireEvent.keyDown(textbox, {key: 'Enter'});
+        expect(mockCreatePost).not.toHaveBeenCalled();
+
+        await act(async () => finish('Hi.'));
+        expect(textbox.value).toBe('Hi.');
+        expect(textbox.readOnly).toBe(false);
+        expect(send.disabled).toBe(false);
+        expect(screen.getByRole('status').textContent).toBe('');
     });
 });

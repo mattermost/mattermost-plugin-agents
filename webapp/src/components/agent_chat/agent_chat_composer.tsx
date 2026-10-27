@@ -5,7 +5,6 @@ import React, {useCallback, useEffect, useId, useLayoutEffect, useRef, useState}
 import {useIntl} from 'react-intl';
 import {useDispatch, useSelector} from 'react-redux';
 import styled, {css} from 'styled-components';
-import PlusIcon from '@mattermost/compass-icons/components/plus';
 import SendOutlineIcon from '@mattermost/compass-icons/components/send-outline';
 import SquareIcon from '@mattermost/compass-icons/components/square';
 
@@ -14,6 +13,7 @@ import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 
 import {GlobalState} from '@mattermost/types/store';
 
+import type {LLMBot} from '@/bots';
 import {Client4, createPost, doStopGenerating} from '@/client';
 import {Textbox as HostTextbox} from '@/mm_webapp';
 
@@ -41,6 +41,7 @@ import {
     readDraft,
     writeDraft,
 } from './composer_input';
+import ComposerPlusMenu from './composer_plus_menu';
 import {MAX_FILES_PER_POST, useComposerAttachments} from './use_composer_attachments';
 import {useThreadProfiles} from './use_thread_profiles';
 import {markGenerationStopped, useThreadGenerating} from './use_thread_generating';
@@ -58,7 +59,11 @@ interface AgentChatComposerProps {
     rootId?: string;
     onCreated?: (postId: string) => void;
 
-    // Replaces the attach ("+") button at the start of the pill.
+    // The chat's agent, for the "+" menu's Tools and AI Rewrite; null or
+    // omitted for a thread without one.
+    bot?: LLMBot | null;
+
+    // Replaces the "+" menu at the start of the pill.
     leadingAction?: React.ReactNode;
 }
 
@@ -68,7 +73,7 @@ interface HostTextboxHandle {
     getInputBox: () => HTMLTextAreaElement | HTMLInputElement | null | undefined;
 }
 
-type SendError = {kind: 'post'} | {kind: 'stop'} | {kind: 'command'; message: string; invalidCommand: boolean};
+type SendError = {kind: 'post'} | {kind: 'stop'} | {kind: 'command'; message: string; invalidCommand: boolean} | {kind: 'menu'; message: string};
 
 // Clipboard files (a pasted screenshot) as uploadable files; a nameless one
 // gets the host's "Image Pasted at <date>" style name from `nameFor`.
@@ -138,10 +143,10 @@ const domId = (prefix: string, reactId: string) => `${prefix}-${reactId.replace(
 // textarea stands in. In-progress text is kept per channel and thread for the
 // browser session.
 //
-// Files attach through the "+" picker, a paste, or a drop on the surrounding
+// Files attach through the "+" menu's Upload files, a paste, or a drop on the surrounding
 // AgentChatDropZone; each uploads to the channel right away and its file id
 // goes out with the post. Send waits until every upload has settled.
-const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, leadingAction}: AgentChatComposerProps) => {
+const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, leadingAction}: AgentChatComposerProps) => {
     const intl = useIntl();
     const dispatch = useDispatch();
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
@@ -168,6 +173,10 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, leadin
     const [message, setMessage] = useState(() => readDraft(key));
     const [sending, setSending] = useState(false);
     const [sendError, setSendError] = useState<SendError | null>(null);
+
+    // While an AI Rewrite runs the box is read-only and Send waits, so the
+    // rewritten text never lands over newer edits (as the host holds them).
+    const [rewriting, setRewriting] = useState(false);
     const {
         attachments,
         canAttach,
@@ -247,7 +256,7 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, leadin
     // Files alone are a valid post (as in the host composer); an unfinished or
     // failed upload holds the post until it is retried or removed.
     const hasContent = message.trim().length > 0 || fileIds.length > 0;
-    const canSend = hasContent && !uploading && !hasErrors && !sending && !tooLong;
+    const canSend = hasContent && !uploading && !hasErrors && !sending && !tooLong && !rewriting;
 
     // Runs a slash command as actions/command.ts does. Its ephemeral response
     // arrives as a post over the websocket; only errors surface here.
@@ -312,7 +321,7 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, leadin
     // `override`: the text to send instead of the box's (a closed code block).
     const send = useCallback(async (override?: string) => {
         const text = (override ?? message).trim();
-        if (!(text || fileIds.length > 0) || uploading || hasErrors || tooLong || inFlight.current) {
+        if (!(text || fileIds.length > 0) || uploading || hasErrors || tooLong || rewriting || inFlight.current) {
             return;
         }
         const asCommand = isSlashCommand(text) && invalidCommand.current !== text;
@@ -344,7 +353,7 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, leadin
                 focusInput();
             }
         }
-    }, [message, fileIds.length, uploading, hasErrors, tooLong, rootId, runCommand, postMessage, focusInput]);
+    }, [message, fileIds.length, uploading, hasErrors, tooLong, rewriting, rootId, runCommand, postMessage, focusInput]);
 
     // The same call as the post's own Stop control; the server then ends the
     // stream (cancel, end), which LLMBotPost renders as stopped.
@@ -383,6 +392,20 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, leadin
         setSendError(null);
         pendingPostId.current = '';
     };
+
+    // The "+" menu reads and replaces the text through these. A replacement is
+    // an edit like typing (draft, wrap measuring and expanded layout follow
+    // `message`), then focus returns to the box with the caret at the end.
+    const getText = useCallback(() => message, [message]);
+    const setText = useCallback((text: string) => {
+        setMessage(text);
+        setSendError(null);
+        pendingPostId.current = '';
+        focusInput();
+    }, [focusInput]);
+    const showMenuError = useCallback((errorMessage: string) => {
+        setSendError({kind: 'menu', message: errorMessage});
+    }, []);
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement | HTMLInputElement>) => {
         // The host suggestion list stops the Enter (or Tab) that picks a
@@ -449,19 +472,24 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, leadin
     }
     const placeholder = isReply ? intl.formatMessage({defaultMessage: 'Reply…'}) : label;
 
-    let leading = leadingAction ? <LeadingSlot>{leadingAction}</LeadingSlot> : null;
-    if (!leading && canAttach) {
-        leading = (
-            <AttachButton
-                size='medium'
-                rounded={true}
-                icon={<Icon glyph={<PlusIcon/>}/>}
-                aria-label={intl.formatMessage({defaultMessage: 'Attach files'})}
-                disabled={sending}
-                onClick={openPicker}
-            />
-        );
-    }
+    const leading = (
+        <LeadingSlot>
+            {leadingAction ?? (
+                <ComposerPlusMenu
+                    bot={bot}
+                    channelId={channelId}
+                    rootId={rootId}
+                    uploadEnabled={canAttach}
+                    onUploadFiles={openPicker}
+                    getText={getText}
+                    setText={setText}
+                    disabled={sending}
+                    onError={showMenuError}
+                    onRewritingChange={setRewriting}
+                />
+            )}
+        </LeadingSlot>
+    );
     const invalid = Boolean(sendError) || tooLong;
 
     // Expanded (text on its own full-width row, "+" and send below) once the
@@ -502,6 +530,7 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, leadin
             return;
         }
         input.setAttribute('aria-invalid', String(invalid));
+        input.readOnly = rewriting;
         if (describedBy) {
             input.setAttribute('aria-describedby', describedBy);
         } else {
@@ -514,6 +543,8 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, leadin
         errorText = intl.formatMessage({defaultMessage: 'Couldn\'t send your message. Try again.'});
     } else if (sendError?.kind === 'stop') {
         errorText = intl.formatMessage({defaultMessage: 'Couldn\'t stop generating. Try again.'});
+    } else if (sendError?.kind === 'menu') {
+        errorText = sendError.message;
     } else if (sendError?.kind === 'command') {
         errorText = sendError.message || intl.formatMessage({defaultMessage: 'Couldn\'t run that command. Try again.'});
         if (sendError.invalidCommand) {
@@ -549,6 +580,7 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, leadin
                 $hasLeadingAction={hasLeading}
                 $hostTextbox={Boolean(HostTextbox)}
                 data-expanded={expanded}
+                aria-busy={rewriting}
                 data-testid='agent-chat-composer-pill'
             >
                 <WrapMirror
@@ -601,6 +633,7 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, leadin
                             placeholder={placeholder}
                             aria-label={label}
                             aria-invalid={invalid}
+                            readOnly={rewriting}
                             {...(describedBy ? {'aria-describedby': describedBy} : {})}
                             onChange={handleChange}
                             onKeyDown={handleKeyDown}
@@ -610,7 +643,7 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, leadin
                 )}
                 {generatingPostId ? (
                     <StopButton
-                        size='medium'
+                        size='small'
                         rounded={true}
                         icon={<Icon glyph={<SquareIcon/>}/>}
                         aria-label={intl.formatMessage({defaultMessage: 'Stop generating'})}
@@ -620,7 +653,7 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, leadin
                     />
                 ) : (
                     <SendButton
-                        size='medium'
+                        size='small'
                         rounded={true}
                         data-emphasis='primary'
                         icon={<SendIcon glyph={<SendOutlineIcon/>}/>}
@@ -636,6 +669,7 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, leadin
                 >
                     {generatingPostId ? intl.formatMessage({defaultMessage: 'Generating…'}) : ''}
                     {!generatingPostId && justStopped ? intl.formatMessage({defaultMessage: 'Stopped'}) : ''}
+                    {rewriting ? intl.formatMessage({defaultMessage: 'Rewriting…'}) : ''}
                 </LiveStatus>
             </Shell>
             {limitReached && (
@@ -689,8 +723,8 @@ const ComposerColumn = styled.div`
     width: 100%;
 `;
 
-// Half the pill's single-line outer height (one 40px line + xs padding above
-// and below + the 1px --border-dark on each side = 58px), so one line reads as
+// Half the pill's single-line outer height (one 32px line + xs padding above
+// and below + the 1px --border-dark on each side = 50px), so one line reads as
 // a full pill while a taller, multi-line box keeps the same corners instead of
 // the stretched capsule --radius-pill would draw. No compass radius token is
 // that large (--radius-xl is 16px). Update it with the Shell's padding or
@@ -701,7 +735,7 @@ const COMPOSER_RADIUS = `calc(${TEXTAREA_ONE_LINE_HEIGHT} / 2 + var(--spacing-xs
 // padding. Items sit on the bottom row so the buttons stay by the last line as
 // the text grows. Without a leading button the text keeps the pill's l inset.
 // Positioned so the host suggestion list can float above the whole pill.
-// The medium compass IconButton ("+", send, stop) is 40px, exactly one text
+// The small compass IconButton ("+", send, stop) is 32px, exactly one text
 // line (TEXTAREA_ONE_LINE_HEIGHT), so the pill's geometry uses one value.
 const PILL_BUTTON_SIZE = TEXTAREA_ONE_LINE_HEIGHT;
 
@@ -828,30 +862,20 @@ const Textarea = styled.textarea`
     }
 `;
 
-// The prototype's ComposerShell "+": a round, faintly filled icon button.
-const AttachButton = styled(IconButton)`
-    && {
-        grid-area: plus;
-    }
-
-    &&:not(:disabled):not(:hover):not(:active) {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
-    }
-`;
-
 // Optical correction for the send glyph's shape, not a layout value: the
 // paper plane's path spans x 2-22.2 of its 24-unit viewBox (box centered), but
 // its mass is the triangle from the left edge to the right tip, whose centroid
-// sits at x ~8.7, ~3px left of center at the rendered size. Nudging it right by
-// --spacing-xxxxs (2px; 1px still read as left-heavy against that offset)
-// makes it look centered. A transform, so the button's size and hit area stay.
+// sits at x ~8.7, ~2.4px left of center at the small button's 16px glyph (~3px
+// at the old 20px one). Nudging it right by --spacing-xxxxs (2px; 1px leaves
+// it ~1.4px left-heavy) makes it look centered. A transform, so the button's
+// size and hit area stay.
 const SEND_ICON_OPTICAL_OFFSET = 'var(--spacing-xxxxs)';
 
 const SendIcon = styled(Icon)`
     transform: translateX(${SEND_ICON_OPTICAL_OFFSET});
 `;
 
-// Stop: the standard (neutral) compass IconButton, round and 40px like Send so
+// Stop: the standard (neutral) compass IconButton, round and 32px like Send so
 // swapping them does not move anything; quieter than the primary Send.
 const StopButton = styled(IconButton)`
     && {
@@ -859,12 +883,12 @@ const StopButton = styled(IconButton)`
     }
 `;
 
-// Opened by the "+" button; never focused or announced itself.
+// Opened by the "+" menu's Upload files; never focused or announced itself.
 const HiddenFileInput = styled.input`
     ${visuallyHidden}
 `;
 
-// Send (and Stop): a round medium compass IconButton (40x40, the "+" size,
+// Send (and Stop): a round small compass IconButton (32x32, the "+" size,
 // circular through `rounded`) colored like a compass primary Button
 // (Button.css emphasis-primary: fill, 8%/16% black hover/active mixes,
 // disabled wash). The extra && outranks IconButton's own

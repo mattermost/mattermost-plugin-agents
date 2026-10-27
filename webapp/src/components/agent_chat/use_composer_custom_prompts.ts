@@ -5,9 +5,9 @@ import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {useDispatch, useSelector} from 'react-redux';
 
 import type {LLMBot} from '@/bots';
-import {getCustomPrompts as fetchCustomPromptsList, renderCustomPrompt} from '@/client';
+import {getCustomPromptPins, getCustomPrompts as fetchCustomPromptsList, renderCustomPrompt} from '@/client';
 import {AGENTS_ROUTE} from '@/components/agents/use_agents_route';
-import {CustomPromptsHandler, fetchPinnedPromptIds, ShowCustomPromptsModalHandler} from '@/redux';
+import {CustomPromptsHandler, PinnedPromptIdsHandler, ShowCustomPromptsModalHandler} from '@/redux';
 import {getCustomPrompts, getPinnedPromptIds} from '@/selectors';
 import type {CustomPrompt} from '@/types';
 
@@ -38,8 +38,15 @@ export function useComposerCustomPrompts(): ComposerCustomPrompts {
         setStatus('loading');
 
         // Pins only order the list, so they stay best effort, as on the
-        // Custom Prompts page and the RHS prompt buttons.
-        dispatch(fetchPinnedPromptIds() as any);
+        // Custom Prompts page and the RHS prompt buttons (fetchPinnedPromptIds,
+        // fetched directly so no thunk middleware is assumed).
+        Promise.resolve().then(getCustomPromptPins).then((ids) => {
+            if (id === latest.current) {
+                dispatch({type: PinnedPromptIdsHandler, pinnedPromptIds: ids});
+            }
+        }).catch((e) => {
+            console.error('Failed to fetch pinned prompt IDs:', e); // eslint-disable-line no-console
+        });
         try {
             const list = await fetchCustomPromptsList();
             if (id === latest.current) {

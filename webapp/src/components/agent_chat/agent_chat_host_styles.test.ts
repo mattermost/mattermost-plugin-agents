@@ -52,11 +52,11 @@ describe('hostTextboxPillStyles', () => {
     // Styled-components keeps `&` in interpolated css; the selectors here are as written.
     const text = cssText(hostTextboxPillStyles);
 
-    test('the host textarea is one 40px line at least (an empty box never clips its placeholder) and grows to the cap', () => {
+    test('the host textarea is one 32px line at least (an empty box never clips its placeholder) and grows to the cap', () => {
         // One line = line-height-100 + the block padding the text styles use.
-        expect(TEXTAREA_ONE_LINE_HEIGHT).toBe('calc(var(--line-height-100) + 2 * var(--spacing-s))');
+        expect(TEXTAREA_ONE_LINE_HEIGHT).toBe('calc(var(--line-height-100) + 2 * var(--spacing-xxs))');
         expect(composerTextStyles).toContain('line-height: var(--line-height-100);');
-        expect(composerTextStyles).toContain('padding: var(--spacing-s) 0;');
+        expect(composerTextStyles).toContain('padding: var(--spacing-xxs) 0;');
 
         const textarea = ruleFor(text, '&&& textarea.custom-textarea');
         expect(textarea).toContain(`min-height: ${TEXTAREA_ONE_LINE_HEIGHT}`);
@@ -65,7 +65,7 @@ describe('hostTextboxPillStyles', () => {
         // The textarea and its autosize copy share the text metrics, so the copy measures what the box shows.
         const shared = ruleFor(text, '&&& .custom-textarea');
         expect(shared).toContain('line-height: var(--line-height-100)');
-        expect(shared).toContain('padding: var(--spacing-s) 0');
+        expect(shared).toContain('padding: var(--spacing-xxs) 0');
     });
 
     test('expanded, the host textarea and its sizing copy are inset by spacing-xs on every side', () => {

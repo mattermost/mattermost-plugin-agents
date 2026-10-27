@@ -25,16 +25,16 @@ import {css} from 'styled-components';
 //   absolute, `bottom: 100%`, z-index 100) inside the SuggestionBox, i.e.
 //   against the nearest positioned ancestor, `.textarea-wrapper` by default.
 
-// One line of body text plus the textarea's block padding: 40px, a medium
+// One line of body text plus the textarea's block padding: 32px, a small
 // compass IconButton, so an empty box keeps its full first line.
-export const TEXTAREA_ONE_LINE_HEIGHT = 'calc(var(--line-height-100) + 2 * var(--spacing-s))';
+export const TEXTAREA_ONE_LINE_HEIGHT = 'calc(var(--line-height-100) + 2 * var(--spacing-xxs))';
 
 // No compass token caps a text box; eight lines of body text plus the
 // textarea's block padding.
-export const TEXTAREA_MAX_HEIGHT = 'calc(8 * var(--line-height-100) + 2 * var(--spacing-s))';
+export const TEXTAREA_MAX_HEIGHT = 'calc(8 * var(--line-height-100) + 2 * var(--spacing-xxs))';
 
 // Expanded composer (text on its own full-width row): the text box is inset by
-// spacing-xs on every side instead of the inline state's 40px line alignment,
+// spacing-xs on every side instead of the inline state's 32px line alignment,
 // so one line is line-height-100 + 2 * spacing-xs and the cap is eight such lines.
 export const TEXTAREA_EXPANDED_PADDING = 'var(--spacing-xs)';
 export const TEXTAREA_EXPANDED_ONE_LINE_HEIGHT = 'calc(var(--line-height-100) + 2 * var(--spacing-xs))';
@@ -47,13 +47,13 @@ export const composerTextStyles = `
     margin: 0;
 
     /*
-     * One line of text plus this padding is exactly a medium compass
-     * IconButton (40px: line-height-100 + 2 * spacing-s), the height of the
+     * One line of text plus this padding is exactly a small compass
+     * IconButton (32px: line-height-100 + 2 * spacing-xxs), the height of the
      * "+" and send buttons. With the pill's items bottom-aligned, the first
      * line (and the placeholder) shares their center while the text is one
      * line, and the last line keeps it as the text grows.
      */
-    padding: var(--spacing-s) 0;
+    padding: var(--spacing-xxs) 0;
     border: none;
     font-family: var(--font-family-body);
     font-size: var(--font-size-100);
