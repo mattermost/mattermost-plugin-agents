@@ -47,6 +47,12 @@ const ThreadsList = styled.div`
     && [class*='thread-list-item__preview'] {
         margin-bottom: 0;
     }
+
+    /* The title keeps the body text size (compass sets it one step larger). */
+    && [class*='thread-list-item__title'] {
+        font-size: var(--font-size-100);
+        line-height: var(--line-height-100);
+    }
 `;
 
 const RhsContainer = styled.div`
