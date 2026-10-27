@@ -203,15 +203,16 @@ const RHSTitle = () => {
 // mirrors host CSS.
 const HOST_TITLE_INLINE_PADDING = '1.6rem';
 
-// `tight` is the chat views' title (a new chat and an open chat): its elements sit closer than the
-// chat history's generic title.
+// `tight` is the chat views' title (a new chat and an open chat): its elements sit closer and its
+// start takes the host's padding back down to 12px. The chat history's generic title keeps the host's
+// padding, plus 4px (--spacing-xxxs).
 const Container = styled.span<{$tight?: boolean}>`
     display: flex;
     flex: 1 1 auto;
     min-width: 0;
     align-items: center;
     gap: ${({$tight}) => ($tight ? 'var(--spacing-xxxs)' : 'var(--spacing-xs)')};
-    margin-left: calc(-1 * ${HOST_TITLE_INLINE_PADDING} + var(--spacing-m));
+    margin-left: ${({$tight}) => ($tight ? `calc(-1 * ${HOST_TITLE_INLINE_PADDING} + var(--spacing-m))` : 'var(--spacing-xxxs)')};
     margin-right: calc(-1 * ${HOST_TITLE_INLINE_PADDING} + var(--spacing-xxxs));
 `;
 
