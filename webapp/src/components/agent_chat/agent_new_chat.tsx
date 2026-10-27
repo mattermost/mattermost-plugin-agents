@@ -102,7 +102,7 @@ const pageLayout = css`
     padding: var(--spacing-xxxxl);
 
     /* Sit slightly above true center, as in the prototype. */
-    transform: translateY(calc(-1 * (var(--spacing-xxxxxl) + var(--spacing-l))));
+    transform: translateY(calc(-1 * (var(--spacing-xxxxxl) + var(--spacing-l) + var(--spacing-xxl))));
 `;
 
 // The RHS is short as well as narrow: a smaller lift, and 24px padding on all
@@ -110,7 +110,7 @@ const pageLayout = css`
 const panelLayout = css`
     gap: var(--spacing-xl);
     padding: var(--spacing-xxl);
-    transform: translateY(calc(-1 * var(--spacing-xxl)));
+    transform: translateY(calc(-2 * var(--spacing-xxl)));
 `;
 
 const EmptyChat = styled.div<{$layout: AgentNewChatLayout}>`
