@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -123,6 +124,8 @@ type scopedTestEnv struct {
 	streaming     *fakeStreamingService
 	minter        *scopedTestMinter
 	catalog       *scopedCatalogManager
+	builder       *llmcontext.Builder
+	botConfig     llm.BotConfig
 
 	toolRuns int
 	runsMu   sync.Mutex
@@ -135,6 +138,18 @@ func (env *scopedTestEnv) runs() int {
 	env.runsMu.Lock()
 	defer env.runsMu.Unlock()
 	return env.toolRuns
+}
+
+// removeToolFromAgent updates the agent without the given allowlist entry and
+// ends the live runs that no longer fit it, as the listeners registered in
+// server/main.go do after an agent update.
+func (env *scopedTestEnv) removeToolFromAgent(removed llm.EnabledMCPTool) {
+	cfg := env.botConfig
+	cfg.EnabledMCPTools = slices.DeleteFunc(slices.Clone(cfg.EnabledMCPTools), func(tool llm.EnabledMCPTool) bool { return tool == removed })
+	updated := bots.NewBot(cfg, llm.ServiceConfig{}, &model.Bot{UserId: scopedBotUserID, Username: scopedBotUsername}, nil)
+	env.catalog.RevokeScopedSessionsWhere(func(run *mcp.ScopedRun) bool {
+		return env.builder.ScopedRunLapsed(updated, run)
+	})
 }
 
 func (env *scopedTestEnv) auditRecords(event string) []*model.AuditRecord {
@@ -230,17 +245,18 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	}
 
 	botService := bots.New(mockAPI, client, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
+	env.botConfig = llm.BotConfig{
+		ID:                    "scoped-agent",
+		Name:                  scopedBotUsername,
+		DisplayName:           "Scoped Bot",
+		ChannelAccessLevel:    llm.ChannelAccessLevelAll,
+		UserAccessLevel:       llm.UserAccessLevelAll,
+		UseServiceAccountAuth: true,
+		ScopedChannelMode:     true,
+		EnabledMCPTools:       enabledTools,
+	}
 	conversations.SetBotsWithAccounts(mockAPI, botService, bots.NewBot(
-		llm.BotConfig{
-			ID:                    "scoped-agent",
-			Name:                  scopedBotUsername,
-			DisplayName:           "Scoped Bot",
-			ChannelAccessLevel:    llm.ChannelAccessLevelAll,
-			UserAccessLevel:       llm.UserAccessLevelAll,
-			UseServiceAccountAuth: true,
-			ScopedChannelMode:     true,
-			EnabledMCPTools:       enabledTools,
-		},
+		env.botConfig,
 		llm.ServiceConfig{DefaultModel: "test-model", Type: llm.ServiceTypeOpenAI},
 		&model.Bot{UserId: scopedBotUserID, Username: scopedBotUsername, DisplayName: "Scoped Bot"},
 		newDMTestLLM(llmResponses...),
@@ -260,6 +276,7 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	env.convStore = newFakeConvStore()
 
 	contextBuilder := llmcontext.NewLLMContextBuilder(client, toolProvider, env.catalog, scopedBuilderConfig{})
+	env.builder = contextBuilder
 	policies := newDMPolicyChecker()
 	policies.policies[scopedRemote+":get_issue"] = mcp.ToolPolicyAsk
 	env.conversations = conversations.New(promptsManager, mmClient, env.streaming, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil,
@@ -516,4 +533,49 @@ func TestScopedChannelTurnErrorRevokesSession(t *testing.T) {
 	require.Len(t, minted, 1)
 	assert.Equal(t, []string{minted[0].Id}, revoked)
 	assert.Equal(t, 0, env.runs())
+}
+
+// Removing a tool from a scoped agent's allowlist ends the runs that were
+// started with it, so the removed tool stops running without approval.
+func TestScopedChannelTurnStopsAutoRunningRemovedTool(t *testing.T) {
+	jira := llm.EnabledMCPTool{ServerOrigin: scopedRemote, ToolName: "get_issue"}
+	webSearch := llm.EnabledMCPTool{ServerOrigin: llm.BuiltinToolsOrigin, ToolName: "WebSearch"}
+	jiraCall := func(id string) []llm.ToolCall {
+		return []llm.ToolCall{{ID: id, Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+	}
+	searchCall := []llm.ToolCall{{ID: "call-2", Name: "WebSearch", Arguments: json.RawMessage(`{"query":"mattermost scoped sessions"}`)}}
+
+	tests := []struct {
+		name         string
+		removed      llm.EnabledMCPTool
+		secondCall   []llm.ToolCall
+		wantToolRuns int
+		wantSearches int32
+	}{
+		{name: "MCP tool", removed: jira, secondCall: jiraCall("call-2"), wantToolRuns: 1},
+		{name: "built-in web search", removed: webSearch, secondCall: searchCall, wantToolRuns: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var searches atomic.Int32
+			searx := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				searches.Add(1)
+				_, _ = w.Write([]byte(`{"results":[]}`))
+			}))
+			t.Cleanup(searx.Close)
+
+			channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypeOpen, Name: "town-square"}
+			env := setupScopedTestEnv(t, channel, scopedEnvOpts{
+				webSearchURL:  searx.URL,
+				namedBuiltins: []string{"WebSearch"},
+				onToolRun:     func(env *scopedTestEnv) { env.removeToolFromAgent(tt.removed) },
+			}, dmMakeToolCallStream(jiraCall("call-1")), dmMakeToolCallStream(tt.secondCall), dmMakeTextStream("done"))
+
+			assert.Equal(t, tt.wantToolRuns, env.runs(), "only the call made before the removal runs")
+			assert.EqualValues(t, tt.wantSearches, searches.Load(), "the removed web search never runs")
+			toolUse, _ := scopedToolBlocks(t, env)
+			require.Len(t, toolUse, 1, "the call after the removal waits for approval")
+			assert.Equal(t, "call-1", toolUse[0].ID)
+		})
+	}
 }
