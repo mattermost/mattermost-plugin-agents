@@ -8,6 +8,7 @@ import {IntlProvider} from 'react-intl';
 import {Post} from '@mattermost/types/posts';
 
 import PostMenu from './post_menu';
+import {AGENT_CHAT_SURFACE, AgentChatSurfaceContext} from './agent_chat/agent_chat_surface_context';
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
@@ -110,6 +111,46 @@ describe('PostMenu license gating', () => {
         expect(screen.queryByText('Find action items')).toBeNull();
         expect(screen.queryByText('Find open questions')).toBeNull();
         expect(screen.getByText('React for me')).not.toBeNull();
+    });
+});
+
+describe('PostMenu in the agent chat views', () => {
+    const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+
+    beforeEach(() => {
+        useIsLicensedFor.mockReturnValue(true);
+    });
+
+    const renderInAgentChat = () => render(
+        <IntlProvider locale='en'>
+            <AgentChatSurfaceContext.Provider value={AGENT_CHAT_SURFACE}>
+                <PostMenu post={post}/>
+            </AgentChatSurfaceContext.Provider>
+        </IntlProvider>,
+    );
+
+    test('keeps summarize and action items but drops the agent picker, open questions, React for me and the visibility note', () => {
+        renderInAgentChat();
+
+        expect(screen.getByText('Summarize Thread')).not.toBeNull();
+        expect(screen.getByText('Find action items')).not.toBeNull();
+        expect(screen.queryByText('Find open questions')).toBeNull();
+        expect(screen.queryByText('bot-selector')).toBeNull();
+        expect(screen.queryByText('React for me')).toBeNull();
+        expect(screen.queryByText(/will only be visible to you/)).toBeNull();
+    });
+
+    test('keeps the agent picker, open questions, React for me and the note outside them', () => {
+        render(
+            <IntlProvider locale='en'>
+                <PostMenu post={post}/>
+            </IntlProvider>,
+        );
+
+        expect(screen.getByText('bot-selector')).not.toBeNull();
+        expect(screen.getByText('Find open questions')).not.toBeNull();
+        expect(screen.getByText('React for me')).not.toBeNull();
+        expect(screen.getByText(/will only be visible to you/)).not.toBeNull();
     });
 });
 
