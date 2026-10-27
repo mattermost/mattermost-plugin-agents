@@ -278,8 +278,10 @@ func (c *Conversations) checkSourceChannel(userID, channelID string) error {
 }
 
 // buildContext builds the turn's LLM context with the tools the policy
-// allows. extraOpts are applied after the policy's own options.
-func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, extraOpts ...llm.ContextOption) *llm.Context {
+// allows. Skills are offered only in ordinary conversations, and runs with no
+// requester present get only built-in skills, which no user can edit.
+// extraOpts are applied after the policy's own options.
+func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, extraOpts ...llm.ContextOption) (*llm.Context, error) {
 	builder := p.c.contextBuilder
 	opts := []llm.ContextOption{builder.WithLLMContextResponseFiles()}
 	if p.interactive {
@@ -290,10 +292,19 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 			return botChannelAutoEverywhereKeepTool(p.c.toolPolicyChecker, tool)
 		}))
 	}
+	opts = append(opts, builder.WithLLMContextSkills(p.conv == nil || p.conv.Operation == llm.OperationConversation))
 	opts = append(opts, p.c.conversationToolOptions(p.bot, p.conv)...)
 	opts = append(opts, extraOpts...)
 
 	llmContext := p.c.buildConversationContextWithTools(ctx, p.bot, p.user, p.channel, prefsLogMessage, opts...)
+	skillsCfg := p.bot.GetConfig()
+	if !p.interactive {
+		skillsCfg.Skills.AllowPersonal = false
+		skillsCfg.Skills.EnabledSharedIDs = nil
+	}
+	if err := builder.AddSkillTools(llmContext, skillsCfg); err != nil {
+		return nil, fmt.Errorf("failed to load skills: %w", err)
+	}
 	switch {
 	case !p.toolsEnabled && !p.isDM && p.c.channelMentionToolCallingEnabled():
 		// Tools are off only because nobody is present to approve them;
@@ -305,7 +316,7 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 	case p.autoEverywhereOnly:
 		p.c.applyBotChannelAutoEverywhereToolFilter(llmContext)
 	}
-	return llmContext
+	return llmContext, nil
 }
 
 // autoExecute decides, per tool call, whether the call runs without the

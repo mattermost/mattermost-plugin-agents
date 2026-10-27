@@ -1303,7 +1303,8 @@ export async function createCustomPrompt(prompt: {name: string; description: str
     });
 }
 
-export async function updateCustomPrompt(id: string, prompt: {name: string; description: string; template: string; is_shared: boolean}): Promise<void> {
+// updated_at, when set, makes the update fail with 409 if the prompt changed since it was read.
+export async function updateCustomPrompt(id: string, prompt: {name: string; description: string; template: string; is_shared: boolean; updated_at?: number}): Promise<void> {
     const url = `${baseRoute()}/custom-prompts/${id}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'PUT',

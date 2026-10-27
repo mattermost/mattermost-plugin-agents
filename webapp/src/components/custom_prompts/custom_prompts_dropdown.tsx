@@ -139,7 +139,7 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
                     role='menuitem'
                     disabled={true}
                 >
-                    <span><FormattedMessage defaultMessage='No custom prompts yet'/></span>
+                    <span><FormattedMessage defaultMessage='No skills yet'/></span>
                 </StyledMenuItem>
             )}
             <StyledMenuSeparator role='separator'/>
@@ -149,7 +149,7 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
                 onClick={handleCreateClick}
             >
                 <CogOutlineIcon size={16}/>
-                <span><FormattedMessage defaultMessage='Manage prompts'/></span>
+                <span><FormattedMessage defaultMessage='Manage skills'/></span>
             </StyledMenuItem>
         </MenuContent>
     );

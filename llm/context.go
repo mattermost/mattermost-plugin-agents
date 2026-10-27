@@ -69,7 +69,9 @@ type Context struct {
 	// UnconnectedMCPServers lists servers the requester can connect from the
 	// conversation; set only when the connection request tool is cataloged.
 	UnconnectedMCPServers []UnconnectedMCPServer
-	Parameters            map[string]any
+	// Skills is the catalog load_skill can load; set only when it is cataloged.
+	Skills     []SkillInfo
+	Parameters map[string]any
 
 	// ResponsePostID is the bot's streamed response post for this run. Set by
 	// conversation entry points after the placeholder post exists; not
@@ -124,6 +126,10 @@ type ToolCatalogContext struct {
 	// attached automatically. The model cannot see provider file ids, so the
 	// prompt must tell it to copy shareable files into $OUTPUT_DIR.
 	SandboxFilesAttached bool
+
+	// SkillsEnabled catalogs the skill tools. Only conversation turns set
+	// it; analysis, search, and bridge flows run without skills.
+	SkillsEnabled bool
 }
 
 // CreatedFile identifies a file created by a tool during this turn for

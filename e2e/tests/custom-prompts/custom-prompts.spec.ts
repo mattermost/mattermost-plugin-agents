@@ -160,7 +160,7 @@ async function openCustomPromptsModal(page) {
         }
         store.dispatch({ type: 'SHOW_CUSTOM_PROMPTS_MODAL', show: true });
     });
-    await expect(page.getByRole('dialog', {name: 'Custom Prompts'})).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('dialog', {name: 'Skills'})).toBeVisible({ timeout: 10000 });
 }
 
 // ---------------------------------------------------------------------------
@@ -189,10 +189,10 @@ test.describe('Custom Prompts Management Modal', () => {
         await openCustomPromptsModal(page);
 
         // Verify modal structure
-        await expect(page.getByRole('dialog', {name: 'Custom Prompts'})).toBeVisible();
-        await expect(page.getByText('All Prompts')).toBeVisible();
-        await expect(page.getByText('Your Prompts')).toBeVisible();
-        await expect(page.getByPlaceholder('Search prompts')).toBeVisible();
+        await expect(page.getByRole('dialog', {name: 'Skills'})).toBeVisible();
+        await expect(page.getByText('All Skills')).toBeVisible();
+        await expect(page.getByText('Your Skills')).toBeVisible();
+        await expect(page.getByPlaceholder('Search skills')).toBeVisible();
         await expect(page.getByRole('button', { name: 'Create new' })).toBeVisible();
     });
 
@@ -202,12 +202,12 @@ test.describe('Custom Prompts Management Modal', () => {
 
         // Click "Create new" to show the form
         await page.getByRole('button', { name: 'Create new' }).click();
-        await expect(page.getByText('New Prompt')).toBeVisible();
+        await expect(page.getByText('New Skill')).toBeVisible();
 
         // Fill the form (default visibility is Private, which is fine for this test)
-        await page.getByPlaceholder('Enter a title for your prompt').fill('Modal Test Prompt');
+        await page.getByPlaceholder('Enter a title for your skill').fill('Modal Test Prompt');
         await page.getByPlaceholder('Enter a brief description').fill('Created via modal');
-        await page.getByPlaceholder('Enter the system prompt template').fill('Hello from modal test');
+        await page.getByPlaceholder('Enter the skill instructions').fill('Hello from modal test');
 
         // Save (use exact match to avoid matching "Saved messages" button in header)
         await page.getByRole('button', { name: 'Save', exact: true }).click();
@@ -240,7 +240,7 @@ test.describe('Custom Prompts Management Modal', () => {
         await page.getByText('Editable Prompt').click();
 
         // The form should show pre-filled values
-        const titleInput = page.getByPlaceholder('Enter a title for your prompt');
+        const titleInput = page.getByPlaceholder('Enter a title for your skill');
         await expect(titleInput).toHaveValue('Editable Prompt');
 
         // Edit the title
@@ -259,7 +259,7 @@ test.describe('Custom Prompts Management Modal', () => {
                 store.dispatch({type: 'SHOW_CUSTOM_PROMPTS_MODAL', show: false});
             }
         });
-        await expect(page.getByRole('dialog', {name: 'Custom Prompts'})).toBeHidden({ timeout: 10000 });
+        await expect(page.getByRole('dialog', {name: 'Skills'})).toBeHidden({ timeout: 10000 });
 
         // Reopen
         await openCustomPromptsModal(page);
@@ -292,12 +292,12 @@ test.describe('Custom Prompts Management Modal', () => {
         await expect(page.getByText('Beta Search Prompt')).toBeVisible();
 
         // Search for Alpha only
-        await page.getByPlaceholder('Search prompts').fill('Alpha');
+        await page.getByPlaceholder('Search skills').fill('Alpha');
         await expect(page.getByText('Alpha Search Prompt')).toBeVisible();
         await expect(page.getByText('Beta Search Prompt')).not.toBeVisible();
 
         // Clear search to restore both
-        await page.getByPlaceholder('Search prompts').fill('');
+        await page.getByPlaceholder('Search skills').fill('');
         await expect(page.getByText('Beta Search Prompt')).toBeVisible();
     });
 
@@ -328,14 +328,14 @@ test.describe('Custom Prompts Management Modal', () => {
         await expect(page.getByText('Admin Created Prompt')).toBeVisible();
 
         // Switch to Your Prompts tab
-        await page.getByText('Your Prompts').click();
+        await page.getByText('Your Skills').click();
 
         // Only the current user's prompt should appear
         await expect(page.getByText('My Own Prompt')).toBeVisible();
         await expect(page.getByText('Admin Created Prompt')).not.toBeVisible();
 
         // Switch back to All Prompts
-        await page.getByText('All Prompts').click();
+        await page.getByText('All Skills').click();
         await expect(page.getByText('Admin Created Prompt')).toBeVisible();
 
         // Clean up admin prompt
@@ -375,13 +375,13 @@ test.describe('Custom Prompts Management Modal', () => {
         expect(pinsAfter).not.toContain(prompt.id);
     });
 
-    test('empty state shows "No prompts found" message', async ({ page }) => {
+    test('empty state shows "No skills found" message', async ({ page }) => {
         await setupTestPage(page);
         await openCustomPromptsModal(page);
 
         // Search for something that doesn't exist
-        await page.getByPlaceholder('Search prompts').fill('xyznonexistent99999');
-        await expect(page.getByText('No prompts found')).toBeVisible({ timeout: 5000 });
+        await page.getByPlaceholder('Search skills').fill('xyznonexistent99999');
+        await expect(page.getByText('No skills found')).toBeVisible({ timeout: 5000 });
     });
 });
 
@@ -429,7 +429,7 @@ test.describe('Custom Prompts in AI Actions Submenu', () => {
         }
 
         await aiButton.click();
-        await page.getByText('Custom prompts').hover();
+        await page.getByText('Skills', {exact: true}).hover();
 
         await expect(page.getByText('Formatting Bar Prompt')).toBeVisible({ timeout: 10000 });
         await page.getByText('Formatting Bar Prompt').click();
@@ -450,11 +450,11 @@ test.describe('Custom Prompts in AI Actions Submenu', () => {
         }
 
         await aiButton.click();
-        await page.getByText('Custom prompts').hover();
-        await page.getByText('Manage prompts').click();
+        await page.getByText('Skills', {exact: true}).hover();
+        await page.getByText('Manage skills').click();
 
-        await expect(page.getByRole('dialog', {name: 'Custom Prompts'})).toBeVisible({ timeout: 10000 });
-        await expect(page.getByText('All Prompts')).toBeVisible();
+        await expect(page.getByRole('dialog', {name: 'Skills'})).toBeVisible({ timeout: 10000 });
+        await expect(page.getByText('All Skills')).toBeVisible();
     });
 });
 

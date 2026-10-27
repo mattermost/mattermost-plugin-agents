@@ -119,6 +119,8 @@ export function changedFieldLabel(intl: IntlShape, field: string): string {
         return intl.formatMessage({defaultMessage: 'Reasoning'});
     case 'maxToolTurns':
         return intl.formatMessage({defaultMessage: 'Max tool turns'});
+    case 'skills':
+        return intl.formatMessage({defaultMessage: 'Skills'});
     default:
         return humanizeFieldKey(field);
     }

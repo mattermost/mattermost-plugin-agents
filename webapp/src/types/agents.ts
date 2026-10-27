@@ -23,6 +23,30 @@ export type EnabledTool = {
     tool_name: string; // tool identifier on that server
 }
 
+// Mirrors llm.MaxSkillDescriptionRunes on the backend; also caps per-agent overrides.
+export const MaxSkillDescriptionRunes = 1024;
+
+// SkillsConfig matches llm.SkillsConfig. Shared skills are opt-in per agent;
+// descriptionOverrides is keyed by skill ID.
+export type SkillsConfig = {
+    disabled: boolean;
+    allowPersonal: boolean;
+
+    // Server sends nil Go slices and maps as JSON null.
+    enabledSharedIDs: string[] | null;
+    descriptionOverrides: Record<string, string> | null;
+}
+
+// normalizeSkillsConfig fills in what older servers and snapshots omit.
+export function normalizeSkillsConfig(skills?: Partial<SkillsConfig> | null): SkillsConfig {
+    return {
+        disabled: skills?.disabled ?? false,
+        allowPersonal: skills?.allowPersonal ?? false,
+        enabledSharedIDs: [...(skills?.enabledSharedIDs ?? [])],
+        descriptionOverrides: {...(skills?.descriptionOverrides ?? {})},
+    };
+}
+
 // Mirrors config.AgentInactiveReason on the backend.
 export type AgentInactiveReason = 'invalid_config' | 'service_unavailable' | 'service_not_licensed' | 'agent_limit';
 
@@ -70,6 +94,9 @@ export type UserAgent = {
     reasoningEffort: string;
     thinkingBudget: number;
     maxToolTurns: number;
+
+    // Absent or null from servers that predate skills.
+    skills?: SkillsConfig | null;
 
     /**
      * @deprecated Structured output is configured per service
@@ -127,6 +154,9 @@ export type CreateAgentRequest = {
     reasoningEffort?: string;
     thinkingBudget?: number;
     maxToolTurns?: number;
+
+    // Required so payload builders can't silently drop it on full-replace PUT.
+    skills: SkillsConfig;
 }
 
 // UpdateAgentRequest matches api.UpdateAgentRequest in Go.
@@ -157,6 +187,7 @@ export type UpdateAgentRequest = {
     reasoningEffort?: string;
     thinkingBudget?: number;
     maxToolTurns?: number;
+    skills: SkillsConfig;
 }
 
 // ServiceInfo matches api.ServiceInfo in Go (safe subset, no secrets).
@@ -218,6 +249,9 @@ export type AgentExportAgent = {
     mcpDynamicToolLoading: boolean;
     autoEnableNewMCPTools: boolean;
     mcpTools: AgentExportMCPTool[];
+
+    // Skill IDs only resolve on the exporting server; elsewhere they match no skill.
+    skills: SkillsConfig;
 }
 
 export type AgentExportDocument = {

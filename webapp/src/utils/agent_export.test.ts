@@ -23,6 +23,8 @@ const intl = {
         realIntl.formatMessage({id: descriptor.id ?? descriptor.defaultMessage, ...descriptor}, values as never),
 } as unknown as IntlShape;
 
+const skillID = 'a'.repeat(26);
+
 function agentFile(content: unknown, name = 'agent.json'): File {
     return new File([typeof content === 'string' ? content : JSON.stringify(content)], name, {type: 'application/json'});
 }
@@ -41,6 +43,7 @@ const validDocument = {
         mcpDynamicToolLoading: false,
         autoEnableNewMCPTools: false,
         mcpTools: [{serverOrigin: 'https://jira.example.com/mcp', toolName: 'search'}],
+        skills: {disabled: false, allowPersonal: true, enabledSharedIDs: [skillID], descriptionOverrides: {[skillID]: 'Use for releases'}},
     },
 };
 
@@ -59,10 +62,16 @@ describe('buildAgentExport', () => {
                 {server_origin: 'https://jira.example.com/mcp/', tool_name: 'search'},
                 {server_origin: 'https://jira.example.com/mcp', tool_name: ' search '},
             ],
+            skills: {disabled: false, allowPersonal: true, enabledSharedIDs: [skillID], descriptionOverrides: {[skillID]: 'Use for releases'}},
         }, 3, 10);
 
         expect(doc).toEqual(validDocument);
         expect(JSON.stringify(doc)).not.toContain('svc-secret');
+    });
+
+    test('exports default skill settings for snapshots saved before skills existed', () => {
+        const doc = buildAgentExport({name: 'helper', skills: null}, 1, 10);
+        expect(doc.agent.skills).toEqual({disabled: false, allowPersonal: false, enabledSharedIDs: [], descriptionOverrides: {}});
     });
 });
 
@@ -124,7 +133,14 @@ describe('readAgentExportFile', () => {
             mcpDynamicToolLoading: true,
             autoEnableNewMCPTools: false,
             mcpTools: [],
+            skills: {disabled: false, allowPersonal: false, enabledSharedIDs: [], descriptionOverrides: {}},
         });
+    });
+
+    test('drops duplicate skill IDs and blank overrides', async () => {
+        const skills = {enabledSharedIDs: [skillID, skillID], descriptionOverrides: {[skillID]: '  '}};
+        const doc = await readAgentExportFile(agentFile({...validDocument, agent: {...validDocument.agent, skills}}), intl);
+        expect(doc.agent.skills).toEqual({disabled: false, allowPersonal: false, enabledSharedIDs: [skillID], descriptionOverrides: {}});
     });
 
     test.each([
@@ -133,6 +149,10 @@ describe('readAgentExportFile', () => {
         {name: 'a newer format', content: {...validDocument, schemaVersion: 2}, message: 'format version 2'},
         {name: 'a missing agent section', content: {kind: 'mattermost-agent', schemaVersion: 1}, message: 'not a valid Mattermost agent export'},
         {name: 'a wrongly typed field', content: {...validDocument, agent: {...validDocument.agent, disableTools: 'yes'}}, message: 'not a valid Mattermost agent export'},
+        {name: 'a malformed skill ID', content: {...validDocument, agent: {...validDocument.agent, skills: {enabledSharedIDs: ['not-an-id']}}}, message: 'not a valid Mattermost agent export'},
+        {name: 'an override keyed by a malformed ID', content: {...validDocument, agent: {...validDocument.agent, skills: {descriptionOverrides: {bad: 'x'}}}}, message: 'not a valid Mattermost agent export'},
+        {name: 'an override over the length limit', content: {...validDocument, agent: {...validDocument.agent, skills: {descriptionOverrides: {[skillID]: 'x'.repeat(1025)}}}}, message: 'not a valid Mattermost agent export'},
+        {name: 'a wrongly typed skills flag', content: {...validDocument, agent: {...validDocument.agent, skills: {disabled: 'no'}}}, message: 'not a valid Mattermost agent export'},
         {name: 'a tool without an origin', content: {...validDocument, agent: {...validDocument.agent, mcpTools: [{serverOrigin: ' ', toolName: 'x'}]}}, message: 'not a valid Mattermost agent export'},
     ])('rejects $name', async ({content, message}) => {
         await expect(readAgentExportFile(agentFile(content), intl)).rejects.toThrow(message);

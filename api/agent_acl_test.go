@@ -31,6 +31,7 @@ var managerEditableBotConfigFields = map[string]bool{
 	"StructuredOutputEnabled": true,
 	"MaxToolTurns":            true,
 	"UseServiceAccountAuth":   true,
+	"Skills":                  true,
 }
 
 func TestServiceAccountChangeNeedsAdmin(t *testing.T) {
@@ -204,6 +205,9 @@ func mutateBotConfigField(t *testing.T, cfg *llm.BotConfig, fieldName string) {
 		return
 	case "ChannelIDs", "UserIDs", "TeamIDs", "AdminUserIDs", "EnabledNativeTools":
 		v.Set(reflect.ValueOf([]string{"mutated-id"}))
+		return
+	case "Skills":
+		v.Set(reflect.ValueOf(llm.SkillsConfig{AllowPersonal: true, EnabledSharedIDs: []string{"mutated-id"}}))
 		return
 	}
 

@@ -364,7 +364,7 @@ export default class Plugin {
         if (registry.registerAIActionMenuItemComponent) {
             registry.registerAIActionMenuItemComponent({
                 icon: <CodeTagsIcon size={18}/>,
-                text: <FormattedMessage defaultMessage='Custom prompts'/>,
+                text: <FormattedMessage defaultMessage='Skills'/>,
                 sortOrder: 10,
                 component: CustomPromptsDropdown,
             });

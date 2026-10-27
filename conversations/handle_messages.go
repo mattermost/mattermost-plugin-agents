@@ -289,7 +289,10 @@ func (c *Conversations) handleMentionViaConversation(
 	bot, postingUser, channel := policy.bot, policy.user, policy.channel
 	// Build the context once WITH tools so the system prompt can reference
 	// .Tools and .DisabledTools.
-	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences")
+	llmContext, err := policy.buildContext(ctx, "Failed to load user tool preferences")
+	if err != nil {
+		return err
+	}
 	progress.Advance(responseProgressLoadingConversation)
 
 	systemPrompt, fmtErr := c.prompts.Format(prompts.PromptDirectMessageQuestionSystem, llmContext)
@@ -433,7 +436,10 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, policy *tur
 		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 	}
 	// Build the context once WITH tools so the system prompt can reference them.
-	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences", extraOpts...)
+	llmContext, err := policy.buildContext(ctx, "Failed to load user tool preferences", extraOpts...)
+	if err != nil {
+		return err
+	}
 	progress.Advance(responseProgressLoadingConversation)
 
 	convResult, err := c.createOrGetDMConversation(auth.SessionIDFromContext(ctx), policy.bot.GetMMBot().UserId, policy.user, policy.channel, post, llmContext)

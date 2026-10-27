@@ -83,6 +83,7 @@ func clearManagerEditableFields(cfg *llm.BotConfig) {
 	cfg.StructuredOutputEnabled = false //nolint:staticcheck // deprecated field is still persisted, so it must be normalized too
 	cfg.MaxToolTurns = 0
 	cfg.UseServiceAccountAuth = false
+	cfg.Skills = llm.SkillsConfig{}
 
 	// Access/MCP-grant ID collections are sets on the wire; order and nil-vs-empty are not changes.
 	cfg.ChannelIDs = sortedOrNil(cfg.ChannelIDs)

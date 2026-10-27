@@ -705,6 +705,10 @@ func TestListAgentsFiltersByAccess(t *testing.T) {
 		ID: "agent-1", CreatorID: "other-user", DisplayName: "Public Agent",
 		ServiceID: "svc-1", UserAccessLevel: llm.UserAccessLevelAll,
 		CustomInstructions: "internal procedures",
+		Skills: llm.SkillsConfig{
+			EnabledSharedIDs:     []string{"skillid12345678901234567ab"},
+			DescriptionOverrides: map[string]string{"skillid12345678901234567ab": "internal skill guidance"},
+		},
 	}
 	e.agentStore.agents["agent-2"] = &llm.BotConfig{
 		ID: "agent-2", CreatorID: "other-user", DisplayName: "Private Agent",
@@ -719,8 +723,11 @@ func TestListAgentsFiltersByAccess(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&agents))
 	assert.Len(t, agents, 1)
 	assert.Equal(t, "Public Agent", agents[0].DisplayName)
-	// Non-managers must not see customInstructions.
+	// Non-managers must not see customInstructions or skill description overrides.
 	assert.Empty(t, agents[0].CustomInstructions)
+	assert.Empty(t, agents[0].Skills.DescriptionOverrides)
+	assert.Equal(t, []string{"skillid12345678901234567ab"}, agents[0].Skills.EnabledSharedIDs)
+	assert.Equal(t, "internal skill guidance", e.agentStore.agents["agent-1"].Skills.DescriptionOverrides["skillid12345678901234567ab"], "redaction must not modify the stored agent")
 }
 
 func TestUpdateAgentAsCreator(t *testing.T) {

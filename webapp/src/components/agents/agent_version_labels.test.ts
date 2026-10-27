@@ -16,6 +16,7 @@ const intl = {
 describe('changedFieldLabel', () => {
     test.each([
         {field: 'customInstructions', expected: 'Custom instructions'},
+        {field: 'skills', expected: 'Skills'},
         {field: 'structuredOutputEnabled', expected: 'Structured output enabled'},
         {field: 'maxFileSize', expected: 'Max file size'},
         {field: 'botUserID', expected: 'Bot user ID'},

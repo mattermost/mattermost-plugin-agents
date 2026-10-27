@@ -35,6 +35,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
+	"github.com/mattermost/mattermost-plugin-agents/v2/skills"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
@@ -600,6 +601,9 @@ func (p *Plugin) OnActivate() error {
 	}
 
 	customPromptsStore := customprompts.NewStore(dbClient)
+	contextBuilder.SetSkillProvider(skills.NewProvider(customPromptsStore, prompts, func() bool {
+		return licenseChecker.Allows(enterprise.CapSharedPrompts)
+	}))
 
 	apiService := api.New(
 		bots,

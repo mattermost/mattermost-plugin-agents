@@ -17,6 +17,7 @@ const (
 	PromptMeetingSummarySystem             = "meeting_summary_system"
 	PromptMeetingSummaryUser               = "meeting_summary_user"
 	PromptSearchSystem                     = "search_system"
+	PromptSkillSummarizeConversations      = "skill_summarize_conversations"
 	PromptStandardPersonality              = "standard_personality"
 	PromptStandardPersonalityWithoutLocale = "standard_personality_without_locale"
 	PromptSummarizeChannelRangeSystem      = "summarize_channel_range_system"

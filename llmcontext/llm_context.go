@@ -43,6 +43,11 @@ type MCPServerDescriber interface {
 
 var _ MCPServerDescriber = (*mcp.ClientManager)(nil)
 
+// SkillProvider provides the skill tools and catalog for a request.
+type SkillProvider interface {
+	Tools(bot llm.BotConfig, c *llm.Context) ([]llm.Tool, []llm.SkillInfo, error)
+}
+
 // ConfigProvider provides configuration access
 type ConfigProvider interface {
 	GetServiceByID(id string) (llm.ServiceConfig, bool)
@@ -55,6 +60,7 @@ type Builder struct {
 	mcpToolProvider MCPToolProvider
 	configProvider  ConfigProvider
 	licenseChecker  *enterprise.LicenseChecker
+	skillProvider   SkillProvider
 
 	mcpDynamicToolTelemetry llm.MCPDynamicToolTelemetry
 }
@@ -77,6 +83,10 @@ func NewLLMContextBuilder(
 
 func (b *Builder) SetMCPDynamicToolTelemetry(telemetry llm.MCPDynamicToolTelemetry) {
 	b.mcpDynamicToolTelemetry = telemetry
+}
+
+func (b *Builder) SetSkillProvider(provider SkillProvider) {
+	b.skillProvider = provider
 }
 
 // BuildLLMContextUserRequest is a helper function to collect the required context for a user request.
@@ -230,6 +240,13 @@ func (b *Builder) WithLLMContextInteractive() llm.ContextOption {
 func (b *Builder) WithLLMContextResponseFiles() llm.ContextOption {
 	return func(c *llm.Context) {
 		c.ToolCatalog.ResponseFilesSupported = true
+	}
+}
+
+// WithLLMContextSkills sets whether AddSkillTools catalogs the skill tools.
+func (b *Builder) WithLLMContextSkills(enabled bool) llm.ContextOption {
+	return func(c *llm.Context) {
+		c.ToolCatalog.SkillsEnabled = enabled
 	}
 }
 
@@ -571,6 +588,22 @@ func (b *Builder) WithLLMContextTools(ctx stdcontext.Context, bot *bots.Bot) llm
 		markSandboxFileAttachment(c, bot)
 		c.Tools = b.getToolsStoreForUser(ctx, c, bot, c.RequestingUser.Id, false)
 	}
+}
+
+// AddSkillTools catalogs the skill tools for cfg when the context enables
+// skills. Call it after the tool store is built: built-in skills depend on the
+// tools beside them.
+func (b *Builder) AddSkillTools(c *llm.Context, cfg llm.BotConfig) error {
+	if !c.ToolCatalog.SkillsEnabled || b.skillProvider == nil || cfg.DisableTools || c.Tools == nil {
+		return nil
+	}
+	tools, catalog, err := b.skillProvider.Tools(cfg, c)
+	if err != nil {
+		return err
+	}
+	c.Tools.AddTools(tools)
+	c.Skills = catalog
+	return nil
 }
 
 func markSandboxFileAttachment(c *llm.Context, bot *bots.Bot) {
