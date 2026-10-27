@@ -143,7 +143,7 @@ const Main = styled.div`
     display: flex;
     align-items: flex-start;
     gap: var(--spacing-m);
-    padding: var(--spacing-l);
+    padding: var(--spacing-m) var(--spacing-xl);
     cursor: pointer;
 
     & > :first-child {
