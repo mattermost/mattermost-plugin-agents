@@ -17,8 +17,7 @@ import {Timestamp} from '@/mm_webapp';
 // stronger one of the same kind).
 const HOVER_PERCENT = '4%';
 
-// No compass token for the muted text strengths: the preview reads a step above the meta line.
-const PREVIEW_COLOR = 'rgba(var(--center-channel-color-rgb), 0.72)';
+// No compass token for the muted text strength of the meta line.
 const META_COLOR = 'rgba(var(--center-channel-color-rgb), 0.64)';
 
 type Props = {
@@ -178,7 +177,6 @@ const Heading = styled.div`
 const Preview = styled.div`
     display: -webkit-box;
     overflow: hidden;
-    color: ${PREVIEW_COLOR};
     font-size: var(--font-size-100);
     line-height: var(--line-height-100);
     overflow-wrap: anywhere;
