@@ -20,6 +20,8 @@ import {getProfilePictureUrl} from '@/client';
 import ConfirmationDialog from '@/components/confirmation_dialog';
 import Dropdown from '@/components/dropdown';
 import {DropdownMenuItem} from '@/components/dot_menu';
+import {WaveDots} from '@/components/llmbot_post/thinking_dots';
+import {prefersReducedMotion} from '@/components/llmbot_post/motion';
 import {useMenuTransition} from '@/hooks/use_menu_transition';
 import type {LLMBot} from '@/bots';
 import type {AgentThreadsByBot} from '@/hooks/use_agent_threads';
@@ -32,6 +34,9 @@ interface AgentThreadsListProps {
     error: Error | null;
     activeBotId?: string;
     activeRootId?: string;
+
+    // Root post ids of the chats whose agent is answering right now; a chat that is not open shows it.
+    generatingRoots?: ReadonlySet<string>;
     onSelectThread: (botId: string, rootId: string) => void;
     onNewChat: (botId: string) => void;
     onRetry: () => void;
@@ -53,6 +58,7 @@ const AgentThreadsList = ({
     error,
     activeBotId,
     activeRootId,
+    generatingRoots,
     onSelectThread,
     onNewChat,
     onRetry,
@@ -239,6 +245,7 @@ const AgentThreadsList = ({
                                                 key={thread.id}
                                                 thread={thread}
                                                 active={isActiveAgent && activeRootId === thread.root_post_id}
+                                                generating={Boolean(thread.root_post_id && generatingRoots?.has(thread.root_post_id)) && !(isActiveAgent && activeRootId === thread.root_post_id)}
                                                 placeholder={newChatPlaceholder}
                                                 onSelect={() => onSelectThread(bot.id, thread.root_post_id as string)}
                                                 onArchive={() => {
@@ -308,6 +315,9 @@ const AgentThreadsList = ({
 interface ThreadItemProps {
     thread: AIThread;
     active: boolean;
+
+    // The agent is answering in this chat while it is not open.
+    generating: boolean;
     placeholder: string;
     onSelect: () => void;
     onArchive: () => void;
@@ -316,7 +326,7 @@ interface ThreadItemProps {
 // A compass ChannelSidebarItem only renders its own kebab for channel and DM rows, so the
 // actions button is overlaid on the row (as the agent rows do for their chevron and [+]),
 // with the same hover/focus reveal as the compass kebab.
-const ThreadItem = ({thread, active, placeholder, onSelect, onArchive}: ThreadItemProps) => {
+const ThreadItem = ({thread, active, generating, placeholder, onSelect, onArchive}: ThreadItemProps) => {
     const intl = useIntl();
     const [menuOpen, setMenuOpen] = useState(false);
     const {rendered, onExited} = useMenuTransition(menuOpen);
@@ -335,6 +345,12 @@ const ThreadItem = ({thread, active, placeholder, onSelect, onArchive}: ThreadIt
                 active={active}
                 onClick={onSelect}
             />
+            {generating && (
+                <GeneratingSlot data-testid='thread-generating'>
+                    <WaveDots animate={!prefersReducedMotion()}/>
+                    <VisuallyHidden>{intl.formatMessage({defaultMessage: 'The agent is responding'})}</VisuallyHidden>
+                </GeneratingSlot>
+            )}
             <ThreadActionsSlot>
                 <Dropdown
                     isOpen={rendered}
@@ -554,6 +570,36 @@ const ThreadActionsSlot = styled.span`
     }
 `;
 
+// The wave where the actions button appears on hover: the actions take its place then.
+const GeneratingSlot = styled.span`
+    position: absolute;
+    top: 0;
+    right: var(--spacing-xl);
+    bottom: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity var(--duration-quick) var(--ease-transition);
+
+    @media (prefers-reduced-motion: reduce) {
+        transition: none;
+    }
+`;
+
+const VisuallyHidden = styled.span`
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+`;
+
 const ThreadListItem = styled.li<{$active: boolean}>`
     position: relative;
 
@@ -562,6 +608,12 @@ const ThreadListItem = styled.li<{$active: boolean}>`
        icon and label do not shift when the row becomes active. */
     && [class*='__left'] {
         padding-left: ${(p) => (p.$active ? 'calc(var(--spacing-xxxxl) - var(--spacing-xxxxs))' : 'var(--spacing-xxxxl)')};
+    }
+
+    &:hover ${GeneratingSlot},
+    &:focus-within ${GeneratingSlot},
+    &[data-menu-open] ${GeneratingSlot} {
+        opacity: 0;
     }
 
     &:hover ${ThreadActionsSlot},

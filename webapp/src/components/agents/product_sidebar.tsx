@@ -17,6 +17,8 @@ import {useAgentThreads} from '@/hooks/use_agent_threads';
 import type {AIThread} from '@/types/ai_thread';
 import {onAgentThreadsRefreshRequested, subscribeToAllPostUpdates} from '@/websocket';
 
+import {useGeneratingThreadRoots} from '@/components/agent_chat/use_thread_generating';
+
 import AgentThreadsList from './agent_threads_list';
 import FindAgentsButton from './find_agents_button';
 import SidebarAddMenu from './sidebar_add_menu';
@@ -63,6 +65,7 @@ const YourAgentsSection = () => {
     const route = useAgentsRoute();
     const {bots} = useBotlist();
     const {threadsByBot, loading, error, refresh, refreshWithTitleRetry} = useAgentThreads(bots);
+    const generatingRoots = useGeneratingThreadRoots();
 
     useEffect(() => subscribeToAllPostUpdates((msg) => {
         if (msg.data.control === 'end') {
@@ -91,6 +94,7 @@ const YourAgentsSection = () => {
             error={error}
             activeBotId={route.view === 'chat' ? route.botId : ''}
             activeRootId={route.view === 'chat' ? route.rootId : ''}
+            generatingRoots={generatingRoots}
             onSelectThread={route.toChat}
             onNewChat={route.toChat}
             onRetry={refresh}

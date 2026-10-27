@@ -10,8 +10,8 @@ import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
 import {Timestamp} from '@/mm_webapp';
 
-// No compass token for the translucent hover fill (the Agents chat header's name button uses the same).
-const HOVER_PERCENT = '8%';
+// No compass token for the translucent hover fill (a lighter one than the Agents chat header's name button).
+const HOVER_PERCENT = '4%';
 
 // Avatars overlap by a quarter of their width, as in the host's Threads list.
 const AVATAR_OVERLAP = 'calc(-1 * var(--spacing-xxs))';
@@ -94,16 +94,43 @@ export default function ThreadItem(props: Props) {
     );
 }
 
+// Inset from the list's edges, with rounded corners. The divider is a pseudo-element, so it can be
+// inset inside the item and disappear while the item is hovered.
 const ThreadItemContainer = styled.div`
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: var(--spacing-xs);
+    margin: 0 var(--spacing-xs);
     padding: var(--spacing-m) var(--spacing-l);
+    border-radius: var(--radius-m);
     cursor: pointer;
-    border-bottom: var(--border-default);
+    transition: background var(--duration-quick) var(--ease-transition);
+
+    &::after {
+        position: absolute;
+        right: var(--spacing-l);
+        bottom: 0;
+        left: var(--spacing-l);
+        border-bottom: var(--border-default);
+        content: '';
+        transition: opacity var(--duration-quick) var(--ease-transition);
+    }
 
     &:hover {
         background: color-mix(in srgb, var(--center-channel-color) ${HOVER_PERCENT}, transparent);
+    }
+
+    &:hover::after {
+        opacity: 0;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        transition: none;
+
+        &::after {
+            transition: none;
+        }
     }
 
     &:focus-visible {

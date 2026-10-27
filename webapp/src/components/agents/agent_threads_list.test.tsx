@@ -235,4 +235,14 @@ describe('AgentThreadsList', () => {
             expect(screen.getByRole('button', {name: 'Archive'})).toBeTruthy();
         });
     });
+    test.each([
+        {name: 'a chat whose agent is answering', generating: ['root_1'], activeRootId: '', expected: 1},
+        {name: 'the chat that is open does not', generating: ['root_1'], activeRootId: 'root_1', expected: 0},
+        {name: 'a chat that is idle does not', generating: [], activeRootId: '', expected: 0},
+        {name: 'only the answering chats show it', generating: ['root_1', 'root_2'], activeRootId: '', expected: 2},
+    ])('generating indicator: $name', ({generating, activeRootId, expected}) => {
+        renderList({generatingRoots: new Set(generating), activeBotId: 'a', activeRootId});
+
+        expect(screen.queryAllByTestId('thread-generating')).toHaveLength(expected);
+    });
 });

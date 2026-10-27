@@ -37,15 +37,6 @@ jest.mock('@/websocket', () => ({
     subscribeToAllPostUpdates: () => () => null,
 }));
 
-// The pinned prompts have their own fetching; here only that they get the DM channel.
-jest.mock('../custom_prompts/rhs_prompt_buttons', () => {
-    const ReactActual = jest.requireActual<typeof import('react')>('react');
-    return {
-        __esModule: true,
-        default: ({channelId}: {channelId: string}) => ReactActual.createElement('div', {'data-testid': 'prompt-buttons'}, channelId),
-    };
-});
-
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
     const intl = {
@@ -176,7 +167,9 @@ describe('RHSNewTab', () => {
         expect(state[pluginKey].bots[0].dmChannelID).toBe('dm1');
         expect(state.entities.channels.channels.dm1).toBeTruthy();
         expect(state.entities.channels.myMembers.dm1).toBeTruthy();
-        expect(screen.getByTestId('prompt-buttons').textContent).toBe('dm1');
+
+        // The empty state has no pinned-prompt buttons (prompts are in the composer's "+" menu).
+        expect(screen.queryByRole('button', {name: /prompt/i})).toBeNull();
     });
 
     test.each([

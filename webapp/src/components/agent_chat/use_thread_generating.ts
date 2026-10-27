@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {useSyncExternalStore} from 'react';
+import {useMemo, useSyncExternalStore} from 'react';
 import {useSelector} from 'react-redux';
 
 import {GlobalState} from '@mattermost/types/store';
@@ -127,4 +127,31 @@ export const useThreadGenerating = (channelId: string, rootId: string): string |
     // Re-render on every recorded change; the selector below reads the set.
     const recorded = useSyncExternalStore(subscribe, getVersion);
     return useSelector<GlobalState, string | null>((state) => (recorded >= 0 ? findGenerating(state, channelId, rootId) : null));
+};
+
+// The root post ids of the current user's chats with an agent generating right now, across every
+// channel (a chat they are not looking at included). A post leaves the set when its `end` or
+// `cancel` event arrives. Only posts already in the store count: the host receives a reply's
+// post when the agent starts it, in any channel the user belongs to.
+export const useGeneratingThreadRoots = (): ReadonlySet<string> => {
+    const recorded = useSyncExternalStore(subscribe, getVersion);
+
+    // One string, so an unchanged set does not re-render on every state change.
+    const key = useSelector<GlobalState, string>((state) => {
+        if (recorded < 0 || generating.size === 0) {
+            return '';
+        }
+        const posts = (state.entities?.posts?.posts ?? {}) as Record<string, PostLike | undefined>;
+        const currentUserId = state.entities?.users?.currentUserId ?? '';
+        const roots = new Set<string>();
+        generating.forEach((postId) => {
+            const post = posts[postId];
+            if (post && isRequester(state, post, currentUserId)) {
+                roots.add(post.root_id || post.id);
+            }
+        });
+        return Array.from(roots).sort().join(',');
+    });
+
+    return useMemo(() => new Set(key ? key.split(',') : []), [key]);
 };

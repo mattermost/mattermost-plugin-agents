@@ -121,13 +121,25 @@ export const ThinkingDots: React.FC<ThinkingDotsProps> = ({active, agentName}) =
     );
 };
 
+/** The wave itself, for other indicators that mean "the agent is responding". */
+export const WaveDots: React.FC<{animate: boolean; half?: boolean}> = ({animate, half = false}) => (
+    <DotRow
+        aria-hidden={true}
+        $half={half}
+    >
+        <Dot $animate={animate}/>
+        <Dot $animate={animate}/>
+        <Dot $animate={animate}/>
+    </DotRow>
+);
+
 const wave = keyframes`
     0%, 60%, 100% {
         transform: translateY(0);
     }
 
     30% {
-        transform: translateY(calc(-1 * var(--spacing-xxxs)));
+        transform: translateY(calc(-1 * var(--wave-dot-rise, var(--spacing-xxxs))));
     }
 `;
 
@@ -167,9 +179,21 @@ const Dots = styled.div<{$leaving: boolean; $animate: boolean}>`
     ${noMotionWhenReduced}
 `;
 
+// `half` is for small indicators (the floating jump button): the dots, the gaps and the rise all
+// at half size, through the variables the dots read.
+const DotRow = styled.span<{$half: boolean}>`
+    --wave-dot-size: ${(p) => (p.$half ? 'calc(var(--spacing-xxs) / 2)' : 'var(--spacing-xxs)')};
+    --wave-dot-gap: ${(p) => (p.$half ? 'calc(var(--spacing-xxxs) / 2)' : 'var(--spacing-xxxs)')};
+    --wave-dot-rise: ${(p) => (p.$half ? 'calc(var(--spacing-xxxs) / 2)' : 'var(--spacing-xxxs)')};
+
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wave-dot-gap);
+`;
+
 const Dot = styled.span<{$animate: boolean}>`
-    width: var(--spacing-xxs);
-    height: var(--spacing-xxs);
+    width: var(--wave-dot-size, var(--spacing-xxs));
+    height: var(--wave-dot-size, var(--spacing-xxs));
     border-radius: 50%;
     background: color-mix(in srgb, var(--center-channel-color) ${DOT_EMPHASIS_PERCENT}%, transparent);
 

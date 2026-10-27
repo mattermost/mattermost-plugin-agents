@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {useRef} from 'react';
 import {useIntl} from 'react-intl';
 import styled, {css, keyframes} from 'styled-components';
 
@@ -9,8 +9,11 @@ import type {LLMBot} from '@/bots';
 import {ThreadViewer as UnstyledThreadViewer} from '@/mm_webapp';
 
 import AgentChatComposer from './agent_chat_composer';
+import JumpToLatest from './jump_to_latest';
+import {useThreadGenerating} from './use_thread_generating';
+import {useThreadScroll} from './use_thread_scroll';
 import {AGENT_CHAT_SURFACE, AgentChatSurfaceContext} from './agent_chat_surface_context';
-import {CHAT_CONTENT_MAX_WIDTH, hostThreadChatStyles} from './agent_chat_host_styles';
+import {CHAT_COLUMN_PADDING, CHAT_CONTENT_MAX_WIDTH, hostThreadChatStyles} from './agent_chat_host_styles';
 import type {AgentNewChatLayout} from './agent_new_chat';
 
 interface AgentChatThreadViewProps {
@@ -39,6 +42,9 @@ export const isThreadViewerAvailable = Boolean(UnstyledThreadViewer);
 // pinned below it, replaces the host reply box.
 const AgentChatThreadView = ({channelId, rootId, agentName, bot, layout, isThreadView, testId, viewerTestId}: AgentChatThreadViewProps) => {
     const intl = useIntl();
+    const viewerRef = useRef<HTMLDivElement>(null);
+    const {scrolledUp, scrollToBottom} = useThreadScroll(viewerRef);
+    const generating = useThreadGenerating(channelId, rootId) !== null;
 
     if (!ThreadViewer) {
         return null;
@@ -51,13 +57,19 @@ const AgentChatThreadView = ({channelId, rootId, agentName, bot, layout, isThrea
                 $layout={layout}
                 data-testid={testId}
             >
-                <ViewerArea>
+                <ViewerArea ref={viewerRef}>
                     <ThreadViewer
                         data-testid={viewerTestId}
                         rootPostId={rootId}
                         isThreadView={isThreadView}
                         useRelativeTimestamp={false}
                         inputPlaceholder={intl.formatMessage({defaultMessage: 'Reply…'})}
+                    />
+                    <JumpToLatest
+                        visible={scrolledUp}
+                        responding={generating}
+                        agentName={agentName}
+                        onClick={scrollToBottom}
                     />
                 </ViewerArea>
                 {channelId && (
@@ -102,6 +114,7 @@ const ThreadPane = styled.div<{$layout: AgentNewChatLayout}>`
 
 // Definite height, no own scroll: the host ThreadViewer brings its own scroller.
 const ViewerArea = styled.div`
+    position: relative;
     display: flex;
     flex: 1 1 auto;
     flex-direction: column;
@@ -115,8 +128,16 @@ const ComposerArea = styled.div<{$layout: AgentNewChatLayout}>`
     padding: var(--spacing-xs) var(--spacing-xxl) var(--spacing-xxl);
 
     ${({$layout}) => $layout === 'page' && css`
+        box-sizing: border-box;
+
+        /* The messages' column: the same inset, cap and side padding, so the edges line up. */
+        width: calc(100% - 2 * var(--spacing-m));
         max-width: ${CHAT_CONTENT_MAX_WIDTH};
         margin-inline: auto;
+        padding-inline: ${CHAT_COLUMN_PADDING};
+
+        /* The messages above already end with their own spacing. */
+        padding-top: 0;
     `}
 `;
 

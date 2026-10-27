@@ -13,7 +13,6 @@ import {requestAgentThreadsRefresh} from '@/websocket';
 
 import AgentNewChat from '../agent_chat/agent_new_chat';
 import {useAgentDMChannel} from '../agents/use_agent_dm_channel';
-import RHSPromptButtons from '../custom_prompts/rhs_prompt_buttons';
 
 type Props = {
     selectPost: (postId: string) => void
@@ -58,13 +57,7 @@ const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
                 bot={activeBot}
                 channelId={dm.channelId}
                 onCreated={onCreated}
-            >
-                <RHSPromptButtons
-                    channelId={dm.channelId}
-                    selectPost={selectPost}
-                    setCurrentTab={setCurrentTab}
-                />
-            </AgentNewChat>
+            />
         );
     }
 
