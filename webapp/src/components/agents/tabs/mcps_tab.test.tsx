@@ -456,6 +456,32 @@ describe('McpsTab', () => {
         }
     });
 
+    test('lets a scoped agent pick built-in web search by name', async () => {
+        mockedGetUserMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'Built-in tools',
+                serverOrigin: 'builtin://mattermost-agents',
+                kind: 'builtin',
+                authenticated: true,
+                needsOAuth: false,
+                serviceAccountConfigured: false,
+                tools: [
+                    {name: 'WebSearch', description: 'Search the web', enabled: true, policy: 'ask'},
+                    {name: 'WebSearchFetchSource', description: 'Read a page', enabled: true, policy: 'ask'},
+                ],
+            }],
+        });
+
+        const {onChange} = renderTab({useServiceAccountAuth: true, autoEnableNewMCPTools: false, scopedChannelMode: true});
+
+        await screen.findByText('Built-in tools');
+        expect(screen.queryByText('Connected')).toBeNull();
+        fireEvent.click(screen.getByRole('button', {name: /Press to expand or collapse tools/}));
+        fireEvent.click(screen.getAllByRole('switch', {name: toolToggleName})[0]);
+
+        expect(onChange).toHaveBeenCalledWith({enabledTools: [{server_origin: 'builtin://mattermost-agents', tool_name: 'WebSearch'}]});
+    });
+
     test('does not strip saved grants when an unavailable server lists no tools', async () => {
         mockedGetUserMCPTools.mockResolvedValue({
             servers: [{
