@@ -307,6 +307,7 @@ func (b *Builder) WithLLMContextScopedCatalogPreview(bot *bots.Bot) llm.ContextO
 		if !b.ScopedChannelModeActive(bot, c.Channel) {
 			return
 		}
+		c.ToolCatalog.ScopedPreview = true
 		keep := c.ToolCatalog.KeepMCPTool
 		c.ToolCatalog.KeepMCPTool = func(tool llm.Tool) bool {
 			return mcp.ScopedCatalogAllows(tool) && (keep == nil || keep(tool))
@@ -522,7 +523,7 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 	// Add built-in tools (always add for LLM awareness; execution controlled via WithToolsDisabled)
 	builtInTools := b.toolProvider.GetTools(bot, c)
 	scopedTurn := c.ToolCatalog.ScopedTurn != nil && b.ScopedChannelModeActive(bot, c.Channel)
-	if scopedTurn {
+	if scopedTurn || c.ToolCatalog.ScopedPreview {
 		// A scoped turn runs every tool unasked, so the built-in tools that
 		// reach outside Mattermost need the admin to have named them.
 		builtInTools = llm.FilterScopedOptInTools(builtInTools, botCfg.EnabledMCPTools)

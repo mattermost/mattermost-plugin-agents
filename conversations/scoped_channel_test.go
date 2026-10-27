@@ -8,12 +8,15 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
@@ -21,6 +24,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
@@ -95,6 +100,13 @@ func (m *scopedCatalogManager) GetToolsWithSelection(_ context.Context, req mcp.
 	return []llm.Tool{m.tool}, nil
 }
 
+type scopedSilentLogger struct{}
+
+func (scopedSilentLogger) Debug(string, ...any) {}
+func (scopedSilentLogger) Info(string, ...any)  {}
+func (scopedSilentLogger) Warn(string, ...any)  {}
+func (scopedSilentLogger) Error(string, ...any) {}
+
 type scopedBuilderConfig struct{}
 
 func (scopedBuilderConfig) GetServiceByID(string) (llm.ServiceConfig, bool) {
@@ -143,6 +155,11 @@ type scopedEnvOpts struct {
 	streamingErr error
 	// onToolRun runs inside the tool, while the turn is in flight.
 	onToolRun func(env *scopedTestEnv)
+	// webSearchURL turns on the plugin's built-in web search against a
+	// SearXNG instance at this URL.
+	webSearchURL string
+	// namedBuiltins are built-in tools the agent's allowlist names.
+	namedBuiltins []string
 }
 
 func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts, llmResponses ...*llm.TextStreamResult) *scopedTestEnv {
@@ -196,6 +213,22 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	manager.SetScopedSessions(env.minter)
 	env.catalog = &scopedCatalogManager{ClientManager: manager, tool: tool}
 
+	enabledTools := []llm.EnabledMCPTool{{ServerOrigin: scopedRemote, ToolName: "get_issue"}}
+	for _, name := range opts.namedBuiltins {
+		enabledTools = append(enabledTools, llm.EnabledMCPTool{ServerOrigin: llm.BuiltinToolsOrigin, ToolName: name})
+	}
+	var toolProvider llmcontext.ToolProvider = &testToolProvider{}
+	if opts.webSearchURL != "" {
+		webSearch := mmtools.NewWebSearchService(func() *config.Config {
+			return &config.Config{WebSearch: config.WebSearchConfig{
+				Enabled:  true,
+				Provider: "searxng",
+				SearXNG:  config.WebSearchSearXNGConfig{BaseURL: opts.webSearchURL},
+			}}
+		}, scopedSilentLogger{}, http.DefaultClient, licenseChecker)
+		toolProvider = mmtools.NewMMToolProvider(mocks.NewMockClient(t), webSearch, nil)
+	}
+
 	botService := bots.New(mockAPI, client, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	conversations.SetBotsWithAccounts(mockAPI, botService, bots.NewBot(
 		llm.BotConfig{
@@ -206,7 +239,7 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 			UserAccessLevel:       llm.UserAccessLevelAll,
 			UseServiceAccountAuth: true,
 			ScopedChannelMode:     true,
-			EnabledMCPTools:       []llm.EnabledMCPTool{{ServerOrigin: scopedRemote, ToolName: "get_issue"}},
+			EnabledMCPTools:       enabledTools,
 		},
 		llm.ServiceConfig{DefaultModel: "test-model", Type: llm.ServiceTypeOpenAI},
 		&model.Bot{UserId: scopedBotUserID, Username: scopedBotUsername, DisplayName: "Scoped Bot"},
@@ -226,7 +259,7 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	require.NoError(t, err)
 	env.convStore = newFakeConvStore()
 
-	contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{}, env.catalog, scopedBuilderConfig{})
+	contextBuilder := llmcontext.NewLLMContextBuilder(client, toolProvider, env.catalog, scopedBuilderConfig{})
 	policies := newDMPolicyChecker()
 	policies.policies[scopedRemote+":get_issue"] = mcp.ToolPolicyAsk
 	env.conversations = conversations.New(promptsManager, mmClient, env.streaming, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil,
@@ -327,6 +360,63 @@ func TestScopedChannelTurnAutoRunsTools(t *testing.T) {
 		assert.Empty(t, env.auditRecords(audit.EventAgentScopedToolCall))
 		toolUse, _ := scopedToolBlocks(t, env)
 		assert.Empty(t, toolUse, "a call awaiting approval is neither run nor persisted as a tool round")
+	})
+}
+
+// Built-in web search is offered to a scoped turn, and runs without approval,
+// only when the agent's allowlist names it.
+func TestScopedChannelTurnWebSearchNeedsNamedTool(t *testing.T) {
+	webSearchCall := []llm.ToolCall{{ID: "call-1", Name: "WebSearch", Arguments: json.RawMessage(`{"query":"mattermost scoped sessions"}`)}}
+
+	tests := []struct {
+		name          string
+		namedBuiltins []string
+		channelType   model.ChannelType
+		searches      int
+	}{
+		{name: "not named", namedBuiltins: nil, channelType: model.ChannelTypePrivate, searches: 0},
+		{name: "only the fetch tool named", namedBuiltins: []string{"WebSearchFetchSource"}, channelType: model.ChannelTypePrivate, searches: 0},
+		{name: "named", namedBuiltins: []string{"WebSearch"}, channelType: model.ChannelTypePrivate, searches: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var searches atomic.Int32
+			searx := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				searches.Add(1)
+				_, _ = w.Write([]byte(`{"results":[{"title":"Scoped sessions","url":"https://example.com/a","content":"about scoped sessions"}]}`))
+			}))
+			t.Cleanup(searx.Close)
+
+			channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: tt.channelType, Name: "evidence"}
+			env := setupScopedTestEnv(t, channel, scopedEnvOpts{webSearchURL: searx.URL, namedBuiltins: tt.namedBuiltins},
+				dmMakeToolCallStream(webSearchCall), dmMakeTextStream("done"))
+
+			assert.EqualValues(t, tt.searches, searches.Load())
+			toolUse, _ := scopedToolBlocks(t, env)
+			if tt.searches == 0 {
+				require.Len(t, toolUse, 1)
+				assert.Equal(t, conversation.StatusError, toolUse[0].Status, "a web search that was not opted in is rejected as unknown")
+				assert.Empty(t, env.auditRecords(audit.EventAgentScopedToolCall))
+				return
+			}
+			require.Len(t, toolUse, 1)
+			assert.Equal(t, conversation.StatusAutoApproved, toolUse[0].Status)
+		})
+	}
+
+	t.Run("a DM keeps the plugin-wide setting", func(t *testing.T) {
+		var searches atomic.Int32
+		searx := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			searches.Add(1)
+			_, _ = w.Write([]byte(`{"results":[]}`))
+		}))
+		t.Cleanup(searx.Close)
+
+		channel := &model.Channel{Id: scopedChannelID, Type: model.ChannelTypeDirect, Name: scopedBotUserID + "__" + scopedUserID}
+		env := setupScopedTestEnv(t, channel, scopedEnvOpts{webSearchURL: searx.URL}, dmMakeToolCallStream(webSearchCall), dmMakeTextStream("done"))
+
+		assert.Zero(t, searches.Load(), "the call waits for approval")
+		assert.Empty(t, env.auditRecords(audit.EventAgentScopedToolCall))
 	})
 }
 
