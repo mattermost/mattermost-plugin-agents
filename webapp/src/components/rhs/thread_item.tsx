@@ -73,7 +73,7 @@ export default function ThreadItem(props: Props) {
                     alt=''
                     aria-hidden='true'
                     name={props.agentName}
-                    size='28'
+                    size='24'
                 />
                 <Text>
                     <Heading>{heading}</Heading>
