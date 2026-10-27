@@ -480,12 +480,10 @@ func TestChannelMentionSystemPromptDynamicToolWorkflow(t *testing.T) {
 			}, &channelFollowUpTestConfig{enableChannelMentionToolCalling: tt.allowToolsInChannel})
 			isDM := tt.channelType == model.ChannelTypeDirect
 			policy := &turnPolicy{
-				c: &Conversations{contextBuilder: builder, toolPolicyChecker: mapPolicyChecker{}},
-				turnRequest: turnRequest{
-					bot:     channelFollowUpTestBot(),
-					user:    &model.User{Id: testRequesterID, Username: "user", Locale: "en"},
-					channel: &model.Channel{Id: "channel-id", TeamId: "team-id", Type: tt.channelType},
-				},
+				c:            &Conversations{contextBuilder: builder, toolPolicyChecker: mapPolicyChecker{}},
+				bot:          channelFollowUpTestBot(),
+				user:         &model.User{Id: testRequesterID, Username: "user", Locale: "en"},
+				channel:      &model.Channel{Id: "channel-id", TeamId: "team-id", Type: tt.channelType},
 				isDM:         isDM,
 				toolsEnabled: isDM || tt.allowToolsInChannel,
 			}

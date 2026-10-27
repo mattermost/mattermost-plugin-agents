@@ -1,7 +1,7 @@
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
-import { expandToolActivity, expectToolActivityCurrent } from 'helpers/llmbot-post';
+import { expandToolActivity, expectToolActivityCurrent, toolCard } from 'helpers/llmbot-post';
 import {
     OpenAIMockContainer,
     RunOpenAIMocks,
@@ -183,7 +183,7 @@ test.describe('Dynamic MCP Tool Approval (Mocked LLM)', () => {
 
         // The ask-policy business tool needs a decision, so its approval card
         // renders in full without expanding the activity area.
-        await expect(initialBotPost.getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible({
+        await expect(toolCard(initialBotPost, embeddedGetChannelInfoLabel)).toBeVisible({
             timeout: 45000,
         });
 
@@ -193,8 +193,8 @@ test.describe('Dynamic MCP Tool Approval (Mocked LLM)', () => {
         await expect(initialBotPost.getByText(searchToolsLabel, {exact: true})).toHaveCount(0);
 
         const activityRounds = await expandToolActivity(initialBotPost);
-        await expect(activityRounds.getByText(searchToolsLabel, {exact: true})).toBeVisible({timeout: 45000});
-        await expect(activityRounds.getByText(loadToolLabel, {exact: true})).toBeVisible({timeout: 45000});
+        await expect(toolCard(activityRounds, searchToolsLabel)).toBeVisible({timeout: 45000});
+        await expect(toolCard(activityRounds, loadToolLabel)).toBeVisible({timeout: 45000});
         await expect(rhs.getByText('Auto-approved').first()).toBeVisible({timeout: 30000});
 
         // Pending-tool responses must not be masked by the empty-result fallback.
@@ -207,7 +207,7 @@ test.describe('Dynamic MCP Tool Approval (Mocked LLM)', () => {
 
         await expect(initialBotPost.getByText(continuationMarker)).toBeVisible({timeout: 45000});
         const settledRounds = await expandToolActivity(initialBotPost);
-        await expect(settledRounds.getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible();
+        await expect(toolCard(settledRounds, embeddedGetChannelInfoLabel)).toBeVisible();
         await expect(initialBotPost.getByText(/did not return a result/i)).not.toBeVisible();
         await expect(botPosts).toHaveCount(1);
         await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();

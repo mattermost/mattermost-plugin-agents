@@ -3,6 +3,7 @@ import type {StartedTestContainer, StartedNetwork} from 'testcontainers';
 import type {StartedPostgreSqlContainer} from '@testcontainers/postgresql';
 import {Client4} from "@mattermost/client";
 import { Client } from 'pg'
+import { test } from '@playwright/test';
 import { pluginAdminConfigApiFromClient } from './plugin-http';
 
 if (typeof globalThis.File === 'undefined') {
@@ -17,8 +18,8 @@ const defaultUsername        = "admin";
 const defaultPassword        = "admin";
 const defaultTeamName        = "test";
 const defaultTeamDisplayName = "Test";
-// release-11.10 does not implement plugin EvaluateAccessControl (mattermost#37509 landed on master / 11.11).
-const defaultMattermostImage = "mattermostdevelopment/mattermost-enterprise-edition:master";
+// Needs 11.11+ for plugin EvaluateAccessControl (mattermost#37509).
+const defaultMattermostImage = "mattermost/mattermost-enterprise-edition:latest";
 export const POSTGRES_IMAGE = "pgvector/pgvector:pg15";
 
 export function mattermostImage(): string {
@@ -180,11 +181,6 @@ export default class MattermostContainer {
         await this.mmctl('permissions', 'remove', 'system_user', 'manage_own_agent');
     }
 
-    getLogs = async (lines: number): Promise<string> => {
-        const {output} = await this.container.exec(["mmctl", "--local", "logs", "--number", lines.toString()])
-        return output
-    }
-
     setSiteURL = async () => {
         await this.mmctl("config", "set", "ServiceSettings.SiteURL", this.url())
     }
@@ -272,6 +268,7 @@ export default class MattermostContainer {
     }
 
     start = async (): Promise<MattermostContainer> => {
+        test.slow(); // triples a beforeAll's 60 s timeout, which container startup can exceed
         const image = mattermostImage();
         const isCustomImage = !!process.env.MM_IMAGE;
         console.log(`\n🚀 Starting Mattermost container`);
@@ -347,10 +344,9 @@ export default class MattermostContainer {
 
 
         // Install ffmpeg for transcription features
-        try {
-            await this.container.exec(["sh", "-c", "apt-get update && apt-get install -y ffmpeg"])
-        } catch (error) {
-            console.log("Note: Could not install ffmpeg (container may not support apt-get)")
+        const {exitCode: ffmpegExitCode} = await this.container.exec(["sh", "-c", "apt-get update && apt-get install -y ffmpeg"])
+        if (ffmpegExitCode !== 0) {
+            console.log(`Note: Could not install ffmpeg (exit code ${ffmpegExitCode}); transcription features may not work`)
         }
 
         await this.waitForLocalMode()

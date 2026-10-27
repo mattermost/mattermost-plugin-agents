@@ -17,6 +17,7 @@ import {
     expectNoToolActivity,
     expectToolActivityCurrent,
     TOOL_CARD_SELECTOR,
+    toolCard,
 } from 'helpers/llmbot-post';
 import MattermostContainer, {getTownSquareChannel, TownSquareChannel} from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
@@ -459,7 +460,7 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
             // collapsed activity area and only reappears when expanded.
             await expect(rhs.getByText(createPostToolLabel, {exact: true})).toHaveCount(0);
             const activityRounds = await expandToolActivity(rhs.locator('[data-testid="llm-bot-post"]').last());
-            await expect(activityRounds.getByText(createPostToolLabel, {exact: true})).toBeVisible({timeout: 30000});
+            await expect(toolCard(activityRounds, createPostToolLabel)).toBeVisible({timeout: 30000});
 
             await navigateToChannel(page, baseUrl, 'town-square');
             await expect(page.getByText(rejectPostText)).not.toBeVisible();

@@ -4,6 +4,8 @@ import path from 'path';
 
 import { GenericContainer, StartedNetwork, StartedTestContainer, Wait } from 'testcontainers';
 
+import { test } from '@playwright/test';
+
 export const WEB_SEARCH_MOCK_IMAGE = 'node:20-alpine';
 export const WEB_SEARCH_MOCK_PORT = 8090;
 export const WEB_SEARCH_MOCK_ALIAS = 'websearch';
@@ -98,6 +100,7 @@ export class WebSearchMockContainer {
     private serverDir: string | null = null;
 
     async start(network: StartedNetwork): Promise<void> {
+        test.slow(); // triples a beforeAll's 60 s timeout, which container startup can exceed
         this.serverDir = fs.mkdtempSync(path.join(os.tmpdir(), 'web-search-mock-'));
         fs.writeFileSync(path.join(this.serverDir, 'server.js'), buildServerScript());
 

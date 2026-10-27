@@ -17,7 +17,6 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
-	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
@@ -344,30 +343,26 @@ func TestStore(t *testing.T) {
 
 		docs := []embeddings.PostDocument{
 			{
-				PostID:    "post1",
-				CreateAt:  now,
-				TeamID:    "team1",
-				ChannelID: "channel1",
-				UserID:    "user1",
-				Content:   "This is ",
-				ChunkInfo: chunking.ChunkInfo{
-					IsChunk:     true,
-					ChunkIndex:  0,
-					TotalChunks: 2,
-				},
+				PostID:      "post1",
+				CreateAt:    now,
+				TeamID:      "team1",
+				ChannelID:   "channel1",
+				UserID:      "user1",
+				Content:     "This is ",
+				IsChunk:     true,
+				ChunkIndex:  0,
+				TotalChunks: 2,
 			},
 			{
-				PostID:    "post1",
-				CreateAt:  now,
-				TeamID:    "team1",
-				ChannelID: "channel1",
-				UserID:    "user1",
-				Content:   "the full content",
-				ChunkInfo: chunking.ChunkInfo{
-					IsChunk:     true,
-					ChunkIndex:  1,
-					TotalChunks: 2,
-				},
+				PostID:      "post1",
+				CreateAt:    now,
+				TeamID:      "team1",
+				ChannelID:   "channel1",
+				UserID:      "user1",
+				Content:     "the full content",
+				IsChunk:     true,
+				ChunkIndex:  1,
+				TotalChunks: 2,
 			},
 		}
 
@@ -648,30 +643,26 @@ func TestSearch(t *testing.T) {
 
 		docs := []embeddings.PostDocument{
 			{
-				PostID:    "post1",
-				CreateAt:  now,
-				TeamID:    "team1",
-				ChannelID: "channel1",
-				UserID:    "user1",
-				Content:   "This is ",
-				ChunkInfo: chunking.ChunkInfo{
-					IsChunk:     true,
-					ChunkIndex:  0,
-					TotalChunks: 2,
-				},
+				PostID:      "post1",
+				CreateAt:    now,
+				TeamID:      "team1",
+				ChannelID:   "channel1",
+				UserID:      "user1",
+				Content:     "This is ",
+				IsChunk:     true,
+				ChunkIndex:  0,
+				TotalChunks: 2,
 			},
 			{
-				PostID:    "post1",
-				CreateAt:  now,
-				TeamID:    "team1",
-				ChannelID: "channel1",
-				UserID:    "user1",
-				Content:   "the full content",
-				ChunkInfo: chunking.ChunkInfo{
-					IsChunk:     true,
-					ChunkIndex:  1,
-					TotalChunks: 2,
-				},
+				PostID:      "post1",
+				CreateAt:    now,
+				TeamID:      "team1",
+				ChannelID:   "channel1",
+				UserID:      "user1",
+				Content:     "the full content",
+				IsChunk:     true,
+				ChunkIndex:  1,
+				TotalChunks: 2,
 			},
 		}
 
@@ -956,7 +947,7 @@ func TestSearchWithPermissions(t *testing.T) {
 
 		results, err := pgVector.Search(ctx, searchVector, opts)
 		require.Error(t, err)
-		assert.Len(t, results, 0, "Should return no posts when not specifying a user")
+		assert.Empty(t, results, "Should return no posts when not specifying a user")
 	})
 
 	t.Run("search with user ID only returns posts from channels the user is a member of", func(t *testing.T) {
@@ -1129,70 +1120,60 @@ func TestDeleteWithChunks(t *testing.T) {
 		docs := []embeddings.PostDocument{
 			// Post 1 and chunks
 			{
-				PostID:    "post1",
-				CreateAt:  now,
-				TeamID:    "team1",
-				ChannelID: "channel1",
-				UserID:    "user1",
-				Content:   "Content 1",
-				ChunkInfo: chunking.ChunkInfo{
-					IsChunk:     true,
-					ChunkIndex:  0,
-					TotalChunks: 3,
-				},
+				PostID:      "post1",
+				CreateAt:    now,
+				TeamID:      "team1",
+				ChannelID:   "channel1",
+				UserID:      "user1",
+				Content:     "Content 1",
+				IsChunk:     true,
+				ChunkIndex:  0,
+				TotalChunks: 3,
 			},
 			{
-				PostID:    "post1",
-				CreateAt:  now,
-				TeamID:    "team1",
-				ChannelID: "channel1",
-				UserID:    "user1",
-				Content:   "Chunk 1.1",
-				ChunkInfo: chunking.ChunkInfo{
-					IsChunk:     true,
-					ChunkIndex:  1,
-					TotalChunks: 3,
-				},
+				PostID:      "post1",
+				CreateAt:    now,
+				TeamID:      "team1",
+				ChannelID:   "channel1",
+				UserID:      "user1",
+				Content:     "Chunk 1.1",
+				IsChunk:     true,
+				ChunkIndex:  1,
+				TotalChunks: 3,
 			},
 			{
-				PostID:    "post1",
-				CreateAt:  now,
-				TeamID:    "team1",
-				ChannelID: "channel1",
-				UserID:    "user1",
-				Content:   "Chunk 1.2",
-				ChunkInfo: chunking.ChunkInfo{
-					IsChunk:     true,
-					ChunkIndex:  2,
-					TotalChunks: 3,
-				},
+				PostID:      "post1",
+				CreateAt:    now,
+				TeamID:      "team1",
+				ChannelID:   "channel1",
+				UserID:      "user1",
+				Content:     "Chunk 1.2",
+				IsChunk:     true,
+				ChunkIndex:  2,
+				TotalChunks: 3,
 			},
 			// Post 2 and chunks
 			{
-				PostID:    "post2",
-				CreateAt:  now,
-				TeamID:    "team1",
-				ChannelID: "channel1",
-				UserID:    "user1",
-				Content:   "Content 2",
-				ChunkInfo: chunking.ChunkInfo{
-					IsChunk:     true,
-					ChunkIndex:  0,
-					TotalChunks: 2,
-				},
+				PostID:      "post2",
+				CreateAt:    now,
+				TeamID:      "team1",
+				ChannelID:   "channel1",
+				UserID:      "user1",
+				Content:     "Content 2",
+				IsChunk:     true,
+				ChunkIndex:  0,
+				TotalChunks: 2,
 			},
 			{
-				PostID:    "post2",
-				CreateAt:  now,
-				TeamID:    "team1",
-				ChannelID: "channel1",
-				UserID:    "user1",
-				Content:   "Chunk 2.1",
-				ChunkInfo: chunking.ChunkInfo{
-					IsChunk:     true,
-					ChunkIndex:  1,
-					TotalChunks: 2,
-				},
+				PostID:      "post2",
+				CreateAt:    now,
+				TeamID:      "team1",
+				ChannelID:   "channel1",
+				UserID:      "user1",
+				Content:     "Chunk 2.1",
+				IsChunk:     true,
+				ChunkIndex:  1,
+				TotalChunks: 2,
 			},
 		}
 
@@ -1567,7 +1548,7 @@ func TestSearchExcludesDeletedPosts(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should only return 3 results (active posts only)
-	assert.Equal(t, 3, len(results), "Should only return active posts, not deleted ones")
+	assert.Len(t, results, 3, "Should only return active posts, not deleted ones")
 
 	// Verify only active posts are returned
 	returnedPostIDs := make(map[string]bool)
@@ -1750,17 +1731,15 @@ func TestStoreValidation(t *testing.T) {
 		// First, store as single document
 		singleDoc := []embeddings.PostDocument{
 			{
-				PostID:    "post_reindex",
-				CreateAt:  now,
-				TeamID:    "team1",
-				ChannelID: "channel1",
-				UserID:    "user1",
-				Content:   "Short content",
-				ChunkInfo: chunking.ChunkInfo{
-					IsChunk:     false,
-					ChunkIndex:  0,
-					TotalChunks: 1,
-				},
+				PostID:      "post_reindex",
+				CreateAt:    now,
+				TeamID:      "team1",
+				ChannelID:   "channel1",
+				UserID:      "user1",
+				Content:     "Short content",
+				IsChunk:     false,
+				ChunkIndex:  0,
+				TotalChunks: 1,
 			},
 		}
 		singleEmbed := [][]float32{{0.1, 0.2, 0.3}}
@@ -1776,43 +1755,37 @@ func TestStoreValidation(t *testing.T) {
 		// Now reindex as multiple chunks
 		chunkedDocs := []embeddings.PostDocument{
 			{
-				PostID:    "post_reindex",
-				CreateAt:  now,
-				TeamID:    "team1",
-				ChannelID: "channel1",
-				UserID:    "user1",
-				Content:   "Chunk 0",
-				ChunkInfo: chunking.ChunkInfo{
-					IsChunk:     true,
-					ChunkIndex:  0,
-					TotalChunks: 3,
-				},
+				PostID:      "post_reindex",
+				CreateAt:    now,
+				TeamID:      "team1",
+				ChannelID:   "channel1",
+				UserID:      "user1",
+				Content:     "Chunk 0",
+				IsChunk:     true,
+				ChunkIndex:  0,
+				TotalChunks: 3,
 			},
 			{
-				PostID:    "post_reindex",
-				CreateAt:  now,
-				TeamID:    "team1",
-				ChannelID: "channel1",
-				UserID:    "user1",
-				Content:   "Chunk 1",
-				ChunkInfo: chunking.ChunkInfo{
-					IsChunk:     true,
-					ChunkIndex:  1,
-					TotalChunks: 3,
-				},
+				PostID:      "post_reindex",
+				CreateAt:    now,
+				TeamID:      "team1",
+				ChannelID:   "channel1",
+				UserID:      "user1",
+				Content:     "Chunk 1",
+				IsChunk:     true,
+				ChunkIndex:  1,
+				TotalChunks: 3,
 			},
 			{
-				PostID:    "post_reindex",
-				CreateAt:  now,
-				TeamID:    "team1",
-				ChannelID: "channel1",
-				UserID:    "user1",
-				Content:   "Chunk 2",
-				ChunkInfo: chunking.ChunkInfo{
-					IsChunk:     true,
-					ChunkIndex:  2,
-					TotalChunks: 3,
-				},
+				PostID:      "post_reindex",
+				CreateAt:    now,
+				TeamID:      "team1",
+				ChannelID:   "channel1",
+				UserID:      "user1",
+				Content:     "Chunk 2",
+				IsChunk:     true,
+				ChunkIndex:  2,
+				TotalChunks: 3,
 			},
 		}
 		chunkedEmbeds := [][]float32{
@@ -1856,30 +1829,26 @@ func TestStoreValidation(t *testing.T) {
 		// First, store as multiple chunks
 		chunkedDocs := []embeddings.PostDocument{
 			{
-				PostID:    "post_unchunk",
-				CreateAt:  now,
-				TeamID:    "team1",
-				ChannelID: "channel1",
-				UserID:    "user1",
-				Content:   "Chunk 0",
-				ChunkInfo: chunking.ChunkInfo{
-					IsChunk:     true,
-					ChunkIndex:  0,
-					TotalChunks: 2,
-				},
+				PostID:      "post_unchunk",
+				CreateAt:    now,
+				TeamID:      "team1",
+				ChannelID:   "channel1",
+				UserID:      "user1",
+				Content:     "Chunk 0",
+				IsChunk:     true,
+				ChunkIndex:  0,
+				TotalChunks: 2,
 			},
 			{
-				PostID:    "post_unchunk",
-				CreateAt:  now,
-				TeamID:    "team1",
-				ChannelID: "channel1",
-				UserID:    "user1",
-				Content:   "Chunk 1",
-				ChunkInfo: chunking.ChunkInfo{
-					IsChunk:     true,
-					ChunkIndex:  1,
-					TotalChunks: 2,
-				},
+				PostID:      "post_unchunk",
+				CreateAt:    now,
+				TeamID:      "team1",
+				ChannelID:   "channel1",
+				UserID:      "user1",
+				Content:     "Chunk 1",
+				IsChunk:     true,
+				ChunkIndex:  1,
+				TotalChunks: 2,
 			},
 		}
 		chunkedEmbeds := [][]float32{
@@ -1898,17 +1867,15 @@ func TestStoreValidation(t *testing.T) {
 		// Now reindex as single document (content edited to be shorter)
 		singleDoc := []embeddings.PostDocument{
 			{
-				PostID:    "post_unchunk",
-				CreateAt:  now,
-				TeamID:    "team1",
-				ChannelID: "channel1",
-				UserID:    "user1",
-				Content:   "Short content now",
-				ChunkInfo: chunking.ChunkInfo{
-					IsChunk:     false,
-					ChunkIndex:  0,
-					TotalChunks: 1,
-				},
+				PostID:      "post_unchunk",
+				CreateAt:    now,
+				TeamID:      "team1",
+				ChannelID:   "channel1",
+				UserID:      "user1",
+				Content:     "Short content now",
+				IsChunk:     false,
+				ChunkIndex:  0,
+				TotalChunks: 1,
 			},
 		}
 		singleEmbed := [][]float32{{0.9, 0.9, 0.9}}
@@ -2095,7 +2062,7 @@ func TestSearchValidation(t *testing.T) {
 		results, err := pgVector.Search(ctx, searchVector, opts)
 		require.NoError(t, err)
 		// User with no channel memberships should see no results
-		assert.Len(t, results, 0)
+		assert.Empty(t, results)
 	})
 }
 
@@ -2415,17 +2382,15 @@ func TestStoreConcurrentChunkConsistency(t *testing.T) {
 				vecs := make([][]float32, chunkCount)
 				for j := range chunkCount {
 					docs[j] = embeddings.PostDocument{
-						PostID:    postID,
-						CreateAt:  now,
-						TeamID:    "team1",
-						ChannelID: "channel1",
-						UserID:    "user1",
-						Content:   fmt.Sprintf("%s/chunk%d", tag, j),
-						ChunkInfo: chunking.ChunkInfo{
-							IsChunk:     true,
-							ChunkIndex:  j,
-							TotalChunks: chunkCount,
-						},
+						PostID:      postID,
+						CreateAt:    now,
+						TeamID:      "team1",
+						ChannelID:   "channel1",
+						UserID:      "user1",
+						Content:     fmt.Sprintf("%s/chunk%d", tag, j),
+						IsChunk:     true,
+						ChunkIndex:  j,
+						TotalChunks: chunkCount,
 					}
 					vecs[j] = []float32{float32(idx) * 0.1, float32(idx) * 0.2, float32(idx) * 0.3}
 				}
@@ -2459,7 +2424,7 @@ func TestStoreConcurrentChunkConsistency(t *testing.T) {
 		var winnerIdx int
 		_, err = fmt.Sscanf(firstTag, fmt.Sprintf("iter%d-writer%%d", iter), &winnerIdx)
 		require.NoErrorf(t, err, "iter %d: could not parse winning writer index from tag %q", iter, firstTag)
-		require.Equalf(t, winnerIdx+1, len(contents),
+		require.Lenf(t, contents, winnerIdx+1,
 			"iter %d: winner is writer%d (TotalChunks=%d) but found %d rows: %v",
 			iter, winnerIdx, winnerIdx+1, len(contents), contents)
 	}
@@ -2579,16 +2544,13 @@ func TestDeleteOrphaned(t *testing.T) {
 
 		docs := []embeddings.PostDocument{
 			{PostID: "chunked_post", CreateAt: now, TeamID: "team1", ChannelID: "ch1", UserID: "user1", Content: "chunk 0",
-				ChunkInfo: chunking.ChunkInfo{
-					IsChunk: true, ChunkIndex: 0, TotalChunks: 3},
+				IsChunk: true, ChunkIndex: 0, TotalChunks: 3,
 			},
 			{PostID: "chunked_post", CreateAt: now, TeamID: "team1", ChannelID: "ch1", UserID: "user1", Content: "chunk 1",
-				ChunkInfo: chunking.ChunkInfo{
-					IsChunk: true, ChunkIndex: 1, TotalChunks: 3},
+				IsChunk: true, ChunkIndex: 1, TotalChunks: 3,
 			},
 			{PostID: "chunked_post", CreateAt: now, TeamID: "team1", ChannelID: "ch1", UserID: "user1", Content: "chunk 2",
-				ChunkInfo: chunking.ChunkInfo{
-					IsChunk: true, ChunkIndex: 2, TotalChunks: 3},
+				IsChunk: true, ChunkIndex: 2, TotalChunks: 3,
 			},
 		}
 		vecs := [][]float32{{0.1, 0.2, 0.3}, {0.4, 0.5, 0.6}, {0.7, 0.8, 0.9}}

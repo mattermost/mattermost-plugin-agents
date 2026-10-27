@@ -4,7 +4,7 @@ import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
 import { buildToolCallAndTextResponse } from 'helpers/aimock-fixtures';
-import { expectNoToolActivity } from 'helpers/llmbot-post';
+import { expectNoToolActivity, toolCard } from 'helpers/llmbot-post';
 import { RunToolConfigAIMockContainer, setupRegularTestUser } from 'helpers/tool-config-container';
 
 const username = 'regularuser';
@@ -64,7 +64,7 @@ test.describe('Ask Policy (Aimock)', () => {
         // The round awaiting a decision renders in full, below where the
         // activity area would be. Nothing else ran, so there is no activity
         // area and the approval card is the only place the tool is named.
-        await expect(latestBotPost.getByText(getChannelInfoLabel, { exact: true })).toBeVisible({
+        await expect(toolCard(latestBotPost, getChannelInfoLabel)).toBeVisible({
             timeout: 90000,
         });
         await expectNoToolActivity(latestBotPost);

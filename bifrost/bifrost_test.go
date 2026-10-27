@@ -1504,13 +1504,11 @@ func TestResponsesReasoningFor(t *testing.T) {
 func TestGetKeysForProviderVertex(t *testing.T) {
 	saJSON := `{"type":"service_account","project_id":"x"}`
 	acc := &providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider:              schemas.Vertex,
-			Region:                "us-west1",
-			VertexProjectID:       "my-gcp-project",
-			VertexProjectNumber:   "123456789012",
-			VertexAuthCredentials: saJSON,
-		},
+		Provider:              schemas.Vertex,
+		Region:                "us-west1",
+		VertexProjectID:       "my-gcp-project",
+		VertexProjectNumber:   "123456789012",
+		VertexAuthCredentials: saJSON,
 	}
 
 	keys, err := acc.GetKeysForProvider(context.Background(), schemas.Vertex)
@@ -1524,25 +1522,21 @@ func TestGetKeysForProviderVertex(t *testing.T) {
 	assert.Equal(t, saJSON, vc.AuthCredentials.Val)
 
 	adc := &providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider:              schemas.Vertex,
-			Region:                "europe-west1",
-			VertexProjectID:       "adc-project",
-			VertexProjectNumber:   "",
-			VertexAuthCredentials: "",
-		},
+		Provider:              schemas.Vertex,
+		Region:                "europe-west1",
+		VertexProjectID:       "adc-project",
+		VertexProjectNumber:   "",
+		VertexAuthCredentials: "",
 	}
 	keysADC, err := adc.GetKeysForProvider(context.Background(), schemas.Vertex)
 	require.NoError(t, err)
 	require.Len(t, keysADC, 1)
 	require.NotNil(t, keysADC[0].VertexKeyConfig)
 	assert.Equal(t, "adc-project", keysADC[0].VertexKeyConfig.ProjectID.Val)
-	assert.Equal(t, "", keysADC[0].VertexKeyConfig.AuthCredentials.Val)
+	assert.Empty(t, keysADC[0].VertexKeyConfig.AuthCredentials.Val)
 
 	other := &providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-		},
+		Provider: schemas.OpenAI,
 	}
 	_, err = other.GetKeysForProvider(context.Background(), schemas.Vertex)
 	require.Error(t, err)
@@ -2273,12 +2267,10 @@ func TestConvertToBifrostResponsesRequestStructuredOutput(t *testing.T) {
 func TestMultiProviderAccount_SingleProvider(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIKey:   "openai-key",
-			APIURL:   "https://api.openai.com",
-			OrgID:    "org-123",
-		},
+		Provider: schemas.OpenAI,
+		APIKey:   "openai-key",
+		APIURL:   "https://api.openai.com",
+		OrgID:    "org-123",
 	})
 
 	providers, err := acc.GetConfiguredProviders()
@@ -2298,16 +2290,12 @@ func TestMultiProviderAccount_SingleProvider(t *testing.T) {
 func TestMultiProviderAccount_MultipleProviders(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIKey:   "openai-key",
-		},
+		Provider: schemas.OpenAI,
+		APIKey:   "openai-key",
 	})
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.Anthropic,
-			APIKey:   "anthropic-key",
-		},
+		Provider: schemas.Anthropic,
+		APIKey:   "anthropic-key",
 	})
 
 	providers, err := acc.GetConfiguredProviders()
@@ -2329,10 +2317,8 @@ func TestMultiProviderAccount_MultipleProviders(t *testing.T) {
 func TestMultiProviderAccount_UnknownProvider(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIKey:   "openai-key",
-		},
+		Provider: schemas.OpenAI,
+		APIKey:   "openai-key",
 	})
 
 	_, err := acc.GetKeysForProvider(context.Background(), schemas.Anthropic)
@@ -2345,17 +2331,13 @@ func TestMultiProviderAccount_UnknownProvider(t *testing.T) {
 func TestMultiProviderAccount_DuplicateProvider(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIKey:   "first-key",
-		},
+		Provider: schemas.OpenAI,
+		APIKey:   "first-key",
 	})
 	// Second add with same provider should be silently skipped (first wins)
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIKey:   "second-key",
-		},
+		Provider: schemas.OpenAI,
+		APIKey:   "second-key",
 	})
 
 	providers, err := acc.GetConfiguredProviders()
@@ -2371,11 +2353,9 @@ func TestMultiProviderAccount_DuplicateProvider(t *testing.T) {
 func TestMultiProviderAccount_AzureKeyConfig(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.Azure,
-			APIKey:   "azure-key",
-			APIURL:   "https://myservice.openai.azure.com",
-		},
+		Provider: schemas.Azure,
+		APIKey:   "azure-key",
+		APIURL:   "https://myservice.openai.azure.com",
 	})
 
 	keys, err := acc.GetKeysForProvider(context.Background(), schemas.Azure)
@@ -2388,13 +2368,11 @@ func TestMultiProviderAccount_AzureKeyConfig(t *testing.T) {
 func TestMultiProviderAccount_BedrockKeyConfig(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider:           schemas.Bedrock,
-			APIKey:             "bedrock-key",
-			Region:             "us-east-1",
-			AWSAccessKeyID:     "AKIA123",
-			AWSSecretAccessKey: "secret123",
-		},
+		Provider:           schemas.Bedrock,
+		APIKey:             "bedrock-key",
+		Region:             "us-east-1",
+		AWSAccessKeyID:     "AKIA123",
+		AWSSecretAccessKey: "secret123",
 	})
 
 	keys, err := acc.GetKeysForProvider(context.Background(), schemas.Bedrock)
@@ -3461,20 +3439,16 @@ func TestServiceConfigToFallbackEntry_VertexCredsAndKeyless(t *testing.T) {
 func TestMultiProviderAccount_CustomProviderKeepsDistinctSlot(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIKey:   "cloud",
-			APIURL:   "https://api.openai.com",
-		},
+		Provider: schemas.OpenAI,
+		APIKey:   "cloud",
+		APIURL:   "https://api.openai.com",
 	})
 	customName := customProviderName(schemas.OpenAI, "local")
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIURL:   "http://localhost:11434",
-		},
-		name:    customName,
-		keyless: true,
+		Provider: schemas.OpenAI,
+		APIURL:   "http://localhost:11434",
+		name:     customName,
+		keyless:  true,
 	})
 
 	providers, err := acc.GetConfiguredProviders()
@@ -3556,10 +3530,8 @@ func TestNewFromServiceConfig_ChatOnlyFallbackGetsCustomProviderWithoutCollision
 // Responses → chat), while a non-chat-only custom provider leaves it unset.
 func TestProviderAccount_ChatOnlyCustomConfig(t *testing.T) {
 	chatOnly := &providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIURL:   "http://localhost:11434",
-		},
+		Provider: schemas.OpenAI,
+		APIURL:   "http://localhost:11434",
 		name:     customProviderName(schemas.OpenAI, "local"),
 		chatOnly: true,
 	}
@@ -3575,11 +3547,9 @@ func TestProviderAccount_ChatOnlyCustomConfig(t *testing.T) {
 	// A custom provider that does support the Responses API leaves AllowedRequests
 	// unset so all operations remain available.
 	responsesCapable := &providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIURL:   "https://api.example.com",
-		},
-		name: customProviderName(schemas.OpenAI, "other"),
+		Provider: schemas.OpenAI,
+		APIURL:   "https://api.example.com",
+		name:     customProviderName(schemas.OpenAI, "other"),
 	}
 	cfg, err = responsesCapable.GetConfigForProvider(responsesCapable.registeredName())
 	require.NoError(t, err)
@@ -3764,13 +3734,11 @@ func TestEnvProxyRouting(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", proxy.URL)
 
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.OpenAI,
-			APIKey:           "test-key",
-			APIURL:           backend.URL,
-			DefaultModel:     "gpt-4",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.OpenAI,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "gpt-4",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -3851,13 +3819,11 @@ func TestCountTokensReturnsCount(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.Anthropic,
-			APIKey:           "test-key",
-			APIURL:           backend.URL,
-			DefaultModel:     "claude-sonnet-4-5",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.Anthropic,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "claude-sonnet-4-5",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -3886,13 +3852,11 @@ func TestCountTokensOmitsMaxOutputTokens(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.OpenAI,
-			APIKey:           "test-key",
-			APIURL:           backend.URL,
-			DefaultModel:     "gpt-5.4",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.OpenAI,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "gpt-5.4",
+		StreamingTimeout: 10 * time.Second,
 		OutputTokenLimit: 8192, // produces MaxGeneratedTokens > 0 → MaxOutputTokens in the request
 	})
 	require.NoError(t, err)
@@ -3928,13 +3892,11 @@ func TestCountTokensOmitsNativeServerTools(t *testing.T) {
 	// the production "Server tools are not supported in the count_tokens
 	// endpoint" error.
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.Anthropic,
-			APIKey:           "test-key",
-			APIURL:           backend.URL,
-			DefaultModel:     "claude-sonnet-4-6",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:           schemas.Anthropic,
+		APIKey:             "test-key",
+		APIURL:             backend.URL,
+		DefaultModel:       "claude-sonnet-4-6",
+		StreamingTimeout:   10 * time.Second,
 		EnabledNativeTools: []string{llm.NativeToolWebSearch},
 	})
 	require.NoError(t, err)
@@ -3968,13 +3930,11 @@ func TestCountTokensKeepsFunctionTools(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.Anthropic,
-			APIKey:           "test-key",
-			APIURL:           backend.URL,
-			DefaultModel:     "claude-sonnet-4-6",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.Anthropic,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "claude-sonnet-4-6",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -4008,13 +3968,11 @@ func TestCountTokensUnsupportedProvider(t *testing.T) {
 	// "unsupported_operation" error synchronously. CountTokens must classify
 	// that as ErrUnsupportedTokenCount without contacting the backend.
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.Mistral,
-			APIKey:           "test-key",
-			APIURL:           backend.URL,
-			DefaultModel:     "mistral-large-latest",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.Mistral,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "mistral-large-latest",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -4037,13 +3995,11 @@ func TestCountTokensScrubsAPIKeyFromError(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.Anthropic,
-			APIKey:           secret,
-			APIURL:           backend.URL,
-			DefaultModel:     "claude-sonnet-4-5",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.Anthropic,
+		APIKey:           secret,
+		APIURL:           backend.URL,
+		DefaultModel:     "claude-sonnet-4-5",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()

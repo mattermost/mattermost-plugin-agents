@@ -75,12 +75,12 @@ func TestDMTurnTraceIsCorrelated(t *testing.T) {
 	select {
 	case <-env.streamService.finished:
 	case <-time.After(5 * time.Second):
-		t.Fatal("response never finished streaming")
+		require.FailNow(t, "response never finished streaming")
 	}
 	select {
 	case <-env.fakeLLM.titleDone:
 	case <-time.After(5 * time.Second):
-		t.Fatal("title was never generated")
+		require.FailNow(t, "title was never generated")
 	}
 
 	require.Eventually(t, func() bool {

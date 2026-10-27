@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -115,10 +116,10 @@ func TestSearXNGProvider(t *testing.T) {
 				client = nil
 			} else {
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					require.Equal(t, "GET", r.Method)
-					require.Equal(t, "/search", r.URL.Path)
-					require.Equal(t, "golang programming", r.URL.Query().Get("q"))
-					require.Equal(t, "json", r.URL.Query().Get("format"))
+					assert.Equal(t, "GET", r.Method)
+					assert.Equal(t, "/search", r.URL.Path)
+					assert.Equal(t, "golang programming", r.URL.Query().Get("q"))
+					assert.Equal(t, "json", r.URL.Query().Get("format"))
 					tc.handler(w, r)
 				}))
 				defer server.Close()

@@ -4,7 +4,7 @@ import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
 import { buildToolCallAndTextResponse } from 'helpers/aimock-fixtures';
-import { expandToolActivity, expectToolActivitySummary } from 'helpers/llmbot-post';
+import { expandToolActivity, expectToolActivitySummary, toolCard } from 'helpers/llmbot-post';
 import { RunToolConfigAIMockContainer, setupRegularTestUser } from 'helpers/tool-config-container';
 
 const username = 'regularuser';
@@ -72,7 +72,7 @@ test.describe('Auto Run (DM) Policy (Aimock)', () => {
         await expectToolActivitySummary(latestBotPost, 1);
 
         const activityRounds = await expandToolActivity(latestBotPost);
-        await expect(activityRounds.getByText(getChannelInfoLabel, { exact: true })).toBeVisible({
+        await expect(toolCard(activityRounds, getChannelInfoLabel)).toBeVisible({
             timeout: 120000,
         });
         await expect(rhsContainer.getByText('Auto-approved').first()).toBeVisible({ timeout: 30000 });

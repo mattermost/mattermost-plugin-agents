@@ -107,13 +107,25 @@ type ConfigStore interface {
 
 // AgentStore provides CRUD access to user-created agents in the database.
 type AgentStore interface {
-	CreateAgent(cfg *llm.BotConfig) error
+	// CreateAgent and UpdateAgent record every write as a new agent version.
+	CreateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error
 	GetAgent(id string) (*llm.BotConfig, error)
 	ListAgents() ([]*llm.BotConfig, error)
 	ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error)
 	CountActiveAgents() (int, error)
-	UpdateAgent(cfg *llm.BotConfig) error
+	UpdateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error
 	DeleteAgent(id string) error
+
+	// ListAgentVersions returns up to limit versions older than before (no
+	// upper bound when before is 0), newest first.
+	ListAgentVersions(agentID string, before, limit int) (store.AgentVersionPage, error)
+	// GetAgentVersion returns nil, nil when the version does not exist.
+	GetAgentVersion(agentID string, version int) (*store.AgentVersionDetail, error)
+	// DeleteAgentVersions deletes the given versions; it returns
+	// store.ErrCurrentAgentVersion, deleting nothing, when they include the current one.
+	DeleteAgentVersions(agentID string, versions []int) (int64, error)
+	// DeletePreviousAgentVersions deletes every version but the current one.
+	DeletePreviousAgentVersions(agentID string) (int64, error)
 }
 
 // ConfigUpdater updates the in-memory plugin configuration.
@@ -383,6 +395,10 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	agentRouter.PUT("/:agentid", a.handleUpdateAgent)
 	agentRouter.DELETE("/:agentid", a.handleDeleteAgent)
 	agentRouter.POST("/:agentid/avatar", a.handleUploadAgentAvatar)
+	agentRouter.GET("/:agentid/versions", a.handleListAgentVersions)
+	agentRouter.GET("/:agentid/versions/:version", a.handleGetAgentVersion)
+	agentRouter.POST("/:agentid/versions/:version/restore", a.handleRestoreAgentVersion)
+	agentRouter.DELETE("/:agentid/versions", a.handleDeleteAgentVersions)
 	// Access policy authoring: agent managers.
 	agentRouter.GET("/:agentid/access_policy", a.handleGetAgentPolicy)
 	agentRouter.PUT("/:agentid/access_policy", a.handlePutAgentPolicy)

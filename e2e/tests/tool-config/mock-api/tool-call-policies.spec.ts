@@ -15,7 +15,7 @@ import {
 import { RunToolConfigContainerWithPolicies } from 'helpers/tool-config-container';
 import { adminUsername, adminPassword } from 'helpers/system-console-container';
 import { createBotConfigHelper } from 'helpers/bot-config';
-import { expandToolActivity } from 'helpers/llmbot-post';
+import { expandToolActivity, toolCard } from 'helpers/llmbot-post';
 
 /**
  * Test Suite: Tool Call Policies with Mocked LLM (4.13)
@@ -414,9 +414,9 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
             await expect(rhs.getByText('Finished reading the unsafe post.')).toBeVisible({timeout: 45000});
 
             const activityRounds = await expandToolActivity(latestBotPost);
-            await expect(activityRounds.getByText(embeddedReadPostLabel, {exact: true})).toBeVisible({timeout: 30000});
+            await expect(toolCard(activityRounds, embeddedReadPostLabel)).toBeVisible({timeout: 30000});
 
-            await activityRounds.getByText(embeddedReadPostLabel, {exact: true}).click();
+            await toolCard(activityRounds, embeddedReadPostLabel).getByText(embeddedReadPostLabel, {exact: true}).click();
             await expect(latestBotPost.getByText(seedMessage, {exact: false})).toBeVisible({timeout: 30000});
             await expect(latestBotPost.getByText('blocked-image')).toBeVisible({timeout: 30000});
             await expect(latestBotPost.locator('img[src*="tool-result-image-"]')).toHaveCount(0);
@@ -556,7 +556,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
 
         const botPosts = rhs.locator('[data-testid="llm-bot-post"]');
         const initialBotPost = botPosts.last();
-        await expect(initialBotPost.getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible({timeout: 30000});
+        await expect(toolCard(initialBotPost, embeddedGetChannelInfoLabel)).toBeVisible({timeout: 30000});
 
         const acceptButton = rhs.getByRole('button', {name: /^accept$/i});
         await expect(acceptButton).toBeVisible({timeout: 30000});
@@ -570,11 +570,11 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         // Tool cards and the auto-approved badge only exist once the
         // collapsed activity area is expanded.
         const activityRounds = await expandToolActivity(latestBotPost);
-        await expect(activityRounds.getByText(embeddedReadChannelLabel, {exact: true})).toBeVisible({timeout: 30000});
+        await expect(toolCard(activityRounds, embeddedReadChannelLabel)).toBeVisible({timeout: 30000});
         await expect(rhs.getByText('Auto-approved')).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
 
-        await activityRounds.getByText(embeddedReadChannelLabel, {exact: true}).click();
+        await toolCard(activityRounds, embeddedReadChannelLabel).getByText(embeddedReadChannelLabel, {exact: true}).click();
         // read_channel result is rendered as markdown; the seed string is not a single text node (bold, etc.).
         await expect(latestBotPost.getByText(seededMessage, {exact: false})).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();
@@ -652,7 +652,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         const botPosts = rhs.locator('[data-testid="llm-bot-post"]');
         const postA = botPosts.nth(0);
 
-        await expect(postA.getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible({timeout: 30000});
+        await expect(toolCard(postA, embeddedGetChannelInfoLabel)).toBeVisible({timeout: 30000});
 
         // A pending-tool response has no text; it must not be overwritten with
         // the empty-result fallback that would mask the tool approval UI.
@@ -666,7 +666,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         // Both the original tool card and the follow-up text are visible in
         // postA; no second bot post is created.
         await expect(postA.getByText(continuationMarker)).toBeVisible({timeout: 30000});
-        await expect((await expandToolActivity(postA)).getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible();
+        await expect(toolCard(await expandToolActivity(postA), embeddedGetChannelInfoLabel)).toBeVisible();
         await expect(botPosts).toHaveCount(1);
     });
 

@@ -97,6 +97,8 @@ const LoadingContainer = styled.div`
     padding: var(--spacing-xxxxl);
 `;
 
+const DEFAULT_AGENT_VERSIONS_TO_KEEP = 50;
+
 const defaultConfig: Config = {
     services: [],
     bots: [],
@@ -337,7 +339,28 @@ const Config = (props: Props) => {
                 title={intl.formatMessage({defaultMessage: 'AI Bots'})}
                 subtitle={intl.formatMessage({defaultMessage: 'AI agents are managed from the Agents product page.'})}
             >
-                <BotsMovedNotice/>
+                <ItemList>
+                    <BotsMovedNotice/>
+                    <BooleanItem
+                        label={<FormattedMessage defaultMessage='Limit agent version history'/>}
+                        value={(value.agentVersionsToKeep ?? 0) > 0}
+                        onChange={(to) => updateConfig({agentVersionsToKeep: to ? DEFAULT_AGENT_VERSIONS_TO_KEEP : 0})}
+                        helpText={intl.formatMessage({defaultMessage: 'When false, every saved version of each agent is kept. When true, each agent keeps only its most recent versions and older ones are permanently deleted.'})}
+                    />
+                    {(value.agentVersionsToKeep ?? 0) > 0 && (
+                        <TextItem
+                            label={intl.formatMessage({defaultMessage: 'Versions to keep per agent'})}
+                            type='number'
+                            min='1'
+                            value={String(value.agentVersionsToKeep)}
+                            onChange={(e) => {
+                                const parsed = parseInt(e.target.value, 10);
+                                updateConfig({agentVersionsToKeep: Number.isNaN(parsed) || parsed < 1 ? 1 : parsed});
+                            }}
+                            helptext={intl.formatMessage({defaultMessage: 'Includes the current version. Older versions are deleted when this setting is saved and each time an agent is saved.'})}
+                        />
+                    )}
+                </ItemList>
             </AdminPanel>
             <AdminPanel
                 title={intl.formatMessage({defaultMessage: 'AI Functions'})}

@@ -17,6 +17,7 @@ import {
     expectToolActivitySummary,
     mainAreaText,
     TOOL_STATUS_SELECTOR,
+    toolCard,
 } from 'helpers/llmbot-post';
 import MattermostContainer, {getTownSquareChannel} from 'helpers/mmcontainer';
 import {RunToolConfigAIMockContainer, setupRegularTestUser} from 'helpers/tool-config-container';
@@ -224,8 +225,8 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
         await expect(botPost.getByText(readChannelLabel, {exact: true})).toHaveCount(0);
 
         const activityRounds = await expandToolActivity(botPost);
-        await expect(activityRounds.getByText(getChannelInfoLabel, {exact: true})).toBeVisible({timeout: 30000});
-        await expect(activityRounds.getByText(readChannelLabel, {exact: true})).toBeVisible();
+        await expect(toolCard(activityRounds, getChannelInfoLabel)).toBeVisible({timeout: 30000});
+        await expect(toolCard(activityRounds, readChannelLabel)).toBeVisible();
 
         await collapseToolActivity(botPost);
         await expect(botPost.getByText(getChannelInfoLabel, {exact: true})).toHaveCount(0);
@@ -260,7 +261,7 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
         await expectToolActivitySummary(botPost, 1, 'error');
 
         const activityRounds = await expandToolActivity(botPost);
-        await expect(activityRounds.getByText(readChannelLabel, {exact: true})).toBeVisible({timeout: 30000});
+        await expect(toolCard(activityRounds, readChannelLabel)).toBeVisible({timeout: 30000});
     });
 
     test('folds the closing reasoning block into the activity area while its answer stays in the post', async ({page}) => {
@@ -276,7 +277,7 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
 
         // The Thinking row sits in the expanded stack after the tool that preceded it.
         const activityRounds = await expandToolActivity(botPost);
-        await expect(activityRounds.getByText(getChannelInfoLabel, {exact: true})).toBeVisible({timeout: 30000});
+        await expect(toolCard(activityRounds, getChannelInfoLabel)).toBeVisible({timeout: 30000});
         await llmBotHelper.expectReasoningLabelVisible(true);
         await llmBotHelper.clickReasoningToggle();
         await llmBotHelper.expectReasoningText(reasoningText);
@@ -297,7 +298,7 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
         await expect(stopButton).toBeVisible();
 
         const activityRounds = await expandToolActivity(botPost);
-        await expect(activityRounds.getByText(getChannelInfoLabel, {exact: true})).toBeVisible();
+        await expect(toolCard(activityRounds, getChannelInfoLabel)).toBeVisible();
         expect(await mainAreaText(botPost)).toContain(midStreamMarker);
         await expect(stopButton).toBeVisible();
 

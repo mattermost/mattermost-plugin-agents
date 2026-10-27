@@ -62,7 +62,22 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 	}
 
 	access := a.mcpClientManager.GetCatalogAccess(c.Request.Context(), req)
+	if !abortIfCatalogUnavailable(c, access) {
+		return
+	}
 	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, access, req.ServiceAccount))
+}
+
+// abortIfCatalogUnavailable fails the request when MCP server access policy
+// could not be evaluated: the access then denies nothing, so listing servers
+// from it would show servers the user may not use. It returns false once it
+// has aborted.
+func abortIfCatalogUnavailable(c *gin.Context, access mcp.CatalogAccess) bool {
+	if !access.Unavailable() {
+		return true
+	}
+	c.AbortWithError(http.StatusServiceUnavailable, errors.New("MCP tools are temporarily unavailable"))
+	return false
 }
 
 // resolveMCPToolsCatalog decides whose tools to list. ok is false when the
@@ -124,6 +139,9 @@ func (a *API) handleRefreshUserMCPTools(c *gin.Context) {
 	access, err := a.mcpClientManager.RefreshCatalogAccess(c.Request.Context(), req)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to refresh MCP tools: %w", err))
+		return
+	}
+	if !abortIfCatalogUnavailable(c, access) {
 		return
 	}
 

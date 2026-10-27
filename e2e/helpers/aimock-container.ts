@@ -10,6 +10,7 @@ import {
     mergeFixtureFiles,
     normalizeFixtureInput,
 } from './aimock-fixtures';
+import { test } from '@playwright/test';
 
 export const AIMOCK_IMAGE =
     'ghcr.io/copilotkit/aimock:1.31.0@sha256:288f6698ff2f3c97eb422dd84a865cd5e610041ee096a36bee7aa4768c33a8ca';
@@ -72,6 +73,7 @@ export class AIMockContainer {
     private reloadCounter = 0;
 
     async start(network: StartedNetwork, options: AIMockStartOptions = {}): Promise<void> {
+        test.slow(); // triples a beforeAll's 60 s timeout, which container startup can exceed
         this.network = network;
         this.startOptions = options;
         this.fixtureFileContents = this.buildInitialFixtureFile(options);

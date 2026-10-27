@@ -254,8 +254,7 @@ func (a *API) handleTranscribeFile(c *gin.Context) {
 
 	result, err := a.meetingsService.HandleTranscribeFile(userID, bot, post, channel, fileID, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
-		var licErr *enterprise.LicenseError
-		if errors.As(err, &licErr) {
+		if _, ok := errors.AsType[*enterprise.LicenseError](err); ok {
 			abortNotLicensed(c, err)
 			return
 		}
@@ -283,8 +282,7 @@ func (a *API) handleSummarizeTranscription(c *gin.Context) {
 
 	result, err := a.meetingsService.HandleSummarizeTranscription(userID, bot, post, channel, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
-		var licErr *enterprise.LicenseError
-		if errors.As(err, &licErr) {
+		if _, ok := errors.AsType[*enterprise.LicenseError](err); ok {
 			abortNotLicensed(c, err)
 			return
 		}
@@ -487,8 +485,7 @@ func (a *API) handlePostbackSummary(c *gin.Context) {
 
 	result, err := a.meetingsService.HandlePostbackSummary(userID, post)
 	if err != nil {
-		var licErr *enterprise.LicenseError
-		if errors.As(err, &licErr) {
+		if _, ok := errors.AsType[*enterprise.LicenseError](err); ok {
 			abortNotLicensed(c, err)
 			return
 		}

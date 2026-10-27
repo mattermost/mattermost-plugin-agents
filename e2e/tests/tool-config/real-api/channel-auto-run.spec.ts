@@ -3,7 +3,7 @@ import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
 import { buildToolCallAndTextResponse, mergeFixtureFiles } from 'helpers/aimock-fixtures';
-import { expandToolActivity } from 'helpers/llmbot-post';
+import { expandToolActivity, toolCard } from 'helpers/llmbot-post';
 import { RunToolConfigAIMockContainer, setupRegularTestUser } from 'helpers/tool-config-container';
 import { createToolConfigAPIHelper } from 'helpers/tool-config';
 
@@ -126,7 +126,7 @@ test.describe('Channel Auto Run Policy (Aimock)', () => {
         const latestBotPost = rhs.locator('[data-testid="llm-bot-post"]').last();
 
         // Pending approvals render in full without expanding anything.
-        await expect(latestBotPost.getByText(readChannelLabel, { exact: true })).toBeVisible({
+        await expect(toolCard(latestBotPost, readChannelLabel)).toBeVisible({
             timeout: 90000,
         });
 

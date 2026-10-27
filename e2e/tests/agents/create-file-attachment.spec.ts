@@ -20,7 +20,7 @@ import {
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
 import {AIPlugin} from 'helpers/ai-plugin';
-import {expandToolActivity} from 'helpers/llmbot-post';
+import {expandToolActivity, toolCard} from 'helpers/llmbot-post';
 import {
     RunToolConfigAIMockContainer,
     setupRegularTestUser,
@@ -167,7 +167,7 @@ test.describe('Response File Attachments (Aimock)', () => {
         // The resolved tool card lives behind the collapsed activity row and
         // renders without any approval controls once revealed.
         const activityRounds = await expandToolActivity(latestBotPost);
-        await expect(activityRounds.getByText(createFileToolLabel, {exact: true})).toBeVisible({timeout: 120000});
+        await expect(toolCard(activityRounds, createFileToolLabel)).toBeVisible({timeout: 120000});
         await expect(rhsContainer.getByText('Auto-approved').first()).toBeVisible({timeout: 30000});
 
         // The created file is attached to the bot's reply post.

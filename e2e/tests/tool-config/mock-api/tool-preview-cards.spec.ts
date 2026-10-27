@@ -10,6 +10,7 @@ import {
 import { RunToolConfigContainerWithPolicies } from 'helpers/tool-config-container';
 import { adminUsername, adminPassword } from 'helpers/system-console-container';
 import { createBotConfigHelper } from 'helpers/bot-config';
+import { toolCard } from 'helpers/llmbot-post';
 
 /**
  * Test Suite: post preview cards (renderer registry)
@@ -177,7 +178,7 @@ test.describe('post preview cards (Mocked LLM)', () => {
         const botPost = rhs.locator('[data-testid="llm-bot-post"]').last();
 
         // Card header + pending approval stage.
-        await expect(botPost.getByText(readPostLabel, {exact: true})).toBeVisible({timeout: 30000});
+        await expect(toolCard(botPost, readPostLabel)).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /^accept$/i})).toBeVisible({timeout: 30000});
 
         // The permalink-style preview shows the seeded post's content before
@@ -257,7 +258,7 @@ test.describe('post preview cards (Mocked LLM)', () => {
         const botPost = rhs.locator('[data-testid="llm-bot-post"]').last();
 
         // Card header + pending approval stage.
-        await expect(botPost.getByText(createPostLabel, {exact: true})).toBeVisible({timeout: 30000});
+        await expect(toolCard(botPost, createPostLabel)).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /^accept$/i})).toBeVisible({timeout: 30000});
 
         // The preview shows the post-to-be: its message rendered as a post,

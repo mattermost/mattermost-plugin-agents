@@ -71,6 +71,14 @@ type Context struct {
 	UnconnectedMCPServers []UnconnectedMCPServer
 	Parameters            map[string]any
 
+	// ResponsePostID is the bot's streamed response post for this run. Set by
+	// conversation entry points after the placeholder post exists; not
+	// prompt-visible. Tools that resume the agent loop later
+	// (wait_for_async_work) rederive all conversation state from this post.
+	// Every flow that sets ToolCatalog.ResponseFilesSupported sets it before
+	// tools can run, so tools gated on that flag may rely on it.
+	ResponsePostID string
+
 	// ToolCatalog holds request-scoped inputs used while building the tool store.
 	ToolCatalog ToolCatalogContext
 	// ToolRuntime holds non-prompt tool execution state for this turn.

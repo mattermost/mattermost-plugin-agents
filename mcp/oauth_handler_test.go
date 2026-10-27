@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 )
@@ -547,7 +548,7 @@ func newRefreshTestServer(t *testing.T, tokenHandler http.HandlerFunc) *httptest
 		switch r.URL.Path {
 		case "/.well-known/oauth-authorization-server":
 			w.Header().Set("Content-Type", "application/json")
-			require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+			assert.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
 				Issuer:                        server.URL,
 				AuthorizationEndpoint:         server.URL + "/authorize",
 				TokenEndpoint:                 server.URL + "/token",

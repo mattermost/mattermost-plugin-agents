@@ -194,6 +194,6 @@ func TestPluginHTTPRoundTripper_ReturnsWhenContextExpires(t *testing.T) {
 	select {
 	case <-bodyClosed:
 	case <-time.After(time.Second):
-		t.Fatal("response body was not closed after cancellation")
+		require.FailNow(t, "response body was not closed after cancellation")
 	}
 }

@@ -223,6 +223,8 @@ const MCPServer = ({
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
     const serviceAccountLicensed = useIsLicensedFor('mcp_service_account');
     const [isEditingName, setIsEditingName] = useState(false);
+    const serverTitleRef = useRef<HTMLButtonElement>(null);
+    const focusTitleAfterEdit = useRef(false);
     const [serverName, setServerName] = useState(serverConfig.name);
     const [isOAuthExpanded, setIsOAuthExpanded] = useState(Boolean(serverConfig.clientID));
     const unnamedServerLabel = intl.formatMessage(
@@ -306,12 +308,23 @@ const MCPServer = ({
     // Handle keyboard events for the name input
     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
         if (e.key === 'Enter') {
+            focusTitleAfterEdit.current = true;
             handleRename();
         } else if (e.key === 'Escape') {
+            focusTitleAfterEdit.current = true;
             setServerName(config.name);
             setIsEditingName(false);
         }
     };
+
+    // Enter and Escape unmount the focused input; hand focus back to the
+    // title so keyboard users keep their place. Blur and Tab move on as usual.
+    useEffect(() => {
+        if (!isEditingName && focusTitleAfterEdit.current) {
+            focusTitleAfterEdit.current = false;
+            serverTitleRef.current?.focus();
+        }
+    }, [isEditingName]);
 
     return (
         <ServerContainer>
@@ -328,7 +341,15 @@ const MCPServer = ({
                         />
                     </ServerNameEditContainer>
                 ) : (
-                    <ServerTitle onClick={() => setIsEditingName(true)}>
+                    <ServerTitle
+                        ref={serverTitleRef}
+                        type='button'
+                        aria-label={intl.formatMessage(
+                            {defaultMessage: 'Rename {name}'},
+                            {name: config.name || unnamedServerLabel},
+                        )}
+                        onClick={() => setIsEditingName(true)}
+                    >
                         {config.name || unnamedServerLabel}
                         <ServerTitleEditIcon>
                             <Icon
@@ -867,7 +888,7 @@ const ServerTitleEditIcon = styled.span`
     transition: opacity 0.2s ease;
 `;
 
-const ServerTitle = styled.div`
+const ServerTitle = styled.button`
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -879,13 +900,17 @@ const ServerTitle = styled.div`
     cursor: pointer;
     padding: 0;
     margin: 0;
+    border: none;
+    background: none;
+    text-align: left;
     border-radius: var(--radius-s);
 
     &:hover {
         background-color: rgba(var(--center-channel-color-rgb), 0.08);
     }
 
-    &:hover ${ServerTitleEditIcon} {
+    &:hover ${ServerTitleEditIcon},
+    &:focus-visible ${ServerTitleEditIcon} {
         opacity: 0.72;
     }
 `;

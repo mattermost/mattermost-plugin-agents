@@ -15,6 +15,10 @@ import {
     doLoopInAgent,
     doRunSearch,
     doThreadAnalysis,
+    deleteAgentVersions,
+    getAgentVersion,
+    getAgentVersions,
+    restoreAgentVersion,
     getArtifactToken,
     getChannelAutoReply,
     getChannelInterval,
@@ -432,6 +436,58 @@ describe('license denial errors', () => {
         await expect(doThreadAnalysis('post-1', 'summarize_thread', 'bot')).rejects.toMatchObject({
             status_code: 500,
             message: '',
+        });
+    });
+});
+
+describe('agent versioning client', () => {
+    const agentBase = `${siteURL}/plugins/${manifest.id}/agents`;
+
+    function jsonResponse(body: unknown, init: {ok?: boolean; status?: number} = {}): Response {
+        return {
+            ok: init.ok ?? true,
+            status: init.status ?? 200,
+            json: () => Promise.resolve(body),
+        } as unknown as Response;
+    }
+
+    test.each([
+        {name: 'list versions', call: () => getAgentVersions('a1'), url: `${agentBase}/a1/versions`, method: 'GET'},
+        {name: 'list older versions', call: () => getAgentVersions('a1', {before: 51}), url: `${agentBase}/a1/versions?before=51`, method: 'GET'},
+        {name: 'list a page of versions', call: () => getAgentVersions('a1', {before: 51, limit: 20}), url: `${agentBase}/a1/versions?before=51&limit=20`, method: 'GET'},
+        {name: 'get one version', call: () => getAgentVersion('a1', 3), url: `${agentBase}/a1/versions/3`, method: 'GET'},
+        {name: 'restore a version', call: () => restoreAgentVersion('a1', 3), url: `${agentBase}/a1/versions/3/restore`, method: 'POST'},
+        {name: 'delete versions', call: () => deleteAgentVersions('a1', [1, 2]), url: `${agentBase}/a1/versions`, method: 'DELETE'},
+    ])('$name uses the contract route', async ({call, url, method}) => {
+        mockFetch.mockResolvedValue(jsonResponse({}));
+
+        await call();
+
+        const [calledUrl, options] = mockFetch.mock.calls[0];
+        expect(calledUrl).toBe(url);
+        expect(options).toEqual(expect.objectContaining({method}));
+    });
+
+    test.each([
+        {name: 'selected versions', versions: [1, 4] as number[] | 'all', body: {versions: [1, 4]}},
+        {name: 'every previous version', versions: 'all' as number[] | 'all', body: {all: true}},
+    ])('deleteAgentVersions sends $name and returns the count', async ({versions, body}) => {
+        mockFetch.mockResolvedValue(jsonResponse({deleted: 2}));
+
+        await expect(deleteAgentVersions('a1', versions)).resolves.toBe(2);
+        expect(JSON.parse(mockFetch.mock.calls[0][1].body as string)).toEqual(body);
+    });
+
+    test.each([
+        {name: 'restore', call: () => restoreAgentVersion('a1', 3)},
+        {name: 'delete', call: () => deleteAgentVersions('a1', [3])},
+        {name: 'list versions', call: () => getAgentVersions('a1')},
+    ])('$name surfaces the server error message and status', async ({call}) => {
+        mockFetch.mockResolvedValue(jsonResponse({error: 'the current version of an agent cannot be deleted'}, {ok: false, status: 400}));
+
+        await expect(call()).rejects.toMatchObject({
+            status_code: 400,
+            message: 'the current version of an agent cannot be deleted',
         });
     });
 });

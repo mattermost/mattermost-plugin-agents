@@ -36,9 +36,9 @@ test.beforeAll(async () => {
     // Bot accounts + tokens are needed to author the calls transcription post,
     // and inline replies (CRT off) keep the streamed summary in the center
     // channel where the helper can find it by post id.
-    await mattermost.container.exec(['mmctl', '--local', 'config', 'set', 'ServiceSettings.EnableBotAccountCreation', 'true']);
-    await mattermost.container.exec(['mmctl', '--local', 'config', 'set', 'ServiceSettings.EnableUserAccessTokens', 'true']);
-    await mattermost.container.exec(['mmctl', '--local', 'config', 'set', 'ServiceSettings.CollapsedThreads', 'disabled']);
+    await mattermost.mmctl('config', 'set', 'ServiceSettings.EnableBotAccountCreation', 'true');
+    await mattermost.mmctl('config', 'set', 'ServiceSettings.EnableUserAccessTokens', 'true');
+    await mattermost.mmctl('config', 'set', 'ServiceSettings.CollapsedThreads', 'disabled');
 });
 
 test.afterAll(async () => {

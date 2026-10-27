@@ -5,6 +5,7 @@ package store
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	sq "github.com/Masterminds/squirrel"
 	"github.com/jmoiron/sqlx"
@@ -14,6 +15,9 @@ import (
 type Store struct {
 	db      *sqlx.DB
 	builder sq.StatementBuilderType
+
+	// agentVersionsToKeep is how many versions of each agent to keep; 0 keeps all.
+	agentVersionsToKeep atomic.Int64
 }
 
 // New creates a new Store from an existing sqlx.DB connection.

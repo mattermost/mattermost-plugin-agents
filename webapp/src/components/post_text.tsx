@@ -128,6 +128,7 @@ const PostText = (props: Props) => {
         text;
 
     return (
+        // eslint-disable-next-line agents/click-events-have-key-events, agents/no-static-element-interactions -- delegates clicks from the links inside, which stay keyboard-operable
         <TextContainer
             data-testid='posttext'
             $showCursor={props.showCursor}

@@ -16,6 +16,7 @@ import {
     expectToolActivitySummary,
     TOOL_CARD_SELECTOR,
     TOOL_STATUS_SELECTOR,
+    toolCard,
 } from 'helpers/llmbot-post';
 import MattermostContainer, {getTownSquareChannel} from 'helpers/mmcontainer';
 import {RunToolConfigAIMockContainer, setupRegularTestUser} from 'helpers/tool-config-container';
@@ -168,8 +169,8 @@ test.describe('Tool Activity Approval Placement (Aimock)', () => {
         await expect(botPost.getByText(getChannelInfoLabel, {exact: true})).toHaveCount(0);
 
         const activityRounds = await expandToolActivity(botPost);
-        await expect(activityRounds.getByText(readChannelLabel, {exact: true})).toBeVisible({timeout: 30000});
-        await expect(activityRounds.getByText(getChannelInfoLabel, {exact: true})).toBeVisible();
+        await expect(toolCard(activityRounds, readChannelLabel)).toBeVisible({timeout: 30000});
+        await expect(toolCard(activityRounds, getChannelInfoLabel)).toBeVisible();
     });
 
     test('summarizes a rejected tool as rejected', async ({page}) => {
