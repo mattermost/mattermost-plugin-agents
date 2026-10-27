@@ -165,6 +165,11 @@ describe('hostThreadChatStyles message look', () => {
         expect(ruleFor(text, '.post:not(.current--user) .post__header > :not(.post-menu)')).toContain('display: none !important');
     });
 
+    test('both bubbles round all four corners the same', () => {
+        expect(ruleFor(text, '.post .post__content > .post__img + div')).toContain('border-radius: var(--radius-xl)');
+        expect(ruleFor(text, ownBubble)).toContain('border-radius: var(--radius-xl)');
+    });
+
     test('your own bubble reverses the colors, hides your name and puts the time under the bubble', () => {
         const rule = ruleFor(text, ownBubble);
         expect(rule).toContain('background: var(--center-channel-color)');
