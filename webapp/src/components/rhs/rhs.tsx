@@ -47,6 +47,19 @@ const ThreadsList = styled.div`
         margin-bottom: 0;
     }
 
+    /* The name row clips to 20px, which cuts off the agent's avatar: let it show in full. */
+    && [class*='thread-list-item__name-row'],
+    && [class*='thread-list-item__name-group'] {
+        height: auto;
+        min-height: var(--spacing-xl);
+        overflow: visible;
+    }
+
+    /* The reply count has no padding of its own here (the compass item pads it for its avatar group). */
+    && [class*='thread-list-item__reply-count'] {
+        padding: 0;
+    }
+
     /* The item always has its tag slot; there is none to show (the name is the agent's). */
     && [class*='thread-list-item__name-group'] > :not([class*='thread-list-item__author']) {
         display: none;
