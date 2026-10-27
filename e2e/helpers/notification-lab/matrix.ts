@@ -65,7 +65,12 @@ export async function startMatrixLab(browser: Browser, options: MatrixLabOptions
         await lab.stop();
         test.skip(true, SKIP_REASON[requires]);
     }
-    await lab.openBrowsers(browser, browsers);
+    try {
+        await lab.openBrowsers(browser, browsers);
+    } catch (error) {
+        await lab.stop();
+        throw error;
+    }
     return lab;
 }
 

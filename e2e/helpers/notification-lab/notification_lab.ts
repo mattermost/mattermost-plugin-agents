@@ -136,10 +136,11 @@ export class NotificationLab {
             mcp: options.mcp,
             enableChannelMentionToolCalling: options.enableChannelMentionToolCalling,
         });
+        const push = new PushProxy();
+        const mail = new MailCapture();
+        let aimock: Awaited<ReturnType<typeof RunAIMockSidecar>> | undefined;
         try {
-            const aimock = await RunAIMockSidecar(mattermost.network, {fixtures: options.fixtures ?? {fixtures: []}});
-            const push = new PushProxy();
-            const mail = new MailCapture();
+            aimock = await RunAIMockSidecar(mattermost.network, {fixtures: options.fixtures ?? {fixtures: []}});
             await push.start(mattermost.network);
             await mail.start(mattermost.network);
 
@@ -155,7 +156,16 @@ export class NotificationLab {
             }
             return lab;
         } catch (error) {
-            await mattermost.stop().catch(() => undefined);
+            const started = aimock;
+            const stops: Array<() => Promise<unknown>> = [
+                () => push.stop(),
+                () => mail.stop(),
+                () => started?.stop() ?? Promise.resolve(),
+                () => mattermost.stop(),
+            ];
+            for (const stop of stops) {
+                await stop().catch(() => undefined);
+            }
             throw error;
         }
     }
