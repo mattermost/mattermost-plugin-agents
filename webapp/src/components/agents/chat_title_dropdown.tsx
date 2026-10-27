@@ -14,8 +14,8 @@ type DropdownButtonProps = Omit<React.ComponentProps<typeof Dropdown>, 'children
 
 interface ChatTitleDropdownProps extends DropdownButtonProps {
 
-    // The floating menu's reference: the wrapper element (the compass Dropdown itself takes no ref).
-    ref?: React.Ref<HTMLSpanElement>;
+    // The floating menu's reference: the button, so focus returns to it when the menu closes.
+    ref?: React.Ref<HTMLButtonElement>;
 
     // The chat's title, or the agent's name in a new chat.
     label: string;
@@ -29,26 +29,31 @@ interface ChatTitleDropdownProps extends DropdownButtonProps {
 }
 
 // The title of an agent chat as a compass Dropdown trigger: the product's chat header and the RHS
-// title open the same menu from it. The floating menu needs an element that takes a ref, which the
-// compass Dropdown does not, hence the wrapper; and the menu's other reference props (its
-// handlers and aria attributes) belong on the button, so they are passed on to it.
-const ChatTitleDropdown = ({ref, label, ariaLabel, expanded, onClick, testId, heading = false, ...buttonProps}: ChatTitleDropdownProps) => (
-    <Trigger ref={ref}>
-        <TitleDropdown
-            {...buttonProps}
-            size='large'
-            isOpen={expanded}
-            aria-label={ariaLabel}
-            aria-haspopup='menu'
-            aria-expanded={expanded}
-            title={label}
-            data-testid={testId}
-            onClick={onClick}
-        >
-            {heading ? <Heading>{label}</Heading> : label}
-        </TitleDropdown>
-    </Trigger>
-);
+// title open the same menu from it. The menu's reference (the ref) and its other reference props
+// (handlers, aria attributes) are passed on to the button. The wrapper only limits the width.
+const ChatTitleDropdown = ({ref, label, ariaLabel, expanded, onClick, testId, heading = false, ...buttonProps}: ChatTitleDropdownProps) => {
+    // React 19 passes `ref` to a function component as a prop, and the compass Dropdown spreads its
+    // other props onto its button, so the ref reaches the button; its props type does not list it.
+    const refProp = {ref} as Record<string, unknown>;
+    return (
+        <Trigger>
+            <TitleDropdown
+                {...buttonProps}
+                {...refProp}
+                size='large'
+                isOpen={expanded}
+                aria-label={ariaLabel}
+                aria-haspopup='menu'
+                aria-expanded={expanded}
+                title={label}
+                data-testid={testId}
+                onClick={onClick}
+            >
+                {heading ? <Heading>{label}</Heading> : label}
+            </TitleDropdown>
+        </Trigger>
+    );
+};
 
 export default ChatTitleDropdown;
 
