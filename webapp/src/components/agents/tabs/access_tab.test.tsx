@@ -47,12 +47,16 @@ jest.mock('@/components/select', () => ({
     SelectUser: ({disabled}: {disabled?: boolean}) => (
         <input
             role='combobox'
+            aria-controls='mock-listbox'
+            aria-expanded={false}
             disabled={disabled}
         />
     ),
     SelectChannel: ({disabled}: {disabled?: boolean}) => (
         <input
             role='combobox'
+            aria-controls='mock-listbox'
+            aria-expanded={false}
             disabled={disabled}
         />
     ),

@@ -1,0 +1,7 @@
+{
+  "name": "eslint-plugin-agents",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Repo-local ESLint rules for the Agents webapp",
+  "main": "index.js"
+}

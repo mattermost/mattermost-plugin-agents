@@ -1,10 +1,11 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
 import { buildToolCallAndTextResponse } from 'helpers/aimock-fixtures';
-import { expectNoToolActivity } from 'helpers/llmbot-post';
+import { expectNoToolActivity, toolCard } from 'helpers/llmbot-post';
 import { RunToolConfigAIMockContainer, setupRegularTestUser } from 'helpers/tool-config-container';
 
 const username = 'regularuser';
@@ -17,31 +18,30 @@ const getChannelInfoLabel = 'Get Channel Info';
 const userMessage = 'aimock ask policy get channel info';
 const continuationText = 'Aimock ask policy continuation after channel lookup.';
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigAIMockContainer([
+        { name: getChannelInfoConfigName, policy: 'ask', enabled: true },
+    ]));
+    const aimock = own(await RunAIMockSidecar(mattermost.network, {
+        fixtures: buildToolCallAndTextResponse({
+            userMessage,
+            toolCallId: 'call_aimock_ask_get_channel_info',
+            toolName: embeddedGetChannelInfoTool,
+            toolArguments: { channel_name: 'Town Square' },
+            finalContent: continuationText,
+            title: 'Aimock ask policy',
+        }),
+    }));
+    return { mattermost, aimock };
+});
+
 test.describe('Ask Policy (Aimock)', () => {
     let mattermost: MattermostContainer;
     let aimock: AIMockContainer;
 
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        mattermost = await RunToolConfigAIMockContainer([
-            { name: getChannelInfoConfigName, policy: 'ask', enabled: true },
-        ]);
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, aimock } = containers);
         await setupRegularTestUser(mattermost);
-        aimock = await RunAIMockSidecar(mattermost.network, {
-            fixtures: buildToolCallAndTextResponse({
-                userMessage,
-                toolCallId: 'call_aimock_ask_get_channel_info',
-                toolName: embeddedGetChannelInfoTool,
-                toolArguments: { channel_name: 'Town Square' },
-                finalContent: continuationText,
-                title: 'Aimock ask policy',
-            }),
-        });
-    });
-
-    test.afterAll(async () => {
-        await aimock?.stop();
-        await mattermost?.stop();
     });
 
     test('ask policy tool shows pending approval in DM', async ({ page }) => {
@@ -64,7 +64,7 @@ test.describe('Ask Policy (Aimock)', () => {
         // The round awaiting a decision renders in full, below where the
         // activity area would be. Nothing else ran, so there is no activity
         // area and the approval card is the only place the tool is named.
-        await expect(latestBotPost.getByText(getChannelInfoLabel, { exact: true })).toBeVisible({
+        await expect(toolCard(latestBotPost, getChannelInfoLabel)).toBeVisible({
             timeout: 90000,
         });
         await expectNoToolActivity(latestBotPost);

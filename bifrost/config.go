@@ -262,6 +262,7 @@ func serviceConfigToFallbackEntry(svc llm.ServiceConfig) (FallbackEntry, error) 
 	return FallbackEntry{
 		ProviderSettings: providerSettingsFromService(provider, svc),
 		ID:               svc.ID,
+		OutputTokenLimit: svc.OutputTokenLimit,
 		// Credential-based providers like Bedrock authenticate without an API
 		// key, so an empty key does not make them keyless.
 		IsKeyLess: svc.APIKey == "" && provider != schemas.Bedrock,

@@ -121,6 +121,13 @@ var (
 	RunTraceID = attribute.Key("agents.agent.run.trace_id")
 )
 
+// Attribute keys for ambient auto-reply
+var (
+	// AmbientShouldReply is the ambient classifier's decision; it is unset
+	// when classification failed.
+	AmbientShouldReply = attribute.Key("agents.ambient.should_reply")
+)
+
 // Attribute keys for post streaming
 var (
 	StreamOutcome       = attribute.Key("agents.stream.outcome")

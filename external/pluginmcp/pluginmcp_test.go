@@ -23,12 +23,12 @@ func TestGetUserID_RoundTrip(t *testing.T) {
 }
 
 func TestGetUserID_Missing(t *testing.T) {
-	require.Equal(t, "", GetUserID(context.Background()))
+	require.Empty(t, GetUserID(context.Background()))
 }
 
 func TestGetUserID_EmptyValue(t *testing.T) {
 	ctx := withUserID(context.Background(), "")
-	require.Equal(t, "", GetUserID(ctx))
+	require.Empty(t, GetUserID(ctx))
 }
 
 func TestSanitizeForToolName(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -309,7 +310,7 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 		}
 
 		// Create argument getter that extracts arguments from the MCP request
-		argsGetter := func(target interface{}) error {
+		argsGetter := func(target any) error {
 			// Convert MCP arguments to the target struct
 			argumentsBytes, marshalErr := json.Marshal(req.Params.Arguments)
 			if marshalErr != nil {
@@ -469,8 +470,7 @@ func excludedFieldsForAccessMode(t reflect.Type, accessMode string) map[string]b
 	}
 
 	var excluded map[string]bool
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
+	for field := range t.Fields() {
 		name := jsonFieldName(field)
 		if name == "" {
 			continue
@@ -503,23 +503,12 @@ func isAccessAllowed(restrictionTag, currentAccessMode string) bool {
 		return true // No restrictions
 	}
 
-	// Normalize and split by comma
-	allowedValues := strings.Split(strings.ReplaceAll(restrictionTag, " ", ""), ",")
-
-	// Check each allowed value
-	for _, allowed := range allowedValues {
-		// Direct access mode matching
-		if allowed == currentAccessMode {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(strings.Split(strings.ReplaceAll(restrictionTag, " ", ""), ","), currentAccessMode)
 }
 
 // validateAccessRestrictions validates that no access-restricted fields are present in the JSON data
 // for the current access mode. This prevents clients from sending fields they shouldn't have access to.
-func validateAccessRestrictions(jsonData []byte, target interface{}, currentAccessMode string) error {
+func validateAccessRestrictions(jsonData []byte, target any, currentAccessMode string) error {
 	if currentAccessMode == "" {
 		panic("access mode cannot be empty - indicates uninitialized AccessMode")
 	}
@@ -536,7 +525,7 @@ func validateAccessRestrictions(jsonData []byte, target interface{}, currentAcce
 
 	// Check if the incoming JSON is actually an object/map
 	// If it's not an object, we can't have field restrictions to validate
-	var incomingData map[string]interface{}
+	var incomingData map[string]any
 	if err := json.Unmarshal(jsonData, &incomingData); err != nil {
 		// If JSON can't be parsed as an object, it's likely a primitive value or array
 		// In this case, there are no fields to validate transport restrictions for
@@ -544,9 +533,7 @@ func validateAccessRestrictions(jsonData []byte, target interface{}, currentAcce
 	}
 
 	// Check each field in the struct
-	for i := 0; i < targetType.NumField(); i++ {
-		field := targetType.Field(i)
-
+	for field := range targetType.Fields() {
 		name := jsonFieldName(field)
 		if name == "" {
 			continue

@@ -102,6 +102,21 @@ export class AgentPageHelper {
         await rowScope.getByRole('button', { name: 'Delete', exact: true }).click();
     }
 
+    /** Click Export in the agent row actions menu (opens the menu first). */
+    async clickExportAction(displayName: string): Promise<void> {
+        const rowScope = this.page.getByText(displayName, { exact: true }).locator(
+            'xpath=ancestor::div[.//button[@aria-label="Agent actions"]][1]',
+        );
+        await rowScope.getByRole('button', { name: 'Export', exact: true }).click();
+    }
+
+    /** Open the editor for an existing agent from its row actions menu. */
+    async openAgentEditor(displayName: string): Promise<void> {
+        await this.openAgentActions(displayName);
+        await this.clickEditAction(displayName);
+        await this.waitForModal();
+    }
+
     // --- Config View Locators ---
 
     getModal(): Locator {
@@ -223,6 +238,167 @@ export class AgentPageHelper {
 
     getToolToggles(): Locator {
         return this.page.getByRole('switch');
+    }
+
+    // --- Editor header ---
+
+    /** Export button in the editor header (existing agents only). */
+    getEditorExportButton(): Locator {
+        return this.page.getByRole('button', { name: 'Export', exact: true });
+    }
+
+    /** The avatar preview image on the Configuration tab. */
+    getAvatarPreview(): Locator {
+        return this.getExactLabel('Bot avatar').locator('xpath=following-sibling::*[1]//img[1]');
+    }
+
+    /** Hidden file input behind the avatar "Upload Image" button. */
+    getAvatarFileInput(): Locator {
+        return this.getExactLabel('Bot avatar').locator('xpath=following-sibling::*[1]//input[@type="file"]');
+    }
+
+    // --- Version history (header version line + modal) ---
+
+    /** The version line next to the agent title, e.g. "v7 · Dana Lee, 2 days ago". */
+    getVersionLine(): Locator {
+        return this.page.getByRole('button', { name: /^Version history, v\d+/ });
+    }
+
+    /** The update icon button to the left of Import and Export. */
+    getVersionHistoryButton(): Locator {
+        return this.page.getByRole('button', { name: 'Version history', exact: true });
+    }
+
+    getVersionHistoryDialog(): Locator {
+        return this.page.getByRole('dialog', { name: 'Version history', exact: true });
+    }
+
+    async openVersionHistory(): Promise<void> {
+        await this.getVersionLine().click();
+        await this.getVersionList().waitFor({ state: 'visible', timeout: 10000 });
+    }
+
+    async closeVersionHistory(): Promise<void> {
+        await this.getVersionHistoryDialog().getByRole('button', { name: 'Close', exact: true }).click();
+        await expect(this.getVersionHistoryDialog()).toBeHidden({ timeout: 10000 });
+    }
+
+    getVersionList(): Locator {
+        return this.page.getByTestId('version-list');
+    }
+
+    /** All version entries, newest first (row menus are not entries). */
+    getVersionItems(): Locator {
+        return this.getVersionList().getByRole('button', { name: /^Version \d+/ });
+    }
+
+    getVersionItem(version: number): Locator {
+        return this.getVersionList().getByRole('button', { name: new RegExp(`^Version ${version}(?!\\d)`) });
+    }
+
+    getVersionSnapshot(): Locator {
+        return this.page.getByTestId('version-snapshot');
+    }
+
+    getVersionSnapshotInstructions(): Locator {
+        return this.page.getByTestId('version-snapshot-instructions');
+    }
+
+    /** The field name cell for a setting in the selected version's read-only configuration. */
+    getVersionFieldLabel(name: string): Locator {
+        return this.getVersionSnapshot().locator('dt').filter({ hasText: name });
+    }
+
+    getRestoreVersionButton(): Locator {
+        return this.page.getByRole('button', { name: 'Restore this version' });
+    }
+
+    getRestoreDialog(): Locator {
+        return this.page.getByRole('dialog', { name: 'Restore this version?' });
+    }
+
+    getRestoreConfirmButton(): Locator {
+        return this.getRestoreDialog().getByRole('button', { name: 'Restore', exact: true });
+    }
+
+    /** Opens the history modal (if needed) and selects a version. */
+    async openHistoryVersion(version: number): Promise<void> {
+        if (!(await this.getVersionList().isVisible())) {
+            await this.openVersionHistory();
+        }
+        await this.getVersionItem(version).click();
+        await expect(this.getVersionItem(version)).toHaveAttribute('aria-current', 'true');
+        await this.getVersionSnapshot().waitFor({ state: 'visible', timeout: 10000 });
+    }
+
+    /** The "..." menu on a previous version's row (the current version has none). */
+    getVersionActionsButton(version: number): Locator {
+        return this.getVersionList().getByRole('button', { name: `Actions for version ${version}`, exact: true });
+    }
+
+    /** Opens a previous version's row menu and picks an item such as "Delete this version". */
+    async clickVersionAction(version: number, action: 'Restore this version' | 'Delete this version'): Promise<void> {
+        await this.getVersionItem(version).hover();
+        await this.getVersionActionsButton(version).click();
+        await this.page.getByTestId('dropdownmenu').getByRole('button', { name: action, exact: true }).click();
+    }
+
+    /** The "..." menu at the top of the version list. */
+    getVersionHistoryMenuButton(): Locator {
+        return this.getVersionHistoryDialog().getByRole('button', { name: 'More version history actions', exact: true });
+    }
+
+    /** Turns on multi-select, which shows a checkbox on every previous version. */
+    async startSelectingVersions(): Promise<void> {
+        await this.getVersionHistoryMenuButton().click();
+        await this.page.getByTestId('dropdownmenu').getByRole('button', { name: 'Select multiple versions', exact: true }).click();
+    }
+
+    /** Checkbox that selects a previous version for deletion. */
+    getVersionCheckbox(version: number): Locator {
+        return this.getVersionList().getByRole('checkbox', { name: `Select version ${version}`, exact: true });
+    }
+
+    getDeleteSelectedVersionsButton(): Locator {
+        return this.getVersionHistoryDialog().getByRole('button', { name: 'Delete selected', exact: true });
+    }
+
+    async clickDeleteAllPreviousVersions(): Promise<void> {
+        await this.getVersionHistoryMenuButton().click();
+        await this.page.getByTestId('dropdownmenu').getByRole('button', { name: 'Delete all previous versions', exact: true }).click();
+    }
+
+    /** Confirms the open version delete dialog. */
+    async confirmVersionDelete(): Promise<void> {
+        const dialog = this.page.getByRole('dialog', { name: /^Delete / });
+        await dialog.getByRole('button', { name: 'Delete', exact: true }).click();
+        await expect(dialog).toBeHidden({ timeout: 10000 });
+    }
+
+    // --- Import ---
+
+    /** Import button on the Agents list. */
+    getImportButton(): Locator {
+        return this.page.getByRole('button', { name: 'Import', exact: true });
+    }
+
+    /** Import button in the editor header. */
+    getEditorImportButton(): Locator {
+        return this.page.getByRole('button', { name: 'Import', exact: true });
+    }
+
+    /** Clicks an import button and picks file in the file chooser it opens. */
+    async importAgentFile(button: Locator, file: string | { name: string; mimeType: string; buffer: Buffer }): Promise<void> {
+        const [chooser] = await Promise.all([
+            this.page.waitForEvent('filechooser'),
+            button.click(),
+        ]);
+        await chooser.setFiles(file);
+    }
+
+    /** The notice the editor shows once an agent file is loaded into the form. */
+    getImportedNotice(): Locator {
+        return this.page.getByRole('status').filter({ hasText: 'Settings loaded from the agent file' });
     }
 
     // --- Convenience Methods ---

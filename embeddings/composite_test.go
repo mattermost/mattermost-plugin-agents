@@ -150,8 +150,8 @@ func TestCompositeSearch_Store(t *testing.T) {
 			docs:    []PostDocument{},
 			options: defaultOptions,
 			verify: func(t *testing.T, store *stubVectorStore, provider *stubEmbeddingProvider) {
-				assert.Len(t, store.storeCalls, 0, "store should not be called for empty input")
-				assert.Len(t, provider.batchCreateEmbeddingsCalls, 0, "embedding provider should not be called for empty input")
+				assert.Empty(t, store.storeCalls, "store should not be called for empty input")
+				assert.Empty(t, provider.batchCreateEmbeddingsCalls, "embedding provider should not be called for empty input")
 			},
 		},
 		{
@@ -159,8 +159,8 @@ func TestCompositeSearch_Store(t *testing.T) {
 			docs:    nil,
 			options: defaultOptions,
 			verify: func(t *testing.T, store *stubVectorStore, provider *stubEmbeddingProvider) {
-				assert.Len(t, store.storeCalls, 0, "store should not be called for nil input")
-				assert.Len(t, provider.batchCreateEmbeddingsCalls, 0, "embedding provider should not be called for nil input")
+				assert.Empty(t, store.storeCalls, "store should not be called for nil input")
+				assert.Empty(t, provider.batchCreateEmbeddingsCalls, "embedding provider should not be called for nil input")
 			},
 		},
 		{
@@ -175,7 +175,7 @@ func TestCompositeSearch_Store(t *testing.T) {
 			wantErr:     true,
 			errContains: "embedding service unavailable",
 			verify: func(t *testing.T, store *stubVectorStore, provider *stubEmbeddingProvider) {
-				assert.Len(t, store.storeCalls, 0, "store should not be called when embedding fails")
+				assert.Empty(t, store.storeCalls, "store should not be called when embedding fails")
 				assert.Len(t, provider.batchCreateEmbeddingsCalls, 1, "embedding provider should be called once")
 			},
 		},
@@ -214,7 +214,7 @@ func TestCompositeSearch_Store(t *testing.T) {
 			errContains: "embedding count mismatch",
 			verify: func(t *testing.T, store *stubVectorStore, provider *stubEmbeddingProvider) {
 				// Store should not be called when embedding count doesn't match doc count
-				assert.Len(t, store.storeCalls, 0, "store should not be called when embedding count mismatches")
+				assert.Empty(t, store.storeCalls, "store should not be called when embedding count mismatches")
 				assert.Len(t, provider.batchCreateEmbeddingsCalls, 1, "embedding provider should be called once")
 			},
 		},
@@ -336,7 +336,7 @@ func TestCompositeSearch_Search(t *testing.T) {
 			errContains: "embedding API rate limited",
 			verify: func(t *testing.T, store *stubVectorStore, provider *stubEmbeddingProvider) {
 				assert.Len(t, provider.createEmbeddingCalls, 1, "embedding should be attempted")
-				assert.Len(t, store.searchCalls, 0, "search should not be called when embedding fails")
+				assert.Empty(t, store.searchCalls, "search should not be called when embedding fails")
 			},
 		},
 		{
@@ -361,7 +361,7 @@ func TestCompositeSearch_Search(t *testing.T) {
 			wantErr:     true,
 			errContains: "context canceled",
 			verify: func(t *testing.T, store *stubVectorStore, provider *stubEmbeddingProvider) {
-				assert.Len(t, store.searchCalls, 0, "search should not be called after context cancellation")
+				assert.Empty(t, store.searchCalls, "search should not be called after context cancellation")
 			},
 		},
 		{
@@ -404,7 +404,7 @@ func TestCompositeSearch_Search(t *testing.T) {
 			verify: func(t *testing.T, store *stubVectorStore, provider *stubEmbeddingProvider) {
 				// Empty query is still processed - embedding is generated for empty string
 				assert.Len(t, provider.createEmbeddingCalls, 1)
-				assert.Equal(t, "", provider.createEmbeddingCalls[0])
+				assert.Empty(t, provider.createEmbeddingCalls[0])
 			},
 		},
 		{

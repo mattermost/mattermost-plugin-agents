@@ -16,14 +16,13 @@ const pulse2 = keyframes`
     100% { transform: scale(2.2); opacity: 0; }
 `;
 
-const DotContainer = styled.span<{$clickable?: boolean}>`
+const DotContainer = styled.span`
     position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
     width: 12px;
     height: 12px;
-    cursor: ${(props) => (props.$clickable ? 'pointer' : 'default')};
 
     &,
     &::before,
@@ -54,17 +53,10 @@ const DotContainer = styled.span<{$clickable?: boolean}>`
 
 type Props = {
     className?: string;
-    onClick?: (e: React.MouseEvent) => void;
 }
 
-export const PulsatingDot: React.FC<Props> = ({className, onClick}) => {
-    return (
-        <DotContainer
-            className={className}
-            onClick={onClick}
-            $clickable={Boolean(onClick)}
-        />
-    );
+export const PulsatingDot: React.FC<Props> = ({className}) => {
+    return <DotContainer className={className}/>;
 };
 
 export default PulsatingDot;

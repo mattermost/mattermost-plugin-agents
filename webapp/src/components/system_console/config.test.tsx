@@ -356,3 +356,55 @@ describe('Config default agent selector', () => {
         expect(saved).toMatchObject({defaultBotUserID: '', defaultBotName: '', transcriptBotUserID: '', transcriptBackend: ''});
     });
 });
+
+describe('Config agent version retention', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        (getAIBots as jest.Mock).mockResolvedValue({bots: []});
+        (savePluginConfig as jest.Mock).mockImplementation(async (cfg) => cfg);
+    });
+
+    async function saveAndGetConfig(registerSaveAction: jest.Mock): Promise<PluginConfig> {
+        const save = registerSaveAction.mock.calls.at(-1)?.[0] as SaveAction;
+        await act(async () => {
+            await save();
+        });
+        return (savePluginConfig as jest.Mock).mock.calls.at(-1)[0];
+    }
+
+    function limitRadio(name: 'True' | 'False') {
+        const group = screen.getByRole('radiogroup', {name: 'Limit agent version history'});
+        return Array.from(group.querySelectorAll('label')).find((l) => l.textContent === name)!.querySelector('input')!;
+    }
+
+    it('keeps every version until a limit is turned on, then saves the number to keep', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue(loadedConfig);
+        const {registerSaveAction} = renderConfig();
+        await screen.findByText('service:My Service:unsaved');
+
+        expect(limitRadio('False').checked).toBe(true);
+        expect(screen.queryByLabelText('Versions to keep per agent')).toBeNull();
+
+        fireEvent.click(limitRadio('True'));
+        const count = screen.getByLabelText('Versions to keep per agent') as HTMLInputElement;
+        expect(count.value).toBe('50');
+        fireEvent.change(count, {target: {value: '10'}});
+        expect((await saveAndGetConfig(registerSaveAction)).agentVersionsToKeep).toBe(10);
+
+        fireEvent.change(count, {target: {value: '0'}});
+        expect((await saveAndGetConfig(registerSaveAction)).agentVersionsToKeep).toBe(1);
+
+        fireEvent.click(limitRadio('False'));
+        expect(screen.queryByLabelText('Versions to keep per agent')).toBeNull();
+        expect((await saveAndGetConfig(registerSaveAction)).agentVersionsToKeep).toBe(0);
+    });
+
+    it('shows a saved limit', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, agentVersionsToKeep: 25});
+        renderConfig();
+        await screen.findByText('service:My Service:unsaved');
+
+        expect(limitRadio('True').checked).toBe(true);
+        expect((screen.getByLabelText('Versions to keep per agent') as HTMLInputElement).value).toBe('25');
+    });
+});

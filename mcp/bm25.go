@@ -4,8 +4,9 @@
 package mcp
 
 import (
+	"cmp"
 	"math"
-	"sort"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -105,11 +106,8 @@ func (idx *BM25Index) Search(query string, limit int) []BM25Result {
 		}
 	}
 
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].Score == results[j].Score {
-			return results[i].ID < results[j].ID
-		}
-		return results[i].Score > results[j].Score
+	slices.SortFunc(results, func(a, b BM25Result) int {
+		return cmp.Or(cmp.Compare(b.Score, a.Score), cmp.Compare(a.ID, b.ID))
 	})
 
 	if len(results) == 0 {

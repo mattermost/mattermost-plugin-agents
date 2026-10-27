@@ -97,6 +97,8 @@ const LoadingContainer = styled.div`
     padding: var(--spacing-xxxxl);
 `;
 
+const DEFAULT_AGENT_VERSIONS_TO_KEEP = 50;
+
 const defaultConfig: Config = {
     services: [],
     bots: [],
@@ -114,6 +116,7 @@ const defaultConfig: Config = {
     allowUnsafeLinks: false,
     enableHTMLArtifacts: false,
     enableChannelMentionToolCalling: false,
+    enableAmbientAutoReply: false,
     allowNativeWebSearchInChannels: false,
     embeddingSearchConfig: {
         type: '',
@@ -205,6 +208,7 @@ const Config = (props: Props) => {
     const intl = useIntl();
     const tokenAccountingLicensed = useIsLicensedFor('token_accounting');
     const providerWebSearchLicensed = useIsLicensedFor('provider_web_search');
+    const channelAutoReplyLicensed = useIsLicensedFor('channel_auto_reply');
 
     // Load config from plugin API on mount
     useEffect(() => {
@@ -337,7 +341,28 @@ const Config = (props: Props) => {
                 title={intl.formatMessage({defaultMessage: 'AI Bots'})}
                 subtitle={intl.formatMessage({defaultMessage: 'AI agents are managed from the Agents product page.'})}
             >
-                <BotsMovedNotice/>
+                <ItemList>
+                    <BotsMovedNotice/>
+                    <BooleanItem
+                        label={<FormattedMessage defaultMessage='Limit agent version history'/>}
+                        value={(value.agentVersionsToKeep ?? 0) > 0}
+                        onChange={(to) => updateConfig({agentVersionsToKeep: to ? DEFAULT_AGENT_VERSIONS_TO_KEEP : 0})}
+                        helpText={intl.formatMessage({defaultMessage: 'When false, every saved version of each agent is kept. When true, each agent keeps only its most recent versions and older ones are permanently deleted.'})}
+                    />
+                    {(value.agentVersionsToKeep ?? 0) > 0 && (
+                        <TextItem
+                            label={intl.formatMessage({defaultMessage: 'Versions to keep per agent'})}
+                            type='number'
+                            min='1'
+                            value={String(value.agentVersionsToKeep)}
+                            onChange={(e) => {
+                                const parsed = parseInt(e.target.value, 10);
+                                updateConfig({agentVersionsToKeep: Number.isNaN(parsed) || parsed < 1 ? 1 : parsed});
+                            }}
+                            helptext={intl.formatMessage({defaultMessage: 'Includes the current version. Older versions are deleted when this setting is saved and each time an agent is saved.'})}
+                        />
+                    )}
+                </ItemList>
             </AdminPanel>
             <AdminPanel
                 title={intl.formatMessage({defaultMessage: 'AI Functions'})}
@@ -404,6 +429,26 @@ const Config = (props: Props) => {
                             updateConfig({enableChannelMentionToolCalling: to});
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, @mentioning a bot in public channels allows tool calling (e.g., web search, integrations). When disabled, channel mentions still work but tools are disabled—only DMs allow tool usage. This is an experimental feature for multi-player tool calling in channels.'})}
+                    />
+                    <BooleanItem
+                        label={
+                            <Horizontal>
+                                <FormattedMessage defaultMessage='Enable ambient auto-replies'/>
+                                <Tag
+                                    type='info'
+                                    label={<FormattedMessage defaultMessage='EXPERIMENTAL'/>}
+                                />
+                            </Horizontal>
+                        }
+                        value={Boolean(value.enableAmbientAutoReply)}
+                        disableTrue={!channelAutoReplyLicensed}
+                        extra={!channelAutoReplyLicensed && (
+                            <LicenseChip capability='channel_auto_reply'/>
+                        )}
+                        onChange={(to) => {
+                            updateConfig({enableAmbientAutoReply: to});
+                        }}
+                        helpText={intl.formatMessage({defaultMessage: 'Lets channel managers choose the ambient auto-reply modes, where the agent’s model reads each new message and decides whether the agent should reply. Every analyzed message costs an LLM call. When disabled, ambient modes cannot be saved and channels using them stop replying automatically; @mentions keep working.'})}
                     />
                     <BooleanItem
                         label={<FormattedMessage defaultMessage='Allow native web search in channels'/>}

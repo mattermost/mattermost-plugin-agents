@@ -28,8 +28,12 @@ export type PluginConfig = {
     allowUnsafeLinks: boolean,
     enableHTMLArtifacts?: boolean,
     enableChannelMentionToolCalling: boolean,
+    enableAmbientAutoReply?: boolean,
     allowNativeWebSearchInChannels: boolean,
     embeddingSearchConfig: EmbeddingSearchConfig,
     mcp: MCPConfig,
     webSearch: WebSearchSettings,
+
+    // Versions of each agent's history to keep; 0 keeps every version.
+    agentVersionsToKeep?: number,
 }

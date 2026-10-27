@@ -1,7 +1,8 @@
 // spec: specs/agents-tour.md
 // seed: tests/seed.spec.ts
 
-import { test, expect, Locator, Page } from '@playwright/test';
+import { expect, Locator, Page } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -54,10 +55,14 @@ const expectTourFinished = async (page: Page, pulsatingDot: Locator, tourPopover
     await expect(tourPopover).not.toBeVisible();
 };
 
-// Setup for all tests in the file
-test.beforeAll(async () => {
-    mattermost = await RunContainer();
-    openAIMock = await RunOpenAIMocks(mattermost.network);
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
+test.beforeAll(async ({ containers }) => {
+    ({ mattermost, openAIMock } = containers);
 });
 
 // Reset tour preference before each test
@@ -73,12 +78,6 @@ test.beforeEach(async () => {
     } catch (e) {
         // Preference may not exist, that's okay
     }
-});
-
-// Cleanup after all tests
-test.afterAll(async () => {
-    await openAIMock.stop();
-    await mattermost.stop();
 });
 
 test.describe('Agents Tour - Basic Flow', () => {

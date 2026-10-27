@@ -65,7 +65,7 @@ func TestUserRemovedFromChannel(t *testing.T) {
 		UserID: "user1",
 	})
 	require.NoError(t, err)
-	assert.Len(t, results, 0, "User1 should NOT see the post after being removed from channel")
+	assert.Empty(t, results, "User1 should NOT see the post after being removed from channel")
 
 	// Verify user2 (still a member) CAN still see the post
 	results, err = search.Search(ctx, "secret information", embeddings.SearchOptions{

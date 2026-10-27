@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -90,7 +91,7 @@ func TestResolveOAuthConfig_DiscoveryStrictnessAndLeniency(t *testing.T) {
 				switch r.URL.Path {
 				case "/.well-known/oauth-protected-resource":
 					w.Header().Set("Content-Type", "application/json")
-					require.NoError(t, json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
+					assert.NoError(t, json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
 						Resource:             serverURL + tt.prmResourceSuffix,
 						AuthorizationServers: []string{serverURL},
 						ScopesSupported:      []string{"read"},
@@ -101,7 +102,7 @@ func TestResolveOAuthConfig_DiscoveryStrictnessAndLeniency(t *testing.T) {
 						issuer = serverURL
 					}
 					w.Header().Set("Content-Type", "application/json")
-					require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+					assert.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
 						Issuer:                        issuer,
 						AuthorizationEndpoint:         serverURL + "/custom-authorize",
 						TokenEndpoint:                 serverURL + "/custom-token",
@@ -240,7 +241,7 @@ func TestFetchAuthorizationServerMetadataLenientIssuerTOCTOU(t *testing.T) {
 			respIssuer = "https://evil.example.com"
 		}
 		w.Header().Set("Content-Type", "application/json")
-		require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+		assert.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
 			Issuer:                respIssuer,
 			AuthorizationEndpoint: issuer + "/authorize",
 			TokenEndpoint:         issuer + "/token",
@@ -299,7 +300,7 @@ func TestFetchProtectedResourceMetadataRootFallback(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		require.NoError(t, json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
+		assert.NoError(t, json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
 			Resource:             origin,
 			AuthorizationServers: []string{origin},
 		}))
@@ -322,7 +323,7 @@ func TestResolveOAuthConfig_ASMetadataFailureFallsBackToIssuer(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/oauth-protected-resource" {
 			w.Header().Set("Content-Type", "application/json")
-			require.NoError(t, json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
+			assert.NoError(t, json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
 				Resource: serverURL,
 				// The issuer's well-known metadata path is not served, so
 				// fetchAuthorizationServerMetadata fails for it.
@@ -407,7 +408,7 @@ func TestLoadOrCreateClientCredentials_Registration(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/register" && tt.registrationHandler != nil {
 					registrationCalled = true
-					require.Equal(t, http.MethodPost, r.Method)
+					assert.Equal(t, http.MethodPost, r.Method)
 					tt.registrationHandler(w, r)
 					return
 				}
@@ -510,7 +511,7 @@ func TestFetchAuthorizationServerMetadataIssuerFollowIsOneHop(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+		assert.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
 			Issuer:                        "https://elsewhere.example.com",
 			AuthorizationEndpoint:         hostB.URL + "/authorize",
 			TokenEndpoint:                 hostB.URL + "/token",
@@ -524,7 +525,7 @@ func TestFetchAuthorizationServerMetadataIssuerFollowIsOneHop(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+		assert.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
 			Issuer:                        hostB.URL,
 			AuthorizationEndpoint:         hostA.URL + "/authorize",
 			TokenEndpoint:                 hostA.URL + "/token",
@@ -576,7 +577,7 @@ func TestDCRHonorsServerAuthMethods(t *testing.T) {
 			_, _ = w.Write([]byte("<!doctype html>"))
 		case "/.well-known/oauth-authorization-server":
 			w.Header().Set("Content-Type", "application/json")
-			require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+			assert.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
 				Issuer:                            serverURL,
 				AuthorizationEndpoint:             serverURL + "/oauth/authorize",
 				TokenEndpoint:                     serverURL + "/oauth/access_token",
@@ -587,7 +588,7 @@ func TestDCRHonorsServerAuthMethods(t *testing.T) {
 			}))
 		case "/register":
 			var body map[string]any
-			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 			registeredMethod, _ = body["token_endpoint_auth_method"].(string)
 			// Reject anything the server doesn't support, like Mattermost does.
 			if registeredMethod != "none" && registeredMethod != "client_secret_post" {
@@ -668,7 +669,7 @@ func TestDCRSendsApplicationType(t *testing.T) {
 			return
 		}
 		var body map[string]any
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 		gotAppType, _ = body["application_type"].(string)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)

@@ -1392,7 +1392,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 				continue
 			}
 			if next, ok := ev.payload["next"].(string); ok {
-				require.NotEqual(t, "", next)
+				require.NotEmpty(t, next)
 				if resolvedIdx == -1 {
 					lastNextBeforeResolved = next
 				}

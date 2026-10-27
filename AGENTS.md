@@ -47,6 +47,8 @@ Most Go packages live at the **repo root**, not under `server/`.
 
 Linters (golangci-lint, ESLint, gofmt/goimports, header check, editorconfig) already enforce formatting, imports, error checking, license headers, and indentation. The rules below are the ones a linter cannot enforce.
 
+Repo-specific guards also run in `make check-style`: the `build/govet` vet tool (timeout-less `http.Client`, plus upstream mattermost-govet `license`, `mutexLock`, `noSelectStar`), testifylint `go-require`, `webapp/eslint-plugin-agents` (jsx-a11y rules that also see same-file styled-components), and `e2e/eslint-rules`. Suppress a legitimate case on that line with the reason: `//nolint:httpclienttimeout // <reason>` or `// eslint-disable-next-line <rule> -- <reason>`.
+
 - File names: `snake_case.go` / `snake_case.ts(x)`.
 - TypeScript/React: PascalCase components, strict typing, **always styled-components**, never inline `style={{...}}`.
 - New user-facing strings must go through i18n (`make i18n-extract` picks them up).
@@ -100,7 +102,6 @@ The plugin emits OpenTelemetry traces. Agent-relevant rules:
 
 ## Gotchas
 
-- If `make install-go-tools` fails to build `mattermost-govet`, the pinned commit is incompatible with the active Go toolchain. The Makefile prints the exact fix: bump `MATTERMOST_GOVET_VERSION` in the Makefile to a newer commit. This is a real problem to fix, not a warning to ignore.
 - `postgres/pgvector_test.go` boots its own pgvector container via `testcontainers-go` (`pgvector/pgvector:pg17`); `go test ./postgres/...` works on a fresh checkout as long as Docker is available. To run against an existing pgvector instance for fast iteration, set `PGVECTOR_TEST_DSN`.
 - Plugin config is migrated to the plugin DB on activation. For automation, read/write `GET`/`PUT /plugins/mattermost-ai/admin/config` rather than patching the Mattermost server config.
 - The embedded MCP server requires `SiteURL` to be set on the Mattermost server, and uses in-memory transport (no HTTP). On tool name collisions across MCP servers, first-registered wins; later duplicates are skipped with a warning.

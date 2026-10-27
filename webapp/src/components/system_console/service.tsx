@@ -518,6 +518,7 @@ const Service = (props: Props) => {
 
     return (
         <ServiceContainer>
+            {/* eslint-disable-next-line agents/click-events-have-key-events, agents/no-static-element-interactions -- mouse shortcut; the chevron IconButton is the keyboard toggle */}
             <HeaderContainer onClick={() => setOpen((o) => !o)}>
                 <HeaderIconAI/>
                 <Title>

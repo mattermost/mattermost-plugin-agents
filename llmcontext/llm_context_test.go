@@ -583,6 +583,40 @@ func TestWithLLMContextResponseFiles(t *testing.T) {
 	assert.False(t, llm.NewContext().ToolCatalog.ResponseFilesSupported)
 }
 
+type sandboxFileDownloader struct{}
+
+func (sandboxFileDownloader) DownloadProviderFile(stdcontext.Context, llm.ProviderFileReference, int64) (llm.ProviderFile, error) {
+	return llm.ProviderFile{}, nil
+}
+
+func TestWithLLMContextToolsPromisesSandboxFilesOnlyWhenThePrimaryServesThem(t *testing.T) {
+	tests := []struct {
+		name         string
+		serviceType  string
+		wantAttached bool
+	}{
+		{name: "OpenAI primary with a downloading fallback", serviceType: llm.ServiceTypeOpenAI},
+		{name: "Anthropic primary", serviceType: llm.ServiceTypeAnthropic, wantAttached: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := newTestBuilder(t, &emptyToolProvider{}, &staticMCPToolProvider{})
+			bot := bots.NewBot(
+				llm.BotConfig{ID: "bot-id", Name: "matty", DisplayName: "Matty", EnabledNativeTools: []string{llm.NativeToolCodeInterpreter}},
+				llm.ServiceConfig{DefaultModel: "test-model", Type: tt.serviceType},
+				&model.Bot{UserId: "bot-id", Username: "matty", DisplayName: "Matty"},
+				nil,
+			)
+			bot.SetProviderServicesForTest(&llm.ProviderServices{FileDownloader: sandboxFileDownloader{}})
+
+			context := buildToolsContext(builder, bot, builder.WithLLMContextResponseFiles())
+
+			assert.Equal(t, tt.wantAttached, context.ToolCatalog.SandboxFilesAttached)
+		})
+	}
+}
+
 func TestFilterToolAuthErrorsForAllowlist(t *testing.T) {
 	allowlist := []llm.EnabledMCPTool{
 		{ServerOrigin: "https://allowed.example/", ToolName: "t1"},

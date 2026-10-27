@@ -744,7 +744,7 @@ func TestStreamToolFollowUpRestoresToolFromPriorLoadTurns(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = c.streamToolFollowUp(context.Background(), policy, post, conv, false, nil)
+	err = c.streamToolFollowUp(context.Background(), policy, post, conv, followUpOptions{})
 	require.NoError(t, err)
 	streamingService.waitForStreaming()
 	require.Len(t, lm.requests, 1)

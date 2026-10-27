@@ -10,7 +10,14 @@ import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
-import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
+import {
+    UserAgent,
+    CreateAgentRequest,
+    UpdateAgentRequest,
+    ServiceInfo,
+    AgentVersionList,
+    AgentVersionDetail,
+} from '@/types/agents';
 import {isValidId} from '@/utils/ids';
 
 import manifest from './manifest';
@@ -931,11 +938,12 @@ export async function updateUserToolPreferences(prefs: {disabled_servers: string
     });
 }
 
-export type ChannelAutoReplyMode = 'off' | 'root_posts' | 'threads';
+export type ChannelAutoReplyMode = 'off' | 'root_posts' | 'threads' | 'ambient' | 'ambient_threads';
 
 export type ChannelAutoReplySettings = {
     bot_id: string;
     mode: ChannelAutoReplyMode;
+    instructions: string;
 };
 
 export async function getChannelAutoReply(channelId: string): Promise<ChannelAutoReplySettings> {
@@ -1146,6 +1154,50 @@ export async function deleteAgent(id: string): Promise<void> {
         status_code: response.status,
         url,
     });
+}
+
+// fetchAgentJSON sends an authenticated request to an agent route and throws
+// a ClientError carrying the server's message for any non-2xx response.
+async function fetchAgentJSON<T>(url: string, init: {method: string; body?: string}): Promise<T> {
+    const response = await fetch(url, Client4.getOptions(init));
+    if (!response.ok) {
+        throw new ClientError(Client4.url, {
+            message: await readAgentErrorMessage(response),
+            status_code: response.status,
+            url,
+        });
+    }
+    return response.json();
+}
+
+// getAgentVersions fetches one page of versions, newest first: those older
+// than `before` (from the newest when omitted), at most `limit` long.
+export function getAgentVersions(agentId: string, page: {before?: number; limit?: number} = {}): Promise<AgentVersionList> {
+    const params = new URLSearchParams();
+    if (typeof page.before === 'number') {
+        params.set('before', String(page.before));
+    }
+    if (typeof page.limit === 'number') {
+        params.set('limit', String(page.limit));
+    }
+    const query = params.toString();
+    return fetchAgentJSON(`${agentRoute(agentId)}/versions${query ? `?${query}` : ''}`, {method: 'GET'});
+}
+
+export function getAgentVersion(agentId: string, version: number): Promise<AgentVersionDetail> {
+    return fetchAgentJSON(`${agentRoute(agentId)}/versions/${version}`, {method: 'GET'});
+}
+
+export function restoreAgentVersion(agentId: string, version: number): Promise<UserAgent> {
+    return fetchAgentJSON(`${agentRoute(agentId)}/versions/${version}/restore`, {method: 'POST'});
+}
+
+// deleteAgentVersions permanently deletes the given versions, or with 'all'
+// every version except the current one, and resolves to how many were deleted.
+export async function deleteAgentVersions(agentId: string, versions: number[] | 'all'): Promise<number> {
+    const body = versions === 'all' ? {all: true} : {versions};
+    const result: {deleted: number} = await fetchAgentJSON(`${agentRoute(agentId)}/versions`, {method: 'DELETE', body: JSON.stringify(body)});
+    return result.deleted;
 }
 
 export async function uploadAgentAvatar(agentId: string, file: File): Promise<void> {
