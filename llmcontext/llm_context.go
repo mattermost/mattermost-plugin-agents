@@ -350,7 +350,6 @@ func (b *Builder) mintScopedRun(ctx stdcontext.Context, c *llm.Context, bot *bot
 	audit.AddParam(rec, audit.KeyPostID, c.ToolCatalog.ScopedTurn.TriggerPostID)
 	audit.AddParam(rec, audit.KeyThreadRootPostID, c.ToolCatalog.ScopedTurn.ThreadRootID)
 	audit.AddParam(rec, audit.KeyConversationID, c.ToolCatalog.ScopedTurn.ConversationID)
-	audit.AddParam(rec, audit.KeyScopeExtraChannelCount, len(cfg.ScopedExtraChannelIDs))
 	audit.AddParam(rec, audit.KeyScopeOpenTeamPublicChannels, true)
 	grantDeferred := false
 	defer func() {
@@ -381,6 +380,7 @@ func (b *Builder) mintScopedRun(ctx stdcontext.Context, c *llm.Context, bot *bot
 		return nil, err
 	}
 	rec.Success()
+	audit.AddParam(rec, audit.KeyScopeExtraChannelCount, len(run.ExtraChannelIDs()))
 	var recordGrant func(conversationID string)
 	if c.ToolCatalog.ScopedTurn.ConversationPending {
 		grantDeferred = true

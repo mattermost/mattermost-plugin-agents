@@ -45,9 +45,12 @@ func (c *scopedTestConfig) EnableChannelMentionToolCalling() bool {
 type recordingScopedMinter struct {
 	mu        sync.Mutex
 	createErr error
-	userIDs   []string
-	scopes    []model.SessionScope
-	revoked   []string
+	// rejectChannelIDs makes the server refuse a scope that lists any of them,
+	// as it does for a channel that no longer exists.
+	rejectChannelIDs []string
+	userIDs          []string
+	scopes           []model.SessionScope
+	revoked          []string
 }
 
 func (m *recordingScopedMinter) CreateScopedSession(userID string, scope *model.SessionScope, expiresAt int64) (*model.Session, error) {
@@ -55,6 +58,11 @@ func (m *recordingScopedMinter) CreateScopedSession(userID string, scope *model.
 	defer m.mu.Unlock()
 	if m.createErr != nil {
 		return nil, m.createErr
+	}
+	for _, id := range m.rejectChannelIDs {
+		if slices.Contains(scope.Resources.ChannelIDs, id) {
+			return nil, errors.New("missing channels")
+		}
 	}
 	m.userIDs = append(m.userIDs, userID)
 	m.scopes = append(m.scopes, *scope)
@@ -187,9 +195,12 @@ func TestScopedChannelModeActive(t *testing.T) {
 	}
 }
 
-func newScopedCatalogProvider(t *testing.T, minter scopedsession.Minter, tools []llm.Tool) *scopedCatalogProvider {
+func newScopedCatalogProvider(t *testing.T, minter scopedsession.Minter, tools []llm.Tool, missingChannelIDs ...string) *scopedCatalogProvider {
 	t.Helper()
 	mockAPI := &plugintest.API{}
+	for _, id := range missingChannelIDs {
+		mockAPI.On("GetChannel", id).Return(nil, &model.AppError{StatusCode: http.StatusNotFound}).Maybe()
+	}
 	for i := 1; i <= 10; i++ {
 		args := make([]any, i)
 		for j := range args {
@@ -275,6 +286,42 @@ func TestScopedChannelTurnCatalog(t *testing.T) {
 	llmContext.ReleaseScopedSession()
 	assert.Equal(t, []string{sessionID}, minter.revoked, "releasing the turn revokes its session once")
 	assert.True(t, llmContext.ScopedSessionReleased())
+}
+
+func TestScopedChannelTurnGrantCountsOnlyChannelsInScope(t *testing.T) {
+	channel := &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypePrivate}
+	existing, other, missing := model.NewId(), model.NewId(), model.NewId()
+
+	tests := []struct {
+		name       string
+		configured []string
+		want       int
+	}{
+		{name: "every extra channel exists", configured: []string{existing, other}, want: 2},
+		{name: "one extra channel no longer exists", configured: []string{existing, missing}, want: 1},
+		{name: "an extra channel repeats the triggering channel", configured: []string{channel.Id, existing}, want: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			minter := &recordingScopedMinter{rejectChannelIDs: []string{missing}}
+			provider := newScopedCatalogProvider(t, minter, scopedTestMCPCatalog(), missing)
+			builder, auditRecords := newScopedTestBuilder(t, defaultScopedTestEnv(), &emptyToolProvider{}, provider)
+			cfg := scopedTestBotConfig()
+			cfg.ScopedExtraChannelIDs = tt.configured
+			bot := newScopedTestBot(cfg)
+
+			llmContext := builder.BuildLLMContextUserRequest(bot, &model.User{Id: model.NewId()}, channel,
+				builder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{TriggerPostID: model.NewId(), ConversationID: model.NewId()}),
+				builder.WithLLMContextTools(stdcontext.Background(), bot),
+			)
+			t.Cleanup(llmContext.ReleaseScopedSession)
+
+			require.True(t, llmContext.ToolsScoped)
+			records := auditRecords()
+			require.Len(t, records, 1)
+			assert.Equal(t, tt.want, records[0].EventData.Parameters[audit.KeyScopeExtraChannelCount])
+		})
+	}
 }
 
 func TestScopedChannelTurnCatalogNeedsNamedTools(t *testing.T) {
