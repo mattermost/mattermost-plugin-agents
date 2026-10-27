@@ -8,15 +8,19 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"sync"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -481,4 +485,108 @@ func TestScopedChannelTurnPanicRevokesSession(t *testing.T) {
 	})
 	require.Len(t, minter.userIDs, 1)
 	assert.Len(t, minter.revoked, 1, "a panic while building the catalog still revokes the session")
+}
+
+type silentLogger struct{}
+
+func (silentLogger) Debug(string, ...any) {}
+func (silentLogger) Info(string, ...any)  {}
+func (silentLogger) Warn(string, ...any)  {}
+func (silentLogger) Error(string, ...any) {}
+
+// newWebSearchToolProvider is the production built-in tool provider with web
+// search turned on plugin-wide.
+func newWebSearchToolProvider(t *testing.T) *mmtools.MMToolProvider {
+	t.Helper()
+	webSearch := mmtools.NewWebSearchService(func() *config.Config {
+		return &config.Config{WebSearch: config.WebSearchConfig{
+			Enabled:  true,
+			Provider: "searxng",
+			SearXNG:  config.WebSearchSearXNGConfig{BaseURL: "https://searx.example.com"},
+		}}
+	}, silentLogger{}, http.DefaultClient, enterprisetest.CheckerAt(enterprise.LevelEnterprise))
+	return mmtools.NewMMToolProvider(mocks.NewMockClient(t), webSearch, nil)
+}
+
+func TestScopedChannelTurnWebSearchNeedsNamedTools(t *testing.T) {
+	webTools := []string{"WebSearch", "WebSearchFetchSource"}
+	named := func(names ...string) []llm.EnabledMCPTool {
+		enabled := scopedTestBotConfig().EnabledMCPTools
+		for _, name := range names {
+			enabled = append(enabled, llm.EnabledMCPTool{ServerOrigin: llm.BuiltinToolsOrigin, ToolName: name})
+		}
+		return enabled
+	}
+
+	tests := []struct {
+		name       string
+		enabled    []llm.EnabledMCPTool
+		scopedTurn bool
+		channel    *model.Channel
+		expected   []string
+	}{
+		{name: "not named", enabled: named(), scopedTurn: true},
+		{name: "search named", enabled: named("WebSearch"), scopedTurn: true, expected: []string{"WebSearch"}},
+		{name: "fetch named", enabled: named("WebSearchFetchSource"), scopedTurn: true, expected: []string{"WebSearchFetchSource"}},
+		{name: "both named", enabled: named(webTools...), scopedTurn: true, expected: webTools},
+		{
+			name: "wildcard opts in nothing",
+			enabled: append(named(), llm.EnabledMCPTool{ServerOrigin: llm.BuiltinToolsOrigin, ToolName: llm.MCPServerToolWildcard},
+				llm.EnabledMCPTool{ServerOrigin: "", ToolName: "WebSearch"}),
+			scopedTurn: true,
+		},
+		{name: "unscoped channel turn keeps the plugin-wide setting", enabled: named(), expected: webTools},
+		{
+			name:       "DM keeps the plugin-wide setting",
+			enabled:    named(),
+			scopedTurn: true,
+			channel:    &model.Channel{Id: model.NewId(), Type: model.ChannelTypeDirect},
+			expected:   webTools,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			toolProvider := newWebSearchToolProvider(t)
+			provider := newScopedCatalogProvider(t, &recordingScopedMinter{}, scopedTestMCPCatalog())
+			builder, _ := newScopedTestBuilder(t, defaultScopedTestEnv(), toolProvider, provider)
+			cfg := scopedTestBotConfig()
+			cfg.EnabledMCPTools = tt.enabled
+			bot := newScopedTestBot(cfg)
+			channel := tt.channel
+			if channel == nil {
+				channel = &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypeOpen}
+			}
+
+			opts := []llm.ContextOption{}
+			if tt.scopedTurn {
+				opts = append(opts, builder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{TriggerPostID: model.NewId(), ConversationID: model.NewId()}))
+			}
+			opts = append(opts, builder.WithLLMContextTools(stdcontext.Background(), bot))
+			llmContext := builder.BuildLLMContextUserRequest(bot, &model.User{Id: model.NewId()}, channel, opts...)
+			t.Cleanup(llmContext.ReleaseScopedSession)
+
+			var got []string
+			for _, name := range toolNames(llmContext.Tools) {
+				if slices.Contains(webTools, name) {
+					got = append(got, name)
+				}
+			}
+			assert.ElementsMatch(t, tt.expected, got)
+		})
+	}
+}
+
+func TestScopedChannelTurnWithoutSessionStillNeedsNamedWebSearch(t *testing.T) {
+	toolProvider := newWebSearchToolProvider(t)
+	provider := newScopedCatalogProvider(t, &recordingScopedMinter{createErr: errors.New("mint failed")}, scopedTestMCPCatalog())
+	builder, _ := newScopedTestBuilder(t, defaultScopedTestEnv(), toolProvider, provider)
+	bot := newScopedTestBot(scopedTestBotConfig())
+
+	llmContext := builder.BuildLLMContextUserRequest(bot, &model.User{Id: model.NewId()}, &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypeOpen},
+		builder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{TriggerPostID: model.NewId()}),
+		builder.WithLLMContextTools(stdcontext.Background(), bot),
+	)
+
+	assert.NotContains(t, toolNames(llmContext.Tools), "WebSearch")
+	assert.NotContains(t, toolNames(llmContext.Tools), "WebSearchFetchSource")
 }

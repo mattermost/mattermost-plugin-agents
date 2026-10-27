@@ -422,7 +422,14 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 	botCfg := bot.GetConfig()
 
 	// Add built-in tools (always add for LLM awareness; execution controlled via WithToolsDisabled)
-	store.AddTools(b.toolProvider.GetTools(bot, c))
+	builtInTools := b.toolProvider.GetTools(bot, c)
+	scopedTurn := c.ToolCatalog.ScopedTurn != nil && b.ScopedChannelModeActive(bot, c.Channel)
+	if scopedTurn {
+		// A scoped turn runs every tool unasked, so the built-in tools that
+		// reach outside Mattermost need the admin to have named them.
+		builtInTools = llm.FilterScopedOptInTools(builtInTools, botCfg.EnabledMCPTools)
+	}
+	store.AddTools(builtInTools)
 
 	var mcpTools []llm.Tool
 	var mcpErrors *mcp.Errors
@@ -436,7 +443,7 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		}
 
 		var scopedRun *mcp.ScopedRun
-		if c.ToolCatalog.ScopedTurn != nil && b.ScopedChannelModeActive(bot, c.Channel) {
+		if scopedTurn {
 			run, mintErr := b.mintScopedRun(ctx, c, bot, userID)
 			if mintErr != nil {
 				// Fail closed: never fall back to the requester's credentials.
