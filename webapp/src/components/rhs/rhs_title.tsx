@@ -209,7 +209,7 @@ const Container = styled.span`
     flex: 1 1 auto;
     min-width: 0;
     align-items: center;
-    gap: var(--spacing-xs);
+    gap: var(--spacing-xxxs);
     margin-left: calc(-1 * ${HOST_TITLE_INLINE_PADDING} + var(--spacing-m));
     margin-right: calc(-1 * ${HOST_TITLE_INLINE_PADDING} + var(--spacing-xxxs));
 `;
