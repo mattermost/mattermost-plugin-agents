@@ -66,7 +66,7 @@ func (a CatalogAccess) Unavailable() bool {
 		return false
 	}
 	return slices.ContainsFunc(a.Errors.Errors, func(err error) bool {
-		return errors.Is(err, ErrCatalogRemoteOwnerRequired) || errors.Is(err, ErrCatalogInvokerRequired) || errors.Is(err, ErrClientManagerClosed)
+		return errors.Is(err, ErrCatalogRemoteOwnerRequired) || errors.Is(err, ErrCatalogInvokerRequired) || errors.Is(err, ErrCatalogScopedRunInvalid) || errors.Is(err, ErrClientManagerClosed)
 	})
 }
 
@@ -98,7 +98,7 @@ func (r CatalogRequest) validate() error {
 	if r.InvokingUserID == "" {
 		return ErrCatalogInvokerRequired
 	}
-	if r.Scoped != nil && (!r.ServiceAccount || r.Scoped.Session() == nil || r.Scoped.BotUserID() != r.RemoteOwnerID) {
+	if r.Scoped != nil && (!r.ServiceAccount || r.Scoped.Session() == nil || r.Scoped.Closed() || r.Scoped.BotUserID() != r.RemoteOwnerID) {
 		return ErrCatalogScopedRunInvalid
 	}
 	return nil
