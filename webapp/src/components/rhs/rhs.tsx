@@ -24,6 +24,7 @@ import AgentChatDropZone from '../agent_chat/agent_chat_drop_zone';
 import AgentChatThreadView from '../agent_chat/agent_chat_thread_view';
 
 import ChatActionsPopover from './chat_actions_popover';
+import RHSViewTransition from './rhs_view_transition';
 import ThreadItem from './thread_item';
 
 import RHSNewTab from './rhs_new_tab';
@@ -256,9 +257,14 @@ export default function RHS() {
         <RhsContainer
             data-testid='mattermost-ai-rhs'
         >
-            {dropZone ? (
-                <AgentChatDropZone testId='rhs-file-drop-zone'>{content}</AgentChatDropZone>
-            ) : content}
+            <RHSViewTransition
+                viewKey={selectedPostId ? `thread:${selectedPostId}` : currentTab}
+                rank={currentTab === 'threads' ? 0 : 1}
+            >
+                {dropZone ? (
+                    <AgentChatDropZone testId='rhs-file-drop-zone'>{content}</AgentChatDropZone>
+                ) : content}
+            </RHSViewTransition>
             <ChatActionsPopover
                 anchor={menuFor?.anchor ?? null}
                 onClose={() => setMenuFor(null)}

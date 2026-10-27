@@ -206,7 +206,9 @@ describe('RHS', () => {
         state['plugins-mattermost-ai'] = {selectedPostId: '', rhsTab: 'threads'};
         rerender(<Rhs/>);
         await waitFor(() => expect(screen.getByTestId('rhs-threads-list')).toBeTruthy());
-        expect(screen.queryByTestId('rhs-new-tab')).toBeNull();
+
+        // The new chat leaves once its exit transition is over.
+        await waitFor(() => expect(screen.queryByTestId('rhs-new-tab')).toBeNull());
 
         // An open thread takes over whichever list tab was last chosen.
         state['plugins-mattermost-ai'] = {selectedPostId: 'post-id', rhsTab: 'threads'};
