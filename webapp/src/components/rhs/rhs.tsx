@@ -41,6 +41,12 @@ const ThreadsList = styled.div`
     min-height: 0;
     padding: var(--spacing-xs) 0;
     overflow-y: auto;
+
+    /* The compass Thread List Item's title and preview are <p>s, which the host gives a bottom margin. */
+    && [class*='thread-list-item__title'],
+    && [class*='thread-list-item__preview'] {
+        margin-bottom: 0;
+    }
 `;
 
 const RhsContainer = styled.div`
