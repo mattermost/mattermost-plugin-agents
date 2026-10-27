@@ -1,6 +1,6 @@
 import {StartedTestContainer, GenericContainer, StartedNetwork, Network, Wait} from "testcontainers";
 
-import { test } from "@playwright/test";
+import { withDeadline } from "./deadline";
 
 /** A registered rule as returned by GET /mocks, including how often it matched. */
 export type SmockerMockState = {
@@ -76,13 +76,13 @@ export class OpenAIMockContainer {
 	container: StartedTestContainer;
 
 	start = async (network: StartedNetwork) => {
-		test.slow(); // triples a beforeAll's 60 s timeout, which container startup can exceed
-		this.container = await new GenericContainer(SMOCKER_IMAGE)
+		this.container = await withDeadline("Starting the Smocker container", 5 * 60000, () => new GenericContainer(SMOCKER_IMAGE)
 			.withExposedPorts(8081)
 			.withNetwork(network)
 			.withNetworkAliases("openai")
 			.withWaitStrategy(Wait.forHttp("/version", 8081))
-			.start()
+			.withStartupTimeout(120000)
+			.start())
 
 		await this.resetMocks();
 	}
@@ -110,6 +110,7 @@ export class OpenAIMockContainer {
 		try {
 			await fetch(`http://localhost:${this.container.getMappedPort(8081)}/reset`, {
 				method: "POST",
+				signal: AbortSignal.timeout(10000),
 			});
 		} catch (error) {
 			if (attempt >= maxAttempts - 1) {

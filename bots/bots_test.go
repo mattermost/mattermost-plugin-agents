@@ -220,25 +220,101 @@ func TestGetLLMResolvesProviderServicesThroughWrapperChain(t *testing.T) {
 	require.False(t, assertable, "the wrapped model must not be relied on for provider capabilities")
 }
 
-func TestGetLLMProviderServicesForNonDownloadableProvider(t *testing.T) {
-	cfg := &mockConfig{}
-	mmBots := newTestMMBots(t, cfg)
-
-	service := llm.ServiceConfig{
-		ID:           "openai-svc",
-		Type:         llm.ServiceTypeOpenAI,
-		APIKey:       "test-key",
-		DefaultModel: "gpt-5",
+func TestGetLLMProviderServicesForNonDownloadablePrimary(t *testing.T) {
+	anthropicFallback := llm.ServiceConfig{
+		ID:           "anthropic-svc",
+		Type:         llm.ServiceTypeAnthropic,
+		APIKey:       "fallback-key",
+		DefaultModel: "claude-sonnet-4-6",
 	}
-	botCfg := llm.BotConfig{
-		Name:               "openai-sandbox-bot",
-		EnabledNativeTools: []string{llm.NativeToolCodeInterpreter},
+	tests := []struct {
+		name             string
+		fallbacks        []llm.ServiceConfig
+		wantFileDownload bool
+	}{
+		{name: "OpenAI alone cannot download files"},
+		{
+			name:             "an Anthropic fallback can download the files of turns it serves",
+			fallbacks:        []llm.ServiceConfig{anthropicFallback},
+			wantFileDownload: true,
+		},
 	}
 
-	_, providerServices, err := mmBots.getLLM(service, botCfg, nil)
-	require.NoError(t, err)
-	t.Cleanup(mmBots.ShutdownServiceLLMs)
-	require.False(t, providerServices.CanDownloadFiles())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &mockConfig{}
+			mmBots := newTestMMBots(t, cfg)
+
+			service := llm.ServiceConfig{
+				ID:           "openai-svc",
+				Type:         llm.ServiceTypeOpenAI,
+				APIKey:       "test-key",
+				DefaultModel: "gpt-5",
+			}
+			botCfg := llm.BotConfig{
+				Name:               "openai-sandbox-bot",
+				EnabledNativeTools: []string{llm.NativeToolCodeInterpreter},
+			}
+
+			_, providerServices, err := mmBots.getLLM(service, botCfg, tt.fallbacks)
+			require.NoError(t, err)
+			t.Cleanup(mmBots.ShutdownServiceLLMs)
+			require.Equal(t, tt.wantFileDownload, providerServices.CanDownloadFiles())
+		})
+	}
+}
+
+func TestSandboxFileGatesFollowTheServingChain(t *testing.T) {
+	openAI := llm.ServiceConfig{ID: "openai-svc", Type: llm.ServiceTypeOpenAI, APIKey: "k", DefaultModel: "gpt-5"}
+	anthropic := llm.ServiceConfig{ID: "anthropic-svc", Type: llm.ServiceTypeAnthropic, APIKey: "k2", DefaultModel: "claude-sonnet-4-6"}
+	openAIWithAnthropicFallback := openAI
+	openAIWithAnthropicFallback.FallbackServiceID = anthropic.ID
+
+	tests := []struct {
+		name        string
+		services    []llm.ServiceConfig
+		primaryID   string
+		wantPromise bool
+		wantAttach  bool
+	}{
+		{
+			name:       "OpenAI primary with an Anthropic fallback attaches files but does not promise them",
+			services:   []llm.ServiceConfig{openAIWithAnthropicFallback, anthropic},
+			primaryID:  openAI.ID,
+			wantAttach: true,
+		},
+		{
+			name:        "Anthropic primary promises and attaches files",
+			services:    []llm.ServiceConfig{anthropic},
+			primaryID:   anthropic.ID,
+			wantPromise: true,
+			wantAttach:  true,
+		},
+		{
+			name:      "OpenAI alone neither promises nor attaches files",
+			services:  []llm.ServiceConfig{openAI},
+			primaryID: openAI.ID,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &mockConfig{services: tt.services}
+			agentStore := &stubAgentStore{agents: []llm.BotConfig{{
+				ID: "bot1", Name: "sandbox", DisplayName: "Sandbox", ServiceID: tt.primaryID,
+				EnabledNativeTools: []string{llm.NativeToolCodeInterpreter},
+			}}}
+			mmBots := newEnsureBotsHarness(t, cfg, agentStore, enterpriseAdvancedLicense())
+
+			require.NoError(t, mmBots.EnsureBots())
+			bots := mmBots.GetAllBots()
+			require.Len(t, bots, 1)
+			require.True(t, bots[0].HasNativeCodeExecutionEnabled())
+
+			assert.Equal(t, tt.wantPromise, bots[0].ShouldPromiseSandboxFiles(), "prompt gate")
+			assert.Equal(t, tt.wantAttach, bots[0].CanAttachSandboxFiles(), "attach gate")
+		})
+	}
 }
 
 func TestGetLLMLoadTestMockInvalidProfileJSON(t *testing.T) {

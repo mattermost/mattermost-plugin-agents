@@ -16,7 +16,8 @@
 import fs from 'fs';
 import path from 'path';
 
-import {test, expect, type Locator, type Page} from '@playwright/test';
+import {expect, type Locator, type Page} from '@playwright/test';
+import {containerTest} from 'helpers/container-fixture';
 
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {buildCreateFileSequence, buildTitleFixture, mergeFixtureFiles} from 'helpers/aimock-fixtures';
@@ -255,6 +256,19 @@ async function askForArtifact(page: Page, mattermost: MattermostContainer, aimoc
     return {botPost, iframe};
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigAIMockContainer({
+        customInstructions: 'When asked to create a file, use the CreateFile tool.',
+        defaultBotName: botName,
+        botId: 'html-artifact-bot',
+        botDisplayName: 'Artifact Bot',
+    }));
+    const aimock = own(await RunAIMockSidecar(mattermost.network, {
+        fixtures: {fixtures: [buildTitleFixture('HTML artifact bootstrap')]},
+    }));
+    return {mattermost, aimock};
+});
+
 test.describe('HTML artifacts', () => {
     test.describe.configure({mode: 'serial'});
     // Granting notifications keeps the browser-permission announcement bar out of screenshots.
@@ -264,14 +278,8 @@ test.describe('HTML artifacts', () => {
     let aimock: AIMockContainer;
     let externalServer: ExternalServer;
 
-    test.beforeAll(async () => {
-        test.setTimeout(240000);
-        mattermost = await RunToolConfigAIMockContainer({
-            customInstructions: 'When asked to create a file, use the CreateFile tool.',
-            defaultBotName: botName,
-            botId: 'html-artifact-bot',
-            botDisplayName: 'Artifact Bot',
-        });
+    test.beforeAll(async ({containers}) => {
+        ({mattermost, aimock} = containers);
         await setHTMLArtifactsEnabled(mattermost, true);
         const admin = await mattermost.getAdminClient();
         await admin.patchConfig({
@@ -288,16 +296,11 @@ test.describe('HTML artifacts', () => {
         const me = await client.getMe();
         await client.savePreferences(me.id, [{user_id: me.id, category: 'display_settings', name: 'collapsed_reply_threads', value: 'off'}]);
         await setupSecondViewer(mattermost);
-        aimock = await RunAIMockSidecar(mattermost.network, {
-            fixtures: {fixtures: [buildTitleFixture('HTML artifact bootstrap')]},
-        });
         externalServer = await startExternalServer(mattermost.url());
     });
 
     test.afterAll(async () => {
         await externalServer?.close();
-        await aimock?.stop();
-        await mattermost?.stop();
     });
 
     test('renders inline, brokers getCurrentUser with consent, and opens fullscreen', async ({page}) => {
