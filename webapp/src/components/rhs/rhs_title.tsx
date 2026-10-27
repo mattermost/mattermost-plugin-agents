@@ -122,9 +122,10 @@ const RHSTitle = () => {
         actions = (
             <>
                 {activeConversationId && <ContextUsageIndicator conversationId={activeConversationId}/>}
-                <IconButton
+                <NewChatButton
                     size='small'
                     padding='compact'
+                    rounded={true}
                     icon={<Icon glyph={<PlusIcon/>}/>}
                     aria-label={newChatLabel}
                     title={newChatLabel}
@@ -197,6 +198,12 @@ const RHSTitle = () => {
 // The Back button sits flush with the header's start; without it the title is inset.
 // min-width: 0 all the way down lets a long name ellipsize instead of pushing the
 // host's expand, popout and close buttons out of the header.
+// The host pads its title area by 1.6rem on both sides (sass/layout/_sidebar-right.scss
+// `.sidebar--right__title`); the end of the title (the New chat or tools button) takes that padding
+// back, less 4px (--spacing-xxxs), so it sits close to the host's own header buttons. Not a compass
+// value: it mirrors host CSS.
+const HOST_TITLE_INLINE_PADDING = '1.6rem';
+
 const Container = styled.span<{$hasBack: boolean}>`
     display: flex;
     flex: 1 1 auto;
@@ -204,6 +211,7 @@ const Container = styled.span<{$hasBack: boolean}>`
     align-items: center;
     gap: var(--spacing-xs);
     margin-left: ${({$hasBack}) => ($hasBack ? '0' : 'var(--spacing-xs)')};
+    margin-right: calc(-1 * ${HOST_TITLE_INLINE_PADDING} + var(--spacing-xxxs));
 `;
 
 const Actions = styled.span`
@@ -212,6 +220,21 @@ const Actions = styled.span`
     align-items: center;
     gap: var(--spacing-xxs);
     margin-inline-start: auto;
+`;
+
+// No compass token for the resting and hover washes of the text color behind New chat, which set it
+// apart from the bare back button next to the title.
+const NEW_CHAT_FILL = 'rgba(var(--center-channel-color-rgb), 0.08)';
+const NEW_CHAT_FILL_HOVER = 'rgba(var(--center-channel-color-rgb), 0.12)';
+
+const NewChatButton = styled(IconButton)`
+    && {
+        background-color: ${NEW_CHAT_FILL};
+    }
+
+    &&:hover:not(:disabled) {
+        background-color: ${NEW_CHAT_FILL_HOVER};
+    }
 `;
 
 const FallbackIcon = styled.img`

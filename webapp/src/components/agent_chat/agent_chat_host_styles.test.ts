@@ -64,6 +64,10 @@ describe('hostThreadChatStyles', () => {
         } else {
             expect(text).not.toContain(column);
             expect(text).not.toContain('scrollbar-gutter');
+
+            // The rows still share the composer's side padding, with no cap or inset.
+            expect(ruleFor(text, '.innerList')).toBe(`box-sizing: border-box; padding-inline: ${CHAT_COLUMN_PADDING};`);
+            expect(ruleFor(text, '&&& .post')).toContain('padding-inline: 0');
             expect(text).not.toContain('2 * var(--spacing-m)');
         }
     });

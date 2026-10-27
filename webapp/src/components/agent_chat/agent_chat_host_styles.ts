@@ -153,11 +153,26 @@ const centeredColumn = (maxWidth: string) => css`
     }
 `;
 
+// Without a column (the RHS fills its panel) the rows still get the composer's side padding, from the
+// same wrapper, so the posts have the same space on both sides (the host pads a post 1.5em on the left
+// and 0.5em on the right) and line up with the composer below.
+const paddedRows = css`
+    .innerList {
+        box-sizing: border-box;
+        padding-inline: ${CHAT_COLUMN_PADDING};
+    }
+
+    &&& .post,
+    &&& .Separator {
+        padding-inline: 0;
+    }
+`;
+
 // Chat-bubble restyle of the host ThreadViewer. Interpolate it into the styled
 // wrapper that contains the ThreadViewer (the product view's thread pane, the
 // RHS thread pane); it is scoped under that wrapper and never applied globally.
 export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptions = {}) => css`
-    ${columnMaxWidth ? centeredColumn(columnMaxWidth) : ''}
+    ${columnMaxWidth ? centeredColumn(columnMaxWidth) : paddedRows}
 
     /*
      * The plugin's pill composer replaces the host reply box. The host renders it
