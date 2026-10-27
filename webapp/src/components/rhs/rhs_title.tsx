@@ -11,6 +11,7 @@ import PlusIcon from '@mattermost/compass-icons/components/plus';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 //@ts-ignore it exists
 import aiIcon from '../../../../assets/bot_icon.png';
@@ -119,16 +120,19 @@ const RHSTitle = () => {
         actions = (
             <>
                 {activeConversationId && <ContextUsageIndicator conversationId={activeConversationId}/>}
-                <NewChatButton
-                    size='small'
-                    padding='compact'
-                    rounded={true}
-                    icon={<Icon glyph={<PlusIcon/>}/>}
-                    aria-label={newChatLabel}
-                    title={newChatLabel}
-                    data-testid='new-chat'
-                    onClick={startNewChat}
-                />
+                <WithTooltip title={newChatLabel}>
+                    <TooltipTrigger>
+                        <NewChatButton
+                            size='small'
+                            padding='compact'
+                            rounded={true}
+                            icon={<Icon glyph={<PlusIcon/>}/>}
+                            aria-label={newChatLabel}
+                            data-testid='new-chat'
+                            onClick={startNewChat}
+                        />
+                    </TooltipTrigger>
+                </WithTooltip>
             </>
         );
     }
@@ -217,6 +221,10 @@ const Actions = styled.span`
 // apart from the bare back button next to the title.
 const NEW_CHAT_FILL = 'rgba(var(--center-channel-color-rgb), 0.08)';
 const NEW_CHAT_FILL_HOVER = 'rgba(var(--center-channel-color-rgb), 0.12)';
+
+const TooltipTrigger = styled.span`
+    display: inline-flex;
+`;
 
 const NewChatButton = styled(IconButton)`
     && {
