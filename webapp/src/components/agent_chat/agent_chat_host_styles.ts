@@ -281,6 +281,9 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
     .post.current--user ${BUBBLE} {
         flex: 0 1 auto;
         max-width: calc(100% - ${AVATAR_SLOT} - var(--spacing-xs));
+
+        /* Room under your own messages before the agent's reply. */
+        margin-bottom: var(--spacing-m);
         border-radius: var(--radius-xl) 0 var(--radius-xl) var(--radius-xl);
         background: var(--button-bg);
         color: var(--button-color);

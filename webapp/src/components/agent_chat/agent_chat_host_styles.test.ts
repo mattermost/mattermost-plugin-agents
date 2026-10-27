@@ -40,6 +40,9 @@ describe('hostThreadChatStyles', () => {
         // Date separators leave more room under the line than the host's own 1em.
         expect(text).toContain('margin-bottom: var(--spacing-xxl)');
 
+        // Your own bubbles leave 12px (--spacing-m) of room below them.
+        expect(ruleFor(text, '.post.current--user .post__content > .post__img + div')).toContain('margin-bottom: var(--spacing-m)');
+
         // Posts and separators share one column where there is a cap, and the full width otherwise.
         const column = `max-width: ${CHAT_CONTENT_MAX_WIDTH}`;
         if (capped) {
