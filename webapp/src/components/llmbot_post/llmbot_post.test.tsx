@@ -16,6 +16,7 @@ import {AGENT_CHAT_SURFACE, AgentChatSurfaceContext} from '../agent_chat/agent_c
 
 import {LLMBotPost, PostUpdateWebsocketMessage} from './llmbot_post';
 import {advanceAnimation} from './test_support';
+import {THINKING_DELAY_MS, THINKING_FADE_MS, THINKING_MIN_VISIBLE_MS} from './thinking_dots';
 
 jest.mock('react-redux', () => ({
     useSelector: jest.fn(),
@@ -1571,5 +1572,108 @@ describe('LLMBotPost meetings license gating', () => {
         }));
 
         expect(screen.queryByText('Post summary')).toBeNull();
+    });
+});
+
+describe('LLMBotPost thinking indicator', () => {
+    const dots = () => screen.queryByTestId('llm-bot-thinking');
+    let listener: PostUpdateHandler | undefined;
+
+    function renderPost(wrap: boolean) {
+        listener = undefined; // eslint-disable-line no-undefined
+        const post = (
+            <LLMBotPost
+                post={{...makePost(), user_id: 'bot_1'}}
+                websocketRegister={(_postID, _listenerID, handler) => {
+                    listener = handler;
+                }}
+                websocketUnregister={jest.fn()}
+            />
+        );
+        return render(
+            <IntlProvider locale='en'>
+                {wrap ? <AgentChatSurfaceContext.Provider value={AGENT_CHAT_SURFACE}>{post}</AgentChatSurfaceContext.Provider> : post}
+            </IntlProvider>,
+        );
+    }
+
+    const send = (data: Partial<PostUpdateWebsocketMessage>) => act(() => {
+        listener?.(postUpdateMessage({post_id: 'post_1', ...data}));
+    });
+    const wait = (ms: number) => act(() => {
+        jest.advanceTimersByTime(ms);
+    });
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        mockUseConversation.mockReturnValue({conversation: makeConversation([]), loading: false, error: null});
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('shows after the delay while generating with nothing yet, and replaces Working...', () => {
+        renderPost(true);
+        send({control: 'start'});
+        expect(dots()).toBeNull();
+        expect(screen.queryByText('Working...')).toBeNull();
+        wait(THINKING_DELAY_MS);
+        expect(dots()).not.toBeNull();
+        expect(screen.queryByText('Working...')).toBeNull();
+        expect(screen.getByRole('status').textContent).toBe('The agent is thinking');
+    });
+
+    test('is absent without the agent chat surface', () => {
+        renderPost(false);
+        send({control: 'start'});
+        wait(THINKING_DELAY_MS * 4);
+        expect(dots()).toBeNull();
+        expect(screen.queryByText('Working...')).not.toBeNull();
+    });
+
+    test.each([
+        {name: 'text', data: {next: 'Hello'}},
+        {name: 'reasoning', data: {control: 'reasoning_summary', reasoning: 'Thinking it over'}},
+        {name: 'a tool call', data: {control: 'tool_call', tool_call: JSON.stringify([{id: 'tc1', name: 'search', description: '', arguments: {}, status: ToolCallStatus.Pending}])}},
+    ])('hides once $name arrives, and never coexists after the hold', ({data}) => {
+        renderPost(true);
+        send({control: 'start'});
+        wait(THINKING_DELAY_MS);
+        expect(dots()).not.toBeNull();
+        send(data);
+        wait(THINKING_MIN_VISIBLE_MS + THINKING_FADE_MS);
+        expect(dots()).toBeNull();
+    });
+
+    test('content before the delay means the dots never appear', () => {
+        renderPost(true);
+        send({control: 'start'});
+        wait(THINKING_DELAY_MS - 10);
+        send({next: 'Fast'});
+        wait(THINKING_DELAY_MS * 4);
+        expect(dots()).toBeNull();
+    });
+
+    test('stop while only dots show ends them', () => {
+        renderPost(true);
+        send({control: 'start'});
+        wait(THINKING_DELAY_MS);
+        send({control: 'cancel'});
+        wait(THINKING_MIN_VISIBLE_MS + THINKING_FADE_MS);
+        expect(dots()).toBeNull();
+    });
+
+    test('a new generation shows the dots again', () => {
+        renderPost(true);
+        send({control: 'start'});
+        wait(THINKING_DELAY_MS);
+        send({next: 'Done'});
+        send({control: 'cancel'});
+        wait(THINKING_MIN_VISIBLE_MS + THINKING_FADE_MS);
+        expect(dots()).toBeNull();
+        send({control: 'continue'});
+        wait(THINKING_DELAY_MS);
+        expect(dots()).not.toBeNull();
     });
 });

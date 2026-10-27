@@ -42,6 +42,7 @@ import {ControlsBarComponent} from './controls_bar';
 import {extractPermalinkData} from './permalink_data';
 import {FoldingText, useFoldingText} from './folding_text';
 import {RoundView} from './round_view';
+import {ThinkingDots} from './thinking_dots';
 import ToolActivityDisplay from './tool_activity_display';
 
 // Sentinel id for the in-progress streaming round; persisted rounds use turn ids.
@@ -601,7 +602,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const showPostbackButton = meetingsLicensed && !isGenerationInProgress && requesterIsCurrentUser && isTranscriptionResult;
 
     // In the agent chat views the composer's send button is the Stop control.
-    const {composerHandlesStop} = useContext(AgentChatSurfaceContext);
+    const {composerHandlesStop, showThinkingIndicator} = useContext(AgentChatSurfaceContext);
     const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser && !composerHandlesStop;
     const hasContent = renderedRounds.length > 0;
     const showControlsBar = ((showRegenerate || showPostbackButton) && hasContent) || showStopGeneratingButton;
@@ -750,10 +751,20 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // Tool-only posts leave post.message empty, so precontent stays true on
     // remount. Hide Working... once rounds exist, except while generation is
     // actually resuming (continue/start still set precontent on purpose).
-    const showWorking = !generationStopped && (
+    const showWorkingStatus = !generationStopped && (
         (precontent && (generating || renderedRounds.length === 0)) ||
         (conversationLoading && !generating && renderedRounds.length === 0)
     );
+
+    // The dots stand in for the Working... status while nothing has arrived,
+    // never alongside it (or any other activity UI).
+    const thinkingActive = showThinkingIndicator && !awaitingRequester && !error &&
+        (isGenerationInProgress || (regenerating && !pendingRefetch)) && renderedRounds.length === 0;
+    const showWorking = showWorkingStatus && !thinkingActive;
+    const agentName = useSelector<GlobalState, string | undefined>((state) => {
+        const profile = props.post.user_id ? state.entities.users.profiles?.[props.post.user_id] : undefined; // eslint-disable-line no-undefined
+        return profile ? displayNameFor(profile, selectTeammateNameDisplay(state)) : undefined; // eslint-disable-line no-undefined
+    });
 
     let statusMessage: string | undefined;
     if (awaitingRequester) {
@@ -792,6 +803,12 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     text={foldingText}
                     channelID={props.post.channel_id}
                     postID={props.post.id}
+                />
+            )}
+            {showThinkingIndicator && (
+                <ThinkingDots
+                    active={thinkingActive}
+                    agentName={agentName}
                 />
             )}
             <AnswerArea $afterActivity={activity.items.length > 0}>

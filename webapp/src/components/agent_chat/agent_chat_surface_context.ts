@@ -8,11 +8,16 @@ export interface AgentChatSurface {
     // The pill composer's send button turns into Stop while a reply generates,
     // so agent posts in this surface leave their own Stop control out.
     composerHandlesStop: boolean;
+
+    // Agent posts show animated dots while a reply has produced nothing yet.
+    // Only the agent chat views opt in. To widen it to other surfaces (the
+    // Channels DM, host RHS), set this true in the default context value below.
+    showThinkingIndicator: boolean;
 }
 
 // Provided by the agent chat views (Agents product view, Agents RHS) around
 // the host ThreadViewer, whose posts render the plugin's LLMBotPost. Anywhere
 // else (the Channels DM, channel threads in the host RHS) the default applies.
-export const AgentChatSurfaceContext = createContext<AgentChatSurface>({composerHandlesStop: false});
+export const AgentChatSurfaceContext = createContext<AgentChatSurface>({composerHandlesStop: false, showThinkingIndicator: false});
 
-export const AGENT_CHAT_SURFACE: AgentChatSurface = {composerHandlesStop: true};
+export const AGENT_CHAT_SURFACE: AgentChatSurface = {composerHandlesStop: true, showThinkingIndicator: true};
