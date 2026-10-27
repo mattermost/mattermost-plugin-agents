@@ -143,7 +143,6 @@ const RHSTitle = () => {
         return (
             <Container
                 data-testid='rhs-title'
-                $hasBack={Boolean(back)}
             >
                 {back}
                 <FallbackIcon
@@ -160,7 +159,6 @@ const RHSTitle = () => {
     return (
         <Container
             data-testid='rhs-title'
-            $hasBack={Boolean(back)}
         >
             {back}
             <AgentAvatar bot={menuBot}/>
@@ -199,18 +197,20 @@ const RHSTitle = () => {
 // min-width: 0 all the way down lets a long name ellipsize instead of pushing the
 // host's expand, popout and close buttons out of the header.
 // The host pads its title area by 1.6rem on both sides (sass/layout/_sidebar-right.scss
-// `.sidebar--right__title`); the end of the title (the New chat or tools button) takes that padding
-// back, less 4px (--spacing-xxxs), so it sits close to the host's own header buttons. Not a compass
-// value: it mirrors host CSS.
+// `.sidebar--right__title`). The title takes that padding back so it can set its own: 12px
+// (--spacing-m) at the start, and 4px (--spacing-xxxs) at the end, where the New chat or tools
+// button sits close to the host's own header buttons. It is a margin on this element rather than a
+// rule on the host's class, so no other RHS panel is affected. Not a compass value: the 1.6rem
+// mirrors host CSS.
 const HOST_TITLE_INLINE_PADDING = '1.6rem';
 
-const Container = styled.span<{$hasBack: boolean}>`
+const Container = styled.span`
     display: flex;
     flex: 1 1 auto;
     min-width: 0;
     align-items: center;
     gap: var(--spacing-xs);
-    margin-left: ${({$hasBack}) => ($hasBack ? '0' : 'var(--spacing-xs)')};
+    margin-left: calc(-1 * ${HOST_TITLE_INLINE_PADDING} + var(--spacing-m));
     margin-right: calc(-1 * ${HOST_TITLE_INLINE_PADDING} + var(--spacing-xxxs));
 `;
 
