@@ -17,6 +17,7 @@ import {AGENT_CHAT_SURFACE, AgentChatSurfaceContext} from '../agent_chat/agent_c
 import {LLMBotPost, PostUpdateWebsocketMessage} from './llmbot_post';
 import {advanceAnimation} from './test_support';
 import {THINKING_DELAY_MS, THINKING_FADE_MS, THINKING_MIN_VISIBLE_MS} from './thinking_dots';
+import {BACKLOG_DRAIN_MS, FLUSH_MAX_MS} from './use_smooth_text';
 
 jest.mock('react-redux', () => ({
     useSelector: jest.fn(),
@@ -1675,5 +1676,146 @@ describe('LLMBotPost thinking indicator', () => {
         send({control: 'continue'});
         wait(THINKING_DELAY_MS);
         expect(dots()).not.toBeNull();
+    });
+});
+
+describe('LLMBotPost smooth streaming', () => {
+    let listener: PostUpdateHandler | undefined;
+    const longText = Array.from({length: 120}, (_, i) => `word${i}`).join(' ');
+
+    function renderSurfacePost(wrap: boolean, message = '') {
+        listener = undefined; // eslint-disable-line no-undefined
+        const post = (
+            <LLMBotPost
+                post={makePost(message)}
+                websocketRegister={(_postID, _listenerID, handler) => {
+                    listener = handler;
+                }}
+                websocketUnregister={jest.fn()}
+            />
+        );
+        return render(
+            <IntlProvider locale='en'>
+                {wrap ? <AgentChatSurfaceContext.Provider value={AGENT_CHAT_SURFACE}>{post}</AgentChatSurfaceContext.Provider> : post}
+            </IntlProvider>,
+        );
+    }
+
+    const send = (data: Partial<PostUpdateWebsocketMessage>) => act(() => {
+        listener?.(postUpdateMessage({post_id: 'post_1', ...data}));
+    });
+    const wait = (ms: number) => act(() => {
+        jest.advanceTimersByTime(ms);
+    });
+
+    // The text the answer's PostText last rendered.
+    const shown = () => mockPostTextRender.mock.calls.at(-1)?.[0] ?? '';
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+
+        // No refetch lands, so the live round stays on screen after end.
+        mockUseConversation.mockReturnValue({conversation: null, loading: false, error: null});
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test.each([
+        {name: 'outside the agent chat views text shows as it arrives', wrap: false, immediate: true},
+        {name: 'in the agent chat views text is revealed over frames', wrap: true, immediate: false},
+    ])('$name', ({wrap, immediate}) => {
+        renderSurfacePost(wrap);
+        send({control: 'start'});
+        send({next: longText});
+        expect(shown() === longText).toBe(immediate);
+        expect(longText.startsWith(shown())).toBe(true);
+        wait(BACKLOG_DRAIN_MS + 50);
+        expect(shown()).toBe(longText);
+    });
+
+    test.each([
+        {name: 'end flushes the buffer within the flush time', data: {control: 'end'}, waitMs: FLUSH_MAX_MS + 20},
+        {name: 'cancel (Stop) shows everything at once', data: {control: 'cancel'}, waitMs: 0},
+    ])('$name', ({data, waitMs}) => {
+        renderSurfacePost(true);
+        send({control: 'start'});
+        send({next: longText});
+        expect(shown()).not.toBe(longText);
+        send(data);
+        if (waitMs > 0) {
+            expect(shown()).not.toBe(longText);
+            wait(waitMs);
+        }
+        expect(shown()).toBe(longText);
+    });
+
+    test('the post Stop control shows everything at once', () => {
+        // The post's own Stop (where the composer does not stop) with smoothing on.
+        mockUseConversation.mockReturnValue({conversation: makeConversation([]), loading: false, error: null});
+        render(
+            <IntlProvider locale='en'>
+                <AgentChatSurfaceContext.Provider value={{...AGENT_CHAT_SURFACE, composerHandlesStop: false}}>
+                    <LLMBotPost
+                        post={makePost()}
+                        websocketRegister={(_postID, _listenerID, handler) => {
+                            listener = handler;
+                        }}
+                        websocketUnregister={jest.fn()}
+                    />
+                </AgentChatSurfaceContext.Provider>
+            </IntlProvider>,
+        );
+        send({control: 'start'});
+        send({next: longText});
+        expect(shown()).not.toBe(longText);
+        act(() => {
+            fireEvent.click(screen.getByTestId('stop-generating-button'));
+        });
+        expect(shown()).toBe(longText);
+    });
+
+    test('a finished post renders in full at once', () => {
+        renderSurfacePost(true, longText);
+        expect(shown()).toBe(longText);
+    });
+
+    test('regenerate starts the new generation from nothing', () => {
+        renderSurfacePost(true);
+        send({control: 'start'});
+        send({next: longText});
+        send({control: 'cancel'});
+        expect(shown()).toBe(longText);
+        send({control: 'start'});
+        send({next: 'Fresh '});
+        expect(shown()).toBe('Fresh ');
+    });
+});
+
+describe('LLMBotPost bubble fit', () => {
+    test.each([
+        {name: 'agent chat views mark the bubble fit', wrap: true, marked: true},
+        {name: 'other surfaces leave the bubble alone', wrap: false, marked: false},
+    ])('$name', ({wrap, marked}) => {
+        const post = (
+            <LLMBotPost
+                post={makePost('Short reply')}
+                websocketUnregister={jest.fn()}
+            />
+        );
+
+        // Host markup around the post: the bubble is the avatar slot's sibling.
+        render(
+            <IntlProvider locale='en'>
+                <div className='post__content'>
+                    <div className='post__img'/>
+                    <div>
+                        {wrap ? <AgentChatSurfaceContext.Provider value={AGENT_CHAT_SURFACE}>{post}</AgentChatSurfaceContext.Provider> : post}
+                    </div>
+                </div>
+            </IntlProvider>,
+        );
+        expect(screen.getByTestId('llm-bot-post').hasAttribute('data-bubble-fit')).toBe(marked);
     });
 });

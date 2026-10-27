@@ -4,7 +4,7 @@
 import React, {useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
-import styled from 'styled-components';
+import styled, {css} from 'styled-components';
 
 import {GlobalState} from '@mattermost/types/store';
 
@@ -44,6 +44,9 @@ import {FoldingText, useFoldingText} from './folding_text';
 import {RoundView} from './round_view';
 import {ThinkingDots} from './thinking_dots';
 import ToolActivityDisplay from './tool_activity_display';
+import {noMotionWhenReduced, prefersReducedMotion} from './motion';
+import {useBubbleWidth} from './use_bubble_width';
+import {useSmoothText} from './use_smooth_text';
 
 // Sentinel id for the in-progress streaming round; persisted rounds use turn ids.
 const LIVE_ROUND_ID = 'live';
@@ -139,6 +142,20 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     const [reasoningSummary, setReasoningSummary] = useState('');
     const [isReasoningLoading, setIsReasoningLoading] = useState(false);
+
+    // In the agent chat views the composer's send button is the Stop control.
+    const {composerHandlesStop, showThinkingIndicator, smoothStreaming, hugShortBubbles} = useContext(AgentChatSurfaceContext);
+
+    // Streamed text is revealed at a steady pace where the surface asks for
+    // it. A stop, cancel or error shows what arrived at once.
+    const [revealCut, setRevealCut] = useState(false);
+    const smoothReveal = smoothStreaming && !prefersReducedMotion();
+    const revealed = useSmoothText(message, {
+        enabled: smoothReveal,
+        streaming: generating,
+        flushImmediately: revealCut || stopped || error !== '',
+    });
+    const shownMessage = revealed.text;
 
     const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
 
@@ -440,6 +457,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (data.control === 'cancel') {
+                setRevealCut(true);
                 progressCompleteRef.current = true;
                 setProgressPhase(null);
                 setGenerating(false);
@@ -456,6 +474,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     return;
                 }
                 reasoningSeenRef.current = false;
+                setRevealCut(false);
                 setGenerating(true);
                 setPrecontent(true);
                 setStopped(false);
@@ -478,6 +497,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
                 // Tool-approval resume: prior round comes from refetched
                 // persistedRounds, so reset all local state.
+                setRevealCut(false);
                 setGenerating(true);
                 setPrecontent(true);
                 setStopped(false);
@@ -501,24 +521,30 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         };
     }, [props.post.id, conversationId]);
 
+    // Citations past the revealed text wait until it gets there.
+    const shownAnnotations = useMemo(
+        () => (shownMessage === message ? annotations : annotations.filter((annotation) => annotation.end_index <= shownMessage.length)),
+        [shownMessage, message, annotations],
+    );
+
     const currentRound: Round | null = useMemo(() => {
-        const hasContent = message !== '' ||
+        const hasContent = shownMessage !== '' ||
             toolCalls.length > 0 ||
             reasoningSummary !== '' ||
-            annotations.length > 0 ||
+            shownAnnotations.length > 0 ||
             serverTools.length > 0;
         if (!hasContent) {
             return null;
         }
         return {
             id: LIVE_ROUND_ID,
-            text: message,
+            text: shownMessage,
             toolCalls,
             reasoning: {summary: reasoningSummary, signature: ''},
-            annotations,
+            annotations: shownAnnotations,
             serverTools,
         };
-    }, [message, toolCalls, reasoningSummary, annotations, serverTools]);
+    }, [shownMessage, toolCalls, reasoningSummary, shownAnnotations, serverTools]);
 
     const renderedRounds = useMemo(() => computeRenderedRounds({
         regenerating,
@@ -534,6 +560,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         progressCompleteRef.current = false;
         progressSequenceRef.current = 0;
         reasoningSeenRef.current = false;
+        setRevealCut(false);
         setMessage('');
         setGenerating(false);
         setPrecontent(true);
@@ -601,8 +628,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const meetingsLicensed = useIsLicensedFor('meetings');
     const showPostbackButton = meetingsLicensed && !isGenerationInProgress && requesterIsCurrentUser && isTranscriptionResult;
 
-    // In the agent chat views the composer's send button is the Stop control.
-    const {composerHandlesStop, showThinkingIndicator} = useContext(AgentChatSurfaceContext);
     const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser && !composerHandlesStop;
     const hasContent = renderedRounds.length > 0;
     const showControlsBar = ((showRegenerate || showPostbackButton) && hasContent) || showStopGeneratingButton;
@@ -717,6 +742,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         return 'done';
     }, [anchorRoundId, anchorStage, onlookerWaitRoundId, onlookerWaitStage]);
 
+    const liveReveal = useMemo(
+        () => (smoothReveal ? {fresh: revealed.fresh, onFreshEnd: revealed.retire} : undefined), // eslint-disable-line no-undefined
+        [smoothReveal, revealed.fresh, revealed.retire],
+    );
+
     const renderRound = useCallback((round: Round) => {
         const isLiveRound = round.id === LIVE_ROUND_ID;
         return (
@@ -733,9 +763,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 reasoningLoading={isLiveRound && isReasoningLoading}
                 reasoningCollapsed={!expandedReasoning[round.id]}
                 onToggleReasoning={toggleReasoning}
+                reveal={isLiveRound ? liveReveal : undefined} // eslint-disable-line no-undefined
             />
         );
     }, [
+        liveReveal,
         props.post.id,
         props.post.channel_id,
         conversationId,
@@ -766,6 +798,14 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         return profile ? displayNameFor(profile, selectTeammateNameDisplay(state)) : undefined; // eslint-disable-line no-undefined
     });
 
+    // Short replies hug their content (agent chat views only), measured from
+    // the displayed text, so the bubble follows the reveal, not the buffer.
+    const postBodyRef = useRef<HTMLDivElement>(null);
+    const bubble = useBubbleWidth(postBodyRef, {
+        enabled: hugShortBubbles,
+        streaming: isGenerationInProgress || shownMessage !== message,
+    });
+
     let statusMessage: string | undefined;
     if (awaitingRequester) {
         statusMessage = awaitingRequesterMessage;
@@ -775,7 +815,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     return (
         <PostBody
+            ref={postBodyRef}
             data-testid='llm-bot-post'
+            data-bubble-fit={bubble.fit ?? undefined} // eslint-disable-line no-undefined
+            data-bubble-motion={bubble.motion ? 'on' : undefined} // eslint-disable-line no-undefined
+            $hugMinWidth={bubble.minWidth}
         >
             {error && <ErrorMessage message={error}/>}
             {conversationError && !generating && (
@@ -848,7 +892,16 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     );
 };
 
-const PostBody = styled.div`
+// While a streaming reply hugs, it never narrows (use_bubble_width.ts).
+const PostBody = styled.div<{$hugMinWidth: number}>`
+    ${(props) => props.$hugMinWidth > 0 && css`
+        min-width: ${props.$hugMinWidth}px;
+    `}
+
+    &[data-bubble-motion='on'] {
+        transition: min-width var(--duration-moderate) var(--ease-transition);
+        ${noMotionWhenReduced}
+    }
 `;
 
 // Same gap as between stacked rounds, so a round moving from here into the

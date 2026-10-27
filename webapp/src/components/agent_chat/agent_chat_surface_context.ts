@@ -13,11 +13,32 @@ export interface AgentChatSurface {
     // Only the agent chat views opt in. To widen it to other surfaces (the
     // Channels DM, host RHS), set this true in the default context value below.
     showThinkingIndicator: boolean;
+
+    // Agent posts reveal streamed text at a steady pace, fading it in, instead
+    // of in chunk-sized jumps. Only the agent chat views opt in; widening it
+    // is a one-line change to the default context value below.
+    smoothStreaming: boolean;
+
+    // Short agent replies hug their content instead of spanning the column.
+    // Only the agent chat views opt in; widening it is a one-line change to
+    // the default context value below (the host bubble rule also needs the
+    // surface's host styles).
+    hugShortBubbles: boolean;
 }
 
 // Provided by the agent chat views (Agents product view, Agents RHS) around
 // the host ThreadViewer, whose posts render the plugin's LLMBotPost. Anywhere
 // else (the Channels DM, channel threads in the host RHS) the default applies.
-export const AgentChatSurfaceContext = createContext<AgentChatSurface>({composerHandlesStop: false, showThinkingIndicator: false});
+export const AgentChatSurfaceContext = createContext<AgentChatSurface>({
+    composerHandlesStop: false,
+    showThinkingIndicator: false,
+    smoothStreaming: false,
+    hugShortBubbles: false,
+});
 
-export const AGENT_CHAT_SURFACE: AgentChatSurface = {composerHandlesStop: true, showThinkingIndicator: true};
+export const AGENT_CHAT_SURFACE: AgentChatSurface = {
+    composerHandlesStop: true,
+    showThinkingIndicator: true,
+    smoothStreaming: true,
+    hugShortBubbles: true,
+};

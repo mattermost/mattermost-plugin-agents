@@ -3,11 +3,16 @@
 
 import React from 'react';
 import {fireEvent, render, screen} from '@testing-library/react';
+import {IntlProvider} from 'react-intl';
 
 import PostText from './post_text';
 
 jest.mock('react-redux', () => ({
     useSelector: jest.fn(),
+}));
+
+jest.mock('./citations/citation_component', () => ({
+    CitationComponent: () => null,
 }));
 
 // Mirrors the anchors core's markdown renderer emits: internal links carry
@@ -58,5 +63,39 @@ describe('PostText internal links', () => {
             expect(push).not.toHaveBeenCalled();
             expect(notPrevented).toBe(true);
         }
+    });
+});
+
+describe('PostText streaming reveal', () => {
+    beforeEach(() => {
+        (window as any).PostUtils = {
+            formatText: (text: string) => text,
+            messageHtmlToComponent: (html: string) => <p>{html}</p>,
+        };
+    });
+
+    afterEach(() => {
+        delete (window as any).PostUtils;
+    });
+
+    test.each([
+        {name: 'without reveal, one pass over the whole message', reveal: false, annotations: undefined, paragraphs: 1}, // eslint-disable-line no-undefined
+        {name: 'with reveal, block by block', reveal: true, annotations: undefined, paragraphs: 2}, // eslint-disable-line no-undefined
+        {name: 'with reveal but citations, one pass', reveal: true, annotations: [{type: 'url_citation' as const, start_index: 0, end_index: 3, index: 1}], paragraphs: 1},
+    ])('$name', ({reveal, annotations, paragraphs}) => {
+        render(
+            <IntlProvider locale='en'>
+                <PostText
+                    message={'One\n\nTwo words'}
+                    channelID='channel'
+                    postID='post'
+                    annotations={annotations}
+                    reveal={reveal ? {fresh: [{id: 1, start: 5, end: 14}], onFreshEnd: jest.fn()} : undefined} // eslint-disable-line no-undefined
+                />
+            </IntlProvider>,
+        );
+        const container = screen.getByTestId('posttext');
+        expect(container.querySelectorAll(':scope > p')).toHaveLength(paragraphs);
+        expect(container.querySelector('[data-fresh-text]') !== null).toBe(reveal && !annotations);
     });
 });

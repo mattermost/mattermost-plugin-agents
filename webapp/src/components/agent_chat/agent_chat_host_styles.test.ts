@@ -9,7 +9,7 @@ import {
     composerTextStyles,
     hostTextboxPillStyles,
 } from './agent_chat_composer_host_styles';
-import {CHAT_CONTENT_MAX_WIDTH, hostThreadChatStyles} from './agent_chat_host_styles';
+import {CHAT_CONTENT_MAX_WIDTH, HUG_MAX_FRACTION, hostThreadChatStyles} from './agent_chat_host_styles';
 
 // jsdom never applies stylesheets, so check the generated rules instead.
 const cssText = (value: unknown): string => {
@@ -78,5 +78,30 @@ describe('hostTextboxPillStyles', () => {
     test('the suggestion list floats above the whole pill', () => {
         expect(ruleFor(text, '&&& .textarea-wrapper')).toContain('position: static');
         expect(ruleFor(text, '&&& .suggestion-list--top')).toContain('bottom: calc(100% + var(--spacing-xs))');
+    });
+});
+
+describe('hostThreadChatStyles bubble fit', () => {
+    const text = cssText(hostThreadChatStyles());
+    const bubble = '.post .post__content > .post__img + div';
+
+    test('an agent bubble marked hug shrinks to its content, capped at the hug fraction of the row', () => {
+        expect(HUG_MAX_FRACTION).toBe(0.75);
+        const rule = ruleFor(text, `${bubble}:has([data-bubble-fit='hug'])`);
+        expect(rule).toContain('flex: 0 1 auto');
+        expect(rule).toContain('width: fit-content');
+        expect(rule).toContain(`max-width: calc(${HUG_MAX_FRACTION} * (100% - var(--icon-size-32) - var(--spacing-xs)))`);
+    });
+
+    test('width changes animate only once a post opts into motion, with compass motion tokens', () => {
+        const rule = ruleFor(text, `${bubble}:has([data-bubble-motion='on'])`);
+        expect(rule).toContain('interpolate-size: allow-keywords');
+        expect(rule).toContain('flex-grow var(--duration-moderate) var(--ease-transition)');
+        expect(rule).toContain('width var(--duration-moderate) var(--ease-transition)');
+    });
+
+    test('agent bubbles default to the full row, own bubbles are unchanged', () => {
+        expect(ruleFor(text, bubble)).toContain('flex: 1 1 auto');
+        expect(ruleFor(text, '.post.current--user .post__content > .post__img + div')).toContain('flex: 0 1 auto');
     });
 });

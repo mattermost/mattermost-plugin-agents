@@ -45,6 +45,13 @@ import {css} from 'styled-components';
 //   An open toolbar menu marks its trigger `.post-menu__item--active` and/or
 //   `aria-expanded="true"`. The host only renders the items while the row is
 //   hovered (React state), which bubble hover implies.
+// - Bubble fit (read-only measurement by llmbot_post/use_bubble_width.ts):
+//     `.post__header` inside the bubble (its children's natural widths; the
+//     absolute `.post-menu` is skipped), and host attachments the bubble may
+//     hold below the message: components/file_attachment_list
+//     (`.post-image__columns`, single image `.file-view--single`),
+//     post_view/message_attachments (`.attachment`), and post_view/post_body_additional_content
+//     embeds (`.post__embed-container`, `.PostAttachmentOpenGraph`).
 
 // Width of the chat column (messages and composers), from the prototype's
 // AgentChat.module.scss (`agent-chat__messages-list` / `__composer`: 800px).
@@ -55,6 +62,20 @@ const AVATAR_SLOT = 'var(--icon-size-32)';
 
 // The body column of a post, which becomes the bubble.
 const BUBBLE = '.post__content > .post__img + div';
+
+// Exported for the plugin's read-only bubble measurement (use_bubble_width.ts).
+export const BUBBLE_SELECTOR = BUBBLE;
+export const BUBBLE_HEADER_SELECTOR = '.post__header';
+export const BUBBLE_TOOLBAR_SELECTOR = '.post-menu';
+export const BUBBLE_WIDE_HOST_CONTENT_SELECTOR = '.post-image__columns, .file-view--single, .attachment, .post__embed-container, .PostAttachmentOpenGraph';
+
+// An agent bubble hugs its content when its natural width is under this share
+// of the row (the row minus the avatar slot), and spans the row otherwise.
+export const HUG_MAX_FRACTION = 0.75;
+
+// Set by LLMBotPost on its own wrapper inside the bubble.
+export const BUBBLE_FIT_ATTRIBUTE = 'data-bubble-fit';
+export const BUBBLE_MOTION_ATTRIBUTE = 'data-bubble-motion';
 
 // The bubble the user is on: pointer over it (the toolbar is its descendant, so
 // moving onto the toolbar keeps it), keyboard focus inside it, the row's a11y
@@ -188,6 +209,31 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
     /* Keyboard focus inside a row must not clip the toolbar (the host only unclips on hover). */
     .post:focus-within {
         overflow: visible;
+    }
+
+    /*
+     * Short agent replies hug their content: LLMBotPost marks its wrapper
+     * hug or full (use_bubble_width.ts) and the bubble follows. Without :has()
+     * support the rule never matches and every bubble stays full width.
+     */
+    .post ${BUBBLE}:has([${BUBBLE_FIT_ATTRIBUTE}='hug']) {
+        flex: 0 1 auto;
+        width: fit-content;
+        max-width: calc(${HUG_MAX_FRACTION} * (100% - ${AVATAR_SLOT} - var(--spacing-xs)));
+    }
+
+    /* Width changes animate only for posts that streamed here, never on load. */
+    .post ${BUBBLE}:has([${BUBBLE_MOTION_ATTRIBUTE}='on']) {
+        interpolate-size: allow-keywords;
+        transition:
+            background var(--duration-quick) var(--ease-transition),
+            flex-grow var(--duration-moderate) var(--ease-transition),
+            width var(--duration-moderate) var(--ease-transition),
+            max-width var(--duration-moderate) var(--ease-transition);
+
+        @media (prefers-reduced-motion: reduce) {
+            transition: none;
+        }
     }
 
     /* Own messages: right-aligned, primary-colored bubble. */
