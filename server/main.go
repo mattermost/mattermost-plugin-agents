@@ -34,7 +34,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
-	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
@@ -510,7 +509,7 @@ func (p *Plugin) OnActivate() error {
 	// embedded Mattermost server is connected at every level.
 	remoteMCPAllowed := func() bool { return licenseChecker.Allows(enterprise.CapRemoteMCP) }
 	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), ensureEmbeddedMCPServer(), untrustedHTTPClient, mmClient, remoteMCPAllowed, accessChecker)
-	mcpClientManager.SetScopedSessions(scopedsession.NewPluginAPIMinter(p.API))
+	mcpClientManager.SetScopedSessions(newScopedSessionMinter(p.API, &pluginAPI.Log))
 	reinitMCP := func() {
 		mcpClientManager.ReInit(p.configuration.MCP(), ensureEmbeddedMCPServer())
 	}

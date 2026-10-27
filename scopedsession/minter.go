@@ -6,18 +6,15 @@ package scopedsession
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
-	"github.com/Masterminds/semver/v3"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // RunTTL bounds one run's scoped session. Runs revoke their session when they
 // end; the expiry is the backstop for a run that never does.
 const RunTTL = 30 * time.Minute
-
-// MinServerVersion is the first Mattermost release with CreateScopedSession.
-const MinServerVersion = "12.2.0"
 
 // Minter creates and revokes scoped sessions on the Mattermost server.
 type Minter interface {
@@ -33,8 +30,8 @@ type SessionAPI interface {
 	RevokeSession(sessionID string) *model.AppError
 }
 
-// PluginAPIMinter mints through the server plugin API. On a server without
-// CreateScopedSession the call fails, so the run fails closed.
+// PluginAPIMinter mints through the server plugin API. Only use it once Probe
+// has confirmed the server can create scoped sessions.
 type PluginAPIMinter struct {
 	api SessionAPI
 }
@@ -62,12 +59,32 @@ func (m *PluginAPIMinter) RevokeSession(sessionID string) error {
 	return nil
 }
 
-// ServerSupports reports whether a server at version can mint scoped
-// sessions. An unparseable version fails closed.
-func ServerSupports(version string) bool {
-	current, err := semver.NewVersion(version)
-	if err != nil {
-		return false
+// ErrServerUnsupported is returned by Probe when the server has no
+// CreateScopedSession.
+var ErrServerUnsupported = errors.New("this Mattermost server cannot create scoped sessions")
+
+// Probe reports whether api's server can create scoped sessions, without
+// creating one. It asks for a session with no scope, which a server that has
+// CreateScopedSession refuses as a bad request before reading anything. A
+// server without the method answers with neither a session nor an error,
+// because the plugin RPC client only logs a call to a missing method. Probe
+// returns nil only for that bad request: ErrServerUnsupported for a missing
+// method, and any other error when the answer was neither.
+func Probe(api SessionAPI) error {
+	session, appErr := api.CreateScopedSession("", nil, 0)
+	switch {
+	case session != nil:
+		err := errors.New("server created a scoped session without a scope")
+		if session.Id != "" {
+			if revokeErr := api.RevokeSession(session.Id); revokeErr != nil {
+				err = errors.Join(err, revokeErr)
+			}
+		}
+		return err
+	case appErr == nil:
+		return ErrServerUnsupported
+	case appErr.StatusCode != http.StatusBadRequest:
+		return fmt.Errorf("scoped session probe failed: %w", appErr)
 	}
-	return !current.LessThan(semver.MustParse(MinServerVersion))
+	return nil
 }

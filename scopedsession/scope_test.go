@@ -68,26 +68,6 @@ func TestContentChannels(t *testing.T) {
 	}
 }
 
-func TestServerSupports(t *testing.T) {
-	tests := []struct {
-		version   string
-		supported bool
-	}{
-		{version: "12.2.0", supported: true},
-		{version: "12.3.1", supported: true},
-		{version: "13.0.0", supported: true},
-		{version: "12.1.9", supported: false},
-		{version: "11.5.0", supported: false},
-		{version: "", supported: false},
-		{version: "not a version", supported: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.version, func(t *testing.T) {
-			assert.Equal(t, tt.supported, ServerSupports(tt.version))
-		})
-	}
-}
-
 func TestScopeFromContext(t *testing.T) {
 	scope := &model.SessionScope{Permissions: model.ScopeReadPermissions, Resources: model.SessionScopeResources{ChannelIDs: []string{"c"}}}
 	ended := NewBinding(scope)
