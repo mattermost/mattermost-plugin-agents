@@ -375,6 +375,7 @@ func (b *Builder) mintScopedRun(ctx stdcontext.Context, c *llm.Context, bot *bot
 		RequesterID:     requesterID,
 		ChannelID:       c.Channel.Id,
 		ExtraChannelIDs: cfg.ScopedExtraChannelIDs,
+		EnabledTools:    cfg.EnabledMCPTools,
 	})
 	if err != nil {
 		return nil, err

@@ -35,6 +35,8 @@ type ScopedSessionRequest struct {
 	ChannelID string
 	// ExtraChannelIDs are admin-picked channels the agent may also read.
 	ExtraChannelIDs []string
+	// EnabledTools is the agent's tool allowlist when the run was started.
+	EnabledTools []llm.EnabledMCPTool
 }
 
 // ScopedRun is one run's scoped session and the embedded MCP connection that
@@ -46,6 +48,7 @@ type ScopedRun struct {
 	session  *model.Session
 	scope    *model.SessionScope
 	binding  *scopedsession.Binding
+	enabled  []llm.EnabledMCPTool
 	clients  *UserClients
 	manager  *ClientManager
 	minter   scopedsession.Minter
@@ -77,6 +80,14 @@ func (r *ScopedRun) ExtraChannelIDs() []string {
 		return nil
 	}
 	return slices.Clone(r.scope.Resources.ChannelIDs[1:])
+}
+
+// EnabledTools returns the allowlist entries the run was started with.
+func (r *ScopedRun) EnabledTools() []llm.EnabledMCPTool {
+	if r == nil {
+		return nil
+	}
+	return slices.Clone(r.enabled)
 }
 
 // Closed reports whether the run has ended, by its owner or by revocation.
@@ -196,7 +207,7 @@ func (m *ClientManager) mintScopedSession(req ScopedSessionRequest) (*ScopedRun,
 	clients := newLocalClients(req.BotUserID, m.log, m.httpClient, m.toolsCache)
 	clients.admission = m.admission
 	clients.connCtx = scopedsession.WithBinding(context.Background(), binding)
-	run := &ScopedRun{session: session, scope: scope, binding: binding, clients: clients, manager: m, minter: minter}
+	run := &ScopedRun{session: session, scope: scope, binding: binding, enabled: slices.Clone(req.EnabledTools), clients: clients, manager: m, minter: minter}
 
 	m.scopedMu.Lock()
 	closed := m.scopedClosed
