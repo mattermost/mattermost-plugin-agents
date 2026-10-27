@@ -4,15 +4,26 @@
 import React from 'react';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
+import DotsHorizontalIcon from '@mattermost/compass-icons/components/dots-horizontal';
+import MessageTextOutlineIcon from '@mattermost/compass-icons/components/message-text-outline';
 
-import {ThreadListItem} from '@mattermost/compass-ui/components/thread-list-item';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
 import {Timestamp} from '@/mm_webapp';
 
+// No compass token for the translucent hover fill (the Agents chat header's name button uses a
+// stronger one of the same kind).
+const HOVER_PERCENT = '4%';
+
+// No compass token for the muted text strengths: the preview reads a step above the meta line.
+const PREVIEW_COLOR = 'rgba(var(--center-channel-color-rgb), 0.72)';
+const META_COLOR = 'rgba(var(--center-channel-color-rgb), 0.64)';
+
 type Props = {
 
-    // The chat's title; shown above the first message when it has one.
+    // The chat's title; the item's heading. Falls back to the first message, then a generic label.
     title: string;
 
     // The chat's first message; empty while it loads or if it is unavailable.
@@ -25,53 +36,204 @@ type Props = {
     replyCount?: number;
     onClick: () => void;
 
-    // The item's hover actions button was used; the list opens the menu next to it.
+    // The item's actions button was used; the list opens the menu next to it.
     onMenuClick: (anchor: HTMLElement) => void;
 }
 
-// A chat in the history: the compass Thread List Item, the same entry as the host's Threads view
-// (name, time, first message and reply count, with the hover actions button). The name is the
-// agent's, with its avatar; there is no tag and no participants row, as every chat is with one agent.
+// A chat in the history: the agent's avatar, then the chat's title, the start of its first message,
+// and a line of the agent's name, the time and the number of replies. The actions button shows on
+// hover and focus.
 export default function ThreadItem(props: Props) {
     const intl = useIntl();
     const title = props.title.trim();
-    const known = typeof props.replyCount === 'number';
+    const preview = props.preview.trim();
+    const heading = title || preview || intl.formatMessage({defaultMessage: 'Conversation with Agents'});
+
+    // The first message is the heading when there is no title, so it is not repeated below.
+    const body = title ? preview : '';
+    const replies = typeof props.replyCount === 'number' ? intl.formatMessage({defaultMessage: '{count, plural, one {# reply} other {# replies}}'}, {count: props.replyCount}) : '';
+    const actionsLabel = intl.formatMessage({defaultMessage: 'Chat actions'});
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            props.onClick();
+        }
+    };
+
     return (
-        <ThreadListItem
-            authorName={(
-                <AgentName>
-                    <UserAvatar
-                        src={props.agentAvatarUrl}
-                        alt=''
-                        aria-hidden='true'
-                        name={props.agentName}
-                        size='20'
-                    />
-                    {props.agentName}
-                </AgentName>
-            )}
-            {...(title ? {threadTitle: title} : {})}
-            previewText={props.preview.trim() || (title ? '' : intl.formatMessage({defaultMessage: 'Conversation with Agents'}))}
-            timestamp={(
-                <Timestamp // Matches the timestamp format in the threads view
-                    value={props.lastActivityDate}
-                    units={['now', 'minute', 'hour', 'day', 'week']}
-                    useTime={false}
-                    day={'numeric'}
+        <Item>
+            <Main
+                role='button'
+                tabIndex={0}
+                aria-label={`${heading}, ${props.agentName}`}
+                onClick={props.onClick}
+                onKeyDown={handleKeyDown}
+            >
+                <UserAvatar
+                    src={props.agentAvatarUrl}
+                    alt=''
+                    aria-hidden='true'
+                    name={props.agentName}
+                    size='40'
                 />
-            )}
-            replyCount={props.replyCount ?? 0}
-            formatReplyCount={(count) => (known ? intl.formatMessage({defaultMessage: '{count, plural, one {# reply} other {# replies}}'}, {count}) : '')}
-            participants={[]}
-            menuLabel={intl.formatMessage({defaultMessage: 'Chat actions'})}
-            onClick={props.onClick}
-            onMenuClick={(e) => props.onMenuClick(e.currentTarget)}
-        />
+                <Text>
+                    <Heading>{heading}</Heading>
+                    {body && <Preview>{body}</Preview>}
+                    <Meta>
+                        <span>{props.agentName}</span>
+                        <Dot aria-hidden='true'>{'·'}</Dot>
+                        <span>
+                            <Timestamp // Matches the timestamp format in the threads view
+                                value={props.lastActivityDate}
+                                units={['now', 'minute', 'hour', 'day', 'week']}
+                                useTime={false}
+                                day={'numeric'}
+                            />
+                        </span>
+                        {replies && (
+                            <>
+                                <Dot aria-hidden='true'>{'·'}</Dot>
+                                <Replies>
+                                    <Icon
+                                        glyph={<MessageTextOutlineIcon/>}
+                                        size='12'
+                                    />
+                                    <span aria-hidden='true'>{props.replyCount}</span>
+                                    <VisuallyHidden>{replies}</VisuallyHidden>
+                                </Replies>
+                            </>
+                        )}
+                    </Meta>
+                </Text>
+            </Main>
+            <Actions>
+                <IconButton
+                    size='small'
+                    padding='compact'
+                    icon={<Icon glyph={<DotsHorizontalIcon/>}/>}
+                    aria-label={actionsLabel}
+                    data-testid='thread-item-actions'
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        props.onMenuClick(e.currentTarget);
+                    }}
+                />
+            </Actions>
+        </Item>
     );
 }
 
-const AgentName = styled.span`
-    display: inline-flex;
+const Item = styled.div`
+    position: relative;
+    border-bottom: var(--border-default);
+    transition: background var(--duration-quick) var(--ease-transition);
+
+    &:hover,
+    &:focus-within {
+        background: color-mix(in srgb, var(--center-channel-color) ${HOVER_PERCENT}, transparent);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        transition: none;
+    }
+`;
+
+const Main = styled.div`
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-m);
+    padding: var(--spacing-l);
+    cursor: pointer;
+
+    & > :first-child {
+        flex: 0 0 auto;
+    }
+
+    &:focus-visible {
+        outline: var(--spacing-xxxxs) solid var(--focus-ring-color);
+        outline-offset: calc(-1 * var(--spacing-xxxxs));
+    }
+`;
+
+const Text = styled.div`
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: var(--spacing-xxxs);
+`;
+
+const Heading = styled.div`
+    overflow: hidden;
+    color: var(--center-channel-color);
+    font-size: var(--font-size-200);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-200);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+`;
+
+// Two lines of the first message.
+const Preview = styled.div`
+    display: -webkit-box;
+    overflow: hidden;
+    color: ${PREVIEW_COLOR};
+    font-size: var(--font-size-100);
+    line-height: var(--line-height-100);
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+`;
+
+const Meta = styled.div`
+    display: flex;
+    min-width: 0;
     align-items: center;
     gap: var(--spacing-xs);
+    color: ${META_COLOR};
+    font-size: var(--font-size-75);
+    line-height: var(--line-height-75);
+    white-space: nowrap;
+`;
+
+const Dot = styled.span`
+    flex: 0 0 auto;
+`;
+
+const Replies = styled.span`
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xxxs);
+`;
+
+// Hover (or focus) reveals the actions button at the item's top right.
+const Actions = styled.div`
+    position: absolute;
+    top: var(--spacing-s);
+    right: var(--spacing-s);
+    z-index: 1;
+    opacity: 0;
+    transition: opacity var(--duration-quick) var(--ease-transition);
+
+    ${Item}:hover &,
+    ${Item}:focus-within & {
+        opacity: 1;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        transition: none;
+    }
+`;
+
+const VisuallyHidden = styled.span`
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
 `;

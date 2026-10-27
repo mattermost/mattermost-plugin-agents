@@ -40,36 +40,6 @@ const ThreadsList = styled.div`
     min-height: 0;
     padding: var(--spacing-xs) 0;
     overflow-y: auto;
-
-    /* The compass Thread List Item's title and preview are <p>s, which the host gives a bottom margin. */
-    && [class*='thread-list-item__title'],
-    && [class*='thread-list-item__preview'] {
-        margin-bottom: 0;
-    }
-
-    /* The name row clips to 20px, which cuts off the agent's avatar: let it show in full. */
-    && [class*='thread-list-item__name-row'],
-    && [class*='thread-list-item__name-group'] {
-        height: auto;
-        min-height: var(--spacing-xl);
-        overflow: visible;
-    }
-
-    /* The reply count has no padding of its own here (the compass item pads it for its avatar group). */
-    && [class*='thread-list-item__reply-count'] {
-        padding: 0;
-    }
-
-    /* The item always has its tag slot; there is none to show (the name is the agent's). */
-    && [class*='thread-list-item__name-group'] > :not([class*='thread-list-item__author']) {
-        display: none;
-    }
-
-    /* The title keeps the body text size (compass sets it one step larger). */
-    && [class*='thread-list-item__title'] {
-        font-size: var(--font-size-100);
-        line-height: var(--line-height-100);
-    }
 `;
 
 const RhsContainer = styled.div`

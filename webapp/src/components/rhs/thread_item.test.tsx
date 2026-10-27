@@ -7,7 +7,7 @@ import {fireEvent, render, screen} from '@testing-library/react';
 import ThreadItem from './thread_item';
 
 jest.mock('@/mm_webapp', () => ({
-    Timestamp: () => null,
+    Timestamp: () => <span>{'46m ago'}</span>,
 }));
 
 jest.mock('react-intl', () => ({
@@ -22,12 +22,12 @@ const renderItem = (props: Partial<React.ComponentProps<typeof ThreadItem>> = {}
     const handlers = {onClick: jest.fn(), onMenuClick: jest.fn()};
     render(
         <ThreadItem
-            title='Survival tips'
-            preview='Can you give me some survival tips'
-            agentName='Wilson'
+            title='Mattermost selling features overview'
+            preview='Key selling points: self-hosted and air-gapped deployment'
+            agentName='Matty'
             agentAvatarUrl='/users/bot/image'
             lastActivityDate={0}
-            replyCount={1}
+            replyCount={15}
             {...handlers}
             {...props}
         />,
@@ -36,25 +36,24 @@ const renderItem = (props: Partial<React.ComponentProps<typeof ThreadItem>> = {}
 };
 
 describe('ThreadItem', () => {
-    test('is the compass Thread List Item with the agent as its name: avatar, no tag, no participants', () => {
+    test('shows the agent\'s avatar, the chat title and first message, and a meta line with the agent, time and replies', () => {
         renderItem();
 
-        // The agent's name leads the item (its avatar is decorative); the title, message and reply count follow.
-        expect(screen.getByText('Wilson')).toBeTruthy();
-        expect(screen.getByText('Survival tips')).toBeTruthy();
-        expect(screen.getByText('Can you give me some survival tips')).toBeTruthy();
-        expect(screen.getByText('1 reply')).toBeTruthy();
         expect(document.querySelector('img[src="/users/bot/image"]')).toBeTruthy();
+        expect(screen.getByText('Mattermost selling features overview')).toBeTruthy();
+        expect(screen.getByText('Key selling points: self-hosted and air-gapped deployment')).toBeTruthy();
+        expect(screen.getByText('Matty')).toBeTruthy();
+        expect(screen.getByText('46m ago')).toBeTruthy();
 
-        // No participants row (so no second avatar and no group label).
-        expect(screen.queryByRole('group')).toBeNull();
-        expect(screen.queryByText(/participant/i)).toBeNull();
+        // The count shows as a number; screen readers get the full phrase.
+        expect(screen.getByText('15')).toBeTruthy();
+        expect(screen.getByText('15 replies')).toBeTruthy();
     });
 
     test.each([
+        {replyCount: 1, text: '1 reply'},
         {replyCount: 0, text: '0 replies'},
-        {replyCount: 4, text: '4 replies'},
-    ])('pluralizes $replyCount replies', ({replyCount, text}) => {
+    ])('$text', ({replyCount, text}) => {
         renderItem({replyCount});
 
         expect(screen.getByText(text)).toBeTruthy();
@@ -68,32 +67,26 @@ describe('ThreadItem', () => {
     });
 
     test.each([
-        {name: 'a title is shown above the message', title: 'Survival tips', preview: 'First message', expected: ['Survival tips', 'First message']},
-        {name: 'a blank title is not shown', title: '  ', preview: 'First message', expected: ['First message']},
-    ])('$name', ({title, preview, expected}) => {
+        {name: 'a title leads and the message follows', title: 'A title', preview: 'First message', texts: ['A title', 'First message'], absent: []},
+        {name: 'the first message heads an untitled chat and is not repeated', title: '  ', preview: 'First message', texts: ['First message'], absent: []},
+        {name: 'a generic label heads a chat with neither', title: '', preview: '', texts: ['Conversation with Agents'], absent: []},
+    ])('$name', ({title, preview, texts}) => {
         renderItem({title, preview});
 
-        expected.forEach((text) => expect(screen.getByText(text)).toBeTruthy());
-        expect(screen.queryByText('Conversation with Agents')).toBeNull();
-    });
-
-    test('falls back to a generic label with neither a title nor a message', () => {
-        renderItem({title: '', preview: ''});
-
-        expect(screen.getByText('Conversation with Agents')).toBeTruthy();
+        texts.forEach((text) => expect(screen.getAllByText(text)).toHaveLength(1));
     });
 
     test('opens the chat on click and from the keyboard', () => {
         const {onClick} = renderItem();
 
-        const item = screen.getByRole('button', {name: /Survival tips/});
+        const item = screen.getByRole('button', {name: 'Mattermost selling features overview, Matty'});
         fireEvent.click(item);
         fireEvent.keyDown(item, {key: 'Enter'});
 
         expect(onClick).toHaveBeenCalledTimes(2);
     });
 
-    test('the hover actions button asks the list to open its menu next to it, without opening the chat', () => {
+    test('the actions button asks the list to open its menu next to it, without opening the chat', () => {
         const {onClick, onMenuClick} = renderItem();
 
         const button = screen.getByRole('button', {name: 'Chat actions'});
