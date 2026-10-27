@@ -1,4 +1,6 @@
-import { test, expect, Locator, Page } from '@playwright/test';
+import { expect, Locator, Page } from '@playwright/test';
+
+import { containerTest } from 'helpers/container-fixture';
 
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
@@ -25,6 +27,14 @@ const REPLY_MARKDOWN = [
     '- [Town Square](/test/channels/town-square)',
 ].join('\n');
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunAIMockContainer({
+        config: { allowUnsafeLinks: true },
+    }));
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
@@ -50,17 +60,8 @@ async function askForLinks(page: Page): Promise<Locator> {
 }
 
 test.describe.serial('AI-generated link domain allowlist', () => {
-    test.beforeAll(async () => {
-        test.setTimeout(240000);
-        mattermost = await RunAIMockContainer({
-            config: { allowUnsafeLinks: true },
-        });
-        openAIMock = await RunOpenAIMocks(mattermost.network);
-    });
-
-    test.afterAll(async () => {
-        await openAIMock?.stop();
-        await mattermost?.stop();
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test('keeps allowlisted links clickable and renders others as plain text', async ({ page }) => {
