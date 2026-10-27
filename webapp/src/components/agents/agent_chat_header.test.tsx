@@ -81,10 +81,13 @@ const renderHeader = (props: Partial<React.ComponentProps<typeof AgentChatHeader
     return handlers;
 };
 
+const menuItems = () => screen.getAllByRole('menuitem').map((item) => item.textContent);
 const openMenu = () => fireEvent.click(screen.getByTestId('agent-chat-menu-button'));
 const openActions = async () => {
     await waitFor(() => expect(mockGetThreads).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('button', {name: 'Chat actions'}));
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    openMenu();
+    await waitFor(() => expect(menuItems()).toContain('Older chat'));
 };
 
 // The menu stays mounted (and its focus manager hides the rest) until its exit animation ends.
@@ -92,7 +95,6 @@ const clickItem = async (name: string) => {
     fireEvent.click(screen.getAllByRole('menuitem', {name})[0]);
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
 };
-const menuItems = () => screen.getAllByRole('menuitem').map((item) => item.textContent);
 
 describe('AgentChatHeader', () => {
     beforeEach(() => {
@@ -146,15 +148,81 @@ describe('AgentChatHeader', () => {
         expect(document.querySelector('header[aria-label="Matty"] img[src="/users/bot1/image"]')).toBeTruthy();
     });
 
+    const CHATS = ['Listed chat', 'Quarterly plan', 'New chat', 'Older chat'];
     test.each([
-        {name: 'new chat, no edit access', props: {}, expected: ['View all agents']},
-        {name: 'new chat, can edit', props: {onOpenSettings: jest.fn()}, expected: ['Agent settings', 'View all agents']},
-        {name: 'open chat, no edit access', props: {rootId: 'root1'}, expected: ['New chat', 'Rename chat', 'Archive chat', 'View all agents']},
-        {name: 'open chat, can edit', props: {rootId: 'root1', onOpenSettings: jest.fn()}, expected: ['New chat', 'Rename chat', 'Archive chat', 'Agent settings', 'View all agents']},
-    ])('name menu items: $name', ({props, expected}) => {
+        {name: 'new chat, no edit access', props: {}, expected: [...CHATS, 'View all agents']},
+        {name: 'new chat, can edit', props: {onOpenSettings: jest.fn()}, expected: [...CHATS, 'Agent settings', 'View all agents']},
+        {name: 'open chat, no edit access', props: {rootId: 'root1'}, expected: [...CHATS, 'New chat', 'Rename chat', 'Archive chat', 'View all agents']},
+        {name: 'open chat, can edit', props: {rootId: 'root1', onOpenSettings: jest.fn()}, expected: [...CHATS, 'New chat', 'Rename chat', 'Archive chat', 'Agent settings', 'View all agents']},
+    ])('name menu items, chats first: $name', async ({props, expected}) => {
         renderHeader(props);
-        openMenu();
+        await openActions();
         expect(menuItems()).toEqual(expected);
+        expect(screen.getByRole('group', {name: 'Recent chats'})).toBeTruthy();
+    });
+
+    test('name menu marks the active chat and selecting another chat opens it', async () => {
+        renderHeader({rootId: 'root1'});
+        await openActions();
+        const active = screen.getAllByRole('menuitem').filter((item) => item.getAttribute('aria-current') === 'true');
+        expect(active.map((item) => item.textContent)).toEqual(['Quarterly plan']);
+        await clickItem('Quarterly plan');
+        expect(mockPush).not.toHaveBeenCalled();
+
+        openMenu();
+        await clickItem('Older chat');
+        expect(mockPush).toHaveBeenCalledWith(expect.stringMatching(/\/chat\/bot1\/old$/));
+    });
+
+    test('name menu omits the chats group when the agent has no chats', async () => {
+        mockGetThreads.mockResolvedValue([]);
+        renderHeader({rootId: 'root1'});
+        await waitFor(() => expect(mockGetThreads).toHaveBeenCalled());
+        openMenu();
+        expect(screen.queryByRole('group', {name: 'Recent chats'})).toBeNull();
+        expect(menuItems()).toEqual(['New chat', 'Rename chat', 'Archive chat', 'View all agents']);
+    });
+
+    test('name menu opens with the keyboard-reachable button and Escape returns focus', async () => {
+        renderHeader({rootId: 'root1'});
+        const trigger = screen.getByTestId('agent-chat-menu-button');
+        trigger.focus();
+        openMenu();
+        expect(trigger.getAttribute('aria-expanded')).toBe('true');
+        fireEvent.keyDown(screen.getByRole('menu'), {key: 'Escape'});
+        await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+        expect(trigger.getAttribute('aria-expanded')).toBe('false');
+        await waitFor(() => expect(document.activeElement).toBe(trigger));
+    });
+
+    describe('new chat button', () => {
+        test.each([
+            {name: 'start state', props: {}, disabled: true},
+            {name: 'established chat', props: {rootId: 'root1'}, disabled: false},
+        ])('label and enabled state: $name', ({props, disabled}) => {
+            renderHeader(props);
+            const button = screen.getByRole('button', {name: 'New chat'}) as HTMLButtonElement;
+            expect(button.getAttribute('data-testid')).toBe('agent-chat-new-chat-button');
+            expect(button.disabled).toBe(disabled);
+        });
+
+        test('calls onNewChat in an established chat and is inert in the start state', () => {
+            const {onNewChat} = renderHeader({rootId: 'root1'});
+            fireEvent.click(screen.getByTestId('agent-chat-new-chat-button'));
+            expect(onNewChat).toHaveBeenCalledTimes(1);
+        });
+
+        test('does nothing when clicked in the start state', () => {
+            const {onNewChat} = renderHeader();
+            fireEvent.click(screen.getByTestId('agent-chat-new-chat-button'));
+            expect(onNewChat).not.toHaveBeenCalled();
+        });
+
+        test('the old actions menu button is gone', () => {
+            renderHeader({rootId: 'root1'});
+            expect(screen.queryByTestId('agent-chat-actions-button')).toBeNull();
+            expect(screen.queryByRole('button', {name: 'Chat actions'})).toBeNull();
+        });
     });
 
     test.each([
@@ -217,60 +285,6 @@ describe('AgentChatHeader', () => {
         openMenu();
         await clickItem('View all agents');
         expect(mockPush).toHaveBeenCalledWith(expect.stringMatching(/\/agents\/all$/));
-    });
-
-    test('actions menu lists this agent\'s DM chats newest first with placeholders and the active one marked', async () => {
-        renderHeader({rootId: 'root1'});
-        await openActions();
-        await waitFor(() => expect(menuItems()).toContain('Quarterly plan'));
-        expect(menuItems()).toEqual([
-            'New chat', 'View all agents',
-            'Listed chat', 'Quarterly plan', 'New chat', 'Older chat',
-            'Rename chat', 'Archive chat',
-        ]);
-        const active = screen.getAllByRole('menuitem').filter((item) => item.getAttribute('aria-current') === 'true');
-        expect(active.map((item) => item.textContent)).toEqual(['Quarterly plan']);
-    });
-
-    test('selecting another chat opens it; selecting the active one does nothing', async () => {
-        renderHeader({rootId: 'root1'});
-        await openActions();
-        await clickItem('Quarterly plan');
-        expect(mockPush).not.toHaveBeenCalled();
-
-        fireEvent.click(screen.getByTestId('agent-chat-actions-button'));
-        await clickItem('Older chat');
-        expect(mockPush).toHaveBeenCalledWith(expect.stringMatching(/\/chat\/bot1\/old$/));
-    });
-
-    test('actions menu New chat and View all agents', async () => {
-        const {onNewChat} = renderHeader({rootId: 'root1'});
-        await openActions();
-        await clickItem('View all agents');
-        expect(mockPush).toHaveBeenCalledWith(expect.stringMatching(/\/agents\/all$/));
-
-        fireEvent.click(screen.getByTestId('agent-chat-actions-button'));
-        await clickItem('New chat');
-        expect(onNewChat).toHaveBeenCalledTimes(1);
-    });
-
-    test.each([
-        {name: 'new chat state', props: {}, reply: true},
-        {name: 'thread without a known conversation id', props: {rootId: 'root1'}, reply: false},
-    ])('Rename and Archive are disabled: $name', async ({props, reply}) => {
-        renderHeader(props, reply);
-        await openActions();
-        for (const name of ['Rename chat', 'Archive chat']) {
-            expect((screen.getByRole('menuitem', {name}) as HTMLButtonElement).disabled).toBe(true);
-        }
-    });
-
-    test('rename and archive are enabled for a confirmed thread', async () => {
-        renderHeader({rootId: 'root1'});
-        await openActions();
-        for (const name of ['Rename chat', 'Archive chat']) {
-            expect((screen.getByRole('menuitem', {name}) as HTMLButtonElement).disabled).toBe(false);
-        }
     });
 
     test.each([
