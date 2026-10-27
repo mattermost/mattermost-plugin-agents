@@ -24,7 +24,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
-	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -920,7 +919,6 @@ func (r *scopedPolicyRecorder) auditRecords(event string) []*model.AuditRecord {
 func (env *policyEnv) enableScopedSessions(t *testing.T) *scopedPolicyRecorder {
 	t.Helper()
 	rec := &scopedPolicyRecorder{minter: &scopedTestMinter{}}
-	env.mockAPI.On("GetServerVersion").Return(scopedsession.MinServerVersion).Maybe()
 	env.mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
 	env.mockAPI.On("HasPermissionToChannel", mock.Anything, mock.Anything, model.PermissionReadChannel).Return(true).Maybe()
 	env.mockAPI.On("LogAuditRec", mock.Anything).Run(func(args mock.Arguments) {

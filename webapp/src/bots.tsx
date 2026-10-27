@@ -93,6 +93,11 @@ export async function fetchAndStoreBots(dispatch: Dispatch): Promise<LLMBot[] | 
         htmlArtifactsEnabled: Boolean(response.htmlArtifactsEnabled),
     });
 
+    dispatch({
+        type: 'SET_SCOPED_SESSIONS_SUPPORTED',
+        scopedSessionsSupported: Boolean(response.scopedSessionsSupported),
+    });
+
     return response.bots;
 }
 

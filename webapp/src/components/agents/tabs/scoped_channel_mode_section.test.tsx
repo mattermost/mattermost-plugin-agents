@@ -5,7 +5,7 @@ import React from 'react';
 import {fireEvent, render, screen} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
-import {serverSupportsScopedSessions, useServerSupportsScopedSessions} from '@/hooks/use_server_supports_scoped_sessions';
+import {useServerSupportsScopedSessions} from '@/hooks/use_server_supports_scoped_sessions';
 
 import ScopedChannelModeSection from './scoped_channel_mode_section';
 
@@ -18,7 +18,6 @@ jest.mock('react-intl', () => {
 });
 
 jest.mock('@/hooks/use_server_supports_scoped_sessions', () => ({
-    ...jest.requireActual('@/hooks/use_server_supports_scoped_sessions'),
     useServerSupportsScopedSessions: jest.fn(() => true),
 }));
 
@@ -36,7 +35,7 @@ jest.mock('@/components/select', () => ({
 const mockedServerSupport = useServerSupportsScopedSessions as unknown as jest.Mock;
 
 const toggleName = /^Run tools in channels without asking/;
-const unsupportedNotice = /needs Mattermost Server 12.2 or later/;
+const unsupportedNotice = /^This setting needs a Mattermost server version that supports scoped sessions/;
 const allowlistNotice = /turn off "Automatically enable all MCP tools"/;
 const allToolsNotice = /^To use this setting, replace the servers granted with all of their tools/;
 const allToolsWarning = /^Pick each tool by name/;
@@ -83,17 +82,21 @@ describe('ScopedChannelModeSection', () => {
     });
 
     test.each([
-        {name: 'agent managers', opts: {editable: false}, notice: null},
-        {name: 'older servers', server: false, opts: {}, notice: unsupportedNotice},
-        {name: 'agents that enable every MCP tool', opts: {autoEnableNewMCPTools: true}, notice: allowlistNotice},
-        {name: 'agents granted all tools of a server', opts: {hasAllToolsGrants: true}, notice: allToolsNotice},
+        {name: 'agent managers', server: true, opts: {editable: false}, notice: null},
+        {name: 'servers that cannot create scoped sessions', server: false, opts: {}, notice: unsupportedNotice},
+        {name: 'admins before the server support is known', server: null, opts: {}, notice: null},
+        {name: 'agents that enable every MCP tool', server: true, opts: {autoEnableNewMCPTools: true}, notice: allowlistNotice},
+        {name: 'agents granted all tools of a server', server: true, opts: {hasAllToolsGrants: true}, notice: allToolsNotice},
     ])('$name cannot turn it on', ({server, opts, notice}) => {
-        mockedServerSupport.mockReturnValue(server ?? true);
+        mockedServerSupport.mockReturnValue(server);
         const {toggle} = renderSection(opts);
 
         expect(toggle.disabled).toBe(true);
         if (notice) {
             expect(screen.getByText(notice)).not.toBeNull();
+        }
+        if (notice !== unsupportedNotice) {
+            expect(screen.queryByText(unsupportedNotice)).toBeNull();
         }
     });
 
@@ -123,23 +126,5 @@ describe('ScopedChannelModeSection', () => {
         renderSection({scopedChannelMode: true});
 
         expect(screen.queryByText(extrasWarning)).toBeNull();
-    });
-});
-
-describe('serverSupportsScopedSessions', () => {
-    test.each([
-        ['12.2.0', true],
-        ['12.2.1', true],
-        ['12.10.0', true],
-        ['13.0.0', true],
-        ['12.3.0-rc1', true],
-        ['12.2.0+build.5', true],
-        ['12.2.0-rc1', false],
-        ['12.1.9', false],
-        ['11.9.0', false],
-        ['', false],
-        ['dev', false],
-    ])('%s => %s', (version, expected) => {
-        expect(serverSupportsScopedSessions(version)).toBe(expected);
     });
 });

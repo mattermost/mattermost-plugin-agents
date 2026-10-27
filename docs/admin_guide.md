@@ -855,7 +855,7 @@ Requirements, checked when the setting is saved and again on every turn:
 - **Use service accounts for authentication** is on. Turning it off also turns this setting off and clears the additional channels.
 - **Automatically enable all MCP tools** is off, and every MCP tool is picked by name: a server cannot be granted with all of its tools. A legacy all-tools grant gives the agent none of that server's tools in channel turns.
 - **Enable Channel Mention Tool Calling** is on in the plugin settings.
-- Mattermost Server 12.2 or later, and an Enterprise license.
+- A Mattermost server version that can create scoped sessions, and an Enterprise license. The plugin checks this on each server node when it starts; on a server that cannot, the setting cannot be turned on and agents that have it run with the usual approval flow.
 
 When a requirement stops holding, channel turns fall back to the requesting user's permissions with the usual approval flow, and live scoped sessions for that agent are revoked on every node. The same happens when you remove an additional channel or a tool from the agent, so a removed tool stops running at once. If the server cannot create a session, the turn runs without MCP tools rather than with anyone else's credentials.
 

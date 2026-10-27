@@ -586,6 +586,10 @@ func (m *testMCPClientManager) MintScopedSession(ctx context.Context, req mcp.Sc
 	return m.scoped.MintScopedSession(ctx, req)
 }
 
+func (m *testMCPClientManager) ScopedSessionsAvailable() bool {
+	return m.scoped != nil && m.scoped.ScopedSessionsAvailable()
+}
+
 func (m *testMCPClientManager) GetToolsWithSelection(_ context.Context, req mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	if m.onGetTools != nil {
 		m.onGetTools()

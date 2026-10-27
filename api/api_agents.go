@@ -24,7 +24,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
-	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -373,8 +372,8 @@ func (a *API) checkScopedChannelMode(c *gin.Context, proposed llm.BotConfig, pre
 	if prev != nil {
 		stored = *prev
 	}
-	if proposed.ScopedChannelMode && !stored.ScopedChannelMode && !scopedsession.ServerSupports(a.pluginAPI.System.GetServerVersion()) {
-		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("scoped channel mode requires Mattermost server %s or later", scopedsession.MinServerVersion))
+	if proposed.ScopedChannelMode && !stored.ScopedChannelMode && !a.contextBuilder.ServerSupportsScopedSessions() {
+		abortAgentRequest(c, http.StatusBadRequest, errors.New("scoped channel mode requires a Mattermost server that can create scoped sessions"))
 		return false
 	}
 	for _, channelID := range proposed.ScopedExtraChannelIDs {

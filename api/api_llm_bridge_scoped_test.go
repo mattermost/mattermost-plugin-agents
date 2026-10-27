@@ -20,7 +20,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/public/bridgeclient"
-	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -88,14 +87,14 @@ func TestBridgeScopedAgentCompletion(t *testing.T) {
 	dmChannel := &model.Channel{Id: model.NewId(), Type: model.ChannelTypeDirect}
 
 	tests := []struct {
-		name          string
-		channelID     string
-		allowedTools  []string
-		serverVersion string
-		wantStatus    int
-		wantErr       string
-		wantScoped    bool
-		wantUnscoped  bool
+		name         string
+		channelID    string
+		allowedTools []string
+		noScoped     bool
+		wantStatus   int
+		wantErr      string
+		wantScoped   bool
+		wantUnscoped bool
 	}{
 		{
 			name:         "no channel_id",
@@ -121,12 +120,12 @@ func TestBridgeScopedAgentCompletion(t *testing.T) {
 			wantUnscoped: true,
 		},
 		{
-			name:          "server without scoped sessions refuses tools",
-			channelID:     publicChannel.Id,
-			allowedTools:  []string{"jira__get_issue"},
-			serverVersion: "12.1.0",
-			wantStatus:    http.StatusForbidden,
-			wantErr:       "scoped channel mode is not available",
+			name:         "server without scoped sessions refuses tools",
+			channelID:    publicChannel.Id,
+			allowedTools: []string{"jira__get_issue"},
+			noScoped:     true,
+			wantStatus:   http.StatusForbidden,
+			wantErr:      "scoped channel mode is not available",
 		},
 		{
 			name:         "private channel the user cannot read",
@@ -145,11 +144,6 @@ func TestBridgeScopedAgentCompletion(t *testing.T) {
 			e := SetupTestEnvironment(t)
 			defer e.Cleanup(t)
 
-			serverVersion := tt.serverVersion
-			if serverVersion == "" {
-				serverVersion = scopedsession.MinServerVersion
-			}
-			e.mockAPI.On("GetServerVersion").Return(serverVersion).Maybe()
 			e.mockAPI.On("GetChannel", publicChannel.Id).Return(publicChannel, nil).Maybe()
 			e.mockAPI.On("GetChannel", dmChannel.Id).Return(dmChannel, nil).Maybe()
 			e.mockAPI.On("GetChannel", unreadableChannel.Id).Return(unreadableChannel, nil).Maybe()
@@ -161,7 +155,9 @@ func TestBridgeScopedAgentCompletion(t *testing.T) {
 			minter := &scopedBridgeMinter{}
 			manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, e.client.Log, e.client, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
 			t.Cleanup(manager.Close)
-			manager.SetScopedSessions(minter)
+			if !tt.noScoped {
+				manager.SetScopedSessions(minter)
+			}
 			catalog := &scopedBridgeCatalog{ClientManager: manager}
 			e.api.contextBuilder = llmcontext.NewLLMContextBuilder(e.client, &testLLMContextToolProvider{}, catalog, scopedBridgeConfig{channelToolCalling: true})
 
@@ -235,7 +231,6 @@ func TestBridgeScopedRunStopsAutoRunningWhenRevoked(t *testing.T) {
 			defer e.Cleanup(t)
 
 			channel := &model.Channel{Id: model.NewId(), TeamId: model.NewId(), Type: model.ChannelTypeOpen}
-			e.mockAPI.On("GetServerVersion").Return(scopedsession.MinServerVersion).Maybe()
 			e.mockAPI.On("GetChannel", channel.Id).Return(channel, nil).Maybe()
 			e.mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: channel.TeamId}, nil).Maybe()
 			e.mockAPI.On("HasPermissionToChannel", testUserID, mock.Anything, mock.Anything).Return(true).Maybe()
