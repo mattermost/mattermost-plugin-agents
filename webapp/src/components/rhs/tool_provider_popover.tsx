@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState, useCallback, useEffect} from 'react';
+import React, {useState, useCallback, useEffect, useRef} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {ChevronDownIcon, RefreshIcon} from '@mattermost/compass-icons/components';
@@ -25,7 +25,7 @@ import {ToggleSwitch} from '../toggle_switch';
 
 export type {UserMCPServerInfo};
 
-type ToolProviderPopoverProps = {
+export type ToolProviderPopoverProps = {
     disabledServers: string[];
     onDisabledServersChange: (servers: string[]) => void;
     preloadedServers?: UserMCPServerInfo[];
@@ -48,12 +48,34 @@ function filterServersByEnabledTools(
     return servers.filter((s) => allowedOrigins.has(s.serverOrigin));
 }
 
-const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloadedServers, enabledMCPTools, autoEnableNewMCPTools}: ToolProviderPopoverProps) => {
-    const intl = useIntl();
+export type UseToolProvidersArgs = ToolProviderPopoverProps;
+
+export interface ToolProviders {
+
+    // Servers the agent may use (see filterServersByEnabledTools).
+    servers: UserMCPServerInfo[];
+    loading: boolean;
+
+    // Set when the last fetch failed; cleared by the next successful one.
+    error: boolean;
+    remoteMcpLicensed: boolean;
+    fetchServers: (opts?: {showLoading?: boolean; forceRefresh?: boolean}) => Promise<void>;
+
+    // Optimistic; reverts and resolves false when the preference save fails.
+    toggle: (serverOrigin: string, enabled: boolean) => Promise<boolean>;
+    connect: (authURL: string) => void;
+
+    // Resolves false when the disconnect fails.
+    disconnect: (serverName: string) => Promise<boolean>;
+}
+
+// The tool provider data and actions behind ToolProviderPopover, shared with
+// the agent chat composer's "+" menu so both behave the same.
+export function useToolProviders({disabledServers, onDisabledServersChange, preloadedServers, enabledMCPTools, autoEnableNewMCPTools}: UseToolProvidersArgs): ToolProviders {
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
     const [allServers, setAllServers] = useState<UserMCPServerInfo[]>(preloadedServers || []);
     const [loading, setLoading] = useState(false);
-    const refreshLabel = intl.formatMessage({defaultMessage: 'Refresh tool providers'});
+    const [error, setError] = useState(false);
 
     useEffect(() => {
         if (preloadedServers && preloadedServers.length > 0) {
@@ -63,18 +85,28 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
 
     const servers = filterServersByEnabledTools(allServers, enabledMCPTools, autoEnableNewMCPTools);
 
+    // Only the latest fetch may write, so a slow earlier response never
+    // overwrites a newer list.
+    const latestFetch = useRef(0);
     const fetchServers = useCallback(async (opts: {showLoading?: boolean; forceRefresh?: boolean} = {showLoading: true}) => {
+        const id = ++latestFetch.current;
         if (opts.showLoading) {
             setLoading(true);
         }
         try {
             const response = opts.forceRefresh ? await refreshUserMCPTools() : await getUserMCPTools();
-            setAllServers(response.servers);
-        } catch (error) {
+            if (id === latestFetch.current) {
+                setAllServers(response.servers);
+                setError(false);
+            }
+        } catch (e) {
             // eslint-disable-next-line no-console
-            console.error('Failed to fetch MCP tools for RHS popover:', error);
+            console.error('Failed to fetch MCP tools for RHS popover:', e);
+            if (id === latestFetch.current) {
+                setError(true);
+            }
         } finally {
-            if (opts.showLoading) {
+            if (opts.showLoading && id === latestFetch.current) {
                 setLoading(false);
             }
         }
@@ -84,7 +116,7 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
         fetchServers({showLoading: false});
     }, [fetchServers]));
 
-    const handleToggle = useCallback(async (serverOrigin: string, enabled: boolean) => {
+    const toggle = useCallback(async (serverOrigin: string, enabled: boolean) => {
         let updatedDisabled: string[];
         if (enabled) {
             updatedDisabled = disabledServers.filter((s) => s !== serverOrigin);
@@ -95,25 +127,43 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
 
         try {
             await updateUserToolPreferences({disabled_servers: updatedDisabled});
+            return true;
         } catch {
             // Revert on error
             onDisabledServersChange(disabledServers);
+            return false;
         }
     }, [disabledServers, onDisabledServersChange]);
 
-    const handleConnect = useCallback((authURL: string) => {
+    const connect = useCallback((authURL: string) => {
         window.open(authURL, '_blank', 'noopener,noreferrer');
     }, []);
 
-    const handleDisconnect = useCallback(async (serverName: string) => {
+    const disconnect = useCallback(async (serverName: string) => {
         try {
             await disconnectMCPOAuth(serverName);
             await fetchServers();
-        } catch (error) {
+            return true;
+        } catch (e) {
             // eslint-disable-next-line no-console
-            console.error(`Failed to disconnect MCP OAuth for ${serverName}:`, error);
+            console.error(`Failed to disconnect MCP OAuth for ${serverName}:`, e);
+            return false;
         }
     }, [fetchServers]);
+
+    return {servers, loading, error, remoteMcpLicensed, fetchServers, toggle, connect, disconnect};
+}
+
+const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloadedServers, enabledMCPTools, autoEnableNewMCPTools}: ToolProviderPopoverProps) => {
+    const intl = useIntl();
+    const refreshLabel = intl.formatMessage({defaultMessage: 'Refresh tool providers'});
+    const {servers, loading, remoteMcpLicensed, fetchServers, toggle: handleToggle, connect: handleConnect, disconnect: handleDisconnect} = useToolProviders({
+        disabledServers,
+        onDisabledServersChange,
+        preloadedServers,
+        enabledMCPTools,
+        autoEnableNewMCPTools,
+    });
 
     return (
         <DotMenu

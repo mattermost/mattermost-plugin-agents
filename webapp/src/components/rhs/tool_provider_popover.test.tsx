@@ -2,12 +2,12 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {act, fireEvent, render, renderHook, screen, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import {getUserMCPTools, refreshUserMCPTools, updateUserToolPreferences} from '@/client';
 
-import ToolProviderPopover, {UserMCPServerInfo} from './tool_provider_popover';
+import ToolProviderPopover, {UserMCPServerInfo, useToolProviders} from './tool_provider_popover';
 
 jest.mock('@/client', () => ({
     disconnectMCPOAuth: jest.fn(),
@@ -213,5 +213,68 @@ describe('ToolProviderPopover', () => {
         const toggle = screen.getByRole('switch');
         expect((toggle as HTMLInputElement).checked).toBe(true);
         expect((toggle as HTMLInputElement).disabled).toBe(false);
+    });
+});
+
+describe('useToolProviders', () => {
+    const hookArgs = {disabledServers: [], onDisabledServersChange: jest.fn(), autoEnableNewMCPTools: true};
+
+    afterEach(() => {
+        jest.clearAllMocks();
+    });
+
+    test('a slow earlier fetch never overwrites a newer one', async () => {
+        let resolveSlow!: (value: {servers: UserMCPServerInfo[]}) => void;
+        mockGetUserMCPTools.mockReturnValueOnce(new Promise((resolve) => {
+            resolveSlow = resolve;
+        }));
+        mockRefreshUserMCPTools.mockResolvedValueOnce({servers: [refreshedServer]});
+        const {result} = renderHook(() => useToolProviders(hookArgs));
+
+        let slow!: Promise<void>;
+        act(() => {
+            slow = result.current.fetchServers();
+        });
+        await act(() => result.current.fetchServers({showLoading: true, forceRefresh: true}));
+        await act(async () => {
+            resolveSlow({servers: [initialServer]});
+            await slow;
+        });
+
+        expect(result.current.servers).toEqual([refreshedServer]);
+        expect(result.current.loading).toBe(false);
+    });
+
+    test.each([
+        {name: 'a failed fetch sets error until a later one succeeds', fail: true},
+        {name: 'a successful fetch leaves error unset', fail: false},
+    ])('$name', async ({fail}) => {
+        if (fail) {
+            mockGetUserMCPTools.mockRejectedValueOnce(new Error('down'));
+        }
+        mockGetUserMCPTools.mockResolvedValue({servers: [initialServer]});
+        jest.spyOn(console, 'error').mockImplementation(() => null);
+        const {result} = renderHook(() => useToolProviders(hookArgs));
+
+        await act(() => result.current.fetchServers());
+        expect(result.current.error).toBe(fail);
+
+        await act(() => result.current.fetchServers());
+        expect(result.current.error).toBe(false);
+        expect(result.current.servers).toEqual([initialServer]);
+    });
+
+    test('toggle reverts and resolves false when the save fails', async () => {
+        mockUpdateUserToolPreferences.mockRejectedValueOnce(new Error('nope'));
+        const onDisabledServersChange = jest.fn();
+        const {result} = renderHook(() => useToolProviders({...hookArgs, onDisabledServersChange}));
+
+        let saved = true;
+        await act(async () => {
+            saved = await result.current.toggle(initialServer.serverOrigin, false);
+        });
+
+        expect(saved).toBe(false);
+        expect(onDisabledServersChange.mock.calls).toEqual([[[initialServer.serverOrigin]], [[]]]);
     });
 });

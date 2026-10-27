@@ -1518,3 +1518,94 @@ export async function renderCustomPrompt(id: string, channelId?: string, botId?:
         url,
     });
 }
+
+// The core server's composer rewrite actions (server/public/model/post.go
+// RewriteAction), the same list the host composer's AI Rewrite menu offers.
+export type RewriteAction = 'shorten' | 'elaborate' | 'improve_writing' | 'fix_spelling' | 'simplify' | 'summarize' | 'custom';
+
+// Reads a core server AppError body ({id, message}). Only the translated
+// summary is kept; detailed_error never reaches the UI.
+async function readAppError(response: Response): Promise<{message: string; server_error_id?: string}> {
+    try {
+        const data: unknown = await response.json();
+        if (data !== null && typeof data === 'object') {
+            const {message, id} = data as {message?: unknown; id?: unknown};
+            return {
+                message: typeof message === 'string' ? message : '',
+                ...(typeof id === 'string' && id ? {server_error_id: id} : {}),
+            };
+        }
+    } catch {
+        // Empty or non-JSON body: the caller applies its own fallback text.
+    }
+    return {message: ''};
+}
+
+// Rewrites composer text through the core server's AI rewrite route (the call
+// the host composer makes, Client4.getAIRewrittenMessage), which completes
+// through this plugin's LLM bridge with the given agent. rootId adds the
+// thread as context.
+export async function rewriteMessage(
+    agentId: string,
+    message: string,
+    action: RewriteAction,
+    opts: {customPrompt?: string; rootId?: string; signal?: AbortSignal} = {},
+): Promise<string> {
+    const body: {agent_id: string; message: string; action: RewriteAction; custom_prompt?: string; root_id?: string} = {
+        agent_id: agentId,
+        message,
+        action,
+    };
+    if (opts.customPrompt) {
+        body.custom_prompt = opts.customPrompt;
+    }
+    if (opts.rootId) {
+        body.root_id = opts.rootId;
+    }
+    const url = `${Client4.getPostsRoute()}/rewrite`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify(body),
+        signal: opts.signal,
+    }));
+
+    if (response.ok) {
+        const data = await response.json() as {rewritten_text?: unknown};
+        if (typeof data?.rewritten_text !== 'string') {
+            throw new ClientError(Client4.url, {message: '', status_code: response.status, url});
+        }
+        return data.rewritten_text;
+    }
+
+    const err = await readAppError(response);
+    throw new ClientError(Client4.url, {
+        message: err.message,
+        server_error_id: err.server_error_id,
+        status_code: response.status,
+        url,
+    });
+}
+
+// Whether the core server can reach this plugin's LLM bridge, which the host
+// checks (useGetAgentsBridgeEnabled) before offering AI Rewrite.
+export async function getAgentsBridgeStatus(): Promise<{available: boolean; reason?: string}> {
+    const url = `${Client4.getAgentsRoute()}/status`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        const data = await response.json() as {available?: unknown; reason?: unknown};
+        return {
+            available: data?.available === true,
+            ...(typeof data?.reason === 'string' && data.reason ? {reason: data.reason} : {}),
+        };
+    }
+
+    const err = await readAppError(response);
+    throw new ClientError(Client4.url, {
+        message: err.message,
+        status_code: response.status,
+        url,
+    });
+}
