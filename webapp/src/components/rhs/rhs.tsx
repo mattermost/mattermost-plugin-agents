@@ -1,15 +1,16 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState, useEffect, useCallback, useRef} from 'react';
+import React, {useState, useEffect, useCallback} from 'react';
 import {useDispatch, useSelector} from 'react-redux';
 import styled from 'styled-components';
 
 import {GlobalState} from '@mattermost/types/store';
 
 import manifest from '@/manifest';
+import type {RHSTab} from '@/redux';
 
-import {getAIThreads, getUserMCPTools, getUserToolPreferences, updateRead} from '@/client';
+import {getAIThreads, updateRead} from '@/client';
 
 import {useBotlist} from '@/bots';
 
@@ -20,7 +21,6 @@ import {useConversationIdForThread} from '@/hooks/use_conversation_id_for_thread
 import AgentChatDropZone from '../agent_chat/agent_chat_drop_zone';
 import AgentChatThreadView from '../agent_chat/agent_chat_thread_view';
 
-import type {UserMCPServerInfo} from './tool_provider_popover';
 import ThreadItem from './thread_item';
 import RHSHeader from './rhs_header';
 
@@ -50,19 +50,19 @@ const twentyFourHoursInMS = 24 * 60 * 60 * 1000;
 
 export default function RHS() {
     const dispatch = useDispatch();
-    const [currentTab, setCurrentTab] = useState('new');
     const selectedPostId = useSelector((state: any) => state['plugins-' + manifest.id].selectedPostId);
 
-    // The header title (rendered by the host, outside this component) asks for a fresh new chat
-    // when the agent is switched: show the new-chat tab. Not on the first render.
-    const newChatRequest = useSelector((state: any) => state['plugins-' + manifest.id].newChatRequest ?? 0);
-    const lastNewChatRequest = useRef(newChatRequest);
-    useEffect(() => {
-        if (newChatRequest !== lastNewChatRequest.current) {
-            lastNewChatRequest.current = newChatRequest;
-            setCurrentTab('new');
+    // The list view (new chat or history) is shared with the header title, which is rendered by
+    // the host outside this component (it shows Back and the tools button by it). An open
+    // thread takes over the pane whichever list view was last chosen.
+    const listTab = useSelector<any, RHSTab>((state) => state['plugins-' + manifest.id].rhsTab ?? 'new');
+    const currentTab = selectedPostId ? 'thread' : listTab;
+    const setCurrentTab = useCallback((tab: string) => {
+        // 'thread' is implied by selecting a post.
+        if (tab !== 'thread') {
+            dispatch({type: 'AI_RHS_SET_TAB', tab});
         }
-    }, [newChatRequest]);
+    }, [dispatch]);
 
     // The selected thread's root, once the store has it (the ThreadViewer loads it).
     const selectedRoot = useSelector<GlobalState, {channel_id: string; user_id: string} | null>((state) => (
@@ -72,8 +72,6 @@ export default function RHS() {
     const currentTeamId = useSelector<GlobalState, string>((state) => state.entities.teams.currentTeamId);
 
     const [threads, setThreads] = useState<AIThread[] | null>(null);
-    const [disabledServers, setDisabledServers] = useState<string[]>([]);
-    const [preloadedServers, setPreloadedServers] = useState<UserMCPServerInfo[]>([]);
 
     const markSelectedThreadRead = useCallback((postId: string) => {
         updateRead(currentUserId, currentTeamId, postId, Date.now() + twentyFourHoursInMS).catch((error) => {
@@ -85,28 +83,6 @@ export default function RHS() {
             console.error('Failed to update AI thread read marker:', error); // eslint-disable-line no-console
         });
     }, [currentTeamId, currentUserId]);
-
-    useEffect(() => {
-        const fetchPreferences = async () => {
-            try {
-                const prefs = await getUserToolPreferences();
-                setDisabledServers(prefs.disabled_servers || []);
-            } catch {
-                // Preferences unavailable, default to all enabled
-            }
-        };
-        fetchPreferences();
-
-        const fetchServers = async () => {
-            try {
-                const response = await getUserMCPTools();
-                setPreloadedServers(response.servers);
-            } catch {
-                // Silently fail - servers will load when popover opens
-            }
-        };
-        fetchServers();
-    }, []);
 
     useEffect(() => {
         const fetchThreads = async () => {
@@ -144,9 +120,6 @@ export default function RHS() {
     let dropZone = false;
     if (selectedPostId) {
         dropZone = true;
-        if (currentTab !== 'thread') {
-            setCurrentTab('thread');
-        }
         const channelId = selectedRoot?.channel_id ?? '';
 
         // The agent of the thread: the DM partner, or the root's author for
@@ -178,10 +151,7 @@ export default function RHS() {
                             turnCount={p.turn_count}
                             lastActivityDate={p.update_at}
                             label={bots.find((bot) => bot.id === p.bot_id)?.displayName ?? ''}
-                            onClick={() => {
-                                setCurrentTab('thread');
-                                selectPost(p.root_post_id!);
-                            }}
+                            onClick={() => selectPost(p.root_post_id!)}
                         />))}
                 </ThreadsList>
             );
@@ -206,10 +176,6 @@ export default function RHS() {
                 currentTab={currentTab}
                 setCurrentTab={setCurrentTab}
                 selectPost={selectPost}
-                activeBot={activeBot}
-                disabledServers={disabledServers}
-                onDisabledServersChange={setDisabledServers}
-                preloadedServers={preloadedServers}
                 activeConversationId={activeConversationId}
             />
             {dropZone ? (

@@ -168,7 +168,7 @@ test.describe('Chat History', () => {
     await expect(page.getByText(responseTestText)).toBeVisible();
   });
 
-  test('chat history button is visible and functional', async ({ page }) => {
+  test('back button in the header opens the chat history', async ({ page }) => {
     const { aiPlugin } = await setupTestPage(page);
     await aiPlugin.openRHS();
 
@@ -177,7 +177,7 @@ test.describe('Chat History', () => {
     await aiPlugin.sendMessage('Test for history button');
     await aiPlugin.waitForBotResponse(responseTestText);
 
-    // Chat history button should be visible
+    // The Back button (in the RHS header) should be visible
     await expect(aiPlugin.chatHistoryButton).toBeVisible();
 
     // Should be clickable

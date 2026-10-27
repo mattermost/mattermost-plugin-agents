@@ -190,29 +190,30 @@ describe('RHS', () => {
         warn.mockRestore();
     });
 
-    test('a new-chat request from the header title returns to the new-chat tab, but not on first render', async () => {
+    test('the pane follows the tab shared with the header title, and the header changes it through the store', async () => {
         mockGetAIThreads.mockResolvedValue([]);
         const state = {
             ...baseState,
-            'plugins-mattermost-ai': {selectedPostId: '', newChatRequest: 0},
+            'plugins-mattermost-ai': {selectedPostId: '', rhsTab: 'new'},
         };
         mockUseSelector.mockImplementation((selector) => selector(state));
 
         const {rerender} = renderRHS();
         expect(screen.getByTestId('rhs-new-tab')).toBeTruthy();
 
-        // Leave the new-chat tab for the history tab.
+        // The header asks for the history tab; the store (not local state) owns the answer.
         fireEvent.click(screen.getByTestId('rhs-header'));
-        await waitFor(() => expect(screen.queryByTestId('rhs-new-tab')).toBeNull());
+        expect(mockDispatch).toHaveBeenCalledWith({type: 'AI_RHS_SET_TAB', tab: 'threads'});
 
-        // Unrelated re-render with the same request counter: stays on the history tab.
+        state['plugins-mattermost-ai'] = {selectedPostId: '', rhsTab: 'threads'};
         rerender(<Rhs/>);
+        await waitFor(() => expect(screen.getByTestId('rhs-threads-list')).toBeTruthy());
         expect(screen.queryByTestId('rhs-new-tab')).toBeNull();
 
-        // The agent was switched in the header: back to a fresh new chat.
-        state['plugins-mattermost-ai'] = {selectedPostId: '', newChatRequest: 1};
+        // An open thread takes over whichever list tab was last chosen.
+        state['plugins-mattermost-ai'] = {selectedPostId: 'post-id', rhsTab: 'threads'};
         rerender(<Rhs/>);
-        await waitFor(() => expect(screen.getByTestId('rhs-new-tab')).toBeTruthy());
+        expect(screen.getByTestId('rhs-thread-viewer')).toBeTruthy();
     });
 
     test('logs generic read marker rejections', async () => {

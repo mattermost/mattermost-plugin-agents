@@ -15,11 +15,19 @@ const mockSavePreferences = jest.fn();
 jest.mock('@/client', () => ({
     getProfilePictureUrl: (id: string) => `/users/${id}/image`,
     getAIBots: jest.fn(() => Promise.resolve(null)),
+    getUserMCPTools: jest.fn(() => Promise.resolve({servers: []})),
+    getUserToolPreferences: jest.fn(() => Promise.resolve({disabled_servers: []})),
     savePreferences: (...args: unknown[]) => mockSavePreferences(...args),
 }));
 
 jest.mock('@mattermost/shared/components/tooltip', () => ({
     WithTooltip: ({children}: {children: React.ReactNode}) => <>{children}</>,
+}));
+
+// The popover's own behavior is covered by tool_provider_popover.test.tsx.
+jest.mock('./tool_provider_popover', () => ({
+    __esModule: true,
+    default: () => <button type='button'>{'Tools'}</button>,
 }));
 
 jest.mock('react-intl', () => {
@@ -35,7 +43,7 @@ jest.mock('react-intl', () => {
 const pluginKey = `plugins-${manifest.id}`;
 const preferenceKey = `${PREFERENCE_CATEGORY_AGENTS}--${PREFERENCE_NAME_SELECTED_AGENT}`;
 
-const makeBot = (id: string, displayName: string) => ({
+const makeBot = (id: string, displayName: string): {id: string; displayName: string; username: string; lastIconUpdate: number; dmChannelID: string; useServiceAccountAuth?: boolean} => ({
     id,
     displayName,
     username: id,
@@ -46,9 +54,9 @@ const makeBot = (id: string, displayName: string) => ({
 // A reducer that applies the preference the title writes, so the title re-renders.
 const dispatched: Array<{type: string; postId?: string}> = [];
 
-const makeStore = (bots: ReturnType<typeof makeBot>[] | null, selected: string) => {
+const makeStore = (bots: ReturnType<typeof makeBot>[] | null, selected: string, rhs: {selectedPostId?: string; rhsTab?: string} = {}) => {
     const initial = {
-        [pluginKey]: {bots},
+        [pluginKey]: {bots, ...rhs},
         entities: {
             users: {currentUserId: 'me'},
             preferences: {myPreferences: selected ? {[preferenceKey]: {value: selected}} : {}},
@@ -65,8 +73,8 @@ const makeStore = (bots: ReturnType<typeof makeBot>[] | null, selected: string) 
     return createStore(reducer);
 };
 
-const renderTitle = (bots: ReturnType<typeof makeBot>[] | null, selected: string) => render(
-    <Provider store={makeStore(bots, selected)}>
+const renderTitle = (bots: ReturnType<typeof makeBot>[] | null, selected: string, rhs: {selectedPostId?: string; rhsTab?: string} = {}) => render(
+    <Provider store={makeStore(bots, selected, rhs)}>
         <RHSTitle/>
     </Provider>,
 );
@@ -89,14 +97,14 @@ describe('RHSTitle', () => {
         renderTitle(bots, '');
 
         expect(screen.getByText('Agents')).not.toBeNull();
-        expect(screen.queryByRole('button')).toBeNull();
+        expect(screen.queryByRole('button', {name: /choose agent/})).toBeNull();
     });
 
     test('a single agent is a plain title without a menu', () => {
         renderTitle([makeBot('a', 'Alpha')], '');
 
         expect(screen.getByText('Alpha')).not.toBeNull();
-        expect(screen.queryByRole('button')).toBeNull();
+        expect(screen.queryByRole('button', {name: /choose agent/})).toBeNull();
         expect(screen.queryByText('Agents')).toBeNull();
     });
 
@@ -163,5 +171,55 @@ describe('RHSTitle', () => {
             fireEvent.keyDown(document.activeElement ?? document.body, {key: 'Escape'});
         });
         expect(button.getAttribute('aria-expanded')).toBe('false');
+    });
+    describe('Back and tools', () => {
+        const backButton = () => screen.queryByRole('button', {name: 'Back to chat history'});
+        const toolsButton = () => screen.queryByRole('button', {name: 'Tools'});
+
+        test.each([
+            {name: 'new chat', rhs: {}, back: true, tools: true},
+            {name: 'an open thread', rhs: {selectedPostId: 'root1'}, back: true, tools: false},
+            {name: 'the chat history', rhs: {rhsTab: 'threads'}, back: false, tools: false},
+        ])('on $name: back=$back, tools=$tools', ({rhs, back, tools}) => {
+            renderTitle(two, 'a', rhs);
+
+            expect(backButton() !== null).toBe(back);
+            expect(toolsButton() !== null).toBe(tools);
+        });
+
+        test('the chat history has the generic Agents title: no agent menu, no Back, no tools', () => {
+            renderTitle(two, 'a', {rhsTab: 'threads'});
+
+            expect(screen.getByText('Agents')).not.toBeNull();
+            expect(screen.queryByRole('button', {name: /choose agent/})).toBeNull();
+            expect(screen.queryByText('Alpha')).toBeNull();
+        });
+
+        test('Back leaves the open chat and shows the chat history', () => {
+            renderTitle(two, 'a', {selectedPostId: 'root1'});
+
+            fireEvent.click(backButton()!);
+
+            expect(dispatched.filter((a) => a.type === 'SELECT_AI_POST' || a.type === 'AI_RHS_SET_TAB')).toEqual([
+                {type: 'SELECT_AI_POST', postId: ''},
+                {type: 'AI_RHS_SET_TAB', tab: 'threads'},
+            ]);
+        });
+
+        test('Back is also there while the agents are loading or there is a single agent', () => {
+            const {unmount} = renderTitle(null, '');
+            expect(backButton()).not.toBeNull();
+            unmount();
+
+            renderTitle([makeBot('a', 'Alpha')], '');
+            expect(backButton()).not.toBeNull();
+            expect(toolsButton()).not.toBeNull();
+        });
+
+        test('no tools button for a service account agent', () => {
+            renderTitle([{...makeBot('a', 'Alpha'), useServiceAccountAuth: true}, makeBot('b', 'Beta')], 'a');
+
+            expect(toolsButton()).toBeNull();
+        });
     });
 });

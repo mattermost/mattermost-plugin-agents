@@ -2,32 +2,9 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, screen} from '@testing-library/react';
-
-import type {LLMBot} from '@/bots';
+import {fireEvent, render, screen} from '@testing-library/react';
 
 import RHSHeader from './rhs_header';
-
-jest.mock('@/client', () => ({
-    disconnectMCPOAuth: jest.fn(),
-    getUserMCPTools: jest.fn(),
-    refreshUserMCPTools: jest.fn(),
-    updateUserToolPreferences: jest.fn(),
-}));
-
-// OverlayTrigger is provided by the host Mattermost webapp, not this package.
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children}: {children: React.ReactNode}) => <>{children}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
-
-jest.mock('@/hooks/use_mcp_connection_events', () => ({
-    useMCPConnectionEvents: jest.fn(),
-}));
-
-jest.mock('@/license', () => ({
-    useIsLicensedFor: jest.fn(() => true),
-}));
 
 jest.mock('react-intl', () => ({
     FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
@@ -37,57 +14,58 @@ jest.mock('react-intl', () => ({
 }));
 
 jest.mock('@mattermost/compass-icons/components', () => ({
-    ChevronDownIcon: () => <span data-testid='chevron-icon'/>,
     ClockOutlineIcon: () => <span data-testid='clock-icon'/>,
     PencilOutlineIcon: () => <span data-testid='pencil-icon'/>,
-    RefreshIcon: () => <span data-testid='refresh-icon'/>,
 }));
 
-// Cast instead of importing the enums; system_console/bot.tsx drags in the whole console tree.
-const activeBot = {
-    id: 'bot-id',
-    displayName: 'Agents',
-    username: 'ai',
-    lastIconUpdate: 0,
-    dmChannelID: 'dm-channel-id',
-    channelAccessLevel: 0,
-    channelIDs: [],
-    userAccessLevel: 0,
-    userIDs: [],
-    enabledMCPTools: [],
-    autoEnableNewMCPTools: true,
-} as LLMBot;
+jest.mock('./context_usage_indicator', () => ({
+    __esModule: true,
+    default: ({conversationId}: {conversationId: string}) => <span data-testid='context-usage'>{conversationId}</span>,
+}));
 
-function renderHeader(bot: LLMBot) {
-    return render(
+function renderHeader(currentTab: string, extra: Partial<React.ComponentProps<typeof RHSHeader>> = {}) {
+    const setCurrentTab = jest.fn();
+    const selectPost = jest.fn();
+    render(
         <RHSHeader
-            currentTab='new'
-            activeBot={bot}
-            setCurrentTab={jest.fn()}
-            selectPost={jest.fn()}
-            disabledServers={[]}
-            onDisabledServersChange={jest.fn()}
+            currentTab={currentTab}
+            setCurrentTab={setCurrentTab}
+            selectPost={selectPost}
+            {...extra}
         />,
     );
+    return {setCurrentTab, selectPost};
 }
 
 describe('RHSHeader', () => {
-    test('no longer renders an agent selector (it lives in the RHS title)', () => {
-        renderHeader(activeBot);
+    test('no longer renders the history button, an agent selector or the tools button (they live in the RHS title)', () => {
+        renderHeader('thread');
 
+        expect(screen.queryByTestId('chat-history')).toBeNull();
         expect(screen.queryByTestId('bot-selector-rhs')).toBeNull();
-        expect(screen.queryByText('Choose an Agent')).toBeNull();
-    });
-
-    test('shows the Tools popover for a regular agent', () => {
-        renderHeader(activeBot);
-
-        expect(screen.getByRole('button', {name: 'Tools'})).not.toBeNull();
-    });
-
-    test('hides the Tools popover when the active agent uses service account auth', () => {
-        renderHeader({...activeBot, useServiceAccountAuth: true});
-
         expect(screen.queryByRole('button', {name: 'Tools'})).toBeNull();
+    });
+
+    test('the history view is titled and offers New chat', () => {
+        const {setCurrentTab, selectPost} = renderHeader('threads');
+
+        expect(screen.getByText('Chat history')).not.toBeNull();
+        fireEvent.click(screen.getByTestId('new-chat'));
+        expect(setCurrentTab).toHaveBeenCalledWith('new');
+        expect(selectPost).toHaveBeenCalledWith('');
+    });
+
+    test('the new-chat tab has no title and no New chat button', () => {
+        renderHeader('new');
+
+        expect(screen.queryByText('Chat history')).toBeNull();
+        expect(screen.queryByTestId('new-chat')).toBeNull();
+    });
+
+    test('an open chat shows the context usage ring and New chat', () => {
+        renderHeader('thread', {activeConversationId: 'conv1'});
+
+        expect(screen.getByTestId('context-usage').textContent).toBe('conv1');
+        expect(screen.getByTestId('new-chat')).not.toBeNull();
     });
 });

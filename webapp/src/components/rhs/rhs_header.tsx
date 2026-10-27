@@ -9,74 +9,36 @@ import {FormattedMessage} from 'react-intl';
 import {Button} from '@mattermost/compass-ui/components/button';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 
-import {LLMBot} from '@/bots';
-
 import ContextUsageIndicator from './context_usage_indicator';
-import ToolProviderPopover, {UserMCPServerInfo} from './tool_provider_popover';
 
 type Props = {
     currentTab: string
-    activeBot: LLMBot | null
     setCurrentTab: (tab: string) => void
     selectPost: (postId: string) => void
-    disabledServers: string[]
-    onDisabledServersChange: (servers: string[]) => void
-    preloadedServers?: UserMCPServerInfo[]
     activeConversationId?: string
 }
 
+// The pane's own bar under the host header (which holds Back, the agent and the tools button):
+// the chat history's title, the context usage ring, and New chat.
 const RHSHeader = (props: Props) => {
-    let historyButton = null;
-    if (props.currentTab === 'threads') {
-        historyButton = (
-            <CurrentViewTitle>
-                <Icon
-                    size='16'
-                    glyph={<ClockOutlineIcon/>}
-                />
-                <FormattedMessage defaultMessage='Chat history'/>
-            </CurrentViewTitle>
-        );
-    } else {
-        historyButton = (
-            <Button
-                emphasis='quaternary'
-                size='x-small'
-                leadingIcon={<Icon glyph={<ClockOutlineIcon/>}/>}
-                data-testid='chat-history'
-                onClick={() => {
-                    props.setCurrentTab('threads');
-                    props.selectPost('');
-                }}
-            >
-                <FormattedMessage defaultMessage='View chat history'/>
-            </Button>
-        );
-    }
-
     // All right-side controls share one flex group so the ring
     // appearing/disappearing doesn't shift the others.
     return (
         <Header>
-            {historyButton}
+            {props.currentTab === 'threads' && (
+                <CurrentViewTitle>
+                    <Icon
+                        size='16'
+                        glyph={<ClockOutlineIcon/>}
+                    />
+                    <FormattedMessage defaultMessage='Chat history'/>
+                </CurrentViewTitle>
+            )}
             <RightControls>
                 {props.activeConversationId && (
                     <ContextUsageIndicator conversationId={props.activeConversationId}/>
                 )}
-                {props.currentTab === 'new' ? (
-                    <>
-                        {/* SA agents have no per-user connections or preferences to manage. */}
-                        {props.activeBot?.useServiceAccountAuth !== true && (
-                            <ToolProviderPopover
-                                disabledServers={props.disabledServers}
-                                onDisabledServersChange={props.onDisabledServersChange}
-                                preloadedServers={props.preloadedServers}
-                                enabledMCPTools={props.activeBot?.enabledMCPTools}
-                                autoEnableNewMCPTools={props.activeBot?.autoEnableNewMCPTools}
-                            />
-                        )}
-                    </>
-                ) : (
+                {props.currentTab !== 'new' && (
                     <Button
                         emphasis='tertiary'
                         size='x-small'

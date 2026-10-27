@@ -24,6 +24,7 @@ export async function setupRedux(registry: any, store: WebappStore) {
         bots,
         selectedPostId,
         newChatRequest,
+        rhsTab,
         allowUnsafeLinks,
         htmlArtifactsEnabled,
         customPrompts,
@@ -101,6 +102,22 @@ function newChatRequest(state = 0, action: any) {
     switch (action.type) {
     case 'AI_RHS_NEW_CHAT':
         return state + 1;
+    default:
+        return state;
+    }
+}
+
+// The RHS's list view when no thread is open: the new-chat tab or the chat history. It lives here,
+// not in the RHS body, because the header title (rendered by the host) shows the Back button and
+// the tools button according to it.
+export type RHSTab = 'new' | 'threads';
+
+export function rhsTab(state: RHSTab = 'new', action: any): RHSTab {
+    switch (action.type) {
+    case 'AI_RHS_SET_TAB':
+        return action.tab === 'threads' ? 'threads' : 'new';
+    case 'AI_RHS_NEW_CHAT':
+        return 'new';
     default:
         return state;
     }

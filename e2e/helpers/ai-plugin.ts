@@ -27,9 +27,9 @@ export class AIPlugin {
     return this.page.getByTestId('mattermost-ai-rhs');
   }
 
-  /** Triggers the per-session MCP tool provider popover (only on the New chat tab). */
+  /** Triggers the per-session MCP tool provider popover (in the RHS header title, only on the New chat tab). */
   getRhsToolsMenuButton(): Locator {
-    return this.getRhsContainer().getByRole('button', { name: /^Tools$/i });
+    return this.page.getByTestId('rhs-title').getByRole('button', { name: /^Tools$/i });
   }
 
   /**
@@ -46,7 +46,7 @@ export class AIPlugin {
   async openRhsToolProvidersMenu(): Promise<Locator> {
     await this.ensureRhsNewChatTab();
     await this.getRhsToolsMenuButton().click();
-    const menu = this.getRhsContainer().getByTestId('dropdownmenu');
+    const menu = this.page.getByTestId('dropdownmenu');
     await expect(menu).toBeVisible({ timeout: 10000 });
     return menu;
   }
