@@ -24,8 +24,6 @@ const renderItem = (props: Partial<React.ComponentProps<typeof ThreadItem>> = {}
         <ThreadItem
             title='Survival tips'
             preview='Can you give me some survival tips'
-            authorName='Systems Administrator'
-            authorAvatarUrl='/users/me/image'
             agentName='Wilson'
             agentAvatarUrl='/users/bot/image'
             lastActivityDate={0}
@@ -38,15 +36,19 @@ const renderItem = (props: Partial<React.ComponentProps<typeof ThreadItem>> = {}
 };
 
 describe('ThreadItem', () => {
-    test('is the compass Thread List Item: author, agent tag, title, first message and reply count', () => {
+    test('is the compass Thread List Item with the agent as its name: avatar, no tag, no participants', () => {
         renderItem();
 
-        // The names also label the participants' avatars, hence all matches.
-        expect(screen.getAllByText('Systems Administrator').length).toBeGreaterThan(0);
-        expect(screen.getAllByText('Wilson').length).toBeGreaterThan(0);
+        // The agent's name leads the item (its avatar is decorative); the title, message and reply count follow.
+        expect(screen.getByText('Wilson')).toBeTruthy();
         expect(screen.getByText('Survival tips')).toBeTruthy();
         expect(screen.getByText('Can you give me some survival tips')).toBeTruthy();
         expect(screen.getByText('1 reply')).toBeTruthy();
+        expect(document.querySelector('img[src="/users/bot/image"]')).toBeTruthy();
+
+        // No participants row (so no second avatar and no group label).
+        expect(screen.queryByRole('group')).toBeNull();
+        expect(screen.queryByText(/participant/i)).toBeNull();
     });
 
     test.each([

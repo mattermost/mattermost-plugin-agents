@@ -3,8 +3,10 @@
 
 import React from 'react';
 import {useIntl} from 'react-intl';
+import styled from 'styled-components';
 
 import {ThreadListItem} from '@mattermost/compass-ui/components/thread-list-item';
+import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
 import {Timestamp} from '@/mm_webapp';
 
@@ -15,8 +17,6 @@ type Props = {
 
     // The chat's first message; empty while it loads or if it is unavailable.
     preview: string;
-    authorName: string;
-    authorAvatarUrl: string;
     agentName: string;
     agentAvatarUrl: string;
     lastActivityDate: number;
@@ -30,16 +30,26 @@ type Props = {
 }
 
 // A chat in the history: the compass Thread List Item, the same entry as the host's Threads view
-// (author and agent tag, time, first message, participants and reply count, with the hover
-// actions button).
+// (name, time, first message and reply count, with the hover actions button). The name is the
+// agent's, with its avatar; there is no tag and no participants row, as every chat is with one agent.
 export default function ThreadItem(props: Props) {
     const intl = useIntl();
     const title = props.title.trim();
     const known = typeof props.replyCount === 'number';
     return (
         <ThreadListItem
-            authorName={props.authorName}
-            channelLabel={props.agentName}
+            authorName={(
+                <AgentName>
+                    <UserAvatar
+                        src={props.agentAvatarUrl}
+                        alt=''
+                        aria-hidden='true'
+                        name={props.agentName}
+                        size='20'
+                    />
+                    {props.agentName}
+                </AgentName>
+            )}
             {...(title ? {threadTitle: title} : {})}
             previewText={props.preview.trim() || (title ? '' : intl.formatMessage({defaultMessage: 'Conversation with Agents'}))}
             timestamp={(
@@ -52,13 +62,16 @@ export default function ThreadItem(props: Props) {
             )}
             replyCount={props.replyCount ?? 0}
             formatReplyCount={(count) => (known ? intl.formatMessage({defaultMessage: '{count, plural, one {# reply} other {# replies}}'}, {count}) : '')}
-            participants={[
-                {key: 'author', src: props.authorAvatarUrl, name: props.authorName},
-                {key: 'agent', src: props.agentAvatarUrl, name: props.agentName},
-            ]}
+            participants={[]}
             menuLabel={intl.formatMessage({defaultMessage: 'Chat actions'})}
             onClick={props.onClick}
             onMenuClick={(e) => props.onMenuClick(e.currentTarget)}
         />
     );
 }
+
+const AgentName = styled.span`
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+`;

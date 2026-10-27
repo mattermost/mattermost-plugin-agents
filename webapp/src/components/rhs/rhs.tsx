@@ -7,7 +7,6 @@ import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 
 import {GlobalState} from '@mattermost/types/store';
-import type {UserProfile} from '@mattermost/types/users';
 
 import manifest from '@/manifest';
 import type {RHSTab} from '@/redux';
@@ -48,6 +47,11 @@ const ThreadsList = styled.div`
         margin-bottom: 0;
     }
 
+    /* The item always has its tag slot; there is none to show (the name is the agent's). */
+    && [class*='thread-list-item__name-group'] > :not([class*='thread-list-item__author']) {
+        display: none;
+    }
+
     /* The title keeps the body text size (compass sets it one step larger). */
     && [class*='thread-list-item__title'] {
         font-size: var(--font-size-100);
@@ -63,11 +67,6 @@ const RhsContainer = styled.div`
 `;
 
 type ChatPreview = {message: string; replyCount: number};
-
-// The chats are the user's own, so the author is always the current user.
-const chatAuthorName = (user?: UserProfile) => (
-    `${user?.first_name ?? ''} ${user?.last_name ?? ''}`.trim() || user?.username || ''
-);
 
 // Above the plugin's other modals (2000), like the other archive confirmations.
 const ARCHIVE_DIALOG_Z_INDEX = 2000;
@@ -150,7 +149,6 @@ export default function RHS() {
     // The chats' first messages and reply counts, loaded after the list. Until they arrive (or if
     // they cannot be loaded) the items show the chat title.
     const [previews, setPreviews] = useState<Record<string, ChatPreview>>({});
-    const currentUser = useSelector<GlobalState, UserProfile | undefined>((state) => state.entities.users.profiles[currentUserId]);
 
     const markSelectedThreadRead = useCallback((postId: string) => {
         updateRead(currentUserId, currentTeamId, postId, Date.now() + twentyFourHoursInMS).catch((error) => {
@@ -250,8 +248,6 @@ export default function RHS() {
                             title={p.title}
                             preview={previews[p.root_post_id!]?.message ?? ''}
                             replyCount={previews[p.root_post_id!]?.replyCount}
-                            authorName={chatAuthorName(currentUser)}
-                            authorAvatarUrl={getProfilePictureUrl(currentUserId, currentUser?.last_picture_update ?? 0)}
                             agentName={bots.find((bot) => bot.id === p.bot_id)?.displayName ?? ''}
                             agentAvatarUrl={getProfilePictureUrl(p.bot_id, bots.find((bot) => bot.id === p.bot_id)?.lastIconUpdate ?? 0)}
                             lastActivityDate={p.update_at}
