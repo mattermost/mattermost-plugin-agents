@@ -5,7 +5,10 @@ import React, {useState, useCallback, useEffect, useId, useRef} from 'react';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 
-import {Dropdown as CompassDropdown} from '@mattermost/compass-ui/components/dropdown';
+import ChevronDownIcon from '@mattermost/compass-icons/components/chevron-down';
+import ChevronUpIcon from '@mattermost/compass-icons/components/chevron-up';
+import {Button} from '@mattermost/compass-ui/components/button';
+import {Icon} from '@mattermost/compass-ui/components/icon';
 import {PopoverMenu, PopoverMenuTitle} from '@mattermost/compass-ui/components/popover-menu';
 
 import {disconnectMCPOAuth, getUserMCPTools, refreshUserMCPTools, updateUserToolPreferences, type UserMCPServerInfo} from '@/client';
@@ -182,7 +185,7 @@ export function useToolProviders({disabledServers, onDisabledServersChange, prel
     return {servers, loading, error, remoteMcpLicensed, fetchServers, toggle, connect, disconnect};
 }
 
-// The Tools dropdown of the RHS header: a compass Dropdown trigger opening a menu of the tool
+// The Tools dropdown of the RHS header: a compass Button trigger opening a menu of the tool
 // providers (the same rows as the composer's "+" menu).
 const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloadedServers, enabledMCPTools, autoEnableNewMCPTools}: ToolProviderPopoverProps) => {
     const intl = useIntl();
@@ -230,15 +233,16 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
             placement='bottom-end'
             target={(
                 <TriggerWrap>
-                    <CompassDropdown
+                    <Button
                         size='x-small'
-                        isOpen={open}
+                        emphasis='dim'
+                        trailingIcon={<Icon glyph={open ? <ChevronUpIcon/> : <ChevronDownIcon/>}/>}
                         aria-haspopup='menu'
                         aria-expanded={open}
                         onClick={() => setMenuOpen(!open)}
                     >
                         {intl.formatMessage({defaultMessage: 'Tools'})}
-                    </CompassDropdown>
+                    </Button>
                 </TriggerWrap>
             )}
         >
