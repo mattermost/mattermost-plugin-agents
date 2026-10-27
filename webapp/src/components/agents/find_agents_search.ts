@@ -8,6 +8,9 @@ import type {AIThread} from '@/types/ai_thread';
 // Mirrors the host quick switcher's cap on its "Recent" section.
 export const MAX_RECENT_AGENTS = 20;
 
+// How many chats the empty state lists; the modal body scrolls past that.
+export const MAX_RECENT_CHATS = 8;
+
 // Keeps a very broad query (e.g. one letter) from rendering every chat.
 export const MAX_RESULTS_PER_SECTION = 50;
 
@@ -61,6 +64,21 @@ export const recentAgents = (bots: LLMBot[], threadsByBot: AgentThreadsByBot): L
     return [...bots].
         sort((a, b) => lastActivity(b, threadsByBot) - lastActivity(a, threadsByBot)).
         slice(0, MAX_RECENT_AGENTS);
+};
+
+// Empty state: the newest chats across all agents, by last activity.
+export const recentChats = (bots: LLMBot[], threadsByBot: AgentThreadsByBot, placeholderTitle: string): ChatResult[] => {
+    const chats: ChatResult[] = [];
+    for (const bot of bots) {
+        for (const thread of threadsByBot[bot.id] ?? []) {
+            if (thread.root_post_id) {
+                chats.push({bot, thread, title: thread.title.trim() || placeholderTitle});
+            }
+        }
+    }
+    return chats.
+        sort((a, b) => b.thread.update_at - a.thread.update_at).
+        slice(0, MAX_RECENT_CHATS);
 };
 
 // Agents rank by name match (then username match); chats rank by title match,

@@ -18,7 +18,7 @@ import {useBotlist, type LLMBot} from '@/bots';
 import {getProfilePictureUrl} from '@/client';
 import {useAgentThreads} from '@/hooks/use_agent_threads';
 
-import {recentAgents, searchAgents, type ChatResult} from './find_agents_search';
+import {recentAgents, recentChats, searchAgents, type ChatResult} from './find_agents_search';
 import {useAgentsRoute} from './use_agents_route';
 
 const LISTBOX_ID = 'find-agents-listbox';
@@ -30,7 +30,7 @@ type ResultItem =
     | {kind: 'chat'; key: string; bot: LLMBot; chat: ChatResult};
 
 interface Section {
-    key: 'recent' | 'agents' | 'chats';
+    key: 'recentChats' | 'recentAgents' | 'agents' | 'chats';
     items: ResultItem[];
 }
 
@@ -91,12 +91,30 @@ const Content = ({onClose}: {onClose: () => void}) => {
     const placeholderTitle = intl.formatMessage({defaultMessage: 'New chat'});
     const searching = query.trim() !== '';
 
+    // True once the first threads fetch has settled (success or error). Until then the empty
+    // state shows nothing, so agents never flash before the chats replace them.
+    const settledRef = useRef(false);
+    if (!loading) {
+        settledRef.current = true;
+    }
+    const settled = settledRef.current;
+
     const sections = useMemo<Section[]>(() => {
         const allBots = bots ?? [];
         if (!searching) {
+            if (!settled) {
+                return [];
+            }
+            const chats = recentChats(allBots, threadsByBot, placeholderTitle);
+            if (chats.length > 0) {
+                return [{
+                    key: 'recentChats',
+                    items: chats.map((chat): ResultItem => ({kind: 'chat', key: `chat-${chat.thread.id}`, bot: chat.bot, chat})),
+                }];
+            }
             return [{
-                key: 'recent',
-                items: recentAgents(allBots, threadsByBot).map((bot) => ({kind: 'agent', key: `agent-${bot.id}`, bot})),
+                key: 'recentAgents',
+                items: recentAgents(allBots, threadsByBot).map((bot): ResultItem => ({kind: 'agent', key: `agent-${bot.id}`, bot})),
             }];
         }
         const results = searchAgents(allBots, threadsByBot, query, placeholderTitle);
@@ -104,7 +122,7 @@ const Content = ({onClose}: {onClose: () => void}) => {
             {key: 'agents', items: results.agents.map((bot): ResultItem => ({kind: 'agent', key: `agent-${bot.id}`, bot}))},
             {key: 'chats', items: results.chats.map((chat): ResultItem => ({kind: 'chat', key: `chat-${chat.thread.id}`, bot: chat.bot, chat}))},
         ].filter((section): section is Section => section.items.length > 0);
-    }, [bots, threadsByBot, query, searching, placeholderTitle]);
+    }, [bots, threadsByBot, query, searching, settled, placeholderTitle]);
 
     const flat = useMemo(() => sections.flatMap((section) => section.items), [sections]);
     const activeIndex = flat.length === 0 ? -1 : Math.min(selected, flat.length - 1);
@@ -161,8 +179,10 @@ const Content = ({onClose}: {onClose: () => void}) => {
 
     const sectionLabel = (key: Section['key']) => {
         switch (key) {
-        case 'recent':
-            return intl.formatMessage({defaultMessage: 'Recent'});
+        case 'recentChats':
+            return intl.formatMessage({defaultMessage: 'Recent chats'});
+        case 'recentAgents':
+            return intl.formatMessage({defaultMessage: 'Recent agents'});
         case 'agents':
             return intl.formatMessage({defaultMessage: 'Agents'});
         default:

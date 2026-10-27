@@ -7,6 +7,7 @@ import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {getAIThreads} from '@/client';
 import type {AIThread} from '@/types/ai_thread';
 
+import {MAX_RECENT_CHATS} from './find_agents_search';
 import FindAgentsButton from './find_agents_button';
 import {buildChatPath} from './use_agents_route';
 
@@ -69,11 +70,63 @@ describe('FindAgentsButton and modal', () => {
         delete window.WebappUtils;
     });
 
-    test('empty state lists recent agents only, most recently active first', async () => {
+    test('empty state lists recent chats only, newest first', async () => {
         await openModal();
         await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
-        expect(optionNames()).toEqual(['Beta@beta', 'Alpha@alpha', 'Gamma@gamma']);
-        expect(screen.getByText('Recent')).toBeTruthy();
+        expect(optionNames()).toEqual(['Quarterly planBeta', 'New chatBeta']);
+        expect(screen.getByText('Recent chats')).toBeTruthy();
+        expect(screen.queryByText('Recent agents')).toBeNull();
+    });
+
+    test('empty state caps recent chats and spans agents', async () => {
+        mockGetThreads.mockResolvedValue([
+            ...Array.from({length: MAX_RECENT_CHATS + 2}, (_, i) => thread(`n${i}`, 'a', `Chat ${i}`, 100 + i)),
+            thread('c1', 'c', 'Gamma chat', 500),
+            {...thread('x1', 'a', 'Wrong channel', 900), channel_id: 'other'},
+        ]);
+        await openModal();
+        await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+        const names = optionNames();
+        expect(names).toHaveLength(MAX_RECENT_CHATS);
+        expect(names[0]).toBe('Gamma chatGamma');
+        expect(names[1]).toBe(`Chat ${MAX_RECENT_CHATS + 1}Alpha`);
+        expect(names).not.toContain('Wrong channelAlpha');
+    });
+
+    test('without chats the empty state lists recent agents in list order', async () => {
+        mockGetThreads.mockResolvedValue([]);
+        await openModal();
+        await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+        expect(optionNames()).toEqual(['Alpha@alpha', 'Beta@beta', 'Gamma@gamma']);
+        expect(screen.getByText('Recent agents')).toBeTruthy();
+        expect(screen.queryByText('Recent chats')).toBeNull();
+    });
+
+    test('chats of an agent without a DM channel are left out', async () => {
+        mockGetThreads.mockResolvedValue([thread('g1', 'ghost', 'Ghost chat', 99)]);
+        await openModal();
+        await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+        expect(optionNames()).toEqual(['Alpha@alpha', 'Beta@beta', 'Gamma@gamma']);
+    });
+
+    test('shows no agents while threads load, then the chats', async () => {
+        let resolve: (v: AIThread[]) => void = () => null;
+        mockGetThreads.mockReturnValue(new Promise<AIThread[]>((r) => {
+            resolve = r;
+        }));
+        await openModal();
+        expect(screen.queryAllByRole('option')).toHaveLength(0);
+        expect(screen.queryByText('Recent agents')).toBeNull();
+        resolve([thread('1', 'b', 'Quarterly plan', 20)]);
+        await waitFor(() => expect(optionNames()).toEqual(['Quarterly planBeta']));
+    });
+
+    test('a failed fetch shows the error and falls back to recent agents', async () => {
+        mockGetThreads.mockRejectedValue(new Error('boom'));
+        await openModal();
+        await screen.findByRole('alert');
+        expect(optionNames()).toEqual(['Alpha@alpha', 'Beta@beta', 'Gamma@gamma']);
+        expect(screen.getByText('Recent agents')).toBeTruthy();
     });
 
     test('combobox ARIA wires the active descendant to the selected option', async () => {
@@ -131,23 +184,26 @@ describe('FindAgentsButton and modal', () => {
         await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
         const selectedName = () => screen.getAllByRole('option').find((o) => o.getAttribute('aria-selected') === 'true')?.textContent;
         fireEvent.keyDown(input, {key: 'ArrowUp'});
-        expect(selectedName()).toBe('Gamma@gamma');
+        expect(selectedName()).toBe('New chatBeta');
         fireEvent.keyDown(input, {key: 'ArrowDown'});
-        expect(selectedName()).toBe('Beta@beta');
+        expect(selectedName()).toBe('Quarterly planBeta');
         fireEvent.keyDown(input, {key: 'ArrowDown'});
-        expect(selectedName()).toBe('Alpha@alpha');
+        expect(selectedName()).toBe('New chatBeta');
+        fireEvent.keyDown(input, {key: 'Enter'});
+        expect(push).toHaveBeenCalledWith(buildChatPath('b', 'root_2'));
     });
 
     test('hover sets the selection', async () => {
         await openModal();
         const options = screen.getAllByRole('option');
-        fireEvent.mouseMove(options[2]);
-        expect(screen.getAllByRole('option')[2].getAttribute('aria-selected')).toBe('true');
+        fireEvent.mouseMove(options[1]);
+        expect(screen.getAllByRole('option')[1].getAttribute('aria-selected')).toBe('true');
     });
 
     const selectionCases: Array<{name: string; query: string; pick: string; path: string}> = [
-        {name: 'agent with chats opens its most recent chat', query: '', pick: 'Beta@beta', path: buildChatPath('b', 'root_1')},
-        {name: 'agent without chats starts a new chat', query: '', pick: 'Alpha@alpha', path: buildChatPath('a')},
+        {name: 'recent chat opens that chat', query: '', pick: 'New chatBeta', path: buildChatPath('b', 'root_2')},
+        {name: 'agent with chats opens its most recent chat', query: 'bet', pick: 'Beta@beta', path: buildChatPath('b', 'root_1')},
+        {name: 'agent without chats starts a new chat', query: 'alp', pick: 'Alpha@alpha', path: buildChatPath('a')},
         {name: 'chat opens that chat', query: 'new', pick: 'New chatBeta', path: buildChatPath('b', 'root_2')},
     ];
 

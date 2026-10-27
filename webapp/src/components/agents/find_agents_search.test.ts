@@ -4,7 +4,7 @@
 import type {LLMBot} from '@/bots';
 import type {AIThread} from '@/types/ai_thread';
 
-import {MAX_RECENT_AGENTS, recentAgents, searchAgents} from './find_agents_search';
+import {MAX_RECENT_AGENTS, MAX_RECENT_CHATS, recentAgents, recentChats, searchAgents} from './find_agents_search';
 
 const bot = (id: string, displayName: string, username = id): LLMBot => ({id, displayName, username} as LLMBot);
 
@@ -63,5 +63,24 @@ describe('recentAgents', () => {
     test('caps the list', () => {
         const many = Array.from({length: MAX_RECENT_AGENTS + 5}, (_, i) => bot(`x${i}`, `Agent ${i}`));
         expect(recentAgents(many, {})).toHaveLength(MAX_RECENT_AGENTS);
+    });
+});
+
+describe('recentChats', () => {
+    test('lists chats across agents newest first, with the placeholder for blank titles', () => {
+        const result = recentChats(bots, threadsByBot, 'New chat');
+        expect(result.map((c) => c.thread.id)).toEqual(['a2', 'b1', 'a1']);
+        expect(result.map((c) => c.title)).toEqual(['Reader notes', 'Plans', 'New chat']);
+    });
+
+    test('caps the list at the newest chats', () => {
+        const many = {a: Array.from({length: MAX_RECENT_CHATS + 3}, (_, i) => thread(`t${i}`, 'a', `Chat ${i}`, i))};
+        const result = recentChats(bots, many, 'New chat');
+        expect(result).toHaveLength(MAX_RECENT_CHATS);
+        expect(result[0].thread.id).toBe(`t${MAX_RECENT_CHATS + 2}`);
+    });
+
+    test('is empty without chats', () => {
+        expect(recentChats(bots, {}, 'New chat')).toEqual([]);
     });
 });
