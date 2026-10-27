@@ -5,7 +5,7 @@ import React from 'react';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 import DotsHorizontalIcon from '@mattermost/compass-icons/components/dots-horizontal';
-import MessageTextOutlineIcon from '@mattermost/compass-icons/components/message-text-outline';
+import ReplyOutlineIcon from '@mattermost/compass-icons/components/reply-outline';
 
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
@@ -94,8 +94,8 @@ export default function ThreadItem(props: Props) {
                                 <Dot aria-hidden='true'>{'·'}</Dot>
                                 <Replies>
                                     <Icon
-                                        glyph={<MessageTextOutlineIcon/>}
-                                        size='12'
+                                        glyph={<ReplyOutlineIcon/>}
+                                        size='10'
                                     />
                                     <span aria-hidden='true'>{props.replyCount}</span>
                                     <VisuallyHidden>{replies}</VisuallyHidden>
