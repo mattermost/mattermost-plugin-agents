@@ -857,7 +857,7 @@ Requirements, checked when the setting is saved and again on every turn:
 - **Enable Channel Mention Tool Calling** is on in the plugin settings.
 - Mattermost Server 12.2 or later, and an Enterprise license.
 
-When a requirement stops holding, channel turns fall back to the requesting user's permissions with the usual approval flow, and live scoped sessions for that agent are revoked on every node. If the server cannot create a session, the turn runs without MCP tools rather than with anyone else's credentials.
+When a requirement stops holding, channel turns fall back to the requesting user's permissions with the usual approval flow, and live scoped sessions for that agent are revoked on every node. The same happens when you remove an additional channel or a tool from the agent, so a removed tool stops running at once. If the server cannot create a session, the turn runs without MCP tools rather than with anyone else's credentials.
 
 > **Warning:** Content from the additional channels can appear in any channel where the agent is used, including to people who are not members of them. Pick them deliberately.
 

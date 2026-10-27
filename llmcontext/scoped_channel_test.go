@@ -651,6 +651,19 @@ func TestScopedRunLapsed(t *testing.T) {
 		{name: "extra channel added", cfg: func(c *llm.BotConfig) { c.ScopedExtraChannelIDs = []string{kept, removed, model.NewId()} }},
 		{name: "extra channel removed", cfg: func(c *llm.BotConfig) { c.ScopedExtraChannelIDs = []string{kept} }, lapsed: true},
 		{name: "scoped mode turned off", cfg: func(c *llm.BotConfig) { c.ScopedChannelMode = false }, lapsed: true},
+		{name: "tool added", cfg: func(c *llm.BotConfig) {
+			c.EnabledMCPTools = append(c.EnabledMCPTools, llm.EnabledMCPTool{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "search_posts"})
+		}},
+		{name: "named tool removed", cfg: func(c *llm.BotConfig) { c.EnabledMCPTools = c.EnabledMCPTools[1:] }, lapsed: true},
+		{name: "named web search removed", cfg: func(c *llm.BotConfig) {
+			c.EnabledMCPTools = slices.DeleteFunc(slices.Clone(c.EnabledMCPTools), func(t llm.EnabledMCPTool) bool {
+				return t.ServerOrigin == llm.BuiltinToolsOrigin
+			})
+		}, lapsed: true},
+		{name: "origin formatting changed", cfg: func(c *llm.BotConfig) {
+			c.EnabledMCPTools = slices.Clone(c.EnabledMCPTools)
+			c.EnabledMCPTools[2].ServerOrigin += "/"
+		}},
 		{name: "bot gone", noBot: true, lapsed: true},
 	}
 	for _, tt := range tests {
@@ -659,12 +672,14 @@ func TestScopedRunLapsed(t *testing.T) {
 			builder, _ := newScopedTestBuilder(t, defaultScopedTestEnv(), &emptyToolProvider{}, provider)
 			cfg := scopedTestBotConfig()
 			cfg.ScopedExtraChannelIDs = []string{kept, removed}
+			cfg.EnabledMCPTools = append(cfg.EnabledMCPTools, llm.EnabledMCPTool{ServerOrigin: llm.BuiltinToolsOrigin, ToolName: "WebSearch"})
 			bot := newScopedTestBot(cfg)
 			run, err := provider.MintScopedSession(stdcontext.Background(), mcp.ScopedSessionRequest{
 				BotUserID:       bot.BotUserID(),
 				RequesterID:     model.NewId(),
 				ChannelID:       model.NewId(),
 				ExtraChannelIDs: cfg.ScopedExtraChannelIDs,
+				EnabledTools:    cfg.EnabledMCPTools,
 			})
 			require.NoError(t, err)
 

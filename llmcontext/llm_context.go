@@ -347,15 +347,24 @@ func (b *Builder) ScopedChannelModeAvailable(bot *bots.Bot) bool {
 }
 
 // ScopedRunLapsed reports whether a live scoped run of bot must end: the agent
-// can no longer run scoped, or the run can read an extra channel the agent no
-// longer lists.
+// can no longer run scoped, the run can read an extra channel the agent no
+// longer lists, or the run can use a tool, built-in web search included, that
+// the agent's allowlist no longer names.
 func (b *Builder) ScopedRunLapsed(bot *bots.Bot, run *mcp.ScopedRun) bool {
 	if bot == nil || !b.ScopedChannelModeAvailable(bot) {
 		return true
 	}
-	extras := bot.GetConfig().ScopedExtraChannelIDs
-	return slices.ContainsFunc(run.ExtraChannelIDs(), func(id string) bool {
-		return !slices.Contains(extras, id)
+	cfg := bot.GetConfig()
+	if slices.ContainsFunc(run.ExtraChannelIDs(), func(id string) bool {
+		return !slices.Contains(cfg.ScopedExtraChannelIDs, id)
+	}) {
+		return true
+	}
+	return slices.ContainsFunc(run.EnabledTools(), func(granted llm.EnabledMCPTool) bool {
+		return !slices.ContainsFunc(cfg.EnabledMCPTools, func(current llm.EnabledMCPTool) bool {
+			return current.ToolName == granted.ToolName &&
+				llm.NormalizeMCPServerOrigin(current.ServerOrigin) == llm.NormalizeMCPServerOrigin(granted.ServerOrigin)
+		})
 	})
 }
 
