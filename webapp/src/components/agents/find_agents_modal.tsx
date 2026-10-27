@@ -8,6 +8,7 @@ import MessageTextOutlineIcon from '@mattermost/compass-icons/components/message
 import {Button} from '@mattermost/compass-ui/components/button';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {MenuItem} from '@mattermost/compass-ui/components/menu-item';
+import {MenuGroupHeading} from '@mattermost/compass-ui/components/menu-group-heading';
 import {Modal, ModalOverlay} from '@mattermost/compass-ui/components/modal';
 import {Scrollbar} from '@mattermost/compass-ui/components/scrollbar';
 import {SearchInput} from '@mattermost/compass-ui/components/search-input';
@@ -230,9 +231,10 @@ const Content = ({onClose}: {onClose: () => void}) => {
                                         key={section.key}
                                         role='presentation'
                                     >
-                                        <SectionHeading id={headingId(section.key)}>
-                                            {sectionLabel(section.key)}
-                                        </SectionHeading>
+                                        <MenuGroupHeading
+                                            id={headingId(section.key)}
+                                            label={sectionLabel(section.key)}
+                                        />
                                         <Group
                                             role='group'
                                             aria-labelledby={headingId(section.key)}
@@ -361,18 +363,6 @@ const Group = styled.ul`
     margin: 0;
     padding: 0;
     list-style: none;
-`;
-
-const SectionHeading = styled.h3`
-    margin: 0;
-    padding: var(--spacing-xs) var(--spacing-l) var(--spacing-xxxs);
-    font-family: var(--font-family-body);
-    font-size: var(--font-size-75);
-    font-weight: var(--font-weight-semibold);
-    line-height: var(--line-height-75);
-    text-transform: uppercase;
-    color: var(--center-channel-color);
-    opacity: 0.64;
 `;
 
 const AvatarSlot = styled.span`
