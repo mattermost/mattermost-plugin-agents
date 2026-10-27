@@ -73,7 +73,7 @@ const PostMenu = (props: Props) => {
                 <>
                     <DropdownMenuItem
                         icon={<IconThreadSummarization/>}
-                        label={<FormattedMessage defaultMessage='Summarize Thread'/>}
+                        label={focusedAIActions ? <FormattedMessage defaultMessage='Summarize'/> : <FormattedMessage defaultMessage='Summarize Thread'/>}
                         onClick={() => analyzeThread(post.id, 'summarize_thread')}
                     />
                     <DropdownMenuItem

@@ -132,7 +132,7 @@ describe('PostMenu in the agent chat views', () => {
     test('keeps summarize and action items but drops the agent picker, open questions, React for me and the visibility note', () => {
         renderInAgentChat();
 
-        expect(screen.getByText('Summarize Thread')).not.toBeNull();
+        expect(screen.getByText('Summarize')).not.toBeNull();
         expect(screen.getByText('Find action items')).not.toBeNull();
         expect(screen.queryByText('Find open questions')).toBeNull();
         expect(screen.queryByText('bot-selector')).toBeNull();
