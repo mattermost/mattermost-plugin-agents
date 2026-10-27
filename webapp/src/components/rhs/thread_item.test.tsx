@@ -10,6 +10,10 @@ jest.mock('@/mm_webapp', () => ({
     Timestamp: () => null,
 }));
 
+jest.mock('@mattermost/shared/components/tooltip', () => ({
+    WithTooltip: ({children}: {children: React.ReactNode}) => <>{children}</>,
+}));
+
 jest.mock('react-intl', () => ({
     useIntl: () => ({
         formatMessage: ({defaultMessage}: {defaultMessage: string}, values?: {count: number}) => (
@@ -30,11 +34,31 @@ const renderItem = (props: Partial<React.ComponentProps<typeof ThreadItem>> = {}
             lastActivityDate={0}
             replyCount={1}
             onClick={onClick}
+            onRename={jest.fn()}
+            onArchive={jest.fn()}
             {...props}
         />,
     );
     return onClick;
 };
+
+describe('ThreadItem actions', () => {
+    test.each([
+        {label: 'Rename chat', callback: 'onRename'},
+        {label: 'Archive chat', callback: 'onArchive'},
+    ] as const)('the hover actions open the same menu as the Agents sidebar; $label runs it without opening the chat', async ({label, callback}) => {
+        const handlers = {onRename: jest.fn(), onArchive: jest.fn()};
+        const onClick = renderItem(handlers);
+
+        fireEvent.click(screen.getByRole('button', {name: 'Chat actions'}));
+        expect(await screen.findByText('Rename chat')).toBeTruthy();
+        expect(screen.getByText('Archive chat')).toBeTruthy();
+        fireEvent.click(screen.getByText(label));
+
+        expect(handlers[callback]).toHaveBeenCalledTimes(1);
+        expect(onClick).not.toHaveBeenCalled();
+    });
+});
 
 describe('ThreadItem', () => {
     test('shows the author, the agent, the first message and the reply count', () => {

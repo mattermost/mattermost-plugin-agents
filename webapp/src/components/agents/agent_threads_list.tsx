@@ -4,7 +4,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
-import ArchiveOutlineIcon from '@mattermost/compass-icons/components/archive-outline';
 import DotsHorizontalIcon from '@mattermost/compass-icons/components/dots-horizontal';
 import ChevronDownIcon from '@mattermost/compass-icons/components/chevron-down';
 import ChevronRightIcon from '@mattermost/compass-icons/components/chevron-right';
@@ -19,13 +18,15 @@ import {PopoverMenu} from '@mattermost/compass-ui/components/popover-menu';
 import {getProfilePictureUrl} from '@/client';
 import ConfirmationDialog from '@/components/confirmation_dialog';
 import Dropdown from '@/components/dropdown';
-import {DropdownMenuItem} from '@/components/dot_menu';
 import {WaveDots} from '@/components/llmbot_post/thinking_dots';
 import {prefersReducedMotion} from '@/components/llmbot_post/motion';
 import {useMenuTransition} from '@/hooks/use_menu_transition';
 import type {LLMBot} from '@/bots';
 import type {AgentThreadsByBot} from '@/hooks/use_agent_threads';
 import type {AIThread} from '@/types/ai_thread';
+
+import AgentChatRenameDialog from './agent_chat_rename_dialog';
+import ChatActionsMenuItems from './chat_actions_menu_items';
 
 interface AgentThreadsListProps {
     bots: LLMBot[];
@@ -43,6 +44,9 @@ interface AgentThreadsListProps {
 
     // Archives one chat. Rejects when it fails (the dialog then shows the error).
     onArchiveThread: (thread: AIThread) => Promise<void>;
+
+    // Renames one chat. Rejects when it fails (the dialog then shows the error).
+    onRenameThread: (thread: AIThread, title: string) => Promise<void>;
 }
 
 // Threads shown per agent before "More"; each click reveals this many more.
@@ -63,11 +67,13 @@ const AgentThreadsList = ({
     onNewChat,
     onRetry,
     onArchiveThread,
+    onRenameThread,
 }: AgentThreadsListProps) => {
     const intl = useIntl();
     const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
     const [limits, setLimits] = useState<Record<string, number>>({});
     const [archiveTarget, setArchiveTarget] = useState<AIThread | null>(null);
+    const [renameTarget, setRenameTarget] = useState<AIThread | null>(null);
     const [archiving, setArchiving] = useState(false);
     const [archiveFailed, setArchiveFailed] = useState(false);
 
@@ -248,6 +254,7 @@ const AgentThreadsList = ({
                                                 generating={Boolean(thread.root_post_id && generatingRoots?.has(thread.root_post_id)) && !(isActiveAgent && activeRootId === thread.root_post_id)}
                                                 placeholder={newChatPlaceholder}
                                                 onSelect={() => onSelectThread(bot.id, thread.root_post_id as string)}
+                                                onRename={() => setRenameTarget(thread)}
                                                 onArchive={() => {
                                                     setArchiveFailed(false);
                                                     setArchiveTarget(thread);
@@ -280,6 +287,19 @@ const AgentThreadsList = ({
                     </AgentBlock>
                 );
             })}
+            <AgentChatRenameDialog
+                show={renameTarget !== null}
+                initialTitle={renameTarget?.title ?? ''}
+                onSubmit={async (title) => {
+                    if (renameTarget) {
+                        await onRenameThread(renameTarget, title);
+                    }
+                    if (mounted.current) {
+                        setRenameTarget(null);
+                    }
+                }}
+                onClose={() => setRenameTarget(null)}
+            />
             <ConfirmationDialog
                 show={archiveTarget !== null}
                 titleId='archive-chat-dialog-title'
@@ -320,13 +340,14 @@ interface ThreadItemProps {
     generating: boolean;
     placeholder: string;
     onSelect: () => void;
+    onRename: () => void;
     onArchive: () => void;
 }
 
 // A compass ChannelSidebarItem only renders its own kebab for channel and DM rows, so the
 // actions button is overlaid on the row (as the agent rows do for their chevron and [+]),
 // with the same hover/focus reveal as the compass kebab.
-const ThreadItem = ({thread, active, generating, placeholder, onSelect, onArchive}: ThreadItemProps) => {
+const ThreadItem = ({thread, active, generating, placeholder, onSelect, onRename, onArchive}: ThreadItemProps) => {
     const intl = useIntl();
     const [menuOpen, setMenuOpen] = useState(false);
     const {rendered, onExited} = useMenuTransition(menuOpen);
@@ -379,10 +400,9 @@ const ThreadItem = ({thread, active, generating, placeholder, onSelect, onArchiv
                             setMenuOpen(false);
                         }}
                     >
-                        <DropdownMenuItem
-                            label={intl.formatMessage({defaultMessage: 'Archive chat'})}
-                            icon={<ArchiveOutlineIcon/>}
-                            onClick={onArchive}
+                        <ChatActionsMenuItems
+                            onRename={onRename}
+                            onArchive={onArchive}
                         />
                     </PopoverMenu>
                 </Dropdown>

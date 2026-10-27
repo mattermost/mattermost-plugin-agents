@@ -107,7 +107,7 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
     const postConversationId = useConversationIdForThread(rootId);
     const conversationId = postConversationId || (isValidId(openThread?.id) ? openThread.id : '');
     const {conversation} = useConversation(conversationId);
-    const currentTitle = renamedTitle ?? conversation?.title ?? '';
+    const currentTitle = renamedTitle ?? openThread?.title ?? conversation?.title ?? '';
 
     // The Dropdown's focus manager moves focus in on mount; a reopen during the exit
     // transition keeps it mounted, so move focus here too.
@@ -175,7 +175,7 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
     };
 
     // An open chat is named by its title; the agent's name labels the new-chat state.
-    const chatTitle = rootId ? ((renamedTitle ?? conversation?.title ?? openThread?.title ?? '').trim() || intl.formatMessage({defaultMessage: 'New chat'})) : '';
+    const chatTitle = rootId ? ((renamedTitle ?? openThread?.title ?? conversation?.title ?? '').trim() || intl.formatMessage({defaultMessage: 'New chat'})) : '';
     const nameLabel = rootId ? chatTitle : bot.displayName;
     const nameMenuLabel = rootId ? intl.formatMessage({defaultMessage: '{title}, {name} options'}, {title: chatTitle, name: bot.displayName}) : intl.formatMessage({defaultMessage: '{name} options'}, {name: bot.displayName});
     const newChatLabel = intl.formatMessage({defaultMessage: 'New chat'});

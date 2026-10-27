@@ -12,10 +12,10 @@ import {Icon} from '@mattermost/compass-ui/components/icon';
 import {Scrollbar} from '@mattermost/compass-ui/components/scrollbar';
 
 import {useBotlist} from '@/bots';
-import {archiveConversation} from '@/client';
+import {archiveConversation, renameConversation} from '@/client';
 import {useAgentThreads} from '@/hooks/use_agent_threads';
 import type {AIThread} from '@/types/ai_thread';
-import {onAgentThreadsRefreshRequested, subscribeToAllPostUpdates} from '@/websocket';
+import {onAgentThreadsRefreshRequested, requestAgentThreadsRefresh, subscribeToAllPostUpdates} from '@/websocket';
 
 import {useGeneratingThreadRoots} from '@/components/agent_chat/use_thread_generating';
 
@@ -86,6 +86,13 @@ const YourAgentsSection = () => {
         await refresh();
     }, [view, openBotId, openRootId, toChat, refresh]);
 
+    const renameThread = useCallback(async (thread: AIThread, title: string) => {
+        await renameConversation(thread.id, title);
+
+        // The open chat's header and the RHS history list the same chats.
+        requestAgentThreadsRefresh();
+    }, []);
+
     return (
         <AgentThreadsList
             bots={bots ?? []}
@@ -99,6 +106,7 @@ const YourAgentsSection = () => {
             onNewChat={route.toChat}
             onRetry={refresh}
             onArchiveThread={archiveThread}
+            onRenameThread={renameThread}
         />
     );
 };

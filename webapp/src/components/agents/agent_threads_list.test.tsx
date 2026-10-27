@@ -59,6 +59,7 @@ const renderList = (props: Partial<React.ComponentProps<typeof AgentThreadsList>
         onNewChat: jest.fn(),
         onRetry: jest.fn(),
         onArchiveThread: jest.fn(() => Promise.resolve()),
+        onRenameThread: jest.fn(() => Promise.resolve()),
     };
     render(
         <IntlProvider
@@ -194,6 +195,30 @@ describe('AgentThreadsList', () => {
             fireEvent.click(screen.getByRole('button', {name: 'Collapse Alpha chats'}));
             fireEvent.click(screen.getByRole('button', {name: 'Expand Alpha chats'}));
             expect(chatTitles()).toHaveLength(THREADS_PAGE_SIZE);
+        });
+    });
+
+    describe('rename', () => {
+        test('the actions menu offers Rename chat and Archive chat', async () => {
+            renderList();
+            fireEvent.click(screen.getByRole('button', {name: 'Actions for First chat'}));
+
+            expect(await screen.findByText('Rename chat')).toBeTruthy();
+            expect(screen.getByText('Archive chat')).toBeTruthy();
+        });
+
+        test('Rename chat asks for a title and renames that chat', async () => {
+            const h = renderList();
+            fireEvent.click(screen.getByRole('button', {name: 'Actions for First chat'}));
+            fireEvent.click(await screen.findByText('Rename chat'));
+
+            const input = await screen.findByLabelText('Chat name');
+            expect((input as HTMLInputElement).value).toBe('First chat');
+            fireEvent.change(input, {target: {value: 'Renamed chat'}});
+            fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+            await waitFor(() => expect(h.onRenameThread).toHaveBeenCalledWith(expect.objectContaining({id: '1'}), 'Renamed chat'));
+            await waitFor(() => expect(screen.queryByLabelText('Chat name')).toBeNull());
         });
     });
 

@@ -13,6 +13,8 @@ const mockGetUserMCPTools = jest.fn();
 const mockGetUserToolPreferences = jest.fn();
 const mockUpdateRead = jest.fn();
 const mockCreatePost = jest.fn();
+const mockArchiveConversation = jest.fn();
+const mockRenameConversation = jest.fn();
 const mockGetPostsByIds = jest.fn();
 
 jest.mock('@/client', () => ({
@@ -22,6 +24,8 @@ jest.mock('@/client', () => ({
     createPost: (...args: unknown[]) => mockCreatePost(...args),
     getProfilesByIds: () => Promise.resolve([]),
     getPostsByIds: (ids: string[]) => mockGetPostsByIds(ids),
+    archiveConversation: (id: string) => mockArchiveConversation(id),
+    renameConversation: (id: string, title: string) => mockRenameConversation(id, title),
     getProfilePictureUrl: (id: string) => `/users/${id}/image`,
     updateRead: (userId: string, teamId: string, postId: string, timestamp: number) => (
         mockUpdateRead(userId, teamId, postId, timestamp)
@@ -85,7 +89,13 @@ jest.mock('./thread_item', () => {
 
     return {
         __esModule: true,
-        default: (props: {preview: string; replyCount?: number}) => ReactActual.createElement('div', {'data-testid': 'rhs-thread-item'}, `${props.preview}|${props.replyCount ?? 'none'}`),
+        default: (props: {preview: string; replyCount?: number; onRename: () => void; onArchive: () => void}) => ReactActual.createElement(
+            'div',
+            {'data-testid': 'rhs-thread-item'},
+            `${props.preview}|${props.replyCount ?? 'none'}`,
+            ReactActual.createElement('button', {type: 'button', onClick: props.onRename}, `rename ${props.preview}`),
+            ReactActual.createElement('button', {type: 'button', onClick: props.onArchive}, `archive ${props.preview}`),
+        ),
     };
 });
 
@@ -228,9 +238,61 @@ describe('RHS', () => {
 
         renderRHS();
 
-        await waitFor(() => expect(screen.getAllByTestId('rhs-thread-item').map((el) => el.textContent)).toEqual(expected));
+        await waitFor(() => expect(screen.getAllByTestId('rhs-thread-item').map((el) => el.firstChild?.textContent)).toEqual(expected));
         expect(mockGetPostsByIds).toHaveBeenCalledWith(['root1', 'root2']);
         errorLog.mockRestore();
+    });
+
+    describe('chat history actions', () => {
+        const openHistory = async () => {
+            mockGetAIThreads.mockResolvedValue([
+                {id: 'c1', bot_id: 'bot-id', root_post_id: 'root1', title: 'Title one', turn_count: 3, update_at: 1},
+                {id: 'c2', bot_id: 'bot-id', root_post_id: 'root2', title: 'Title two', turn_count: 1, update_at: 2},
+            ]);
+            mockGetPostsByIds.mockResolvedValue([]);
+            const state = {...baseState, 'plugins-mattermost-ai': {selectedPostId: '', rhsTab: 'threads'}};
+            mockUseSelector.mockImplementation((selector) => selector(state));
+            renderRHS();
+            await waitFor(() => expect(screen.getAllByTestId('rhs-thread-item')).toHaveLength(2));
+        };
+
+        test('Rename chat asks for a title, renames that chat and shows the new title', async () => {
+            mockRenameConversation.mockResolvedValue(true);
+            await openHistory();
+
+            fireEvent.click(screen.getByRole('button', {name: 'rename Title one'}));
+            const input = await screen.findByLabelText('Chat name');
+            expect((input as HTMLInputElement).value).toBe('Title one');
+            fireEvent.change(input, {target: {value: 'Renamed'}});
+            fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+            await waitFor(() => expect(mockRenameConversation).toHaveBeenCalledWith('c1', 'Renamed'));
+            await waitFor(() => expect(screen.getAllByTestId('rhs-thread-item').map((el) => el.firstChild?.textContent)).toEqual(['Renamed|none', 'Title two|none']));
+        });
+
+        test('Archive chat confirms, archives that chat and removes it from the list', async () => {
+            mockArchiveConversation.mockResolvedValue(true);
+            await openHistory();
+
+            fireEvent.click(screen.getByRole('button', {name: 'archive Title two'}));
+            fireEvent.click(await screen.findByRole('button', {name: 'Archive'}));
+
+            await waitFor(() => expect(mockArchiveConversation).toHaveBeenCalledWith('c2'));
+            await waitFor(() => expect(screen.getAllByTestId('rhs-thread-item').map((el) => el.firstChild?.textContent)).toEqual(['Title one|none']));
+        });
+
+        test('a failed archive keeps the chat and shows an error', async () => {
+            const errorLog = jest.spyOn(console, 'error').mockImplementation(() => null);
+            mockArchiveConversation.mockRejectedValue(new Error('nope'));
+            await openHistory();
+
+            fireEvent.click(screen.getByRole('button', {name: 'archive Title one'}));
+            fireEvent.click(await screen.findByRole('button', {name: 'Archive'}));
+
+            expect((await screen.findByRole('alert')).textContent).toContain('Couldn\'t archive this chat');
+            expect(screen.getAllByTestId('rhs-thread-item')).toHaveLength(2);
+            errorLog.mockRestore();
+        });
     });
 
     test('logs generic read marker rejections', async () => {
