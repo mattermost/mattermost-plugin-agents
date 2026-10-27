@@ -1,7 +1,8 @@
 // spec: tests/channel-analysis/integration.plan.md
 // seed: tests/seed.spec.ts
 
-import { test, expect, Page } from '@playwright/test';
+import { expect, Page } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import type { Client4 } from '@mattermost/client';
 
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
@@ -154,31 +155,26 @@ async function expectReadChannelToolResult(
     }
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunAIMockContainer({ mcp: CHANNEL_ANALYSIS_MCP }));
+    // aimock strict mode requires at least one fixture at startup; each test replaces these.
+    const aimock = own(await RunAIMockSidecar(mattermost.network, {
+        fixtures: buildReadChannelAnalysisFixtures({
+            toolCallId: 'bootstrap_read_channel',
+            finalContent: 'bootstrap response',
+        }),
+    }));
+    return { mattermost, aimock };
+});
+
 test.describe('Channel Analysis Aimock Backend Verification', () => {
     test.describe.configure({ mode: 'serial' });
 
     let mattermost: MattermostContainer;
     let aimock: AIMockContainer;
 
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        mattermost = await RunAIMockContainer({ mcp: CHANNEL_ANALYSIS_MCP });
-        // aimock strict mode requires at least one fixture at startup; each test replaces these.
-        aimock = await RunAIMockSidecar(mattermost.network, {
-            fixtures: buildReadChannelAnalysisFixtures({
-                toolCallId: 'bootstrap_read_channel',
-                finalContent: 'bootstrap response',
-            }),
-        });
-    });
-
-    test.afterAll(async () => {
-        if (aimock) {
-            await aimock.stop();
-        }
-        if (mattermost) {
-            await mattermost.stop();
-        }
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, aimock } = containers);
     });
 
     test('Sanity check: Channel analysis produces valid summary', async ({ page }) => {

@@ -129,7 +129,9 @@ func TestServerToolActivityReplayedInRequest(t *testing.T) {
 		{Role: llm.PostRoleUser, Message: "now make it blue"},
 	}}
 
-	messages := llmClient.convertToResponsesMessages(request.Posts)
+	respReq, err := llmClient.convertToBifrostResponsesRequest(request, llmClient.GetDefaultConfig())
+	require.NoError(t, err)
+	messages := respReq.Input
 
 	var texts []string
 	for _, msg := range messages {
@@ -188,9 +190,10 @@ func TestServerToolActivityNotReplayedWhenAbsent(t *testing.T) {
 	require.NoError(t, err)
 	defer llmClient.Shutdown()
 
-	messages := llmClient.convertToResponsesMessages([]llm.Post{
+	respReq, err := llmClient.convertToBifrostResponsesRequest(llm.CompletionRequest{Posts: []llm.Post{
 		{Role: llm.PostRoleUser, Message: "hi"},
 		{Role: llm.PostRoleBot, Message: "hello"},
-	})
-	require.Len(t, messages, 2)
+	}}, llmClient.GetDefaultConfig())
+	require.NoError(t, err)
+	require.Len(t, respReq.Input, 2)
 }

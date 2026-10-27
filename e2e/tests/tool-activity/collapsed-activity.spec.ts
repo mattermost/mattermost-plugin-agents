@@ -1,4 +1,5 @@
-import {test, expect} from '@playwright/test';
+import {expect} from '@playwright/test';
+import {containerTest} from 'helpers/container-fixture';
 
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {
@@ -62,21 +63,28 @@ const stopAnswerStart = 'STOP_ANSWER: beginning a long explanation';
 const stopAnswerTail = 'that keeps going for a while so the stream is still open when Stop is pressed. ';
 const stopAnswer = `${stopAnswerStart} ${stopAnswerTail.repeat(16)}`;
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigAIMockContainer({
+        toolConfigs: [
+            {name: 'get_channel_info', policy: 'auto_run_in_dm', enabled: true},
+            {name: 'read_channel', policy: 'auto_run_in_dm', enabled: true},
+        ],
+        reasoningEnabled: true,
+    }));
+    const aimock = own(await RunAIMockSidecar(mattermost.network));
+    return {mattermost, aimock};
+});
+
 test.describe('Collapsed Tool Activity (Aimock)', () => {
     test.describe.configure({mode: 'serial'});
 
     let mattermost: MattermostContainer;
     let aimock: AIMockContainer;
 
-    test.beforeAll(async () => {
-        test.setTimeout(300000);
-        mattermost = await RunToolConfigAIMockContainer({
-            toolConfigs: [
-                {name: 'get_channel_info', policy: 'auto_run_in_dm', enabled: true},
-                {name: 'read_channel', policy: 'auto_run_in_dm', enabled: true},
-            ],
-            reasoningEnabled: true,
-        });
+    test.beforeAll(async ({containers}) => {
+        // setFixtures can fall back to restarting aimock, which outlasts the default hook timeout.
+        test.setTimeout(180000);
+        ({mattermost, aimock} = containers);
         await setupRegularTestUser(mattermost);
         const townSquare = await getTownSquareChannel(mattermost, username, password);
 
@@ -203,12 +211,7 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
             },
         );
 
-        aimock = await RunAIMockSidecar(mattermost.network, {fixtures});
-    });
-
-    test.afterAll(async () => {
-        await aimock?.stop();
-        await mattermost?.stop();
+        await aimock.setFixtures(fixtures);
     });
 
     test('collapses multiple auto-run tools into a summary that expands and collapses again', async ({page}) => {

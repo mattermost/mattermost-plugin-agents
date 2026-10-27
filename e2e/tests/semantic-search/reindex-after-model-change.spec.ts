@@ -1,17 +1,19 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
 import { mattermostAIAdminConfigApiFromClient, mattermostAIPluginRoutes } from 'helpers/plugin-http';
 
-let mattermost: MattermostContainer;
-
-test.beforeAll(async () => {
-    mattermost = await RunContainer();
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    return { mattermost };
 });
 
-test.afterAll(async () => {
-    await mattermost.stop();
+let mattermost: MattermostContainer;
+
+test.beforeAll(async ({ containers }) => {
+    ({ mattermost } = containers);
 });
 
 type JobStatus = { status: string; error?: string };

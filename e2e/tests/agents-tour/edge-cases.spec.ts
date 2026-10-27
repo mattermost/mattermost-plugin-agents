@@ -1,7 +1,8 @@
 // spec: specs/agents-tour.md
 // seed: tests/seed.spec.ts
 
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -14,12 +15,17 @@ const password = 'regularuser';
 const TOUR_PREFERENCE_CATEGORY = 'mattermost-ai-tutorial';
 const TOUR_PREFERENCE_NAME = 'agents_tour_v1';
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
-test.beforeAll(async () => {
-    mattermost = await RunContainer();
-    openAIMock = await RunOpenAIMocks(mattermost.network);
+test.beforeAll(async ({ containers }) => {
+    ({ mattermost, openAIMock } = containers);
 });
 
 test.beforeEach(async () => {
@@ -34,11 +40,6 @@ test.beforeEach(async () => {
     } catch (e) {
         // Preference may not exist
     }
-});
-
-test.afterAll(async () => {
-    await openAIMock.stop();
-    await mattermost.stop();
 });
 
 test.describe('Agents Tour - Edge Cases', () => {

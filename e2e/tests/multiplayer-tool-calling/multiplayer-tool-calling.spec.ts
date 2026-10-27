@@ -1,7 +1,8 @@
 // spec: tests/multiplayer-tool-calling/multiplayer-tool-calling.plan.md
 // seed: tests/seed.spec.ts
 
-import {test, expect, Page} from '@playwright/test';
+import {expect, Page} from '@playwright/test';
+import {containerTest} from 'helpers/container-fixture';
 
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {
@@ -226,6 +227,21 @@ async function navigateToChannel(page: Page, baseUrl: string, channelName: strin
     await waitForPageReady(page);
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigAIMockContainer({
+        toolConfigs: MULTIPLAYER_ASK_TOOL_CONFIGS,
+        customInstructions: multiplayerCustomInstructions,
+        enableVectorIndex: true,
+        defaultBotName: 'toolbot',
+        botId: 'tool-test-bot',
+        botDisplayName: 'Tool Test Bot',
+    }));
+    const aimock = own(await RunAIMockSidecar(mattermost.network, {
+        fixtures: {fixtures: [buildTitleFixture('Multiplayer bootstrap')]},
+    }));
+    return { mattermost, aimock };
+});
+
 test.describe('Multiplayer Tool Calling (Aimock)', () => {
     // Serial: one shared Mattermost + aimock sidecar; each test reloads fixtures via setFixtures/restart.
     // Keep-private runs first so a prior happy-path create_post does not leave Town Square posts that
@@ -234,28 +250,10 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
 
     let townSquare: TownSquareChannel;
 
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        mattermost = await RunToolConfigAIMockContainer({
-            toolConfigs: MULTIPLAYER_ASK_TOOL_CONFIGS,
-            customInstructions: multiplayerCustomInstructions,
-            enableVectorIndex: true,
-            defaultBotName: 'toolbot',
-            botId: 'tool-test-bot',
-            botDisplayName: 'Tool Test Bot',
-        });
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, aimock } = containers);
         await setupMultiplayerUsers(mattermost);
         townSquare = await getTownSquareChannel(mattermost, invokerUsername, invokerPassword);
-        aimock = await RunAIMockSidecar(mattermost.network, {
-            fixtures: {fixtures: [buildTitleFixture('Multiplayer bootstrap')]},
-        });
-    });
-
-    test.afterAll(async () => {
-        await aimock?.stop();
-        if (mattermost) {
-            await mattermost.stop();
-        }
     });
 
     test('Accept tool calls then Keep Private', async ({browser}) => {

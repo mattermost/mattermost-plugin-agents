@@ -1,16 +1,15 @@
 // spec: specs/agents-tour.md
 // seed: tests/seed.spec.ts
 
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import { RunSystemConsoleContainer, adminUsername, adminPassword } from 'helpers/system-console-container';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 
-let mattermost: MattermostContainer;
-
-test.beforeAll(async () => {
-    mattermost = await RunSystemConsoleContainer({
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunSystemConsoleContainer({
         services: [{
             id: 'mock-service',
             name: 'Mock Service',
@@ -19,11 +18,14 @@ test.beforeAll(async () => {
             apiURL: 'http://localhost:8080',
         }],
         bots: [],
-    });
+    }));
+    return { mattermost };
 });
 
-test.afterAll(async () => {
-    await mattermost.stop();
+let mattermost: MattermostContainer;
+
+test.beforeAll(async ({ containers }) => {
+    ({ mattermost } = containers);
 });
 
 test.describe('Agents Tour - No Bots Configured', () => {

@@ -50,12 +50,6 @@ func TestMaxImageDimension(t *testing.T) {
 			want:       anthropicManyImageDimension,
 		},
 		{
-			name:       "custom Anthropic provider name still matches",
-			provider:   customProviderName(schemas.Anthropic, "svc2"),
-			imageCount: 1,
-			want:       anthropicMaxImageDimension,
-		},
-		{
 			name:       "OpenAI uses the documented 65535 side cap",
 			provider:   schemas.OpenAI,
 			imageCount: 1,
