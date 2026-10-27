@@ -4,6 +4,8 @@
 import React from 'react';
 import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 
+import {fakeHostTextboxRenders} from '../../../tests/fake_host_textbox';
+
 import Rhs from './rhs';
 
 const mockGetAIThreads = jest.fn();
@@ -17,6 +19,7 @@ jest.mock('@/client', () => ({
     getUserMCPTools: () => mockGetUserMCPTools(),
     getUserToolPreferences: () => mockGetUserToolPreferences(),
     createPost: (...args: unknown[]) => mockCreatePost(...args),
+    getProfilesByIds: () => Promise.resolve([]),
     updateRead: (userId: string, teamId: string, postId: string, timestamp: number) => (
         mockUpdateRead(userId, teamId, postId, timestamp)
     ),
@@ -57,6 +60,7 @@ jest.mock('@/mm_webapp', () => {
     const ReactActual = jest.requireActual<typeof import('react')>('react');
 
     return {
+        Textbox: jest.requireActual('../../../tests/fake_host_textbox').FakeHostTextbox,
         ThreadViewer: (props: Record<string, unknown>) => {
             mockThreadViewer(props);
             return ReactActual.createElement('div', {'data-testid': 'rhs-thread-viewer'});
@@ -215,7 +219,9 @@ describe('RHS', () => {
         {name: 'the thread is in the agent\'s DM', post: {channel_id: 'dm-channel-id', user_id: 'user-id'}, label: 'Reply to Agents'},
         {name: 'the agent started the thread', post: {channel_id: 'other-dm', user_id: 'bot-id'}, label: 'Reply to Agents'},
         {name: 'the agent is unknown', post: {channel_id: 'other-dm', user_id: 'user-id'}, label: 'Reply'},
+        {name: 'it is a channel thread the agent was mentioned in', post: {channel_id: 'town-square', user_id: 'user-id'}, label: 'Reply'},
     ])('replies from the pill composer into the selected thread when $name', async ({post, label}) => {
+        window.sessionStorage.clear();
         mockCreatePost.mockResolvedValue({id: 'reply-id'});
         const state = {
             ...baseState,
@@ -230,6 +236,9 @@ describe('RHS', () => {
             fireEvent.keyDown(reply, {key: 'Enter'});
         });
         expect(mockCreatePost).toHaveBeenCalledWith(expect.objectContaining({channel_id: post.channel_id, root_id: 'post-id', message: 'follow up'}));
+
+        // Autocomplete and slash commands are scoped to that thread.
+        expect(fakeHostTextboxRenders[fakeHostTextboxRenders.length - 1]).toEqual(expect.objectContaining({channelId: post.channel_id, rootId: 'post-id'}));
 
         await act(async () => {
             unmount();

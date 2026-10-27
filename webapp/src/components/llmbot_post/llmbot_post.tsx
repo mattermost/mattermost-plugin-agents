@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
+import React, {useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
 import styled from 'styled-components';
@@ -29,6 +29,7 @@ import HTMLArtifacts from '../html_artifacts/html_artifacts';
 import {needsViewerDecision, selectDecisionToolCalls} from '../tool_decisions';
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
 import {Annotation} from '../citations/types';
+import {AgentChatSurfaceContext} from '../agent_chat/agent_chat_surface_context';
 
 import {
     Round,
@@ -598,7 +599,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const showRegenerate = isDM && !isGenerationInProgress && requesterIsCurrentUser && !isNoShowRegen;
     const meetingsLicensed = useIsLicensedFor('meetings');
     const showPostbackButton = meetingsLicensed && !isGenerationInProgress && requesterIsCurrentUser && isTranscriptionResult;
-    const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser;
+
+    // In the agent chat views the composer's send button is the Stop control.
+    const {composerHandlesStop} = useContext(AgentChatSurfaceContext);
+    const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser && !composerHandlesStop;
     const hasContent = renderedRounds.length > 0;
     const showControlsBar = ((showRegenerate || showPostbackButton) && hasContent) || showStopGeneratingButton;
 

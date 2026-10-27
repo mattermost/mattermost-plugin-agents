@@ -34,6 +34,7 @@ jest.mock('@/mm_webapp', () => ({}));
 const mockRequestRefresh = jest.fn();
 jest.mock('@/websocket', () => ({
     requestAgentThreadsRefresh: () => mockRequestRefresh(),
+    subscribeToAllPostUpdates: () => () => null,
 }));
 
 // The pinned prompts have their own fetching; here only that they get the DM channel.

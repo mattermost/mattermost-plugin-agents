@@ -84,6 +84,7 @@ const expectedPost = (message: string, rootId = '') => ({
 describe('AgentChatComposer', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        window.sessionStorage.clear();
         jest.spyOn(console, 'error').mockImplementation(() => null);
     });
 
@@ -282,6 +283,7 @@ const attachModes = [
 describe('AgentChatComposer attachments', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        window.sessionStorage.clear();
         jest.spyOn(console, 'error').mockImplementation(() => null);
     });
 

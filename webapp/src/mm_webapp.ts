@@ -1,20 +1,23 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-export const AdvancedTextEditor = (window as any).Components.AdvancedTextEditor;
+// Host components are read with optional chaining so importing this module
+// never throws where the host does not publish them (older servers, unit tests).
+
+export const AdvancedTextEditor = (window as any).Components?.AdvancedTextEditor;
 
 // Compatibility with pre v10 create post export
-export const CreatePost = (window as any).Components.CreatePost;
+export const CreatePost = (window as any).Components?.CreatePost;
 
 export function isRHSCompatable(): boolean {
     return AdvancedTextEditor || CreatePost;
 }
 
-export const PostMessagePreview = (window as any).Components.PostMessagePreview;
+export const PostMessagePreview = (window as any).Components?.PostMessagePreview;
 
-export const Timestamp = (window as any).Components.Timestamp;
+export const Timestamp = (window as any).Components?.Timestamp;
 
-export const ThreadViewer = (window as any).Components.ThreadViewer;
+export const ThreadViewer = (window as any).Components?.ThreadViewer;
 
 export const DatePicker = (window as any).Components?.DatePicker;
 
@@ -22,4 +25,8 @@ export const MenuItem = (window as any).Components?.MenuItem;
 
 export const MenuSeparator = (window as any).Components?.MenuSeparator;
 
-export const useWebSocketClient = (window as any).ProductApi.useWebSocketClient;
+// The host's suggestion-box textarea (components/textbox): @mention, ~channel,
+// :emoji: and slash command autocomplete. Absent on hosts that do not publish it.
+export const Textbox = (window as any).Components?.Textbox;
+
+export const useWebSocketClient = (window as any).ProductApi?.useWebSocketClient;

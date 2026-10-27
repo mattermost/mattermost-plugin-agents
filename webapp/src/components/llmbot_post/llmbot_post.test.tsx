@@ -12,6 +12,8 @@ import type {ConversationResponse, Turn} from '@/types/conversation';
 
 import {ToolCallStatus} from '../tool_types';
 
+import {AGENT_CHAT_SURFACE, AgentChatSurfaceContext} from '../agent_chat/agent_chat_surface_context';
+
 import {LLMBotPost, PostUpdateWebsocketMessage} from './llmbot_post';
 import {advanceAnimation} from './test_support';
 
@@ -1496,6 +1498,35 @@ describe('LLMBotPost stopped generation notice', () => {
         fireEvent.click(screen.getByTestId('stop-generating-button'));
 
         expect(stoppedNotice()).toBe('You stopped generating this response.');
+    });
+});
+
+describe('LLMBotPost Stop in agent chat surfaces', () => {
+    test.each([
+        {name: 'no surface (Channels DM, host RHS)', wrap: false, stopShown: true},
+        {name: 'an agent chat view, whose composer stops', wrap: true, stopShown: false},
+    ])('while generating, $name', ({wrap, stopShown}) => {
+        mockUseConversation.mockReturnValue({conversation: makeConversation([]), loading: false, error: null});
+        let listener: PostUpdateHandler | undefined;
+        const post = (
+            <LLMBotPost
+                post={makePost()}
+                websocketRegister={(_postID, _listenerID, handler) => {
+                    listener = handler;
+                }}
+                websocketUnregister={jest.fn()}
+            />
+        );
+        render(
+            <IntlProvider locale='en'>
+                {wrap ? <AgentChatSurfaceContext.Provider value={AGENT_CHAT_SURFACE}>{post}</AgentChatSurfaceContext.Provider> : post}
+            </IntlProvider>,
+        );
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Partial'}));
+        });
+        expect(screen.queryByTestId('stop-generating-button') !== null).toBe(stopShown);
     });
 });
 

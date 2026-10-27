@@ -8,6 +8,7 @@ import styled, {css, keyframes} from 'styled-components';
 import {ThreadViewer as UnstyledThreadViewer} from '@/mm_webapp';
 
 import AgentChatComposer from './agent_chat_composer';
+import {AGENT_CHAT_SURFACE, AgentChatSurfaceContext} from './agent_chat_surface_context';
 import {CHAT_CONTENT_MAX_WIDTH, hostThreadChatStyles} from './agent_chat_host_styles';
 import type {AgentNewChatLayout} from './agent_new_chat';
 
@@ -39,31 +40,34 @@ const AgentChatThreadView = ({channelId, rootId, agentName, layout, isThreadView
         return null;
     }
 
+    // Posts in this view leave Stop to the composer below them.
     return (
-        <ThreadPane
-            $layout={layout}
-            data-testid={testId}
-        >
-            <ViewerArea>
-                <ThreadViewer
-                    data-testid={viewerTestId}
-                    rootPostId={rootId}
-                    isThreadView={isThreadView}
-                    useRelativeTimestamp={false}
-                    inputPlaceholder={intl.formatMessage({defaultMessage: 'Reply…'})}
-                />
-            </ViewerArea>
-            {channelId && (
-                <ComposerArea $layout={layout}>
-                    <AgentChatComposer
-                        key={rootId}
-                        channelId={channelId}
-                        rootId={rootId}
-                        agentName={agentName}
+        <AgentChatSurfaceContext.Provider value={AGENT_CHAT_SURFACE}>
+            <ThreadPane
+                $layout={layout}
+                data-testid={testId}
+            >
+                <ViewerArea>
+                    <ThreadViewer
+                        data-testid={viewerTestId}
+                        rootPostId={rootId}
+                        isThreadView={isThreadView}
+                        useRelativeTimestamp={false}
+                        inputPlaceholder={intl.formatMessage({defaultMessage: 'Reply…'})}
                     />
-                </ComposerArea>
-            )}
-        </ThreadPane>
+                </ViewerArea>
+                {channelId && (
+                    <ComposerArea $layout={layout}>
+                        <AgentChatComposer
+                            key={rootId}
+                            channelId={channelId}
+                            rootId={rootId}
+                            agentName={agentName}
+                        />
+                    </ComposerArea>
+                )}
+            </ThreadPane>
+        </AgentChatSurfaceContext.Provider>
     );
 };
 
