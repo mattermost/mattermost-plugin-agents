@@ -131,6 +131,13 @@ func (m *ClientManager) SetScopedSessions(minter scopedsession.Minter) {
 	m.scopedMinter = minter
 }
 
+// ScopedSessionsAvailable reports whether this node can mint scoped sessions.
+func (m *ClientManager) ScopedSessionsAvailable() bool {
+	m.scopedMu.Lock()
+	defer m.scopedMu.Unlock()
+	return m.scopedMinter != nil
+}
+
 // MintScopedSession creates a scoped session for req's bot. The session can
 // read req's channel, its extra channels, and every public channel on an open
 // team, and nothing else. The caller owns the run and must Close it when the

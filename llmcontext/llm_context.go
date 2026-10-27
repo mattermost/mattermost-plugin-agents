@@ -16,7 +16,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
-	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -52,6 +51,9 @@ var _ MCPServerDescriber = (*mcp.ClientManager)(nil)
 // connect with.
 type ScopedSessionMinter interface {
 	MintScopedSession(ctx stdcontext.Context, req mcp.ScopedSessionRequest) (*mcp.ScopedRun, error)
+	// ScopedSessionsAvailable reports whether this node's server can create
+	// scoped sessions.
+	ScopedSessionsAvailable() bool
 }
 
 var _ ScopedSessionMinter = (*mcp.ClientManager)(nil)
@@ -322,9 +324,13 @@ func (b *Builder) ScopedChannelModeActive(bot *bots.Bot, channel *model.Channel)
 }
 
 // ServerSupportsScopedSessions reports whether the Mattermost server can mint
-// scoped sessions.
+// scoped sessions, as probed when the plugin started on this node.
 func (b *Builder) ServerSupportsScopedSessions() bool {
-	return b != nil && b.pluginAPI != nil && scopedsession.ServerSupports(b.pluginAPI.System.GetServerVersion())
+	if b == nil {
+		return false
+	}
+	minter, ok := b.mcpToolProvider.(ScopedSessionMinter)
+	return ok && minter.ScopedSessionsAvailable()
 }
 
 func (b *Builder) channelToolCallingEnabled() bool {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
@@ -195,4 +196,52 @@ func TestScopedRunReadsThroughEmbeddedServer(t *testing.T) {
 	}
 	require.NoError(t, <-closeErr)
 	assert.Equal(t, []string{run.Session().Id}, minter.revoked)
+}
+
+// TestScopedSessionSupportProbedAtActivation runs the activation probe into
+// the client manager and context builder production uses: only a server that
+// refuses the probe as a bad request gets a minter, so scoped runs fail closed
+// on a server without CreateScopedSession or when the probe errs.
+func TestScopedSessionSupportProbedAtActivation(t *testing.T) {
+	tests := []struct {
+		name        string
+		probeResult *model.AppError
+		supported   bool
+	}{
+		{name: "server refuses the probe as invalid", probeResult: model.NewAppError("CreateScopedSession", "app.session.create_scoped.scope_missing.app_error", nil, "", http.StatusBadRequest), supported: true},
+		{name: "server has no CreateScopedSession"},
+		{name: "probe fails on the server", probeResult: model.NewAppError("CreateScopedSession", "app.internal", nil, "", http.StatusInternalServerError)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			botID := model.NewId()
+			api := &plugintest.API{}
+			api.On("LogInfo", mock.Anything).Return().Maybe()
+			api.On("LogWarn", mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+			api.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+			api.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
+			// A server without the method answers like this: the plugin RPC
+			// client logs the failed call and returns zero values.
+			api.On("CreateScopedSession", "", (*model.SessionScope)(nil), int64(0)).Return(nil, tt.probeResult).Once()
+			api.On("CreateScopedSession", botID, mock.Anything, mock.Anything).Return(&model.Session{Id: model.NewId(), UserId: botID}, nil).Maybe()
+			api.On("RevokeSession", mock.Anything).Return(nil).Maybe()
+			pluginAPI := pluginapi.NewClient(api, nil)
+
+			manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, pluginAPI.Log, pluginAPI, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
+			t.Cleanup(manager.Close)
+			manager.SetScopedSessions(newScopedSessionMinter(api, &pluginAPI.Log))
+			builder := llmcontext.NewLLMContextBuilder(pluginAPI, nil, manager, nil)
+
+			assert.Equal(t, tt.supported, builder.ServerSupportsScopedSessions())
+			run, err := manager.MintScopedSession(t.Context(), mcp.ScopedSessionRequest{BotUserID: botID, RequesterID: model.NewId(), ChannelID: model.NewId()})
+			if tt.supported {
+				require.NoError(t, err)
+				require.NoError(t, run.Close())
+			} else {
+				require.ErrorIs(t, err, mcp.ErrScopedSessionsUnavailable)
+				api.AssertNotCalled(t, "CreateScopedSession", botID, mock.Anything, mock.Anything)
+			}
+			api.AssertExpectations(t)
+		})
+	}
 }

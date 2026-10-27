@@ -91,13 +91,13 @@ func (p *scopedCatalogProvider) GetToolsWithSelection(_ stdcontext.Context, req 
 
 type scopedTestEnv struct {
 	level               enterprise.Level
-	serverVersion       string
+	noScopedSessions    bool
 	channelToolCalling  bool
 	requesterCannotRead bool
 }
 
 func defaultScopedTestEnv() scopedTestEnv {
-	return scopedTestEnv{level: enterprise.LevelEnterprise, serverVersion: scopedsession.MinServerVersion, channelToolCalling: true}
+	return scopedTestEnv{level: enterprise.LevelEnterprise, channelToolCalling: true}
 }
 
 func newScopedTestBuilder(t *testing.T, env scopedTestEnv, toolProvider ToolProvider, mcpProvider MCPToolProvider) (*Builder, func() []*model.AuditRecord) {
@@ -106,7 +106,6 @@ func newScopedTestBuilder(t *testing.T, env scopedTestEnv, toolProvider ToolProv
 	mockAPI := &plugintest.API{}
 	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
 	mockAPI.On("GetLicense").Return(enterprisetest.LicenseFor(env.level)).Maybe()
-	mockAPI.On("GetServerVersion").Return(env.serverVersion).Maybe()
 	mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: "team-id"}, nil).Maybe()
 	mockAPI.On("HasPermissionToChannel", mock.Anything, mock.Anything, model.PermissionReadChannel).Return(!env.requesterCannotRead).Maybe()
 	for i := 1; i <= 10; i++ {
@@ -127,6 +126,9 @@ func newScopedTestBuilder(t *testing.T, env scopedTestEnv, toolProvider ToolProv
 		records = append(records, args.Get(0).(*model.AuditRecord))
 	}).Maybe().Return()
 
+	if p, ok := mcpProvider.(*scopedCatalogProvider); ok && env.noScopedSessions {
+		p.SetScopedSessions(nil)
+	}
 	builder := NewLLMContextBuilder(pluginapi.NewClient(mockAPI, nil), toolProvider, mcpProvider, &scopedTestConfig{channelToolCalling: env.channelToolCalling})
 	return builder, func() []*model.AuditRecord {
 		mu.Lock()
@@ -172,8 +174,7 @@ func TestScopedChannelModeActive(t *testing.T) {
 		{name: "service accounts off", cfg: func(c *llm.BotConfig) { c.UseServiceAccountAuth = false }, channel: publicChannel},
 		{name: "every MCP tool enabled automatically", cfg: func(c *llm.BotConfig) { c.AutoEnableNewMCPTools = true }, channel: publicChannel},
 		{name: "below Enterprise", env: func(e *scopedTestEnv) { e.level = enterprise.LevelProfessional }, channel: publicChannel},
-		{name: "server too old", env: func(e *scopedTestEnv) { e.serverVersion = "12.1.0" }, channel: publicChannel},
-		{name: "unknown server version", env: func(e *scopedTestEnv) { e.serverVersion = "" }, channel: publicChannel},
+		{name: "server cannot create scoped sessions", env: func(e *scopedTestEnv) { e.noScopedSessions = true }, channel: publicChannel},
 		{name: "channel tool calling off", env: func(e *scopedTestEnv) { e.channelToolCalling = false }, channel: publicChannel},
 		{name: "DM", channel: &model.Channel{Id: model.NewId(), Type: model.ChannelTypeDirect}},
 		{name: "group message", channel: &model.Channel{Id: model.NewId(), Type: model.ChannelTypeGroup}},
@@ -189,7 +190,7 @@ func TestScopedChannelModeActive(t *testing.T) {
 			if tt.env != nil {
 				tt.env(&env)
 			}
-			builder, _ := newScopedTestBuilder(t, env, &emptyToolProvider{}, nil)
+			builder, _ := newScopedTestBuilder(t, env, &emptyToolProvider{}, newScopedCatalogProvider(t, &recordingScopedMinter{}, nil))
 			assert.Equal(t, tt.active, builder.ScopedChannelModeActive(newScopedTestBot(cfg), tt.channel))
 		})
 	}
@@ -440,7 +441,7 @@ func TestScopedChannelTurnFallsBackOnlyWithApproval(t *testing.T) {
 	}{
 		{name: "entry point without a scoped turn", channel: publicChannel},
 		{name: "DM", channel: dm, scopedTurn: true},
-		{name: "server too old", channel: publicChannel, scopedTurn: true, env: func(e *scopedTestEnv) { e.serverVersion = "12.1.0" }},
+		{name: "server cannot create scoped sessions", channel: publicChannel, scopedTurn: true, env: func(e *scopedTestEnv) { e.noScopedSessions = true }},
 		{name: "channel tool calling off", channel: publicChannel, scopedTurn: true, env: func(e *scopedTestEnv) { e.channelToolCalling = false }},
 	}
 	for _, tt := range tests {
