@@ -149,7 +149,7 @@ func TestToolApprovalClickOnFirstVisiblePendingCard(t *testing.T) {
 			select {
 			case <-resumeEnded:
 			case <-time.After(10 * time.Second):
-				t.Fatal("the resumed run never finished")
+				require.Fail(t, "the resumed run never finished")
 			}
 		})
 	}
