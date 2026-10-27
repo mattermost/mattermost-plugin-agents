@@ -52,7 +52,7 @@ export const AgentChatSurfaceContext = createContext<AgentChatSurface>({
 export const AGENT_CHAT_SURFACE: AgentChatSurface = {
     composerHandlesStop: true,
     showThinkingIndicator: true,
-    smoothStreaming: false,
+    smoothStreaming: true,
     hugShortBubbles: true,
     controlsBelowBubble: true,
     showCopyButton: true,
