@@ -4,7 +4,7 @@
 import React from 'react';
 import {Provider} from 'react-redux';
 import {createStore} from 'redux';
-import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 
 import type {LLMBot} from '@/bots';
 import {clearConversationCache} from '@/hooks/use_conversation';
@@ -87,6 +87,10 @@ const openActions = async () => {
     await waitFor(() => expect(mockGetThreads).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
     openMenu();
+    await waitFor(() => expect(menuItems()).toContain('Recent chats'));
+};
+const openChats = async () => {
+    fireEvent.click(screen.getByRole('menuitem', {name: 'Recent chats'}));
     await waitFor(() => expect(menuItems()).toContain('Older chat'));
 };
 
@@ -150,36 +154,41 @@ describe('AgentChatHeader', () => {
 
     const CHATS = ['Listed chat', 'Quarterly plan', 'New chat', 'Older chat'];
     test.each([
-        {name: 'new chat, no edit access', props: {}, expected: [...CHATS, 'View all agents']},
-        {name: 'new chat, can edit', props: {onOpenSettings: jest.fn()}, expected: [...CHATS, 'Agent settings', 'View all agents']},
-        {name: 'open chat, no edit access', props: {rootId: 'root1'}, expected: [...CHATS, 'New chat', 'Rename chat', 'Archive chat', 'View all agents']},
-        {name: 'open chat, can edit', props: {rootId: 'root1', onOpenSettings: jest.fn()}, expected: [...CHATS, 'New chat', 'Rename chat', 'Archive chat', 'Agent settings', 'View all agents']},
-    ])('name menu items, chats first: $name', async ({props, expected}) => {
+        {name: 'new chat, no edit access', props: {}, expected: ['Recent chats', 'View all agents']},
+        {name: 'new chat, can edit', props: {onOpenSettings: jest.fn()}, expected: ['Recent chats', 'Agent settings', 'View all agents']},
+        {name: 'open chat, no edit access', props: {rootId: 'root1'}, expected: ['Recent chats', 'New chat', 'Rename chat', 'Archive chat', 'View all agents']},
+        {name: 'open chat, can edit', props: {rootId: 'root1', onOpenSettings: jest.fn()}, expected: ['Recent chats', 'New chat', 'Rename chat', 'Archive chat', 'Agent settings', 'View all agents']},
+    ])('name menu items, chats in a submenu: $name', async ({props, expected}) => {
         renderHeader(props);
         await openActions();
         expect(menuItems()).toEqual(expected);
-        expect(screen.getByRole('group', {name: 'Recent chats'})).toBeTruthy();
+        expect(screen.getByRole('menuitem', {name: 'Recent chats'}).getAttribute('aria-haspopup')).toBe('menu');
+
+        await openChats();
+        expect(within(screen.getByRole('menu', {name: 'Recent chats'})).getAllByRole('menuitem').map((item) => item.textContent)).toEqual(CHATS);
     });
 
     test('name menu marks the active chat and selecting another chat opens it', async () => {
         renderHeader({rootId: 'root1'});
         await openActions();
+        await openChats();
         const active = screen.getAllByRole('menuitem').filter((item) => item.getAttribute('aria-current') === 'true');
         expect(active.map((item) => item.textContent)).toEqual(['Quarterly plan']);
         await clickItem('Quarterly plan');
         expect(mockPush).not.toHaveBeenCalled();
 
         openMenu();
+        await openChats();
         await clickItem('Older chat');
         expect(mockPush).toHaveBeenCalledWith(expect.stringMatching(/\/chat\/bot1\/old$/));
     });
 
-    test('name menu omits the chats group when the agent has no chats', async () => {
+    test('name menu omits the chats submenu when the agent has no chats', async () => {
         mockGetThreads.mockResolvedValue([]);
         renderHeader({rootId: 'root1'});
         await waitFor(() => expect(mockGetThreads).toHaveBeenCalled());
         openMenu();
-        expect(screen.queryByRole('group', {name: 'Recent chats'})).toBeNull();
+        expect(screen.queryByRole('menuitem', {name: 'Recent chats'})).toBeNull();
         expect(menuItems()).toEqual(['New chat', 'Rename chat', 'Archive chat', 'View all agents']);
     });
 
