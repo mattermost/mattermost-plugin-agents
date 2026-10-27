@@ -178,6 +178,7 @@ const ComposerPlusMenu = ({bot, channelId, rootId = '', uploadEnabled, onUploadF
             onOpenChange={setMenuOpen}
             placement='top-start'
             focusManager={RETURN_FOCUS_OFF}
+            tooltip={label}
             target={(
                 <PlusButton
                     id={triggerId}
