@@ -395,7 +395,13 @@ func (a *API) prepareAgentBridgeCompletion(
 	// same time.
 	var shouldExecute func(llm.ToolCall) bool
 	if len(autoRunNames) > 0 {
+		runContext := llmRequest.Context
 		shouldExecute = func(tc llm.ToolCall) bool {
+			// A scoped run whose session has ended, because the response
+			// finished or the agent's scoped mode lapsed, runs nothing unasked.
+			if runContext.ToolsScoped && runContext.ScopedSessionReleased() {
+				return false
+			}
 			_, ok := autoRunNames[tc.Name]
 			return ok
 		}
