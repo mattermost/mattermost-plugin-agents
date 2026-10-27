@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/internal/mmtestcontainer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver"
 	"github.com/mattermost/mattermost/server/public/model"
 	plugintest "github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
-	mmcontainer "github.com/mattermost/testcontainers-mattermost-go"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -110,9 +110,9 @@ func setupSharedSuiteAttempt(t *testing.T) (*EmbeddedTestSuite, error) {
 	cfg.TeamSettings.EnableUserCreation = model.NewPointer(true)
 
 	// Start Mattermost container with config at creation time
-	container, err := mmcontainer.RunContainer(ctx,
-		mmcontainer.WithLicense(""),
-		mmcontainer.WithConfig(cfg),
+	container, err := mmtestcontainer.RunContainer(ctx,
+		mmtestcontainer.WithLicense(""),
+		mmtestcontainer.WithConfig(cfg),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start shared Mattermost container: %w", err)
@@ -143,7 +143,7 @@ func setupSharedSuiteAttempt(t *testing.T) (*EmbeddedTestSuite, error) {
 // EmbeddedTestSuite provides infrastructure for testing the embedded MCP server
 type EmbeddedTestSuite struct {
 	t              *testing.T
-	container      *mmcontainer.MattermostContainer
+	container      *mmtestcontainer.MattermostContainer
 	serverURL      string
 	adminClient    *model.Client4
 	embeddedServer *mcpserver.MattermostInMemoryMCPServer
@@ -164,9 +164,9 @@ func SetupEmbeddedTestSuite(t *testing.T) *EmbeddedTestSuite {
 	cfg.TeamSettings.EnableUserCreation = model.NewPointer(true)
 
 	// Start Mattermost container with config at creation time
-	container, err := mmcontainer.RunContainer(ctx,
-		mmcontainer.WithLicense(""),
-		mmcontainer.WithConfig(cfg),
+	container, err := mmtestcontainer.RunContainer(ctx,
+		mmtestcontainer.WithLicense(""),
+		mmtestcontainer.WithConfig(cfg),
 	)
 	require.NoError(t, err, "Failed to start Mattermost container")
 

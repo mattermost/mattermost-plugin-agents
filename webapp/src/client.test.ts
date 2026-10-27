@@ -14,6 +14,7 @@ import {
     doChannelAnalysis,
     doLoopInAgent,
     doRunSearch,
+    doSetPostViewing,
     doThreadAnalysis,
     deleteAgentVersions,
     getAgentVersion,
@@ -251,6 +252,28 @@ describe('doLoopInAgent', () => {
         await expect(doLoopInAgent(id, BOT_ID)).rejects.toThrow();
 
         expect(mockFetch).not.toHaveBeenCalled();
+    });
+});
+
+describe('doSetPostViewing', () => {
+    test.each([
+        {name: 'viewing', viewing: true, keepalive: false, tabId: 'tab-1', body: {viewing: true, tab_id: 'tab-1'}},
+        {name: 'no longer viewing while the page unloads', viewing: false, keepalive: true, tabId: 'tab-1', body: {viewing: false, tab_id: 'tab-1'}},
+        {name: 'without a tab', viewing: true, keepalive: false, tabId: '', body: {viewing: true}},
+    ])('posts the viewing state: $name', async ({viewing, keepalive, tabId, body}) => {
+        await expect(doSetPostViewing(WELL_FORMED_ID, viewing, keepalive, tabId)).resolves.toBeUndefined();
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/viewing`);
+        expect(options).toEqual(expect.objectContaining({method: 'POST', keepalive}));
+        expect(JSON.parse(String(options.body))).toEqual(body);
+    });
+
+    test('rejects when the server refuses the report', async () => {
+        mockFetch.mockResolvedValue({ok: false, status: 400, json: jest.fn()} as unknown as Response);
+
+        await expect(doSetPostViewing(WELL_FORMED_ID, true)).rejects.toMatchObject({status_code: 400});
     });
 });
 

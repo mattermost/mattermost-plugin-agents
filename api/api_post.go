@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -197,27 +198,30 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 	// Create thread analyzer with conversation service
 	botUserID := bot.GetMMBot().UserId
 	analyzer := threads.New(bot.LLM(), a.prompts, a.mmClient, a.convService)
+	runCtx, cancelRun := context.WithCancel(detachedRequestContext(c))
 	var analyzeResult *threads.AnalyzeResult
 	var title string
 	switch data.AnalysisType {
 	case "summarize_thread":
 		title = TitleThreadSummary
-		analyzeResult, err = analyzer.Summarize(c.Request.Context(), post.Id, llmContext, botUserID, userID)
+		analyzeResult, err = analyzer.Summarize(runCtx, post.Id, llmContext, botUserID, userID)
 	case "action_items":
 		title = TitleFindActionItems
-		analyzeResult, err = analyzer.FindActionItems(c.Request.Context(), post.Id, llmContext, botUserID, userID)
+		analyzeResult, err = analyzer.FindActionItems(runCtx, post.Id, llmContext, botUserID, userID)
 	case "open_questions":
 		title = TitleFindOpenQuestions
-		analyzeResult, err = analyzer.FindOpenQuestions(c.Request.Context(), post.Id, llmContext, botUserID, userID)
+		analyzeResult, err = analyzer.FindOpenQuestions(runCtx, post.Id, llmContext, botUserID, userID)
 	}
 	if err != nil {
+		cancelRun()
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to analyze thread: %w", err))
 		return
 	}
 
 	// Create analysis post with conversation ID
 	analysisPost := makeAnalysisPost(post.Id, data.AnalysisType, analyzeResult.ConversationID)
-	if err := a.streamingService.StreamToNewDM(telemetry.DetachContext(c.Request.Context()), botUserID, analyzeResult.Stream, user.Id, analysisPost, post.Id); err != nil {
+	if err := a.streamingService.StreamToNewDM(runCtx, botUserID, analyzeResult.Stream, user.Id, analysisPost, post.Id, cancelRun); err != nil {
+		cancelRun()
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
@@ -252,7 +256,7 @@ func (a *API) handleTranscribeFile(c *gin.Context) {
 		return
 	}
 
-	result, err := a.meetingsService.HandleTranscribeFile(userID, bot, post, channel, fileID, auth.SessionIDFromContext(c.Request.Context()))
+	result, err := a.meetingsService.HandleTranscribeFile(c.Request.Context(), userID, bot, post, channel, fileID, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
 		if _, ok := errors.AsType[*enterprise.LicenseError](err); ok {
 			abortNotLicensed(c, err)
@@ -280,7 +284,7 @@ func (a *API) handleSummarizeTranscription(c *gin.Context) {
 		return
 	}
 
-	result, err := a.meetingsService.HandleSummarizeTranscription(userID, bot, post, channel, auth.SessionIDFromContext(c.Request.Context()))
+	result, err := a.meetingsService.HandleSummarizeTranscription(c.Request.Context(), userID, bot, post, channel, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
 		if _, ok := errors.AsType[*enterprise.LicenseError](err); ok {
 			abortNotLicensed(c, err)
@@ -295,6 +299,21 @@ func (a *API) handleSummarizeTranscription(c *gin.Context) {
 	}
 
 	c.Render(http.StatusOK, render.JSON{Data: result})
+}
+
+// detachedRequestContext returns a context for a run that starts in this
+// request but must outlive it: the response streams in a goroutine, and
+// core cancels the request context once the handler returns. Only the active
+// span, the authenticated session ID, and the request's audit record carry
+// over (telemetry.DetachContext keeps only the span, and the services read
+// the latter two from ctx); canceling the request (e.g. a browser
+// disconnect) does not stop the run, the stop route does. The audit record
+// is emitted when the handler returns, so only synchronous service code may
+// enrich it.
+func detachedRequestContext(c *gin.Context) context.Context {
+	reqCtx := c.Request.Context()
+	ctx := auth.WithSessionID(telemetry.DetachContext(reqCtx), auth.SessionIDFromContext(reqCtx))
+	return audit.WithRecord(ctx, audit.RecordFromContext(reqCtx))
 }
 
 func (a *API) handleStop(c *gin.Context) {
@@ -338,7 +357,7 @@ func (a *API) handleRegenerate(c *gin.Context) {
 		return
 	}
 
-	if err := a.conversationsService.HandleRegenerate(c.Request.Context(), userID, post, channel); err != nil {
+	if err := a.conversationsService.HandleRegenerate(detachedRequestContext(c), userID, post, channel); err != nil {
 		abortWithServiceError(c, err, regenerateHTTPStatus)
 		return
 	}
@@ -383,7 +402,7 @@ func (a *API) handleToolCall(c *gin.Context) {
 	// Opaque block IDs only — never the tool answers carried alongside them.
 	audit.AddParam(rec, "accepted_tool_ids", audit.TruncateIDs(data.AcceptedToolIDs))
 
-	if err := a.conversationsService.HandleToolCall(c.Request.Context(), userID, post, channel, data.AcceptedToolIDs, data.ToolAnswers); err != nil {
+	if err := a.conversationsService.HandleToolCall(detachedRequestContext(c), userID, post, channel, data.AcceptedToolIDs, data.ToolAnswers); err != nil {
 		abortWithServiceError(c, err, toolApprovalHTTPStatus)
 		return
 	}
@@ -430,7 +449,7 @@ func (a *API) handleToolResult(c *gin.Context) {
 
 	audit.AddParam(rec, "accepted_tool_ids", audit.TruncateIDs(data.AcceptedToolIDs))
 
-	if err := a.conversationsService.HandleToolResult(c.Request.Context(), userID, post, channel, data.AcceptedToolIDs); err != nil {
+	if err := a.conversationsService.HandleToolResult(detachedRequestContext(c), userID, post, channel, data.AcceptedToolIDs); err != nil {
 		abortWithServiceError(c, err, toolApprovalHTTPStatus)
 		return
 	}

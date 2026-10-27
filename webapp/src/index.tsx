@@ -53,6 +53,9 @@ import {useBotlist, resolveActiveBot, getSelectedAgentId, fetchAndStoreBots} fro
 import {botsFromState, makeChannelAutoReplySchema} from './components/channel_settings/autoreply_schema';
 import {handleChannelAutoReplyUpdated, ChannelAutoReplyUpdatedEvent} from './components/channel_settings/autoreply_state';
 import {shouldSuppressBotNotification} from './notifications';
+import {handlePostedWebsocket} from './posted_events';
+import {getDeferredNotificationsSupported} from './selectors';
+import {getViewingTracker} from './viewing';
 import AgentsTour from './components/tutorial/agents_tour';
 import AgentsPage, {AGENTS_ROUTE} from './components/agents/agents_page';
 import IconAI from './components/assets/icon_ai';
@@ -221,6 +224,7 @@ export default class Plugin {
         };
 
         registry.registerWebSocketEventHandler('config_changed', refreshRuntimeBotsCache);
+        registry.registerWebSocketEventHandler('posted', handlePostedWebsocket);
 
         // Agent CRUD refreshes server-side bot cache but does not emit config_changed; mirror that refresh so RHS dropdown updates.
         registry.registerWebSocketEventHandler('custom_mattermost-ai_bots_invalidate', refreshRuntimeBotsCache);
@@ -262,11 +266,13 @@ export default class Plugin {
                     );
                 },
             );
-
-            // Warm the runtime bots cache so the synchronous shouldRender can
-            // see agent availability before any AI surface has been opened.
-            fetchAndStoreBots(store.dispatch).catch(() => { /* best effort */ });
         }
+
+        // Warm the runtime bots cache so the channel-settings tab's synchronous
+        // shouldRender can see agent availability before any AI surface has been
+        // opened, and so the desktop notification hook knows whether the server
+        // defers agent post notifications.
+        fetchAndStoreBots(store.dispatch).catch(() => { /* best effort */ });
 
         if (rhs) {
             registry.registerChannelHeaderButtonAction(<ChannelHeaderIcon/>, () => {
@@ -382,7 +388,11 @@ export default class Plugin {
         const parentPost = post?.root_id ? state?.entities.posts.posts[post.root_id] : null;
         const currentUserId = state?.entities.users.currentUserId;
 
-        if (shouldSuppressBotNotification(post, {currentUserId, parentPost, now: Date.now()})) {
+        // The server never defers posts in shared channels.
+        const deferredNotifications = Boolean(state && getDeferredNotificationsSupported(state as any) && !channel?.shared);
+        const isPostViewed = (postId: string) => getViewingTracker().isViewed(postId);
+
+        if (shouldSuppressBotNotification(post, {currentUserId, parentPost, now: Date.now(), deferredNotifications, isPostViewed})) {
             return {args: {...args, notify: false}};
         }
         return {args};

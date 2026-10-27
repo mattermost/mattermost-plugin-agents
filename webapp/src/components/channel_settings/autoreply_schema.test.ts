@@ -190,7 +190,7 @@ describe('makeLoadValues', () => {
 
     test('awaits a bots fetch when the runtime cache is null', async () => {
         mockedGetChannelAutoReply.mockResolvedValue({bot_id: '', mode: 'off'});
-        mockedGetAIBots.mockResolvedValue({bots: [other], searchEnabled: false, allowUnsafeLinks: false});
+        mockedGetAIBots.mockResolvedValue({bots: [other], searchEnabled: false, allowUnsafeLinks: false, htmlArtifactsEnabled: false, deferredNotifications: false});
         const store = makeTestStore(makeState({bots: null}));
 
         const values = await makeLoadValues(store)(makeChannel('O'));
@@ -212,7 +212,7 @@ describe('makeLoadValues', () => {
 
     test('clears the saved agent when the fetch returns a genuinely empty agent list', async () => {
         mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'threads'});
-        mockedGetAIBots.mockResolvedValue({bots: [], searchEnabled: false, allowUnsafeLinks: false});
+        mockedGetAIBots.mockResolvedValue({bots: [], searchEnabled: false, allowUnsafeLinks: false, htmlArtifactsEnabled: false, deferredNotifications: false});
         const store = makeTestStore(makeState({bots: null}));
 
         const values = await makeLoadValues(store)(makeChannel('O'));

@@ -8,6 +8,7 @@ import {PreferenceType} from '@mattermost/types/preferences';
 import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
+import type {LLMBot} from '@/bots';
 import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
 import {
@@ -301,6 +302,31 @@ export async function doRegenerate(postid: string) {
     });
 }
 
+// Reports whether this user has the agent post on screen, so the server can
+// skip notifying them about it. keepalive lets the request outlive the page.
+// tabId identifies the reporting tab, so its stop does not end another tab's
+// report; it must match [A-Za-z0-9_-]{1,64}.
+export async function doSetPostViewing(postid: string, viewing: boolean, keepalive = false, tabId = ''): Promise<void> {
+    const url = `${postRoute(postid)}/viewing`;
+    const response = await fetch(url, {
+        ...Client4.getOptions({
+            method: 'POST',
+            body: JSON.stringify(tabId ? {viewing, tab_id: tabId} : {viewing}),
+        }),
+        keepalive,
+    });
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function doToolCall(postid: string, toolIDs: string[], toolAnswers?: Record<string, ToolAnswer>) {
     const url = `${postRoute(postid)}/tool_call`;
     const response = await fetch(url, Client4.getOptions({
@@ -479,14 +505,23 @@ export async function getConversationContext(conversationId: string): Promise<Co
     });
 }
 
-export async function getAIBots() {
+// AIBotsResponse mirrors api.AIBotsResponse.
+export type AIBotsResponse = {
+    bots: LLMBot[];
+    searchEnabled: boolean;
+    allowUnsafeLinks: boolean;
+    htmlArtifactsEnabled: boolean;
+    deferredNotifications: boolean;
+};
+
+export async function getAIBots(): Promise<AIBotsResponse> {
     const url = `${baseRoute()}/ai_bots`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
 
     if (response.ok) {
-        return response.json();
+        return response.json() as Promise<AIBotsResponse>;
     }
 
     throw new ClientError(Client4.url, {

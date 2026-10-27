@@ -348,12 +348,12 @@ func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) (er
 	}
 
 	if err := c.convService.AppendSyntheticUserTurn(conv.ID, conversation.SyntheticKindWake, mmtools.WakeUserMessage); err != nil {
-		c.failResponsePlaceholder(wakePost, user.Locale)
+		c.failResponsePlaceholder(ctx, wakePost, user.Locale)
 		return err
 	}
 
 	if err := c.streamToolFollowUp(ctx, policy, wakePost, conv, followUpOptions{Unattended: true}); err != nil {
-		c.failResponsePlaceholder(wakePost, user.Locale)
+		c.failResponsePlaceholder(ctx, wakePost, user.Locale)
 		return err
 	}
 	return nil

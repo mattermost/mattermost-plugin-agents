@@ -12,6 +12,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/metrics"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/notifications"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
@@ -33,6 +34,7 @@ type Service struct {
 	contextBuilder   *llmcontext.Builder
 	conversations    *conversations.Conversations
 	licenseChecker   *enterprise.LicenseChecker
+	notifier         notifications.Notifier
 
 	ffmpegPath string
 }
@@ -69,6 +71,12 @@ func NewService(
 	}
 
 	return service
+}
+
+// SetNotifier sets who marks streamed meeting posts deferred and notifies
+// about summaries that fail before streaming.
+func (s *Service) SetNotifier(n notifications.Notifier) {
+	s.notifier = n
 }
 
 // checkMeetingsLicense returns a *enterprise.LicenseError when meeting

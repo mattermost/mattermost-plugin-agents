@@ -36,10 +36,12 @@ jest.mock('react-intl', () => {
     };
 });
 
+const mockSetPostViewing = jest.fn<Promise<void>, [string, boolean, boolean]>(() => Promise.resolve());
 jest.mock('@/client', () => ({
     doPostbackSummary: jest.fn(),
     doRegenerate: jest.fn(),
     doStopGenerating: jest.fn(),
+    doSetPostViewing: (postId: string, viewing: boolean, keepalive: boolean) => mockSetPostViewing(postId, viewing, keepalive),
 }));
 
 jest.mock('@/license', () => ({
@@ -279,6 +281,72 @@ describe('LLMBotPost streaming fallback rendering', () => {
             expect(screen.getByText(errorText)).toBeTruthy();
         });
         expect(screen.queryByText('Working...')).toBeNull();
+    });
+});
+
+describe('LLMBotPost viewing reports', () => {
+    let hasFocus: jest.SpyInstance;
+
+    beforeEach(() => {
+        mockSetPostViewing.mockClear();
+        hasFocus = jest.spyOn(document, 'hasFocus').mockReturnValue(true);
+    });
+
+    afterEach(() => {
+        hasFocus.mockRestore();
+    });
+
+    function renderStreamingPost() {
+        let listener: PostUpdateHandler | undefined;
+        const websocketRegister = jest.fn((postID, listenerID, handler) => {
+            listener = handler;
+        });
+        const view = renderPost(makePost(), websocketRegister);
+        const send = (data: Omit<PostUpdateWebsocketMessage, 'post_id'>) => act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', ...data}));
+        });
+        return {...view, send};
+    }
+
+    const reports = () => mockSetPostViewing.mock.calls.map(([postId, viewing]) => ({postId, viewing}));
+
+    test('a response streaming on screen is reported as viewed until it ends', () => {
+        const {send, unmount} = renderStreamingPost();
+        expect(reports()).toEqual([]);
+
+        send({control: 'progress', progress_phase: 'checking_mcp', progress_seq: 1});
+        expect(reports()).toEqual([{postId: 'post_1', viewing: true}]);
+
+        send({control: 'start'});
+        send({next: 'partial'});
+        expect(reports()).toEqual([{postId: 'post_1', viewing: true}]);
+
+        send({control: 'end'});
+        expect(reports()).toEqual([{postId: 'post_1', viewing: true}, {postId: 'post_1', viewing: true}]);
+
+        unmount();
+        expect(reports()).toEqual([
+            {postId: 'post_1', viewing: true},
+            {postId: 'post_1', viewing: true},
+            {postId: 'post_1', viewing: false},
+        ]);
+    });
+
+    test('leaving the window mid-stream withdraws the report', () => {
+        const {send, unmount} = renderStreamingPost();
+        send({control: 'start'});
+        send({next: 'partial'});
+
+        hasFocus.mockReturnValue(false);
+        act(() => {
+            window.dispatchEvent(new Event('blur'));
+        });
+
+        expect(reports()).toEqual([{postId: 'post_1', viewing: true}, {postId: 'post_1', viewing: false}]);
+
+        send({control: 'end'});
+        unmount();
+        expect(reports()).toHaveLength(2);
     });
 });
 

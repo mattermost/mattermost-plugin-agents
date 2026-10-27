@@ -61,7 +61,7 @@ func (s *noToolsStreamingService) StreamToNewPost(context.Context, string, strin
 	return nil
 }
 
-func (s *noToolsStreamingService) StreamToNewDM(_ context.Context, botID string, _ *llm.TextStreamResult, _ string, post *model.Post, _ string) error {
+func (s *noToolsStreamingService) StreamToNewDM(_ context.Context, botID string, _ *llm.TextStreamResult, _ string, post *model.Post, _ string, _ func()) error {
 	s.newDMCalls++
 	s.dmPosts = append(s.dmPosts, post)
 	post.Id = "response-post-id"

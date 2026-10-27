@@ -12,11 +12,13 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/notifications"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -58,7 +60,10 @@ const WebSearchContextProp = "web_search_context"
 
 type Service interface {
 	StreamToNewPost(ctx context.Context, botID string, requesterUserID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string) error
-	StreamToNewDM(ctx context.Context, botID string, stream *llm.TextStreamResult, userID string, post *model.Post, respondingToPostID string) error
+	// StreamToNewDM creates post as a DM from the bot to userID and streams
+	// into it. onFinish, when set, runs once the stream into the created post
+	// ends, so callers can stop the work producing a stream nobody reads.
+	StreamToNewDM(ctx context.Context, botID string, stream *llm.TextStreamResult, userID string, post *model.Post, respondingToPostID string, onFinish func()) error
 	StreamToPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, userLocale string, requesterUserID string)
 
 	// StreamContinuationToPost streams a follow-up round onto a post that
@@ -78,6 +83,13 @@ type postStreamContext struct {
 // errStoppedByUser is the cancellation cause of a stream the requester
 // stopped, distinguishing it from shutdown or a superseded run.
 var errStoppedByUser = errors.New("generation stopped by user")
+
+// errPluginShutdown is the cancellation cause of streams canceled because the
+// plugin is shutting down.
+var errPluginShutdown = errors.New("plugin shutting down")
+
+// ErrShuttingDown is returned for streams started once Shutdown has begun.
+var ErrShuttingDown = errors.New("streaming is shutting down")
 
 // TurnStore is the subset of store operations needed by the streaming layer.
 // Finalize either creates a fresh anchor (first stream / regen, with the caller
@@ -160,9 +172,13 @@ var ErrAlreadyStreamingToPost = fmt.Errorf("already streaming to post")
 type MMPostStreamService struct {
 	contexts      map[string]postStreamContext
 	contextsMutex sync.Mutex
-	mmClient      Client
-	i18n          *i18n.Bundle
-	turnStore     TurnStore
+	shuttingDown  bool
+	// drained is closed when the last run finishes during Shutdown.
+	drained   chan struct{}
+	mmClient  Client
+	i18n      *i18n.Bundle
+	turnStore TurnStore
+	notifier  notifications.Notifier
 }
 
 func NewMMPostStreamService(mmClient Client, i18n *i18n.Bundle) *MMPostStreamService {
@@ -179,8 +195,14 @@ func (p *MMPostStreamService) SetTurnStore(ts TurnStore) {
 	p.turnStore = ts
 }
 
+// SetNotifier sets who marks new posts deferred and notifies when a run on a
+// post ends. When nil (the default), posts notify at creation as usual.
+func (p *MMPostStreamService) SetNotifier(n notifications.Notifier) {
+	p.notifier = n
+}
+
 func (p *MMPostStreamService) StreamToNewPost(ctx context.Context, botID string, requesterUserID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string) error {
-	return p.streamToCreatedPost(ctx, botID, requesterUserID, stream, post, respondingToPostID, func() error {
+	return p.streamToCreatedPost(ctx, botID, requesterUserID, stream, post, respondingToPostID, nil, func() error {
 		if err := p.mmClient.CreatePost(post); err != nil {
 			return fmt.Errorf("unable to create post: %w", err)
 		}
@@ -188,8 +210,8 @@ func (p *MMPostStreamService) StreamToNewPost(ctx context.Context, botID string,
 	})
 }
 
-func (p *MMPostStreamService) StreamToNewDM(ctx context.Context, botID string, stream *llm.TextStreamResult, userID string, post *model.Post, respondingToPostID string) error {
-	return p.streamToCreatedPost(ctx, botID, userID, stream, post, respondingToPostID, func() error {
+func (p *MMPostStreamService) StreamToNewDM(ctx context.Context, botID string, stream *llm.TextStreamResult, userID string, post *model.Post, respondingToPostID string, onFinish func()) error {
+	return p.streamToCreatedPost(ctx, botID, userID, stream, post, respondingToPostID, onFinish, func() error {
 		if err := p.mmClient.DM(botID, userID, post); err != nil {
 			return fmt.Errorf("failed to post DM: %w", err)
 		}
@@ -199,21 +221,45 @@ func (p *MMPostStreamService) StreamToNewDM(ctx context.Context, botID string, s
 
 // streamToCreatedPost creates the post via createPost and streams into it,
 // using the user's locale only for a 1-1 DM between the user and the bot;
-// everything else gets the server default locale.
-func (p *MMPostStreamService) streamToCreatedPost(ctx context.Context, botID string, userID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string, createPost func() error) error {
+// everything else gets the server default locale. onFinish, when set, runs
+// once streaming into the created post ends; it is not called when this
+// returns an error.
+func (p *MMPostStreamService) streamToCreatedPost(ctx context.Context, botID string, userID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string, onFinish func(), createPost func() error) error {
 	// We use ModifyPostForBot directly here to add the responding to post ID
 	ModifyPostForBot(botID, userID, post, respondingToPostID)
+	if p.notifier != nil {
+		p.notifier.MarkDeferred(post)
+	}
 
 	if err := createPost(); err != nil {
 		return err
 	}
 
-	ctx, err := p.GetStreamingContext(ctx, post.Id)
+	streamCtx, err := p.GetStreamingContext(ctx, post.Id)
 	if err != nil {
+		// The post exists with its notifications deferred, so the run must
+		// still end for the requester.
+		if p.notifier != nil {
+			outcome := notifications.OutcomeErrored
+			if errors.Is(err, ErrShuttingDown) {
+				outcome = notifications.OutcomeCancelled
+			}
+			p.notifier.Notify(telemetry.DetachContext(ctx), notifications.StreamEnd{
+				PostID:       post.Id,
+				ChannelID:    post.ChannelId,
+				RequesterID:  userID,
+				Outcome:      outcome,
+				PostDeferred: post.HasDeferredNotification(),
+			})
+		}
 		return err
 	}
+	ctx = streamCtx
 
 	go func() {
+		if onFinish != nil {
+			defer onFinish()
+		}
 		defer p.FinishStreaming(post.Id)
 		user, err := p.mmClient.GetUser(userID)
 		locale := *p.mmClient.GetConfig().LocalizationSettings.DefaultServerLocale
@@ -261,10 +307,43 @@ func (p *MMPostStreamService) StopStreaming(postID string) {
 	}
 }
 
+// Shutdown cancels every in-flight stream and waits up to timeout for their
+// runs to finish, so each run ends as a cancel the requester did not ask for
+// and notifies them. It refuses new streams from the start, and reports
+// whether every run finished in time.
+func (p *MMPostStreamService) Shutdown(timeout time.Duration) bool {
+	p.contextsMutex.Lock()
+	p.shuttingDown = true
+	if len(p.contexts) == 0 {
+		p.contextsMutex.Unlock()
+		return true
+	}
+	for _, streamContext := range p.contexts {
+		streamContext.cancel(errPluginShutdown)
+	}
+	if p.drained == nil {
+		p.drained = make(chan struct{})
+	}
+	drained := p.drained
+	p.contextsMutex.Unlock()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-drained:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
 func (p *MMPostStreamService) GetStreamingContext(inCtx context.Context, postID string) (context.Context, error) {
 	p.contextsMutex.Lock()
 	defer p.contextsMutex.Unlock()
 
+	if p.shuttingDown {
+		return nil, ErrShuttingDown
+	}
 	if _, ok := p.contexts[postID]; ok {
 		return nil, ErrAlreadyStreamingToPost
 	}
@@ -289,6 +368,10 @@ func (p *MMPostStreamService) FinishStreaming(postID string) {
 		streamContext.cancel(nil)
 	}
 	delete(p.contexts, postID)
+	if p.drained != nil && len(p.contexts) == 0 {
+		close(p.drained)
+		p.drained = nil
+	}
 }
 
 // newTurnAccumulator constructs an in-memory accumulator. Nothing is persisted
@@ -390,6 +473,35 @@ func redactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
 	return redacted
 }
 
+// needsRequesterDecision reports whether a tool call batch leaves the run
+// waiting for the requester: an approval, or an interaction tool, neither of
+// which the server will auto-execute. Resolved batches and batches about to
+// auto-execute do not.
+func needsRequesterDecision(toolCalls []llm.ToolCall) bool {
+	for _, tc := range toolCalls {
+		if tc.Status == llm.ToolCallStatusPending && !tc.WouldAutoExecute {
+			return true
+		}
+	}
+	return false
+}
+
+func notificationOutcome(outcome string, stoppedByUser bool) notifications.Outcome {
+	switch outcome {
+	case telemetry.StreamOutcomeCompleted:
+		return notifications.OutcomeCompleted
+	case telemetry.StreamOutcomeEmpty:
+		return notifications.OutcomeEmpty
+	case telemetry.StreamOutcomeCancelled:
+		if stoppedByUser {
+			return notifications.OutcomeStoppedByUser
+		}
+		return notifications.OutcomeCancelled
+	default:
+		return notifications.OutcomeErrored
+	}
+}
+
 // StreamToPost streams a fresh response onto a post (first stream or regen,
 // where the caller has already scrubbed prior turns). For tool-approval resume
 // use StreamContinuationToPost.
@@ -425,7 +537,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 	// apart from a canceled or failed one. Only the length of the final
 	// message is recorded, never its content.
 	outcome := ""
-	defer func() {
+	resolveOutcome := func() {
 		if outcome == "" {
 			// Channel closed without an end event.
 			outcome = telemetry.StreamOutcomeCompleted
@@ -433,6 +545,9 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 				outcome = telemetry.StreamOutcomeEmpty
 			}
 		}
+	}
+	defer func() {
+		resolveOutcome()
 		span.SetAttributes(
 			telemetry.StreamOutcome.String(outcome),
 			telemetry.StreamMessageLength.Int(len(post.Message)),
@@ -480,6 +595,11 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 		}
 	}
 
+	// Tracked apart from acc, which is nil for posts without a conversation.
+	pausedForRequester := false
+	updateFailed := false
+	stoppedByUser := false
+
 	// A pending batch awaiting a user decision renders an approval card the
 	// user can click at once, and the click resolves against the stored
 	// turn, so that batch is only broadcast after finalizeTurn has persisted
@@ -494,6 +614,21 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 			p.broadcastToolCalls(post, heldPendingToolCalls, requesterUserID)
 		}
 		p.sendPostStreamingEvent(post, broadcast, map[string]any{"control": PostStreamingControlEnd})
+
+		if p.notifier != nil {
+			resolveOutcome()
+			// Runs before the caller's FinishStreaming, so no other run can
+			// change the post between its final update and this delivery.
+			p.notifier.Notify(telemetry.DetachContext(ctx), notifications.StreamEnd{
+				PostID:             post.Id,
+				ChannelID:          post.ChannelId,
+				RequesterID:        requesterUserID,
+				Outcome:            notificationOutcome(outcome, stoppedByUser),
+				PausedForRequester: pausedForRequester,
+				UpdateFailed:       updateFailed,
+				PostDeferred:       post.HasDeferredNotification(),
+			})
+		}
 	}()
 
 	var messageBuilder strings.Builder
@@ -504,9 +639,11 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 	handleCancel := func() {
 		outcome = telemetry.StreamOutcomeCancelled
 		if errors.Is(context.Cause(ctx), errStoppedByUser) {
+			stoppedByUser = true
 			post.AddProp(GenerationStoppedProp, true)
 		}
 		if err := p.mmClient.UpdatePost(post); err != nil {
+			updateFailed = true
 			p.mmClient.LogError("Error updating post on stop signaled", "error", err)
 			return
 		}
@@ -525,6 +662,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 			if !ok {
 				// Stream channel closed - persist final state
 				if err := p.mmClient.UpdatePost(post); err != nil {
+					updateFailed = true
 					p.mmClient.LogError("Streaming failed to update post on channel close", "error", err)
 				}
 				return
@@ -586,6 +724,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					outcome = telemetry.StreamOutcomeCompleted
 				}
 				if err := p.mmClient.UpdatePost(post); err != nil {
+					updateFailed = true
 					p.mmClient.LogError("Streaming failed to update post", "error", err)
 					return
 				}
@@ -623,6 +762,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 				}
 
 				if err := p.mmClient.UpdatePost(post); err != nil {
+					updateFailed = true
 					p.mmClient.LogError("Error recovering from streaming error", "error", err)
 					return
 				}
@@ -655,6 +795,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					for i := range toolCalls {
 						toolCalls[i].SanitizeArguments()
 					}
+					pausedForRequester = needsRequesterDecision(toolCalls)
 					if acc != nil {
 						// On resolved, reset the accumulator: toolrunner
 						// persists the just-completed round separately via

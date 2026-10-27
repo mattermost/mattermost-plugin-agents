@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
-	mmcontainer "github.com/mattermost/testcontainers-mattermost-go"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/internal/mmtestcontainer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver"
 	loggerlib "github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/tools"
@@ -72,7 +72,7 @@ var _ loggerlib.Logger = (*testLogger)(nil)
 
 // withLatestMattermostImage runs the suite against the latest stable server; the
 // library default is an old release.
-func withLatestMattermostImage(req *mmcontainer.MattermostContainerRequest) {
+func withLatestMattermostImage(req *mmtestcontainer.MattermostContainerRequest) {
 	req.Image = "mattermost/mattermost-enterprise-edition:latest"
 	if image := os.Getenv("MM_IMAGE"); image != "" {
 		req.Image = image
@@ -82,7 +82,7 @@ func withLatestMattermostImage(req *mmcontainer.MattermostContainerRequest) {
 // TestSuite represents the integration test suite
 type TestSuite struct {
 	t          *testing.T
-	container  *mmcontainer.MattermostContainer
+	container  *mmtestcontainer.MattermostContainer
 	serverURL  string
 	adminToken string
 	logger     loggerlib.Logger
@@ -105,12 +105,12 @@ func SetupTestSuite(t *testing.T) *TestSuite {
 	cfg.ServiceSettings.EnableUserAccessTokens = model.NewPointer(true)
 
 	// Retry once — the container init (team/user creation via mmctl) can hit transient races.
-	var container *mmcontainer.MattermostContainer
+	var container *mmtestcontainer.MattermostContainer
 	var err error
 	for attempt := range 2 {
-		container, err = mmcontainer.RunContainer(ctx,
-			mmcontainer.WithLicense(""),
-			mmcontainer.WithConfig(cfg),
+		container, err = mmtestcontainer.RunContainer(ctx,
+			mmtestcontainer.WithLicense(""),
+			mmtestcontainer.WithConfig(cfg),
 			withLatestMattermostImage,
 		)
 		if err == nil {

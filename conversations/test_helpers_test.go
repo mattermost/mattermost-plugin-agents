@@ -66,6 +66,36 @@ type fakeMMClient struct {
 	// may log while the test goroutine reads.
 	logMu     sync.Mutex
 	logErrors []string
+
+	deliveryMu sync.Mutex
+	deliveries []fakeDelivery
+	// deliveryErr, when set, answers each DeliverPostNotifications call.
+	deliveryErr func(fakeDelivery) error
+}
+
+type fakeDelivery struct {
+	postID  string
+	userIDs []string
+}
+
+func (c *fakeMMClient) DeliverPostNotifications(postID string, options *model.DeliverPostNotificationsOptions) error {
+	c.deliveryMu.Lock()
+	defer c.deliveryMu.Unlock()
+	d := fakeDelivery{postID: postID}
+	if options != nil {
+		d.userIDs = options.UserIDs
+	}
+	c.deliveries = append(c.deliveries, d)
+	if c.deliveryErr != nil {
+		return c.deliveryErr(d)
+	}
+	return nil
+}
+
+func (c *fakeMMClient) deliveredNotifications() []fakeDelivery {
+	c.deliveryMu.Lock()
+	defer c.deliveryMu.Unlock()
+	return append([]fakeDelivery(nil), c.deliveries...)
 }
 
 func (c *fakeMMClient) GetUser(userID string) (*model.User, error) {
@@ -87,6 +117,14 @@ func (c *fakeMMClient) GetPostThread(postID string) (*model.PostList, error) {
 func (c *fakeMMClient) CreatePost(post *model.Post) error {
 	if !c.allowCreatePost {
 		return errors.New("not implemented")
+	}
+	if post.Id == "" {
+		post.Id = model.NewId()
+	}
+	// Like the server, create posts in shared channels without deferring
+	// their notifications, and return the created post.
+	if channel := c.channels[post.ChannelId]; channel != nil && channel.IsShared() {
+		post.DelProp(model.PostPropsDeferredNotification)
 	}
 	c.createdPosts = append(c.createdPosts, post.Clone())
 	return nil
@@ -319,7 +357,7 @@ func (s *fakeStreamingService) StreamToNewPost(_ context.Context, _ string, _ st
 	return nil
 }
 
-func (s *fakeStreamingService) StreamToNewDM(context.Context, string, *llm.TextStreamResult, string, *model.Post, string) error {
+func (s *fakeStreamingService) StreamToNewDM(context.Context, string, *llm.TextStreamResult, string, *model.Post, string, func()) error {
 	return nil
 }
 

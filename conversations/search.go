@@ -112,10 +112,10 @@ func (c *Conversations) runSearch(ctx context.Context, policy *turnPolicy, quest
 	defer func() {
 		switch {
 		case errors.Is(err, ErrSearchToolsUnavailable):
-			c.setPlaceholderMessage(responsePost, user.Locale, "agents.search_tools_unavailable",
+			c.setPlaceholderMessage(ctx, responsePost, user.Locale, "agents.search_tools_unavailable",
 				"I can't search Mattermost because the Mattermost search tool isn't available to this agent. Ask your system admin to enable the embedded Mattermost MCP server and the search_posts tool for this agent.")
 		case err != nil:
-			c.failResponsePlaceholder(responsePost, user.Locale)
+			c.failResponsePlaceholder(ctx, responsePost, user.Locale)
 		}
 	}()
 

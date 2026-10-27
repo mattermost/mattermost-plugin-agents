@@ -11,6 +11,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
@@ -262,7 +263,7 @@ func (s *loadedStateStreamingService) StreamToNewPost(context.Context, string, s
 	return nil
 }
 
-func (s *loadedStateStreamingService) StreamToNewDM(context.Context, string, *llm.TextStreamResult, string, *model.Post, string) error {
+func (s *loadedStateStreamingService) StreamToNewDM(context.Context, string, *llm.TextStreamResult, string, *model.Post, string, func()) error {
 	return nil
 }
 
@@ -714,6 +715,58 @@ func TestStreamToolFollowUpRestoresToolFromPriorLoadTurns(t *testing.T) {
 	streamingService.waitForStreaming()
 	require.Len(t, lm.requests, 1)
 	require.NotNil(t, lm.requests[0].Context.Tools.GetTool("jira__get_issue"))
+}
+
+// unendingLLM records the context of each completion and returns a stream
+// that never produces an event, like a round still in flight.
+type unendingLLM struct {
+	loadedStateLLM
+	ctxs chan context.Context
+}
+
+func (l *unendingLLM) ChatCompletion(ctx context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+	l.ctxs <- ctx
+	return &llm.TextStreamResult{Stream: make(chan llm.TextStreamEvent)}, nil
+}
+
+func TestStreamToolFollowUpStopsToolLoopWhenStreamEnds(t *testing.T) {
+	convStore, conv := loadedStateConversationStore()
+	lm := &unendingLLM{ctxs: make(chan context.Context, 1)}
+	bot := loadedStateBot(lm)
+	// StreamContinuationToPost returns without reading the stream, as the
+	// real one does once the requester stops it.
+	streamingService := &loadedStateStreamingService{}
+	c := &Conversations{
+		contextBuilder:   loadedStateBuilder(t),
+		bots:             passthroughBotsService(bot),
+		convService:      conversation.NewService(convStore, nil, nil, nil),
+		streamingService: streamingService,
+	}
+
+	post := &model.Post{Id: "root-post-id"}
+	policy, err := c.resolveTurnPolicy(context.Background(), turnRequest{
+		bot:     bot,
+		user:    &model.User{Id: testRequesterID, Username: "user"},
+		channel: &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__" + testRequesterID},
+		conv:    conv,
+		post:    post,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, c.streamToolFollowUp(context.Background(), policy, post, conv, followUpOptions{}))
+	streamingService.waitForStreaming()
+
+	var loopCtx context.Context
+	select {
+	case loopCtx = <-lm.ctxs:
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "the follow-up never called the LLM")
+	}
+	select {
+	case <-loopCtx.Done():
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "the tool loop kept running after its stream ended")
+	}
 }
 
 func TestRegenerateRestoresLoadsBeforeAnchorButDropsLoadsInScrubbedGeneration(t *testing.T) {

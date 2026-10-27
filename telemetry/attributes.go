@@ -136,6 +136,15 @@ const (
 	StreamOutcomeEmpty     = "empty"
 )
 
+// Attribute keys for agent post notification delivery
+var (
+	NotificationOutcome  = attribute.Key("agents.notification.outcome")
+	NotificationDelivery = attribute.Key("agents.notification.delivery") // "none" | "everyone" | "requester_only"
+	NotificationPaused   = attribute.Key("agents.notification.paused_for_requester")
+	NotificationDeferred = attribute.Key("agents.notification.post_deferred")
+	NotificationFallback = attribute.Key("agents.notification.fallback") // legacy-server push to the requester
+)
+
 // Attribute keys for attribute-based access control (ABAC) decisions
 var (
 	ABACResourceType = attribute.Key("agents.abac.resource_type")
