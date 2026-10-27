@@ -56,7 +56,6 @@ describe('RHSViewTransition', () => {
     });
 
     test.each([
-        {name: 'history to a chat slides forward', from: ['threads', 0], to: ['thread:a', 1], direction: 'forward'},
         {name: 'a chat to history slides back', from: ['thread:a', 1], to: ['threads', 0], direction: 'back'},
         {name: 'the new chat to its first chat cross-fades', from: ['new', 1], to: ['thread:a', 1], direction: 'none'},
     ] as const)('$name', ({from, to, direction}) => {
@@ -77,17 +76,43 @@ describe('RHSViewTransition', () => {
         expect(exiting()?.getAttribute('data-state')).toBe('exit');
     });
 
-    test('the outgoing view stays mounted with its state, inert, and goes when the exit is over', () => {
+    test('going forward the new view slides in empty and its content mounts when the slide is over', () => {
         const {rerender} = renderTransition('threads', 0);
-        fireEvent.change(screen.getByLabelText('threads draft'), {target: {value: 'half typed'}});
 
         rerenderTo(rerender, 'thread:a', 1);
 
+        // The heavy view is not mounted while it moves; the old one is still there.
+        expect(exiting()?.getAttribute('data-direction')).toBe('forward');
+        expect(screen.queryByLabelText('thread:a draft')).toBeNull();
+        expect(screen.getByLabelText('threads draft')).toBeTruthy();
+
+        act(() => {
+            jest.advanceTimersByTime(50);
+        });
+        expect(screen.queryByLabelText('thread:a draft')).toBeNull();
+
+        act(() => {
+            jest.advanceTimersByTime(400);
+        });
+
+        // Slide over: the content mounted (to fade in) and the old view is gone.
+        const content = screen.getByLabelText('thread:a draft');
+        expect(content.closest('[data-state]')?.getAttribute('data-state')).toBe('idle');
+        expect(content.closest('[data-reveal]')?.getAttribute('data-reveal')).toBe('fade');
+        expect(exiting()).toBeNull();
+    });
+
+    test('the outgoing view stays mounted with its state, inert, and goes when the exit is over', () => {
+        const {rerender} = renderTransition('thread:a', 1);
+        fireEvent.change(screen.getByLabelText('thread:a draft'), {target: {value: 'half typed'}});
+
+        rerenderTo(rerender, 'threads', 0);
+
         // Still there, as the user left it, and out of the way of the new view.
-        expect((screen.getByLabelText('threads draft') as HTMLInputElement).value).toBe('half typed');
+        expect((screen.getByLabelText('thread:a draft') as HTMLInputElement).value).toBe('half typed');
         expect(exiting()?.getAttribute('aria-hidden')).toBe('true');
         expect(exiting()?.hasAttribute('inert')).toBe(true);
-        expect(screen.getByLabelText('thread:a draft')).toBeTruthy();
+        expect(screen.getByLabelText('threads draft')).toBeTruthy();
 
         // The slide starts two frames in, and the exit unmounts after it.
         act(() => {
@@ -98,17 +123,21 @@ describe('RHSViewTransition', () => {
         });
 
         expect(exiting()).toBeNull();
-        expect(screen.queryByLabelText('threads draft')).toBeNull();
-        expect(screen.getByLabelText('thread:a draft').closest('[data-state]')?.getAttribute('data-state')).toBe('idle');
+        expect(screen.queryByLabelText('thread:a draft')).toBeNull();
+        expect(screen.getByLabelText('threads draft').closest('[data-state]')?.getAttribute('data-state')).toBe('idle');
     });
 
     test('a second change during an exit replaces the outgoing view', () => {
-        const {rerender} = renderTransition('threads', 0);
-        rerenderTo(rerender, 'thread:a', 1);
+        const {rerender} = renderTransition('thread:a', 1);
         rerenderTo(rerender, 'threads', 0);
+        rerenderTo(rerender, 'thread:b', 1);
 
-        expect(exiting()?.getAttribute('data-direction')).toBe('back');
-        expect(screen.getAllByLabelText(/draft/).length).toBe(2);
+        expect(exiting()?.getAttribute('data-direction')).toBe('forward');
+
+        // Only the view that was showing is outgoing (the one before it is gone), and the new,
+        // heavy one is not mounted yet.
+        expect(screen.getAllByLabelText(/draft/).length).toBe(1);
+        expect(screen.getByLabelText('threads draft')).toBeTruthy();
 
         // The slide starts two frames in, and the exit unmounts after it.
         act(() => {
@@ -119,7 +148,7 @@ describe('RHSViewTransition', () => {
         });
 
         expect(screen.getAllByLabelText(/draft/).length).toBe(1);
-        expect(screen.getByLabelText('threads draft')).toBeTruthy();
+        expect(screen.getByLabelText('thread:b draft')).toBeTruthy();
     });
 
     test('with reduced motion the views just swap', () => {

@@ -38,9 +38,17 @@ interface Shown {
     rank: number;
     outgoing: Outgoing | null;
 
-    // False for the first frames after a change: the new view mounts (its first render and layout
-    // are the heavy part) while it waits off-screen, and the slide starts once that has painted.
+    // False for the first frames after a change, while the new pane waits off-screen; the slide
+    // starts once it has painted.
     started: boolean;
+
+    // False while a view slides in going forward: the chat is the heavy view (the host thread
+    // viewer, the composer, long markdown), and mounting it mid-slide drops frames, so the pane
+    // slides in empty and the content mounts when the slide is over.
+    contentShown: boolean;
+
+    // The content was held back, so it fades in when it mounts.
+    fade: boolean;
 }
 
 // Shows one view and, when `viewKey` changes, keeps the previous one mounted (as it last rendered)
@@ -48,7 +56,7 @@ interface Shown {
 // from the left under the old one leaving to the right. The outgoing view is inert and unmounts
 // when its exit ends. With reduced motion, or no previous view, the views just swap.
 const RHSViewTransition = ({viewKey, rank, children}: RHSViewTransitionProps) => {
-    const [shown, setShown] = useState<Shown>({key: viewKey, rank, outgoing: null, started: true});
+    const [shown, setShown] = useState<Shown>({key: viewKey, rank, outgoing: null, started: true, contentShown: true, fade: false});
 
     // The previous render's children, which become the outgoing view when the key changes.
     const lastChildren = useRef<React.ReactNode>(children);
@@ -71,6 +79,8 @@ const RHSViewTransition = ({viewKey, rank, children}: RHSViewTransitionProps) =>
             rank,
             outgoing: animate ? {key: shown.key, node: lastChildren.current, direction} : null,
             started: !animate,
+            contentShown: !animate || direction !== 'forward',
+            fade: animate && direction === 'forward',
         });
     }
 
@@ -98,7 +108,7 @@ const RHSViewTransition = ({viewKey, rank, children}: RHSViewTransitionProps) =>
         if (!outgoing || !started) {
             return () => null;
         }
-        const timer = setTimeout(() => setShown((current) => ({...current, outgoing: null})), EXIT_UNMOUNT_MS);
+        const timer = setTimeout(() => setShown((current) => ({...current, outgoing: null, contentShown: true})), EXIT_UNMOUNT_MS);
         return () => clearTimeout(timer);
     }, [outgoing, started]);
 
@@ -127,8 +137,9 @@ const RHSViewTransition = ({viewKey, rank, children}: RHSViewTransitionProps) =>
                 key={viewKey}
                 data-state={enteringState}
                 data-direction={direction}
+                data-reveal={shown.fade && shown.contentShown ? 'fade' : 'none'}
             >
-                {children}
+                {shown.contentShown ? children : null}
             </Layer>
         </Stage>
     );
@@ -201,6 +212,11 @@ const Layer = styled.div`
 
     &:not([data-state='idle']) * {
         scrollbar-color: transparent transparent;
+    }
+
+    /* The content that mounts after a forward slide fades in, rather than popping. */
+    &[data-reveal='fade'] > * {
+        animation: ${fadeIn} var(--duration-quick) var(--ease-entrance) both;
     }
 
     &[data-state='exit'],

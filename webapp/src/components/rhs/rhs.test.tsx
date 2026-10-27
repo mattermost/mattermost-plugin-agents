@@ -213,7 +213,7 @@ describe('RHS', () => {
         // An open thread takes over whichever list tab was last chosen.
         state['plugins-mattermost-ai'] = {selectedPostId: 'post-id', rhsTab: 'threads'};
         rerender(<Rhs/>);
-        expect(screen.getByTestId('rhs-thread-viewer')).toBeTruthy();
+        await waitFor(() => expect(screen.getByTestId('rhs-thread-viewer')).toBeTruthy());
     });
 
     test.each([
