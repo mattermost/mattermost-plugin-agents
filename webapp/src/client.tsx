@@ -8,6 +8,7 @@ import {PreferenceType} from '@mattermost/types/preferences';
 import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
+import type {LLMBot} from '@/bots';
 import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
 import {
@@ -504,14 +505,23 @@ export async function getConversationContext(conversationId: string): Promise<Co
     });
 }
 
-export async function getAIBots() {
+// AIBotsResponse mirrors api.AIBotsResponse.
+export type AIBotsResponse = {
+    bots: LLMBot[];
+    searchEnabled: boolean;
+    allowUnsafeLinks: boolean;
+    htmlArtifactsEnabled: boolean;
+    deferredNotifications: boolean;
+};
+
+export async function getAIBots(): Promise<AIBotsResponse> {
     const url = `${baseRoute()}/ai_bots`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
 
     if (response.ok) {
-        return response.json();
+        return response.json() as Promise<AIBotsResponse>;
     }
 
     throw new ClientError(Client4.url, {
