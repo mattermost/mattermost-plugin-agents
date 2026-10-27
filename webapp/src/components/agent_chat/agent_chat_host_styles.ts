@@ -156,6 +156,9 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
      */
     .Separator {
         padding-inline: ${HOST_POST_INLINE_PADDING};
+
+        /* More room under the date line than the host's 1em, so the first post breathes. */
+        margin-bottom: var(--spacing-xxl);
     }
 
     .post .post__content {

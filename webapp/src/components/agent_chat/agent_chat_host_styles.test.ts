@@ -37,6 +37,9 @@ describe('hostThreadChatStyles', () => {
         expect(ruleFor(text, '[data-testid=\'comment-create\']')).toContain('display: none');
         expect(ruleFor(text, '.root-post__divider')).toContain('display: none');
 
+        // Date separators leave more room under the line than the host's own 1em.
+        expect(text).toContain('margin-bottom: var(--spacing-xxl)');
+
         // Posts and separators share one column where there is a cap, and the full width otherwise.
         const column = `max-width: ${CHAT_CONTENT_MAX_WIDTH}`;
         if (capped) {
