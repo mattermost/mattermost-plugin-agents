@@ -61,11 +61,11 @@ function createTestSuite() {
         await page.reload();
         await page.waitForLoadState('domcontentloaded');
 
-        // Verify in UI: Open RHS and check bot selector
+        // Verify in UI: Open RHS and check the title
         await aiPlugin.openRHS();
 
-        // The bot selector should show the new display name
-        const botSelector = page.getByTestId('bot-selector-rhs');
+        // The RHS title shows the new display name
+        const botSelector = page.getByTestId('rhs-title');
         await expect(botSelector).toContainText('AI Assistant');
 
         // Restore original name for other tests
@@ -91,7 +91,7 @@ function createTestSuite() {
         await page.waitForLoadState('domcontentloaded');
 
         await aiPlugin.openRHS();
-        let botSelector = page.getByTestId('bot-selector-rhs');
+        let botSelector = page.getByTestId('rhs-title');
         await expect(botSelector).toContainText('Assistant v1');
 
         // Second change
@@ -106,7 +106,7 @@ function createTestSuite() {
         // Need to open RHS again after page reload
         await aiPlugin.openRHS();
 
-        botSelector = page.getByTestId('bot-selector-rhs');
+        botSelector = page.getByTestId('rhs-title');
         await expect(botSelector).toContainText('Assistant v2');
 
         // Restore original name
@@ -134,14 +134,14 @@ function createTestSuite() {
 
         // Open RHS and send a message
         await aiPlugin.openRHS();
-        await expect(page.getByTestId('bot-selector-rhs')).toContainText('Persistent Bot');
+        await expect(page.getByTestId('rhs-title')).toContainText('Persistent Bot');
 
         await openAIMock.addCompletionMock(responseTest);
         await aiPlugin.sendMessage('Test persistence');
         await aiPlugin.waitForBotResponse(responseTestText);
 
         // Display name should still be visible after interaction
-        await expect(page.getByTestId('bot-selector-rhs')).toContainText('Persistent Bot');
+        await expect(page.getByTestId('rhs-title')).toContainText('Persistent Bot');
 
         // Restore original name
         await botConfig.updateBot(originalBot!.id, {

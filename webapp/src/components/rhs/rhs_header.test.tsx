@@ -43,10 +43,6 @@ jest.mock('@mattermost/compass-icons/components', () => ({
     RefreshIcon: () => <span data-testid='refresh-icon'/>,
 }));
 
-jest.mock('../bot_selector', () => ({
-    BotDropdown: () => <div data-testid='bot-dropdown'/>,
-}));
-
 // Cast instead of importing the enums; system_console/bot.tsx drags in the whole console tree.
 const activeBot = {
     id: 'bot-id',
@@ -66,11 +62,9 @@ function renderHeader(bot: LLMBot) {
     return render(
         <RHSHeader
             currentTab='new'
-            bots={null}
             activeBot={bot}
             setCurrentTab={jest.fn()}
             selectPost={jest.fn()}
-            setActiveBot={jest.fn()}
             disabledServers={[]}
             onDisabledServersChange={jest.fn()}
         />,
@@ -78,6 +72,13 @@ function renderHeader(bot: LLMBot) {
 }
 
 describe('RHSHeader', () => {
+    test('no longer renders an agent selector (it lives in the RHS title)', () => {
+        renderHeader(activeBot);
+
+        expect(screen.queryByTestId('bot-selector-rhs')).toBeNull();
+        expect(screen.queryByText('Choose an Agent')).toBeNull();
+    });
+
     test('shows the Tools popover for a regular agent', () => {
         renderHeader(activeBot);
 

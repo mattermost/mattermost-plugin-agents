@@ -119,7 +119,7 @@ export default function RHS() {
         dispatch({type: 'SELECT_AI_POST', postId});
     }, [dispatch]);
 
-    const {bots, activeBot, setActiveBot} = useBotlist();
+    const {bots, activeBot} = useBotlist();
     const activeConversationId = useConversationIdForThread(selectedPostId);
 
     // No bots available - hide the RHS entirely
@@ -194,9 +194,7 @@ export default function RHS() {
                 currentTab={currentTab}
                 setCurrentTab={setCurrentTab}
                 selectPost={selectPost}
-                bots={bots}
                 activeBot={activeBot}
-                setActiveBot={setActiveBot}
                 disabledServers={disabledServers}
                 onDisabledServersChange={setDisabledServers}
                 preloadedServers={preloadedServers}

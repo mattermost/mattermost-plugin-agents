@@ -26,6 +26,7 @@ import PostMenu from './components/post_menu';
 import IconThreadSummarization from './components/assets/icon_thread_summarization';
 import IconReactForMe from './components/assets/icon_react_for_me';
 import RHS from './components/rhs/rhs';
+import RHSTitle from './components/rhs/rhs_title';
 import CustomPromptsDropdown from './components/custom_prompts/custom_prompts_dropdown';
 import CustomPromptsManagement from './components/custom_prompts/custom_prompts_management';
 import Config from './components/system_console/config';
@@ -119,25 +120,6 @@ const ProductSwitcherIconAI = (props: {className?: string}) => (
         <IconAI/>
     </ProductSwitcherIconWrapper>
 );
-
-const RHSTitleContainer = styled.span`
-    display: flex;
-	gap: 8px;
-    align-items: center;
-	margin-left: 8px;
-`;
-
-const RHSTitle = () => {
-    return (
-        <RHSTitleContainer>
-            <IconAIContainer
-                src={aiIcon}
-                alt=''
-            />
-            <FormattedMessage defaultMessage='Agents'/>
-        </RHSTitleContainer>
-    );
-};
 
 const ChannelHeaderIcon = () => {
     const {bots} = useBotlist();

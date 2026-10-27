@@ -1,17 +1,13 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {ChevronDownIcon, ClockOutlineIcon, PencilOutlineIcon} from '@mattermost/compass-icons/components';
+import {ClockOutlineIcon, PencilOutlineIcon} from '@mattermost/compass-icons/components';
 import React from 'react';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 
 import {Button} from '@mattermost/compass-ui/components/button';
 import {Icon} from '@mattermost/compass-ui/components/icon';
-
-import {DotMenuButton} from '../dot_menu';
-
-import {BotDropdown} from '../bot_selector';
 
 import {LLMBot} from '@/bots';
 
@@ -20,11 +16,9 @@ import ToolProviderPopover, {UserMCPServerInfo} from './tool_provider_popover';
 
 type Props = {
     currentTab: string
-    bots: LLMBot[] | null
     activeBot: LLMBot | null
     setCurrentTab: (tab: string) => void
     selectPost: (postId: string) => void
-    setActiveBot: (bot: LLMBot) => void
     disabledServers: string[]
     onDisabledServersChange: (servers: string[]) => void
     preloadedServers?: UserMCPServerInfo[]
@@ -59,7 +53,6 @@ const RHSHeader = (props: Props) => {
             </Button>
         );
     }
-    const currentBotName = props.activeBot?.displayName ?? '';
 
     // All right-side controls share one flex group so the ring
     // appearing/disappearing doesn't shift the others.
@@ -81,20 +74,6 @@ const RHSHeader = (props: Props) => {
                                 enabledMCPTools={props.activeBot?.enabledMCPTools}
                                 autoEnableNewMCPTools={props.activeBot?.autoEnableNewMCPTools}
                             />
-                        )}
-                        {props.bots && (
-                            <BotDropdown
-                                bots={props.bots}
-                                activeBot={props.activeBot}
-                                setActiveBot={props.setActiveBot}
-                                container={SelectorDropdown}
-                                testId='bot-selector-rhs'
-                            >
-                                <>
-                                    <SelectorDropdownName>{currentBotName}</SelectorDropdownName>
-                                    <ChevronDownIcon/>
-                                </>
-                            </BotDropdown>
                         )}
                     </>
                 ) : (
@@ -144,39 +123,6 @@ const RightControls = styled.div`
     align-items: center;
     gap: 4px;
     margin-left: auto;
-`;
-
-const SelectorDropdown = styled(DotMenuButton)<{$isActive: boolean}>`
-	display: flex;
-	align-items: center;
-	padding: 2px 4px 2px 6px;
-	border-radius: 4px;
-	height: 20px;
-	width: auto;
-	max-width: 128px;
-
-	font-size: 11px;
-	font-weight: 600;
-	line-height: 16px;
-
-    color: ${(props) => (props.$isActive ? 'var(--button-bg)' : 'var(--center-channel-color-rgb)')};
-    background-color: ${(props) => (props.$isActive ? 'rgba(var(--button-bg-rgb), 0.16)' : 'rgba(var(--center-channel-color-rgb), 0.08)')};
-
-    &:hover {
-        color: ${(props) => (props.$isActive ? 'var(--button-bg)' : 'var(--center-channel-color-rgb)')};
-        background-color: ${(props) => (props.$isActive ? 'rgba(var(--button-bg-rgb), 0.16)' : 'rgba(var(--center-channel-color-rgb), 0.16)')};
-    }
-
-    svg {
-        flex-shrink: 0;
-    }
-`;
-
-const SelectorDropdownName = styled.span`
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
 `;
 
 export default React.memo(RHSHeader);

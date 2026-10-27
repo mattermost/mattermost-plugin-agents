@@ -88,7 +88,7 @@ test.describe('Direct Channel Creation', () => {
     await botSelector.click();
 
     // Select first bot
-    const firstBot = page.getByRole('button', { name: /.*Bot.*/ }).first();
+    const firstBot = page.getByRole('menuitem', { name: /.*Bot.*/ }).first();
     await firstBot.click();
 
     // Channel should be immediately available (no loading state)

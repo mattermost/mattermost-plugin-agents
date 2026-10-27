@@ -118,16 +118,16 @@ export class AIPlugin {
   }
 
   async switchBot(botName: string) {
-    await this.page.getByTestId(`bot-selector-rhs`).click();
-    await this.page.getByRole('button', { name: botName }).click();
+    await this.page.getByTestId('bot-selector-rhs').click();
+    await this.page.getByRole('menuitem', { name: botName }).click();
   }
 
   /**
-   * Select a bot in the RHS selector, retrying until the bot appears (Agents list can lag behind API creates).
+   * Select a bot in the RHS title's agent menu, retrying until the bot appears (Agents list can lag behind API creates).
    */
   async switchBotWhenListed(botDisplayName: string): Promise<void> {
     const selector = this.page.getByTestId('bot-selector-rhs');
-    const option = this.page.getByRole('button', { name: botDisplayName });
+    const option = this.page.getByRole('menuitem', { name: botDisplayName });
     await expect(async () => {
       await this.page.keyboard.press('Escape');
       await selector.click();
