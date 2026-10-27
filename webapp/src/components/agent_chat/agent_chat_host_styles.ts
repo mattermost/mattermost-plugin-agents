@@ -77,6 +77,20 @@ export const HUG_MAX_FRACTION = 0.75;
 export const BUBBLE_FIT_ATTRIBUTE = 'data-bubble-fit';
 export const BUBBLE_MOTION_ATTRIBUTE = 'data-bubble-motion';
 
+// Set by the plugin's controls bar when it should sit under the bubble.
+export const BUBBLE_CONTROLS_ATTRIBUTE = 'data-bubble-controls';
+export const BUBBLE_CONTROLS_BELOW = 'below';
+
+// Height of the controls bar (an x-small IconButton / Button row). No compass
+// token covers a control row height; controls_bar.tsx uses the same value.
+export const CONTROLS_BAR_HEIGHT = '28px';
+
+// Gap between the bubble's bottom edge and the controls bar. The x-small
+// IconButton (24px) is centered in the 28px bar, so it looks 2px farther: a
+// 2px gap shows 4px, enough to keep its focus ring clear of the bubble.
+// One-line tweak; the reserved margin follows it.
+const CONTROLS_BAR_GAP = 'var(--spacing-xxxxs)';
+
 // The bubble the user is on: pointer over it (the toolbar is its descendant, so
 // moving onto the toolbar keeps it), keyboard focus inside it, the row's a11y
 // focus, or one of its toolbar menus open.
@@ -220,6 +234,26 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         flex: 0 1 auto;
         width: fit-content;
         max-width: calc(${HUG_MAX_FRACTION} * (100% - ${AVATAR_SLOT} - var(--spacing-xs)));
+    }
+
+    /*
+     * Post controls under the bubble: the plugin marks its controls bar (still
+     * inside the bubble in the DOM, so tab order and hover/focus-within are
+     * unchanged) and it is placed just below the bubble's bottom edge, aligned
+     * with the text. The bubble reserves that space with a bottom margin only
+     * when the bar is rendered. A flex item's margin counts in the height of
+     * \`.post__content\` (flex margins never collapse), so the virtualized
+     * list, which measures each row from the DOM, includes it.
+     */
+    .post ${BUBBLE}:has([${BUBBLE_CONTROLS_ATTRIBUTE}='${BUBBLE_CONTROLS_BELOW}']) {
+        margin-bottom: calc(${CONTROLS_BAR_HEIGHT} + ${CONTROLS_BAR_GAP});
+    }
+
+    .post ${BUBBLE} [${BUBBLE_CONTROLS_ATTRIBUTE}='${BUBBLE_CONTROLS_BELOW}'] {
+        position: absolute;
+        top: calc(100% + ${CONTROLS_BAR_GAP});
+        left: var(--spacing-l);
+        margin-top: 0;
     }
 
     /* Width changes animate only for posts that streamed here, never on load. */

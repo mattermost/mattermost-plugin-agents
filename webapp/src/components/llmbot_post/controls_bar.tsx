@@ -10,12 +10,18 @@ import {CloseIcon, RefreshIcon, SendIcon} from '@mattermost/compass-icons/compon
 import {Button} from '@mattermost/compass-ui/components/button';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+
 import {WithTooltip} from '@mattermost/shared/components/tooltip';
+
+import {BUBBLE_CONTROLS_ATTRIBUTE, BUBBLE_CONTROLS_BELOW, CONTROLS_BAR_HEIGHT} from '../agent_chat/agent_chat_host_styles';
 
 interface ControlsBarComponentProps {
     showStopGeneratingButton: boolean;
     showPostbackButton: boolean;
     showRegenerate: boolean;
+
+    // Agent chat views place the bar under the bubble (agent_chat_host_styles.ts).
+    belowBubble?: boolean;
     onStopGenerating: () => void;
     onPostSummary: () => void;
     onRegenerate: () => void;
@@ -25,6 +31,7 @@ export const ControlsBarComponent: React.FC<ControlsBarComponentProps> = ({
     showStopGeneratingButton,
     showPostbackButton,
     showRegenerate,
+    belowBubble = false,
     onStopGenerating,
     onPostSummary,
     onRegenerate,
@@ -33,7 +40,7 @@ export const ControlsBarComponent: React.FC<ControlsBarComponentProps> = ({
     const regenerateLabel = intl.formatMessage({defaultMessage: 'Regenerate'});
 
     return (
-        <ControlsBar>
+        <ControlsBar {...(belowBubble ? {[BUBBLE_CONTROLS_ATTRIBUTE]: BUBBLE_CONTROLS_BELOW} : {})}>
             {showStopGeneratingButton && (
                 <Button
                     emphasis='tertiary'
@@ -77,7 +84,7 @@ const ControlsBar = styled.div`
 	display: flex;
 	flex-direction: row;
 	align-items: center;
-	height: 28px;
+	height: ${CONTROLS_BAR_HEIGHT};
 	margin-top: 8px;
 	gap: 4px;
 `;

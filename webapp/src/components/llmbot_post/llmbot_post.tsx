@@ -144,7 +144,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const [isReasoningLoading, setIsReasoningLoading] = useState(false);
 
     // In the agent chat views the composer's send button is the Stop control.
-    const {composerHandlesStop, showThinkingIndicator, smoothStreaming, hugShortBubbles} = useContext(AgentChatSurfaceContext);
+    const {composerHandlesStop, showThinkingIndicator, smoothStreaming, hugShortBubbles, controlsBelowBubble} = useContext(AgentChatSurfaceContext);
 
     // Streamed text is revealed at a steady pace where the surface asks for
     // it. A stop, cancel or error shows what arrived at once.
@@ -883,6 +883,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 showStopGeneratingButton={showStopGeneratingButton}
                 showPostbackButton={showPostbackButton}
                 showRegenerate={showRegenerate}
+                belowBubble={controlsBelowBubble}
                 onStopGenerating={stopGenerating}
                 onPostSummary={postSummary}
                 onRegenerate={regnerate}

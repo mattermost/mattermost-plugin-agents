@@ -52,3 +52,23 @@ describe('ControlsBarComponent Regenerate', () => {
         expect(tooltip?.getAttribute('data-disabled')).toBe('false');
     });
 });
+
+describe('ControlsBarComponent placement marker', () => {
+    test.each([
+        {name: 'below the bubble in the agent chat views', belowBubble: true, marker: 'below'},
+        {name: 'unmarked when not below', belowBubble: false, marker: null},
+    ])('$name', ({belowBubble, marker}) => {
+        const {container} = render(
+            <ControlsBarComponent
+                showStopGeneratingButton={false}
+                showPostbackButton={false}
+                showRegenerate={true}
+                belowBubble={belowBubble}
+                onStopGenerating={jest.fn()}
+                onPostSummary={jest.fn()}
+                onRegenerate={jest.fn()}
+            />,
+        );
+        expect(container.querySelector('[data-bubble-controls]')?.getAttribute('data-bubble-controls') ?? null).toBe(marker);
+    });
+});

@@ -1822,3 +1822,32 @@ describe('LLMBotPost bubble fit', () => {
         expect(screen.getByTestId('llm-bot-post').hasAttribute('data-bubble-fit')).toBe(marked);
     });
 });
+
+describe('LLMBotPost controls below the bubble', () => {
+    test.each([
+        {name: 'agent chat views mark the controls bar', wrap: true, marker: 'below'},
+        {name: 'other surfaces keep the controls inside the bubble', wrap: false, marker: null},
+    ])('$name', ({wrap, marker}) => {
+        mockUseConversation.mockReturnValue({
+            conversation: makeConversation([makeTurn({content: [{type: 'text', text: 'Old answer'}]})]),
+            loading: false,
+            error: null,
+        });
+        const post = (
+            <LLMBotPost
+                post={makePost('Old answer')}
+                websocketUnregister={jest.fn()}
+            />
+        );
+        render(
+            <IntlProvider locale='en'>
+                {wrap ? <AgentChatSurfaceContext.Provider value={AGENT_CHAT_SURFACE}>{post}</AgentChatSurfaceContext.Provider> : post}
+            </IntlProvider>,
+        );
+        const bar = screen.getByTestId('regenerate-button').closest('[data-bubble-controls]');
+        expect(bar?.getAttribute('data-bubble-controls') ?? null).toBe(marker);
+        if (!wrap) {
+            expect(screen.getByTestId('regenerate-button')).toBeTruthy();
+        }
+    });
+});

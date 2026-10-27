@@ -24,6 +24,12 @@ export interface AgentChatSurface {
     // the default context value below (the host bubble rule also needs the
     // surface's host styles).
     hugShortBubbles: boolean;
+
+    // The post controls (Regenerate, Stop, Post summary) sit under the bubble
+    // instead of inside it. Only the agent chat views opt in; widening it is a
+    // one-line change to the default context value below (the host bubble rule
+    // also needs the surface's host styles).
+    controlsBelowBubble: boolean;
 }
 
 // Provided by the agent chat views (Agents product view, Agents RHS) around
@@ -34,6 +40,7 @@ export const AgentChatSurfaceContext = createContext<AgentChatSurface>({
     showThinkingIndicator: false,
     smoothStreaming: false,
     hugShortBubbles: false,
+    controlsBelowBubble: false,
 });
 
 export const AGENT_CHAT_SURFACE: AgentChatSurface = {
@@ -44,4 +51,5 @@ export const AGENT_CHAT_SURFACE: AgentChatSurface = {
     // (use_smooth_text.ts, streaming_markdown.tsx) stays; turn this back on once it is smooth.
     smoothStreaming: false,
     hugShortBubbles: true,
+    controlsBelowBubble: true,
 };

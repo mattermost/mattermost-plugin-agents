@@ -105,3 +105,21 @@ describe('hostThreadChatStyles bubble fit', () => {
         expect(ruleFor(text, '.post.current--user .post__content > .post__img + div')).toContain('flex: 0 1 auto');
     });
 });
+
+describe('hostThreadChatStyles controls below the bubble', () => {
+    const text = cssText(hostThreadChatStyles());
+    const bubble = '.post .post__content > .post__img + div';
+
+    test('only a bubble holding the below marker reserves space, from tokens plus the bar height', () => {
+        const rule = ruleFor(text, `${bubble}:has([data-bubble-controls='below'])`);
+        expect(rule).toContain('margin-bottom: calc(28px + var(--spacing-xxxxs))');
+        expect(ruleFor(text, bubble)).not.toContain('margin-bottom');
+    });
+
+    test('the marked bar is placed absolutely under the bubble, aligned with its text', () => {
+        const rule = ruleFor(text, `${bubble} [data-bubble-controls='below']`);
+        expect(rule).toContain('position: absolute');
+        expect(rule).toContain('top: calc(100% + var(--spacing-xxxxs))');
+        expect(rule).toContain('left: var(--spacing-l)');
+    });
+});
