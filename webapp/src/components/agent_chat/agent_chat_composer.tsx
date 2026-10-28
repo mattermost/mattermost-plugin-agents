@@ -172,6 +172,19 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
     const key = draftKey(channelId, rootId);
     const [message, setMessage] = useState(() => readDraft(key));
     const [sending, setSending] = useState(false);
+
+    // The send-key hint shows while the composer is focused and empty, then fades after a few seconds.
+    const [focused, setFocused] = useState(false);
+    const [hintExpired, setHintExpired] = useState(false);
+    useEffect(() => {
+        setHintExpired(false);
+        const timer = focused ? setTimeout(() => setHintExpired(true), SEND_HINT_MS) : null;
+        return () => {
+            if (timer) {
+                clearTimeout(timer);
+            }
+        };
+    }, [focused]);
     const [sendError, setSendError] = useState<SendError | null>(null);
 
     // While an AI Rewrite runs the box is read-only and Send waits, so the
@@ -260,8 +273,10 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
     // Which key sends follows the user's Advanced setting (Ctrl+Enter, or Enter).
     let sendHint = intl.formatMessage({defaultMessage: 'Enter to send'});
     if (sendOnCtrlEnter) {
-        sendHint = isMacPlatform() ? intl.formatMessage({defaultMessage: '⌘ Return to send'}) : intl.formatMessage({defaultMessage: 'Ctrl+Enter to send'});
+        sendHint = isMacPlatform() ? intl.formatMessage({defaultMessage: '⌘ Enter to send'}) : intl.formatMessage({defaultMessage: 'Ctrl+Enter to send'});
     }
+
+    const hintVisible = focused && !hintExpired && !hasContent && !generatingPostId;
 
     const canSend = hasContent && !uploading && !hasErrors && !sending && !tooLong && !rewriting;
 
@@ -588,6 +603,8 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
                 $hostTextbox={Boolean(HostTextbox)}
                 data-expanded={expanded}
                 aria-busy={rewriting}
+                onFocus={() => setFocused(true)}
+                onBlur={() => setFocused(false)}
                 data-testid='agent-chat-composer-pill'
             >
                 <WrapMirror
@@ -670,6 +687,13 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
                         onClick={() => send()}
                     />
                 )}
+                <SendHint
+                    aria-hidden={true}
+                    data-visible={hintVisible}
+                    data-testid='agent-chat-send-hint'
+                >
+                    {sendHint}
+                </SendHint>
                 <LiveStatus
                     role='status'
                     aria-live='polite'
@@ -679,14 +703,6 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
                     {rewriting ? intl.formatMessage({defaultMessage: 'Rewriting…'}) : ''}
                 </LiveStatus>
             </Shell>
-            {hasContent && !generatingPostId && (
-                <SendHint
-                    aria-hidden={true}
-                    data-testid='agent-chat-send-hint'
-                >
-                    {sendHint}
-                </SendHint>
-            )}
             {limitReached && (
                 <ErrorText
                     id={limitId}
@@ -714,6 +730,9 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
         </ComposerColumn>
     );
 };
+
+// How long the hint stays once the composer is focused.
+const SEND_HINT_MS = 4000;
 
 const isMacPlatform = () => (/Mac|iPhone|iPad|iPod/i).test(navigator.platform || navigator.userAgent || '');
 
@@ -952,10 +971,30 @@ const SendButton = styled(IconButton)`
     }
 `;
 
-// Under the pill, at its right edge, in the same inset as the messages below it.
+// Inside the pill, on the right, just left of the send button: out of the grid flow, so showing or
+// hiding it never moves anything. The right inset is the pill's padding plus the 32px button and the gap.
 const SendHint = styled.p`
+    position: absolute;
+    right: calc(2 * var(--spacing-xs) + var(--spacing-xxxl));
+    bottom: var(--spacing-xs);
+    display: flex;
+    height: var(--spacing-xxxl);
+    align-items: center;
     margin: 0;
-    padding: 0 var(--spacing-l);
+    pointer-events: none;
+    opacity: 0;
+
+    /* No compass token for a slow fade: twice the moderate duration. */
+    transition: opacity calc(2 * var(--duration-moderate)) var(--ease-transition);
+
+    &[data-visible='true'] {
+        opacity: 1;
+        transition-duration: var(--duration-quick);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        transition: none;
+    }
     font-family: var(--font-family-body);
     font-size: var(--font-size-75);
     line-height: var(--line-height-75);

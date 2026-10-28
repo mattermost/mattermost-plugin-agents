@@ -186,11 +186,33 @@ describe('AgentChatComposer', () => {
         }
     });
 
-    test('hints the send key once there is text to send', () => {
+    test('hints the send key while focused and empty, and not once there is text', () => {
         const {textbox} = renderComposer();
-        expect(screen.queryByTestId('agent-chat-send-hint')).toBeNull();
+        const hint = () => screen.getByTestId('agent-chat-send-hint');
+
+        // The composer takes focus on mount, so the hint shows right away; leaving it hides it.
+        expect(hint().getAttribute('data-visible')).toBe('true');
+        expect(hint().textContent).toBe('Enter to send');
+        fireEvent.blur(textbox);
+        expect(hint().getAttribute('data-visible')).toBe('false');
+        fireEvent.focus(textbox);
+        expect(hint().getAttribute('data-visible')).toBe('true');
         fireEvent.change(textbox, {target: {value: 'hello'}});
-        expect(screen.getByTestId('agent-chat-send-hint').textContent).toBe('Enter to send');
+        expect(hint().getAttribute('data-visible')).toBe('false');
+    });
+
+    test('the hint fades after a few seconds', () => {
+        jest.useFakeTimers();
+        try {
+            renderComposer();
+            expect(screen.getByTestId('agent-chat-send-hint').getAttribute('data-visible')).toBe('true');
+            act(() => {
+                jest.advanceTimersByTime(5000);
+            });
+            expect(screen.getByTestId('agent-chat-send-hint').getAttribute('data-visible')).toBe('false');
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     test('the send button creates the root post', async () => {
