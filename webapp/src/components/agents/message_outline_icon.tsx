@@ -3,12 +3,21 @@
 
 import React from 'react';
 
+interface MessageOutlineIconProps {
+
+    // Set by the compass Icon, which clones its glyph with the pixel size to draw (not the Icon's
+    // own size: a 16 Icon passes 18, because the compass glyphs carry padding in their 24px grid).
+    size?: number | string;
+}
+
 // The chat bubble outline used for chats in the Agents sidebar. It is not in the installed
-// compass-icons yet, so the glyph is kept here (24px grid, like the compass icons).
-const MessageOutlineIcon = () => (
+// compass-icons yet, so the glyph is kept here, taking `size` like the compass icons do.
+const MessageOutlineIcon = ({size}: MessageOutlineIconProps) => (
     <svg
         xmlns='http://www.w3.org/2000/svg'
         viewBox='0 0 24 24'
+        width={size ?? '1em'}
+        height={size ?? '1em'}
         fill='currentColor'
     >
         <path d='M20 2H4C2.9 2 2 2.9 2 4V22L6 18H20C21.1 18 22 17.1 22 16V4C22 2.9 21.1 2 20 2M20 16H5.2L4 17.2V4H20V16Z'/>
