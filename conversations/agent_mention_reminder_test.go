@@ -257,6 +257,66 @@ func TestMessageHasBeenPostedSendsReminderWhenPreviousPostIsAgent(t *testing.T) 
 	}
 }
 
+func TestMessageHasBeenPostedReminderShownOncePerThread(t *testing.T) {
+	fix := newReminderFixture(t)
+	channel := &model.Channel{Id: reminderChannelID, Type: model.ChannelTypeOpen}
+	fix.setChannel(channel)
+
+	rootPost := &model.Post{Id: reminderRootID, ChannelId: channel.Id, UserId: reminderUserID, CreateAt: 100, Message: "start"}
+	agent1 := &model.Post{Id: "agent-1", ChannelId: channel.Id, UserId: reminderBotID, RootId: reminderRootID, CreateAt: 200, Message: "agent one"}
+	reply1 := &model.Post{Id: "reply-1", ChannelId: channel.Id, UserId: reminderUserID, RootId: reminderRootID, CreateAt: 300, Message: "first reply"}
+	agent2 := &model.Post{Id: "agent-2", ChannelId: channel.Id, UserId: reminderBotID, RootId: reminderRootID, CreateAt: 400, Message: "agent two"}
+	reply2 := &model.Post{Id: "reply-2", ChannelId: channel.Id, UserId: reminderUserID, RootId: reminderRootID, CreateAt: 500, Message: "second reply"}
+	fix.setThread(reminderRootID, rootPost, agent1, reply1, agent2, reply2)
+
+	fix.conv.MessageHasBeenPosted(nil, reply1)
+	require.Len(t, fix.client.ephemeralPosts, 1, "the first reply after an agent post triggers the reminder")
+
+	fix.conv.MessageHasBeenPosted(nil, reply2)
+	require.Len(t, fix.client.ephemeralPosts, 1, "a second reply in the same thread must not trigger the reminder again")
+}
+
+func TestMessageHasBeenPostedReminderShownAgainInDifferentThread(t *testing.T) {
+	fix := newReminderFixture(t)
+	channel := &model.Channel{Id: reminderChannelID, Type: model.ChannelTypeOpen}
+	fix.setChannel(channel)
+
+	const otherRootID = "other-root-id"
+
+	rootA := &model.Post{Id: reminderRootID, ChannelId: channel.Id, UserId: reminderUserID, CreateAt: 100, Message: "start a"}
+	agentA := &model.Post{Id: "agent-a", ChannelId: channel.Id, UserId: reminderBotID, RootId: reminderRootID, CreateAt: 200, Message: "agent a"}
+	replyA := &model.Post{Id: "reply-a", ChannelId: channel.Id, UserId: reminderUserID, RootId: reminderRootID, CreateAt: 300, Message: "reply a"}
+	fix.setThread(reminderRootID, rootA, agentA, replyA)
+
+	rootB := &model.Post{Id: otherRootID, ChannelId: channel.Id, UserId: reminderUserID, CreateAt: 100, Message: "start b"}
+	agentB := &model.Post{Id: "agent-b", ChannelId: channel.Id, UserId: reminderBotID, RootId: otherRootID, CreateAt: 200, Message: "agent b"}
+	replyB := &model.Post{Id: "reply-b", ChannelId: channel.Id, UserId: reminderUserID, RootId: otherRootID, CreateAt: 300, Message: "reply b"}
+	fix.setThread(otherRootID, rootB, agentB, replyB)
+
+	fix.conv.MessageHasBeenPosted(nil, replyA)
+	require.Len(t, fix.client.ephemeralPosts, 1)
+
+	fix.conv.MessageHasBeenPosted(nil, replyB)
+	require.Len(t, fix.client.ephemeralPosts, 2, "the reminder shows again in a different thread the user has not seen it in")
+}
+
+func TestMessageHasBeenPostedReminderNotShownWhenUserOptedOut(t *testing.T) {
+	fix := newReminderFixture(t)
+	channel := &model.Channel{Id: reminderChannelID, Type: model.ChannelTypeOpen}
+	fix.setChannel(channel)
+
+	require.NoError(t, conversations.SaveAgentMentionReminderOptOut(fix.client, reminderUserID))
+
+	rootPost := &model.Post{Id: reminderRootID, ChannelId: channel.Id, UserId: reminderUserID, CreateAt: 100, Message: "start"}
+	agentPost := &model.Post{Id: "agent-post", ChannelId: channel.Id, UserId: reminderBotID, RootId: reminderRootID, CreateAt: 200, Message: "agent response"}
+	reply := &model.Post{Id: reminderReplyID, ChannelId: channel.Id, UserId: reminderUserID, RootId: reminderRootID, CreateAt: 300, Message: "thanks!"}
+	fix.setThread(reminderRootID, rootPost, agentPost, reply)
+
+	fix.conv.MessageHasBeenPosted(nil, reply)
+
+	require.Empty(t, fix.client.ephemeralPosts, "a user who opted out never sees the reminder")
+}
+
 func TestMessageHasBeenPostedReminderHandlesNoPreviousPost(t *testing.T) {
 	fix := newReminderFixture(t)
 	channel := &model.Channel{Id: reminderChannelID, Type: model.ChannelTypeOpen}

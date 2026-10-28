@@ -525,6 +525,25 @@ func (a *API) handleLoopInAgent(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+// handleAgentMentionReminderOptOut records a per-user preference to never show
+// the "you must @mention an agent" reminder again, in any thread. The user is
+// authenticated by MattermostAuthorizationRequired before this handler runs.
+func (a *API) handleAgentMentionReminderOptOut(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+
+	if err := a.enforceEmptyBody(c); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if err := conversations.SaveAgentMentionReminderOptOut(a.mmClient, userID); err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save reminder preference: %w", err))
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
 func loopInAgentHTTPStatus(err error) int {
 	switch {
 	case errors.Is(err, conversations.ErrLoopInNotPostOwner),

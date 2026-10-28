@@ -7,11 +7,32 @@ import {FormattedMessage} from 'react-intl';
 
 import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
 
-import {doLoopInAgent} from '@/client';
+import {doDisableAgentMentionReminder, doLoopInAgent} from '@/client';
 import {isValidId} from '@/utils/ids';
 
 const Hint = styled.div`
     color: rgba(var(--center-channel-color-rgb), 0.64);
+`;
+
+const Actions = styled.div`
+    display: flex;
+    gap: var(--spacing-2, 8px);
+    margin-top: var(--spacing-1, 4px);
+`;
+
+const DismissButton = styled.button<{$pending: boolean}>`
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: rgba(var(--link-color-rgb), 1);
+    cursor: ${(props) => (props.$pending ? 'progress' : 'pointer')};
+    pointer-events: ${(props) => (props.$pending ? 'none' : 'auto')};
+    opacity: ${(props) => (props.$pending ? 0.6 : 1)};
+    text-decoration: underline;
+
+    &:hover {
+        text-decoration: none;
+    }
 `;
 
 const LoopInError = styled(ErrorMessage)`
@@ -52,6 +73,7 @@ interface Props {
 }
 
 type LoopInStatus = 'idle' | 'pending' | 'done' | 'error';
+type DismissStatus = 'idle' | 'pending' | 'done' | 'error';
 
 export const AgentMentionReminderPost = ({post}: Props) => {
     const botUserId = stringProp(post.props?.bot_user_id);
@@ -62,7 +84,9 @@ export const AgentMentionReminderPost = ({post}: Props) => {
     const canLoopIn = post.type === EphemeralPostType && isValidId(botUserId) && loopInPostId !== '';
 
     const [status, setStatus] = useState<LoopInStatus>('idle');
+    const [dismissStatus, setDismissStatus] = useState<DismissStatus>('idle');
     const pending = status === 'pending';
+    const dismissPending = dismissStatus === 'pending';
 
     const onClick = async (event: React.MouseEvent<HTMLAnchorElement>) => {
         event.preventDefault();
@@ -79,9 +103,34 @@ export const AgentMentionReminderPost = ({post}: Props) => {
         }
     };
 
+    const onDismiss = async () => {
+        if (dismissPending || dismissStatus === 'done') {
+            return;
+        }
+        setDismissStatus('pending');
+        try {
+            await doDisableAgentMentionReminder();
+            setDismissStatus('done');
+        } catch (err) {
+            console.error('Failed to disable agent mention reminder:', err); // eslint-disable-line no-console
+            setDismissStatus('error');
+        }
+    };
+
     if (!canLoopIn) {
         return (
             <Hint>{post.message}</Hint>
+        );
+    }
+
+    if (dismissStatus === 'done') {
+        return (
+            <Hint>
+                <FormattedMessage
+                    id='agents.agent_mention_reminder_dismissed'
+                    defaultMessage="You won't see this reminder again."
+                />
+            </Hint>
         );
     }
 
@@ -116,6 +165,19 @@ export const AgentMentionReminderPost = ({post}: Props) => {
                     ),
                 }}
             />
+            <Actions>
+                <DismissButton
+                    type='button'
+                    onClick={onDismiss}
+                    $pending={dismissPending}
+                    aria-disabled={dismissPending}
+                >
+                    <FormattedMessage
+                        id='agents.agent_mention_reminder_dismiss'
+                        defaultMessage="Don't show again"
+                    />
+                </DismissButton>
+            </Actions>
             {status === 'error' && (
                 <LoopInError
                     message={
@@ -123,6 +185,16 @@ export const AgentMentionReminderPost = ({post}: Props) => {
                             id='agents.agent_mention_reminder_error'
                             defaultMessage='Failed to loop in @{botDisplayName}. Please try again.'
                             values={{botDisplayName}}
+                        />
+                    }
+                />
+            )}
+            {dismissStatus === 'error' && (
+                <LoopInError
+                    message={
+                        <FormattedMessage
+                            id='agents.agent_mention_reminder_dismiss_error'
+                            defaultMessage='Failed to update your preference. Please try again.'
                         />
                     }
                 />

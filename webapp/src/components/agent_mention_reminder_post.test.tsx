@@ -5,15 +5,17 @@ import React from 'react';
 import {render, screen, fireEvent} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
-import {doLoopInAgent} from '@/client';
+import {doDisableAgentMentionReminder, doLoopInAgent} from '@/client';
 
 import {AgentMentionReminderPost} from './agent_mention_reminder_post';
 
 jest.mock('@/client', () => ({
     doLoopInAgent: jest.fn(),
+    doDisableAgentMentionReminder: jest.fn(),
 }));
 
 const mockedDoLoopInAgent = doLoopInAgent as jest.MockedFunction<typeof doLoopInAgent>;
+const mockedDoDisableAgentMentionReminder = doDisableAgentMentionReminder as jest.MockedFunction<typeof doDisableAgentMentionReminder>;
 
 // Mattermost IDs are 26 characters of lowercase letters and digits.
 const POST_ID = 'ehz9k3wqr7t1a5m2xd8pnb4jsc';
@@ -52,6 +54,8 @@ describe('AgentMentionReminderPost', () => {
     beforeEach(() => {
         mockedDoLoopInAgent.mockReset();
         mockedDoLoopInAgent.mockImplementation(() => Promise.resolve());
+        mockedDoDisableAgentMentionReminder.mockReset();
+        mockedDoDisableAgentMentionReminder.mockImplementation(() => Promise.resolve());
     });
 
     test('falls back to the bot username when no display name is set', () => {
@@ -66,6 +70,30 @@ describe('AgentMentionReminderPost', () => {
 
         expect(mockedDoLoopInAgent).toHaveBeenCalledWith(TARGET_POST_ID, BOT_USER_ID);
         expect(await screen.findByText('Looped in @Matty.')).not.toBeNull();
+    });
+
+    test('clicking "Don\'t show again" persists the preference and confirms', async () => {
+        renderPost({bot_user_id: BOT_USER_ID, bot_username: 'matty', bot_display_name: 'Matty', target_post_id: TARGET_POST_ID});
+
+        fireEvent.click(screen.getByRole('button', {name: "Don't show again"}));
+
+        expect(mockedDoDisableAgentMentionReminder).toHaveBeenCalledTimes(1);
+        expect(await screen.findByText("You won't see this reminder again.")).not.toBeNull();
+    });
+
+    test('a failed "Don\'t show again" surfaces an error and keeps the loop-in action', async () => {
+        mockedDoDisableAgentMentionReminder.mockImplementation(() => Promise.reject(new Error('nope')));
+        renderPost({bot_user_id: BOT_USER_ID, bot_username: 'matty', bot_display_name: 'Matty', target_post_id: TARGET_POST_ID});
+
+        fireEvent.click(screen.getByRole('button', {name: "Don't show again"}));
+
+        expect(await screen.findByText('Failed to update your preference. Please try again.')).not.toBeNull();
+        expect(screen.getByRole('link', {name: 'Click here to loop in @Matty'})).not.toBeNull();
+    });
+
+    test('the plain fallback message offers no "Don\'t show again" button', () => {
+        renderPost({}, {message: POST_MESSAGE});
+        expect(screen.queryByRole('button', {name: "Don't show again"})).toBeNull();
     });
 
     test('falls back to the post id when no target post id is set', async () => {
