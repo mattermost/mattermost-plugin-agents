@@ -54,6 +54,7 @@ const CustomPromptsManagement = () => {
                         onClick={handleModalClick}
                     >
                         <PromptsModal
+                            open={show}
                             closeOnEscape={false}
                             size='medium'
                             title={title}
