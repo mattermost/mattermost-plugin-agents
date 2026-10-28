@@ -43,10 +43,14 @@ const (
 // thread a user returns to after this long is harmless.
 const agentMentionReminderShownTTL = 30 * 24 * time.Hour
 
+// agentMentionReminderOptOutKey is the KV key for a user's global opt-out of
+// the reminder.
 func agentMentionReminderOptOutKey(userID string) string {
 	return agentMentionReminderOptOutKeyPrefix + userID
 }
 
+// agentMentionReminderShownKey is the KV key for the marker that the reminder
+// was already shown to a user in a given thread.
 func agentMentionReminderShownKey(userID, rootID string) string {
 	return agentMentionReminderShownKeyPrefix + userID + "_" + rootID
 }
