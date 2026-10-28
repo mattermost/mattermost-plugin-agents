@@ -461,8 +461,24 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         line-height: var(--line-height-75);
     }
 
-    .post.current--user .post-message__text,
-    .post.current--user .post-message__text a {
+    .post.current--user .post-message__text {
         color: var(--bubble-fg);
+    }
+
+    /*
+     * Links (and @mentions, channel links, hashtags, which the host renders as links too) use the
+     * host's link color, which is made for the center channel background, not the reversed bubble.
+     * They take the bubble's text color and are underlined to still read as links. &&& outranks the
+     * host's link and mention rules.
+     */
+    &&& .post.current--user .post-message__text a,
+    &&& .post.current--user .post-message__text a:visited,
+    &&& .post.current--user .post-message__text a:hover {
+        color: var(--bubble-fg);
+        text-decoration: underline;
+    }
+
+    &&& .post.current--user .post-message__text a:hover {
+        opacity: 0.8;
     }
 `;

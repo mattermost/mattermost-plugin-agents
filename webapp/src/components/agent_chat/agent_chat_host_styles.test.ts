@@ -186,6 +186,12 @@ describe('hostThreadChatStyles message look', () => {
         });
     });
 
+    test('links in your own bubble take the bubble text color and stay underlined', () => {
+        const link = ruleFor(text, '&&& .post.current--user .post-message__text a');
+        expect(link).toContain('color: var(--bubble-fg)');
+        expect(link).toContain('text-decoration: underline');
+    });
+
     test('your own bubble reverses the colors, hides your name and puts the time under the bubble', () => {
         const rule = ruleFor(text, ownBubble);
         expect(rule).toContain('background: var(--bubble-bg)');
