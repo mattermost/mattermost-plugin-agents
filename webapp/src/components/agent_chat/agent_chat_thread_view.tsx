@@ -35,6 +35,16 @@ interface AgentChatThreadViewProps {
     viewerTestId?: string;
 }
 
+// The host renders a post's time as a permalink to the post, which in a chat only reloads the view
+// the user is in. Its tooltip (the full date) stays; the click does nothing.
+const TIME_PERMALINK_SELECTOR = 'a.post__permalink';
+const blockTimePermalink = (e: React.MouseEvent) => {
+    if ((e.target as Element).closest?.(TIME_PERMALINK_SELECTOR)) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+};
+
 export const isThreadViewerAvailable = Boolean(UnstyledThreadViewer);
 
 // One agent thread as a chat: the host ThreadViewer renders the posts (as
@@ -57,7 +67,10 @@ const AgentChatThreadView = ({channelId, rootId, agentName, bot, layout, isThrea
                 $layout={layout}
                 data-testid={testId}
             >
-                <ViewerArea ref={viewerRef}>
+                <ViewerArea
+                    ref={viewerRef}
+                    onClickCapture={blockTimePermalink}
+                >
                     <ThreadViewer
                         data-testid={viewerTestId}
                         rootPostId={rootId}

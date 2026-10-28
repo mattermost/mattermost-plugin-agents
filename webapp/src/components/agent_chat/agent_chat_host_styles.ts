@@ -311,6 +311,11 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         display: none !important;
     }
 
+    /* The time is not a link here (clicks are blocked by the thread view): it keeps the host tooltip. */
+    .post .post__permalink {
+        cursor: default;
+    }
+
     /* Keyboard focus inside a row must not clip the toolbar (the host only unclips on hover). */
     .post:focus-within {
         overflow: visible;
