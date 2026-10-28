@@ -66,6 +66,9 @@ export const THREAD_SCROLLER_SELECTOR = '#threadViewerScrollContainer';
 // No compass token covers content widths.
 export const CHAT_CONTENT_MAX_WIDTH = '800px';
 
+// Compact only: its text sits optically high in the shorter bubble, so it gets 2px more under it than over it.
+const BUBBLE_PADDING_BOTTOM_COMPACT = 'calc(var(--spacing-xxxs) + var(--spacing-xxxxs))';
+
 // The body column of a post, which becomes the bubble.
 const BUBBLE = '.post__content > .post__img + div';
 
@@ -91,10 +94,12 @@ export const BUBBLE_CONTROLS_BELOW = 'below';
 export const CONTROLS_BAR_HEIGHT = '28px';
 
 // Gap between the bubble's bottom edge and the controls bar. The x-small
-// IconButton (24px) is centered in the 28px bar, so it looks 2px farther: a
-// 2px gap shows 4px, enough to keep its focus ring clear of the bubble.
-// One-line tweak; the reserved margin follows it.
-const CONTROLS_BAR_GAP = 'var(--spacing-xxxxs)';
+// IconButton (24px) is centered in the 28px bar, so it already sits 2px below
+// the bubble with no gap. One-line tweak; the reserved margin follows it.
+const CONTROLS_BAR_GAP = '0px';
+
+// Compact mode pulls the controls bar this much closer to the bubble (and shortens the reserved space).
+const COMPACT_CONTROLS_PULL = 'var(--spacing-xxxxs)';
 
 // The bubble the user is on: pointer over it, keyboard focus inside it, or the
 // row's a11y focus.
@@ -173,6 +178,11 @@ const paddedRows = css`
 export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptions = {}) => css`
     ${columnMaxWidth ? centeredColumn(columnMaxWidth) : paddedRows}
 
+    /* Room under the last post, so the end of the list reads as the end. */
+    .innerList {
+        padding-bottom: var(--spacing-xxxl);
+    }
+
     /*
      * The plugin's pill composer replaces the host reply box. The host renders it
      * as the last child of the flex column \`.virtual-list__ctr\`, after the
@@ -236,6 +246,31 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         background: transparent;
     }
 
+    /*
+     * The user's compact display setting (the host adds \`post--compact\` to every row): rows sit
+     * closer together. The host's own compact padding is kept for the row; the bubble gives back
+     * some of its vertical padding.
+     */
+    &&& .post.post--compact ${BUBBLE} {
+        /* All four sides, so no host compact rule leaves one of them behind. */
+        padding: var(--spacing-xxxs) var(--spacing-s) ${BUBBLE_PADDING_BOTTOM_COMPACT};
+    }
+
+    /* The host pads a row 8px at the top; compact halves it, which is the space between posts. */
+    &&& .post.post--compact {
+        padding-top: var(--spacing-xxxs);
+    }
+
+    /*
+     * The host's compact header adds its own top padding (3px on thread posts) and floats left, so
+     * the text sits lower than the bubble's bottom padding. The header holds nothing in flow here
+     * (the time is absolute), so it takes no space of its own.
+     */
+    &&& .post.post--compact .post__header {
+        float: none;
+        padding: 0;
+    }
+
     /* The body column (header + message). */
     .post ${BUBBLE} {
         /* Anchors the host toolbar (absolute, top right) to the body, not the row. */
@@ -255,7 +290,7 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
 
     /* The agent's reply shows its bubble shape only while the user is on it. */
     ${activeBubble('.post')} {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
+        background: rgba(var(--center-channel-color-rgb), 0.06);
     }
 
     /*
@@ -317,12 +352,45 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
     }
 
     /*
+     * Compact bubbles have a smaller side inset: the controls bar and your time follow it. They also
+     * sit 2px closer to the bubble (the bar's buttons are centered in it, so they were 2px lower
+     * than the bubble's edge), and the reserved space shrinks with them.
+     */
+    .post.post--compact ${BUBBLE} [${BUBBLE_CONTROLS_ATTRIBUTE}='${BUBBLE_CONTROLS_BELOW}'] {
+        top: calc(100% + ${CONTROLS_BAR_GAP} - ${COMPACT_CONTROLS_PULL});
+        left: var(--spacing-s);
+    }
+
+    .post.post--compact ${BUBBLE}:has([${BUBBLE_CONTROLS_ATTRIBUTE}='${BUBBLE_CONTROLS_BELOW}']),
+    .post.post--compact.current--user ${BUBBLE} {
+        margin-bottom: calc(${CONTROLS_BAR_HEIGHT} + ${CONTROLS_BAR_GAP} - ${COMPACT_CONTROLS_PULL});
+    }
+
+    .post.post--compact.current--user .post__header .badges-wrapper {
+        top: calc(100% + ${CONTROLS_BAR_GAP} - ${COMPACT_CONTROLS_PULL});
+        right: var(--spacing-s);
+    }
+
+    /*
      * Own messages: right-aligned bubble with the colors reversed (text color as the background,
      * the center channel background as the text). No avatar or name; the time sits under the
      * bubble, in the space the bubble reserves.
      */
     .post.current--user .post__content {
         flex-direction: row-reverse;
+    }
+
+    /*
+     * The bubble swaps the center channel colors for everything inside it (text, links' neighbors,
+     * code blocks, attachments, quotes and tables all derive from these), so host content reads on
+     * the reversed background. The row keeps copies of the original values, taken before the swap
+     * (the bubble's own background and the time under it need the originals).
+     */
+    .post.current--user {
+        --bubble-bg: var(--center-channel-color);
+        --bubble-bg-rgb: var(--center-channel-color-rgb);
+        --bubble-fg: var(--center-channel-bg);
+        --bubble-fg-rgb: var(--center-channel-bg-rgb);
     }
 
     .post.current--user ${BUBBLE} {
@@ -334,8 +402,13 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         margin-bottom: calc(${CONTROLS_BAR_HEIGHT} + ${CONTROLS_BAR_GAP});
         border-radius: var(--radius-xl);
         corner-shape: squircle;
-        background: var(--center-channel-color);
-        color: var(--center-channel-bg);
+        --center-channel-color: var(--bubble-fg);
+        --center-channel-color-rgb: var(--bubble-fg-rgb);
+        --center-channel-bg: var(--bubble-bg);
+        --center-channel-bg-rgb: var(--bubble-bg-rgb);
+
+        background: var(--bubble-bg);
+        color: var(--bubble-fg);
         transition: background var(--duration-quick) var(--ease-transition);
 
         @media (prefers-reduced-motion: reduce) {
@@ -345,13 +418,18 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
 
     /* Shade the background toward the text color's opposite: lighter on light themes, darker on dark. */
     ${activeBubble('.post.current--user')} {
-        background: linear-gradient(rgba(var(--center-channel-bg-rgb), 0.12), rgba(var(--center-channel-bg-rgb), 0.12)), var(--center-channel-color);
+        background: linear-gradient(rgba(var(--bubble-fg-rgb), 0.12), rgba(var(--bubble-fg-rgb), 0.12)), var(--bubble-bg);
     }
 
     /* While editing, the host editor sits in the bubble: use the neutral bubble. */
     .post.current--user.post--editing ${BUBBLE} {
-        background: rgba(var(--center-channel-color-rgb), 0.04);
-        color: var(--center-channel-color);
+        --center-channel-color: var(--bubble-bg);
+        --center-channel-color-rgb: var(--bubble-bg-rgb);
+        --center-channel-bg: var(--bubble-fg);
+        --center-channel-bg-rgb: var(--bubble-fg-rgb);
+
+        background: rgba(var(--bubble-bg-rgb), 0.04);
+        color: var(--bubble-bg);
     }
 
     .post.current--user .post__header .col__name {
@@ -368,13 +446,13 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
     }
 
     .post.current--user .post__time {
-        color: rgba(var(--center-channel-color-rgb), 0.64);
+        color: rgba(var(--bubble-bg-rgb), 0.64);
         font-size: var(--font-size-75);
         line-height: var(--line-height-75);
     }
 
     .post.current--user .post-message__text,
     .post.current--user .post-message__text a {
-        color: var(--center-channel-bg);
+        color: var(--bubble-fg);
     }
 `;
