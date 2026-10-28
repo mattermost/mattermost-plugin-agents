@@ -533,7 +533,6 @@
   "ai.wait.fallback_line": "<b>Waiting on async work</b> · {countdown}",
   "ai.wait.onlooker_line": "<b>Waiting on async work</b> for {user} · {countdown}",
   "ai.wait.owner_line": "<b>Waiting on async work.</b> {bot} will check again in {countdown}",
-  "ai.wait.resumed": "Waited {minutes}m, then resumed",
   "ai.wait.step_waited": "waited {minutes}m",
   "ai.wait.step_waiting": "waiting",
   "an7oWdi0": "Agents post responses in the right panel which will only be visible to you.",

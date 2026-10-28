@@ -674,7 +674,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         try {
             await doWaitCheckNow(props.post.id);
         } catch {
-            // Best-effort: the refetch reconciles if the wait already resumed.
+            // Re-enable the controls so a transient failure can be retried; a
+            // wait that already resolved reconciles via the refetch below.
+            setWaitBusy(false);
         }
         if (conversationId) {
             invalidateConversation(conversationId);
@@ -687,7 +689,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             await doWaitCancel(props.post.id);
             setWaitCancelled(true);
         } catch {
-            // Best-effort: the refetch reconciles if the wait already resolved.
+            // Re-enable the controls so a transient failure can be retried; a
+            // wait that already resolved reconciles via the refetch below.
+            setWaitBusy(false);
         }
         if (conversationId) {
             invalidateConversation(conversationId);
@@ -844,7 +848,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 {waitForThisPost && (
                     <WaitStatusFooter
                         resumeAt={waitForThisPost.resume_at}
-                        durationMinutes={waitForThisPost.duration_minutes}
                         isOwner={waitIsOwner}
                         requesterUsername={requesterUsername}
                         botDisplayName={botDisplayName}

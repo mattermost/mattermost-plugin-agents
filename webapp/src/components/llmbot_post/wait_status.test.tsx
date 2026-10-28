@@ -75,7 +75,6 @@ function renderFooter(overrides: FooterOverrides = {}) {
         <IntlProvider locale='en'>
             <WaitStatusFooter
                 resumeAt={overrides.resumeAt ?? Date.now() + (9 * 60 * 1000) + (35 * 1000)}
-                durationMinutes={10}
                 isOwner={overrides.isOwner ?? false}
                 requesterUsername={overrides.requesterUsername}
                 botDisplayName={overrides.botDisplayName}
@@ -133,13 +132,14 @@ describe('WaitStatusFooter', () => {
         expect(screen.queryByTestId('llm-bot-wait-cancel')).toBeNull();
     });
 
-    test('resolves to a resumed state once the countdown elapses', () => {
+    test('stays pending with controls at 0:00 so a delayed resume can be cancelled', () => {
         renderFooter({isOwner: true, resumeAt: Date.now() - 1000});
 
         const status = screen.getByTestId('llm-bot-wait-status');
-        expect(status.getAttribute('data-wait-state')).toBe('resumed');
-        expect(status.textContent).toContain('Waited 10m, then resumed');
-        expect(screen.queryByTestId('llm-bot-wait-check-now')).toBeNull();
+        expect(status.getAttribute('data-wait-state')).toBe('pending');
+        expect(status.textContent).toContain('0:00');
+        expect(screen.getByTestId('llm-bot-wait-check-now')).not.toBeNull();
+        expect(screen.getByTestId('llm-bot-wait-cancel')).not.toBeNull();
     });
 
     test('shows a cancelled state when the wait was cancelled', () => {

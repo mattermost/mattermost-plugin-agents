@@ -79,9 +79,6 @@ export type WaitResolution = 'pending' | 'cancelled';
 interface WaitStatusFooterProps {
     resumeAt: number; // Unix ms the bot is scheduled to resume.
 
-    // The clamped wait length, for the resolved "Waited Nm" text.
-    durationMinutes: number;
-
     // The current user requested the wait: only they get the controls.
     isOwner: boolean;
 
@@ -103,42 +100,34 @@ interface WaitStatusFooterProps {
 /**
  * The footer shown on a bot post while it is paused on wait_for_async_work. It
  * renders a live countdown to the resume time and, for the requester, controls
- * to resume or cancel early. Once the wait resolves it shows a calm, resolved
- * state in place of the amber pending one.
+ * to resume or cancel early. The pending state (and its controls) stays until
+ * the server reports the wait resolved — either the post's active_wait is
+ * removed and the parent unmounts this footer, or the owner cancels and this
+ * shows a calm, resolved state. The countdown is a display aid only, so a
+ * delayed resume never hides the recovery controls.
  */
 export const WaitStatusFooter: React.FC<WaitStatusFooterProps> = (props) => {
     const pending = props.resolution === 'pending';
     const now = useTickingNow(pending);
     const remaining = props.resumeAt - now;
 
-    // A pending wait whose countdown has elapsed reads as resumed: the wake
-    // fires at resume_at, and the refetch that removes the footer may lag.
-    const resolved = props.resolution === 'cancelled' || (pending && remaining <= 0);
-
-    if (resolved) {
-        const message = props.resolution === 'cancelled' ? (
-            <FormattedMessage
-                id='ai.wait.cancelled'
-                defaultMessage='Wait cancelled'
-            />
-        ) : (
-            <FormattedMessage
-                id='ai.wait.resumed'
-                defaultMessage='Waited {minutes}m, then resumed'
-                values={{minutes: props.durationMinutes}}
-            />
-        );
+    if (props.resolution === 'cancelled') {
         return (
             <StatusBar
                 $resolved={true}
                 data-testid='llm-bot-wait-status'
-                data-wait-state={props.resolution === 'cancelled' ? 'cancelled' : 'resumed'}
+                data-wait-state='cancelled'
             >
                 <IconBox $resolved={true}>
                     <CheckIcon size={16}/>
                 </IconBox>
                 <Content>
-                    <Line>{message}</Line>
+                    <Line>
+                        <FormattedMessage
+                            id='ai.wait.cancelled'
+                            defaultMessage='Wait cancelled'
+                        />
+                    </Line>
                 </Content>
             </StatusBar>
         );
