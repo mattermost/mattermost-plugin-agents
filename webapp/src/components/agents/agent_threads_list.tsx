@@ -365,7 +365,7 @@ const ThreadItem = ({thread, active, generating, placeholder, onSelect, onRename
                 $active={active}
             >
                 <Icon
-                    size='16'
+                    size='12'
                     glyph={<MessageOutlineIcon/>}
                 />
             </ThreadIcon>
@@ -636,8 +636,9 @@ const VisuallyHidden = styled.span`
     border: 0;
 `;
 
-// Over the item's own 16px icon (its padding plus the container's 6px offset). The icon column is as wide as
-// the agent row's avatar column, so the chat's label sits at the same left edge as the agent's name.
+// Over the item's own 16px icon slot (its padding plus the container's 6px offset), centered in it: a 12px
+// icon (drawn 14px) is 2px in. The icon column is as wide as the agent row's avatar column, so the
+// chat's label sits at the same left edge as the agent's name.
 const ThreadIcon = styled.span<{$active: boolean}>`
     position: absolute;
     top: 0;
@@ -646,7 +647,7 @@ const ThreadIcon = styled.span<{$active: boolean}>`
     z-index: 1;
     display: flex;
     align-items: center;
-    padding-left: calc(var(--spacing-l) + var(--spacing-xxxxs) + var(--spacing-xxxs));
+    padding-left: calc(var(--spacing-l) + var(--spacing-xxxxs) + var(--spacing-xxxs) + var(--spacing-xxxxs));
     color: var(--sidebar-text);
     opacity: ${(p) => (p.$active ? 1 : 0.64)};
     pointer-events: none;
