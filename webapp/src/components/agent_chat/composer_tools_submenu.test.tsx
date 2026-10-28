@@ -179,13 +179,10 @@ describe('ComposerPlusMenu Tools', () => {
         expect(within(menu).queryByRole('menuitem', {name: /Connect/})).toBeNull();
     });
 
-    test('Refresh forces a provider refresh', async () => {
-        mockClient.refreshUserMCPTools.mockResolvedValue({servers: [server('Fresh')]});
+    test('has no refresh button (the submenu loads fresh providers when it opens)', async () => {
         renderMenu();
         const menu = await openSubmenu('Tools');
-        fireEvent.click(await within(menu).findByRole('button', {name: 'Refresh tool providers'}));
-        await waitFor(() => expect(checkbox(menu, 'Fresh')).toBeTruthy());
-        expect(mockClient.refreshUserMCPTools).toHaveBeenCalledTimes(1);
+        expect(within(menu).queryByRole('button', {name: 'Refresh tool providers'})).toBeNull();
     });
 
     test('a toggle made in another control (the header popover) shows here without a reload', async () => {

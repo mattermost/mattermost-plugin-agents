@@ -65,6 +65,7 @@ const ComposerToolsSubmenu = ({bot, open, focusOnOpen, onOpen, onClose, onError}
                 disabledServers={prefs.disabledServers}
                 providers={providers}
                 onError={onError}
+                refresh={false}
             />
         </ComposerSubmenu>
     );
