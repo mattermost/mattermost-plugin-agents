@@ -675,9 +675,11 @@ const ThreadListItem = styled.li`
     }
 `;
 
+// The button's text lines up with the chat labels above it: they start 46px in (18px item padding, the
+// 24px icon column and 4px of gaps), and the x-small button has 8px of padding of its own.
 const MoreRow = styled.div`
     display: flex;
-    padding: var(--spacing-xxxxs) var(--spacing-l) var(--spacing-xxxxs) var(--spacing-xxxxl);
+    padding: var(--spacing-xxxxs) var(--spacing-l) var(--spacing-xxxxs) calc(var(--spacing-xxxxl) - var(--spacing-xxxxs));
 `;
 
 const ArchiveError = styled.p`
