@@ -19,7 +19,7 @@ import {useIsLicensedFor} from '@/license';
 
 import {focusFirstItem, handleMenuNavigation} from '../agent_chat/composer_menu_keyboard';
 import {ErrorRow} from '../agent_chat/composer_menu_parts';
-import ToolProviderMenuBody from '../agent_chat/tool_provider_menu_body';
+import ToolProviderMenuBody, {ProviderRefreshButton} from '../agent_chat/tool_provider_menu_body';
 import Dropdown from '../dropdown';
 
 export type {UserMCPServerInfo};
@@ -255,7 +255,10 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
                 data-testid='dropdownmenu'
                 onKeyDown={handleMenuNavigation}
             >
-                <PopoverMenuTitle>{title}</PopoverMenuTitle>
+                <TitleRow>
+                    <PopoverMenuTitle>{title}</PopoverMenuTitle>
+                    <ProviderRefreshButton providers={providers}/>
+                </TitleRow>
                 {errorMessage && <ErrorRow role='alert'>{errorMessage}</ErrorRow>}
                 <ToolProviderMenuBody
                     status='ready'
@@ -263,11 +266,20 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
                     disabledServers={disabledServers}
                     providers={providers}
                     onError={setErrorMessage}
+                    refresh={false}
                 />
             </PopoverMenu>
         </Dropdown>
     );
 };
+
+// The refresh button sits at the end of the title row.
+const TitleRow = styled.div`
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-right: var(--spacing-xs);
+`;
 
 // The floating reference needs an element that takes a ref; the compass Dropdown does not.
 const TriggerWrap = styled.span`

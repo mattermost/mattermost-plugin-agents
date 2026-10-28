@@ -6,10 +6,13 @@ import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 import RefreshIcon from '@mattermost/compass-icons/components/refresh';
 
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {MenuItem} from '@mattermost/compass-ui/components/menu-item';
 import {PopoverMenuDivider, PopoverMenuGroup} from '@mattermost/compass-ui/components/popover-menu';
 import {Switch} from '@mattermost/compass-ui/components/switch';
 
+import {TooltipAboveModals} from '@/components/dropdown';
 import type {ToolProviders} from '@/components/rhs/tool_provider_popover';
 import {mcpServerStatus} from '@/utils/mcp_availability';
 
@@ -25,14 +28,41 @@ export interface ToolProviderMenuBodyProps {
     disabledServers: string[];
     providers: ToolProviders;
     onError: (message: string) => void;
+
+    // Whether the body shows the refresh button in a row of its own at the top (default). The RHS popover
+    // puts the same ProviderRefreshButton on its title row instead.
+    refresh?: boolean;
 }
+
+// Reloads the providers from the servers (OAuth state included), as the old "Refresh" menu row did.
+export const ProviderRefreshButton = ({providers}: {providers: ToolProviders}) => {
+    const intl = useIntl();
+    const label = intl.formatMessage({defaultMessage: 'Refresh tool providers'});
+    return (
+        <TooltipAboveModals title={label}>
+            <TooltipTrigger>
+                <IconButton
+                    size='x-small'
+                    icon={<Icon glyph={<RefreshIcon/>}/>}
+                    aria-label={label}
+                    disabled={providers.loading}
+                    onClick={() => providers.fetchServers({showLoading: true, forceRefresh: true})}
+                />
+            </TooltipTrigger>
+        </TooltipAboveModals>
+    );
+};
 
 // The tool providers as compass menu rows. The composer's Tools submenu and the RHS Tools
 // dropdown show the same rows through the same useToolProviders data and actions.
-const ToolProviderMenuBody = ({status, onRetry, disabledServers, providers, onError}: ToolProviderMenuBodyProps) => {
+const ToolProviderMenuBody = ({status, onRetry, disabledServers, providers, onError, refresh = true}: ToolProviderMenuBodyProps) => {
     const intl = useIntl();
-    const {servers, loading, error, remoteMcpLicensed, fetchServers, toggle, connect, disconnect} = providers;
-    const refreshLabel = intl.formatMessage({defaultMessage: 'Refresh tool providers'});
+    const {servers, loading, error, remoteMcpLicensed, toggle, connect, disconnect} = providers;
+    const refreshRow = refresh && (
+        <RefreshRow>
+            <ProviderRefreshButton providers={providers}/>
+        </RefreshRow>
+    );
 
     if (status === 'error') {
         return (
@@ -51,12 +81,18 @@ const ToolProviderMenuBody = ({status, onRetry, disabledServers, providers, onEr
         );
     }
     if (status === 'loading' || (loading && servers.length === 0)) {
-        return <LoadingRow label={intl.formatMessage({defaultMessage: 'Loading providers...'})}/>;
+        return (
+            <>
+                {refreshRow}
+                <LoadingRow label={intl.formatMessage({defaultMessage: 'Loading providers...'})}/>
+            </>
+        );
     }
 
     const disconnectable = servers.filter((s) => s.authenticated && s.needsOAuth && mcpServerStatus(s, false) !== 'sa-only-unavailable');
     return (
         <>
+            {refreshRow}
             {error && (
                 <ErrorRow role='alert'>
                     {intl.formatMessage({defaultMessage: 'Couldn\'t load tool providers.'})}
@@ -123,35 +159,28 @@ const ToolProviderMenuBody = ({status, onRetry, disabledServers, providers, onEr
                     })}
                 </PopoverMenuGroup>
             )}
-            <PopoverMenuDivider/>
-            <PopoverMenuGroup>
-                {disconnectable.map((server) => (
-                    <MenuItem
-                        key={server.serverOrigin}
-                        role='menuitem'
-                        label={intl.formatMessage({defaultMessage: 'Disconnect {name}'}, {name: server.name})}
-                        leadingElement={false}
-                        destructive={true}
-                        onClick={async () => {
-                            const done = await disconnect(server.name);
-                            if (!done) {
-                                onError(intl.formatMessage({defaultMessage: 'Couldn\'t disconnect {name}. Try again.'}, {name: server.name}));
-                            }
-                        }}
-                    />
-                ))}
-                <MenuItem
-                    role='menuitem'
-                    label={refreshLabel}
-                    leadingElement={true}
-                    leadingVisual={menuIcon(<RefreshIcon/>)}
-                    onClick={() => {
-                        if (!loading) {
-                            fetchServers({showLoading: true, forceRefresh: true});
-                        }
-                    }}
-                />
-            </PopoverMenuGroup>
+            {disconnectable.length > 0 && (
+                <>
+                    <PopoverMenuDivider/>
+                    <PopoverMenuGroup>
+                        {disconnectable.map((server) => (
+                            <MenuItem
+                                key={server.serverOrigin}
+                                role='menuitem'
+                                label={intl.formatMessage({defaultMessage: 'Disconnect {name}'}, {name: server.name})}
+                                leadingElement={false}
+                                destructive={true}
+                                onClick={async () => {
+                                    const done = await disconnect(server.name);
+                                    if (!done) {
+                                        onError(intl.formatMessage({defaultMessage: 'Couldn\'t disconnect {name}. Try again.'}, {name: server.name}));
+                                    }
+                                }}
+                            />
+                        ))}
+                    </PopoverMenuGroup>
+                </>
+            )}
         </>
     );
 };
@@ -181,4 +210,15 @@ const ConnectLabel = styled.span`
     font-size: var(--font-size-75);
     font-weight: var(--font-weight-semibold);
     line-height: var(--line-height-75);
+`;
+
+// The refresh button at the top right of the menu.
+const RefreshRow = styled.div`
+    display: flex;
+    justify-content: flex-end;
+    padding: 0 var(--spacing-xs);
+`;
+
+const TooltipTrigger = styled.span`
+    display: inline-flex;
 `;

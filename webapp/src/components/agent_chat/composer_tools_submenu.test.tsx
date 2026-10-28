@@ -183,7 +183,7 @@ describe('ComposerPlusMenu Tools', () => {
         mockClient.refreshUserMCPTools.mockResolvedValue({servers: [server('Fresh')]});
         renderMenu();
         const menu = await openSubmenu('Tools');
-        fireEvent.click(await within(menu).findByRole('menuitem', {name: 'Refresh tool providers'}));
+        fireEvent.click(await within(menu).findByRole('button', {name: 'Refresh tool providers'}));
         await waitFor(() => expect(checkbox(menu, 'Fresh')).toBeTruthy());
         expect(mockClient.refreshUserMCPTools).toHaveBeenCalledTimes(1);
     });

@@ -142,7 +142,7 @@ describe('ToolProviderPopover', () => {
         renderComponent();
 
         fireEvent.click(screen.getByRole('button', {name: 'Tools'}));
-        fireEvent.click(await screen.findByRole('menuitem', {name: 'Refresh tool providers'}));
+        fireEvent.click(await screen.findByRole('button', {name: 'Refresh tool providers'}));
 
         await waitFor(() => expect(mockRefreshUserMCPTools).toHaveBeenCalledTimes(1));
         expect(screen.getByText('Refreshed Server')).not.toBeNull();
