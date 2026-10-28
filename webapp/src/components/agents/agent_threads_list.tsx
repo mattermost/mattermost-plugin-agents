@@ -27,6 +27,7 @@ import type {AIThread} from '@/types/ai_thread';
 
 import AgentChatRenameDialog from './agent_chat_rename_dialog';
 import ChatActionsMenuItems from './chat_actions_menu_items';
+import MessageOutlineIcon from './message_outline_icon';
 
 interface AgentThreadsListProps {
     bots: LLMBot[];
@@ -360,6 +361,15 @@ const ThreadItem = ({thread, active, generating, placeholder, onSelect, onRename
             data-thread-item={true}
             {...(menuOpen && {'data-menu-open': true})}
         >
+            <ThreadIcon
+                aria-hidden={true}
+                $active={active}
+            >
+                <Icon
+                    size='12'
+                    glyph={<MessageOutlineIcon/>}
+                />
+            </ThreadIcon>
             <ChannelSidebarItem
                 name={title}
                 leadingVisual='threads'
@@ -628,6 +638,22 @@ const VisuallyHidden = styled.span`
     border: 0;
 `;
 
+// Centered where the item's 16px icon is (its padding plus the container's 6px offset), 12px wide:
+// the extra 2px centers it in the 16px slot.
+const ThreadIcon = styled.span<{$active: boolean}>`
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    padding-left: calc(var(--spacing-xxxxl) + var(--spacing-xxxxs) + var(--spacing-xxxs) + var(--spacing-xxxxs));
+    color: var(--sidebar-text);
+    opacity: ${(p) => (p.$active ? 1 : 0.64)};
+    pointer-events: none;
+`;
+
 const ThreadListItem = styled.li<{$active: boolean}>`
     position: relative;
 
@@ -635,7 +661,13 @@ const ThreadListItem = styled.li<{$active: boolean}>`
        control and compass takes that 2px back from the control's padding; do the same so the
        icon and label do not shift when the row becomes active. */
     && [class*='__left'] {
-        padding-left: ${(p) => (p.$active ? 'calc(var(--spacing-xxxxl) - var(--spacing-l) - var(--spacing-xxxxs))' : 'calc(var(--spacing-xxxxl) - var(--spacing-l))')};
+        padding-left: ${(p) => (p.$active ? 'calc(var(--spacing-xxxxl) - var(--spacing-xxxxs))' : 'var(--spacing-xxxxl)')};
+    }
+
+    /* The item's built-in icon cannot be swapped (no custom-icon slot), so it is hidden and the
+       smaller chat icon is overlaid in its place (as the nav rows above do). */
+    [class*='icon-container'] > svg {
+        visibility: hidden;
     }
 
     &:hover ${GeneratingSlot},
@@ -653,7 +685,7 @@ const ThreadListItem = styled.li<{$active: boolean}>`
 
 const MoreRow = styled.div`
     display: flex;
-    padding: var(--spacing-xxxxs) var(--spacing-l) var(--spacing-xxxxs) calc(var(--spacing-xxxxl) - var(--spacing-l));
+    padding: var(--spacing-xxxxs) var(--spacing-l) var(--spacing-xxxxs) var(--spacing-xxxxl);
 `;
 
 const ArchiveError = styled.p`
