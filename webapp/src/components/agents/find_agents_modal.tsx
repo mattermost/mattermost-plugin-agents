@@ -138,13 +138,8 @@ const Content = ({onClose}: {onClose: () => void}) => {
         if (item.kind === 'chat') {
             toChat(item.bot.id, item.chat.thread.root_post_id as string);
         } else {
-            // Same target as clicking the agent in the sidebar.
-            const latest = threadsByBot[item.bot.id]?.[0]?.root_post_id;
-            if (latest) {
-                toChat(item.bot.id, latest);
-            } else {
-                toChat(item.bot.id);
-            }
+            // An agent result starts a new chat with that agent (a chat result opens that chat).
+            toChat(item.bot.id);
         }
         onClose();
     };
@@ -274,7 +269,12 @@ const Content = ({onClose}: {onClose: () => void}) => {
                                                             label={item.kind === 'chat' ? item.chat.title : item.bot.displayName}
                                                             secondaryLabel={item.kind === 'chat' ? item.bot.displayName : (item.bot.username && `@${item.bot.username}`)}
                                                             secondaryLabelPosition='inline'
-                                                            leadingVisual={(
+                                                            leadingVisual={item.kind === 'chat' ? (
+                                                                <Icon
+                                                                    size='16'
+                                                                    glyph={<MessageTextOutlineIcon/>}
+                                                                />
+                                                            ) : (
                                                                 <AvatarSlot aria-hidden={true}>
                                                                     <UserAvatar
                                                                         src={getProfilePictureUrl(item.bot.id, item.bot.lastIconUpdate)}
@@ -282,14 +282,6 @@ const Content = ({onClose}: {onClose: () => void}) => {
                                                                         name={item.bot.displayName}
                                                                         size='24'
                                                                     />
-                                                                    {item.kind === 'chat' && (
-                                                                        <ChatBadge>
-                                                                            <Icon
-                                                                                size='12'
-                                                                                glyph={<MessageTextOutlineIcon/>}
-                                                                            />
-                                                                        </ChatBadge>
-                                                                    )}
                                                                 </AvatarSlot>
                                                             )}
                                                             onClick={() => choose(item)}
@@ -386,20 +378,8 @@ const Group = styled.ul`
 `;
 
 const AvatarSlot = styled.span`
-    position: relative;
     display: inline-flex;
     flex-shrink: 0;
-`;
-
-// Marks a chat row (vs an agent row) on the agent's avatar.
-const ChatBadge = styled.span`
-    position: absolute;
-    right: calc(-1 * var(--spacing-xxxs));
-    bottom: calc(-1 * var(--spacing-xxxs));
-    display: inline-flex;
-    border-radius: var(--radius-pill);
-    background: var(--center-channel-bg);
-    color: var(--center-channel-color);
 `;
 
 const NoResults = styled.div`

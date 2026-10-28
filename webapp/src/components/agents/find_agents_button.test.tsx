@@ -202,7 +202,7 @@ describe('FindAgentsButton and modal', () => {
 
     const selectionCases: Array<{name: string; query: string; pick: string; path: string}> = [
         {name: 'recent chat opens that chat', query: '', pick: 'New chatBeta', path: buildChatPath('b', 'root_2')},
-        {name: 'agent with chats opens its most recent chat', query: 'bet', pick: 'Beta@beta', path: buildChatPath('b', 'root_1')},
+        {name: 'agent with chats starts a new chat', query: 'bet', pick: 'Beta@beta', path: buildChatPath('b')},
         {name: 'agent without chats starts a new chat', query: 'alp', pick: 'Alpha@alpha', path: buildChatPath('a')},
         {name: 'chat opens that chat', query: 'new', pick: 'New chatBeta', path: buildChatPath('b', 'root_2')},
     ];
