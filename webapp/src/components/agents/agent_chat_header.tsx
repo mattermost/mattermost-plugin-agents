@@ -140,16 +140,16 @@ const Title = styled.div`
 `;
 
 // Once a chat has its own title, the agent's name sits to the right of the title's dropdown, outside
-// it: body-100 type in the dim text color. It gives way (ellipsis) before the buttons on the right do.
+// it: body-75 type in the dim text color. It gives way (ellipsis) before the buttons on the right do.
 const AgentName = styled.span`
     flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
     color: rgba(var(--center-channel-color-rgb), 0.64);
     font-family: var(--font-family-body);
-    font-size: var(--font-size-100);
+    font-size: var(--font-size-75);
     font-weight: var(--font-weight-regular);
-    line-height: var(--line-height-100);
+    line-height: var(--line-height-75);
     text-overflow: ellipsis;
     white-space: nowrap;
 `;
