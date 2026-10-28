@@ -276,6 +276,25 @@ func TestMessageHasBeenPostedReminderShownOncePerThread(t *testing.T) {
 	require.Len(t, fix.client.ephemeralPosts, 1, "a second reply in the same thread must not trigger the reminder again")
 }
 
+func TestMessageHasBeenPostedReminderShownForEachUserInThread(t *testing.T) {
+	fix := newReminderFixture(t)
+	channel := &model.Channel{Id: reminderChannelID, Type: model.ChannelTypeOpen}
+	fix.setChannel(channel)
+
+	rootPost := &model.Post{Id: reminderRootID, ChannelId: channel.Id, UserId: reminderUserID, CreateAt: 100, Message: "start"}
+	agent1 := &model.Post{Id: "agent-1", ChannelId: channel.Id, UserId: reminderBotID, RootId: reminderRootID, CreateAt: 200, Message: "agent one"}
+	replyUser := &model.Post{Id: "reply-user", ChannelId: channel.Id, UserId: reminderUserID, RootId: reminderRootID, CreateAt: 300, Message: "reply from the first user"}
+	agent2 := &model.Post{Id: "agent-2", ChannelId: channel.Id, UserId: reminderBotID, RootId: reminderRootID, CreateAt: 400, Message: "agent two"}
+	replyOther := &model.Post{Id: "reply-other", ChannelId: channel.Id, UserId: reminderOtherUserID, RootId: reminderRootID, CreateAt: 500, Message: "reply from the second user"}
+	fix.setThread(reminderRootID, rootPost, agent1, replyUser, agent2, replyOther)
+
+	fix.conv.MessageHasBeenPosted(nil, replyUser)
+	fix.conv.MessageHasBeenPosted(nil, replyOther)
+
+	require.Len(t, fix.client.ephemeralPosts, 2, "the per-thread marker is scoped per user, so each user's reply after an agent post is reminded")
+	require.ElementsMatch(t, []string{reminderUserID, reminderOtherUserID}, fix.client.ephemeralPostUserIDs)
+}
+
 func TestMessageHasBeenPostedReminderShownAgainInDifferentThread(t *testing.T) {
 	fix := newReminderFixture(t)
 	channel := &model.Channel{Id: reminderChannelID, Type: model.ChannelTypeOpen}
