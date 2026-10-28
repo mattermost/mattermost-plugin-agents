@@ -3,7 +3,6 @@
 
 import {act, fireEvent, screen, waitFor, within} from '@testing-library/react';
 
-import {PROMPTS_PATH} from '@/components/agents/use_agents_route';
 import manifest from '@/manifest';
 
 import {bot, composerText, openMenu, openSubmenu, renderMenu, trigger, waitForMenuClosed} from './composer_plus_menu_test_harness';
@@ -271,22 +270,16 @@ describe('ComposerPlusMenu custom prompts', () => {
     });
 
     test.each([
-        {name: 'inside the Agents product opens the Custom Prompts page', path: `/plug/${manifest.id}/agents/chat/bot1`, page: true},
-        {name: 'elsewhere opens the Custom Prompts modal', path: '/team/messages/@matty', page: false},
-    ])('Manage prompts $name', async ({path, page}) => {
+        {name: 'inside the Agents product', path: `/plug/${manifest.id}/agents/chat/bot1`},
+        {name: 'elsewhere', path: '/team/messages/@matty'},
+    ])('Manage prompts $name opens the Custom Prompts modal', async ({path}) => {
         setPath(path);
         const {store} = renderMenu();
         const submenu = await openSubmenu('Custom prompts');
         fireEvent.click(within(submenu).getByRole('menuitem', {name: 'Manage prompts'}));
         await waitForMenuClosed();
-        const modalShown = (store.getState() as any)[`plugins-${manifest.id}`].showCustomPromptsModal;
-        if (page) {
-            expect(mockPush).toHaveBeenCalledWith(PROMPTS_PATH);
-            expect(modalShown).toBe(false);
-        } else {
-            expect(mockPush).not.toHaveBeenCalled();
-            expect(modalShown).toBe(true);
-        }
+        expect(mockPush).not.toHaveBeenCalled();
+        expect((store.getState() as any)[`plugins-${manifest.id}`].showCustomPromptsModal).toBe(true);
     });
 });
 

@@ -42,7 +42,6 @@ import {MenuItem} from '@mattermost/compass-ui/components/menu-item';
 import {PopoverMenu, PopoverMenuGroup} from '@mattermost/compass-ui/components/popover-menu';
 
 import type {LLMBot} from '@/bots';
-import {useAgentsRoute} from '@/components/agents/use_agents_route';
 import Dropdown from '@/components/dropdown';
 import {useMenuTransition} from '@/hooks/use_menu_transition';
 import type {CustomPrompt} from '@/types';
@@ -78,7 +77,6 @@ const PLUS_FILL = 'rgba(var(--center-channel-color-rgb), 0.08)';
 
 const ComposerPlusMenu = ({bot, channelId, rootId = '', uploadEnabled, onUploadFiles, getText, setText, disabled, onError, onRewritingChange}: ComposerPlusMenuProps) => {
     const intl = useIntl();
-    const {toPrompts} = useAgentsRoute();
     const [open, setOpen] = useState(false);
     const menu = useMenuTransition(open);
     const [submenu, setSubmenu] = useState<{id: Submenu; focus: boolean} | null>(null);
@@ -108,7 +106,7 @@ const ComposerPlusMenu = ({bot, channelId, rootId = '', uploadEnabled, onUploadF
         onError(intl.formatMessage({defaultMessage: 'Couldn\'t insert the custom prompt. Try again.'}));
     }, [onError, intl]);
     const {insert: insertPrompt} = useInsertCustomPrompt({bot, channelId, setText, onError: promptError});
-    const manageCustomPrompts = useManageCustomPrompts(toPrompts);
+    const manageCustomPrompts = useManageCustomPrompts();
 
     const rewriteError = useCallback((serverMessage: string) => {
         onError(serverMessage || intl.formatMessage({defaultMessage: 'Couldn\'t rewrite your message. Try again.'}));

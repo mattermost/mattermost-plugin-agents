@@ -6,7 +6,6 @@ import {useDispatch, useSelector} from 'react-redux';
 
 import type {LLMBot} from '@/bots';
 import {getCustomPromptPins, getCustomPrompts as fetchCustomPromptsList, renderCustomPrompt} from '@/client';
-import {AGENTS_ROUTE} from '@/components/agents/use_agents_route';
 import {CustomPromptsHandler, PinnedPromptIdsHandler, ShowCustomPromptsModalHandler} from '@/redux';
 import {getCustomPrompts, getPinnedPromptIds} from '@/selectors';
 import type {CustomPrompt} from '@/types';
@@ -123,20 +122,12 @@ export function useInsertCustomPrompt({bot, channelId, setText, onError}: Insert
     return {insert, pending};
 }
 
-// The Agents product has a Custom Prompts page; elsewhere the modal opens.
-export function isInAgentsProduct(): boolean {
-    const history = window.WebappUtils?.browserHistory as {location?: {pathname?: string}} | undefined;
-    const pathname = history?.location?.pathname ?? '';
-    return pathname === AGENTS_ROUTE || pathname.startsWith(`${AGENTS_ROUTE}/`);
-}
-
-export function useManageCustomPrompts(toPrompts: () => void) {
+// "Manage prompts" opens the custom prompts modal everywhere, the Agents product's chats included, as
+// the channel composer's prompts menu does. (The product's Custom Prompts page is still reached
+// from its sidebar.)
+export function useManageCustomPrompts() {
     const dispatch = useDispatch();
     return useCallback(() => {
-        if (isInAgentsProduct()) {
-            toPrompts();
-            return;
-        }
         dispatch({type: ShowCustomPromptsModalHandler, show: true});
-    }, [dispatch, toPrompts]);
+    }, [dispatch]);
 }
