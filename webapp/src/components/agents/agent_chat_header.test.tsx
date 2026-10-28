@@ -152,6 +152,23 @@ describe('AgentChatHeader', () => {
         expect(document.querySelector('header[aria-label="Matty"] img[src="/users/bot1/image"]')).toBeTruthy();
     });
 
+    test.each([
+        {name: 'a new chat has no subtitle (the title is already the agent)', props: {}, expected: null},
+        {name: 'an open chat shows the agent name after its title, in the same button', props: {rootId: 'root1'}, expected: 'Matty'},
+    ])('agent name subtitle: $name', async ({props, expected}) => {
+        mockGetConversation.mockResolvedValue({id: CONVERSATION_ID, title: 'Quarterly plan', turns: []});
+        renderHeader(props, true);
+        await waitFor(() => expect(screen.getByTestId('agent-chat-menu-button')).toBeTruthy());
+        const button = screen.getByTestId('agent-chat-menu-button');
+        if (expected === null) {
+            expect(button.textContent).toBe('Matty');
+            return;
+        }
+        await waitFor(() => expect(button.textContent).toBe(`Quarterly plan${expected}`));
+        const heading = within(button).getByRole('heading', {level: 1});
+        expect(heading.nextElementSibling?.textContent).toBe(expected);
+    });
+
     const CHATS = ['Listed chat', 'Quarterly plan', 'New chat', 'Older chat'];
     test.each([
         {name: 'new chat, no edit access', props: {}, expected: ['Recent chats', 'View all agents']},

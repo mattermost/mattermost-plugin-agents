@@ -77,6 +77,7 @@ const AgentChatHeader = ({bot, rootId, onOpenSettings, onNewChat, onArchived}: A
                             testId='agent-chat-menu-button'
                             heading={true}
                             subtitle={rootId ? bot.displayName : ''}
+                            subtitlePlacement='beside'
                         />
                     )}
                 />

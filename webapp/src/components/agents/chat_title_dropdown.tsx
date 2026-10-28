@@ -29,12 +29,16 @@ interface ChatTitleDropdownProps extends DropdownButtonProps {
 
     // A dim second line under the title: the agent's name, once the chat has a title of its own.
     subtitle?: string;
+
+    // Where the subtitle goes: under the title (default, the RHS) or beside it, to its right (the product
+    // view's header).
+    subtitlePlacement?: 'below' | 'beside';
 }
 
 // The title of an agent chat as a compass Dropdown trigger: the product's chat header and the RHS
 // title open the same menu from it. The menu's reference (the ref) and its other reference props
 // (handlers, aria attributes) are passed on to the button. The wrapper only limits the width.
-const ChatTitleDropdown = ({ref, label, ariaLabel, expanded, onClick, testId, heading = false, subtitle, ...buttonProps}: ChatTitleDropdownProps) => {
+const ChatTitleDropdown = ({ref, label, ariaLabel, expanded, onClick, testId, heading = false, subtitle, subtitlePlacement = 'below', ...buttonProps}: ChatTitleDropdownProps) => {
     // React 19 passes `ref` to a function component as a prop, and the compass Dropdown spreads its
     // other props onto its button, so the ref reaches the button; its props type does not list it.
     const refProp = {ref} as Record<string, unknown>;
@@ -45,9 +49,9 @@ const ChatTitleDropdown = ({ref, label, ariaLabel, expanded, onClick, testId, he
     }
     if (subtitle) {
         content = (
-            <Stack>
+            <Stack $beside={subtitlePlacement === 'beside'}>
                 {titleLabel}
-                <Subtitle>{subtitle}</Subtitle>
+                <Subtitle $beside={subtitlePlacement === 'beside'}>{subtitle}</Subtitle>
             </Stack>
         );
     }
@@ -63,7 +67,7 @@ const ChatTitleDropdown = ({ref, label, ariaLabel, expanded, onClick, testId, he
                 aria-expanded={expanded}
                 title={label}
                 data-testid={testId}
-                $stacked={Boolean(subtitle)}
+                $stacked={Boolean(subtitle) && subtitlePlacement === 'below'}
                 onClick={onClick}
             >
                 {content}
@@ -128,26 +132,30 @@ const Heading = styled.h1`
     white-space: nowrap;
 `;
 
-// The title over the agent's name, both ending in an ellipsis. The title keeps the label's type;
-// the name is a dim, smaller line (host 64% text).
-const Stack = styled.span`
+// The title with the agent's name under it, or beside it, both ending in an ellipsis. The title keeps the
+// label's type; the name is a dim, smaller line (host 64% text). Beside, the title is the part that
+// shrinks, so the name stays whole.
+const Stack = styled.span<{$beside: boolean}>`
     display: flex;
     min-width: 0;
-    flex-direction: column;
-    align-items: flex-start;
+    flex-direction: ${({$beside}) => ($beside ? 'row' : 'column')};
+    align-items: ${({$beside}) => ($beside ? 'baseline' : 'flex-start')};
+    gap: ${({$beside}) => ($beside ? 'var(--spacing-xs)' : '0')};
     text-align: start;
 `;
 
 const Line = styled.span`
+    min-width: 0;
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 `;
 
-const Subtitle = styled(Line)`
+const Subtitle = styled(Line)<{$beside: boolean}>`
+    flex: ${({$beside}) => ($beside ? '0 0 auto' : '0 1 auto')};
     color: rgba(var(--center-channel-color-rgb), 0.64);
-    font-size: var(--font-size-75);
+    font-size: ${({$beside}) => ($beside ? 'var(--font-size-100)' : 'var(--font-size-75)')};
     font-weight: var(--font-weight-regular);
-    line-height: var(--line-height-75);
+    line-height: ${({$beside}) => ($beside ? 'var(--line-height-100)' : 'var(--line-height-75)')};
 `;
