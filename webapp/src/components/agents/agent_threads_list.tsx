@@ -659,11 +659,14 @@ const ThreadIcon = styled.span<{$active: boolean; $busy: boolean}>`
     /* The wave takes the icon's color (the sidebar text, at the icon's opacity). */
     --wave-dot-color: currentColor;
 
-    /* The wave and the dot are narrower than the 16px slot, so center them in it. */
+    /* The wave and the dot are narrower than the 16px slot, so they are centered in a 16px wrapper. The
+       overlay's offset already includes the 12px icon's 2px centering, so the wrapper is pulled back by
+       that 2px to put their center where the icon's and the avatar's is. */
     > span {
         display: inline-flex;
         justify-content: center;
         width: var(--spacing-l);
+        margin-left: calc(-1 * var(--spacing-xxxxs));
     }
 `;
 
@@ -674,9 +677,6 @@ const UnreadDot = styled.span`
         height: var(--spacing-xs);
         border-radius: var(--radius-pill);
         background: var(--mention-bg);
-
-        /* Optical alignment with the icons and avatar above it: 1px left of the slot's center (no token). */
-        transform: translateX(-1px);
     }
 `;
 
