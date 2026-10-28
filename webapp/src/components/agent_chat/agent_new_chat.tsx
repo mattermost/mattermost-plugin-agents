@@ -3,7 +3,7 @@
 
 import React, {useState} from 'react';
 import {defineMessages, useIntl, type MessageDescriptor} from 'react-intl';
-import styled, {css} from 'styled-components';
+import styled, {css, keyframes} from 'styled-components';
 
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
@@ -102,7 +102,7 @@ const pageLayout = css`
     padding: var(--spacing-xxxxl);
 
     /* Sit slightly above true center, as in the prototype. */
-    transform: translateY(calc(-1 * (var(--spacing-xxxxxl) + var(--spacing-l) + var(--spacing-xxl))));
+    --empty-chat-lift: calc(var(--spacing-xxxxxl) + var(--spacing-l) + var(--spacing-xxl));
 `;
 
 // The RHS is short as well as narrow: a smaller lift, and 24px padding on all
@@ -110,7 +110,21 @@ const pageLayout = css`
 const panelLayout = css`
     gap: var(--spacing-xl);
     padding: var(--spacing-xxl);
-    transform: translateY(calc(-2 * var(--spacing-xxl)));
+    --empty-chat-lift: calc(2 * var(--spacing-xxl));
+`;
+
+// The content fades in and rises 24px into its lifted position. The element's own transform holds
+// the end state, so the animation only fills backwards.
+const emptyChatEnter = keyframes`
+    from {
+        opacity: 0;
+        transform: translateY(calc(var(--spacing-xxl) - var(--empty-chat-lift)));
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(calc(-1 * var(--empty-chat-lift)));
+    }
 `;
 
 const EmptyChat = styled.div<{$layout: AgentNewChatLayout}>`
@@ -123,6 +137,12 @@ const EmptyChat = styled.div<{$layout: AgentNewChatLayout}>`
     min-height: 0;
 
     ${({$layout}) => ($layout === 'page' ? pageLayout : panelLayout)}
+    transform: translateY(calc(-1 * var(--empty-chat-lift)));
+    animation: ${emptyChatEnter} var(--duration-moderate) var(--ease-entrance) backwards;
+
+    @media (prefers-reduced-motion: reduce) {
+        animation: none;
+    }
 `;
 
 const EmptyIntro = styled.div`
