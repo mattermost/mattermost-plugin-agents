@@ -78,9 +78,13 @@ const ToolProviderMenuBody = ({status, onRetry, disabledServers, providers, onEr
                                     key={server.serverOrigin}
                                     role='menuitem'
                                     label={server.name}
-                                    secondaryLabel={intl.formatMessage({defaultMessage: 'Connect'})}
-                                    secondaryLabelPosition='inline'
                                     leadingElement={false}
+                                    trailingElement={true}
+                                    trailingVisual={(
+                                        <ConnectLabel>
+                                            {intl.formatMessage({defaultMessage: 'Connect'})}
+                                        </ConnectLabel>
+                                    )}
                                     disabled={!server.authURL}
                                     onClick={() => server.authURL && connect(server.authURL)}
                                 />
@@ -163,4 +167,18 @@ const RowSwitch = styled(Switch)`
         align-self: center;
         pointer-events: none;
     }
+`;
+
+// A not-yet-connected provider shows its Connect call to action as a primary button, as it did before the
+// menu rows. The row is the control (a menuitem; a click opens the auth URL), and a button cannot
+// sit inside it, so this only carries the look (an x-small primary button's type and padding).
+const ConnectLabel = styled.span`
+    flex-shrink: 0;
+    padding: var(--spacing-xxxxs) var(--spacing-xs);
+    border-radius: var(--radius-s);
+    background: var(--button-bg);
+    color: var(--button-color);
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-75);
 `;
