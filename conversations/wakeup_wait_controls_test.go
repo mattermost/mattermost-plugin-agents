@@ -152,6 +152,7 @@ func TestHandleWaitCancel(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, env.kv.data, "a canceled wait must consume its marker")
 			require.Equal(t, []string{WakeJobKeyPrefix + env.conv.ID}, sched.canceled)
+			require.Equal(t, []string{env.conv.ID}, env.convUpdates, "canceling must tell clients to refetch")
 		})
 	}
 }

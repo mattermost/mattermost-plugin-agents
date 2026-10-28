@@ -154,6 +154,11 @@ type wakeEnv struct {
 	kv        *kvFake
 	c         *Conversations
 	wakePost  *model.Post
+
+	// convUpdates records the conversation IDs broadcast via the
+	// conversation_updated websocket event, so tests can assert that a
+	// resolving wait tells clients to refetch.
+	convUpdates []string
 }
 
 // newWakeEnv builds the env around bot; a nil bot uses the default test bot.
@@ -176,6 +181,16 @@ func newWakeEnv(t *testing.T, bot *bots.Bot) *wakeEnv {
 	env.mmClient.On("LogError", mock.Anything, mock.Anything).Maybe().Return()
 	env.mmClient.On("LogWarn", mock.Anything, mock.Anything).Maybe().Return()
 	env.mmClient.On("GetConfig").Return(&model.Config{}).Maybe()
+	env.mmClient.On("PublishWebSocketEvent", mock.Anything, mock.Anything, mock.Anything).Maybe().Run(func(args mock.Arguments) {
+		if args.Get(0).(string) != WebsocketEventConversationUpdated {
+			return
+		}
+		if payload, ok := args.Get(1).(map[string]any); ok {
+			if convID, ok := payload["conversation_id"].(string); ok {
+				env.convUpdates = append(env.convUpdates, convID)
+			}
+		}
+	}).Return()
 	env.kv = newKVFake(env.mmClient)
 
 	env.c = &Conversations{
@@ -768,6 +783,7 @@ func TestRegenerationCancelsThreadWakeWithoutNote(t *testing.T) {
 	mmClient := mocks.NewMockClient(t)
 	kv := newKVFake(mmClient)
 	mmClient.On("GetPost", "root-post-id").Return(&model.Post{Id: "root-post-id"}, nil).Maybe()
+	mmClient.On("PublishWebSocketEvent", mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 	sched := &fakeWakeScheduler{scheduled: map[string]WakeJob{}}
 	post := &model.Post{Id: "response-post-id", UserId: "bot-id", RootId: "root-post-id"}
 	post.AddProp(streaming.ConversationIDProp, conv.ID)

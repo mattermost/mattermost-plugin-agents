@@ -208,7 +208,27 @@ func (c *Conversations) cancelThreadWake(markerKey string) bool {
 		return false
 	}
 	c.wakeScheduler.Cancel(WakeJobKeyPrefix + marker.ConversationID)
+	c.notifyConversationUpdated(marker.ConversationID)
 	return true
+}
+
+// WebsocketEventConversationUpdated tells the webapp to refetch a conversation
+// (received there as custom_mattermost-ai_conversation_updated). Emitted when a
+// pending wait resolves so the "waiting" footer clears from server state rather
+// than from the client's countdown alone.
+const WebsocketEventConversationUpdated = "conversation_updated"
+
+// notifyConversationUpdated asks every client to refetch the conversation. The
+// payload carries only an id, so clients without it cached ignore the event.
+func (c *Conversations) notifyConversationUpdated(conversationID string) {
+	if conversationID == "" {
+		return
+	}
+	c.mmClient.PublishWebSocketEvent(
+		WebsocketEventConversationUpdated,
+		map[string]any{"conversation_id": conversationID},
+		&model.WebsocketBroadcast{},
+	)
 }
 
 // ErrNoPendingWait is returned by a wait control when the post has no pending
@@ -424,6 +444,9 @@ func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) (er
 	if !consumed {
 		return c.dropWake("steered or superseded", nil, "conversation_id", job.ConversationID)
 	}
+	// The wait is resolving; tell clients to drop the "waiting" footer now
+	// rather than waiting for the countdown to run out.
+	c.notifyConversationUpdated(job.ConversationID)
 
 	conv, err := c.convService.GetConversation(job.ConversationID)
 	if err != nil {
