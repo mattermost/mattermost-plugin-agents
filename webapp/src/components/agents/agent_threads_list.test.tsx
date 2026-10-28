@@ -262,12 +262,23 @@ describe('AgentThreadsList', () => {
     });
     test.each([
         {name: 'a chat whose agent is answering', generating: ['root_1'], activeRootId: '', expected: 1},
-        {name: 'the chat that is open does not', generating: ['root_1'], activeRootId: 'root_1', expected: 0},
+        {name: 'the chat that is open too', generating: ['root_1'], activeRootId: 'root_1', expected: 1},
         {name: 'a chat that is idle does not', generating: [], activeRootId: '', expected: 0},
-        {name: 'only the answering chats show it', generating: ['root_1', 'root_2'], activeRootId: '', expected: 2},
+        {name: 'every answering chat', generating: ['root_1', 'root_2'], activeRootId: '', expected: 2},
     ])('generating indicator: $name', ({generating, activeRootId, expected}) => {
         renderList({generatingRoots: new Set(generating), activeBotId: 'a', activeRootId});
 
         expect(screen.queryAllByTestId('thread-generating')).toHaveLength(expected);
+    });
+
+    test.each([
+        {name: 'a chat that finished while it was not open', unread: ['root_1'], generating: [], expectedUnread: 1, expectedGenerating: 0},
+        {name: 'a chat that is answering shows the wave, not the dot', unread: ['root_1'], generating: ['root_1'], expectedUnread: 0, expectedGenerating: 1},
+        {name: 'no unread chats', unread: [], generating: [], expectedUnread: 0, expectedGenerating: 0},
+    ])('unread indicator: $name', ({unread, generating, expectedUnread, expectedGenerating}) => {
+        renderList({unreadRoots: new Set(unread), generatingRoots: new Set(generating), activeBotId: 'a', activeRootId: ''});
+
+        expect(screen.queryAllByTestId('thread-unread')).toHaveLength(expectedUnread);
+        expect(screen.queryAllByTestId('thread-generating')).toHaveLength(expectedGenerating);
     });
 });

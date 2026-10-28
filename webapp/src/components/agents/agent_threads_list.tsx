@@ -39,6 +39,9 @@ interface AgentThreadsListProps {
 
     // Root post ids of the chats whose agent is answering right now; a chat that is not open shows it.
     generatingRoots?: ReadonlySet<string>;
+
+    // Root post ids of the chats whose agent finished answering while they were not open.
+    unreadRoots?: ReadonlySet<string>;
     onSelectThread: (botId: string, rootId: string) => void;
     onNewChat: (botId: string) => void;
     onRetry: () => void;
@@ -64,6 +67,7 @@ const AgentThreadsList = ({
     activeBotId,
     activeRootId,
     generatingRoots,
+    unreadRoots,
     onSelectThread,
     onNewChat,
     onRetry,
@@ -252,7 +256,8 @@ const AgentThreadsList = ({
                                                 key={thread.id}
                                                 thread={thread}
                                                 active={isActiveAgent && activeRootId === thread.root_post_id}
-                                                generating={Boolean(thread.root_post_id && generatingRoots?.has(thread.root_post_id)) && !(isActiveAgent && activeRootId === thread.root_post_id)}
+                                                generating={Boolean(thread.root_post_id && generatingRoots?.has(thread.root_post_id))}
+                                                unread={Boolean(thread.root_post_id && unreadRoots?.has(thread.root_post_id))}
                                                 placeholder={newChatPlaceholder}
                                                 onSelect={() => onSelectThread(bot.id, thread.root_post_id as string)}
                                                 onRename={() => setRenameTarget(thread)}
@@ -337,8 +342,11 @@ interface ThreadItemProps {
     thread: AIThread;
     active: boolean;
 
-    // The agent is answering in this chat while it is not open.
+    // The agent is answering in this chat.
     generating: boolean;
+
+    // The agent finished answering while the chat was not open.
+    unread: boolean;
     placeholder: string;
     onSelect: () => void;
     onRename: () => void;
@@ -348,7 +356,7 @@ interface ThreadItemProps {
 // A compass ChannelSidebarItem only renders its own kebab for channel and DM rows, so the
 // actions button is overlaid on the row (as the agent rows do for their chevron and [+]),
 // with the same hover/focus reveal as the compass kebab.
-const ThreadItem = ({thread, active, generating, placeholder, onSelect, onRename, onArchive}: ThreadItemProps) => {
+const ThreadItem = ({thread, active, generating, unread, placeholder, onSelect, onRename, onArchive}: ThreadItemProps) => {
     const intl = useIntl();
     const [menuOpen, setMenuOpen] = useState(false);
     const {rendered, onExited} = useMenuTransition(menuOpen);
@@ -363,24 +371,35 @@ const ThreadItem = ({thread, active, generating, placeholder, onSelect, onRename
             <ThreadIcon
                 aria-hidden={true}
                 $active={active}
+                $busy={generating}
             >
-                <Icon
-                    size='12'
-                    glyph={<MessageOutlineIcon/>}
-                />
+                {generating && (
+                    <span data-testid='thread-generating'>
+                        <WaveDots animate={!prefersReducedMotion()}/>
+                    </span>
+                )}
+                {!generating && unread && (
+                    <span data-testid='thread-unread'>
+                        <UnreadDot/>
+                    </span>
+                )}
+                {!generating && !unread && (
+                    <Icon
+                        size='12'
+                        glyph={<MessageOutlineIcon/>}
+                    />
+                )}
             </ThreadIcon>
+            {generating && (
+                <VisuallyHidden>{intl.formatMessage({defaultMessage: 'The agent is responding'})}</VisuallyHidden>
+            )}
             <ChannelSidebarItem
                 name={title}
                 leadingVisual='threads'
+                status={unread && !generating ? 'unread' : 'read'}
                 active={active}
                 onClick={onSelect}
             />
-            {generating && (
-                <GeneratingSlot data-testid='thread-generating'>
-                    <WaveDots animate={!prefersReducedMotion()}/>
-                    <VisuallyHidden>{intl.formatMessage({defaultMessage: 'The agent is responding'})}</VisuallyHidden>
-                </GeneratingSlot>
-            )}
             <ThreadActionsSlot>
                 <Dropdown
                     isOpen={rendered}
@@ -606,24 +625,6 @@ const ThreadActionsSlot = styled.span`
     }
 `;
 
-// The wave where the actions button appears on hover: the actions take its place then.
-const GeneratingSlot = styled.span`
-    position: absolute;
-    top: 0;
-    right: var(--spacing-xl);
-    bottom: 0;
-    z-index: 1;
-    display: flex;
-    align-items: center;
-    pointer-events: none;
-    opacity: 1;
-    transition: opacity var(--duration-quick) var(--ease-transition);
-
-    @media (prefers-reduced-motion: reduce) {
-        transition: none;
-    }
-`;
-
 const VisuallyHidden = styled.span`
     position: absolute;
     width: 1px;
@@ -639,7 +640,7 @@ const VisuallyHidden = styled.span`
 // Over the item's own 16px icon slot (its padding plus the container's 6px offset), centered in it: a 12px
 // icon (drawn 14px) is 2px in. The icon column is as wide as the agent row's avatar column, so the
 // chat's label sits at the same left edge as the agent's name.
-const ThreadIcon = styled.span<{$active: boolean}>`
+const ThreadIcon = styled.span<{$active: boolean; $busy: boolean}>`
     position: absolute;
     top: 0;
     bottom: 0;
@@ -649,8 +650,25 @@ const ThreadIcon = styled.span<{$active: boolean}>`
     align-items: center;
     padding-left: calc(var(--spacing-l) + var(--spacing-xxxxs) + var(--spacing-xxxs) + var(--spacing-xxxxs));
     color: var(--sidebar-text);
-    opacity: ${(p) => (p.$active ? 1 : 0.64)};
+    opacity: ${(p) => (p.$active || p.$busy ? 1 : 0.64)};
     pointer-events: none;
+
+    /* The wave and the dot are narrower than the 16px slot, so center them in it. */
+    > span {
+        display: inline-flex;
+        justify-content: center;
+        width: var(--spacing-l);
+    }
+`;
+
+// The agent finished while the chat was not open: the host's unread/mention color, in the icon slot.
+const UnreadDot = styled.span`
+    && {
+        width: var(--spacing-xs);
+        height: var(--spacing-xs);
+        border-radius: var(--radius-pill);
+        background: var(--mention-bg);
+    }
 `;
 
 const ThreadListItem = styled.li`
@@ -660,12 +678,6 @@ const ThreadListItem = styled.li`
        smaller chat icon is overlaid in its place (as the nav rows above do). */
     [class*='icon-container'] > svg {
         visibility: hidden;
-    }
-
-    &:hover ${GeneratingSlot},
-    &:focus-within ${GeneratingSlot},
-    &[data-menu-open] ${GeneratingSlot} {
-        opacity: 0;
     }
 
     &:hover ${ThreadActionsSlot},

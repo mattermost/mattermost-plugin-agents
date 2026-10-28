@@ -1,8 +1,8 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {useMemo, useSyncExternalStore} from 'react';
-import {useSelector} from 'react-redux';
+import {useEffect, useMemo, useSyncExternalStore} from 'react';
+import {useSelector, useStore} from 'react-redux';
 
 import {GlobalState} from '@mattermost/types/store';
 
@@ -22,6 +22,10 @@ const generating = new Set<string>();
 // Stopped from the composer: later chunks already in flight must not mark it
 // generating again (LLMBotPost's stoppedRef); a new start (regenerate) does.
 const stopped = new Set<string>();
+
+// Agent posts whose generation finished (an `end`, not a cancel or a stop) and that the user has not
+// opened since: the sidebar marks their chats as unread. Session-only, like `generating`.
+const finished = new Set<string>();
 
 const listeners = new Set<() => void>();
 let version = 0;
@@ -43,13 +47,18 @@ export const recordPostUpdate = (msg: PluginWebSocketMessage<PostUpdateWebsocket
     const control = msg.data.control ?? '';
     if (DONE_CONTROLS.has(control)) {
         stopped.delete(postId);
-        if (generating.delete(postId)) {
+        const wasGenerating = generating.delete(postId);
+        if (wasGenerating && control === 'end') {
+            finished.add(postId);
+        }
+        if (wasGenerating) {
             notify();
         }
         return;
     }
     if (RESTART_CONTROLS.has(control)) {
         stopped.delete(postId);
+        finished.delete(postId);
     }
     const live = LIVE_CONTROLS.has(control) || typeof msg.data.next === 'string';
     if (live && !stopped.has(postId) && !generating.has(postId)) {
@@ -72,6 +81,7 @@ export const markGenerationStopped = (postId: string) => {
 export const resetGeneratingPosts = () => {
     generating.clear();
     stopped.clear();
+    finished.clear();
     notify();
 };
 
@@ -148,6 +158,54 @@ export const useGeneratingThreadRoots = (): ReadonlySet<string> => {
             const post = posts[postId];
             if (post && isRequester(state, post, currentUserId)) {
                 roots.add(post.root_id || post.id);
+            }
+        });
+        return Array.from(roots).sort().join(',');
+    });
+
+    return useMemo(() => new Set(key ? key.split(',') : []), [key]);
+};
+
+// The root post ids of the current user's chats whose agent finished answering while they were not
+// looking at them: a chat leaves the set when it is opened (`openRootId`). Posts count as in
+// useGeneratingThreadRoots: only those already in the store, and only the user's own requests.
+export const useUnreadFinishedThreadRoots = (openRootId = ''): ReadonlySet<string> => {
+    const recorded = useSyncExternalStore(subscribe, getVersion);
+    const store = useStore<GlobalState>();
+
+    // Opening a chat reads it.
+    useEffect(() => {
+        if (!openRootId || finished.size === 0) {
+            return;
+        }
+        const posts = (store.getState().entities?.posts?.posts ?? {}) as Record<string, PostLike | undefined>;
+        let cleared = false;
+        Array.from(finished).forEach((postId) => {
+            const post = posts[postId];
+            if (post && (post.root_id || post.id) === openRootId) {
+                finished.delete(postId);
+                cleared = true;
+            }
+        });
+        if (cleared) {
+            notify();
+        }
+    }, [openRootId, recorded, store]);
+
+    const key = useSelector<GlobalState, string>((state) => {
+        if (recorded < 0 || finished.size === 0) {
+            return '';
+        }
+        const posts = (state.entities?.posts?.posts ?? {}) as Record<string, PostLike | undefined>;
+        const currentUserId = state.entities?.users?.currentUserId ?? '';
+        const roots = new Set<string>();
+        finished.forEach((postId) => {
+            const post = posts[postId];
+            if (post && isRequester(state, post, currentUserId)) {
+                const root = post.root_id || post.id;
+                if (root !== openRootId) {
+                    roots.add(root);
+                }
             }
         });
         return Array.from(roots).sort().join(',');
