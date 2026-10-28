@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -11,19 +12,17 @@ import { OpenAIMockContainer, RunOpenAIMocks, turnMocksWithTitleSiphon, response
 const username = 'regularuser';
 const password = 'regularuser';
 
+const test = containerTest(async (own) => {
+  const mattermost = own(await RunContainer());
+  const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+  return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
-// Setup for all tests in the file
-test.beforeAll(async () => {
-  mattermost = await RunContainer();
-  openAIMock = await RunOpenAIMocks(mattermost.network);
-});
-
-// Cleanup after all tests
-test.afterAll(async () => {
-  await openAIMock.stop();
-  await mattermost.stop();
+test.beforeAll(async ({ containers }) => {
+  ({ mattermost, openAIMock } = containers);
 });
 
 // Agent selection persists server-side; reset so mock-bot tests stay isolated.

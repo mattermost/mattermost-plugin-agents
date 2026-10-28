@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -45,21 +46,19 @@ data: [DONE]
 
 const actionItemsResponseText = "Based on the conversation, here are the action items: 1. John to update project roadmap by Friday";
 
-// Setup for all tests in the file
-test.beforeAll(async () => {
-    mattermost = await RunContainer();
-    openAIMock = await RunOpenAIMocks(mattermost.network);
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
+test.beforeAll(async ({ containers }) => {
+    ({ mattermost, openAIMock } = containers);
 });
 
 test.beforeEach(async () => {
     // Reset mocks before each test to prevent cross-contamination
     await openAIMock.resetMocks();
-});
-
-// Cleanup after all tests
-test.afterAll(async () => {
-    await openAIMock.stop();
-    await mattermost.stop();
 });
 
 // Common test setup

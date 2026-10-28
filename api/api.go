@@ -66,6 +66,7 @@ type Config interface {
 	EnableHTMLArtifacts() bool
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
+	EnableAmbientAutoReply() bool
 
 	// GetServices returns a snapshot of the stored service configurations, in
 	// configuration order. The bridge service endpoints operate on this
@@ -156,7 +157,7 @@ type ConversationStore interface {
 // cluster cache invalidation internally.
 type ChannelAutoReplyStore interface {
 	Get(channelID string) (*autoreply.Setting, error)
-	Set(channelID, botID string, mode autoreply.Mode, updatedBy string) (*autoreply.Setting, error)
+	Set(setting autoreply.Setting) (*autoreply.Setting, error)
 	Delete(channelID string) error
 }
 

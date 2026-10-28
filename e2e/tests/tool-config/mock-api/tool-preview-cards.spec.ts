@@ -1,4 +1,5 @@
-import { test, expect, type Page, type Locator } from '@playwright/test';
+import { expect, type Page, type Locator } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import {
@@ -90,19 +91,19 @@ async function mentionBotAndOpenThread(page: Page, mmPage: MattermostPage, botNa
     await openThreadForPost(post, timeout);
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigContainerWithPolicies());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 test.describe('post preview cards (Mocked LLM)', () => {
-    test.beforeAll(async () => {
-        mattermost = await RunToolConfigContainerWithPolicies();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
         await setEmbeddedToolPolicies([
             {name: 'read_post', policy: 'ask', enabled: true},
             {name: 'create_post', policy: 'ask', enabled: true},
         ]);
-    });
-
-    test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
     });
 
     test('shows a preview of the referenced post before approval, with View raw', async ({ page }) => {

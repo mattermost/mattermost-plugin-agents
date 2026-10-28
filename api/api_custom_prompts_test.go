@@ -74,13 +74,20 @@ func setupPostgresTestStore(t *testing.T, dbPrefix string) (*sqlx.DB, *store.Sto
 	return db, s
 }
 
+// setupTestDBClient is setupPostgresTestStore for tests that only need a DBClient connected to the
+// scratch database.
+func setupTestDBClient(t *testing.T, namePrefix string) *mmapi.DBClient {
+	t.Helper()
+
+	db, _ := setupPostgresTestStore(t, namePrefix)
+
+	return mmapi.NewTestDBClient(db)
+}
+
 func setupCustomPromptsTestEnvironment(t *testing.T) (*TestEnvironment, *customprompts.Store) {
 	t.Helper()
 
-	db, _ := setupPostgresTestStore(t, "customprompts_api_test")
-
-	dbClient := mmapi.NewTestDBClient(db)
-	cpStore := customprompts.NewStore(dbClient)
+	cpStore := customprompts.NewStore(setupTestDBClient(t, "customprompts_api_test"))
 
 	env := SetupTestEnvironment(t)
 	env.api.customPromptsStore = cpStore

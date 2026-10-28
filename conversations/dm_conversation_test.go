@@ -369,8 +369,16 @@ type dmTestLLM struct {
 	onChat    func()
 	// callTraces records the trace each call ran under, in call order.
 	callTraces []trace.TraceID
-	// titleDone, when set, is signaled after each ChatCompletionNoStream.
+	// titleDone, when set, is signaled after each title ChatCompletionNoStream.
 	titleDone chan struct{}
+
+	noStreamResponseByOp map[string]string
+	noStreamErrByOp      map[string]error
+	// lastNoStreamReq and lastNoStreamCfg record the latest classifier call only,
+	// so asynchronous title generation cannot overwrite them.
+	lastNoStreamReq llm.CompletionRequest
+	lastNoStreamCfg llm.LanguageModelConfig
+	classifierCalls int
 }
 
 func newDMTestLLM(responses ...*llm.TextStreamResult) *dmTestLLM {
@@ -394,10 +402,37 @@ func (f *dmTestLLM) ChatCompletion(ctx context.Context, request llm.CompletionRe
 }
 
 func (f *dmTestLLM) ChatCompletionNoStream(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	var cfg llm.LanguageModelConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	isClassifier := request.Operation == llm.OperationAmbientClassification
 	f.mu.Lock()
 	f.callTraces = append(f.callTraces, trace.SpanContextFromContext(ctx).TraceID())
+	if isClassifier {
+		f.lastNoStreamReq = request
+		f.lastNoStreamCfg = cfg
+		f.classifierCalls++
+	}
+	opErr := f.noStreamErrByOp[request.Operation]
+	resp, hasResp := f.noStreamResponseByOp[request.Operation]
 	done := f.titleDone
 	f.mu.Unlock()
+
+	if opErr != nil {
+		return "", opErr
+	}
+	if hasResp {
+		return resp, nil
+	}
+	if isClassifier {
+		return "", fmt.Errorf("no classifier response configured")
+	}
 	if done != nil {
 		done <- struct{}{}
 	}

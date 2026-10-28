@@ -16,13 +16,15 @@ import (
 func TestConvertToResponsesMessagesIgnoresStoredReasoningOnAssistantInput(t *testing.T) {
 	b := &LLM{provider: schemas.OpenAI}
 
-	messages := b.convertToResponsesMessages([]llm.Post{
+	respReq, err := b.convertToBifrostResponsesRequest(llm.CompletionRequest{Posts: []llm.Post{
 		{
 			Role:      llm.PostRoleBot,
 			Message:   "assistant reply",
 			Reasoning: "internal reasoning summary from previous turn",
 		},
-	})
+	}}, llm.LanguageModelConfig{Model: "gpt-4o"})
+	require.NoError(t, err)
+	messages := respReq.Input
 
 	require.Len(t, messages, 1)
 	msg := messages[0]

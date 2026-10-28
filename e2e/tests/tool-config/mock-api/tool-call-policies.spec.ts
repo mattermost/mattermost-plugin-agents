@@ -1,6 +1,7 @@
 import * as http from 'http';
 
-import { test, expect, type Page, type Locator } from '@playwright/test';
+import { expect, type Page, type Locator } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -159,20 +160,20 @@ async function waitForChannelReady(page: Page, channelDisplayName: string): Prom
     });
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigContainerWithPolicies());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 test.describe('Tool Call Policies (Mocked LLM)', () => {
-    test.beforeAll(async () => {
-        mattermost = await RunToolConfigContainerWithPolicies();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
         await setEmbeddedToolPolicies([
             {name: 'read_post', policy: 'auto_run_in_dm', enabled: true},
             {name: 'get_channel_info', policy: 'ask', enabled: true},
             {name: 'read_channel', policy: 'auto_run_in_dm', enabled: true},
         ]);
-    });
-
-    test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
     });
 
     // Note: does not configure a disabled tool; it only checks a text-only mock response

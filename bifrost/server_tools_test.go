@@ -321,20 +321,31 @@ func TestProviderServices(t *testing.T) {
 	tests := []struct {
 		name             string
 		provider         schemas.ModelProvider
+		fallbacks        []schemas.ModelProvider
 		wantFileDownload bool
 	}{
 		{name: "anthropic serves file content", provider: schemas.Anthropic, wantFileDownload: true},
 		{name: "openai has no usable file retrieval yet", provider: schemas.OpenAI, wantFileDownload: false},
 		{name: "gemini has no file retrieval", provider: schemas.Gemini, wantFileDownload: false},
+		{name: "an anthropic fallback serves files created on its turns", provider: schemas.OpenAI, fallbacks: []schemas.ModelProvider{schemas.Anthropic}, wantFileDownload: true},
+		{name: "fallbacks without file retrieval add none", provider: schemas.OpenAI, fallbacks: []schemas.ModelProvider{schemas.Gemini}, wantFileDownload: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var fallbacks []FallbackEntry
+			for i, provider := range tt.fallbacks {
+				fallbacks = append(fallbacks, FallbackEntry{
+					Provider: provider, APIKey: "fallback-key", DefaultModel: "test-model",
+					ID: fmt.Sprintf("fallback-%d", i),
+				})
+			}
 			llmClient, err := New(Config{
 				Provider:         tt.provider,
 				APIKey:           "test-key",
 				DefaultModel:     "test-model",
 				StreamingTimeout: 10 * time.Second,
+				Fallbacks:        fallbacks,
 			})
 			require.NoError(t, err)
 			defer llmClient.Shutdown()

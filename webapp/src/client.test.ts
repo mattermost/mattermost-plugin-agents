@@ -319,7 +319,7 @@ describe('agent selection by bot id', () => {
 
 describe('getChannelAutoReply', () => {
     test('issues a GET to the channel autoreply route and returns the parsed body', async () => {
-        const body = {bot_id: 'bot-1', mode: 'threads'};
+        const body = {bot_id: 'bot-1', mode: 'threads', instructions: ''};
         mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve(body)} as unknown as Response);
 
         await expect(getChannelAutoReply('channel-1')).resolves.toEqual(body);
@@ -331,7 +331,7 @@ describe('getChannelAutoReply', () => {
     });
 
     test('percent-encodes the channel id so it occupies a single path segment', async () => {
-        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve({bot_id: '', mode: 'off'})} as unknown as Response);
+        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve({bot_id: '', mode: 'off', instructions: ''})} as unknown as Response);
 
         await getChannelAutoReply('cha/nnel');
 
@@ -351,14 +351,19 @@ describe('updateChannelAutoReply', () => {
         const json = jest.fn();
         mockFetch.mockResolvedValue({ok: true, status: 200, json} as unknown as Response);
 
-        await expect(updateChannelAutoReply('channel-1', {bot_id: 'bot-1', mode: 'root_posts'})).resolves.toBeUndefined();
+        const settings = {
+            bot_id: 'bot-1',
+            mode: 'ambient' as const,
+            instructions: 'when asked',
+        };
+        await expect(updateChannelAutoReply('channel-1', settings)).resolves.toBeUndefined();
 
         expect(mockFetch).toHaveBeenCalledTimes(1);
         const [url, options] = mockFetch.mock.calls[0];
         expect(url).toBe(`${siteURL}/plugins/${manifest.id}/channel/channel-1/autoreply`);
         expect(options).toEqual(expect.objectContaining({
             method: 'PUT',
-            body: JSON.stringify({bot_id: 'bot-1', mode: 'root_posts'}),
+            body: JSON.stringify(settings),
         }));
         expect(json).not.toHaveBeenCalled();
     });
@@ -366,7 +371,7 @@ describe('updateChannelAutoReply', () => {
     test.each([403, 413, 500])('throws an error carrying status %d on a non-ok response', async (status) => {
         mockFetch.mockResolvedValue({ok: false, status, json: jest.fn()} as unknown as Response);
 
-        await expect(updateChannelAutoReply('channel-1', {bot_id: '', mode: 'off'})).rejects.toMatchObject({status_code: status});
+        await expect(updateChannelAutoReply('channel-1', {bot_id: '', mode: 'off', instructions: ''})).rejects.toMatchObject({status_code: status});
     });
 });
 

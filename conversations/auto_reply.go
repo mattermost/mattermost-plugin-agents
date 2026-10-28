@@ -48,17 +48,32 @@ func (c *Conversations) autoReplySettingForChannel(channel *model.Channel) *auto
 // permissions and usage restrictions apply, and conversation creation, tool
 // running, streaming, and CheckUsageRestrictions are all reused.
 //
-// All conditions that prevent a reply return an error wrapping ErrNoResponse so
-// MessageHasBeenPosted logs them at debug, not error, level.
+// Expected conditions that prevent a reply return an error wrapping
+// ErrNoResponse so MessageHasBeenPosted logs them at debug, not error, level.
 func (c *Conversations) handleAutoReply(ctx context.Context, setting *autoreply.Setting, post *model.Post, postingUser *model.User, channel *model.Channel) error {
-	// Mode gate: root_posts fires only for top-level posts; threads fires for both.
-	if setting.Mode == autoreply.ModeRootPosts && post.RootId != "" {
-		return fmt.Errorf("auto-reply mode root_posts ignores thread replies: %w", ErrNoResponse)
+	// Mode gate: root_posts fires only for top-level posts, ambient_threads
+	// only for thread replies; threads and ambient fire for both. A mode this
+	// version does not know never replies.
+	switch setting.Mode {
+	case autoreply.ModeRootPosts:
+		if post.RootId != "" {
+			return fmt.Errorf("auto-reply mode root_posts ignores thread replies: %w", ErrNoResponse)
+		}
+	case autoreply.ModeAmbientThreads:
+		if post.RootId == "" {
+			return fmt.Errorf("auto-reply mode ambient_threads ignores top-level posts: %w", ErrNoResponse)
+		}
+	case autoreply.ModeThreads, autoreply.ModeAmbient:
+	default:
+		return fmt.Errorf("unknown auto-reply mode %q: %w", setting.Mode, ErrNoResponse)
 	}
 
 	// Re-check the license at trigger time; fail closed on a nil checker.
 	if !c.licenseChecker.Allows(enterprise.CapChannelAutoReply) {
 		return fmt.Errorf("channel agent auto-reply is available at Enterprise Advanced and above: %w", ErrNoResponse)
+	}
+	if setting.Mode.IsAmbient() && !c.ambientAutoReplyEnabled() {
+		return fmt.Errorf("ambient auto-reply is disabled by the system admin: %w", ErrNoResponse)
 	}
 
 	// The bot may have been deleted or restricted after the setting was
@@ -66,6 +81,35 @@ func (c *Conversations) handleAutoReply(ctx context.Context, setting *autoreply.
 	bot := c.bots.GetBotByID(setting.BotID)
 	if bot == nil {
 		return fmt.Errorf("auto-reply bot no longer exists: %w", ErrNoResponse)
+	}
+
+	if setting.Mode.IsAmbient() {
+		// Run the turn's own gates before the classifier so a turn that could
+		// not run never triggers LLM spend.
+		if _, policyErr := c.resolveTurnPolicy(ctx, turnRequest{bot: bot, user: postingUser, channel: channel, trigger: post}); policyErr != nil {
+			_, unlicensed := errors.AsType[*enterprise.LicenseError](policyErr)
+			if unlicensed || errors.Is(policyErr, bots.ErrUsageRestriction) {
+				return fmt.Errorf("auto-reply bot unavailable for user/channel: %v: %w", policyErr, ErrNoResponse)
+			}
+			return fmt.Errorf("ambient auto-reply turn policy failed: %w", policyErr)
+		}
+		thread, threadErr := c.ambientThreadPosts(post)
+		if threadErr != nil {
+			c.mmClient.LogWarn("Ambient auto-reply failed to load thread", "post_id", post.Id, "channel_id", channel.Id, "error", threadErr.Error())
+			return fmt.Errorf("ambient auto-reply failed to load thread: %v: %w", threadErr, ErrNoResponse)
+		}
+		if setting.Mode == autoreply.ModeAmbientThreads && !threadHasReplyFrom(thread, bot.GetMMBot().UserId) {
+			return fmt.Errorf("auto-reply mode ambient_threads ignores threads the agent has not replied in: %w", ErrNoResponse)
+		}
+		release, acquired := c.ambientLimiter.tryAcquire(channel.Id)
+		if !acquired {
+			return fmt.Errorf("ambient classifier is over its rate or concurrency limit: %w", ErrNoResponse)
+		}
+		classErr := c.classifyAmbientReply(ctx, bot, setting, post, postingUser, channel, thread)
+		release()
+		if classErr != nil {
+			return classErr
+		}
 	}
 
 	err := c.handleMentions(ctx, bot, cloneWithAgentMention(post, bot.GetMMBot().Username), postingUser, channel)
