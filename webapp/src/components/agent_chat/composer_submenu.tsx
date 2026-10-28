@@ -92,12 +92,27 @@ const ComposerSubmenu = ({label, icon, secondaryLabel, disabled, menuLabel, open
         }
     };
     useEffect(() => cancelHoverClose, []);
+
+    // The parents share one open-submenu state, so onClose closes whichever submenu is open. A close
+    // that is pending here must therefore never fire once this one is no longer the open one (the
+    // pointer has moved to a sibling row that opened its own): it would close that sibling instead.
+    const openRef = useRef(open);
+    useEffect(() => {
+        openRef.current = open;
+        if (!open) {
+            cancelHoverClose();
+        }
+    }, [open]);
     const handleEntryMouseLeave = () => {
         if (!open || focusOnOpen) {
             return;
         }
         cancelHoverClose();
-        hoverCloseTimer.current = setTimeout(onClose, HOVER_CLOSE_DELAY_MS);
+        hoverCloseTimer.current = setTimeout(() => {
+            if (openRef.current) {
+                onClose();
+            }
+        }, HOVER_CLOSE_DELAY_MS);
     };
 
     const handleRowKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {

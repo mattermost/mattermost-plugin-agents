@@ -26,6 +26,29 @@ const Harness = () => {
     );
 };
 
+// Two rows sharing one open-submenu state, as the real parent menus have.
+const SiblingsHarness = () => {
+    const [openId, setOpenId] = useState<string | null>(null);
+    return (
+        <div>
+            {['First', 'Second'].map((name) => (
+                <ComposerSubmenu
+                    key={name}
+                    label={name}
+                    icon={<span/>}
+                    menuLabel={`${name} menu`}
+                    open={openId === name}
+                    focusOnOpen={false}
+                    onOpen={() => setOpenId(name)}
+                    onClose={() => setOpenId(null)}
+                >
+                    <button type='button'>{`${name} item`}</button>
+                </ComposerSubmenu>
+            ))}
+        </div>
+    );
+};
+
 const row = () => screen.getByRole('menuitem', {name: 'Parent'});
 const entry = () => row().parentElement as HTMLElement;
 
@@ -81,5 +104,31 @@ describe('ComposerSubmenu closing', () => {
         });
 
         expect(childOpen()).toBe(true);
+    });
+});
+
+describe('ComposerSubmenu siblings', () => {
+    beforeEach(() => {
+        jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('moving from one row to the next within the close delay leaves the next one open', () => {
+        render(<SiblingsHarness/>);
+        const first = screen.getByRole('menuitem', {name: 'First'});
+        const second = screen.getByRole('menuitem', {name: 'Second'});
+
+        fireEvent.mouseEnter(first);
+        fireEvent.mouseLeave(first.parentElement as HTMLElement);
+        fireEvent.mouseEnter(second);
+        act(() => {
+            jest.advanceTimersByTime(500);
+        });
+
+        expect(second.getAttribute('aria-expanded')).toBe('true');
+        expect(first.getAttribute('aria-expanded')).toBe('false');
     });
 });
