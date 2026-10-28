@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, screen, fireEvent} from '@testing-library/react';
+import {act, render, screen, fireEvent} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import {doDisableAgentMentionReminder, doLoopInAgent} from '@/client';
@@ -93,6 +93,57 @@ describe('AgentMentionReminderPost', () => {
 
     test('the plain fallback message offers no "Don\'t show again" button', () => {
         renderPost({}, {message: POST_MESSAGE});
+        expect(screen.queryByRole('button', {name: "Don't show again"})).toBeNull();
+    });
+
+    test('keeps the dismissal error and retry when loop-in resolves before the dismissal fails', async () => {
+        let rejectDismiss!: (reason?: unknown) => void;
+        mockedDoLoopInAgent.mockImplementation(() => Promise.resolve());
+        mockedDoDisableAgentMentionReminder.mockImplementation(() => new Promise((_, reject) => {
+            rejectDismiss = reject;
+        }));
+
+        renderPost({bot_user_id: BOT_USER_ID, bot_username: 'matty', bot_display_name: 'Matty', target_post_id: TARGET_POST_ID});
+
+        // Start the dismissal (stays pending), then loop in (resolves).
+        fireEvent.click(screen.getByRole('button', {name: "Don't show again"}));
+        fireEvent.click(screen.getByRole('link', {name: 'Click here to loop in @Matty'}));
+
+        expect(await screen.findByText('Looped in @Matty.')).not.toBeNull();
+
+        await act(async () => {
+            rejectDismiss(new Error('nope'));
+        });
+
+        // The loop-in confirmation does not swallow the unsaved-preference feedback.
+        expect(await screen.findByText('Failed to update your preference. Please try again.')).not.toBeNull();
+        expect(screen.getByText('Looped in @Matty.')).not.toBeNull();
+        expect(screen.getByRole('button', {name: "Don't show again"})).not.toBeNull();
+    });
+
+    test('keeps the loop-in error and retry when dismissal resolves before loop-in fails', async () => {
+        let rejectLoopIn!: (reason?: unknown) => void;
+        mockedDoLoopInAgent.mockImplementation(() => new Promise((_, reject) => {
+            rejectLoopIn = reject;
+        }));
+        mockedDoDisableAgentMentionReminder.mockImplementation(() => Promise.resolve());
+
+        renderPost({bot_user_id: BOT_USER_ID, bot_username: 'matty', bot_display_name: 'Matty', target_post_id: TARGET_POST_ID});
+
+        // Start the loop-in (stays pending), then dismiss (resolves).
+        fireEvent.click(screen.getByRole('link', {name: 'Click here to loop in @Matty'}));
+        fireEvent.click(screen.getByRole('button', {name: "Don't show again"}));
+
+        expect(await screen.findByText("You won't see this reminder again.")).not.toBeNull();
+
+        await act(async () => {
+            rejectLoopIn(new Error('nope'));
+        });
+
+        // The dismissal confirmation does not swallow the loop-in error or its retry link.
+        expect(await screen.findByText('Failed to loop in @Matty. Please try again.')).not.toBeNull();
+        expect(screen.getByRole('link', {name: 'Click here to loop in @Matty'})).not.toBeNull();
+        expect(screen.getByText("You won't see this reminder again.")).not.toBeNull();
         expect(screen.queryByRole('button', {name: "Don't show again"})).toBeNull();
     });
 
