@@ -260,6 +260,10 @@ const collapseOut = keyframes`
 
 const ExpandedRounds = styled.div<{$closing: boolean}>`
     display: grid;
+
+    // The implicit auto track sizes to min-content, so a long nowrap tool
+    // title would widen it past the post instead of ellipsizing.
+    grid-template-columns: minmax(0, 1fr);
     ${(props) => css`
         animation: ${props.$closing ? collapseOut : expandIn} ${EXPAND_MS}ms ease forwards;
     `}
