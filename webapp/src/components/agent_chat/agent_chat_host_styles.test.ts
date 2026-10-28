@@ -188,8 +188,13 @@ describe('hostThreadChatStyles message look', () => {
 
     test('links in your own bubble mix the link color toward the bubble text color, without an underline', () => {
         const link = ruleFor(text, '&&& .post.current--user .post__content > .post__img + div a:not(.post__permalink)');
-        expect(link).toContain('color: color-mix(in srgb, var(--link-color) 50%, var(--bubble-fg))');
+        expect(link).toContain('color: color-mix(in srgb, var(--link-color) 40%, var(--bubble-fg))');
         expect(link).not.toContain('text-decoration');
+    });
+
+    test('your own bubble has no hover or focus state', () => {
+        expect(ruleFor(text, '.post.current--user .post__content > .post__img + div:hover')).toBeNull();
+        expect(ruleFor(text, '.post.current--user .post__content > .post__img + div:focus-within')).toBeNull();
     });
 
     test('your own bubble reverses the colors, hides your name and puts the time under the bubble', () => {

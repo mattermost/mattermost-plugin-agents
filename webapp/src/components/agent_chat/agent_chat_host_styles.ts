@@ -66,8 +66,8 @@ export const THREAD_SCROLLER_SELECTOR = '#threadViewerScrollContainer';
 // No compass token covers content widths.
 export const CHAT_CONTENT_MAX_WIDTH = '800px';
 
-// A link on your own (reversed) bubble: the host link color, 50% toward the bubble's text color.
-const OWN_BUBBLE_LINK_COLOR = 'color-mix(in srgb, var(--link-color) 50%, var(--bubble-fg))';
+// A link on your own (reversed) bubble: the host link color, 40% of it mixed with the bubble's text color.
+const OWN_BUBBLE_LINK_COLOR = 'color-mix(in srgb, var(--link-color) 40%, var(--bubble-fg))';
 
 // Compact only: its text sits optically high in the shorter bubble, so it gets 2px more under it than over it.
 const BUBBLE_PADDING_BOTTOM_COMPACT = 'calc(var(--spacing-xxxs) + var(--spacing-xxxxs))';
@@ -427,11 +427,6 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         @media (prefers-reduced-motion: reduce) {
             transition: none;
         }
-    }
-
-    /* Shade the background toward the text color's opposite: lighter on light themes, darker on dark. */
-    ${activeBubble('.post.current--user')} {
-        background: linear-gradient(rgba(var(--bubble-fg-rgb), 0.12), rgba(var(--bubble-fg-rgb), 0.12)), var(--bubble-bg);
     }
 
     /* While editing, the host editor sits in the bubble: use the neutral bubble. */
