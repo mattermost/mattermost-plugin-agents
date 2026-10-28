@@ -230,6 +230,11 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return err
 	}
 
+	claimedContent, err := c.claimToolDecision(pendingTurn, pendingBlocks)
+	if err != nil {
+		return err
+	}
+
 	// Execute approved tools and build results. Blocks resolved in a prior
 	// call keep their status and are not part of this decision, so they enter
 	// neither audit list; anything auto-executed this call counts as accepted.
@@ -361,8 +366,12 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	if err != nil {
 		return fmt.Errorf("failed to marshal updated blocks: %w", err)
 	}
-	if updateErr := c.convService.UpdateTurnContent(pendingTurn.ID, updatedContent); updateErr != nil {
-		return fmt.Errorf("failed to update turn with resolved statuses: %w", updateErr)
+	swapped, err := c.convService.CompareAndSwapTurnContent(pendingTurn.ID, claimedContent, updatedContent)
+	if err != nil {
+		return fmt.Errorf("failed to update turn with resolved statuses: %w", err)
+	}
+	if !swapped {
+		return fmt.Errorf("turn %s changed while its tool calls ran", pendingTurn.ID)
 	}
 
 	// Write tool results as a tool_result turn. DecidedAt is set when no
@@ -585,10 +594,15 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 	}
 
 	now := model.GetMillis()
+	// Turns that record the decision (DecidedAt) are written first and
+	// conditionally: concurrent clicks race on the same first turn, and the
+	// loser fails before writing anything or streaming a second follow-up.
+	var decisionUpdates, otherUpdates []turnUpdate
 	for i := range turns {
 		blocks := decoded[i]
 
 		modified := false
+		recordsDecision := false
 		for j := range blocks {
 			switch blocks[j].Type {
 			case conversation.BlockTypeToolUse:
@@ -608,19 +622,42 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 				if _, ok := clickedPostToolUseIDs[blocks[j].ToolUseID]; ok && blocks[j].DecidedAt == nil {
 					blocks[j].DecidedAt = new(now)
 					modified = true
+					recordsDecision = true
 				}
 			}
 		}
 
-		if modified {
-			updatedContent, marshalErr := json.Marshal(blocks)
-			if marshalErr != nil {
-				return fmt.Errorf("failed to marshal updated blocks: %w", marshalErr)
-			}
-			if updateErr := c.convService.UpdateTurnContent(turns[i].ID, updatedContent); updateErr != nil {
-				return fmt.Errorf("failed to update turn shared flags: %w", updateErr)
-			}
+		if !modified {
+			continue
 		}
+		updatedContent, marshalErr := json.Marshal(blocks)
+		if marshalErr != nil {
+			return fmt.Errorf("failed to marshal updated blocks: %w", marshalErr)
+		}
+		update := turnUpdate{turn: &turns[i], content: updatedContent}
+		if recordsDecision {
+			decisionUpdates = append(decisionUpdates, update)
+		} else {
+			otherUpdates = append(otherUpdates, update)
+		}
+	}
+
+	updates := slices.Concat(decisionUpdates, otherUpdates)
+	for i, update := range updates {
+		swapped, updateErr := c.convService.CompareAndSwapTurnContent(update.turn.ID, update.turn.Content, update.content)
+		if updateErr == nil && swapped {
+			continue
+		}
+		if i == 0 && updateErr == nil {
+			return fmt.Errorf("share decision for post %s was already recorded: %w", post.Id, ErrStaleToolClick)
+		}
+		// A recorded decision without its companion writes would make a retry
+		// return early as already decided and never stream the follow-up.
+		c.undoTurnUpdates(updates[:i])
+		if updateErr != nil {
+			return fmt.Errorf("failed to update turn shared flags: %w", updateErr)
+		}
+		return fmt.Errorf("turn %s changed while recording the share decision", update.turn.ID)
 	}
 
 	// DMs stream the follow-up from HandleToolCall.
@@ -770,6 +807,48 @@ func resolveApprovedToolUseBlock(ctx context.Context, llmContext *llm.Context, b
 		llm.ToolCallInfo{ID: block.ID, Execution: execution},
 		func(args any) error { return json.Unmarshal(block.Input, args) },
 		llmContext)
+}
+
+// turnUpdate is a conditional rewrite of turn from its read content to content.
+type turnUpdate struct {
+	turn    *store.Turn
+	content json.RawMessage
+}
+
+// undoTurnUpdates restores applied updates, newest first. It is best effort:
+// a restore that fails or finds the turn changed again is logged and skipped.
+func (c *Conversations) undoTurnUpdates(applied []turnUpdate) {
+	for _, update := range slices.Backward(applied) {
+		swapped, err := c.convService.CompareAndSwapTurnContent(update.turn.ID, update.content, update.turn.Content)
+		if err != nil || !swapped {
+			c.mmClient.LogError("Failed to undo a partial tool decision write", "turn_id", update.turn.ID, "error", err)
+		}
+	}
+}
+
+// claimToolDecision marks the turn's pending tool_use blocks accepted, but only
+// while the turn is unchanged since it was read, so a double click, a retry, or
+// an HA peer handling the same click cannot execute the calls twice. It returns
+// the claimed content for the final conditional write.
+func (c *Conversations) claimToolDecision(turn *store.Turn, blocks []conversation.ContentBlock) (json.RawMessage, error) {
+	claimed := slices.Clone(blocks)
+	for i := range claimed {
+		if claimed[i].Type == conversation.BlockTypeToolUse && claimed[i].Status == conversation.StatusPending {
+			claimed[i].Status = conversation.StatusAccepted
+		}
+	}
+	content, err := json.Marshal(claimed)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal claimed blocks: %w", err)
+	}
+	swapped, err := c.convService.CompareAndSwapTurnContent(turn.ID, turn.Content, content)
+	if err != nil {
+		return nil, fmt.Errorf("failed to claim tool decision: %w", err)
+	}
+	if !swapped {
+		return nil, fmt.Errorf("tool calls on turn %s were already decided: %w", turn.ID, ErrStaleToolClick)
+	}
+	return content, nil
 }
 
 // findPendingToolTurn returns the assistant turn linked to clickedPostID along

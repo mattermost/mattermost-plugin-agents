@@ -4,6 +4,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -486,6 +487,24 @@ func (m *mockConversationStore) GetTurnByPostID(postID string) (*store.Turn, err
 		return nil, nil
 	}
 	return turn, nil
+}
+
+func (m *mockConversationStore) CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error) {
+	if m.err != nil {
+		return false, m.err
+	}
+	for convID, turns := range m.turns {
+		for i, turn := range turns {
+			if turn.ID == id {
+				if !bytes.Equal(turn.Content, expected) {
+					return false, nil
+				}
+				m.turns[convID][i].Content = content
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func (m *mockConversationStore) UpdateTurnContent(id string, content json.RawMessage) error {

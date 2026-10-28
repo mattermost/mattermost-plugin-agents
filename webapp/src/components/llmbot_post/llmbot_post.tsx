@@ -27,7 +27,7 @@ import {ServerToolUse} from '@/types/conversation';
 
 import HTMLArtifacts from '../html_artifacts/html_artifacts';
 import {needsViewerDecision, selectDecisionToolCalls} from '../tool_decisions';
-import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
+import {ToolApprovalStage, ToolCall, ToolCallPhase, ToolCallStatus} from '../tool_types';
 import {Annotation} from '../citations/types';
 
 import {
@@ -36,7 +36,7 @@ import {
     computeRenderedRounds,
     deriveApprovalStageForPost,
 } from './turn_content_utils';
-import {deriveActivity, isTerminalToolStatus} from './activity_items';
+import {deriveActivity} from './activity_items';
 import {ControlsBarComponent} from './controls_bar';
 import {extractPermalinkData} from './permalink_data';
 import {FoldingText, useFoldingText} from './folding_text';
@@ -59,6 +59,7 @@ export interface PostUpdateWebsocketMessage {
     progress_phase?: AgentProgressPhase
     progress_seq?: number
     tool_call?: string
+    tool_call_phase?: ToolCallPhase
     reasoning?: string
     annotations?: string
     server_tool?: string
@@ -75,12 +76,6 @@ interface LLMBotPostProps {
     post: any;
     websocketRegister?: (postID: string, listenerID: string, handler: (msg: PluginWebSocketMessage<PostUpdateWebsocketMessage>) => void) => void;
     websocketUnregister?: (postID: string, listenerID: string) => void;
-}
-
-// ToolRunner emits one tool_call event per round with pending statuses, then one
-// with terminal statuses after execution. The terminal one is the round boundary.
-function isResolvedToolCallEvent(toolCalls: ToolCall[]): boolean {
-    return toolCalls.length > 0 && toolCalls.every((tc) => isTerminalToolStatus(tc.status));
 }
 
 export const LLMBotPost = (props: LLMBotPostProps) => {
@@ -302,7 +297,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 setGenerating(true);
                 try {
                     const parsedToolCalls = JSON.parse(data.tool_call) as ToolCall[];
-                    if (isResolvedToolCallEvent(parsedToolCalls)) {
+                    if (data.tool_call_phase === 'resolved') {
                         const live = liveRef.current;
                         setLiveRounds((prev) => [
                             ...prev,

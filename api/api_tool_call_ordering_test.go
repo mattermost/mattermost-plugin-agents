@@ -136,9 +136,13 @@ func TestToolApprovalClickOnFirstVisiblePendingCard(t *testing.T) {
 
 			events := make(chan llm.TextStreamEvent, len(test.priorRounds)+2)
 			for _, round := range test.priorRounds {
-				events <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: round}
+				phase := llm.ToolCallPhaseExecuting
+				if round[0].Status != llm.ToolCallStatusPending {
+					phase = llm.ToolCallPhaseResolved
+				}
+				events <- llm.TextStreamEvent{Type: llm.EventTypeToolCallBatch, Value: llm.ToolCallBatch{Phase: phase, Calls: round}}
 			}
-			events <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{test.toolCall}}
+			events <- llm.TextStreamEvent{Type: llm.EventTypeToolCallBatch, Value: llm.ToolCallBatch{Phase: llm.ToolCallPhaseAwaitingDecision, Calls: []llm.ToolCall{test.toolCall}}}
 			events <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 			close(events)
 

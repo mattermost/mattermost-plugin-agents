@@ -500,11 +500,12 @@ describe('LLMBotPost mid-stream text routing', () => {
         });
     }
 
-    // ToolRunner re-emits a round's calls with terminal statuses once they ran; that closes the round.
+    // ToolRunner re-emits a round's calls in the resolved phase once they ran; that closes the round.
     function resolvedToolCall(id: string, name: string) {
         return {
             control: 'tool_call',
             tool_call: JSON.stringify([{id, name, description: '', status: ToolCallStatus.Success}]),
+            tool_call_phase: 'resolved' as const,
         };
     }
 
@@ -912,6 +913,7 @@ describe('LLMBotPost rounds awaiting a decision', () => {
                 post_id: 'post_1',
                 control: 'tool_call',
                 tool_call: JSON.stringify([{id: 'tc_search', name: 'search_tools', description: '', status: ToolCallStatus.Success}]),
+                tool_call_phase: 'resolved',
             }));
             listener?.(postUpdateMessage({post_id: 'post_1', next: 'I will post that'}));
             listener?.(postUpdateMessage({
