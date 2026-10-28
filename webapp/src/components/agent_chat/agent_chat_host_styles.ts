@@ -183,6 +183,11 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         padding-bottom: var(--spacing-xxxl);
     }
 
+    /* Compact lists end closer to the last post. */
+    .innerList:has(.post--compact) {
+        padding-bottom: var(--spacing-l);
+    }
+
     /*
      * The plugin's pill composer replaces the host reply box. The host renders it
      * as the last child of the flex column \`.virtual-list__ctr\`, after the

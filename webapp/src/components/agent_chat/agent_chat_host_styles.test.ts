@@ -163,6 +163,10 @@ describe('hostThreadChatStyles message look', () => {
         });
     });
 
+    test('a compact list ends closer to its last post', () => {
+        expect(ruleFor(cssText(hostThreadChatStyles()), '.innerList:has(.post--compact)')).toContain('padding-bottom: var(--spacing-l)');
+    });
+
     test('the agent\'s reply keeps the bubble shape, tinted only on hover, and hides its header', () => {
         const rule = ruleFor(text, '.post .post__content > .post__img + div');
         expect(rule).toContain('padding: var(--spacing-xs) var(--spacing-l)');
