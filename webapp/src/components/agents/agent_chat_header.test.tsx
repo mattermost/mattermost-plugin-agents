@@ -153,20 +153,23 @@ describe('AgentChatHeader', () => {
     });
 
     test.each([
-        {name: 'a new chat has no subtitle (the title is already the agent)', props: {}, expected: null},
-        {name: 'an open chat shows the agent name after its title, in the same button', props: {rootId: 'root1'}, expected: 'Matty'},
-    ])('agent name subtitle: $name', async ({props, expected}) => {
+        {name: 'a new chat has no agent name next to the title (the title is already the agent)', props: {}, expected: null},
+        {name: 'an open chat shows the agent name outside the dropdown, to its right', props: {rootId: 'root1'}, expected: 'Matty'},
+    ])('agent name: $name', async ({props, expected}) => {
         mockGetConversation.mockResolvedValue({id: CONVERSATION_ID, title: 'Quarterly plan', turns: []});
         renderHeader(props, true);
-        await waitFor(() => expect(screen.getByTestId('agent-chat-menu-button')).toBeTruthy());
-        const button = screen.getByTestId('agent-chat-menu-button');
+        const button = await screen.findByTestId('agent-chat-menu-button');
         if (expected === null) {
-            expect(button.textContent).toBe('Matty');
+            expect(screen.queryByTestId('agent-chat-agent-name')).toBeNull();
             return;
         }
-        await waitFor(() => expect(button.textContent).toBe(`Quarterly plan${expected}`));
-        const heading = within(button).getByRole('heading', {level: 1});
-        expect(heading.nextElementSibling?.textContent).toBe(expected);
+        const name = await screen.findByTestId('agent-chat-agent-name');
+        expect(name.textContent).toBe(expected);
+        expect(button.contains(name)).toBe(false);
+        expect(button.textContent).toBe('Quarterly plan');
+
+        // To the right of the dropdown's wrapper in the title row.
+        expect(button.closest('span')?.nextElementSibling).toBe(name);
     });
 
     const CHATS = ['Listed chat', 'Quarterly plan', 'New chat', 'Older chat'];

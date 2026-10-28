@@ -76,11 +76,14 @@ const AgentChatHeader = ({bot, rootId, onOpenSettings, onNewChat, onArchived}: A
                             onClick={onClick}
                             testId='agent-chat-menu-button'
                             heading={true}
-                            subtitle={rootId ? bot.displayName : ''}
-                            subtitlePlacement='beside'
                         />
                     )}
                 />
+                {rootId && (
+                    <AgentName data-testid='agent-chat-agent-name'>
+                        {bot.displayName}
+                    </AgentName>
+                )}
             </Title>
             <Actions>
                 {showTools && (
@@ -134,6 +137,21 @@ const Title = styled.div`
     align-items: center;
     gap: var(--spacing-xs);
     padding-inline: var(--spacing-xs);
+`;
+
+// Once a chat has its own title, the agent's name sits to the right of the title's dropdown, outside
+// it: body-100 type in the dim text color. It gives way (ellipsis) before the buttons on the right do.
+const AgentName = styled.span`
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    color: rgba(var(--center-channel-color-rgb), 0.64);
+    font-family: var(--font-family-body);
+    font-size: var(--font-size-100);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-100);
+    text-overflow: ellipsis;
+    white-space: nowrap;
 `;
 
 // A disabled button fires no pointer events, so the tooltip listens on this wrapper.
