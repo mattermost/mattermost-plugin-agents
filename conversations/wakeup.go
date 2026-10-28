@@ -188,8 +188,9 @@ func (c *Conversations) consumeWakeMarker(key string, expected wakeMarker) (bool
 }
 
 // cancelThreadWake cancels the thread's pending wake, whichever user's
-// conversation scheduled it, and reports whether there was one.
-func (c *Conversations) cancelThreadWake(markerKey string) bool {
+// conversation scheduled it, and reports whether there was one. channelID
+// scopes the resolve notification; pass "" when the caller has no channel.
+func (c *Conversations) cancelThreadWake(markerKey, channelID string) bool {
 	if c.wakeScheduler == nil {
 		return false
 	}
@@ -208,7 +209,7 @@ func (c *Conversations) cancelThreadWake(markerKey string) bool {
 		return false
 	}
 	c.wakeScheduler.Cancel(WakeJobKeyPrefix + marker.ConversationID)
-	c.notifyConversationUpdated(marker.ConversationID)
+	c.notifyConversationUpdated(marker.ConversationID, channelID, marker.RequesterUserID)
 	return true
 }
 
@@ -218,16 +219,27 @@ func (c *Conversations) cancelThreadWake(markerKey string) bool {
 // than from the client's countdown alone.
 const WebsocketEventConversationUpdated = "conversation_updated"
 
-// notifyConversationUpdated asks every client to refetch the conversation. The
-// payload carries only an id, so clients without it cached ignore the event.
-func (c *Conversations) notifyConversationUpdated(conversationID string) {
+// notifyConversationUpdated asks clients in the conversation's channel to
+// refetch it. The payload carries only an id, but the broadcast is scoped to
+// the channel so the resolve timing is not disclosed outside it; it falls back
+// to the requester when no channel is known, and never broadcasts unscoped.
+func (c *Conversations) notifyConversationUpdated(conversationID, channelID, fallbackUserID string) {
 	if conversationID == "" {
+		return
+	}
+	broadcast := &model.WebsocketBroadcast{}
+	switch {
+	case channelID != "":
+		broadcast.ChannelId = channelID
+	case fallbackUserID != "":
+		broadcast.UserId = fallbackUserID
+	default:
 		return
 	}
 	c.mmClient.PublishWebSocketEvent(
 		WebsocketEventConversationUpdated,
 		map[string]any{"conversation_id": conversationID},
-		&model.WebsocketBroadcast{},
+		broadcast,
 	)
 }
 
@@ -334,7 +346,7 @@ func (c *Conversations) HandleWaitCancel(userID string, post *model.Post) error 
 	if marker.RequesterUserID != userID {
 		return ErrNotWaitOwner
 	}
-	if !c.cancelThreadWake(responsePostMarkerKey(post)) {
+	if !c.cancelThreadWake(responsePostMarkerKey(post), post.ChannelId) {
 		return ErrNoPendingWait
 	}
 	return nil
@@ -350,7 +362,7 @@ func (c *Conversations) getOrCreateConversation(params conversation.GetOrCreateP
 	if err != nil {
 		return nil, err
 	}
-	if c.cancelThreadWake(threadWakeMarkerKey(params.RootPostID, params.BotID)) {
+	if c.cancelThreadWake(threadWakeMarkerKey(params.RootPostID, params.BotID), params.ChannelID) {
 		if err := c.convService.AppendSyntheticUserTurn(result.Conversation.ID, conversation.SyntheticKindWakeCanceled, mmtools.WakeCanceledUserMessage); err != nil {
 			c.mmClient.LogError("wait_for_async_work: failed to record canceled wait", "error", err, "conversation_id", result.Conversation.ID)
 		}
@@ -446,7 +458,7 @@ func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) (er
 	}
 	// The wait is resolving; tell clients to drop the "waiting" footer now
 	// rather than waiting for the countdown to run out.
-	c.notifyConversationUpdated(job.ConversationID)
+	c.notifyConversationUpdated(job.ConversationID, post.ChannelId, job.RequesterUserID)
 
 	conv, err := c.convService.GetConversation(job.ConversationID)
 	if err != nil {
