@@ -512,7 +512,7 @@ const ChevronSlot = styled.span`
     transition: opacity var(--duration-quick) var(--ease-transition);
 
     &:focus-within {
-        opacity: 1;
+        opacity: 0.64;
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -577,10 +577,14 @@ const AgentRow = styled.div`
         display: none;
     }
 
-    &:hover ${NewChatSlot},
+    &:hover ${NewChatSlot} {
+        opacity: 1;
+    }
+
+    /* The chevron is a quiet affordance, at the same strength as the sidebar icons. */
     &:hover ${ChevronSlot},
     &:focus-within ${ChevronSlot} {
-        opacity: 1;
+        opacity: 0.64;
     }
 `;
 
