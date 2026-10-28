@@ -1,9 +1,11 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {ReactNode, useEffect, useRef} from 'react';
+import React, {ReactNode, useContext, useEffect, useRef} from 'react';
+import {ReactReduxContext} from 'react-redux';
 import styled from 'styled-components';
 
+import CustomPromptsManagement from '@/components/custom_prompts/custom_prompts_management';
 import CustomPromptsPage from '@/components/custom_prompts/custom_prompts_page';
 
 import AgentChatPage from './agent_chat_page';
@@ -46,6 +48,11 @@ const AgentsPage = ({renderers = defaultContentRenderers}: AgentsPageProps) => {
     const pageRef = useRef<HTMLDivElement>(null);
     const route = useAgentsRoute();
     const {toAll, toPrompts} = route;
+
+    // The host renders the plugin's root components (the Custom Prompts modal among them) only in the
+    // channel, backstage and popout layouts, not in product routes, so the product mounts its own copy
+    // for the composer's "Manage prompts". It needs the plugin's redux store.
+    const hasStore = useContext(ReactReduxContext) !== null;
 
     useEffect(() => {
         // The host webapp owns `app__body` on document.body (see MM-67913 / Boards #188).
@@ -92,6 +99,7 @@ const AgentsPage = ({renderers = defaultContentRenderers}: AgentsPageProps) => {
             <ContentOutlet>
                 {renderers[route.view](route)}
             </ContentOutlet>
+            {hasStore && <CustomPromptsManagement/>}
         </PageWrapper>
     );
 };

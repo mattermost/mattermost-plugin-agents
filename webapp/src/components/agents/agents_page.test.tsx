@@ -3,6 +3,8 @@
 
 import React from 'react';
 import {act, render, screen} from '@testing-library/react';
+import {Provider} from 'react-redux';
+import {createStore} from 'redux';
 
 import AgentsPage, {AGENTS_ROUTE, ContentRenderers} from './agents_page';
 
@@ -18,6 +20,9 @@ jest.mock('react-intl', () => {
 
 // The sidebar's "Your agents" section pulls in the plugin's redux-backed bots module.
 jest.mock('@/bots', () => ({useBotlist: () => ({bots: []})}));
+
+// The host mounts root components only outside product routes; the page mounts the Custom Prompts modal.
+jest.mock('@/components/custom_prompts/custom_prompts_management', () => ({__esModule: true, default: () => <div data-testid='custom-prompts-modal-root'/>}));
 
 jest.mock('./agents_list', () => ({__esModule: true, default: () => <div>{'agents list'}</div>}));
 
@@ -45,6 +50,20 @@ const renderPage = (renderers?: ContentRenderers) => render(
 );
 
 describe('AgentsPage', () => {
+    test('mounts the Custom Prompts modal when the plugin store is available, and not without one', () => {
+        window.WebappUtils = {browserHistory: makeHistory(AGENTS_ROUTE)} as any;
+        const {unmount} = render(<AgentsPage/>);
+        expect(screen.queryByTestId('custom-prompts-modal-root')).toBeNull();
+        unmount();
+
+        render(
+            <Provider store={createStore(() => ({}))}>
+                <AgentsPage/>
+            </Provider>,
+        );
+        expect(screen.getByTestId('custom-prompts-modal-root')).toBeTruthy();
+    });
+
     afterEach(() => {
         delete window.WebappUtils;
     });
