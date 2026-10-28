@@ -417,26 +417,34 @@ const Section = styled.section`
     padding-bottom: var(--spacing-s);
 `;
 
+// The channel sidebar category header from compass-design (compass-proto ChannelsSidebar
+// `channels-sidebar__category`): 32px tall, 12px semibold uppercase body font (Open Sans) with
+// 0.02em tracking, sidebar text at 75%. compass-ui does not ship it yet, so it is composed here.
 const SectionHeader = styled.div`
     display: flex;
     align-items: center;
-    padding: var(--spacing-xxxs) var(--spacing-l);
+    height: var(--spacing-xxxl);
+    padding: 0 var(--spacing-l);
 `;
 
+// && keeps the type over any host heading rule (the host styles h3 for its own pages).
 const SectionLabel = styled.h3`
-    flex: 1 1 auto;
-    min-width: 0;
-    margin: 0;
-    overflow: hidden;
-    font-family: var(--font-family-body);
-    font-size: var(--font-size-75);
-    font-weight: var(--font-weight-semibold);
-    line-height: var(--line-height-75);
-    text-overflow: ellipsis;
-    text-transform: uppercase;
-    white-space: nowrap;
-    color: var(--sidebar-text);
-    opacity: 0.75;
+    && {
+        flex: 1 1 auto;
+        min-width: 0;
+        margin: 0;
+        overflow: hidden;
+        font-family: var(--font-family-body);
+        font-size: var(--font-size-75);
+        font-weight: var(--font-weight-semibold);
+        letter-spacing: 0.02em;
+        line-height: var(--line-height-75);
+        text-overflow: ellipsis;
+        text-transform: uppercase;
+        white-space: nowrap;
+        color: var(--sidebar-text);
+        opacity: 0.75;
+    }
 `;
 
 const StatusMessage = styled.div`
@@ -627,7 +635,7 @@ const ThreadListItem = styled.li<{$active: boolean}>`
        control and compass takes that 2px back from the control's padding; do the same so the
        icon and label do not shift when the row becomes active. */
     && [class*='__left'] {
-        padding-left: ${(p) => (p.$active ? 'calc(var(--spacing-xxxxl) - var(--spacing-xxxxs))' : 'var(--spacing-xxxxl)')};
+        padding-left: ${(p) => (p.$active ? 'calc(var(--spacing-xxxxl) - var(--spacing-l) - var(--spacing-xxxxs))' : 'calc(var(--spacing-xxxxl) - var(--spacing-l))')};
     }
 
     &:hover ${GeneratingSlot},
@@ -645,7 +653,7 @@ const ThreadListItem = styled.li<{$active: boolean}>`
 
 const MoreRow = styled.div`
     display: flex;
-    padding: var(--spacing-xxxxs) var(--spacing-l) var(--spacing-xxxxs) var(--spacing-xxxxl);
+    padding: var(--spacing-xxxxs) var(--spacing-l) var(--spacing-xxxxs) calc(var(--spacing-xxxxl) - var(--spacing-l));
 `;
 
 const ArchiveError = styled.p`
