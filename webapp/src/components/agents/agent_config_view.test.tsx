@@ -355,6 +355,46 @@ describe('AgentConfigView', () => {
         expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
     });
 
+    describe('in a modal', () => {
+        const renderModalView = () => {
+            const onBack = jest.fn();
+            const closeRequestRef: React.MutableRefObject<(() => void) | null> = {current: null};
+            const result = render(
+                <IntlProvider locale='en'>
+                    <AgentConfigView
+                        mode='create'
+                        variant='modal'
+                        services={services}
+                        closeRequestRef={closeRequestRef}
+                        onBack={onBack}
+                        onSaved={jest.fn()}
+                    />
+                </IntlProvider>,
+            );
+            return {...result, onBack, closeRequestRef};
+        };
+
+        test('has no Back button, and the owner closes it through the close request', () => {
+            const {onBack, closeRequestRef} = renderModalView();
+            expect(screen.queryByRole('button', {name: 'Back to agents'})).toBeNull();
+
+            act(() => closeRequestRef.current?.());
+            expect(onBack).toHaveBeenCalledTimes(1);
+        });
+
+        test('the close request asks before discarding changes, and Escape is left to the modal', () => {
+            const {onBack, closeRequestRef} = renderModalView();
+            fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'Unsaved Agent'}});
+
+            fireEvent.keyDown(document, {key: 'Escape'});
+            expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
+
+            act(() => closeRequestRef.current?.());
+            expect(screen.getByRole('dialog', {name: 'Discard changes?'})).not.toBeNull();
+            expect(onBack).not.toHaveBeenCalled();
+        });
+    });
+
     // Regression test for MM-69185.
     //
     // After saving on the MCP tab, navigating back to the same agent's MCP tab and

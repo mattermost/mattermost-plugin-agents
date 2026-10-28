@@ -10,9 +10,9 @@ import {Button} from '@mattermost/compass-ui/components/button';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
-import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {createAgent, getUserMCPTools, updateAgent, uploadAgentAvatar} from '@/client';
+import {TooltipAboveModals} from '@/components/dropdown';
 import {
     AgentExportDocument,
     UserAgent,
@@ -213,13 +213,27 @@ type Props = {
 
     /** An agent export file to load into the form when the view opens. */
     importedDocument?: AgentExportDocument;
+
+    /**
+     * 'page' (default) is the full page editor. 'modal' is the same view inside a modal sheet: no Back
+     * button (the modal has its close button), less room above the title, and the owner handles Escape
+     * (see closeRequestRef).
+     */
+    variant?: 'page' | 'modal';
+
+    /**
+     * Set to the view's close request while it is mounted: it closes at once, or asks to discard
+     * unsaved changes first. A modal's close button, backdrop and Escape all go through it.
+     */
+    closeRequestRef?: React.MutableRefObject<(() => void) | null>;
 }
 
 const DISCARD_CHANGES_TITLE_ID = 'discard-agent-changes-title';
 const RENAME_AGENT_TITLE_ID = 'rename-agent-title';
 
 const AgentConfigView = (props: Props) => {
-    const {mode, agent, services, onBack, onSaved, onRestored, importedDocument} = props;
+    const {mode, agent, services, onBack, onSaved, onRestored, importedDocument, variant = 'page', closeRequestRef} = props;
+    const inModal = variant === 'modal';
     const intl = useIntl();
 
     // Parent owns the manage_system check via useCurrentUserHasSystemPermission.
@@ -311,11 +325,23 @@ const AgentConfigView = (props: Props) => {
         setShowDiscardDialog(false);
     }, []);
 
+    useEffect(() => {
+        if (closeRequestRef) {
+            closeRequestRef.current = requestBack;
+        }
+        return () => {
+            if (closeRequestRef) {
+                closeRequestRef.current = null;
+            }
+        };
+    }, [closeRequestRef, requestBack]);
+
     // Escape key: same as back — confirm when there are unsaved changes.
     // Skip Escapes a child already handled (e.g. closing a picker menu or a nested dialog).
+    // A modal's shell owns Escape (it also defers to open menus and dialogs) and calls closeRequestRef.
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
-            if (e.key !== 'Escape' || e.defaultPrevented) {
+            if (inModal || e.key !== 'Escape' || e.defaultPrevented) {
                 return;
             }
             if (dialogOpenRef.current) {
@@ -326,7 +352,7 @@ const AgentConfigView = (props: Props) => {
         };
         document.addEventListener('keydown', handler);
         return () => document.removeEventListener('keydown', handler);
-    }, [requestBack]);
+    }, [requestBack, inModal]);
 
     const updateDraft = useCallback((updates: Partial<AgentDraft>) => {
         setDraft((prev) => ({...prev, ...updates}));
@@ -595,15 +621,17 @@ const AgentConfigView = (props: Props) => {
     return (
         <>
             <ViewContainer>
-                <ViewHeader>
+                <ViewHeader $modal={inModal}>
                     <HeaderLeading>
-                        <BackButton
-                            icon={<Icon glyph={<ArrowLeftIcon/>}/>}
-                            size='medium'
-                            onClick={requestBack}
-                            disabled={saving}
-                            aria-label={intl.formatMessage({defaultMessage: 'Back to agents'})}
-                        />
+                        {!inModal && (
+                            <BackButton
+                                icon={<Icon glyph={<ArrowLeftIcon/>}/>}
+                                size='medium'
+                                onClick={requestBack}
+                                disabled={saving}
+                                aria-label={intl.formatMessage({defaultMessage: 'Back to agents'})}
+                            />
+                        )}
                         <HeaderTitleBlock>
                             <ViewTitle>{title}</ViewTitle>
                             {versionLine}
@@ -611,7 +639,7 @@ const AgentConfigView = (props: Props) => {
                     </HeaderLeading>
                     <HeaderActions>
                         {canViewHistory && (
-                            <WithTooltip title={intl.formatMessage({defaultMessage: 'Version history'})}>
+                            <TooltipAboveModals title={intl.formatMessage({defaultMessage: 'Version history'})}>
                                 <IconButton
                                     icon={<Icon glyph={<UpdateIcon/>}/>}
                                     size='medium'
@@ -619,7 +647,7 @@ const AgentConfigView = (props: Props) => {
                                     aria-haspopup='dialog'
                                     aria-label={intl.formatMessage({defaultMessage: 'Version history'})}
                                 />
-                            </WithTooltip>
+                            </TooltipAboveModals>
                         )}
                         <Button
                             emphasis='tertiary'
@@ -874,11 +902,11 @@ const ViewContainer = styled.div`
     width: 100%;
 `;
 
-const ViewHeader = styled.div`
+const ViewHeader = styled.div<{$modal: boolean}>`
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: var(--spacing-xxxxxl) 0 var(--spacing-l) 0;
+    padding: ${({$modal}) => ($modal ? 'var(--spacing-xs)' : 'var(--spacing-xxxxxl)')} 0 var(--spacing-l) 0;
     flex-shrink: 0;
 `;
 

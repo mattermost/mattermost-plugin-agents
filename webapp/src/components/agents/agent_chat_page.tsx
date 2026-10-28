@@ -20,7 +20,7 @@ import AgentChatThreadView, {isThreadViewerAvailable} from '../agent_chat/agent_
 import AgentNewChat from '../agent_chat/agent_new_chat';
 
 import AgentChatHeader from './agent_chat_header';
-import AgentConfigView from './agent_config_view';
+import AgentSettingsModal from './agent_settings_modal';
 import {useAgentDMChannel} from './use_agent_dm_channel';
 import {useAgentEditAccess} from './use_agent_edit_access';
 
@@ -104,32 +104,6 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
         );
     }
 
-    if (settingsOpen && access.status === 'allowed') {
-        const close = () => setSettingsOpen(false);
-        return (
-            <SettingsFrame>
-                <SettingsColumn>
-                    <AgentConfigView
-                        mode='edit'
-                        agent={access.agent}
-                        services={access.services}
-                        onBack={close}
-                        onSaved={() => {
-                            close();
-                            reloadAccess();
-
-                            // A rename or new avatar shows up in the header and sidebar.
-                            fetchAndStoreBots(dispatch).catch((e: unknown) => {
-                                console.error('Failed to refresh agents after saving settings:', e); // eslint-disable-line no-console
-                            });
-                        }}
-                        onRestored={reloadAccess}
-                    />
-                </SettingsColumn>
-            </SettingsFrame>
-        );
-    }
-
     let body;
     if (dm.status === 'error') {
         body = (
@@ -172,21 +146,44 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
         );
     }
 
+    const closeSettings = () => setSettingsOpen(false);
+
+    // The settings open over the chat, so its state (the composer draft, the scroll position) stays.
     return (
-        <ChatPane
-            aria-label={intl.formatMessage({defaultMessage: 'Chat with {name}'}, {name: bot.displayName})}
-        >
-            <AgentChatHeader
-                bot={bot}
-                rootId={dm.status === 'ready' && rootId && validRootId === rootId ? rootId : ''}
-                onNewChat={newChat}
-                onArchived={newChat}
-                {...(access.status === 'allowed' ? {onOpenSettings: () => setSettingsOpen(true)} : {})}
-            />
-            <AgentChatDropZone testId='agent-chat-file-drop-zone'>
-                {body}
-            </AgentChatDropZone>
-        </ChatPane>
+        <>
+            <ChatPane
+                aria-label={intl.formatMessage({defaultMessage: 'Chat with {name}'}, {name: bot.displayName})}
+            >
+                <AgentChatHeader
+                    bot={bot}
+                    rootId={dm.status === 'ready' && rootId && validRootId === rootId ? rootId : ''}
+                    onNewChat={newChat}
+                    onArchived={newChat}
+                    {...(access.status === 'allowed' ? {onOpenSettings: () => setSettingsOpen(true)} : {})}
+                />
+                <AgentChatDropZone testId='agent-chat-file-drop-zone'>
+                    {body}
+                </AgentChatDropZone>
+            </ChatPane>
+            {access.status === 'allowed' && (
+                <AgentSettingsModal
+                    show={settingsOpen}
+                    agent={access.agent}
+                    services={access.services}
+                    onClose={closeSettings}
+                    onSaved={() => {
+                        closeSettings();
+                        reloadAccess();
+
+                        // A rename or new avatar shows up in the header and sidebar.
+                        fetchAndStoreBots(dispatch).catch((e: unknown) => {
+                            console.error('Failed to refresh agents after saving settings:', e); // eslint-disable-line no-console
+                        });
+                    }}
+                    onRestored={reloadAccess}
+                />
+            )}
+        </>
     );
 };
 
@@ -332,30 +329,6 @@ const CenteredState = styled.div`
     gap: var(--spacing-s);
     min-height: 0;
     padding: var(--spacing-xxxxl);
-`;
-
-// Same column as the All agents editor (agents_list.tsx ContentColumn); no
-// compass token covers content widths.
-const SETTINGS_MAX_WIDTH = '960px';
-
-const SettingsFrame = styled.div`
-    display: flex;
-    flex: 1 1 auto;
-    flex-direction: column;
-    min-height: 0;
-    height: 100%;
-    overflow: hidden;
-`;
-
-const SettingsColumn = styled.div`
-    display: flex;
-    flex: 1 1 auto;
-    flex-direction: column;
-    width: 100%;
-    max-width: ${SETTINGS_MAX_WIDTH};
-    min-height: 0;
-    margin: 0 auto;
-    padding: 0 var(--spacing-xxxl);
 `;
 
 export default AgentChatPage;

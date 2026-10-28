@@ -472,22 +472,27 @@ describe('AgentChatPage', () => {
         error.mockRestore();
     });
 
-    test('Agent settings opens the existing agent editor in place and Back returns to the chat', async () => {
+    test('Agent settings opens the agent editor in a modal over the chat, which stays mounted', async () => {
         mockGetAgents.mockResolvedValue({agents: [agent({creatorID: 'me'})]});
         mockGetServices.mockResolvedValue([{id: 'svc1'}]);
         renderPage(makeStore({bots: [makeBot('bot1', 'dm1')], loadedChannels: ['dm1'], systemPermissions: ['manage_own_agent']}));
-        await screen.findByRole('textbox', {name: 'Message Agent bot1'});
+        const composer = await screen.findByRole('textbox', {name: 'Message Agent bot1'});
         await act(async () => {
             await Promise.resolve();
         });
+        expect(screen.queryByText('config for agent1')).toBeNull();
 
         fireEvent.click(screen.getByRole('button', {name: 'Agent bot1 options'}));
         fireEvent.click(screen.getByRole('menuitem', {name: 'Agent settings'}));
         expect(await screen.findByText('config for agent1')).toBeTruthy();
-        expect(mockConfigViewProps).toHaveBeenLastCalledWith(expect.objectContaining({mode: 'edit', services: [{id: 'svc1'}]}));
+        expect(mockConfigViewProps).toHaveBeenLastCalledWith(expect.objectContaining({mode: 'edit', variant: 'modal', services: [{id: 'svc1'}]}));
+
+        // The chat is still there (hidden from assistive tech behind the modal), the same element.
+        expect(screen.getByRole('textbox', {name: 'Message Agent bot1', hidden: true})).toBe(composer);
 
         fireEvent.click(screen.getByRole('button', {name: 'Back'}));
-        expect(await screen.findByRole('textbox', {name: 'Message Agent bot1'})).toBeTruthy();
+        await waitFor(() => expect(screen.queryByText('config for agent1')).toBeNull());
+        expect(screen.getByRole('textbox', {name: 'Message Agent bot1'})).toBe(composer);
     });
 
     test('the thread renders inside the chat wrapper that carries the bubble and width styles', async () => {
