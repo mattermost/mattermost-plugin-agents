@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
@@ -27,7 +28,9 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
+	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -503,6 +506,74 @@ func TestHandleTranscribeFileDeniedByFilePolicy(t *testing.T) {
 			require.Equal(t, test.wantAdminRead, adminReadCalled,
 				"admin GetFileInfo/GetFile must run only after the caller's file policy allows access")
 			assert.NotContains(t, rec.Body.String(), "sensitive recording contents")
+		})
+	}
+}
+
+// stubWakeScheduler satisfies conversations.WakeScheduler for wait-control
+// route tests, which exercise authorization before any scheduling happens.
+type stubWakeScheduler struct{ canceled []string }
+
+func (s *stubWakeScheduler) ScheduleOnce(string, time.Time, any) (*cluster.JobOnce, error) {
+	return nil, nil
+}
+func (s *stubWakeScheduler) Cancel(key string) { s.canceled = append(s.canceled, key) }
+
+// TestWaitControlAuthorization pins that the wait check-now / cancel routes
+// reject a requester who did not schedule the wait (403) and a request against
+// a post with no pending wait (409), through the real route + service wiring.
+func TestWaitControlAuthorization(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	const ownerID = "owneruser0123456789012345a"
+	markerKey := "wait_thread_postid_" + testBotUserID
+	markerBytes := func(requester string) []byte {
+		raw, err := json.Marshal(map[string]any{
+			"conversation_id":   "conv-wait",
+			"scheduled_at":      1000,
+			"response_post_id":  "postid",
+			"requester_user_id": requester,
+			"resume_at":         600000,
+			"duration_minutes":  10,
+		})
+		require.NoError(t, err)
+		return raw
+	}
+
+	tests := []struct {
+		name       string
+		endpoint   string
+		marker     []byte
+		wantStatus int
+	}{
+		{name: "non-owner cannot cancel", endpoint: "/post/postid/wait/cancel", marker: markerBytes(ownerID), wantStatus: http.StatusForbidden},
+		{name: "non-owner cannot check now", endpoint: "/post/postid/wait/check_now", marker: markerBytes(ownerID), wantStatus: http.StatusForbidden},
+		{name: "cancel with no pending wait is a conflict", endpoint: "/post/postid/wait/cancel", marker: nil, wantStatus: http.StatusConflict},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.setupTestBot(llm.BotConfig{Name: "permtest"})
+			e.useConversations()
+			e.api.conversationsService.SetWakeScheduler(&stubWakeScheduler{}, nil)
+
+			post := &model.Post{Id: "postid", UserId: testBotUserID, ChannelId: "channelid"}
+			e.mockAPI.On("GetPost", "postid").Return(post, nil)
+			e.mockAPI.On("GetChannel", "channelid").Return(&model.Channel{Id: "channelid", Type: model.ChannelTypeOpen, TeamId: "teamid"}, nil)
+			e.mockAPI.On("HasPermissionToChannel", testUserID, "channelid", model.PermissionReadChannel).Return(true)
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything).Maybe()
+			e.mockAPI.On("KVGet", markerKey).Return(tt.marker, nil)
+
+			request := httptest.NewRequest(http.MethodPost, tt.endpoint, nil)
+			request.Header.Add("Mattermost-User-ID", testUserID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+
+			require.Equal(t, tt.wantStatus, recorder.Result().StatusCode)
 		})
 	}
 }

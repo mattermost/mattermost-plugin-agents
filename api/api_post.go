@@ -438,6 +438,54 @@ func (a *API) handleToolResult(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+func (a *API) handleWaitCheckNow(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+
+	if err := a.enforceEmptyBody(c); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if err := a.conversationsService.HandleWaitCheckNow(userID, post); err != nil {
+		c.AbortWithError(waitControlHTTPStatus(err), err)
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+func (a *API) handleWaitCancel(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+
+	if err := a.enforceEmptyBody(c); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if err := a.conversationsService.HandleWaitCancel(userID, post); err != nil {
+		c.AbortWithError(waitControlHTTPStatus(err), err)
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+// waitControlHTTPStatus maps errors from the wait-control routes to HTTP
+// statuses: a non-requester is forbidden (403); a wait that is no longer
+// pending is a stale client view (409); everything else is a server fault.
+func waitControlHTTPStatus(err error) int {
+	switch {
+	case errors.Is(err, conversations.ErrNotWaitOwner):
+		return http.StatusForbidden
+	case errors.Is(err, conversations.ErrNoPendingWait):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
 // isConversationOwner checks whether the given user is the owner of the
 // conversation associated with the post (via the conversation_id prop).
 //
