@@ -355,6 +355,40 @@ describe('AgentConfigView', () => {
         expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
     });
 
+    test('renderFrame places the header actions, tabs, body and footer in the owner\'s frame instead of the page\'s', () => {
+        const onBack = jest.fn();
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='create'
+                    variant='modal'
+                    services={services}
+                    onBack={onBack}
+                    onSaved={jest.fn()}
+                    renderFrame={({title, headerAction, tabs, body, footer}) => (
+                        <div data-testid='frame'>
+                            <h2>{title}</h2>
+                            <div data-testid='frame-header-action'>{headerAction}</div>
+                            <div data-testid='frame-tabs'>{tabs}</div>
+                            <div data-testid='frame-body'>{body}</div>
+                            <div data-testid='frame-footer'>{footer}</div>
+                        </div>
+                    )}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByRole('heading', {name: 'New Agent'})).not.toBeNull();
+        expect(within(screen.getByTestId('frame-header-action')).getByRole('button', {name: 'Import'})).not.toBeNull();
+        expect(within(screen.getByTestId('frame-tabs')).getByRole('tab', {name: 'Access'})).not.toBeNull();
+        expect(within(screen.getByTestId('frame-body')).getByLabelText('Display Name')).not.toBeNull();
+        expect(screen.queryByRole('button', {name: 'Back to agents'})).toBeNull();
+
+        fireEvent.click(within(screen.getByTestId('frame-footer')).getByRole('button', {name: 'Cancel'}));
+        expect(onBack).toHaveBeenCalledTimes(1);
+        expect(within(screen.getByTestId('frame-footer')).getByRole('button', {name: 'Save'})).not.toBeNull();
+    });
+
     describe('in a modal', () => {
         const renderModalView = () => {
             const onBack = jest.fn();
