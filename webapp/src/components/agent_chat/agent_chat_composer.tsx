@@ -256,6 +256,13 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
     // Files alone are a valid post (as in the host composer); an unfinished or
     // failed upload holds the post until it is retried or removed.
     const hasContent = message.trim().length > 0 || fileIds.length > 0;
+
+    // Which key sends follows the user's Advanced setting (Ctrl+Enter, or Enter).
+    let sendHint = intl.formatMessage({defaultMessage: 'Enter to send'});
+    if (sendOnCtrlEnter) {
+        sendHint = isMacPlatform() ? intl.formatMessage({defaultMessage: '⌘ Return to send'}) : intl.formatMessage({defaultMessage: 'Ctrl+Enter to send'});
+    }
+
     const canSend = hasContent && !uploading && !hasErrors && !sending && !tooLong && !rewriting;
 
     // Runs a slash command as actions/command.ts does. Its ephemeral response
@@ -672,6 +679,14 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
                     {rewriting ? intl.formatMessage({defaultMessage: 'Rewriting…'}) : ''}
                 </LiveStatus>
             </Shell>
+            {hasContent && !generatingPostId && (
+                <SendHint
+                    aria-hidden={true}
+                    data-testid='agent-chat-send-hint'
+                >
+                    {sendHint}
+                </SendHint>
+            )}
             {limitReached && (
                 <ErrorText
                     id={limitId}
@@ -699,6 +714,8 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
         </ComposerColumn>
     );
 };
+
+const isMacPlatform = () => (/Mac|iPhone|iPad|iPod/i).test(navigator.platform || navigator.userAgent || '');
 
 // The host Textbox requires onKeyPress; sending is decided on keydown.
 const noop = () => null;
@@ -933,6 +950,17 @@ const SendButton = styled(IconButton)`
         color: rgba(var(--center-channel-color-rgb), 0.32);
         opacity: 1;
     }
+`;
+
+// Under the pill, at its right edge, in the same inset as the messages below it.
+const SendHint = styled.p`
+    margin: 0;
+    padding: 0 var(--spacing-l);
+    font-family: var(--font-family-body);
+    font-size: var(--font-size-75);
+    line-height: var(--line-height-75);
+    text-align: end;
+    color: rgba(var(--center-channel-color-rgb), 0.64);
 `;
 
 const ErrorText = styled.p`

@@ -186,6 +186,13 @@ describe('AgentChatComposer', () => {
         }
     });
 
+    test('hints the send key once there is text to send', () => {
+        const {textbox} = renderComposer();
+        expect(screen.queryByTestId('agent-chat-send-hint')).toBeNull();
+        fireEvent.change(textbox, {target: {value: 'hello'}});
+        expect(screen.getByTestId('agent-chat-send-hint').textContent).toBe('Enter to send');
+    });
+
     test('the send button creates the root post', async () => {
         mockCreatePost.mockResolvedValue({id: 'root1'});
         const {textbox, send, onCreated} = setup();
