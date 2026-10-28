@@ -375,7 +375,10 @@ const ThreadItem = ({thread, active, generating, unread, placeholder, onSelect, 
             >
                 {generating && (
                     <span data-testid='thread-generating'>
-                        <WaveDots animate={!prefersReducedMotion()}/>
+                        <WaveDots
+                            animate={!prefersReducedMotion()}
+                            half={true}
+                        />
                     </span>
                 )}
                 {!generating && unread && (
@@ -653,6 +656,9 @@ const ThreadIcon = styled.span<{$active: boolean; $busy: boolean}>`
     opacity: ${(p) => (p.$active || p.$busy ? 1 : 0.64)};
     pointer-events: none;
 
+    /* The wave takes the icon's color (the sidebar text, at the icon's opacity). */
+    --wave-dot-color: currentColor;
+
     /* The wave and the dot are narrower than the 16px slot, so center them in it. */
     > span {
         display: inline-flex;
@@ -668,6 +674,9 @@ const UnreadDot = styled.span`
         height: var(--spacing-xs);
         border-radius: var(--radius-pill);
         background: var(--mention-bg);
+
+        /* Optical alignment with the icons and avatar above it: 1px left of the slot's center (no token). */
+        transform: translateX(-1px);
     }
 `;
 

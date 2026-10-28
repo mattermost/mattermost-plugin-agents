@@ -180,7 +180,7 @@ const Dots = styled.div<{$leaving: boolean; $animate: boolean}>`
 `;
 
 // `half` is for small indicators (the floating jump button): the dots, the gaps and the rise all
-// at half size, through the variables the dots read.
+// at half size, through the variables the dots read. `--wave-dot-color` set on an ancestor recolors the dots (the sidebar sets it to its icon color).
 const DotRow = styled.span<{$half: boolean}>`
     --wave-dot-size: ${(p) => (p.$half ? 'calc(var(--spacing-xxs) / 2)' : 'var(--spacing-xxs)')};
     --wave-dot-gap: ${(p) => (p.$half ? 'calc(var(--spacing-xxxs) / 2)' : 'var(--spacing-xxxs)')};
@@ -195,7 +195,7 @@ const Dot = styled.span<{$animate: boolean}>`
     width: var(--wave-dot-size, var(--spacing-xxs));
     height: var(--wave-dot-size, var(--spacing-xxs));
     border-radius: 50%;
-    background: color-mix(in srgb, var(--center-channel-color) ${DOT_EMPHASIS_PERCENT}%, transparent);
+    background: var(--wave-dot-color, color-mix(in srgb, var(--center-channel-color) ${DOT_EMPHASIS_PERCENT}%, transparent));
 
     ${(props) => props.$animate && css`
         animation: ${wave} ${WAVE_CYCLE_MS}ms var(--ease-transition) infinite;
