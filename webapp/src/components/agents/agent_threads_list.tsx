@@ -357,7 +357,6 @@ const ThreadItem = ({thread, active, generating, placeholder, onSelect, onRename
 
     return (
         <ThreadListItem
-            $active={active}
             data-thread-item={true}
             {...(menuOpen && {'data-menu-open': true})}
         >
@@ -366,7 +365,7 @@ const ThreadItem = ({thread, active, generating, placeholder, onSelect, onRename
                 $active={active}
             >
                 <Icon
-                    size='12'
+                    size='16'
                     glyph={<MessageOutlineIcon/>}
                 />
             </ThreadIcon>
@@ -589,9 +588,8 @@ const ThreadList = styled.ul`
 `;
 
 // Thread rows are compass ChannelSidebarItems, like the agent rows above them, so height,
-// type and hover/active states match. Only the icon column is moved: the same left padding as
-// the agent row (which clears its chevron) puts each icon under the agent's avatar, in both the
-// resting and active states of the item (which pad the control differently).
+// type and hover/active states match. The item has no trailing slot for the actions button, so it
+// is overlaid on the row and revealed like the compass kebab.
 const ThreadActionsSlot = styled.span`
     position: absolute;
     top: 0;
@@ -638,8 +636,8 @@ const VisuallyHidden = styled.span`
     border: 0;
 `;
 
-// Centered where the item's 16px icon is (its padding plus the container's 6px offset), 12px wide:
-// the extra 2px centers it in the 16px slot.
+// Over the item's own 16px icon (its padding plus the container's 6px offset). The icon column is as wide as
+// the agent row's avatar column, so the chat's label sits at the same left edge as the agent's name.
 const ThreadIcon = styled.span<{$active: boolean}>`
     position: absolute;
     top: 0;
@@ -648,21 +646,14 @@ const ThreadIcon = styled.span<{$active: boolean}>`
     z-index: 1;
     display: flex;
     align-items: center;
-    padding-left: calc(var(--spacing-xxxxl) + var(--spacing-xxxxs) + var(--spacing-xxxs) + var(--spacing-xxxxs));
+    padding-left: calc(var(--spacing-l) + var(--spacing-xxxxs) + var(--spacing-xxxs));
     color: var(--sidebar-text);
     opacity: ${(p) => (p.$active ? 1 : 0.64)};
     pointer-events: none;
 `;
 
-const ThreadListItem = styled.li<{$active: boolean}>`
+const ThreadListItem = styled.li`
     position: relative;
-
-    /* Nests each chat under its agent. The active item adds a 2px border element before the
-       control and compass takes that 2px back from the control's padding; do the same so the
-       icon and label do not shift when the row becomes active. */
-    && [class*='__left'] {
-        padding-left: ${(p) => (p.$active ? 'calc(var(--spacing-xxxxl) - var(--spacing-xxxxs))' : 'var(--spacing-xxxxl)')};
-    }
 
     /* The item's built-in icon cannot be swapped (no custom-icon slot), so it is hidden and the
        smaller chat icon is overlaid in its place (as the nav rows above do). */
