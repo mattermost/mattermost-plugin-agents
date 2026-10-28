@@ -186,10 +186,10 @@ describe('hostThreadChatStyles message look', () => {
         });
     });
 
-    test('links in your own bubble take the bubble text color and stay underlined', () => {
-        const link = ruleFor(text, '&&& .post.current--user .post-message__text a');
-        expect(link).toContain('color: var(--bubble-fg)');
-        expect(link).toContain('text-decoration: underline');
+    test('links in your own bubble mix the link color toward the bubble text color, without an underline', () => {
+        const link = ruleFor(text, '&&& .post.current--user .post__content > .post__img + div a:not(.post__permalink)');
+        expect(link).toContain('color: color-mix(in srgb, var(--link-color) 50%, var(--bubble-fg))');
+        expect(link).not.toContain('text-decoration');
     });
 
     test('your own bubble reverses the colors, hides your name and puts the time under the bubble', () => {

@@ -66,6 +66,9 @@ export const THREAD_SCROLLER_SELECTOR = '#threadViewerScrollContainer';
 // No compass token covers content widths.
 export const CHAT_CONTENT_MAX_WIDTH = '800px';
 
+// A link on your own (reversed) bubble: the host link color, 50% toward the bubble's text color.
+const OWN_BUBBLE_LINK_COLOR = 'color-mix(in srgb, var(--link-color) 50%, var(--bubble-fg))';
+
 // Compact only: its text sits optically high in the shorter bubble, so it gets 2px more under it than over it.
 const BUBBLE_PADDING_BOTTOM_COMPACT = 'calc(var(--spacing-xxxs) + var(--spacing-xxxxs))';
 
@@ -466,19 +469,16 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
     }
 
     /*
-     * Links (and @mentions, channel links, hashtags, which the host renders as links too) use the
-     * host's link color, which is made for the center channel background, not the reversed bubble.
-     * They take the bubble's text color and are underlined to still read as links. &&& outranks the
-     * host's link and mention rules.
+     * Links (and @mentions, channel links, hashtags, which the host renders as links too, and links in
+     * attachments) use the host's link color, which is made for the center channel background, not the
+     * reversed bubble. It is mixed toward the bubble's text color, which always contrasts with the
+     * bubble, so a link keeps its hue but stays readable on both light and dark themes. The post's
+     * time (also an anchor, drawn outside the bubble) keeps its own color. &&& outranks the host's
+     * link and mention rules.
      */
-    &&& .post.current--user .post-message__text a,
-    &&& .post.current--user .post-message__text a:visited,
-    &&& .post.current--user .post-message__text a:hover {
-        color: var(--bubble-fg);
-        text-decoration: underline;
-    }
-
-    &&& .post.current--user .post-message__text a:hover {
-        opacity: 0.8;
+    &&& .post.current--user ${BUBBLE} a:not(.post__permalink),
+    &&& .post.current--user ${BUBBLE} a:not(.post__permalink):visited,
+    &&& .post.current--user ${BUBBLE} a:not(.post__permalink):hover {
+        color: ${OWN_BUBBLE_LINK_COLOR};
     }
 `;
