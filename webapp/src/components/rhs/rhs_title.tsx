@@ -87,18 +87,21 @@ const RHSTitle = () => {
     const newChatLabel = intl.formatMessage({defaultMessage: 'New chat'});
     const backLabel = intl.formatMessage({defaultMessage: 'Back to chat history'});
     const back = onHistory ? null : (
-        <IconButton
-            size='small'
-            padding='compact'
-            icon={<Icon glyph={<ArrowLeftIcon/>}/>}
-            aria-label={backLabel}
-            title={backLabel}
-            data-testid='chat-history'
-            onClick={() => {
-                dispatch({type: 'SELECT_AI_POST', postId: ''});
-                dispatch({type: 'AI_RHS_SET_TAB', tab: 'threads'});
-            }}
-        />
+        <WithTooltip title={backLabel}>
+            <TooltipTrigger>
+                <IconButton
+                    size='small'
+                    padding='compact'
+                    icon={<Icon glyph={<ArrowLeftIcon/>}/>}
+                    aria-label={backLabel}
+                    data-testid='chat-history'
+                    onClick={() => {
+                        dispatch({type: 'SELECT_AI_POST', postId: ''});
+                        dispatch({type: 'AI_RHS_SET_TAB', tab: 'threads'});
+                    }}
+                />
+            </TooltipTrigger>
+        </WithTooltip>
     );
 
     // The end of the title: the tools button on a new chat (SA agents have no per-user connections

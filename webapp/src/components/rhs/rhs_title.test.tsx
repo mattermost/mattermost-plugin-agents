@@ -296,6 +296,13 @@ describe('RHSTitle', () => {
             ]);
         });
 
+        test('Back and New chat use the host tooltip, not the browser\'s native one', () => {
+            renderTitle(two, 'a', {selectedPostId: 'root1'});
+
+            expect(backButton()!.getAttribute('title')).toBeNull();
+            expect(screen.getByTestId('new-chat').getAttribute('title')).toBeNull();
+        });
+
         test('Back is also there while the agents are loading or there is a single agent', () => {
             const {unmount} = renderTitle(null, '');
             expect(backButton()).not.toBeNull();
