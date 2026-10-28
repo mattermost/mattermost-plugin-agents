@@ -260,6 +260,16 @@ describe('AgentThreadsList', () => {
             expect(screen.getByRole('button', {name: 'Archive'})).toBeTruthy();
         });
     });
+    test('clicking a collapsed agent row opens it and expands its chats', () => {
+        const h = renderList();
+        fireEvent.click(screen.getByRole('button', {name: 'Collapse Alpha chats'}));
+        expect(screen.getByRole('button', {name: 'Expand Alpha chats'})).not.toBeNull();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Alpha'}));
+        expect(h.onSelectThread).toHaveBeenCalled();
+        expect(screen.getByRole('button', {name: 'Collapse Alpha chats'})).not.toBeNull();
+    });
+
     test.each([
         {name: 'a chat whose agent is answering', generating: ['root_1'], activeRootId: '', expected: 1},
         {name: 'the chat that is open too', generating: ['root_1'], activeRootId: 'root_1', expected: 1},

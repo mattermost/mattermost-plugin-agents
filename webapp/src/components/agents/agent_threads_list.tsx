@@ -192,6 +192,10 @@ const AgentThreadsList = ({
                 const listId = `agent-threads-${bot.id}`;
 
                 const openAgent = () => {
+                    // Never land in a chat that is hidden in a collapsed list.
+                    if (collapsed[bot.id]) {
+                        setCollapsed((prev) => ({...prev, [bot.id]: false}));
+                    }
                     if (threads.length > 0) {
                         onSelectThread(bot.id, threads[0].root_post_id as string);
                     } else {
@@ -500,7 +504,7 @@ const ChevronSlot = styled.span`
     position: absolute;
     top: 0;
     bottom: 0;
-    left: var(--spacing-xxs);
+    left: 0;
     z-index: 2;
     display: flex;
     align-items: center;
@@ -524,6 +528,10 @@ const ChevronToggle = styled.button`
     align-items: center;
     justify-content: center;
     margin: 0;
+
+    /* A 24px target around the 12px glyph, which stays where it was (6px in from the row's edge). */
+    width: var(--spacing-xxl);
+    height: var(--spacing-xxl);
     padding: 0;
     border: 0;
     background: transparent;
