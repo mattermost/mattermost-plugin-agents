@@ -9,6 +9,7 @@ import PlusIcon from '@mattermost/compass-icons/components/plus';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {getProfilePictureUrl, getUserMCPTools, getUserToolPreferences} from '@/client';
 import type {LLMBot} from '@/bots';
@@ -75,6 +76,7 @@ const AgentChatHeader = ({bot, rootId, onOpenSettings, onNewChat, onArchived}: A
                             onClick={onClick}
                             testId='agent-chat-menu-button'
                             heading={true}
+                            subtitle={rootId ? bot.displayName : ''}
                         />
                     )}
                 />
@@ -89,16 +91,19 @@ const AgentChatHeader = ({bot, rootId, onOpenSettings, onNewChat, onArchived}: A
                         autoEnableNewMCPTools={bot.autoEnableNewMCPTools}
                     />
                 )}
-                <IconButton
-                    size='small'
-                    padding='compact'
-                    icon={<Icon glyph={<PlusIcon/>}/>}
-                    aria-label={newChatLabel}
-                    title={rootId ? newChatLabel : intl.formatMessage({defaultMessage: 'You\'re already in a new chat'})}
-                    disabled={!rootId}
-                    data-testid='agent-chat-new-chat-button'
-                    onClick={onNewChat}
-                />
+                <WithTooltip title={rootId ? newChatLabel : intl.formatMessage({defaultMessage: 'You\'re already in a new chat'})}>
+                    <TooltipTrigger>
+                        <IconButton
+                            size='small'
+                            padding='compact'
+                            icon={<Icon glyph={<PlusIcon/>}/>}
+                            aria-label={newChatLabel}
+                            disabled={!rootId}
+                            data-testid='agent-chat-new-chat-button'
+                            onClick={onNewChat}
+                        />
+                    </TooltipTrigger>
+                </WithTooltip>
             </Actions>
         </Root>
     );
@@ -128,6 +133,11 @@ const Title = styled.div`
     align-items: center;
     gap: var(--spacing-xs);
     padding-inline: var(--spacing-xs);
+`;
+
+// A disabled button fires no pointer events, so the tooltip listens on this wrapper.
+const TooltipTrigger = styled.span`
+    display: inline-flex;
 `;
 
 const Actions = styled.div`

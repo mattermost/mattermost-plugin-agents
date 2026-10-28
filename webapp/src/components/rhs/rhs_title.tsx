@@ -177,6 +177,7 @@ const RHSTitle = () => {
                         expanded={expanded}
                         onClick={onClick}
                         testId='bot-selector-rhs'
+                        subtitle={threadOpen ? menuBot.displayName : ''}
                     />
                 )}
             />
