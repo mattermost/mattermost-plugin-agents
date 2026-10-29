@@ -73,13 +73,18 @@ export class AgentPageHelper {
         return this.page.getByRole('button', { name: `Start a new chat with ${displayName}`, exact: true });
     }
 
+    /** The whole row: the primary action button and its sibling controls (actions menu, badges). */
+    getAgentRow(displayName: string): Locator {
+        return this.page.getByTestId('agent-row').filter({has: this.getAgentRowButton(displayName)});
+    }
+
     /** Click the row's primary action, which opens a new chat with that agent. */
     async clickAgentRow(displayName: string): Promise<void> {
         await this.getAgentRowButton(displayName).click();
     }
 
     async openAgentActions(displayName: string): Promise<void> {
-        const rowScope = this.getAgentRowButton(displayName);
+        const rowScope = this.getAgentRow(displayName);
         await rowScope.getByRole('button', { name: 'Agent actions' }).click();
     }
 
@@ -88,7 +93,7 @@ export class AgentPageHelper {
      * global "Edit" controls elsewhere in the Mattermost product shell.
      */
     async clickEditAction(displayName: string): Promise<void> {
-        const rowScope = this.getAgentRowButton(displayName);
+        const rowScope = this.getAgentRow(displayName);
         await rowScope.getByRole('button', { name: 'Edit', exact: true }).click();
     }
 
@@ -97,13 +102,13 @@ export class AgentPageHelper {
      * global "Delete" controls elsewhere in the Mattermost product shell.
      */
     async clickDeleteAction(displayName: string): Promise<void> {
-        const rowScope = this.getAgentRowButton(displayName);
+        const rowScope = this.getAgentRow(displayName);
         await rowScope.getByRole('button', { name: 'Delete', exact: true }).click();
     }
 
     /** Click Export in the agent row actions menu (opens the menu first). */
     async clickExportAction(displayName: string): Promise<void> {
-        const rowScope = this.getAgentRowButton(displayName);
+        const rowScope = this.getAgentRow(displayName);
         await rowScope.getByRole('button', { name: 'Export', exact: true }).click();
     }
 

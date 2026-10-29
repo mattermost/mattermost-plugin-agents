@@ -274,6 +274,16 @@ describe('AgentRow primary action', () => {
         expect(screen.queryByRole('button', {name: 'Start new chat with Agent One'})).toBeNull();
     });
 
+    // A button's children are presentational to assistive technology: nothing interactive may sit inside it.
+    test('no other control sits inside the row button', () => {
+        renderRow({canManage: true, agent: {...makeAgent(), inactiveReason: 'agent_limit' as const}});
+
+        const row = screen.getByRole('button', {name: rowName});
+        expect(row.contains(screen.getByRole('button', {name: 'Agent actions'}))).toBe(false);
+        expect(row.contains(screen.getByRole('button', {name: 'Start new chat with Agent One'}))).toBe(false);
+        expect(row.querySelector('[tabindex="0"]')).toBeNull();
+    });
+
     test('is keyboard focusable', () => {
         renderRow();
         expect(screen.getByRole('button', {name: rowName}).getAttribute('tabindex')).toBe('0');

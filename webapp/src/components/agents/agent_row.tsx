@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState, useCallback, useRef} from 'react';
+import React, {useCallback} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {
@@ -35,8 +35,6 @@ type Props = {
 
 const AgentRow = (props: Props) => {
     const {agent, services, servicesLoaded, canManage, onStartChat, onEdit, onDelete, onExport} = props;
-    const [menuOpen, setMenuOpen] = useState(false);
-    const actionsRef = useRef<HTMLDivElement>(null);
     const intl = useIntl();
 
     const avatarUrl = getProfilePictureUrl(agent.botUserID ?? '', 0);
@@ -87,53 +85,46 @@ const AgentRow = (props: Props) => {
     const agentLabel = agent.displayName || agent.name;
     const unavailableId = `agent-row-unavailable-${agent.id}`;
 
-    const handleRowActivate = useCallback((e: React.MouseEvent) => {
-        // Clicks inside the actions menu bubble here; they never start a chat.
-        if (!actionable || menuOpen || actionsRef.current?.contains(e.target as Node)) {
-            return;
+    const handleRowActivate = useCallback(() => {
+        if (actionable) {
+            onStartChat(botUserId);
         }
-        onStartChat(botUserId);
-    }, [actionable, menuOpen, botUserId, onStartChat]);
-
-    // The button is its own target: the click must not also reach the row, which would start a second chat.
-    const handleNewChatClick = useCallback((e: React.MouseEvent) => {
-        e.stopPropagation();
-        onStartChat(botUserId);
-    }, [botUserId, onStartChat]);
+    }, [actionable, botUserId, onStartChat]);
 
     const handleRowKeyDown = useCallback(
         (e: React.KeyboardEvent) => {
-            // Keys pressed on nested controls (badge triggers, the actions menu) bubble here too.
-            if (!actionable || menuOpen || e.target !== e.currentTarget) {
-                return;
-            }
-            if (e.key === 'Enter' || e.key === ' ') {
+            if (actionable && (e.key === 'Enter' || e.key === ' ')) {
                 e.preventDefault();
                 onStartChat(botUserId);
             }
         },
-        [actionable, menuOpen, botUserId, onStartChat],
+        [actionable, botUserId, onStartChat],
     );
 
+    // The row's primary action is RowMain, a button that holds only text and the avatar. Its ::after
+    // stretches over the whole row so a click anywhere starts a chat, while the other controls (the
+    // hover button, the badges, the actions menu) are siblings above it, never inside a button.
     return (
         <RowContainer
             $clickable={actionable}
-            onClick={handleRowActivate}
-            onKeyDown={handleRowKeyDown}
-            role='button'
-            tabIndex={0}
-            {...(actionable ? {} : {'aria-disabled': true, 'aria-describedby': unavailableId})}
-            aria-label={intl.formatMessage(
-                {defaultMessage: 'Start a new chat with {name}'},
-                {name: agentLabel},
-            )}
+            data-testid='agent-row'
         >
-            {!actionable && (
-                <VisuallyHidden id={unavailableId}>
-                    <FormattedMessage defaultMessage='This agent has no bot account, so a chat cannot be started.'/>
-                </VisuallyHidden>
-            )}
-            <RowMain>
+            <RowMain
+                role='button'
+                tabIndex={0}
+                onClick={handleRowActivate}
+                onKeyDown={handleRowKeyDown}
+                {...(actionable ? {} : {'aria-disabled': true, 'aria-describedby': unavailableId})}
+                aria-label={intl.formatMessage(
+                    {defaultMessage: 'Start a new chat with {name}'},
+                    {name: agentLabel},
+                )}
+            >
+                {!actionable && (
+                    <VisuallyHidden id={unavailableId}>
+                        <FormattedMessage defaultMessage='This agent has no bot account, so a chat cannot be started.'/>
+                    </VisuallyHidden>
+                )}
                 <Avatar
                     src={avatarUrl}
                     alt=''
@@ -143,41 +134,40 @@ const AgentRow = (props: Props) => {
                 <NameColumn>
                     <DisplayName>{agent.displayName}</DisplayName>
                     <Username>{'@'}{agent.name}</Username>
-                    {actionable && (
-                        <NewChatSlot>
-                            <Button
-                                emphasis='dim'
-                                size='x-small'
-                                leadingIcon={<Icon glyph={<MessageOutlineIcon/>}/>}
-                                aria-label={intl.formatMessage({defaultMessage: 'Start new chat with {agent}'}, {agent: agentLabel})}
-                                data-testid='agent-row-new-chat'
-                                onClick={handleNewChatClick}
-                            >
-                                {intl.formatMessage({defaultMessage: 'Start new chat'})}
-                            </Button>
-                        </NewChatSlot>
-                    )}
                 </NameColumn>
-                <BadgesColumn>
-                    {inactiveReason && (
-                        <WithTooltip title={<InactiveReasonMessage reason={inactiveReason}/>}>
-                            <Tag
-                                type='danger'
-                                tabIndex={0}
-                                label={<FormattedMessage defaultMessage='Inactive'/>}
-                            />
-                        </WithTooltip>
-                    )}
-                    {mcpBadge}
-                </BadgesColumn>
             </RowMain>
+            {actionable && (
+                <NewChatSlot>
+                    <Button
+                        emphasis='dim'
+                        size='x-small'
+                        leadingIcon={<Icon glyph={<MessageOutlineIcon/>}/>}
+                        aria-label={intl.formatMessage({defaultMessage: 'Start new chat with {agent}'}, {agent: agentLabel})}
+                        data-testid='agent-row-new-chat'
+                        onClick={handleRowActivate}
+                    >
+                        {intl.formatMessage({defaultMessage: 'Start new chat'})}
+                    </Button>
+                </NewChatSlot>
+            )}
+            <BadgesColumn>
+                {inactiveReason && (
+                    <WithTooltip title={<InactiveReasonMessage reason={inactiveReason}/>}>
+                        <Tag
+                            type='danger'
+                            tabIndex={0}
+                            label={<FormattedMessage defaultMessage='Inactive'/>}
+                        />
+                    </WithTooltip>
+                )}
+                {mcpBadge}
+            </BadgesColumn>
             {canManage && (
-                <ActionsColumn ref={actionsRef}>
+                <ActionsColumn>
                     <DotMenu
                         icon={<DotsHorizontalIcon/>}
                         title={intl.formatMessage({defaultMessage: 'Agent actions'})}
                         placement='bottom-end'
-                        onOpenChange={setMenuOpen}
 
                         // Rendered in place so the menu stays inside the row's DOM subtree.
                         portal={false}
@@ -221,6 +211,7 @@ const InactiveReasonMessage = ({reason}: {reason: AgentInactiveReason}) => {
 // --- Styled Components ---
 
 const RowContainer = styled.div<{$clickable: boolean}>`
+    position: relative;
     display: flex;
     flex-direction: row;
     align-items: center;
@@ -230,24 +221,31 @@ const RowContainer = styled.div<{$clickable: boolean}>`
     border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
     background: var(--center-channel-bg, #fff);
     cursor: ${({$clickable}) => ($clickable ? 'pointer' : 'default')};
-    outline: none;
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.04);
     }
-
-    &:focus-visible {
-        box-shadow: inset 0 0 0 2px rgba(var(--button-bg-rgb, 28, 88, 217), 0.4);
-    }
 `;
 
+// Not positioned itself, so its ::after covers the whole row (RowContainer is the positioned ancestor).
 const RowMain = styled.div`
     display: flex;
+    flex: 0 1 auto;
     flex-direction: row;
     align-items: center;
     gap: var(--spacing-xs);
-    flex: 1;
     min-width: 0;
+    outline: none;
+
+    &::after {
+        position: absolute;
+        inset: 0;
+        content: '';
+    }
+
+    &:focus-visible::after {
+        box-shadow: inset 0 0 0 2px rgba(var(--button-bg-rgb, 28, 88, 217), 0.4);
+    }
 `;
 
 const Avatar = styled(UserAvatar)`
@@ -256,10 +254,10 @@ const Avatar = styled(UserAvatar)`
 
 const NameColumn = styled.div`
     display: flex;
+    flex: 0 1 auto;
     flex-direction: row;
     align-items: center;
     gap: var(--spacing-xs);
-    flex: 1;
     min-width: 0;
 `;
 
@@ -287,6 +285,8 @@ const Username = styled.div`
 
 // Shown only while the row is hovered or has focus inside it (the button itself stays in the tab order).
 const NewChatSlot = styled.span`
+    position: relative;
+    z-index: 1;
     display: inline-flex;
     flex-shrink: 0;
     opacity: 0;
@@ -303,7 +303,10 @@ const NewChatSlot = styled.span`
 `;
 
 const BadgesColumn = styled.div`
+    position: relative;
+    z-index: 1;
     display: flex;
+    margin-left: auto;
     flex-direction: row;
     gap: var(--spacing-xs);
     align-items: center;
@@ -311,6 +314,8 @@ const BadgesColumn = styled.div`
 `;
 
 const ActionsColumn = styled.div`
+    position: relative;
+    z-index: 1;
     flex-shrink: 0;
 `;
 
