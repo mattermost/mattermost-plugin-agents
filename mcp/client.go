@@ -441,7 +441,7 @@ func newClientWithTimeout(ctx context.Context, timeout time.Duration, userID str
 			return nil, err
 		}
 		if err != nil {
-			c.log.Debug("Unauthorized connection to MCP server with static OAuth credentials failed; asking the user to connect",
+			c.log.Info("Unauthorized connection to MCP server with static OAuth credentials failed; asking the user to connect",
 				"userID", c.userID, "server", serverConfig.Name, "error", err)
 		} else {
 			_ = session.Close()
