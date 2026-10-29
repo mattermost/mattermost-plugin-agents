@@ -243,6 +243,26 @@ func WriteScheduledPost(w *strings.Builder, entry ScheduledPostEntry) {
 	fmt.Fprintf(w, "Message: %s\n\n", sp.Message)
 }
 
+// DraftEntry holds data for formatting a single message draft.
+type DraftEntry struct {
+	HeaderLabel string // e.g. "Draft 1"; empty to omit
+	Draft       *model.Draft
+}
+
+// WriteDraft writes a formatted draft entry to the builder.
+func WriteDraft(w *strings.Builder, entry DraftEntry) {
+	writeHeader(w, entry.HeaderLabel)
+	d := entry.Draft
+	fmt.Fprintf(w, "Channel ID: %s\n", d.ChannelId)
+	if d.RootId != "" {
+		fmt.Fprintf(w, "Root ID: %s\n", d.RootId)
+	}
+	if d.UpdateAt > 0 {
+		fmt.Fprintf(w, "Last updated: %s\n", TimeFromMillis(d.UpdateAt))
+	}
+	fmt.Fprintf(w, "Message: %s\n\n", d.Message)
+}
+
 // WriteReactions writes a post's emoji reactions grouped by emoji, with the
 // reacting usernames, to the builder. usernames maps user IDs to usernames.
 func WriteReactions(w *strings.Builder, postID string, reactions []*model.Reaction, usernames map[string]string) {
