@@ -284,7 +284,7 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         flex: 1 1 auto;
         min-width: 0;
         padding: var(--spacing-xs) var(--spacing-l);
-        border-radius: var(--radius-xl);
+        border-radius: var(--radius-l);
         background: transparent;
         transition: background var(--duration-quick) var(--ease-transition);
 
@@ -410,7 +410,7 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
 
         /* Room for the time under the bubble, and before the agent's reply. */
         margin-bottom: calc(${CONTROLS_BAR_HEIGHT} + ${CONTROLS_BAR_GAP});
-        border-radius: var(--radius-xl);
+        border-radius: var(--radius-l);
         --center-channel-color: var(--bubble-fg);
         --center-channel-color-rgb: var(--bubble-fg-rgb);
         --center-channel-bg: var(--bubble-bg);
