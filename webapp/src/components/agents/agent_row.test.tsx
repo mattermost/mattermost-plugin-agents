@@ -256,6 +256,24 @@ describe('AgentRow primary action', () => {
         expect(onEdit).not.toHaveBeenCalled();
     });
 
+    test.each([
+        {who: 'manager', canManage: true},
+        {who: 'non-manager', canManage: false},
+    ])('$who: the New chat button starts one chat, not two', ({canManage}) => {
+        const onStartChat = jest.fn();
+        renderRow({canManage, onStartChat});
+
+        fireEvent.click(screen.getByRole('button', {name: 'New chat with Agent One'}));
+
+        expect(onStartChat).toHaveBeenCalledTimes(1);
+        expect(onStartChat).toHaveBeenCalledWith('bot-1');
+    });
+
+    test('an agent with no bot account has no New chat button', () => {
+        renderRow({agent: {...makeAgent(), botUserID: ''}});
+        expect(screen.queryByRole('button', {name: 'New chat with Agent One'})).toBeNull();
+    });
+
     test('is keyboard focusable', () => {
         renderRow();
         expect(screen.getByRole('button', {name: rowName}).getAttribute('tabindex')).toBe('0');

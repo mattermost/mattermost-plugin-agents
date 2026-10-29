@@ -8,8 +8,11 @@ import {
     DotsHorizontalIcon,
     ExportVariantIcon,
     PencilOutlineIcon,
+    PlusIcon,
     TrashCanOutlineIcon,
 } from '@mattermost/compass-icons/components';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {Tag} from '@mattermost/compass-ui/components/tag';
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 import {WithTooltip} from '@mattermost/shared/components/tooltip';
@@ -92,6 +95,12 @@ const AgentRow = (props: Props) => {
         onStartChat(botUserId);
     }, [actionable, menuOpen, botUserId, onStartChat]);
 
+    // The button is its own target: the click must not also reach the row, which would start a second chat.
+    const handleNewChatClick = useCallback((e: React.MouseEvent) => {
+        e.stopPropagation();
+        onStartChat(botUserId);
+    }, [botUserId, onStartChat]);
+
     const handleRowKeyDown = useCallback(
         (e: React.KeyboardEvent) => {
             // Keys pressed on nested controls (badge triggers, the actions menu) bubble here too.
@@ -134,6 +143,21 @@ const AgentRow = (props: Props) => {
                 <NameColumn>
                     <DisplayName>{agent.displayName}</DisplayName>
                     <Username>{'@'}{agent.name}</Username>
+                    {actionable && (
+                        <NewChatSlot>
+                            <WithTooltip title={intl.formatMessage({defaultMessage: 'New chat'})}>
+                                <TooltipTrigger>
+                                    <IconButton
+                                        size='x-small'
+                                        icon={<Icon glyph={<PlusIcon/>}/>}
+                                        aria-label={intl.formatMessage({defaultMessage: 'New chat with {agent}'}, {agent: agentLabel})}
+                                        data-testid='agent-row-new-chat'
+                                        onClick={handleNewChatClick}
+                                    />
+                                </TooltipTrigger>
+                            </WithTooltip>
+                        </NewChatSlot>
+                    )}
                 </NameColumn>
                 <BadgesColumn>
                     {inactiveReason && (
@@ -260,6 +284,27 @@ const Username = styled.div`
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+`;
+
+// Shown only while the row is hovered or has focus inside it (the button itself stays in the tab order).
+const NewChatSlot = styled.span`
+    display: inline-flex;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity var(--duration-quick) var(--ease-transition);
+
+    ${RowContainer}:hover &,
+    ${RowContainer}:focus-within & {
+        opacity: 1;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        transition: none;
+    }
+`;
+
+const TooltipTrigger = styled.span`
+    display: inline-flex;
 `;
 
 const BadgesColumn = styled.div`
