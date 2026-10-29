@@ -668,7 +668,6 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
                 {generatingPostId ? (
                     <StopButton
                         size='small'
-                        rounded={true}
                         icon={<Icon glyph={<RecordSquareOutlineIcon/>}/>}
                         aria-label={intl.formatMessage({defaultMessage: 'Stop generating'})}
                         data-testid='stop-generating-button'
@@ -678,7 +677,6 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
                 ) : (
                     <SendButton
                         size='small'
-                        rounded={true}
                         data-emphasis='primary'
                         icon={<SendIcon glyph={<SendOutlineIcon/>}/>}
                         aria-label={intl.formatMessage({defaultMessage: 'Send message'})}
@@ -914,7 +912,7 @@ const SendIcon = styled(Icon)`
     transform: translateX(${SEND_ICON_OPTICAL_OFFSET});
 `;
 
-// Stop: the standard (neutral) compass IconButton, round and 32px like Send so
+// Stop: the standard (neutral) compass IconButton, 32px like Send so
 // swapping them does not move anything; quieter than the primary Send.
 const StopButton = styled(IconButton)`
     && {
@@ -927,8 +925,7 @@ const HiddenFileInput = styled.input`
     ${visuallyHidden}
 `;
 
-// Send (and Stop): a round small compass IconButton (32x32, the "+" size,
-// circular through `rounded`) colored like a compass primary Button
+// Send (and Stop): a small compass IconButton (32x32, the "+" size) colored like a compass primary Button
 // (Button.css emphasis-primary: fill, 8%/16% black hover/active mixes,
 // disabled wash). The extra && outranks IconButton's own
 // :hover/:active/:disabled rules.

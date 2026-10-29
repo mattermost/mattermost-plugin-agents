@@ -72,7 +72,7 @@ type Submenu = 'tools' | 'prompts' | 'rewrite';
 const RETURN_FOCUS_OFF = {returnFocus: false};
 
 // The composer's "+" fill (as the old attach button): no compass token for the 8%
-// center-channel wash on a neutral round IconButton.
+// center-channel wash on a neutral IconButton.
 const PLUS_FILL = 'rgba(var(--center-channel-color-rgb), 0.08)';
 
 const ComposerPlusMenu = ({bot, channelId, rootId = '', uploadEnabled, onUploadFiles, getText, setText, disabled, onError, onRewritingChange}: ComposerPlusMenuProps) => {
@@ -181,7 +181,6 @@ const ComposerPlusMenu = ({bot, channelId, rootId = '', uploadEnabled, onUploadF
                 <PlusButton
                     id={triggerId}
                     size='small'
-                    rounded={true}
                     icon={<Icon glyph={<PlusIcon/>}/>}
                     aria-label={label}
                     aria-haspopup='menu'
@@ -251,7 +250,7 @@ const ComposerPlusMenu = ({bot, channelId, rootId = '', uploadEnabled, onUploadF
     );
 };
 
-// The composer's round, faintly filled 32px "+" (a small IconButton), placed by
+// The composer's faintly filled 32px "+" (a small IconButton), placed by
 // the composer's leading slot.
 const PlusButton = styled(IconButton)`
     &&:not(:disabled):not(:hover):not(:active):not([aria-expanded='true']) {
