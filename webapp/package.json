@@ -70,7 +70,7 @@
   "dependencies": {
     "@floating-ui/react-dom-interactions": "0.13.3",
     "@mattermost/client": "11.9.0",
-    "@mattermost/compass-icons": "0.1.63",
+    "@mattermost/compass-icons": "0.1.64",
     "@mattermost/compass-ui": "0.1.0-alpha.23",
     "@mattermost/eslint-plugin": "1.1.0-0",
     "@mattermost/shared": "11.9.0",
