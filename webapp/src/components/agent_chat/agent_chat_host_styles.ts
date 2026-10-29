@@ -379,8 +379,8 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
     }
 
     /*
-     * Own messages: a right-aligned bubble, filled at rest (8% of the text color) and a little
-     * stronger on hover (12%). No avatar or name; the time sits under the bubble,
+     * Own messages: a right-aligned bubble, filled with 8% of the text color. It has no hover shade:
+     * nothing on it is actionable. No avatar or name; the time sits under the bubble,
      * in the space the bubble reserves.
      */
     .post.current--user .post__content {
@@ -396,15 +396,6 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         margin-bottom: calc(${CONTROLS_BAR_HEIGHT} + ${CONTROLS_BAR_GAP});
         border-radius: var(--radius-l);
         background: rgba(var(--center-channel-color-rgb), 0.08);
-        transition: background var(--duration-quick) var(--ease-transition);
-
-        @media (prefers-reduced-motion: reduce) {
-            transition: none;
-        }
-    }
-
-    ${activeBubble('.post.current--user')} {
-        background: rgba(var(--center-channel-color-rgb), 0.12);
     }
 
     /* Keyboard focus inside your own bubble, or the row's a11y focus, also gets a ring. */
