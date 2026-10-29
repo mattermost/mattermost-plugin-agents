@@ -159,9 +159,9 @@ const ToolActivityDisplay: React.FC<ToolActivityDisplayProps> = (props) => {
                 onClick={toggle}
             >
                 {expandable && (
-                    <CollapseChevron $expanded={expanded}>
+                    <HeaderChevron $expanded={expanded}>
                         <ChevronRightIcon/>
-                    </CollapseChevron>
+                    </HeaderChevron>
                 )}
                 <RollingLine
                     lineKey={lineKey}
@@ -212,6 +212,29 @@ const ActivityHeader = styled(CollapseHeaderRow)`
         cursor: default;
         color: rgba(var(--center-channel-color-rgb), 0.75);
     }
+`;
+
+// Mounts only once there is something to expand. It grows in from zero width
+// (cancelling the header gap) so the status line eases over rather than jumping.
+const chevronIn = keyframes`
+    from {
+        width: 0;
+        margin-right: -8px;
+        opacity: 0;
+    }
+    to {
+        width: 16px;
+        margin-right: 0;
+        opacity: 1;
+    }
+`;
+
+const HeaderChevron = styled(CollapseChevron)`
+    overflow: hidden;
+    transition: transform 0.2s ease;
+    animation: ${chevronIn} ${EXPAND_MS}ms ease;
+
+    ${noMotionWhenReduced}
 `;
 
 const Indicator = styled.div`
