@@ -122,17 +122,18 @@ export default function ThreadItem(props: Props) {
     );
 }
 
-// The divider is a pseudo-element along the bottom edge. It disappears while the item is hovered, and
-// the one above it (that sits against the hovered item) goes with it.
+// Rounded, with the divider drawn as a pseudo-element inset from the corners. It disappears while
+// the item is hovered, and the one above it (that sits against the hovered item) goes with it.
 const Item = styled.div`
     position: relative;
+    border-radius: var(--radius-m);
     transition: background var(--duration-quick) var(--ease-transition);
 
     &::after {
         position: absolute;
-        right: 0;
+        right: var(--spacing-m);
         bottom: 0;
-        left: 0;
+        left: var(--spacing-m);
         border-bottom: var(--border-light);
         content: '';
         pointer-events: none;
@@ -164,7 +165,8 @@ const Main = styled.div`
     display: flex;
     align-items: flex-start;
     gap: var(--spacing-m);
-    padding: var(--spacing-m) var(--spacing-xl) calc(var(--spacing-m) + var(--spacing-xxxxs));
+    padding: var(--spacing-m) var(--spacing-m) calc(var(--spacing-m) + var(--spacing-xxxxs));
+    border-radius: var(--radius-m);
     cursor: pointer;
 
     & > :first-child {
