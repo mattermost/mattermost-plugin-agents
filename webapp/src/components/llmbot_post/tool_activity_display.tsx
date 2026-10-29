@@ -219,7 +219,7 @@ const ActivityHeader = styled(CollapseHeaderRow)`
 const chevronIn = keyframes`
     from {
         width: 0;
-        margin-right: -8px;
+        margin-right: calc(-1 * var(--spacing-xs));
         opacity: 0;
     }
     to {
