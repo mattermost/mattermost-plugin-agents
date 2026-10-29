@@ -5,7 +5,7 @@ import React, {useCallback, useEffect, useId, useLayoutEffect, useRef, useState}
 import {useIntl} from 'react-intl';
 import {useDispatch, useSelector} from 'react-redux';
 import styled, {css} from 'styled-components';
-import SendGlyph from '@mattermost/compass-icons/components/send';
+import SendOutlineIcon from '@mattermost/compass-icons/components/send-outline';
 import SquareIcon from '@mattermost/compass-icons/components/square';
 
 import {WithTooltip} from '@mattermost/shared/components/tooltip';
@@ -685,7 +685,7 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
                         size='small'
                         rounded={true}
                         data-emphasis='primary'
-                        icon={<SendIcon glyph={<SendGlyph/>}/>}
+                        icon={<SendIcon glyph={<SendOutlineIcon/>}/>}
                         aria-label={intl.formatMessage({defaultMessage: 'Send message'})}
                         disabled={!canSend}
                         loading={sending}
