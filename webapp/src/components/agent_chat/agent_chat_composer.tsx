@@ -903,10 +903,10 @@ const Textarea = styled.textarea`
 // paper plane's path spans x 2-22.2 of its 24-unit viewBox (box centered), but
 // its mass is the triangle from the left edge to the right tip, whose centroid
 // sits at x ~8.7, ~2.4px left of center at the small button's 16px glyph (~3px
-// at the old 20px one). Nudging it right by --spacing-xxxxs (2px; 1px leaves
-// it ~1.4px left-heavy) makes it look centered. A transform, so the button's
-// size and hit area stay.
-const SEND_ICON_OPTICAL_OFFSET = 'var(--spacing-xxxxs)';
+// at the old 20px one). In the standard rounded-square button a 1px nudge
+// right looks centered (2px was tuned for the circle and reads too far right).
+// A transform, so the button's size and hit area stay.
+const SEND_ICON_OPTICAL_OFFSET = '1px';
 
 const SendIcon = styled(Icon)`
     transform: translateX(${SEND_ICON_OPTICAL_OFFSET});
