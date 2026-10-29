@@ -10,8 +10,8 @@ import {prefersReducedMotion} from '../llmbot_post/motion';
 // finishes before it unmounts. The duration itself comes from the token in CSS.
 const EXIT_UNMOUNT_MS = 350;
 
-// The panel sliding over the other has elevation-2.
-const SLIDING_SHADOW = 'var(--elevation-2)';
+// The panel sliding over the other has elevation-3.
+const SLIDING_SHADOW = 'var(--elevation-3)';
 
 // How far the view underneath shifts while the new one slides over it. No compass token for a
 // share of the pane's width.
@@ -186,7 +186,7 @@ const motion = (name: ReturnType<typeof keyframes>, easing: string) => css`
 
 // The layers stack in the stage and each fills it, so a view lays out exactly as it did alone. The
 // stage clips the sliding views to the pane. The layer sliding over the other (the entering view
-// going forward, the leaving one going back) has elevation-2 while it moves.
+// going forward, the leaving one going back) has elevation-3 while it moves.
 const Stage = styled.div`
     position: relative;
     display: flex;
