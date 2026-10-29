@@ -6,6 +6,7 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -32,10 +33,12 @@ func TestConnectRequiresAuthorizationForStaticOAuthServer(t *testing.T) {
 		clientID           string
 		storedToken        bool
 		challengeOnConnect bool
+		noAnonymousTools   bool
 		wantConnected      bool
 	}{
 		{name: "static client without a stored token needs authorization", clientID: "static-client"},
 		{name: "static client without a stored token keeps the connect challenge's metadata", clientID: "static-client", challengeOnConnect: true},
+		{name: "static client without a stored token needs authorization when no tools are listed anonymously", clientID: "static-client", noAnonymousTools: true},
 		{name: "static client with a stored token connects", clientID: "static-client", storedToken: true, wantConnected: true},
 		{name: "server without static client connects anonymously", wantConnected: true},
 	}
@@ -48,6 +51,11 @@ func TestConnectRequiresAuthorizationForStaticOAuthServer(t *testing.T) {
 			httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				body, err := io.ReadAll(r.Body)
 				assert.NoError(t, err)
+				if r.Header.Get("Authorization") == "" && tt.noAnonymousTools && bytes.Contains(body, []byte(`"method":"tools/list"`)) {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + string(jsonRPCID(t, body)) + `,"result":{"tools":[]}}`))
+					return
+				}
 				if r.Header.Get("Authorization") == "" && (tt.challengeOnConnect || bytes.Contains(body, []byte(`"method":"tools/call"`))) {
 					w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="http://`+r.Host+`/.well-known/oauth-protected-resource/mcp"`)
 					w.WriteHeader(http.StatusUnauthorized)
@@ -95,4 +103,13 @@ func TestConnectRequiresAuthorizationForStaticOAuthServer(t *testing.T) {
 			assert.Empty(t, uc.GetTools(context.Background()), "no tools may be offered before the user authorizes")
 		})
 	}
+}
+
+func jsonRPCID(t *testing.T, body []byte) json.RawMessage {
+	t.Helper()
+	var req struct {
+		ID json.RawMessage `json:"id"`
+	}
+	assert.NoError(t, json.Unmarshal(body, &req))
+	return req.ID
 }

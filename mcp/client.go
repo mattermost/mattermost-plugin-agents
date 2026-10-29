@@ -429,19 +429,27 @@ func newClientWithTimeout(ctx context.Context, timeout time.Duration, userID str
 		func(connectCtx context.Context) (*mcp.ClientSession, error) {
 			return c.connectAndDiscover(connectCtx, serverConfig, p.forceRefresh)
 		})
+
+	// The user has never authorized a server that requires OAuth. Connecting
+	// first lets a server that challenges on connect pass its
+	// resource_metadata to the OAuth start link. Any other outcome still asks
+	// the user to connect: some OAuth servers (e.g. Google's Workspace MCP
+	// servers) answer initialize and tools/list anonymously and only reject
+	// tools/call, and others list no tools to anonymous callers.
+	if needsAuthorization {
+		if _, ok := errors.AsType[*OAuthNeededError](err); ok {
+			return nil, err
+		}
+		if err != nil {
+			c.log.Debug("Unauthorized connection to MCP server with static OAuth credentials failed; asking the user to connect",
+				"userID", c.userID, "server", serverConfig.Name, "error", err)
+		} else {
+			_ = session.Close()
+		}
+		return nil, &OAuthNeededError{authURL: c.oauthStartURL()}
+	}
 	if err != nil {
 		return nil, err
-	}
-
-	// The server let an unauthorized user connect. Some OAuth servers (e.g.
-	// Google's Workspace MCP servers) answer initialize and tools/list
-	// anonymously and only reject tools/call; offering those tools would fail
-	// every call and never prompt the user to connect. Connecting first still
-	// lets a server that challenges on connect pass its resource_metadata to
-	// the OAuth start link.
-	if needsAuthorization {
-		_ = session.Close()
-		return nil, &OAuthNeededError{authURL: c.oauthStartURL()}
 	}
 
 	c.session = session
