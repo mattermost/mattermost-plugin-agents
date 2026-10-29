@@ -41,8 +41,9 @@ var (
 	// A trailing parenthesised group of markdown links.
 	trailingLinksRe = regexp.MustCompile(`\(((?:\[[^\]]+\]\([^)\s]+\)(?:, )?)+)\)$`)
 	linkRe          = regexp.MustCompile(`\[([^\]]+)\]\(([^)\s]+)\)`)
-	// GitHub also autolinks "www." hosts without a scheme.
-	wwwAutolinkRe = regexp.MustCompile(`(?i)\bwww\.[a-z0-9-]+\.[a-z]`)
+	// Anything GitHub could render as a link: a URL with any scheme in any
+	// case, or a "www." host, which GitHub autolinks without a scheme.
+	descURLRe = regexp.MustCompile(`(?i)[a-z][a-z0-9+.-]*://|\bwww\.`)
 )
 
 // isEmoji reports whether r is an emoji or an emoji modifier. Plain arrows,
@@ -168,7 +169,7 @@ func bulletProblems(lineNo int, line string, allowed map[string]string) []string
 	}
 	// The notes are published as the release body, and PR text is an input,
 	// so the description may carry no URL that GitHub would render as a link.
-	if strings.Contains(desc, "](") || markdownLinkURLRe.MatchString(desc) || wwwAutolinkRe.MatchString(desc) {
+	if strings.Contains(desc, "](") || descURLRe.MatchString(desc) {
 		problems = append(problems, fmt.Sprintf("line %d: links and URLs belong only at the end of the item", lineNo))
 	}
 	for _, m := range linkRe.FindAllStringSubmatch(line[loc[2]:loc[3]], -1) {

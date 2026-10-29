@@ -106,6 +106,7 @@ func TestValidateNotes(t *testing.T) {
 		"inline link":             {"## Fixes\n- Fixed [a crash](" + pr2 + ") on start. ([#1](" + pr1 + "))", "only at the end"},
 		"bare URL":                {"## Breaking changes and upgrade notes\n- Download the fix from https://evil.example/fix before upgrading. ([#1](" + pr1 + "))", "only at the end"},
 		"autolink":                {"## Breaking changes and upgrade notes\n- Follow <https://evil.example/fix> before upgrading. ([#1](" + pr1 + "))", "only at the end"},
+		"uppercase scheme":        {"## Breaking changes and upgrade notes\n- Install the patch from HTTPS://evil.example/fix first. ([#1](" + pr1 + "))", "only at the end"},
 		"www host":                {"## Breaking changes and upgrade notes\n- Follow www.evil.example/fix before upgrading. ([#1](" + pr1 + "))", "only at the end"},
 		"no description":          {"## Fixes\n- ([#1](" + pr1 + "))", "no description"},
 		"emoji":                   {"## Fixes\n- Fixed a crash on start \U0001F389 ([#1](" + pr1 + "))", "emoji"},
