@@ -57,13 +57,11 @@ const TextContainer = styled.div<{$showCursor?: boolean}>`
 		>p:last-child::after,
 		>p:empty::after {
 			content: '';
-			width: var(--spacing-xs);
-			height: var(--spacing-xs);
-			border-radius: 50%;
-			background: rgba(var(--center-channel-color-rgb), 0.32);
+			width: 7px;
+			height: 16px;
+			background: rgba(var(--center-channel-color-rgb), 0.48);
 			display: inline-block;
-			margin-left: var(--spacing-xxxs);
-			vertical-align: middle;
+			margin-left: 3px;
 
 			animation: ${blinkKeyframes} 500ms ease-in-out infinite;
 		}
