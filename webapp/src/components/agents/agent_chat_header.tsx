@@ -21,7 +21,13 @@ import {useAgentsRoute} from './use_agents_route';
 
 interface AgentChatHeaderProps {
     bot: LLMBot;
+
+    // The open chat, once it is known to be this agent's (the chat menu acts on it).
     rootId?: string;
+
+    // A chat is open, even while it is still loading and its rootId is not yet validated. The new-chat
+    // features (tools, switching agent) follow this, not rootId. Defaults to whether rootId is set.
+    inThread?: boolean;
 
     // Present only when the current user may edit this agent.
     onOpenSettings?: () => void;
@@ -29,10 +35,14 @@ interface AgentChatHeaderProps {
 
     // Called after the open chat was archived.
     onArchived: () => void;
+
+    // The agents to offer in a new chat's "Switch agent" submenu. An open chat belongs to its agent,
+    // so it never offers the switch.
+    bots?: LLMBot[];
 }
 
 // The agent name opens the chat menu, as the prototype's header title button does.
-const AgentChatHeader = ({bot, rootId, onOpenSettings, onNewChat, onArchived}: AgentChatHeaderProps) => {
+const AgentChatHeader = ({bot, rootId, inThread = Boolean(rootId), onOpenSettings, onNewChat, onArchived, bots}: AgentChatHeaderProps) => {
     const intl = useIntl();
     const {toChat, toAll} = useAgentsRoute();
 
@@ -48,10 +58,13 @@ const AgentChatHeader = ({bot, rootId, onOpenSettings, onNewChat, onArchived}: A
 
     // Like the RHS: the tools button is for the new-chat state, and not for service
     // account agents (no per-user connections or preferences to manage).
-    const showTools = !rootId && bot.useServiceAccountAuth !== true;
+    const showTools = !inThread && bot.useServiceAccountAuth !== true;
 
     return (
-        <Root aria-label={bot.displayName}>
+        <Root
+            $bordered={inThread}
+            aria-label={bot.displayName}
+        >
             <Title>
                 <UserAvatar
                     src={getProfilePictureUrl(bot.id, bot.lastIconUpdate)}
@@ -68,6 +81,7 @@ const AgentChatHeader = ({bot, rootId, onOpenSettings, onNewChat, onArchived}: A
                     onNewChat={onNewChat}
                     onViewAll={toAll}
                     onArchived={onArchived}
+                    {...(!inThread && bots ? {agents: {bots, onSwitch: (other: LLMBot) => toChat(other.id)}} : {})}
                     renderTrigger={({ariaLabel, label, expanded, onClick}) => (
                         <ChatTitleDropdown
                             label={label}
@@ -95,14 +109,14 @@ const AgentChatHeader = ({bot, rootId, onOpenSettings, onNewChat, onArchived}: A
                         autoEnableNewMCPTools={bot.autoEnableNewMCPTools}
                     />
                 )}
-                <WithTooltip title={rootId ? newChatLabel : intl.formatMessage({defaultMessage: 'You\'re already in a new chat'})}>
+                <WithTooltip title={inThread ? newChatLabel : intl.formatMessage({defaultMessage: 'You\'re already in a new chat'})}>
                     <TooltipTrigger>
                         <IconButton
                             size='small'
                             padding='compact'
                             icon={<Icon glyph={<PlusIcon/>}/>}
                             aria-label={newChatLabel}
-                            disabled={!rootId}
+                            disabled={!inThread}
                             data-testid='agent-chat-new-chat-button'
                             onClick={onNewChat}
                         />
@@ -114,7 +128,7 @@ const AgentChatHeader = ({bot, rootId, onOpenSettings, onNewChat, onArchived}: A
 };
 
 // The prototype's agent-chat header: 56px bar (spacing-m padding around a 32px row).
-const Root = styled.header`
+const Root = styled.header<{$bordered: boolean}>`
     /* Above the new-chat body, whose lift (translateY) can overlap this bar and block its clicks. */
     position: relative;
     z-index: 1;
@@ -126,8 +140,13 @@ const Root = styled.header`
     gap: var(--spacing-l);
     min-height: calc(var(--spacing-xxxl) + 2 * var(--spacing-m));
     padding: var(--spacing-m);
-    background: var(--center-channel-bg);
     border-bottom: var(--border-default);
+    ${({$bordered}) => !$bordered && 'border-bottom-color: transparent;'}
+    transition: border-color var(--duration-moderate) var(--ease-transition);
+
+    @media (prefers-reduced-motion: reduce) {
+        transition: none;
+    }
 `;
 
 const Title = styled.div`

@@ -17,7 +17,7 @@ import {requestAgentThreadsRefresh} from '@/websocket';
 
 import AgentChatDropZone from '../agent_chat/agent_chat_drop_zone';
 import AgentChatThreadView, {isThreadViewerAvailable} from '../agent_chat/agent_chat_thread_view';
-import AgentNewChat from '../agent_chat/agent_new_chat';
+import AgentNewChat, {NewChatBackdrop} from '../agent_chat/agent_new_chat';
 
 import AgentChatHeader from './agent_chat_header';
 import AgentSettingsModal from './agent_settings_modal';
@@ -87,6 +87,17 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
 
     const newChat = useCallback(() => toChat(botId), [toChat, botId]);
 
+    const closeSettings = useCallback(() => setSettingsOpen(false), []);
+    const handleSettingsSaved = useCallback(() => {
+        closeSettings();
+        reloadAccess();
+
+        // A rename or new avatar shows up in the header and sidebar.
+        fetchAndStoreBots(dispatch).catch((e: unknown) => {
+            console.error('Failed to refresh agents after saving settings:', e); // eslint-disable-line no-console
+        });
+    }, [closeSettings, reloadAccess, dispatch]);
+
     if (!bots) {
         return <LoadingState/>;
     }
@@ -105,6 +116,7 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
     }
 
     let body;
+    let isNewChat = false;
     if (dm.status === 'error') {
         body = (
             <CenteredState>
@@ -131,6 +143,7 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
             />
         );
     } else {
+        isNewChat = true;
         body = (
             <AgentNewChat
                 key={bot.id}
@@ -146,19 +159,20 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
         );
     }
 
-    const closeSettings = () => setSettingsOpen(false);
-
     // The settings open over the chat, so its state (the composer draft, the scroll position) stays.
     return (
         <>
             <ChatPane
                 aria-label={intl.formatMessage({defaultMessage: 'Chat with {name}'}, {name: bot.displayName})}
             >
+                <NewChatBackdrop visible={isNewChat}/>
                 <AgentChatHeader
                     bot={bot}
                     rootId={dm.status === 'ready' && rootId && validRootId === rootId ? rootId : ''}
+                    inThread={Boolean(rootId)}
                     onNewChat={newChat}
                     onArchived={newChat}
+                    bots={bots}
                     {...(access.status === 'allowed' ? {onOpenSettings: () => setSettingsOpen(true)} : {})}
                 />
                 <AgentChatDropZone testId='agent-chat-file-drop-zone'>
@@ -171,15 +185,7 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
                     agent={access.agent}
                     services={access.services}
                     onClose={closeSettings}
-                    onSaved={() => {
-                        closeSettings();
-                        reloadAccess();
-
-                        // A rename or new avatar shows up in the header and sidebar.
-                        fetchAndStoreBots(dispatch).catch((e: unknown) => {
-                            console.error('Failed to refresh agents after saving settings:', e); // eslint-disable-line no-console
-                        });
-                    }}
+                    onSaved={handleSettingsSaved}
                     onRestored={reloadAccess}
                 />
             )}
@@ -310,6 +316,8 @@ const AgentThread = ({channelId, rootId, agentName, bot, onNewChat, toAll, onVal
 
 // Definite height, no own scroll: the host ThreadViewer brings its own scroller.
 const ChatPane = styled.section`
+    position: relative;
+    isolation: isolate;
     display: flex;
     flex: 1 1 auto;
     flex-direction: column;

@@ -105,10 +105,13 @@ const CONTROLS_BAR_GAP = '0px';
 const COMPACT_CONTROLS_PULL = 'var(--spacing-xxxxs)';
 
 // The bubble the user is on: pointer over it, keyboard focus inside it, or the
-// row's a11y focus.
+// row's a11y focus. Keyboard focus is :has(:focus-visible), not :focus-within: clicking a button or
+// link in a reply leaves it focused, and :focus-within would keep the shade on after the pointer left.
+// The :has() is wrapped in :is(), whose selector list is forgiving: in a browser without :has() an
+// unwrapped entry would invalidate this whole comma-joined rule, dropping the :hover shade with it.
 const activeBubble = (post: string) => [
     `${post} ${BUBBLE}:hover`,
-    `${post} ${BUBBLE}:focus-within`,
+    `${post} ${BUBBLE}:is(:has(:focus-visible))`,
     `${post}.a11y--active ${BUBBLE}`,
 ].join(',\n    ');
 
@@ -427,6 +430,13 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         @media (prefers-reduced-motion: reduce) {
             transition: none;
         }
+    }
+
+    /* Your own bubble has no hover shade, but keyboard focus inside it, or the row's a11y focus, still gets a ring. */
+    .post.current--user.a11y--active ${BUBBLE},
+    .post.current--user ${BUBBLE}:is(:has(:focus-visible)) {
+        outline: 2px solid var(--button-bg);
+        outline-offset: 2px;
     }
 
     /* While editing, the host editor sits in the bubble: use the neutral bubble. */

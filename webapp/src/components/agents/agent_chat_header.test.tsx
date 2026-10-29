@@ -168,8 +168,8 @@ describe('AgentChatHeader', () => {
         expect(button.contains(name)).toBe(false);
         expect(button.textContent).toBe('Quarterly plan');
 
-        // To the right of the dropdown's wrapper in the title row.
-        expect(button.closest('span')?.nextElementSibling).toBe(name);
+        // To the right of the dropdown in the title row.
+        expect(button.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
     const CHATS = ['Listed chat', 'Quarterly plan', 'New chat', 'Older chat'];
@@ -316,10 +316,36 @@ describe('AgentChatHeader', () => {
         expect(mockPush).toHaveBeenCalledWith(expect.stringMatching(/\/agents\/all$/));
     });
 
+    describe('switch agent', () => {
+        const other = {id: 'bot2', displayName: 'Other agent', lastIconUpdate: 0, dmChannelID: 'dm2'} as LLMBot;
+
+        test('a new chat offers a submenu to switch agents and opens a new chat with the pick', async () => {
+            renderHeader({bots: [bot, other]});
+            openMenu();
+            await waitFor(() => expect(menuItems()).toContain('Switch agent'));
+            fireEvent.click(screen.getByRole('menuitem', {name: 'Switch agent'}));
+            await waitFor(() => expect(menuItems()).toContain('Other agent'));
+            await clickItem('Other agent');
+            expect(mockPush).toHaveBeenCalledWith(expect.stringMatching(/\/chat\/bot2$/));
+        });
+
+        test.each([
+            {name: 'an established thread', props: {rootId: 'root1', bots: [bot, other]}},
+            {name: 'a new chat with only one agent', props: {bots: [bot]}},
+            {name: 'a new chat before the agent list has loaded', props: {}},
+            {name: 'a chat that is still loading (open, but its root not yet validated)', props: {inThread: true, bots: [bot, other]}},
+        ])('$name does not offer it', async ({props}) => {
+            renderHeader(props);
+            await openActions();
+            expect(menuItems()).not.toContain('Switch agent');
+        });
+    });
+
     test.each([
         {name: 'new chat state shows the tools button', props: {}, bot, shown: true},
         {name: 'open thread hides it, as the RHS does', props: {rootId: 'root1'}, bot, shown: false},
         {name: 'service account agent hides it', props: {}, bot: {...bot, useServiceAccountAuth: true} as LLMBot, shown: false},
+        {name: 'a chat still loading hides it too', props: {inThread: true}, bot, shown: false},
     ])('tools button: $name', ({props, bot: b, shown}) => {
         renderHeader({...props, bot: b});
         expect(Boolean(screen.queryByText('Tools'))).toBe(shown);

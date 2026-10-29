@@ -127,8 +127,10 @@ const ContentOutlet = styled.main`
     flex-direction: column;
     min-width: 0;
     min-height: 0;
+    border: var(--border-light);
     border-radius: var(--radius-l);
     background: var(--center-channel-bg);
+    box-shadow: var(--elevation-1);
     overflow-x: hidden;
     overflow-y: auto;
 `;

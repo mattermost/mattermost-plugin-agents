@@ -60,9 +60,10 @@ interface AgentChatNameMenuProps {
     // Called after the open chat was archived.
     onArchived: () => void;
 
-    // Offers a submenu to pick an agent (the RHS, which has no agent list of its own): "Switch
-    // agent" in a new chat, and "New chat" in an open chat (a new chat with the agent picked,
-    // the open chat's own included). `onSwitch` starts a new chat with that agent.
+    // Offers a submenu to pick an agent: "Switch agent" in a new chat, and "New chat" in an open chat
+    // (a new chat with the agent picked, the open chat's own included). `onSwitch` starts a new chat
+    // with that agent. The RHS passes it always (it has no agent list of its own); the product header
+    // only in a new chat, since an open chat belongs to its agent.
     agents?: {bots: LLMBot[]; onSwitch: (bot: LLMBot) => void};
 
     // The surface draws its own title button; this menu opens from it.

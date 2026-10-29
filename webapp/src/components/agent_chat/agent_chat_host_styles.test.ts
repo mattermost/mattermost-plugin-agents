@@ -192,9 +192,27 @@ describe('hostThreadChatStyles message look', () => {
         expect(link).not.toContain('text-decoration');
     });
 
+    // Clicking a button or link in a reply leaves it focused; :focus-within would keep the bubble's
+    // hover shade on after the pointer left it.
+    test('the agent bubble shades for keyboard focus, not for a clicked control that kept focus', () => {
+        expect(text).not.toContain('.post__img + div:focus-within');
+        expect(ruleFor(text, '.post .post__content > .post__img + div:is(:has(:focus-visible))')).toContain('background: rgba(var(--center-channel-color-rgb), 0.06)');
+    });
+
+    // A bare :has() entry in a comma-joined list invalidates the whole rule where :has() is unsupported
+    // (Firefox ESR 115), taking the :hover shade with it.
+    test('no :has() sits outside :is() in a selector list that also carries :hover', () => {
+        expect(text).not.toMatch(/[^(]:has\(:focus-visible\)/);
+    });
+
     test('your own bubble has no hover or focus state', () => {
         expect(ruleFor(text, '.post.current--user .post__content > .post__img + div:hover')).toBeNull();
         expect(ruleFor(text, '.post.current--user .post__content > .post__img + div:focus-within')).toBeNull();
+    });
+
+    test('your own bubble still shows a ring for keyboard focus and a11y focus', () => {
+        const rule = ruleFor(text, '.post.current--user .post__content > .post__img + div:is(:has(:focus-visible))');
+        expect(rule).toContain('outline: 2px solid var(--button-bg)');
     });
 
     test('your own bubble reverses the colors, hides your name and puts the time under the bubble', () => {
