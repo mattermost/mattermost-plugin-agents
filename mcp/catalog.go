@@ -15,6 +15,7 @@ var (
 	ErrCatalogRemoteOwnerRequired = errors.New("catalog request remote pool owner is required")
 	ErrCatalogInvokerRequired     = errors.New("catalog request invoking user ID is required")
 	ErrClientManagerClosed        = errors.New("MCP client manager is closed")
+	ErrCatalogScopedRunInvalid    = errors.New("scoped catalog request needs a live run for its service-account bot")
 )
 
 const (
@@ -34,6 +35,11 @@ type CatalogRequest struct {
 	// ServiceAccount selects admin SA headers (and fail-closed exclusion of
 	// remotes without them) instead of per-user OAuth for remote servers.
 	ServiceAccount bool
+	// Scoped, when set, connects the embedded server through this run's
+	// scoped session instead of InvokingUserID's session, and limits the
+	// catalog to ScopedCatalogAllows. InvokingUserID is still the subject of
+	// access policy.
+	Scoped *ScopedRun
 }
 
 // CatalogAccess is one request-scoped catalog result. PluginServers and
@@ -60,7 +66,7 @@ func (a CatalogAccess) Unavailable() bool {
 		return false
 	}
 	return slices.ContainsFunc(a.Errors.Errors, func(err error) bool {
-		return errors.Is(err, ErrCatalogRemoteOwnerRequired) || errors.Is(err, ErrCatalogInvokerRequired) || errors.Is(err, ErrClientManagerClosed)
+		return errors.Is(err, ErrCatalogRemoteOwnerRequired) || errors.Is(err, ErrCatalogInvokerRequired) || errors.Is(err, ErrCatalogScopedRunInvalid) || errors.Is(err, ErrClientManagerClosed)
 	})
 }
 
@@ -77,12 +83,23 @@ func ServiceAccountCatalogRequest(remoteOwnerID, invokingUserID string) CatalogR
 	return CatalogRequest{RemoteOwnerID: remoteOwnerID, InvokingUserID: invokingUserID, ServiceAccount: true}
 }
 
+// ScopedCatalogRequest is a scoped run's catalog: remotes pooled by the run's
+// bot with service-account headers, the embedded server reached through the
+// run's scoped session, and no plugin MCP servers. Access policy is evaluated
+// for requesterID.
+func ScopedCatalogRequest(run *ScopedRun, requesterID string) CatalogRequest {
+	return CatalogRequest{RemoteOwnerID: run.BotUserID(), InvokingUserID: requesterID, ServiceAccount: true, Scoped: run}
+}
+
 func (r CatalogRequest) validate() error {
 	if r.RemoteOwnerID == "" {
 		return ErrCatalogRemoteOwnerRequired
 	}
 	if r.InvokingUserID == "" {
 		return ErrCatalogInvokerRequired
+	}
+	if r.Scoped != nil && (!r.ServiceAccount || r.Scoped.Session() == nil || r.Scoped.Closed() || r.Scoped.BotUserID() != r.RemoteOwnerID) {
+		return ErrCatalogScopedRunInvalid
 	}
 	return nil
 }

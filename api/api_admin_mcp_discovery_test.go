@@ -89,7 +89,7 @@ func newDelayedDiscoveryEmbeddedServer(t *testing.T, toolName string, delay time
 	return &delayedDiscoveryEmbeddedServer{ctx: ctx, server: server, delay: delay}
 }
 
-func (d *delayedDiscoveryEmbeddedServer) CreateClientTransport(_ string, _ string, _ string, _ *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+func (d *delayedDiscoveryEmbeddedServer) CreateClientTransport(_ context.Context, _ string, _ string, _ string, _ *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
 	if d.delay > 0 {
 		d.delayOnce.Do(func() { time.Sleep(d.delay) })
 	}

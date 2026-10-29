@@ -509,6 +509,7 @@ func (p *Plugin) OnActivate() error {
 	// embedded Mattermost server is connected at every level.
 	remoteMCPAllowed := func() bool { return licenseChecker.Allows(enterprise.CapRemoteMCP) }
 	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), ensureEmbeddedMCPServer(), untrustedHTTPClient, mmClient, remoteMCPAllowed, accessChecker)
+	mcpClientManager.SetScopedSessions(newScopedSessionMinter(p.API, &pluginAPI.Log))
 	reinitMCP := func() {
 		mcpClientManager.ReInit(p.configuration.MCP(), ensureEmbeddedMCPServer())
 	}
