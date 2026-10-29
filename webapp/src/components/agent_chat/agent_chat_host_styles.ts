@@ -66,6 +66,9 @@ export const THREAD_SCROLLER_SELECTOR = '#threadViewerScrollContainer';
 // No compass token covers content widths.
 export const CHAT_CONTENT_MAX_WIDTH = '800px';
 
+// A link on your own (reversed) bubble: the host link color, 40% of it mixed with the bubble's text color.
+const OWN_BUBBLE_LINK_COLOR = 'color-mix(in srgb, var(--link-color) 40%, var(--bubble-fg))';
+
 // Compact only: its text sits optically high in the shorter bubble, so it gets 2px more under it than over it.
 const BUBBLE_PADDING_BOTTOM_COMPACT = 'calc(var(--spacing-xxxs) + var(--spacing-xxxxs))';
 
@@ -379,12 +382,25 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
     }
 
     /*
-     * Own messages: a right-aligned bubble, filled with 8% of the text color. It has no hover shade:
-     * nothing on it is actionable. No avatar or name; the time sits under the bubble,
-     * in the space the bubble reserves.
+     * Own messages: right-aligned bubble with the colors reversed (text color as the background,
+     * the center channel background as the text). No avatar or name; the time sits under the
+     * bubble, in the space the bubble reserves.
      */
     .post.current--user .post__content {
         flex-direction: row-reverse;
+    }
+
+    /*
+     * The bubble swaps the center channel colors for everything inside it (text, links' neighbors,
+     * code blocks, attachments, quotes and tables all derive from these), so host content reads on
+     * the reversed background. The row keeps copies of the original values, taken before the swap
+     * (the bubble's own background and the time under it need the originals).
+     */
+    .post.current--user {
+        --bubble-bg: var(--center-channel-color);
+        --bubble-bg-rgb: var(--center-channel-color-rgb);
+        --bubble-fg: var(--center-channel-bg);
+        --bubble-fg-rgb: var(--center-channel-bg-rgb);
     }
 
     .post.current--user ${BUBBLE} {
@@ -395,19 +411,36 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         /* Room for the time under the bubble, and before the agent's reply. */
         margin-bottom: calc(${CONTROLS_BAR_HEIGHT} + ${CONTROLS_BAR_GAP});
         border-radius: var(--radius-l);
-        background: rgba(var(--center-channel-color-rgb), 0.08);
+        --center-channel-color: var(--bubble-fg);
+        --center-channel-color-rgb: var(--bubble-fg-rgb);
+        --center-channel-bg: var(--bubble-bg);
+        --center-channel-bg-rgb: var(--bubble-bg-rgb);
+
+        background: var(--bubble-bg);
+        color: var(--bubble-fg);
+        transition: background var(--duration-quick) var(--ease-transition);
+
+        @media (prefers-reduced-motion: reduce) {
+            transition: none;
+        }
     }
 
-    /* Keyboard focus inside your own bubble, or the row's a11y focus, also gets a ring. */
+    /* Your own bubble has no hover shade, but keyboard focus inside it, or the row's a11y focus, still gets a ring. */
     .post.current--user.a11y--active ${BUBBLE},
     .post.current--user ${BUBBLE}:is(:has(:focus-visible)) {
         outline: 2px solid var(--button-bg);
         outline-offset: 2px;
     }
 
-    /* While editing, the host editor sits in the bubble: a quieter fill than the message has. */
+    /* While editing, the host editor sits in the bubble: use the neutral bubble. */
     .post.current--user.post--editing ${BUBBLE} {
-        background: rgba(var(--center-channel-color-rgb), 0.04);
+        --center-channel-color: var(--bubble-bg);
+        --center-channel-color-rgb: var(--bubble-bg-rgb);
+        --center-channel-bg: var(--bubble-fg);
+        --center-channel-bg-rgb: var(--bubble-fg-rgb);
+
+        background: rgba(var(--bubble-bg-rgb), 0.04);
+        color: var(--bubble-bg);
     }
 
     .post.current--user .post__header .col__name {
@@ -424,8 +457,26 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
     }
 
     .post.current--user .post__time {
-        color: rgba(var(--center-channel-color-rgb), 0.64);
+        color: rgba(var(--bubble-bg-rgb), 0.64);
         font-size: var(--font-size-75);
         line-height: var(--line-height-75);
+    }
+
+    .post.current--user .post-message__text {
+        color: var(--bubble-fg);
+    }
+
+    /*
+     * Links (and @mentions, channel links, hashtags, which the host renders as links too, and links in
+     * attachments) use the host's link color, which is made for the center channel background, not the
+     * reversed bubble. It is mixed toward the bubble's text color, which always contrasts with the
+     * bubble, so a link keeps its hue but stays readable on both light and dark themes. The post's
+     * time (also an anchor, drawn outside the bubble) keeps its own color. &&& outranks the host's
+     * link and mention rules.
+     */
+    &&& .post.current--user ${BUBBLE} a:not(.post__permalink),
+    &&& .post.current--user ${BUBBLE} a:not(.post__permalink):visited,
+    &&& .post.current--user ${BUBBLE} a:not(.post__permalink):hover {
+        color: ${OWN_BUBBLE_LINK_COLOR};
     }
 `;
