@@ -73,9 +73,13 @@ export class AgentPageHelper {
         return this.page.getByRole('button', { name: `Start a new chat with ${displayName}`, exact: true });
     }
 
-    /** The whole row: the primary action button and its sibling controls (actions menu, badges). */
+    /**
+     * The whole row: the primary action button and its sibling controls (actions menu, badges).
+     * Matched by the visible name, not the row button's role: an open actions menu hides the rest of
+     * the row from the accessibility tree, which would drop the row from a role-based match.
+     */
     getAgentRow(displayName: string): Locator {
-        return this.page.getByTestId('agent-row').filter({has: this.getAgentRowButton(displayName)});
+        return this.page.getByTestId('agent-row').filter({has: this.page.getByText(displayName, {exact: true})});
     }
 
     /** Click the row's primary action, which opens a new chat with that agent. */
