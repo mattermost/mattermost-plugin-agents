@@ -64,8 +64,16 @@ export const AnimatedModalShell = ({show, children, onBackdropClick, onEscape, z
             if (document.querySelector(`[${OPEN_POPUP_ATTRIBUTE}]`)) {
                 return;
             }
+
+            // A dialog outside this shell owns Escape, unless it is another shell below this one (a modal
+            // opened from inside it stacks above its opener, so the opener must not block the top one).
+            const ownShell = document.querySelector(`[${SHELL_ATTRIBUTE}="${shellId}"]`);
+            const isBelow = (el: HTMLElement) => {
+                const shell = el.closest(`[${SHELL_ATTRIBUTE}]`);
+                return Boolean(ownShell && shell && shell !== ownShell && shell.compareDocumentPosition(ownShell) & Node.DOCUMENT_POSITION_FOLLOWING);
+            };
             const hasOtherDialog = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]')).
-                some((el) => el.closest(`[${SHELL_ATTRIBUTE}="${shellId}"]`) === null && isDialogOpen(el));
+                some((el) => el.closest(`[${SHELL_ATTRIBUTE}="${shellId}"]`) === null && !isBelow(el) && isDialogOpen(el));
             if (hasOtherDialog) {
                 return;
             }

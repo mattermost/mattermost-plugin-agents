@@ -7,7 +7,7 @@ import styled from 'styled-components';
 
 import {Modal} from '@mattermost/compass-ui/components/modal';
 
-import {AnimatedModalShell, MODAL_SHEET_CLASS} from '@/components/animated_modal_shell';
+import {AnimatedModalShell} from '@/components/animated_modal_shell';
 import type {ServiceInfo, UserAgent} from '@/types/agents';
 
 import AgentConfigView, {type AgentConfigFrameParts} from './agent_config_view';
@@ -60,7 +60,7 @@ const AgentSettingsModal = ({show, agent, services, onClose, onSaved, onRestored
             onEscape={requestClose}
             zIndex={2000}
         >
-            <Sheet className={MODAL_SHEET_CLASS}>
+            <Sheet>
                 <AgentConfigView
                     mode='edit'
                     variant='modal'
@@ -87,6 +87,11 @@ const SettingsModal = styled(Modal)`
     && {
         height: 80vh;
         max-width: 100%;
+    }
+
+    /* The tab bar fills the header slot edge to edge; the tab list sets its own inset. (The class name is compass's generated one.) */
+    && [class*='modal-header__slot'] {
+        padding: 0;
     }
 `;
 

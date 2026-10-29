@@ -79,6 +79,49 @@ describe('AnimatedModalShell', () => {
         expect(onEscape).not.toHaveBeenCalled();
     });
 
+    it('a modal opened from inside another shell takes Escape, and the opener defers to it', () => {
+        const onOuter = jest.fn();
+        const onInner = jest.fn();
+        const ui = (innerShown: boolean) => (
+            <AnimatedModalShell
+                show={true}
+                onEscape={onOuter}
+            >
+                <Modal
+                    closeOnEscape={false}
+                    title='Outer'
+                >
+                    {'outer'}
+                    {innerShown && (
+                        <AnimatedModalShell
+                            show={true}
+                            onEscape={onInner}
+                        >
+                            <Modal
+                                closeOnEscape={false}
+                                title='Inner'
+                            >
+                                {'inner'}
+                            </Modal>
+                        </AnimatedModalShell>
+                    )}
+                </Modal>
+            </AnimatedModalShell>
+        );
+        const view = render(ui(false));
+
+        // Opened after its opener, so it stacks above it.
+        view.rerender(ui(true));
+        document.querySelectorAll<HTMLElement>('[role="dialog"]').forEach((el) => {
+            el.getClientRects = () => [{}] as unknown as DOMRectList;
+        });
+
+        fireEvent.keyDown(document.body, {key: 'Escape'});
+
+        expect(onInner).toHaveBeenCalledTimes(1);
+        expect(onOuter).not.toHaveBeenCalled();
+    });
+
     it('show=false unmounts after the exit and stops handling Escape', async () => {
         const {onEscape, rerender} = renderShell();
 

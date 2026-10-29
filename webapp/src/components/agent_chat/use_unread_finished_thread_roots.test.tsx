@@ -6,7 +6,7 @@ import {act, renderHook} from '@testing-library/react';
 import {Provider} from 'react-redux';
 import {createStore} from 'redux';
 
-import {recordPostUpdate, resetGeneratingPosts, useGeneratingThreadRoots, useUnreadFinishedThreadRoots} from './use_thread_generating';
+import {recordPostUpdate, resetGeneratingPosts, useGeneratingThreadRoots, useMarkThreadRead, useUnreadFinishedThreadRoots} from './use_thread_generating';
 
 jest.mock('@/websocket', () => ({subscribeToAllPostUpdates: jest.fn()}));
 
@@ -75,5 +75,40 @@ describe('unread finished chats', () => {
         act(() => update('p1', 'start'));
         act(() => update('p1', 'end'));
         expect(Array.from(result.current.unread)).toEqual([]);
+    });
+
+    test('reading a chat elsewhere (the RHS) clears it for the sidebar', () => {
+        const posts = {p1: post('p1', 'root1')};
+        const wrapper = ({children}: {children: React.ReactNode}) => <Provider store={makeStore(posts)}>{children}</Provider>;
+        const sidebar = renderHook(() => useUnreadFinishedThreadRoots(''), {wrapper});
+        act(() => update('p1', 'start'));
+        act(() => update('p1', 'end'));
+        expect(Array.from(sidebar.result.current)).toEqual(['root1']);
+
+        const rhs = renderHook(() => useMarkThreadRead('root1'), {wrapper});
+        expect(Array.from(sidebar.result.current)).toEqual([]);
+        rhs.unmount();
+    });
+
+    test('a finished post that reaches the store after its chat was opened is still read', () => {
+        let posts: Record<string, unknown> = {};
+        const store = createStore(() => ({entities: {users: {currentUserId: 'me'}, posts: {posts}}}));
+        const {result} = renderHook(() => useUnreadFinishedThreadRoots('root1'), {
+            wrapper: ({children}: {children: React.ReactNode}) => <Provider store={store}>{children}</Provider>,
+        });
+        act(() => update('p1', 'start'));
+        act(() => update('p1', 'end'));
+
+        act(() => {
+            posts = {p1: post('p1', 'root1')};
+            store.dispatch({type: 'ADD_POST'});
+        });
+
+        // Open again elsewhere: nothing is left over for the chat.
+        const later = renderHook(() => useUnreadFinishedThreadRoots(''), {
+            wrapper: ({children}: {children: React.ReactNode}) => <Provider store={store}>{children}</Provider>,
+        });
+        expect(Array.from(result.current)).toEqual([]);
+        expect(Array.from(later.result.current)).toEqual([]);
     });
 });

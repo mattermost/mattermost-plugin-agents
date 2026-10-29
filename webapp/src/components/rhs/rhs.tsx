@@ -22,6 +22,7 @@ import type {AIThread} from '@/types/ai_thread';
 
 import AgentChatDropZone from '../agent_chat/agent_chat_drop_zone';
 import AgentChatThreadView from '../agent_chat/agent_chat_thread_view';
+import {useMarkThreadRead} from '../agent_chat/use_thread_generating';
 
 import ChatActionsPopover from './chat_actions_popover';
 import RHSViewTransition from './rhs_view_transition';
@@ -65,6 +66,7 @@ const twentyFourHoursInMS = 24 * 60 * 60 * 1000;
 export default function RHS() {
     const dispatch = useDispatch();
     const selectedPostId = useSelector((state: any) => state['plugins-' + manifest.id].selectedPostId);
+    useMarkThreadRead(selectedPostId || '');
 
     // The list view (new chat or history) is shared with the header title, which is rendered by
     // the host outside this component (it shows Back and the tools button by it). An open

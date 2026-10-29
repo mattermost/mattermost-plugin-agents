@@ -682,7 +682,10 @@ const AgentConfigView = (props: Props) => {
     );
 
     const tabs = (
-        <ConfigTabs role='tablist'>
+        <ConfigTabs
+            role='tablist'
+            $modal={inModal}
+        >
             <UnderlineTab
                 type='button'
                 role='tab'
@@ -725,7 +728,7 @@ const AgentConfigView = (props: Props) => {
     );
 
     const viewBody = (
-        <ViewBody>
+        <ViewBody $modal={inModal}>
             {errors.general && (
                 <Notice
                     type='danger'
@@ -967,8 +970,8 @@ const HeaderActions = styled.div`
     flex-shrink: 0;
 `;
 
-const ConfigTabs = styled(UnderlineTabs)`
-    padding: 0 var(--spacing-l);
+const ConfigTabs = styled(UnderlineTabs)<{$modal: boolean}>`
+    padding: ${({$modal}) => ($modal ? '0 0 0 var(--spacing-xxxl)' : '0 var(--spacing-l)')};
 `;
 
 const HeaderLeading = styled.div`
@@ -1029,8 +1032,8 @@ const BackButton = styled(IconButton)`
     margin-left: calc(-1 * var(--spacing-xs));
 `;
 
-const ViewBody = styled.div`
-    padding: var(--spacing-xxxl) var(--spacing-l);
+const ViewBody = styled.div<{$modal: boolean}>`
+    padding: ${({$modal}) => ($modal ? 'var(--spacing-xxl) var(--spacing-xxxl)' : 'var(--spacing-xxxl) var(--spacing-l)')};
     flex: 1;
     min-height: 0;
     overflow-y: auto;

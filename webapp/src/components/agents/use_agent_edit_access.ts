@@ -29,13 +29,17 @@ export function useAgentEditAccess(botId: string): {access: AgentEditAccess; rel
     // Mirrors AgentsList: without these, /services 403s, so the editor gets no list.
     const canViewServices = hasManageOwnAgent || hasManageOthersAgent || hasManageSystem;
 
-    const [result, setResult] = useState<{key: string; access: AgentEditAccess} | null>(null);
+    const [result, setResult] = useState<{identity: string; access: AgentEditAccess} | null>(null);
     const [revision, setRevision] = useState(0);
-    const key = `${botId}:${currentUserId}:${hasManageOthersAgent}:${hasManageSystem}:${canViewServices}:${revision}`;
+
+    // Who and what the access was resolved for. A reload (the revision) keeps the previous result until
+    // the new one arrives, so an open editor is not unmounted (and its unsaved edits lost) meanwhile.
+    const identity = `${botId}:${currentUserId}:${hasManageOthersAgent}:${hasManageSystem}:${canViewServices}`;
+    const key = `${identity}:${revision}`;
 
     useEffect(() => {
         let cancelled = false;
-        const requestKey = key;
+        const requestIdentity = identity;
         const load = async () => {
             let access: AgentEditAccess = {status: 'denied'};
             try {
@@ -57,7 +61,7 @@ export function useAgentEditAccess(botId: string): {access: AgentEditAccess; rel
                 console.error('Failed to resolve agent edit access:', e); // eslint-disable-line no-console
             }
             if (!cancelled) {
-                setResult({key: requestKey, access});
+                setResult({identity: requestIdentity, access});
             }
         };
         if (botId && currentUserId) {
@@ -66,12 +70,12 @@ export function useAgentEditAccess(botId: string): {access: AgentEditAccess; rel
         return () => {
             cancelled = true;
         };
-    }, [key, botId, currentUserId, hasManageOthersAgent, hasManageSystem, canViewServices]);
+    }, [key, identity, botId, currentUserId, hasManageOthersAgent, hasManageSystem, canViewServices]);
 
     const reload = useCallback(() => setRevision((n) => n + 1), []);
 
     if (!botId || !currentUserId) {
         return {access: {status: 'denied'}, reload};
     }
-    return {access: result?.key === key ? result.access : {status: 'loading'}, reload};
+    return {access: result?.identity === identity ? result.access : {status: 'loading'}, reload};
 }

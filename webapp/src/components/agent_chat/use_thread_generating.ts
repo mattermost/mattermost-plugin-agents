@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import {useEffect, useMemo, useSyncExternalStore} from 'react';
-import {useSelector, useStore} from 'react-redux';
+import {useSelector} from 'react-redux';
 
 import {GlobalState} from '@mattermost/types/store';
 
@@ -139,77 +139,70 @@ export const useThreadGenerating = (channelId: string, rootId: string): string |
     return useSelector<GlobalState, string | null>((state) => (recorded >= 0 ? findGenerating(state, channelId, rootId) : null));
 };
 
-// The root post ids of the current user's chats with an agent generating right now, across every
-// channel (a chat they are not looking at included). A post leaves the set when its `end` or
-// `cancel` event arrives. Only posts already in the store count: the host receives a reply's
-// post when the agent starts it, in any channel the user belongs to.
-export const useGeneratingThreadRoots = (): ReadonlySet<string> => {
-    const recorded = useSyncExternalStore(subscribe, getVersion);
-
-    // One string, so an unchanged set does not re-render on every state change.
-    const key = useSelector<GlobalState, string>((state) => {
-        if (recorded < 0 || generating.size === 0) {
-            return '';
-        }
-        const posts = (state.entities?.posts?.posts ?? {}) as Record<string, PostLike | undefined>;
-        const currentUserId = state.entities?.users?.currentUserId ?? '';
-        const roots = new Set<string>();
-        generating.forEach((postId) => {
-            const post = posts[postId];
-            if (post && isRequester(state, post, currentUserId)) {
-                roots.add(post.root_id || post.id);
+// The sorted, comma-joined root post ids of the current user's chats among the recorded posts `ids`
+// (`exclude` left out). One string, so an unchanged set does not re-render on every state change.
+// Only posts already in the store count: the host receives a reply's post when the agent starts it,
+// in any channel the user belongs to.
+const rootsKey = (state: GlobalState, ids: ReadonlySet<string>, exclude = ''): string => {
+    if (ids.size === 0) {
+        return '';
+    }
+    const posts = (state.entities?.posts?.posts ?? {}) as Record<string, PostLike | undefined>;
+    const currentUserId = state.entities?.users?.currentUserId ?? '';
+    const roots = new Set<string>();
+    ids.forEach((postId) => {
+        const post = posts[postId];
+        if (post && isRequester(state, post, currentUserId)) {
+            const root = post.root_id || post.id;
+            if (root !== exclude) {
+                roots.add(root);
             }
-        });
-        return Array.from(roots).sort().join(',');
+        }
     });
+    return Array.from(roots).sort().join(',');
+};
 
+const useRoots = (ids: ReadonlySet<string>, exclude = ''): ReadonlySet<string> => {
+    // Re-render on every recorded change; the selector reads the set.
+    const recorded = useSyncExternalStore(subscribe, getVersion);
+    const key = useSelector<GlobalState, string>((state) => (recorded < 0 ? '' : rootsKey(state, ids, exclude)));
     return useMemo(() => new Set(key ? key.split(',') : []), [key]);
 };
 
-// The root post ids of the current user's chats whose agent finished answering while they were not
-// looking at them: a chat leaves the set when it is opened (`openRootId`). Posts count as in
-// useGeneratingThreadRoots: only those already in the store, and only the user's own requests.
-export const useUnreadFinishedThreadRoots = (openRootId = ''): ReadonlySet<string> => {
+// The root post ids of the current user's chats with an agent generating right now, across every
+// channel (a chat they are not looking at included). A post leaves the set when its `end` or
+// `cancel` event arrives.
+export const useGeneratingThreadRoots = (): ReadonlySet<string> => useRoots(generating);
+
+// Opening a chat, in the product view or the RHS, reads it: its finished posts leave the unread set.
+// Runs again when a finished post reaches the store after the chat was opened.
+export const useMarkThreadRead = (openRootId: string) => {
     const recorded = useSyncExternalStore(subscribe, getVersion);
-    const store = useStore<GlobalState>();
 
-    // Opening a chat reads it.
-    useEffect(() => {
-        if (!openRootId || finished.size === 0) {
-            return;
-        }
-        const posts = (store.getState().entities?.posts?.posts ?? {}) as Record<string, PostLike | undefined>;
-        let cleared = false;
-        Array.from(finished).forEach((postId) => {
-            const post = posts[postId];
-            if (post && (post.root_id || post.id) === openRootId) {
-                finished.delete(postId);
-                cleared = true;
-            }
-        });
-        if (cleared) {
-            notify();
-        }
-    }, [openRootId, recorded, store]);
-
-    const key = useSelector<GlobalState, string>((state) => {
-        if (recorded < 0 || finished.size === 0) {
+    // The finished posts of the open chat that are in the store, as one string for a stable dependency.
+    const readKey = useSelector<GlobalState, string>((state) => {
+        if (recorded < 0 || !openRootId || finished.size === 0) {
             return '';
         }
         const posts = (state.entities?.posts?.posts ?? {}) as Record<string, PostLike | undefined>;
-        const currentUserId = state.entities?.users?.currentUserId ?? '';
-        const roots = new Set<string>();
-        finished.forEach((postId) => {
+        return Array.from(finished).filter((postId) => {
             const post = posts[postId];
-            if (post && isRequester(state, post, currentUserId)) {
-                const root = post.root_id || post.id;
-                if (root !== openRootId) {
-                    roots.add(root);
-                }
-            }
-        });
-        return Array.from(roots).sort().join(',');
+            return post && (post.root_id || post.id) === openRootId;
+        }).join(',');
     });
 
-    return useMemo(() => new Set(key ? key.split(',') : []), [key]);
+    useEffect(() => {
+        if (!readKey) {
+            return;
+        }
+        readKey.split(',').forEach((postId) => finished.delete(postId));
+        notify();
+    }, [readKey]);
+};
+
+// The root post ids of the current user's chats whose agent finished answering while they were not
+// looking at them (`openRootId` is never in it).
+export const useUnreadFinishedThreadRoots = (openRootId = ''): ReadonlySet<string> => {
+    useMarkThreadRead(openRootId);
+    return useRoots(finished, openRootId);
 };
