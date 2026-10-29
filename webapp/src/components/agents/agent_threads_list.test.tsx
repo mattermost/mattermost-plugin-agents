@@ -159,26 +159,76 @@ describe('AgentThreadsList', () => {
         expect(imgs).toEqual(expect.arrayContaining(['/api/v4/users/a/image', '/api/v4/users/b/image']));
     });
 
-    describe('thread limit and More', () => {
+    describe('thread limit and Show more / Show less', () => {
         const limitCases = [
             {count: 3, shown: 3, more: false},
             {count: THREADS_PAGE_SIZE, shown: THREADS_PAGE_SIZE, more: false},
             {count: THREADS_PAGE_SIZE + 1, shown: THREADS_PAGE_SIZE, more: true},
             {count: 25, shown: THREADS_PAGE_SIZE, more: true},
         ];
-        test.each(limitCases)('$count threads shows $shown, More=$more', ({count, shown, more}) => {
+        test.each(limitCases)('$count threads shows $shown, Show more=$more', ({count, shown, more}) => {
             renderList({threadsByBot: {a: manyThreads(count)}});
             expect(chatTitles()).toHaveLength(shown);
             expect(Boolean(screen.queryByRole('button', {name: 'Show more Alpha chats'}))).toBe(more);
         });
 
-        test('More reveals the next batch, then disappears when all are shown', () => {
+        test('Show more reveals the next batch, then the button stays at the end of the list as Show less', () => {
             renderList({threadsByBot: {a: manyThreads(25)}});
+            expect(screen.getByRole('button', {name: 'Show more Alpha chats'}).textContent).toBe('Show more');
             fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
             expect(chatTitles()).toHaveLength(20);
             fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
             expect(chatTitles()).toHaveLength(25);
             expect(screen.queryByRole('button', {name: 'Show more Alpha chats'})).toBeNull();
+
+            const less = screen.getByRole('button', {name: 'Show less Alpha chats'});
+            expect(less.textContent).toBe('Show less');
+
+            // It is the last item of that agent's list.
+            const list = document.getElementById('agent-threads-a') as HTMLElement;
+            expect(list.lastElementChild?.contains(less)).toBe(true);
+        });
+
+        test('Show less folds the list back to one page and offers Show more again', async () => {
+            renderList({threadsByBot: {a: manyThreads(25)}});
+            fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
+            fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
+            fireEvent.click(screen.getByRole('button', {name: 'Show less Alpha chats'}));
+
+            // The extra rows fold away over the quick duration first, then the list drops them.
+            expect(chatTitles()).toHaveLength(25);
+            await waitFor(() => expect(chatTitles()).toHaveLength(THREADS_PAGE_SIZE));
+            expect(screen.getByRole('button', {name: 'Show more Alpha chats'})).toBeTruthy();
+            expect(screen.queryByRole('button', {name: 'Show less Alpha chats'})).toBeNull();
+        });
+
+        test('Show less is immediate under reduced motion', () => {
+            const original = window.matchMedia;
+            window.matchMedia = ((query: string) => ({matches: query.includes('reduce'), media: query, addEventListener: jest.fn(), removeEventListener: jest.fn()})) as unknown as typeof window.matchMedia;
+            try {
+                renderList({threadsByBot: {a: manyThreads(25)}});
+                fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
+                fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
+                fireEvent.click(screen.getByRole('button', {name: 'Show less Alpha chats'}));
+                expect(chatTitles()).toHaveLength(THREADS_PAGE_SIZE);
+            } finally {
+                window.matchMedia = original;
+            }
+        });
+
+        test.each([
+            {name: 'a short list that was never expanded', count: 3},
+            {name: 'a list of exactly one page', count: THREADS_PAGE_SIZE},
+        ])('$name has no Show less', ({count}) => {
+            renderList({threadsByBot: {a: manyThreads(count)}});
+            expect(screen.queryByRole('button', {name: /Show (more|less) Alpha chats/})).toBeNull();
+        });
+
+        // The open chat is listed beyond the limit without the user having expanded anything.
+        test('a pinned active chat does not make Show less appear', () => {
+            renderList({threadsByBot: {a: manyThreads(11)}, activeBotId: 'a', activeRootId: 'root_11'});
+            expect(chatTitles()).toHaveLength(11);
+            expect(screen.queryByRole('button', {name: 'Show less Alpha chats'})).toBeNull();
         });
 
         test('the active thread beyond the limit stays visible, in order', () => {
@@ -290,5 +340,11 @@ describe('AgentThreadsList', () => {
 
         expect(screen.queryAllByTestId('thread-unread')).toHaveLength(expectedUnread);
         expect(screen.queryAllByTestId('thread-generating')).toHaveLength(expectedGenerating);
+    });
+
+    test('an unread chat is announced to screen readers', () => {
+        renderList({unreadRoots: new Set(['root_1']), activeBotId: 'a', activeRootId: ''});
+
+        expect(screen.getAllByText('The agent has replied')).toHaveLength(1);
     });
 });

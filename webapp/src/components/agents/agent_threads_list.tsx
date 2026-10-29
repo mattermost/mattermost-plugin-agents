@@ -3,7 +3,7 @@
 
 import React, {useEffect, useRef, useState} from 'react';
 import {useIntl} from 'react-intl';
-import styled from 'styled-components';
+import styled, {css, keyframes} from 'styled-components';
 import DotsHorizontalIcon from '@mattermost/compass-icons/components/dots-horizontal';
 import ChevronDownIcon from '@mattermost/compass-icons/components/chevron-down';
 import ChevronRightIcon from '@mattermost/compass-icons/components/chevron-right';
@@ -53,11 +53,32 @@ interface AgentThreadsListProps {
     onRenameThread: (thread: AIThread, title: string) => Promise<void>;
 }
 
-// Threads shown per agent before "More"; each click reveals this many more.
+// Threads shown per agent before "Show more"; each click reveals this many more.
 export const THREADS_PAGE_SIZE = 10;
+
+// The compass quick duration, in ms, for sequencing work after a CSS animation that uses it.
+const quickDurationMs = () => {
+    const ms = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--duration-quick'));
+    return Number.isFinite(ms) ? ms : 150;
+};
+
+// Rows past the first page only exist once "Show more" revealed them, so they enter; on "Show less" the
+// ones that are about to go (not the open chat, which stays listed) fold away first.
+const rowMotion = (index: number, rootId: string | null | undefined, limit: number, folding: boolean, activeRootId: string | undefined) => {
+    if (limit <= THREADS_PAGE_SIZE || index < THREADS_PAGE_SIZE) {
+        return {};
+    }
+    if (folding && !(activeRootId && rootId === activeRootId)) {
+        return {motion: 'leave' as const};
+    }
+    return {motion: 'enter' as const};
+};
 
 // Above the plugin's other modals (2000), like every confirmation sheet on this page.
 const ARCHIVE_DIALOG_Z_INDEX = 2000;
+
+// The dimmed strength of the sidebar's quiet affordances (icons, the row chevron).
+const QUIET_OPACITY = 0.64;
 
 const AgentThreadsList = ({
     bots,
@@ -77,6 +98,9 @@ const AgentThreadsList = ({
     const intl = useIntl();
     const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
     const [limits, setLimits] = useState<Record<string, number>>({});
+
+    // Agents whose revealed rows are folding away after "Show less"; the limit resets when that ends.
+    const [folding, setFolding] = useState<Record<string, boolean>>({});
     const [archiveTarget, setArchiveTarget] = useState<AIThread | null>(null);
     const [renameTarget, setRenameTarget] = useState<AIThread | null>(null);
     const [archiving, setArchiving] = useState(false);
@@ -84,7 +108,6 @@ const AgentThreadsList = ({
 
     // Keeps the title visible while the dialog's exit animation runs.
     const lastArchiveTitle = useRef('');
-    const pendingFocus = useRef<{botId: string; index: number} | null>(null);
     const mounted = useRef(true);
     useEffect(() => {
         mounted.current = true;
@@ -93,20 +116,23 @@ const AgentThreadsList = ({
         };
     }, []);
 
-    // When "More" reveals the last threads its button disappears; move focus to the
-    // first revealed row instead of dropping it to the document body.
-    useEffect(() => {
-        const target = pendingFocus.current;
-        if (!target) {
+    // "Show less" folds the extra rows away over the quick duration, then drops them.
+    const foldBack = (botId: string) => {
+        const reset = () => {
+            if (!mounted.current) {
+                return;
+            }
+            setLimits((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => id !== botId)));
+            setFolding((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => id !== botId)));
+        };
+        const quick = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : quickDurationMs();
+        if (quick === 0) {
+            reset();
             return;
         }
-        pendingFocus.current = null;
-        const list = document.getElementById(`agent-threads-${target.botId}`);
-        if (!list || list.querySelector('[data-more-threads]')) {
-            return;
-        }
-        list.querySelectorAll<HTMLElement>('[data-thread-item]')[target.index]?.querySelector('button')?.focus();
-    });
+        setFolding((prev) => ({...prev, [botId]: true}));
+        window.setTimeout(reset, quick);
+    };
 
     const toggle = (botId: string) => {
         setCollapsed((prev) => ({...prev, [botId]: !prev[botId]}));
@@ -188,6 +214,10 @@ const AgentThreadsList = ({
                 // The open chat stays listed even when it is beyond the limit.
                 const shown = threads.filter((t, i) => i < limit || (isActiveAgent && Boolean(activeRootId) && t.root_post_id === activeRootId));
                 const hiddenCount = threads.length - shown.length;
+
+                // Once every chat is revealed the button stays at the end of the list as "Show less", which
+                // folds the list back to one page. It is only offered where the user expanded a longer list.
+                const canShowLess = hiddenCount === 0 && limit > THREADS_PAGE_SIZE && threads.length > THREADS_PAGE_SIZE;
                 const isCollapsed = Boolean(collapsed[bot.id]) && threads.length > 0;
                 const listId = `agent-threads-${bot.id}`;
 
@@ -255,10 +285,11 @@ const AgentThreadsList = ({
                                         id={listId}
                                         aria-label={intl.formatMessage({defaultMessage: '{agent} chats'}, {agent: bot.displayName})}
                                     >
-                                        {shown.map((thread) => (
+                                        {shown.map((thread, index) => (
                                             <ThreadItem
                                                 key={thread.id}
                                                 thread={thread}
+                                                {...rowMotion(index, thread.root_post_id, limit, Boolean(folding[bot.id]), isActiveAgent ? (activeRootId ?? '') : '')}
                                                 active={isActiveAgent && activeRootId === thread.root_post_id}
                                                 generating={Boolean(thread.root_post_id && generatingRoots?.has(thread.root_post_id))}
                                                 unread={Boolean(thread.root_post_id && unreadRoots?.has(thread.root_post_id))}
@@ -271,7 +302,7 @@ const AgentThreadsList = ({
                                                 }}
                                             />
                                         ))}
-                                        {hiddenCount > 0 && (
+                                        {(hiddenCount > 0 || canShowLess) && (
                                             <li>
                                                 <MoreRow>
                                                     <Button
@@ -279,13 +310,16 @@ const AgentThreadsList = ({
                                                         appearance='inverted'
                                                         size='x-small'
                                                         data-more-threads={true}
-                                                        aria-label={intl.formatMessage({defaultMessage: 'Show more {agent} chats'}, {agent: bot.displayName})}
+                                                        aria-label={canShowLess ? intl.formatMessage({defaultMessage: 'Show less {agent} chats'}, {agent: bot.displayName}) : intl.formatMessage({defaultMessage: 'Show more {agent} chats'}, {agent: bot.displayName})}
                                                         onClick={() => {
-                                                            pendingFocus.current = {botId: bot.id, index: shown.length};
+                                                            if (canShowLess) {
+                                                                foldBack(bot.id);
+                                                                return;
+                                                            }
                                                             setLimits((prev) => ({...prev, [bot.id]: limit + THREADS_PAGE_SIZE}));
                                                         }}
                                                     >
-                                                        {intl.formatMessage({defaultMessage: 'More'})}
+                                                        {canShowLess ? intl.formatMessage({defaultMessage: 'Show less'}) : intl.formatMessage({defaultMessage: 'Show more'})}
                                                     </Button>
                                                 </MoreRow>
                                             </li>
@@ -352,6 +386,9 @@ interface ThreadItemProps {
     // The agent finished answering while the chat was not open.
     unread: boolean;
     placeholder: string;
+
+    // The row was revealed by "Show more" (enter), or is being folded away by "Show less" (leave).
+    motion?: 'enter' | 'leave';
     onSelect: () => void;
     onRename: () => void;
     onArchive: () => void;
@@ -360,7 +397,7 @@ interface ThreadItemProps {
 // A compass ChannelSidebarItem only renders its own kebab for channel and DM rows, so the
 // actions button is overlaid on the row (as the agent rows do for their chevron and [+]),
 // with the same hover/focus reveal as the compass kebab.
-const ThreadItem = ({thread, active, generating, unread, placeholder, onSelect, onRename, onArchive}: ThreadItemProps) => {
+const ThreadItem = ({thread, active, generating, unread, placeholder, motion, onSelect, onRename, onArchive}: ThreadItemProps) => {
     const intl = useIntl();
     const [menuOpen, setMenuOpen] = useState(false);
     const {rendered, onExited} = useMenuTransition(menuOpen);
@@ -370,78 +407,84 @@ const ThreadItem = ({thread, active, generating, unread, placeholder, onSelect, 
     return (
         <ThreadListItem
             data-thread-item={true}
+            $motion={motion}
             {...(menuOpen && {'data-menu-open': true})}
         >
-            <ThreadIcon
-                aria-hidden={true}
-                $active={active}
-                $busy={generating}
-            >
-                {generating && (
-                    <span data-testid='thread-generating'>
-                        <WaveDots
-                            animate={!prefersReducedMotion()}
-                            half={true}
-                        />
-                    </span>
-                )}
-                {!generating && unread && (
-                    <span data-testid='thread-unread'>
-                        <UnreadDot/>
-                    </span>
-                )}
-                {!generating && !unread && (
-                    <Icon
-                        size='12'
-                        glyph={<MessageOutlineIcon/>}
-                    />
-                )}
-            </ThreadIcon>
-            {generating && (
-                <VisuallyHidden>{intl.formatMessage({defaultMessage: 'The agent is responding'})}</VisuallyHidden>
-            )}
-            <ChannelSidebarItem
-                name={title}
-                leadingVisual='threads'
-                status={unread && !generating ? 'unread' : 'read'}
-                active={active}
-                onClick={onSelect}
-            />
-            <ThreadActionsSlot>
-                <Dropdown
-                    isOpen={rendered}
-                    onOpenChange={setMenuOpen}
-                    placement='bottom-end'
-                    tooltip={actionsLabel}
-                    target={(
-                        <IconButton
-                            size='x-small'
-                            // eslint-disable-next-line react/style-prop-object -- compass IconButton `style` is a variant prop, not CSS
-                            style='inverted'
-                            icon={<Icon glyph={<DotsHorizontalIcon/>}/>}
-                            aria-label={actionsLabel}
-                            aria-haspopup='menu'
-                            aria-expanded={menuOpen}
-                            active={menuOpen}
-                            onClick={() => setMenuOpen(!menuOpen)}
+            <ThreadRowBody $motion={motion}>
+                <ThreadIcon
+                    aria-hidden={true}
+                    $active={active}
+                    $emphasized={generating || unread}
+                >
+                    {generating && (
+                        <span data-testid='thread-generating'>
+                            <WaveDots
+                                animate={!prefersReducedMotion()}
+                                half={true}
+                            />
+                        </span>
+                    )}
+                    {!generating && unread && (
+                        <span data-testid='thread-unread'>
+                            <UnreadDot/>
+                        </span>
+                    )}
+                    {!generating && !unread && (
+                        <Icon
+                            size='12'
+                            glyph={<MessageOutlineIcon/>}
                         />
                     )}
-                >
-                    <PopoverMenu
-                        open={menuOpen}
-                        onExited={onExited}
-                        onClick={(e: React.MouseEvent) => {
-                            e.stopPropagation();
-                            setMenuOpen(false);
-                        }}
+                </ThreadIcon>
+                {generating && (
+                    <VisuallyHidden>{intl.formatMessage({defaultMessage: 'The agent is responding'})}</VisuallyHidden>
+                )}
+                {!generating && unread && (
+                    <VisuallyHidden>{intl.formatMessage({defaultMessage: 'The agent has replied'})}</VisuallyHidden>
+                )}
+                <ChannelSidebarItem
+                    name={title}
+                    leadingVisual='threads'
+                    status={unread && !generating ? 'unread' : 'read'}
+                    active={active}
+                    onClick={onSelect}
+                />
+                <ThreadActionsSlot>
+                    <Dropdown
+                        isOpen={rendered}
+                        onOpenChange={setMenuOpen}
+                        placement='bottom-end'
+                        tooltip={actionsLabel}
+                        target={(
+                            <IconButton
+                                size='x-small'
+                                // eslint-disable-next-line react/style-prop-object -- compass IconButton `style` is a variant prop, not CSS
+                                style='inverted'
+                                icon={<Icon glyph={<DotsHorizontalIcon/>}/>}
+                                aria-label={actionsLabel}
+                                aria-haspopup='menu'
+                                aria-expanded={menuOpen}
+                                active={menuOpen}
+                                onClick={() => setMenuOpen(!menuOpen)}
+                            />
+                        )}
                     >
-                        <ChatActionsMenuItems
-                            onRename={onRename}
-                            onArchive={onArchive}
-                        />
-                    </PopoverMenu>
-                </Dropdown>
-            </ThreadActionsSlot>
+                        <PopoverMenu
+                            open={menuOpen}
+                            onExited={onExited}
+                            onClick={(e: React.MouseEvent) => {
+                                e.stopPropagation();
+                                setMenuOpen(false);
+                            }}
+                        >
+                            <ChatActionsMenuItems
+                                onRename={onRename}
+                                onArchive={onArchive}
+                            />
+                        </PopoverMenu>
+                    </Dropdown>
+                </ThreadActionsSlot>
+            </ThreadRowBody>
         </ThreadListItem>
     );
 };
@@ -512,7 +555,7 @@ const ChevronSlot = styled.span`
     transition: opacity var(--duration-quick) var(--ease-transition);
 
     &:focus-within {
-        opacity: 0.64;
+        opacity: ${QUIET_OPACITY};
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -555,7 +598,7 @@ const NewChatSlot = styled.span`
     padding-right: var(--spacing-l);
 
     /* Visible at rest (dimmed) so it can be found without hovering the row. */
-    opacity: 0.64;
+    opacity: ${QUIET_OPACITY};
     transition: opacity var(--duration-quick) var(--ease-transition);
 
     &:focus-within {
@@ -584,7 +627,7 @@ const AgentRow = styled.div`
     /* The chevron is a quiet affordance, at the same strength as the sidebar icons. */
     &:hover ${ChevronSlot},
     &:focus-within ${ChevronSlot} {
-        opacity: 0.64;
+        opacity: ${QUIET_OPACITY};
     }
 `;
 
@@ -655,7 +698,8 @@ const VisuallyHidden = styled.span`
 // Over the item's own 16px icon slot (its padding plus the container's 6px offset), centered in it: a 12px
 // icon (drawn 14px) is 2px in. The icon column is as wide as the agent row's avatar column, so the
 // chat's label sits at the same left edge as the agent's name.
-const ThreadIcon = styled.span<{$active: boolean; $busy: boolean}>`
+// `$emphasized` draws the slot at full opacity instead of the dimmed resting strength (the wave and the unread dot).
+const ThreadIcon = styled.span<{$active: boolean; $emphasized: boolean}>`
     position: absolute;
     top: 0;
     bottom: 0;
@@ -665,7 +709,7 @@ const ThreadIcon = styled.span<{$active: boolean; $busy: boolean}>`
     align-items: center;
     padding-left: calc(var(--spacing-l) + var(--spacing-xxxxs) + var(--spacing-xxxs) + var(--spacing-xxxxs));
     color: var(--sidebar-text);
-    opacity: ${(p) => (p.$active || p.$busy ? 1 : 0.64)};
+    opacity: ${(p) => (p.$active || p.$emphasized ? 1 : QUIET_OPACITY)};
     pointer-events: none;
 
     /* The wave takes the icon's color (the sidebar text, at the icon's opacity). */
@@ -692,8 +736,50 @@ const UnreadDot = styled.span`
     }
 `;
 
-const ThreadListItem = styled.li`
+// Rows revealed by "Show more" grow open and fade in; "Show less" folds them away the same way back.
+// grid-template-rows 0fr/1fr animates the row's own height, whatever it is.
+const rowReveal = keyframes`
+    from {
+        grid-template-rows: 0fr;
+        opacity: 0;
+    }
+
+    to {
+        grid-template-rows: 1fr;
+        opacity: 1;
+    }
+`;
+
+const rowFold = keyframes`
+    from {
+        grid-template-rows: 1fr;
+        opacity: 1;
+    }
+
+    to {
+        grid-template-rows: 0fr;
+        opacity: 0;
+    }
+`;
+
+// The row's content, which is what the grid row animation squeezes. It only clips while a row moves, so a
+// focus ring or the open actions menu is not cut off at rest.
+const ThreadRowBody = styled.div<{$motion?: 'enter' | 'leave'}>`
     position: relative;
+    min-height: 0;
+    ${({$motion}) => $motion && 'overflow: clip;'}
+`;
+
+const ThreadListItem = styled.li<{$motion?: 'enter' | 'leave'}>`
+    position: relative;
+    ${({$motion}) => $motion && css`
+        display: grid;
+        animation: ${$motion === 'enter' ? rowReveal : rowFold} var(--duration-quick) var(--ease-transition) both;
+
+        @media (prefers-reduced-motion: reduce) {
+            animation: none;
+        }
+    `}
 
     /* The item's built-in icon cannot be swapped (no custom-icon slot), so it is hidden and the
        smaller chat icon is overlaid in its place (as the nav rows above do). */

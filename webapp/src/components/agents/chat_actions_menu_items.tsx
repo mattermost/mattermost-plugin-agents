@@ -27,6 +27,7 @@ const ChatActionsMenuItems = ({onRename, onArchive}: ChatActionsMenuItemsProps) 
             <DropdownMenuItem
                 label={intl.formatMessage({defaultMessage: 'Archive chat'})}
                 icon={<ArchiveOutlineIcon/>}
+                destructive={true}
                 onClick={onArchive}
             />
         </>
