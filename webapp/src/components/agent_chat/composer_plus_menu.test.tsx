@@ -106,7 +106,7 @@ describe('ComposerPlusMenu trigger and items', () => {
     test.each([
         {name: 'a new chat with a user-auth agent', props: {}, items: ['Upload files', 'Tools', 'Custom prompts', 'AI Rewrite']},
         {name: 'uploads unavailable', props: {uploadEnabled: false}, items: ['Tools', 'Custom prompts', 'AI Rewrite']},
-        {name: 'an existing thread (no Tools, as the header popover)', props: {rootId: 'root1'}, items: ['Upload files', 'Custom prompts', 'AI Rewrite']},
+        {name: 'an existing thread', props: {rootId: 'root1'}, items: ['Upload files', 'Tools', 'Custom prompts', 'AI Rewrite']},
         {name: 'a service account agent', props: {bot: {...bot, useServiceAccountAuth: true}}, items: ['Upload files', 'Custom prompts', 'AI Rewrite']},
         {name: 'no agent', props: {bot: null}, items: ['Upload files', 'Custom prompts']},
     ])('shows the right items for $name', async ({props, items}) => {

@@ -14,9 +14,8 @@
  *
  *   bot            The chat's agent. Without one, Tools and AI Rewrite are left out.
  *   channelId      The channel the composer posts to (custom prompts render for it).
- *   rootId         The thread root, '' for a new chat. Tools are offered only for
- *                  a new chat (as the RHS and Agents header popover); AI Rewrite
- *                  sends it so the thread is context.
+ *   rootId         The thread root, '' for a new chat. AI Rewrite sends it so the
+ *                  thread is context.
  *   uploadEnabled  Whether files can attach (the composer's canAttach); false
  *                  leaves "Upload files" out.
  *   onUploadFiles  Opens the file picker. Called synchronously inside the click,
@@ -126,7 +125,7 @@ const ComposerPlusMenu = ({bot, channelId, rootId = '', uploadEnabled, onUploadF
         onRewritingChange?.(rewriter.processing);
     }, [rewriter.processing, onRewritingChange]);
 
-    const showTools = showComposerTools(bot, rootId);
+    const showTools = showComposerTools(bot);
     const showRewrite = Boolean(bot) && availability !== 'unavailable';
 
     const submenuProps = (id: Submenu) => ({

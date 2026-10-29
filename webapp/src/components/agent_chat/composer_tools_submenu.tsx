@@ -12,11 +12,10 @@ import ComposerSubmenu from './composer_submenu';
 import ToolProviderMenuBody from './tool_provider_menu_body';
 import {useComposerToolPreferences} from './use_composer_tool_preferences';
 
-// The composer menu shows Tools only where the RHS and the Agents header show
-// their tools popover: a new chat with an agent that does not use service
-// account auth (those have no per-user connections or preferences).
-export function showComposerTools(bot: LLMBot | null | undefined, rootId: string): bot is LLMBot {
-    return Boolean(bot) && !rootId && bot?.useServiceAccountAuth !== true;
+// The composer menu shows Tools in a new chat and in an existing thread, for an agent that does not
+// use service account auth (those have no per-user connections or preferences).
+export function showComposerTools(bot: LLMBot | null | undefined): bot is LLMBot {
+    return Boolean(bot) && bot?.useServiceAccountAuth !== true;
 }
 
 interface Props {
