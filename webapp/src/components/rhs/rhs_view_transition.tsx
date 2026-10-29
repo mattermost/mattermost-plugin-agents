@@ -248,19 +248,19 @@ const Layer = styled.div`
     }
 
     &[data-state='enter'][data-direction='forward'] {
-        ${motion(slideInFromRight, 'var(--ease-entrance)')}
+        ${motion(slideInFromRight, 'var(--ease-transition)')}
         box-shadow: ${SLIDING_SHADOW};
     }
 
     &[data-state='exit'][data-direction='forward'] {
-        ${motion(slideOutToLeft, 'var(--ease-exit)')}
+        ${motion(slideOutToLeft, 'var(--ease-transition)')}
     }
 
     /* Back: the old view leaves to the right, over the one returning from the left. */
     &[data-state='enter'][data-direction='back'],
     &[data-state='enter-wait'][data-direction='back'] {
         z-index: 0;
-        ${motion(slideInFromLeft, 'var(--ease-entrance)')}
+        ${motion(slideInFromLeft, 'var(--ease-transition)')}
     }
 
     &[data-state='exit-wait'][data-direction='back'] {
@@ -269,7 +269,7 @@ const Layer = styled.div`
 
     &[data-state='exit'][data-direction='back'] {
         z-index: 1;
-        ${motion(slideOutToRight, 'var(--ease-exit)')}
+        ${motion(slideOutToRight, 'var(--ease-transition)')}
         box-shadow: ${SLIDING_SHADOW};
     }
 
