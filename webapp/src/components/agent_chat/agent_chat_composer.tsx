@@ -8,6 +8,7 @@ import styled, {css} from 'styled-components';
 import SendOutlineIcon from '@mattermost/compass-icons/components/send-outline';
 import SquareIcon from '@mattermost/compass-icons/components/square';
 
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 
@@ -666,14 +667,18 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
                     </GrowWrap>
                 )}
                 {generatingPostId ? (
-                    <StopButton
-                        size='small'
-                        icon={<Icon glyph={<SquareIcon/>}/>}
-                        aria-label={intl.formatMessage({defaultMessage: 'Stop generating'})}
-                        data-testid='stop-generating-button'
-                        loading={stopping}
-                        onClick={stopGeneration}
-                    />
+                    <WithTooltip title={intl.formatMessage({defaultMessage: 'Stop'})}>
+                        <StopSlot>
+                            <IconButton
+                                size='small'
+                                icon={<Icon glyph={<SquareIcon/>}/>}
+                                aria-label={intl.formatMessage({defaultMessage: 'Stop generating'})}
+                                data-testid='stop-generating-button'
+                                loading={stopping}
+                                onClick={stopGeneration}
+                            />
+                        </StopSlot>
+                    </WithTooltip>
                 ) : (
                     <SendButton
                         size='small'
@@ -913,11 +918,11 @@ const SendIcon = styled(Icon)`
 `;
 
 // Stop: the standard (neutral) compass IconButton, 32px like Send so
-// swapping them does not move anything; quieter than the primary Send.
-const StopButton = styled(IconButton)`
-    && {
-        grid-area: send;
-    }
+// swapping them does not move anything; quieter than the primary Send. The slot
+// takes the send grid area and carries the tooltip's trigger.
+const StopSlot = styled.span`
+    display: inline-flex;
+    grid-area: send;
 `;
 
 // Opened by the "+" menu's Upload files; never focused or announced itself.
