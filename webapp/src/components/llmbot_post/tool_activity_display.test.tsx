@@ -223,3 +223,15 @@ describe('ToolActivityDisplay expand and collapse', () => {
         expect(screen.queryByText('round:r1')).toBeNull();
     });
 });
+
+describe('ToolActivityDisplay layout', () => {
+    // jsdom has no layout engine, so assert the computed track definition: an
+    // implicit auto track sizes to the widest nowrap tool title and pushes
+    // every tool card past the post's right edge.
+    test('constrains the expanded rounds to the post width', () => {
+        render(activityElement([makeRound('r1', '', [makeTool()])], {expanded: true}));
+
+        const rounds = screen.getByTestId('llm-bot-tool-activity-rounds');
+        expect(getComputedStyle(rounds).gridTemplateColumns).toBe('minmax(0, 1fr)');
+    });
+});
