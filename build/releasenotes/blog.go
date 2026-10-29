@@ -108,7 +108,7 @@ func buildBlogPrompt(o blogOptions) string {
 var (
 	markdownLinkURLRe = regexp.MustCompile(`\]\(([^)\s]+)\)|<((?i:https?)://[^>\s]+)>|((?i:https?)://[^\s)>\]]+)`)
 	// Links GitHub renders that the allow-list above cannot check.
-	unlistedLinkRe = regexp.MustCompile(`(?i)\bmailto:|[\w.+-]+@[\w-]+\.[\w.-]+|[\w.-]+/[\w.-]+#\d`)
+	unlistedLinkRe = regexp.MustCompile(`(?i)\bmailto:|[\w.+-]+@[\w-]+\.[\w.-]+|[\w.-]+/[\w.-]+#\d|(?i)\bwww\.|<[A-Za-z/!?]`)
 )
 
 // validateBlog checks the tone rules and that the post links only to allowed URLs.
@@ -137,7 +137,7 @@ func validateBlog(out string, allowedLinks []string) []string {
 		}
 	}
 	if unlistedLinkRe.MatchString(codeSpanRe.ReplaceAllString(out, "")) {
-		problems = append(problems, "the post contains an email address, mailto link or reference to another repository")
+		problems = append(problems, "the post contains an email address, mailto link, www. host, raw HTML or reference to another repository")
 	}
 	return problems
 }

@@ -56,9 +56,10 @@ jobs:
             and (.remotes | length == 1)
             and .remotes[0].type == "streamable-http"
             and .remotes[0].url == "https://{mattermost_host}/plugins/mattermost-ai/mcp-server/mcp"
+            and (.remotes[0].variables.mattermost_host | .isRequired == true and (has("default") or has("value") or has("choices") | not))
             and ([(.remotes[0].headers // [])[] | {name, value}] == [{"name": "Authorization", "value": "Bearer {personal_access_token}"}])
           ' server.json >/dev/null || {
-            echo "::error file=server.json::server.json must keep the canonical name, remote URL and Authorization header, no packages, a description of at most 100 characters, and a plain x.y.z version."
+            echo "::error file=server.json::server.json must keep the canonical name, remote URL with a required mattermost_host that has no default or choices, the Authorization header, no packages, a description of at most 100 characters, and a plain x.y.z version."
             exit 1
           }
 

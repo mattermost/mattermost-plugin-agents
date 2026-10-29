@@ -122,6 +122,7 @@ func TestValidateNotes(t *testing.T) {
 		"GH reference":            {"## Breaking changes and upgrade notes\n- Follow the steps in GH-4 first. ([#1](" + pr1 + "))", "only at the end"},
 		"channel mention":         {"## Breaking changes and upgrade notes\n- Tell @channel to upgrade now. ([#1](" + pr1 + "))", "only at the end"},
 		"CRLF is accepted":        {"## Fixes\r\n- Fixed a crash on startup. ([#1](" + pr1 + "))\r\n", ""},
+		"escaped backtick":        {"## Breaking changes and upgrade notes\n- \\` visit https://evil.example/fix \\` first. ([#1](" + pr1 + "))", "only at the end"},
 		"www host":                {"## Breaking changes and upgrade notes\n- Follow www.evil.example/fix before upgrading. ([#1](" + pr1 + "))", "only at the end"},
 		"no description":          {"## Fixes\n- ([#1](" + pr1 + "))", "no description"},
 		"emoji":                   {"## Fixes\n- Fixed a crash on start \U0001F389 ([#1](" + pr1 + "))", "emoji"},

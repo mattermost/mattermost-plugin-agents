@@ -197,7 +197,12 @@ func bulletProblems(lineNo int, line string, allowed map[string]string) []string
 // hasRenderedLink reports whether s contains anything GitHub would render as a
 // link. Code spans render literally, so they are ignored.
 func hasRenderedLink(s string) bool {
-	return controlCharRe.MatchString(s) || renderedLinkRe.MatchString(codeSpanRe.ReplaceAllString(s, ""))
+	// A backslash can escape a backtick so that what looks like a code span
+	// is not one; item text never needs a backslash, so reject it outright.
+	if strings.Contains(s, `\`) || controlCharRe.MatchString(s) {
+		return true
+	}
+	return renderedLinkRe.MatchString(codeSpanRe.ReplaceAllString(s, ""))
 }
 
 // safeBullet reports whether line is a "- " item whose text carries nothing
