@@ -495,6 +495,24 @@ describe('AgentChatComposer attachments', () => {
         expect(mockCreatePost).toHaveBeenCalledWith(expectedPost('hi'));
     });
 
+    test('a message sent just before the composer unmounts does not come back as a draft', async () => {
+        let resolvePost: (post: {id: string}) => void = () => null;
+        mockCreatePost.mockReturnValueOnce(new Promise((resolve) => {
+            resolvePost = resolve;
+        }));
+        const {textbox, send, unmount} = renderComposer();
+        fireEvent.change(textbox, {target: {value: 'already sent'}});
+        expect(JSON.stringify(Object.values(window.sessionStorage))).toContain('already sent');
+
+        fireEvent.click(send);
+        unmount();
+        await act(async () => {
+            resolvePost({id: 'p1'});
+        });
+
+        expect(JSON.stringify(Object.values(window.sessionStorage))).not.toContain('already sent');
+    });
+
     test('an upload in flight is cancelled when the composer unmounts', async () => {
         const uploads = fakeUploads();
         const {unmount} = renderComposer();

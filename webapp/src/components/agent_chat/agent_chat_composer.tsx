@@ -293,6 +293,9 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
             team_id: currentTeamId || channelTeamId,
             root_id: rootId,
         });
+
+        // Also when unmounted: the command went out, so its text must not come back as a draft.
+        writeDraft(key, '');
         if (!mounted.current) {
             return;
         }
@@ -309,7 +312,6 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
             window.open(target.url, '_blank', 'noopener,noreferrer');
         }
         invalidCommand.current = '';
-        writeDraft(key, '');
         setMessage('');
     }, [channelId, currentTeamId, channelTeamId, rootId, dispatch, config.SiteURL, key]);
 
@@ -325,6 +327,13 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
             props: {},
             file_ids: fileIds,
         });
+
+        // Now, not from the draft effect: onCreated may unmount this composer (a new chat becomes
+        // its thread) before that effect would run, and a composer unmounted while the post was in
+        // flight must not bring the sent text back as a draft either.
+        if (created?.id) {
+            writeDraft(key, '');
+        }
         if (!mounted.current) {
             return;
         }
@@ -333,10 +342,6 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
         }
         pendingPostId.current = '';
         invalidCommand.current = '';
-
-        // Now, not from the draft effect: onCreated may unmount this composer
-        // (a new chat becomes its thread) before that effect would run.
-        writeDraft(key, '');
         setMessage('');
         clear();
         onCreated?.(created.id);
