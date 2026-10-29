@@ -88,9 +88,10 @@ describe('AgentChatComposer Stop', () => {
         jest.restoreAllMocks();
     });
 
-    test('Send is a 32px compass icon button', () => {
+    test('Send is a round 32px compass icon button', () => {
         setup();
         expect(sendButton()?.className).toMatch(/icon-button--size-small/);
+        expect(sendButton()?.className).toMatch(/icon-button--rounded/);
     });
 
     test.each([
@@ -106,9 +107,10 @@ describe('AgentChatComposer Stop', () => {
         expect(Boolean(stopButton())).toBe(stop);
         expect(Boolean(sendButton())).toBe(!stop);
 
-        // Both 32px buttons; only Send has the primary recolor.
+        // Both round 32px buttons; only Send has the primary recolor.
         const button = (stop ? stopButton() : sendButton())!;
         expect(button.className).toMatch(/icon-button--size-small/);
+        expect(button.className).toMatch(/icon-button--rounded/);
         expect(button.getAttribute('data-emphasis')).toBe(stop ? null : 'primary');
         expect(button.getAttribute('aria-pressed')).toBeNull();
     });
