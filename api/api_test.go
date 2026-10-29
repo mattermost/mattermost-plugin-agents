@@ -69,6 +69,7 @@ type TestEnvironment struct {
 type testConfigImpl struct {
 	allowUnsafeLinks                bool
 	enableHTMLArtifacts             bool
+	enableGenerativeUI              bool
 	enableChannelMentionToolCalling bool
 	enableAmbientAutoReply          bool
 	mcpConfig                       mcp.Config
@@ -95,6 +96,10 @@ func (tc *testConfigImpl) AllowUnsafeLinks() bool {
 
 func (tc *testConfigImpl) EnableHTMLArtifacts() bool {
 	return tc.enableHTMLArtifacts
+}
+
+func (tc *testConfigImpl) EnableGenerativeUI() bool {
+	return tc.enableGenerativeUI
 }
 
 func (tc *testConfigImpl) EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig {
@@ -1593,6 +1598,7 @@ func TestHandleGetAIBots(t *testing.T) {
 		expectedSearchEnabled         bool
 		expectedAllowUnsafeLinks      bool
 		expectedHTMLArtifacts         bool
+		expectedGenerativeUI          bool
 		expectedStatus                int
 		envSetup                      func(e *TestEnvironment)
 	}{
@@ -1653,6 +1659,15 @@ func TestHandleGetAIBots(t *testing.T) {
 			},
 		},
 		{
+			name:                 "generative UI enabled via config",
+			expectedGenerativeUI: true,
+			expectedStatus:       http.StatusOK,
+			envSetup: func(e *TestEnvironment) {
+				e.config.enableGenerativeUI = true
+				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
+			},
+		},
+		{
 			// Unlicensed servers run service account agents in per-user mode, so the
 			// response must report the effective mode instead of the raw agent flag.
 			name:                          "service account agent reports user mode when unlicensed",
@@ -1708,6 +1723,7 @@ func TestHandleGetAIBots(t *testing.T) {
 				require.Equal(t, test.expectedSearchEnabled, response.SearchEnabled, "SearchEnabled field should match expected value")
 				require.Equal(t, test.expectedAllowUnsafeLinks, response.AllowUnsafeLinks, "AllowUnsafeLinks field should match expected value")
 				require.Equal(t, test.expectedHTMLArtifacts, response.HTMLArtifactsEnabled, "HTMLArtifactsEnabled field should match expected value")
+				require.Equal(t, test.expectedGenerativeUI, response.GenerativeUIEnabled, "GenerativeUIEnabled field should match expected value")
 				require.NotEmpty(t, response.Bots, "Should return at least one bot")
 				require.Equal(t, test.expectedUseServiceAccountAuth, response.Bots[0].UseServiceAccountAuth,
 					"UseServiceAccountAuth field should report the effective service account mode")

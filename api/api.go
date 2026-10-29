@@ -64,6 +64,7 @@ type Config interface {
 	MCP() mcp.Config
 	AllowUnsafeLinks() bool
 	EnableHTMLArtifacts() bool
+	EnableGenerativeUI() bool
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
 	EnableAmbientAutoReply() bool
@@ -734,6 +735,7 @@ type AIBotsResponse struct {
 	SearchEnabled        bool        `json:"searchEnabled"`
 	AllowUnsafeLinks     bool        `json:"allowUnsafeLinks"`
 	HTMLArtifactsEnabled bool        `json:"htmlArtifactsEnabled"`
+	GenerativeUIEnabled  bool        `json:"generativeUIEnabled"`
 }
 
 // usesServiceAccountAuth reports the effective service account mode for a bot:
@@ -826,6 +828,7 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 		SearchEnabled:        searchEnabled,
 		AllowUnsafeLinks:     a.config.AllowUnsafeLinks(),
 		HTMLArtifactsEnabled: a.config.EnableHTMLArtifacts(),
+		GenerativeUIEnabled:  a.config.EnableGenerativeUI(),
 	})
 }
 

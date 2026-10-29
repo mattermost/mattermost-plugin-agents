@@ -27,6 +27,7 @@ export type PluginConfig = {
     allowedUpstreamHostnames: string,
     allowUnsafeLinks: boolean,
     enableHTMLArtifacts?: boolean,
+    enableGenerativeUI?: boolean,
     enableChannelMentionToolCalling: boolean,
     enableAmbientAutoReply?: boolean,
     allowNativeWebSearchInChannels: boolean,

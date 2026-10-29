@@ -115,6 +115,7 @@ const defaultConfig: Config = {
     allowedUpstreamHostnames: '',
     allowUnsafeLinks: false,
     enableHTMLArtifacts: false,
+    enableGenerativeUI: false,
     enableChannelMentionToolCalling: false,
     enableAmbientAutoReply: false,
     allowNativeWebSearchInChannels: false,
@@ -413,6 +414,22 @@ const Config = (props: Props) => {
                             updateConfig({enableHTMLArtifacts: to});
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, HTML files that agents attach to their replies are rendered as sandboxed interactive artifacts that run only when a viewer clicks Run. Artifacts have no access to the user\'s Mattermost session, and they read the viewer\'s basic profile only after the viewer explicitly allows it. Network access is blocked, fully only in Chromium 152 or later; in other browsers an artifact can still send its content, any profile data the viewer allowed, and anything the viewer types into it to external sites via WebRTC. An artifact can also place content on the clipboard that differs from what it displays, so treat anything copied from an artifact as untrusted. The Site URL must match the address users open Mattermost at, or artifacts fail to load. Enable only where these risks are acceptable.'})}
+                    />
+                    <BooleanItem
+                        label={
+                            <Horizontal>
+                                <FormattedMessage defaultMessage='Enable generative UI'/>
+                                <Tag
+                                    type='info'
+                                    label={<FormattedMessage defaultMessage='EXPERIMENTAL'/>}
+                                />
+                            </Horizontal>
+                        }
+                        value={Boolean(value.enableGenerativeUI)}
+                        onChange={(to) => {
+                            updateConfig({enableGenerativeUI: to});
+                        }}
+                        helpText={intl.formatMessage({defaultMessage: 'When enabled, agents can answer direct messages and mentions with structured UI such as tables, cards, metrics, and checklists, rendered with Mattermost components inside the post. Only a fixed set of display components can render; generated UI cannot run scripts or call tools. Clients without the plugin, such as mobile, show the UI source as a code block. Takes effect for new conversations.'})}
                     />
                     <BooleanItem
                         label={

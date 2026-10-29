@@ -13,6 +13,8 @@ const (
 	PromptFindActionItemsUser              = "find_action_items_user"
 	PromptFindOpenQuestionsSystem          = "find_open_questions_system"
 	PromptFindOpenQuestionsUser            = "find_open_questions_user"
+	PromptGenerativeUI                     = "generative_ui"
+	PromptGenerativeUILibrary              = "generative_ui_library"
 	PromptLocale                           = "locale"
 	PromptMeetingSummaryGeneral            = "meeting_summary_general"
 	PromptMeetingSummarySystem             = "meeting_summary_system"

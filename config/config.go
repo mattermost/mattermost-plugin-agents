@@ -37,6 +37,7 @@ type Config struct {
 	AllowedUpstreamHostnames        string                           `json:"allowedUpstreamHostnames"`
 	AllowUnsafeLinks                bool                             `json:"allowUnsafeLinks"`
 	EnableHTMLArtifacts             bool                             `json:"enableHTMLArtifacts"`
+	EnableGenerativeUI              bool                             `json:"enableGenerativeUI"`
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
 	EnableAmbientAutoReply          bool                             `json:"enableAmbientAutoReply"`
 	AllowNativeWebSearchInChannels  bool                             `json:"allowNativeWebSearchInChannels"`
@@ -196,6 +197,12 @@ func (c *Container) AllowUnsafeLinks() bool {
 // as sandboxed interactive artifacts.
 func (c *Container) EnableHTMLArtifacts() bool {
 	return c.Config().EnableHTMLArtifacts
+}
+
+// EnableGenerativeUI reports whether agents may answer with OpenUI Lang blocks
+// that the webapp renders as native components.
+func (c *Container) EnableGenerativeUI() bool {
+	return c.Config().EnableGenerativeUI
 }
 
 func (c *Container) EnableChannelMentionToolCalling() bool {
