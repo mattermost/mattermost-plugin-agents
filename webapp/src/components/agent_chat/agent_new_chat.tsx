@@ -132,6 +132,21 @@ const orbSwingY = keyframes`
     }
 `;
 
+// Each orb also breathes: it fades down and back up to its full strength (the max) as it drifts. The fade
+// runs on its own period, so it drifts out of step with the motion instead of tracking it.
+const ORB_FADE_PERIOD = 1.3;
+const ORB_FADE_MIN = 0.4;
+
+const orbFade = keyframes`
+    from {
+        opacity: 1;
+    }
+
+    to {
+        opacity: ${ORB_FADE_MIN};
+    }
+`;
+
 // The backdrop's base: a faint wash of the text color over the center channel background, strongest in
 // the center and fading to nothing at the corners, so the orbs and the grain have a little more to
 // stand out against.
@@ -222,7 +237,9 @@ const Orb = styled.span<{$strength: number; $surface: boolean; $dy: number; $sca
         color-mix(in srgb, var(--orb-color) 50%, transparent) var(--orb-half, 80%),
         transparent 100%
     );
-    animation: ${orbSwingY} ${({$duration}) => $duration}s ease-in-out ${({$delay}) => $delay}s infinite alternate;
+    animation:
+        ${orbSwingY} ${({$duration}) => $duration}s ease-in-out ${({$delay}) => $delay}s infinite alternate,
+        ${orbFade} ${({$duration}) => $duration * ORB_FADE_PERIOD}s ease-in-out ${({$delay}) => $delay}s infinite alternate;
 `;
 
 // The grain sits above the orbs in overlay blend and dithers them, so they don't band.
