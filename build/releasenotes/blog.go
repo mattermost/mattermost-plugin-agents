@@ -107,7 +107,6 @@ func buildBlogPrompt(o blogOptions) string {
 
 var (
 	markdownLinkURLRe = regexp.MustCompile(`\]\(([^)\s]+)\)|<((?i:https?)://[^>\s]+)>|((?i:https?)://[^\s)>\]]+)`)
-	autolinkRe        = regexp.MustCompile(`<(?i:https?)://[^>\s]+>`)
 	// Links GitHub renders that the allow-list above cannot check.
 	unlistedLinkRe = regexp.MustCompile(`(?i)\bmailto:|[\w.+-]+@[\w-]+\.[\w.-]+|[\w.-]+/[\w.-]+#\d|(?i)\bwww\.|<[A-Za-z/!?]`)
 )
@@ -137,9 +136,9 @@ func validateBlog(out string, allowedLinks []string) []string {
 			problems = append(problems, fmt.Sprintf("link %s is not in the allowed list", u))
 		}
 	}
-	// <https://...> autolinks were checked against the allow-list above, so
-	// they are removed before looking for raw HTML.
-	if unlistedLinkRe.MatchString(autolinkRe.ReplaceAllString(codeSpanRe.ReplaceAllString(out, ""), "")) {
+	// Links were checked against the allow-list above, so they are removed
+	// before looking for link forms the allow-list cannot check.
+	if unlistedLinkRe.MatchString(markdownLinkURLRe.ReplaceAllString(codeSpanRe.ReplaceAllString(out, ""), "")) {
 		problems = append(problems, "the post contains an email address, mailto link, www. host, raw HTML or reference to another repository")
 	}
 	return problems
