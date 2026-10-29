@@ -8,9 +8,9 @@ Self-hosted AI agents for [Mattermost](https://github.com/mattermost/mattermost)
 
 ![The Mattermost Agents AI Plugin is an extension for mattermost that provides functionality for self-hosted and vendor-hosted LLMs](img/mattermost-ai-llm-access.webp)
 
-Mattermost Agents (plugin ID `mattermost-ai`) adds AI agents to a Mattermost server. You talk to an agent in a direct message, the Agents pane, or a channel. The agent can search and post in Mattermost, call tools on other systems through the Model Context Protocol (MCP), and work with files, all with the permissions of the person it is acting for. You choose the LLM, including models that run on your own infrastructure, so conversations and data stay under your control.
+Mattermost Agents (plugin ID `mattermost-ai`) adds AI agents to a Mattermost server. You talk to an agent in a direct message, the Agents pane, or a channel. The agent can search and post in Mattermost, call tools on other systems through the Model Context Protocol (MCP), and work with files, all with the permissions of the person it is acting for. You choose the LLM, including models that run on your own infrastructure, so with a self-hosted model, conversations and data stay in your environment.
 
-**Does Mattermost have an official MCP server?** Yes. It is built into this plugin and needs no separate install. After an admin enables it, MCP clients connect to `/plugins/mattermost-ai/mcp-server/mcp` on your Mattermost server and sign in as a Mattermost user. See [Mattermost MCP Server](docs/mcp_server.md).
+**Does Mattermost have an official MCP server?** Yes. It is built into this plugin and needs no separate installation. After an admin enables it, MCP clients connect to `/plugins/mattermost-ai/mcp-server/mcp` on your Mattermost server and sign in as a Mattermost user. See [Mattermost MCP Server](docs/mcp_server.md).
 
 ## Key Features
 

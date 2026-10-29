@@ -65,13 +65,13 @@ See [Model Context Protocol (MCP) Integration](admin_guide.md#model-context-prot
 ## Stay in control of what it does
 
 - **Tool approval.** Depending on the admin's per-tool policy, a tool call can run automatically or wait for you to select **Accept** or **Reject**, with the tool name and arguments shown. Only the person who started the conversation can approve. Per-tool policies are an Enterprise feature.
-- **Share or keep private.** In channels, after a tool runs you choose whether its arguments and results are **Share**d with the channel or kept private. If you keep them private, the agent's reply is generated without that content.
+- **Share or keep private.** In channels, after a tool runs you choose whether its arguments and results are shared with the channel (**Share**) or kept private (**Keep private**). If you keep them private, the agent's reply is generated without that content.
 - **Your permissions.** Mattermost and plugin tools run as you. For agents an admin configures with service account authentication, external MCP tools use shared credentials instead, and you are not asked to connect accounts.
 - **Admin governance.** Admins control who can use each agent and which tools it can call. The server audit log records state-changing actions such as configuration changes, agent edits, and in-channel tool approvals, without prompt or tool content. See [Multiplayer Tool Calling](features/multiplayer_tool_calling.md) for the full model.
 
 ## Bring the agent into channels
 
-- **@mention.** Mention an agent in a channel or thread, such as `@copilot`, and it replies in the thread using the thread's earlier context. Everyone in the channel can see and join the conversation. Multiplayer agents in channels are available at Professional and above. By default tool calls run in direct messages; an admin can enable the experimental **Enable Channel Mention Tool Calling** setting to allow tools in channels.
+- **@mention.** Mention an agent in a channel or thread, such as `@copilot`, and it replies in the thread using the thread's earlier context. Everyone in the channel can see and join the conversation. Multiplayer agents in channels are available at Professional and above. By default, tool calls run in direct messages; an admin can enable the experimental **Enable Channel Mention Tool Calling** setting to allow tools in channels.
 - **Channel auto-reply.** A channel manager can set an agent to reply to new top-level posts, to threads too, or in experimental ambient modes where the agent replies only when a classification step decides a reply is useful. Auto-reply is available at Enterprise Advanced. See [Channel auto-reply](user_guide.md#channel-auto-reply).
 - **Ask the user.** An agent can ask you a multiple-choice question in the conversation when it needs a decision before continuing.
 

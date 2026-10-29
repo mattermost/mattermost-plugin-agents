@@ -1,6 +1,6 @@
 # Implementing Sovereign AI
 
-Run AI agents in Mattermost under your own control: self-hosted or customer-chosen LLMs, data that stays in your environment, and access governed by Mattermost permissions. This guide explains how the Mattermost Agents plugin supports sovereign AI deployments.
+Run AI agents in Mattermost under your own control: self-hosted or customer-chosen LLMs, data that stays in your environment when the LLM runs there, and access governed by Mattermost permissions. This guide explains how the Mattermost Agents plugin supports sovereign AI deployments.
 
 ## Overview
 
@@ -67,7 +67,7 @@ The Mattermost Agents plugin serves as the foundation for Sovereign AI implement
 
 #### Data Privacy Controls
 - Optional user ID transmission to LLM providers
-- Conversation data stays within Mattermost infrastructure
+- Conversation data stays within your infrastructure when the LLM provider runs there; a cloud provider receives the content of each request
 - Audit trails for AI interactions
 - Configurable data retention policies
 

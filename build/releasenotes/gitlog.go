@@ -39,26 +39,24 @@ var (
 	fullReleaseRe = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 )
 
-// extractPRNumbers returns the distinct pull request numbers referenced by a
-// commit subject, in order of appearance.
+// extractPRNumbers returns the pull request that landed a commit: the number
+// of a GitHub merge commit, or else the last "(#N)" of a squash-merge subject.
+// Earlier "(#N)" groups belong to a reverted or cherry-picked original, which
+// is not a change in this range.
 func extractPRNumbers(subject string) []int {
-	var out []int
-	seen := map[int]bool{}
-	add := func(s string) {
-		n, err := strconv.Atoi(s)
-		if err != nil || n <= 0 || seen[n] {
-			return
+	m := mergePRRe.FindStringSubmatch(subject)
+	if m == nil {
+		all := prNumberRe.FindAllStringSubmatch(subject, -1)
+		if len(all) == 0 {
+			return nil
 		}
-		seen[n] = true
-		out = append(out, n)
+		m = all[len(all)-1]
 	}
-	if m := mergePRRe.FindStringSubmatch(subject); m != nil {
-		add(m[1])
+	n, err := strconv.Atoi(m[1])
+	if err != nil || n <= 0 {
+		return nil
 	}
-	for _, m := range prNumberRe.FindAllStringSubmatch(subject, -1) {
-		add(m[1])
-	}
-	return out
+	return []int{n}
 }
 
 // parseGitLog parses the output of `git log --pretty=format:%H%x09%s`.

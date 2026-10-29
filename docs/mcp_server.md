@@ -146,7 +146,20 @@ Cursor reads the OAuth metadata from the server and starts the sign-in the first
 
 ### VS Code and GitHub Copilot
 
-Add the server to `.vscode/mcp.json` in your workspace. This example prompts for a personal access token and stores it securely instead of writing it to the file:
+Add the server to `.vscode/mcp.json` in your workspace. With only a URL, VS Code reads the OAuth metadata from the server and signs you in through Mattermost:
+
+```json
+{
+  "servers": {
+    "mattermost": {
+      "type": "http",
+      "url": "https://your-mattermost-server/plugins/mattermost-ai/mcp-server/mcp"
+    }
+  }
+}
+```
+
+To use a personal access token instead, this example prompts for the token and stores it securely rather than writing it to the file. Input variables are resolved by VS Code itself, so prefer the OAuth form above for any agent that runs outside the VS Code session:
 
 ```json
 {

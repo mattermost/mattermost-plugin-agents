@@ -21,11 +21,11 @@ func TestExtractPRNumbers(t *testing.T) {
 	}{
 		"squash merge":          {"Add experimental ambient auto-reply (#997)", []int{997}},
 		"no number":             {"Bump Go version", nil},
-		"revert of a PR":        {`Revert "Add thing (#12)" (#13)`, []int{12, 13}},
+		"revert of a PR":        {`Revert "Add thing (#12)" (#13)`, []int{13}},
 		"repeated number":       {"Fix (#5) and again (#5)", []int{5}},
 		"issue ref is ignored":  {"Fix crash, fixes #55", nil},
 		"merge commit":          {"Merge pull request #321 from user/branch", []int{321}},
-		"merge and squash form": {"Merge pull request #321 from user/branch (#322)", []int{321, 322}},
+		"merge and squash form": {"Merge pull request #321 from user/branch (#322)", []int{321}},
 		"number inside text":    {"Handle (#7) in the middle of a subject", []int{7}},
 		"huge number rejected":  {"Fix (#99999999999999999999999)", nil},
 	} {
@@ -117,20 +117,25 @@ func TestResolveBaseAndCollectCommits(t *testing.T) {
 	t.Setenv("GITHUB_REF_NAME", "")
 	ctx := context.Background()
 
-	base, err := resolveBase(ctx, "v1.1.0", "v1.1.0")
-	require.NoError(t, err)
-	assert.Equal(t, "v1.0.0", base, "a full release is compared with the previous full release")
-
-	base, err = resolveBase(ctx, "v1.1.0-rc1", "v1.1.0-rc1")
-	require.NoError(t, err)
-	assert.Equal(t, "v1.0.0", base)
-
-	base, err = resolveBase(ctx, "HEAD", "")
-	require.NoError(t, err)
-	assert.Equal(t, "v1.1.0", base, "an untagged head is compared with the newest tag")
-
-	_, err = resolveBase(ctx, "v1.0.0", "v1.0.0")
-	assert.Error(t, err, "the first release has no previous tag")
+	for name, tc := range map[string]struct {
+		head, current, want string
+		wantErr             bool
+	}{
+		"full release uses previous full release": {head: "v1.1.0", current: "v1.1.0", want: "v1.0.0"},
+		"pre-release uses previous tag":           {head: "v1.1.0-rc1", current: "v1.1.0-rc1", want: "v1.0.0"},
+		"untagged head uses newest tag":           {head: "HEAD", current: "", want: "v1.1.0"},
+		"first release has no previous tag":       {head: "v1.0.0", current: "v1.0.0", wantErr: true},
+	} {
+		t.Run("resolveBase/"+name, func(t *testing.T) {
+			base, err := resolveBase(ctx, tc.head, tc.current)
+			if tc.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, base)
+		})
+	}
 
 	commits, err := collectCommits(ctx, "v1.0.0", "v1.1.0")
 	require.NoError(t, err)
@@ -139,8 +144,14 @@ func TestResolveBaseAndCollectCommits(t *testing.T) {
 	assert.Equal(t, []int{3}, commits[0].PRs)
 	assert.Equal(t, "second (#2)", commits[1].Subject)
 
-	assert.Equal(t, "v1.1.0", detectTag(ctx, "v1.1.0"))
-	assert.Empty(t, detectTag(ctx, "HEAD"))
+	for name, tc := range map[string]struct{ head, want string }{
+		"tagged head":   {head: "v1.1.0", want: "v1.1.0"},
+		"untagged head": {head: "HEAD", want: ""},
+	} {
+		t.Run("detectTag/"+name, func(t *testing.T) {
+			assert.Equal(t, tc.want, detectTag(ctx, tc.head))
+		})
+	}
 
 	t.Setenv("GITHUB_REF_TYPE", "tag")
 	t.Setenv("GITHUB_REF_NAME", "v9.9.9")

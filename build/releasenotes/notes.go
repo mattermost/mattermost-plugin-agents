@@ -18,7 +18,7 @@ const (
 	// the model's context even for a large release.
 	maxPromptChars = 300_000
 
-	notesMaxTokens = 16000
+	notesMaxTokens = 32000
 )
 
 // entry is one unit of change given to the model: a pull request, or a commit

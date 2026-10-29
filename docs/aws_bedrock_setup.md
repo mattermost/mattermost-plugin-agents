@@ -6,7 +6,7 @@ Configure the Mattermost Agents plugin to use [Amazon Bedrock](https://aws.amazo
 
 Before you begin, ensure you have:
 
-- A Mattermost server (v10.11 or later) running on an AWS EC2 instance
+- A Mattermost server (v12.0 or later) running on an AWS EC2 instance
 - An active Mattermost Enterprise license
 - AWS CLI configured with permissions to create IAM resources
 - Access to the Mattermost System Console as a system administrator

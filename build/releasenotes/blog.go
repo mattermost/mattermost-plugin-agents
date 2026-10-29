@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	blogMaxTokens = 16000
+	blogMaxTokens = 32000
 	// maxDocChars caps each documentation file in the blog prompt.
 	maxDocChars = 60_000
 )
