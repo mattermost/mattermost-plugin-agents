@@ -150,9 +150,9 @@ test.describe('Edge Cases - aimock', () => {
 
         const rhs = aiPlugin.getRhsContainer();
         await aiPlugin.sendMessage(PHASE3_CONCURRENT_ONE_PROMPT);
-        await expect(rhs.getByText(PHASE3_CONCURRENT_ONE_PROMPT)).toBeVisible();
+        await expect(rhs.getByTestId('post-message-text').getByText(PHASE3_CONCURRENT_ONE_PROMPT)).toBeVisible();
         await aiPlugin.sendMessage(PHASE3_CONCURRENT_TWO_PROMPT);
-        await expect(rhs.getByText(PHASE3_CONCURRENT_TWO_PROMPT)).toBeVisible();
+        await expect(rhs.getByTestId('post-message-text').getByText(PHASE3_CONCURRENT_TWO_PROMPT)).toBeVisible();
         await aiPlugin.sendMessage(PHASE3_CONCURRENT_THREE_PROMPT);
 
         await waitForPostTextCount(page, 3);
@@ -207,9 +207,9 @@ test.describe('Edge Cases - aimock', () => {
 
         const rhs = aiPlugin.getRhsContainer();
         await aiPlugin.sendMessage(PHASE3_RAPID_MSG_ONE_PROMPT);
-        await expect(rhs.getByText(PHASE3_RAPID_MSG_ONE_PROMPT)).toBeVisible();
+        await expect(rhs.getByTestId('post-message-text').getByText(PHASE3_RAPID_MSG_ONE_PROMPT)).toBeVisible();
         await aiPlugin.sendMessage(PHASE3_RAPID_MSG_TWO_PROMPT);
-        await expect(rhs.getByText(PHASE3_RAPID_MSG_TWO_PROMPT)).toBeVisible();
+        await expect(rhs.getByTestId('post-message-text').getByText(PHASE3_RAPID_MSG_TWO_PROMPT)).toBeVisible();
         await aiPlugin.sendMessage(PHASE3_RAPID_MSG_THREE_PROMPT);
 
         await waitForPostTextCount(page, 3);

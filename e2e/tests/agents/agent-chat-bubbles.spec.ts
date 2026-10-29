@@ -5,9 +5,11 @@
 // content, wide ones span the row, and a streamed reply grows without
 // re-creating text that is already on screen.
 
-import {test, expect, type Locator, type Page} from '@playwright/test';
+import {expect, type Locator, type Page} from '@playwright/test';
 
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
+import {containerTest} from 'helpers/container-fixture';
+import {withDeadline} from 'helpers/deadline';
 import {buildReasoningResponse, buildTextResponse} from 'helpers/aimock-fixtures';
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
@@ -193,42 +195,39 @@ function watchSettledText() {
     w.__settledText = () => ({ended, spans, removed, refaded});
 }
 
+const MATTERMOST_START_MS = 240000;
+const AIMOCK_START_MS = 120000;
+
+const test = containerTest(async (own) => {
+    const mattermost = own(await withDeadline('Starting Mattermost', MATTERMOST_START_MS, () => RunAIMockContainer()));
+    const aimock = own(await withDeadline('Starting aimock', AIMOCK_START_MS, () => RunAIMockSidecar(mattermost.network, {
+        fixtures: [
+            ...buildTextResponse({userMessage: SHORT_PROMPT, content: SHORT_REPLY}).fixtures,
+            ...buildReasoningResponse({userMessage: REASONING_PROMPT, reasoning: 'The user wants a short confirmation.', content: REASONING_REPLY}).fixtures,
+            ...buildTextResponse({userMessage: LONG_PROMPT, content: LONG_REPLY}).fixtures,
+            ...buildTextResponse({userMessage: CODE_PROMPT, content: CODE_REPLY}).fixtures,
+
+            // Small chunks, slowly, so the reveal runs over several seconds.
+            {
+                match: {userMessage: STREAM_PROMPT},
+                response: {content: STREAM_REPLY},
+                chunkSize: 6,
+                streamingProfile: {ttft: 300, tps: 30, jitter: 0},
+            },
+        ],
+    })));
+    return {mattermost, aimock};
+});
+
 test.describe('Agent chat bubbles', () => {
     test.describe.configure({mode: 'serial'});
 
-    test.beforeAll(async () => {
-        test.setTimeout(240000);
-        mattermost = await RunAIMockContainer();
-        try {
-            aimock = await RunAIMockSidecar(mattermost.network, {
-                fixtures: [
-                    ...buildTextResponse({userMessage: SHORT_PROMPT, content: SHORT_REPLY}).fixtures,
-                    ...buildReasoningResponse({userMessage: REASONING_PROMPT, reasoning: 'The user wants a short confirmation.', content: REASONING_REPLY}).fixtures,
-                    ...buildTextResponse({userMessage: LONG_PROMPT, content: LONG_REPLY}).fixtures,
-                    ...buildTextResponse({userMessage: CODE_PROMPT, content: CODE_REPLY}).fixtures,
-
-                    // Small chunks, slowly, so the reveal runs over several seconds.
-                    {
-                        match: {userMessage: STREAM_PROMPT},
-                        response: {content: STREAM_REPLY},
-                        chunkSize: 6,
-                        streamingProfile: {ttft: 300, tps: 30, jitter: 0},
-                    },
-                ],
-            });
-        } catch (error) {
-            await mattermost.stop().catch(() => undefined);
-            throw error;
-        }
+    test.beforeAll(async ({containers}) => {
+        ({mattermost, aimock} = containers);
         const client = await mattermost.getClient(username, password);
         const me = await client.getMe();
         botUserId = (await client.getUserByUsername(AIMOCK_BOT_NAME)).id;
         await client.createDirectChannel([me.id, botUserId]);
-    });
-
-    test.afterAll(async () => {
-        await aimock?.stop();
-        await mattermost?.stop();
     });
 
     test('a one-word reply hugs its content', async ({page}) => {

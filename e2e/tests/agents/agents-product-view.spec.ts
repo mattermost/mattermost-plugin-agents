@@ -9,9 +9,11 @@
 import fs from 'fs';
 import path from 'path';
 
-import {test, expect, type Page} from '@playwright/test';
+import {expect, type Page} from '@playwright/test';
 
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
+import {containerTest} from 'helpers/container-fixture';
+import {withDeadline} from 'helpers/deadline';
 import {buildTextResponse, buildTitleFixture} from 'helpers/aimock-fixtures';
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
@@ -118,26 +120,26 @@ const newChatComposer = (page: Page) => page.getByTestId('agent-chat-new-compose
 const replyComposer = (page: Page) => page.getByTestId('agent-chat-thread').getByRole('textbox', {name: `Reply to ${botDisplayName}`});
 
 async function openAgentsFromSwitcher(page: Page): Promise<void> {
-    await page.getByRole('button', {name: 'Open product menu'}).click();
+    // The host labels this button differently across versions ("Open product menu", "Product switch menu").
+    await page.getByRole('button', {name: /product.*menu/i}).click();
     await page.getByRole('menuitem', {name: 'Agents'}).click();
     await expect(page).toHaveURL(/\/plug\/mattermost-ai\/agents/);
 }
 
+const MATTERMOST_START_MS = 240000;
+const AIMOCK_START_MS = 120000;
+
+const test = containerTest(async (own) => {
+    const mattermost = own(await withDeadline('Starting Mattermost', MATTERMOST_START_MS, () => RunAIMockContainer()));
+    const aimock = own(await withDeadline('Starting aimock', AIMOCK_START_MS, () => RunAIMockSidecar(mattermost.network, {fixtures: baseFixtures()})));
+    return {mattermost, aimock};
+});
+
 test.describe('Agents product view', () => {
     test.describe.configure({mode: 'serial'});
 
-    test.beforeAll(async () => {
-        test.setTimeout(240000);
-        mattermost = await RunAIMockContainer();
-        try {
-            aimock = await RunAIMockSidecar(mattermost.network, {
-                fixtures: baseFixtures(),
-            });
-        } catch (error) {
-            await mattermost.stop().catch(() => undefined);
-            throw error;
-        }
-
+    test.beforeAll(async ({containers}) => {
+        ({mattermost, aimock} = containers);
         const client = await mattermost.getClient(username, password);
         const me = await client.getMe();
         const bot = await client.getUserByUsername(AIMOCK_BOT_NAME);
@@ -148,8 +150,6 @@ test.describe('Agents product view', () => {
     test.afterAll(async () => {
         fs.mkdirSync(SCREENSHOT_DIR, {recursive: true});
         fs.writeFileSync(path.join(SCREENSHOT_DIR, 'conversation_responses.json'), JSON.stringify(conversationResponses, null, 2));
-        await aimock?.stop();
-        await mattermost?.stop();
     });
 
     test('product switcher opens a new chat with the default agent, not the agents list', async ({page}) => {
