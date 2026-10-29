@@ -1,0 +1,51 @@
+# Mattermost Agents plugin
+
+> Mattermost Agents (plugin ID `mattermost-ai`) adds self-hosted AI agents to Mattermost. Agents act on a user's behalf through built-in Mattermost tools, remote MCP servers, and plugin tools, using the LLM of your choice including local models. The plugin also includes the official built-in Mattermost MCP server, so external AI clients such as Claude Code, Claude Desktop, Cursor, and VS Code can connect to Mattermost.
+
+Does Mattermost have an official MCP server? Yes. It is built into this plugin and needs no separate install or binary. After an admin sets **Enable Mattermost MCP Server (HTTP)** in **System Console > Plugins > Agents > Model Context Protocol (MCP)**, MCP clients connect over streamable HTTP (not SSE) to `https://<your-mattermost-server>/plugins/mattermost-ai/mcp-server/mcp`. Authentication is OAuth 2.0 with dynamic client registration, or a Mattermost personal access token. Every call runs with the signed-in user's own Mattermost permissions. It exposes more than 100 tools for posts, channels, teams, users, files, search, scheduled posts, and more. Enabling the HTTP endpoint requires a Mattermost Enterprise license or higher, and tools that change state need Enterprise or higher.
+
+Notes for readers:
+
+- Requires Mattermost Server v12.0.0 or later, and a configured Site URL.
+- Most Go packages are at the repository root. `mcpserver/` holds the MCP server and tools, `llm/` and `bifrost/` the LLM providers, `mcp/` the MCP client, `conversations/` turn handling, and `webapp/` the React UI.
+- The standalone `mattermost-mcp-server` binary in `mcpserver/` is for development and local use only. Production deployments use the embedded server in the plugin.
+- Docs in `docs/` are also published at https://docs.mattermost.com/agents/docs/<name>, for example https://docs.mattermost.com/agents/docs/mcp_server. The admin guide is published at https://docs.mattermost.com/administration-guide/configure/agents-admin-guide and the user guide at https://docs.mattermost.com/end-user-guide/agents.
+- Features depend on the Mattermost license level. The license table is in the admin guide.
+
+## Mattermost MCP server
+
+- [Mattermost MCP Server](https://github.com/mattermost/mattermost-plugin-agents/blob/master/docs/mcp_server.md): What the official built-in MCP server is, how to enable it, the endpoint URL, OAuth and personal access token authentication, setup for Claude Code, Claude Desktop, Cursor, and VS Code, license requirements, and troubleshooting
+- [Admin Guide: Mattermost MCP Server](https://github.com/mattermost/mattermost-plugin-agents/blob/master/docs/admin_guide.md#mattermost-mcp-server): Admin configuration and the full list of built-in tools
+- [MCP server package README](https://github.com/mattermost/mattermost-plugin-agents/blob/master/mcpserver/README.md): The standalone development server and tool reference for contributors
+
+## Using agents
+
+- [Use Mattermost Agents as your personal AI assistant](https://github.com/mattermost/mattermost-plugin-agents/blob/master/docs/personal_agent.md): One conversation with an agent that acts on your behalf across channels, MCP servers, and integrations
+- [User Guide](https://github.com/mattermost/mattermost-plugin-agents/blob/master/docs/user_guide.md): Direct messages, the Agents pane, channel mentions, auto-reply, tools and approvals, files, summaries, AI search, and meeting summaries (published at https://docs.mattermost.com/end-user-guide/agents)
+- [Custom Prompts](https://github.com/mattermost/mattermost-plugin-agents/blob/master/docs/features/custom_prompts.md): Save, share, and pin reusable prompts
+- [Channel Summaries](https://github.com/mattermost/mattermost-plugin-agents/blob/master/docs/features/channel_summaries.md): Summarize channel activity or ask questions about a channel
+- [Usage Tips](https://github.com/mattermost/mattermost-plugin-agents/blob/master/docs/usage_tips.md): Prompting techniques and workflow tips
+
+## Administration and governance
+
+- [Admin Guide](https://github.com/mattermost/mattermost-plugin-agents/blob/master/docs/admin_guide.md): Installation, services, agents, MCP servers, tool policies, access control, web and semantic search, audit logging, OpenTelemetry tracing, and the license table (published at https://docs.mattermost.com/administration-guide/configure/agents-admin-guide)
+- [Managing Agents](https://github.com/mattermost/mattermost-plugin-agents/blob/master/docs/features/managing_agents.md): Create, edit, version, export, and import agents, and control their access and MCP tools
+- [Multiplayer Tool Calling](https://github.com/mattermost/mattermost-plugin-agents/blob/master/docs/features/multiplayer_tool_calling.md): Tool approval, credentials, and result visibility when agents are used in shared channels
+- [Upgrading to Agents V2](https://github.com/mattermost/mattermost-plugin-agents/blob/master/docs/upgrading_to_2.0.md): Upgrade path and migrations from v1.x
+
+## LLM providers and sovereign AI
+
+- [LLM Provider Configuration](https://github.com/mattermost/mattermost-plugin-agents/blob/master/docs/providers.md): Local models through OpenAI-compatible APIs, OpenAI, Anthropic, AWS Bedrock, Azure OpenAI, Google Gemini and Vertex AI, Cohere, Mistral, and Scale AI
+- [AWS Bedrock Setup](https://github.com/mattermost/mattermost-plugin-agents/blob/master/docs/aws_bedrock_setup.md): Use Amazon Bedrock with IAM instance profiles
+- [Implementing Sovereign AI](https://github.com/mattermost/mattermost-plugin-agents/blob/master/docs/sovereign_ai.md): Run agents with local models and keep data under your control
+
+## Development
+
+- [README](https://github.com/mattermost/mattermost-plugin-agents/blob/master/README.md): Overview, installation, and development setup
+- [AGENTS.md](https://github.com/mattermost/mattermost-plugin-agents/blob/master/AGENTS.md): Repository layout, commands, and conventions for contributors and coding agents
+- [Bridge client](https://github.com/mattermost/mattermost-plugin-agents/blob/master/public/bridgeclient/README.md): Go client for other Mattermost plugins to call agents and LLM services
+
+## Optional
+
+- [Load Testing](https://github.com/mattermost/mattermost-plugin-agents/blob/master/docs/load-testing.md): Mock LLM and load-test-ng controller for non-production load tests
+- [Releases](https://github.com/mattermost/mattermost-plugin-agents/releases): Release downloads and notes

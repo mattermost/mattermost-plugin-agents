@@ -2,33 +2,49 @@
 
 # Mattermost Agents Plugin [![Download Latest Master Build](https://img.shields.io/badge/Download-Latest%20Master%20Build-blue)](https://github.com/mattermost/mattermost-plugin-agents/releases/tag/latest-master)
 
-The Mattermost Agents Plugin integrates AI capabilities directly into your [Mattermost](https://github.com/mattermost/mattermost) workspace. **Run any local LLM** on your infrastructure or connect to cloud providers - you control your data and deployment.
+Self-hosted AI agents for [Mattermost](https://github.com/mattermost/mattermost) that act on your behalf through tools and MCP servers, plus a built-in Mattermost MCP server for external AI clients such as Claude Code, Claude Desktop, Cursor, and VS Code.
 
 </div>
 
 ![The Mattermost Agents AI Plugin is an extension for mattermost that provides functionality for self-hosted and vendor-hosted LLMs](img/mattermost-ai-llm-access.webp)
 
+Mattermost Agents (plugin ID `mattermost-ai`) adds AI agents to a Mattermost server. You talk to an agent in a direct message, the Agents pane, or a channel. The agent can search and post in Mattermost, call tools on other systems through the Model Context Protocol (MCP), and work with files, all with the permissions of the person it is acting for. You choose the LLM, including models that run on your own infrastructure, so conversations and data stay under your control.
+
+**Does Mattermost have an official MCP server?** Yes. It is built into this plugin and needs no separate install. After an admin enables it, MCP clients connect to `/plugins/mattermost-ai/mcp-server/mcp` on your Mattermost server and sign in as a Mattermost user. See [Mattermost MCP Server](docs/mcp_server.md).
+
 ## Key Features
 
-- **Multiple AI Assistants**: Configure different agents with specialized personalities and capabilities
-- **Thread & Channel Summarization**: Get concise summaries of long discussions with a single click
-- **Action Item Extraction**: Automatically identify and extract action items from threads
-- **Meeting Transcription**: Transcribe and summarize meeting recordings
-- **Semantic Search**: Find relevant content across your Mattermost instance using natural language
-- **Smart Reactions**: Let AI suggest contextually appropriate emoji reactions
-- **Direct Conversations**: Chat directly with AI assistants in dedicated channels
-- **Flexible LLM Support**: Use local models (Ollama, vLLM, etc.), cloud providers (OpenAI, Anthropic, Azure), or any OpenAI-compatible API
+- **Agents that act on your behalf**: Chat with a personal agent that searches and reads Mattermost, posts and sends messages, schedules posts and reminders, and uses tools from other systems. Configure multiple agents with their own instructions, models, and tool access. See [Use Mattermost Agents as your personal AI assistant](docs/personal_agent.md).
+- **Tools and MCP**: Agents use built-in Mattermost tools, remote MCP servers with per-user OAuth (with a **Connect** card in the conversation), and tools registered by other Mattermost plugins. Dynamic tool loading keeps large tool catalogs out of the model's context.
+- **Built-in Mattermost MCP server**: Connect Claude Code, Claude Desktop, Cursor, VS Code, or any MCP client that supports streamable HTTP to Mattermost, using OAuth with dynamic client registration or a personal access token. Over 100 tools run with the signed-in user's own permissions. See [Mattermost MCP Server](docs/mcp_server.md).
+- **Governance**: Per-tool approval policies, user, team, and channel access controls for agents, attribute-based access control, server audit logging, token usage tracking, and OpenTelemetry tracing. Admins decide which tools exist and which need approval. See the [Admin Guide](docs/admin_guide.md).
+- **Bring your own LLM**: Use local models through OpenAI-compatible APIs (Ollama, vLLM), or OpenAI, Anthropic, AWS Bedrock, Azure OpenAI, Google Gemini and Vertex AI, Cohere, Mistral, and Scale AI. See [LLM Provider Configuration](docs/providers.md) and [Implementing Sovereign AI](docs/sovereign_ai.md).
+- **Summaries, search, and meetings**: Summarize threads, unread messages, and channels; ask questions about a channel; search with keyword and semantic search; and summarize Mattermost Calls and Zoom meeting recordings.
+- **Files and artifacts**: Agents create text files attached to their replies, read attachments, analyze images with vision-capable models, and render HTML artifacts in the conversation.
+- **Channel use**: @mention an agent in a channel, or set a channel to auto-reply. Tool results in channels can be shared or kept private by the person who asked.
+- **Custom prompts**: Save reusable prompts, pin them in the Agents pane, and share them with your team.
+
+Some features depend on your Mattermost license level. See the [license requirements](docs/admin_guide.md#license-requirements).
 
 ## Documentation
 
-Comprehensive documentation is available in the `/docs` directory:
+Documentation is available in the [`docs`](docs/) directory:
 
-- [User Guide](docs/user_guide.md): Learn how to interact with AI features
-- [Admin Guide](docs/admin_guide.md): Detailed installation and configuration instructions
+- [User Guide](docs/user_guide.md): Use agents, tools, summaries, search, and meeting summaries
+- [Use Mattermost Agents as your personal AI assistant](docs/personal_agent.md): What a personal agent can do across channels, MCP servers, and integrations
+- [Admin Guide](docs/admin_guide.md): Installation, configuration, MCP servers, tool policies, access control, audit logging, tracing, and license requirements
+- [Mattermost MCP Server](docs/mcp_server.md): Connect Claude Code, Claude Desktop, Cursor, VS Code, and other MCP clients to Mattermost
+- [LLM Provider Configuration](docs/providers.md): Configuration for supported LLM providers
+- [AWS Bedrock Setup](docs/aws_bedrock_setup.md): Use Amazon Bedrock with IAM instance profiles
+- [Implementing Sovereign AI](docs/sovereign_ai.md): Deploy agents with local models and data control
+- [Usage Tips](docs/usage_tips.md): Voice dictation, prompting techniques, and workflow tips
+- [Upgrading to Agents V2](docs/upgrading_to_2.0.md): Upgrade path, automatic migrations, and breaking changes from v1.x
 - [Load Testing](docs/load-testing.md): Configure the in-process mock LLM and load-test-ng Agents controller
-- [Provider Setup](docs/providers.md): Configuration for supported LLM providers
-- [Feature Documentation](docs/features/): Detailed guides for individual features
+- Feature documentation:
+  - [Managing Agents](docs/features/managing_agents.md): Create, edit, and version agents and control their access and MCP tools
+  - [Custom Prompts](docs/features/custom_prompts.md): Save, share, and pin reusable prompts
   - [Channel Summaries](docs/features/channel_summaries.md): Use the **Ask Agents about this channel** button to summarize and analyze channel activity
+  - [Multiplayer Tool Calling](docs/features/multiplayer_tool_calling.md): Tool approval, credentials, and result visibility in shared channels
 
 ## Installation
 
@@ -38,7 +54,7 @@ Comprehensive documentation is available in the `/docs` directory:
 
 ### System Requirements
 
-- Mattermost Server v11.9.0+
+- Mattermost Server v12.0.0+
 - PostgreSQL database with pgvector extension for semantic search capabilities
 - Network access to your chosen LLM provider
 
@@ -66,7 +82,7 @@ See the [Bridge Client README](public/bridgeclient/README.md) for installation a
 
 ### Prerequisites
 
-- Go 1.24+
+- Go 1.27+
 - Node.js 24.11+
 - Access to an LLM provider (OpenAI, Anthropic, etc.)
 
@@ -138,7 +154,7 @@ LLM_PROVIDER=anthropic make evals
 LLM_PROVIDER=openai,azure make evals
 
 # Use a specific model
-ANTHROPIC_MODEL=claude-3-opus-20240229 make evals
+ANTHROPIC_MODEL=claude-opus-5-5 make evals
 ```
 
 See `cmd/evalviewer/README.md` for complete documentation on environment variables and configuration options.
@@ -146,4 +162,4 @@ See `cmd/evalviewer/README.md` for complete documentation on environment variabl
 
 ## License
 
-This repository is licensed under [Apache-2](./LICENSE), except for the [server/enterprise](server/enterprise) directory which is licensed under the [Mattermost Source Available License](LICENSE.enterprise). See [Mattermost Source Available License](https://docs.mattermost.com/overview/faq.html#mattermost-source-available-license) to learn more.
+This repository is licensed under [Apache-2](./LICENSE.txt), except for the [enterprise](enterprise) directory which is licensed under the [Mattermost Source Available License](enterprise/LICENSE). See [Mattermost Source Available License](https://docs.mattermost.com/overview/faq.html#mattermost-source-available-license) to learn more.

@@ -1,5 +1,7 @@
 # Implementing Sovereign AI
 
+Run AI agents in Mattermost under your own control: self-hosted or customer-chosen LLMs, data that stays in your environment, and access governed by Mattermost permissions. This guide explains how the Mattermost Agents plugin supports sovereign AI deployments.
+
 ## Overview
 
 Sovereign AI is an approach to artificial intelligence implementation that prioritizes organizational control over data, processing, and infrastructure. In the context of Mattermost, this is realized through the Agents plugin, which enables organizations to leverage advanced AI capabilities through LLMs while maintaining complete control of their sensitive communications and information.
