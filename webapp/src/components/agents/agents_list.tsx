@@ -5,9 +5,7 @@ import React, {useCallback, useEffect, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
-import {PlusIcon} from '@mattermost/compass-icons/components';
-//eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
-import {OverlayTrigger, Tooltip} from 'react-bootstrap';
+import {ImportIcon, PlusIcon} from '@mattermost/compass-icons/components';
 
 import {GlobalState} from '@mattermost/types/store';
 
@@ -18,15 +16,18 @@ import {SearchInput} from '@mattermost/compass-ui/components/search-input';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
 import {Tabs} from '@mattermost/compass-ui/components/tabs';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {getAgents, getServices, deleteAgent as deleteAgentAPI} from '@/client';
 import {userHasSystemPermission} from '@/utils/permissions';
-import {UserAgent, ServiceInfo} from '@/types/agents';
+import {downloadAgentExport} from '@/utils/agent_export';
+import {AgentExportDocument, UserAgent, ServiceInfo} from '@/types/agents';
 import {LicenseLevel, useAgentLimit, useLicenseLevel, useLicenseLevelName} from '@/license';
 
 import AgentRow from './agent_row';
 import DeleteAgentDialog from './delete_agent_dialog';
 import AgentConfigView from './agent_config_view';
+import {useAgentFilePicker} from './use_agent_file_picker';
 
 type Tab = 'all' | 'yours';
 
@@ -62,6 +63,8 @@ const AgentsList = () => {
     const [viewMode, setViewMode] = useState<'create' | 'edit'>('create');
     const [editingAgent, setEditingAgent] = useState<UserAgent | null>(null);
     const [activeAgentCount, setActiveAgentCount] = useState<number | null>(null);
+    const [importedDocument, setImportedDocument] = useState<AgentExportDocument | null>(null);
+    const [actionError, setActionError] = useState('');
 
     const serverAgentCount = activeAgentCount ?? agents.length;
     const createQuotaReached = agentLimit !== null && serverAgentCount >= agentLimit;
@@ -145,14 +148,26 @@ const AgentsList = () => {
         setViewOpen(true);
     }, [createButtonDisabled]);
 
+    const handleImportedDocument = useCallback((doc: AgentExportDocument) => {
+        setActionError('');
+        setImportedDocument(doc);
+        setEditingAgent(null);
+        setViewMode('create');
+        setViewOpen(true);
+    }, []);
+
+    const importPicker = useAgentFilePicker(handleImportedDocument, setActionError);
+
     const handleViewBack = useCallback(() => {
         setViewOpen(false);
         setEditingAgent(null);
+        setImportedDocument(null);
     }, []);
 
     const handleViewSaved = useCallback(() => {
         setViewOpen(false);
         setEditingAgent(null);
+        setImportedDocument(null);
         fetchAgents();
     }, [fetchAgents]);
 
@@ -166,6 +181,16 @@ const AgentsList = () => {
         // Migrated legacy bots have no creator; system admins had full control via System Console.
         return Boolean(!a.creatorID && hasManageSystem);
     }, [currentUserId, hasManageOthersAgent, hasManageSystem]);
+
+    const handleExportAgent = useCallback(async (agent: UserAgent) => {
+        setActionError('');
+        try {
+            await downloadAgentExport(agent.id);
+        } catch (e: any) {
+            const message = (typeof e?.message === 'string' ? e.message : '').trim();
+            setActionError(message || intl.formatMessage({defaultMessage: 'Failed to export agent.'}));
+        }
+    }, [intl]);
 
     const filteredAgents = agents.filter((a) => {
         if (activeTab === 'yours' && a.creatorID !== currentUserId) {
@@ -188,6 +213,8 @@ const AgentsList = () => {
                         services={services}
                         onBack={handleViewBack}
                         onSaved={handleViewSaved}
+                        onRestored={fetchAgents}
+                        {...(importedDocument ? {importedDocument} : {})}
                     />
                 </ContentColumn>
             </ConfigViewFrame>
@@ -207,39 +234,48 @@ const AgentsList = () => {
                                 <FormattedMessage defaultMessage='Agents are AI assistants in your workspace. Mention @username in a channel or direct message to chat with one.'/>
                             </Subtitle>
                         </TitleRow>
-                        {userCanCreateAgent && (
-                            createQuotaReached ? (
-                                <OverlayTrigger
-                                    placement='bottom'
-                                    overlay={
-                                        <Tooltip id='create-agent-quota-tooltip'>
-                                            {createQuotaMessage}
-                                        </Tooltip>
-                                    }
-                                >
-                                    {/* Wrapper receives hover events; a disabled button does not fire them itself. */}
-                                    <CreateButtonWrapper>
-                                        <CreateButton
-                                            emphasis='primary'
-                                            leadingIcon={<Icon glyph={<PlusIcon/>}/>}
-                                            onClick={handleCreateAgent}
-                                            disabled={true}
-                                        >
-                                            <FormattedMessage defaultMessage='Create agent'/>
-                                        </CreateButton>
-                                    </CreateButtonWrapper>
-                                </OverlayTrigger>
-                            ) : (
-                                <CreateButton
-                                    emphasis='primary'
-                                    leadingIcon={<Icon glyph={<PlusIcon/>}/>}
-                                    onClick={handleCreateAgent}
+                        <HeaderActions>
+                            {userCanCreateAgent && (
+                                <Button
+                                    emphasis='tertiary'
+                                    leadingIcon={<Icon glyph={<ImportIcon/>}/>}
+                                    onClick={importPicker.open}
                                     disabled={createButtonDisabled}
                                 >
-                                    <FormattedMessage defaultMessage='Create agent'/>
-                                </CreateButton>
-                            )
-                        )}
+                                    <FormattedMessage defaultMessage='Import'/>
+                                </Button>
+                            )}
+                            {importPicker.input}
+                            {userCanCreateAgent && (
+                                createQuotaReached ? (
+                                    <WithTooltip
+                                        title={createQuotaMessage}
+                                        forcedPlacement='bottom'
+                                    >
+                                        {/* Wrapper receives hover events; a disabled button does not fire them itself. */}
+                                        <CreateButtonWrapper>
+                                            <Button
+                                                emphasis='primary'
+                                                leadingIcon={<Icon glyph={<PlusIcon/>}/>}
+                                                onClick={handleCreateAgent}
+                                                disabled={true}
+                                            >
+                                                <FormattedMessage defaultMessage='Create agent'/>
+                                            </Button>
+                                        </CreateButtonWrapper>
+                                    </WithTooltip>
+                                ) : (
+                                    <Button
+                                        emphasis='primary'
+                                        leadingIcon={<Icon glyph={<PlusIcon/>}/>}
+                                        onClick={handleCreateAgent}
+                                        disabled={createButtonDisabled}
+                                    >
+                                        <FormattedMessage defaultMessage='Create agent'/>
+                                    </Button>
+                                )
+                            )}
+                        </HeaderActions>
                     </Header>
 
                     <TabBar
@@ -276,6 +312,16 @@ const AgentsList = () => {
                         <Notice
                             type='danger'
                             title={error}
+                        />
+                    )}
+
+                    {actionError && (
+                        <Notice
+                            type='danger'
+                            title={actionError}
+                            role='alert'
+                            onDismiss={() => setActionError('')}
+                            dismissLabel={intl.formatMessage({defaultMessage: 'Dismiss'})}
                         />
                     )}
 
@@ -318,6 +364,7 @@ const AgentsList = () => {
                                     canManage={userCanManageAgent(agent)}
                                     onEdit={handleEdit}
                                     onDelete={handleDeleteRequest}
+                                    onExport={handleExportAgent}
                                 />
                             ))}
                         </AgentListContainer>
@@ -465,12 +512,15 @@ const Subtitle = styled.p`
     margin: 0;
 `;
 
-const CreateButtonWrapper = styled.div`
-    display: inline-flex;
+const HeaderActions = styled.div`
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
     flex-shrink: 0;
 `;
 
-const CreateButton = styled(Button)`
+const CreateButtonWrapper = styled.div`
+    display: inline-flex;
     flex-shrink: 0;
 `;
 

@@ -4,15 +4,17 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
-import {ArrowLeftIcon} from '@mattermost/compass-icons/components';
+import {ArrowLeftIcon, ExportVariantIcon, ImportIcon, UpdateIcon} from '@mattermost/compass-icons/components';
 
 import {Button} from '@mattermost/compass-ui/components/button';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
-import {createAgent, updateAgent, uploadAgentAvatar} from '@/client';
+import {createAgent, getUserMCPTools, updateAgent, uploadAgentAvatar} from '@/client';
 import {
+    AgentExportDocument,
     UserAgent,
     CreateAgentRequest,
     UpdateAgentRequest,
@@ -30,10 +32,15 @@ import {UnderlineTab, UnderlineTabs} from '@/components/underline_tabs';
 import {useIsLicensedFor} from '@/license';
 import {useABACSupport} from '@/utils/access_control';
 import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
+import {downloadAgentExport, matchImportedMCPTools} from '@/utils/agent_export';
 
+import {useAgentFilePicker} from './use_agent_file_picker';
 import ConfigTab from './tabs/config_tab';
 import AccessTab from './tabs/access_tab';
 import McpsTab from './tabs/mcps_tab';
+import AgentVersionHistoryModal from './agent_version_history_modal';
+import {formatRelativeTime} from './agent_version_labels';
+import {hasVersions, useAgentVersionHistory} from './use_agent_version_history';
 
 type Tab = 'config' | 'access' | 'mcps';
 
@@ -202,13 +209,17 @@ type Props = {
     services: ServiceInfo[]; // pre-fetched from parent
     onBack: () => void;
     onSaved: (agent: UserAgent) => void; // called after successful create or update
+    onRestored?: (agent: UserAgent) => void; // called after a version was restored; the editor stays open
+
+    /** An agent export file to load into the form when the view opens. */
+    importedDocument?: AgentExportDocument;
 }
 
 const DISCARD_CHANGES_TITLE_ID = 'discard-agent-changes-title';
 const RENAME_AGENT_TITLE_ID = 'rename-agent-title';
 
 const AgentConfigView = (props: Props) => {
-    const {mode, agent, services, onBack, onSaved} = props;
+    const {mode, agent, services, onBack, onSaved, onRestored, importedDocument} = props;
     const intl = useIntl();
 
     // Parent owns the manage_system check via useCurrentUserHasSystemPermission.
@@ -237,11 +248,21 @@ const AgentConfigView = (props: Props) => {
     const [baselineDraft, setBaselineDraft] = useState<AgentDraft>(initialDraft);
     const [avatarFile, setAvatarFile] = useState<File | null>(null);
     const [saving, setSaving] = useState(false);
+    const [exporting, setExporting] = useState(false);
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [showDiscardDialog, setShowDiscardDialog] = useState(false);
     const [showRenameDialog, setShowRenameDialog] = useState(false);
+    const [importing, setImporting] = useState(false);
+    const [showHistory, setShowHistory] = useState(false);
+    const history = useAgentVersionHistory(mode === 'edit' && agent ? agent.id : '');
+    const refreshHistory = history.refresh;
+
+    // MCP server origins whose tools the last imported file referenced but
+    // this server does not list; null until a file is imported.
+    const [importMissingServers, setImportMissingServers] = useState<string[] | null>(null);
+    const importRequestRef = useRef(0);
     const dialogOpenRef = useRef(false);
-    dialogOpenRef.current = showDiscardDialog || showRenameDialog;
+    dialogOpenRef.current = showDiscardDialog || showRenameDialog || showHistory;
 
     const savedUsername = (mode === 'edit' && agent?.name) || '';
     const isRenaming = savedUsername !== '' && draft.username !== savedUsername;
@@ -329,6 +350,99 @@ const AgentConfigView = (props: Props) => {
         setBaselineDraft((prev) => ({...prev, enabledTools: [...next]}));
     }, []);
 
+    const handleVersionRestored = useCallback((restored: UserAgent) => {
+        const restoredDraft = agentToDraft(restored, services);
+
+        // Switching access away from attribute-based deletes the agent's
+        // policy, so a restored attribute-based version has none until one
+        // is created on the Access tab.
+        const needsAccessPolicy = restoredDraft.userAccessLevel === UserAccessLevel.AttributeBased &&
+            baselineDraft.userAccessLevel !== UserAccessLevel.AttributeBased;
+        setDraft(restoredDraft);
+        setBaselineDraft(cloneDraft(restoredDraft));
+        setAvatarFile(null);
+        setErrors({});
+        setImportMissingServers(null);
+        if (needsAccessPolicy) {
+            setShowHistory(false);
+            setActiveTab('access');
+        }
+        onRestored?.(restored);
+    }, [baselineDraft.userAccessLevel, onRestored, services]);
+
+    useEffect(() => {
+        return () => {
+            importRequestRef.current += 1;
+        };
+    }, []);
+
+    // Loads the file's transferable settings into the form; saving applies
+    // them through the normal create or update. The name and display name are
+    // only suggestions for a new agent.
+    const applyImport = useCallback(async (doc: AgentExportDocument) => {
+        importRequestRef.current += 1;
+        const request = importRequestRef.current;
+        const imported = doc.agent;
+        setImporting(true);
+        try {
+            let enabledTools: EnabledTool[] = [];
+            let missingServerOrigins: string[] = [];
+            if (!imported.autoEnableNewMCPTools && imported.mcpTools.length > 0) {
+                const {servers} = await getUserMCPTools({agentId: agent?.id, serviceAccount: draft.useServiceAccountAuth});
+                ({enabledTools, missingServerOrigins} = matchImportedMCPTools(imported.mcpTools, servers ?? []));
+            }
+            if (request !== importRequestRef.current) {
+                return;
+            }
+            updateDraft({
+                ...(mode === 'create' && imported.name ? {username: imported.name} : {}),
+                ...(mode === 'create' && imported.displayName ? {displayName: imported.displayName} : {}),
+                customInstructions: imported.customInstructions,
+                disableTools: imported.disableTools,
+                maxToolTurns: imported.maxToolTurns > 0 ? imported.maxToolTurns : DefaultMaxToolTurns,
+                mcpDynamicToolLoading: imported.mcpDynamicToolLoading,
+                autoEnableNewMCPTools: imported.autoEnableNewMCPTools,
+                enabledTools,
+            });
+            setImportMissingServers(missingServerOrigins);
+            setActiveTab('config');
+        } catch {
+            if (request === importRequestRef.current) {
+                setErrors({general: intl.formatMessage({defaultMessage: 'Failed to load your MCP servers, so the agent file was not imported. Please try again.'})});
+            }
+        } finally {
+            if (request === importRequestRef.current) {
+                setImporting(false);
+            }
+        }
+    }, [agent?.id, draft.useServiceAccountAuth, intl, mode, updateDraft]);
+
+    const filePicker = useAgentFilePicker(applyImport, (message) => setErrors({general: message}));
+
+    const initialImportRef = useRef(importedDocument ?? null);
+    useEffect(() => {
+        const doc = initialImportRef.current;
+        initialImportRef.current = null;
+        if (doc) {
+            applyImport(doc);
+        }
+    }, [applyImport]);
+
+    const handleExport = useCallback(async () => {
+        if (!agent || exporting) {
+            return;
+        }
+        setExporting(true);
+        try {
+            await downloadAgentExport(agent.id);
+        } catch (e: any) {
+            const message = (typeof e?.message === 'string' ? e.message : '').trim();
+            setErrors({general: message || intl.formatMessage({defaultMessage: 'Failed to export agent. Please try again.'})});
+        } finally {
+            setExporting(false);
+        }
+    }, [agent, exporting, intl]);
+
     const validate = useCallback((): Record<string, string> => {
         const errs: Record<string, string> = {};
         if (!draft.displayName.trim()) {
@@ -380,6 +494,9 @@ const AgentConfigView = (props: Props) => {
             // Clear dirty state so onSaved -> onBack flow doesn't trigger discard prompt
             setBaselineDraft(cloneDraft(draft));
             setAvatarFile(null);
+            if (mode === 'edit') {
+                refreshHistory();
+            }
 
             onSaved(savedAgent);
         } catch (e: any) {
@@ -404,7 +521,7 @@ const AgentConfigView = (props: Props) => {
         } finally {
             setSaving(false);
         }
-    }, [mode, agent, draft, avatarFile, intl, onSaved]);
+    }, [mode, agent, draft, avatarFile, intl, onSaved, refreshHistory]);
 
     const handleSave = useCallback(() => {
         const validationErrors = validate();
@@ -432,6 +549,49 @@ const AgentConfigView = (props: Props) => {
 
     const title = mode === 'create' ? intl.formatMessage({defaultMessage: 'New Agent'}) : draft.displayName || intl.formatMessage({defaultMessage: 'Edit Agent'});
 
+    const versionHistory = mode === 'edit' && agent && hasVersions(history.list) ? history.list : null;
+    const canViewHistory = versionHistory !== null;
+    let versionLine: React.ReactNode = null;
+    if (versionHistory) {
+        const current = versionHistory.versions.find((v) => v.version === versionHistory.currentVersion) ?? versionHistory.versions[0];
+        const summary = intl.formatMessage(
+            {defaultMessage: 'v{version} · by {author}, {time}'},
+            {
+                version: current.version,
+                author: history.authorLabel(current.createdBy),
+                time: formatRelativeTime(intl, current.createAt),
+            },
+        );
+        const unsaved = intl.formatMessage({defaultMessage: 'Unsaved changes'});
+        versionLine = (
+            <VersionLineButton
+                type='button'
+                aria-haspopup='dialog'
+                aria-label={intl.formatMessage(
+                    {defaultMessage: 'Version history, {summary}'},
+                    {summary: isDirty ? `${summary} · ${unsaved}` : summary},
+                )}
+                onClick={() => setShowHistory(true)}
+            >
+                {isDirty ? `${summary} · ${unsaved}` : summary}
+            </VersionLineButton>
+        );
+    } else if (mode === 'edit' && agent && history.listError) {
+        versionLine = (
+            <VersionLineError role='alert'>
+                {history.listError}
+                {' '}
+                <Button
+                    emphasis='link'
+                    size='small'
+                    onClick={() => history.refresh()}
+                >
+                    <FormattedMessage defaultMessage='Retry'/>
+                </Button>
+            </VersionLineError>
+        );
+    }
+
     return (
         <>
             <ViewContainer>
@@ -444,8 +604,45 @@ const AgentConfigView = (props: Props) => {
                             disabled={saving}
                             aria-label={intl.formatMessage({defaultMessage: 'Back to agents'})}
                         />
-                        <ViewTitle>{title}</ViewTitle>
+                        <HeaderTitleBlock>
+                            <ViewTitle>{title}</ViewTitle>
+                            {versionLine}
+                        </HeaderTitleBlock>
                     </HeaderLeading>
+                    <HeaderActions>
+                        {canViewHistory && (
+                            <WithTooltip title={intl.formatMessage({defaultMessage: 'Version history'})}>
+                                <IconButton
+                                    icon={<Icon glyph={<UpdateIcon/>}/>}
+                                    size='medium'
+                                    onClick={() => setShowHistory(true)}
+                                    aria-haspopup='dialog'
+                                    aria-label={intl.formatMessage({defaultMessage: 'Version history'})}
+                                />
+                            </WithTooltip>
+                        )}
+                        <Button
+                            emphasis='tertiary'
+                            leadingIcon={<Icon glyph={<ImportIcon/>}/>}
+                            onClick={filePicker.open}
+                            loading={importing}
+                            disabled={saving}
+                        >
+                            <FormattedMessage defaultMessage='Import'/>
+                        </Button>
+                        {filePicker.input}
+                        {mode === 'edit' && agent && (
+                            <Button
+                                emphasis='tertiary'
+                                leadingIcon={<Icon glyph={<ExportVariantIcon/>}/>}
+                                onClick={handleExport}
+                                loading={exporting}
+                                disabled={saving}
+                            >
+                                {exporting ? <FormattedMessage defaultMessage='Exporting...'/> : <FormattedMessage defaultMessage='Export'/>}
+                            </Button>
+                        )}
+                    </HeaderActions>
                 </ViewHeader>
 
                 <ConfigTabs role='tablist'>
@@ -496,6 +693,19 @@ const AgentConfigView = (props: Props) => {
                             title={errors.general}
                         />
                     )}
+                    {importMissingServers !== null && (
+                        <Notice
+                            type={importMissingServers.length > 0 ? 'warning' : 'info'}
+                            title={intl.formatMessage({defaultMessage: 'Settings loaded from the agent file'})}
+                            description={importMissingServers.length > 0 ? intl.formatMessage(
+                                {defaultMessage: 'Tools from MCP servers that are not available here were left out: {servers}. Review the settings, then save to apply them.'},
+                                {servers: importMissingServers.join(', ')},
+                            ) : intl.formatMessage({defaultMessage: 'Review the settings, then save to apply them.'})}
+                            role='status'
+                            onDismiss={() => setImportMissingServers(null)}
+                            dismissLabel={intl.formatMessage({defaultMessage: 'Dismiss'})}
+                        />
+                    )}
                     {serviceAccountFieldsLocked && (
                         <div role='status'>
                             <Notice
@@ -515,6 +725,7 @@ const AgentConfigView = (props: Props) => {
                                 draft={draft}
                                 onChange={updateDraft}
                                 onAvatarChange={setAvatarFile}
+                                avatarFile={avatarFile}
                                 botUserId={agent?.botUserID}
                                 services={services}
                                 errors={errors}
@@ -577,6 +788,19 @@ const AgentConfigView = (props: Props) => {
                     </Button>
                 </ViewFooter>
             </ViewContainer>
+            {mode === 'edit' && agent && (
+                <AgentVersionHistoryModal
+                    show={showHistory}
+                    onClose={() => setShowHistory(false)}
+                    agentId={agent.id}
+                    agentName={agent.displayName}
+                    services={services}
+                    history={history}
+                    isDirty={isDirty}
+                    currentUserAccessLevel={baselineDraft.userAccessLevel}
+                    onRestored={handleVersionRestored}
+                />
+            )}
             <ConfirmationDialog
                 show={showDiscardDialog}
                 titleId={DISCARD_CHANGES_TITLE_ID}
@@ -658,6 +882,13 @@ const ViewHeader = styled.div`
     flex-shrink: 0;
 `;
 
+const HeaderActions = styled.div`
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    flex-shrink: 0;
+`;
+
 const ConfigTabs = styled(UnderlineTabs)`
     padding: 0 var(--spacing-l);
 `;
@@ -667,6 +898,41 @@ const HeaderLeading = styled.div`
     align-items: center;
     gap: var(--spacing-xs);
     min-width: 0;
+`;
+
+const HeaderTitleBlock = styled.div`
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    min-width: 0;
+`;
+
+// Reads as quiet metadata under the title rather than a button or link.
+const VersionLineButton = styled.button`
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 16px;
+    color: rgba(var(--center-channel-color-rgb), 0.72);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+
+    &:hover {
+        text-decoration: underline;
+    }
+`;
+
+const VersionLineError = styled.div`
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--error-text);
 `;
 
 const ViewTitle = styled.h1`

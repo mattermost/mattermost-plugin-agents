@@ -642,6 +642,11 @@ func (a *API) streamLLMResponse(c *gin.Context, model llm.LanguageModel, maxTool
 	defer drainStream(streamResult)
 
 	for event := range streamResult.Stream {
+		// Bridge clients predate tool call phases and expect the raw calls.
+		if batch, ok := event.Value.(llm.ToolCallBatch); ok && event.Type == llm.EventTypeToolCallBatch {
+			event = llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: batch.Calls}
+		}
+
 		// Convert the event to JSON
 		eventJSON, err := json.Marshal(event)
 		if err != nil {

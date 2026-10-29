@@ -11,19 +11,38 @@ linters:
     - govet
     - ineffassign
     - misspell
+    - modernize
     - nakedret
     - revive
     - staticcheck
+    - testifylint
     - unconvert
     - unused
     - whitespace
   settings:
+    testifylint:
+      disable-all: true
+      enable:
+        - empty
+        - go-require
+        - len
+    gocritic:
+      enabled-checks:
+        - emptyStringTest
     govet:
       disable:
         - fieldalignment
       enable-all: true
     misspell:
       locale: US
+    staticcheck:
+      checks:
+        - all
+        - -ST1000
+        - -ST1003
+        - -ST1020
+        - -ST1021
+        - -ST1022
   exclusions:
     generated: lax
     presets:
@@ -52,6 +71,7 @@ linters:
           - errcheck
         text: c.Abort
     paths:
+      - node_modules
       - third_party$
       - builtin$
       - examples$

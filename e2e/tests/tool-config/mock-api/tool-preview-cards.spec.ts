@@ -1,4 +1,5 @@
-import { test, expect, type Page, type Locator } from '@playwright/test';
+import { expect, type Page, type Locator } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import {
@@ -10,6 +11,7 @@ import {
 import { RunToolConfigContainerWithPolicies } from 'helpers/tool-config-container';
 import { adminUsername, adminPassword } from 'helpers/system-console-container';
 import { createBotConfigHelper } from 'helpers/bot-config';
+import { toolCard } from 'helpers/llmbot-post';
 
 /**
  * Test Suite: post preview cards (renderer registry)
@@ -89,19 +91,19 @@ async function mentionBotAndOpenThread(page: Page, mmPage: MattermostPage, botNa
     await openThreadForPost(post, timeout);
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigContainerWithPolicies());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 test.describe('post preview cards (Mocked LLM)', () => {
-    test.beforeAll(async () => {
-        mattermost = await RunToolConfigContainerWithPolicies();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
         await setEmbeddedToolPolicies([
             {name: 'read_post', policy: 'ask', enabled: true},
             {name: 'create_post', policy: 'ask', enabled: true},
         ]);
-    });
-
-    test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
     });
 
     test('shows a preview of the referenced post before approval, with View raw', async ({ page }) => {
@@ -177,7 +179,7 @@ test.describe('post preview cards (Mocked LLM)', () => {
         const botPost = rhs.locator('[data-testid="llm-bot-post"]').last();
 
         // Card header + pending approval stage.
-        await expect(botPost.getByText(readPostLabel, {exact: true})).toBeVisible({timeout: 30000});
+        await expect(toolCard(botPost, readPostLabel)).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /^accept$/i})).toBeVisible({timeout: 30000});
 
         // The permalink-style preview shows the seeded post's content before
@@ -257,7 +259,7 @@ test.describe('post preview cards (Mocked LLM)', () => {
         const botPost = rhs.locator('[data-testid="llm-bot-post"]').last();
 
         // Card header + pending approval stage.
-        await expect(botPost.getByText(createPostLabel, {exact: true})).toBeVisible({timeout: 30000});
+        await expect(toolCard(botPost, createPostLabel)).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /^accept$/i})).toBeVisible({timeout: 30000});
 
         // The preview shows the post-to-be: its message rendered as a post,

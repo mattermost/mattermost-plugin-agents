@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -135,21 +137,22 @@ func TestStreamToolFollowUpDecoratesWebSearchAnnotations(t *testing.T) {
 	streamingService := &streamCaptureStreamingService{}
 	c := &Conversations{
 		contextBuilder:   loadedStateBuilder(t),
+		bots:             passthroughBotsService(bot),
 		convService:      conversation.NewService(convStore, nil, nil, nil),
 		streamingService: streamingService,
 	}
 
-	err := c.streamToolFollowUp(
-		context.Background(),
-		bot,
-		&model.User{Id: "user-id", Username: "user"},
-		&model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"},
-		&model.Post{Id: "root-post-id"},
-		conv,
-		true,
-		false,
-		testWebSearchApprovalContext(),
-	)
+	post := &model.Post{Id: "root-post-id"}
+	policy, err := c.resolveTurnPolicy(context.Background(), turnRequest{
+		bot:     bot,
+		user:    &model.User{Id: testRequesterID, Username: "user"},
+		channel: &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__" + testRequesterID},
+		conv:    conv,
+		post:    post,
+	})
+	require.NoError(t, err)
+
+	err = c.streamToolFollowUp(context.Background(), policy, post, conv, followUpOptions{ApprovalContext: testWebSearchApprovalContext()})
 	require.NoError(t, err)
 	streamingService.waitForStreaming()
 
@@ -173,21 +176,23 @@ func TestStreamToolFollowUpSkipsAnnotationDecorationWithoutApprovalContext(t *te
 	streamingService := &streamCaptureStreamingService{}
 	c := &Conversations{
 		contextBuilder:   loadedStateBuilder(t),
+		bots:             passthroughBotsService(bot),
+		licenseChecker:   enterprisetest.CheckerAt(enterprise.LevelProfessional),
 		convService:      conversation.NewService(convStore, nil, nil, nil),
 		streamingService: streamingService,
 	}
 
-	err := c.streamToolFollowUp(
-		context.Background(),
-		bot,
-		&model.User{Id: "user-id", Username: "user"},
-		&model.Channel{Id: "channel-id", Type: model.ChannelTypeOpen, TeamId: "team-id"},
-		&model.Post{Id: "root-post-id"},
-		conv,
-		false,
-		false,
-		nil,
-	)
+	post := &model.Post{Id: "root-post-id"}
+	policy, err := c.resolveTurnPolicy(context.Background(), turnRequest{
+		bot:     bot,
+		user:    &model.User{Id: testRequesterID, Username: "user"},
+		channel: &model.Channel{Id: "channel-id", Type: model.ChannelTypeOpen, TeamId: "team-id"},
+		conv:    conv,
+		post:    post,
+	})
+	require.NoError(t, err)
+
+	err = c.streamToolFollowUp(context.Background(), policy, post, conv, followUpOptions{})
 	require.NoError(t, err)
 	streamingService.waitForStreaming()
 

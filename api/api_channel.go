@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin/render"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/channels"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
@@ -164,7 +165,7 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 	}
 
 	// Create analysis post with conversation ID for streaming turn persistence
-	analysisPost := makeAnalysisPost("", data.AnalysisType, result.ConversationID)
+	analysisPost := makeChannelAnalysisPost(channel.Id, data.AnalysisType, result.ConversationID)
 
 	if err := a.streamingService.StreamToNewDM(telemetry.DetachContext(c.Request.Context()), bot.GetMMBot().UserId, result.Stream, user.Id, analysisPost, ""); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
@@ -299,6 +300,7 @@ func (a *API) handleInterval(c *gin.Context) {
 	post := &model.Post{}
 	post.AddProp(streaming.NoRegen, "true")
 	post.AddProp(streaming.ConversationIDProp, result.ConversationID)
+	post.AddProp(conversations.AnalyzedChannelIDProp, channel.Id)
 
 	// Stream result to new DM
 	if err := a.streamingService.StreamToNewDM(telemetry.DetachContext(c.Request.Context()), bot.GetMMBot().UserId, result.Stream, user.Id, post, ""); err != nil {

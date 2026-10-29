@@ -66,6 +66,10 @@ export interface ToolCall {
     decided?: boolean;
 }
 
+// ToolCallPhase mirrors llm.ToolCallPhase on live tool_call websocket events.
+// 'resolved' closes the round; 'executing' and 'awaiting_decision' are in progress.
+export type ToolCallPhase = 'executing' | 'awaiting_decision' | 'resolved';
+
 // ToolApprovalStage mirrors the server-computed approval state for a post.
 // 'done' means no user decision remains (auto-run, keep private, all
 // rejected, or no tool_use blocks at all) — render no buttons.

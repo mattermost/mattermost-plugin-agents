@@ -6,14 +6,12 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {ChevronDownIcon, ChevronRightIcon, CheckIcon, AlertCircleOutlineIcon, ClockOutlineIcon, CloseCircleOutlineIcon, GlobeIcon, HelpCircleOutlineIcon, LockIcon} from '@mattermost/compass-icons/components';
 
-// eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
-import {OverlayTrigger, Tooltip} from 'react-bootstrap';
-
 import {Button} from '@mattermost/compass-ui/components/button';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
 import {Tag} from '@mattermost/compass-ui/components/tag';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {toolDisplayName} from '@/utils/tool_identity';
 
@@ -146,44 +144,6 @@ const ResultReviewHelpButton = styled.button`
     }
 `;
 
-const TooltipTitle = styled.div`
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 16px;
-    margin-bottom: 4px;
-`;
-
-const TooltipBody = styled.div`
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
-    max-width: 320px;
-    opacity: 0.88;
-`;
-
-const ShareVisibilityTooltip = styled(Tooltip)`
-    .tooltip-arrow {
-        display: none;
-    }
-
-    .tooltip-inner {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        padding: 2px 8px;
-        border-radius: 10px;
-        max-width: none;
-
-        font-size: 11px;
-        font-weight: 600;
-        line-height: 16px;
-
-        color: var(--error-text);
-        background-color: var(--center-channel-bg);
-        border: 1px solid rgba(var(--error-text-color-rgb), 0.24);
-    }
-`;
-
 const ResponseLabel = styled.div`
     display: flex;
     align-items: center;
@@ -308,16 +268,12 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
             <ButtonContainer>
                 {isResultApprovalStage ? (
                     <>
-                        <OverlayTrigger
-                            placement='top'
-                            overlay={
-                                <ShareVisibilityTooltip>
-                                    <GlobeIcon size={14}/>
-                                    <FormattedMessage
-                                        id='ai.tool_call.visible_to_channel'
-                                        defaultMessage='Visible to channel'
-                                    />
-                                </ShareVisibilityTooltip>
+                        <WithTooltip
+                            title={
+                                <FormattedMessage
+                                    id='ai.tool_call.visible_to_channel'
+                                    defaultMessage='Visible to channel'
+                                />
                             }
                         >
                             <span>
@@ -334,7 +290,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                                     />
                                 </Button>
                             </span>
-                        </OverlayTrigger>
+                        </WithTooltip>
                         <Button
                             emphasis='tertiary'
                             size='x-small'
@@ -495,23 +451,18 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                                         id='ai.tool_call.review_tool_response'
                                         defaultMessage='Review tool response'
                                     />
-                                    <OverlayTrigger
-                                        placement='top'
-                                        overlay={
-                                            <Tooltip>
-                                                <TooltipTitle>
-                                                    <FormattedMessage
-                                                        id='ai.tool_call.tooltip.why_second_step'
-                                                        defaultMessage='Why is there a second approval step?'
-                                                    />
-                                                </TooltipTitle>
-                                                <TooltipBody>
-                                                    <FormattedMessage
-                                                        id='ai.tool_call.tooltip.approval_body'
-                                                        defaultMessage='This step controls whether Agents can use the tool response when generating the next message in the channel. If you reject, the response stays private and won’t be used in the channel reply.'
-                                                    />
-                                                </TooltipBody>
-                                            </Tooltip>
+                                    <WithTooltip
+                                        title={
+                                            <FormattedMessage
+                                                id='ai.tool_call.tooltip.why_second_step'
+                                                defaultMessage='Why is there a second approval step?'
+                                            />
+                                        }
+                                        hint={
+                                            <FormattedMessage
+                                                id='ai.tool_call.tooltip.approval_body'
+                                                defaultMessage='This step controls whether Agents can use the tool response when generating the next message in the channel. If you reject, the response stays private and won’t be used in the channel reply.'
+                                            />
                                         }
                                     >
                                         <ResultReviewHelpButton
@@ -520,7 +471,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                                         >
                                             <HelpCircleOutlineIcon size={16}/>
                                         </ResultReviewHelpButton>
-                                    </OverlayTrigger>
+                                    </WithTooltip>
                                 </ResultReviewTitle>
                             }
                             description={

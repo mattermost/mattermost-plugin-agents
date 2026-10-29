@@ -11,6 +11,16 @@ export const TOOL_STATUS_SELECTOR = '[data-testid="llm-bot-tool-status"]';
 /** One tool call's card: its name, status, and — when expanded — its arguments and result. */
 export const TOOL_CARD_SELECTOR = '[class*="ToolCallCard"]';
 
+/**
+ * The card in `scope` for the tool displayed as `label`. Locate tool names
+ * through this, not on the post: the activity header repeats the latest tool's
+ * name, so a post-wide match finds two elements during the live-to-persisted
+ * handoff. Cards inside a collapsed activity area exist only once expanded.
+ */
+export function toolCard(scope: Locator, label: string): Locator {
+    return scope.locator(TOOL_CARD_SELECTOR).filter({ has: scope.page().getByText(label, { exact: true }) });
+}
+
 /** The glyph ToolStatusIcon renders, exposed as its data-status attribute. */
 export type ToolStatusGlyph = 'running' | 'success' | 'error' | 'rejected';
 

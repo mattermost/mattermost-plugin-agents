@@ -48,6 +48,7 @@ const groups = {
         'tests/llmbot-post-component/combined-features.spec.ts',
         'tests/llmbot-post-component/debug-test.spec.ts',
         'tests/agents/create-file-attachment.spec.ts',
+        'tests/agents/html-artifact.spec.ts',
         'tests/tool-activity/collapsed-activity.spec.ts',
     ],
     'e2e-shard-3': [
@@ -95,6 +96,7 @@ const groups = {
         'tests/tool-config/real-api/channel-auto-run.spec.ts',
         'tests/tool-config/real-api/disabled-tool.spec.ts',
         'tests/channel-autoreply/channel_autoreply.spec.ts',
+        'tests/agents/versioning-import-export.spec.ts',
     ],
 };
 

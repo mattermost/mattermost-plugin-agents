@@ -42,6 +42,7 @@ type Config interface {
 	EnableTokenUsageLogToPlugin() bool
 	EnableTokenUsageLogToFile() bool
 	GetTranscriptGenerator() string
+	GetTranscriptBotUserID() string
 }
 
 // AgentStore provides read access to user-created agents from the database.
@@ -827,7 +828,7 @@ func (b *MMBots) wrapLLM(base llm.LanguageModel, serviceConfig llm.ServiceConfig
 	// calls only: a direct service call carries user_id for attribution, not
 	// as a principal, so its fallback chain is never trimmed per user.
 	if botConfig != nil {
-		result = newFallbackAccessLLM(result, b, serviceConfig.ID)
+		result = newFallbackAccessLLM(result, b, serviceConfig.ID, effectiveModelFor(serviceConfig, botConfig), fallbackServices)
 	}
 
 	return result
@@ -968,7 +969,40 @@ func (b *MMBots) findBot(pred func(*Bot) bool) *Bot {
 }
 
 func (b *MMBots) getTranscriberBot() *Bot {
-	return b.GetBotByUsername(b.config.GetTranscriptGenerator())
+	return b.GetBotByIDOrUsername(b.config.GetTranscriptBotUserID(), b.config.GetTranscriptGenerator())
+}
+
+// GetBotByIDOrUsername resolves a stored or requested agent reference: by its
+// bot user ID when one is set, otherwise by the legacy username, which only
+// selects the agent whose account currently holds it. A missing agent returns
+// nil rather than another agent, which would run with that agent's model,
+// instructions, tools, and identity.
+func (b *MMBots) GetBotByIDOrUsername(botUserID, legacyUsername string) *Bot {
+	if botUserID != "" {
+		return b.GetBotByID(botUserID)
+	}
+	return b.GetBotByUsername(legacyUsername)
+}
+
+// UsernameResolver selects the agent whose account currently holds a username.
+type UsernameResolver interface {
+	GetBotByUsername(username string) *Bot
+}
+
+// ResolveAgentUsernames maps each legacy username reference to the bot user
+// ID of the agent whose account currently holds it, and returns the usernames
+// no agent holds. It reads bot accounts through the Mattermost API, so callers
+// must not hold a database transaction open around it.
+func ResolveAgentUsernames(resolver UsernameResolver, usernames []string) (resolved map[string]string, unresolved []string) {
+	resolved = make(map[string]string, len(usernames))
+	for _, username := range usernames {
+		if bot := resolver.GetBotByUsername(username); bot != nil {
+			resolved[username] = bot.BotUserID()
+		} else {
+			unresolved = append(unresolved, username)
+		}
+	}
+	return resolved, unresolved
 }
 
 // accountHoldsUsername reports whether bot's Mattermost account currently

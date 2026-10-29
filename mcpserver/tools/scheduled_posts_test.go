@@ -69,7 +69,7 @@ func TestToolCreateScheduledPost(t *testing.T) {
 	mux.HandleFunc("/api/v4/posts/schedule", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&got)
 		w.Header().Set("Content-Type", "application/json")
-		resp := &model.ScheduledPost{Draft: model.Draft{ChannelId: channelID, Message: got.Message}, ScheduledAt: got.ScheduledAt}
+		resp := &model.ScheduledPost{ChannelId: channelID, Message: got.Message, ScheduledAt: got.ScheduledAt}
 		resp.Id = scheduledID
 		_ = json.NewEncoder(w).Encode(resp)
 	})
@@ -108,7 +108,7 @@ func TestToolUpdateScheduledPostMergesExisting(t *testing.T) {
 	// Existing scheduled post to merge against.
 	mux.HandleFunc(fmt.Sprintf("/api/v4/posts/scheduled/team/%s", teamID), func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		sp := &model.ScheduledPost{Draft: model.Draft{ChannelId: channelID, Message: "original", RootId: rootID}, ScheduledAt: existingAt}
+		sp := &model.ScheduledPost{ChannelId: channelID, Message: "original", RootId: rootID, ScheduledAt: existingAt}
 		sp.Id = scheduledID
 		_ = json.NewEncoder(w).Encode(map[string][]*model.ScheduledPost{channelID: {sp}})
 	})
@@ -158,7 +158,7 @@ func TestToolUpdateScheduledPostDirectChannel(t *testing.T) {
 	// Direct-channel scheduled posts come back under the "directChannels" key.
 	mux.HandleFunc(fmt.Sprintf("/api/v4/posts/scheduled/team/%s", teamID), func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		sp := &model.ScheduledPost{Draft: model.Draft{ChannelId: dmChannelID, Message: "dm original"}, ScheduledAt: time.Now().Add(time.Hour).UnixMilli()}
+		sp := &model.ScheduledPost{ChannelId: dmChannelID, Message: "dm original", ScheduledAt: time.Now().Add(time.Hour).UnixMilli()}
 		sp.Id = scheduledID
 		_ = json.NewEncoder(w).Encode(map[string][]*model.ScheduledPost{"directChannels": {sp}})
 	})
@@ -216,7 +216,7 @@ func TestToolListScheduledPosts(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc(fmt.Sprintf("/api/v4/posts/scheduled/team/%s", teamID), func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		sp := &model.ScheduledPost{Draft: model.Draft{ChannelId: channelID, Message: "queued"}, ScheduledAt: time.Now().Add(time.Hour).UnixMilli()}
+		sp := &model.ScheduledPost{ChannelId: channelID, Message: "queued", ScheduledAt: time.Now().Add(time.Hour).UnixMilli()}
 		sp.Id = model.NewId()
 		_ = json.NewEncoder(w).Encode(map[string][]*model.ScheduledPost{channelID: {sp}})
 	})

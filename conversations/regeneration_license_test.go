@@ -18,9 +18,6 @@ func TestCheckRegenerateLicense(t *testing.T) {
 	threadPost.AddProp(ThreadIDProp, "thread-root")
 	threadPost.AddProp(AnalysisTypeProp, "summarize_thread")
 
-	channelPost := &model.Post{}
-	channelPost.AddProp(AnalysisTypeProp, "summarize_channel")
-
 	recordingPost := &model.Post{}
 	recordingPost.AddProp(ReferencedRecordingFileID, "fileid")
 
@@ -40,12 +37,6 @@ func TestCheckRegenerateLicense(t *testing.T) {
 			name:     "thread summary",
 			post:     threadPost,
 			cap:      enterprise.CapThreadSummarization,
-			minLevel: enterprise.LevelProfessional,
-		},
-		{
-			name:     "channel summary",
-			post:     channelPost,
-			cap:      enterprise.CapChannelSummarization,
 			minLevel: enterprise.LevelProfessional,
 		},
 		{

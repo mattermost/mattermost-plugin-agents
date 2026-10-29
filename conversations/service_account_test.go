@@ -63,7 +63,7 @@ func TestHandleToolCallExecutesFromServiceAccountCatalog(t *testing.T) {
 	convStore := newLoadedStateFlowStore()
 	conv := &store.Conversation{
 		ID:           "conv-id",
-		UserID:       "user-id",
+		UserID:       testRequesterID,
 		BotID:        serviceAccountBotUserID,
 		SystemPrompt: "system",
 		Operation:    "conversation",
@@ -96,25 +96,25 @@ func TestHandleToolCallExecutesFromServiceAccountCatalog(t *testing.T) {
 	approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
 	channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
 
-	require.NoError(t, c.HandleToolCall(context.Background(), "user-id", approvalPost, channel, []string{"tool-use-1"}, nil))
+	require.NoError(t, c.HandleToolCall(context.Background(), testRequesterID, approvalPost, channel, []string{"tool-use-1"}, nil))
 
 	require.Equal(t, []string{serviceAccountBotUserID}, provider.SAIdentities(),
 		"the approval resume must re-derive the catalog for the agent bot identity")
-	require.Equal(t, []string{"user-id"}, provider.SAInvokers(),
+	require.Equal(t, []string{testRequesterID}, provider.SAInvokers(),
 		"embedded/plugin identity on the SA catalog is the initiator")
 	require.Equal(t, 0, provider.Calls(), "service account agents never build the per-user remotes catalog")
 	require.Equal(t, 1, executed, "the service account resolver must run exactly once")
 
 	turns, err := convStore.GetTurnsForConversation(conv.ID)
 	require.NoError(t, err)
-	require.Len(t, turns, 2)
+	require.Len(t, turns, 3)
 
 	var updatedBlocks []conversation.ContentBlock
-	require.NoError(t, json.Unmarshal(turns[0].Content, &updatedBlocks))
+	require.NoError(t, json.Unmarshal(turns[1].Content, &updatedBlocks))
 	require.Equal(t, conversation.StatusSuccess, updatedBlocks[0].Status)
 
 	var resultBlocks []conversation.ContentBlock
-	require.NoError(t, json.Unmarshal(turns[1].Content, &resultBlocks))
+	require.NoError(t, json.Unmarshal(turns[2].Content, &resultBlocks))
 	require.Equal(t, conversation.BlockTypeToolResult, resultBlocks[0].Type)
 	require.Equal(t, "mcp:sa_jira__get_issue", resultBlocks[0].Content)
 }
@@ -129,10 +129,12 @@ func serviceAccountConversations(t *testing.T, convStore *loadedStateFlowStore, 
 	botsService.SetBotsForTesting([]*bots.Bot{serviceAccountTestBot(true)})
 
 	mmClient := mocks.NewMockClient(t)
+	seedRequesterInitiator(t, convStore, "conv-id", mmClient)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
-	mmClient.On("GetUser", "user-id").Return(&model.User{Id: "user-id", Username: "user"}, nil).Maybe()
+	mmClient.On("GetUser", testRequesterID).Return(&model.User{Id: testRequesterID, Username: "user"}, nil).Maybe()
 
 	return &Conversations{
+		configProvider: &channelFollowUpTestConfig{enableChannelMentionToolCalling: true},
 		mmClient:       mmClient,
 		contextBuilder: newSingleBuildLLMContextBuilder(t, provider),
 		bots:           botsService,

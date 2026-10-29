@@ -106,7 +106,7 @@ describe('AvatarItem', () => {
             expect(getBotProfilePictureUrl).toHaveBeenCalledWith('newbot');
         });
 
-        expect(screen.getByRole('img').getAttribute('src')).toBe(aiIcon);
+        expect(screen.getByRole('img', {name: 'Bot avatar'}).getAttribute('src')).toBe(aiIcon);
     });
 
     it('keeps the placeholder when the avatar fetch rejects (no unhandled rejection)', async () => {
@@ -191,6 +191,45 @@ describe('AvatarItem', () => {
 
             await Promise.resolve();
             expect(screen.getByRole('img').getAttribute('src')).toBe('blob:preview');
+            unmount();
+            unmount = null;
+        } finally {
+            unmount?.();
+            objectURL.restore();
+        }
+    });
+
+    it('shows the parent-held pending file across remounts and drops it when the parent clears it', async () => {
+        getBotProfilePictureUrl.mockResolvedValue('/profile/agent.png');
+        const objectURL = mockObjectURL();
+        const file = new File(['x'], 'a.png', {type: 'image/png'});
+        const renderControlled = (pendingFile: File | null) => (
+            <IntlProvider locale='en'>
+                <AvatarItem
+                    botusername='agent'
+                    avatarOwnerKey='agent-id'
+                    pendingFile={pendingFile}
+                    changedAvatar={jest.fn()}
+                />
+            </IntlProvider>
+        );
+
+        let unmount: (() => void) | null = null;
+        try {
+            // A fresh mount (e.g. returning to the tab) previews the pending upload.
+            const rendered = render(renderControlled(file));
+            unmount = rendered.unmount;
+            await waitFor(() => {
+                expect(screen.getByRole('img').getAttribute('src')).toBe('blob:preview');
+            });
+            await waitFor(() => expect(getBotProfilePictureUrl).toHaveBeenCalledWith('agent'));
+            expect(screen.getByRole('img').getAttribute('src')).toBe('blob:preview');
+
+            rendered.rerender(renderControlled(null));
+            await waitFor(() => {
+                expect(screen.getByRole('img').getAttribute('src')).toBe('/profile/agent.png');
+            });
+            expect(objectURL.revokeObjectURL).toHaveBeenCalledWith('blob:preview');
             unmount();
             unmount = null;
         } finally {

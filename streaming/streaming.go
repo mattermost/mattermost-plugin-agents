@@ -6,6 +6,7 @@ package streaming
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -71,8 +72,12 @@ type Service interface {
 }
 
 type postStreamContext struct {
-	cancel context.CancelFunc
+	cancel context.CancelCauseFunc
 }
+
+// errStoppedByUser is the cancellation cause of a stream the requester
+// stopped, distinguishing it from shutdown or a superseded run.
+var errStoppedByUser = errors.New("generation stopped by user")
 
 // TurnStore is the subset of store operations needed by the streaming layer.
 // Finalize either creates a fresh anchor (first stream / regen, with the caller
@@ -243,9 +248,17 @@ func (p *MMPostStreamService) sendPostStreamingEvent(post *model.Post, broadcast
 	p.mmClient.PublishWebSocketEvent("postupdate", payload, broadcast)
 }
 
-// StopStreaming cancels any in-flight stream to the given post.
+// StopStreaming cancels any in-flight stream to the given post on behalf of
+// the requester; the post is marked as stopped. The run stays registered
+// until its owner calls FinishStreaming, so a new run on the post cannot
+// start while the stopped one is still finishing and be canceled by its
+// cleanup.
 func (p *MMPostStreamService) StopStreaming(postID string) {
-	p.FinishStreaming(postID)
+	p.contextsMutex.Lock()
+	defer p.contextsMutex.Unlock()
+	if streamContext, ok := p.contexts[postID]; ok {
+		streamContext.cancel(errStoppedByUser)
+	}
 }
 
 func (p *MMPostStreamService) GetStreamingContext(inCtx context.Context, postID string) (context.Context, error) {
@@ -256,7 +269,7 @@ func (p *MMPostStreamService) GetStreamingContext(inCtx context.Context, postID 
 		return nil, ErrAlreadyStreamingToPost
 	}
 
-	ctx, cancel := context.WithCancel(inCtx)
+	ctx, cancel := context.WithCancelCause(inCtx)
 
 	streamingContext := postStreamContext{
 		cancel: cancel,
@@ -273,7 +286,7 @@ func (p *MMPostStreamService) FinishStreaming(postID string) {
 	p.contextsMutex.Lock()
 	defer p.contextsMutex.Unlock()
 	if streamContext, ok := p.contexts[postID]; ok {
-		streamContext.cancel()
+		streamContext.cancel(nil)
 	}
 	delete(p.contexts, postID)
 }
@@ -328,9 +341,9 @@ func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator) {
 // broadcastToolCalls sends tool call WebSocket events with privacy scoping.
 // The requester receives full tool call data (arguments, results).
 // Other channel members receive redacted tool calls (names and status only).
-func (p *MMPostStreamService) broadcastToolCalls(post *model.Post, toolCalls []llm.ToolCall, requesterUserID string) {
+func (p *MMPostStreamService) broadcastToolCalls(post *model.Post, batch llm.ToolCallBatch, requesterUserID string) {
 	// Full data to the requester only.
-	fullJSON, err := json.Marshal(toolCalls)
+	fullJSON, err := json.Marshal(batch.Calls)
 	if err != nil {
 		p.mmClient.LogError("Failed to marshal tool calls", "error", err)
 		return
@@ -339,10 +352,10 @@ func (p *MMPostStreamService) broadcastToolCalls(post *model.Post, toolCalls []l
 		ChannelId:           post.ChannelId,
 		UserId:              requesterUserID,
 		ReliableClusterSend: true,
-	}, map[string]any{"control": "tool_call", "tool_call": string(fullJSON)})
+	}, map[string]any{"control": "tool_call", "tool_call": string(fullJSON), "tool_call_phase": string(batch.Phase)})
 
 	// Redacted data to the rest of the channel (omit requester to avoid duplicates).
-	redacted := redactToolCalls(toolCalls)
+	redacted := redactToolCalls(batch.Calls)
 	redactedJSON, err := json.Marshal(redacted)
 	if err != nil {
 		p.mmClient.LogError("Failed to marshal redacted tool calls", "error", err)
@@ -352,7 +365,7 @@ func (p *MMPostStreamService) broadcastToolCalls(post *model.Post, toolCalls []l
 		ChannelId:           post.ChannelId,
 		OmitUsers:           map[string]bool{requesterUserID: true},
 		ReliableClusterSend: true,
-	}, map[string]any{"control": "tool_call", "tool_call": string(redactedJSON)})
+	}, map[string]any{"control": "tool_call", "tool_call": string(redactedJSON), "tool_call_phase": string(batch.Phase)})
 }
 
 // redactToolCalls returns a copy of the tool calls with Arguments, Result, and
@@ -433,6 +446,10 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 	// them over TCP so they are not silently dropped between cluster nodes.
 	broadcast := &model.WebsocketBroadcast{ChannelId: post.ChannelId, ReliableClusterSend: true}
 
+	// A new run (regenerate, tool-approval resume) supersedes an earlier
+	// stop; the post update at stream end persists the cleared marker.
+	post.DelProp(GenerationStoppedProp)
+
 	// Look up any prior anchor; only continuation uses it (to demote at
 	// finalize). First stream and regen find none.
 	controlEvent := PostStreamingControlStart
@@ -463,9 +480,16 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 		}
 	}
 
+	// A batch awaiting a decision is broadcast only after finalizeTurn
+	// persists it, so an approval click can never reach the server before its
+	// turn exists.
+	var awaitingDecision *llm.ToolCallBatch
 	defer func() {
 		if acc != nil {
 			p.finalizeTurn(acc)
+		}
+		if awaitingDecision != nil {
+			p.broadcastToolCalls(post, *awaitingDecision, requesterUserID)
 		}
 		p.sendPostStreamingEvent(post, broadcast, map[string]any{"control": PostStreamingControlEnd})
 	}()
@@ -475,9 +499,27 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 	var reasoningBuffer strings.Builder
 	attachmentCapWarned := false
 
+	handleCancel := func() {
+		outcome = telemetry.StreamOutcomeCancelled
+		if errors.Is(context.Cause(ctx), errStoppedByUser) {
+			post.AddProp(GenerationStoppedProp, true)
+		}
+		if err := p.mmClient.UpdatePost(post); err != nil {
+			p.mmClient.LogError("Error updating post on stop signaled", "error", err)
+			return
+		}
+		p.sendPostStreamingEvent(post, broadcast, map[string]any{"control": PostStreamingControlCancel})
+	}
+
 	for {
 		select {
 		case event, ok := <-stream.Stream:
+			// When the upstream shares this context it ends, errors or closes
+			// on cancel too, and select may pick that over ctx.Done().
+			if (!ok || event.Type == llm.EventTypeEnd || event.Type == llm.EventTypeError) && ctx.Err() != nil {
+				handleCancel()
+				return
+			}
 			if !ok {
 				// Stream channel closed - persist final state
 				if err := p.mmClient.UpdatePost(post); err != nil {
@@ -603,13 +645,13 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 						acc.sequence.FinishReasoning(reasoningData)
 					}
 				}
-			case llm.EventTypeToolCalls:
+			case llm.EventTypeToolCallBatch:
 				// Tool calls are handled by toolrunner before streaming begins.
 				// Here we only accumulate them for turn persistence and send a
 				// WebSocket event so the webapp can display progress.
-				if toolCalls, ok := event.Value.([]llm.ToolCall); ok {
-					for i := range toolCalls {
-						toolCalls[i].SanitizeArguments()
+				if batch, ok := event.Value.(llm.ToolCallBatch); ok {
+					for i := range batch.Calls {
+						batch.Calls[i].SanitizeArguments()
 					}
 					if acc != nil {
 						// On resolved, reset the accumulator: toolrunner
@@ -617,10 +659,10 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 						// onToolTurns, and only the final round's content
 						// belongs on the anchor. Do NOT broadcast next: ""
 						// here — the webapp snapshots the round's preamble
-						// at the resolved tool_call event. On pending,
-						// retain the calls so a rejected-approval turn
+						// at the resolved tool_call event. Otherwise retain
+						// the calls so an interrupted or awaiting turn
 						// keeps them.
-						if llm.IsResolvedToolCallBatch(toolCalls) {
+						if batch.Phase == llm.ToolCallPhaseResolved {
 							acc.sequence.Reset()
 							acc.annotations = nil
 							acc.toolCalls = nil
@@ -632,10 +674,14 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 							messageBuilder.Reset()
 							post.Message = ""
 						} else {
-							acc.toolCalls = toolCalls
+							acc.toolCalls = batch.Calls
 						}
 					}
-					p.broadcastToolCalls(post, toolCalls, requesterUserID)
+					if batch.Phase == llm.ToolCallPhaseAwaitingDecision {
+						awaitingDecision = &batch
+					} else {
+						p.broadcastToolCalls(post, batch, requesterUserID)
+					}
 				}
 			case llm.EventTypeAnnotations:
 				if annotationMap, ok := event.Value.(map[string]any); ok {
@@ -709,12 +755,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 				}
 			}
 		case <-ctx.Done():
-			outcome = telemetry.StreamOutcomeCancelled
-			if err := p.mmClient.UpdatePost(post); err != nil {
-				p.mmClient.LogError("Error updating post on stop signaled", "error", err)
-				return
-			}
-			p.sendPostStreamingEvent(post, broadcast, map[string]any{"control": PostStreamingControlCancel})
+			handleCancel()
 			return
 		}
 	}

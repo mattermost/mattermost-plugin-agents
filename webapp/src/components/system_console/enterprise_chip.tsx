@@ -5,32 +5,15 @@ import React from 'react';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 
-//eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
-import {OverlayTrigger, Tooltip} from 'react-bootstrap';
-
 import {Tag} from '@mattermost/compass-ui/components/tag';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {Capability, requiredLevelFor, useLicenseLevelName} from '@/license';
 
-// OverlayTrigger attaches its hover handlers to this element, so it must be a DOM node.
 const ChipAnchor = styled.span`
     display: inline-flex;
     margin-left: 8px;
     white-space: nowrap;
-`;
-
-const MainText = styled.div`
-	font-size: 12px;
-	font-weight: 600;
-	line-height: 15px;
-`;
-
-const SubText = styled.div`
-	font-size: 11px;
-	font-weight: 600;
-	line-height: 16px;
-	letter-spacing: 0.22px;
-	opacity: 0.56;
 `;
 
 type Props = {
@@ -44,14 +27,9 @@ type Props = {
 
 const EnterpriseChip = (props: Props) => {
     return (
-        <OverlayTrigger
-            placement='top'
-            overlay={
-                <Tooltip>
-                    <MainText>{props.title || 'Enterprise feature'}</MainText>
-                    <SubText>{props.subtext}</SubText>
-                </Tooltip>
-            }
+        <WithTooltip
+            title={props.title || 'Enterprise feature'}
+            hint={props.subtext}
         >
             <ChipAnchor>
                 <Tag
@@ -59,7 +37,7 @@ const EnterpriseChip = (props: Props) => {
                     label={props.text || 'Enterprise'}
                 />
             </ChipAnchor>
-        </OverlayTrigger>
+        </WithTooltip>
     );
 };
 

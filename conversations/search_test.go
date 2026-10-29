@@ -86,7 +86,7 @@ func waitForStreamFinished(t *testing.T, env *dmTestEnv) {
 	select {
 	case <-env.streamService.finished:
 	case <-time.After(10 * time.Second):
-		t.Fatal("search response never finished streaming")
+		require.FailNow(t, "search response never finished streaming")
 	}
 }
 
@@ -243,7 +243,7 @@ func TestHandleSearchWithoutSearchTool(t *testing.T) {
 			case message := <-updated:
 				assert.Contains(t, message, "search_posts")
 			case <-time.After(10 * time.Second):
-				t.Fatal("placeholder was never updated")
+				require.FailNow(t, "placeholder was never updated")
 			}
 
 			conv, err := env.convService.GetConversationByThread(questionPost.Id, env.botID, env.userID)
@@ -273,6 +273,7 @@ func TestSearchThreadReplyKeepsSearchTools(t *testing.T) {
 
 			rootPostID := model.NewId()
 			channelID := env.channelID
+			env.mmClient.posts = map[string]*model.Post{rootPostID: {Id: rootPostID, UserId: env.userID, ChannelId: channelID, Message: "first question"}}
 			_, err := env.convService.CreateConversation(conversation.CreateConversationParams{
 				UserID:       env.userID,
 				BotID:        env.botID,

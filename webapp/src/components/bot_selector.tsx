@@ -156,6 +156,12 @@ const BotList = styled.div`
 	overflow-y: auto;
 	flex: 1 1 auto;
 	min-height: 0;
+
+	/* MenuItem's row is top-aligned for a 16px icon. These rows lead with a
+	   24px avatar, so center the label and check with it. */
+	button[class*='menu-item'] [class*='menu-item__content'] {
+		align-items: center;
+	}
 `;
 
 const MenuHeader = styled.div`

@@ -8,6 +8,8 @@ import styled from 'styled-components';
 
 import {GlobalState} from '@mattermost/types/store';
 
+import {CancelIcon} from '@mattermost/compass-icons/components';
+
 import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 
@@ -19,11 +21,13 @@ import {useConversation, invalidateConversation} from '@/hooks/use_conversation'
 import {PostMessagePreview} from '@/mm_webapp';
 
 import {isValidId} from '@/utils/ids';
+import {displayNameFor, selectTeammateNameDisplay} from '@/utils/teammate_name';
 
 import {ServerToolUse} from '@/types/conversation';
 
+import HTMLArtifacts from '../html_artifacts/html_artifacts';
 import {needsViewerDecision, selectDecisionToolCalls} from '../tool_decisions';
-import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
+import {ToolApprovalStage, ToolCall, ToolCallPhase, ToolCallStatus} from '../tool_types';
 import {Annotation} from '../citations/types';
 
 import {
@@ -32,7 +36,7 @@ import {
     computeRenderedRounds,
     deriveApprovalStageForPost,
 } from './turn_content_utils';
-import {deriveActivity, isTerminalToolStatus} from './activity_items';
+import {deriveActivity} from './activity_items';
 import {ControlsBarComponent} from './controls_bar';
 import {extractPermalinkData} from './permalink_data';
 import {FoldingText, useFoldingText} from './folding_text';
@@ -55,6 +59,7 @@ export interface PostUpdateWebsocketMessage {
     progress_phase?: AgentProgressPhase
     progress_seq?: number
     tool_call?: string
+    tool_call_phase?: ToolCallPhase
     reasoning?: string
     annotations?: string
     server_tool?: string
@@ -71,12 +76,6 @@ interface LLMBotPostProps {
     post: any;
     websocketRegister?: (postID: string, listenerID: string, handler: (msg: PluginWebSocketMessage<PostUpdateWebsocketMessage>) => void) => void;
     websocketUnregister?: (postID: string, listenerID: string) => void;
-}
-
-// ToolRunner emits one tool_call event per round with pending statuses, then one
-// with terminal statuses after execution. The terminal one is the round boundary.
-function isResolvedToolCallEvent(toolCalls: ToolCall[]): boolean {
-    return toolCalls.length > 0 && toolCalls.every((tc) => isTerminalToolStatus(tc.status));
 }
 
 export const LLMBotPost = (props: LLMBotPostProps) => {
@@ -298,7 +297,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 setGenerating(true);
                 try {
                     const parsedToolCalls = JSON.parse(data.tool_call) as ToolCall[];
-                    if (isResolvedToolCallEvent(parsedToolCalls)) {
+                    if (data.tool_call_phase === 'resolved') {
                         const live = liveRef.current;
                         setLiveRounds((prev) => [
                             ...prev,
@@ -665,6 +664,25 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         ) : intl.formatMessage({defaultMessage: 'Waiting for the requester to approve tool use'});
     }
 
+    // Only the requester can stop, so the requester is who stopped it.
+    // A regenerate leaves the prior run's marker on the post until it finishes.
+    const generationStopped = (stopped || (props.post.props?.generation_stopped === true && !regenerating)) && !isGenerationInProgress;
+    const requesterDisplayName = useSelector<GlobalState, string | undefined>((state) => {
+        const profile = requesterUserId ? state.entities.users.profiles?.[requesterUserId] : undefined; // eslint-disable-line no-undefined
+        return profile ? displayNameFor(profile, selectTeammateNameDisplay(state)) : undefined; // eslint-disable-line no-undefined
+    });
+    let generationStoppedMessage: string;
+    if (requesterIsCurrentUser) {
+        generationStoppedMessage = intl.formatMessage({defaultMessage: 'You stopped generating this response.'});
+    } else if (requesterDisplayName) {
+        generationStoppedMessage = intl.formatMessage(
+            {defaultMessage: '{name} stopped generating this response.'},
+            {name: requesterDisplayName},
+        );
+    } else {
+        generationStoppedMessage = intl.formatMessage({defaultMessage: 'The requester stopped generating this response.'});
+    }
+
     const reasoningLoadingRoundId = isReasoningLoading ? LIVE_ROUND_ID : undefined; // eslint-disable-line no-undefined
     const activity = useMemo(
         () => deriveActivity(renderedRounds, {pendingDecisionRoundId, reasoningLoadingRoundId, live: isGenerationInProgress}),
@@ -723,9 +741,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // Tool-only posts leave post.message empty, so precontent stays true on
     // remount. Hide Working... once rounds exist, except while generation is
     // actually resuming (continue/start still set precontent on purpose).
-    const showWorking =
+    const showWorking = !generationStopped && (
         (precontent && (generating || renderedRounds.length === 0)) ||
-        (conversationLoading && !generating && renderedRounds.length === 0);
+        (conversationLoading && !generating && renderedRounds.length === 0)
+    );
 
     let statusMessage: string | undefined;
     if (awaitingRequester) {
@@ -769,6 +788,19 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             <AnswerArea $afterActivity={activity.items.length > 0}>
                 {activity.answerRounds.map(renderRound)}
             </AnswerArea>
+            {generationStopped && (
+                <GenerationStoppedNotice data-testid='llm-bot-generation-stopped'>
+                    <GenerationStoppedIcon
+                        size={14}
+                        aria-hidden={true}
+                    />
+                    {generationStoppedMessage}
+                </GenerationStoppedNotice>
+            )}
+            <HTMLArtifacts
+                postId={props.post.id}
+                files={props.post.metadata?.files}
+            />
             { showPostbackButton &&
             <PostSummaryHelpMessage
                 data-testid='llm-bot-post-summary-help'
@@ -799,6 +831,22 @@ const AnswerArea = styled.div<{$afterActivity: boolean}>`
     &:not(:empty) {
         margin-top: ${(props) => (props.$afterActivity ? '8px' : '0')};
     }
+`;
+
+const GenerationStoppedNotice = styled.div`
+    display: flex;
+    align-items: start;
+    gap: 4px;
+    margin-top: 8px;
+    font-size: 12px;
+    line-height: 16px;
+    color: rgba(var(--center-channel-color-rgb), 0.64);
+`;
+
+// Lines the 14px icon up with the first line of 16px text when the notice wraps.
+const GenerationStoppedIcon = styled(CancelIcon)`
+    flex-shrink: 0;
+    margin-top: 1px;
 `;
 
 const PostSummaryHelpMessage = styled(SectionNotice)`

@@ -617,8 +617,13 @@ func abacDeny() *model.AccessDecision  { return &model.AccessDecision{Decision: 
 
 func setupABACTestEnvironment(t *testing.T, stub abacStubClient) *TestEnvironment {
 	t.Helper()
+	return setupABACTestEnvironmentAtLevel(t, stub, enterprise.LevelEnterpriseAdvanced)
+}
+
+func setupABACTestEnvironmentAtLevel(t *testing.T, stub abacStubClient, level enterprise.Level) *TestEnvironment {
+	t.Helper()
 	mockAPI := &plugintest.API{}
-	enterprisetest.StubLicense(mockAPI, enterprise.LevelEnterpriseAdvanced)
+	enterprisetest.StubLicense(mockAPI, level)
 	client := pluginapi.NewClient(mockAPI, nil)
 	checker := accesscontrol.New(stub, nil, accesscontrol.NoMCPServerIDs, nil)
 	mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), nil, nil, checker, &http.Client{}, nil)

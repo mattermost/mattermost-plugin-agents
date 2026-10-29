@@ -18,9 +18,9 @@ Mattermost server plugin (`mattermost-ai`) that integrates LLM providers. Go 1.2
 - Build & deploy plugin to a running Mattermost: `make deploy`
 - E2E (self-contained, no env setup needed; slow, defer to CI when possible): `make e2e`
 - Single e2e spec: `cd e2e && npx playwright test tests/path/spec.ts --reporter=list`
-- Prompt evals (non-interactive): `make evals-ci`
+- Prompt evals (non-interactive): `make evals-ci` (includes `./mcpserver`, which boots Mattermost containers and needs Docker)
   Provider: `LLM_PROVIDER=openai|anthropic|azure|openaicompatible|all make evals-ci`
-  Model: `ANTHROPIC_MODEL=claude-sonnet-4-5-20250929 make evals-ci`
+  Model: `ANTHROPIC_MODEL=claude-opus-5-5 make evals-ci`
 - Streaming benchmarks: `go test -bench=. -benchmem ./llm/... ./streaming/...`
 
 When `make check` fails, run the underlying targets individually (`make check-style`, `make test`, `make check-shards`, `make check-i18n`, `make check-locks`) to isolate which step broke. CI runs the same drift checks; if i18n or a lockfile is out of sync, those targets regenerate the file in place — review and commit.
@@ -46,6 +46,8 @@ Most Go packages live at the **repo root**, not under `server/`.
 ## Conventions
 
 Linters (golangci-lint, ESLint, gofmt/goimports, header check, editorconfig) already enforce formatting, imports, error checking, license headers, and indentation. The rules below are the ones a linter cannot enforce.
+
+Repo-specific guards also run in `make check-style`: the `build/govet` vet tool (timeout-less `http.Client`, plus upstream mattermost-govet `license`, `mutexLock`, `noSelectStar`), testifylint `go-require`, `webapp/eslint-plugin-agents` (jsx-a11y rules that also see same-file styled-components), and `e2e/eslint-rules`. Suppress a legitimate case on that line with the reason: `//nolint:httpclienttimeout // <reason>` or `// eslint-disable-next-line <rule> -- <reason>`.
 
 - File names: `snake_case.go` / `snake_case.ts(x)`.
 - TypeScript/React: PascalCase components, strict typing, **always styled-components**, never inline `style={{...}}`.
@@ -100,7 +102,6 @@ The plugin emits OpenTelemetry traces. Agent-relevant rules:
 
 ## Gotchas
 
-- If `make install-go-tools` fails to build `mattermost-govet`, the pinned commit is incompatible with the active Go toolchain. The Makefile prints the exact fix: bump `MATTERMOST_GOVET_VERSION` in the Makefile to a newer commit. This is a real problem to fix, not a warning to ignore.
 - `postgres/pgvector_test.go` boots its own pgvector container via `testcontainers-go` (`pgvector/pgvector:pg17`); `go test ./postgres/...` works on a fresh checkout as long as Docker is available. To run against an existing pgvector instance for fast iteration, set `PGVECTOR_TEST_DSN`.
 - Plugin config is migrated to the plugin DB on activation. For automation, read/write `GET`/`PUT /plugins/mattermost-ai/admin/config` rather than patching the Mattermost server config.
 - The embedded MCP server requires `SiteURL` to be set on the Mattermost server, and uses in-memory transport (no HTTP). On tool name collisions across MCP servers, first-registered wins; later duplicates are skipped with a warning.
@@ -108,7 +109,11 @@ The plugin emits OpenTelemetry traces. Agent-relevant rules:
 - A fresh checkout does not compile: run `make apply` first to generate `server/manifest.go` (`undefined: manifest` errors otherwise).
 - The repo has three Go modules: the root, `loadtest/controller/`, and `cmd/evalviewer/`. Go version bumps, `go mod tidy`, and `go fix` must be run in each.
 - `webapp/node_modules/` contains stray Go files that `./...` matches; for sweeping Go commands use `$(go list ./... | grep -v node_modules)`.
-- Bumping the Go version: update the `go` directive in all three modules AND the `FIPS_IMAGE` tag in `build/fips.mk` — set the new tag without a digest, open a PR so the `build-fips` CI job pulls it, then pin the digest CI resolves. **Check the image exists first** (tag-listing procedure in `build/fips.mk`): the `go` directive is held at 1.26.x until `cgr.dev/mattermost.com/go-msft-fips` publishes a 1.27 toolchain — do not bump past what that registry offers. If `bin/golangci-lint` starts failing everywhere with "export data version N is greater than maximum supported version", the pinned linter predates the toolchain: bump `GOLANGCI_LINT_VERSION` in the Makefile and rerun `make install-go-tools`.
+- Bumping the Go version: update the `go` directive in all three modules AND the `FIPS_IMAGE` tag in `build/fips.mk` — set the new tag without a digest, open a PR so the `build-fips` CI job pulls it, then pin the digest CI resolves. **Check the image exists first** (tag-listing procedure in `build/fips.mk`): do not bump the `go` directive past what `cgr.dev/mattermost.com/go-openssl-fips` offers. If `bin/golangci-lint` starts failing everywhere with "export data version N is greater than maximum supported version", the pinned linter predates the toolchain: bump `GOLANGCI_LINT_VERSION` in the Makefile and rerun `make install-go-tools`.
+
+## Cursor Cloud specific instructions
+
+- Run e2e with `TESTCONTAINERS_HOST_OVERRIDE=localhost` (e.g. `cd e2e && TESTCONTAINERS_HOST_OVERRIDE=localhost npx playwright test tests/agents/html-artifact.spec.ts --reporter=list`). On Cloud VMs testcontainers reports the Docker gateway IP (e.g. `172.18.0.1`) as the Mattermost host, and browsers send Fetch Metadata (`Sec-Fetch-*`) headers only to HTTPS or `localhost` origins, so without the override the HTML artifact specs only ever get the "can only be viewed inside Mattermost" page.
 
 ## Pull requests and commits
 

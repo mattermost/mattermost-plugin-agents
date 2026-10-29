@@ -43,7 +43,7 @@ func (c *Conversations) decorateStreamWithCreatedFiles(ctx context.Context, bot 
 }
 
 func (c *Conversations) attachSandboxOutputFiles(ctx context.Context, bot *bots.Bot, llmCtx *llm.Context) {
-	if llmCtx == nil || !bot.SandboxFileAttachmentAvailable() {
+	if llmCtx == nil || !bot.CanAttachSandboxFiles() {
 		return
 	}
 	downloader := bot.ProviderServices().FileDownloader

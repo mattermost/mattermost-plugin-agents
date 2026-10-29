@@ -2,12 +2,13 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {act, render, screen} from '@testing-library/react';
+import {act, fireEvent, render, screen} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import {getAIBots, getPluginConfig, savePluginConfig} from '@/client';
 
-import Config, {effectiveDefaultBotName} from './config';
+import Config, {effectiveDefaultBotID} from './config';
+import {PluginConfig} from './plugin_config_types';
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
@@ -268,18 +269,142 @@ describe('Config license gating', () => {
     });
 });
 
-describe('effectiveDefaultBotName', () => {
-    const bots = [
-        {username: 'first', displayName: 'First'},
-        {username: 'second', displayName: 'Second'},
-    ];
+const BOT_FIRST = 'f1rstbotidaaaaaaaaaaaaaaa';
+const BOT_SECOND = 's3condbotidbbbbbbbbbbbbbb';
+const BOT_TRANSCRIPT = 't4anscriptbotidcccccccccc';
 
+const runtimeBots = [
+    {id: BOT_FIRST, username: 'first', displayName: 'First'},
+    {id: BOT_SECOND, username: 'second', displayName: 'Second'},
+    {id: BOT_TRANSCRIPT, username: 'scribe', displayName: 'Scribe'},
+];
+
+describe('effectiveDefaultBotID', () => {
     it.each([
-        {name: 'a configured bot', configured: 'second', bots, expected: 'second'},
-        {name: 'an empty default', configured: '', bots, expected: 'first'},
-        {name: 'a removed bot', configured: 'gone', bots, expected: 'first'},
-        {name: 'no bots', configured: '', bots: [], expected: ''},
-    ])('resolves $name the way the server does', ({configured, bots: available, expected}) => {
-        expect(effectiveDefaultBotName(configured, available)).toBe(expected);
+        {name: 'a configured ID', id: BOT_SECOND, legacy: '', expected: BOT_SECOND},
+        {name: 'a configured ID that wins over a stale legacy name', id: BOT_SECOND, legacy: 'first', expected: BOT_SECOND},
+        {name: 'a legacy name only', id: '', legacy: 'second', expected: BOT_SECOND},
+        {name: 'a renamed agent still matched by ID', id: BOT_FIRST, legacy: 'old-name', expected: BOT_FIRST},
+        {name: 'an empty default', id: '', legacy: '', expected: BOT_FIRST},
+        {name: 'a removed agent ID', id: 'gone0000000000000000000000', legacy: '', expected: ''},
+        {name: 'an unknown legacy name', id: '', legacy: 'gone', expected: ''},
+    ])('resolves $name the way the server does', ({id, legacy, expected}) => {
+        expect(effectiveDefaultBotID(id, legacy, runtimeBots)).toBe(expected);
+    });
+
+    it('returns an empty value when there are no agents', () => {
+        expect(effectiveDefaultBotID('', '', [])).toBe('');
+    });
+});
+
+describe('Config default agent selector', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        (getAIBots as jest.Mock).mockResolvedValue({bots: runtimeBots});
+        (savePluginConfig as jest.Mock).mockImplementation((cfg) => Promise.resolve(cfg));
+    });
+
+    async function saveLastRegistered(registerSaveAction: jest.Mock) {
+        const save = registerSaveAction.mock.calls.at(-1)?.[0] as SaveAction;
+        await act(async () => {
+            await save();
+        });
+        return (savePluginConfig as jest.Mock).mock.calls.at(-1)?.[0] as PluginConfig;
+    }
+
+    it('shows the agent matching a legacy default name and saves it unchanged for the server to convert', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, defaultBotName: 'second', defaultBotUserID: ''});
+        const {registerSaveAction} = renderConfig();
+
+        await screen.findByText('Second');
+        expect(screen.queryByText('First')).toBeNull();
+
+        const saved = await saveLastRegistered(registerSaveAction);
+        expect(saved.defaultBotUserID).toBe('');
+        expect(saved.defaultBotName).toBe('second');
+    });
+
+    it('saves a selection by ID and clears the legacy default name', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, defaultBotName: 'second', transcriptBackend: 'scribe'});
+        const {registerSaveAction} = renderConfig();
+        await screen.findByText('Second');
+
+        fireEvent.click(screen.getByRole('combobox', {name: 'Default bot'}));
+        fireEvent.pointerUp(await screen.findByRole('option', {name: 'First'}));
+
+        const saved = await saveLastRegistered(registerSaveAction);
+        expect(saved.defaultBotUserID).toBe(BOT_FIRST);
+        expect(saved.defaultBotName).toBe('');
+        expect(saved.transcriptBotUserID).toBe('');
+        expect(saved.transcriptBackend).toBe('scribe');
+    });
+
+    it('flags a configured default agent that is not available', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, defaultBotUserID: 'gone0000000000000000000000'});
+        renderConfig();
+
+        await screen.findByText(/The configured default agent is not available/);
+        expect(screen.queryByText('First')).toBeNull();
+    });
+
+    it('sends empty ID and legacy fields when nothing is configured', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue(loadedConfig);
+        const {registerSaveAction} = renderConfig();
+        await screen.findByText('First');
+
+        const saved = await saveLastRegistered(registerSaveAction);
+        expect(saved).toMatchObject({defaultBotUserID: '', defaultBotName: '', transcriptBotUserID: '', transcriptBackend: ''});
+    });
+});
+
+describe('Config agent version retention', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        (getAIBots as jest.Mock).mockResolvedValue({bots: []});
+        (savePluginConfig as jest.Mock).mockImplementation(async (cfg) => cfg);
+    });
+
+    async function saveAndGetConfig(registerSaveAction: jest.Mock): Promise<PluginConfig> {
+        const save = registerSaveAction.mock.calls.at(-1)?.[0] as SaveAction;
+        await act(async () => {
+            await save();
+        });
+        return (savePluginConfig as jest.Mock).mock.calls.at(-1)[0];
+    }
+
+    function limitRadio(name: 'True' | 'False') {
+        const group = screen.getByRole('radiogroup', {name: 'Limit agent version history'});
+        return Array.from(group.querySelectorAll('label')).find((l) => l.textContent === name)!.querySelector('input')!;
+    }
+
+    it('keeps every version until a limit is turned on, then saves the number to keep', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue(loadedConfig);
+        const {registerSaveAction} = renderConfig();
+        await screen.findByText('service:My Service:unsaved');
+
+        expect(limitRadio('False').checked).toBe(true);
+        expect(screen.queryByLabelText('Versions to keep per agent')).toBeNull();
+
+        fireEvent.click(limitRadio('True'));
+        const count = screen.getByLabelText('Versions to keep per agent') as HTMLInputElement;
+        expect(count.value).toBe('50');
+        fireEvent.change(count, {target: {value: '10'}});
+        expect((await saveAndGetConfig(registerSaveAction)).agentVersionsToKeep).toBe(10);
+
+        fireEvent.change(count, {target: {value: '0'}});
+        expect((await saveAndGetConfig(registerSaveAction)).agentVersionsToKeep).toBe(1);
+
+        fireEvent.click(limitRadio('False'));
+        expect(screen.queryByLabelText('Versions to keep per agent')).toBeNull();
+        expect((await saveAndGetConfig(registerSaveAction)).agentVersionsToKeep).toBe(0);
+    });
+
+    it('shows a saved limit', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, agentVersionsToKeep: 25});
+        renderConfig();
+        await screen.findByText('service:My Service:unsaved');
+
+        expect(limitRadio('True').checked).toBe(true);
+        expect((screen.getByLabelText('Versions to keep per agent') as HTMLInputElement).value).toBe('25');
     });
 });

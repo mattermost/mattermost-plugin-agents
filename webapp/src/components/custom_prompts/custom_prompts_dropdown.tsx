@@ -30,23 +30,26 @@ const AgentSelectorWrapper = styled.div`
     margin-bottom: 4px;
 `;
 
-const StyledMenuItem = styled.li`
+const StyledMenuItem = styled.button`
     display: flex;
     align-items: center;
     gap: 8px;
+    width: 100%;
     padding: 6px 20px;
+    border: none;
+    background: none;
+    text-align: left;
     cursor: pointer;
     font-family: 'Open Sans', sans-serif;
     font-size: 14px;
     line-height: 20px;
     color: var(--center-channel-color);
-    list-style: none;
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.08);
     }
 
-    &[aria-disabled='true'] {
+    &:disabled {
         cursor: default;
         color: rgba(var(--center-channel-color-rgb), 0.40);
 
@@ -90,7 +93,7 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
         dismissMenu();
         try {
             const botUsername = selectedBot?.username;
-            const result = await renderCustomPrompt(prompt.id, channelId, botUsername);
+            const result = await renderCustomPrompt(prompt.id, channelId, selectedBot?.id);
             if (!isBotDMChannel && botUsername) {
                 updateText(`@${botUsername} ${result.rendered}`);
             } else {
@@ -123,6 +126,7 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
                 prompts.map((prompt) => (
                     <StyledMenuItem
                         key={prompt.id}
+                        type='button'
                         role='menuitem'
                         onClick={() => handlePromptClick(prompt)}
                     >
@@ -131,14 +135,16 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
                 ))
             ) : (
                 <StyledMenuItem
+                    type='button'
                     role='menuitem'
-                    aria-disabled='true'
+                    disabled={true}
                 >
                     <span><FormattedMessage defaultMessage='No custom prompts yet'/></span>
                 </StyledMenuItem>
             )}
             <StyledMenuSeparator role='separator'/>
             <StyledMenuItem
+                type='button'
                 role='menuitem'
                 onClick={handleCreateClick}
             >

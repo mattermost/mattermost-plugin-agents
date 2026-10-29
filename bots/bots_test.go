@@ -39,9 +39,11 @@ func (failingAgentStore) ListAgents() ([]*llm.BotConfig, error) {
 }
 
 type mockConfig struct {
-	bots               []llm.BotConfig
-	services           []llm.ServiceConfig
-	enableTokenLogging bool
+	bots                []llm.BotConfig
+	services            []llm.ServiceConfig
+	enableTokenLogging  bool
+	transcriptBotName   string
+	transcriptBotUserID string
 }
 
 func (m *mockConfig) GetBots() []llm.BotConfig {
@@ -78,7 +80,11 @@ func (m *mockConfig) EnableTokenUsageLogToFile() bool {
 }
 
 func (m *mockConfig) GetTranscriptGenerator() string {
-	return "testbot"
+	return m.transcriptBotName
+}
+
+func (m *mockConfig) GetTranscriptBotUserID() string {
+	return m.transcriptBotUserID
 }
 
 func newTestMMBots(t *testing.T, cfg *mockConfig) *MMBots {
@@ -214,25 +220,101 @@ func TestGetLLMResolvesProviderServicesThroughWrapperChain(t *testing.T) {
 	require.False(t, assertable, "the wrapped model must not be relied on for provider capabilities")
 }
 
-func TestGetLLMProviderServicesForNonDownloadableProvider(t *testing.T) {
-	cfg := &mockConfig{}
-	mmBots := newTestMMBots(t, cfg)
-
-	service := llm.ServiceConfig{
-		ID:           "openai-svc",
-		Type:         llm.ServiceTypeOpenAI,
-		APIKey:       "test-key",
-		DefaultModel: "gpt-5",
+func TestGetLLMProviderServicesForNonDownloadablePrimary(t *testing.T) {
+	anthropicFallback := llm.ServiceConfig{
+		ID:           "anthropic-svc",
+		Type:         llm.ServiceTypeAnthropic,
+		APIKey:       "fallback-key",
+		DefaultModel: "claude-sonnet-4-6",
 	}
-	botCfg := llm.BotConfig{
-		Name:               "openai-sandbox-bot",
-		EnabledNativeTools: []string{llm.NativeToolCodeInterpreter},
+	tests := []struct {
+		name             string
+		fallbacks        []llm.ServiceConfig
+		wantFileDownload bool
+	}{
+		{name: "OpenAI alone cannot download files"},
+		{
+			name:             "an Anthropic fallback can download the files of turns it serves",
+			fallbacks:        []llm.ServiceConfig{anthropicFallback},
+			wantFileDownload: true,
+		},
 	}
 
-	_, providerServices, err := mmBots.getLLM(service, botCfg, nil)
-	require.NoError(t, err)
-	t.Cleanup(mmBots.ShutdownServiceLLMs)
-	require.False(t, providerServices.CanDownloadFiles())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &mockConfig{}
+			mmBots := newTestMMBots(t, cfg)
+
+			service := llm.ServiceConfig{
+				ID:           "openai-svc",
+				Type:         llm.ServiceTypeOpenAI,
+				APIKey:       "test-key",
+				DefaultModel: "gpt-5",
+			}
+			botCfg := llm.BotConfig{
+				Name:               "openai-sandbox-bot",
+				EnabledNativeTools: []string{llm.NativeToolCodeInterpreter},
+			}
+
+			_, providerServices, err := mmBots.getLLM(service, botCfg, tt.fallbacks)
+			require.NoError(t, err)
+			t.Cleanup(mmBots.ShutdownServiceLLMs)
+			require.Equal(t, tt.wantFileDownload, providerServices.CanDownloadFiles())
+		})
+	}
+}
+
+func TestSandboxFileGatesFollowTheServingChain(t *testing.T) {
+	openAI := llm.ServiceConfig{ID: "openai-svc", Type: llm.ServiceTypeOpenAI, APIKey: "k", DefaultModel: "gpt-5"}
+	anthropic := llm.ServiceConfig{ID: "anthropic-svc", Type: llm.ServiceTypeAnthropic, APIKey: "k2", DefaultModel: "claude-sonnet-4-6"}
+	openAIWithAnthropicFallback := openAI
+	openAIWithAnthropicFallback.FallbackServiceID = anthropic.ID
+
+	tests := []struct {
+		name        string
+		services    []llm.ServiceConfig
+		primaryID   string
+		wantPromise bool
+		wantAttach  bool
+	}{
+		{
+			name:       "OpenAI primary with an Anthropic fallback attaches files but does not promise them",
+			services:   []llm.ServiceConfig{openAIWithAnthropicFallback, anthropic},
+			primaryID:  openAI.ID,
+			wantAttach: true,
+		},
+		{
+			name:        "Anthropic primary promises and attaches files",
+			services:    []llm.ServiceConfig{anthropic},
+			primaryID:   anthropic.ID,
+			wantPromise: true,
+			wantAttach:  true,
+		},
+		{
+			name:      "OpenAI alone neither promises nor attaches files",
+			services:  []llm.ServiceConfig{openAI},
+			primaryID: openAI.ID,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &mockConfig{services: tt.services}
+			agentStore := &stubAgentStore{agents: []llm.BotConfig{{
+				ID: "bot1", Name: "sandbox", DisplayName: "Sandbox", ServiceID: tt.primaryID,
+				EnabledNativeTools: []string{llm.NativeToolCodeInterpreter},
+			}}}
+			mmBots := newEnsureBotsHarness(t, cfg, agentStore, enterpriseAdvancedLicense())
+
+			require.NoError(t, mmBots.EnsureBots())
+			bots := mmBots.GetAllBots()
+			require.Len(t, bots, 1)
+			require.True(t, bots[0].HasNativeCodeExecutionEnabled())
+
+			assert.Equal(t, tt.wantPromise, bots[0].ShouldPromiseSandboxFiles(), "prompt gate")
+			assert.Equal(t, tt.wantAttach, bots[0].CanAttachSandboxFiles(), "attach gate")
+		})
+	}
 }
 
 func TestGetLLMLoadTestMockInvalidProfileJSON(t *testing.T) {
@@ -1169,6 +1251,44 @@ func TestGetBotByUsernameFindsRenamedBotAccount(t *testing.T) {
 
 			assert.Same(t, tc.expected, mmBots.GetBotByUsername(tc.username))
 			assert.Same(t, tc.expectedFirst, mmBots.GetBotByUsernameOrFirst(tc.username))
+		})
+	}
+}
+
+func TestGetBotByIDOrUsername(t *testing.T) {
+	alpha := NewBot(llm.BotConfig{Name: "alpha"}, llm.ServiceConfig{}, &model.Bot{UserId: "bot-a", Username: "alpha"}, nil)
+	beta := NewBot(llm.BotConfig{Name: "beta"}, llm.ServiceConfig{}, &model.Bot{UserId: "bot-b", Username: "beta"}, nil)
+	notFound := model.NewAppError("GetUserByUsername", "app.user.missing_account.const", nil, "", http.StatusNotFound)
+
+	testCases := []struct {
+		name           string
+		botUserID      string
+		legacyUsername string
+		// alphaHolds is the username alpha's account holds now.
+		alphaHolds string
+		expected   *Bot
+	}{
+		{name: "ID of an available agent", botUserID: "bot-b", expected: beta},
+		{name: "ID wins over the legacy name", botUserID: "bot-b", legacyUsername: "alpha", expected: beta},
+		{name: "ID of a missing agent does not fall back to the legacy name", botUserID: "bot-gone", legacyUsername: "alpha"},
+		{name: "ID of a missing agent does not fall back to the first agent", botUserID: "bot-gone"},
+		{name: "legacy name held by the agent's account", legacyUsername: "alpha", expected: alpha},
+		{name: "legacy name the agent's account released", legacyUsername: "alpha", alphaHolds: "alpha-renamed"},
+		{name: "nothing configured"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &mockConfig{transcriptBotUserID: tc.botUserID, transcriptBotName: tc.legacyUsername}
+			mmBots := newTestMMBots(t, cfg)
+			mockAPI := mmBots.ensureBotsClusterMutex.(*plugintest.API)
+			mockAPI.On("GetUser", "bot-a").Return(&model.User{Id: "bot-a", Username: cmp.Or(tc.alphaHolds, "alpha"), IsBot: true}, nil).Maybe()
+			mockAPI.On("GetUser", "bot-b").Return(&model.User{Id: "bot-b", Username: "beta", IsBot: true}, nil).Maybe()
+			mockAPI.On("GetUserByUsername", mock.Anything).Return(nil, notFound).Maybe()
+			mmBots.SetBotsForTesting([]*Bot{alpha, beta})
+
+			assert.Same(t, tc.expected, mmBots.GetBotByIDOrUsername(tc.botUserID, tc.legacyUsername))
+			assert.Same(t, tc.expected, mmBots.getTranscriberBot(), "the transcript agent setting must resolve the same way")
 		})
 	}
 }

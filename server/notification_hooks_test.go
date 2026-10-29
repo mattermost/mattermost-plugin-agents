@@ -258,7 +258,7 @@ func setupEditedPostPlugin(t *testing.T) (*Plugin, *singleTurnStore) {
 		Sequence:       1,
 	}}
 
-	convs := conversations.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	convs := conversations.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	convs.SetConversationService(conversation.NewService(turnStore, nil, nil, nil))
 
 	mockAPI := &plugintest.API{}

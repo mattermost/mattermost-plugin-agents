@@ -103,7 +103,7 @@ func TestBuildConversationContextWithTools_MentionShapeBuildsOnce(t *testing.T) 
 
 	c := &Conversations{contextBuilder: builder}
 	bot := loadedStateBot(nil)
-	user := &model.User{Id: "user-id", Username: "user"}
+	user := &model.User{Id: testRequesterID, Username: "user"}
 	channel := &model.Channel{Id: "channel-id", Type: model.ChannelTypeOpen}
 
 	llmCtx := c.buildConversationContextWithTools(context.Background(), bot, user, channel, "")
@@ -147,7 +147,7 @@ func TestBuildConversationContextWithTools_DMShapeBuildsOnce(t *testing.T) {
 			// A missing expectation fails the test if the preferences are read anyway.
 			mmClient := mocks.NewMockClient(t)
 			if tc.wantPrefsLoaded {
-				mmClient.On("KVGet", "user_tool_providers_user-id", mock.AnythingOfType("*mcp.UserToolProviderPreferences")).
+				mmClient.On("KVGet", "user_tool_providers_"+testRequesterID, mock.AnythingOfType("*mcp.UserToolProviderPreferences")).
 					Run(func(args mock.Arguments) {
 						prefs := args.Get(1).(*mcp.UserToolProviderPreferences)
 						prefs.DisabledServers = []string{disabledOrigin}
@@ -160,8 +160,8 @@ func TestBuildConversationContextWithTools_DMShapeBuildsOnce(t *testing.T) {
 				mmClient:       mmClient,
 				contextBuilder: newSingleBuildLLMContextBuilder(t, provider),
 			}
-			user := &model.User{Id: "user-id", Username: "user"}
-			channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
+			user := &model.User{Id: testRequesterID, Username: "user"}
+			channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__" + testRequesterID}
 
 			llmCtx := c.buildConversationContextWithTools(context.Background(), tc.bot, user, channel, "Failed to load user tool preferences")
 			require.NotNil(t, llmCtx)
@@ -192,8 +192,8 @@ func TestBuildConversationContextWithTools_DoesNotMaterializeDynamicMCPTools(t *
 
 	c := &Conversations{contextBuilder: builder}
 	bot := loadedStateBot(nil)
-	user := &model.User{Id: "user-id", Username: "user"}
-	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
+	user := &model.User{Id: testRequesterID, Username: "user"}
+	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__" + testRequesterID}
 
 	llmCtx := c.buildConversationContextWithTools(context.Background(), bot, user, channel, "Failed to load user tool preferences")
 	require.NotNil(t, llmCtx)
@@ -226,8 +226,8 @@ func TestBuildConversationContextWithTools_DropsPreFilteredMCPServers(t *testing
 
 	c := &Conversations{contextBuilder: builder}
 	bot := loadedStateBot(nil)
-	user := &model.User{Id: "user-id", Username: "user"}
-	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
+	user := &model.User{Id: testRequesterID, Username: "user"}
+	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__" + testRequesterID}
 
 	llmCtx := c.buildConversationContextWithTools(
 		context.Background(),

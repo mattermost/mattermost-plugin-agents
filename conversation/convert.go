@@ -23,10 +23,19 @@ const DefaultMaxFileSize = int64(5 * 1024 * 1024)
 // only and fetched on demand via the read_file tool. ~8 KiB ≈ 2000 tokens.
 const InlineFileMaxBytes = int64(8 * 1024)
 
-// UnsharedToolResultRedaction replaces tool_result content the requester has
-// not shared, preserving the tool_use/tool_result pairing required by LLM
-// providers.
-const UnsharedToolResultRedaction = "[result not shared by user]"
+// UnsharedToolResultRedaction replaces tool_result content the requester
+// decided not to share, preserving the tool_use/tool_result pairing required
+// by LLM providers. Unshared tool_use arguments are redacted alongside it.
+const UnsharedToolResultRedaction = "[arguments and result not shared by user]"
+
+// PendingShareToolResultRedaction replaces tool_result content whose share
+// decision the requester has not made yet.
+const PendingShareToolResultRedaction = "[result pending the user's decision to share it]"
+
+// NotExecutedToolResult is replayed as the result of a tool call that was
+// still pending or accepted when the turn ended, so the model does not read
+// it as a call that ran and returned nothing.
+const NotExecutedToolResult = "Not executed: the user stopped the response or moved on without approving this tool call."
 
 // unsharedToolUseArgumentsRedaction replaces tool_use arguments the requester
 // has not shared. Empty JSON keeps the call well-formed for providers that
@@ -44,7 +53,8 @@ type PostConversionOptions struct {
 
 // BlocksToPost converts a slice of content blocks and a role string into an llm.Post.
 // When opts.RedactUnshared is true, tool_result content whose Shared flag is not
-// true is replaced with UnsharedToolResultRedaction, and tool_use arguments
+// true is replaced with UnsharedToolResultRedaction (or
+// PendingShareToolResultRedaction before the share decision), and tool_use arguments
 // whose Shared flag is not true are replaced with an empty JSON object so the
 // LLM cannot paraphrase private tool parameters into a channel-visible reply.
 func BlocksToPost(
@@ -64,6 +74,8 @@ func BlocksToPost(
 	var textParts []string
 	var fileContents []string
 	var descriptors []string
+	var notices []string
+	resultIDs := make(map[string]bool)
 
 	for _, block := range blocks {
 		switch block.Type {
@@ -121,7 +133,11 @@ func BlocksToPost(
 			content := block.Content
 			if opts.RedactUnshared && (block.Shared == nil || !*block.Shared) {
 				content = UnsharedToolResultRedaction
+				if block.DecidedAt == nil {
+					content = PendingShareToolResultRedaction
+				}
 			}
+			resultIDs[block.ToolUseID] = true
 			merged := false
 			for i := range post.ToolUse {
 				if post.ToolUse[i].ID == block.ToolUseID {
@@ -139,17 +155,19 @@ func BlocksToPost(
 			}
 
 		case BlockTypeImage:
-			if !opts.EnableVision {
-				continue
-			}
 			if opts.MMClient == nil {
+				notices = append(notices, format.UnavailableAttachment("", format.AttachmentLoadFailed))
 				continue
 			}
+			// Fetched even with vision off: it re-checks the requester's access
+			// before the placeholder names the file.
 			fileInfo, err := opts.MMClient.GetFileInfo(block.FileID)
-			if err != nil {
-				if !errors.Is(err, mmapi.ErrFileActionForbidden) {
-					opts.MMClient.LogError("failed to get file info for image attachment", "error", err)
-				}
+			if err != nil || fileInfo == nil {
+				notices = append(notices, attachmentLoadNotice(opts.MMClient, block, err, "failed to get file info for image attachment"))
+				continue
+			}
+			if !opts.EnableVision {
+				notices = append(notices, format.UnavailableAttachment(fileInfo.Name, format.AttachmentImageInputDisabled))
 				continue
 			}
 			if !llm.IsSupportedImageMimeType(fileInfo.MimeType) {
@@ -161,7 +179,7 @@ func BlocksToPost(
 			}
 			reader, err := opts.MMClient.GetFile(block.FileID)
 			if err != nil {
-				opts.MMClient.LogError("failed to get file for image attachment", "error", err)
+				notices = append(notices, attachmentLoadNotice(opts.MMClient, block, err, "failed to get file for image attachment"))
 				continue
 			}
 			data, err := io.ReadAll(reader)
@@ -169,7 +187,7 @@ func BlocksToPost(
 				opts.MMClient.LogError("failed to close image attachment reader", "error", closeErr)
 			}
 			if err != nil {
-				opts.MMClient.LogError("failed to read image attachment", "error", err)
+				notices = append(notices, attachmentLoadNotice(opts.MMClient, block, err, "failed to read image attachment"))
 				continue
 			}
 			post.Files = append(post.Files, llm.File{
@@ -181,13 +199,12 @@ func BlocksToPost(
 
 		case BlockTypeFile:
 			if opts.MMClient == nil {
+				notices = append(notices, format.UnavailableAttachment("", format.AttachmentLoadFailed))
 				continue
 			}
 			fileInfo, err := opts.MMClient.GetFileInfo(block.FileID)
-			if err != nil {
-				if !errors.Is(err, mmapi.ErrFileActionForbidden) {
-					opts.MMClient.LogError("failed to get file info for file attachment", "error", err)
-				}
+			if err != nil || fileInfo == nil {
+				notices = append(notices, attachmentLoadNotice(opts.MMClient, block, err, "failed to get file info for file attachment"))
 				continue
 			}
 
@@ -219,7 +236,7 @@ func BlocksToPost(
 			if content == "" {
 				reader, err := opts.MMClient.GetFile(block.FileID)
 				if err != nil {
-					opts.MMClient.LogError("failed to get file for file attachment", "error", err)
+					notices = append(notices, attachmentLoadNotice(opts.MMClient, block, err, "failed to get file for file attachment"))
 					continue
 				}
 				body, err := io.ReadAll(io.LimitReader(reader, effectiveMax))
@@ -227,7 +244,7 @@ func BlocksToPost(
 					opts.MMClient.LogError("failed to close file attachment reader", "error", closeErr)
 				}
 				if err != nil {
-					opts.MMClient.LogError("failed to read file content", "error", err)
+					notices = append(notices, attachmentLoadNotice(opts.MMClient, block, err, "failed to read file content"))
 					continue
 				}
 				content = string(body)
@@ -240,6 +257,17 @@ func BlocksToPost(
 		}
 	}
 
+	for i := range post.ToolUse {
+		tc := &post.ToolUse[i]
+		if resultIDs[tc.ID] {
+			continue
+		}
+		if tc.Status == llm.ToolCallStatusPending || tc.Status == llm.ToolCallStatusAccepted {
+			tc.Result = NotExecutedToolResult
+			tc.Status = llm.ToolCallStatusRejected
+		}
+	}
+
 	if len(textParts) > 0 {
 		post.Message = strings.Join(textParts, "\n")
 	}
@@ -249,11 +277,30 @@ func BlocksToPost(
 	if len(descriptors) > 0 {
 		post.Message += "\nAttached files (call the read_file tool with the File ID to read their contents):\n" + strings.Join(descriptors, "\n\n")
 	}
+	if len(notices) > 0 {
+		if post.Message != "" {
+			post.Message += "\n"
+		}
+		post.Message += strings.Join(notices, "\n")
+	}
 	if len(post.ServerTools) == 0 {
 		post.AssistantSegments = nil
 	}
 
 	return post
+}
+
+// attachmentLoadNotice logs a failed attachment read and returns its
+// placeholder. A forbidden file is an expected access denial: it is neither
+// logged nor named.
+func attachmentLoadNotice(mmClient mmapi.Client, block ContentBlock, err error, logMsg string) string {
+	if errors.Is(err, mmapi.ErrFileActionForbidden) {
+		return format.UnavailableAttachment("", format.AttachmentForbidden)
+	}
+	if err != nil {
+		mmClient.LogError(logMsg, "error", err)
+	}
+	return format.UnavailableAttachment(block.Filename, format.AttachmentLoadFailed)
 }
 
 func enrichToolCallFromStore(toolCall *llm.ToolCall, toolStore *llm.ToolStore) {

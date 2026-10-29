@@ -12,6 +12,10 @@ const NoRegen = "no_regen"
 const UnsafeLinksPostProp = "unsafe_links"
 const ConversationIDProp = "conversation_id"
 
+// GenerationStoppedProp marks a response the requester stopped before it
+// finished, so every viewer can tell a cut-off reply from a complete one.
+const GenerationStoppedProp = "generation_stopped"
+
 // LLMRequesterUserIDProp is a compatibility bridge for the meeting summarization
 // flow, which still produces custom_llmbot posts without a conversation entity.
 // Ownership for conversation-backed posts should be resolved via ConversationIDProp

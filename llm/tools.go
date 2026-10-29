@@ -56,10 +56,11 @@ type Tool struct {
 	ValidateArguments func(json.RawMessage) error
 
 	// AutoExecute marks a built-in tool that runs without user approval, like
-	// the MCP dynamic-loading meta-tools. Reserve it for tools whose only side
-	// effect is scoped to the assistant's own response (e.g. CreateFile
-	// attaching a file to the reply post). Only honored for tools with an
-	// empty ServerOrigin — MCP tools must never auto-execute through this flag.
+	// the MCP dynamic-loading meta-tools. Reserve it for tools whose side
+	// effect is scoped to this assistant's own response or conversation
+	// control flow (e.g. CreateFile attaching a file, wait_for_async_work
+	// scheduling a later resume). Only honored for tools with an empty
+	// ServerOrigin — MCP tools must never auto-execute through this flag.
 	AutoExecute bool
 }
 
@@ -237,32 +238,6 @@ const (
 	// to skip the call-approval UI and proceed directly to result-sharing.
 	ToolCallStatusAutoApproved
 )
-
-// IsResolvedToolCallBatch reports whether a ToolCalls event represents the
-// post-execution "resolved" broadcast (every call has a terminal status
-// assigned by toolrunner after execution) rather than the pre-execution
-// "pending" broadcast. toolrunner.buildResolvedToolCalls tags successful
-// auto-run tools as AutoApproved (not Success) and errored ones as Error;
-// user-approved tools are later tagged Success by the approval flow. Anything
-// else — most commonly Pending, but also Rejected — indicates the batch has
-// not been executed. Streaming persistence and the annotation decorator both
-// reset per-round state at this boundary, so they must share this predicate.
-func IsResolvedToolCallBatch(toolCalls []ToolCall) bool {
-	if len(toolCalls) == 0 {
-		return false
-	}
-	for _, tc := range toolCalls {
-		switch tc.Status {
-		case ToolCallStatusSuccess,
-			ToolCallStatusError,
-			ToolCallStatusAutoApproved:
-			// terminal status after execution
-		default:
-			return false
-		}
-	}
-	return true
-}
 
 // ToolCall represents a tool call. An empty result indicates that the tool has not yet been resolved.
 type ToolCall struct {

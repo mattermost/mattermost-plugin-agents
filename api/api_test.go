@@ -4,6 +4,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
@@ -66,10 +68,17 @@ type TestEnvironment struct {
 // testConfigImpl is a minimal implementation of Config for testing
 type testConfigImpl struct {
 	allowUnsafeLinks                bool
+	enableHTMLArtifacts             bool
 	enableChannelMentionToolCalling bool
+	enableAmbientAutoReply          bool
 	mcpConfig                       mcp.Config
 	services                        []llm.ServiceConfig
+	defaultBotUserID                string
 	defaultBotName                  string
+}
+
+func (tc *testConfigImpl) GetDefaultBotUserID() string {
+	return tc.defaultBotUserID
 }
 
 func (tc *testConfigImpl) GetDefaultBotName() string {
@@ -84,12 +93,20 @@ func (tc *testConfigImpl) AllowUnsafeLinks() bool {
 	return tc.allowUnsafeLinks
 }
 
+func (tc *testConfigImpl) EnableHTMLArtifacts() bool {
+	return tc.enableHTMLArtifacts
+}
+
 func (tc *testConfigImpl) EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig {
 	return embeddings.EmbeddingSearchConfig{}
 }
 
 func (tc *testConfigImpl) EnableChannelMentionToolCalling() bool {
 	return tc.enableChannelMentionToolCalling
+}
+
+func (tc *testConfigImpl) EnableAmbientAutoReply() bool {
+	return tc.enableAmbientAutoReply
 }
 
 func (tc *testConfigImpl) AllowNativeWebSearchInChannels() bool {
@@ -394,19 +411,13 @@ func (f *fakeChannelAutoReplyStore) Get(channelID string) (*autoreply.Setting, e
 	return f.settings[channelID], nil
 }
 
-func (f *fakeChannelAutoReplyStore) Set(channelID, botID string, mode autoreply.Mode, updatedBy string) (*autoreply.Setting, error) {
+func (f *fakeChannelAutoReplyStore) Set(setting autoreply.Setting) (*autoreply.Setting, error) {
 	if f.setErr != nil {
 		return nil, f.setErr
 	}
-	setting := autoreply.Setting{
-		ChannelID: channelID,
-		BotID:     botID,
-		Mode:      mode,
-		UpdatedBy: updatedBy,
-		UpdateAt:  time.Now().UnixMilli(),
-	}
+	setting.UpdateAt = time.Now().UnixMilli()
 	f.setCalls = append(f.setCalls, setting)
-	f.settings[channelID] = &setting
+	f.settings[setting.ChannelID] = &setting
 	return &setting, nil
 }
 
@@ -478,6 +489,24 @@ func (m *mockConversationStore) GetTurnByPostID(postID string) (*store.Turn, err
 	return turn, nil
 }
 
+func (m *mockConversationStore) CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error) {
+	if m.err != nil {
+		return false, m.err
+	}
+	for convID, turns := range m.turns {
+		for i, turn := range turns {
+			if turn.ID == id {
+				if !bytes.Equal(turn.Content, expected) {
+					return false, nil
+				}
+				m.turns[convID][i].Content = content
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 func (m *mockConversationStore) UpdateTurnContent(id string, content json.RawMessage) error {
 	if m.err != nil {
 		return m.err
@@ -515,10 +544,126 @@ type mockAgentStore struct {
 
 	// updateErrs, when non-empty, pops errors on consecutive UpdateAgent calls.
 	updateErrs []error
+
+	// versions holds each agent's versions, oldest first, recorded with the
+	// same rules as the real store.
+	versions map[string][]store.AgentVersionDetail
 }
 
 func newMockAgentStore() *mockAgentStore {
-	return &mockAgentStore{agents: make(map[string]*llm.BotConfig)}
+	return &mockAgentStore{
+		agents:   make(map[string]*llm.BotConfig),
+		versions: make(map[string][]store.AgentVersionDetail),
+	}
+}
+
+func mockVersionSnapshot(cfg *llm.BotConfig) llm.BotConfig {
+	snap := *cloneBotConfig(cfg)
+	snap.BotUserID = ""
+	snap.CreatorID = ""
+	snap.CreateAt, snap.UpdateAt, snap.DeleteAt = 0, 0, 0
+	nilIfEmpty := func(s []string) []string {
+		if len(s) == 0 {
+			return nil
+		}
+		return s
+	}
+	snap.ChannelIDs = nilIfEmpty(snap.ChannelIDs)
+	snap.UserIDs = nilIfEmpty(snap.UserIDs)
+	snap.TeamIDs = nilIfEmpty(snap.TeamIDs)
+	snap.AdminUserIDs = nilIfEmpty(snap.AdminUserIDs)
+	snap.EnabledNativeTools = nilIfEmpty(snap.EnabledNativeTools)
+	if len(snap.EnabledMCPTools) == 0 {
+		snap.EnabledMCPTools = nil
+	}
+	return snap
+}
+
+// recordVersion appends cfg as the next version of its agent. Agents seeded
+// directly into agents (no versions yet) first get prev recorded as version 1.
+func (m *mockAgentStore) recordVersion(cfg, prev *llm.BotConfig, meta store.AgentVersionMeta) {
+	history := m.versions[cfg.ID]
+	if len(history) == 0 && prev != nil {
+		history = append(history, store.AgentVersionDetail{
+			Version:       1,
+			Source:        store.AgentVersionSourceInitial,
+			CreateAt:      prev.UpdateAt,
+			ChangedFields: []string{},
+			Config:        mockVersionSnapshot(prev),
+		})
+	}
+	snap := mockVersionSnapshot(cfg)
+	changed := []string{}
+	if len(history) > 0 {
+		changed = audit.ChangedJSONKeys(history[len(history)-1].Config, snap)
+	}
+	history = append(history, store.AgentVersionDetail{
+		Version:             mockLatestVersion(history) + 1,
+		CreatedBy:           meta.ActorID,
+		CreateAt:            cfg.UpdateAt,
+		Source:              meta.Source,
+		RestoredFromVersion: meta.RestoredFromVersion,
+		ChangedFields:       changed,
+		Config:              snap,
+	})
+	m.versions[cfg.ID] = history
+}
+
+func (m *mockAgentStore) ListAgentVersions(agentID string, before, limit int) (store.AgentVersionPage, error) {
+	if limit < 1 {
+		return store.AgentVersionPage{}, fmt.Errorf("invalid agent version page size %d", limit)
+	}
+	history := m.versions[agentID]
+	page := store.AgentVersionPage{CurrentVersion: mockLatestVersion(history), Versions: []store.AgentVersion{}}
+	for _, h := range slices.Backward(history) {
+		if before > 0 && h.Version >= before {
+			continue
+		}
+		if len(page.Versions) == limit {
+			page.HasMore = true
+			break
+		}
+		page.Versions = append(page.Versions, h.AgentVersion)
+	}
+	return page, nil
+}
+
+func (m *mockAgentStore) GetAgentVersion(agentID string, version int) (*store.AgentVersionDetail, error) {
+	for _, detail := range m.versions[agentID] {
+		if detail.Version == version {
+			detail.Config = *cloneBotConfig(&detail.Config)
+			return &detail, nil
+		}
+	}
+	return nil, nil
+}
+
+func mockLatestVersion(history []store.AgentVersionDetail) int {
+	if len(history) == 0 {
+		return 0
+	}
+	return history[len(history)-1].Version
+}
+
+func (m *mockAgentStore) DeleteAgentVersions(agentID string, versions []int) (int64, error) {
+	history := m.versions[agentID]
+	if slices.Contains(versions, mockLatestVersion(history)) {
+		return 0, store.ErrCurrentAgentVersion
+	}
+	kept := slices.DeleteFunc(slices.Clone(history), func(v store.AgentVersionDetail) bool {
+		return slices.Contains(versions, v.Version)
+	})
+	m.versions[agentID] = kept
+	return int64(len(history) - len(kept)), nil
+}
+
+func (m *mockAgentStore) DeletePreviousAgentVersions(agentID string) (int64, error) {
+	history := m.versions[agentID]
+	if len(history) == 0 {
+		return 0, nil
+	}
+	m.versions[agentID] = history[len(history)-1:]
+	return int64(len(history) - 1), nil
 }
 
 // cloneBotConfig returns a deep copy so API callers cannot mutate mock store internals via returned pointers.
@@ -548,7 +693,7 @@ func cloneBotConfig(src *llm.BotConfig) *llm.BotConfig {
 	return &dst
 }
 
-func (m *mockAgentStore) CreateAgent(cfg *llm.BotConfig) error {
+func (m *mockAgentStore) CreateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error {
 	if m.createErr != nil {
 		return m.createErr
 	}
@@ -557,6 +702,7 @@ func (m *mockAgentStore) CreateAgent(cfg *llm.BotConfig) error {
 	cfg.CreateAt = now
 	cfg.UpdateAt = now
 	m.agents[cfg.ID] = cloneBotConfig(cfg)
+	m.recordVersion(cfg, nil, meta)
 	return nil
 }
 
@@ -601,7 +747,7 @@ func (m *mockAgentStore) CountActiveAgents() (int, error) {
 	return count, nil
 }
 
-func (m *mockAgentStore) UpdateAgent(cfg *llm.BotConfig) error {
+func (m *mockAgentStore) UpdateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error {
 	if len(m.updateErrs) > 0 {
 		err := m.updateErrs[0]
 		m.updateErrs = m.updateErrs[1:]
@@ -618,6 +764,7 @@ func (m *mockAgentStore) UpdateAgent(cfg *llm.BotConfig) error {
 	}
 	cfg.UpdateAt = time.Now().UnixMilli()
 	m.agents[cfg.ID] = cloneBotConfig(cfg)
+	m.recordVersion(cfg, existing, meta)
 	return nil
 }
 
@@ -627,6 +774,7 @@ func (m *mockAgentStore) DeleteAgent(id string) error {
 		return fmt.Errorf("agent %q not found or already deleted", id)
 	}
 	cfg.DeleteAt = time.Now().UnixMilli()
+	delete(m.versions, id)
 	return nil
 }
 
@@ -756,6 +904,10 @@ func (e *TestEnvironment) setBots(registry ...*bots.Bot) {
 	e.bots.SetBotsForTesting(registry)
 }
 
+// askForEveryTool is a tool policy checker that never lets a tool run
+// without approval.
+var askForEveryTool = mcp.ToolPolicyFunc(func(string, string) (string, bool) { return mcp.ToolPolicyAsk, false })
+
 func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	mockAPI := &plugintest.API{}
 	noopMetrics := &metrics.NoopMetrics{}
@@ -805,6 +957,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		nil,
 		nil,
 		cfg,
+		askForEveryTool,
 	)
 
 	api := New(
@@ -887,28 +1040,42 @@ func TestAIBotRequiredUsesConfiguredDefaultBot(t *testing.T) {
 }
 
 func TestAIBotRequiredDoesNotSubstituteAnotherAgent(t *testing.T) {
+	const firstID = "firstbotuserid123456789012"
+	const namedID = "namedbotuserid123456789012"
+	const missingID = "missingbotuserid1234567890"
 	first := bots.NewBot(
 		llm.BotConfig{Name: "first", DisplayName: "First"},
 		llm.ServiceConfig{},
-		&model.Bot{UserId: "firstbotuserid12345678901", Username: "first", DisplayName: "First"},
+		&model.Bot{UserId: firstID, Username: "first", DisplayName: "First"},
 		nil,
 	)
 	named := bots.NewBot(
 		llm.BotConfig{Name: "named", DisplayName: "Named"},
 		llm.ServiceConfig{},
-		&model.Bot{UserId: "namedbotuserid12345678901", Username: "named", DisplayName: "Named"},
+		&model.Bot{UserId: namedID, Username: "named", DisplayName: "Named"},
 		nil,
 	)
 
 	tests := []struct {
-		name           string
-		query          string
-		defaultBotName string
-		expected       *bots.Bot
+		name             string
+		query            string
+		defaultBotUserID string
+		defaultBotName   string
+		expected         *bots.Bot
+		expectedStatus   int
 	}{
-		{name: "requested agent is served", query: "?botUsername=named", expected: named},
-		{name: "requested agent is unavailable", query: "?botUsername=renamed"},
-		{name: "configured default agent is unavailable", defaultBotName: "renamed"},
+		{name: "agent requested by ID is served", query: "?botId=" + namedID, expected: named},
+		{name: "requested ID wins over requested username", query: "?botId=" + namedID + "&botUsername=first", expected: named},
+		{name: "agent requested by ID is unavailable", query: "?botId=" + missingID + "&botUsername=named", expectedStatus: http.StatusNotFound},
+		{name: "requested ID is not a bot user ID", query: "?botId=named", expectedStatus: http.StatusBadRequest},
+		{name: "agent requested by username is served", query: "?botUsername=named", expected: named},
+		{name: "agent requested by username is unavailable", query: "?botUsername=renamed", expectedStatus: http.StatusNotFound},
+		{name: "default agent by ID is served", defaultBotUserID: namedID, expected: named},
+		{name: "default agent ID wins over legacy name", defaultBotUserID: namedID, defaultBotName: "first", expected: named},
+		{name: "default agent by legacy name is served", defaultBotName: "named", expected: named},
+		{name: "default agent ID is unavailable", defaultBotUserID: missingID, defaultBotName: "named", expectedStatus: http.StatusNotFound},
+		{name: "default agent legacy name is unavailable", defaultBotName: "renamed", expectedStatus: http.StatusNotFound},
+		{name: "requested agent wins over the default", query: "?botId=" + firstID, defaultBotUserID: namedID, expected: first},
 		{name: "no agent requested and no default configured", expected: first},
 	}
 
@@ -916,6 +1083,7 @@ func TestAIBotRequiredDoesNotSubstituteAnotherAgent(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			e := SetupTestEnvironment(t)
 			defer e.Cleanup(t)
+			e.config.defaultBotUserID = tc.defaultBotUserID
 			e.config.defaultBotName = tc.defaultBotName
 			e.mockAPI.On("GetUserByUsername", "renamed").
 				Return(nil, model.NewAppError("GetUserByUsername", "app.user.missing_account.const", nil, "", http.StatusNotFound)).Maybe()
@@ -929,7 +1097,7 @@ func TestAIBotRequiredDoesNotSubstituteAnotherAgent(t *testing.T) {
 
 			if tc.expected == nil {
 				require.True(t, ctx.IsAborted())
-				require.Equal(t, http.StatusNotFound, w.Code)
+				require.Equal(t, tc.expectedStatus, w.Code)
 				_, set := ctx.Get(ContextBotKey)
 				require.False(t, set, "no other agent may be selected in place of the requested one")
 				return
@@ -937,6 +1105,53 @@ func TestAIBotRequiredDoesNotSubstituteAnotherAgent(t *testing.T) {
 			require.False(t, ctx.IsAborted())
 			require.Same(t, tc.expected, ctx.MustGet(ContextBotKey).(*bots.Bot))
 		})
+	}
+}
+
+// TestBotRequiredRoutesAcceptBotID drives every route behind aiBotRequired
+// through the router, so a route that stops honoring botId fails here.
+func TestBotRequiredRoutesAcceptBotID(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	const missingID = "missingbotuserid1234567890"
+	routes := map[string]string{
+		"react":                   "/post/postid/react",
+		"analyze post":            "/post/postid/analyze",
+		"transcribe":              "/post/postid/transcribe/file/fileid",
+		"summarize_transcription": "/post/postid/summarize_transcription",
+		"postback_summary":        "/post/postid/postback_summary",
+		"loop_in_agent":           "/post/postid/loop_in_agent",
+		"analyze channel":         "/channel/channelid/analyze",
+		"interval":                "/channel/channelid/interval",
+		"search run":              "/search/run",
+	}
+	tests := []struct {
+		name           string
+		query          string
+		expectedStatus int
+	}{
+		{name: "missing agent", query: "?botId=" + missingID, expectedStatus: http.StatusNotFound},
+		{name: "malformed bot user ID", query: "?botId=permtest", expectedStatus: http.StatusBadRequest},
+	}
+
+	for routeName, url := range routes {
+		for _, tc := range tests {
+			t.Run(routeName+" "+tc.name, func(t *testing.T) {
+				e := SetupTestEnvironment(t)
+				defer e.Cleanup(t)
+				e.setupTestBot(llm.BotConfig{Name: "permtest"})
+				e.mockAPI.On("GetPost", "postid").Return(&model.Post{ChannelId: "channelid"}, nil).Maybe()
+				e.mockAPI.On("GetChannel", "channelid").Return(&model.Channel{Id: "channelid", Type: model.ChannelTypeOpen, TeamId: "teamid"}, nil).Maybe()
+				e.mockAPI.On("HasPermissionToChannel", testUserID, "channelid", model.PermissionReadChannel).Return(true).Maybe()
+
+				request := httptest.NewRequest(http.MethodPost, url+tc.query, nil)
+				request.Header.Add("Mattermost-User-ID", testUserID)
+				recorder := httptest.NewRecorder()
+				e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+				require.Equal(t, tc.expectedStatus, recorder.Code)
+			})
+		}
 	}
 }
 
@@ -1003,21 +1218,26 @@ func TestDefaultAgentFlagFollowsLiveAccount(t *testing.T) {
 	const otherID = "otherbotuserid12345678901a"
 
 	tests := []struct {
-		name           string
-		defaultBotName string
-		expectDefault  string
+		name             string
+		defaultBotUserID string
+		defaultBotName   string
+		expectDefault    string
 	}{
-		{name: "default setting follows the rename", defaultBotName: "new-name", expectDefault: defaultID},
-		{name: "default setting names the released username", defaultBotName: "old-name"},
+		{name: "default setting holds the agent's bot user ID", defaultBotUserID: defaultID, expectDefault: defaultID},
+		{name: "default bot user ID wins over legacy name", defaultBotUserID: defaultID, defaultBotName: "other", expectDefault: defaultID},
+		{name: "default bot user ID names no agent", defaultBotUserID: "missingbotuserid1234567890"},
+		{name: "legacy default name follows the rename", defaultBotName: "new-name", expectDefault: defaultID},
+		{name: "legacy default name is the released username", defaultBotName: "old-name"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			e := SetupTestEnvironment(t)
 			defer e.Cleanup(t)
+			e.config.defaultBotUserID = tc.defaultBotUserID
 			e.config.defaultBotName = tc.defaultBotName
 
-			e.mockAPI.On("GetUser", defaultID).Return(&model.User{Id: defaultID, Username: "new-name", IsBot: true}, nil)
+			e.mockAPI.On("GetUser", defaultID).Return(&model.User{Id: defaultID, Username: "new-name", IsBot: true}, nil).Maybe()
 			e.mockAPI.On("GetUser", otherID).Return(&model.User{Id: otherID, Username: "other", IsBot: true}, nil).Maybe()
 			e.mockAPI.On("GetUserByUsername", "new-name").Return(&model.User{Id: defaultID, Username: "new-name", IsBot: true}, nil).Maybe()
 			e.mockAPI.On("GetUserByUsername", "old-name").
@@ -1115,6 +1335,11 @@ func TestPostRouter(t *testing.T) {
 				},
 			},
 		} {
+			// The agent-post routes check access to the post's agent in the
+			// service; TestPostResumeRoutesUseThePostsAgent covers them.
+			if name == "user not allowed" && (urlName == "stop" || urlName == "regenerate") {
+				continue
+			}
 			t.Run(urlName+" "+name, func(t *testing.T) {
 				e := SetupTestEnvironment(t)
 				defer e.Cleanup(t)
@@ -1123,7 +1348,10 @@ func TestPostRouter(t *testing.T) {
 
 				e.setupTestBot(test.botconfig)
 
+				// The agent-post routes resolve the agent from the post's
+				// author; the others ignore it.
 				e.mockAPI.On("GetPost", "postid").Return(&model.Post{
+					UserId:    testBotUserID,
 					ChannelId: "channelid",
 				}, nil)
 				e.mockAPI.On("LogError", mock.Anything).Maybe()
@@ -1270,7 +1498,7 @@ func TestEmptyBodyCheckerInApi(t *testing.T) {
 			defer e.Cleanup(t)
 
 			e.mockAPI.On("LogDebug", "Request rejected", "method", http.MethodPost, "path", mock.Anything, "status", http.StatusBadRequest, "error", "request body must be empty")
-			e.mockAPI.On("GetPost", mock.Anything).Return(&model.Post{}, nil).Maybe()
+			e.mockAPI.On("GetPost", mock.Anything).Return(&model.Post{UserId: testBotUserID}, nil).Maybe()
 			e.mockAPI.On("GetChannel", mock.Anything).Return(&model.Channel{}, nil).Maybe()
 			e.mockAPI.On("HasPermissionToChannel", mock.Anything, mock.Anything, model.PermissionReadChannel).Return(true).Maybe()
 			e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageSystem).Return(true).Maybe()
@@ -1364,6 +1592,7 @@ func TestHandleGetAIBots(t *testing.T) {
 		expectedUseServiceAccountAuth bool
 		expectedSearchEnabled         bool
 		expectedAllowUnsafeLinks      bool
+		expectedHTMLArtifacts         bool
 		expectedStatus                int
 		envSetup                      func(e *TestEnvironment)
 	}{
@@ -1411,6 +1640,15 @@ func TestHandleGetAIBots(t *testing.T) {
 			expectedStatus:                http.StatusOK,
 			envSetup: func(e *TestEnvironment) {
 				e.config.allowUnsafeLinks = true
+				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
+			},
+		},
+		{
+			name:                  "html artifacts enabled via config",
+			expectedHTMLArtifacts: true,
+			expectedStatus:        http.StatusOK,
+			envSetup: func(e *TestEnvironment) {
+				e.config.enableHTMLArtifacts = true
 				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
 			},
 		},
@@ -1469,6 +1707,7 @@ func TestHandleGetAIBots(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, test.expectedSearchEnabled, response.SearchEnabled, "SearchEnabled field should match expected value")
 				require.Equal(t, test.expectedAllowUnsafeLinks, response.AllowUnsafeLinks, "AllowUnsafeLinks field should match expected value")
+				require.Equal(t, test.expectedHTMLArtifacts, response.HTMLArtifactsEnabled, "HTMLArtifactsEnabled field should match expected value")
 				require.NotEmpty(t, response.Bots, "Should return at least one bot")
 				require.Equal(t, test.expectedUseServiceAccountAuth, response.Bots[0].UseServiceAccountAuth,
 					"UseServiceAccountAuth field should report the effective service account mode")

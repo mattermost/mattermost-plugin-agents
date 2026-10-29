@@ -73,6 +73,11 @@ export class PluginAdminConfigApi {
         const settleMs = options?.settleMs ?? DEFAULT_PUT_SETTLE_MS;
         await new Promise((resolve) => setTimeout(resolve, settleMs));
     }
+
+    /** Overwrites the given top-level fields, preserving the rest of the config. */
+    async patch(changes: Record<string, unknown>, options?: { settleMs?: number }): Promise<void> {
+        await this.put({...(await this.get()), ...changes}, options);
+    }
 }
 
 export function pluginAdminConfigApiFromClient(
@@ -155,6 +160,19 @@ export class PluginRoutesApi {
             throw new Error(`${path} failed: ${response.status} ${text}`);
         }
         return response.json();
+    }
+
+    /** Sends the request and returns the response as-is, for tests that assert on error statuses. */
+    async request(method: string, path: string, token: string, body?: unknown): Promise<Response> {
+        const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+        if (body !== undefined) {
+            headers['Content-Type'] = 'application/json';
+        }
+        return fetch(this.pluginUrl(path), {
+            method,
+            headers,
+            body: body === undefined ? undefined : JSON.stringify(body),
+        });
     }
 
     async deleteRequest(path: string, token: string): Promise<void> {

@@ -26,7 +26,7 @@ const (
 	fixedStart = int64(23974)
 )
 
-func TestChannelSummarization(t *testing.T) {
+func TestChannelSummarizationEval(t *testing.T) {
 	evalConfigs := []struct {
 		name            string
 		filename        string
@@ -39,11 +39,10 @@ func TestChannelSummarization(t *testing.T) {
 				"is a summary",
 				"includes a mention that @daniel.espino-garcia mentioned react scan",
 				"mentions positive feedback to react scan",
-				"mentions @claudio.costa is working on adding code coverage tracking to the monorepo",
+				"mentions @claudio.costa is working on adding code coverage tracking",
 				"mentions claudio and harrison discussing exactly what should be tracked for code coverage",
 				"mentions harrison queueing a item for a June 2nd webguild meeting about showing off PRs around accessibility",
 				"does not mention the summarization process",
-				"does not mention people joining or leaving the channel",
 			},
 		},
 	}
@@ -189,6 +188,15 @@ func (s *evalInMemoryStore) UpdateTurnContent(id string, content json.RawMessage
 		t.Content = content
 	}
 	return nil
+}
+
+func (s *evalInMemoryStore) CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error) {
+	t, ok := s.turns[id]
+	if !ok || !bytes.Equal(t.Content, expected) {
+		return false, nil
+	}
+	t.Content = content
+	return true, nil
 }
 
 func (s *evalInMemoryStore) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {

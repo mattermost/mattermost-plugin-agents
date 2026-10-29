@@ -254,7 +254,7 @@ func TestClientManagerServiceAccountEmbeddedSessionAsInvoker(t *testing.T) {
 		invokingUserID: "user-a-session",
 	})
 	embeddedServer := &recordingEmbeddedMCPServer{
-		fakeEmbeddedMCPServer: fakeEmbeddedMCPServer{ctx: runCtx, server: newTestMCPServer(0, "search_users")},
+		ctx: runCtx, server: newTestMCPServer(0, "search_users"),
 	}
 	m := NewClientManager(Config{
 		IdleTimeoutMinutes: 30,
@@ -352,7 +352,7 @@ func TestClientManagerServiceAccountInvokersDoNotShareEmbeddedSession(t *testing
 		"user-b": "session-b",
 	})
 	embeddedServer := &recordingEmbeddedMCPServer{
-		fakeEmbeddedMCPServer: fakeEmbeddedMCPServer{ctx: runCtx, server: newTestMCPServer(0, "search_users")},
+		ctx: runCtx, server: newTestMCPServer(0, "search_users"),
 	}
 	m := NewClientManager(Config{
 		IdleTimeoutMinutes: 30,

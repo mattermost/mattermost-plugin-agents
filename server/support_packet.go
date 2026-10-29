@@ -40,6 +40,7 @@ type SupportPacket struct {
 	EnableCallSummary               bool `yaml:"enable_call_summary"`
 	EnableTokenUsageLogging         bool `yaml:"enable_token_usage_logging"`
 	EnableChannelMentionToolCalling bool `yaml:"enable_channel_mention_tool_calling"`
+	EnableAmbientAutoReply          bool `yaml:"enable_ambient_auto_reply"`
 	AllowNativeWebSearchInChannels  bool `yaml:"allow_native_web_search_in_channels"`
 	WebSearchEnabled                bool `yaml:"web_search_enabled"`
 	EmbeddingSearchEnabled          bool `yaml:"embedding_search_enabled"`
@@ -104,6 +105,7 @@ func buildSupportPacket(store agentCounter, cfg *config.Config, version string) 
 		EnableCallSummary:               cfg.EnableCallSummary,
 		EnableTokenUsageLogging:         cfg.EnableTokenUsageLogging,
 		EnableChannelMentionToolCalling: cfg.EnableChannelMentionToolCalling,
+		EnableAmbientAutoReply:          cfg.EnableAmbientAutoReply,
 		AllowNativeWebSearchInChannels:  cfg.AllowNativeWebSearchInChannels,
 		WebSearchEnabled:                cfg.WebSearch.Enabled,
 		EmbeddingSearchEnabled:          cfg.EmbeddingSearchConfig.Type != "",

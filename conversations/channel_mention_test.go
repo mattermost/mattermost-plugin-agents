@@ -55,6 +55,7 @@ func TestMain(m *testing.M) {
 		fmt.Printf("Failed to get connection string: %v\n", err)
 		os.Exit(1)
 	}
+	conversations.PostgresTestConnStr = channelMentionTestConnStr
 
 	code := m.Run()
 
@@ -781,6 +782,7 @@ func setupDeletedPostFixture(t *testing.T) *deletedPostFixture {
 		nil,
 		nil,
 		nil,
+		newDMPolicyChecker(),
 	)
 	service.SetConversationService(convService)
 

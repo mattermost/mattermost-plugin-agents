@@ -101,7 +101,7 @@ func TestAvailability(t *testing.T) {
 		// early initialization when no search exists yet.
 		a := NewAvailability()
 		a.SetQueryAllowedFunc(func() bool {
-			t.Fatal("predicate must not be called when search is nil")
+			require.FailNow(t, "predicate must not be called when search is nil")
 			return true
 		})
 		require.Nil(t, a.QuerySearch())

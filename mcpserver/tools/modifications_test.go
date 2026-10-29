@@ -123,20 +123,22 @@ func TestApplySearchModifiers(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := provider.applySearchModifiers(t.Context(), client, "hello", tt.args)
+			got, teamID := provider.applySearchModifiers(t.Context(), client, "hello", tt.args)
 			assert.Equal(t, tt.want, got)
+			assert.Empty(t, teamID, "a channel name should not imply a team")
 		})
 	}
 }
 
 // TestApplySearchModifiersResolvesChannelID verifies that an ID passed to `in`
-// is resolved to the channel URL name.
+// is resolved to the channel URL name and its team.
 func TestApplySearchModifiersResolvesChannelID(t *testing.T) {
 	channelID := model.NewId()
+	teamID := model.NewId()
 	mux := http.NewServeMux()
 	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", channelID), func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(&model.Channel{Id: channelID, Name: "resolved-name", DisplayName: "Resolved"})
+		_ = json.NewEncoder(w).Encode(&model.Channel{Id: channelID, Name: "resolved-name", DisplayName: "Resolved", TeamId: teamID})
 	})
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
@@ -144,6 +146,7 @@ func TestApplySearchModifiersResolvesChannelID(t *testing.T) {
 	provider := newTestProvider(t, ts.URL)
 	client := newTestClient(ts.URL)
 
-	got := provider.applySearchModifiers(t.Context(), client, "hello", CombinedSearchArgs{In: channelID})
+	got, gotTeamID := provider.applySearchModifiers(t.Context(), client, "hello", CombinedSearchArgs{In: channelID})
 	assert.Equal(t, "in:resolved-name hello", got)
+	assert.Equal(t, teamID, gotTeamID)
 }

@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -9,17 +10,17 @@ import { OpenAIMockContainer, RunOpenAIMocks, responseTest } from 'helpers/opena
 const username = 'regularuser';
 const password = 'regularuser';
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
-test.beforeAll(async () => {
-    mattermost = await RunContainer();
-    openAIMock = await RunOpenAIMocks(mattermost.network);
-});
-
-test.afterAll(async () => {
-    await openAIMock.stop();
-    await mattermost.stop();
+test.beforeAll(async ({ containers }) => {
+    ({ mattermost, openAIMock } = containers);
 });
 
 async function setupTestPage(page) {
@@ -130,7 +131,7 @@ async function renderPromptViaAPI(
     client: any,
     promptId: string,
     channelId = '',
-    botUsername = '',
+    botId = '',
 ) {
     const baseUrl = mattermost.url();
     const response = await fetch(`${baseUrl}/plugins/mattermost-ai/custom-prompts/${promptId}/render`, {
@@ -139,7 +140,7 @@ async function renderPromptViaAPI(
             Authorization: `Bearer ${client.getToken()}`,
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ channel_id: channelId, bot_username: botUsername }),
+        body: JSON.stringify({ channel_id: channelId, bot_id: botId }),
     });
     if (!response.ok) {
         throw new Error(`renderPromptViaAPI failed: ${response.status} ${response.statusText}`);

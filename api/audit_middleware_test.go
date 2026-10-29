@@ -194,6 +194,8 @@ func TestAuditMiddlewareSaveConfig(t *testing.T) {
 			defer e.Cleanup(t)
 			store.getErr = tt.getErr
 			store.saveErr = tt.saveErr
+			e.mockAPI.On("GetUserByUsername", "ai").
+				Return(nil, model.NewAppError("GetUserByUsername", "app.user.missing_account.const", nil, "", http.StatusNotFound)).Maybe()
 
 			if tt.userID != "" {
 				e.mockAPI.On("HasPermissionTo", tt.userID, model.PermissionManageSystem).Return(tt.isAdmin)
@@ -244,6 +246,8 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		{event: AuditEventUpdateAgent, method: http.MethodPut, path: "/agents/agentid"},
 		{event: AuditEventDeleteAgent, method: http.MethodDelete, path: "/agents/agentid"},
 		{event: AuditEventUpdateAgentAvatar, method: http.MethodPost, path: "/agents/agentid/avatar"},
+		{event: AuditEventRestoreAgentVersion, method: http.MethodPost, path: "/agents/agentid/versions/1/restore"},
+		{event: AuditEventDeleteAgentVersions, method: http.MethodDelete, path: "/agents/agentid/versions"},
 		{event: AuditEventCreateCustomPrompt, method: http.MethodPost, path: "/custom-prompts"},
 		{event: AuditEventUpdateCustomPrompt, method: http.MethodPut, path: "/custom-prompts/promptid"},
 		{event: AuditEventDeleteCustomPrompt, method: http.MethodDelete, path: "/custom-prompts/promptid"},

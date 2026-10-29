@@ -11,6 +11,11 @@ import {WebSearchConfig as WebSearchSettings} from './web_search/web_search_pane
 export type PluginConfig = {
     services: LLMService[] | null,
     bots: LLMBotConfig[] | null,
+
+    // Agents are referenced by immutable bot user ID. The legacy username
+    // fields are only read by the server when the matching ID is empty.
+    defaultBotUserID: string,
+    transcriptBotUserID: string,
     defaultBotName: string,
     transcriptBackend: string,
     telemetryOutput: 'off' | 'logs' | 'otlp' | '',
@@ -21,9 +26,14 @@ export type PluginConfig = {
     enableCallSummary: boolean,
     allowedUpstreamHostnames: string,
     allowUnsafeLinks: boolean,
+    enableHTMLArtifacts?: boolean,
     enableChannelMentionToolCalling: boolean,
+    enableAmbientAutoReply?: boolean,
     allowNativeWebSearchInChannels: boolean,
     embeddingSearchConfig: EmbeddingSearchConfig,
     mcp: MCPConfig,
     webSearch: WebSearchSettings,
+
+    // Versions of each agent's history to keep; 0 keeps every version.
+    agentVersionsToKeep?: number,
 }

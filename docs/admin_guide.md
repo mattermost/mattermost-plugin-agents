@@ -59,6 +59,16 @@ When this setting is set to **True**, AI-generated links may be rendered as clic
 
 Enable this setting only in trusted or otherwise mitigated environments, such as where users are trained to validate links and your organization has endpoint protections and URL controls in place.
 
+### Agent version history limit
+
+Every save of an agent records a version in its history. By default every version is kept.
+
+- **System Console labels**: **Limit agent version history** and **Versions to keep per agent**
+- **Configuration key**: `agentVersionsToKeep` (`0` keeps every version)
+- **Default value**: `0`
+
+When a limit is set, each agent keeps only its most recent versions, including the current one. Saving the setting deletes older versions of every agent, and each later save of an agent deletes the versions that fall outside the limit. Deleted versions can't be recovered. Agent managers can also delete versions themselves; see [Deleting versions](features/managing_agents.md#deleting-versions).
+
 ### Service configuration
 
 Configure an LLM provider (Service) for your Agents integration. Services manage the connection to the LLM provider, including authentication, model defaults, and optional fallback behavior. You can create multiple services for different providers or configurations, and share them across multiple agents.
@@ -147,7 +157,7 @@ If you have unsaved changes and try to leave the agent configuration view by sel
 | **Agent Avatar** | Custom image for the agent |
 | **Service** | Select a configured Service from the dropdown |
 | **Model** | (Optional) Override the service's default model for this agent |
-| **Max tool turns** | Maximum consecutive tool-call/execute rounds per response. Default **30**, range **1–250**. Lower for smaller models that loop on tool calls; raise for agents that chain many MCP tools per turn. |
+| **Max tool turns** | Maximum consecutive tool-call/execute rounds per response; after the last round the agent answers without tools. Default **30**, range **1–250**. Lower for smaller models that loop on tool calls; raise for agents that chain many MCP tools per turn. |
 | **Custom Instructions** | Custom instructions that define the agent's personality and capabilities |
 | **Enable Vision** | Enable Vision to allow the agent to process images. Requires a compatible model and service. |
 | **Enable Tools** | Enables tool use for integrations and other tool-based capabilities. Disable this only for models or use cases where tool calling shouldn't be available. Some features won't work without tools. |
@@ -296,8 +306,8 @@ To obtain Google Custom Search credentials:
 
 #### Usage and limitations
 
-- Agents are limited to **3 web searches per conversation** to manage API costs and prevent LLMs from looping indefinitely
-- Agents cannot repeat the same search query within a conversation
+- Agents are limited to **3 web searches per response** to manage API costs and prevent LLMs from looping indefinitely
+- Agents cannot repeat the same search query within a response
 - Search results include clickable citations that link back to source websites
 - Domain denylisting applies to all providers and is enforced for _web page fetching only_. 
 
@@ -347,7 +357,7 @@ Notes on deferred reindex:
 
 Configure who can access AI features by setting team-level, channel-level, and user-level permissions for each agent.
 
-Per-channel agent auto-reply is governed by the channel-management permission (`manage_public_channel_properties` or `manage_private_channel_properties`, depending on the channel type), checked server-side on writes; channel members can read the current setting. The auto-reply endpoints do not depend on the workspace default agent: reads and writes work even when the default agent is restricted from the channel or user (or when no agents are configured at all), and writes validate the *selected* agent's channel access instead. Channel agent auto-reply is available at Enterprise Advanced; below that level the channel settings tab is hidden and any stored setting is inactive. Turning auto-reply off through the REST endpoint never requires a license, so an existing setting is always clearable. The channel settings tab UI requires Mattermost v11.10 or later; on older servers the tab is hidden, but the REST endpoint (`GET`/`PUT /plugins/mattermost-ai/channel/{channelid}/autoreply`) remains available.
+Per-channel agent auto-reply is governed by the channel-management permission (`manage_public_channel_properties` or `manage_private_channel_properties`, depending on the channel type), checked server-side on writes; channel members can read the current mode and agent, while the ambient instructions are returned only to users with that permission. The auto-reply endpoints do not depend on the workspace default agent: reads and writes work even when the default agent is restricted from the channel or user (or when no agents are configured at all), and writes validate the *selected* agent's channel access instead. Channel agent auto-reply is available at Enterprise Advanced; below that level the channel settings tab is hidden and any stored setting is inactive. Turning auto-reply off through the REST endpoint never requires a license, so an existing setting is always clearable. The two experimental ambient modes (**Ambient** and **Ambient in mentioned threads**) additionally require **Enable ambient auto-replies** in the plugin's system console settings, which is off by default. Ambient modes run an LLM classification call for each eligible message, so expect extra token usage in channels that use them. To bound that cost, each server node runs at most 8 classifications at once and classifies at most a burst of 6 messages per channel, then about one every 5 seconds; messages over those limits get no ambient reply. Turning the setting off immediately stops ambient replies in every channel and blocks saving ambient modes; stored ambient settings are kept, so they resume if the setting is turned back on. Before downgrading the plugin to a version without ambient modes, switch every ambient channel to another mode or off: older versions treat an unknown mode as replying to every message. The channel settings tab UI requires Mattermost v11.10 or later; on older servers the tab is hidden, but the REST endpoint (`GET`/`PUT /plugins/mattermost-ai/channel/{channelid}/autoreply`) remains available.
 
 ### Attribute-based access control (ABAC)
 
@@ -641,7 +651,7 @@ Restoring only plugin configuration isn't sufficient to restore agents managed f
 
 The plugin uses a service-based architecture:
 
-- `PluginSettings.Plugins["mattermost-ai"]["config"]` stores plugin-wide settings and AI service configurations, including `defaultBotName`
+- `PluginSettings.Plugins["mattermost-ai"]["config"]` stores plugin-wide settings and AI service configurations, including `defaultBotUserID`
 - Agents are stored separately in the `Agents_UserAgents` table
 
 This separation allows multiple agents to share the same LLM service configuration while keeping agent lifecycle and access data out of `config.bots`.
@@ -660,10 +670,12 @@ This separation allows multiple agents to share the same LLM service configurati
         "fallbackServiceID": "z9d4meq7jtrx5nch1u8kwsoa3e"
       }
     ],
-    "defaultBotName": "ai"
+    "defaultBotUserID": "q8n4w7bpstfxjcmk3yr9zhde1a"
   }
 }
 ```
+
+`defaultBotUserID` and `transcriptBotUserID` select the default and transcript agents by bot user ID, so renaming an agent doesn't change which agent they select. The legacy `defaultBotName` and `transcriptBackend` username fields are still read when the matching ID field is empty: they select only the agent whose account currently holds that username. On startup, and whenever the configuration is saved, the plugin replaces each legacy username with the bot user ID of the agent holding it; a username that no agent holds is left in place and logged as a warning. Automation should write the ID fields and set the legacy fields to `""`.
 
 Service IDs are Mattermost-style 26-character IDs. Configurations created before this format was adopted used UUIDs; those are rewritten once on upgrade, so external automation that hard-coded UUID service IDs must re-read `GET /plugins/mattermost-ai/admin/config` to pick up the new IDs.
 
@@ -697,6 +709,41 @@ Integrations are available in direct messages by default. If you enable the expe
 ### File creation by agents
 
 The built-in `CreateFile` tool lets an agent create a text file that is attached to its own reply. It executes automatically without an approval prompt — like the dynamic tool loading meta-tools — because its only effect is attaching a file to the agent's own response; users see a resolved (auto-approved) tool card. The embedded and external MCP posting tools (`create_post`, `dm`, `group_message`) also accept an inline `files` parameter and create the attachments as the acting user, subject to those tools' configured approval policies. In channels, availability of all of these follows the existing **Enable Channel Mention Tool Calling** setting.
+
+### HTML artifacts
+
+When **Enable HTML artifacts** is turned on (`enableHTMLArtifacts` in the plugin configuration, off by default), HTML files (`.html`/`.htm`) attached to a post by one of the plugin's agents are rendered as interactive artifacts inline in the agent's reply and can be opened in a fullscreen viewer. This covers files the agent creates with the `CreateFile` tool and HTML files produced by the code execution sandbox (code interpreter) that the agent attaches to its reply. The `CreateFile` tool description also tells the model that HTML files must be self-contained and how to use the theme variables and viewer API. HTML artifacts are an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature.
+
+Requirements:
+
+- **Chromium 152 or later for full network isolation.** The plugin sends a `Connection-Allowlist: ()` response header that blocks every network connection an artifact starts, including WebRTC. Only Chromium 152 and later honor it: Chrome, Edge, and Mattermost Desktop App versions built on Chromium 152 or later. Other browsers, such as Firefox and Safari, ignore it, and in those browsers an artifact can still send data out through WebRTC (see Known limitations). If full isolation is required, enable this setting only where users run a supported browser.
+- **HTTPS or `localhost`.** Browsers send Fetch Metadata headers only to secure origins, so artifacts render only when Mattermost is served over HTTPS (or from `localhost`). Over plain HTTP the viewer sees the "can only be viewed inside Mattermost" page.
+- **A matching Site URL.** The **Site URL** (`ServiceSettings.SiteURL`) must match the address users open Mattermost at. The artifact's bridge posts its messages only to the origin of the Site URL, so if users reach Mattermost at a different origin, those messages are dropped and artifacts fail to load ("This artifact could not be loaded."). If the Site URL is not set, the bridge falls back to posting to any origin, which weakens this protection.
+
+Security model:
+
+- Artifacts are served by the plugin from `/plugins/mattermost-ai/artifacts/{file_id}` only for HTML files attached to a post authored by one of this plugin's agents, and only to users who can read the post's channel (and pass the file download access policy).
+- The response carries a `Content-Security-Policy` with `sandbox allow-scripts`, so the document runs in an opaque origin even when opened directly in a tab, and the embedding iframe uses `sandbox="allow-scripts"`. Artifact scripts cannot read Mattermost cookies, local storage, or call the Mattermost API.
+- The plugin serves artifact markup only to iframe loads started by Mattermost's own page (`Sec-Fetch-Dest: iframe` and `Sec-Fetch-Site: same-origin`). Any other load, such as opening the artifact URL in a new tab, gets a static, script-free page saying the artifact can only be viewed inside Mattermost, so artifact content never fills a tab without the host's safety notice. Each load carries a fresh random nonce (the `n` query parameter), and the bridge token authenticates one viewer, one file, and one load (an HMAC of the viewer, the file, and the nonce), so a token from one load is useless for any other.
+- The CSP allows no network requests via fetch/XHR/WebSocket (`connect-src 'none'`) and no external resources (scripts, styles, fonts, images); only inline code and `data:`/`blob:` resources are allowed.
+- The webapp embeds each artifact inside a script-free wrapper frame (same origin as Mattermost) whose `Content-Security-Policy` `frame-src` allows only that artifact's own URL. Browsers enforce a parent frame's `frame-src` on every navigation of a child frame, including navigations the child starts, so an artifact cannot navigate its frame to another site through links, `location` changes, meta refresh, or `blob:`/`data:` URLs. The navigation is blocked. This was verified in Chromium, Firefox, and WebKit.
+- The `Connection-Allowlist: ()` header (Chromium 152 and later only, see Requirements) blocks every network connection the document or its local-scheme child frames (`srcdoc`, `data:`, `blob:`) start, including WebRTC (STUN/TURN), navigations, and DNS prefetch.
+- The response carries a `Permissions-Policy` that denies browser features such as camera, microphone, geolocation, clipboard read and write, fullscreen, payment, and USB, serial, HID, and Bluetooth access, including the privacy-sandbox features an opaque-origin frame would otherwise get by default.
+- An artifact can reach user data only through a small host-mediated `postMessage` API (`window.mattermost`). In this version it exposes the viewer's theme and `getCurrentUser()`, which returns the viewer's name (first name, last name, nickname, and display name) and username (never their user ID, email, roles, or tokens) and requires the viewer's explicit consent; the artifact can only ask while the viewer is interacting with it, which includes right after the viewer's click on **Run**, **Open fullscreen**, **Reload**, or **Retry** (see the "Click to interact" bullet below). A keyboard answer to the consent prompt counts as **Allow** only if focus reached **Allow** and the key press started after the prompt armed (600 ms after it appeared); **Deny** works as soon as the prompt is armed. The viewer's locale is sent with the theme, without consent.
+- Artifacts larger than 5 MiB (or the server's maximum file size, if smaller) are not rendered; viewers can download them instead.
+- No artifact runs automatically, including for the user who asked the agent for it. Everyone sees a placeholder, and the artifact loads only after they click **Run** (or open it fullscreen). An artifact that ran without a click could act on a prompt injection with no human decision. Once a viewer runs an artifact, it keeps running when shown again during that browser session (for example in the right-hand sidebar), but it is not engaged there (see the next bullet).
+- A loaded artifact can take keyboard focus only while the viewer is interacting with it. The click that starts a run counts as the viewer's first interaction: after a click on **Run**, **Open fullscreen**, **Reload**, or **Retry**, the artifact loads engaged, receives keyboard focus when it finishes loading (so typing and scrolling go to it) without a second click, and may ask for consent right away; the consent prompt's protections are unchanged. If the viewer moves focus elsewhere before it finishes loading, it does not get focus. An artifact that starts running without a click (one the viewer already ran this browser session, shown again) is not engaged. Whenever the artifact is not engaged, a transparent "Click to interact" layer covers it and the viewer clicks it to continue; the layer's hint is always visible, and when the viewer tries to scroll over the artifact, the hint is briefly emphasized ("Click to scroll and interact") while the page keeps scrolling normally. An artifact that focuses itself while not engaged is stopped and unloaded, with focus returned to where the viewer was (for example the message box). Focus moving back to the page ends the interaction until the next click.
+- The injected bridge script sends the webapp a token-authenticated heartbeat. If it stops for 2 seconds the frame is hidden, and after 8 seconds it is unloaded. The webapp also stops and unloads an artifact whose frame loads a second time, for example when the artifact reloads itself or when Chromium or WebKit replace a blocked navigation with an error page. These guards are defense in depth behind the navigation block. Whatever replaced the artifact cannot use the `window.mattermost` API, because every message from the artifact must carry a bridge token that only the injected bridge script knows (it runs before any artifact script and removes itself from the page), and the webapp ignores messages without it.
+- The bridge prevents artifact code from re-opening the document after it loads (`document.open()`, and `document.write()` outside parsing), which would otherwise remove the bridge's listeners.
+- The **Download** button gives the original HTML file. Opened from disk, it runs in the browser without the sandbox, the CSP, or any of the protections above, so treat a downloaded artifact like any other untrusted HTML file.
+
+Known limitations: artifacts are not fully isolated from the network in every browser, and not at all from the clipboard.
+
+- In browsers other than Chromium 152 or later (for example Firefox and Safari), `Connection-Allowlist` is ignored and an artifact can open WebRTC connections, which are not governed by CSP or the iframe sandbox, and send data out that way. The bridge script removes the WebRTC constructors from the artifact's window before any artifact code runs, but this is best effort only: child frames (`srcdoc`, `about:blank`) and `blob:`/`data:` documents get fresh constructors, and the CSP does not block those child frames. Only `Connection-Allowlist` blocks WebRTC.
+- A known Chromium issue (observed in Chrome 155) crashes the browser tab when an artifact creates a WebRTC connection inside a nested `srcdoc` frame while `Connection-Allowlist` is in effect. No data leaves, but the viewer has to reload Mattermost. An artifact can therefore crash the tab; artifacts only run after the viewer clicks **Run**.
+- An artifact can write to the clipboard on a click (via `document.execCommand('copy')`), which no sandbox flag or Permissions-Policy controls. What it places on the clipboard may differ from what it displays, so treat anything copied out of an artifact, especially commands, as untrusted.
+
+Artifact navigation is blocked in every supported browser, and in Chromium 152 or later all network connections are blocked. In Firefox and Safari, WebRTC remains a way out for the artifact's own content, any profile data the viewer allowed it to read through the `window.mattermost` API, and anything the viewer types into the artifact. An artifact can draw anything inside its frame, including a convincing imitation of a Mattermost sign-in or "session expired" dialog, so it could phish for a password. To counter this, the artifact is always shown inside a bordered frame below a header that the artifact cannot draw over, and that header permanently tells viewers the content is AI-generated and that they should never enter passwords or sensitive information into it. Because the model writes the artifact, its content may include conversation or channel content the model had access to, and a prompt injection could cause the model to write an artifact that tries to leak it. This is why an artifact runs only after the viewer clicks **Run** and why the feature is off by default; enable it only where this risk is acceptable.
 
 ## Model Context Protocol (MCP) Integration
 

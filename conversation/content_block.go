@@ -34,6 +34,12 @@ const (
 	StatusAutoApproved = "auto_approved"
 )
 
+// Synthetic user turn kinds, persisted in ContentBlock.SyntheticKind.
+const (
+	SyntheticKindWake         = "wake"
+	SyntheticKindWakeCanceled = "wake_canceled"
+)
+
 // ContentBlock is a flat struct representing any content block type.
 // The Type field discriminates which fields are meaningful.
 // Uses omitempty on all optional fields so JSON output only includes relevant fields.
@@ -44,6 +50,10 @@ type ContentBlock struct {
 	Text      string     `json:"text,omitempty"`
 	Signature string     `json:"signature,omitempty"` // thinking blocks only
 	Citations []Citation `json:"citations,omitempty"` // text blocks only
+
+	// SyntheticKind marks text blocks of post-less user turns injected by the
+	// plugin (see SyntheticKind* constants).
+	SyntheticKind string `json:"synthetic_kind,omitempty"`
 
 	// ToolUse fields
 	ID           string          `json:"id,omitempty"`

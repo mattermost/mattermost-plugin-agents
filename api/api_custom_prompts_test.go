@@ -17,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/customprompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -30,7 +31,10 @@ import (
 
 var rootDSN = "postgres://mmuser:mostest@localhost:5432/postgres?sslmode=disable"
 
-func setupCustomPromptsTestEnvironment(t *testing.T) (*TestEnvironment, *customprompts.Store) {
+// setupTestDBClient creates a scratch database from PG_ROOT_DSN (skipping
+// when postgres is unreachable), runs the real migrations against it, and
+// returns a DBClient connected to it. The database is dropped on cleanup.
+func setupTestDBClient(t *testing.T, namePrefix string) *mmapi.DBClient {
 	t.Helper()
 
 	if dsn := os.Getenv("PG_ROOT_DSN"); dsn != "" {
@@ -43,7 +47,7 @@ func setupCustomPromptsTestEnvironment(t *testing.T) (*TestEnvironment, *customp
 	}
 	defer rootDB.Close()
 
-	dbName := fmt.Sprintf("customprompts_api_test_%d", model.GetMillis())
+	dbName := fmt.Sprintf("%s_%d", namePrefix, model.GetMillis())
 	_, err = rootDB.Exec("CREATE DATABASE " + dbName)
 	require.NoError(t, err)
 
@@ -65,8 +69,13 @@ func setupCustomPromptsTestEnvironment(t *testing.T) (*TestEnvironment, *customp
 	err = s.RunMigrations()
 	require.NoError(t, err)
 
-	dbClient := mmapi.NewTestDBClient(db)
-	cpStore := customprompts.NewStore(dbClient)
+	return mmapi.NewTestDBClient(db)
+}
+
+func setupCustomPromptsTestEnvironment(t *testing.T) (*TestEnvironment, *customprompts.Store) {
+	t.Helper()
+
+	cpStore := customprompts.NewStore(setupTestDBClient(t, "customprompts_api_test"))
 
 	env := SetupTestEnvironment(t)
 	env.api.customPromptsStore = cpStore
@@ -85,6 +94,48 @@ func createTestPrompt(t *testing.T, cpStore *customprompts.Store, creatorID stri
 	})
 	require.NoError(t, err)
 	return prompt
+}
+
+func TestRenderRequestBot(t *testing.T) {
+	const namedID = "namedbotuserid123456789012"
+	const otherID = "otherbotuserid123456789012"
+	named := bots.NewBot(llm.BotConfig{Name: "named"}, llm.ServiceConfig{},
+		&model.Bot{UserId: namedID, Username: "named"}, nil)
+	other := bots.NewBot(llm.BotConfig{Name: "other"}, llm.ServiceConfig{},
+		&model.Bot{UserId: otherID, Username: "other"}, nil)
+
+	tests := []struct {
+		name      string
+		req       RenderRequest
+		expected  *bots.Bot
+		expectErr bool
+	}{
+		{name: "agent selected by bot user ID", req: RenderRequest{BotID: namedID}, expected: named},
+		{name: "bot user ID wins over username", req: RenderRequest{BotID: namedID, BotUsername: "other"}, expected: named},
+		{name: "missing bot user ID selects no agent", req: RenderRequest{BotID: "missingbotuserid1234567890", BotUsername: "other"}},
+		{name: "malformed bot user ID is rejected", req: RenderRequest{BotID: "named"}, expectErr: true},
+		{name: "agent selected by deprecated username", req: RenderRequest{BotUsername: "other"}, expected: other},
+		{name: "released username selects no agent", req: RenderRequest{BotUsername: "released"}},
+		{name: "no agent requested", req: RenderRequest{}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.mockAPI.On("GetUserByUsername", "released").
+				Return(nil, model.NewAppError("GetUserByUsername", "app.user.missing_account.const", nil, "", http.StatusNotFound)).Maybe()
+			e.setBots(named, other)
+
+			bot, err := e.api.renderRequestBot(tc.req)
+			if tc.expectErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Same(t, tc.expected, bot)
+		})
+	}
 }
 
 func TestCustomPromptOwnership(t *testing.T) {

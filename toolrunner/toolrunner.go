@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
@@ -31,8 +32,10 @@ type ToolRunner struct {
 // Option configures a ToolRunner at construction time.
 type Option func(*ToolRunner)
 
-// WithMaxRounds overrides the default maximum number of tool-call rounds.
-// Non-positive values fall back to llm.DefaultMaxToolTurns.
+// WithMaxRounds overrides the default maximum number of tool rounds (LLM
+// calls whose tool calls are executed or rejected). One more LLM call, with
+// tools disabled, follows the last tool round so the run always ends with an
+// answer. Non-positive values fall back to llm.DefaultMaxToolTurns.
 func WithMaxRounds(n int) Option {
 	return func(r *ToolRunner) {
 		if n > 0 {
@@ -61,10 +64,10 @@ func New(lm llm.LanguageModel, opts ...Option) *ToolRunner {
 	return r
 }
 
-// finalAssistantText drops preamble text from a forced synthesis round that
+// finalAssistantText drops preamble text from a tools-disabled round that
 // still emitted (and had dropped) tool calls.
-func finalAssistantText(text string, synthesisForced bool, droppedToolCalls int) string {
-	if synthesisForced && droppedToolCalls > 0 {
+func finalAssistantText(text string, toolsDisabled bool, droppedToolCalls int) string {
+	if toolsDisabled && droppedToolCalls > 0 {
 		return ""
 	}
 	return text
@@ -213,9 +216,29 @@ func (r *ToolRunner) runLoop(
 	// abandon persists the rounds completed so far and stops the loop.
 	abandon := func() { r.deliverToolTurns(result, onToolTurns) }
 
-	var synthesisForced bool
+	// toolsDisabled means the next call must answer without tools: the
+	// tool-round cap or the consecutive-failure limit was reached.
+	var toolsDisabled bool
+	disableTools := func() {
+		if !toolsDisabled {
+			currentOpts = append(currentOpts, llm.WithToolsDisabled())
+			toolsDisabled = true
+		}
+	}
+	// finishToolRound runs after every tool round, executed or rejected, so a
+	// tools-off answer always follows the last one.
+	finishToolRound := func(round int) {
+		if llm.CountTrailingFailedToolCalls(request.Posts) >= llm.MaxConsecutiveToolCallFailures {
+			request.Posts = llm.EnsureToolRetryLimitSystemMessage(request.Posts)
+			disableTools()
+		}
+		if round+1 >= r.maxRounds {
+			request.Posts = llm.EnsureToolIterationLimitUserMessage(request.Posts)
+			disableTools()
+		}
+	}
 
-	for round := 0; round < r.maxRounds; round++ {
+	for round := 0; round <= r.maxRounds; round++ {
 		// For round > 0, make a new LLM call.
 		if round > 0 {
 			var err error
@@ -244,16 +267,16 @@ func (r *ToolRunner) runLoop(
 
 		toolCalls := resp.toolCalls
 
-		// Drop any tool calls the model returned on a forced synthesis round;
+		// Providers may ignore tool_choice="none"; never execute those calls.
 		droppedToolCalls := 0
-		if synthesisForced && len(toolCalls) > 0 {
+		if toolsDisabled && len(toolCalls) > 0 {
 			droppedToolCalls = len(toolCalls)
 			toolCalls = nil
 		}
 
 		// No tool calls = final response.
 		if len(toolCalls) == 0 {
-			result.FinalText = finalAssistantText(resp.text, synthesisForced, droppedToolCalls)
+			result.FinalText = finalAssistantText(resp.text, toolsDisabled, droppedToolCalls)
 			r.deliverToolTurns(result, onToolTurns)
 			send(llm.TextStreamEvent{Type: llm.EventTypeEnd})
 			return
@@ -264,25 +287,23 @@ func (r *ToolRunner) runLoop(
 			resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
 			appendToolTurnAndPost(result, &request, resp.text, resp.reasoningData, resp.serverTools, resp.segments, resolvedToolCalls, toolResults, resp.usage)
 
-			if !send(llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}) {
+			if !send(toolCallBatchEvent(llm.ToolCallPhaseResolved, resolvedToolCalls)) {
 				abandon()
 				return
 			}
 
-			if llm.CountTrailingFailedToolCalls(request.Posts) >= llm.MaxConsecutiveToolCallFailures {
-				request.Posts = llm.EnsureToolRetryLimitSystemMessage(request.Posts)
-				currentOpts = append(currentOpts, llm.WithToolsDisabled())
-			}
+			finishToolRound(round)
 			continue
 		}
 
 		toolCalls = enrichToolCallsForApproval(toolCalls, store)
 
-		// Check shouldExecute for ALL tool calls.
+		// Check shouldExecute for ALL tool calls. A user-interaction call is
+		// answered by the user, so no policy can auto-execute it.
 		allApproved := true
 		approved := make([]bool, len(toolCalls))
 		for i, tc := range toolCalls {
-			approved[i] = shouldExecute(tc)
+			approved[i] = shouldExecute(tc) && tc.UserInteraction == ""
 			if !approved[i] {
 				allApproved = false
 			}
@@ -297,20 +318,19 @@ func (r *ToolRunner) runLoop(
 				toolCalls[i].WouldAutoExecute = approved[i]
 			}
 			r.deliverToolTurns(result, onToolTurns)
-			if send(llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}) {
+			if send(toolCallBatchEvent(llm.ToolCallPhaseAwaitingDecision, toolCalls)) {
 				send(llm.TextStreamEvent{Type: llm.EventTypeEnd})
 			}
 			return
 		}
 
-		// All calls passed the policy: stamp them so the pending broadcast
-		// (and, if the stream is interrupted mid-execution, the persisted
-		// blocks) carry the auto-execute signal instead of implying an
-		// approval request, then forward so the UI can show spinners.
+		// All calls passed the policy. The marker keeps persisted blocks from
+		// implying an approval request if the stream is interrupted
+		// mid-execution.
 		for i := range toolCalls {
 			toolCalls[i].WouldAutoExecute = true
 		}
-		if !send(llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}) {
+		if !send(toolCallBatchEvent(llm.ToolCallPhaseExecuting, toolCalls)) {
 			abandon()
 			return
 		}
@@ -330,25 +350,27 @@ func (r *ToolRunner) runLoop(
 		appendToolTurnAndPost(result, &request, resp.text, resp.reasoningData, resp.serverTools, resp.segments, resolvedToolCalls, toolResults, resp.usage)
 
 		// Forward resolved tool calls so the UI can show success/error states.
-		if !send(llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}) {
+		if !send(toolCallBatchEvent(llm.ToolCallPhaseResolved, resolvedToolCalls)) {
 			abandon()
 			return
 		}
 
-		// Check for consecutive tool call failures and disable tools if needed.
-		if llm.CountTrailingFailedToolCalls(request.Posts) >= llm.MaxConsecutiveToolCallFailures {
-			request.Posts = llm.EnsureToolRetryLimitSystemMessage(request.Posts)
-			currentOpts = append(currentOpts, llm.WithToolsDisabled())
-		}
-
-		// Force the last allowed round to be a tools-disabled synthesis so the
-		// caller always gets a final answer when the cap is hit.
-		if round == r.maxRounds-2 {
-			request.Posts = llm.EnsureToolIterationLimitUserMessage(request.Posts)
-			currentOpts = append(currentOpts, llm.WithToolsDisabled())
-			synthesisForced = true
-		}
+		finishToolRound(round)
 	}
+
+	// Unreachable while every tool round ends in finishToolRound; kept so a
+	// future path can't close the stream without persisting turns or ending.
+	r.deliverToolTurns(result, onToolTurns)
+	send(llm.TextStreamEvent{
+		Type:  llm.EventTypeError,
+		Value: fmt.Errorf("tool loop stopped after %d rounds without a final response", r.maxRounds+1),
+	})
+}
+
+// toolCallBatchEvent copies calls because consumers sanitize them in place
+// while the runner is still executing and replaying the originals.
+func toolCallBatchEvent(phase llm.ToolCallPhase, calls []llm.ToolCall) llm.TextStreamEvent {
+	return llm.TextStreamEvent{Type: llm.EventTypeToolCallBatch, Value: llm.ToolCallBatch{Phase: phase, Calls: slices.Clone(calls)}}
 }
 
 // assistantResponse holds the accumulated contents of one fully consumed

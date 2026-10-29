@@ -104,7 +104,7 @@ func TestToolRunner_ApprovalAfterToolRound(t *testing.T) {
 		switch event.Type {
 		case llm.EventTypeText:
 			gotText = true
-		case llm.EventTypeToolCalls:
+		case llm.EventTypeToolCallBatch:
 			gotToolCalls = true
 		}
 	}
@@ -374,7 +374,7 @@ func TestToolRunner_MixedVisibleAndUnloadedDoesNotExecuteVisible(t *testing.T) {
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "run tools"}},
 		Context: &llm.Context{Tools: store},
 	}, func(llm.ToolCall) bool {
-		t.Fatal("shouldExecute must not be called for batches with unavailable tools")
+		require.FailNow(t, "shouldExecute must not be called for batches with unavailable tools")
 		return true
 	}, nil)
 	require.NoError(t, err)
@@ -414,7 +414,7 @@ func TestToolRunner_ApprovalToolCallsPersistSchemaMetadata(t *testing.T) {
 		ServerOrigin: "https://jira.example.com",
 		Schema:       schema,
 		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
-			t.Fatal("approval-required tool must not execute")
+			require.FailNow(t, "approval-required tool must not execute")
 			return "", nil
 		},
 	}})
@@ -427,8 +427,8 @@ func TestToolRunner_ApprovalToolCallsPersistSchemaMetadata(t *testing.T) {
 
 	var pendingCalls []llm.ToolCall
 	for event := range result.Stream.Stream {
-		if event.Type == llm.EventTypeToolCalls {
-			pendingCalls = append(pendingCalls, event.Value.([]llm.ToolCall)...)
+		if event.Type == llm.EventTypeToolCallBatch {
+			pendingCalls = append(pendingCalls, event.Value.(llm.ToolCallBatch).Calls...)
 		}
 	}
 	require.Len(t, pendingCalls, 1)
@@ -470,7 +470,7 @@ func TestToolRunner_InvalidArgumentsFailBatchAndModelRetries(t *testing.T) {
 		{
 			Name: "safe_tool",
 			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
-				t.Fatal("a call batched with invalid arguments must not execute")
+				require.FailNow(t, "a call batched with invalid arguments must not execute")
 				return "", nil
 			},
 		},
@@ -487,12 +487,17 @@ func TestToolRunner_InvalidArgumentsFailBatchAndModelRetries(t *testing.T) {
 	require.NoError(t, err)
 
 	var lastEmitted []llm.ToolCall
+	var phases []llm.ToolCallPhase
 	for event := range result.Stream.Stream {
-		if event.Type == llm.EventTypeToolCalls {
-			lastEmitted = event.Value.([]llm.ToolCall)
+		if event.Type == llm.EventTypeToolCallBatch {
+			batch := event.Value.(llm.ToolCallBatch)
+			lastEmitted = batch.Calls
+			phases = append(phases, batch.Phase)
 		}
 	}
 
+	assert.Equal(t, []llm.ToolCallPhase{llm.ToolCallPhaseResolved, llm.ToolCallPhaseAwaitingDecision}, phases,
+		"a batch failed on invalid arguments closes its round before the retry awaits a decision")
 	require.Len(t, result.ToolTurns, 1)
 	failed := result.ToolTurns[0].ToolResults
 	require.Len(t, failed, 2)
@@ -600,7 +605,7 @@ func TestToolRunner_MixedBatchSkippedDoesNotDisableToolsAfterRetryLimit(t *testi
 	store.AddTools([]llm.Tool{{
 		Name: "safe_tool",
 		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
-			t.Fatal("available tools must not execute in mixed unavailable batches")
+			require.FailNow(t, "available tools must not execute in mixed unavailable batches")
 			return "", nil
 		},
 	}})
@@ -670,19 +675,21 @@ func TestToolRunner_AllApprovedMarksOnlyPendingCallsWouldAutoExecute(t *testing.
 	}, alwaysExecute, nil)
 	require.NoError(t, err)
 
-	var toolCallEvents [][]llm.ToolCall
+	var toolCallEvents []llm.ToolCallBatch
 	for event := range result.Stream.Stream {
-		if event.Type == llm.EventTypeToolCalls {
-			toolCallEvents = append(toolCallEvents, event.Value.([]llm.ToolCall))
+		if event.Type == llm.EventTypeToolCallBatch {
+			toolCallEvents = append(toolCallEvents, event.Value.(llm.ToolCallBatch))
 		}
 	}
 
 	require.Len(t, toolCallEvents, 2)
-	for _, call := range toolCallEvents[0] {
+	assert.Equal(t, llm.ToolCallPhaseExecuting, toolCallEvents[0].Phase)
+	assert.Equal(t, llm.ToolCallPhaseResolved, toolCallEvents[1].Phase)
+	for _, call := range toolCallEvents[0].Calls {
 		assert.Equal(t, llm.ToolCallStatusPending, call.Status)
 		assert.True(t, call.WouldAutoExecute)
 	}
-	for _, call := range toolCallEvents[1] {
+	for _, call := range toolCallEvents[1].Calls {
 		assert.Equal(t, llm.ToolCallStatusAutoApproved, call.Status)
 		assert.False(t, call.WouldAutoExecute)
 	}
@@ -726,9 +733,10 @@ func TestToolRunner_PausedBatchMarksWouldAutoExecute(t *testing.T) {
 
 	var pausedCalls []llm.ToolCall
 	for event := range result.Stream.Stream {
-		if event.Type == llm.EventTypeToolCalls {
-			if tcs, ok := event.Value.([]llm.ToolCall); ok {
-				pausedCalls = tcs
+		if event.Type == llm.EventTypeToolCallBatch {
+			if batch, ok := event.Value.(llm.ToolCallBatch); ok {
+				assert.Equal(t, llm.ToolCallPhaseAwaitingDecision, batch.Phase)
+				pausedCalls = batch.Calls
 			}
 		}
 	}

@@ -66,7 +66,7 @@ func (s regenMeetingsStub) SummarizeTranscription(context.Context, *bots.Bot, *s
 // branches. Removing WithFilePolicy would let those admin reads run.
 func TestHandleRegenerateDeniedByFilePolicy(t *testing.T) {
 	const (
-		userID    = "user-id-1234567890123456789012"
+		userID    = "userid12345678901234567890"
 		botID     = "bot-id-12345678901234567890123"
 		sessionID = "session-id-12345678901234567890"
 	)

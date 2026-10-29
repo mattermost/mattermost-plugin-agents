@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -56,11 +57,16 @@ const (
 )
 
 type Config interface {
+	GetDefaultBotUserID() string
+	// GetDefaultBotName is the legacy username reference, used only when no
+	// default bot user ID is set.
 	GetDefaultBotName() string
 	MCP() mcp.Config
 	AllowUnsafeLinks() bool
+	EnableHTMLArtifacts() bool
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
+	EnableAmbientAutoReply() bool
 
 	// GetServices returns a snapshot of the stored service configurations, in
 	// configuration order. The bridge service endpoints operate on this
@@ -102,13 +108,25 @@ type ConfigStore interface {
 
 // AgentStore provides CRUD access to user-created agents in the database.
 type AgentStore interface {
-	CreateAgent(cfg *llm.BotConfig) error
+	// CreateAgent and UpdateAgent record every write as a new agent version.
+	CreateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error
 	GetAgent(id string) (*llm.BotConfig, error)
 	ListAgents() ([]*llm.BotConfig, error)
 	ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error)
 	CountActiveAgents() (int, error)
-	UpdateAgent(cfg *llm.BotConfig) error
+	UpdateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error
 	DeleteAgent(id string) error
+
+	// ListAgentVersions returns up to limit versions older than before (no
+	// upper bound when before is 0), newest first.
+	ListAgentVersions(agentID string, before, limit int) (store.AgentVersionPage, error)
+	// GetAgentVersion returns nil, nil when the version does not exist.
+	GetAgentVersion(agentID string, version int) (*store.AgentVersionDetail, error)
+	// DeleteAgentVersions deletes the given versions; it returns
+	// store.ErrCurrentAgentVersion, deleting nothing, when they include the current one.
+	DeleteAgentVersions(agentID string, versions []int) (int64, error)
+	// DeletePreviousAgentVersions deletes every version but the current one.
+	DeletePreviousAgentVersions(agentID string) (int64, error)
 }
 
 // ConfigUpdater updates the in-memory plugin configuration.
@@ -136,7 +154,7 @@ type ConversationStore interface {
 // cluster cache invalidation internally.
 type ChannelAutoReplyStore interface {
 	Get(channelID string) (*autoreply.Setting, error)
-	Set(channelID, botID string, mode autoreply.Mode, updatedBy string) (*autoreply.Setting, error)
+	Set(setting autoreply.Setting) (*autoreply.Setting, error)
 	Delete(channelID string) error
 }
 
@@ -195,6 +213,11 @@ type API struct {
 	autoReplyStore        ChannelAutoReplyStore
 	accessChecker         *accesscontrol.Checker
 	mcpRequestLimiter     *mcpRequestLimiter
+
+	// artifactSecretCache caches the HTML artifact bridge secret after
+	// its first load from the KV store.
+	artifactSecretMu    sync.Mutex
+	artifactSecretCache []byte
 
 	// auditEvents maps gin handler names to audit event names for routes
 	// that emit server audit records. Built once in New; read-only after.
@@ -351,6 +374,8 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.GET("/oauth/callback", a.handleOAuthCallback)
 	router.GET("/ai_threads", a.handleGetAIThreads)
 	router.GET("/ai_bots", a.handleGetAIBots)
+	router.GET("/artifacts/:fileid", a.handleGetArtifact)
+	router.GET("/artifacts/:fileid/token", a.handleGetArtifactToken)
 	router.GET("/mcp/tools", a.handleGetUserMCPTools)
 	router.POST("/mcp/tools/refresh", a.handleRefreshUserMCPTools)
 	router.GET("/mcp/oauth/:serverName/start", a.handleOAuthStart)
@@ -371,6 +396,10 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	agentRouter.PUT("/:agentid", a.handleUpdateAgent)
 	agentRouter.DELETE("/:agentid", a.handleDeleteAgent)
 	agentRouter.POST("/:agentid/avatar", a.handleUploadAgentAvatar)
+	agentRouter.GET("/:agentid/versions", a.handleListAgentVersions)
+	agentRouter.GET("/:agentid/versions/:version", a.handleGetAgentVersion)
+	agentRouter.POST("/:agentid/versions/:version/restore", a.handleRestoreAgentVersion)
+	agentRouter.DELETE("/:agentid/versions", a.handleDeleteAgentVersions)
 	// Access policy authoring: agent managers.
 	agentRouter.GET("/:agentid/access_policy", a.handleGetAgentPolicy)
 	agentRouter.PUT("/:agentid/access_policy", a.handlePutAgentPolicy)
@@ -407,12 +436,17 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	postRouter.POST("/analyze", a.handleThreadAnalysis)
 	postRouter.POST("/transcribe/file/:fileid", a.capabilityRequired(enterprise.CapMeetings), a.handleTranscribeFile)
 	postRouter.POST("/summarize_transcription", a.capabilityRequired(enterprise.CapMeetings), a.handleSummarizeTranscription)
-	postRouter.POST("/stop", a.handleStop)
-	postRouter.POST("/regenerate", a.handleRegenerate)
-	postRouter.POST("/tool_call", a.handleToolCall)
-	postRouter.POST("/tool_result", a.handleToolResult)
 	postRouter.POST("/postback_summary", a.handlePostbackSummary)
 	postRouter.POST("/loop_in_agent", a.handleLoopInAgent)
+
+	// Resuming a run acts as the agent that wrote the post, so these routes
+	// authorize against that agent rather than the default one.
+	agentPostRouter := router.Group("/post/:postid")
+	agentPostRouter.Use(a.agentPostAuthorizationRequired)
+	agentPostRouter.POST("/stop", a.handleStop)
+	agentPostRouter.POST("/regenerate", a.handleRegenerate)
+	agentPostRouter.POST("/tool_call", a.handleToolCall)
+	agentPostRouter.POST("/tool_result", a.handleToolResult)
 
 	channelRouter := botRequiredRouter.Group("/channel/:channelid")
 	channelRouter.Use(a.channelAuthorizationRequired)
@@ -498,16 +532,39 @@ func (a *API) metricsMiddleware(c *gin.Context) {
 	a.metricsService.ObserveAPIEndpointDuration(endpoint, c.Request.Method, strconv.Itoa(status), elapsed)
 }
 
+// aiBotRequired selects the agent a request runs with: the one named by the
+// botId query parameter, else by the deprecated botUsername one, else the
+// configured default. The first agent is used only when no default is
+// configured; a requested or configured agent that is not available is a 404.
 func (a *API) aiBotRequired(c *gin.Context) {
-	botUsername := c.Query("botUsername")
-	if botUsername == "" {
-		botUsername = a.config.GetDefaultBotName()
-	}
-
-	bot := a.bots.GetBotByUsernameOrFirst(botUsername)
-	if bot == nil {
-		c.AbortWithError(http.StatusNotFound, fmt.Errorf("agent not available: %s", botUsername))
-		return
+	var bot *bots.Bot
+	switch botID, botUsername := c.Query("botId"), c.Query("botUsername"); {
+	case botID != "":
+		if !model.IsValidId(botID) {
+			c.AbortWithError(http.StatusBadRequest, errors.New("invalid botId: must be a bot user ID"))
+			return
+		}
+		bot = a.bots.GetBotByID(botID)
+		if bot == nil {
+			c.AbortWithError(http.StatusNotFound, fmt.Errorf("agent not available: %s", botID))
+			return
+		}
+	case botUsername != "":
+		bot = a.bots.GetBotByUsername(botUsername)
+		if bot == nil {
+			c.AbortWithError(http.StatusNotFound, fmt.Errorf("agent not available: %s", botUsername))
+			return
+		}
+	default:
+		var configured bool
+		bot, configured = a.defaultBot()
+		if !configured {
+			bot = a.bots.GetBotByUsernameOrFirst("")
+		}
+		if bot == nil {
+			c.AbortWithError(http.StatusNotFound, errors.New("default agent not available"))
+			return
+		}
 	}
 	c.Set(ContextBotKey, bot)
 }
@@ -673,9 +730,10 @@ type AIBotInfo struct {
 }
 
 type AIBotsResponse struct {
-	Bots             []AIBotInfo `json:"bots"`
-	SearchEnabled    bool        `json:"searchEnabled"`
-	AllowUnsafeLinks bool        `json:"allowUnsafeLinks"`
+	Bots                 []AIBotInfo `json:"bots"`
+	SearchEnabled        bool        `json:"searchEnabled"`
+	AllowUnsafeLinks     bool        `json:"allowUnsafeLinks"`
+	HTMLArtifactsEnabled bool        `json:"htmlArtifactsEnabled"`
 }
 
 // usesServiceAccountAuth reports the effective service account mode for a bot:
@@ -688,11 +746,21 @@ func (a *API) usesServiceAccountAuth(bot *bots.Bot) bool {
 	return a.contextBuilder.UsesServiceAccountCatalog(bot)
 }
 
+// defaultBot returns the configured default agent, nil when it is not
+// available, and whether a default is configured at all.
+func (a *API) defaultBot() (*bots.Bot, bool) {
+	botUserID, legacyName := a.config.GetDefaultBotUserID(), a.config.GetDefaultBotName()
+	if botUserID == "" && legacyName == "" {
+		return nil, false
+	}
+	return a.bots.GetBotByIDOrUsername(botUserID, legacyName), true
+}
+
 // defaultBotUserID returns the bot user ID of the default agent, or "" when
-// it is not available. Registry usernames can lag a rename, so the default is
-// matched by user ID rather than by comparing them to DefaultBotName.
+// it is not available. Registry usernames can lag a rename, so callers match
+// the default by user ID rather than by username.
 func (a *API) defaultBotUserID() string {
-	if bot := a.bots.GetBotByUsername(a.config.GetDefaultBotName()); bot != nil {
+	if bot, _ := a.defaultBot(); bot != nil {
 		return bot.BotUserID()
 	}
 	return ""
@@ -754,9 +822,10 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 	searchEnabled := a.searchService.Enabled()
 
 	c.JSON(http.StatusOK, AIBotsResponse{
-		Bots:             bots,
-		SearchEnabled:    searchEnabled,
-		AllowUnsafeLinks: a.config.AllowUnsafeLinks(),
+		Bots:                 bots,
+		SearchEnabled:        searchEnabled,
+		AllowUnsafeLinks:     a.config.AllowUnsafeLinks(),
+		HTMLArtifactsEnabled: a.config.EnableHTMLArtifacts(),
 	})
 }
 

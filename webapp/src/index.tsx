@@ -129,7 +129,10 @@ const RHSTitleContainer = styled.span`
 const RHSTitle = () => {
     return (
         <RHSTitleContainer>
-            <IconAIContainer src={aiIcon}/>
+            <IconAIContainer
+                src={aiIcon}
+                alt=''
+            />
             <FormattedMessage defaultMessage='Agents'/>
         </RHSTitleContainer>
     );
@@ -143,7 +146,12 @@ const ChannelHeaderIcon = () => {
         return null;
     }
 
-    return <IconAIContainer src={aiIcon}/>;
+    return (
+        <IconAIContainer
+            src={aiIcon}
+            alt=''
+        />
+    );
 };
 
 export default class Plugin {
@@ -342,7 +350,7 @@ export default class Plugin {
                         searchTerms,
                         state.entities.teams.currentTeamId,
                         '',
-                        activeBot?.username,
+                        activeBot?.id,
                     );
                     doSelectPost(result.postid, result.channelid, store.dispatch);
                     if (rhs) {
