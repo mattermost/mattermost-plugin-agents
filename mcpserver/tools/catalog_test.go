@@ -47,6 +47,8 @@ func TestToolCatalogContainsExpectedFamilies(t *testing.T) {
 		// posts & scheduled
 		"get_post_info", "update_post", "pin_post", "save_post", "acknowledge_post",
 		"create_scheduled_post", "set_post_reminder",
+		// drafts
+		"list_drafts", "create_draft", "delete_draft",
 		// reactions & emoji
 		"get_post_reactions", "add_reaction", "list_custom_emoji",
 		// threads & unread
