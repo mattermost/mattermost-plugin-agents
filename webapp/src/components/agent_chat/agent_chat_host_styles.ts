@@ -184,14 +184,9 @@ const paddedRows = css`
 export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptions = {}) => css`
     ${columnMaxWidth ? centeredColumn(columnMaxWidth) : paddedRows}
 
-    /* Room under the last post, so the end of the list reads as the end. */
+    /* A little room under the last post, so the end of the list reads as the end. */
     .innerList {
-        padding-bottom: var(--spacing-xxxl);
-    }
-
-    /* Compact lists end closer to the last post. */
-    .innerList:has(.post--compact) {
-        padding-bottom: var(--spacing-l);
+        padding-bottom: var(--spacing-m);
     }
 
     /*
