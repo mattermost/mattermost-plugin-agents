@@ -155,9 +155,6 @@ export function markFreshText(block: MarkdownBlock, fresh: readonly FreshRange[]
 interface WalkState {
     open: number | null;
 
-    /** Marker ids of ranges still fading in. */
-    fading: ReadonlySet<number>;
-
     /** Spans emitted so far per range: a range split by inline markup has several. */
     segments: Map<number, number>;
 }
@@ -192,9 +189,6 @@ function wrapFreshText(node: React.ReactNode, state: WalkState): React.ReactNode
                         <span
                             key={`fresh-${id}-${segment}`}
                             data-fresh-text={id}
-
-                            // data-fade marks text revealed moments ago, still inside its fade window.
-                            data-fade={state.fading.has(id) ? true : undefined} // eslint-disable-line no-undefined
                         >
                             {part}
                         </span>,
@@ -249,21 +243,20 @@ type HtmlToComponent = (html: string, options: unknown) => React.ReactNode;
 
 interface BlockProps {
     source: string;
-    fading: ReadonlySet<number>;
     formatText: FormatText;
     messageHtmlToComponent: HtmlToComponent;
     markdownOptions: unknown;
     htmlOptions: unknown;
 }
 
-// Memoized on the marked source (not on which ranges are still fading): a
+// Memoized on the marked source: a
 // settled block is not formatted again while the block after it grows.
-const MarkdownBlockView = React.memo(({source, fading, formatText, messageHtmlToComponent, markdownOptions, htmlOptions}: BlockProps) => {
+const MarkdownBlockView = React.memo(({source, formatText, messageHtmlToComponent, markdownOptions, htmlOptions}: BlockProps) => {
     const rendered = messageHtmlToComponent(formatText(source, markdownOptions), htmlOptions);
     if (source.indexOf(FRESH_START) === -1 && source.indexOf(FRESH_END) === -1) {
         return <>{rendered}</>;
     }
-    return <>{wrapFreshText(rendered, {open: null, fading, segments: new Map()})}</>;
+    return <>{wrapFreshText(rendered, {open: null, segments: new Map()})}</>;
 }, (prev, next) => prev.source === next.source &&
     prev.formatText === next.formatText &&
     prev.messageHtmlToComponent === next.messageHtmlToComponent &&
@@ -274,9 +267,6 @@ MarkdownBlockView.displayName = 'MarkdownBlockView';
 interface StreamingMarkdownProps {
     message: string;
     fresh: readonly FreshRange[];
-
-    /** Ranges revealed at or before this have finished fading; all fade when omitted. */
-    fadeAfter?: number;
     formatText: FormatText;
     messageHtmlToComponent: HtmlToComponent;
     markdownOptions: unknown;
@@ -285,24 +275,18 @@ interface StreamingMarkdownProps {
 
 /**
  * Renders streaming markdown block by block, so only the still-growing block
- * re-renders per reveal step, with revealed text wrapped in spans that fade in
- * once and then keep their DOM nodes for the rest of the stream.
+ * re-renders per reveal step, with revealed text wrapped in spans that keep
+ * their DOM nodes for the rest of the stream.
  * Renders fragments only: the blocks stay direct children of the container.
  */
 export const StreamingMarkdown = (props: StreamingMarkdownProps) => {
     const blocks = useMemo(() => splitMarkdownBlocks(props.message), [props.message]);
-    const fadeAfter = props.fadeAfter ?? -Infinity;
-    const fading = useMemo(
-        () => new Set(props.fresh.filter((range) => range.at > fadeAfter).map((range) => range.id % FRESH_ID_SPAN)),
-        [props.fresh, fadeAfter],
-    );
     return (
         <>
             {blocks.map((block, index) => (
                 <MarkdownBlockView
                     key={index} // eslint-disable-line react/no-array-index-key
                     source={markFreshText(block, props.fresh)}
-                    fading={fading}
                     formatText={props.formatText}
                     messageHtmlToComponent={props.messageHtmlToComponent}
                     markdownOptions={props.markdownOptions}

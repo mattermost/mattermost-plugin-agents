@@ -43,14 +43,6 @@ export interface FreshRange {
     at: number;
 }
 
-/**
- * A range revealed this long ago has finished fading in (compass
- * --duration-moderate, 300ms, plus a margin). Its text is not faded again if
- * markdown re-parsing (a list turning loose, an emphasis closing) re-creates
- * its element.
- */
-export const FADE_SETTLED_MS = 400;
-
 export interface FrameScheduler {
     request: (callback: () => void) => number;
     cancel: (handle: number) => void;
@@ -73,9 +65,6 @@ export interface SmoothTextOptions {
 export interface SmoothText {
     text: string;
     fresh: readonly FreshRange[];
-
-    /** Fresh ranges revealed at or before this time have finished fading. */
-    fadeAfter: number;
 }
 
 interface RevealState {
@@ -384,16 +373,8 @@ export function useSmoothText(target: string, options: SmoothTextOptions): Smoot
         }
     }, []);
 
-    // Taken when the ranges change: that is when the renderer re-renders the
-    // growing block (and may re-create elements), so it is current there.
-    const fadeRef = useRef<{fresh: readonly FreshRange[]; after: number} | null>(null);
-    if (fadeRef.current === null || fadeRef.current.fresh !== state.fresh) {
-        fadeRef.current = {fresh: state.fresh, after: now() - FADE_SETTLED_MS};
-    }
-
     return {
         text: state.shown === state.target.length ? state.target : state.target.slice(0, state.shown),
         fresh: state.fresh.length === 0 ? NO_FRESH : state.fresh,
-        fadeAfter: fadeRef.current.after,
     };
 }

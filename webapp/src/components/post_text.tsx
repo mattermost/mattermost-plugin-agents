@@ -23,10 +23,9 @@ export type ChannelNamesMap = {
     } | Channel;
 };
 
-/** Streaming reveal: the message renders block by block, fresh text fading in. */
+/** Streaming reveal: the message renders block by block as text is revealed. */
 export interface TextReveal {
     fresh: readonly FreshRange[];
-    fadeAfter: number;
 }
 
 interface Props {
@@ -121,7 +120,6 @@ const RevealText = (props: RevealTextProps) => {
             <StreamingMarkdown
                 message={props.message}
                 fresh={props.reveal.fresh}
-                fadeAfter={props.reveal.fadeAfter}
                 formatText={formatText}
                 messageHtmlToComponent={messageHtmlToComponent}
                 markdownOptions={markdownOptions}

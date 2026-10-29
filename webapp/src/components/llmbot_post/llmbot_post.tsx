@@ -748,8 +748,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     }, [anchorRoundId, anchorStage, onlookerWaitRoundId, onlookerWaitStage]);
 
     const liveReveal = useMemo(
-        () => (smoothReveal ? {fresh: revealed.fresh, fadeAfter: revealed.fadeAfter} : undefined), // eslint-disable-line no-undefined
-        [smoothReveal, revealed.fresh, revealed.fadeAfter],
+        () => (smoothReveal ? {fresh: revealed.fresh} : undefined), // eslint-disable-line no-undefined
+        [smoothReveal, revealed.fresh],
     );
 
     const renderRound = useCallback((round: Round) => {

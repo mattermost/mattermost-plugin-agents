@@ -17,12 +17,11 @@ const messageHtmlToComponent = (html: string) => {
 const markdownOptions = {};
 const htmlOptions = {};
 
-function renderMarkdown(message: string, fresh: readonly FreshRange[] = [], fadeAfter?: number) {
+function renderMarkdown(message: string, fresh: readonly FreshRange[] = []) {
     const element = (msg: string, f: readonly FreshRange[]) => (
         <StreamingMarkdown
             message={msg}
             fresh={f}
-            fadeAfter={fadeAfter}
             formatText={formatText}
             messageHtmlToComponent={messageHtmlToComponent}
             markdownOptions={markdownOptions}
@@ -133,15 +132,6 @@ describe('StreamingMarkdown', () => {
             });
         });
         expect(container.textContent).toBe('One two three four five');
-    });
-
-    // Markdown re-parsing can re-create an element (a list turning loose): text
-    // that already faded in must not fade in again.
-    test('only ranges still fading in are marked to fade', () => {
-        const message = 'Older words then newer';
-        const {container} = renderMarkdown(message, [{id: 1, start: 0, end: 12, at: 100}, {id: 2, start: 12, end: message.length, at: 900}], 500);
-        expect(container.querySelector('[data-fresh-text="1"]')?.hasAttribute('data-fade')).toBe(false);
-        expect(container.querySelector('[data-fresh-text="2"]')?.hasAttribute('data-fade')).toBe(true);
     });
 
     test('settled text keeps its DOM when later text arrives', () => {
