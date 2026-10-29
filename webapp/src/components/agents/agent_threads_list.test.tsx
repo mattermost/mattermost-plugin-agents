@@ -172,12 +172,9 @@ describe('AgentThreadsList', () => {
             expect(Boolean(screen.queryByRole('button', {name: 'Show more Alpha chats'}))).toBe(more);
         });
 
-        test('Show more reveals the next batch, then the button stays at the end of the list as Show less', () => {
+        test('Show more reveals every chat at once, then the button stays at the end of the list as Show less', () => {
             renderList({threadsByBot: {a: manyThreads(25)}});
             expect(screen.getByRole('button', {name: 'Show more Alpha chats'}).textContent).toBe('Show more');
-            fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
-            expect(chatTitles()).toHaveLength(2 * THREADS_PAGE_SIZE);
-            fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
             fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
             expect(chatTitles()).toHaveLength(25);
             expect(screen.queryByRole('button', {name: 'Show more Alpha chats'})).toBeNull();
@@ -193,8 +190,6 @@ describe('AgentThreadsList', () => {
         test('Show less folds the list back to one page and offers Show more again', async () => {
             renderList({threadsByBot: {a: manyThreads(25)}});
             fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
-            fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
-            fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
             fireEvent.click(screen.getByRole('button', {name: 'Show less Alpha chats'}));
 
             // The extra rows fold away over the quick duration first, then the list drops them.
@@ -209,8 +204,6 @@ describe('AgentThreadsList', () => {
             window.matchMedia = ((query: string) => ({matches: query.includes('reduce'), media: query, addEventListener: jest.fn(), removeEventListener: jest.fn()})) as unknown as typeof window.matchMedia;
             try {
                 renderList({threadsByBot: {a: manyThreads(25)}});
-                fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
-                fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
                 fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
                 fireEvent.click(screen.getByRole('button', {name: 'Show less Alpha chats'}));
                 expect(chatTitles()).toHaveLength(THREADS_PAGE_SIZE);

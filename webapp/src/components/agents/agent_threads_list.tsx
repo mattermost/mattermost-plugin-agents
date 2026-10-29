@@ -53,7 +53,7 @@ interface AgentThreadsListProps {
     onRenameThread: (thread: AIThread, title: string) => Promise<void>;
 }
 
-// Threads shown per agent before "Show more"; each click reveals this many more.
+// Threads shown per agent before "Show more", which reveals the rest at once ("Show less" folds back).
 export const THREADS_PAGE_SIZE = 7;
 
 // The compass quick duration, in ms, for sequencing work after a CSS animation that uses it.
@@ -316,7 +316,7 @@ const AgentThreadsList = ({
                                                                 foldBack(bot.id);
                                                                 return;
                                                             }
-                                                            setLimits((prev) => ({...prev, [bot.id]: limit + THREADS_PAGE_SIZE}));
+                                                            setLimits((prev) => ({...prev, [bot.id]: Infinity}));
                                                         }}
                                                     >
                                                         {canShowLess ? intl.formatMessage({defaultMessage: 'Show less'}) : intl.formatMessage({defaultMessage: 'Show more'})}
