@@ -56,10 +56,16 @@ jobs:
             and (.remotes | length == 1)
             and .remotes[0].type == "streamable-http"
             and .remotes[0].url == "https://{mattermost_host}/plugins/mattermost-ai/mcp-server/mcp"
-            and (.remotes[0].variables.mattermost_host | .isRequired == true and (has("default") or has("value") or has("choices") | not))
-            and ([(.remotes[0].headers // [])[] | {name, value}] == [{"name": "Authorization", "value": "Bearer {personal_access_token}"}])
+            and (.remotes[0].variables | keys == ["mattermost_host"])
+            and .remotes[0].variables.mattermost_host.isRequired == true
+            and ([(.remotes[0].headers // [])[] | {name, value, isSecret}] == [{"name": "Authorization", "value": "Bearer {personal_access_token}", "isSecret": true}])
+            and (.remotes[0].headers[0].variables | keys == ["personal_access_token"])
+            and .remotes[0].headers[0].variables.personal_access_token.isSecret == true
+            # Every input stays user-supplied: a preset value, default or
+            # choices list would let a client fill in the host or token.
+            and ([.. | objects | select(has("variables")) | .variables[] | has("value") or has("default") or has("choices")] | any | not)
           ' server.json >/dev/null || {
-            echo "::error file=server.json::server.json must keep the canonical name, remote URL with a required mattermost_host that has no default or choices, the Authorization header, no packages, a description of at most 100 characters, and a plain x.y.z version."
+            echo "::error file=server.json::server.json must keep the canonical name, remote URL and Authorization header, user-supplied inputs only (no value, default or choices), no packages, a description of at most 100 characters, and a plain x.y.z version."
             exit 1
           }
 
