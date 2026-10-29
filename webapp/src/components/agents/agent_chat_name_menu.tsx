@@ -6,7 +6,7 @@ import {useIntl} from 'react-intl';
 import AccountMultipleOutlineIcon from '@mattermost/compass-icons/components/account-multiple-outline';
 import ArchiveOutlineIcon from '@mattermost/compass-icons/components/archive-outline';
 import MessagePlusOutlineIcon from '@mattermost/compass-icons/components/message-plus-outline';
-import MessageTextOutlineIcon from '@mattermost/compass-icons/components/message-text-outline';
+import MessageOutlineIcon from '@mattermost/compass-icons/components/message-outline';
 import PencilOutlineIcon from '@mattermost/compass-icons/components/pencil-outline';
 import SettingsOutlineIcon from '@mattermost/compass-icons/components/settings-outline';
 import SyncIcon from '@mattermost/compass-icons/components/sync';
@@ -272,7 +272,7 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                 {chats.length > 0 && (
                                     <ComposerSubmenu
                                         label={chatsLabel}
-                                        icon={<MessageTextOutlineIcon/>}
+                                        icon={<MessageOutlineIcon/>}
                                         menuLabel={chatsLabel}
                                         grow='down'
                                         data-testid='agent-chat-recent-chats'
@@ -285,7 +285,7 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                                     return (
                                                         <ChatMenuItem
                                                             key={thread.id}
-                                                            icon={<MessageTextOutlineIcon/>}
+                                                            icon={<MessageOutlineIcon/>}
                                                             label={thread.title.trim() || newChatLabel}
                                                             active={active}
                                                             trailingElement={active}

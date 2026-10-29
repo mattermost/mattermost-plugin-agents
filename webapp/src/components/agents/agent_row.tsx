@@ -10,6 +10,7 @@ import {
     PencilOutlineIcon,
     TrashCanOutlineIcon,
 } from '@mattermost/compass-icons/components';
+import MessageOutlineIcon from '@mattermost/compass-icons/components/message-outline';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {Button} from '@mattermost/compass-ui/components/button';
 import {Tag} from '@mattermost/compass-ui/components/tag';
@@ -20,8 +21,6 @@ import {getProfilePictureUrl} from '@/client';
 import DotMenu, {DropdownMenuItem} from '@/components/dot_menu';
 
 import {AgentInactiveReason, UserAgent, ServiceInfo} from '@/types/agents';
-
-import MessageOutlineIcon from './message_outline_icon';
 
 type Props = {
     agent: UserAgent;

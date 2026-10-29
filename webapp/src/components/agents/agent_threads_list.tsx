@@ -7,6 +7,7 @@ import styled, {css, keyframes} from 'styled-components';
 import DotsHorizontalIcon from '@mattermost/compass-icons/components/dots-horizontal';
 import ChevronDownIcon from '@mattermost/compass-icons/components/chevron-down';
 import ChevronRightIcon from '@mattermost/compass-icons/components/chevron-right';
+import MessageOutlineIcon from '@mattermost/compass-icons/components/message-outline';
 import PlusIcon from '@mattermost/compass-icons/components/plus';
 import {WithTooltip} from '@mattermost/shared/components/tooltip';
 import {Button} from '@mattermost/compass-ui/components/button';
@@ -27,7 +28,6 @@ import type {AIThread} from '@/types/ai_thread';
 
 import AgentChatRenameDialog from './agent_chat_rename_dialog';
 import ChatActionsMenuItems from './chat_actions_menu_items';
-import MessageOutlineIcon from './message_outline_icon';
 
 interface AgentThreadsListProps {
     bots: LLMBot[];

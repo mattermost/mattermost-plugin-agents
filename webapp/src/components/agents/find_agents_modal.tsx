@@ -4,7 +4,7 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
-import MessageTextOutlineIcon from '@mattermost/compass-icons/components/message-text-outline';
+import MessageOutlineIcon from '@mattermost/compass-icons/components/message-outline';
 import {Button} from '@mattermost/compass-ui/components/button';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {MenuItem} from '@mattermost/compass-ui/components/menu-item';
@@ -272,7 +272,7 @@ const Content = ({onClose}: {onClose: () => void}) => {
                                                             leadingVisual={item.kind === 'chat' ? (
                                                                 <Icon
                                                                     size='16'
-                                                                    glyph={<MessageTextOutlineIcon/>}
+                                                                    glyph={<MessageOutlineIcon/>}
                                                                 />
                                                             ) : (
                                                                 <AvatarSlot aria-hidden={true}>
