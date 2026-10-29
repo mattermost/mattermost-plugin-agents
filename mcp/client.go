@@ -420,7 +420,8 @@ func newClientWithTimeout(ctx context.Context, timeout time.Duration, userID str
 		serviceAccount: p.serviceAccount,
 	}
 
-	if err := c.requireStaticOAuthToken(); err != nil {
+	needsAuthorization, err := c.staticOAuthTokenMissing()
+	if err != nil {
 		return nil, err
 	}
 
@@ -430,6 +431,17 @@ func newClientWithTimeout(ctx context.Context, timeout time.Duration, userID str
 		})
 	if err != nil {
 		return nil, err
+	}
+
+	// The server let an unauthorized user connect. Some OAuth servers (e.g.
+	// Google's Workspace MCP servers) answer initialize and tools/list
+	// anonymously and only reject tools/call; offering those tools would fail
+	// every call and never prompt the user to connect. Connecting first still
+	// lets a server that challenges on connect pass its resource_metadata to
+	// the OAuth start link.
+	if needsAuthorization {
+		_ = session.Close()
+		return nil, &OAuthNeededError{authURL: c.oauthStartURL()}
 	}
 
 	c.session = session
@@ -518,24 +530,18 @@ func NewPluginClient(ctx context.Context, userID string, cfg PluginServerConfig,
 	return client, nil
 }
 
-// requireStaticOAuthToken returns an *OAuthNeededError when the server has
-// admin-configured OAuth client credentials but the user has never authorized
-// it. Such a server requires OAuth, yet some (e.g. Google's Workspace MCP
-// servers) answer initialize and tools/list anonymously and only reject
-// tools/call; connecting anyway would offer tools that cannot work and never
-// prompt the user to connect.
-func (c *Client) requireStaticOAuthToken() error {
+// staticOAuthTokenMissing reports whether the server has admin-configured
+// OAuth client credentials that the user has never authorized. Such a server
+// requires OAuth even when it answers some requests anonymously.
+func (c *Client) staticOAuthTokenMissing() (bool, error) {
 	if c.serviceAccount || c.oauthManager == nil || staticOAuthCreds(c.config) == nil {
-		return nil
+		return false, nil
 	}
 	hasToken, err := c.oauthManager.HasStoredToken(c.userID, c.config.Name)
 	if err != nil {
-		return fmt.Errorf("failed to check stored OAuth token for MCP server %s: %w", c.config.Name, err)
+		return false, fmt.Errorf("failed to check stored OAuth token for MCP server %s: %w", c.config.Name, err)
 	}
-	if hasToken {
-		return nil
-	}
-	return &OAuthNeededError{authURL: c.oauthStartURL()}
+	return !hasToken, nil
 }
 
 func (c *Client) oauthNeededError(err error) error {
