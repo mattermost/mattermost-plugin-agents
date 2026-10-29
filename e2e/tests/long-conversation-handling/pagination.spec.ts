@@ -76,8 +76,8 @@ test.describe('Long Conversation Handling - Creating Long Conversations', () => 
 
         // Verify all messages are present in the conversation
         const rhsContainer = page.getByTestId('mattermost-ai-rhs');
-        await expect(rhsContainer.getByText('Message 1', { exact: true })).toBeVisible();
-        await expect(rhsContainer.getByText('Message 10')).toBeVisible();
+        await expect(rhsContainer.getByTestId('post-message-text').getByText('Message 1', { exact: true })).toBeVisible();
+        await expect(rhsContainer.getByTestId('post-message-text').getByText('Message 10')).toBeVisible();
 
         // RHS should still be functional
         await expect(aiPlugin.rhsPostTextarea).toBeVisible();
@@ -207,6 +207,6 @@ test.describe('Long Conversation Handling - UI Responsiveness', () => {
 
         // Should load smoothly
         const rhsContainer = page.getByTestId('mattermost-ai-rhs');
-        await expect(rhsContainer.getByText('First conv 1', { exact: true })).toBeVisible({ timeout: 10000 });
+        await expect(rhsContainer.getByTestId('post-message-text').getByText('First conv 1', { exact: true })).toBeVisible({ timeout: 10000 });
     });
 });
