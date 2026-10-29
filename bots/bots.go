@@ -68,6 +68,10 @@ type MMBots struct {
 	metrics                llm.MetricsObserver
 
 	tokenSinksMu sync.Mutex
+
+	registryListenersMu sync.Mutex
+	registryListeners   []func()
+
 	// ensureMu serializes registry rebuilds on this node, so a full rebuild
 	// that read the agents before a RefreshAgent cannot swap its stale
 	// registry in afterwards. EnsureBots takes it after the cluster mutex;
@@ -545,6 +549,7 @@ func (b *MMBots) EnsureBots() error {
 		b.lastEnsuredServiceCfgs = nil
 		b.forceRefresh = true
 		b.botsLock.Unlock()
+		b.notifyRegistryChange()
 		return nil
 	}
 	// Store deep copies of the successfully ensured configs for optimistic checking.
@@ -561,8 +566,27 @@ func (b *MMBots) EnsureBots() error {
 	b.lastEnsuredServiceCfgs = currentServiceCfgs
 	b.forceRefresh = false
 	b.botsLock.Unlock()
+	b.notifyRegistryChange()
 
 	return nil
+}
+
+// AddRegistryListener registers fn to run after this node's bot registry is
+// rebuilt. Listeners run on their own goroutine, so they may do network or
+// DB work without holding up the rebuild.
+func (b *MMBots) AddRegistryListener(fn func()) {
+	b.registryListenersMu.Lock()
+	defer b.registryListenersMu.Unlock()
+	b.registryListeners = append(b.registryListeners, fn)
+}
+
+func (b *MMBots) notifyRegistryChange() {
+	b.registryListenersMu.Lock()
+	listeners := slices.Clone(b.registryListeners)
+	b.registryListenersMu.Unlock()
+	for _, fn := range listeners {
+		go fn()
+	}
 }
 
 // newUnsyncedBot validates botCfg and returns its bot, with the agent's model
@@ -676,6 +700,7 @@ func (b *MMBots) RefreshAgent(agentID string) error {
 
 	bot, err := b.rebuildAgentBot(agentID)
 	b.replaceAgentBot(agentID, bot)
+	b.notifyRegistryChange()
 	return err
 }
 

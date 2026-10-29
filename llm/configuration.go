@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/loadtest/profile"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // MaxCustomInstructionsRunes bounds the per-turn LLM system prompt and agent-save
@@ -25,6 +26,10 @@ const DefaultMaxToolTurns = 30
 // MaxAllowedMaxToolTurns caps user-provided MaxToolTurns to keep runaway loops bounded
 // even if a misconfigured agent requests an unreasonably high value.
 const MaxAllowedMaxToolTurns = 250
+
+// MaxScopedExtraChannels caps the admin-picked extra channels a scoped agent
+// may read.
+const MaxScopedExtraChannels = 50
 
 // StructuredOutputPolicy declares how a service handles a requested
 // JSONOutputFormat schema. It is stored per service because the capability
@@ -313,6 +318,23 @@ func (c *BotConfig) Validate() error {
 	}
 	if c.MaxToolTurns > MaxAllowedMaxToolTurns {
 		return fmt.Errorf("maxToolTurns must be less than or equal to %d", MaxAllowedMaxToolTurns)
+	}
+	if c.ScopedChannelMode && !c.UseServiceAccountAuth {
+		return errors.New("scopedChannelMode requires useServiceAccountAuth")
+	}
+	if c.ScopedChannelMode && c.AutoEnableNewMCPTools {
+		return errors.New("scopedChannelMode requires an explicit MCP tool allowlist (autoEnableNewMCPTools off)")
+	}
+	if c.ScopedChannelMode && slices.ContainsFunc(c.EnabledMCPTools, func(t EnabledMCPTool) bool { return t.ToolName == MCPServerToolWildcard }) {
+		return errors.New("scopedChannelMode requires every MCP tool to be named in enabledMCPTools; all-tools entries are not allowed")
+	}
+	if len(c.ScopedExtraChannelIDs) > MaxScopedExtraChannels {
+		return fmt.Errorf("scopedExtraChannelIDs exceeds the maximum of %d channels", MaxScopedExtraChannels)
+	}
+	for _, id := range c.ScopedExtraChannelIDs {
+		if !model.IsValidId(id) {
+			return errors.New("scopedExtraChannelIDs contains an invalid channel ID")
+		}
 	}
 	return nil
 }

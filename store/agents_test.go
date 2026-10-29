@@ -44,6 +44,8 @@ func testAgent(creatorID, username, displayName string) *llm.BotConfig {
 		StructuredOutputEnabled: true, //nolint:staticcheck // deprecated but still persisted verbatim
 		MaxToolTurns:            42,
 		UseServiceAccountAuth:   true,
+		ScopedChannelMode:       true,
+		ScopedExtraChannelIDs:   []string{"extra-1", "extra-2"},
 	}
 }
 
@@ -104,6 +106,8 @@ func TestAgentCreateAndGet(t *testing.T) {
 	assert.True(t, fetched.StructuredOutputEnabled) //nolint:staticcheck // deprecated field still round-trips through the store
 	assert.Equal(t, 42, fetched.MaxToolTurns)
 	assert.True(t, fetched.UseServiceAccountAuth)
+	assert.True(t, fetched.ScopedChannelMode)
+	assert.Equal(t, []string{"extra-1", "extra-2"}, fetched.ScopedExtraChannelIDs)
 }
 
 // TestAgentMaxToolTurnsDefaultsToThirty verifies that the SQL DEFAULT 30 supplied
@@ -225,6 +229,8 @@ func TestAgentUpdate(t *testing.T) {
 	agent.EnabledMCPTools = nil
 	agent.ServiceID = "svc-2"
 	agent.UseServiceAccountAuth = false
+	agent.ScopedChannelMode = false
+	agent.ScopedExtraChannelIDs = nil
 
 	require.NoError(t, s.UpdateAgent(agent, SystemAgentVersionMeta()))
 
@@ -242,6 +248,8 @@ func TestAgentUpdate(t *testing.T) {
 	assert.Nil(t, fetched.EnabledMCPTools)
 	assert.Equal(t, "svc-2", fetched.ServiceID)
 	assert.False(t, fetched.UseServiceAccountAuth)
+	assert.False(t, fetched.ScopedChannelMode)
+	assert.Nil(t, fetched.ScopedExtraChannelIDs)
 
 	// Immutable fields should not change
 	assert.Equal(t, agent.CreatorID, fetched.CreatorID)

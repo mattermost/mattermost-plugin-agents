@@ -296,6 +296,13 @@ func (c *Conversations) handleMentionViaConversation(
 	// Build the context once WITH tools so the system prompt can reference
 	// .Tools and .DisabledTools.
 	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences")
+	// The run owns the scoped session until its stream finishes.
+	scopedHandedOff := false
+	defer func() {
+		if !scopedHandedOff {
+			llmContext.ReleaseScopedSession()
+		}
+	}()
 	progress.Advance(responseProgressLoadingConversation)
 
 	systemPrompt, fmtErr := c.prompts.Format(prompts.PromptDirectMessageQuestionSystem, llmContext)
@@ -324,6 +331,7 @@ func (c *Conversations) handleMentionViaConversation(
 		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
 	}
 	llmContext.ResponsePostID = responsePost.Id
+	llmContext.SetScopedTurnConversation(convResult.Conversation.ID)
 
 	ctx, runSpan := c.startAgentRunSpan(ctx, agentRunInfo{
 		convID:     convResult.Conversation.ID,
@@ -372,10 +380,14 @@ func (c *Conversations) handleMentionViaConversation(
 	stream := decorateStreamWithWebSearchAnnotations(result.Stream, llmContext)
 	stream = c.decorateStreamWithCreatedFiles(ctx, bot, stream, responsePost, nil, llmContext, llmContext)
 
-	if streamErr := c.streamToExistingPost(ctx, stream, responsePost, postingUser, channel, false, func() { runSpan.End() }); streamErr != nil {
+	if streamErr := c.streamToExistingPost(ctx, stream, responsePost, postingUser, channel, false, func() {
+		llmContext.ReleaseScopedSession()
+		runSpan.End()
+	}); streamErr != nil {
 		return fmt.Errorf("unable to stream response: %w", streamErr)
 	}
 	runHandedOff = true
+	scopedHandedOff = true
 
 	if convResult.IsNew {
 		titleCtx := telemetry.DetachContext(ctx)
@@ -393,6 +405,23 @@ func (c *Conversations) handleMentionViaConversation(
 	}
 
 	return nil
+}
+
+// existingThreadConversationID returns the ID of the conversation the thread
+// rooted at rootID already has with bot, or "" when there is none yet.
+func (c *Conversations) existingThreadConversationID(bot *bots.Bot, user *model.User, rootID string) string {
+	if c.convService == nil || rootID == "" {
+		return ""
+	}
+	conv, err := c.convService.GetConversationByThread(rootID, bot.GetMMBot().UserId, user.Id)
+	if err != nil {
+		c.mmClient.LogWarn("Failed to look up the thread's conversation for a scoped turn", "root_id", rootID, "error", err.Error())
+		return ""
+	}
+	if conv == nil {
+		return ""
+	}
+	return conv.ID
 }
 
 func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) (err error) {

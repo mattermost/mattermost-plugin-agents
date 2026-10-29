@@ -835,6 +835,36 @@ The agent setting is all-or-nothing:
 
 Service account authentication is available at Enterprise and above, the same as remote and external MCP servers (see [license requirements](#license-requirements)). Below that level, the service account header configuration cannot be added and the agent setting doesn't change how tool calls authenticate.
 
+### Scoped channel mode
+
+An agent using service account authentication can also run its tools in channels **without asking for approval**, by reading through a short-lived session that the Mattermost server limits to a fixed scope. Turn on **Run tools in channels without asking** in the service account section of the agent's **MCPs** tab. Only system administrators can change it.
+
+In a channel turn, the agent's Mattermost tools run as the **agent's bot account** on a session that:
+
+- can read the channel the agent was used in, every public channel on a team anyone on the server can join, and any **additional channels** you pick for the agent;
+- can read nothing else. Channel and team membership neither add to nor is required for this. The bot's direct messages, group messages, private channels someone added the bot to, channels and teams under an access policy, and teams that only some users can join (invite-only, restricted to email domains, or group-synced) are all out of reach. With compliance mode on, the open-team part is turned off;
+- cannot change anything in Mattermost. The only post is the agent's normal reply in the thread;
+- lasts for one run of the agent and is revoked when the run ends, or after 30 minutes at most.
+
+Every tool call in such a turn runs without the Accept/Reject step and its result is shared in the thread, except questions the agent asks the user, which still wait for an answer. The catalog for those turns contains only read-only Mattermost tools and tools from external MCP servers reached with service account credentials, and of those only the tools named one by one in the agent's MCP tool allowlist. State-changing Mattermost tools and other plugins' MCP servers are not used. Semantic search and file reads are limited to the same channels. Built-in web search (`WebSearch`) and its URL fetch (`WebSearchFetchSource`) are opt-in per agent: they are offered, and run without asking, only when you pick them under **Built-in tools** on the agent's **MCPs** tab, in addition to **Enable Web Search** being on in the plugin's [web search settings](#built-in-web-search-configuration). An agent that does not name them has no built-in web search in channel turns. Provider-native web search is not part of this: it follows the agent's native tool selection and **Allow native web search in channels**. Direct messages with the agent are not affected: they keep using the requesting user's permissions and the usual approval flow.
+
+The session's limits apply only inside Mattermost. External MCP tools act on their own systems with the service account's access there, and can change data if the tool and the service account allow it. What bounds them is the set of tools you name for the agent and the permissions of the service account upstream: name only the tools the agent needs, and give the service account the least access that works, such as read-only credentials.
+
+Requirements, checked when the setting is saved and again on every turn:
+
+- **Use service accounts for authentication** is on. Turning it off also turns this setting off and clears the additional channels.
+- **Automatically enable all MCP tools** is off, and every MCP tool is picked by name: a server cannot be granted with all of its tools. A legacy all-tools grant gives the agent none of that server's tools in channel turns.
+- **Enable Channel Mention Tool Calling** is on in the plugin settings.
+- A Mattermost server version that can create scoped sessions, and an Enterprise license. The plugin checks this on each server node when it starts; on a server that cannot, the setting cannot be turned on and channel turns of agents that have it run with the usual approval flow.
+
+When a requirement stops holding, channel turns fall back to the requesting user's permissions with the usual approval flow, and live scoped sessions for that agent are revoked on every node. The same happens when you remove an additional channel or a tool from the agent, so a removed tool stops running at once. If the server cannot create a session, the turn runs without MCP tools rather than with anyone else's credentials.
+
+> **Warning:** Content from the additional channels can appear in any channel where the agent is used, including to people who are not members of them. Pick them deliberately.
+
+For LLM Bridge calls to an agent in scoped channel mode, `channel_id` is required (requests without it return `400`). Allowlisted tools then run on a scoped session for that channel, which `user_id` must be able to read (otherwise the request returns `403`). Unlike channel turns, Bridge requests with `allowed_tools` do not fall back to the requesting user's permissions when a requirement above does not hold: they return `403`. Requests in a DM channel run as `user_id`, as before.
+
+Audit records: each scoped session grant is recorded as `agentScopedSessionGrant`, and each tool call it runs as `agentScopedToolCall`. Both name the user who triggered the run as the actor and carry only IDs (agent, channel, conversation, post, tool name, server kind) and the outcome, never prompts, arguments, results, or the session itself.
+
 ### MCP dynamic tool loading
 
 When an agent's MCP dynamic tool loading setting is enabled, the model doesn't receive every full MCP tool schema at once. Instead, it sees `search_tools` and `load_tool` meta-tools, plus any preloaded or internal tools available for that request.

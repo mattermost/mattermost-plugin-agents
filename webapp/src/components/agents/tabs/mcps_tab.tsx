@@ -25,6 +25,7 @@ import {useIsLicensedFor} from '@/license';
 import {LicenseChip} from '@/components/system_console/enterprise_chip';
 
 import {filterMcpsServersBySearchQuery} from './mcp_servers_filter';
+import ScopedChannelModeSection from './scoped_channel_mode_section';
 
 // Same sentinel as llm.MCPServerToolWildcard ('*' = all tools from that origin).
 const MCPServerToolWildcard = '*';
@@ -34,6 +35,8 @@ type Props = {
     enabledTools: EnabledTool[];
     autoEnableNewMCPTools: boolean;
     useServiceAccountAuth: boolean;
+    scopedChannelMode: boolean;
+    scopedExtraChannelIds: string[];
 
     /** Soft-lock auto-enable + tool grants while SA is on for non-admins; SA checkbox stays reachable. */
     serviceAccountFieldsLocked: boolean;
@@ -44,6 +47,8 @@ type Props = {
         enabledTools?: EnabledTool[];
         autoEnableNewMCPTools?: boolean;
         useServiceAccountAuth?: boolean;
+        scopedChannelMode?: boolean;
+        scopedExtraChannelIds?: string[];
     }) => void;
 
     // Optional server-state reconciliation callback. Used when removing entries
@@ -134,6 +139,8 @@ const McpsTab = (props: Props) => {
         enabledTools,
         autoEnableNewMCPTools,
         useServiceAccountAuth,
+        scopedChannelMode,
+        scopedExtraChannelIds,
         serviceAccountFieldsLocked,
         canEditServiceAccountAuth,
         onChange,
@@ -246,6 +253,10 @@ const McpsTab = (props: Props) => {
 
         const existing = enabledTools.filter((t) => t.server_origin !== server.serverOrigin);
         if (serverTools.length === 0) {
+            // Scoped agents must name every tool; there is nothing to name yet.
+            if (scopedChannelMode) {
+                return;
+            }
             onChange({enabledTools: [...existing, {server_origin: server.serverOrigin, tool_name: MCPServerToolWildcard}]});
             return;
         }
@@ -254,7 +265,7 @@ const McpsTab = (props: Props) => {
             tool_name: t.name,
         }));
         onChange({enabledTools: [...existing, ...newTools]});
-    }, [enabledTools, hasServerWildcard, onChange]);
+    }, [enabledTools, hasServerWildcard, onChange, scopedChannelMode]);
 
     const isEntryAvailable = useCallback((et: EnabledTool) => {
         return servers.some((s) => {
@@ -318,7 +329,14 @@ const McpsTab = (props: Props) => {
                         if (e.target.checked && !serviceAccountLicensed) {
                             return;
                         }
-                        onChange({useServiceAccountAuth: e.target.checked});
+
+                        // Scoped channel mode builds on service accounts; the
+                        // server clears it too when they are turned off.
+                        onChange(e.target.checked ? {useServiceAccountAuth: true} : {
+                            useServiceAccountAuth: false,
+                            scopedChannelMode: false,
+                            scopedExtraChannelIds: [],
+                        });
                     }}
                 >
                     <CheckboxText>
@@ -341,6 +359,16 @@ const McpsTab = (props: Props) => {
                         title={<FormattedMessage defaultMessage="Anyone who can use this agent acts with its shared service account access on external MCP servers. Mattermost (embedded) and plugin tools run with each requesting user's own permissions. Restrict who can use this agent on the Access tab. External MCP servers without service account credentials configured are excluded from this agent."/>}
                     />
                 </div>
+            )}
+            {useServiceAccountAuth && (
+                <ScopedChannelModeSection
+                    scopedChannelMode={scopedChannelMode}
+                    scopedExtraChannelIds={scopedExtraChannelIds}
+                    autoEnableNewMCPTools={autoEnableNewMCPTools}
+                    hasAllToolsGrants={enabledTools.some((t) => t.tool_name === MCPServerToolWildcard)}
+                    editable={canEditServiceAccountAuth}
+                    onChange={onChange}
+                />
             )}
         </ServiceAccountSection>
     );
@@ -391,7 +419,12 @@ const McpsTab = (props: Props) => {
                     id='mcp-auto-enable'
                     checked={autoEnableNewMCPTools}
                     disabled={serviceAccountFieldsLocked}
-                    onChange={(e) => onChange({autoEnableNewMCPTools: e.target.checked})}
+                    onChange={(e) => onChange(e.target.checked ? {
+                        autoEnableNewMCPTools: true,
+
+                        // Scoped channel mode needs an explicit allowlist.
+                        scopedChannelMode: false,
+                    } : {autoEnableNewMCPTools: false})}
                 >
                     <CheckboxText>
                         <CheckboxTitle>
@@ -508,7 +541,7 @@ const McpsTab = (props: Props) => {
                                         <ServerName>{server.name}</ServerName>
                                         <ServerMeta>
                                             {metaDetail}
-                                            {serverStatusBadge(status)}
+                                            {server.kind !== 'builtin' && serverStatusBadge(status)}
                                         </ServerMeta>
                                     </ServerInfo>
                                 </ServerHeaderButton>
@@ -537,6 +570,11 @@ const McpsTab = (props: Props) => {
                                     role='region'
                                     aria-label={server.name}
                                 >
+                                    {server.kind === 'builtin' && (
+                                        <EmptyToolsNotice>
+                                            <FormattedMessage defaultMessage='These apply to agents that run tools in channels without asking: they use web search only if picked here, and web search must also be turned on in the plugin settings. Other agents and direct messages follow the plugin settings.'/>
+                                        </EmptyToolsNotice>
+                                    )}
                                     {adminEnabledTools.length === 0 && emptyToolsNotice(status, {
                                         wildcardOn,
                                         useServiceAccountAuth,

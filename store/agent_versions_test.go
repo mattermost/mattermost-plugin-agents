@@ -384,6 +384,7 @@ func TestAgentVersionChangedFields(t *testing.T) {
 			mutate: func(cfg *llm.BotConfig) {
 				cfg.UserIDs = []string{}
 				cfg.EnabledNativeTools = []string{}
+				cfg.ScopedExtraChannelIDs = []string{}
 			},
 			expected: []string{},
 		},
@@ -419,6 +420,7 @@ func TestAgentVersionChangedFields(t *testing.T) {
 			agent := testAgent("creator-1", "diff-agent", "Diff Agent")
 			agent.UserIDs = nil
 			agent.EnabledNativeTools = nil
+			agent.ScopedExtraChannelIDs = nil
 			require.NoError(t, s.CreateAgent(agent, SystemAgentVersionMeta()))
 
 			fetched, err := s.GetAgent(agent.ID)

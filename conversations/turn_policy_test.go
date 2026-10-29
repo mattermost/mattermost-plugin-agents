@@ -4,14 +4,18 @@
 package conversations_test
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
@@ -23,7 +27,10 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
+	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -639,6 +646,8 @@ type turnEntryPoint struct {
 	// autoReply is set for channel auto-reply, which needs Enterprise
 	// Advanced and so never runs without the remote MCP license.
 	autoReply bool
+	// requester is who the turn runs for, when not autoReplyUserID.
+	requester string
 	// seed prepares what the entry point acts on and returns the call that
 	// starts the turn.
 	seed func(t *testing.T, env *policyEnv) func() error
@@ -729,7 +738,8 @@ var turnEntryPoints = []turnEntryPoint{
 		},
 	},
 	{
-		name: "bot activate_ai mention",
+		name:      "bot activate_ai mention",
+		requester: autoReplyForeignBotID,
 		seed: func(_ *testing.T, env *policyEnv) func() error {
 			post := env.rootPost(autoReplyForeignBotID, "@"+autoReplyBotUsername+" what is the weather")
 			post.AddProp(conversations.ActivateAIProp, true)
@@ -831,6 +841,19 @@ var turnEntryPoints = []turnEntryPoint{
 		},
 	},
 	{
+		name: "async wake",
+		seed: func(t *testing.T, env *policyEnv) func() error {
+			botPost := env.seedRun(t, env.channel, nil, humanPost("what is the weather"), earlierAnswer(), nil)
+			scheduler := &capturingWakeScheduler{}
+			env.conversations.SetWakeScheduler(scheduler, nil)
+			require.NoError(t, env.conversations.ScheduleWake(botPost.Id, autoReplyUserID, time.Minute))
+			require.Len(t, scheduler.jobs, 1)
+			return func() error {
+				return env.conversations.ResumeConversation(context.Background(), scheduler.jobs[0])
+			}
+		},
+	},
+	{
 		name:       "search",
 		dm:         true,
 		returnsErr: true,
@@ -841,6 +864,87 @@ var turnEntryPoints = []turnEntryPoint{
 			}
 		},
 	},
+}
+
+type capturingWakeScheduler struct {
+	jobs []conversations.WakeJob
+}
+
+func (s *capturingWakeScheduler) ScheduleOnce(_ string, _ time.Time, props any) (*cluster.JobOnce, error) {
+	s.jobs = append(s.jobs, props.(conversations.WakeJob))
+	return nil, nil
+}
+
+func (s *capturingWakeScheduler) Cancel(string) {}
+
+// scopedPolicyBotConfig is policyBotConfig in scoped channel mode with the
+// weather and embedded tools enabled.
+func scopedPolicyBotConfig() llm.BotConfig {
+	cfg := policyBotConfig()
+	cfg.AutoEnableNewMCPTools = false
+	cfg.UseServiceAccountAuth = true
+	cfg.ScopedChannelMode = true
+	cfg.EnabledMCPTools = []llm.EnabledMCPTool{
+		{ServerOrigin: policyToolOrigin, ToolName: policyToolName},
+		{ServerOrigin: mcp.EmbeddedClientKey, ToolName: policyTimeToolName},
+		{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "search_posts"},
+	}
+	return cfg
+}
+
+// scopedPolicyRecorder observes a policy environment's scoped sessions and
+// the audit records and tool runs of its turns.
+type scopedPolicyRecorder struct {
+	minter   *scopedTestMinter
+	toolRuns atomic.Int32
+
+	mu      sync.Mutex
+	records []*model.AuditRecord
+}
+
+func (r *scopedPolicyRecorder) auditRecords(event string) []*model.AuditRecord {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*model.AuditRecord
+	for _, rec := range r.records {
+		if rec.EventName == event {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+// enableScopedSessions lets env's agents mint scoped sessions and counts every
+// tool run.
+func (env *policyEnv) enableScopedSessions(t *testing.T) *scopedPolicyRecorder {
+	t.Helper()
+	rec := &scopedPolicyRecorder{minter: &scopedTestMinter{}}
+	env.mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
+	env.mockAPI.On("HasPermissionToChannel", mock.Anything, mock.Anything, model.PermissionReadChannel).Return(true).Maybe()
+	env.mockAPI.On("LogAuditRec", mock.Anything).Run(func(args mock.Arguments) {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		rec.records = append(rec.records, args.Get(0).(*model.AuditRecord))
+	}).Maybe().Return()
+
+	client := pluginapi.NewClient(env.mockAPI, nil)
+	manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
+	t.Cleanup(manager.Close)
+	manager.SetScopedSessions(rec.minter)
+	env.mcpMgr.scoped = manager
+
+	for i := range env.mcpMgr.tools {
+		tool := &env.mcpMgr.tools[i]
+		if tool.ServerOrigin == mcp.EmbeddedClientKey {
+			tool.ReadOnly = true
+		}
+		resolve := tool.Resolver
+		tool.Resolver = func(ctx context.Context, llmCtx *llm.Context, args llm.ToolArgumentGetter) (string, error) {
+			rec.toolRuns.Add(1)
+			return resolve(ctx, llmCtx, args)
+		}
+	}
+	return rec
 }
 
 // setupInvariantEnv is a policy environment with channel tool calling on, an
@@ -977,6 +1081,36 @@ func TestTurnEntryPointPolicyInvariants(t *testing.T) {
 				require.NoError(t, err)
 				env.waitForStream(t)
 				assert.Zero(t, env.executions.Load())
+			})
+
+			t.Run("a scoped agent runs every tool on sessions it revokes", func(t *testing.T) {
+				env := setupInvariantEnv(t, scopedPolicyBotConfig(),
+					dmMakeToolCallStream([]llm.ToolCall{policyWeatherCall}),
+					dmMakeTextStream("It's sunny"),
+				)
+				scoped := env.enableScopedSessions(t)
+
+				require.NoError(t, entry.seed(t, env)())
+				if !entry.noAnswer {
+					env.waitForStream(t)
+				}
+
+				require.Eventually(t, func() bool {
+					minted, revoked := scoped.minter.snapshot()
+					return len(minted) > 0 && len(revoked) == len(minted)
+				}, 5*time.Second, 10*time.Millisecond, "every session the turn mints is revoked when its run ends")
+				assert.Zero(t, env.mcpMgr.unscopedCatalogs.Load(), "a scoped turn never builds the requester's catalog")
+
+				calls := scoped.auditRecords(audit.EventAgentScopedToolCall)
+				require.NotEmpty(t, calls, "the turn runs a tool")
+				assert.Len(t, calls, int(scoped.toolRuns.Load()), "every tool run is audited")
+				requester := cmp.Or(entry.requester, autoReplyUserID)
+				for _, call := range calls {
+					assert.Equal(t, requester, call.Actor.UserId, "the record names the requester")
+					encoded, err := json.Marshal(call)
+					require.NoError(t, err)
+					assert.NotContains(t, string(encoded), "NYC", "tool arguments never enter audit records")
+				}
 			})
 		})
 	}

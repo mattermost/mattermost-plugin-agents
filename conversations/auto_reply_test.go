@@ -38,7 +38,7 @@ const (
 	autoReplyUserID       = "aruserid1234567890123456ab"
 	autoReplyOtherUserID  = "arotherid123456789012345ab"
 	autoReplyForeignBotID = "arforeignbot1234567890123a"
-	autoReplyChannelID    = "archannel-id"
+	autoReplyChannelID    = "archannelid1234567890123ab"
 	autoReplyTeamID       = "arteam-id"
 	autoReplyRootID       = "arroot-id"
 	autoReplyReplyID      = "arreply-id"
@@ -101,6 +101,13 @@ func autoReplySecondBotConfig() llm.BotConfig {
 // setupAutoReplyTestEnv builds a Conversations service around an open channel
 // with the given agents registered (all backed by the same canned-response
 // LLM), a licensed server, and a fake auto-reply settings lookup wired in.
+// autoReplyBuilderConfig lets the context builder see the env's channel tool
+// calling toggle, which scoped channel mode depends on.
+type autoReplyBuilderConfig struct {
+	*mockConfigProvider
+	*testToolCallingConfig
+}
+
 func setupAutoReplyTestEnv(t *testing.T, botConfigs []llm.BotConfig, llmResponses ...*llm.TextStreamResult) *autoReplyTestEnv {
 	t.Helper()
 	return setupAutoReplyTestEnvWithTools(t, botConfigs, nil, &testToolCallingConfig{enableAmbientAutoReply: true}, llmResponses...)
@@ -162,7 +169,7 @@ func setupAutoReplyTestEnvWithTools(
 
 	mcpMgr := &testMCPClientManager{}
 	toolProvider := &testToolProvider{tools: builtInTools}
-	contextBuilder := llmcontext.NewLLMContextBuilder(pluginClient, toolProvider, mcpMgr, &mockConfigProvider{})
+	contextBuilder := llmcontext.NewLLMContextBuilder(pluginClient, toolProvider, mcpMgr, autoReplyBuilderConfig{&mockConfigProvider{}, toolCallingConfig})
 	promptsManager, err := llm.NewPrompts(prompts.PromptsFolder)
 	require.NoError(t, err)
 

@@ -638,3 +638,97 @@ func TestScopedChannelTurnWithoutSessionStillNeedsNamedWebSearch(t *testing.T) {
 	assert.NotContains(t, toolNames(llmContext.Tools), "WebSearch")
 	assert.NotContains(t, toolNames(llmContext.Tools), "WebSearchFetchSource")
 }
+
+func TestScopedRunLapsed(t *testing.T) {
+	kept, removed := model.NewId(), model.NewId()
+	tests := []struct {
+		name   string
+		cfg    func(*llm.BotConfig)
+		noBot  bool
+		lapsed bool
+	}{
+		{name: "unchanged agent"},
+		{name: "extra channel added", cfg: func(c *llm.BotConfig) { c.ScopedExtraChannelIDs = []string{kept, removed, model.NewId()} }},
+		{name: "extra channel removed", cfg: func(c *llm.BotConfig) { c.ScopedExtraChannelIDs = []string{kept} }, lapsed: true},
+		{name: "scoped mode turned off", cfg: func(c *llm.BotConfig) { c.ScopedChannelMode = false }, lapsed: true},
+		{name: "tool added", cfg: func(c *llm.BotConfig) {
+			c.EnabledMCPTools = append(c.EnabledMCPTools, llm.EnabledMCPTool{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "search_posts"})
+		}},
+		{name: "named tool removed", cfg: func(c *llm.BotConfig) { c.EnabledMCPTools = c.EnabledMCPTools[1:] }, lapsed: true},
+		{name: "named web search removed", cfg: func(c *llm.BotConfig) {
+			c.EnabledMCPTools = slices.DeleteFunc(slices.Clone(c.EnabledMCPTools), func(t llm.EnabledMCPTool) bool {
+				return t.ServerOrigin == llm.BuiltinToolsOrigin
+			})
+		}, lapsed: true},
+		{name: "origin formatting changed", cfg: func(c *llm.BotConfig) {
+			c.EnabledMCPTools = slices.Clone(c.EnabledMCPTools)
+			c.EnabledMCPTools[2].ServerOrigin += "/"
+		}},
+		{name: "bot gone", noBot: true, lapsed: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := newScopedCatalogProvider(t, &recordingScopedMinter{}, nil)
+			builder, _ := newScopedTestBuilder(t, defaultScopedTestEnv(), &emptyToolProvider{}, provider)
+			cfg := scopedTestBotConfig()
+			cfg.ScopedExtraChannelIDs = []string{kept, removed}
+			cfg.EnabledMCPTools = append(cfg.EnabledMCPTools, llm.EnabledMCPTool{ServerOrigin: llm.BuiltinToolsOrigin, ToolName: "WebSearch"})
+			bot := newScopedTestBot(cfg)
+			run, err := provider.MintScopedSession(stdcontext.Background(), mcp.ScopedSessionRequest{
+				BotUserID:       bot.BotUserID(),
+				RequesterID:     model.NewId(),
+				ChannelID:       model.NewId(),
+				ExtraChannelIDs: cfg.ScopedExtraChannelIDs,
+				EnabledTools:    cfg.EnabledMCPTools,
+			})
+			require.NoError(t, err)
+
+			if tt.cfg != nil {
+				tt.cfg(&cfg)
+			}
+			current := newTestBotWithMMBot(cfg, &model.Bot{UserId: bot.BotUserID(), Username: "matty"})
+			if tt.noBot {
+				current = nil
+			}
+			assert.Equal(t, tt.lapsed, builder.ScopedRunLapsed(current, run))
+		})
+	}
+}
+
+func TestScopedCatalogPreviewMirrorsWebSearchOptIn(t *testing.T) {
+	tests := []struct {
+		name     string
+		named    []string
+		expected []string
+	}{
+		{name: "not named"},
+		{name: "named", named: []string{"WebSearch"}, expected: []string{"WebSearch"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			minter := &recordingScopedMinter{}
+			provider := newScopedCatalogProvider(t, minter, scopedTestMCPCatalog())
+			builder, _ := newScopedTestBuilder(t, defaultScopedTestEnv(), newWebSearchToolProvider(t), provider)
+			cfg := scopedTestBotConfig()
+			for _, name := range tt.named {
+				cfg.EnabledMCPTools = append(cfg.EnabledMCPTools, llm.EnabledMCPTool{ServerOrigin: llm.BuiltinToolsOrigin, ToolName: name})
+			}
+			bot := newScopedTestBot(cfg)
+			channel := &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypeOpen}
+
+			llmContext := builder.BuildLLMContextUserRequest(bot, &model.User{Id: model.NewId()}, channel,
+				builder.WithLLMContextScopedCatalogPreview(bot),
+				builder.WithLLMContextTools(stdcontext.Background(), bot),
+			)
+
+			var got []string
+			for _, name := range toolNames(llmContext.Tools) {
+				if name == "WebSearch" || name == "WebSearchFetchSource" {
+					got = append(got, name)
+				}
+			}
+			assert.ElementsMatch(t, tt.expected, got)
+			assert.Empty(t, minter.userIDs, "a preview never mints a session")
+		})
+	}
+}

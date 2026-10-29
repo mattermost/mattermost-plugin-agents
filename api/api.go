@@ -738,6 +738,9 @@ type AIBotsResponse struct {
 	SearchEnabled        bool        `json:"searchEnabled"`
 	AllowUnsafeLinks     bool        `json:"allowUnsafeLinks"`
 	HTMLArtifactsEnabled bool        `json:"htmlArtifactsEnabled"`
+	// ScopedSessionsSupported reports whether this server can create the
+	// scoped sessions scoped channel mode runs on.
+	ScopedSessionsSupported bool `json:"scopedSessionsSupported"`
 }
 
 // usesServiceAccountAuth reports the effective service account mode for a bot:
@@ -826,10 +829,11 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 	searchEnabled := a.searchService.Enabled()
 
 	c.JSON(http.StatusOK, AIBotsResponse{
-		Bots:                 bots,
-		SearchEnabled:        searchEnabled,
-		AllowUnsafeLinks:     a.config.AllowUnsafeLinks(),
-		HTMLArtifactsEnabled: a.config.EnableHTMLArtifacts(),
+		Bots:                    bots,
+		SearchEnabled:           searchEnabled,
+		AllowUnsafeLinks:        a.config.AllowUnsafeLinks(),
+		HTMLArtifactsEnabled:    a.config.EnableHTMLArtifacts(),
+		ScopedSessionsSupported: a.contextBuilder.ServerSupportsScopedSessions(),
 	})
 }
 

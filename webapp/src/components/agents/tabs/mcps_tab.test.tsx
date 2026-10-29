@@ -37,6 +37,10 @@ jest.mock('@/hooks/use_mcp_connection_events', () => ({
     useMCPConnectionEvents: jest.fn(),
 }));
 
+jest.mock('@/hooks/use_server_supports_scoped_sessions', () => ({
+    useServerSupportsScopedSessions: jest.fn(() => true),
+}));
+
 // WithTooltip renders its title alongside children so tests can assert the tooltip text.
 jest.mock('@mattermost/shared/components/tooltip', () => ({
     WithTooltip: ({children, title}: {children: React.ReactNode; title?: React.ReactNode}) => (
@@ -74,6 +78,7 @@ type RenderOpts = {
     enabledTools?: Array<{server_origin: string; tool_name: string}>;
     autoEnableNewMCPTools?: boolean;
     useServiceAccountAuth?: boolean;
+    scopedChannelMode?: boolean;
     serviceAccountFieldsLocked?: boolean;
     canEditServiceAccountAuth?: boolean;
 };
@@ -83,6 +88,7 @@ function renderTab({
     enabledTools = [],
     autoEnableNewMCPTools = true,
     useServiceAccountAuth = false,
+    scopedChannelMode = false,
     serviceAccountFieldsLocked = false,
     canEditServiceAccountAuth = true,
 }: RenderOpts = {}) {
@@ -96,6 +102,8 @@ function renderTab({
                     enabledTools={enabledTools}
                     autoEnableNewMCPTools={autoEnableNewMCPTools}
                     useServiceAccountAuth={useServiceAccountAuth}
+                    scopedChannelMode={scopedChannelMode}
+                    scopedExtraChannelIds={[]}
                     serviceAccountFieldsLocked={serviceAccountFieldsLocked}
                     canEditServiceAccountAuth={canEditServiceAccountAuth}
                     onChange={onChange}
@@ -122,6 +130,8 @@ function renderWithOrphanedTool(useServiceAccountAuth: boolean) {
                     ]}
                     autoEnableNewMCPTools={false}
                     useServiceAccountAuth={useServiceAccountAuth}
+                    scopedChannelMode={false}
+                    scopedExtraChannelIds={[]}
                     serviceAccountFieldsLocked={false}
                     canEditServiceAccountAuth={true}
                     onChange={onChange}
@@ -161,6 +171,8 @@ describe('McpsTab', () => {
                     ]}
                     autoEnableNewMCPTools={false}
                     useServiceAccountAuth={false}
+                    scopedChannelMode={false}
+                    scopedExtraChannelIds={[]}
                     serviceAccountFieldsLocked={false}
                     canEditServiceAccountAuth={true}
                     onChange={onChange}
@@ -240,7 +252,7 @@ describe('McpsTab', () => {
         expect(screen.getByText(serviceAccountWarning)).not.toBeNull();
 
         fireEvent.click(toggle);
-        expect(on.onChange).toHaveBeenCalledWith({useServiceAccountAuth: false});
+        expect(on.onChange).toHaveBeenCalledWith({useServiceAccountAuth: false, scopedChannelMode: false, scopedExtraChannelIds: []});
     });
 
     // Soft-lock mirrors the server sensitive-field ACL: auto-enable and tool
@@ -255,6 +267,8 @@ describe('McpsTab', () => {
                     enabledTools={[]}
                     autoEnableNewMCPTools={false}
                     useServiceAccountAuth={true}
+                    scopedChannelMode={false}
+                    scopedExtraChannelIds={[]}
                     serviceAccountFieldsLocked={true}
                     canEditServiceAccountAuth={false}
                     onChange={onChange}
@@ -413,6 +427,59 @@ describe('McpsTab', () => {
 
         fireEvent.click(toolToggle);
         expect(onChange).not.toHaveBeenCalled();
+    });
+
+    test.each([
+        {name: 'grants every tool of a server that lists none yet', scopedChannelMode: false, expected: [{server_origin: 'https://jira.example.com/mcp', tool_name: '*'}]},
+        {name: 'grants nothing for such a server to a scoped agent', scopedChannelMode: true, expected: null},
+    ])('$name', async ({scopedChannelMode, expected}) => {
+        mockedGetUserMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'Jira',
+                serverOrigin: 'https://jira.example.com/mcp',
+                kind: 'remote',
+                authenticated: true,
+                needsOAuth: false,
+                serviceAccountConfigured: true,
+                tools: [],
+            }],
+        });
+
+        const {onChange} = renderTab({useServiceAccountAuth: true, autoEnableNewMCPTools: false, scopedChannelMode});
+
+        await screen.findByText('Jira');
+        fireEvent.click(screen.getByRole('switch', {name: serverToggleName}));
+        if (expected) {
+            expect(onChange).toHaveBeenCalledWith({enabledTools: expected});
+        } else {
+            expect(onChange).not.toHaveBeenCalled();
+        }
+    });
+
+    test('lets a scoped agent pick built-in web search by name', async () => {
+        mockedGetUserMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'Built-in tools',
+                serverOrigin: 'builtin://mattermost-agents',
+                kind: 'builtin',
+                authenticated: true,
+                needsOAuth: false,
+                serviceAccountConfigured: false,
+                tools: [
+                    {name: 'WebSearch', description: 'Search the web', enabled: true, policy: 'ask'},
+                    {name: 'WebSearchFetchSource', description: 'Read a page', enabled: true, policy: 'ask'},
+                ],
+            }],
+        });
+
+        const {onChange} = renderTab({useServiceAccountAuth: true, autoEnableNewMCPTools: false, scopedChannelMode: true});
+
+        await screen.findByText('Built-in tools');
+        expect(screen.queryByText('Connected')).toBeNull();
+        fireEvent.click(screen.getByRole('button', {name: /Press to expand or collapse tools/}));
+        fireEvent.click(screen.getAllByRole('switch', {name: toolToggleName})[0]);
+
+        expect(onChange).toHaveBeenCalledWith({enabledTools: [{server_origin: 'builtin://mattermost-agents', tool_name: 'WebSearch'}]});
     });
 
     test('does not strip saved grants when an unavailable server lists no tools', async () => {

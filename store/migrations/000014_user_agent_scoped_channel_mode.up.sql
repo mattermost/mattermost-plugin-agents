@@ -1,0 +1,4 @@
+ALTER TABLE Agents_UserAgents
+    ADD COLUMN IF NOT EXISTS ScopedChannelMode BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE Agents_UserAgents
+    ADD COLUMN IF NOT EXISTS ScopedExtraChannelIDs TEXT NOT NULL DEFAULT '[]';

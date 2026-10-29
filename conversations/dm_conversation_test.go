@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -594,11 +595,33 @@ type testMCPClientManager struct {
 	tools      []llm.Tool
 	errors     *mcp.Errors
 	onGetTools func()
+
+	// scoped, when set, mints scoped sessions for agents in scoped channel
+	// mode.
+	scoped           *mcp.ClientManager
+	scopedCatalogs   atomic.Int32
+	unscopedCatalogs atomic.Int32
 }
 
-func (m *testMCPClientManager) GetToolsWithSelection(_ context.Context, _ mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
+func (m *testMCPClientManager) MintScopedSession(ctx context.Context, req mcp.ScopedSessionRequest) (*mcp.ScopedRun, error) {
+	if m.scoped == nil {
+		return nil, mcp.ErrScopedSessionsUnavailable
+	}
+	return m.scoped.MintScopedSession(ctx, req)
+}
+
+func (m *testMCPClientManager) ScopedSessionsAvailable() bool {
+	return m.scoped != nil && m.scoped.ScopedSessionsAvailable()
+}
+
+func (m *testMCPClientManager) GetToolsWithSelection(_ context.Context, req mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	if m.onGetTools != nil {
 		m.onGetTools()
+	}
+	if req.Scoped != nil {
+		m.scopedCatalogs.Add(1)
+	} else {
+		m.unscopedCatalogs.Add(1)
 	}
 
 	tools := make([]llm.Tool, 0, len(m.tools))

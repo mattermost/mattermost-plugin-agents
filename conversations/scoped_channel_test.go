@@ -1,0 +1,579 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+package conversations_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
+	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
+	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
+	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+)
+
+const (
+	scopedBotUserID   = "scopedbotid12345678901234a"
+	scopedBotUsername = "scopedbot"
+	scopedUserID      = "scopeduser1234567890123456"
+	scopedChannelID   = "scopedchannel1234567890123"
+	scopedTeamID      = "scopedteam1234567890123456"
+	scopedRemote      = "https://jira.example.com"
+	scopedToolName    = "jira__get_issue"
+)
+
+type scopedTestMinter struct {
+	mu      sync.Mutex
+	minted  []*model.Session
+	revoked []string
+}
+
+func (m *scopedTestMinter) CreateScopedSession(userID string, _ *model.SessionScope, expiresAt int64) (*model.Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session := &model.Session{Id: model.NewId(), UserId: userID, Token: model.NewId(), ExpiresAt: expiresAt}
+	m.minted = append(m.minted, session)
+	return session, nil
+}
+
+func (m *scopedTestMinter) RevokeSession(sessionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.revoked = append(m.revoked, sessionID)
+	return nil
+}
+
+func (m *scopedTestMinter) snapshot() (minted []*model.Session, revoked []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]*model.Session(nil), m.minted...), append([]string(nil), m.revoked...)
+}
+
+// scopedCatalogManager mints through a real ClientManager and serves one
+// remote "ask" tool.
+type scopedCatalogManager struct {
+	*mcp.ClientManager
+	tool llm.Tool
+
+	mu       sync.Mutex
+	scoped   int
+	unscoped int
+}
+
+func (m *scopedCatalogManager) GetToolsWithSelection(_ context.Context, req mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
+	m.mu.Lock()
+	if req.Scoped != nil {
+		m.scoped++
+	} else {
+		m.unscoped++
+	}
+	m.mu.Unlock()
+	if !selection.Allows(m.tool.ServerOrigin) {
+		return nil, nil
+	}
+	return []llm.Tool{m.tool}, nil
+}
+
+type scopedSilentLogger struct{}
+
+func (scopedSilentLogger) Debug(string, ...any) {}
+func (scopedSilentLogger) Info(string, ...any)  {}
+func (scopedSilentLogger) Warn(string, ...any)  {}
+func (scopedSilentLogger) Error(string, ...any) {}
+
+type scopedBuilderConfig struct{}
+
+func (scopedBuilderConfig) GetServiceByID(string) (llm.ServiceConfig, bool) {
+	return llm.ServiceConfig{}, false
+}
+
+func (scopedBuilderConfig) EnableChannelMentionToolCalling() bool { return true }
+
+type scopedTestEnv struct {
+	conversations *conversations.Conversations
+	channel       *model.Channel
+	trigger       *model.Post
+	convStore     *fakeConvStore
+	streaming     *fakeStreamingService
+	minter        *scopedTestMinter
+	catalog       *scopedCatalogManager
+	builder       *llmcontext.Builder
+	botConfig     llm.BotConfig
+
+	toolRuns int
+	runsMu   sync.Mutex
+
+	auditMu sync.Mutex
+	audits  []*model.AuditRecord
+}
+
+func (env *scopedTestEnv) runs() int {
+	env.runsMu.Lock()
+	defer env.runsMu.Unlock()
+	return env.toolRuns
+}
+
+// removeToolFromAgent updates the agent without the given allowlist entry and
+// ends the live runs that no longer fit it, as the listeners registered in
+// server/main.go do after an agent update.
+func (env *scopedTestEnv) removeToolFromAgent(removed llm.EnabledMCPTool) {
+	cfg := env.botConfig
+	cfg.EnabledMCPTools = slices.DeleteFunc(slices.Clone(cfg.EnabledMCPTools), func(tool llm.EnabledMCPTool) bool { return tool == removed })
+	updated := bots.NewBot(cfg, llm.ServiceConfig{}, &model.Bot{UserId: scopedBotUserID, Username: scopedBotUsername}, nil)
+	env.catalog.RevokeScopedSessionsWhere(func(run *mcp.ScopedRun) bool {
+		return env.builder.ScopedRunLapsed(updated, run)
+	})
+}
+
+func (env *scopedTestEnv) auditRecords(event string) []*model.AuditRecord {
+	env.auditMu.Lock()
+	defer env.auditMu.Unlock()
+	var out []*model.AuditRecord
+	for _, rec := range env.audits {
+		if rec.EventName == event {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+// scopedEnvOpts adjusts setupScopedTestEnv. streamingErr fails the run after
+// its session is minted and before streaming starts.
+type scopedEnvOpts struct {
+	streamingErr error
+	// onToolRun runs inside the tool, while the turn is in flight.
+	onToolRun func(env *scopedTestEnv)
+	// webSearchURL turns on the plugin's built-in web search against a
+	// SearXNG instance at this URL.
+	webSearchURL string
+	// namedBuiltins are built-in tools the agent's allowlist names.
+	namedBuiltins []string
+}
+
+func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts, llmResponses ...*llm.TextStreamResult) *scopedTestEnv {
+	t.Helper()
+	env := &scopedTestEnv{minter: &scopedTestMinter{}, streaming: &fakeStreamingService{finished: make(chan string, 4), contextErr: opts.streamingErr}}
+
+	mockAPI := &plugintest.API{}
+	defaultLocale := "en"
+	mockAPI.On("GetConfig").Return(&model.Config{LocalizationSettings: model.LocalizationSettings{DefaultServerLocale: &defaultLocale}}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
+	mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: scopedTeamID, Name: "team"}, nil).Maybe()
+	mockAPI.On("GetBotUsers").Return(nil, nil).Maybe()
+	mockAPI.On("HasPermissionToChannel", mock.Anything, mock.Anything, model.PermissionReadChannel).Return(true).Maybe()
+	mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
+	mockAPI.On("LogAuditRec", mock.Anything).Run(func(args mock.Arguments) {
+		env.auditMu.Lock()
+		defer env.auditMu.Unlock()
+		env.audits = append(env.audits, args.Get(0).(*model.AuditRecord))
+	}).Maybe().Return()
+	for i := 1; i <= 12; i++ {
+		args := make([]any, i)
+		for j := range args {
+			args[j] = mock.Anything
+		}
+		mockAPI.On("LogDebug", args...).Maybe()
+		mockAPI.On("LogInfo", args...).Maybe()
+		mockAPI.On("LogWarn", args...).Maybe()
+		mockAPI.On("LogError", args...).Maybe()
+	}
+	client := pluginapi.NewClient(mockAPI, nil)
+	licenseChecker := enterprise.NewLicenseChecker(client)
+
+	tool := llm.Tool{
+		Name:         scopedToolName,
+		Description:  "fetch a Jira issue",
+		ServerOrigin: scopedRemote,
+		Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
+		Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+			env.runsMu.Lock()
+			env.toolRuns++
+			env.runsMu.Unlock()
+			if opts.onToolRun != nil {
+				opts.onToolRun(env)
+			}
+			return "JIRA-1 is the evidence", nil
+		},
+	}
+	manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
+	t.Cleanup(manager.Close)
+	manager.SetScopedSessions(env.minter)
+	env.catalog = &scopedCatalogManager{ClientManager: manager, tool: tool}
+
+	enabledTools := []llm.EnabledMCPTool{{ServerOrigin: scopedRemote, ToolName: "get_issue"}}
+	for _, name := range opts.namedBuiltins {
+		enabledTools = append(enabledTools, llm.EnabledMCPTool{ServerOrigin: llm.BuiltinToolsOrigin, ToolName: name})
+	}
+	var toolProvider llmcontext.ToolProvider = &testToolProvider{}
+	if opts.webSearchURL != "" {
+		webSearch := mmtools.NewWebSearchService(func() *config.Config {
+			return &config.Config{WebSearch: config.WebSearchConfig{
+				Enabled:  true,
+				Provider: "searxng",
+				SearXNG:  config.WebSearchSearXNGConfig{BaseURL: opts.webSearchURL},
+			}}
+		}, scopedSilentLogger{}, http.DefaultClient, licenseChecker)
+		toolProvider = mmtools.NewMMToolProvider(mocks.NewMockClient(t), webSearch, nil)
+	}
+
+	botService := bots.New(mockAPI, client, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
+	env.botConfig = llm.BotConfig{
+		ID:                    "scoped-agent",
+		Name:                  scopedBotUsername,
+		DisplayName:           "Scoped Bot",
+		ChannelAccessLevel:    llm.ChannelAccessLevelAll,
+		UserAccessLevel:       llm.UserAccessLevelAll,
+		UseServiceAccountAuth: true,
+		ScopedChannelMode:     true,
+		EnabledMCPTools:       enabledTools,
+	}
+	conversations.SetBotsWithAccounts(mockAPI, botService, bots.NewBot(
+		env.botConfig,
+		llm.ServiceConfig{DefaultModel: "test-model", Type: llm.ServiceTypeOpenAI},
+		&model.Bot{UserId: scopedBotUserID, Username: scopedBotUsername, DisplayName: "Scoped Bot"},
+		newDMTestLLM(llmResponses...),
+	))
+
+	mmClient := &fakeMMClient{
+		users: map[string]*model.User{
+			scopedUserID: {Id: scopedUserID, Username: "alice", Locale: "en"},
+		},
+		channels:        map[string]*model.Channel{channel.Id: channel},
+		kv:              make(map[string]any),
+		allowCreatePost: true,
+		config:          &model.Config{LocalizationSettings: model.LocalizationSettings{DefaultServerLocale: &defaultLocale}},
+	}
+	promptsManager, err := llm.NewPrompts(prompts.PromptsFolder)
+	require.NoError(t, err)
+	env.convStore = newFakeConvStore()
+
+	contextBuilder := llmcontext.NewLLMContextBuilder(client, toolProvider, env.catalog, scopedBuilderConfig{})
+	env.builder = contextBuilder
+	policies := newDMPolicyChecker()
+	policies.policies[scopedRemote+":get_issue"] = mcp.ToolPolicyAsk
+	env.conversations = conversations.New(promptsManager, mmClient, env.streaming, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil,
+		&testToolCallingConfig{enableChannelMentionToolCalling: true}, policies)
+	env.conversations.SetConversationService(conversation.NewService(env.convStore, promptsManager, mmClient, botService))
+
+	post := &model.Post{Id: model.NewId(), ChannelId: channel.Id, UserId: scopedUserID, CreateAt: 100, Message: "@" + scopedBotUsername + " find the evidence"}
+	mmClient.postThreads = map[string]*model.PostList{post.Id: {Order: []string{post.Id}, Posts: map[string]*model.Post{post.Id: post}}}
+	mmClient.posts = map[string]*model.Post{post.Id: post}
+	env.channel, env.trigger = channel, post
+	env.conversations.MessageHasBeenPosted(nil, post)
+	if opts.streamingErr != nil {
+		return env
+	}
+
+	select {
+	case <-env.streaming.finished:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "response stream did not finish")
+	}
+	return env
+}
+
+func scopedToolBlocks(t *testing.T, env *scopedTestEnv) (toolUse, toolResult []conversation.ContentBlock) {
+	t.Helper()
+	convs := allConversations(env.convStore)
+	require.Len(t, convs, 1)
+	for _, turn := range env.convStore.turnsFor(convs[0].ID) {
+		var blocks []conversation.ContentBlock
+		require.NoError(t, json.Unmarshal(turn.Content, &blocks))
+		for _, block := range blocks {
+			switch block.Type {
+			case conversation.BlockTypeToolUse:
+				toolUse = append(toolUse, block)
+			case conversation.BlockTypeToolResult:
+				toolResult = append(toolResult, block)
+			}
+		}
+	}
+	return toolUse, toolResult
+}
+
+// In a channel, a scoped agent runs an "ask" tool without approval and
+// shares its result; the same agent in a DM still waits for approval.
+func TestScopedChannelTurnAutoRunsTools(t *testing.T) {
+	toolCall := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+
+	t.Run("channel mention runs on a scoped session without approval", func(t *testing.T) {
+		channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypePrivate, Name: "evidence"}
+		env := setupScopedTestEnv(t, channel, scopedEnvOpts{}, dmMakeToolCallStream(toolCall), dmMakeTextStream("JIRA-1 has it"))
+
+		assert.Equal(t, 1, env.runs(), "the ask tool runs without approval")
+		assert.Equal(t, 0, env.catalog.unscoped, "a scoped turn never builds the requester's catalog")
+		assert.Positive(t, env.catalog.scoped)
+
+		toolUse, toolResult := scopedToolBlocks(t, env)
+		require.Len(t, toolUse, 1)
+		assert.Equal(t, conversation.StatusAutoApproved, toolUse[0].Status)
+		require.NotNil(t, toolUse[0].Shared)
+		assert.True(t, *toolUse[0].Shared, "scoped results are shared with the channel without a Share step")
+		require.Len(t, toolResult, 1)
+		require.NotNil(t, toolResult[0].Shared)
+		assert.True(t, *toolResult[0].Shared)
+
+		minted, _ := env.minter.snapshot()
+		require.Len(t, minted, 1)
+		assert.Equal(t, scopedBotUserID, minted[0].UserId)
+		require.Eventually(t, func() bool {
+			_, revoked := env.minter.snapshot()
+			return len(revoked) == 1 && revoked[0] == minted[0].Id
+		}, 5*time.Second, 10*time.Millisecond, "the session is revoked when the run ends")
+
+		grants := env.auditRecords(audit.EventAgentScopedSessionGrant)
+		require.Len(t, grants, 1)
+		assert.Equal(t, scopedUserID, grants[0].Actor.UserId)
+		assert.Equal(t, allConversations(env.convStore)[0].ID, grants[0].EventData.Parameters[audit.KeyConversationID],
+			"the first turn's grant names the conversation created after the context")
+		calls := env.auditRecords(audit.EventAgentScopedToolCall)
+		require.Len(t, calls, 1)
+		assert.Equal(t, scopedUserID, calls[0].Actor.UserId, "the record names the human who triggered the run")
+		assert.Equal(t, model.AuditStatusSuccess, calls[0].Status)
+		params := calls[0].EventData.Parameters
+		assert.Equal(t, scopedToolName, params[audit.KeyToolName])
+		assert.Equal(t, scopedChannelID, params[audit.KeyChannelID])
+		assert.Equal(t, allConversations(env.convStore)[0].ID, params[audit.KeyConversationID])
+		encoded, err := json.Marshal(calls[0])
+		require.NoError(t, err)
+		assert.NotContains(t, string(encoded), "JIRA-1 is the evidence", "tool results never enter audit records")
+	})
+
+	t.Run("DM still waits for approval", func(t *testing.T) {
+		channel := &model.Channel{Id: scopedChannelID, Type: model.ChannelTypeDirect, Name: scopedBotUserID + "__" + scopedUserID}
+		env := setupScopedTestEnv(t, channel, scopedEnvOpts{}, dmMakeToolCallStream(toolCall))
+
+		assert.Equal(t, 0, env.runs())
+		minted, _ := env.minter.snapshot()
+		assert.Empty(t, minted, "DMs never run on a scoped session")
+		assert.Empty(t, env.auditRecords(audit.EventAgentScopedToolCall))
+		toolUse, _ := scopedToolBlocks(t, env)
+		assert.Empty(t, toolUse, "a call awaiting approval is neither run nor persisted as a tool round")
+	})
+}
+
+// Built-in web search is offered to a scoped turn, and runs without approval,
+// only when the agent's allowlist names it.
+func TestScopedChannelTurnWebSearchNeedsNamedTool(t *testing.T) {
+	webSearchCall := []llm.ToolCall{{ID: "call-1", Name: "WebSearch", Arguments: json.RawMessage(`{"query":"mattermost scoped sessions"}`)}}
+
+	tests := []struct {
+		name          string
+		namedBuiltins []string
+		channelType   model.ChannelType
+		searches      int
+	}{
+		{name: "not named", namedBuiltins: nil, channelType: model.ChannelTypePrivate, searches: 0},
+		{name: "only the fetch tool named", namedBuiltins: []string{"WebSearchFetchSource"}, channelType: model.ChannelTypePrivate, searches: 0},
+		{name: "named", namedBuiltins: []string{"WebSearch"}, channelType: model.ChannelTypePrivate, searches: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var searches atomic.Int32
+			searx := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				searches.Add(1)
+				_, _ = w.Write([]byte(`{"results":[{"title":"Scoped sessions","url":"https://example.com/a","content":"about scoped sessions"}]}`))
+			}))
+			t.Cleanup(searx.Close)
+
+			channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: tt.channelType, Name: "evidence"}
+			env := setupScopedTestEnv(t, channel, scopedEnvOpts{webSearchURL: searx.URL, namedBuiltins: tt.namedBuiltins},
+				dmMakeToolCallStream(webSearchCall), dmMakeTextStream("done"))
+
+			assert.EqualValues(t, tt.searches, searches.Load())
+			toolUse, _ := scopedToolBlocks(t, env)
+			if tt.searches == 0 {
+				require.Len(t, toolUse, 1)
+				assert.Equal(t, conversation.StatusError, toolUse[0].Status, "a web search that was not opted in is rejected as unknown")
+				assert.Empty(t, env.auditRecords(audit.EventAgentScopedToolCall))
+				return
+			}
+			require.Len(t, toolUse, 1)
+			assert.Equal(t, conversation.StatusAutoApproved, toolUse[0].Status)
+		})
+	}
+
+	t.Run("a DM keeps the plugin-wide setting", func(t *testing.T) {
+		var searches atomic.Int32
+		searx := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			searches.Add(1)
+			_, _ = w.Write([]byte(`{"results":[]}`))
+		}))
+		t.Cleanup(searx.Close)
+
+		channel := &model.Channel{Id: scopedChannelID, Type: model.ChannelTypeDirect, Name: scopedBotUserID + "__" + scopedUserID}
+		env := setupScopedTestEnv(t, channel, scopedEnvOpts{webSearchURL: searx.URL}, dmMakeToolCallStream(webSearchCall), dmMakeTextStream("done"))
+
+		assert.Zero(t, searches.Load(), "the call waits for approval")
+		assert.Empty(t, env.auditRecords(audit.EventAgentScopedToolCall))
+	})
+}
+
+// Regenerating and resuming a scoped channel turn mint a fresh session for
+// each run and revoke it when that run ends.
+func TestScopedChannelTurnResumes(t *testing.T) {
+	toolCall := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+	channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypeOpen, Name: "town-square"}
+	env := setupScopedTestEnv(t, channel, scopedEnvOpts{},
+		dmMakeToolCallStream(toolCall), dmMakeTextStream("first"),
+		dmMakeToolCallStream(toolCall), dmMakeTextStream("regenerated"),
+		dmMakeTextStream("resumed"),
+	)
+	require.Equal(t, 1, env.runs())
+	conv := allConversations(env.convStore)[0]
+
+	requireAllRevoked := func(t *testing.T, mints int) {
+		t.Helper()
+		require.Eventually(t, func() bool {
+			minted, revoked := env.minter.snapshot()
+			return len(minted) == mints && len(revoked) == mints
+		}, 5*time.Second, 10*time.Millisecond, "every run's session is revoked when it ends")
+	}
+	requireAllRevoked(t, 1)
+
+	t.Run("regenerate", func(t *testing.T) {
+		regenPost := &model.Post{Id: model.NewId(), UserId: scopedBotUserID, ChannelId: channel.Id, RootId: env.trigger.Id}
+		regenPost.AddProp(streaming.ConversationIDProp, conv.ID)
+		regenPost.AddProp(streaming.RespondingToProp, env.trigger.Id)
+
+		require.NoError(t, env.conversations.HandleRegenerate(context.Background(), scopedUserID, regenPost, channel))
+		<-env.streaming.finished
+
+		assert.Equal(t, 2, env.runs(), "the regenerated run auto-runs the tool too")
+		requireAllRevoked(t, 2)
+	})
+
+	t.Run("tool approval resume", func(t *testing.T) {
+		approvalPostID := model.NewId()
+		blocks, err := json.Marshal([]conversation.ContentBlock{{
+			Type:             conversation.BlockTypeToolUse,
+			ID:               "call-2",
+			Name:             scopedToolName,
+			ServerOrigin:     scopedRemote,
+			Input:            json.RawMessage(`{}`),
+			Status:           conversation.StatusPending,
+			WouldAutoExecute: true,
+		}})
+		require.NoError(t, err)
+		require.NoError(t, env.convStore.CreateTurnAutoSequence(&store.Turn{
+			ID:             model.NewId(),
+			ConversationID: conv.ID,
+			PostID:         &approvalPostID,
+			Role:           "assistant",
+			Content:        blocks,
+		}))
+		approvalPost := &model.Post{Id: approvalPostID, UserId: scopedBotUserID, ChannelId: channel.Id, RootId: env.trigger.Id}
+		approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
+
+		require.NoError(t, env.conversations.HandleToolCall(context.Background(), scopedUserID, approvalPost, channel, nil, nil))
+		<-env.streaming.finished
+
+		assert.Equal(t, 3, env.runs(), "the resumed call runs on the re-derived scoped catalog")
+		// One session executes the decision, one streams the follow-up.
+		requireAllRevoked(t, 4)
+		assert.Len(t, env.auditRecords(audit.EventAgentScopedToolCall), 3)
+		assert.Equal(t, 0, env.catalog.unscoped)
+	})
+}
+
+// When the agent's scoped mode lapses mid-run, the run's remaining tool calls
+// wait for approval instead of running.
+func TestScopedChannelTurnStopsAutoRunningWhenRevoked(t *testing.T) {
+	first := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+	second := []llm.ToolCall{{ID: "call-2", Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+	channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypeOpen, Name: "town-square"}
+	revokeAll := func(env *scopedTestEnv) {
+		env.catalog.RevokeScopedSessionsWhere(func(*mcp.ScopedRun) bool { return true })
+	}
+
+	env := setupScopedTestEnv(t, channel, scopedEnvOpts{onToolRun: revokeAll},
+		dmMakeToolCallStream(first), dmMakeToolCallStream(second), dmMakeTextStream("done"))
+
+	assert.Equal(t, 1, env.runs(), "only the call made before the revocation runs")
+	assert.Len(t, env.auditRecords(audit.EventAgentScopedToolCall), 1)
+	toolUse, _ := scopedToolBlocks(t, env)
+	require.Len(t, toolUse, 1, "the call after the revocation waits for approval")
+	assert.Equal(t, "call-1", toolUse[0].ID)
+}
+
+// A run that fails after its session was minted still revokes it.
+func TestScopedChannelTurnErrorRevokesSession(t *testing.T) {
+	channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypeOpen, Name: "town-square"}
+	env := setupScopedTestEnv(t, channel, scopedEnvOpts{streamingErr: errors.New("streaming unavailable")})
+
+	minted, revoked := env.minter.snapshot()
+	require.Len(t, minted, 1)
+	assert.Equal(t, []string{minted[0].Id}, revoked)
+	assert.Equal(t, 0, env.runs())
+}
+
+// Removing a tool from a scoped agent's allowlist ends the runs that were
+// started with it, so the removed tool stops running without approval.
+func TestScopedChannelTurnStopsAutoRunningRemovedTool(t *testing.T) {
+	jira := llm.EnabledMCPTool{ServerOrigin: scopedRemote, ToolName: "get_issue"}
+	webSearch := llm.EnabledMCPTool{ServerOrigin: llm.BuiltinToolsOrigin, ToolName: "WebSearch"}
+	jiraCall := func(id string) []llm.ToolCall {
+		return []llm.ToolCall{{ID: id, Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+	}
+	searchCall := []llm.ToolCall{{ID: "call-2", Name: "WebSearch", Arguments: json.RawMessage(`{"query":"mattermost scoped sessions"}`)}}
+
+	tests := []struct {
+		name         string
+		removed      llm.EnabledMCPTool
+		secondCall   []llm.ToolCall
+		wantToolRuns int
+		wantSearches int32
+	}{
+		{name: "MCP tool", removed: jira, secondCall: jiraCall("call-2"), wantToolRuns: 1},
+		{name: "built-in web search", removed: webSearch, secondCall: searchCall, wantToolRuns: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var searches atomic.Int32
+			searx := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				searches.Add(1)
+				_, _ = w.Write([]byte(`{"results":[]}`))
+			}))
+			t.Cleanup(searx.Close)
+
+			channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypeOpen, Name: "town-square"}
+			env := setupScopedTestEnv(t, channel, scopedEnvOpts{
+				webSearchURL:  searx.URL,
+				namedBuiltins: []string{"WebSearch"},
+				onToolRun:     func(env *scopedTestEnv) { env.removeToolFromAgent(tt.removed) },
+			}, dmMakeToolCallStream(jiraCall("call-1")), dmMakeToolCallStream(tt.secondCall), dmMakeTextStream("done"))
+
+			assert.Equal(t, tt.wantToolRuns, env.runs(), "only the call made before the removal runs")
+			assert.EqualValues(t, tt.wantSearches, searches.Load(), "the removed web search never runs")
+			toolUse, _ := scopedToolBlocks(t, env)
+			require.Len(t, toolUse, 1, "the call after the removal waits for approval")
+			assert.Equal(t, "call-1", toolUse[0].ID)
+		})
+	}
+}
