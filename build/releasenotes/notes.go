@@ -92,7 +92,7 @@ Output format
 - Breaking changes and upgrade notes: changes an administrator must act on or be aware of before upgrading, such as removed or renamed settings, changed defaults, changed behavior of existing features, migrations, and deprecations. Say what changed and, when the input says so, what to do.
 - New features: capabilities that did not exist before. Improvements: better behavior, performance or interface for things that already existed. Fixes: bugs that are now fixed.
 - One item per line, starting with "- ". No nested lists, no blank lines inside a section, no paragraphs, no text outside the sections. No introduction, closing remarks or summary.
-- Each item states the user-visible or administrator-visible effect in plain past tense or as a plain statement ("Added ...", "Fixed ...", "Agents now ..."). Describe what changed for the reader, not how the code changed. Name settings, tools, commands, @-mentions and other identifiers in backticks. Never write a URL, email address or reference to another repository in an item.
+- Each item states the user-visible or administrator-visible effect in plain past tense or as a plain statement ("Added ...", "Fixed ...", "Agents now ..."). Describe what changed for the reader, not how the code changed. Name settings, tools, commands, @-mentions and other identifiers in backticks. Never write a URL, email address, square brackets, @-mention or issue reference (such as #123) in an item's text; references belong only in its trailing links.
 - Each item ends with the link taken verbatim from the Link line of the change it summarizes, separated from the text by one space. Example of the shape, not real content:
   - Added a per-agent setting that limits the number of tool rounds in one turn. ([#1234](https://github.com/example/repo/pull/1234))
 - When several changes are parts of the same story, merge them into one item and put every link in the same parentheses, separated by commas: ([#1](https://...), [#2](https://...)). Use only links from the Link lines.
@@ -251,5 +251,5 @@ func supportedVersionsLine(minServerVersion string) string {
 
 // composeNotes prepends the preserved supported-versions line to the notes.
 func composeNotes(minServerVersion, notes string) string {
-	return supportedVersionsLine(minServerVersion) + "\n" + strings.TrimSpace(notes) + "\n"
+	return supportedVersionsLine(minServerVersion) + "\n" + strings.TrimSpace(strings.ReplaceAll(notes, "\r\n", "\n")) + "\n"
 }

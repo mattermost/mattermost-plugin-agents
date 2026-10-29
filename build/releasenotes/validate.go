@@ -41,12 +41,15 @@ var (
 	// A trailing parenthesised group of markdown links.
 	trailingLinksRe = regexp.MustCompile(`\(((?:\[[^\]]+\]\([^)\s]+\)(?:, )?)+)\)$`)
 	linkRe          = regexp.MustCompile(`\[([^\]]+)\]\(([^)\s]+)\)`)
-	// Anything GitHub renders as a link, outside code spans: markdown links, a
-	// URL with any scheme in any case, "www." hosts, mailto, raw HTML such as
-	// <a href="//host">, "@" (emails, mentions, owner/repo@sha), and
-	// owner/repo#123 references to other repositories.
-	renderedLinkRe = regexp.MustCompile(`\]\(|(?i)[a-z][a-z0-9+.-]*://|(?i)\bwww\.|(?i)\bmailto:|<[A-Za-z/!?]|@|[\w.-]+/[\w.-]+#\d`)
-	codeSpanRe     = regexp.MustCompile("`[^`]*`")
+	// Anything GitHub renders as a link, outside code spans: square brackets
+	// (inline and reference links), a URL with any scheme in any case, "www."
+	// hosts, mailto, raw HTML such as <a href="//host">, "@" (emails, mentions,
+	// owner/repo@sha), and issue references (#123, owner/repo#123, GH-123).
+	renderedLinkRe = regexp.MustCompile(`[\[\]]|(?i)[a-z][a-z0-9+.-]*://|(?i)\bwww\.|(?i)\bmailto:|<[A-Za-z/!?]|@|#\d|(?i)\bGH-\d`)
+	// Control characters other than tab and newline. A bare CR is a line
+	// ending to markdown, so it would hide a second line inside one item.
+	controlCharRe = regexp.MustCompile(`[\x00-\x08\x0b-\x1f\x7f]`)
+	codeSpanRe    = regexp.MustCompile("`[^`]*`")
 )
 
 // isEmoji reports whether r is an emoji or an emoji modifier. Plain arrows,
@@ -102,7 +105,7 @@ func styleProblems(s string) []string {
 // allowed maps each permitted link URL to its link text. It returns every
 // problem found; an empty result means the output is acceptable.
 func validateNotes(out string, allowed map[string]string) []string {
-	out = strings.TrimSpace(out)
+	out = strings.TrimSpace(strings.ReplaceAll(out, "\r\n", "\n"))
 	if out == "" {
 		return []string{"output is empty"}
 	}
@@ -113,6 +116,9 @@ func validateNotes(out string, allowed map[string]string) []string {
 	problems := styleProblems(out)
 	if firstPersonRe.MatchString(out) {
 		problems = append(problems, "uses first person (we, our); state the change directly")
+	}
+	if controlCharRe.MatchString(out) {
+		problems = append(problems, "contains control characters such as a bare carriage return")
 	}
 
 	lastSection := -1
@@ -173,7 +179,7 @@ func bulletProblems(lineNo int, line string, allowed map[string]string) []string
 	// The notes are published as the release body, and PR text is an input,
 	// so the description may carry nothing GitHub would render as a link.
 	if hasRenderedLink(desc) {
-		problems = append(problems, fmt.Sprintf("line %d: links, URLs, emails, @-mentions and other-repository references belong only at the end of the item; put identifiers in backticks", lineNo))
+		problems = append(problems, fmt.Sprintf("line %d: links, brackets, URLs, emails, @-mentions and issue references belong only at the end of the item; put identifiers in backticks", lineNo))
 	}
 	for _, m := range linkRe.FindAllStringSubmatch(line[loc[2]:loc[3]], -1) {
 		text, url := m[1], m[2]
@@ -191,7 +197,18 @@ func bulletProblems(lineNo int, line string, allowed map[string]string) []string
 // hasRenderedLink reports whether s contains anything GitHub would render as a
 // link. Code spans render literally, so they are ignored.
 func hasRenderedLink(s string) bool {
-	return renderedLinkRe.MatchString(codeSpanRe.ReplaceAllString(s, ""))
+	return controlCharRe.MatchString(s) || renderedLinkRe.MatchString(codeSpanRe.ReplaceAllString(s, ""))
+}
+
+// safeBullet reports whether line is a "- " item whose text carries nothing
+// GitHub or Mattermost would render as a link or mention, apart from its
+// trailing references.
+func safeBullet(line string) bool {
+	loc := trailingLinksRe.FindStringIndex(line)
+	if loc == nil || !strings.HasPrefix(line, "- ") {
+		return false
+	}
+	return !hasRenderedLink(line[:loc[0]])
 }
 
 func indexOf(list []string, s string) int {

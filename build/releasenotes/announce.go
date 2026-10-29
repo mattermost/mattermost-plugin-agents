@@ -119,11 +119,12 @@ func formatAnnouncement(o announceOptions) string {
 	return head.String() + body.String() + "\n" + footer
 }
 
-// bulletLines returns the "- " lines of a section.
+// bulletLines returns the "- " lines of a section. The release body can be
+// edited by hand, so lines that would post a link or mention are dropped.
 func bulletLines(lines []string) []string {
 	var out []string
 	for _, l := range lines {
-		if strings.HasPrefix(l, "- ") {
+		if safeBullet(l) {
 			out = append(out, l)
 		}
 	}
