@@ -1,0 +1,79 @@
+name: release-notes-preview
+
+# Generates the release notes for an existing tag exactly as the tag build of
+# ci.yml would, and shows them in the job summary. Nothing is released or
+# changed. Run it from the branch whose build/releasenotes code you want to
+# test; it reads the history and plugin.json of the tag you name.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to write release notes for, for example v2.11.0
+        required: true
+        type: string
+      base:
+        description: Previous release tag. Leave empty to use the previous full release before the tag.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Generate release notes
+        env:
+          TAG: ${{ inputs.tag }}
+          BASE: ${{ inputs.base }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_NOTES_MODEL: ${{ vars.RELEASE_NOTES_MODEL || vars.CLAUDE_MODEL || 'claude-sonnet-5-5' }}
+        run: |
+          set -euo pipefail
+          semver='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+          if ! [[ "$TAG" =~ $semver ]]; then
+            echo "::error::tag must look like v1.2.3"
+            exit 1
+          fi
+          if [[ -n "$BASE" && ! "$BASE" =~ $semver ]]; then
+            echo "::error::base must look like v1.2.3"
+            exit 1
+          fi
+          git rev-parse --verify --quiet "refs/tags/${TAG}^{commit}" >/dev/null || {
+            echo "::error::tag $TAG does not exist in this repository"
+            exit 1
+          }
+          args=(notes --head "refs/tags/${TAG}" --tag "$TAG" --output "$RUNNER_TEMP/release-notes.md")
+          if [[ -n "$BASE" ]]; then
+            args+=(--base "$BASE")
+          fi
+          go run ./build/releasenotes "${args[@]}"
+          {
+            echo "## Release notes preview for ${TAG}"
+            echo
+            cat "$RUNNER_TEMP/release-notes.md"
+            echo
+            echo "<details><summary>Markdown source</summary>"
+            echo
+            echo '~~~markdown'
+            cat "$RUNNER_TEMP/release-notes.md"
+            echo '~~~'
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes-preview
+          path: ${{ runner.temp }}/release-notes.md
+          retention-days: 7

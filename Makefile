@@ -435,6 +435,15 @@ evalviewer:
 	@echo Building evalviewer...
 	$(GO) build $(GO_BUILD_FLAGS) -C cmd/evalviewer -o ../../bin/evalviewer .
 
+## Generates release notes with an LLM: make release-notes BASE=v2.10.0 HEAD=v2.11.0.
+## Needs ANTHROPIC_API_KEY; GITHUB_TOKEN is optional but raises the GitHub API rate limit.
+## BASE defaults to the previous release before HEAD (default HEAD). Optional: TAG=vX.Y.Z,
+## OUTPUT=path (default stdout), RELEASE_NOTES_MODEL, PRINT_PROMPT=1 to only print the prompt.
+## See build/releasenotes/README.md.
+.PHONY: release-notes
+release-notes:
+	$(GO) run ./build/releasenotes notes $(if $(BASE),--base $(BASE)) $(if $(HEAD),--head $(HEAD)) $(if $(TAG),--tag $(TAG)) $(if $(OUTPUT),--output $(OUTPUT)) $(if $(PRINT_PROMPT),--print-prompt)
+
 # Packages with evals. Eval test names end in "Eval" so -run skips unit tests;
 # mcpserver evals boot Mattermost containers and need Docker.
 EVAL_PACKAGES = ./conversations ./threads ./channels ./react ./mcpserver

@@ -1,0 +1,146 @@
+name: release-announce
+
+# Release follow-ups, both off until enabled with repository variables:
+#
+#   announce    posts the release to a Mattermost channel through an incoming
+#               webhook. Enable with the variable RELEASE_ANNOUNCE_ENABLED=true
+#               and the secret MATTERMOST_RELEASE_WEBHOOK_URL.
+#   blog-draft  drafts a blog post for marketing from the release notes and the
+#               docs and uploads it as a workflow artifact. Enable with the
+#               variable RELEASE_BLOG_DRAFT_ENABLED=true. Needs ANTHROPIC_API_KEY.
+#
+# Mattermost's release pipeline creates the GitHub release from the build
+# artifact. Releases created with the default GITHUB_TOKEN do not trigger
+# workflows, but that pipeline creates the release as a GitHub App, so
+# `release: published` is expected to fire. If it does not, run this workflow
+# by hand with the tag. The release body is the input; neither job changes the
+# release.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Released tag to announce, for example v2.11.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-announce-${{ inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  announce:
+    name: Announce in Mattermost
+    if: vars.RELEASE_ANNOUNCE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      # The tool comes from the default branch so it exists even when the
+      # release is older than this workflow.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.repository.default_branch || github.ref }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Get release notes
+        id: notes
+        env:
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::notice::$TAG is not a full release tag; nothing to announce."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          prerelease=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)
+          if [[ "$prerelease" == "true" ]]; then
+            echo "::notice::$TAG is a pre-release; nothing to announce."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body > "$RUNNER_TEMP/notes.md"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Post announcement
+        if: steps.notes.outputs.skip != 'true'
+        env:
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          MATTERMOST_RELEASE_WEBHOOK_URL: ${{ secrets.MATTERMOST_RELEASE_WEBHOOK_URL }}
+          RELEASE_DOCS_URL: ${{ vars.RELEASE_DOCS_URL }}
+        run: go run ./build/releasenotes announce --tag "$TAG" --notes "$RUNNER_TEMP/notes.md"
+
+  blog-draft:
+    name: Draft blog post
+    if: vars.RELEASE_BLOG_DRAFT_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.repository.default_branch || github.ref }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # The docs as they were at the release, so the draft describes that version.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
+          path: release-src
+          sparse-checkout: docs
+
+      - name: Get release notes
+        id: notes
+        env:
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::notice::$TAG is not a full release tag; no blog draft."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          prerelease=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)
+          if [[ "$prerelease" == "true" ]]; then
+            echo "::notice::$TAG is a pre-release; no blog draft."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body > "$RUNNER_TEMP/notes.md"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Draft blog post
+        if: steps.notes.outputs.skip != 'true'
+        env:
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          RELEASE_NOTES_MODEL: ${{ vars.RELEASE_NOTES_MODEL || vars.CLAUDE_MODEL || 'claude-sonnet-5-5' }}
+          RELEASE_DOCS_URL: ${{ vars.RELEASE_DOCS_URL }}
+        run: |
+          set -euo pipefail
+          go run ./build/releasenotes blog \
+            --tag "$TAG" \
+            --notes "$RUNNER_TEMP/notes.md" \
+            --docs-dir release-src/docs \
+            --output "$RUNNER_TEMP/blog-draft.md"
+          {
+            echo "## Draft blog post for ${TAG}"
+            echo
+            echo "Draft for marketing to edit. Not published anywhere."
+            echo
+            cat "$RUNNER_TEMP/blog-draft.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload draft
+        if: steps.notes.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: blog-draft-${{ inputs.tag || github.event.release.tag_name }}
+          path: ${{ runner.temp }}/blog-draft.md
+          retention-days: 30
