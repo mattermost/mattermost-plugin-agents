@@ -420,6 +420,10 @@ func newClientWithTimeout(ctx context.Context, timeout time.Duration, userID str
 		serviceAccount: p.serviceAccount,
 	}
 
+	if err := c.requireStaticOAuthToken(); err != nil {
+		return nil, err
+	}
+
 	session, err := connectWithDeadline(ctx, timeout, "MCP server "+serverConfig.Name,
 		func(connectCtx context.Context) (*mcp.ClientSession, error) {
 			return c.connectAndDiscover(connectCtx, serverConfig, p.forceRefresh)
@@ -512,6 +516,26 @@ func NewPluginClient(ctx context.Context, userID string, cfg PluginServerConfig,
 	}
 
 	return client, nil
+}
+
+// requireStaticOAuthToken returns an *OAuthNeededError when the server has
+// admin-configured OAuth client credentials but the user has never authorized
+// it. Such a server requires OAuth, yet some (e.g. Google's Workspace MCP
+// servers) answer initialize and tools/list anonymously and only reject
+// tools/call; connecting anyway would offer tools that cannot work and never
+// prompt the user to connect.
+func (c *Client) requireStaticOAuthToken() error {
+	if c.serviceAccount || c.oauthManager == nil || staticOAuthCreds(c.config) == nil {
+		return nil
+	}
+	hasToken, err := c.oauthManager.HasStoredToken(c.userID, c.config.Name)
+	if err != nil {
+		return fmt.Errorf("failed to check stored OAuth token for MCP server %s: %w", c.config.Name, err)
+	}
+	if hasToken {
+		return nil
+	}
+	return &OAuthNeededError{authURL: c.oauthStartURL()}
 }
 
 func (c *Client) oauthNeededError(err error) error {
