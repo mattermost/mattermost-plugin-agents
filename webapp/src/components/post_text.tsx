@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useLayoutEffect, useMemo, useRef, useState} from 'react';
+import React, {useMemo} from 'react';
 import {useSelector} from 'react-redux';
 import styled, {keyframes, css} from 'styled-components';
 
@@ -13,8 +13,7 @@ import manifest from '@/manifest';
 
 import {insertAnnotationMarkers, replaceCitationMarkers} from './citations/citation_processor';
 import {Annotation} from './citations/types';
-import {noMotionWhenReduced} from './llmbot_post/motion';
-import {StreamingMarkdown, fadeOnAnimation} from './llmbot_post/streaming_markdown';
+import {StreamingMarkdown} from './llmbot_post/streaming_markdown';
 import type {FreshRange} from './llmbot_post/use_smooth_text';
 
 export type ChannelNamesMap = {
@@ -93,18 +92,6 @@ const handleInternalLinkClick = (e: React.MouseEvent<HTMLDivElement>) => {
     history.push(path);
 };
 
-// Blocks appended after mount fade in; those present at mount do not. A block
-// whose text arrives in fading spans is not faded again as a whole (only
-// blocks without spans, such as code, fade as one).
-const RevealTextContainer = styled(TextContainer)<{$enterFrom: number | null}>`
-	${(props) => props.$enterFrom !== null && css`
-		> :nth-child(n + ${props.$enterFrom}):not(:has([data-fresh-text])) {
-			animation: ${fadeOnAnimation} var(--duration-moderate) var(--ease-entrance) backwards;
-			${noMotionWhenReduced}
-		}
-	`}
-`;
-
 interface RevealTextProps {
     message: string;
     postID: string;
@@ -118,13 +105,6 @@ interface RevealTextProps {
 const RevealText = (props: RevealTextProps) => {
     // @ts-ignore
     const {formatText, messageHtmlToComponent} = window.PostUtils;
-    const containerRef = useRef<HTMLDivElement>(null);
-    const [enterFrom, setEnterFrom] = useState<number | null>(null);
-
-    useLayoutEffect(() => {
-        setEnterFrom((containerRef.current?.childElementCount ?? 0) + 1);
-    }, []);
-
     const markdownOptions = useMemo(
         () => buildMarkdownOptions(props.team, props.allowUnsafeLinks, props.siteURL),
         [props.team, props.allowUnsafeLinks, props.siteURL],
@@ -133,11 +113,9 @@ const RevealText = (props: RevealTextProps) => {
 
     return (
         // eslint-disable-next-line agents/click-events-have-key-events, agents/no-static-element-interactions -- delegates clicks from the links inside, which stay keyboard-operable
-        <RevealTextContainer
-            ref={containerRef}
+        <TextContainer
             data-testid='posttext'
             $showCursor={props.showCursor}
-            $enterFrom={enterFrom}
             onClick={handleInternalLinkClick}
         >
             <StreamingMarkdown
@@ -149,7 +127,7 @@ const RevealText = (props: RevealTextProps) => {
                 markdownOptions={markdownOptions}
                 htmlOptions={htmlOptions}
             />
-        </RevealTextContainer>
+        </TextContainer>
     );
 };
 

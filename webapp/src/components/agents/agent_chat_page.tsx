@@ -17,7 +17,7 @@ import {requestAgentThreadsRefresh} from '@/websocket';
 
 import AgentChatDropZone from '../agent_chat/agent_chat_drop_zone';
 import AgentChatThreadView, {isThreadViewerAvailable} from '../agent_chat/agent_chat_thread_view';
-import AgentNewChat, {NewChatBackdrop} from '../agent_chat/agent_new_chat';
+import AgentNewChat from '../agent_chat/agent_new_chat';
 
 import AgentChatHeader from './agent_chat_header';
 import AgentSettingsModal from './agent_settings_modal';
@@ -116,7 +116,6 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
     }
 
     let body;
-    let isNewChat = false;
     if (dm.status === 'error') {
         body = (
             <CenteredState>
@@ -143,7 +142,6 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
             />
         );
     } else {
-        isNewChat = true;
         body = (
             <AgentNewChat
                 key={bot.id}
@@ -165,7 +163,6 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
             <ChatPane
                 aria-label={intl.formatMessage({defaultMessage: 'Chat with {name}'}, {name: bot.displayName})}
             >
-                <NewChatBackdrop visible={isNewChat}/>
                 <AgentChatHeader
                     bot={bot}
                     rootId={dm.status === 'ready' && rootId && validRootId === rootId ? rootId : ''}
@@ -316,8 +313,6 @@ const AgentThread = ({channelId, rootId, agentName, bot, onNewChat, toAll, onVal
 
 // Definite height, no own scroll: the host ThreadViewer brings its own scroller.
 const ChatPane = styled.section`
-    position: relative;
-    isolation: isolate;
     display: flex;
     flex: 1 1 auto;
     flex-direction: column;

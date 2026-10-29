@@ -4,9 +4,9 @@
 import React from 'react';
 import {Provider} from 'react-redux';
 import {createStore} from 'redux';
-import {act, render, screen} from '@testing-library/react';
+import {render, screen} from '@testing-library/react';
 
-import AgentNewChat, {isLightSurface, NEW_CHAT_GREETINGS, NewChatBackdrop, orbStrength} from './agent_new_chat';
+import AgentNewChat, {NEW_CHAT_GREETINGS} from './agent_new_chat';
 
 jest.mock('@/client', () => ({
     createPost: jest.fn(),
@@ -98,72 +98,5 @@ describe('AgentNewChat', () => {
         render(ui(<button>{'Pinned prompt'}</button>));
         expect(screen.getByRole('textbox', {name: 'Message Matty'})).toBeTruthy();
         expect(screen.getByRole('button', {name: 'Pinned prompt'})).toBeTruthy();
-    });
-
-    describe('theme-dependent orb opacity', () => {
-        const surface = (background: string) => {
-            const el = document.createElement('div');
-            el.style.backgroundColor = background;
-            document.body.appendChild(el);
-            return el;
-        };
-        afterEach(() => {
-            document.body.innerHTML = '';
-        });
-
-        test.each([
-            {name: 'a light theme', background: 'rgb(255, 255, 255)', light: true},
-            {name: 'a dark theme', background: 'rgb(25, 27, 31)', light: false},
-
-            // No background: the dim setting is the safe failure (colorSchemeFor itself answers "light"
-            // for anything it cannot parse, which must not reach the orbs).
-            {name: 'a transparent surface', background: 'rgba(0, 0, 0, 0)', light: false},
-            {name: 'no background at all', background: '', light: false},
-        ])('$name is read as light: $light', ({background, light}) => {
-            expect(isLightSurface(surface(background))).toBe(light);
-            expect(isLightSurface(null)).toBe(false);
-        });
-
-        const accent = {size: '1cqmax', top: '0', left: '0', strength: 10, dx: 0, dy: 0, scaleFrom: 1, scaleTo: 1, xDuration: 1, yDuration: 1};
-        test.each([
-            {name: 'an accent orb on a dark theme', orb: accent, light: false, expected: 10},
-            {name: 'an accent orb gets a slight boost on a light theme', orb: accent, light: true, expected: 12},
-            {name: 'a surface orb is dim on a dark theme', orb: {...accent, surface: true, strength: 3, lightStrength: 90}, light: false, expected: 3},
-            {name: 'a surface orb is near-solid on a light theme', orb: {...accent, surface: true, strength: 3, lightStrength: 90}, light: true, expected: 90},
-            {name: 'a surface orb without a light value keeps its strength', orb: {...accent, surface: true, strength: 3}, light: true, expected: 3},
-        ])('$name', ({orb, light, expected}) => {
-            expect(orbStrength(orb, light)).toBeCloseTo(expected);
-        });
-
-        // Through the component: the colors follow the pane's background, and a theme change re-reads it.
-        test('the surface orbs are re-read when the theme preference changes', () => {
-            let theme = 'dark';
-            const themeStore = createStore((state: any = {entities: {preferences: {myPreferences: {'theme--': {value: 'dark'}}}}}, action: any) => (
-                action.type === 'SET_THEME' ? {entities: {preferences: {myPreferences: {'theme--': {value: action.value}}}}} : state
-            ));
-
-            // The backdrop reads its parent's background, here the render container's.
-            const pane = document.createElement('div');
-            pane.style.backgroundColor = 'rgb(25, 27, 31)';
-            document.body.appendChild(pane);
-            const {container} = render(
-                <Provider store={themeStore}>
-                    <NewChatBackdrop visible={true}/>
-                </Provider>,
-                {container: pane},
-            );
-            const surfaceOrbColor = () => {
-                const orbs = Array.from(container.querySelectorAll('[aria-hidden="true"] > span > span'));
-                return getComputedStyle(orbs[orbs.length - 1]).getPropertyValue('--orb-color');
-            };
-            expect(surfaceOrbColor()).toContain('3%');
-
-            theme = 'light';
-            pane.style.backgroundColor = 'rgb(255, 255, 255)';
-            act(() => {
-                themeStore.dispatch({type: 'SET_THEME', value: theme});
-            });
-            expect(surfaceOrbColor()).toMatch(/\b(85|90|95)%/);
-        });
     });
 });

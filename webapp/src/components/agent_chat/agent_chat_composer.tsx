@@ -759,17 +759,11 @@ const ComposerColumn = styled.div`
     width: 100%;
 `;
 
-// Half the pill's single-line outer height (one 32px line + xs padding above
-// and below + the 1px border on each side = 50px), so one line reads as
-// a full pill while a taller, multi-line box keeps the same corners instead of
-// the stretched capsule --radius-pill would draw. No compass radius token is
-// that large (--radius-xl is 16px). Update it with the Shell's padding or
-// border, or with TEXTAREA_ONE_LINE_HEIGHT.
-const COMPOSER_RADIUS = `calc(${TEXTAREA_ONE_LINE_HEIGHT} / 2 + var(--spacing-xs) + 1px)`;
-
-// No compass or host token for the focused border: the resting border is --border-default and the
-// hover one --border-dark; focus raises the opacity above both, to 24% of the text color.
-const BORDER_FOCUS = 'rgba(var(--center-channel-color-rgb), 0.24)';
+// No compass or host token for the border washes: the host's message box draws a 2px border at 16% of
+// the text color, 24% on hover and 32% while focused (advanced_text_editor.scss in the host).
+const BORDER_REST = 'rgba(var(--center-channel-color-rgb), 0.16)';
+const BORDER_HOVER = 'rgba(var(--center-channel-color-rgb), 0.24)';
+const BORDER_FOCUS = 'rgba(var(--center-channel-color-rgb), 0.32)';
 
 // The prototype's ComposerShell row: "+", text, send, xs apart inside xs
 // padding. Items sit on the bottom row so the buttons stay by the last line as
@@ -799,21 +793,19 @@ const Shell = styled.div<{$hasLeadingAction: boolean; $hostTextbox: boolean}>`
             ${({$hasLeadingAction}) => ($hasLeadingAction ? "'plus . send'" : "'. . send'")};
     }
     padding: var(--spacing-xs) var(--spacing-xs) var(--spacing-xs) ${({$hasLeadingAction}) => ($hasLeadingAction ? 'var(--spacing-xs)' : 'var(--spacing-l)')};
-    border: var(--border-default);
-    border-radius: ${COMPOSER_RADIUS};
+    border: var(--spacing-xxxxs) solid ${BORDER_REST};
+    border-radius: var(--radius-s);
     background: var(--center-channel-bg);
-    box-shadow: var(--elevation-4);
-    transition: box-shadow var(--duration-quick) var(--ease-transition), border-color var(--duration-quick) var(--ease-transition);
+    transition: border-color var(--duration-quick) var(--ease-transition);
 
     /* Hover and focus raise the border's opacity. */
     &:hover {
-        border: var(--border-dark);
+        border-color: ${BORDER_HOVER};
     }
 
-    &:focus-within {
-        border: var(--border-dark);
+    &:focus-within,
+    &:focus-within:hover {
         border-color: ${BORDER_FOCUS};
-        box-shadow: var(--elevation-5);
     }
 
     @media (prefers-reduced-motion: reduce) {

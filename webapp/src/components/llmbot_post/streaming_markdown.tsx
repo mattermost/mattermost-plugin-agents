@@ -2,9 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React, {useMemo} from 'react';
-import styled, {keyframes} from 'styled-components';
 
-import {noMotionWhenReduced} from './motion';
 import type {FreshRange} from './use_smooth_text';
 
 // Private-use characters mark where fresh text starts and ends. They pass
@@ -154,28 +152,6 @@ export function markFreshText(block: MarkdownBlock, fresh: readonly FreshRange[]
     return out + block.text.slice(last);
 }
 
-const fadeOn = keyframes`
-    from {
-        opacity: 0;
-    }
-    to {
-        opacity: 1;
-    }
-`;
-
-/** Shared by fresh text and newly appended blocks. */
-export const fadeOnAnimation = fadeOn;
-
-// Opacity only (composited, no layout), played once when the span mounts.
-// No forwards fill: a finished fade leaves no animation behind. Only text
-// revealed moments ago fades; a span re-created later shows at once.
-const FreshText = styled.span`
-    &[data-fade] {
-        animation: ${fadeOn} var(--duration-moderate) var(--ease-entrance) backwards;
-        ${noMotionWhenReduced}
-    }
-`;
-
 interface WalkState {
     open: number | null;
 
@@ -213,13 +189,15 @@ function wrapFreshText(node: React.ReactNode, state: WalkState): React.ReactNode
                     const segment = (state.segments.get(id) ?? 0) + 1;
                     state.segments.set(id, segment);
                     out.push(
-                        <FreshText
+                        <span
                             key={`fresh-${id}-${segment}`}
                             data-fresh-text={id}
+
+                            // data-fade marks text revealed moments ago, still inside its fade window.
                             data-fade={state.fading.has(id) ? true : undefined} // eslint-disable-line no-undefined
                         >
                             {part}
-                        </FreshText>,
+                        </span>,
                     );
                 }
             }
