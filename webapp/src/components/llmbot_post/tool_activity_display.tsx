@@ -158,12 +158,11 @@ const ToolActivityDisplay: React.FC<ToolActivityDisplayProps> = (props) => {
                 disabled={!expandable}
                 onClick={toggle}
             >
-                <HeaderChevron
-                    $expanded={expanded}
-                    $visible={expandable}
-                >
-                    <ChevronRightIcon/>
-                </HeaderChevron>
+                {expandable && (
+                    <CollapseChevron $expanded={expanded}>
+                        <ChevronRightIcon/>
+                    </CollapseChevron>
+                )}
                 <RollingLine
                     lineKey={lineKey}
                     animate={liveRef.current}
@@ -213,19 +212,6 @@ const ActivityHeader = styled(CollapseHeaderRow)`
         cursor: default;
         color: rgba(var(--center-channel-color-rgb), 0.75);
     }
-`;
-
-// Before there is anything to expand the chevron takes no space (width and the
-// header's gap collapse), so the status line sits flush with the post text.
-const HeaderChevron = styled(CollapseChevron)<{$visible: boolean}>`
-    opacity: ${(props) => (props.$visible ? 1 : 0)};
-    transition: transform 0.2s ease, opacity 0.2s ease, width 0.2s ease, margin-right 0.2s ease;
-
-    ${(props) => !props.$visible && css`
-        width: 0;
-        margin-right: -8px;
-        overflow: hidden;
-    `}
 `;
 
 const Indicator = styled.div`
