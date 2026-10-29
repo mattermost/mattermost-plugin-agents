@@ -15,13 +15,13 @@ import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {SearchInput} from '@mattermost/compass-ui/components/search-input';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 import {Tabs} from '@mattermost/compass-ui/components/tabs';
-import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {getCustomPrompts, getPinnedPromptIds} from '@/selectors';
 import {fetchCustomPrompts, fetchPinnedPromptIds} from '@/redux';
 import {createCustomPrompt, updateCustomPrompt, deleteCustomPrompt, setCustomPromptPin} from '@/client';
 
 import ConfirmationDialog from '../confirmation_dialog';
+import {TooltipAboveModals} from '@/components/dropdown';
 import {UnderlineTab, UnderlineTabs} from '@/components/underline_tabs';
 
 import CustomPromptForm from './custom_prompt_form';
@@ -458,7 +458,7 @@ const CustomPromptsContent = ({active, confirmZIndex = 3000, layout = 'modal', c
                                                     )}
                                                 </PromptInfo>
                                             </PromptRowMain>
-                                            <WithTooltip title={pinLabel}>
+                                            <TooltipAboveModals title={pinLabel}>
                                                 <PinButton
                                                     size='small'
                                                     active={isPinned}
@@ -467,7 +467,7 @@ const CustomPromptsContent = ({active, confirmZIndex = 3000, layout = 'modal', c
                                                     onClick={() => handleTogglePin(prompt.id)}
                                                     aria-label={pinLabel}
                                                 />
-                                            </WithTooltip>
+                                            </TooltipAboveModals>
                                         </PromptRowHeader>
                                     </PromptRowContainer>
                                 );
