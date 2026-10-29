@@ -7,12 +7,15 @@ name: mcp-registry
 # - Release tags (same pattern as ci.yml) validate and then publish, with the
 #   server.json version taken from the tag. The committed version is a
 #   placeholder.
-# - workflow_dispatch publishes from a release tag ref, or from any ref when a
-#   version is supplied (for example to re-publish or to fix metadata).
+# - workflow_dispatch on a release tag re-publishes it; on any other ref it
+#   only validates. Publishing only ever happens from a release tag.
 #
-# Authentication is GitHub OIDC (no secrets). The registry grants
-# io.github.<repository owner>/* to the workflow, so the server name in
-# server.json must stay under io.github.mattermost/.
+# Authentication is GitHub OIDC (no secrets). The registry checks the
+# namespace, not the remote host, so the checks below pin the name, the
+# remote URL and the auth header to their canonical values: a server.json
+# change cannot point the official listing at another host or add a package.
+# The publish job runs in the mcp-registry environment, so a required reviewer
+# or tag restriction can be added there in the repository settings.
 on:
   push:
     tags:
@@ -22,11 +25,6 @@ on:
       - server.json
       - .github/workflows/mcp-registry.yml
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Version to publish, without the leading v (for example 1.2.3). Leave empty when running on a release tag."
-        required: false
-        type: string
 
 permissions:
   contents: read
@@ -42,8 +40,6 @@ jobs:
   validate:
     timeout-minutes: 10
     runs-on: ubuntu-latest
-    env:
-      INPUT_VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -53,13 +49,16 @@ jobs:
         run: |
           set -euo pipefail
           jq -e '
-            (.name | startswith("io.github.mattermost/"))
+            .name == "io.github.mattermost/mattermost-plugin-agents"
             and (.description | length >= 1 and length <= 100)
             and (.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
-            and ((.remotes | length) > 0)
-            and (all(.remotes[]; .type == "streamable-http" and (.url | startswith("https://"))))
+            and ((.packages // []) | length == 0)
+            and (.remotes | length == 1)
+            and .remotes[0].type == "streamable-http"
+            and .remotes[0].url == "https://{mattermost_host}/plugins/mattermost-ai/mcp-server/mcp"
+            and ([(.remotes[0].headers // [])[] | {name, value}] == [{"name": "Authorization", "value": "Bearer {personal_access_token}"}])
           ' server.json >/dev/null || {
-            echo "::error file=server.json::server.json must keep a name under io.github.mattermost/, a description of at most 100 characters, a plain x.y.z version, and at least one https streamable-http remote."
+            echo "::error file=server.json::server.json must keep the canonical name, remote URL and Authorization header, no packages, a description of at most 100 characters, and a plain x.y.z version."
             exit 1
           }
 
@@ -74,14 +73,10 @@ jobs:
           rm -f "$RUNNER_TEMP/$archive"
 
       - name: Set version from release tag
-        if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
-          else
-            VERSION="$INPUT_VERSION"
-          fi
+          VERSION="${GITHUB_REF#refs/tags/v}"
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Invalid version '$VERSION' (expected x.y.z)"
             exit 1
@@ -96,10 +91,10 @@ jobs:
         run: $RUNNER_TEMP/mcp-publisher validate server.json
 
   publish:
-    # Never runs for pull requests. A workflow_dispatch from a branch needs an
-    # explicit version; on a release tag the tag is the version.
-    if: github.event_name != 'pull_request' && (startsWith(github.ref, 'refs/tags/v') || inputs.version != '')
+    # Only from a release tag, whose name is the version.
+    if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v')
     needs: validate
+    environment: mcp-registry
     timeout-minutes: 10
     runs-on: ubuntu-latest
     # One publish at a time, never cancelled half-way.
@@ -109,8 +104,6 @@ jobs:
     permissions:
       id-token: write # GitHub OIDC token for mcp-publisher login github-oidc
       contents: read
-    env:
-      INPUT_VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -129,11 +122,7 @@ jobs:
       - name: Set version from release tag
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
-          else
-            VERSION="$INPUT_VERSION"
-          fi
+          VERSION="${GITHUB_REF#refs/tags/v}"
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Invalid version '$VERSION' (expected x.y.z)"
             exit 1
