@@ -32,7 +32,14 @@ type pullRequest struct {
 	// Missing is set when GitHub has no such pull request (the number may
 	// belong to an issue or another repository); only the commit subject is known.
 	Missing bool
+	// Untrusted is set when the author has no write access. A PR's title and
+	// description stay editable after merge without review, so only the
+	// commit subject, frozen at merge, is used for these.
+	Untrusted bool
 }
+
+// trustedAssociations are the authors who could change the code anyway.
+var trustedAssociations = map[string]bool{"OWNER": true, "MEMBER": true, "COLLABORATOR": true}
 
 type githubClient struct {
 	BaseURL string
@@ -55,9 +62,10 @@ func newGitHubClient(repo, token string) *githubClient {
 }
 
 type pullRequestResponse struct {
-	Title  string `json:"title"`
-	Body   string `json:"body"`
-	Labels []struct {
+	Title             string `json:"title"`
+	Body              string `json:"body"`
+	AuthorAssociation string `json:"author_association"`
+	Labels            []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
 }
@@ -132,6 +140,9 @@ func (g *githubClient) fetchOnce(ctx context.Context, url string, number int) (p
 	var parsed pullRequestResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return pullRequest{}, false, fmt.Errorf("decoding PR #%d: %w", number, err)
+	}
+	if !trustedAssociations[parsed.AuthorAssociation] {
+		return pullRequest{Number: number, Untrusted: true}, false, nil
 	}
 	pr = pullRequest{Number: number, Title: strings.TrimSpace(parsed.Title)}
 	for _, l := range parsed.Labels {

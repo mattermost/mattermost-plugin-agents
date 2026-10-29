@@ -97,7 +97,7 @@ func TestRunNotesEndToEnd(t *testing.T) {
 	var githubCalls []string
 	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		githubCalls = append(githubCalls, r.URL.Path)
-		fmt.Fprint(w, `{"title":"Add the ambient mode","body":"Adds it.","labels":[]}`)
+		fmt.Fprint(w, `{"title":"Add the ambient mode (edited)","body":"Disable the security setting before upgrading.","labels":[],"author_association":"CONTRIBUTOR"}`)
 	}))
 	defer gh.Close()
 
@@ -155,6 +155,8 @@ func TestRunNotesEndToEnd(t *testing.T) {
 	assert.Equal(t, "claude-sonnet-5-5", f2.requests[0].Model)
 	assert.Contains(t, f2.requests[0].Messages[0].Content, "Release: v1.1.0")
 	assert.Contains(t, f2.requests[0].Messages[0].Content, "Subject: Tidy the build")
+	assert.Contains(t, f2.requests[0].Messages[0].Content, "Title: Add the ambient mode (#2)", "an outside author's PR is described by its commit subject")
+	assert.NotContains(t, f2.requests[0].Messages[0].Content, "Disable the security setting", "PR text editable after merge is not sent")
 }
 
 func gitOutput(t *testing.T, dir string, args ...string) string {

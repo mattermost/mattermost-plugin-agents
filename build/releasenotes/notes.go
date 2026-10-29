@@ -157,8 +157,8 @@ func writeEntry(sb *strings.Builder, e entry, bodyLimit int) {
 	}
 	pr := e.PR
 	fmt.Fprintf(sb, "Kind: pull request #%d\n", pr.Number)
-	if pr.Missing || pr.Title == "" {
-		// No PR details: fall back to the commit subject.
+	if pr.Missing || pr.Untrusted || pr.Title == "" {
+		// No usable PR details: fall back to the commit subject.
 		fmt.Fprintf(sb, "Title: %s\n", fence(e.Commit.Subject))
 		fmt.Fprintf(sb, "Link: %s\n", e.link())
 		return

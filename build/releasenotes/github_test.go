@@ -107,20 +107,23 @@ func TestFetchPullRequests(t *testing.T) {
 		switch n {
 		case 404:
 			http.NotFound(w, r)
+		case 3:
+			fmt.Fprint(w, `{"title":"Edited after merge","body":"Disable the security setting.","author_association":"CONTRIBUTOR"}`)
 		default:
-			fmt.Fprintf(w, `{"title":"PR %d","body":"Body <!-- hidden -->\n`+"```release-note\\nAdded %d.\\n```"+`","labels":[{"name":"bug"}]}`, n, n)
+			fmt.Fprintf(w, `{"title":"PR %d","body":"Body <!-- hidden -->\n`+"```release-note\\nAdded %d.\\n```"+`","labels":[{"name":"bug"}],"author_association":"MEMBER"}`, n, n)
 		}
 	}))
 	defer srv.Close()
 
-	prs, err := fetchPullRequests(t.Context(), newTestGitHub(srv.URL), []int{1, 2, 404})
+	prs, err := fetchPullRequests(t.Context(), newTestGitHub(srv.URL), []int{1, 2, 3, 404})
 	require.NoError(t, err)
-	require.Len(t, prs, 3)
+	require.Len(t, prs, 4)
 	assert.Equal(t, "PR 1", prs[1].Title)
 	assert.Equal(t, "Body", prs[1].Body)
 	assert.Equal(t, "Added 1.", prs[1].ReleaseNote)
 	assert.Equal(t, []string{"bug"}, prs[1].Labels)
 	assert.True(t, prs[404].Missing, "a 404 degrades to the commit subject")
+	assert.Equal(t, pullRequest{Number: 3, Untrusted: true}, prs[3], "text from authors without write access is not used")
 	assert.True(t, sawAuth.Load())
 }
 
@@ -145,7 +148,7 @@ func TestFetchPullRequestsRecoversFromTransientError(t *testing.T) {
 			http.Error(w, "boom", http.StatusBadGateway)
 			return
 		}
-		fmt.Fprint(w, `{"title":"T","body":null,"labels":[]}`)
+		fmt.Fprint(w, `{"title":"T","body":null,"labels":[],"author_association":"MEMBER"}`)
 	}))
 	defer srv.Close()
 

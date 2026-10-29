@@ -34,6 +34,9 @@ On tag builds (`v*`) the `build/release-notes` step of that job then runs
    empty template headings are removed, and each description is capped at 3000
    characters (lower for very large releases, so the prompt stays under about
    300,000 characters). Commits without a PR are sent by subject only.
+   PRs whose author has no write access (not an owner, member or collaborator)
+   are also sent by commit subject only, because a PR's title and description
+   can be edited after merge without review.
 4. Sends everything to the Anthropic Messages API with a prompt that fixes the
    style: sections in the order `## Breaking changes and upgrade notes`,
    `## New features`, `## Improvements`, `## Fixes`; empty sections omitted; one
