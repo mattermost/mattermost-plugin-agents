@@ -12,7 +12,10 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -218,6 +221,16 @@ func allAgentVersions(t *testing.T, e *TestEnvironment, agentID string) []store.
 	return page.Versions
 }
 
+// enableAttributeBasedAccess licenses attribute-based access and sends policy
+// calls to the mock plugin API, where tests can assert on them.
+func enableAttributeBasedAccess(e *TestEnvironment) {
+	e.OverrideLicense(enterprisetest.LicenseFor(enterprise.LevelEnterpriseAdvanced))
+	e.api.accessChecker = accesscontrol.New(accesscontrol.PassthroughClient{}, e.mockAPI, accesscontrol.NoMCPServerIDs, nil)
+	e.mockAPI.On("GetAccessControlVisualAST", testUserID, accesscontrol.ResourceTypeAgent, mock.Anything).
+		Return(&model.VisualExpression{Conditions: []model.Condition{}}, nil).Maybe()
+	e.mockAPI.On("DeleteAccessControlPolicy", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+}
+
 func TestRestoreAgentVersion(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -287,6 +300,52 @@ func TestRestoreAgentVersion(t *testing.T) {
 			errorContains:  "service account authentication",
 			validate: func(t *testing.T, e *TestEnvironment, _ *llm.BotConfig) {
 				assert.False(t, e.agentStore.agents[versionTestAgentID].UseServiceAccountAuth)
+			},
+		},
+		{
+			name: "version without attribute-based access cannot replace an attribute-based agent's policy",
+			setup: func(t *testing.T, e *TestEnvironment) {
+				enableAttributeBasedAccess(e)
+				seedVersionedAgent(t, e, versionTestAgent(), map[string]any{"userAccessLevel": int(llm.UserAccessLevelAttributeBased)})
+			},
+			path:           "/agents/agent-1/versions/1/restore",
+			expectedStatus: http.StatusBadRequest,
+			errorContains:  "different user access level",
+			validate: func(t *testing.T, e *TestEnvironment, _ *llm.BotConfig) {
+				e.mockAPI.AssertNotCalled(t, "DeleteAccessControlPolicy", mock.Anything, mock.Anything, mock.Anything)
+				assert.Equal(t, llm.UserAccessLevelAttributeBased, e.agentStore.agents[versionTestAgentID].UserAccessLevel)
+				assert.Equal(t, 2, mockLatestVersion(e.agentStore.versions[versionTestAgentID]), "a rejected restore writes no version")
+			},
+		},
+		{
+			name: "attribute-based version restores onto an attribute-based agent and keeps its policy",
+			setup: func(t *testing.T, e *TestEnvironment) {
+				enableAttributeBasedAccess(e)
+				original := versionTestAgent()
+				original.UserAccessLevel = llm.UserAccessLevelAttributeBased
+				seedVersionedAgent(t, e, original, map[string]any{"customInstructions": "edited instructions"})
+			},
+			path:           "/agents/agent-1/versions/1/restore",
+			expectedStatus: http.StatusOK,
+			validate: func(t *testing.T, e *TestEnvironment, resp *llm.BotConfig) {
+				e.mockAPI.AssertNotCalled(t, "DeleteAccessControlPolicy", mock.Anything, mock.Anything, mock.Anything)
+				assert.Equal(t, "original instructions", resp.CustomInstructions)
+				assert.Equal(t, llm.UserAccessLevelAttributeBased, e.agentStore.agents[versionTestAgentID].UserAccessLevel)
+			},
+		},
+		{
+			name: "attribute-based version restores onto an agent that no longer uses attribute-based access",
+			setup: func(t *testing.T, e *TestEnvironment) {
+				enableAttributeBasedAccess(e)
+				original := versionTestAgent()
+				original.UserAccessLevel = llm.UserAccessLevelAttributeBased
+				seedVersionedAgent(t, e, original, map[string]any{"userAccessLevel": int(llm.UserAccessLevelAll)})
+			},
+			path:           "/agents/agent-1/versions/1/restore",
+			expectedStatus: http.StatusOK,
+			validate: func(t *testing.T, e *TestEnvironment, _ *llm.BotConfig) {
+				assert.Equal(t, llm.UserAccessLevelAttributeBased, e.agentStore.agents[versionTestAgentID].UserAccessLevel)
+				assert.Equal(t, 3, mockLatestVersion(e.agentStore.versions[versionTestAgentID]))
 			},
 		},
 		{

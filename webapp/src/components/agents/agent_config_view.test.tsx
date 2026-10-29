@@ -1429,6 +1429,27 @@ describe('AgentConfigView history and export', () => {
         expect(mockGetAgentVersion).toHaveBeenCalledWith('agent_1', 2);
     });
 
+    test('blocks restoring a version without attribute-based access onto an attribute-based agent', async () => {
+        const attributeBasedAgent: UserAgent = {...existingAgent, userAccessLevel: 4};
+        mockGetAgentVersion.mockImplementation(async (_id, version) => {
+            const detail = versionDetail(version, 'current instructions');
+            return {...detail, config: {...detail.config, userAccessLevel: version === 2 ? 4 : 0}};
+        });
+        renderEdit(jest.fn(), attributeBasedAgent);
+        const list = await openHistory();
+        fireEvent.click(within(list).getByText('Version 1'));
+        await waitFor(() => expect((screen.getByRole('button', {name: 'Restore this version'}) as HTMLButtonElement).disabled).toBe(false));
+
+        fireEvent.click(screen.getByRole('button', {name: 'Restore this version'}));
+        const dialog = screen.getByRole('dialog', {name: 'Restore this version?'});
+
+        expect(within(dialog).getByText(/permanently delete the agent's access policy/)).not.toBeNull();
+        const confirm = within(dialog).getByRole('button', {name: 'Restore'}) as HTMLButtonElement;
+        expect(confirm.disabled).toBe(true);
+        fireEvent.click(confirm);
+        expect(mockRestoreAgentVersion).not.toHaveBeenCalled();
+    });
+
     test('restore confirmation says when the version matches the current settings', async () => {
         mockGetAgentVersion.mockImplementation(async (_id, version) => versionDetail(version, 'current instructions'));
         renderEdit();

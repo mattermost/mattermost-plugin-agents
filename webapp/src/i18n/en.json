@@ -39,6 +39,7 @@
   "0SC8eQgh": "This summary was created by {botUsername} then edited and posted by @{editorUsername}",
   "0hwU19o/": "Agent admins",
   "0l1j5/1M": "Insert context variable",
+  "0r2afqkH": "This version doesn't use attribute-based access, so restoring it would permanently delete the agent's access policy. Versions don't store access policies, so it couldn't be restored later. To change user access, edit it on the Access tab instead.",
   "0sL95d7H": "Enable all tools for {serverName}",
   "12U/b2lf": "Failed to check index health.",
   "16KWPQAm": "Default bot",

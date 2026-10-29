@@ -24,6 +24,9 @@ interface ConfirmationDialogProps {
     /** Disables buttons (e.g. while a request is in flight). */
     confirmPending?: boolean;
 
+    /** Disables only the confirm button, e.g. when the action is not allowed. */
+    confirmDisabled?: boolean;
+
     /** Higher z-index for stacking over other modals (e.g. 1100 over agent config). */
     zIndex?: number;
 
@@ -50,6 +53,7 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
     onCancel,
     isDestructive = false,
     confirmPending = false,
+    confirmDisabled = false,
     zIndex = 1000,
     managedAccessibility = false,
     show,
@@ -141,7 +145,6 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
         return () => document.removeEventListener('mousedown', handler);
     }, [managedAccessibility, confirmPending, onCancel, dialogMounted]);
 
-    const confirmDisabled = confirmPending;
     const cancelDisabled = confirmPending;
     const backdropProps = managedAccessibility ? {} : {onClick: onCancel};
 
@@ -179,7 +182,7 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
                                 ref={confirmButtonRef}
                                 emphasis='primary'
                                 destructive={isDestructive}
-                                disabled={confirmDisabled}
+                                disabled={confirmPending || confirmDisabled}
                                 onClick={onConfirm}
                             >
                                 {confirmButtonText}

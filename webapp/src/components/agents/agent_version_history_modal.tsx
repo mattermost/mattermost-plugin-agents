@@ -537,6 +537,9 @@ const AgentVersionHistoryModal = ({show, onClose, agentId, agentName, services, 
 
     const restoresRemovedPolicy = detail?.config?.userAccessLevel === UserAccessLevel.AttributeBased &&
         currentUserAccessLevel !== UserAccessLevel.AttributeBased;
+    const restoreDeletesPolicy = Boolean(detail?.config) &&
+        detail?.config?.userAccessLevel !== UserAccessLevel.AttributeBased &&
+        currentUserAccessLevel === UserAccessLevel.AttributeBased;
     const restoredChanges = detail && currentDetail ? changedFieldLabels(intl, differingConfigFields(
         detail.config ?? {},
         currentDetail.config ?? {},
@@ -606,6 +609,11 @@ const AgentVersionHistoryModal = ({show, onClose, agentId, agentName, services, 
                                 <FormattedMessage defaultMessage='This version uses attribute-based access. Its access policy was removed when access was changed, so nobody will be able to use the agent until you create a new policy on the Access tab.'/>
                             </WarningText>
                         )}
+                        {restoreDeletesPolicy && (
+                            <WarningText role='alert'>
+                                <FormattedMessage defaultMessage="This version doesn't use attribute-based access, so restoring it would permanently delete the agent's access policy. Versions don't store access policies, so it couldn't be restored later. To change user access, edit it on the Access tab instead."/>
+                            </WarningText>
+                        )}
                         {isDirty && (
                             <WarningText role='alert'>
                                 <FormattedMessage defaultMessage='You have unsaved changes in the editor. Restoring will discard them.'/>
@@ -617,6 +625,7 @@ const AgentVersionHistoryModal = ({show, onClose, agentId, agentName, services, 
                 onConfirm={handleRestoreConfirm}
                 onCancel={() => setConfirmOpen(false)}
                 confirmPending={restoring}
+                confirmDisabled={restoreDeletesPolicy}
                 managedAccessibility={true}
                 zIndex={2100}
             />

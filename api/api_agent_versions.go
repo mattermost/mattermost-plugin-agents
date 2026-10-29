@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 )
 
@@ -146,6 +147,12 @@ func (a *API) handleRestoreAgentVersion(c *gin.Context) {
 	}
 	if !serviceIDExistsInConfig(pluginCfg, detail.Config.ServiceID) {
 		abortAgentRequest(c, http.StatusBadRequest, errors.New("this version uses an AI service that no longer exists; restore a different version or edit the agent to choose a service"))
+		return
+	}
+	// Leaving attribute-based access deletes the agent's policy, which versions
+	// do not store, so only an explicit access edit may do it.
+	if cfg.UserAccessLevel == llm.UserAccessLevelAttributeBased && detail.Config.UserAccessLevel != llm.UserAccessLevelAttributeBased {
+		abortAgentRequest(c, http.StatusBadRequest, errors.New("this version uses a different user access level; change user access on the Access tab before restoring"))
 		return
 	}
 
