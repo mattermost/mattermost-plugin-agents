@@ -24,24 +24,10 @@ export const MAX_WORD_HOLD_CHARS = 24;
 /**
  * The reveal advances in steps at most this often (every few frames), so the
  * growing block is re-formatted and re-laid out a few times less per second,
- * and each step fades in a small chunk (a word or a few) instead of one word
- * per frame. Fades overlap, so the growth still reads as continuous.
+ * and each step reveals a small chunk (a word or a few) instead of one word
+ * per frame.
  */
 export const REVEAL_TICK_MS = 50;
-
-/**
- * A revealed slice of the displayed text, faded in by the renderer. Ranges
- * stay for the life of the reveal: the renderer keeps each one's element (its
- * fade plays once, on mount), so settled text is never re-created mid-stream.
- */
-export interface FreshRange {
-    id: number;
-    start: number;
-    end: number;
-
-    /** When it was revealed, on the hook's clock. */
-    at: number;
-}
 
 export interface FrameScheduler {
     request: (callback: () => void) => number;
@@ -64,7 +50,6 @@ export interface SmoothTextOptions {
 
 export interface SmoothText {
     text: string;
-    fresh: readonly FreshRange[];
 }
 
 interface RevealState {
@@ -75,14 +60,10 @@ interface RevealState {
     deadline: number;
     arrivals: Array<{end: number; at: number}>;
     flush: {start: number; from: number} | null;
-    fresh: FreshRange[];
-    nextId: number;
     lastFrame: number | null;
     lastReveal: number | null;
     handle: number | null;
 }
-
-const NO_FRESH: readonly FreshRange[] = [];
 
 const defaultScheduler: FrameScheduler = {
     request: (callback) => window.requestAnimationFrame(() => callback()),
@@ -167,15 +148,12 @@ export function revealBoundary(text: string, from: number, cursor: number, floor
     return candidate;
 }
 
-function snap(state: RevealState, target: string, keepFresh: boolean) {
+function snap(state: RevealState, target: string) {
     state.target = target;
     state.shown = target.length;
     state.cursor = target.length;
     state.arrivals = [];
     state.flush = null;
-    if (!keepFresh) {
-        state.fresh = [];
-    }
 }
 
 // The first word shows as soon as it arrives, so the thinking indicator hands
@@ -193,8 +171,6 @@ function revealFirstWord(state: RevealState, now: number) {
     if (end < text.length && isHighSurrogate(text.charCodeAt(end - 1))) {
         end += 1;
     }
-    state.fresh = [...state.fresh, {id: state.nextId, start: 0, end, at: now}];
-    state.nextId += 1;
     state.shown = end;
     state.cursor = Math.max(state.cursor, end);
     state.lastReveal = now;
@@ -205,8 +181,8 @@ function reconcile(state: RevealState, target: string, options: SmoothTextOption
     const {enabled, streaming, flushImmediately} = options;
     if (!enabled) {
         state.streaming = streaming;
-        if (state.target !== target || state.shown !== target.length || state.fresh.length > 0) {
-            snap(state, target, false);
+        if (state.target !== target || state.shown !== target.length) {
+            snap(state, target);
         }
         return;
     }
@@ -219,7 +195,7 @@ function reconcile(state: RevealState, target: string, options: SmoothTextOption
         const continues = target.startsWith(state.target.slice(0, state.shown));
         if (rising || !continues) {
             // A new generation, a mid-stream mount, or a replacement text.
-            snap(state, target, false);
+            snap(state, target);
         } else {
             state.target = target;
             if (state.cursor > target.length) {
@@ -234,7 +210,7 @@ function reconcile(state: RevealState, target: string, options: SmoothTextOption
             }
         }
     } else if (rising) {
-        snap(state, target, false);
+        snap(state, target);
     }
 
     if (streaming) {
@@ -245,12 +221,12 @@ function reconcile(state: RevealState, target: string, options: SmoothTextOption
         return;
     }
     if (flushImmediately) {
-        snap(state, state.target, true);
+        snap(state, state.target);
     } else if (falling) {
         state.flush = {start: now, from: state.shown};
     } else if (!state.flush) {
         // Never streamed here (historic post, or a finished post remounting).
-        snap(state, state.target, true);
+        snap(state, state.target);
     }
 }
 
@@ -288,8 +264,6 @@ function step(state: RevealState, now: number): boolean {
         const due = state.lastReveal === null || now - state.lastReveal >= REVEAL_TICK_MS || flushDone;
         const next = due ? revealBoundary(state.target, state.shown, cursor, floor) : state.shown;
         if (next > state.shown) {
-            state.fresh = [...state.fresh, {id: state.nextId, start: state.shown, end: next, at: now}];
-            state.nextId += 1;
             state.shown = next;
             state.lastReveal = now;
             changed = true;
@@ -329,8 +303,6 @@ export function useSmoothText(target: string, options: SmoothTextOptions): Smoot
             deadline: 0,
             arrivals: [],
             flush: null,
-            fresh: [],
-            nextId: 1,
             lastFrame: null,
             lastReveal: null,
             handle: null,
@@ -375,6 +347,5 @@ export function useSmoothText(target: string, options: SmoothTextOptions): Smoot
 
     return {
         text: state.shown === state.target.length ? state.target : state.target.slice(0, state.shown),
-        fresh: state.fresh.length === 0 ? NO_FRESH : state.fresh,
     };
 }

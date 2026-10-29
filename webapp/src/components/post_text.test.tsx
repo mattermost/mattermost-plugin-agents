@@ -90,12 +90,11 @@ describe('PostText streaming reveal', () => {
                     channelID='channel'
                     postID='post'
                     annotations={annotations}
-                    reveal={reveal ? {fresh: [{id: 1, start: 5, end: 14, at: 0}]} : undefined} // eslint-disable-line no-undefined
+                    reveal={reveal}
                 />
             </IntlProvider>,
         );
         const container = screen.getByTestId('posttext');
         expect(container.querySelectorAll(':scope > p')).toHaveLength(paragraphs);
-        expect(container.querySelector('[data-fresh-text]') !== null).toBe(reveal && !annotations);
     });
 });

@@ -14,7 +14,6 @@ import manifest from '@/manifest';
 import {insertAnnotationMarkers, replaceCitationMarkers} from './citations/citation_processor';
 import {Annotation} from './citations/types';
 import {StreamingMarkdown} from './llmbot_post/streaming_markdown';
-import type {FreshRange} from './llmbot_post/use_smooth_text';
 
 export type ChannelNamesMap = {
     [name: string]: {
@@ -23,18 +22,15 @@ export type ChannelNamesMap = {
     } | Channel;
 };
 
-/** Streaming reveal: the message renders block by block as text is revealed. */
-export interface TextReveal {
-    fresh: readonly FreshRange[];
-}
-
 interface Props {
     message: string;
     channelID: string;
     postID: string;
     showCursor?: boolean;
     annotations?: Annotation[];
-    reveal?: TextReveal;
+
+    /** Streaming reveal: the message renders block by block as text is revealed. */
+    reveal?: boolean;
 }
 
 const blinkKeyframes = keyframes`
@@ -95,7 +91,7 @@ interface RevealTextProps {
     message: string;
     postID: string;
     showCursor?: boolean;
-    reveal: TextReveal;
+    reveal: boolean;
     team: Team;
     siteURL?: string;
     allowUnsafeLinks: boolean;
@@ -119,7 +115,6 @@ const RevealText = (props: RevealTextProps) => {
         >
             <StreamingMarkdown
                 message={props.message}
-                fresh={props.reveal.fresh}
                 formatText={formatText}
                 messageHtmlToComponent={messageHtmlToComponent}
                 markdownOptions={markdownOptions}
