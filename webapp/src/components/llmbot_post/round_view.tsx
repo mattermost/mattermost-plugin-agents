@@ -4,7 +4,7 @@
 import React from 'react';
 import styled from 'styled-components';
 
-import PostText from '../post_text';
+import PostText, {TextReveal} from '../post_text';
 import ToolApprovalSet from '../tool_approval_set';
 import {ToolApprovalStage} from '../tool_types';
 
@@ -25,7 +25,7 @@ interface RoundViewProps {
     reasoningCollapsed: boolean;
 
     /** Only on the live round in surfaces that smooth streaming text. */
-    reveal?: boolean;
+    reveal?: TextReveal;
 
     /** Takes the round id so the post can pass one callback to every round. */
     onToggleReasoning: (roundId: string, collapsed: boolean) => void;

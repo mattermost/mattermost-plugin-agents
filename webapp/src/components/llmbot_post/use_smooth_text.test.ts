@@ -186,9 +186,10 @@ describe('useSmoothText', () => {
     test.each([
         {name: 'a historic post', streaming: false},
         {name: 'a post mounted mid-stream', streaming: true},
-    ])('$name renders its current text at once', ({streaming}) => {
+    ])('$name renders its current text at once, with nothing fresh', ({streaming}) => {
         const t = setup({text: words(100), streaming});
         expect(t.shown()).toBe(words(100));
+        expect(t.hook.result.current.fresh).toHaveLength(0);
         expect(t.pending()).toBe(0);
     });
 
@@ -210,6 +211,7 @@ describe('useSmoothText', () => {
         for (const text of ['Hel', 'Hello wor', 'Hello world, again']) {
             t.update({text});
             expect(t.shown()).toBe(text);
+            expect(t.hook.result.current.fresh).toHaveLength(0);
         }
         expect(t.pending()).toBe(0);
     });
@@ -223,6 +225,7 @@ describe('useSmoothText', () => {
         t.advance(FRAME_MS * 4);
         t.update({text: next});
         expect(t.shown()).toBe(next);
+        expect(t.hook.result.current.fresh).toHaveLength(0);
     });
 
     test('a final authoritative text after the stream snaps when it differs', () => {
@@ -241,6 +244,29 @@ describe('useSmoothText', () => {
         t.update({streaming: true});
         t.update({text: 'New '});
         expect(t.shown()).toBe('New ');
+    });
+
+    test('fresh ranges cover only newly revealed text and stay for the whole reveal', () => {
+        const t = startStream();
+        t.update({text: 'alpha beta gamma delta '});
+        t.advance(BACKLOG_DRAIN_MS);
+        const {fresh, text} = t.hook.result.current;
+        expect(fresh.length).toBeGreaterThan(1);
+
+        // Contiguous, in order, inside the shown text.
+        expect(fresh[0].start).toBe(0);
+        for (let i = 1; i < fresh.length; i++) {
+            expect(fresh[i].start).toBe(fresh[i - 1].end);
+        }
+        expect(fresh[fresh.length - 1].end).toBe(text.length);
+
+        // Dropping a range would re-render its text without its span (new DOM
+        // nodes); ranges only go away when a new text snaps in.
+        t.advance(5000);
+        t.update({text: 'alpha beta gamma delta epsilon '});
+        t.advance(BACKLOG_DRAIN_MS);
+        expect(t.hook.result.current.fresh.slice(0, fresh.length)).toEqual(fresh);
+        expect(t.pending()).toBe(0);
     });
 
     test('the shown text advances at most once per reveal tick', () => {
