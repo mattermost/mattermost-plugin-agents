@@ -44,6 +44,9 @@ var (
 	// Anything GitHub could render as a link: a URL with any scheme in any
 	// case, or a "www." host, which GitHub autolinks without a scheme.
 	descURLRe = regexp.MustCompile(`(?i)[a-z][a-z0-9+.-]*://|\bwww\.`)
+	// Raw HTML, such as <a href="//host">, which GitHub renders.
+	htmlTagRe  = regexp.MustCompile(`<[A-Za-z/!?]`)
+	codeSpanRe = regexp.MustCompile("`[^`]*`")
 )
 
 // isEmoji reports whether r is an emoji or an emoji modifier. Plain arrows,
@@ -168,8 +171,10 @@ func bulletProblems(lineNo int, line string, allowed map[string]string) []string
 		problems = append(problems, fmt.Sprintf("line %d: item has no description", lineNo))
 	}
 	// The notes are published as the release body, and PR text is an input,
-	// so the description may carry no URL that GitHub would render as a link.
-	if strings.Contains(desc, "](") || descURLRe.MatchString(desc) {
+	// so the description may carry nothing GitHub would render as a link: no
+	// markdown link, URL, "www." host or raw HTML. Code spans render
+	// literally, so they are ignored.
+	if prose := codeSpanRe.ReplaceAllString(desc, ""); strings.Contains(prose, "](") || descURLRe.MatchString(prose) || htmlTagRe.MatchString(prose) {
 		problems = append(problems, fmt.Sprintf("line %d: links and URLs belong only at the end of the item", lineNo))
 	}
 	for _, m := range linkRe.FindAllStringSubmatch(line[loc[2]:loc[3]], -1) {
