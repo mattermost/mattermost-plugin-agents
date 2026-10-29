@@ -8,11 +8,10 @@ import {
     DotsHorizontalIcon,
     ExportVariantIcon,
     PencilOutlineIcon,
-    PlusIcon,
     TrashCanOutlineIcon,
 } from '@mattermost/compass-icons/components';
 import {Icon} from '@mattermost/compass-ui/components/icon';
-import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {Button} from '@mattermost/compass-ui/components/button';
 import {Tag} from '@mattermost/compass-ui/components/tag';
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 import {WithTooltip} from '@mattermost/shared/components/tooltip';
@@ -21,6 +20,8 @@ import {getProfilePictureUrl} from '@/client';
 import DotMenu, {DropdownMenuItem} from '@/components/dot_menu';
 
 import {AgentInactiveReason, UserAgent, ServiceInfo} from '@/types/agents';
+
+import MessageOutlineIcon from './message_outline_icon';
 
 type Props = {
     agent: UserAgent;
@@ -145,17 +146,16 @@ const AgentRow = (props: Props) => {
                     <Username>{'@'}{agent.name}</Username>
                     {actionable && (
                         <NewChatSlot>
-                            <WithTooltip title={intl.formatMessage({defaultMessage: 'New chat'})}>
-                                <TooltipTrigger>
-                                    <IconButton
-                                        size='x-small'
-                                        icon={<Icon glyph={<PlusIcon/>}/>}
-                                        aria-label={intl.formatMessage({defaultMessage: 'New chat with {agent}'}, {agent: agentLabel})}
-                                        data-testid='agent-row-new-chat'
-                                        onClick={handleNewChatClick}
-                                    />
-                                </TooltipTrigger>
-                            </WithTooltip>
+                            <Button
+                                emphasis='dim'
+                                size='x-small'
+                                leadingIcon={<Icon glyph={<MessageOutlineIcon/>}/>}
+                                aria-label={intl.formatMessage({defaultMessage: 'Start new chat with {agent}'}, {agent: agentLabel})}
+                                data-testid='agent-row-new-chat'
+                                onClick={handleNewChatClick}
+                            >
+                                {intl.formatMessage({defaultMessage: 'Start new chat'})}
+                            </Button>
                         </NewChatSlot>
                     )}
                 </NameColumn>
@@ -301,10 +301,6 @@ const NewChatSlot = styled.span`
     @media (prefers-reduced-motion: reduce) {
         transition: none;
     }
-`;
-
-const TooltipTrigger = styled.span`
-    display: inline-flex;
 `;
 
 const BadgesColumn = styled.div`

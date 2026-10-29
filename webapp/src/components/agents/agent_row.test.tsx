@@ -263,7 +263,7 @@ describe('AgentRow primary action', () => {
         const onStartChat = jest.fn();
         renderRow({canManage, onStartChat});
 
-        fireEvent.click(screen.getByRole('button', {name: 'New chat with Agent One'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Start new chat with Agent One'}));
 
         expect(onStartChat).toHaveBeenCalledTimes(1);
         expect(onStartChat).toHaveBeenCalledWith('bot-1');
@@ -271,7 +271,7 @@ describe('AgentRow primary action', () => {
 
     test('an agent with no bot account has no New chat button', () => {
         renderRow({agent: {...makeAgent(), botUserID: ''}});
-        expect(screen.queryByRole('button', {name: 'New chat with Agent One'})).toBeNull();
+        expect(screen.queryByRole('button', {name: 'Start new chat with Agent One'})).toBeNull();
     });
 
     test('is keyboard focusable', () => {
