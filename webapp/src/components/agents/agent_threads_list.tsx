@@ -54,7 +54,7 @@ interface AgentThreadsListProps {
 }
 
 // Threads shown per agent before "Show more"; each click reveals this many more.
-export const THREADS_PAGE_SIZE = 10;
+export const THREADS_PAGE_SIZE = 7;
 
 // The compass quick duration, in ms, for sequencing work after a CSS animation that uses it.
 const quickDurationMs = () => {

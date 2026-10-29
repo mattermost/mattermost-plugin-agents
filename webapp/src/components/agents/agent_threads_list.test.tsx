@@ -176,7 +176,8 @@ describe('AgentThreadsList', () => {
             renderList({threadsByBot: {a: manyThreads(25)}});
             expect(screen.getByRole('button', {name: 'Show more Alpha chats'}).textContent).toBe('Show more');
             fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
-            expect(chatTitles()).toHaveLength(20);
+            expect(chatTitles()).toHaveLength(2 * THREADS_PAGE_SIZE);
+            fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
             fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
             expect(chatTitles()).toHaveLength(25);
             expect(screen.queryByRole('button', {name: 'Show more Alpha chats'})).toBeNull();
@@ -193,6 +194,7 @@ describe('AgentThreadsList', () => {
             renderList({threadsByBot: {a: manyThreads(25)}});
             fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
             fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
+            fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
             fireEvent.click(screen.getByRole('button', {name: 'Show less Alpha chats'}));
 
             // The extra rows fold away over the quick duration first, then the list drops them.
@@ -207,6 +209,7 @@ describe('AgentThreadsList', () => {
             window.matchMedia = ((query: string) => ({matches: query.includes('reduce'), media: query, addEventListener: jest.fn(), removeEventListener: jest.fn()})) as unknown as typeof window.matchMedia;
             try {
                 renderList({threadsByBot: {a: manyThreads(25)}});
+                fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
                 fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
                 fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
                 fireEvent.click(screen.getByRole('button', {name: 'Show less Alpha chats'}));
@@ -226,8 +229,8 @@ describe('AgentThreadsList', () => {
 
         // The open chat is listed beyond the limit without the user having expanded anything.
         test('a pinned active chat does not make Show less appear', () => {
-            renderList({threadsByBot: {a: manyThreads(11)}, activeBotId: 'a', activeRootId: 'root_11'});
-            expect(chatTitles()).toHaveLength(11);
+            renderList({threadsByBot: {a: manyThreads(THREADS_PAGE_SIZE + 4)}, activeBotId: 'a', activeRootId: `root_${THREADS_PAGE_SIZE + 4}`});
+            expect(chatTitles()).toHaveLength(THREADS_PAGE_SIZE + 1);
             expect(screen.queryByRole('button', {name: 'Show less Alpha chats'})).toBeNull();
         });
 
