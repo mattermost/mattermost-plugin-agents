@@ -20,10 +20,17 @@ import {css} from 'styled-components';
 // - sass/components/_post.scss `.app__body .custom-textarea` (0,2,0; :focus
 //   0,3,0) draws a 46px minimum, an inset box-shadow border and 4px radius;
 //   bootstrap `.form-control` adds its own border, padding and focus ring.
+// - components/advanced_text_editor/advanced_text_editor.scss styles the host message box's frame
+//   as `.AdvancedTextEditor__body`: `position: relative; flex: 1`, a 2px border at 16% of the text
+//   color (24% on hover, 32% while focused), a 4px radius and the center channel background. The
+//   pill row carries that class (below), so its frame follows the host instead of a copy of it.
 // - components/suggestion/suggestion_list.tsx renders `div.suggestion-list
 //   .suggestion-list--top|--bottom` (sass/components/_suggestion-list.scss:
 //   absolute, `bottom: 100%`, z-index 100) inside the SuggestionBox, i.e.
 //   against the nearest positioned ancestor, `.textarea-wrapper` by default.
+
+// The host message box's frame class. If the host renames it, the pill loses its border.
+export const HOST_COMPOSER_BODY_CLASS = 'AdvancedTextEditor__body';
 
 // One line of body text plus the textarea's block padding: 32px, a small
 // compass IconButton, so an empty box keeps its full first line.

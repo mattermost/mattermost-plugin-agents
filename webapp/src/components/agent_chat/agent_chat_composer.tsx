@@ -20,6 +20,7 @@ import {Textbox as HostTextbox} from '@/mm_webapp';
 
 import AgentChatAttachments from './agent_chat_attachments';
 import {
+    HOST_COMPOSER_BODY_CLASS,
     TEXTAREA_EXPANDED_MAX_HEIGHT,
     TEXTAREA_EXPANDED_ONE_LINE_HEIGHT,
     TEXTAREA_EXPANDED_PADDING,
@@ -602,6 +603,7 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
                 ref={shellRef}
                 $hasLeadingAction={hasLeading}
                 $hostTextbox={Boolean(HostTextbox)}
+                className={HOST_COMPOSER_BODY_CLASS}
                 data-expanded={expanded}
                 aria-busy={rewriting}
                 onFocus={() => setFocused(true)}
@@ -762,12 +764,6 @@ const ComposerColumn = styled.div`
     width: 100%;
 `;
 
-// No compass or host token for the border washes: the host's message box draws a 2px border at 16% of
-// the text color, 24% on hover and 32% while focused (advanced_text_editor.scss in the host).
-const BORDER_REST = 'rgba(var(--center-channel-color-rgb), 0.16)';
-const BORDER_HOVER = 'rgba(var(--center-channel-color-rgb), 0.24)';
-const BORDER_FOCUS = 'rgba(var(--center-channel-color-rgb), 0.32)';
-
 // The prototype's ComposerShell row: "+", text, send, xs apart inside xs
 // padding. Items sit on the bottom row so the buttons stay by the last line as
 // the text grows. Without a leading button the text keeps the pill's l inset.
@@ -796,23 +792,10 @@ const Shell = styled.div<{$hasLeadingAction: boolean; $hostTextbox: boolean}>`
             ${({$hasLeadingAction}) => ($hasLeadingAction ? "'plus . send'" : "'. . send'")};
     }
     padding: var(--spacing-xs) var(--spacing-xs) var(--spacing-xs) ${({$hasLeadingAction}) => ($hasLeadingAction ? 'var(--spacing-xs)' : 'var(--spacing-l)')};
-    border: var(--spacing-xxxxs) solid ${BORDER_REST};
-    border-radius: var(--radius-s);
-    background: var(--center-channel-bg);
-    transition: border-color var(--duration-quick) var(--ease-transition);
 
-    /* Hover and focus raise the border's opacity. */
-    &:hover {
-        border-color: ${BORDER_HOVER};
-    }
-
-    &:focus-within,
-    &:focus-within:hover {
-        border-color: ${BORDER_FOCUS};
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-        transition: none;
+    /* The border, radius and hover and focus states come from the host's message box class (see HOST_COMPOSER_BODY_CLASS); the host's flex: 1 has no place in this column. */
+    && {
+        flex: none;
     }
 
     ${({$hostTextbox}) => $hostTextbox && hostTextboxPillStyles}
@@ -905,12 +888,9 @@ const Textarea = styled.textarea`
 `;
 
 // Optical correction for the send glyph's shape, not a layout value: the
-// paper plane's path spans x 2-22.2 of its 24-unit viewBox (box centered), but
-// its mass is the triangle from the left edge to the right tip, whose centroid
-// sits at x ~8.7, ~2.4px left of center at the small button's 16px glyph (~3px
-// at the old 20px one). In the standard rounded-square button a 1px nudge
-// right looks centered (2px was tuned for the circle and reads too far right).
-// A transform, so the button's size and hit area stay.
+// paper plane's mass is the triangle from its left edge to the right tip, so it
+// sits left of the glyph box's center. Nudging it right by 1px makes it look
+// centered in the button. A transform, so the button's size and hit area stay.
 const SEND_ICON_OPTICAL_OFFSET = '1px';
 
 const SendIcon = styled(Icon)`
