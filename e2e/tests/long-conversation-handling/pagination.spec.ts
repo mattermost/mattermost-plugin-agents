@@ -129,7 +129,7 @@ test.describe('Long Conversation Handling - Scrolling', () => {
         await aiPlugin.waitForBotResponse(responseTestText);
 
         const rhsContainer = page.getByTestId('mattermost-ai-rhs');
-        await expect(rhsContainer.getByText('Latest message')).toBeVisible();
+        await expect(rhsContainer.getByTestId('post-message-text').getByText('Latest message')).toBeVisible();
     });
 
     test('Manual scrolling works in long conversation', async ({ page }) => {
