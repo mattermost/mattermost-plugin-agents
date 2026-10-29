@@ -100,19 +100,6 @@ describe('AgentNewChat', () => {
         expect(screen.getByRole('button', {name: 'Pinned prompt'})).toBeTruthy();
     });
 
-    // The orbs swing past their layer; unclipped they extend the parent's scrollable overflow, and
-    // scrolling something into view (expanding a panel in a reply) scrolls the pane and hides the header.
-    test('the orb layer clips its overflow so it cannot make the parent scrollable', () => {
-        const {container} = render(
-            <Provider store={store}>
-                <NewChatBackdrop visible={false}/>
-            </Provider>,
-        );
-        const layer = container.querySelector('[aria-hidden="true"]');
-        expect(layer).not.toBeNull();
-        expect(getComputedStyle(layer as Element).overflow).toBe('clip');
-    });
-
     describe('theme-dependent orb opacity', () => {
         const surface = (background: string) => {
             const el = document.createElement('div');

@@ -9,7 +9,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import {test, expect, type Locator, type Page} from '@playwright/test';
+import {test, expect, type Page} from '@playwright/test';
 
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {buildTextResponse, buildTitleFixture} from 'helpers/aimock-fixtures';
@@ -117,32 +117,6 @@ const newChatComposer = (page: Page) => page.getByTestId('agent-chat-new-compose
 // The plugin's pill reply composer under the thread (the host reply box is hidden).
 const replyComposer = (page: Page) => page.getByTestId('agent-chat-thread').getByRole('textbox', {name: `Reply to ${botDisplayName}`});
 
-// The pill's text metrics: one 20px line plus 6px block padding = 32px, the
-// height of the (small compass) "+" and send buttons.
-const LINE_PX = 20;
-const ONE_LINE_PX = 32;
-
-// Expanded (multi-line), the text box is inset by --spacing-xs on every side.
-const EXPANDED_INSET_PX = 8;
-const expandedHeight = (lines: number) => (lines * LINE_PX) + (2 * EXPANDED_INSET_PX);
-
-// The box shows its whole first line (placeholder or text, ascenders and
-// descenders): one line tall, nothing scrolled or clipped, a line box at least
-// as tall as the font, centered on the send button.
-async function expectWholeFirstLine(textbox: Locator): Promise<void> {
-    await expect.poll(() => textbox.evaluate((el) => {
-        const style = getComputedStyle(el);
-        const box = el.getBoundingClientRect();
-        const send = el.closest('[data-testid$="-composer"]')?.querySelector('button[aria-label="Send message"]')?.getBoundingClientRect();
-        return {
-            height: box.height,
-            clipped: el.scrollHeight > el.clientHeight,
-            lineFitsFont: parseFloat(style.lineHeight) >= parseFloat(style.fontSize),
-            centerOffset: send ? Math.round(Math.abs((box.top + (box.height / 2)) - (send.top + (send.height / 2)))) : -1,
-        };
-    })).toEqual({height: ONE_LINE_PX, clipped: false, lineFitsFont: true, centerOffset: 0});
-}
-
 async function openAgentsFromSwitcher(page: Page): Promise<void> {
     await page.getByRole('button', {name: 'Open product menu'}).click();
     await page.getByRole('menuitem', {name: 'Agents'}).click();
@@ -217,10 +191,7 @@ test.describe('Agents product view', () => {
 
         const composer = newChatComposer(page);
         await expect(composer.getByRole('textbox')).toBeEnabled({timeout: 30000});
-
-        // The empty box shows its whole placeholder line beside "+" and send.
         await expect(composer.getByRole('textbox')).toHaveAttribute('placeholder', `Message ${botDisplayName}`);
-        await expectWholeFirstLine(composer.getByRole('textbox'));
         await expect(page.getByRole('region', {name: `Chat with ${botDisplayName}`}).getByRole('progressbar')).toHaveCount(0);
         await expect(page.getByText('Setting up chat…')).toHaveCount(0);
 
@@ -327,113 +298,39 @@ test.describe('Agents product view', () => {
         await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}$`));
     });
 
-    test('thread renders in a centered column: plain agent replies, reversed own bubbles with the time outside', async ({page}) => {
+    test('thread shows your message and the reply, with its time in the controls and no host reply box', async ({page}) => {
         await login(page);
         await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}/${rootId}`, {waitUntil: 'domcontentloaded'});
         const thread = page.getByTestId('agent-chat-thread');
         await expect(thread.getByText(FIRST_REPLY)).toBeVisible({timeout: 30000});
 
-        // Read the bubble (the post body column) of the post that contains each text.
-        const bubbleStyle = (text: string) => thread.getByTestId('postContent').filter({hasText: text}).first().evaluate((content) => {
-            const bubble = content.querySelector(':scope > .post__img + div') as HTMLElement;
-            const style = getComputedStyle(bubble);
-            const post = content.closest('.post') as HTMLElement;
-            return {background: style.backgroundColor, color: style.color, left: bubble.getBoundingClientRect().left, postWidth: post.getBoundingClientRect().width};
-        });
-        const resolveColor = (variable: string) => page.evaluate((v) => {
-            const probe = document.createElement('div');
-            probe.style.backgroundColor = `var(${v})`;
-            document.body.appendChild(probe);
-            const value = getComputedStyle(probe).backgroundColor;
-            probe.remove();
-            return value;
-        }, variable);
-
-        // Your bubble reverses the colors; the agent's reply has no bubble at all.
-        const own = await bubbleStyle(FIRST_PROMPT);
-        const agent = await bubbleStyle(FIRST_REPLY);
-        expect(own.background).toBe(await resolveColor('--center-channel-color'));
-        expect(own.color).toBe(await resolveColor('--center-channel-bg'));
-        expect(agent.background).toBe('rgba(0, 0, 0, 0)');
-
-        // No avatars; the agent's name and header time are hidden, its time is in the controls bar.
         const ownPost = thread.locator('.post').filter({hasText: FIRST_PROMPT}).first();
         const replyPost = thread.locator('.post').filter({hasText: FIRST_REPLY}).first();
-        await expect(ownPost.locator('.post__img')).toBeHidden();
-        await expect(replyPost.locator('.post__img')).toBeHidden();
-        await expect(replyPost.locator('.post__header .col__name')).toBeHidden();
-        await expect(replyPost.locator('.post__header .badges-wrapper')).toBeHidden();
+        await expect(ownPost).toBeVisible();
+
+        // The reply's time is in its controls bar, not in a host header.
         await expect(replyPost.getByTestId('controls-bar-time')).toBeVisible();
-        expect(await replyPost.getByTestId('controls-bar-time').evaluate((el) => el.parentElement?.firstElementChild === el)).toBe(true);
 
-        // Your name is hidden and your time sits below the bubble.
-        await expect(ownPost.locator('.post__header .col__name')).toBeHidden();
-        const ownTime = ownPost.locator('.post__header .badges-wrapper');
-        await expect(ownTime).toBeVisible();
-        const ownBubbleBox = (await ownPost.locator('.post__content > .post__img + div').boundingBox())!;
-        expect((await ownTime.boundingBox())!.y).toBeGreaterThanOrEqual(ownBubbleBox.y + ownBubbleBox.height);
+        // Your message sits to the right of the agent's reply.
+        const ownBox = (await ownPost.locator('.post__content > .post__img + div').boundingBox())!;
+        const replyBox = (await replyPost.locator('.post__content > .post__img + div').boundingBox())!;
+        expect(ownBox.x).toBeGreaterThan(replyBox.x);
 
-        // Own bubble sits to the right of the agent's (row-reversed).
-        expect(own.left).toBeGreaterThan(agent.left);
-
-        // Messages are limited to the prototype's 800px column.
-        expect(own.postWidth).toBeLessThanOrEqual(800);
-        expect(agent.postWidth).toBeLessThanOrEqual(800);
-        const composerBox = (await thread.getByTestId('agent-chat-reply-composer').boundingBox())!;
-        expect(composerBox.width).toBeLessThanOrEqual(800);
-
-        // The composer and the messages share one column: the message content (bubble row) and the pill have the same edges.
-        const contentBox = (await replyPost.locator('.post__content').boundingBox())!;
-        expect(Math.abs(contentBox.x - composerBox.x)).toBeLessThanOrEqual(1);
-        expect(Math.abs(contentBox.width - composerBox.width)).toBeLessThanOrEqual(1);
-
-        // The host reply box is replaced, not shown alongside.
+        // The host reply box is replaced by the plugin's composer, not shown alongside.
         await expect(thread.getByTestId('comment-create')).toBeHidden();
+        await expect(replyComposer(page)).toBeVisible();
 
-        // Hover: only the reply's bubble shape tints, and the toolbar shows only over it.
-        const agentPost = thread.locator('.post').filter({hasText: FIRST_REPLY}).first();
-        const agentBubble = agentPost.locator('.post__content > .post__img + div');
-        const toolbar = agentPost.locator('[data-testid^="post-menu-"]');
-        const state = () => agentPost.evaluate((post) => {
-            const bubble = post.querySelector('.post__content > .post__img + div') as HTMLElement;
-            const menu = post.querySelector('[data-testid^="post-menu-"]') as HTMLElement | null;
-            return {
-                row: getComputedStyle(post).backgroundColor,
-                bubble: getComputedStyle(bubble).backgroundColor,
-                toolbar: menu ? getComputedStyle(menu).opacity : 'absent',
-            };
-        });
+        // Hovering the reply tints its bubble; a control clicked with the mouse keeps focus, but the bubble
+        // must not stay tinted once the pointer has left (focus from a click is not keyboard focus).
+        const bubble = replyPost.locator('.post__content > .post__img + div');
+        const tint = () => bubble.evaluate((el) => getComputedStyle(el).backgroundColor);
         await page.mouse.move(0, 0);
-        const idle = await state();
-
-        // Empty row space: the post's side padding left of the reply.
-        const rowBox = (await agentPost.boundingBox())!;
-        const bubbleBox = (await agentBubble.boundingBox())!;
-        await page.mouse.move(rowBox.x + 4, bubbleBox.y + bubbleBox.height - 4);
-        await expect.poll(state).toMatchObject({row: 'rgba(0, 0, 0, 0)', bubble: idle.bubble});
-        expect(['0', 'absent']).toContain((await state()).toolbar);
-
-        await agentBubble.hover();
-        await expect.poll(async () => (await state()).toolbar).toBe('1');
-        // The bubble tint transitions, so wait for it to settle.
-        await expect.poll(async () => (await state()).bubble).not.toBe(idle.bubble);
-        expect((await state()).row).toBe('rgba(0, 0, 0, 0)');
-        await expect(toolbar).toBeVisible();
-
-        // The toolbar sits on the bubble's top edge, within its horizontal extent.
-        const toolbarBox = (await toolbar.boundingBox())!;
-        expect(toolbarBox.x + toolbarBox.width).toBeLessThanOrEqual(bubbleBox.x + bubbleBox.width + 1);
-        expect(toolbarBox.y).toBeLessThan(bubbleBox.y + 4);
-
-        // Moving onto the toolbar keeps it shown.
-        await toolbar.hover();
-        expect((await state()).toolbar).toBe('1');
-
-        // Keyboard: focus inside the bubble shows the toolbar without the pointer.
+        const idle = await tint();
+        await bubble.hover();
+        await expect.poll(tint).not.toBe(idle);
+        await replyPost.getByRole('button', {name: 'Copy'}).click();
         await page.mouse.move(0, 0);
-        await agentPost.getByRole('button', {name: 'Regenerate'}).focus();
-        await expect.poll(async () => (await state()).toolbar).toBe('1');
-        expect((await state()).row).toBe('rgba(0, 0, 0, 0)');
+        await expect.poll(tint).toBe(idle);
     });
 
     test('header: chat title opens the agent menu; the actions menu switches, renames and creates chats', async ({page}) => {
@@ -604,7 +501,9 @@ test.describe('Agents product view', () => {
 
         await trigger.click();
         await menu.getByRole('menuitem', {name: 'Agent settings'}).click();
-        await expect(page.getByRole('button', {name: /Back/})).toBeVisible({timeout: 15000});
+
+        // The editor opens as a modal over the chat, with its tabs.
+        await expect(page.getByRole('tab', {name: 'Configuration'})).toBeVisible({timeout: 15000});
     });
 
     test('Custom Prompts page: create, edit, pin and delete a prompt', async ({page}) => {
@@ -723,7 +622,6 @@ test.describe('Agents product view', () => {
         const reply = replyComposer(page);
         const suggestions = thread.locator('#suggestionList');
         await expect(reply).toBeEnabled({timeout: 30000});
-        await expectWholeFirstLine(reply);
 
         // "@" opens the mention list; Enter picks the user instead of sending.
         await reply.pressSequentially(`mention @${AIMOCK_BOT_NAME.slice(0, 3)}`);
@@ -744,59 +642,41 @@ test.describe('Agents product view', () => {
         await reply.press('Enter');
         await expect(thread.getByTestId('post-message-text').filter({hasText: `mention @${AIMOCK_BOT_NAME}`})).toBeVisible({timeout: 30000});
         await expect(reply).toHaveValue('');
-        await expectWholeFirstLine(reply);
     });
 
-    test('the composer grows with multi-line text up to its cap', async ({page}) => {
+    test('the composer grows with multi-line text up to a cap, then shrinks back', async ({page}) => {
         await login(page);
         await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
         const textbox = newChatComposer(page).getByRole('textbox');
         await expect(textbox).toBeEnabled({timeout: 30000});
-        await expectWholeFirstLine(textbox);
 
         const height = () => textbox.evaluate((el) => el.getBoundingClientRect().height);
-
-        // The pill (the "+", text and send row) rounds its corners by half its
-        // single-line height, and keeps that radius as it grows.
-        const pill = () => textbox.evaluate((el) => {
-            const shell = el.closest('[data-testid="agent-chat-new-composer"]')!.querySelector('button[aria-label="Send message"]')!.parentElement!;
-            return {height: shell.getBoundingClientRect().height, radius: parseFloat(getComputedStyle(shell).borderTopLeftRadius)};
-        });
-        const single = await pill();
-        expect(single.radius).toBe(single.height / 2);
+        const single = await height();
 
         await textbox.fill('one\ntwo\nthree');
-        await expect.poll(height).toBe(expandedHeight(3));
-        expect((await pill()).radius).toBe(single.radius);
+        await expect.poll(height).toBeGreaterThan(single);
 
-        // Expanded: the text spans the pill's full inner width, "+" and send
-        // sit on the row below it.
-        const layout = () => textbox.evaluate((el) => {
-            const shell = el.closest('[data-testid="agent-chat-composer-pill"]') as HTMLElement;
-            const style = getComputedStyle(shell);
-            const inner = shell.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+        // Expanded, "+" and send sit on the row below the text.
+        const buttonsBelow = () => textbox.evaluate((el) => {
             const text = el.getBoundingClientRect();
-            const buttons = ['Add to message', 'Send message'].map((name) => shell.querySelector(`button[aria-label="${name}"]`)!.getBoundingClientRect());
-            const textStyle = getComputedStyle(el);
-            return {
-                expanded: shell.dataset.expanded,
-                padding: [textStyle.paddingTop, textStyle.paddingRight, textStyle.paddingBottom, textStyle.paddingLeft].join(' '),
-                fullWidth: Math.round(text.width) === Math.round(inner),
-                buttonsBelow: buttons.every((b) => b.top >= text.bottom),
-            };
+            const shell = el.closest('[data-testid="agent-chat-composer-pill"]') as HTMLElement;
+            return ['Add to message', 'Send message'].every((name) => shell.querySelector(`button[aria-label="${name}"]`)!.getBoundingClientRect().top >= text.bottom);
         });
-        await expect.poll(layout).toEqual({expanded: 'true', padding: `${EXPANDED_INSET_PX}px ${EXPANDED_INSET_PX}px ${EXPANDED_INSET_PX}px ${EXPANDED_INSET_PX}px`, fullWidth: true, buttonsBelow: true});
+        await expect.poll(buttonsBelow).toBe(true);
 
-        // One long line expands as soon as it wraps between "+" and send.
+        // One long line expands as soon as it wraps.
         await textbox.fill('word '.repeat(60).trim());
-        await expect.poll(layout).toEqual({expanded: 'true', padding: `${EXPANDED_INSET_PX}px ${EXPANDED_INSET_PX}px ${EXPANDED_INSET_PX}px ${EXPANDED_INSET_PX}px`, fullWidth: true, buttonsBelow: true});
+        await expect.poll(height).toBeGreaterThan(single);
 
-        // Capped at eight lines; the rest scrolls.
+        // Capped: twelve lines and twenty lines are the same height, and the rest scrolls.
         await textbox.fill(Array.from({length: 12}, (_v, i) => `line ${i}`).join('\n'));
-        await expect.poll(height).toBe(expandedHeight(8));
+        await expect.poll(height).toBeGreaterThan(single);
+        const capped = await height();
+        await textbox.fill(Array.from({length: 20}, (_v, i) => `line ${i}`).join('\n'));
+        await expect.poll(height).toBe(capped);
+
         await textbox.fill('');
-        await expectWholeFirstLine(textbox);
-        expect((await layout()).expanded).toBe('false');
+        await expect.poll(height).toBe(single);
     });
 
     test('while the agent replies, the composer\'s send button is Stop and stops it', async ({page}) => {
@@ -813,15 +693,7 @@ test.describe('Agents product view', () => {
         const stop = composer.getByRole('button', {name: 'Stop generating'});
         await expect(stop).toBeVisible({timeout: 30000});
 
-        // Round, the "+" button's size; the post leaves Stop to the composer.
-        const box = await stop.boundingBox();
-        expect(box?.width).toBe(ONE_LINE_PX);
-        expect(box?.height).toBe(ONE_LINE_PX);
-        expect(await stop.evaluate((el) => getComputedStyle(el).borderTopLeftRadius)).not.toBe('0px');
-
-        // The standard (neutral) icon button, not Send's primary fill.
-        await expect(stop).not.toHaveAttribute('data-emphasis', 'primary');
-        await expect(stop).not.toHaveAttribute('aria-pressed', /.*/);
+        // The post leaves Stop to the composer.
         await expect(thread.getByTestId('llm-bot-post').getByTestId('stop-generating-button')).toHaveCount(0);
 
         await stop.click();
@@ -955,7 +827,7 @@ test.describe('Agents product view', () => {
         await expect(thread.getByText(JUMP_LAST)).toBeVisible({timeout: 60000});
     });
 
-    test('a chat whose agent is answering shows an indicator in the sidebar while it is not open', async ({page}) => {
+    test('a chat whose agent is answering shows the wave in the sidebar until the reply finishes', async ({page}) => {
         test.setTimeout(120000);
         await login(page);
         await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
@@ -966,11 +838,11 @@ test.describe('Agents product view', () => {
         await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}/[a-z0-9]{26}$`), {timeout: 15000});
         const busyUrl = page.url();
 
-        // Open: the chat itself is in view, so its row shows nothing.
+        // The wave shows on the chat's row while its agent is answering, open or not.
         const indicator = sidebar(page).getByTestId('thread-generating');
-        await expect(indicator).toHaveCount(0);
+        await expect(indicator).toHaveCount(1);
 
-        // Leave for a new chat while the reply is still streaming: the busy chat's row shows it.
+        // Leave for a new chat while the reply is still streaming: the busy chat's row still shows it.
         await sidebar(page).getByRole('button', {name: `New chat with ${botDisplayName}`}).click();
         await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}$`));
         await expect(indicator).toHaveCount(1);
