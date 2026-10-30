@@ -140,6 +140,34 @@ describe('MCPServerToolRow — plugin row policy dropdown re-enable', () => {
     });
 });
 
+describe('MCPServerToolRow — unconfigured tool defaults', () => {
+    test('unconfigured read-only tool shows the server default policy and a Read-only tag', () => {
+        const server: MCPServerInfo = {
+            ...makePluginServer(),
+            serverType: 'remote',
+            name: 'Remote',
+            url: 'https://mcp.example.com',
+            tools: [
+                {name: 'list_things', description: 'List', inputSchema: null, readOnlyHint: true, defaultPolicy: 'auto_run_in_dm'},
+                {name: 'delete_thing', description: 'Delete', inputSchema: null, defaultPolicy: 'ask'},
+            ],
+        };
+        const config = {...makePluginServerConfig(), name: 'Remote', baseURL: 'https://mcp.example.com', tool_configs: []};
+        const {onServerConfigChange} = renderRow(server, config);
+        fireEvent.click(screen.getByText('Remote'));
+
+        expect(selectedLabel(getSelect('Approval policy for list_things'))).toBe('Auto Run (DM)');
+        expect(selectedLabel(getSelect('Approval policy for delete_thing'))).toBe('Ask Every Time');
+        expect(screen.getAllByText('Read-only')).toHaveLength(1);
+
+        // Disabling the tool persists the default it was running with.
+        fireEvent.click(screen.getAllByRole('switch')[1]);
+        expect(onServerConfigChange).toHaveBeenCalledWith(expect.objectContaining({
+            tool_configs: [{name: 'list_things', policy: 'auto_run_in_dm', enabled: false}],
+        }));
+    });
+});
+
 describe('MCPServerToolRow license gating', () => {
     const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
 

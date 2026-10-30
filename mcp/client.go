@@ -204,12 +204,12 @@ func NewSDKClient(impl *mcp.Implementation, opts *mcp.ClientOptions) *mcp.Client
 	return client
 }
 
-// dropNilTools removes null entries from tools/list responses. go-sdk v1.7.0's
-// ListTools panics (nil dereference in filterValidTools) when a server's
-// tools/list result contains a JSON null tool entry, so a misbehaving remote
-// MCP server could crash the whole plugin process before any of our own nil
-// checks run. Stripping the entries in sending middleware runs before the
-// SDK's validation pass. Upstream report:
+// dropNilTools removes null entries from tools/list responses. go-sdk before
+// v1.8.0 panicked (nil dereference in filterValidTools) when a server's
+// tools/list result contained a JSON null tool entry, so a misbehaving remote
+// MCP server could crash the whole plugin process. v1.8.0 skips them itself;
+// stripping them here as well keeps the guard independent of the SDK
+// version. Upstream report:
 // https://github.com/modelcontextprotocol/go-sdk/issues/1119
 func dropNilTools(next mcp.MethodHandler) mcp.MethodHandler {
 	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
@@ -230,6 +230,11 @@ func dropNilTools(next mcp.MethodHandler) mcp.MethodHandler {
 		listResult.Tools = kept
 		return listResult, nil
 	}
+}
+
+// toolReadOnlyHint reports whether the server annotated tool as read-only.
+func toolReadOnlyHint(tool *mcp.Tool) bool {
+	return tool != nil && tool.Annotations != nil && tool.Annotations.ReadOnlyHint
 }
 
 // ListSessionTools lists every tool available on session in wire order,

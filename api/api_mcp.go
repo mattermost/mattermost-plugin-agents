@@ -250,9 +250,11 @@ func (a *API) buildUserMCPServerInfo(
 	authErrorsByOrigin map[string]llm.ToolAuthError,
 	serviceAccount bool,
 ) UserMCPServerInfo {
+	policiesLicensed := a.licenseChecker.Allows(enterprise.CapToolApprovalPolicies)
 	toolInfos := make([]UserMCPToolInfo, 0, len(originTools))
 	for _, t := range originTools {
-		policy, enabled := serverConfig.GetToolPolicy(mcp.ToolPolicyLookupName(serverConfig, t.Name))
+		lookupName := mcp.ToolPolicyLookupName(serverConfig, t.Name)
+		policy, enabled := serverConfig.GetToolPolicyOrDefault(lookupName, mcp.EffectiveDefaultToolPolicy(serverConfig.BaseURL, lookupName, t.ReadOnlyHint, policiesLicensed))
 		bareName := llm.BareMCPToolName(t.Name)
 		toolInfos = append(toolInfos, UserMCPToolInfo{
 			Name:        bareName,

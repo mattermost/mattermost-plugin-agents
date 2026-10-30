@@ -906,7 +906,7 @@ func (e *TestEnvironment) setBots(registry ...*bots.Bot) {
 
 // askForEveryTool is a tool policy checker that never lets a tool run
 // without approval.
-var askForEveryTool = mcp.ToolPolicyFunc(func(string, string) (string, bool) { return mcp.ToolPolicyAsk, false })
+var askForEveryTool = mcp.ToolPolicyFunc(func(string, string, bool) (string, bool) { return mcp.ToolPolicyAsk, false })
 
 func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	mockAPI := &plugintest.API{}

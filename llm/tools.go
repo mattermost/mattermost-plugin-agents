@@ -44,6 +44,12 @@ type Tool struct {
 	// Empty for built-in (non-MCP) tools. Used for auto-approval decisions.
 	ServerOrigin string
 
+	// ReadOnlyHint is the MCP readOnlyHint annotation the tool's server
+	// reported to the requesting user. It is an untrusted hint that only
+	// selects the default approval policy for tools an admin has not
+	// configured (mcp.DefaultToolPolicy). False for built-in tools.
+	ReadOnlyHint bool
+
 	// UserInteraction marks a tool whose pending call is answered by the
 	// requesting user in the Mattermost UI instead of executed by the server;
 	// the Resolver is only an error backstop. Empty for normal tools.

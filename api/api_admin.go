@@ -271,6 +271,11 @@ type MCPToolInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	InputSchema any    `json:"inputSchema"`
+	// ReadOnlyHint is the server's readOnlyHint annotation for the tool.
+	ReadOnlyHint bool `json:"readOnlyHint"`
+	// DefaultPolicy is the policy the tool runs with while it has no stored
+	// tool config (mcp.EffectiveDefaultToolPolicy).
+	DefaultPolicy string `json:"defaultPolicy"`
 }
 
 // MCPServerInfo represents a server and its tools for API response
@@ -468,14 +473,18 @@ func applyMCPDiscoveryResult(info *MCPServerInfo, tools []MCPToolInfo, err error
 	info.Error = new(err.Error())
 }
 
-// toMCPToolInfos converts discovered mcp tool metadata to the API response shape.
-func toMCPToolInfos(toolInfos []mcp.ToolInfo) []MCPToolInfo {
+// toMCPToolInfos converts tool metadata discovered on the server at
+// serverOrigin to the API response shape.
+func (a *API) toMCPToolInfos(serverOrigin string, toolInfos []mcp.ToolInfo) []MCPToolInfo {
+	policiesLicensed := a.licenseChecker.Allows(enterprise.CapToolApprovalPolicies)
 	tools := make([]MCPToolInfo, 0, len(toolInfos))
 	for _, toolInfo := range toolInfos {
 		tools = append(tools, MCPToolInfo{
-			Name:        toolInfo.Name,
-			Description: toolInfo.Description,
-			InputSchema: toolInfo.InputSchema,
+			Name:          toolInfo.Name,
+			Description:   toolInfo.Description,
+			InputSchema:   toolInfo.InputSchema,
+			ReadOnlyHint:  toolInfo.ReadOnlyHint,
+			DefaultPolicy: mcp.EffectiveDefaultToolPolicy(serverOrigin, toolInfo.Name, toolInfo.ReadOnlyHint, policiesLicensed),
 		})
 	}
 	return tools
@@ -534,7 +543,7 @@ func (a *API) discoverRemoteServerTools(ctx context.Context, userID string, serv
 		return nil, err
 	}
 
-	return toMCPToolInfos(toolInfos), nil
+	return a.toMCPToolInfos(serverConfig.BaseURL, toolInfos), nil
 }
 
 // discoverEmbeddedServerTools connects to the embedded MCP server and discovers its tools
@@ -546,7 +555,7 @@ func (a *API) discoverEmbeddedServerTools(ctx context.Context, requestingAdminID
 		return nil, err
 	}
 
-	return toMCPToolInfos(toolInfos), nil
+	return a.toMCPToolInfos(mcp.EmbeddedClientKey, toolInfos), nil
 }
 
 // ClearMCPToolsCacheResponse represents the response for clearing the cache
@@ -589,7 +598,7 @@ func (a *API) discoverPluginServerTools(ctx context.Context, userID string, cfg 
 		return nil, err
 	}
 
-	return toMCPToolInfos(toolInfos), nil
+	return a.toMCPToolInfos(config.PluginServerOrigin(cfg.PluginID), toolInfos), nil
 }
 
 // UpdatePluginServerRequest is the body shape for PUT /admin/mcp/plugin-servers/:pluginID.

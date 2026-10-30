@@ -62,9 +62,10 @@ func DiscoverRemoteServerTools(
 	tools := make([]ToolInfo, 0, len(serverTools))
 	for _, tool := range serverTools {
 		tools = append(tools, ToolInfo{
-			Name:        tool.Name,
-			Description: tool.Description,
-			InputSchema: tool.InputSchema,
+			Name:         tool.Name,
+			Description:  tool.Description,
+			InputSchema:  tool.InputSchema,
+			ReadOnlyHint: toolReadOnlyHint(tool),
 		})
 	}
 
@@ -99,9 +100,10 @@ func DiscoverPluginServerTools(
 	tools := make([]ToolInfo, 0, len(remoteTools))
 	for _, t := range remoteTools {
 		tools = append(tools, ToolInfo{
-			Name:        t.Name,
-			Description: t.Description,
-			InputSchema: t.InputSchema,
+			Name:         t.Name,
+			Description:  t.Description,
+			InputSchema:  t.InputSchema,
+			ReadOnlyHint: toolReadOnlyHint(t),
 		})
 	}
 	return tools, nil
@@ -130,9 +132,10 @@ func DiscoverEmbeddedServerTools(
 	tools := make([]ToolInfo, 0, len(serverTools))
 	for _, tool := range serverTools {
 		tools = append(tools, ToolInfo{
-			Name:        tool.Name,
-			Description: tool.Description,
-			InputSchema: tool.InputSchema,
+			Name:         tool.Name,
+			Description:  tool.Description,
+			InputSchema:  tool.InputSchema,
+			ReadOnlyHint: toolReadOnlyHint(tool),
 		})
 	}
 

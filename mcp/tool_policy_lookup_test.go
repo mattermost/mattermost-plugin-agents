@@ -38,7 +38,7 @@ func TestLookupToolPolicy(t *testing.T) {
 			},
 		}
 
-		policy, enabled := LookupToolPolicy(cfg, pluginOrigin, pluginToolName)
+		policy, enabled := LookupToolPolicy(cfg, pluginOrigin, pluginToolName, false)
 
 		require.Equal(t, ToolPolicyAutoRunEverywhere, policy)
 		require.True(t, enabled)
@@ -51,7 +51,7 @@ func TestLookupToolPolicy(t *testing.T) {
 			},
 		}
 
-		policy, enabled := LookupToolPolicy(cfg, pluginOrigin, pluginToolName)
+		policy, enabled := LookupToolPolicy(cfg, pluginOrigin, pluginToolName, false)
 
 		require.Equal(t, ToolPolicyAutoRunInDM, policy)
 		require.True(t, enabled)
@@ -64,7 +64,7 @@ func TestLookupToolPolicy(t *testing.T) {
 			},
 		}
 
-		policy, enabled := LookupToolPolicy(cfg, pluginOrigin, pluginToolName)
+		policy, enabled := LookupToolPolicy(cfg, pluginOrigin, pluginToolName, false)
 
 		require.Equal(t, ToolPolicyAutoRunEverywhere, policy)
 		require.False(t, enabled)
@@ -79,7 +79,7 @@ func TestLookupToolPolicy(t *testing.T) {
 			}},
 		}
 
-		policy, enabled := LookupToolPolicy(cfg, pluginOrigin, pluginToolName)
+		policy, enabled := LookupToolPolicy(cfg, pluginOrigin, pluginToolName, false)
 
 		require.Equal(t, ToolPolicyAsk, policy)
 		require.True(t, enabled)
@@ -99,7 +99,7 @@ func TestLookupToolPolicy(t *testing.T) {
 			}},
 		}
 
-		policy, enabled := LookupToolPolicy(cfg, pluginOrigin, pluginToolName)
+		policy, enabled := LookupToolPolicy(cfg, pluginOrigin, pluginToolName, false)
 
 		require.Equal(t, ToolPolicyAsk, policy)
 		require.False(t, enabled)
@@ -112,7 +112,7 @@ func TestLookupToolPolicy(t *testing.T) {
 			},
 		}
 
-		policy, enabled := LookupToolPolicy(cfg, "plugin://com.unknown.other", pluginToolName)
+		policy, enabled := LookupToolPolicy(cfg, "plugin://com.unknown.other", pluginToolName, false)
 
 		require.Equal(t, ToolPolicyAsk, policy)
 		require.False(t, enabled)
@@ -132,7 +132,7 @@ func TestLookupToolPolicy(t *testing.T) {
 			}},
 		}
 
-		policy, enabled := LookupToolPolicy(cfg, remoteURL, remoteToolName)
+		policy, enabled := LookupToolPolicy(cfg, remoteURL, remoteToolName, false)
 
 		require.Equal(t, ToolPolicyAutoRunEverywhere, policy)
 		require.True(t, enabled)
@@ -152,7 +152,7 @@ func TestLookupToolPolicy(t *testing.T) {
 			}},
 		}
 
-		policy, enabled := LookupToolPolicy(cfg, remoteURL, "remote__"+remoteToolName)
+		policy, enabled := LookupToolPolicy(cfg, remoteURL, "remote__"+remoteToolName, false)
 
 		require.Equal(t, ToolPolicyAutoRunEverywhere, policy)
 		require.True(t, enabled)
@@ -172,7 +172,7 @@ func TestLookupToolPolicy(t *testing.T) {
 		}
 
 		seedTool := seeds[0]
-		policy, enabled := LookupToolPolicy(cfg, EmbeddedClientKey, seedTool.Name)
+		policy, enabled := LookupToolPolicy(cfg, EmbeddedClientKey, seedTool.Name, false)
 
 		require.NotEmpty(t, policy)
 		require.Equal(t, seedTool.Enabled, enabled)
@@ -192,7 +192,7 @@ func TestLookupToolPolicy(t *testing.T) {
 			},
 		}
 
-		policy, enabled := LookupToolPolicy(cfg, EmbeddedClientKey, "read_file")
+		policy, enabled := LookupToolPolicy(cfg, EmbeddedClientKey, "read_file", false)
 
 		require.Equal(t, ToolPolicyAutoRunInDM, policy)
 		require.True(t, enabled)
@@ -211,14 +211,14 @@ func TestLookupToolPolicy(t *testing.T) {
 			},
 		}
 
-		policy, enabled := LookupToolPolicy(cfg, EmbeddedClientKey, "read_file")
+		policy, enabled := LookupToolPolicy(cfg, EmbeddedClientKey, "read_file", false)
 
 		require.Equal(t, ToolPolicyAsk, policy)
 		require.False(t, enabled)
 	})
 
 	t.Run("unknown origin returns ask false", func(t *testing.T) {
-		policy, enabled := LookupToolPolicy(Config{}, "bogus://nowhere", "x")
+		policy, enabled := LookupToolPolicy(Config{}, "bogus://nowhere", "x", false)
 
 		require.Equal(t, ToolPolicyAsk, policy)
 		require.False(t, enabled)
@@ -262,7 +262,7 @@ func TestLookupEffectiveToolPolicy(t *testing.T) {
 		t.Run(level.String(), func(t *testing.T) {
 			licensed := level >= enterprise.LevelEnterprise
 
-			policy, enabled := LookupEffectiveToolPolicy(cfg, EmbeddedClientKey, "read_file", licensed)
+			policy, enabled := LookupEffectiveToolPolicy(cfg, EmbeddedClientKey, "read_file", false, licensed)
 			require.True(t, enabled)
 			if licensed {
 				require.Equal(t, ToolPolicyAutoRunEverywhere, policy)
@@ -270,11 +270,11 @@ func TestLookupEffectiveToolPolicy(t *testing.T) {
 				require.Equal(t, ToolPolicyAutoRunInDM, policy, "embedded seed policy is used below Enterprise")
 			}
 
-			policy, enabled = LookupEffectiveToolPolicy(cfg, EmbeddedClientKey, "read_post", licensed)
+			policy, enabled = LookupEffectiveToolPolicy(cfg, EmbeddedClientKey, "read_post", false, licensed)
 			require.True(t, enabled)
 			require.Equal(t, ToolPolicyAsk, policy, "an admin's narrower policy than the seed holds at every level")
 
-			policy, enabled = LookupEffectiveToolPolicy(cfg, EmbeddedClientKey, "custom_unseeded", licensed)
+			policy, enabled = LookupEffectiveToolPolicy(cfg, EmbeddedClientKey, "custom_unseeded", false, licensed)
 			require.True(t, enabled)
 			if licensed {
 				require.Equal(t, ToolPolicyAutoRunEverywhere, policy)
@@ -282,10 +282,10 @@ func TestLookupEffectiveToolPolicy(t *testing.T) {
 				require.Equal(t, ToolPolicyAsk, policy, "unseeded embedded tools use ask below Enterprise")
 			}
 
-			_, enabled = LookupEffectiveToolPolicy(cfg, EmbeddedClientKey, "disabled_tool", licensed)
+			_, enabled = LookupEffectiveToolPolicy(cfg, EmbeddedClientKey, "disabled_tool", false, licensed)
 			require.False(t, enabled, "Enabled=false is honored at every level")
 
-			policy, enabled = LookupEffectiveToolPolicy(cfg, remoteURL, "remote_tool", licensed)
+			policy, enabled = LookupEffectiveToolPolicy(cfg, remoteURL, "remote_tool", false, licensed)
 			require.True(t, enabled)
 			if licensed {
 				require.Equal(t, ToolPolicyAutoRunEverywhere, policy)
@@ -293,10 +293,10 @@ func TestLookupEffectiveToolPolicy(t *testing.T) {
 				require.Equal(t, ToolPolicyAsk, policy)
 			}
 
-			_, enabled = LookupEffectiveToolPolicy(cfg, remoteURL, "remote_disabled", licensed)
+			_, enabled = LookupEffectiveToolPolicy(cfg, remoteURL, "remote_disabled", false, licensed)
 			require.False(t, enabled, "remote Enabled=false is honored at every level")
 
-			policy, enabled = LookupEffectiveToolPolicy(cfg, pluginOrigin, "plugin_tool", licensed)
+			policy, enabled = LookupEffectiveToolPolicy(cfg, pluginOrigin, "plugin_tool", false, licensed)
 			require.True(t, enabled)
 			if licensed {
 				require.Equal(t, ToolPolicyAutoRunEverywhere, policy)
@@ -307,8 +307,64 @@ func TestLookupEffectiveToolPolicy(t *testing.T) {
 	}
 
 	t.Run("turning off a tool stays disabled when policies are available", func(t *testing.T) {
-		policy, enabled := LookupEffectiveToolPolicy(cfg, EmbeddedClientKey, "disabled_tool", true)
+		policy, enabled := LookupEffectiveToolPolicy(cfg, EmbeddedClientKey, "disabled_tool", false, true)
 		require.Equal(t, ToolPolicyAutoRunEverywhere, policy)
 		require.False(t, enabled)
 	})
+}
+
+// Unconfigured tools take their default from the server's readOnlyHint, but an
+// admin's stored config, the vetted seed, and the license cap all win over it.
+func TestConfigToolPolicyCheckerReadOnlyHintDefault(t *testing.T) {
+	const remoteURL = "https://mcp.example.com/mcp"
+	const githubURL = "https://api.githubcopilot.com/mcp/"
+	pluginOrigin := pluginServerOriginKey("com.example.plugin")
+
+	cfg := Config{
+		Servers: []ServerConfig{
+			{Name: "Remote", BaseURL: remoteURL, Enabled: true, ToolConfigs: []ToolConfig{
+				{Name: "configured_ask", Policy: ToolPolicyAsk, Enabled: true},
+				{Name: "configured_disabled", Policy: ToolPolicyAsk, Enabled: false},
+			}},
+			{Name: "GitHub", BaseURL: githubURL, Enabled: true},
+			{Name: "Off", BaseURL: "https://off.example.com", Enabled: false},
+		},
+		PluginServers: []PluginServerConfig{
+			{PluginID: "com.example.plugin", Name: "Plugin", Enabled: true},
+		},
+	}
+
+	tests := []struct {
+		name         string
+		origin       string
+		toolName     string
+		readOnlyHint bool
+		licensed     bool
+		wantPolicy   string
+		wantEnabled  bool
+	}{
+		{"read-only remote tool auto-runs in DMs", remoteURL, "list_things", true, true, ToolPolicyAutoRunInDM, true},
+		{"namespaced read-only remote tool auto-runs in DMs", remoteURL, "remote__list_things", true, true, ToolPolicyAutoRunInDM, true},
+		{"remote tool without the hint asks", remoteURL, "delete_things", false, true, ToolPolicyAsk, true},
+		{"stored ask wins over the hint", remoteURL, "configured_ask", true, true, ToolPolicyAsk, true},
+		{"stored disabled stays disabled", remoteURL, "configured_disabled", true, true, ToolPolicyAsk, false},
+		{"vetted seed wins over the hint", githubURL, "list_secret_scanning_alerts", true, true, ToolPolicyAsk, true},
+		{"vetted seed applies without the hint", githubURL, "get_me", false, true, ToolPolicyAutoRunInDM, true},
+		{"disabled server never auto-runs", "https://off.example.com", "list_things", true, true, ToolPolicyAsk, false},
+		{"read-only plugin tool auto-runs in DMs", pluginOrigin, "list_things", true, true, ToolPolicyAutoRunInDM, true},
+		{"embedded server ignores the hint", EmbeddedClientKey, "get_file_link", true, true, ToolPolicyAsk, true},
+		{"unknown origin never auto-runs", "https://unknown.example.com", "list_things", true, true, ToolPolicyAsk, false},
+		{"unlicensed policies ignore the hint", remoteURL, "list_things", true, false, ToolPolicyAsk, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checker := NewConfigToolPolicyChecker(func() Config { return cfg }, func() bool { return tt.licensed })
+
+			policy, enabled := checker.GetToolPolicy(tt.origin, tt.toolName, tt.readOnlyHint)
+
+			require.Equal(t, tt.wantPolicy, policy)
+			require.Equal(t, tt.wantEnabled, enabled)
+		})
+	}
 }

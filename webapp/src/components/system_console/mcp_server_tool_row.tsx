@@ -14,7 +14,7 @@ import {useIsLicensedFor} from '@/license';
 import {ToggleSwitch} from '../toggle_switch';
 import {pluginIDFromServerOrigin, stripPluginPrefix} from '../../utils/tool_names';
 
-import {MCPServerConfig, MCPServerInfo, MCPToolConfig} from './mcp_types';
+import {MCPServerConfig, MCPServerInfo, MCPToolConfig, MCPToolInfo} from './mcp_types';
 import MCPToolConfigRow from './mcp_tool_config_row';
 
 type MCPServerToolRowProps = {
@@ -30,18 +30,19 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
     const isRemoteMcp = server.serverType === 'remote' || server.serverType === 'plugin';
     const enableRemoteBlocked = isRemoteMcp && !remoteMcpLicensed;
 
-    const getToolConfig = (toolName: string): MCPToolConfig => {
-        const existing = serverConfig?.tool_configs?.find((tc) => tc.name === toolName);
+    const getToolConfig = (tool: MCPToolInfo): MCPToolConfig => {
+        const existing = serverConfig?.tool_configs?.find((tc) => tc.name === tool.name);
         if (existing) {
             return existing;
         }
 
-        // Default for unconfigured tools: enabled, ask policy
-        return {name: toolName, policy: 'ask', enabled: true};
+        // Unconfigured tools are enabled with the server-computed default
+        // policy (auto run in DMs for tools the MCP server marks read-only).
+        return {name: tool.name, policy: tool.defaultPolicy ?? 'ask', enabled: true};
     };
 
     const enabledToolCount = server.tools.filter((tool) => {
-        const tc = getToolConfig(tool.name);
+        const tc = getToolConfig(tool);
         return tc.enabled;
     }).length;
 
@@ -167,7 +168,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                                 <MCPToolConfigRow
                                     key={tool.name}
                                     tool={tool}
-                                    toolConfig={getToolConfig(tool.name)}
+                                    toolConfig={getToolConfig(tool)}
                                     onToolConfigChange={(updatedConfig) =>
                                         handleToolConfigChange(tool.name, updatedConfig)
                                     }

@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -367,4 +369,61 @@ func TestHandleGetMCPToolsKeepsPartialPluginFailuresPerServer(t *testing.T) {
 	require.NotNil(t, brokenRow.Error)
 	require.Contains(t, *brokenRow.Error, "connection refused")
 	require.Empty(t, brokenRow.Tools)
+}
+
+// Admin discovery reports each tool's readOnlyHint and the default policy it
+// runs with while unconfigured, so the System Console shows what will happen.
+func TestHandleGetMCPToolsReportsReadOnlyDefaultPolicy(t *testing.T) {
+	tests := []struct {
+		name               string
+		level              enterprise.Level
+		wantReadToolPolicy string
+	}{
+		{"licensed policies auto-run read-only tools in DMs", enterprise.LevelEnterprise, mcp.ToolPolicyAutoRunInDM},
+		{"unlicensed policies keep the ask default", enterprise.LevelUnlicensed, mcp.ToolPolicyAsk},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api, mockAPI, _ := setupAdminTestEnvironment(t)
+			api.licenseChecker = enterprisetest.CheckerAt(tt.level)
+			mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+			allowAnyPluginAPILogging(mockAPI)
+
+			server := gomcp.NewServer(&gomcp.Implementation{Name: "annotated", Version: "1.0"}, nil)
+			handler := func(context.Context, *gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+				return &gomcp.CallToolResult{}, nil
+			}
+			server.AddTool(&gomcp.Tool{
+				Name:        "read_tool",
+				InputSchema: map[string]any{"type": "object"},
+				Annotations: &gomcp.ToolAnnotations{ReadOnlyHint: true},
+			}, handler)
+			server.AddTool(&gomcp.Tool{Name: "write_tool", InputSchema: map[string]any{"type": "object"}}, handler)
+			httpServer := httptest.NewServer(gomcp.NewStreamableHTTPHandler(
+				func(*http.Request) *gomcp.Server { return server },
+				&gomcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true},
+			))
+			t.Cleanup(httpServer.Close)
+
+			api.config.(*testConfigImpl).mcpConfig = mcp.Config{
+				Enabled: true,
+				Servers: []mcp.ServerConfig{{Name: "Annotated", BaseURL: httpServer.URL, Enabled: true}},
+			}
+			api.mcpClientManager.(*mockMCPClientManager).httpClient = &http.Client{}
+
+			row := serverRowByName(t, getAdminMCPTools(t, api), "Annotated")
+			require.Nil(t, row.Error)
+			got := map[string]MCPToolInfo{}
+			for _, tool := range row.Tools {
+				tool.InputSchema = nil
+				got[tool.Name] = tool
+			}
+
+			require.Equal(t, map[string]MCPToolInfo{
+				"read_tool":  {Name: "read_tool", ReadOnlyHint: true, DefaultPolicy: tt.wantReadToolPolicy},
+				"write_tool": {Name: "write_tool", DefaultPolicy: mcp.ToolPolicyAsk},
+			}, got)
+		})
+	}
 }

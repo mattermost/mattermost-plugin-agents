@@ -52,6 +52,12 @@ export type MCPToolInfo = {
     name: string;
     description: string;
     inputSchema: Record<string, unknown> | null;
+
+    // Server-reported MCP readOnlyHint annotation.
+    readOnlyHint?: boolean;
+
+    // Policy the tool runs with while it has no tool_configs entry.
+    defaultPolicy?: MCPToolConfig['policy'];
 };
 
 export type MCPServerInfo = {

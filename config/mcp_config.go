@@ -96,6 +96,13 @@ type MCPServerConfig struct {
 // tools default to enabled with ask policy. Invalid or empty policies are
 // normalized to "ask". When duplicate entries exist the last matching entry wins.
 func (s *MCPServerConfig) GetToolPolicy(toolName string) (string, bool) {
+	return s.GetToolPolicyOrDefault(toolName, MCPToolPolicyAsk)
+}
+
+// GetToolPolicyOrDefault is GetToolPolicy with defaultPolicy, instead of ask,
+// for an enabled server's tools that have no config entry. An invalid
+// defaultPolicy is normalized to "ask".
+func (s *MCPServerConfig) GetToolPolicyOrDefault(toolName, defaultPolicy string) (string, bool) {
 	if s == nil || toolName == "" {
 		return MCPToolPolicyAsk, false
 	}
@@ -104,20 +111,14 @@ func (s *MCPServerConfig) GetToolPolicy(toolName string) (string, bool) {
 		return MCPToolPolicyAsk, false
 	}
 
-	found := false
-	policy := MCPToolPolicyAsk
-	enabled := false
+	policy := defaultPolicy
+	enabled := true
 
 	for _, tc := range s.ToolConfigs {
 		if tc.Name == toolName {
-			found = true
 			policy = tc.Policy
 			enabled = tc.Enabled
 		}
-	}
-
-	if !found {
-		return MCPToolPolicyAsk, true
 	}
 
 	if !IsToolPolicyAutoRunInDM(policy) && policy != MCPToolPolicyAsk {

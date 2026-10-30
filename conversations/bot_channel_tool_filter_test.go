@@ -31,7 +31,7 @@ type mapPolicyChecker map[string]map[string]struct {
 	enabled bool
 }
 
-func (m mapPolicyChecker) GetToolPolicy(serverOrigin, toolName string) (string, bool) {
+func (m mapPolicyChecker) GetToolPolicy(serverOrigin, toolName string, _ bool) (string, bool) {
 	byServer, ok := m[serverOrigin]
 	if !ok {
 		return mcp.ToolPolicyAsk, false
