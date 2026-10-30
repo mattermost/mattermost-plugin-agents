@@ -318,6 +318,7 @@ func TestLookupEffectiveToolPolicy(t *testing.T) {
 func TestConfigToolPolicyCheckerReadOnlyHintDefault(t *testing.T) {
 	const remoteURL = "https://mcp.example.com/mcp"
 	const githubURL = "https://api.githubcopilot.com/mcp/"
+	const figmaURL = "https://mcp.figma.com/mcp"
 	pluginOrigin := pluginServerOriginKey("com.example.plugin")
 
 	cfg := Config{
@@ -325,13 +326,17 @@ func TestConfigToolPolicyCheckerReadOnlyHintDefault(t *testing.T) {
 			{Name: "Remote", BaseURL: remoteURL, Enabled: true, ToolConfigs: []ToolConfig{
 				{Name: "configured_ask", Policy: ToolPolicyAsk, Enabled: true},
 				{Name: "configured_disabled", Policy: ToolPolicyAsk, Enabled: false},
+				{Name: "toggled_only", Enabled: false},
+				{Name: "toggled_write", Enabled: true},
 			}},
 			{Name: "GitHub", BaseURL: githubURL, Enabled: true},
+			{Name: "Figma", BaseURL: figmaURL, Enabled: true},
 			{Name: "Off", BaseURL: "https://off.example.com", Enabled: false},
 		},
 		PluginServers: []PluginServerConfig{
 			{PluginID: "com.example.plugin", Name: "Plugin", Enabled: true},
 		},
+		EmbeddedServer: EmbeddedServerConfig{ToolConfigs: []ToolConfig{{Name: "read_post", Enabled: true}}},
 	}
 
 	tests := []struct {
@@ -348,9 +353,12 @@ func TestConfigToolPolicyCheckerReadOnlyHintDefault(t *testing.T) {
 		{"remote tool without the hint asks", remoteURL, "delete_things", false, true, ToolPolicyAsk, true},
 		{"stored ask wins over the hint", remoteURL, "configured_ask", true, true, ToolPolicyAsk, true},
 		{"stored disabled stays disabled", remoteURL, "configured_disabled", true, true, ToolPolicyAsk, false},
-		{"vetted seed wins over the hint", githubURL, "list_secret_scanning_alerts", true, true, ToolPolicyAsk, true},
-		{"vetted seed applies without the hint", githubURL, "list_copilot_spaces", false, true, ToolPolicyAutoRunInDM, true},
-		{"unseeded GitHub read tool follows the hint", githubURL, "get_me", true, true, ToolPolicyAutoRunInDM, true},
+		{"vetted seed applies without the hint", figmaURL, "whoami", false, true, ToolPolicyAutoRunInDM, true},
+		{"GitHub read tool follows the hint", githubURL, "get_me", true, true, ToolPolicyAutoRunInDM, true},
+		{"GitHub tool without the hint asks", githubURL, "create_issue", false, true, ToolPolicyAsk, true},
+		{"empty stored policy keeps the hint default", remoteURL, "toggled_only", true, true, ToolPolicyAutoRunInDM, false},
+		{"empty stored policy keeps the ask default", remoteURL, "toggled_write", false, true, ToolPolicyAsk, true},
+		{"empty stored embedded policy keeps the seed", EmbeddedClientKey, "read_post", false, true, ToolPolicyAutoRunInDM, true},
 		{"disabled server never auto-runs", "https://off.example.com", "list_things", true, true, ToolPolicyAsk, false},
 		{"read-only plugin tool auto-runs in DMs", pluginOrigin, "list_things", true, true, ToolPolicyAutoRunInDM, true},
 		{"embedded server ignores the hint", EmbeddedClientKey, "get_file_link", true, true, ToolPolicyAsk, true},

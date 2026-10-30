@@ -100,7 +100,8 @@ func LookupToolPolicy(cfg Config, serverBaseURL, toolName string, readOnlyHint b
 			BaseURL:     EmbeddedClientKey,
 			ToolConfigs: toolConfigs,
 		}
-		return embeddedCfg.GetToolPolicy(ToolPolicyLookupName(embeddedCfg, toolName))
+		lookupName := ToolPolicyLookupName(embeddedCfg, toolName)
+		return embeddedCfg.GetToolPolicyOrDefault(lookupName, DefaultToolPolicy(EmbeddedClientKey, lookupName, false))
 	}
 
 	for i := range cfg.Servers {

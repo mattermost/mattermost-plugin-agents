@@ -35,15 +35,18 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
     const isRemoteMcp = server.serverType === 'remote' || server.serverType === 'plugin';
     const enableRemoteBlocked = isRemoteMcp && !remoteMcpLicensed;
 
-    const getToolConfig = (tool: MCPToolInfo): MCPToolConfig => {
-        const existing = serverConfig?.tool_configs?.find((tc) => tc.name === tool.name);
-        if (existing) {
-            return existing;
-        }
+    const findStoredConfig = (toolName: string) => serverConfig?.tool_configs?.find((tc) => tc.name === toolName);
 
-        // Unconfigured tools are enabled with the server-computed default
-        // policy (auto run in DMs for tools the MCP server marks read-only).
-        return {name: tool.name, policy: tool.defaultPolicy ?? 'ask', enabled: true};
+    // The tool's config as it applies: a tool with no stored entry is enabled,
+    // and a tool with no chosen policy shows the server-computed default
+    // (auto run in DMs for tools the MCP server marks read-only).
+    const getToolConfig = (tool: MCPToolInfo): MCPToolConfig => {
+        const defaultPolicy = tool.defaultPolicy ?? 'ask';
+        const existing = findStoredConfig(tool.name);
+        if (existing) {
+            return existing.policy ? existing : {...existing, policy: defaultPolicy};
+        }
+        return {name: tool.name, policy: defaultPolicy, enabled: true};
     };
 
     const enabledToolCount = server.tools.filter((tool) => {
@@ -59,12 +62,19 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
         }
     };
 
-    const handleToolConfigChange = (toolName: string, updatedToolConfig: MCPToolConfig) => {
+    const handleToolConfigChange = (tool: MCPToolInfo, changedToolConfig: MCPToolConfig) => {
         if (!serverConfig) {
             return;
         }
+
+        // Only a policy the admin picks is stored. Toggling the tool or
+        // editing its override keeps an unchosen policy empty, so the tool
+        // keeps following its default.
+        const policyChosen = Boolean(findStoredConfig(tool.name)?.policy) || changedToolConfig.policy !== getToolConfig(tool).policy;
+        const updatedToolConfig = policyChosen ? changedToolConfig : {...changedToolConfig, policy: '' as const};
+
         const existingConfigs = serverConfig.tool_configs || [];
-        const existingIndex = existingConfigs.findIndex((tc) => tc.name === toolName);
+        const existingIndex = existingConfigs.findIndex((tc) => tc.name === tool.name);
         let updatedConfigs: MCPToolConfig[];
         if (existingIndex >= 0) {
             updatedConfigs = [...existingConfigs];
@@ -125,7 +135,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                 tool={tool}
                 toolConfig={getToolConfig(tool)}
                 onToolConfigChange={(updatedConfig) =>
-                    handleToolConfigChange(tool.name, updatedConfig)
+                    handleToolConfigChange(tool, updatedConfig)
                 }
                 serverDisabled={!serverEnabled}
                 displayName={displayName}

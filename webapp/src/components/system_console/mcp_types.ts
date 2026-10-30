@@ -5,7 +5,9 @@
 
 export type MCPToolConfig = {
     name: string;
-    policy: 'auto_run_in_dm' | 'auto_run_everywhere' | 'ask';
+
+    // '' means no policy was chosen for the tool, so it keeps its default.
+    policy: 'auto_run_in_dm' | 'auto_run_everywhere' | 'ask' | '';
     enabled: boolean;
     retrieval_description_override?: string;
 };

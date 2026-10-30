@@ -4,7 +4,6 @@
 package mcp
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -23,9 +22,10 @@ func TestSeedVettedToolConfigs(t *testing.T) {
 			wantCount: 20,
 		},
 		{
-			name:      "GitHub seeds security reads and unverified hosted reads",
-			baseURL:   "https://api.githubcopilot.com/mcp/",
-			wantCount: 12,
+			// GitHub annotates its read tools, so it relies on readOnlyHint.
+			name:    "GitHub has no seed",
+			baseURL: "https://api.githubcopilot.com/mcp/",
+			wantNil: true,
 		},
 		{
 			name:      "Figma seeds 8 read tools",
@@ -76,12 +76,7 @@ func TestSeedVettedToolConfigs(t *testing.T) {
 			require.Len(t, got, tt.wantCount)
 			for _, cfg := range got {
 				require.True(t, cfg.Enabled)
-				switch {
-				case strings.Contains(tt.baseURL, "api.githubcopilot.com"):
-					require.True(t, cfg.Policy == ToolPolicyAutoRunInDM || cfg.Policy == ToolPolicyAsk)
-				default:
-					require.Equal(t, ToolPolicyAutoRunInDM, cfg.Policy)
-				}
+				require.Equal(t, ToolPolicyAutoRunInDM, cfg.Policy)
 				require.NotEmpty(t, cfg.Name)
 			}
 		})
@@ -94,18 +89,6 @@ func TestSeedVettedToolConfigsSpotChecks(t *testing.T) {
 		requireToolConfig(t, configs, "getJiraIssue", ToolPolicyAutoRunInDM, true)
 		requireToolConfig(t, configs, "search", ToolPolicyAutoRunInDM, true)
 		requireNoToolConfig(t, configs, "createJiraIssue")
-	})
-
-	t.Run("GitHub", func(t *testing.T) {
-		configs := SeedVettedToolConfigs("https://api.githubcopilot.com/mcp/")
-		requireToolConfig(t, configs, "get_code_scanning_alert", ToolPolicyAsk, true)
-		requireToolConfig(t, configs, "list_repository_security_advisories", ToolPolicyAsk, true)
-		requireToolConfig(t, configs, "list_copilot_spaces", ToolPolicyAutoRunInDM, true)
-		// Read tools the GitHub server annotates read-only are left to the
-		// readOnlyHint default instead of being seeded.
-		requireNoToolConfig(t, configs, "get_me")
-		requireNoToolConfig(t, configs, "pull_request_read")
-		requireNoToolConfig(t, configs, "create_repository")
 	})
 
 	t.Run("Figma", func(t *testing.T) {

@@ -5,7 +5,6 @@ package mcp
 
 import (
 	"net/url"
-	"slices"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -23,14 +22,12 @@ func IsRemoteServerOrigin(origin string) bool {
 
 // SeedVettedToolConfigs returns one-time seed tool configs for vetted MCP hosts.
 //
-// Only Mattermost-curated READ-only tools are seeded. Most are enabled with
-// policy auto_run_in_dm; GitHub security-scanning reads default to policy ask
-// (admins may switch). Non-READ tools are intentionally not persisted here;
-// tools without config fall back to DefaultToolPolicy (ask, or
-// auto_run_in_dm when the server marks the tool read-only), enabled=true,
-// until an admin explicitly configures them. A remote server whose read
-// tools are all verified to carry readOnlyHint needs no seed for them; only
-// deliberate exceptions (such as GitHub's security reads) stay listed.
+// Only Mattermost-curated READ-only tools are seeded, enabled with policy
+// auto_run_in_dm. Non-READ tools are intentionally not persisted here; tools
+// without config fall back to DefaultToolPolicy (ask, or auto_run_in_dm when
+// the server marks the tool read-only), enabled=true, until an admin
+// explicitly configures them. Servers that annotate their read tools with
+// readOnlyHint, such as GitHub's, need no seed.
 func SeedVettedToolConfigs(baseURL string) []ToolConfig {
 	if baseURL == EmbeddedClientKey {
 		return cloneToolConfigs(mattermostVettedToolConfigs)
@@ -44,8 +41,6 @@ func SeedVettedToolConfigs(baseURL string) []ToolConfig {
 	switch {
 	case host == "mcp.atlassian.com" || strings.HasSuffix(host, ".mcp.atlassian.com"):
 		return cloneToolConfigs(atlassianVettedToolConfigs)
-	case host == "api.githubcopilot.com" || strings.HasSuffix(host, ".api.githubcopilot.com"):
-		return cloneToolConfigs(githubVettedToolConfigs)
 	case host == "mcp.figma.com" || strings.HasSuffix(host, ".mcp.figma.com"):
 		return cloneToolConfigs(figmaVettedToolConfigs)
 	default:
@@ -113,56 +108,6 @@ func autoRunInDMToolConfigs(toolNames []string) []ToolConfig {
 	}
 	return configs
 }
-
-func askToolConfigs(toolNames []string) []ToolConfig {
-	configs := make([]ToolConfig, 0, len(toolNames))
-	for _, toolName := range toolNames {
-		configs = append(configs, ToolConfig{
-			Name:    toolName,
-			Policy:  ToolPolicyAsk,
-			Enabled: true,
-		})
-	}
-	return configs
-}
-
-// githubSecurityAskTools are GitHub Copilot MCP reads that surface vulnerability
-// and secret-scanning posture; they default to ask rather than auto-run.
-var githubSecurityAskTools = map[string]struct{}{
-	"get_code_scanning_alert":                 {},
-	"list_code_scanning_alerts":               {},
-	"get_dependabot_alert":                    {},
-	"list_dependabot_alerts":                  {},
-	"get_secret_scanning_alert":               {},
-	"list_secret_scanning_alerts":             {},
-	"list_org_repository_security_advisories": {},
-	"list_repository_security_advisories":     {},
-}
-
-func buildGithubVettedToolConfigs() []ToolConfig {
-	// Every other GitHub read tool is left to DefaultToolPolicy: the GitHub
-	// MCP server (github/github-mcp-server, checked at v1.14.0) sets
-	// readOnlyHint on all of its read tools, so they already auto-run in DMs.
-	// The security reads above are listed to keep them at ask despite the
-	// hint. These remaining reads exist only on the hosted server, so their
-	// annotations could not be checked from source.
-	unverifiedReadTools := []string{
-		"get_copilot_job_status",
-		"get_copilot_space",
-		"list_copilot_spaces",
-		"github_support_docs_search",
-	}
-
-	securityNames := make([]string, 0, len(githubSecurityAskTools))
-	for name := range githubSecurityAskTools {
-		securityNames = append(securityNames, name)
-	}
-	slices.Sort(securityNames)
-
-	return append(askToolConfigs(securityNames), autoRunInDMToolConfigs(unverifiedReadTools)...)
-}
-
-var githubVettedToolConfigs = buildGithubVettedToolConfigs()
 
 var atlassianVettedToolConfigs = autoRunInDMToolConfigs([]string{
 	"search",

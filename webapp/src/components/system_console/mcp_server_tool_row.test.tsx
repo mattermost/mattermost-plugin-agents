@@ -159,10 +159,41 @@ describe('MCPServerToolRow — unconfigured tool defaults', () => {
         expect(selectedLabel(getSelect('Approval policy for list_things'))).toBe('Auto Run (DM)');
         expect(selectedLabel(getSelect('Approval policy for delete_thing'))).toBe('Ask Every Time');
 
-        // Disabling the tool persists the default it was running with.
+        // Disabling the tool does not choose a policy for it, so the stored
+        // entry keeps following the default.
         fireEvent.click(screen.getAllByRole('switch')[1]);
         expect(onServerConfigChange).toHaveBeenCalledWith(expect.objectContaining({
-            tool_configs: [{name: 'list_things', policy: 'auto_run_in_dm', enabled: false}],
+            tool_configs: [{name: 'list_things', policy: '', enabled: false}],
+        }));
+    });
+
+    test('a stored entry without a policy shows the default and stores a policy only when one is picked', () => {
+        const server: MCPServerInfo = {
+            ...makePluginServer(),
+            serverType: 'remote',
+            name: 'Remote',
+            url: 'https://mcp.example.com',
+            tools: [{name: 'list_things', description: 'List', inputSchema: null, readOnlyHint: true, defaultPolicy: 'auto_run_in_dm'}],
+        };
+        const config = {
+            ...makePluginServerConfig(),
+            name: 'Remote',
+            baseURL: 'https://mcp.example.com',
+            tool_configs: [{name: 'list_things', policy: '' as const, enabled: false}],
+        };
+        const {onServerConfigChange} = renderRow(server, config);
+        fireEvent.click(screen.getByText('Remote'));
+
+        expect(selectedLabel(getSelect('Approval policy for list_things'))).toBe('Auto Run (DM)');
+
+        fireEvent.click(screen.getAllByRole('switch')[1]);
+        expect(onServerConfigChange).toHaveBeenLastCalledWith(expect.objectContaining({
+            tool_configs: [{name: 'list_things', policy: '', enabled: true}],
+        }));
+
+        chooseOption(getSelect('Approval policy for list_things'), 'Ask Every Time');
+        expect(onServerConfigChange).toHaveBeenLastCalledWith(expect.objectContaining({
+            tool_configs: [{name: 'list_things', policy: 'ask', enabled: false}],
         }));
     });
 });

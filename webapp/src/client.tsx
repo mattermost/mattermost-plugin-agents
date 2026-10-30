@@ -55,7 +55,7 @@ export type UserMCPToolsResponse = {
 // avoid client.tsx depending on UI components.
 type MCPToolConfig = {
     name: string;
-    policy: MCPToolPolicy;
+    policy: MCPToolPolicy | ''; // '' keeps the tool's default policy
     enabled: boolean;
 };
 
