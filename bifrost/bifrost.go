@@ -117,11 +117,19 @@ type ProviderSettings struct {
 	// forces store=false on every outgoing OpenAI-family request for this
 	// provider — including when it is reached as a fallback hop.
 	DisableStore bool
+
+	// GDC is set for Gemini on Google Distributed Cloud air-gapped, which
+	// authenticates with minted bearer tokens instead of APIKey.
+	GDC *GDCSettings
 }
 
 // Config holds the configuration for creating a LLM instance.
 type Config struct {
 	ProviderSettings
+
+	// ServiceID is the primary's source service ID, used to name its
+	// custom-provider slot when it needs one (GDC).
+	ServiceID string
 
 	InputTokenLimit  int
 	OutputTokenLimit int
@@ -205,6 +213,16 @@ func bufferFiles(request llm.CompletionRequest) llm.CompletionRequest {
 // setup instead of silently shrinking.
 func New(cfg Config) (*LLM, error) {
 	primaryEntry := &providerAccount{ProviderSettings: cfg.ProviderSettings}
+	if cfg.GDC != nil {
+		// GDC has no API key, and Bifrost only runs a keyless provider from a
+		// custom slot.
+		primaryEntry.name = customProviderName(cfg.Provider, cfg.ServiceID)
+		primaryEntry.keyless = true
+		primaryEntry.chatOnly = cfg.GDC.ChatCompletions
+	}
+	if err := primaryEntry.initGDCTokens(); err != nil {
+		return nil, err
+	}
 
 	account := newMultiProviderAccount()
 	account.addProvider(primaryEntry)
@@ -236,6 +254,10 @@ func New(cfg Config) (*LLM, error) {
 		// key as real credentials). Keyless is scoped to custom-capable base
 		// types; providers like Vertex carry keyless auth (ADC) on their
 		// standard config.
+		if err := entry.initGDCTokens(); err != nil {
+			return nil, fmt.Errorf("fallback service %q: %w", fb.ID, err)
+		}
+
 		name := fb.Provider
 		if usedNames[name] || fb.ChatOnly || (fb.IsKeyLess && isCustomCapableProvider(fb.Provider)) {
 			if !isCustomCapableProvider(fb.Provider) {
@@ -272,7 +294,7 @@ func New(cfg Config) (*LLM, error) {
 
 	return &LLM{
 		client:             client,
-		provider:           cfg.Provider,
+		provider:           primaryEntry.registeredName(),
 		apiKey:             cfg.APIKey,
 		fallbackAPIKeys:    redactKeys[1:],
 		defaultModel:       cfg.DefaultModel,

@@ -77,6 +77,17 @@ type ServiceConfig struct {
 	VertexProjectNumber   string `json:"vertexProjectNumber"`
 	VertexAuthCredentials string `json:"vertexAuthCredentials"`
 
+	// Gemini on Google Distributed Cloud (GDC) air-gapped. APIURL holds the
+	// inference gateway URL and Region holds the GDC zone.
+	// GDCServiceAccountKey is the gdch_service_account JSON key used to mint
+	// short-lived access tokens; GDCCACertificate is an optional PEM CA trusted
+	// for the gateway and token endpoint. GDCAPIMode is one of the GDCAPIMode
+	// constants; empty means GDCAPIModeGenerateContent.
+	GDCProjectID         string `json:"gdcProjectID,omitempty"`
+	GDCServiceAccountKey string `json:"gdcServiceAccountKey,omitempty"`
+	GDCCACertificate     string `json:"gdcCACertificate,omitempty"`
+	GDCAPIMode           string `json:"gdcAPIMode,omitempty"`
+
 	// Renaming the JSON field to inputTokenLimit would require a migration, leaving as is for now.
 	InputTokenLimit         int `json:"tokenLimit"`
 	StreamingTimeoutSeconds int `json:"streamingTimeoutSeconds"`
@@ -420,6 +431,16 @@ func IsValidService(service ServiceConfig) bool {
 			return true
 		}
 		return json.Valid([]byte(service.VertexAuthCredentials))
+	case ServiceTypeGDCGemini:
+		if service.APIURL == "" || service.Region == "" || service.GDCProjectID == "" {
+			return false
+		}
+		switch service.GDCAPIMode {
+		case "", GDCAPIModeGenerateContent, GDCAPIModeChatCompletions:
+		default:
+			return false
+		}
+		return json.Valid([]byte(service.GDCServiceAccountKey))
 	case ServiceTypeLoadTestMock:
 		_, err := profile.Parse(service.LoadTestMockConfig)
 		return err == nil

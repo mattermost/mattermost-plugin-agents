@@ -37,9 +37,21 @@ func MapServiceTypeToProvider(serviceType string) (schemas.ModelProvider, error)
 		return schemas.Gemini, nil
 	case llm.ServiceTypeVertex:
 		return schemas.Vertex, nil
+	case llm.ServiceTypeGDCGemini:
+		return schemas.Gemini, nil // Chat Completions mode: see serviceProvider
 	default:
 		return "", fmt.Errorf("unsupported service type: %s", serviceType)
 	}
+}
+
+// serviceProvider returns the Bifrost base provider that serves svc. It
+// differs from MapServiceTypeToProvider only for GDC in Chat Completions mode,
+// which is served by the OpenAI provider.
+func serviceProvider(svc llm.ServiceConfig) (schemas.ModelProvider, error) {
+	if gdc := gdcSettingsFromService(svc); gdc != nil {
+		return gdcProvider(*gdc), nil
+	}
+	return MapServiceTypeToProvider(svc.Type)
 }
 
 // SupportsNativeTools reports whether the given service type can use provider
@@ -108,6 +120,9 @@ func SupportedNativeToolsForServiceType(serviceType string) []string {
 	case llm.ServiceTypeNorth:
 		// North does not expose provider-native tools (web_search, code_interpreter, ...).
 		return nil
+	case llm.ServiceTypeGDCGemini:
+		// Air-gapped: no Google Search grounding or other provider tools.
+		return nil
 	default:
 		return nil
 	}
@@ -144,7 +159,7 @@ type ServiceClient struct {
 // NewServiceClient builds the Bifrost client for a service and its fallback
 // chain.
 func NewServiceClient(serviceConfig llm.ServiceConfig, fallbackServices []llm.ServiceConfig) (*ServiceClient, error) {
-	provider, err := MapServiceTypeToProvider(serviceConfig.Type)
+	provider, err := serviceProvider(serviceConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -156,6 +171,7 @@ func NewServiceClient(serviceConfig llm.ServiceConfig, fallbackServices []llm.Se
 
 	cfg := Config{
 		ProviderSettings: settings,
+		ServiceID:        serviceConfig.ID,
 		InputTokenLimit:  serviceConfig.InputTokenLimit,
 		OutputTokenLimit: serviceConfig.OutputTokenLimit,
 		UseResponsesAPI:  llm.ServiceUsesResponsesAPI(serviceConfig),
@@ -202,8 +218,11 @@ func (c *ServiceClient) ForAgent(botConfig llm.BotConfig) (*LLM, error) {
 	nativeTools := filterNativeToolsForServiceType(c.serviceConfig.Type, botConfig.EnabledNativeTools)
 	if len(nativeTools) > 0 {
 		for _, fbSvc := range c.fallbackServices {
-			if fbSvc.Type == llm.ServiceTypeNorth {
+			switch fbSvc.Type {
+			case llm.ServiceTypeNorth:
 				return nil, fmt.Errorf("fallback service %q (Cohere North) does not support provider-native tools; disable native tools on the agent or remove the fallback", fbSvc.ID)
+			case llm.ServiceTypeGDCGemini:
+				return nil, fmt.Errorf("fallback service %q (Gemini on GDC) does not support provider-native tools; disable native tools on the agent or remove the fallback", fbSvc.ID)
 			}
 		}
 	}
@@ -223,10 +242,15 @@ func (c *ServiceClient) ForAgent(botConfig llm.BotConfig) (*LLM, error) {
 // onto ProviderSettings. It does not fill in per-provider URL defaults; bifrost
 // has its own and they drift.
 func providerSettingsFromService(provider schemas.ModelProvider, svc llm.ServiceConfig) ProviderSettings {
+	apiURL := normalizeServiceBaseURL(provider, svc)
+	gdc := gdcSettingsFromService(svc)
+	if gdc != nil {
+		apiURL = gdcBaseURL(*gdc)
+	}
 	return ProviderSettings{
 		Provider:              provider,
 		APIKey:                svc.APIKey,
-		APIURL:                normalizeServiceBaseURL(provider, svc),
+		APIURL:                apiURL,
 		OrgID:                 svc.OrgID,
 		Region:                svc.Region,
 		AWSAccessKeyID:        svc.AWSAccessKeyID,
@@ -237,13 +261,14 @@ func providerSettingsFromService(provider schemas.ModelProvider, svc llm.Service
 		DefaultModel:          svc.DefaultModel,
 		StreamingTimeout:      time.Duration(svc.StreamingTimeoutSeconds) * time.Second,
 		DisableStore:          svc.Type == llm.ServiceTypeNorth,
+		GDC:                   gdc,
 	}
 }
 
 // serviceConfigToFallbackEntry converts a ServiceConfig into a FallbackEntry
 // for registration with the Bifrost client.
 func serviceConfigToFallbackEntry(svc llm.ServiceConfig) (FallbackEntry, error) {
-	provider, err := MapServiceTypeToProvider(svc.Type)
+	provider, err := serviceProvider(svc)
 	if err != nil {
 		return FallbackEntry{}, err
 	}
@@ -326,7 +351,8 @@ func IsSupported(serviceType string) bool {
 		llm.ServiceTypeMistral,
 		llm.ServiceTypeGemini,
 		llm.ServiceTypeVertex,
-		llm.ServiceTypeNorth:
+		llm.ServiceTypeNorth,
+		llm.ServiceTypeGDCGemini:
 		return true
 	default:
 		return false

@@ -27,6 +27,23 @@ type providerAccount struct {
 	// zero means unset. The primary's limit is the request default, which
 	// callers may override, so it is not set there.
 	outputTokenLimit int
+
+	// gdcTokens mints bearer tokens for a GDC service; nil otherwise.
+	gdcTokens *gdcTokenSource
+}
+
+// initGDCTokens builds the token source for a GDC service, so a bad key or CA
+// certificate fails client setup instead of the first request.
+func (a *providerAccount) initGDCTokens() error {
+	if a.GDC == nil {
+		return nil
+	}
+	tokens, err := newGDCTokenSource(*a.GDC)
+	if err != nil {
+		return err
+	}
+	a.gdcTokens = tokens
+	return nil
 }
 
 // registeredName returns the name this account is registered under with Bifrost,
@@ -120,6 +137,17 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 		}
 	}
 
+	if a.GDC != nil {
+		networkConfig.ExtraHeaders = map[string]string{
+			gdcUserProjectHeader: gdcUserProject(*a.GDC),
+		}
+		if a.GDC.CACertificatePEM != "" {
+			networkConfig.CACertPEM = &schemas.SecretVar{Val: a.GDC.CACertificatePEM}
+		}
+		// The gateway is an in-cluster service on a private network.
+		networkConfig.AllowPrivateNetwork = true
+	}
+
 	// Configure retry logic with sensible defaults
 	networkConfig.MaxRetries = 2
 	networkConfig.RetryBackoffInitial = 1 * time.Second
@@ -137,6 +165,13 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 		cpc := &schemas.CustomProviderConfig{
 			BaseProviderType: a.Provider,
 			IsKeyLess:        a.keyless,
+		}
+		if a.GDC != nil && a.GDC.ChatCompletions {
+			path := gdcChatCompletionsPath(*a.GDC)
+			cpc.RequestPathOverrides = map[schemas.RequestType]string{
+				schemas.ChatCompletionRequest:       path,
+				schemas.ChatCompletionStreamRequest: path,
+			}
 		}
 		if a.chatOnly {
 			// Chat-only AllowedRequests makes Bifrost transparently downgrade a
@@ -193,6 +228,16 @@ func (m *multiProviderAccount) addProvider(entry *providerAccount) {
 	}
 	m.entries[name] = entry
 	m.order = append(m.order, name)
+}
+
+// hasGDC reports whether any registered service authenticates through GDC.
+func (m *multiProviderAccount) hasGDC() bool {
+	for _, entry := range m.entries {
+		if entry.gdcTokens != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *multiProviderAccount) GetConfiguredProviders() ([]schemas.ModelProvider, error) {

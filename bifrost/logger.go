@@ -29,9 +29,13 @@ func newSanitizingLogger(inner schemas.Logger, apiKeys ...string) schemas.Logger
 // API keys. Pass the primary key plus every fallback key so a fallback
 // provider's credential never leaks through Bifrost's own request/error logs.
 func newBifrostClient(account schemas.Account, apiKeys ...string) (*bifrostcore.Bifrost, error) {
+	plugins := []schemas.LLMPlugin{hopRequestPlugin{}}
+	if multi, ok := account.(*multiProviderAccount); ok && multi.hasGDC() {
+		plugins = append(plugins, gdcAuthPlugin{account: multi})
+	}
 	return bifrostcore.Init(context.Background(), schemas.BifrostConfig{
 		Account:    account,
-		LLMPlugins: []schemas.LLMPlugin{hopRequestPlugin{}},
+		LLMPlugins: plugins,
 		Logger:     newSanitizingLogger(bifrostcore.NewDefaultLogger(schemas.LogLevelInfo), apiKeys...),
 		Tracer:     newOTelTracer(),
 	})

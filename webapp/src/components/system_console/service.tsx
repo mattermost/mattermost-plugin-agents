@@ -39,6 +39,15 @@ export type LLMService = {
     vertexProjectNumber: string
     vertexAuthCredentials: string
 
+    // Gemini on Google Distributed Cloud air-gapped ('gdcgemini'). apiURL is
+    // the inference gateway URL and region is the GDC zone. Optional: mirrors
+    // the backend's omitempty. gdcAPIMode is '' / 'generate_content' or
+    // 'chat_completions'.
+    gdcProjectID?: string
+    gdcServiceAccountKey?: string
+    gdcCACertificate?: string
+    gdcAPIMode?: string
+
     // fallbackServiceID is the ID of another service to fall back to when this
     // service's provider/model is unavailable. Chains are supported (A→B→C).
     // Optional: mirrors the backend's omitempty — may be absent on services
@@ -78,6 +87,7 @@ const mapServiceTypeToDisplayName = new Map<string, string>([
     ['asage', 'asksage (Experimental)'],
     ['gemini', 'Google Gemini'],
     ['vertex', 'Google Vertex AI'],
+    ['gdcgemini', 'Gemini on Google Distributed Cloud'],
 ]);
 
 function scaleAIToDisplayName(intl: IntlShape): string {
@@ -295,7 +305,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                     props.onChange({
                         ...props.service,
                         type: nextType,
-                        apiKey: nextType === 'vertex' ? '' : props.service.apiKey,
+                        apiKey: (nextType === 'vertex' || nextType === 'gdcgemini') ? '' : props.service.apiKey,
                         useResponsesAPI: (nextType === 'openai' || nextType === 'north') ? true : props.service.useResponsesAPI,
                     });
                 }}
@@ -304,6 +314,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                     {value: 'anthropic', label: 'Anthropic'},
                     {value: 'gemini', label: 'Google Gemini'},
                     {value: 'vertex', label: 'Google Vertex AI'},
+                    {value: 'gdcgemini', label: 'Gemini on Google Distributed Cloud'},
                     {value: 'bedrock', label: 'AWS Bedrock'},
                     {value: 'openaicompatible', label: 'OpenAI Compatible'},
                     {value: 'azure', label: 'Azure'},
@@ -380,7 +391,52 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                     />
                 </>
             )}
-            {type !== 'vertex' && (
+            {type === 'gdcgemini' && (
+                <>
+                    <TextItem
+                        label={intl.formatMessage({defaultMessage: 'Inference gateway URL'})}
+                        value={props.service.apiURL}
+                        onChange={(e) => props.onChange({...props.service, apiURL: e.target.value})}
+                        helptext={intl.formatMessage({defaultMessage: 'The Gemini endpoint shown in the GDC console, for example https://inference-gateway-aics-system.aics.ORG.ZONE.google.gdch.test'})}
+                    />
+                    <TextItem
+                        label={intl.formatMessage({defaultMessage: 'GDC project'})}
+                        value={props.service.gdcProjectID || ''}
+                        onChange={(e) => props.onChange({...props.service, gdcProjectID: e.target.value})}
+                        helptext={intl.formatMessage({defaultMessage: 'The GDC project Mattermost is deployed in (e.g., mc-mm-510014)'})}
+                    />
+                    <TextItem
+                        label={intl.formatMessage({defaultMessage: 'GDC zone'})}
+                        value={props.service.region}
+                        onChange={(e) => props.onChange({...props.service, region: e.target.value})}
+                        helptext={intl.formatMessage({defaultMessage: 'The GDC zone serving Gemini (e.g., us-east92-a)'})}
+                    />
+                    <SelectionItem
+                        label={intl.formatMessage({defaultMessage: 'API'})}
+                        value={props.service.gdcAPIMode || 'generate_content'}
+                        onChange={(value) => props.onChange({...props.service, gdcAPIMode: value})}
+                        options={[
+                            {value: 'generate_content', label: intl.formatMessage({defaultMessage: 'Gemini GenerateContent'})},
+                            {value: 'chat_completions', label: intl.formatMessage({defaultMessage: 'OpenAI-compatible Chat Completions'})},
+                        ]}
+                    />
+                    <TextItem
+                        label={intl.formatMessage({defaultMessage: 'Service account key JSON'})}
+                        type='password'
+                        value={props.service.gdcServiceAccountKey || ''}
+                        onChange={(e) => props.onChange({...props.service, gdcServiceAccountKey: e.target.value})}
+                        helptext={intl.formatMessage({defaultMessage: 'Paste the key created with gdcloud iam service-accounts keys create. Mattermost uses it to request short-lived access tokens.'})}
+                    />
+                    <TextItem
+                        label={intl.formatMessage({defaultMessage: 'CA certificate (Optional)'})}
+                        multiline={true}
+                        value={props.service.gdcCACertificate || ''}
+                        onChange={(e) => props.onChange({...props.service, gdcCACertificate: e.target.value})}
+                        helptext={intl.formatMessage({defaultMessage: 'PEM-encoded certificate of your GDC organization CA. Leave blank if the server already trusts it.'})}
+                    />
+                </>
+            )}
+            {type !== 'vertex' && type !== 'gdcgemini' && (
                 <TextItem
                     label={apiKeyLabel}
                     type='password'

@@ -125,6 +125,7 @@ Each provider has specific configuration requirements:
 | **Mistral** | API Key | |
 | **Scale AI** | API Key, API URL | Account ID (required for ScaleGov) |
 | **Azure OpenAI** | API Key, API URL | |
+| **Gemini on Google Distributed Cloud** | Inference gateway URL, GDC project, GDC zone, Service account key JSON, Default Model | CA certificate, API (GenerateContent or Chat Completions) |
 
 For AWS Bedrock, authentication can be configured using AWS credentials in the API Key/Secret fields, or by using IAM roles when running Mattermost on AWS infrastructure.
 
