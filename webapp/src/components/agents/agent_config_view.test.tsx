@@ -355,6 +355,80 @@ describe('AgentConfigView', () => {
         expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
     });
 
+    test('renderFrame places the header actions, tabs, body and footer in the owner\'s frame instead of the page\'s', () => {
+        const onBack = jest.fn();
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='create'
+                    variant='modal'
+                    services={services}
+                    onBack={onBack}
+                    onSaved={jest.fn()}
+                    renderFrame={({title, headerAction, tabs, body, footer}) => (
+                        <div data-testid='frame'>
+                            <h2>{title}</h2>
+                            <div data-testid='frame-header-action'>{headerAction}</div>
+                            <div data-testid='frame-tabs'>{tabs}</div>
+                            <div data-testid='frame-body'>{body}</div>
+                            <div data-testid='frame-footer'>{footer}</div>
+                        </div>
+                    )}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByRole('heading', {name: 'New Agent'})).not.toBeNull();
+        expect(within(screen.getByTestId('frame-header-action')).getByRole('button', {name: 'Import'})).not.toBeNull();
+        expect(within(screen.getByTestId('frame-tabs')).getByRole('tab', {name: 'Access'})).not.toBeNull();
+        expect(within(screen.getByTestId('frame-body')).getByLabelText('Display Name')).not.toBeNull();
+        expect(screen.queryByRole('button', {name: 'Back to agents'})).toBeNull();
+
+        fireEvent.click(within(screen.getByTestId('frame-footer')).getByRole('button', {name: 'Cancel'}));
+        expect(onBack).toHaveBeenCalledTimes(1);
+        expect(within(screen.getByTestId('frame-footer')).getByRole('button', {name: 'Save'})).not.toBeNull();
+    });
+
+    describe('in a modal', () => {
+        const renderModalView = () => {
+            const onBack = jest.fn();
+            const closeRequestRef: React.MutableRefObject<(() => void) | null> = {current: null};
+            const result = render(
+                <IntlProvider locale='en'>
+                    <AgentConfigView
+                        mode='create'
+                        variant='modal'
+                        services={services}
+                        closeRequestRef={closeRequestRef}
+                        onBack={onBack}
+                        onSaved={jest.fn()}
+                    />
+                </IntlProvider>,
+            );
+            return {...result, onBack, closeRequestRef};
+        };
+
+        test('has no Back button, and the owner closes it through the close request', () => {
+            const {onBack, closeRequestRef} = renderModalView();
+            expect(screen.queryByRole('button', {name: 'Back to agents'})).toBeNull();
+
+            act(() => closeRequestRef.current?.());
+            expect(onBack).toHaveBeenCalledTimes(1);
+        });
+
+        test('the close request asks before discarding changes, and Escape is left to the modal', () => {
+            const {onBack, closeRequestRef} = renderModalView();
+            fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'Unsaved Agent'}});
+
+            fireEvent.keyDown(document, {key: 'Escape'});
+            expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
+
+            act(() => closeRequestRef.current?.());
+            expect(screen.getByRole('dialog', {name: 'Discard changes?'})).not.toBeNull();
+            expect(onBack).not.toHaveBeenCalled();
+        });
+    });
+
     // Regression test for MM-69185.
     //
     // After saving on the MCP tab, navigating back to the same agent's MCP tab and
@@ -524,19 +598,21 @@ describe('AgentConfigView', () => {
         },
         {
             name: 'cancelling a nested confirmation dialog',
-            dismissChild: () => {
+            dismissChild: async () => {
                 fireEvent.click(screen.getByRole('button', {name: 'Open nested dialog'}));
                 expect(screen.getByRole('dialog', {name: 'Remove access policy?'})).not.toBeNull();
 
                 fireEvent.keyDown(document, {key: 'Escape'});
-                expect(screen.queryByRole('dialog', {name: 'Remove access policy?'})).toBeNull();
+
+                // The overlay stays mounted for its exit fade before unmounting.
+                await waitFor(() => expect(screen.queryByRole('dialog', {name: 'Remove access policy?'})).toBeNull());
             },
         },
-    ])('Escape used for $name stays on the page; a plain Escape still goes back', ({dismissChild}) => {
+    ])('Escape used for $name stays on the page; a plain Escape still goes back', async ({dismissChild}) => {
         const {onBack} = renderView();
         fireEvent.click(screen.getByRole('tab', {name: 'Access'}));
 
-        dismissChild();
+        await dismissChild();
 
         expect(onBack).not.toHaveBeenCalled();
 
@@ -1934,7 +2010,9 @@ describe('AgentConfigView history deletion', () => {
         await confirmDelete();
 
         expect(await screen.findByText('the current version of an agent cannot be deleted')).not.toBeNull();
-        expect(within(list).getAllByRole('listitem')).toHaveLength(3);
+
+        // The confirmation dialog is portaled to <body>, so the page behind it is aria-hidden.
+        expect(within(list).getAllByRole('listitem', {hidden: true})).toHaveLength(3);
         expect(mockGetAgentVersions).toHaveBeenCalledTimes(1);
     });
 });

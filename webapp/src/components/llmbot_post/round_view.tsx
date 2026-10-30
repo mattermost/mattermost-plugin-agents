@@ -24,6 +24,9 @@ interface RoundViewProps {
     reasoningLoading: boolean;
     reasoningCollapsed: boolean;
 
+    /** Only on the live round in surfaces that smooth streaming text. */
+    reveal?: boolean;
+
     /** Takes the round id so the post can pass one callback to every round. */
     onToggleReasoning: (roundId: string, collapsed: boolean) => void;
 }
@@ -34,8 +37,9 @@ interface RoundViewProps {
  */
 export const RoundView = React.memo((props: RoundViewProps) => {
     const {round} = props;
+    const wide = hasWideContent(round, props.reasoningCollapsed) ? true : undefined; // eslint-disable-line no-undefined
     return (
-        <RoundContainer>
+        <RoundContainer data-bubble-wide={wide}>
             {round.reasoning.summary !== '' && (
                 <ReasoningDisplay
                     reasoningSummary={round.reasoning.summary}
@@ -53,6 +57,7 @@ export const RoundView = React.memo((props: RoundViewProps) => {
                     channelID={props.channelID}
                     postID={props.postID}
                     showCursor={props.showCursor}
+                    reveal={props.reveal}
                     annotations={round.annotations.length > 0 ? round.annotations : undefined} // eslint-disable-line no-undefined
                 />
             )}
@@ -70,6 +75,13 @@ export const RoundView = React.memo((props: RoundViewProps) => {
     );
 });
 RoundView.displayName = 'RoundView';
+
+// Reasoning and tool UI need the full bubble width (use_bubble_width.ts).
+// Collapsed reasoning is one short "Thinking" line, which the bubble measures
+// like text; expanded, its panel needs the row.
+function hasWideContent(round: Round, reasoningCollapsed: boolean): boolean {
+    return (round.reasoning.summary !== '' && !reasoningCollapsed) || round.serverTools.length > 0 || round.toolCalls.length > 0;
+}
 
 const RoundContainer = styled.div`
     & + & {

@@ -56,15 +56,15 @@ async function dispatchFileDrop(page: Page, selector: string, fileName: string, 
 }
 
 test.describe('Agents RHS drag-and-drop file upload', () => {
-    test('drops a file onto the RHS new-tab and attaches it to the editor', async ({page}) => {
+    test('drops a file onto the RHS new chat, uploads it and sends it with the message', async ({page}) => {
         const {aiPlugin} = await setupTestPage(page);
 
         const rhs = aiPlugin.getRhsContainer();
         await expect(rhs).toBeVisible();
+        const composer = rhs.getByTestId('agent-chat-new-composer');
 
-        // The drop zone forwards files to the editor's file input and drops them if the
-        // editor is still waiting on the bot DM channel.
-        await expect(page.locator('[data-testid="rhs-file-drop-zone"] input[type="file"]')).toBeAttached({timeout: 30000});
+        // The pill composer offers attachments once the bot DM channel is ready.
+        await aiPlugin.expectComposerUploadsReady(composer);
 
         await dispatchFileDrop(
             page,
@@ -74,8 +74,31 @@ test.describe('Agents RHS drag-and-drop file upload', () => {
             'hello from the agents drag-and-drop test',
         );
 
-        // Assert the user-visible attachment preview instead of the editor's
-        // hidden file input so the test tracks real RHS composer behavior.
-        await expect(rhs.locator('.file-preview__container')).toContainText('agents-dnd.txt');
+        const card = composer.getByRole('list', {name: 'Attachments'}).getByRole('listitem');
+        await expect(card).toHaveCount(1);
+        await expect(card).toContainText('agents-dnd.txt');
+        await expect(card).toHaveAttribute('data-status', 'done', {timeout: 30000});
+        await expect(rhs.getByTestId('agent-chat-drop-overlay')).toHaveCount(0);
+
+        await aiPlugin.sendMessage('message with a dropped file');
+
+        // The RHS opens the new thread; the user's post carries the file.
+        const thread = rhs.getByTestId('rhs-thread');
+        await expect(thread.getByTestId('post-message-text').getByText('message with a dropped file')).toBeVisible({timeout: 30000});
+        await expect(thread.getByText('agents-dnd.txt')).toBeVisible({timeout: 30000});
+    });
+
+    test('a drag that carries no files shows no drop overlay', async ({page}) => {
+        const {aiPlugin} = await setupTestPage(page);
+        const rhs = aiPlugin.getRhsContainer();
+        await aiPlugin.expectComposerUploadsReady(rhs);
+
+        const dataTransfer = await page.evaluateHandle(() => {
+            const dt = new DataTransfer();
+            dt.setData('text/plain', 'just text');
+            return dt;
+        });
+        await page.dispatchEvent('[data-testid="rhs-file-drop-zone"]', 'dragenter', {dataTransfer});
+        await expect(rhs.getByTestId('agent-chat-drop-overlay')).toHaveCount(0);
     });
 });

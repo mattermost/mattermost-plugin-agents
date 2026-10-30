@@ -1,19 +1,58 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useRef} from 'react';
+import React, {ReactNode, useContext, useEffect, useRef} from 'react';
+import {ReactReduxContext} from 'react-redux';
 import styled from 'styled-components';
 
-import manifest from '@/manifest';
+import CustomPromptsManagement from '@/components/custom_prompts/custom_prompts_management';
+import CustomPromptsPage from '@/components/custom_prompts/custom_prompts_page';
 
+import AgentChatPage from './agent_chat_page';
+import AgentsLanding from './agents_landing';
 import AgentsList from './agents_list';
+import ProductSidebar from './product_sidebar';
+import {AGENTS_ROUTE, AgentsNavigation, AgentsRoute, AgentsView, useAgentsRoute} from './use_agents_route';
 
-export const AGENTS_ROUTE = `/plug/${manifest.id}/agents`;
+export {AGENTS_ROUTE};
+
+// Seam for the center pane: each view maps to its content.
+export type ContentRenderers = Record<AgentsView, (route: AgentsRoute & AgentsNavigation) => ReactNode>;
+
+export const defaultContentRenderers: ContentRenderers = {
+    landing: (route) => <AgentsLanding nav={route}/>,
+    all: (route) => (
+        <AgentsList
+            onStartChat={route.toChat}
+            openCreate={route.create === true}
+            onCloseCreate={route.closeNewAgent}
+        />
+    ),
+    prompts: () => <CustomPromptsPage/>,
+    chat: (route) => (
+        <AgentChatPage
+            botId={route.botId ?? ''}
+            rootId={route.rootId}
+            toChat={route.toChat}
+            toAll={route.toAll}
+        />
+    ),
+};
+
+interface AgentsPageProps {
+    renderers?: ContentRenderers;
+}
 
 // Product mainComponent — rendered by registerProduct when the route matches.
-// No URL-matching or overlay needed; Mattermost's product routing handles it.
-const AgentsPage = () => {
+const AgentsPage = ({renderers = defaultContentRenderers}: AgentsPageProps) => {
     const pageRef = useRef<HTMLDivElement>(null);
+    const route = useAgentsRoute();
+    const {toAll, toPrompts} = route;
+
+    // The host renders the plugin's root components (the Custom Prompts modal among them) only in the
+    // channel, backstage and popout layouts, not in product routes, so the product mounts its own copy
+    // for the composer's "Manage prompts". It needs the plugin's redux store.
+    const hasStore = useContext(ReactReduxContext) !== null;
 
     useEffect(() => {
         // The host webapp owns `app__body` on document.body (see MM-67913 / Boards #188).
@@ -31,7 +70,7 @@ const AgentsPage = () => {
 
         if (wrapper) {
             // Mattermost's product shell may scroll when our page grows taller than the viewport.
-            // Pin overflow on those ancestors so only the agents list viewport scrolls.
+            // Pin overflow on those ancestors so only the content outlet scrolls.
             let node: HTMLElement | null = wrapper.parentElement;
             while (node) {
                 const {overflowY} = window.getComputedStyle(node);
@@ -52,9 +91,15 @@ const AgentsPage = () => {
 
     return (
         <PageWrapper ref={pageRef}>
-            <PageLayout>
-                <AgentsList/>
-            </PageLayout>
+            <ProductSidebar
+                activeView={route.view}
+                onSelectAll={toAll}
+                onSelectPrompts={toPrompts}
+            />
+            <ContentOutlet>
+                {renderers[route.view](route)}
+            </ContentOutlet>
+            {hasStore && <CustomPromptsManagement/>}
         </PageWrapper>
     );
 };
@@ -66,19 +111,28 @@ const PageWrapper = styled.div`
     bottom: 0;
     left: 0;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     width: 100%;
-    background: var(--center-channel-bg, #fff);
+
+    /* Same look as the Channels view: the sidebar-colored page behind a rounded center card. */
+    background: var(--sidebar-bg);
     overflow: hidden;
 `;
 
-const PageLayout = styled.div`
+// The outlet owns the definite height (min-height: 0) and its own scroll region.
+// Chat content (host ThreadViewer) must fill it and must not scroll itself.
+const ContentOutlet = styled.main`
     display: flex;
+    flex: 1 1 0;
     flex-direction: column;
-    flex: 1;
+    min-width: 0;
     min-height: 0;
-    width: 100%;
-    overflow: hidden;
+    border: var(--border-light);
+    border-radius: var(--radius-l);
+    background: var(--center-channel-bg);
+    box-shadow: var(--elevation-1);
+    overflow-x: hidden;
+    overflow-y: auto;
 `;
 
 export default AgentsPage;

@@ -10,9 +10,9 @@ import {Button} from '@mattermost/compass-ui/components/button';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
-import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {createAgent, getUserMCPTools, updateAgent, uploadAgentAvatar} from '@/client';
+import {TooltipAboveModals} from '@/components/dropdown';
 import {
     AgentExportDocument,
     UserAgent,
@@ -203,6 +203,25 @@ function agentToDraft(agent: UserAgent, services: ServiceInfo[]): AgentDraft {
     };
 }
 
+export type AgentConfigFrameParts = {
+    title: React.ReactNode;
+
+    /** The "Version N" line (or its error), or null. */
+    subtitle: React.ReactNode;
+
+    /** Version history, Import and Export. */
+    headerAction: React.ReactNode;
+
+    /** The Configuration, Access and MCPs tabs. */
+    tabs: React.ReactNode;
+
+    /** The active tab's panel; scrolls on its own. */
+    body: React.ReactNode;
+
+    /** Cancel and Save. */
+    footer: React.ReactNode;
+}
+
 type Props = {
     mode: Mode;
     agent?: UserAgent; // provided when mode === 'edit'
@@ -213,13 +232,34 @@ type Props = {
 
     /** An agent export file to load into the form when the view opens. */
     importedDocument?: AgentExportDocument;
+
+    /**
+     * 'page' (default) is the full page editor. 'modal' is the same view inside a modal sheet: no Back
+     * button (the modal has its close button), less room above the title, and the owner handles Escape
+     * (see closeRequestRef).
+     */
+    variant?: 'page' | 'modal';
+
+    /**
+     * Set to the view's close request while it is mounted: it closes at once, or asks to discard
+     * unsaved changes first. A modal's close button, backdrop and Escape all go through it.
+     */
+    closeRequestRef?: React.MutableRefObject<(() => void) | null>;
+
+    /**
+     * Lays the editor out in the owner's own frame instead of the page's header and footer (a modal passes
+     * the compass Modal's title row and footer slot). Receives the pieces to place; the discard, rename and
+     * history dialogs stay with the view.
+     */
+    renderFrame?: (parts: AgentConfigFrameParts) => React.ReactNode;
 }
 
 const DISCARD_CHANGES_TITLE_ID = 'discard-agent-changes-title';
 const RENAME_AGENT_TITLE_ID = 'rename-agent-title';
 
 const AgentConfigView = (props: Props) => {
-    const {mode, agent, services, onBack, onSaved, onRestored, importedDocument} = props;
+    const {mode, agent, services, onBack, onSaved, onRestored, importedDocument, variant = 'page', closeRequestRef, renderFrame} = props;
+    const inModal = variant === 'modal';
     const intl = useIntl();
 
     // Parent owns the manage_system check via useCurrentUserHasSystemPermission.
@@ -311,11 +351,23 @@ const AgentConfigView = (props: Props) => {
         setShowDiscardDialog(false);
     }, []);
 
+    useEffect(() => {
+        if (closeRequestRef) {
+            closeRequestRef.current = requestBack;
+        }
+        return () => {
+            if (closeRequestRef) {
+                closeRequestRef.current = null;
+            }
+        };
+    }, [closeRequestRef, requestBack]);
+
     // Escape key: same as back — confirm when there are unsaved changes.
     // Skip Escapes a child already handled (e.g. closing a picker menu or a nested dialog).
+    // A modal's shell owns Escape (it also defers to open menus and dialogs) and calls closeRequestRef.
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
-            if (e.key !== 'Escape' || e.defaultPrevented) {
+            if (inModal || e.key !== 'Escape' || e.defaultPrevented) {
                 return;
             }
             if (dialogOpenRef.current) {
@@ -326,7 +378,7 @@ const AgentConfigView = (props: Props) => {
         };
         document.addEventListener('keydown', handler);
         return () => document.removeEventListener('keydown', handler);
-    }, [requestBack]);
+    }, [requestBack, inModal]);
 
     const updateDraft = useCallback((updates: Partial<AgentDraft>) => {
         setDraft((prev) => ({...prev, ...updates}));
@@ -592,11 +644,202 @@ const AgentConfigView = (props: Props) => {
         );
     }
 
-    return (
+    const headerActions = (
+        <HeaderActions>
+            {canViewHistory && (
+                <TooltipAboveModals title={intl.formatMessage({defaultMessage: 'Version history'})}>
+                    <IconButton
+                        icon={<Icon glyph={<UpdateIcon/>}/>}
+                        size='medium'
+                        onClick={() => setShowHistory(true)}
+                        aria-haspopup='dialog'
+                        aria-label={intl.formatMessage({defaultMessage: 'Version history'})}
+                    />
+                </TooltipAboveModals>
+            )}
+            <Button
+                emphasis='tertiary'
+                leadingIcon={<Icon glyph={<ImportIcon/>}/>}
+                onClick={filePicker.open}
+                loading={importing}
+                disabled={saving}
+            >
+                <FormattedMessage defaultMessage='Import'/>
+            </Button>
+            {filePicker.input}
+            {mode === 'edit' && agent && (
+                <Button
+                    emphasis='tertiary'
+                    leadingIcon={<Icon glyph={<ExportVariantIcon/>}/>}
+                    onClick={handleExport}
+                    loading={exporting}
+                    disabled={saving}
+                >
+                    {exporting ? <FormattedMessage defaultMessage='Exporting...'/> : <FormattedMessage defaultMessage='Export'/>}
+                </Button>
+            )}
+        </HeaderActions>
+    );
+
+    const tabs = (
+        <ConfigTabs
+            role='tablist'
+            $modal={inModal}
+        >
+            <UnderlineTab
+                type='button'
+                role='tab'
+                id='agent-config-tab'
+                aria-controls='agent-config-panel'
+                aria-selected={activeTab === 'config'}
+                tabIndex={activeTab === 'config' ? 0 : -1}
+                $active={activeTab === 'config'}
+                onClick={() => setActiveTab('config')}
+            >
+                <FormattedMessage defaultMessage='Configuration'/>
+            </UnderlineTab>
+            <UnderlineTab
+                type='button'
+                role='tab'
+                id='agent-access-tab'
+                aria-controls='agent-access-panel'
+                aria-selected={activeTab === 'access'}
+                tabIndex={activeTab === 'access' ? 0 : -1}
+                $active={activeTab === 'access'}
+                onClick={() => setActiveTab('access')}
+            >
+                <FormattedMessage defaultMessage='Access'/>
+            </UnderlineTab>
+            <UnderlineTab
+                type='button'
+                role='tab'
+                id='agent-mcps-tab'
+                aria-controls='agent-mcps-panel'
+                aria-selected={activeTab === 'mcps'}
+                tabIndex={activeTab === 'mcps' ? 0 : -1}
+                $active={activeTab === 'mcps'}
+                disabled={mcpsTabDisabled}
+                {...(mcpsTabDisabled ? {title: intl.formatMessage({defaultMessage: 'Enable Tools to configure MCP integrations'})} : {})}
+                onClick={() => setActiveTab('mcps')}
+            >
+                <FormattedMessage defaultMessage='MCPs'/>
+            </UnderlineTab>
+        </ConfigTabs>
+    );
+
+    const viewBody = (
+        <ViewBody $modal={inModal}>
+            {errors.general && (
+                <Notice
+                    type='danger'
+                    title={errors.general}
+                />
+            )}
+            {importMissingServers !== null && (
+                <Notice
+                    type={importMissingServers.length > 0 ? 'warning' : 'info'}
+                    title={intl.formatMessage({defaultMessage: 'Settings loaded from the agent file'})}
+                    description={importMissingServers.length > 0 ? intl.formatMessage(
+                        {defaultMessage: 'Tools from MCP servers that are not available here were left out: {servers}. Review the settings, then save to apply them.'},
+                        {servers: importMissingServers.join(', ')},
+                    ) : intl.formatMessage({defaultMessage: 'Review the settings, then save to apply them.'})}
+                    role='status'
+                    onDismiss={() => setImportMissingServers(null)}
+                    dismissLabel={intl.formatMessage({defaultMessage: 'Dismiss'})}
+                />
+            )}
+            {serviceAccountFieldsLocked && (
+                <div role='status'>
+                    <Notice
+                        type='warning'
+                        title={<FormattedMessage defaultMessage='This agent uses service account authentication. Access and MCP tool grants require a system administrator while that setting is enabled. Other settings can still be saved, or turn the setting off on the MCPs tab.'/>}
+                    />
+                </div>
+            )}
+
+            {activeTab === 'config' && (
+                <div
+                    role='tabpanel'
+                    id='agent-config-panel'
+                    aria-labelledby='agent-config-tab'
+                >
+                    <ConfigTab
+                        draft={draft}
+                        onChange={updateDraft}
+                        onAvatarChange={setAvatarFile}
+                        avatarFile={avatarFile}
+                        botUserId={agent?.botUserID}
+                        services={services}
+                        errors={errors}
+                        savedUsername={savedUsername}
+                    />
+                </div>
+            )}
+            {activeTab === 'access' && (
+                <div
+                    role='tabpanel'
+                    id='agent-access-panel'
+                    aria-labelledby='agent-access-tab'
+                >
+                    <AccessTab
+                        draft={draft}
+                        baselineUserAccessLevel={baselineDraft.userAccessLevel}
+                        onChange={updateDraft}
+                        serviceAccountFieldsLocked={serviceAccountFieldsLocked}
+                        agentId={agent?.id}
+                        abacSupported={abacSupported}
+                        isSystemAdmin={canEditServiceAccountAuth}
+                    />
+                </div>
+            )}
+            {activeTab === 'mcps' && (
+                <div
+                    role='tabpanel'
+                    id='agent-mcps-panel'
+                    aria-labelledby='agent-mcps-tab'
+                >
+                    <McpsTab
+                        agentId={agent?.id}
+                        enabledTools={draft.enabledTools}
+                        autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
+                        useServiceAccountAuth={draft.useServiceAccountAuth}
+                        serviceAccountFieldsLocked={serviceAccountFieldsLocked}
+                        canEditServiceAccountAuth={canEditServiceAccountAuth}
+                        onChange={(updates) => updateDraft(updates)}
+                        onReconcileEnabledTools={reconcileEnabledTools}
+                    />
+                </div>
+            )}
+        </ViewBody>
+    );
+
+    const footerButtons = (
         <>
-            <ViewContainer>
-                <ViewHeader>
-                    <HeaderLeading>
+            <Button
+                emphasis='tertiary'
+                onClick={requestBack}
+                disabled={saving}
+            >
+                <FormattedMessage defaultMessage='Cancel'/>
+            </Button>
+            <Button
+                emphasis='primary'
+                onClick={handleSave}
+                loading={saving}
+            >
+                {saving ? <FormattedMessage defaultMessage='Saving...'/> : <FormattedMessage defaultMessage='Save'/>
+                }
+            </Button>
+        </>
+    );
+
+    // In a modal the compass Modal supplies the header and footer (its title row, close button and footer
+    // slot), so the owner receives the pieces instead of the page's header and footer.
+    const frame = renderFrame ? renderFrame({title, subtitle: versionLine, headerAction: headerActions, tabs, body: viewBody, footer: footerButtons}) : (
+        <ViewContainer>
+            <ViewHeader $modal={inModal}>
+                <HeaderLeading>
+                    {!inModal && (
                         <BackButton
                             icon={<Icon glyph={<ArrowLeftIcon/>}/>}
                             size='medium'
@@ -604,190 +847,28 @@ const AgentConfigView = (props: Props) => {
                             disabled={saving}
                             aria-label={intl.formatMessage({defaultMessage: 'Back to agents'})}
                         />
-                        <HeaderTitleBlock>
-                            <ViewTitle>{title}</ViewTitle>
-                            {versionLine}
-                        </HeaderTitleBlock>
-                    </HeaderLeading>
-                    <HeaderActions>
-                        {canViewHistory && (
-                            <WithTooltip title={intl.formatMessage({defaultMessage: 'Version history'})}>
-                                <IconButton
-                                    icon={<Icon glyph={<UpdateIcon/>}/>}
-                                    size='medium'
-                                    onClick={() => setShowHistory(true)}
-                                    aria-haspopup='dialog'
-                                    aria-label={intl.formatMessage({defaultMessage: 'Version history'})}
-                                />
-                            </WithTooltip>
-                        )}
-                        <Button
-                            emphasis='tertiary'
-                            leadingIcon={<Icon glyph={<ImportIcon/>}/>}
-                            onClick={filePicker.open}
-                            loading={importing}
-                            disabled={saving}
-                        >
-                            <FormattedMessage defaultMessage='Import'/>
-                        </Button>
-                        {filePicker.input}
-                        {mode === 'edit' && agent && (
-                            <Button
-                                emphasis='tertiary'
-                                leadingIcon={<Icon glyph={<ExportVariantIcon/>}/>}
-                                onClick={handleExport}
-                                loading={exporting}
-                                disabled={saving}
-                            >
-                                {exporting ? <FormattedMessage defaultMessage='Exporting...'/> : <FormattedMessage defaultMessage='Export'/>}
-                            </Button>
-                        )}
-                    </HeaderActions>
-                </ViewHeader>
+                    )}
+                    <HeaderTitleBlock>
+                        <ViewTitle>{title}</ViewTitle>
+                        {versionLine}
+                    </HeaderTitleBlock>
+                </HeaderLeading>
+                {headerActions}
+            </ViewHeader>
 
-                <ConfigTabs role='tablist'>
-                    <UnderlineTab
-                        type='button'
-                        role='tab'
-                        id='agent-config-tab'
-                        aria-controls='agent-config-panel'
-                        aria-selected={activeTab === 'config'}
-                        tabIndex={activeTab === 'config' ? 0 : -1}
-                        $active={activeTab === 'config'}
-                        onClick={() => setActiveTab('config')}
-                    >
-                        <FormattedMessage defaultMessage='Configuration'/>
-                    </UnderlineTab>
-                    <UnderlineTab
-                        type='button'
-                        role='tab'
-                        id='agent-access-tab'
-                        aria-controls='agent-access-panel'
-                        aria-selected={activeTab === 'access'}
-                        tabIndex={activeTab === 'access' ? 0 : -1}
-                        $active={activeTab === 'access'}
-                        onClick={() => setActiveTab('access')}
-                    >
-                        <FormattedMessage defaultMessage='Access'/>
-                    </UnderlineTab>
-                    <UnderlineTab
-                        type='button'
-                        role='tab'
-                        id='agent-mcps-tab'
-                        aria-controls='agent-mcps-panel'
-                        aria-selected={activeTab === 'mcps'}
-                        tabIndex={activeTab === 'mcps' ? 0 : -1}
-                        $active={activeTab === 'mcps'}
-                        disabled={mcpsTabDisabled}
-                        {...(mcpsTabDisabled ? {title: intl.formatMessage({defaultMessage: 'Enable Tools to configure MCP integrations'})} : {})}
-                        onClick={() => setActiveTab('mcps')}
-                    >
-                        <FormattedMessage defaultMessage='MCPs'/>
-                    </UnderlineTab>
-                </ConfigTabs>
+            {tabs}
 
-                <ViewBody>
-                    {errors.general && (
-                        <Notice
-                            type='danger'
-                            title={errors.general}
-                        />
-                    )}
-                    {importMissingServers !== null && (
-                        <Notice
-                            type={importMissingServers.length > 0 ? 'warning' : 'info'}
-                            title={intl.formatMessage({defaultMessage: 'Settings loaded from the agent file'})}
-                            description={importMissingServers.length > 0 ? intl.formatMessage(
-                                {defaultMessage: 'Tools from MCP servers that are not available here were left out: {servers}. Review the settings, then save to apply them.'},
-                                {servers: importMissingServers.join(', ')},
-                            ) : intl.formatMessage({defaultMessage: 'Review the settings, then save to apply them.'})}
-                            role='status'
-                            onDismiss={() => setImportMissingServers(null)}
-                            dismissLabel={intl.formatMessage({defaultMessage: 'Dismiss'})}
-                        />
-                    )}
-                    {serviceAccountFieldsLocked && (
-                        <div role='status'>
-                            <Notice
-                                type='warning'
-                                title={<FormattedMessage defaultMessage='This agent uses service account authentication. Access and MCP tool grants require a system administrator while that setting is enabled. Other settings can still be saved, or turn the setting off on the MCPs tab.'/>}
-                            />
-                        </div>
-                    )}
+            {viewBody}
 
-                    {activeTab === 'config' && (
-                        <div
-                            role='tabpanel'
-                            id='agent-config-panel'
-                            aria-labelledby='agent-config-tab'
-                        >
-                            <ConfigTab
-                                draft={draft}
-                                onChange={updateDraft}
-                                onAvatarChange={setAvatarFile}
-                                avatarFile={avatarFile}
-                                botUserId={agent?.botUserID}
-                                services={services}
-                                errors={errors}
-                                savedUsername={savedUsername}
-                            />
-                        </div>
-                    )}
-                    {activeTab === 'access' && (
-                        <div
-                            role='tabpanel'
-                            id='agent-access-panel'
-                            aria-labelledby='agent-access-tab'
-                        >
-                            <AccessTab
-                                draft={draft}
-                                baselineUserAccessLevel={baselineDraft.userAccessLevel}
-                                onChange={updateDraft}
-                                serviceAccountFieldsLocked={serviceAccountFieldsLocked}
-                                agentId={agent?.id}
-                                abacSupported={abacSupported}
-                                isSystemAdmin={canEditServiceAccountAuth}
-                            />
-                        </div>
-                    )}
-                    {activeTab === 'mcps' && (
-                        <div
-                            role='tabpanel'
-                            id='agent-mcps-panel'
-                            aria-labelledby='agent-mcps-tab'
-                        >
-                            <McpsTab
-                                agentId={agent?.id}
-                                enabledTools={draft.enabledTools}
-                                autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
-                                useServiceAccountAuth={draft.useServiceAccountAuth}
-                                serviceAccountFieldsLocked={serviceAccountFieldsLocked}
-                                canEditServiceAccountAuth={canEditServiceAccountAuth}
-                                onChange={(updates) => updateDraft(updates)}
-                                onReconcileEnabledTools={reconcileEnabledTools}
-                            />
-                        </div>
-                    )}
-                </ViewBody>
+            <ViewFooter>
+                {footerButtons}
+            </ViewFooter>
+        </ViewContainer>
+    );
 
-                <ViewFooter>
-                    <Button
-                        emphasis='tertiary'
-                        onClick={requestBack}
-                        disabled={saving}
-                    >
-                        <FormattedMessage defaultMessage='Cancel'/>
-                    </Button>
-                    <Button
-                        emphasis='primary'
-                        onClick={handleSave}
-                        loading={saving}
-                    >
-                        {saving ? <FormattedMessage defaultMessage='Saving...'/> : <FormattedMessage defaultMessage='Save'/>
-                        }
-                    </Button>
-                </ViewFooter>
-            </ViewContainer>
+    return (
+        <>
+            {frame}
             {mode === 'edit' && agent && (
                 <AgentVersionHistoryModal
                     show={showHistory}
@@ -874,11 +955,11 @@ const ViewContainer = styled.div`
     width: 100%;
 `;
 
-const ViewHeader = styled.div`
+const ViewHeader = styled.div<{$modal: boolean}>`
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: var(--spacing-xxxxxl) 0 var(--spacing-l) 0;
+    padding: ${({$modal}) => ($modal ? 'var(--spacing-xs)' : 'var(--spacing-xxxxxl)')} 0 var(--spacing-l) 0;
     flex-shrink: 0;
 `;
 
@@ -889,8 +970,8 @@ const HeaderActions = styled.div`
     flex-shrink: 0;
 `;
 
-const ConfigTabs = styled(UnderlineTabs)`
-    padding: 0 var(--spacing-l);
+const ConfigTabs = styled(UnderlineTabs)<{$modal: boolean}>`
+    padding: ${({$modal}) => ($modal ? '0 0 0 var(--spacing-xxxl)' : '0 var(--spacing-l)')};
 `;
 
 const HeaderLeading = styled.div`
@@ -951,8 +1032,8 @@ const BackButton = styled(IconButton)`
     margin-left: calc(-1 * var(--spacing-xs));
 `;
 
-const ViewBody = styled.div`
-    padding: var(--spacing-xxxl) var(--spacing-l);
+const ViewBody = styled.div<{$modal: boolean}>`
+    padding: ${({$modal}) => ($modal ? 'var(--spacing-xxl) var(--spacing-xxxl)' : 'var(--spacing-xxxl) var(--spacing-l)')};
     flex: 1;
     min-height: 0;
     overflow-y: auto;

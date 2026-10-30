@@ -3,6 +3,7 @@
 
 import {Client4 as Client4Class, ClientError} from '@mattermost/client';
 import {ChannelWithTeamData} from '@mattermost/types/channels';
+import type {FileInfo} from '@mattermost/types/files';
 import {PreferenceType} from '@mattermost/types/preferences';
 
 import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
@@ -410,6 +411,37 @@ export async function getAIThreads() {
     });
 }
 
+function invalidConversationIdError() {
+    return new ClientError(Client4.url, {
+        message: 'Invalid conversation id',
+        status_code: 400,
+        url: Client4.url,
+    });
+}
+
+// renameConversation sets the user-visible title of one of the caller's conversations.
+export async function renameConversation(conversationId: string, title: string): Promise<void> {
+    if (!isValidId(conversationId)) {
+        throw invalidConversationIdError();
+    }
+
+    const url = `${conversationRoute(conversationId)}/title`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify({title}),
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
 // normalizeConversationResponse coerces every turn's content to a non-null
 // array. The backend may persist a turn whose content column is the JSON
 // literal `null` (e.g. when a stream finalizes before any blocks accumulate),
@@ -501,12 +533,98 @@ export async function createPost(post: any) {
     return created;
 }
 
+export interface FileUpload {
+    promise: Promise<FileInfo>;
+    abort: () => void;
+}
+
+export class FileUploadAbortedError extends Error {
+    constructor() {
+        super('File upload was cancelled');
+        this.name = 'FileUploadAbortedError';
+    }
+}
+
+// Uploads one file to a channel as the host composer does (POST /files with
+// channel_id, client_ids and the file as multipart form data), but over XHR so
+// the caller gets upload progress and can cancel. The returned FileInfo's id
+// goes into the post's file_ids.
+// A stalled upload fails instead of staying "uploading" forever.
+export const UPLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+
+export function uploadFile(file: File, channelId: string, clientId: string, onProgress?: (percent: number) => void): FileUpload {
+    const url = Client4.getFilesRoute();
+    const xhr = new XMLHttpRequest();
+    const promise = new Promise<FileInfo>((resolve, reject) => {
+        xhr.open('POST', url, true);
+        xhr.timeout = UPLOAD_TIMEOUT_MS;
+        const headers = Client4.getOptions({method: 'POST'}).headers as Record<string, string | undefined>;
+        Object.entries(headers).forEach(([name, value]) => {
+            if (value) {
+                xhr.setRequestHeader(name, value);
+            }
+        });
+        xhr.setRequestHeader('Accept', 'application/json');
+
+        if (onProgress && xhr.upload) {
+            xhr.upload.onprogress = (event) => {
+                if (event.lengthComputable && event.total > 0) {
+                    onProgress(Math.floor((event.loaded / event.total) * 100));
+                }
+            };
+        }
+
+        const fail = (message: string) => reject(new ClientError(Client4.url, {message, status_code: xhr.status, url}));
+        xhr.onload = () => {
+            let body: any = null;
+            try {
+                body = JSON.parse(xhr.responseText);
+            } catch {
+                body = null;
+            }
+            if (xhr.status === 201) {
+                const index = body?.client_ids?.indexOf(clientId) ?? -1;
+                const info: FileInfo | undefined = body?.file_infos?.[index >= 0 ? index : 0];
+                if (info?.id) {
+                    resolve(info);
+                    return;
+                }
+                fail('File upload returned no file');
+                return;
+            }
+            fail(body?.message || `File upload failed with status ${xhr.status}`);
+        };
+        xhr.onerror = () => fail('File upload failed: network error');
+        xhr.ontimeout = () => fail('File upload failed: timed out');
+        xhr.onabort = () => reject(new FileUploadAbortedError());
+
+        const formData = new FormData();
+        formData.append('channel_id', channelId);
+        formData.append('client_ids', clientId);
+
+        // The file goes last so the server can stream it.
+        formData.append('files', file, file.name);
+        xhr.send(formData);
+    });
+    return {promise, abort: () => xhr.abort()};
+}
+
+export function getFileThumbnailUrl(fileId: string): string {
+    return Client4.getFileThumbnailUrl(fileId, 0);
+}
+
 export function updateRead(userId: string, teamId: string, selectedPostId: string, timestamp: number) {
     return Client4.updateThreadReadForUser(userId, teamId, selectedPostId, timestamp);
 }
 
 export function getProfilePictureUrl(userId: string, lastIconUpdate: number) {
     return Client4.getProfilePictureUrl(userId, lastIconUpdate);
+}
+
+// The root posts of chats for the history list's previews (message and reply count). The server
+// only returns the posts the user may read.
+export function getPostsByIds(postIds: string[]) {
+    return Client4.getPostsByIds(postIds);
 }
 
 export async function getBotProfilePictureUrl(username: string) {
@@ -1381,6 +1499,97 @@ export async function renderCustomPrompt(id: string, channelId?: string, botId?:
 
     throw new ClientError(Client4.url, {
         message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+// The core server's composer rewrite actions (server/public/model/post.go
+// RewriteAction), the same list the host composer's AI Rewrite menu offers.
+export type RewriteAction = 'shorten' | 'elaborate' | 'improve_writing' | 'fix_spelling' | 'simplify' | 'summarize' | 'custom';
+
+// Reads a core server AppError body ({id, message}). Only the translated
+// summary is kept; detailed_error never reaches the UI.
+async function readAppError(response: Response): Promise<{message: string; server_error_id?: string}> {
+    try {
+        const data: unknown = await response.json();
+        if (data !== null && typeof data === 'object') {
+            const {message, id} = data as {message?: unknown; id?: unknown};
+            return {
+                message: typeof message === 'string' ? message : '',
+                ...(typeof id === 'string' && id ? {server_error_id: id} : {}),
+            };
+        }
+    } catch {
+        // Empty or non-JSON body: the caller applies its own fallback text.
+    }
+    return {message: ''};
+}
+
+// Rewrites composer text through the core server's AI rewrite route (the call
+// the host composer makes, Client4.getAIRewrittenMessage), which completes
+// through this plugin's LLM bridge with the given agent. rootId adds the
+// thread as context.
+export async function rewriteMessage(
+    agentId: string,
+    message: string,
+    action: RewriteAction,
+    opts: {customPrompt?: string; rootId?: string; signal?: AbortSignal} = {},
+): Promise<string> {
+    const body: {agent_id: string; message: string; action: RewriteAction; custom_prompt?: string; root_id?: string} = {
+        agent_id: agentId,
+        message,
+        action,
+    };
+    if (opts.customPrompt) {
+        body.custom_prompt = opts.customPrompt;
+    }
+    if (opts.rootId) {
+        body.root_id = opts.rootId;
+    }
+    const url = `${Client4.getPostsRoute()}/rewrite`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify(body),
+        signal: opts.signal,
+    }));
+
+    if (response.ok) {
+        const data = await response.json() as {rewritten_text?: unknown};
+        if (typeof data?.rewritten_text !== 'string') {
+            throw new ClientError(Client4.url, {message: '', status_code: response.status, url});
+        }
+        return data.rewritten_text;
+    }
+
+    const err = await readAppError(response);
+    throw new ClientError(Client4.url, {
+        message: err.message,
+        server_error_id: err.server_error_id,
+        status_code: response.status,
+        url,
+    });
+}
+
+// Whether the core server can reach this plugin's LLM bridge, which the host
+// checks (useGetAgentsBridgeEnabled) before offering AI Rewrite.
+export async function getAgentsBridgeStatus(): Promise<{available: boolean; reason?: string}> {
+    const url = `${Client4.getAgentsRoute()}/status`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        const data = await response.json() as {available?: unknown; reason?: unknown};
+        return {
+            available: data?.available === true,
+            ...(typeof data?.reason === 'string' && data.reason ? {reason: data.reason} : {}),
+        };
+    }
+
+    const err = await readAppError(response);
+    throw new ClientError(Client4.url, {
+        message: err.message,
         status_code: response.status,
         url,
     });

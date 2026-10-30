@@ -49,6 +49,7 @@ const groups = {
         'tests/llmbot-post-component/debug-test.spec.ts',
         'tests/agents/create-file-attachment.spec.ts',
         'tests/agents/html-artifact.spec.ts',
+        'tests/agents/agent-chat-bubbles.spec.ts',
         'tests/tool-activity/collapsed-activity.spec.ts',
     ],
     'e2e-shard-3': [
@@ -64,6 +65,7 @@ const groups = {
         'tests/agents-tour/edge-cases.spec.ts',
         'tests/agents/access-control.spec.ts',
         'tests/agents/crud.spec.ts',
+        'tests/agents/agents-product-view.spec.ts',
         'tests/agents/mcp-tools.spec.ts',
         'tests/tool-config/tool-toggle.spec.ts',
         'tests/tool-config/vetted-seed.spec.ts',

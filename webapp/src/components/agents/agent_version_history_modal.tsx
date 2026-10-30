@@ -554,6 +554,7 @@ const AgentVersionHistoryModal = ({show, onClose, agentId, agentName, services, 
             >
                 <Sheet className={MODAL_SHEET_CLASS}>
                     <HistoryModal
+                        open={show}
                         closeOnEscape={false}
                         size='medium'
                         title={<FormattedMessage defaultMessage='Version history'/>}

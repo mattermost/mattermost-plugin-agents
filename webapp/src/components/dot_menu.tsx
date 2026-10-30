@@ -184,6 +184,9 @@ type DropdownMenuItemProps = {
     className?: string;
     destructive?: boolean;
     disabled?: boolean;
+
+    /** Overrides the menu item's role, e.g. 'menuitem' inside a role='menu' popup. */
+    role?: React.AriaRole;
 };
 
 export const DropdownMenuItem = (props: DropdownMenuItemProps) => {
@@ -198,6 +201,7 @@ export const DropdownMenuItem = (props: DropdownMenuItemProps) => {
             className={props.className}
             destructive={props.destructive}
             disabled={props.disabled}
+            role={props.role}
         />
     );
 };

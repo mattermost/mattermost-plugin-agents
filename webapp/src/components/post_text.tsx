@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {useMemo} from 'react';
 import {useSelector} from 'react-redux';
 import styled, {keyframes, css} from 'styled-components';
 
@@ -13,6 +13,7 @@ import manifest from '@/manifest';
 
 import {insertAnnotationMarkers, replaceCitationMarkers} from './citations/citation_processor';
 import {Annotation} from './citations/types';
+import {StreamingMarkdown} from './llmbot_post/streaming_markdown';
 
 export type ChannelNamesMap = {
     [name: string]: {
@@ -27,6 +28,9 @@ interface Props {
     postID: string;
     showCursor?: boolean;
     annotations?: Annotation[];
+
+    /** Streaming reveal: the message renders block by block as text is revealed. */
+    reveal?: boolean;
 }
 
 const blinkKeyframes = keyframes`
@@ -81,16 +85,45 @@ const handleInternalLinkClick = (e: React.MouseEvent<HTMLDivElement>) => {
     history.push(path);
 };
 
-const PostText = (props: Props) => {
-    const channel = useSelector<GlobalState, Channel>((state) => state.entities.channels.channels[props.channelID]);
-    const team = useSelector<GlobalState, Team>((state) => state.entities.teams.teams[channel?.team_id]);
-    const siteURL = useSelector<GlobalState, string | undefined>((state) => state.entities.general.config.SiteURL);
-    const allowUnsafeLinks = useSelector<GlobalState, boolean>((state: any) => state['plugins-' + manifest.id]?.allowUnsafeLinks ?? false);
+interface RevealTextProps {
+    message: string;
+    postID: string;
+    showCursor?: boolean;
+    reveal: boolean;
+    team: Team;
+    siteURL?: string;
+    allowUnsafeLinks: boolean;
+}
 
+const RevealText = (props: RevealTextProps) => {
     // @ts-ignore
     const {formatText, messageHtmlToComponent} = window.PostUtils;
+    const markdownOptions = useMemo(
+        () => buildMarkdownOptions(props.team, props.allowUnsafeLinks, props.siteURL),
+        [props.team, props.allowUnsafeLinks, props.siteURL],
+    );
+    const htmlOptions = useMemo(() => buildHtmlOptions(props.postID), [props.postID]);
 
-    const markdownOptions = {
+    return (
+        // eslint-disable-next-line agents/click-events-have-key-events, agents/no-static-element-interactions -- delegates clicks from the links inside, which stay keyboard-operable
+        <TextContainer
+            data-testid='posttext'
+            $showCursor={props.showCursor}
+            onClick={handleInternalLinkClick}
+        >
+            <StreamingMarkdown
+                message={props.message}
+                formatText={formatText}
+                messageHtmlToComponent={messageHtmlToComponent}
+                markdownOptions={markdownOptions}
+                htmlOptions={htmlOptions}
+            />
+        </TextContainer>
+    );
+};
+
+function buildMarkdownOptions(team: Team, allowUnsafeLinks: boolean, siteURL: string | undefined) {
+    return {
         singleline: false,
         mentionHighlight: true,
         atMentions: true,
@@ -99,13 +132,44 @@ const PostText = (props: Props) => {
         minimumHashtagLength: 1000000000,
         siteURL,
     };
+}
 
-    const messageHtmlToComponentOptions = {
+function buildHtmlOptions(postID: string) {
+    return {
         hasPluginTooltips: true,
         latex: false,
         inlinelatex: false,
-        postId: props.postID,
+        postId: postID,
     };
+}
+
+const PostText = (props: Props) => {
+    const channel = useSelector<GlobalState, Channel>((state) => state.entities.channels.channels[props.channelID]);
+    const team = useSelector<GlobalState, Team>((state) => state.entities.teams.teams[channel?.team_id]);
+    const siteURL = useSelector<GlobalState, string | undefined>((state) => state.entities.general.config.SiteURL);
+    const allowUnsafeLinks = useSelector<GlobalState, boolean>((state: any) => state['plugins-' + manifest.id]?.allowUnsafeLinks ?? false);
+
+    // Citation markers index into the whole message, so annotated text keeps
+    // the single-pass render.
+    if (props.reveal && !(props.annotations && props.annotations.length > 0)) {
+        return (
+            <RevealText
+                message={props.message}
+                postID={props.postID}
+                showCursor={props.showCursor}
+                reveal={props.reveal}
+                team={team}
+                siteURL={siteURL}
+                allowUnsafeLinks={allowUnsafeLinks}
+            />
+        );
+    }
+
+    // @ts-ignore
+    const {formatText, messageHtmlToComponent} = window.PostUtils;
+
+    const markdownOptions = buildMarkdownOptions(team, allowUnsafeLinks, siteURL);
+    const messageHtmlToComponentOptions = buildHtmlOptions(props.postID);
 
     // Process message with annotations if they exist
     let processedMessage = props.message;
@@ -123,9 +187,7 @@ const PostText = (props: Props) => {
     }
 
     // Post-process the rendered JSX to replace citation markers with React components
-    const processedText = props.annotations && props.annotations.length > 0 ?
-        replaceCitationMarkers(text, props.annotations) :
-        text;
+    const processedText = props.annotations && props.annotations.length > 0 ? replaceCitationMarkers(text, props.annotations) : text;
 
     return (
         // eslint-disable-next-line agents/click-events-have-key-events, agents/no-static-element-interactions -- delegates clicks from the links inside, which stay keyboard-operable

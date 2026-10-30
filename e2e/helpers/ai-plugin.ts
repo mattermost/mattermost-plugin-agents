@@ -12,8 +12,11 @@ export class AIPlugin {
   constructor(page: Page) {
     this.page = page;
     this.appBarIcon = page.locator('#app-bar-icon-mattermost-ai');
-    this.rhsPostTextarea = page.locator('#rhsContainer').locator('textarea');
-    this.rhsSendButton = page.locator('#rhsContainer').getByTestId('SendMessageButton');
+    // The plugin's pill composer, on the New chat tab ("Message <agent>") and
+    // under a thread ("Reply to <agent>", or "Reply"). Role queries skip the
+    // host reply box, which the plugin keeps mounted but hidden.
+    this.rhsPostTextarea = page.getByTestId('mattermost-ai-rhs').getByRole('textbox', { name: /^(Message |Reply\b)/ });
+    this.rhsSendButton = page.getByTestId('mattermost-ai-rhs').getByRole('button', { name: 'Send message' });
     this.regenerateButton = page.getByRole('button', { name: 'Regenerate' });
     this.chatHistoryButton = page.getByTestId('chat-history');
     this.threadsListContainer = page.getByTestId('rhs-threads-list');
@@ -24,9 +27,9 @@ export class AIPlugin {
     return this.page.getByTestId('mattermost-ai-rhs');
   }
 
-  /** Triggers the per-session MCP tool provider popover (only on the New chat tab). */
+  /** Triggers the per-session MCP tool provider popover (in the RHS header title, only on the New chat tab). */
   getRhsToolsMenuButton(): Locator {
-    return this.getRhsContainer().getByRole('button', { name: /^Tools$/i });
+    return this.page.getByTestId('rhs-title').getByRole('button', { name: /^Tools$/i });
   }
 
   /**
@@ -43,7 +46,7 @@ export class AIPlugin {
   async openRhsToolProvidersMenu(): Promise<Locator> {
     await this.ensureRhsNewChatTab();
     await this.getRhsToolsMenuButton().click();
-    const menu = this.getRhsContainer().getByTestId('dropdownmenu');
+    const menu = this.page.getByTestId('dropdownmenu');
     await expect(menu).toBeVisible({ timeout: 10000 });
     return menu;
   }
@@ -92,33 +95,11 @@ export class AIPlugin {
   }
 
   async sendMessage(message: string) {
-    // Both the new-chat tab (AdvancedTextEditor, location RHS_COMMENT) and
-    // ThreadViewer (after analysis / summarize) use reply_textbox inside the
-    // plugin RHS. New-chat does not submit on Enter — click Send Now.
-    // ThreadViewer's split Send Now is often disabled; Enter submits replies.
-    const rhs = this.getRhsContainer();
-    const composer = rhs.getByTestId('reply_textbox');
-    if (await composer.isVisible().catch(() => false)) {
-      await expect(composer).toBeEnabled({ timeout: 30000 });
-      await composer.click();
-      await composer.fill(message);
-      const send = rhs.getByTestId('SendMessageButton');
-      const newChat = rhs.getByTestId('rhs-new-tab-create-post');
-      if (await newChat.isVisible().catch(() => false)) {
-        await expect(send).toBeEnabled({ timeout: 10000 });
-        await send.click();
-        return;
-      }
-      if (await send.isEnabled().catch(() => false)) {
-        await send.click();
-      } else {
-        await composer.press('Enter');
-      }
-      return;
-    }
-
+    // The new-chat tab and the thread view both use the plugin's pill
+    // composer; Enter sends as soon as it is enabled.
+    await expect(this.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
     await this.rhsPostTextarea.fill(message);
-    await this.rhsSendButton.click();
+    await this.rhsPostTextarea.press('Enter');
   }
 
   /** Wait until no in-progress generation remains in the plugin RHS. */
@@ -129,8 +110,7 @@ export class AIPlugin {
   /** Wait until ThreadViewer is not generating and the reply box accepts input. */
   async waitForThreadComposerIdle() {
     await this.waitForGeneratingToStop();
-    const threadReply = this.getRhsContainer().getByTestId('reply_textbox');
-    await expect(threadReply).toBeEnabled({ timeout: 30000 });
+    await expect(this.getRhsContainer().getByTestId('agent-chat-reply-composer').getByRole('textbox')).toBeEnabled({ timeout: 30000 });
   }
 
   async regenerateResponse() {
@@ -138,19 +118,21 @@ export class AIPlugin {
   }
 
   async switchBot(botName: string) {
-    await this.page.getByTestId(`bot-selector-rhs`).click();
-    await this.page.getByRole('button', { name: botName }).click();
+    await this.page.getByTestId('bot-selector-rhs').click();
+    await this.page.getByRole('menuitem', { name: 'Switch agent' }).click();
+    await this.page.getByRole('menu', { name: 'Switch agent' }).getByRole('menuitem', { name: botName }).click();
   }
 
   /**
-   * Select a bot in the RHS selector, retrying until the bot appears (Agents list can lag behind API creates).
+   * Select a bot in the RHS title's agent menu, retrying until the bot appears (Agents list can lag behind API creates).
    */
   async switchBotWhenListed(botDisplayName: string): Promise<void> {
     const selector = this.page.getByTestId('bot-selector-rhs');
-    const option = this.page.getByRole('button', { name: botDisplayName });
+    const option = this.page.getByRole('menu', { name: 'Switch agent' }).getByRole('menuitem', { name: botDisplayName });
     await expect(async () => {
       await this.page.keyboard.press('Escape');
       await selector.click();
+      await this.page.getByRole('menuitem', { name: 'Switch agent' }).click();
       await expect(option).toBeVisible({ timeout: 3000 });
       await option.click();
     }).toPass({ timeout: 45000, intervals: [500, 1000, 2000] });
@@ -168,13 +150,8 @@ export class AIPlugin {
     // control (one per generating post); require all of them to be gone.
     await this.waitForGeneratingToStop();
 
-    // 3. ThreadViewer uses reply_textbox; new-chat uses the plugin composer.
-    const threadReply = this.getRhsContainer().getByTestId('reply_textbox');
-    if (await threadReply.isVisible().catch(() => false)) {
-      await expect(threadReply).toBeEnabled({ timeout: 30000 });
-      return;
-    }
-    await expect(this.rhsSendButton).toBeVisible({ timeout: 30000 });
+    // 3. The composer (reply or new chat) accepts input again.
+    await expect(this.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
   }
 
   async openChatHistory() {
@@ -342,4 +319,22 @@ export class AIPlugin {
     await expect(rhsContainer).toBeVisible({ timeout: 10000 });
   }
 
+  /**
+   * Waits until the pill composer inside `container` can attach files: its
+   * "+" (Add to message) menu offers Upload files. Closes the menu again.
+   */
+  async expectComposerUploadsReady(container: Locator): Promise<void> {
+    const menu = this.page.getByRole('menu', { name: 'Add to message' });
+    await expect(async () => {
+      // A menu opened before the channel was ready lacks the item: reopen it.
+      if (await menu.count() > 0) {
+        await this.page.keyboard.press('Escape');
+        await expect(menu).toHaveCount(0);
+      }
+      await container.getByRole('button', { name: 'Add to message' }).click();
+      await expect(menu.getByRole('menuitem', { name: 'Upload files' })).toBeVisible({ timeout: 2000 });
+    }).toPass({ timeout: 30000 });
+    await this.page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+  }
 }

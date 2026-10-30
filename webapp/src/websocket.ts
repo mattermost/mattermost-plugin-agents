@@ -13,6 +13,19 @@ type WebsocketListenerObject = {
 type WebsocketListeners = WebsocketListenerObject[]
 type ProgressUpdate = PluginWebSocketMessage<PostUpdateWebsocketMessage> | null;
 
+// Subscribers to every post update, regardless of post ID. index.tsx owns its own
+// PostEventListener instance and the host allows one handler per websocket event,
+// so this registry is module-level: any instance's handler notifies it, and
+// consumers outside the post tree (e.g. the Agents sidebar) need no shared instance.
+const allPostUpdateSubscribers = new Set<WebsocketListener>();
+
+export const subscribeToAllPostUpdates = (callback: WebsocketListener): (() => void) => {
+    allPostUpdateSubscribers.add(callback);
+    return () => {
+        allPostUpdateSubscribers.delete(callback);
+    };
+};
+
 export default class PostEventListener {
     postUpdateWebsocketListeners: WebsocketListeners = [];
     progressUpdates = new Map<string, ProgressUpdate>();
@@ -88,5 +101,7 @@ export default class PostEventListener {
                 listenerObject.listener(msg);
             }
         });
+
+        Array.from(allPostUpdateSubscribers).forEach((callback) => callback(msg));
     };
 }

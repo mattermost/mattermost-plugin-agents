@@ -43,9 +43,17 @@ func assertResponseProgressEvents(t *testing.T, client *fakeMMClient, channelID 
 		"preparing_request",
 		"connecting_provider",
 	}
-	require.Len(t, client.websocketEvents, len(expectedPhases))
+	// Title generation may also publish (conversation_updated) in the
+	// background; only the post's progress events are under test here.
+	var events []fakeWebSocketEvent
+	for _, event := range client.publishedWebSocketEvents() {
+		if event.event == "postupdate" {
+			events = append(events, event)
+		}
+	}
+	require.Len(t, events, len(expectedPhases))
 	for i, expectedPhase := range expectedPhases {
-		event := client.websocketEvents[i]
+		event := events[i]
 		require.Equal(t, "postupdate", event.event)
 		require.Equal(t, "progress", event.payload["control"])
 		require.Equal(t, expectedPhase, event.payload["progress_phase"])

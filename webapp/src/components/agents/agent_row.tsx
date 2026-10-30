@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState, useCallback} from 'react';
+import React, {useCallback} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {
@@ -10,6 +10,9 @@ import {
     PencilOutlineIcon,
     TrashCanOutlineIcon,
 } from '@mattermost/compass-icons/components';
+import MessageOutlineIcon from '@mattermost/compass-icons/components/message-outline';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {Button} from '@mattermost/compass-ui/components/button';
 import {Tag} from '@mattermost/compass-ui/components/tag';
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 import {WithTooltip} from '@mattermost/shared/components/tooltip';
@@ -24,14 +27,14 @@ type Props = {
     services: ServiceInfo[];
     servicesLoaded: boolean;
     canManage: boolean;
+    onStartChat: (botUserId: string) => void;
     onEdit: (agent: UserAgent) => void;
     onDelete: (agent: UserAgent) => void;
     onExport: (agent: UserAgent) => void;
 }
 
 const AgentRow = (props: Props) => {
-    const {agent, services, servicesLoaded, canManage, onEdit, onDelete, onExport} = props;
-    const [menuOpen, setMenuOpen] = useState(false);
+    const {agent, services, servicesLoaded, canManage, onStartChat, onEdit, onDelete, onExport} = props;
     const intl = useIntl();
 
     const avatarUrl = getProfilePictureUrl(agent.botUserID ?? '', 0);
@@ -75,42 +78,53 @@ const AgentRow = (props: Props) => {
         onExport(agent);
     }, [agent, onExport]);
 
+    // The chat route is keyed by the bot user id; without one there is nothing
+    // safe to navigate to, so the row is not actionable.
+    const botUserId = agent.botUserID || '';
+    const actionable = botUserId !== '';
+    const agentLabel = agent.displayName || agent.name;
+    const unavailableId = `agent-row-unavailable-${agent.id}`;
+
     const handleRowActivate = useCallback(() => {
-        if (!canManage || menuOpen) {
-            return;
+        if (actionable) {
+            onStartChat(botUserId);
         }
-        onEdit(agent);
-    }, [canManage, menuOpen, agent, onEdit]);
+    }, [actionable, botUserId, onStartChat]);
 
     const handleRowKeyDown = useCallback(
         (e: React.KeyboardEvent) => {
-            // Keys pressed on nested controls (badge triggers, the actions menu) bubble here too.
-            if (!canManage || menuOpen || e.target !== e.currentTarget) {
-                return;
-            }
-            if (e.key === 'Enter' || e.key === ' ') {
+            if (actionable && (e.key === 'Enter' || e.key === ' ')) {
                 e.preventDefault();
-                onEdit(agent);
+                onStartChat(botUserId);
             }
         },
-        [canManage, menuOpen, agent, onEdit],
+        [actionable, botUserId, onStartChat],
     );
 
+    // The row's primary action is RowMain, a button that holds only text and the avatar. Its ::after
+    // stretches over the whole row so a click anywhere starts a chat, while the other controls (the
+    // hover button, the badges, the actions menu) are siblings above it, never inside a button.
     return (
         <RowContainer
-            $clickable={canManage}
-            {...(canManage ? {
-                onClick: handleRowActivate,
-                onKeyDown: handleRowKeyDown,
-                role: 'button',
-                tabIndex: 0,
-                'aria-label': intl.formatMessage(
-                    {defaultMessage: 'Edit agent {name}'},
-                    {name: agent.displayName || agent.name},
-                ),
-            } : {})}
+            $clickable={actionable}
+            data-testid='agent-row'
         >
-            <RowMain>
+            <RowMain
+                role='button'
+                tabIndex={0}
+                onClick={handleRowActivate}
+                onKeyDown={handleRowKeyDown}
+                {...(actionable ? {} : {'aria-disabled': true, 'aria-describedby': unavailableId})}
+                aria-label={intl.formatMessage(
+                    {defaultMessage: 'Start a new chat with {name}'},
+                    {name: agentLabel},
+                )}
+            >
+                {!actionable && (
+                    <VisuallyHidden id={unavailableId}>
+                        <FormattedMessage defaultMessage='This agent has no bot account, so a chat cannot be started.'/>
+                    </VisuallyHidden>
+                )}
                 <Avatar
                     src={avatarUrl}
                     alt=''
@@ -121,41 +135,39 @@ const AgentRow = (props: Props) => {
                     <DisplayName>{agent.displayName}</DisplayName>
                     <Username>{'@'}{agent.name}</Username>
                 </NameColumn>
-                <BadgesColumn>
-                    {inactiveReason && (
-                        <WithTooltip title={<InactiveReasonMessage reason={inactiveReason}/>}>
-                            <Tag
-                                type='danger'
-                                tabIndex={0}
-                                label={<FormattedMessage defaultMessage='Inactive'/>}
-                            />
-                        </WithTooltip>
-                    )}
-                    {!canManage && (
-                        <WithTooltip
-                            title={
-                                <FormattedMessage
-                                    defaultMessage='Mention @{username} in a channel or direct message to chat with this agent.'
-                                    values={{username: agent.name}}
-                                />
-                            }
-                        >
-                            <Tag
-                                tabIndex={0}
-                                label={<FormattedMessage defaultMessage='Read only'/>}
-                            />
-                        </WithTooltip>
-                    )}
-                    {mcpBadge}
-                </BadgesColumn>
             </RowMain>
+            {actionable && (
+                <NewChatSlot>
+                    <Button
+                        emphasis='dim'
+                        size='x-small'
+                        leadingIcon={<Icon glyph={<MessageOutlineIcon/>}/>}
+                        aria-label={intl.formatMessage({defaultMessage: 'Start new chat with {agent}'}, {agent: agentLabel})}
+                        data-testid='agent-row-new-chat'
+                        onClick={handleRowActivate}
+                    >
+                        {intl.formatMessage({defaultMessage: 'Start new chat'})}
+                    </Button>
+                </NewChatSlot>
+            )}
+            <BadgesColumn>
+                {inactiveReason && (
+                    <WithTooltip title={<InactiveReasonMessage reason={inactiveReason}/>}>
+                        <Tag
+                            type='danger'
+                            tabIndex={0}
+                            label={<FormattedMessage defaultMessage='Inactive'/>}
+                        />
+                    </WithTooltip>
+                )}
+                {mcpBadge}
+            </BadgesColumn>
             {canManage && (
                 <ActionsColumn>
                     <DotMenu
                         icon={<DotsHorizontalIcon/>}
                         title={intl.formatMessage({defaultMessage: 'Agent actions'})}
                         placement='bottom-end'
-                        onOpenChange={setMenuOpen}
 
                         // Rendered in place so the menu stays inside the row's DOM subtree.
                         portal={false}
@@ -199,6 +211,7 @@ const InactiveReasonMessage = ({reason}: {reason: AgentInactiveReason}) => {
 // --- Styled Components ---
 
 const RowContainer = styled.div<{$clickable: boolean}>`
+    position: relative;
     display: flex;
     flex-direction: row;
     align-items: center;
@@ -208,28 +221,31 @@ const RowContainer = styled.div<{$clickable: boolean}>`
     border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
     background: var(--center-channel-bg, #fff);
     cursor: ${({$clickable}) => ($clickable ? 'pointer' : 'default')};
-    outline: none;
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.04);
     }
-
-    ${({$clickable}) =>
-        $clickable &&
-        `
-        &:focus-visible {
-            box-shadow: inset 0 0 0 2px rgba(var(--button-bg-rgb, 28, 88, 217), 0.4);
-        }
-    `}
 `;
 
+// Not positioned itself, so its ::after covers the whole row (RowContainer is the positioned ancestor).
 const RowMain = styled.div`
     display: flex;
+    flex: 0 1 auto;
     flex-direction: row;
     align-items: center;
     gap: var(--spacing-xs);
-    flex: 1;
     min-width: 0;
+    outline: none;
+
+    &::after {
+        position: absolute;
+        inset: 0;
+        content: '';
+    }
+
+    &:focus-visible::after {
+        box-shadow: inset 0 0 0 2px rgba(var(--button-bg-rgb, 28, 88, 217), 0.4);
+    }
 `;
 
 const Avatar = styled(UserAvatar)`
@@ -238,10 +254,10 @@ const Avatar = styled(UserAvatar)`
 
 const NameColumn = styled.div`
     display: flex;
+    flex: 0 1 auto;
     flex-direction: row;
     align-items: center;
     gap: var(--spacing-xs);
-    flex: 1;
     min-width: 0;
 `;
 
@@ -267,8 +283,30 @@ const Username = styled.div`
     text-overflow: ellipsis;
 `;
 
+// Shown only while the row is hovered or has focus inside it (the button itself stays in the tab order).
+const NewChatSlot = styled.span`
+    position: relative;
+    z-index: 1;
+    display: inline-flex;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity var(--duration-quick) var(--ease-transition);
+
+    ${RowContainer}:hover &,
+    ${RowContainer}:focus-within & {
+        opacity: 1;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        transition: none;
+    }
+`;
+
 const BadgesColumn = styled.div`
+    position: relative;
+    z-index: 1;
     display: flex;
+    margin-left: auto;
     flex-direction: row;
     gap: var(--spacing-xs);
     align-items: center;
@@ -276,7 +314,18 @@ const BadgesColumn = styled.div`
 `;
 
 const ActionsColumn = styled.div`
+    position: relative;
+    z-index: 1;
     flex-shrink: 0;
+`;
+
+const VisuallyHidden = styled.span`
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
 `;
 
 export default AgentRow;

@@ -82,8 +82,9 @@ test.describe('Channel Summarization - Basic Functionality', () => {
         // Set up the mock for summarization
         await openAIMock.addCompletionMock(summarizationResponse);
 
-        // Send summarize command (via RHS textarea)
-        await aiPlugin.sendMessage('/summarize-channel');
+        // Ask for the summary in the RHS. Not as "/summarize-channel": the
+        // composer runs a leading "/" as a slash command, and there is none.
+        await aiPlugin.sendMessage('Summarize the channel');
 
         // Wait for bot response with summary
         await expect(page.getByText(/Channel Summary/i)).toBeVisible({ timeout: 10000 });

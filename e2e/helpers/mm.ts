@@ -293,7 +293,7 @@ export class MattermostPage {
             }
 
             await expect(
-                rhsContainer.getByTestId('chat-history').or(rhsContainer.getByTestId('new-chat')).first(),
+                this.page.getByTestId('chat-history').or(this.page.getByTestId('new-chat')).first(),
             ).toBeVisible({ timeout: 10000 });
         }
     }

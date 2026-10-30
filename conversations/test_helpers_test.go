@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -51,7 +52,10 @@ type fakeMMClient struct {
 	fileInfos            map[string]*model.FileInfo
 	files                map[string][]byte
 	onUpdatePost         func(*model.Post)
-	websocketEvents      []fakeWebSocketEvent
+	// wsMu guards websocketEvents: title generation publishes from a
+	// background goroutine.
+	wsMu            sync.Mutex
+	websocketEvents []fakeWebSocketEvent
 	// dmChannelID, when set, is the channel DM posts are created in.
 	dmChannelID string
 	dmPosts     []*model.Post
@@ -225,11 +229,20 @@ func (c *fakeMMClient) GetDirectChannel(string, string) (*model.Channel, error) 
 }
 
 func (c *fakeMMClient) PublishWebSocketEvent(event string, payload map[string]any, broadcast *model.WebsocketBroadcast) {
+	c.wsMu.Lock()
+	defer c.wsMu.Unlock()
 	c.websocketEvents = append(c.websocketEvents, fakeWebSocketEvent{
 		event:     event,
 		payload:   payload,
 		broadcast: broadcast,
 	})
+}
+
+// publishedWebSocketEvents returns a copy of the events published so far.
+func (c *fakeMMClient) publishedWebSocketEvents() []fakeWebSocketEvent {
+	c.wsMu.Lock()
+	defer c.wsMu.Unlock()
+	return slices.Clone(c.websocketEvents)
 }
 
 func (c *fakeMMClient) GetConfig() *model.Config {
