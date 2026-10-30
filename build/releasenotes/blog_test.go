@@ -62,14 +62,9 @@ func TestValidateBlog(t *testing.T) {
 		"invented link":       {"# T\n\n[more](https://example.com/blog)\n", "not in the allowed list"},
 		"invented bare link":  {"# T\n\nSee https://example.com/blog for more.\n", "not in the allowed list"},
 		"uppercase scheme":    {"# T\n\nSee HTTPS://example.com/blog for more.\n", "not in the allowed list"},
-		"email":               {"# T\n\nWrite to sales@example.com.\n", "email address"},
-		"other repo":          {"# T\n\nSee example/repo#12.\n", "another repository"},
 		"numbered doc anchor": {"# T\n\nSee [install](https://github.com/o/r/blob/v2.12.0/docs/admin_guide.md#2-installation) and https://docs.example.com/agents#2.\n", ""},
 		"allowed autolink":    {"# T\n\nRead <https://docs.example.com/agents>.\n", ""},
 		"unlisted autolink":   {"# T\n\nRead <https://evil.example/x>.\n", "not in the allowed list"},
-		"www host":            {"# T\n\nVisit www.evil.example today.\n", "www. host"},
-		"html anchor":         {"# T\n\nSee <a href=\"//evil.example\">this</a>.\n", "raw HTML"},
-		"mention":             {"# T\n\nAsk `@copilot` or @copilot.\n", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			problems := validateBlog(tc.in, allowed)

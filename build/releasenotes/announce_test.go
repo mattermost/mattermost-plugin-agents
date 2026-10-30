@@ -77,11 +77,6 @@ func TestFormatAnnouncement(t *testing.T) {
 			contains: []string{"No breaking changes or new features are listed"},
 			excludes: []string{"Add thing"},
 		},
-		"hand-edited line with a mention or link is dropped": {
-			notes:    "## Breaking changes and upgrade notes\n- Tell @channel to upgrade from https://evil.example now. ([#1](u))\n- Renamed the `Old` setting. ([#2](u))\n",
-			contains: []string{"- Renamed the `Old` setting."},
-			excludes: []string{"@channel", "evil.example"},
-		},
 		"empty notes": {
 			notes:    "",
 			contains: []string{"#### Mattermost Agents v2.12.0 released", "No breaking changes or new features"},
