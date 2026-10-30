@@ -26,6 +26,7 @@ export type PluginConfig = {
     enableCallSummary: boolean,
     allowedUpstreamHostnames: string,
     allowUnsafeLinks: boolean,
+    allowedLinkDomains: string,
     enableHTMLArtifacts?: boolean,
     enableChannelMentionToolCalling: boolean,
     enableAmbientAutoReply?: boolean,

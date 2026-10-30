@@ -17,7 +17,8 @@ import {
     LLMBot,
 } from './bots';
 import {ChannelAccessLevel, UserAccessLevel} from './components/system_console/bot';
-import {BotsHandler} from './redux';
+import {BotsHandler, SetLinkPolicyHandler, setupRedux} from './redux';
+import {getLinkPolicy} from './selectors';
 import manifest from './manifest';
 
 // mm_webapp reads window.Components/ProductApi at module load, which are absent
@@ -250,14 +251,34 @@ describe('filterBotsByChannelAccess', () => {
 describe('fetchAndStoreBots', () => {
     test('dispatches the bots and feature flags, and returns the bots', async () => {
         const bots = [makeBot('a')];
-        mockGetAIBots.mockResolvedValue({bots, searchEnabled: true, allowUnsafeLinks: 1, htmlArtifactsEnabled: true});
+        const linkPolicy = {kind: 'allowlist', allowedDomains: [{host: 'example.com', wildcard: false}]};
+        mockGetAIBots.mockResolvedValue({bots, searchEnabled: true, allowUnsafeLinks: true, linkPolicy, htmlArtifactsEnabled: true});
         const dispatch = jest.fn();
 
         await expect(fetchAndStoreBots(dispatch)).resolves.toBe(bots);
 
         expect(dispatch).toHaveBeenCalledWith({type: BotsHandler, bots});
-        expect(dispatch).toHaveBeenCalledWith({type: 'SET_ALLOW_UNSAFE_LINKS', allowUnsafeLinks: true});
+        expect(dispatch).toHaveBeenCalledWith({type: SetLinkPolicyHandler, linkPolicy});
         expect(dispatch).toHaveBeenCalledWith({type: 'SET_HTML_ARTIFACTS_ENABLED', htmlArtifactsEnabled: true});
+    });
+
+    test('falls back to the plain text link policy when the server omits linkPolicy', async () => {
+        mockGetAIBots.mockResolvedValue({bots: [makeBot('a')], searchEnabled: true});
+
+        let pluginReducer: Parameters<typeof createStore>[0] | undefined;
+        await setupRedux(
+            {registerReducer: (reducer: typeof pluginReducer) => {
+                pluginReducer = reducer;
+            }},
+            {getState: () => ({entities: {general: {license: {}, config: {}}}}), dispatch: jest.fn()} as any,
+        );
+        const store = createStore((state: any = {}, action: any) => ({
+            ['plugins-' + manifest.id]: pluginReducer!(state['plugins-' + manifest.id], action),
+        }));
+
+        await expect(fetchAndStoreBots(store.dispatch)).resolves.toHaveLength(1);
+
+        expect(getLinkPolicy(store.getState() as any)).toEqual({kind: 'plain_text'});
     });
 
     test('returns null and dispatches nothing when the response is falsy', async () => {

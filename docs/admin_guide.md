@@ -59,6 +59,25 @@ When this setting is set to **True**, AI-generated links may be rendered as clic
 
 Enable this setting only in trusted or otherwise mitigated environments, such as where users are trained to validate links and your organization has endpoint protections and URL controls in place.
 
+#### Restricting links to allowed domains
+
+To limit which destinations can become clickable, set an allowlist of domains. This reduces the risk of a prompt injection steering users to an attacker-controlled site.
+
+- **System Console label**: **Allowed Link Domains (csv)** (shown when **Render AI-generated links** is **True**)
+- **Configuration key**: `allowedLinkDomains`
+- **Default value**: empty (links to any domain are clickable)
+
+Enter a comma-separated list of hostnames, for example `mattermost.atlassian.net, *.mycompany.com`. Matching rules:
+
+- A plain entry such as `example.com` matches only that exact host. It doesn't match `docs.example.com`.
+- A wildcard entry such as `*.example.com` matches any subdomain (`docs.example.com`, `a.b.example.com`) but not `example.com` itself. To allow both, list both.
+- Matching is case-insensitive, and ports and paths in entries are ignored.
+- Saving fails if an entry isn't a valid domain (for example `*` or `my domain.com`), so a typo can't silently block links you meant to allow.
+- When an allowlist is set, only `http` and `https` links can be clickable. Other schemes, such as `mailto:`, are shown as plain text.
+- Links to your own Mattermost server (the configured Site URL), such as permalinks and channel links, are always clickable.
+
+A link to a domain that isn't on the allowlist is shown as plain text followed by its destination (for example, `Sign in : https://unlisted.example/login`). Users can still see where the link points, but it isn't clickable.
+
 ### Agent version history limit
 
 Every save of an agent records a version in its history. By default every version is kept.
@@ -895,7 +914,7 @@ After adding the domain, wait 1-2 minutes for changes to propagate before users 
 
 For more information, see [Atlassian's documentation on MCP server settings](https://support.atlassian.com/security-and-access-policies/docs/control-atlassian-rovo-mcp-server-settings/).
 
-> **Note:** By default, the plugin doesn't render AI-generated Markdown links (for example, JIRA ticket links) as clickable links. URLs are displayed in plain text to reduce potential phishing and data exfiltration risk. If an admin enables **Render AI-generated links** (`allowUnsafeLinks`), AI-generated links may become clickable; enable this only with appropriate trust boundaries and security mitigations in place.
+> **Note:** By default, the plugin doesn't render AI-generated Markdown links (for example, JIRA ticket links) as clickable links. URLs are displayed in plain text to reduce potential phishing and data exfiltration risk. If an admin enables **Render AI-generated links** (`allowUnsafeLinks`), AI-generated links may become clickable; enable this only with appropriate trust boundaries and security mitigations in place. To keep JIRA links clickable without allowing every destination, add your Atlassian site (for example, `mycompany.atlassian.net`) to **Allowed Link Domains** (`allowedLinkDomains`).
 
 ## Mattermost MCP Server
 
