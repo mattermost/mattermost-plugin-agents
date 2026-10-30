@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Audit event names for every state-changing operation in the plugin: 32
+// Audit event names for every state-changing operation in the plugin: 33
 // routed events plus the non-gin MCP session grant. All are declared here,
 // including ones whose instrumentation lands in later changes, so call sites
 // never use inline string literals; new state-changing routes add their
@@ -20,7 +20,8 @@ import (
 // logged, so the names stay unprefixed.
 const (
 	// Config.
-	AuditEventSaveConfig = "saveConfig"
+	AuditEventSaveConfig         = "saveConfig"
+	AuditEventSaveSettingsAccess = "saveSettingsAccess"
 
 	// Admin operations.
 	AuditEventReindexPosts          = "reindexPosts"
@@ -100,7 +101,8 @@ func handlerFuncName(h gin.HandlerFunc) string {
 func buildAuditEventRegistry(a *API) map[string]string {
 	return map[string]string{
 		// Config.
-		handlerFuncName(a.handleSaveConfig): AuditEventSaveConfig,
+		handlerFuncName(a.handleSaveConfig):        AuditEventSaveConfig,
+		handlerFuncName(a.handlePutSettingsAccess): AuditEventSaveSettingsAccess,
 
 		// Admin operations.
 		handlerFuncName(a.handleReindexPosts):       AuditEventReindexPosts,

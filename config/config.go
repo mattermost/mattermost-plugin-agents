@@ -56,6 +56,11 @@ type Config struct {
 	// AgentVersionsToKeep is how many versions of each agent's history are
 	// kept; older versions are deleted. 0 keeps every version.
 	AgentVersionsToKeep int `json:"agentVersionsToKeep"`
+	// SettingsAccess lists the users, besides system admins, who may view or
+	// edit this configuration from the Agents product. Only system admins
+	// change it, through its own route; saving the rest of the configuration
+	// never does.
+	SettingsAccess *SettingsAccess `json:"settingsAccess,omitempty"`
 }
 
 type WebSearchConfig struct {
@@ -216,6 +221,14 @@ func (c *Container) EnableAmbientAutoReply() bool {
 
 func (c *Container) AllowNativeWebSearchInChannels() bool {
 	return c.Config().AllowNativeWebSearchInChannels
+}
+
+// SettingsAccess returns the users delegated access to this configuration.
+func (c *Container) SettingsAccess() SettingsAccess {
+	if access := c.Config().SettingsAccess; access != nil {
+		return *access
+	}
+	return SettingsAccess{}
 }
 
 func (c *Container) RegisterUpdateListener(listener UpdateListener) {
