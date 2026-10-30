@@ -16,6 +16,7 @@ import ConfirmationDialog from '../confirmation_dialog';
 import Service, {LLMService} from './service';
 import {LLMBotConfig} from './bot';
 import EnterpriseChip, {useLicenseChipProps} from './enterprise_chip';
+import {useSettingsReadOnly} from './settings_read_only';
 
 const defaultNewService: LLMService = {
     id: '',
@@ -52,6 +53,7 @@ type Props = {
 
 const Services = (props: Props) => {
     const intl = useIntl();
+    const readOnly = useSettingsReadOnly();
     const [showErrorDialog, setShowErrorDialog] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
     const serviceLimit = useServiceLimit();
@@ -115,26 +117,28 @@ const Services = (props: Props) => {
                     />
                 ))}
             </ServicesList>
-            <AddServiceRow>
-                <Button
-                    emphasis='tertiary'
-                    onClick={addNewService}
-                    disabled={addDisabled}
-                    leadingIcon={<Icon glyph={<PlusIcon/>}/>}
-                >
-                    <FormattedMessage defaultMessage='Add an AI Service'/>
-                </Button>
-                {addDisabled && (
-                    <EnterpriseChip
-                        title={serviceChip.title}
-                        text={serviceChip.text}
-                        subtext={intl.formatMessage(
-                            {defaultMessage: 'Your current plan allows {count, plural, one {# LLM service} other {# LLM services}}. Additional services are available on {plan} plans and above.'},
-                            {count: serviceLimit, plan: serviceChip.levelName},
-                        )}
-                    />
-                )}
-            </AddServiceRow>
+            {!readOnly && (
+                <AddServiceRow>
+                    <Button
+                        emphasis='tertiary'
+                        onClick={addNewService}
+                        disabled={addDisabled}
+                        leadingIcon={<Icon glyph={<PlusIcon/>}/>}
+                    >
+                        <FormattedMessage defaultMessage='Add an AI Service'/>
+                    </Button>
+                    {addDisabled && (
+                        <EnterpriseChip
+                            title={serviceChip.title}
+                            text={serviceChip.text}
+                            subtext={intl.formatMessage(
+                                {defaultMessage: 'Your current plan allows {count, plural, one {# LLM service} other {# LLM services}}. Additional services are available on {plan} plans and above.'},
+                                {count: serviceLimit, plan: serviceChip.levelName},
+                            )}
+                        />
+                    )}
+                </AddServiceRow>
+            )}
             <ConfirmationDialog
                 show={showErrorDialog}
                 title={<FormattedMessage defaultMessage='Cannot Delete Service'/>}

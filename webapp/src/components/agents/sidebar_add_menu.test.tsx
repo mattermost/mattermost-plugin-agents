@@ -18,6 +18,7 @@ jest.mock('@/bots', () => ({
 jest.mock('@/client', () => ({
     getProfilePictureUrl: (id: string) => `/api/v4/users/${id}/image`,
     getAIThreads: jest.fn().mockResolvedValue([]),
+    getMySettingsAccess: jest.fn().mockResolvedValue('none'),
 }));
 jest.mock('@mattermost/shared/components/tooltip', () => ({
     WithTooltip: ({children}: {children: React.ReactNode}) => <>{children}</>,
@@ -203,6 +204,7 @@ describe('ProductSidebar plus menu', () => {
                 activeView='all'
                 onSelectAll={jest.fn()}
                 onSelectPrompts={jest.fn()}
+                onSelectSettings={jest.fn()}
             />
         );
         render(

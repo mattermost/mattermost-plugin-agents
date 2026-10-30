@@ -16,6 +16,7 @@ import {ToggleSwitch} from '../toggle_switch';
 
 import {LicenseChip} from './enterprise_chip';
 import {SelectField} from './item';
+import {useSettingsReadOnly} from './settings_read_only';
 import {MCPToolConfig, MCPToolInfo} from './mcp_types';
 
 type ToolPolicy = MCPToolConfig['policy'];
@@ -58,6 +59,8 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
         }
         onToolConfigChange(nextToolConfig);
     };
+
+    const readOnly = useSettingsReadOnly();
 
     const handleRetrievalDescriptionOverrideBlur = (e: React.FocusEvent<HTMLInputElement>) => {
         const trimmedValue = e.target.value.trim();
@@ -105,7 +108,7 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
                         <ToggleSwitch
                             checked={toolConfig.enabled}
                             onChange={handleEnabledChange}
-                            disabled={serverDisabled}
+                            disabled={serverDisabled || readOnly}
                             size='small'
                         />
                     </ToggleWrapper>
@@ -130,7 +133,7 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
                             value={toolConfig.retrieval_description_override || ''}
                             onChange={handleRetrievalDescriptionOverrideChange}
                             onBlur={handleRetrievalDescriptionOverrideBlur}
-                            disabled={serverDisabled}
+                            disabled={serverDisabled || readOnly}
                             placeholder={intl.formatMessage({defaultMessage: 'Describe when the agent should use this tool...'})}
                         />
                         <OverrideHelp>

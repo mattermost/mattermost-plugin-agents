@@ -17,8 +17,12 @@ jest.mock('@/client', () => ({
 // The sidebar has its own tests; here it only navigates.
 jest.mock('./product_sidebar', () => ({
     __esModule: true,
-    default: ({onSelectAll, onSelectPrompts}: {onSelectAll: () => void; onSelectPrompts: () => void}) => (
+    default: ({onSelectAll, onSelectPrompts, onSelectSettings}: {onSelectAll: () => void; onSelectPrompts: () => void; onSelectSettings: () => void}) => (
         <nav>
+            <button
+                type='button'
+                onClick={onSelectSettings}
+            >{'Settings'}</button>
             <button
                 type='button'
                 onClick={onSelectAll}
@@ -35,6 +39,7 @@ jest.mock('./product_sidebar', () => ({
 jest.mock('@/components/custom_prompts/custom_prompts_management', () => ({__esModule: true, default: () => <div data-testid='custom-prompts-modal-root'/>}));
 jest.mock('@/components/custom_prompts/custom_prompts_page', () => ({__esModule: true, default: () => <div>{'prompts view'}</div>}));
 jest.mock('./agents_list', () => ({__esModule: true, default: ({openCreate}: {openCreate: boolean}) => <div>{openCreate ? 'create open' : 'agents list'}</div>}));
+jest.mock('./settings/agents_settings_page', () => ({__esModule: true, default: ({section}: {section?: string}) => <div>{`settings ${section ?? 'default'}`}</div>}));
 jest.mock('./agent_chat_page', () => ({__esModule: true, default: ({botId, rootId}: {botId: string; rootId?: string}) => <div>{`chat ${botId} ${rootId ?? 'new'}`}</div>}));
 
 const makeHistory = (initial: string) => {
@@ -104,6 +109,13 @@ describe('AgentsPage', () => {
 
         act(() => history.push(`${AGENTS_ROUTE}/all/new`));
         expect(screen.getByText('create open')).toBeTruthy();
+
+        act(() => screen.getByRole('button', {name: 'Settings'}).click());
+        expect(history.push).toHaveBeenCalledWith(`${AGENTS_ROUTE}/settings`);
+        expect(screen.getByText('settings default')).toBeTruthy();
+
+        act(() => history.push(`${AGENTS_ROUTE}/settings/mcp`));
+        expect(screen.getByText('settings mcp')).toBeTruthy();
     });
 
     test.each([

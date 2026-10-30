@@ -104,6 +104,13 @@ func TestSettingsRoutesAuthorization(t *testing.T) {
 			allowed: map[string]bool{"admin": true, "readWrite": true},
 		},
 		{
+			name:    "render an access policy in the editor",
+			method:  http.MethodPost,
+			path:    "/access_control/cel/visual_ast",
+			body:    map[string]any{"resource_type": accesscontrol.ResourceTypeService, "expression": "true"},
+			allowed: map[string]bool{"admin": true, "readOnly": true, "readWrite": true},
+		},
+		{
 			name:    "read the delegation lists",
 			method:  http.MethodGet,
 			path:    "/admin/settings-access",

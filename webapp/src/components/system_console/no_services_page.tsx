@@ -12,7 +12,9 @@ import {Icon} from '@mattermost/compass-ui/components/icon';
 import SparklesGraphic from 'src/components/assets/sparkles_graphic';
 
 type Props = {
-    onAddServicePressed: () => void;
+
+    // Unset for viewers who cannot add a service.
+    onAddServicePressed?: () => void;
 };
 
 const NoServicesPage = (props: Props) => {
@@ -23,11 +25,11 @@ const NoServicesPage = (props: Props) => {
                 illustration={{children: <SparklesGraphic/>, 'aria-label': ''}}
                 title={intl.formatMessage({defaultMessage: 'No AI services added yet'})}
                 description={intl.formatMessage({defaultMessage: 'To get started with Agents, add an AI service'})}
-                action={{
+                action={props.onAddServicePressed ? {
                     children: intl.formatMessage({defaultMessage: 'Add an AI Service'}),
                     leadingIcon: <Icon glyph={<PlusIcon/>}/>,
                     onClick: props.onAddServicePressed,
-                }}
+                } : undefined} // eslint-disable-line no-undefined
             />
         </Card>
     );

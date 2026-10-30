@@ -29,7 +29,7 @@ import RHS from './components/rhs/rhs';
 import RHSTitle from './components/rhs/rhs_title';
 import CustomPromptsDropdown from './components/custom_prompts/custom_prompts_dropdown';
 import CustomPromptsManagement from './components/custom_prompts/custom_prompts_management';
-import Config from './components/system_console/config';
+import SettingsAccessConfig from './components/system_console/settings_access_config';
 import {setSiteURL, doReaction, doRunSearch, doThreadAnalysis} from './client';
 
 import {setOpenRHSAction} from './redux_actions';
@@ -244,7 +244,7 @@ export default class Plugin {
             registry.registerPostDropdownMenuAction(<><span className='icon'><IconReactForMe/></span><FormattedMessage defaultMessage='React for me'/></>, doReaction);
         }
 
-        registry.registerAdminConsoleCustomSetting('Config', Config);
+        registry.registerAdminConsoleCustomSetting('Config', SettingsAccessConfig);
         const agentsProductLabel = getAgentsProductLabel(store);
 
         // Channel settings tab (Mattermost >= 11.10 only). The schema is built

@@ -12,6 +12,7 @@ import {Icon} from '@mattermost/compass-ui/components/icon';
 import {getMCPSuggestedDescription} from '../../client';
 
 import {FormRow, HelpText, ItemLabel, TextFieldContainer, TextItem} from './item';
+import {useSettingsReadOnly} from './settings_read_only';
 
 // Mirrors config.MaxMCPServerDescriptionRunes.
 export const MAX_MCP_SERVER_DESCRIPTION_LENGTH = 500;
@@ -41,6 +42,7 @@ type Props = {
 
 const MCPServerDescription = ({serverID, description, connectionSaved, onChange, onSuggestion}: Props) => {
     const intl = useIntl();
+    const readOnly = useSettingsReadOnly();
     const [autoFill, setAutoFill] = useState<AutoFill>({status: 'idle'});
     const canAutoFill = Boolean(serverID) && connectionSaved;
 
@@ -93,32 +95,34 @@ const MCPServerDescription = ({serverID, description, connectionSaved, onChange,
                     {count: [...description].length, max: MAX_MCP_SERVER_DESCRIPTION_LENGTH},
                 )}
             />
-            <FormRow>
-                <ItemLabel/>
-                <TextFieldContainer>
-                    <AutoFillRow>
-                        <Button
-                            emphasis='secondary'
-                            size='small'
-                            disabled={!canAutoFill || autoFill.status === 'loading'}
-                            onClick={fill}
-                        >
-                            {autoFill.status === 'loading' ? intl.formatMessage({defaultMessage: 'Fetching…'}) : intl.formatMessage({defaultMessage: 'Auto-fill from server'})}
-                        </Button>
-                        {autoFill.status === 'needsOAuth' && (
+            {!readOnly && (
+                <FormRow>
+                    <ItemLabel/>
+                    <TextFieldContainer>
+                        <AutoFillRow>
                             <Button
-                                emphasis='tertiary'
+                                emphasis='secondary'
                                 size='small'
-                                trailingIcon={<Icon glyph={<OpenInNewIcon/>}/>}
-                                onClick={() => window.open(autoFill.authURL, '_blank', 'noopener,noreferrer')}
+                                disabled={!canAutoFill || autoFill.status === 'loading'}
+                                onClick={fill}
                             >
-                                {intl.formatMessage({defaultMessage: 'Connect'})}
+                                {autoFill.status === 'loading' ? intl.formatMessage({defaultMessage: 'Fetching…'}) : intl.formatMessage({defaultMessage: 'Auto-fill from server'})}
                             </Button>
-                        )}
-                    </AutoFillRow>
-                    {status && <HelpText>{status}</HelpText>}
-                </TextFieldContainer>
-            </FormRow>
+                            {autoFill.status === 'needsOAuth' && (
+                                <Button
+                                    emphasis='tertiary'
+                                    size='small'
+                                    trailingIcon={<Icon glyph={<OpenInNewIcon/>}/>}
+                                    onClick={() => window.open(autoFill.authURL, '_blank', 'noopener,noreferrer')}
+                                >
+                                    {intl.formatMessage({defaultMessage: 'Connect'})}
+                                </Button>
+                            )}
+                        </AutoFillRow>
+                        {status && <HelpText>{status}</HelpText>}
+                    </TextFieldContainer>
+                </FormRow>
+            )}
         </>
     );
 };
