@@ -114,10 +114,11 @@ describe('AgentsPage', () => {
         expect(screen.getByText('agents list')).toBeTruthy();
     });
 
-    test('the default landing falls back to All agents when no default agent is available', () => {
-        window.WebappUtils = {browserHistory: makeHistory(AGENTS_ROUTE)} as any;
+    test('the default landing becomes All agents when no default agent is available', () => {
+        const history = makeHistory(AGENTS_ROUTE);
+        window.WebappUtils = {browserHistory: history} as any;
         renderPage();
-        expect(screen.getByText('No default agent is available')).toBeTruthy();
+        expect(history.location.pathname).toBe(`${AGENTS_ROUTE}/all`);
         expect(screen.getByText('agents list')).toBeTruthy();
     });
 });

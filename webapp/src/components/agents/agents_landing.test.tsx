@@ -13,16 +13,9 @@ jest.mock('./agent_chat_page', () => ({
     __esModule: true,
     default: ({botId}: {botId: string}) => <div>{`chat ${botId}`}</div>,
 }));
-jest.mock('./agents_list', () => ({__esModule: true, default: () => <div>{'agents list'}</div>}));
-
-jest.mock('react-intl', () => {
-    const actual = jest.requireActual('react-intl');
-    return {...actual, useIntl: () => ({formatMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage})};
-});
-
 const bot = (id: string, isDefault?: boolean) => ({id, displayName: id, isDefault});
 
-const nav = {toAll: jest.fn(), toNewAgent: jest.fn(), closeNewAgent: jest.fn(), toPrompts: jest.fn(), toChat: jest.fn()};
+const nav = {toAll: jest.fn(), replaceWithAll: jest.fn(), toNewAgent: jest.fn(), closeNewAgent: jest.fn(), toPrompts: jest.fn(), toChat: jest.fn()};
 
 describe('resolveDefaultAgent', () => {
     test.each([
@@ -36,21 +29,31 @@ describe('resolveDefaultAgent', () => {
 });
 
 describe('AgentsLanding', () => {
+    beforeEach(() => {
+        nav.replaceWithAll.mockClear();
+    });
+
     test('renders a new chat with the default agent', () => {
         mockUseBotlist.mockReturnValue({bots: [bot('a'), bot('b', true)]});
         render(<AgentsLanding nav={nav}/>);
         expect(screen.getByText('chat b')).toBeTruthy();
-        expect(screen.queryByText('agents list')).toBeNull();
+        expect(nav.replaceWithAll).not.toHaveBeenCalled();
     });
 
     test.each([
         {name: 'unset default', bots: [bot('a'), bot('b')]},
         {name: 'no accessible agents', bots: []},
-    ])('falls back to All agents with a notice: $name', ({bots}) => {
+    ])('hands over to All agents: $name', ({bots}) => {
         mockUseBotlist.mockReturnValue({bots});
         render(<AgentsLanding nav={nav}/>);
-        expect(screen.getByText('No default agent is available')).toBeTruthy();
-        expect(screen.getByText('agents list')).toBeTruthy();
+        expect(nav.replaceWithAll).toHaveBeenCalledTimes(1);
+        expect(screen.queryByText(/^chat /)).toBeNull();
+    });
+
+    test('waits for the agent list before choosing', () => {
+        mockUseBotlist.mockReturnValue({bots: null});
+        render(<AgentsLanding nav={nav}/>);
+        expect(nav.replaceWithAll).not.toHaveBeenCalled();
         expect(screen.queryByText(/^chat /)).toBeNull();
     });
 });

@@ -22,6 +22,10 @@ export interface AgentsRoute {
 export interface AgentsNavigation {
     toAll: () => void;
 
+    // The All agents view, replacing the current entry (the landing without a
+    // default agent) so Back does not return to it.
+    replaceWithAll: () => void;
+
     // The All agents view with the create-agent flow open.
     toNewAgent: () => void;
 
@@ -142,6 +146,7 @@ export const useAgentsRoute = (): AgentsRoute & AgentsNavigation => {
 
     const nav = useMemo<AgentsNavigation>(() => ({
         toAll: () => push(ALL_AGENTS_PATH),
+        replaceWithAll: () => replace(ALL_AGENTS_PATH),
         toNewAgent: () => push(NEW_AGENT_PATH),
         closeNewAgent: () => replace(ALL_AGENTS_PATH),
         toPrompts: () => push(PROMPTS_PATH),

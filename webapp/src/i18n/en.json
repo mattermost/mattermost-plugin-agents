@@ -453,7 +453,6 @@
   "UpwcFdTu": "Unavailable",
   "UrGI9Kwx": "Create agent",
   "UsTzxZr9": "OTLP Export Headers",
-  "Ut+NLorE": "No default agent is available",
   "V4TGblFD": "Bot Username",
   "V52jNnY+": "Enabled",
   "VNHe6w40": "Agent actions",
@@ -938,6 +937,5 @@
   "zm2TJuFo": "Search prompts",
   "zmLm6bD2": "Where should we start?",
   "zpDqqGDZ": "Delete service",
-  "ztBdSy+l": "Choose an agent below to start a chat. A system admin can set the default agent in the plugin settings.",
   "zz6ObK7Z": "Restore"
 }
