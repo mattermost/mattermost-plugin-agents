@@ -386,6 +386,7 @@ const AgentsList = ({onStartChat, openCreate = false, onCloseCreate}: AgentsList
                         />
                     )}
 
+                    {/* TODO: Improve the empty state shown when no agents are configured (e.g. explain what agents are, add a primary "Create agent" call to action, and link to docs/setup for admins who still need to configure an LLM service). */}
                     {!loading && !error && filteredAgents.length === 0 && !searchQuery.trim() && (
                         <AgentsEmptyState
                             title={activeTab === 'yours' ? (
