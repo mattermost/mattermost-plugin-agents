@@ -1441,7 +1441,7 @@ func TestGenerateTitle(t *testing.T) {
 				assert.NoError(t, renameErr)
 				assert.True(t, renamed)
 			}
-			mockLLM := &renamingLLM{testLLM: testLLM{noStreamResponse: `"Go Programming Language"`}}
+			mockLLM := &renamingLLM{noStreamResponse: `"Go Programming Language"`}
 			if tt.renameBefore {
 				rename()
 			}
