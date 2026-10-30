@@ -102,7 +102,7 @@ function emptyToolsNotice(
     case 'no-sa-credentials':
         return (
             <EmptyToolsNotice>
-                <FormattedMessage defaultMessage='This agent cannot use this server until service account credentials are added in System Console MCP settings.'/>
+                <FormattedMessage defaultMessage='This agent cannot use this server until service account credentials are added in Agents Settings, under MCP servers.'/>
             </EmptyToolsNotice>
         );
     case 'sa-connect-failed':
