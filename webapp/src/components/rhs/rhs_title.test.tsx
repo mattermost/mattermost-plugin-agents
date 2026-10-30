@@ -72,10 +72,13 @@ const makeBot = (id: string, displayName: string): {id: string; displayName: str
 // A reducer that applies the preference the title writes, so the title re-renders.
 const dispatched: Array<{type: string; postId?: string; tab?: string}> = [];
 
-const makeStore = (bots: ReturnType<typeof makeBot>[] | null, selected: string, rhs: {selectedPostId?: string; rhsTab?: string} = {}) => {
+type Posts = Record<string, {channel_id: string; user_id: string}>;
+
+const makeStore = (bots: ReturnType<typeof makeBot>[] | null, selected: string, rhs: {selectedPostId?: string; rhsTab?: string} = {}, posts: Posts = {}) => {
     const initial = {
         [pluginKey]: {bots, ...rhs},
         entities: {
+            posts: {posts},
             users: {currentUserId: 'me'},
             preferences: {myPreferences: selected ? {[preferenceKey]: {value: selected}} : {}},
         },
@@ -91,8 +94,8 @@ const makeStore = (bots: ReturnType<typeof makeBot>[] | null, selected: string, 
     return createStore(reducer);
 };
 
-const renderTitle = (bots: ReturnType<typeof makeBot>[] | null, selected: string, rhs: {selectedPostId?: string; rhsTab?: string} = {}) => render(
-    <Provider store={makeStore(bots, selected, rhs)}>
+const renderTitle = (bots: ReturnType<typeof makeBot>[] | null, selected: string, rhs: {selectedPostId?: string; rhsTab?: string} = {}, posts: Posts = {}) => render(
+    <Provider store={makeStore(bots, selected, rhs, posts)}>
         <RHSTitle/>
     </Provider>,
 );
@@ -149,16 +152,8 @@ describe('RHSTitle', () => {
         renderTitle(two, 'a', {selectedPostId: 'root1'});
         fireEvent.click(screen.getByTestId('bot-selector-rhs'));
 
-        // In an open chat the agent picker is the New chat row, in place of Switch agent.
-        expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['New chat', 'Recent chats', 'Rename chat', 'View all agents']);
-    });
-
-    test('with a single agent an open chat has the plain New chat item', () => {
-        renderTitle([makeBot('a', 'Alpha')], 'a', {selectedPostId: 'root1'});
-
-        fireEvent.click(screen.getByTestId('bot-selector-rhs'));
-
-        expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['New chat', 'Rename chat', 'View all agents']);
+        // An open chat belongs to its agent: no Switch agent, as in the product's chat header.
+        expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Recent chats', 'New chat', 'Rename chat', 'View all agents']);
     });
 
     test('choosing a recent chat opens it in the RHS', () => {
@@ -184,10 +179,7 @@ describe('RHSTitle', () => {
 
         expect(mockSavePreferences).toHaveBeenCalledWith('me', [expect.objectContaining({name: PREFERENCE_NAME_SELECTED_AGENT, value: 'b'})]);
         expect(screen.getByTestId('bot-selector-rhs').textContent).toBe('Beta');
-        expect(rhsActions()).toEqual([
-            {type: 'SELECT_AI_POST', postId: ''},
-            {type: 'AI_RHS_SET_TAB', tab: 'new'},
-        ]);
+        expect(rhsActions()).toEqual([{type: 'AI_RHS_SET_TAB', tab: 'new'}]);
     });
 
     test('choosing the current agent changes nothing and just closes the menu', () => {
@@ -203,19 +195,20 @@ describe('RHSTitle', () => {
     });
 
     test.each([
-        {name: 'another agent', pick: 'Beta'},
-        {name: 'the same agent', pick: 'Alpha'},
-    ])('in an open chat, New chat > $name starts a new chat with it', ({pick}) => {
-        renderTitle(two, 'a', {selectedPostId: 'root1'});
+        {name: 'the active agent\'s chat starts one with it', posts: {} as Posts, saved: null, label: 'Alpha'},
+        {name: 'another agent\'s chat starts one with that agent, which becomes the active one', posts: {root1: {channel_id: 'dm-b', user_id: 'me'}}, saved: 'b', label: 'Beta'},
+    ])('in an open chat, New chat: $name', ({posts, saved, label}) => {
+        renderTitle(two, 'a', {selectedPostId: 'root1'}, posts);
+        expect(screen.getByTestId('bot-selector-rhs').getAttribute('aria-label')).toContain(label);
 
-        fireEvent.click(screen.getByTestId('bot-selector-rhs'));
-        fireEvent.click(screen.getByRole('menuitem', {name: 'New chat'}));
-        fireEvent.click(within(screen.getByRole('menu', {name: 'New chat'})).getByRole('menuitem', {name: pick}));
+        fireEvent.click(screen.getByTestId('new-chat'));
 
-        expect(rhsActions()).toEqual([
-            {type: 'SELECT_AI_POST', postId: ''},
-            {type: 'AI_RHS_SET_TAB', tab: 'new'},
-        ]);
+        expect(rhsActions()).toEqual([{type: 'AI_RHS_SET_TAB', tab: 'new'}]);
+        if (saved) {
+            expect(mockSavePreferences).toHaveBeenCalledWith('me', [expect.objectContaining({value: saved})]);
+        } else {
+            expect(mockSavePreferences).not.toHaveBeenCalled();
+        }
     });
 
     test('opens from the keyboard and closes with Escape', async () => {
@@ -260,17 +253,6 @@ describe('RHSTitle', () => {
             expect(screen.queryByTestId('context-usage') !== null).toBe(ring);
         });
 
-        test('New chat leaves the open chat for a fresh one', () => {
-            renderTitle(two, 'a', {selectedPostId: 'root1'});
-
-            fireEvent.click(screen.getByTestId('new-chat'));
-
-            expect(dispatched.filter((a) => a.type === 'SELECT_AI_POST' || a.type === 'AI_RHS_SET_TAB')).toEqual([
-                {type: 'SELECT_AI_POST', postId: ''},
-                {type: 'AI_RHS_SET_TAB', tab: 'new'},
-            ]);
-        });
-
         test('the chat history has the generic Agents title: no agent menu, no Back, no tools', () => {
             renderTitle(two, 'a', {rhsTab: 'threads'});
 
@@ -285,10 +267,7 @@ describe('RHSTitle', () => {
 
             fireEvent.click(backButton()!);
 
-            expect(dispatched.filter((a) => a.type === 'SELECT_AI_POST' || a.type === 'AI_RHS_SET_TAB')).toEqual([
-                {type: 'SELECT_AI_POST', postId: ''},
-                {type: 'AI_RHS_SET_TAB', tab: 'threads'},
-            ]);
+            expect(rhsActions()).toEqual([{type: 'AI_RHS_SET_TAB', tab: 'threads'}]);
         });
 
         test('Back and New chat use the host tooltip, not the browser\'s native one', () => {

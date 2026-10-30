@@ -9,6 +9,7 @@ import {GlobalState} from '@mattermost/types/store';
 
 import manifest from '@/manifest';
 import type {RHSTab} from '@/redux';
+import {selectPost as selectPostAction} from '@/redux_actions';
 
 import {getPostsByIds, getProfilePictureUrl} from '@/client';
 import {ChatActionsDialogs, useChatActions} from '@/components/agents/use_chat_actions';
@@ -24,6 +25,7 @@ import RHSViewTransition from './rhs_view_transition';
 import ThreadItem from './thread_item';
 
 import RHSNewTab from './rhs_new_tab';
+import {useSelectedThreadBot} from './use_selected_thread_bot';
 
 const ThreadsList = styled.div`
     flex: 1;
@@ -44,7 +46,8 @@ type ChatPreview = {message: string; replyCount: number};
 export default function RHS() {
     const dispatch = useDispatch();
     const store = useStore<GlobalState>();
-    const selectedPostId: string = useSelector((state: any) => state['plugins-' + manifest.id].selectedPostId) || '';
+    const {bots, activeBot} = useBotlist();
+    const {rootId: selectedPostId, channelId, bot: threadBot} = useSelectedThreadBot(bots);
 
     // The open chat is read, as in any thread view.
     useMarkAgentThreadRead(selectedPostId, Boolean(selectedPostId));
@@ -54,18 +57,6 @@ export default function RHS() {
     // thread takes over the pane whichever list view was last chosen.
     const listTab = useSelector<any, RHSTab>((state) => state['plugins-' + manifest.id].rhsTab ?? 'new');
     const currentTab = selectedPostId ? 'thread' : listTab;
-    const setCurrentTab = useCallback((tab: string) => {
-        // 'thread' is implied by selecting a post.
-        if (tab !== 'thread') {
-            dispatch({type: 'AI_RHS_SET_TAB', tab});
-        }
-    }, [dispatch]);
-
-    // The selected thread's root, once the store has it (the ThreadViewer loads it).
-    const selectedRoot = useSelector<GlobalState, {channel_id: string; user_id: string} | null>((state) => (
-        (selectedPostId && state.entities.posts.posts[selectedPostId]) || null
-    ));
-    const {bots, activeBot} = useBotlist();
 
     // Every chat of the user's, from the shared stored list; opening the history refetches it.
     const {threads} = useAgentThreads(bots);
@@ -104,7 +95,7 @@ export default function RHS() {
     }, [showingHistory, rootIdsKey]);
 
     const selectPost = useCallback((postId: string) => {
-        dispatch({type: 'SELECT_AI_POST', postId});
+        dispatch(selectPostAction(postId));
     }, [dispatch]);
 
     // No bots available - hide the RHS entirely
@@ -118,11 +109,6 @@ export default function RHS() {
     let dropZone = false;
     if (selectedPostId) {
         dropZone = true;
-        const channelId = selectedRoot?.channel_id ?? '';
-
-        // The agent of the thread: the DM partner, or the root's author for
-        // bot-started threads (e.g. channel analysis).
-        const threadBot = bots?.find((b) => (channelId && b.dmChannelID === channelId) || b.id === selectedRoot?.user_id);
         content = (
             <AgentChatThreadView
                 layout='panel'
@@ -163,7 +149,6 @@ export default function RHS() {
         dropZone = true;
         content = (
             <RHSNewTab
-                setCurrentTab={setCurrentTab}
                 selectPost={selectPost}
                 activeBot={activeBot}
             />

@@ -48,10 +48,8 @@ interface AgentChatNameMenuProps {
     onNewChat: () => void;
     onViewAll: () => void;
 
-    // Offers a submenu to pick an agent: "Switch agent" in a new chat, and "New chat" in an open chat
-    // (a new chat with the agent picked, the open chat's own included). `onSwitch` starts a new chat
-    // with that agent. The RHS passes it always (it has no agent list of its own); the product header
-    // only in a new chat, since an open chat belongs to its agent.
+    // Offers a "Switch agent" submenu, which starts a new chat with the agent picked. Passed in a new
+    // chat only: an open chat belongs to its agent.
     agents?: {bots: LLMBot[]; onSwitch: (bot: LLMBot) => void};
 
     // The surface draws its own title button; this menu opens from it.
@@ -101,10 +99,7 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
     const newChatLabel = intl.formatMessage({defaultMessage: 'New chat'});
     const chatsLabel = intl.formatMessage({defaultMessage: 'Recent chats'});
     const switchable = agents && agents.bots.length > 1 ? agents : null;
-
-    // In an open chat the agent picker is the New chat row itself, so the plain item is left out.
-    const newChatPicker = Boolean(rootId && switchable);
-    const agentsLabel = newChatPicker ? newChatLabel : intl.formatMessage({defaultMessage: 'Switch agent'});
+    const agentsLabel = intl.formatMessage({defaultMessage: 'Switch agent'});
 
     // Every item closes the whole menu; the submenu rows open their child instead.
     const closing = (action: () => void) => () => {
@@ -145,7 +140,7 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                 {switchable && (
                                     <Submenu
                                         label={agentsLabel}
-                                        icon={newChatPicker ? <MessagePlusOutlineIcon/> : <SyncIcon/>}
+                                        icon={<SyncIcon/>}
                                         menuLabel={agentsLabel}
                                         grow='down'
                                         data-testid='agent-chat-switch-agent'
@@ -154,8 +149,8 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                         <PopoverMenuScroll maxHeight={CHATS_LIST_MAX_HEIGHT}>
                                             <PopoverMenuGroup>
                                                 {switchable.bots.map((other) => {
-                                                    // Picking the current agent switches nothing, but still starts a new chat.
-                                                    const active = !newChatPicker && other.id === bot.id;
+                                                    // Picking the current agent switches nothing.
+                                                    const active = other.id === bot.id;
                                                     return (
                                                         <AgentMenuItem
                                                             key={other.id}
@@ -164,7 +159,7 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                                             trailingElement={active}
                                                             {...(active && {'aria-current': true})}
                                                             onClick={closing(() => {
-                                                                if (newChatPicker || !active) {
+                                                                if (!active) {
                                                                     switchable.onSwitch(other);
                                                                 }
                                                             })}
@@ -215,13 +210,11 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                     {rootId && (
                         <>
                             <PopoverMenuGroup>
-                                {!newChatPicker && (
-                                    <IconMenuItem
-                                        icon={<MessagePlusOutlineIcon/>}
-                                        label={newChatLabel}
-                                        onClick={closing(onNewChat)}
-                                    />
-                                )}
+                                <IconMenuItem
+                                    icon={<MessagePlusOutlineIcon/>}
+                                    label={newChatLabel}
+                                    onClick={closing(onNewChat)}
+                                />
                                 <IconMenuItem
                                     icon={<PencilOutlineIcon/>}
                                     label={intl.formatMessage({defaultMessage: 'Rename chat'})}

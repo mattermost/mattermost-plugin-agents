@@ -100,26 +100,23 @@ const makeStore = (bots: Bot[], loadedChannels: string[] = []) => {
 };
 
 // The tab is handed the active bot from the (Redux-backed) bot list, as rhs.tsx does.
-const Harness = ({botId, selectPost, setCurrentTab}: {botId: string; selectPost: jest.Mock; setCurrentTab: jest.Mock}) => {
+const Harness = ({botId, selectPost}: {botId: string; selectPost: jest.Mock}) => {
     const bot = useSelector((state: any) => state[pluginKey].bots.find((b: Bot) => b.id === botId) ?? null);
     return (
         <RHSNewTab
             activeBot={bot}
             selectPost={selectPost}
-            setCurrentTab={setCurrentTab}
         />
     );
 };
 
 const renderTab = (store: ReturnType<typeof makeStore>, botId = 'bot1') => {
     const selectPost = jest.fn();
-    const setCurrentTab = jest.fn();
     const utils = render(
         <Provider store={store}>
             <Harness
                 botId={botId}
                 selectPost={selectPost}
-                setCurrentTab={setCurrentTab}
             />
         </Provider>,
     );
@@ -128,11 +125,10 @@ const renderTab = (store: ReturnType<typeof makeStore>, botId = 'bot1') => {
             <Harness
                 botId={nextBotId}
                 selectPost={selectPost}
-                setCurrentTab={setCurrentTab}
             />
         </Provider>,
     );
-    return {selectPost, setCurrentTab, rerenderBot};
+    return {selectPost, rerenderBot};
 };
 
 describe('RHSNewTab', () => {
@@ -179,7 +175,7 @@ describe('RHSNewTab', () => {
         {name: 'a message opens the new thread', result: {created: {id: 'new-root'}}, opened: true},
         {name: 'a slash command (no post) stays on the new chat', result: {}, opened: false},
     ])('after the host composer submits, $name', async ({result, opened}) => {
-        const {selectPost, setCurrentTab} = renderTab(makeStore([makeBot('bot1', 'dm1')], ['dm1']));
+        const {selectPost} = renderTab(makeStore([makeBot('bot1', 'dm1')], ['dm1']));
         await screen.findByTestId('host-advanced-text-editor');
 
         act(() => {
@@ -188,11 +184,9 @@ describe('RHSNewTab', () => {
 
         if (opened) {
             expect(selectPost).toHaveBeenCalledWith('new-root');
-            expect(setCurrentTab).toHaveBeenCalledWith('thread');
             expect(mockRequestRefresh).toHaveBeenCalledTimes(1);
         } else {
             expect(selectPost).not.toHaveBeenCalled();
-            expect(setCurrentTab).not.toHaveBeenCalled();
             expect(mockRequestRefresh).not.toHaveBeenCalled();
         }
     });

@@ -1,7 +1,8 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {AIThreadTitleSet, AIThreadsReceived, AIThreadsRequested, aiThreads, initialAIThreadsState, rhsTab} from './redux';
+import {AIThreadTitleSet, AIThreadsReceived, AIThreadsRequested, aiThreads, initialAIThreadsState, rhsTab, selectedPostId} from './redux';
+import {showRHSList} from './redux_actions';
 
 describe('rhsTab reducer', () => {
     test.each([
@@ -13,6 +14,15 @@ describe('rhsTab reducer', () => {
         {name: 'unrelated actions keep it', state: 'threads' as const, action: {type: 'SELECT_AI_POST', postId: ''}, expected: 'threads'},
     ])('$name', ({state, action, expected}) => {
         expect(rhsTab(state, action)).toBe(expected);
+    });
+});
+
+describe('selectedPostId reducer', () => {
+    test.each([
+        {name: 'selects a thread', action: {type: 'SELECT_AI_POST', postId: 'root2'}, expected: 'root2'},
+        {name: 'showing a list view closes the thread', action: showRHSList('threads'), expected: ''},
+    ])('$name', ({action, expected}) => {
+        expect(selectedPostId('root1', action)).toBe(expected);
     });
 });
 

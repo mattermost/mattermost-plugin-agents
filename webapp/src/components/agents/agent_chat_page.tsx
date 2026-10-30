@@ -20,7 +20,7 @@ import AgentChatDropZone from '../agent_chat/agent_chat_drop_zone';
 import AgentChatThreadView, {isThreadViewerAvailable} from '../agent_chat/agent_chat_thread_view';
 import AgentNewChat from '../agent_chat/agent_new_chat';
 
-import AgentChatHeader from './agent_chat_header';
+import AgentChatTitleBar from './agent_chat_title_bar';
 import AgentSettingsModal from './agent_settings_modal';
 import {useAgentDMChannel} from './use_agent_dm_channel';
 import {useAgentEditAccess} from './use_agent_edit_access';
@@ -126,12 +126,16 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
             <ChatPane
                 aria-label={intl.formatMessage({defaultMessage: 'Chat with {name}'}, {name: bot.displayName})}
             >
-                <AgentChatHeader
+                <AgentChatTitleBar
+                    surface='page'
                     bot={bot}
                     rootId={dm.status === 'ready' && rootId && validRootId === rootId ? rootId : ''}
                     inThread={Boolean(rootId)}
-                    onNewChat={newChat}
                     bots={bots}
+                    onSwitchAgent={(other) => toChat(other.id)}
+                    onSelectChat={(chatRootId) => toChat(bot.id, chatRootId)}
+                    onNewChat={newChat}
+                    onViewAll={toAll}
                     {...(access.status === 'allowed' ? {onOpenSettings: () => setSettingsOpen(true)} : {})}
                 />
                 <AgentChatDropZone testId='agent-chat-file-drop-zone'>

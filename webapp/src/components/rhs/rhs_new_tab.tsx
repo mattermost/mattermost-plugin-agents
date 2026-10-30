@@ -16,13 +16,12 @@ import {useAgentDMChannel} from '../agents/use_agent_dm_channel';
 
 type Props = {
     selectPost: (postId: string) => void
-    setCurrentTab: (tab: string) => void
     activeBot: LLMBot | null
 }
 
 // The RHS new-chat tab: the same new-chat state as the Agents product view
 // (avatar, greeting, host composer), sized to fill the RHS.
-const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
+const RHSNewTab = ({selectPost, activeBot}: Props) => {
     // Creates the bot DM when missing, stores its id on the bot in Redux, and
     // loads the channel, membership and roles the host ThreadViewer needs.
     const dm = useAgentDMChannel(activeBot);
@@ -30,11 +29,10 @@ const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
 
     const onCreated = useCallback((rootId: string) => {
         selectPost(rootId);
-        setCurrentTab('thread');
 
         // The chat lists pick up the new chat; its title follows over the websocket.
         refreshThreads();
-    }, [selectPost, setCurrentTab, refreshThreads]);
+    }, [selectPost, refreshThreads]);
 
     let content;
     if (dm.status === 'error') {

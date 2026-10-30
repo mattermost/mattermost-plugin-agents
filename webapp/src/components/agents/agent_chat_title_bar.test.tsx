@@ -12,13 +12,12 @@ import {resetToolPreferences} from '@/components/tool_providers/use_tool_prefere
 import manifest from '@/manifest';
 import {aiThreads} from '@/redux';
 
-import AgentChatHeader from './agent_chat_header';
+import AgentChatTitleBar from './agent_chat_title_bar';
 
 const mockRename = jest.fn();
 const mockGetConversation = jest.fn();
 const mockGetThreads = jest.fn();
 const mockGetTools = jest.fn();
-const mockPush = jest.fn();
 jest.mock('@/client', () => ({
     renameConversation: (...args: unknown[]) => mockRename(...args),
     getConversation: (...args: unknown[]) => mockGetConversation(...args),
@@ -26,6 +25,11 @@ jest.mock('@/client', () => ({
     getAIThreads: () => mockGetThreads(),
     getUserMCPTools: () => mockGetTools(),
     getUserToolPreferences: () => Promise.resolve({disabled_servers: []}),
+}));
+
+jest.mock('@/components/rhs/context_usage_indicator', () => ({
+    __esModule: true,
+    default: ({conversationId}: {conversationId: string}) => <span data-testid='context-usage'>{conversationId}</span>,
 }));
 
 jest.mock('@/websocket', () => ({
@@ -67,12 +71,14 @@ const makeStore = (withBotReply: boolean) => createStore(combineReducers({
     }) => state,
 } as any));
 
-const renderHeader = (props: Partial<React.ComponentProps<typeof AgentChatHeader>> = {}, withBotReply = true) => {
-    const handlers = {onNewChat: jest.fn()};
+const renderHeader = (props: Partial<React.ComponentProps<typeof AgentChatTitleBar>> = {}, withBotReply = true) => {
+    const handlers = {onNewChat: jest.fn(), onSwitchAgent: jest.fn(), onSelectChat: jest.fn(), onViewAll: jest.fn()};
     render(
         <Provider store={makeStore(withBotReply)}>
-            <AgentChatHeader
+            <AgentChatTitleBar
+                surface='page'
                 bot={bot}
+                bots={[]}
                 {...handlers}
                 {...props}
             />
@@ -100,7 +106,7 @@ const clickItem = async (name: string) => {
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
 };
 
-describe('AgentChatHeader', () => {
+describe('AgentChatTitleBar', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         clearConversationCache();
@@ -118,7 +124,6 @@ describe('AgentChatHeader', () => {
             thread('t1', 'old', 'Older chat', 1),
         ]);
         mockGetTools.mockResolvedValue({servers: []});
-        (window as any).WebappUtils = {browserHistory: {push: mockPush}};
         jest.spyOn(console, 'error').mockImplementation(() => null);
     });
 
@@ -192,18 +197,18 @@ describe('AgentChatHeader', () => {
     });
 
     test('name menu marks the active chat and selecting another chat opens it', async () => {
-        renderHeader({rootId: 'root1'});
+        const {onSelectChat} = renderHeader({rootId: 'root1'});
         await openActions();
         await openChats();
         const active = screen.getAllByRole('menuitem').filter((item) => item.getAttribute('aria-current') === 'true');
         expect(active.map((item) => item.textContent)).toEqual(['Quarterly plan']);
         await clickItem('Quarterly plan');
-        expect(mockPush).not.toHaveBeenCalled();
+        expect(onSelectChat).not.toHaveBeenCalled();
 
         openMenu();
         await openChats();
         await clickItem('Older chat');
-        expect(mockPush).toHaveBeenCalledWith(expect.stringMatching(/\/chat\/bot1\/old$/));
+        expect(onSelectChat).toHaveBeenCalledWith('old');
     });
 
     test('name menu omits the chats submenu when the agent has no chats', async () => {
@@ -227,33 +232,27 @@ describe('AgentChatHeader', () => {
         await waitFor(() => expect(document.activeElement).toBe(trigger));
     });
 
-    describe('new chat button', () => {
-        test.each([
-            {name: 'start state', props: {}, disabled: true},
-            {name: 'established chat', props: {rootId: 'root1'}, disabled: false},
-        ])('label and enabled state: $name', ({props, disabled}) => {
-            renderHeader(props);
-            const button = screen.getByRole('button', {name: 'New chat'}) as HTMLButtonElement;
-            expect(button.getAttribute('data-testid')).toBe('agent-chat-new-chat-button');
-            expect(button.disabled).toBe(disabled);
-        });
-
-        test('calls onNewChat in an established chat and is inert in the start state', () => {
+    describe('new chat button and context ring', () => {
+        test('an open chat has New chat and the context usage ring', async () => {
             const {onNewChat} = renderHeader({rootId: 'root1'});
-            fireEvent.click(screen.getByTestId('agent-chat-new-chat-button'));
+            fireEvent.click(screen.getByRole('button', {name: 'New chat'}));
             expect(onNewChat).toHaveBeenCalledTimes(1);
+            expect(screen.getByTestId('agent-chat-new-chat-button')).toBeTruthy();
+            expect((await screen.findByTestId('context-usage')).textContent).toBe(CONVERSATION_ID);
         });
 
-        test('does nothing when clicked in the start state', () => {
-            const {onNewChat} = renderHeader();
-            fireEvent.click(screen.getByTestId('agent-chat-new-chat-button'));
-            expect(onNewChat).not.toHaveBeenCalled();
+        test('a new chat has neither (it already is one)', () => {
+            renderHeader();
+            expect(screen.queryByRole('button', {name: 'New chat'})).toBeNull();
+            expect(screen.queryByTestId('context-usage')).toBeNull();
         });
 
-        test('the old actions menu button is gone', () => {
-            renderHeader({rootId: 'root1'});
-            expect(screen.queryByTestId('agent-chat-actions-button')).toBeNull();
-            expect(screen.queryByRole('button', {name: 'Chat actions'})).toBeNull();
+        test('the RHS surface uses its own test ids and no heading', () => {
+            renderHeader({surface: 'rhs', rootId: 'root1'});
+            expect(screen.getByTestId('rhs-title')).toBeTruthy();
+            expect(screen.getByTestId('bot-selector-rhs')).toBeTruthy();
+            expect(screen.getByTestId('new-chat')).toBeTruthy();
+            expect(screen.queryByRole('heading')).toBeNull();
         });
     });
 
@@ -305,29 +304,29 @@ describe('AgentChatHeader', () => {
     });
 
     test('name menu View all agents navigates to the all-agents view', async () => {
-        renderHeader();
+        const {onViewAll} = renderHeader();
         openMenu();
         await clickItem('View all agents');
-        expect(mockPush).toHaveBeenCalledWith(expect.stringMatching(/\/agents\/all$/));
+        expect(onViewAll).toHaveBeenCalledTimes(1);
     });
 
     describe('switch agent', () => {
         const other = {id: 'bot2', displayName: 'Other agent', lastIconUpdate: 0, dmChannelID: 'dm2'} as LLMBot;
 
         test('a new chat offers a submenu to switch agents and opens a new chat with the pick', async () => {
-            renderHeader({bots: [bot, other]});
+            const {onSwitchAgent} = renderHeader({bots: [bot, other]});
             openMenu();
             await waitFor(() => expect(menuItems()).toContain('Switch agent'));
             fireEvent.click(screen.getByRole('menuitem', {name: 'Switch agent'}));
             await waitFor(() => expect(menuItems()).toContain('Other agent'));
             await clickItem('Other agent');
-            expect(mockPush).toHaveBeenCalledWith(expect.stringMatching(/\/chat\/bot2$/));
+            expect(onSwitchAgent).toHaveBeenCalledWith(other);
         });
 
         test.each([
             {name: 'an established thread', props: {rootId: 'root1', bots: [bot, other]}},
             {name: 'a new chat with only one agent', props: {bots: [bot]}},
-            {name: 'a new chat before the agent list has loaded', props: {}},
+            {name: 'a new chat with no other agents listed', props: {}},
             {name: 'a chat that is still loading (open, but its root not yet validated)', props: {inThread: true, bots: [bot, other]}},
         ])('$name does not offer it', async ({props}) => {
             renderHeader(props);
@@ -338,7 +337,7 @@ describe('AgentChatHeader', () => {
 
     test.each([
         {name: 'new chat state shows the tools button', props: {}, bot, shown: true},
-        {name: 'open thread hides it, as the RHS does', props: {rootId: 'root1'}, bot, shown: false},
+        {name: 'open thread hides it', props: {rootId: 'root1'}, bot, shown: false},
         {name: 'service account agent hides it', props: {}, bot: {...bot, useServiceAccountAuth: true} as LLMBot, shown: false},
         {name: 'a chat still loading hides it too', props: {inThread: true}, bot, shown: false},
     ])('tools button: $name', ({props, bot: b, shown}) => {

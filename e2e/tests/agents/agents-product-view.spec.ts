@@ -443,7 +443,7 @@ test.describe('Agents product view', () => {
 
         // The new-chat state shows the agent name and has no chat to rename.
         await expect(header.getByRole('heading', {level: 1, name: botDisplayName})).toBeVisible();
-        await expect(page.getByTestId('agent-chat-new-chat-button')).toBeDisabled();
+        await expect(page.getByTestId('agent-chat-new-chat-button')).toHaveCount(0);
         await trigger.click();
         const newMenu = page.getByRole('menu', {name: `${botDisplayName} options`});
         await expect(newMenu.getByRole('menuitem', {name: 'View all agents'})).toBeVisible();

@@ -99,7 +99,7 @@ function htmlArtifactsEnabled(state = false, action: any) {
 
 // The RHS's list view when no thread is open: the new-chat tab or the chat history. It lives here,
 // not in the RHS body, because the header title (rendered by the host) shows the Back button and
-// the tools button according to it.
+// the tools button according to it. Showing a list view (showRHSList) also closes the open thread.
 export type RHSTab = 'new' | 'threads';
 
 export function rhsTab(state: RHSTab = 'new', action: any): RHSTab {
@@ -182,10 +182,12 @@ export function aiThreads(state: AIThreadsState = initialAIThreadsState, action:
     }
 }
 
-function selectedPostId(state = '', action: any) {
+export function selectedPostId(state = '', action: any) {
     switch (action.type) {
     case 'SELECT_AI_POST':
         return action.postId;
+    case 'AI_RHS_SET_TAB':
+        return '';
     default:
         return state;
     }
