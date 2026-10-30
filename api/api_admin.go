@@ -541,6 +541,59 @@ func (a *API) handleGetMCPSuggestedDescription(c *gin.Context) {
 	c.JSON(http.StatusOK, MCPSuggestedDescriptionResponse{Description: suggestion.Text, Source: suggestion.Source})
 }
 
+// handleGetMCPServerTools lists one saved remote MCP server's tools as the
+// requesting admin, for the System Console flow that connects a new server
+// and has the admin review its tools. A server that needs the admin to sign
+// in reports needsOAuth with the URL that starts the flow. It is read-only,
+// so it is not audited.
+func (a *API) handleGetMCPServerTools(c *gin.Context) {
+	if !a.requireCapability(c, enterprise.CapRemoteMCP) {
+		return
+	}
+
+	mcpConfig := a.config.MCP()
+	index := slices.IndexFunc(mcpConfig.Servers, func(server mcp.ServerConfig) bool {
+		return server.ID == c.Param("serverid")
+	})
+	if index < 0 {
+		c.AbortWithError(http.StatusNotFound, errors.New("MCP server not found"))
+		return
+	}
+	serverConfig := mcpConfig.Servers[index]
+
+	info := MCPServerInfo{
+		Name:       serverConfig.Name,
+		URL:        serverConfig.BaseURL,
+		Tools:      []MCPToolInfo{},
+		ServerType: "remote",
+		Enabled:    serverConfig.Enabled,
+		ID:         serverConfig.ID,
+	}
+	if !serverConfig.Enabled {
+		info.Error = new("The MCP server is disabled.")
+		c.JSON(http.StatusOK, info)
+		return
+	}
+	for _, conflict := range mcpConfig.ServerConflicts() {
+		if conflict.Index == index {
+			info.Error = new(conflict.Error())
+			c.JSON(http.StatusOK, info)
+			return
+		}
+	}
+
+	tools, err := a.discoverRemoteServerTools(c.Request.Context(), c.GetHeader("Mattermost-User-Id"), serverConfig)
+	if err != nil {
+		if _, needsOAuth := errors.AsType[*mcp.OAuthNeededError](err); !needsOAuth {
+			// Connection errors can carry server-supplied text; it stays in the log.
+			a.pluginAPI.Log.Warn("Failed to list MCP server tools", "server", serverConfig.Name, "error", err)
+			err = errors.New("could not connect to the MCP server or list its tools; the server log has details")
+		}
+	}
+	applyMCPDiscoveryResult(&info, tools, err)
+	c.JSON(http.StatusOK, info)
+}
+
 // discoverRemoteServerTools connects to a single remote MCP server and discovers its tools
 func (a *API) discoverRemoteServerTools(ctx context.Context, userID string, serverConfig mcp.ServerConfig) ([]MCPToolInfo, error) {
 	toolInfos, err := mcp.DiscoverRemoteServerTools(ctx, userID, serverConfig, a.pluginAPI.Log, a.mcpClientManager.GetOAuthManager(), a.mcpClientManager.GetHTTPClient(), a.mcpClientManager.GetToolsCache())

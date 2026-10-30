@@ -485,6 +485,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.PUT("/services/:serviceid/access_policy", a.handlePutServicePolicy)
 	adminRouter.DELETE("/services/:serviceid/access_policy", a.handleDeleteServicePolicy)
 	adminRouter.GET("/mcp/:serverid/suggested-description", a.handleGetMCPSuggestedDescription)
+	adminRouter.GET("/mcp/:serverid/tools", a.handleGetMCPServerTools)
 	adminRouter.GET("/mcp/:serverid/access_policy", a.handleGetMCPPolicy)
 	adminRouter.PUT("/mcp/:serverid/access_policy", a.handlePutMCPPolicy)
 	adminRouter.DELETE("/mcp/:serverid/access_policy", a.handleDeleteMCPPolicy)

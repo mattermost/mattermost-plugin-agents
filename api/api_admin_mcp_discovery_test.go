@@ -428,3 +428,112 @@ func TestHandleGetMCPToolsReportsSuggestedPolicy(t *testing.T) {
 		})
 	}
 }
+
+// newAnnotatedMCPServer serves one read-only and one write tool over the
+// go-sdk streamable HTTP transport.
+func newAnnotatedMCPServer(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	server := gomcp.NewServer(&gomcp.Implementation{Name: "annotated", Version: "1.0"}, nil)
+	handler := func(context.Context, *gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		return &gomcp.CallToolResult{}, nil
+	}
+	server.AddTool(&gomcp.Tool{
+		Name:        "read_tool",
+		InputSchema: map[string]any{"type": "object"},
+		Annotations: &gomcp.ToolAnnotations{ReadOnlyHint: true},
+	}, handler)
+	server.AddTool(&gomcp.Tool{Name: "write_tool", InputSchema: map[string]any{"type": "object"}}, handler)
+	httpServer := httptest.NewServer(gomcp.NewStreamableHTTPHandler(
+		func(*http.Request) *gomcp.Server { return server },
+		&gomcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true},
+	))
+	t.Cleanup(httpServer.Close)
+	return httpServer
+}
+
+// The per-server tools route lists one saved remote server's tools for the
+// System Console's add-and-review flow, failing closed on unknown servers and
+// without the remote MCP license, and keeping connection error text out of
+// the response.
+func TestHandleGetMCPServerTools(t *testing.T) {
+	annotated := newAnnotatedMCPServer(t)
+	unreachable := httptest.NewServer(http.NotFoundHandler())
+	unreachable.Close()
+
+	servers := []mcp.ServerConfig{
+		{ID: "annotated", Name: "Annotated", BaseURL: annotated.URL, Enabled: true},
+		{ID: "off", Name: "Off", BaseURL: annotated.URL + "/off", Enabled: false},
+		{ID: "down", Name: "Down", BaseURL: unreachable.URL, Enabled: true},
+	}
+
+	tests := []struct {
+		name       string
+		serverID   string
+		level      enterprise.Level
+		wantStatus int
+		wantError  string
+		wantTools  map[string]string
+	}{
+		{
+			name:       "lists tools with suggested policies",
+			serverID:   "annotated",
+			level:      enterprise.LevelEnterprise,
+			wantStatus: http.StatusOK,
+			wantTools:  map[string]string{"read_tool": mcp.ToolPolicyAutoRunInDM, "write_tool": mcp.ToolPolicyAsk},
+		},
+		{name: "unknown server is not found", serverID: "missing", level: enterprise.LevelEnterprise, wantStatus: http.StatusNotFound},
+		{name: "requires the remote MCP license", serverID: "annotated", level: enterprise.LevelProfessional, wantStatus: http.StatusForbidden},
+		{
+			name:       "disabled server reports an error",
+			serverID:   "off",
+			level:      enterprise.LevelEnterprise,
+			wantStatus: http.StatusOK,
+			wantError:  "The MCP server is disabled.",
+		},
+		{
+			name:       "connection failure reports a generic error",
+			serverID:   "down",
+			level:      enterprise.LevelEnterprise,
+			wantStatus: http.StatusOK,
+			wantError:  "could not connect to the MCP server or list its tools; the server log has details",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api, mockAPI, _ := setupAdminTestEnvironment(t)
+			api.licenseChecker = enterprisetest.CheckerAt(tt.level)
+			mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+			allowAnyPluginAPILogging(mockAPI)
+			api.config.(*testConfigImpl).mcpConfig = mcp.Config{Enabled: true, Servers: servers}
+			api.mcpClientManager.(*mockMCPClientManager).httpClient = &http.Client{}
+
+			req := httptest.NewRequest(http.MethodGet, "/admin/mcp/"+tt.serverID+"/tools", nil)
+			req.Header.Set("Mattermost-User-Id", "admin-user")
+			recorder := httptest.NewRecorder()
+			api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			require.Equal(t, tt.wantStatus, recorder.Code)
+			if tt.wantStatus != http.StatusOK {
+				return
+			}
+			var info MCPServerInfo
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &info))
+			require.Equal(t, tt.serverID, info.ID)
+			if tt.wantError != "" {
+				require.NotNil(t, info.Error)
+				require.Equal(t, tt.wantError, *info.Error)
+				require.Empty(t, info.Tools)
+				return
+			}
+			require.Nil(t, info.Error)
+			got := map[string]string{}
+			for _, tool := range info.Tools {
+				got[tool.Name] = tool.SuggestedPolicy
+				require.Equal(t, mcp.ToolPolicyAsk, tool.DefaultPolicy)
+			}
+			require.Equal(t, tt.wantTools, got)
+		})
+	}
+}

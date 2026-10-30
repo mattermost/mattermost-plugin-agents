@@ -1379,6 +1379,7 @@ func TestAdminRouter(t *testing.T) {
 		"mcp_tools":                 "/admin/mcp/tools",
 		"mcp_vetted_seed":           "/admin/mcp/vetted-tool-seed",
 		"mcp_suggested_description": "/admin/mcp/server-id/suggested-description",
+		"mcp_server_tools":          "/admin/mcp/server-id/tools",
 	} {
 		for name, test := range map[string]struct {
 			request        *http.Request
