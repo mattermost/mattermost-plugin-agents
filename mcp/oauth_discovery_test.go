@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -16,6 +17,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 )
 
 // TestResolveOAuthConfig_DiscoveryStrictnessAndLeniency verifies the discovery
@@ -775,6 +778,86 @@ func TestConstructWellKnownURL(t *testing.T) {
 			result, err := constructWellKnownURL(tt.issuer, tt.suffix)
 			require.NoError(t, err)
 			require.Equal(t, tt.expectedURL, result)
+		})
+	}
+}
+
+// TestInitiateOAuthFlowFallsBackFromNonMatchingChallengeMetadata verifies that
+// a 401 challenge naming protected resource metadata whose resource does not
+// match the server URL (Google's Workspace MCP servers challenge with a
+// per-tool document for ".../mcp" while serving ".../mcp/v1") falls back to the
+// compliant well-known document instead of abandoning discovery, while a
+// compliant challenge document is still preferred.
+func TestInitiateOAuthFlowFallsBackFromNonMatchingChallengeMetadata(t *testing.T) {
+	tests := []struct {
+		name              string
+		challengeResource string
+		wantAuthEndpoint  string
+	}{
+		{name: "compliant challenge metadata is used", challengeResource: "/mcp/v1", wantAuthEndpoint: "/challenge-authorize"},
+		{name: "non-matching challenge metadata falls back to the well-known document", challengeResource: "/mcp", wantAuthEndpoint: "/wellknown-authorize"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			authServer := func(authorizePath string) *httptest.Server {
+				var issuer string
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path != "/.well-known/oauth-authorization-server" {
+						http.NotFound(w, r)
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					assert.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+						Issuer:                        issuer,
+						AuthorizationEndpoint:         issuer + authorizePath,
+						TokenEndpoint:                 issuer + "/token",
+						CodeChallengeMethodsSupported: []string{"S256"},
+					}))
+				}))
+				t.Cleanup(srv.Close)
+				issuer = srv.URL
+				return srv
+			}
+			challengeAS := authServer("/challenge-authorize")
+			wellKnownAS := authServer("/wellknown-authorize")
+
+			var origin string
+			resourceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var prm oauthex.ProtectedResourceMetadata
+				switch r.URL.Path {
+				case "/.well-known/oauth-protected-resource/search_files":
+					prm = oauthex.ProtectedResourceMetadata{Resource: origin + tt.challengeResource, AuthorizationServers: []string{challengeAS.URL}}
+				case "/.well-known/oauth-protected-resource/mcp/v1":
+					prm = oauthex.ProtectedResourceMetadata{Resource: origin + "/mcp/v1", AuthorizationServers: []string{wellKnownAS.URL}}
+				default:
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				assert.NoError(t, json.NewEncoder(w).Encode(prm))
+			}))
+			t.Cleanup(resourceServer.Close)
+			origin = resourceServer.URL
+			serverURL := origin + "/mcp/v1"
+
+			manager, mockClient := setupTestOAuthManagerFull(t, nil, http.DefaultClient)
+			mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
+			mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
+			mockClient.On("KVSetWithExpiry", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+			authURL, err := manager.InitiateOAuthFlowForServerWithMetadata(context.Background(), "user-id", ServerConfig{
+				Name:         "Drive",
+				BaseURL:      serverURL,
+				ClientID:     "static-client",
+				ClientSecret: "static-secret",
+			}, origin+"/.well-known/oauth-protected-resource/search_files", "")
+			require.NoError(t, err)
+
+			parsed, err := url.Parse(authURL)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantAuthEndpoint, parsed.Path)
+			assert.Equal(t, serverURL, parsed.Query().Get("resource"))
 		})
 	}
 }
