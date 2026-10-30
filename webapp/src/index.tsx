@@ -179,7 +179,7 @@ export default class Plugin {
         // Invalidate conversation cache when backend publishes conversation updates
         registry.registerWebSocketEventHandler(
             'custom_mattermost-ai_conversation_updated',
-            (msg: PluginWebSocketMessage<{conversation_id: string; title?: string}>) => {
+            (msg: PluginWebSocketMessage<{conversation_id: string; title?: string; archived?: boolean}>) => {
                 invalidateConversation(msg.data.conversation_id);
                 agentThreadsSync.handleConversationUpdated(msg.data);
             },

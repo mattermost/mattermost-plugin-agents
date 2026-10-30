@@ -4,6 +4,7 @@
 import React, {useCallback, useId, useMemo, useState} from 'react';
 import {useIntl} from 'react-intl';
 import AccountMultipleOutlineIcon from '@mattermost/compass-icons/components/account-multiple-outline';
+import ArchiveOutlineIcon from '@mattermost/compass-icons/components/archive-outline';
 import MessagePlusOutlineIcon from '@mattermost/compass-icons/components/message-plus-outline';
 import MessageOutlineIcon from '@mattermost/compass-icons/components/message-outline';
 import PencilOutlineIcon from '@mattermost/compass-icons/components/pencil-outline';
@@ -46,6 +47,8 @@ interface AgentChatNameMenuProps {
     // Present only when the current user may edit this agent.
     onOpenSettings?: () => void;
     onSelectChat: (rootId: string) => void;
+
+    // Starts a new chat with this agent; also where archiving the open chat lands.
     onNewChat: () => void;
     onViewAll: () => void;
 
@@ -59,9 +62,9 @@ interface AgentChatNameMenuProps {
 
 type Submenu = {kind: 'chats' | 'agents'; focus: boolean};
 
-// The agent chat's name menu: recent chats, the chat actions (new, rename), switching agents where
-// offered, and the way to the agent pages. Shared by the Agents product header and the RHS title,
-// with the rename dialog it opens.
+// The agent chat's name menu: recent chats, the chat actions (new, rename, archive), switching
+// agents where offered, and the way to the agent pages. Shared by the Agents product header and the
+// RHS title, with the rename and archive dialogs it opens.
 const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat, onViewAll, agents, renderTrigger}: AgentChatNameMenuProps) => {
     const intl = useIntl();
     const [nameMenuOpen, setNameMenuOpen] = useState(false);
@@ -221,6 +224,13 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                     label={intl.formatMessage({defaultMessage: 'Rename chat'})}
                                     disabled={!hasChat}
                                     onClick={closing(() => chatActions.startRename({conversationId, title: currentTitle}))}
+                                />
+                                <IconMenuItem
+                                    icon={<ArchiveOutlineIcon/>}
+                                    label={intl.formatMessage({defaultMessage: 'Archive chat'})}
+                                    destructive={true}
+                                    disabled={!hasChat}
+                                    onClick={closing(() => chatActions.startArchive({conversationId, title: currentTitle}, onNewChat))}
                                 />
                             </PopoverMenuGroup>
                             <PopoverMenuDivider/>

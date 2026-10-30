@@ -13,6 +13,7 @@ import type {AIThread} from '@/types/ai_thread';
 
 import {
     THREADS_REFRESH_DEBOUNCE_MS,
+    archiveAIThread,
     createAgentThreadsSync,
     fetchAIThreads,
     groupDMThreadsByBot,
@@ -24,12 +25,14 @@ import {
 jest.mock('@/client', () => ({
     getAIThreads: jest.fn(),
     renameConversation: jest.fn(),
+    archiveConversation: jest.fn(),
 }));
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const {getAIThreads, renameConversation} = require('@/client');
+const {getAIThreads, renameConversation, archiveConversation} = require('@/client');
 const mockGetAIThreads = getAIThreads as jest.Mock;
 const mockRenameConversation = renameConversation as jest.Mock;
+const mockArchiveConversation = archiveConversation as jest.Mock;
 
 const makeBot = (id: string, dmChannelID: string): LLMBot => ({id, dmChannelID} as LLMBot);
 
@@ -143,6 +146,7 @@ describe('stored AI threads', () => {
     beforeEach(() => {
         mockGetAIThreads.mockReset();
         mockRenameConversation.mockReset();
+        mockArchiveConversation.mockReset();
     });
 
     test('views mounted together share one request and read the same list', async () => {
@@ -256,6 +260,55 @@ describe('stored AI threads', () => {
         });
     });
 
+    describe('archive', () => {
+        const loaded = async () => {
+            mockGetAIThreads.mockResolvedValue([makeThread({id: 'c1'}), makeThread({id: 'c2'}), makeThread({id: 'c3'})]);
+            const store = makeStore();
+            await fetchAIThreads(store.dispatch);
+            return store;
+        };
+
+        test('removes the chat before the server answers', async () => {
+            const store = await loaded();
+            const pending = deferred<void>();
+            mockArchiveConversation.mockReturnValue(pending.promise);
+
+            const archiving = archiveAIThread(store, 'c2');
+            expect(titles(store)).toEqual(['c1:', 'c3:']);
+
+            pending.resolve();
+            await archiving;
+            expect(mockArchiveConversation).toHaveBeenCalledWith('c2');
+            expect(titles(store)).toEqual(['c1:', 'c3:']);
+        });
+
+        test('a failed archive puts the chat back where it was and rejects', async () => {
+            const store = await loaded();
+            mockArchiveConversation.mockRejectedValue(new Error('nope'));
+
+            await expect(archiveAIThread(store, 'c2')).rejects.toThrow('nope');
+            expect(titles(store)).toEqual(['c1:', 'c2:', 'c3:']);
+        });
+
+        test('a list fetched before the archive does not bring the chat back', async () => {
+            const store = await loaded();
+            const stale = deferred<AIThread[]>();
+            mockGetAIThreads.mockReturnValueOnce(stale.promise);
+            mockArchiveConversation.mockResolvedValue(null);
+
+            const fetching = fetchAIThreads(store.dispatch);
+            await archiveAIThread(store, 'c2');
+            stale.resolve([makeThread({id: 'c1'}), makeThread({id: 'c2'}), makeThread({id: 'c3'})]);
+            await fetching;
+            expect(titles(store)).toEqual(['c1:', 'c3:']);
+
+            // A list fetched after it reflects the server again, e.g. once a reply restored the chat.
+            mockGetAIThreads.mockResolvedValueOnce([makeThread({id: 'c2'}), makeThread({id: 'c1'})]);
+            await fetchAIThreads(store.dispatch);
+            expect(titles(store)).toEqual(['c2:', 'c1:']);
+        });
+    });
+
     describe('websocket sync', () => {
         beforeEach(() => {
             jest.useFakeTimers();
@@ -322,6 +375,14 @@ describe('stored AI threads', () => {
             sync.handleConversationUpdated({conversation_id: 'c1', title: 'Generated'});
             await settle();
             expect(titles(store)).toEqual(['c1:Generated']);
+            expect(mockGetAIThreads).not.toHaveBeenCalled();
+        });
+
+        test('an archive from another window drops the chat without a refetch', async () => {
+            const {store, sync} = await setup();
+            sync.handleConversationUpdated({conversation_id: 'c1', archived: true});
+            await settle();
+            expect(titles(store)).toEqual([]);
             expect(mockGetAIThreads).not.toHaveBeenCalled();
         });
 

@@ -121,6 +121,10 @@ export const AIThreadsReceived = 'AI_THREADS_RECEIVED';
 export const AIThreadsFailed = 'AI_THREADS_FAILED';
 export const AIThreadTitleSet = 'AI_THREAD_TITLE_SET';
 
+// An archive takes the chat out of the list at once; a failed archive puts it back.
+export const AIThreadRemoved = 'AI_THREAD_REMOVED';
+export const AIThreadRestored = 'AI_THREAD_RESTORED';
+
 export interface AIThreadsState {
 
     // null until the first successful load.
@@ -131,10 +135,12 @@ export interface AIThreadsState {
     // The latest request: the response of a superseded one is dropped.
     requestId: number;
 
-    // Title changes (a rename, a generated title) the latest request may predate, by conversation id,
-    // so its response cannot undo them. `seq` orders them against `requestSeq`.
+    // Title changes (a rename, a generated title) and removals (an archive) the latest request may
+    // predate, by conversation id, so its response cannot undo them. `seq` orders them against
+    // `requestSeq`.
     titleEdits: Record<string, {title: string; seq: number}>;
-    titleSeq: number;
+    removals: Record<string, number>;
+    editSeq: number;
     requestSeq: number;
 }
 
@@ -144,24 +150,28 @@ export const initialAIThreadsState: AIThreadsState = {
     error: false,
     requestId: 0,
     titleEdits: {},
-    titleSeq: 0,
+    removals: {},
+    editSeq: 0,
     requestSeq: 0,
 };
 
 export function aiThreads(state: AIThreadsState = initialAIThreadsState, action: any): AIThreadsState {
     switch (action.type) {
     case AIThreadsRequested:
-        return {...state, loading: true, requestId: action.requestId, requestSeq: state.titleSeq};
+        return {...state, loading: true, requestId: action.requestId, requestSeq: state.editSeq};
     case AIThreadsReceived: {
         if (action.requestId !== state.requestId) {
             return state;
         }
 
-        // Edits made after the request started win over its (older) titles; the rest it reflects.
+        // Edits made after the request started win over its (older) list; the rest it reflects.
         const titleEdits = Object.fromEntries(Object.entries(state.titleEdits).filter(([, edit]) => edit.seq > state.requestSeq));
+        const removals = Object.fromEntries(Object.entries(state.removals).filter(([, seq]) => seq > state.requestSeq));
         const received: AIThread[] = Array.isArray(action.threads) ? action.threads : [];
-        const threads = received.map((t) => (titleEdits[t.id] ? {...t, title: titleEdits[t.id].title} : t));
-        return {...state, threads, loading: false, error: false, titleEdits};
+        const threads = received.
+            filter((t) => !removals[t.id]).
+            map((t) => (titleEdits[t.id] ? {...t, title: titleEdits[t.id].title} : t));
+        return {...state, threads, loading: false, error: false, titleEdits, removals};
     }
     case AIThreadsFailed:
         if (action.requestId !== state.requestId) {
@@ -171,13 +181,34 @@ export function aiThreads(state: AIThreadsState = initialAIThreadsState, action:
     case AIThreadTitleSet: {
         const id: string = action.conversationId;
         const title: string = action.title;
-        const titleSeq = state.titleSeq + 1;
+        const editSeq = state.editSeq + 1;
         return {
             ...state,
             threads: state.threads ? state.threads.map((t) => (t.id === id ? {...t, title} : t)) : state.threads,
-            titleEdits: {...state.titleEdits, [id]: {title, seq: titleSeq}},
-            titleSeq,
+            titleEdits: {...state.titleEdits, [id]: {title, seq: editSeq}},
+            editSeq,
         };
+    }
+    case AIThreadRemoved: {
+        const id: string = action.conversationId;
+        const editSeq = state.editSeq + 1;
+        return {
+            ...state,
+            threads: state.threads ? state.threads.filter((t) => t.id !== id) : state.threads,
+            removals: {...state.removals, [id]: editSeq},
+            editSeq,
+        };
+    }
+    case AIThreadRestored: {
+        // Back at its old position, unless a newer list already has it.
+        const thread: AIThread = action.thread;
+        const removals = Object.fromEntries(Object.entries(state.removals).filter(([id]) => id !== thread.id));
+        if (!state.threads || state.threads.some((t) => t.id === thread.id)) {
+            return {...state, removals};
+        }
+        const threads = [...state.threads];
+        threads.splice(Math.min(action.index, threads.length), 0, thread);
+        return {...state, threads, removals};
     }
     default:
         return state;
