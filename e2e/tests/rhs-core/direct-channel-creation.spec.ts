@@ -92,7 +92,7 @@ test.describe('Direct Channel Creation', () => {
     await firstBot.click();
 
     // Channel should be immediately available (no loading state)
-    await expect(page.getByText('Setting up chat channel...')).not.toBeVisible({ timeout: 1000 });
+    await expect(page.getByText('Setting up chat…')).not.toBeVisible({ timeout: 1000 });
 
     // Verify the text area is enabled
     await expect(aiPlugin.rhsPostTextarea).toBeEnabled();

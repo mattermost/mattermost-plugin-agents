@@ -10,6 +10,7 @@ import {Icon} from '@mattermost/compass-ui/components/icon';
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
 import ChatRowActionsMenu from '@/components/agents/chat_row_actions_menu';
+import {chatTitle} from '@/components/agents/chat_title';
 import type {ChatActions} from '@/components/agents/use_chat_actions';
 import {Timestamp} from '@/mm_webapp';
 
@@ -48,7 +49,7 @@ export default function ThreadItem(props: Props) {
     const [menuOpen, setMenuOpen] = useState(false);
     const title = props.title.trim();
     const preview = props.preview.trim();
-    const heading = title || preview || intl.formatMessage({defaultMessage: 'Conversation with Agents'});
+    const heading = title || preview || chatTitle(intl, '');
 
     // The first message is the heading when there is no title, so it is not repeated below.
     const body = title ? preview : '';

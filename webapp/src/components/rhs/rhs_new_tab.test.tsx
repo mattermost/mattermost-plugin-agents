@@ -149,7 +149,7 @@ describe('RHSNewTab', () => {
         mockGetChannelMember.mockResolvedValue({channel_id: 'dm1', roles: 'channel_user'});
 
         renderTab(store);
-        expect(screen.getByText('Setting up chat channel...')).toBeTruthy();
+        expect(screen.getByText('Setting up chat…')).toBeTruthy();
         expect(screen.queryByTestId('host-advanced-text-editor')).toBeNull();
 
         expect(await screen.findByTestId('host-advanced-text-editor')).toBeTruthy();

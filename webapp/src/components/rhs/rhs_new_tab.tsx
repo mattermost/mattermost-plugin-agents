@@ -6,12 +6,12 @@ import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 
 import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
-import {Spinner} from '@mattermost/compass-ui/components/spinner';
 
 import type {LLMBot} from '@/bots';
 import {useRefreshAgentThreads} from '@/hooks/use_agent_threads';
 
 import AgentNewChat from '../agent_chat/agent_new_chat';
+import ChatSetupStatus from '../agent_chat/chat_setup_status';
 import {useAgentDMChannel} from '../agents/use_agent_dm_channel';
 
 type Props = {
@@ -42,12 +42,7 @@ const RHSNewTab = ({selectPost, activeBot}: Props) => {
             </Status>
         );
     } else if (dm.status === 'loading' || !activeBot) {
-        content = (
-            <Status>
-                <Spinner size='16'/>
-                <FormattedMessage defaultMessage='Setting up chat channel...'/>
-            </Status>
-        );
+        content = <ChatSetupStatus/>;
     } else {
         content = (
             <AgentNewChat

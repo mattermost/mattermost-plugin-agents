@@ -71,7 +71,7 @@ describe('ThreadItem', () => {
     test.each([
         {name: 'a title leads and the message follows', title: 'A title', preview: 'First message', texts: ['A title', 'First message'], absent: []},
         {name: 'the first message heads an untitled chat and is not repeated', title: '  ', preview: 'First message', texts: ['First message'], absent: []},
-        {name: 'a generic label heads a chat with neither', title: '', preview: '', texts: ['Conversation with Agents'], absent: []},
+        {name: 'a generic label heads a chat with neither', title: '', preview: '', texts: ['New chat'], absent: []},
     ])('$name', ({title, preview, texts}) => {
         renderItem({title, preview});
 

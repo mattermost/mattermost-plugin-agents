@@ -24,6 +24,7 @@ import {useConversationIdForThread} from '@/hooks/use_conversation_id_for_thread
 import {useMenuTransition} from '@/hooks/use_menu_transition';
 import {isValidId} from '@/utils/ids';
 
+import {chatTitle} from './chat_title';
 import {ChatActionsDialogs, useChatActions} from './use_chat_actions';
 
 // No compass token for the prototype's chat list max-height (200px).
@@ -93,9 +94,9 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
     const hasChat = Boolean(rootId && conversationId);
 
     // An open chat is named by its title; the agent's name labels the new-chat state.
-    const chatTitle = rootId ? (currentTitle.trim() || intl.formatMessage({defaultMessage: 'New chat'})) : '';
-    const nameLabel = rootId ? chatTitle : bot.displayName;
-    const nameMenuLabel = rootId ? intl.formatMessage({defaultMessage: '{title}, {name} options'}, {title: chatTitle, name: bot.displayName}) : intl.formatMessage({defaultMessage: '{name} options'}, {name: bot.displayName});
+    const title = rootId ? chatTitle(intl, currentTitle) : '';
+    const nameLabel = rootId ? title : bot.displayName;
+    const nameMenuLabel = rootId ? intl.formatMessage({defaultMessage: '{title}, {name} options'}, {title, name: bot.displayName}) : intl.formatMessage({defaultMessage: '{name} options'}, {name: bot.displayName});
     const newChatLabel = intl.formatMessage({defaultMessage: 'New chat'});
     const chatsLabel = intl.formatMessage({defaultMessage: 'Recent chats'});
     const switchable = agents && agents.bots.length > 1 ? agents : null;
@@ -187,7 +188,7 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                                         <IconMenuItem
                                                             key={thread.id}
                                                             icon={<MessageOutlineIcon/>}
-                                                            label={thread.title.trim() || newChatLabel}
+                                                            label={chatTitle(intl, thread.title)}
                                                             active={active}
                                                             trailingElement={active}
                                                             {...(active && {'aria-current': true})}

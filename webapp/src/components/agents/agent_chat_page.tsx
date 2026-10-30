@@ -19,6 +19,7 @@ import {useRefreshAgentThreads} from '@/hooks/use_agent_threads';
 import AgentChatDropZone from '../agent_chat/agent_chat_drop_zone';
 import AgentChatThreadView, {isThreadViewerAvailable} from '../agent_chat/agent_chat_thread_view';
 import AgentNewChat from '../agent_chat/agent_new_chat';
+import ChatSetupStatus from '../agent_chat/chat_setup_status';
 
 import AgentChatTitleBar from './agent_chat_title_bar';
 import AgentSettingsModal from './agent_settings_modal';
@@ -91,7 +92,7 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
             </CenteredState>
         );
     } else if (dm.status === 'loading') {
-        body = <LoadingState label={intl.formatMessage({defaultMessage: 'Setting up chat…'})}/>;
+        body = <ChatSetupStatus/>;
     } else if (rootId) {
         body = (
             <AgentThread
@@ -156,13 +157,9 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
     );
 };
 
-const LoadingState = ({label}: {label?: string}) => (
+const LoadingState = () => (
     <CenteredState>
-        <Spinner
-            size='20'
-            aria-label={label}
-        />
-        {label && <span>{label}</span>}
+        <Spinner size='20'/>
     </CenteredState>
 );
 

@@ -18,6 +18,7 @@ import {useBotlist, type LLMBot} from '@/bots';
 import {getProfilePictureUrl} from '@/client';
 import {useAgentThreads} from '@/hooks/use_agent_threads';
 
+import {chatTitle} from './chat_title';
 import {recentAgents, recentChats, searchAgents, type ChatResult} from './find_agents_search';
 import {useAgentsRoute} from './use_agents_route';
 
@@ -88,7 +89,7 @@ const Content = ({onClose}: {onClose: () => void}) => {
         return () => window.cancelAnimationFrame(frame);
     }, []);
 
-    const placeholderTitle = intl.formatMessage({defaultMessage: 'New chat'});
+    const placeholderTitle = chatTitle(intl, '');
     const searching = query.trim() !== '';
 
     // True once the first threads fetch has settled (success or error). Until then the empty

@@ -22,6 +22,7 @@ import type {AgentThreadsByBot} from '@/hooks/use_agent_threads';
 import type {AIThread} from '@/types/ai_thread';
 
 import ChatRowActionsMenu from './chat_row_actions_menu';
+import {chatTitle} from './chat_title';
 import type {ChatActions} from './use_chat_actions';
 
 interface AgentThreadsListProps {
@@ -141,9 +142,6 @@ const AgentThreadsList = ({
 
     const sectionTitle = intl.formatMessage({defaultMessage: 'Your agents'});
 
-    // Titles are generated asynchronously, so a blank title falls back to the placeholder.
-    const newChatPlaceholder = intl.formatMessage({defaultMessage: 'New chat'});
-
     return (
         <Section aria-label={sectionTitle}>
             <SectionHeader>
@@ -257,7 +255,6 @@ const AgentThreadsList = ({
                                                 active={isActiveAgent && activeRootId === thread.root_post_id}
                                                 generating={Boolean(thread.root_post_id && generatingRoots?.has(thread.root_post_id))}
                                                 unread={Boolean(thread.root_post_id && unreadRoots?.has(thread.root_post_id))}
-                                                placeholder={newChatPlaceholder}
                                                 onSelect={() => onSelectThread(bot.id, thread.root_post_id as string)}
                                                 chatActions={chatActions}
                                             />
@@ -304,7 +301,6 @@ interface ThreadItemProps {
 
     // The agent finished answering while the chat was not open.
     unread: boolean;
-    placeholder: string;
 
     // The row was revealed by "Show more" (enter), or is being folded away by "Show less" (leave).
     motion?: 'enter' | 'leave';
@@ -315,10 +311,10 @@ interface ThreadItemProps {
 // A compass ChannelSidebarItem only renders its own kebab for channel and DM rows, so the
 // actions button is overlaid on the row (as the agent rows do for their chevron and [+]),
 // with the same hover/focus reveal as the compass kebab.
-const ThreadItem = ({thread, active, generating, unread, placeholder, motion, onSelect, chatActions}: ThreadItemProps) => {
+const ThreadItem = ({thread, active, generating, unread, motion, onSelect, chatActions}: ThreadItemProps) => {
     const intl = useIntl();
     const [menuOpen, setMenuOpen] = useState(false);
-    const title = thread.title.trim() || placeholder;
+    const title = chatTitle(intl, thread.title);
     const actionsLabel = intl.formatMessage({defaultMessage: 'Actions for {title}'}, {title});
 
     return (
