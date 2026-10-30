@@ -146,21 +146,29 @@ test.describe('MCP Panel', () => {
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
         await systemConsole.navigateToPluginConfig(mattermost.url());
 
-        const description = page.getByLabel('Description', {exact: true});
-        await description.scrollIntoViewIfNeeded();
+        // Remote servers are edited in the server dialog, which saves on its own.
+        const openServer = async () => {
+            await page.getByRole('button', {name: 'Edit Tickets'}).click();
+            const dialog = page.getByRole('dialog', {name: 'Edit Tickets'});
+            await expect(dialog).toBeVisible();
+            return dialog;
+        };
+        let dialog = await openServer();
+        const description = dialog.getByLabel('Description', {exact: true});
         await expect(description).toHaveValue('');
 
-        await page.getByRole('button', {name: 'Auto-fill from server'}).click();
+        await dialog.getByRole('button', {name: 'Auto-fill from server'}).click();
         await expect(description).toHaveValue(MOCK_SERVER_SELF_DESCRIPTION, {timeout: 30000});
-        await expect(page.getByText('Filled from the description the server reports. Edit it as needed, then save.')).toBeVisible();
+        await expect(dialog.getByText('Filled from the description the server reports. Edit it as needed, then save.')).toBeVisible();
 
         const edited = `${MOCK_SERVER_SELF_DESCRIPTION} Use it for customer escalations.`;
         await description.fill(edited);
-        await systemConsole.clickSave();
+        await dialog.getByRole('button', {name: 'Save', exact: true}).click();
+        await expect(dialog).toBeHidden({timeout: 30000});
         await page.reload();
 
-        const reloaded = page.getByLabel('Description', {exact: true});
-        await reloaded.scrollIntoViewIfNeeded();
+        dialog = await openServer();
+        const reloaded = dialog.getByLabel('Description', {exact: true});
         await expect(reloaded).toHaveValue(edited);
     });
 });
