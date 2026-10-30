@@ -42,6 +42,12 @@ const DM_CHAT: Chat = {prompt: 'product-view-dm-011', reply: 'Channels DM reply 
 const ENTER_REPLY_CHAT: Chat = {prompt: 'product-view-reply-enter-012', reply: 'Reply composer enter marker.'};
 const COMPLETE_CHAT: Chat = {prompt: 'product-view-autocomplete-013', reply: 'Autocomplete chat reply marker.'};
 const STOP_CHAT: Chat = {prompt: 'product-view-stop-seed-014', reply: 'Stop chat reply marker.'};
+const SIDEBAR_ARCHIVE_CHAT: Chat = {prompt: 'product-view-sidebar-archive-015', reply: 'Sidebar archive reply marker.', title: 'Product View Sidebar Archive Chat'};
+const HEADER_ARCHIVE_CHAT: Chat = {prompt: 'product-view-header-archive-016', reply: 'Header archive reply marker.', title: 'Product View Header Archive Chat'};
+
+// The title generator answers with a blank title, so the sidebar row keeps the "New chat" placeholder.
+const EMPTY_TITLE_CHAT: Chat = {prompt: 'product-view-empty-title-017', reply: 'Empty title reply marker.', title: ' '};
+const KEPT_CHAT: Chat = {prompt: 'product-view-kept-018', reply: 'Kept chat reply marker.', title: 'Product View Kept Chat'};
 const ATTACH_PROMPT = 'product-view-attach-004';
 const ATTACH_FILE = 'product-view-attachment.txt';
 const STOP_PROMPT = 'product-view-stop-005';
@@ -61,6 +67,7 @@ const chatFixtures = (...chats: Chat[]) => chats.flatMap(({prompt, reply, title}
 ]);
 const baseFixtures = () => [
     ...chatFixtures({prompt: FIRST_PROMPT, reply: FIRST_REPLY, title: THREAD_TITLE}, SIDEBAR_CHAT, HEADER_CHAT, VIEW_CHAT, DM_CHAT, ENTER_REPLY_CHAT, COMPLETE_CHAT, STOP_CHAT),
+    ...chatFixtures(SIDEBAR_ARCHIVE_CHAT, HEADER_ARCHIVE_CHAT, EMPTY_TITLE_CHAT, KEPT_CHAT),
     ...replyFixtures([ENTER_PROMPT, ATTACH_PROMPT]),
 
     // Streams slowly enough to be stopped mid-way.
@@ -149,6 +156,52 @@ async function seedThread(chat: Chat): Promise<string> {
         return Object.values(thread.posts).some((p) => p.user_id === botUserId && p.message.includes(chat.reply));
     }, {timeout: 60000}).toBe(true);
     return root.id;
+}
+
+// Whether GET /ai_threads lists the chat rooted at rootId.
+async function isListed(rootId: string): Promise<boolean> {
+    const client = await mattermost.getClient(username, password);
+    const threads = await (await fetch(`${mattermost.url()}/plugins/mattermost-ai/ai_threads`, {
+        headers: {Authorization: `Bearer ${client.getToken()}`},
+    })).json();
+    return threads.some((t: {root_post_id: string}) => t.root_post_id === rootId);
+}
+
+// Opens a sidebar row's actions menu, picks Archive chat, checks the confirmation sits above the
+// product chrome, and confirms. The row leaves the list.
+async function archiveFromSidebar(page: Page, rowTitle: string): Promise<void> {
+    const list = sidebar(page).getByRole('list', {name: `${botDisplayName} chats`});
+    const row = list.getByRole('listitem').filter({has: page.getByRole('button', {name: rowTitle, exact: true})});
+    await expect(row).toHaveCount(1, {timeout: 60000});
+    await row.hover();
+    await row.getByRole('button', {name: `Actions for ${rowTitle}`}).click();
+
+    await page.getByRole('menu', {name: `Actions for ${rowTitle}`}).getByRole('menuitem', {name: 'Archive chat'}).click();
+
+    const dialog = page.getByRole('dialog', {name: 'Archive chat'});
+    await expect(dialog).toBeVisible();
+    const box = (await dialog.boundingBox())!;
+    const onTop = await page.evaluate(({x, y}) => {
+        const hit = document.elementFromPoint(x, y);
+        const header = document.getElementById('global-header');
+        const headerBox = header?.getBoundingClientRect();
+        const overHeader = headerBox ? document.elementFromPoint(headerBox.left + (headerBox.width / 2), headerBox.top + (headerBox.height / 2)) : null;
+        return {
+            dialogHit: Boolean(hit?.closest('[role="dialog"]')),
+            headerCovered: header ? !header.contains(overHeader) : null,
+        };
+    }, {x: box.x + (box.width / 2), y: box.y + (box.height / 2)});
+    expect(onTop.dialogHit).toBe(true);
+    if (onTop.headerCovered !== null) {
+        expect(onTop.headerCovered).toBe(true);
+    }
+
+    const archiveResponse = page.waitForResponse((r) => r.url().endsWith('/archive'));
+    await dialog.getByRole('button', {name: 'Archive'}).click();
+    const response = await archiveResponse;
+    expect(response.status(), await response.text()).toBe(200);
+    await expect(dialog).toBeHidden();
+    await expect(row).toHaveCount(0, {timeout: 15000});
 }
 
 const MATTERMOST_START_MS = 240000;
@@ -378,7 +431,7 @@ test.describe('Agents product view', () => {
         await expect(trigger).toHaveAttribute('aria-expanded', 'true');
         const nameMenu = page.getByRole('menu', {name: `${HEADER_CHAT.title}, ${botDisplayName} options`});
         // The menu has a Recent chats submenu first, then the chat actions. A regular user cannot edit the agent, so no Agent settings.
-        await expect(nameMenu.getByRole('menuitem')).toHaveText(['Recent chats', 'New chat', 'Rename chat', 'View all agents']);
+        await expect(nameMenu.getByRole('menuitem')).toHaveText(['Recent chats', 'New chat', 'Rename chat', 'Archive chat', 'View all agents']);
         await page.keyboard.press('Escape');
         await expect(nameMenu).toHaveCount(0);
 
@@ -406,14 +459,66 @@ test.describe('Agents product view', () => {
         await page.getByTestId('agent-chat-new-chat-button').click();
         await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}$`));
 
-        // The new-chat state shows the agent name and has no chat to rename.
+        // The new-chat state shows the agent name and has no chat to rename or archive.
         await expect(header.getByRole('heading', {level: 1, name: botDisplayName})).toBeVisible();
         await expect(page.getByTestId('agent-chat-new-chat-button')).toHaveCount(0);
         await trigger.click();
         const newMenu = page.getByRole('menu', {name: `${botDisplayName} options`});
         await expect(newMenu.getByRole('menuitem', {name: 'View all agents'})).toBeVisible();
         await expect(newMenu.getByRole('menuitem', {name: 'Rename chat'})).toHaveCount(0);
+        await expect(newMenu.getByRole('menuitem', {name: 'Archive chat'})).toHaveCount(0);
         await page.keyboard.press('Escape');
+    });
+
+    test('header: Archive chat archives the open chat and lands on a new chat', async ({page}) => {
+        const rootId = await startChatViaUi(page, HEADER_ARCHIVE_CHAT);
+        await expect(sidebar(page).getByRole('button', {name: HEADER_ARCHIVE_CHAT.title, exact: true})).toBeVisible({timeout: 30000});
+
+        // Archive chat is enabled once the agent's reply, which carries the conversation id, is in.
+        const trigger = page.getByTestId('agent-chat-menu-button');
+        const menu = page.getByRole('menu', {name: /options$/});
+        await trigger.click();
+        await expect(menu.getByRole('menuitem', {name: 'Archive chat'})).toBeEnabled({timeout: 30000});
+        await menu.getByRole('menuitem', {name: 'Archive chat'}).click();
+
+        // Cancel keeps the chat.
+        const dialog = page.getByRole('dialog', {name: 'Archive chat'});
+        await expect(dialog).toContainText(`Archive "${HEADER_ARCHIVE_CHAT.title}"?`);
+        await dialog.getByRole('button', {name: 'Cancel'}).click();
+        await expect(dialog).toBeHidden();
+        await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}/${rootId}$`));
+
+        await trigger.click();
+        await menu.getByRole('menuitem', {name: 'Archive chat'}).click();
+        const archiveResponse = page.waitForResponse((r) => r.url().endsWith('/archive'));
+        await dialog.getByRole('button', {name: 'Archive'}).click();
+        expect((await archiveResponse).status()).toBe(200);
+        await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}$`), {timeout: 15000});
+        await expect(sidebar(page).getByRole('button', {name: HEADER_ARCHIVE_CHAT.title, exact: true})).toHaveCount(0);
+        expect(await isListed(rootId)).toBe(false);
+    });
+
+    test('sidebar: archiving the open chat lands on a new chat with its agent', async ({page}) => {
+        const rootId = await startChatViaUi(page, SIDEBAR_ARCHIVE_CHAT);
+
+        await archiveFromSidebar(page, SIDEBAR_ARCHIVE_CHAT.title!);
+        await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}$`), {timeout: 15000});
+        await expect(newChatComposer(page).getByRole('textbox')).toBeVisible();
+        expect(await isListed(rootId)).toBe(false);
+    });
+
+    test('sidebar: a chat with a blank title ("New chat" row) is archived without leaving the open chat', async ({page}) => {
+        const emptyRootId = await seedThread(EMPTY_TITLE_CHAT);
+        const keptRootId = await seedThread(KEPT_CHAT);
+        await login(page);
+        await page.goto(threadUrl(keptRootId), {waitUntil: 'domcontentloaded'});
+        await expect(page.getByTestId('agent-chat-thread').getByText(KEPT_CHAT.reply)).toBeVisible({timeout: 30000});
+
+        await archiveFromSidebar(page, 'New chat');
+        await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}/${keptRootId}$`));
+        await expect(sidebar(page).getByRole('button', {name: KEPT_CHAT.title, exact: true})).toBeVisible();
+        expect(await isListed(emptyRootId)).toBe(false);
+        expect(await isListed(keptRootId)).toBe(true);
     });
 
     test('Agent settings is offered to an admin and opens the agent editor', async ({page}) => {
