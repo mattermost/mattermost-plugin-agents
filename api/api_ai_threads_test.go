@@ -33,10 +33,13 @@ func TestGetAIThreadsOrdersByLastActivity(t *testing.T) {
 		userID    string
 		updatedAt int64
 		turns     []int64
-		deleted   bool
+		archived  bool
 		// renameTo, when set, renames the conversation through the API
 		// after its turns are added.
 		renameTo string
+		// rootPostDeleteAt, when set, roots the conversation at a Mattermost
+		// post with that DeleteAt (0 for a live post).
+		rootPostDeleteAt *int64
 	}
 	type wantRow struct {
 		title    string
@@ -59,12 +62,12 @@ func TestGetAIThreadsOrdersByLastActivity(t *testing.T) {
 			want: []wantRow{{"continued", 5000}, {"untouched", 3000}},
 		},
 		{
-			name: "other users' and deleted conversations are excluded",
+			name: "other users' and archived conversations are excluded",
 			convs: []convSpec{
 				{title: "continued", userID: testUserID, updatedAt: 1000, turns: []int64{7000}},
 				{title: "untouched", userID: testUserID, updatedAt: 2000},
 				{title: "theirs", userID: otherUserID, updatedAt: 1000, turns: []int64{9000}},
-				{title: "deleted", userID: testUserID, updatedAt: 1000, turns: []int64{9000}, deleted: true},
+				{title: "archived", userID: testUserID, updatedAt: 1000, turns: []int64{9000}, archived: true},
 			},
 			want: []wantRow{{"continued", 7000}, {"untouched", 2000}},
 		},
@@ -75,6 +78,15 @@ func TestGetAIThreadsOrdersByLastActivity(t *testing.T) {
 				{title: "newer", userID: testUserID, updatedAt: 2000, turns: []int64{2000}},
 			},
 			want: []wantRow{{"newer", 2000}, {"renamed", 1000}},
+		},
+		{
+			name: "conversations whose root post was deleted are excluded",
+			convs: []convSpec{
+				{title: "live root", userID: testUserID, updatedAt: 3000, rootPostDeleteAt: new(int64(0))},
+				{title: "deleted root", userID: testUserID, updatedAt: 4000, rootPostDeleteAt: new(int64(3500))},
+				{title: "threadless", userID: testUserID, updatedAt: 2000},
+			},
+			want: []wantRow{{"live root", 3000}, {"threadless", 2000}},
 		},
 		{
 			name:  "no conversations returns an empty array",
@@ -105,6 +117,12 @@ func TestGetAIThreadsOrdersByLastActivity(t *testing.T) {
 					CreatedAt: spec.updatedAt,
 					UpdatedAt: spec.updatedAt,
 				}
+				if spec.rootPostDeleteAt != nil {
+					rootPostID := model.NewId()
+					conv.RootPostID = &rootPostID
+					_, err := db.Exec("INSERT INTO Posts (Id, DeleteAt) VALUES ($1, $2)", rootPostID, *spec.rootPostDeleteAt)
+					require.NoError(t, err)
+				}
 				require.NoError(t, convStore.CreateConversation(conv))
 				for i, createdAt := range spec.turns {
 					require.NoError(t, convStore.CreateTurn(&store.Turn{
@@ -116,10 +134,8 @@ func TestGetAIThreadsOrdersByLastActivity(t *testing.T) {
 						CreatedAt:      createdAt,
 					}))
 				}
-				if spec.deleted {
-					// Soft-delete directly so UpdatedAt is not bumped past the turns.
-					_, err := db.Exec("UPDATE LLM_Conversations SET DeleteAt = $1 WHERE ID = $2", spec.updatedAt, conv.ID)
-					require.NoError(t, err)
+				if spec.archived {
+					require.NoError(t, convStore.ArchiveConversation(conv.ID, spec.updatedAt))
 				}
 				if spec.renameTo != "" {
 					body, err := json.Marshal(renameConversationRequest{Title: spec.renameTo})

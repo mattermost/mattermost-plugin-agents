@@ -99,6 +99,10 @@ func TestHandleStop(t *testing.T) {
 		omitNotifier       bool
 		notifierErr        error
 		omitConversationID bool
+		archived           bool
+		// rootPost, when set, roots the conversation at a post the plugin
+		// API answers for this way.
+		rootPost *rootPostState
 	}
 
 	tests := []struct {
@@ -144,6 +148,41 @@ func TestHandleStop(t *testing.T) {
 			expectPublished:  false,
 		},
 		{
+			name:             "owner can stop a stream on an archived conversation's post",
+			setup:            setup{postUserID: testBotUserID, conversationOwner: testUserID, archived: true},
+			expectedStatus:   http.StatusOK,
+			expectStopCalled: true,
+			expectPublished:  true,
+		},
+		{
+			name:             "non-owner cannot stop a stream on an archived conversation's post",
+			setup:            setup{postUserID: testBotUserID, conversationOwner: testOtherUserID, archived: true},
+			expectedStatus:   http.StatusForbidden,
+			expectStopCalled: false,
+			expectPublished:  false,
+		},
+		{
+			name:             "owner cannot stop a stream of a conversation whose root post was deleted",
+			setup:            setup{postUserID: testBotUserID, conversationOwner: testUserID, archived: true, rootPost: new(rootPostDeleted)},
+			expectedStatus:   http.StatusForbidden,
+			expectStopCalled: false,
+			expectPublished:  false,
+		},
+		{
+			name:             "a failed root post lookup denies ownership",
+			setup:            setup{postUserID: testBotUserID, conversationOwner: testUserID, rootPost: new(rootPostLookupFails)},
+			expectedStatus:   http.StatusForbidden,
+			expectStopCalled: false,
+			expectPublished:  false,
+		},
+		{
+			name:             "owner can stop a stream of a conversation whose root post is live",
+			setup:            setup{postUserID: testBotUserID, conversationOwner: testUserID, rootPost: new(rootPostLive)},
+			expectedStatus:   http.StatusOK,
+			expectStopCalled: true,
+			expectPublished:  true,
+		},
+		{
 			name:             "non-empty body is rejected before any side effect",
 			setup:            setup{postUserID: testBotUserID, conversationOwner: testUserID, body: `{"unexpected":"payload"}`},
 			expectedStatus:   http.StatusBadRequest,
@@ -176,11 +215,20 @@ func TestHandleStop(t *testing.T) {
 			}
 			if !test.setup.omitConversationID {
 				post.AddProp(streaming.ConversationIDProp, conversationID)
-				e.conversationStore.conversations[conversationID] = &store.Conversation{
+				conv := &store.Conversation{
 					ID:     conversationID,
 					UserID: test.setup.conversationOwner,
 					BotID:  testBotUserID,
 				}
+				if test.setup.archived {
+					conv.DeleteAt = 1700000000000
+				}
+				if test.setup.rootPost != nil {
+					rootPostID := "rootstop123456789012345678"
+					conv.RootPostID = &rootPostID
+					e.mockRootPost(rootPostID, *test.setup.rootPost)
+				}
+				e.conversationStore.conversations[conversationID] = conv
 			}
 
 			e.mockAPI.On("GetPost", postID).Return(post, nil)

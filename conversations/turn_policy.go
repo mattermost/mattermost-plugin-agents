@@ -116,6 +116,24 @@ func (c *Conversations) resolveTurnPolicy(ctx context.Context, req turnRequest) 
 	return p, nil
 }
 
+// activateTurnConversation restores the turn's conversation when it is
+// archived (ActivateConversation leaves an active one unchanged). Every entry
+// point that starts or resumes a turn on an existing conversation at the
+// user's request calls it after resolveTurnPolicy accepts the turn, so a
+// refused turn never un-archives, and the run continues on the restored row.
+// Wakes never call it: they drop for an archived conversation instead.
+func (c *Conversations) activateTurnConversation(p *turnPolicy) error {
+	if p.conv == nil {
+		return nil
+	}
+	conv, err := c.convService.ActivateConversation(p.conv)
+	if err != nil {
+		return fmt.Errorf("failed to restore archived conversation: %w", err)
+	}
+	p.conv = conv
+	return nil
+}
+
 // setChannelRunTools derives tool availability for a channel run started by
 // initiator, posted by initiatingUser. An unknown initiator is treated as
 // unattended.
