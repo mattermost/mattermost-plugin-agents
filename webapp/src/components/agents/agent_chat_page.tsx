@@ -31,9 +31,12 @@ interface AgentChatPageProps {
     rootId?: string;
     toChat: (botId: string, rootId?: string) => void;
     toAll: () => void;
+
+    // The header leaves out the agent's avatar and name (a host header above shows them).
+    compactHeader?: boolean;
 }
 
-const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
+const AgentChatPage = ({botId, rootId, toChat, toAll, compactHeader = false}: AgentChatPageProps) => {
     const intl = useIntl();
     const dispatch = useDispatch();
     const {bots} = useBotlist();
@@ -137,6 +140,7 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
                     onSelectChat={(chatRootId) => toChat(bot.id, chatRootId)}
                     onNewChat={newChat}
                     onViewAll={toAll}
+                    compact={compactHeader}
                     {...(access.status === 'allowed' ? {onOpenSettings: () => setSettingsOpen(true)} : {})}
                 />
                 <AgentChatDropZone testId='agent-chat-file-drop-zone'>

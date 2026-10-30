@@ -10,7 +10,7 @@ import {ChannelSidebarItem} from '@mattermost/compass-ui/components/channel-side
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {Scrollbar} from '@mattermost/compass-ui/components/scrollbar';
 
-import {useBotlist} from '@/bots';
+import {useBotlist, type LLMBot} from '@/bots';
 import {useUnreadThreadRoots} from '@/hooks/use_agent_thread_read';
 import {useAgentThreads} from '@/hooks/use_agent_threads';
 
@@ -54,15 +54,27 @@ const NavRow = ({name, glyph, active, onClick}: NavRowProps) => (
     </NavRowWrapper>
 );
 
-// Data wiring for the "Your agents" section: bots, DM threads (the shared stored list, kept current
-// over the websocket), route highlighting, and the chat actions' dialogs.
-const YourAgentsSection = () => {
-    const route = useAgentsRoute();
-    const {bots} = useBotlist();
+interface AgentThreadsSectionProps {
+
+    // The agents to list (null while loading).
+    bots: LLMBot[] | null;
+    activeBotId?: string;
+    activeRootId?: string;
+    onSelectThread: (botId: string, rootId: string) => void;
+    onNewChat: (botId: string) => void;
+
+    // The section's heading; defaults to "Your agents".
+    title?: string;
+}
+
+// Data wiring for an agent chats list: DM threads (the shared stored list, kept current over the
+// websocket), the generating and unread markers, and the chat actions' dialogs. The product sidebar
+// lists every agent; an agent's DM in the Channels app lists only that agent.
+export const AgentThreadsSection = ({bots, activeBotId, activeRootId, onSelectThread, onNewChat, title}: AgentThreadsSectionProps) => {
     const {threadsByBot, loading, error, refresh} = useAgentThreads(bots);
     const generatingRoots = useGeneratingThreadRoots();
     const listedRoots = useMemo(() => Object.values(threadsByBot).flat().map((t) => t.root_post_id).filter((id): id is string => Boolean(id)), [threadsByBot]);
-    const unreadRoots = useUnreadThreadRoots(listedRoots, route.rootId ?? '');
+    const unreadRoots = useUnreadThreadRoots(listedRoots, activeRootId ?? '');
     const chatActions = useChatActions();
 
     return (
@@ -72,17 +84,34 @@ const YourAgentsSection = () => {
                 threadsByBot={threadsByBot}
                 loading={loading && Object.keys(threadsByBot).length === 0}
                 error={error}
-                activeBotId={route.botId}
-                activeRootId={route.rootId}
+                activeBotId={activeBotId}
+                activeRootId={activeRootId}
                 generatingRoots={generatingRoots}
                 unreadRoots={unreadRoots}
-                onSelectThread={route.toChat}
-                onNewChat={route.toChat}
+                onSelectThread={onSelectThread}
+                onNewChat={onNewChat}
                 onRetry={refresh}
                 chatActions={chatActions}
+                title={title}
             />
             <ChatActionsDialogs actions={chatActions}/>
         </>
+    );
+};
+
+// The product's "Your agents" section: every agent, highlighted from the route.
+const YourAgentsSection = () => {
+    const route = useAgentsRoute();
+    const {bots} = useBotlist();
+
+    return (
+        <AgentThreadsSection
+            bots={bots}
+            activeBotId={route.botId}
+            activeRootId={route.rootId}
+            onSelectThread={route.toChat}
+            onNewChat={route.toChat}
+        />
     );
 };
 
