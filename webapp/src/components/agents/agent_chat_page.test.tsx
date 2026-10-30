@@ -502,7 +502,7 @@ describe('AgentChatPage', () => {
         fireEvent.click(screen.getByRole('button', {name: 'Agent bot1 options'}));
         fireEvent.click(screen.getByRole('menuitem', {name: 'Agent settings'}));
         expect(await screen.findByText('config for agent1')).toBeTruthy();
-        expect(mockConfigViewProps).toHaveBeenLastCalledWith(expect.objectContaining({mode: 'edit', variant: 'modal', services: [{id: 'svc1'}]}));
+        expect(mockConfigViewProps).toHaveBeenLastCalledWith(expect.objectContaining({mode: 'edit', services: [{id: 'svc1'}], renderFrame: expect.any(Function)}));
 
         // The chat is still there (hidden from assistive tech behind the modal), the same element.
         expect(screen.getByTestId('host-advanced-text-editor')).toBe(composer);

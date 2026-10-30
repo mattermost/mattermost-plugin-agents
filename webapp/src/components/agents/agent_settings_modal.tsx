@@ -63,7 +63,6 @@ const AgentSettingsModal = ({show, agent, services, onClose, onSaved, onRestored
             <Sheet>
                 <AgentConfigView
                     mode='edit'
-                    variant='modal'
                     agent={agent}
                     services={services}
                     closeRequestRef={closeRequestRef}

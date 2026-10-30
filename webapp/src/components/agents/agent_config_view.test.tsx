@@ -361,7 +361,6 @@ describe('AgentConfigView', () => {
             <IntlProvider locale='en'>
                 <AgentConfigView
                     mode='create'
-                    variant='modal'
                     services={services}
                     onBack={onBack}
                     onSaved={jest.fn()}
@@ -397,11 +396,16 @@ describe('AgentConfigView', () => {
                 <IntlProvider locale='en'>
                     <AgentConfigView
                         mode='create'
-                        variant='modal'
                         services={services}
                         closeRequestRef={closeRequestRef}
                         onBack={onBack}
                         onSaved={jest.fn()}
+                        renderFrame={({body, footer}) => (
+                            <div>
+                                {body}
+                                {footer}
+                            </div>
+                        )}
                     />
                 </IntlProvider>,
             );

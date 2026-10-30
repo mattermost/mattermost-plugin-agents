@@ -2,15 +2,11 @@
 // See LICENSE.txt for license information.
 
 import {useCallback, useEffect, useState} from 'react';
-import {useSelector} from 'react-redux';
-
-import {GlobalState} from '@mattermost/types/store';
 
 import {getAgents, getServices} from '@/client';
 import type {ServiceInfo, UserAgent} from '@/types/agents';
-import {userHasSystemPermission} from '@/utils/permissions';
 
-import {canManageAgent} from './agent_access';
+import {canManageAgent, useAgentPermissions} from './agent_access';
 
 export type AgentEditAccess =
     | {status: 'loading'}
@@ -21,13 +17,7 @@ export type AgentEditAccess =
 // the same rule the All agents list uses (canManageAgent). The agent is matched
 // by bot user ID. Fails closed: a missing agent or a failed lookup is 'denied'.
 export function useAgentEditAccess(botId: string): {access: AgentEditAccess; reload: () => void} {
-    const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
-    const hasManageOwnAgent = useSelector((state: GlobalState) => userHasSystemPermission(state, currentUserId, 'manage_own_agent'));
-    const hasManageOthersAgent = useSelector((state: GlobalState) => userHasSystemPermission(state, currentUserId, 'manage_others_agent'));
-    const hasManageSystem = useSelector((state: GlobalState) => userHasSystemPermission(state, currentUserId, 'manage_system'));
-
-    // Mirrors AgentsList: without these, /services 403s, so the editor gets no list.
-    const canViewServices = hasManageOwnAgent || hasManageOthersAgent || hasManageSystem;
+    const {currentUserId, hasManageOthersAgent, hasManageSystem, canViewServices} = useAgentPermissions();
 
     const [result, setResult] = useState<{identity: string; access: AgentEditAccess} | null>(null);
     const [revision, setRevision] = useState(0);

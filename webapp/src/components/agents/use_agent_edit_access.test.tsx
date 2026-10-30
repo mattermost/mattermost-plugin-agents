@@ -17,7 +17,7 @@ jest.mock('@/client', () => ({
 }));
 
 jest.mock('@/utils/permissions', () => ({userHasSystemPermission: () => true}));
-jest.mock('./agent_access', () => ({canManageAgent: () => true}));
+jest.mock('./agent_access', () => ({...jest.requireActual('./agent_access'), canManageAgent: () => true}));
 
 const wrapper = ({children}: {children: React.ReactNode}) => (
     <Provider store={createStore(() => ({entities: {users: {currentUserId: 'me'}}}))}>{children}</Provider>

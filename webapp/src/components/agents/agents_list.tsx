@@ -4,10 +4,7 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
-import {useSelector} from 'react-redux';
 import {ImportIcon, PlusIcon} from '@mattermost/compass-icons/components';
-
-import {GlobalState} from '@mattermost/types/store';
 
 import {Button} from '@mattermost/compass-ui/components/button';
 import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
@@ -19,12 +16,11 @@ import {Tabs} from '@mattermost/compass-ui/components/tabs';
 import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {getAgents, getServices, deleteAgent as deleteAgentAPI} from '@/client';
-import {userHasSystemPermission} from '@/utils/permissions';
 import {downloadAgentExport} from '@/utils/agent_export';
 import {AgentExportDocument, UserAgent, ServiceInfo} from '@/types/agents';
 import {LicenseLevel, useAgentLimit, useLicenseLevel, useLicenseLevelName} from '@/license';
 
-import {canCreateAgent, canManageAgent} from './agent_access';
+import {canManageAgent, useAgentPermissions} from './agent_access';
 import AgentRow from './agent_row';
 import DeleteAgentDialog from './delete_agent_dialog';
 import AgentConfigView from './agent_config_view';
@@ -44,18 +40,10 @@ type AgentsListProps = {
 
 const AgentsList = ({onStartChat, openCreate = false, onCloseCreate}: AgentsListProps) => {
     const intl = useIntl();
-    const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
-    const hasManageOthersAgent = useSelector((state: GlobalState) =>
-        userHasSystemPermission(state, currentUserId, 'manage_others_agent'));
-    const hasManageOwnAgent = useSelector((state: GlobalState) =>
-        userHasSystemPermission(state, currentUserId, 'manage_own_agent'));
-    const hasManageSystem = useSelector((state: GlobalState) =>
-        userHasSystemPermission(state, currentUserId, 'manage_system'));
-    const userCanCreateAgent = canCreateAgent({hasManageOwnAgent, hasManageSystem});
 
-    // Mirrors api.canConfigureAgentServices. Users without these permissions
-    // browse read-only; requesting /services would 403 and wrongly flag every agent.
-    const canViewServices = hasManageOwnAgent || hasManageOthersAgent || hasManageSystem;
+    // Users without canViewServices browse read-only; requesting /services would 403 and wrongly flag
+    // every agent.
+    const {currentUserId, hasManageOthersAgent, hasManageSystem, canCreate: userCanCreateAgent, canViewServices} = useAgentPermissions();
     const agentLimit = useAgentLimit();
     const licenseLevel = useLicenseLevel();
     const licenseLevelName = useLicenseLevelName();

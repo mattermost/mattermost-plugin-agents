@@ -234,22 +234,16 @@ type Props = {
     importedDocument?: AgentExportDocument;
 
     /**
-     * 'page' (default) is the full page editor. 'modal' is the same view inside a modal sheet: no Back
-     * button (the modal has its close button), less room above the title, and the owner handles Escape
-     * (see closeRequestRef).
-     */
-    variant?: 'page' | 'modal';
-
-    /**
      * Set to the view's close request while it is mounted: it closes at once, or asks to discard
      * unsaved changes first. A modal's close button, backdrop and Escape all go through it.
      */
     closeRequestRef?: React.MutableRefObject<(() => void) | null>;
 
     /**
-     * Lays the editor out in the owner's own frame instead of the page's header and footer (a modal passes
-     * the compass Modal's title row and footer slot). Receives the pieces to place; the discard, rename and
-     * history dialogs stay with the view.
+     * Lays the editor out in the owner's own frame (a modal: the compass Modal's title row, close button
+     * and footer slot) instead of the page's header with its Back button and footer. Receives the pieces
+     * to place; the discard, rename and history dialogs stay with the view. The owner's frame handles
+     * Escape itself (through closeRequestRef).
      */
     renderFrame?: (parts: AgentConfigFrameParts) => React.ReactNode;
 }
@@ -258,8 +252,8 @@ const DISCARD_CHANGES_TITLE_ID = 'discard-agent-changes-title';
 const RENAME_AGENT_TITLE_ID = 'rename-agent-title';
 
 const AgentConfigView = (props: Props) => {
-    const {mode, agent, services, onBack, onSaved, onRestored, importedDocument, variant = 'page', closeRequestRef, renderFrame} = props;
-    const inModal = variant === 'modal';
+    const {mode, agent, services, onBack, onSaved, onRestored, importedDocument, closeRequestRef, renderFrame} = props;
+    const inModal = Boolean(renderFrame);
     const intl = useIntl();
 
     // Parent owns the manage_system check via useCurrentUserHasSystemPermission.
@@ -833,21 +827,17 @@ const AgentConfigView = (props: Props) => {
         </>
     );
 
-    // In a modal the compass Modal supplies the header and footer (its title row, close button and footer
-    // slot), so the owner receives the pieces instead of the page's header and footer.
     const frame = renderFrame ? renderFrame({title, subtitle: versionLine, headerAction: headerActions, tabs, body: viewBody, footer: footerButtons}) : (
         <ViewContainer>
-            <ViewHeader $modal={inModal}>
+            <ViewHeader>
                 <HeaderLeading>
-                    {!inModal && (
-                        <BackButton
-                            icon={<Icon glyph={<ArrowLeftIcon/>}/>}
-                            size='medium'
-                            onClick={requestBack}
-                            disabled={saving}
-                            aria-label={intl.formatMessage({defaultMessage: 'Back to agents'})}
-                        />
-                    )}
+                    <BackButton
+                        icon={<Icon glyph={<ArrowLeftIcon/>}/>}
+                        size='medium'
+                        onClick={requestBack}
+                        disabled={saving}
+                        aria-label={intl.formatMessage({defaultMessage: 'Back to agents'})}
+                    />
                     <HeaderTitleBlock>
                         <ViewTitle>{title}</ViewTitle>
                         {versionLine}
@@ -955,11 +945,11 @@ const ViewContainer = styled.div`
     width: 100%;
 `;
 
-const ViewHeader = styled.div<{$modal: boolean}>`
+const ViewHeader = styled.div`
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: ${({$modal}) => ($modal ? 'var(--spacing-xs)' : 'var(--spacing-xxxxxl)')} 0 var(--spacing-l) 0;
+    padding: var(--spacing-xxxxxl) 0 var(--spacing-l) 0;
     flex-shrink: 0;
 `;
 

@@ -3,7 +3,6 @@
 
 import React, {useCallback, useId, useState} from 'react';
 import {useIntl} from 'react-intl';
-import {useSelector} from 'react-redux';
 import styled from 'styled-components';
 import MessagePlusOutlineIcon from '@mattermost/compass-icons/components/message-plus-outline';
 import PlusIcon from '@mattermost/compass-icons/components/plus';
@@ -19,9 +18,8 @@ import {AgentMenuItem, IconMenuItem, LoadingRow} from '@/components/menu/menu_pa
 import Submenu from '@/components/menu/submenu';
 import {useFocusMenuOnOpen} from '@/components/menu/use_focus_menu_on_open';
 import {useMenuTransition} from '@/hooks/use_menu_transition';
-import {userHasSystemPermission} from '@/utils/permissions';
 
-import {canCreateAgent} from './agent_access';
+import {useAgentPermissions} from './agent_access';
 import {useAgentsRoute} from './use_agents_route';
 
 // No compass token for a scroll cap: the agents submenu scrolls past about ten rows
@@ -43,18 +41,6 @@ const PlusButton = styled(IconButton)`
     }
 `;
 
-// Fails closed: a store without the user or their roles yields false (no "New agent").
-const useMayCreateAgent = (): boolean => useSelector((state: any) => {
-    const userId = state?.entities?.users?.currentUserId;
-    if (!userId) {
-        return false;
-    }
-    return canCreateAgent({
-        hasManageOwnAgent: userHasSystemPermission(state, userId, 'manage_own_agent'),
-        hasManageSystem: userHasSystemPermission(state, userId, 'manage_system'),
-    });
-});
-
 // The "+" at the right of the sidebar header (as the Channels category's): "New agent"
 // opens the All agents create flow, "New chat" lists the agents to start a chat with.
 // Needs the plugin's redux store (bots and permissions).
@@ -62,7 +48,7 @@ const SidebarAddMenu = () => {
     const intl = useIntl();
     const {toNewAgent, toChat} = useAgentsRoute();
     const {bots} = useBotlist();
-    const mayCreate = useMayCreateAgent();
+    const mayCreate = useAgentPermissions().canCreate;
     const [open, setOpen] = useState(false);
     const menu = useMenuTransition(open);
     const [submenu, setSubmenu] = useState<{focus: boolean} | null>(null);
