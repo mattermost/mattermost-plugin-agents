@@ -47,9 +47,7 @@ import {css} from 'styled-components';
 //   right 0) against the nearest positioned ancestor (host: `.post__content`) and
 //   shows its `.post-menu__item`s on `.post:hover/.post--hovered/.a11y--active`.
 //   The plugin hides it entirely in the chat.
-// - Bubble fit (read-only measurement by llmbot_post/use_bubble_width.ts):
-//     `.post__header` inside the bubble (its children's natural widths; the
-//     absolute `.post-menu` is skipped), fenced code as formatted by the host
+// - Bubble fit (CSS only, `:has()` on the bubble): fenced code as formatted by the host
 //     (utils/markdown renderer: `.post-code`, not a `<pre>`), and host attachments the bubble may
 //     hold below the message: components/file_attachment_list
 //     (`.post-image__columns`, single image `.file-view--single`),
@@ -72,18 +70,32 @@ const BUBBLE_PADDING_BOTTOM_COMPACT = 'calc(var(--spacing-xxxs) + var(--spacing-
 // The body column of a post, which becomes the bubble.
 const BUBBLE = '.post__content > .post__img + div';
 
-// Exported for the plugin's read-only bubble measurement (use_bubble_width.ts).
-export const BUBBLE_SELECTOR = BUBBLE;
-export const BUBBLE_HEADER_SELECTOR = '.post__header';
-export const BUBBLE_TOOLBAR_SELECTOR = '.post-menu';
-export const BUBBLE_WIDE_HOST_CONTENT_SELECTOR = '.post-code, .post-image__columns, .file-view--single, .attachment, .post__embed-container, .PostAttachmentOpenGraph';
+// Plugin and host content that always needs the full row: code, tables, media,
+// tool and reasoning UI, artifacts, permalink previews, notices, and host
+// attachments. A collapsed activity line ("Thinking", "Used 2 tools") is short
+// text and hugs like text; its expanded panel marks itself `data-bubble-wide`.
+const BUBBLE_WIDE_CONTENT = [
+    'pre',
+    'table',
+    'img',
+    'video',
+    'iframe',
+    "[data-testid='llm-bot-tool-activity-rounds']",
+    "[data-testid='html-artifact-card']",
+    "[data-testid='html-artifact-wrapper']",
+    "[data-testid='llm-bot-permalink']",
+    "[data-testid='llm-bot-post-summary-help']",
+    '[data-bubble-wide]',
+    '.post-code',
+    '.post-image__columns',
+    '.file-view--single',
+    '.attachment',
+    '.post__embed-container',
+    '.PostAttachmentOpenGraph',
+].join(', ');
 
-// A reply hugs its content when its natural width is under this share
-// of the row, and spans the row otherwise.
-export const HUG_MAX_FRACTION = 0.75;
-
-// Set by LLMBotPost on its own wrapper inside the bubble.
-export const BUBBLE_FIT_ATTRIBUTE = 'data-bubble-fit';
+// Set by LLMBotPost on its own wrapper inside the bubble where short replies hug.
+export const BUBBLE_HUG_ATTRIBUTE = 'data-bubble-hug';
 
 // Set by the plugin's controls bar when it should sit under the bubble.
 export const BUBBLE_CONTROLS_ATTRIBUTE = 'data-bubble-controls';
@@ -324,17 +336,16 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
     }
 
     /*
-     * Short agent replies hug their content: LLMBotPost marks its wrapper
-     * hug or full (use_bubble_width.ts) and the bubble follows. Without :has()
-     * support the rule never matches and every bubble stays full width. The
-     * width never transitions: the decision measures the bubble, and a width
-     * caught mid-transition reads as pinned at the cap (hug and full would
-     * then flip every frame).
+     * Short agent replies hug their content: LLMBotPost marks its wrapper and
+     * the bubble shrinks to its text, up to the row (longer text wraps and
+     * fills it). Content that needs the row (code, tables, media, tool UI)
+     * keeps the full-width bubble. Without :has() support the rule never
+     * matches and every bubble stays full width.
      */
-    .post ${BUBBLE}:has([${BUBBLE_FIT_ATTRIBUTE}='hug']) {
+    .post ${BUBBLE}:has([${BUBBLE_HUG_ATTRIBUTE}]):not(:has(${BUBBLE_WIDE_CONTENT})) {
         flex: 0 1 auto;
         width: fit-content;
-        max-width: calc(${HUG_MAX_FRACTION} * 100%);
+        max-width: 100%;
     }
 
     /*

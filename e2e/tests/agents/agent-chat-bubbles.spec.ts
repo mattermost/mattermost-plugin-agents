@@ -18,8 +18,9 @@ import {AIMOCK_BOT_NAME, RunAIMockContainer} from 'helpers/plugincontainer';
 const username = 'regularuser';
 const password = 'regularuser';
 
-// Mirrors HUG_MAX_FRACTION in webapp/src/components/agent_chat/agent_chat_host_styles.ts.
+// A hugging bubble is clearly narrower than the row; a full one spans it.
 const HUG_MAX_FRACTION = 0.75;
+const FULL_MIN_FRACTION = 0.97;
 
 const SHORT_PROMPT = 'bubbles-short-001';
 const SHORT_REPLY = 'Sure.';
@@ -60,27 +61,19 @@ const bubbleLayout = (post: Locator) => post.evaluate((wrapper) => {
     const available = row.clientWidth - parseFloat(rowStyle.paddingLeft) - parseFloat(rowStyle.paddingRight) -
         avatar.getBoundingClientRect().width - (parseFloat(rowStyle.columnGap) || 0);
     return {
-        fit: wrapper.getAttribute('data-bubble-fit'),
-        flex: getComputedStyle(bubble).flex,
         width: bubble.getBoundingClientRect().width,
         available,
     };
 });
 
-// Counts fit changes over the next 30 frames: a settled bubble has none (the
-// decision once flipped between hug and full on every frame).
-const fitChangesOverFrames = (post: Locator) => post.evaluate((wrapper) => new Promise<number>((resolve) => {
-    let changes = 0;
-    let frames = 0;
-    const observer = new MutationObserver(() => {
-        changes += 1;
-    });
-    observer.observe(wrapper, {attributes: true, attributeFilter: ['data-bubble-fit']});
+// The bubble's width on 30 consecutive frames: a settled bubble does not move.
+const widthsOverFrames = (post: Locator) => post.evaluate((wrapper) => new Promise<number[]>((resolve) => {
+    const bubble = wrapper.closest('.post__content > .post__img + div') as HTMLElement;
+    const widths: number[] = [];
     const frame = () => {
-        frames += 1;
-        if (frames >= 30) {
-            observer.disconnect();
-            resolve(changes);
+        widths.push(bubble.getBoundingClientRect().width);
+        if (widths.length >= 30) {
+            resolve(widths);
             return;
         }
         requestAnimationFrame(frame);
@@ -88,24 +81,25 @@ const fitChangesOverFrames = (post: Locator) => post.evaluate((wrapper) => new P
     requestAnimationFrame(frame);
 }));
 
+async function expectSettled(post: Locator): Promise<void> {
+    const widths = await widthsOverFrames(post);
+    expect(Math.max(...widths) - Math.min(...widths)).toBeLessThan(1);
+}
+
 async function expectHug(post: Locator): Promise<void> {
     await expect.poll(async () => {
-        const {fit, flex} = await bubbleLayout(post);
-        return {fit, flex};
-    }).toEqual({fit: 'hug', flex: '0 1 auto'});
-    const layout = await bubbleLayout(post);
-    expect(layout.width).toBeLessThan(HUG_MAX_FRACTION * layout.available);
-    expect(await fitChangesOverFrames(post)).toBe(0);
+        const {width, available} = await bubbleLayout(post);
+        return width < HUG_MAX_FRACTION * available;
+    }).toBe(true);
+    await expectSettled(post);
 }
 
 async function expectFull(post: Locator): Promise<void> {
     await expect.poll(async () => {
-        const {fit, flex} = await bubbleLayout(post);
-        return {fit, flex};
-    }).toEqual({fit: 'full', flex: '1 1 auto'});
-    const layout = await bubbleLayout(post);
-    expect(layout.width).toBeGreaterThan(HUG_MAX_FRACTION * layout.available);
-    expect(await fitChangesOverFrames(post)).toBe(0);
+        const {width, available} = await bubbleLayout(post);
+        return width > FULL_MIN_FRACTION * available;
+    }).toBe(true);
+    await expectSettled(post);
 }
 
 const MATTERMOST_START_MS = 240000;

@@ -1679,9 +1679,6 @@ describe('LLMBotPost thinking indicator', () => {
     });
 });
 
-// The agent chat surface smooths streaming; spelled out so these tests keep it on if that default changes.
-const SMOOTH_SURFACE = {...AGENT_CHAT_SURFACE, smoothStreaming: true};
-
 describe('LLMBotPost smooth streaming', () => {
     let listener: PostUpdateHandler | undefined;
     const longText = Array.from({length: 120}, (_, i) => `word${i}`).join(' ');
@@ -1699,7 +1696,7 @@ describe('LLMBotPost smooth streaming', () => {
         );
         return render(
             <IntlProvider locale='en'>
-                {wrap ? <AgentChatSurfaceContext.Provider value={SMOOTH_SURFACE}>{post}</AgentChatSurfaceContext.Provider> : post}
+                {wrap ? <AgentChatSurfaceContext.Provider value={AGENT_CHAT_SURFACE}>{post}</AgentChatSurfaceContext.Provider> : post}
             </IntlProvider>,
         );
     }
@@ -1754,31 +1751,6 @@ describe('LLMBotPost smooth streaming', () => {
         expect(shown()).toBe(longText);
     });
 
-    test('the post Stop control shows everything at once', () => {
-        // The post's own Stop (where the composer does not stop) with smoothing on.
-        mockUseConversation.mockReturnValue({conversation: makeConversation([]), loading: false, error: null});
-        render(
-            <IntlProvider locale='en'>
-                <AgentChatSurfaceContext.Provider value={{...SMOOTH_SURFACE, composerHandlesStop: false}}>
-                    <LLMBotPost
-                        post={makePost()}
-                        websocketRegister={(_postID, _listenerID, handler) => {
-                            listener = handler;
-                        }}
-                        websocketUnregister={jest.fn()}
-                    />
-                </AgentChatSurfaceContext.Provider>
-            </IntlProvider>,
-        );
-        send({control: 'start'});
-        send({next: longText});
-        expect(shown()).not.toBe(longText);
-        act(() => {
-            fireEvent.click(screen.getByTestId('stop-generating-button'));
-        });
-        expect(shown()).toBe(longText);
-    });
-
     test('a finished post renders in full at once', () => {
         renderSurfacePost(true, longText);
         expect(shown()).toBe(longText);
@@ -1814,12 +1786,12 @@ describe('LLMBotPost bubble fit', () => {
                 <div className='post__content'>
                     <div className='post__img'/>
                     <div>
-                        {wrap ? <AgentChatSurfaceContext.Provider value={SMOOTH_SURFACE}>{post}</AgentChatSurfaceContext.Provider> : post}
+                        {wrap ? <AgentChatSurfaceContext.Provider value={AGENT_CHAT_SURFACE}>{post}</AgentChatSurfaceContext.Provider> : post}
                     </div>
                 </div>
             </IntlProvider>,
         );
-        expect(screen.getByTestId('llm-bot-post').hasAttribute('data-bubble-fit')).toBe(marked);
+        expect(screen.getByTestId('llm-bot-post').hasAttribute('data-bubble-hug')).toBe(marked);
     });
 });
 
@@ -1876,7 +1848,6 @@ describe('LLMBotPost Copy button', () => {
     test.each([
         {name: 'agent chat views show it', surface: AGENT_CHAT_SURFACE, shown: true},
         {name: 'other surfaces do not', surface: null, shown: false},
-        {name: 'a surface with the flag off does not', surface: {...AGENT_CHAT_SURFACE, showCopyButton: false}, shown: false},
     ])('$name', ({surface, shown}) => {
         renderSurface(surface);
         expect(Boolean(screen.queryByTestId('copy-button'))).toBe(shown);

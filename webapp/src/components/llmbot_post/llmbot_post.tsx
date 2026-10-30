@@ -4,7 +4,7 @@
 import React, {useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
-import styled, {css} from 'styled-components';
+import styled from 'styled-components';
 
 import {GlobalState} from '@mattermost/types/store';
 
@@ -46,7 +46,6 @@ import {RoundView} from './round_view';
 import {ThinkingDots} from './thinking_dots';
 import ToolActivityDisplay from './tool_activity_display';
 import {prefersReducedMotion} from './motion';
-import {useBubbleWidth} from './use_bubble_width';
 import {useSmoothText} from './use_smooth_text';
 
 // Sentinel id for the in-progress streaming round; persisted rounds use turn ids.
@@ -145,12 +144,12 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const [isReasoningLoading, setIsReasoningLoading] = useState(false);
 
     // In the agent chat views the composer's send button is the Stop control.
-    const {composerHandlesStop, showThinkingIndicator, smoothStreaming, hugShortBubbles, controlsBelowBubble, showCopyButton} = useContext(AgentChatSurfaceContext);
+    const {isAgentChat} = useContext(AgentChatSurfaceContext);
 
     // Streamed text is revealed at a steady pace where the surface asks for
     // it. A stop, cancel or error shows what arrived at once.
     const [revealCut, setRevealCut] = useState(false);
-    const smoothReveal = smoothStreaming && !prefersReducedMotion();
+    const smoothReveal = isAgentChat && !prefersReducedMotion();
     const revealed = useSmoothText(message, {
         enabled: smoothReveal,
         streaming: generating,
@@ -629,7 +628,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const meetingsLicensed = useIsLicensedFor('meetings');
     const showPostbackButton = meetingsLicensed && !isGenerationInProgress && requesterIsCurrentUser && isTranscriptionResult;
 
-    const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser && !composerHandlesStop;
+    const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser && !isAgentChat;
     const hasContent = renderedRounds.length > 0;
 
     // Only the anchor round gets a real approval stage: the latest persisted
@@ -730,7 +729,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     // Copy needs a finished answer with text; a tool-only post has nothing to copy.
     const answerMarkdown = useMemo(() => getCopyableText(activity.answerRounds), [activity.answerRounds]);
-    const showCopy = showCopyButton && hasContent && !isGenerationInProgress && answerMarkdown !== '';
+    const showCopy = isAgentChat && hasContent && !isGenerationInProgress && answerMarkdown !== '';
     const showControlsBar = ((showRegenerate || showPostbackButton || showCopy) && hasContent) || showStopGeneratingButton;
     const foldingText = useFoldingText(answerText, activity.items.length > 0 && !activityExpanded);
 
@@ -790,20 +789,12 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     // The dots stand in for the Working... status while nothing has arrived,
     // never alongside it (or any other activity UI).
-    const thinkingActive = showThinkingIndicator && !awaitingRequester && !error &&
+    const thinkingActive = isAgentChat && !awaitingRequester && !error &&
         (isGenerationInProgress || (regenerating && !pendingRefetch)) && renderedRounds.length === 0;
     const showWorking = showWorkingStatus && !thinkingActive;
     const agentName = useSelector<GlobalState, string | undefined>((state) => {
         const profile = props.post.user_id ? state.entities.users.profiles?.[props.post.user_id] : undefined; // eslint-disable-line no-undefined
         return profile ? displayNameFor(profile, selectTeammateNameDisplay(state)) : undefined; // eslint-disable-line no-undefined
-    });
-
-    // Short replies hug their content (agent chat views only), measured from
-    // the displayed text, so the bubble follows the reveal, not the buffer.
-    const postBodyRef = useRef<HTMLDivElement>(null);
-    const bubble = useBubbleWidth(postBodyRef, {
-        enabled: hugShortBubbles,
-        streaming: isGenerationInProgress || shownMessage !== message,
     });
 
     let statusMessage: string | undefined;
@@ -814,11 +805,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     }
 
     return (
-        <PostBody
-            ref={postBodyRef}
+        <div
             data-testid='llm-bot-post'
-            data-bubble-fit={bubble.fit ?? undefined} // eslint-disable-line no-undefined
-            $hugMinWidth={bubble.minWidth}
+            data-bubble-hug={isAgentChat ? '' : undefined} // eslint-disable-line no-undefined
         >
             {error && <ErrorMessage message={error}/>}
             {conversationError && !generating && (
@@ -848,7 +837,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     postID={props.post.id}
                 />
             )}
-            {showThinkingIndicator && (
+            {isAgentChat && (
                 <ThinkingDots
                     active={thinkingActive}
                     agentName={agentName}
@@ -883,23 +872,16 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 showPostbackButton={showPostbackButton}
                 showRegenerate={showRegenerate}
                 copyText={showCopy ? answerMarkdown : null}
-                belowBubble={controlsBelowBubble}
+                belowBubble={isAgentChat}
                 createAt={props.post.create_at}
                 onStopGenerating={stopGenerating}
                 onPostSummary={postSummary}
                 onRegenerate={regnerate}
             />
             }
-        </PostBody>
+        </div>
     );
 };
-
-// While a streaming reply hugs, it never narrows (use_bubble_width.ts).
-const PostBody = styled.div<{$hugMinWidth: number}>`
-    ${(props) => props.$hugMinWidth > 0 && css`
-        min-width: ${props.$hugMinWidth}px;
-    `}
-`;
 
 // Same gap as between stacked rounds, so a round moving from here into the
 // expanded activity stack stays where it is.
