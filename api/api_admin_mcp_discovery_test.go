@@ -371,16 +371,17 @@ func TestHandleGetMCPToolsKeepsPartialPluginFailuresPerServer(t *testing.T) {
 	require.Empty(t, brokenRow.Tools)
 }
 
-// Admin discovery reports each tool's readOnlyHint and the default policy it
-// runs with while unconfigured, so the System Console shows what will happen.
-func TestHandleGetMCPToolsReportsReadOnlyDefaultPolicy(t *testing.T) {
+// Admin discovery reports each tool's readOnlyHint, the policy the System
+// Console suggests for it, and the default it runs with until an admin saves
+// a policy, which stays ask whatever the server reports.
+func TestHandleGetMCPToolsReportsSuggestedPolicy(t *testing.T) {
 	tests := []struct {
-		name               string
-		level              enterprise.Level
-		wantReadToolPolicy string
+		name                  string
+		level                 enterprise.Level
+		wantReadToolSuggested string
 	}{
-		{"licensed policies auto-run read-only tools in DMs", enterprise.LevelEnterprise, mcp.ToolPolicyAutoRunInDM},
-		{"unlicensed policies keep the ask default", enterprise.LevelUnlicensed, mcp.ToolPolicyAsk},
+		{"licensed policies suggest auto-run for read-only tools", enterprise.LevelEnterprise, mcp.ToolPolicyAutoRunInDM},
+		{"unlicensed policies suggest ask", enterprise.LevelUnlicensed, mcp.ToolPolicyAsk},
 	}
 
 	for _, tt := range tests {
@@ -421,8 +422,8 @@ func TestHandleGetMCPToolsReportsReadOnlyDefaultPolicy(t *testing.T) {
 			}
 
 			require.Equal(t, map[string]MCPToolInfo{
-				"read_tool":  {Name: "read_tool", ReadOnlyHint: true, DefaultPolicy: tt.wantReadToolPolicy},
-				"write_tool": {Name: "write_tool", DefaultPolicy: mcp.ToolPolicyAsk},
+				"read_tool":  {Name: "read_tool", ReadOnlyHint: true, DefaultPolicy: mcp.ToolPolicyAsk, SuggestedPolicy: tt.wantReadToolSuggested},
+				"write_tool": {Name: "write_tool", DefaultPolicy: mcp.ToolPolicyAsk, SuggestedPolicy: mcp.ToolPolicyAsk},
 			}, got)
 		})
 	}

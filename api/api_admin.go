@@ -274,8 +274,12 @@ type MCPToolInfo struct {
 	// ReadOnlyHint is the server's readOnlyHint annotation for the tool.
 	ReadOnlyHint bool `json:"readOnlyHint"`
 	// DefaultPolicy is the policy the tool runs with while it has no stored
-	// tool config (mcp.EffectiveDefaultToolPolicy).
+	// policy (mcp.EffectiveDefaultToolPolicy).
 	DefaultPolicy string `json:"defaultPolicy"`
+	// SuggestedPolicy is the policy the System Console pre-selects when an
+	// admin reviews the tool (mcp.SuggestedToolPolicy). It has no effect
+	// until the admin saves it.
+	SuggestedPolicy string `json:"suggestedPolicy"`
 }
 
 // MCPServerInfo represents a server and its tools for API response
@@ -480,11 +484,12 @@ func (a *API) toMCPToolInfos(serverOrigin string, toolInfos []mcp.ToolInfo) []MC
 	tools := make([]MCPToolInfo, 0, len(toolInfos))
 	for _, toolInfo := range toolInfos {
 		tools = append(tools, MCPToolInfo{
-			Name:          toolInfo.Name,
-			Description:   toolInfo.Description,
-			InputSchema:   toolInfo.InputSchema,
-			ReadOnlyHint:  toolInfo.ReadOnlyHint,
-			DefaultPolicy: mcp.EffectiveDefaultToolPolicy(serverOrigin, toolInfo.Name, toolInfo.ReadOnlyHint, policiesLicensed),
+			Name:            toolInfo.Name,
+			Description:     toolInfo.Description,
+			InputSchema:     toolInfo.InputSchema,
+			ReadOnlyHint:    toolInfo.ReadOnlyHint,
+			DefaultPolicy:   mcp.EffectiveDefaultToolPolicy(serverOrigin, toolInfo.Name, policiesLicensed),
+			SuggestedPolicy: mcp.SuggestedToolPolicy(serverOrigin, toolInfo.Name, toolInfo.ReadOnlyHint, policiesLicensed),
 		})
 	}
 	return tools

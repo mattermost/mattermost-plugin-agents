@@ -741,7 +741,6 @@ func collectToolsFromSnapshots(userID string, log pluginapi.LogService, snapshot
 				Schema:       tool.InputSchema,
 				Resolver:     resolver,
 				ServerOrigin: client.config.BaseURL,
-				ReadOnlyHint: toolReadOnlyHint(tool),
 			})
 		}
 	}

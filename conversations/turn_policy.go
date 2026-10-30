@@ -334,7 +334,7 @@ func (p *turnPolicy) autoExecute(llmCtx *llm.Context) func(llm.ToolCall) bool {
 		if isAutoExecuteBuiltIn(lookup.Tool) {
 			return true
 		}
-		policy, enabled := p.c.toolPolicyChecker.GetToolPolicy(lookup.ServerOrigin, lookup.BareName, lookup.Tool.ReadOnlyHint)
+		policy, enabled := p.c.toolPolicyChecker.GetToolPolicy(lookup.ServerOrigin, lookup.BareName)
 		if !enabled {
 			return false
 		}

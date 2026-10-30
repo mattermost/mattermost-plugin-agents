@@ -209,37 +209,6 @@ func TestAutoExecute_AutoExecuteBuiltIn(t *testing.T) {
 	}
 }
 
-// An unconfigured tool its server marks read-only auto-runs in a DM through
-// the production policy checker, but still asks in a channel.
-func TestAutoExecuteReadOnlyHintDefault(t *testing.T) {
-	const origin = "https://mcp.example.com/mcp"
-	cfg := mcp.Config{Servers: []mcp.ServerConfig{{Name: "Example", BaseURL: origin, Enabled: true}}}
-	checker := mcp.NewConfigToolPolicyChecker(func() mcp.Config { return cfg }, func() bool { return true })
-
-	cases := []struct {
-		name         string
-		readOnlyHint bool
-		isDM         bool
-		want         bool
-	}{
-		{"read-only tool in DM auto-runs", true, true, true},
-		{"read-only tool in channel asks", true, false, false},
-		{"unannotated tool in DM asks", false, true, false},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			c := policyTestConversations(checker)
-			llmCtx := &llm.Context{Tools: llm.NewToolStore()}
-			llmCtx.Tools.AddTools([]llm.Tool{{Name: "example__list_things", ServerOrigin: origin, ReadOnlyHint: tc.readOnlyHint}})
-
-			got := testTurnPolicy(c, tc.isDM).autoExecute(llmCtx)(llm.ToolCall{Name: "example__list_things", ServerOrigin: origin})
-
-			assert.Equal(t, tc.want, got)
-		})
-	}
-}
-
 func TestAutoExecute_AutoExecuteBuiltInSkipsPolicyLookup(t *testing.T) {
 	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAsk, enabled: true}
 	c := policyTestConversations(checker)
@@ -260,7 +229,7 @@ type countingPolicyChecker struct {
 	enabled      bool
 }
 
-func (c *countingPolicyChecker) GetToolPolicy(origin, toolName string, _ bool) (string, bool) {
+func (c *countingPolicyChecker) GetToolPolicy(origin, toolName string) (string, bool) {
 	c.calls++
 	c.lastOrigin = origin
 	c.lastToolName = toolName

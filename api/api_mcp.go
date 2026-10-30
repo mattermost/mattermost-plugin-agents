@@ -254,7 +254,7 @@ func (a *API) buildUserMCPServerInfo(
 	toolInfos := make([]UserMCPToolInfo, 0, len(originTools))
 	for _, t := range originTools {
 		lookupName := mcp.ToolPolicyLookupName(serverConfig, t.Name)
-		policy, enabled := serverConfig.GetToolPolicyOrDefault(lookupName, mcp.EffectiveDefaultToolPolicy(serverConfig.BaseURL, lookupName, t.ReadOnlyHint, policiesLicensed))
+		policy, enabled := serverConfig.GetToolPolicyOrDefault(lookupName, mcp.EffectiveDefaultToolPolicy(serverConfig.BaseURL, lookupName, policiesLicensed))
 		bareName := llm.BareMCPToolName(t.Name)
 		toolInfos = append(toolInfos, UserMCPToolInfo{
 			Name:        bareName,

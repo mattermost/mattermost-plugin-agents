@@ -224,33 +224,6 @@ func TestUserClientsGetToolsResolvesAndSanitizesTitle(t *testing.T) {
 	}
 }
 
-// The readOnlyHint a real server reports over the wire reaches the llm.Tool
-// the turn's approval decision reads.
-func TestUserClientsGetToolsCapturesReadOnlyHint(t *testing.T) {
-	server := newTestMCPServer(0, "write_tool")
-	server.AddTool(&gomcp.Tool{
-		Name:        "read_tool",
-		InputSchema: map[string]any{"type": "object"},
-		Annotations: &gomcp.ToolAnnotations{ReadOnlyHint: true},
-	}, func(context.Context, *gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
-		return &gomcp.CallToolResult{}, nil
-	})
-	httpServer := startStreamableMCPServer(t, server)
-
-	serverConfig := ServerConfig{Name: "remote", BaseURL: httpServer.URL, Enabled: true}
-	client, err := NewClient(context.Background(), "user-id", serverConfig, newTestLogService(), newTestOAuthManager(), httpServer.Client(), newTestToolsCache(), false)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
-
-	userClients := &UserClients{userID: "user-id", clients: map[string]*Client{"remote": client}}
-	hints := map[string]bool{}
-	for _, tool := range userClients.GetTools(context.Background()) {
-		hints[llm.BareMCPToolName(tool.Name)] = tool.ReadOnlyHint
-	}
-
-	require.Equal(t, map[string]bool{"read_tool": true, "write_tool": false}, hints)
-}
-
 func TestUserClientsGetToolsDeterministicSlugCollision(t *testing.T) {
 	userClients := &UserClients{
 		userID: "user-id",

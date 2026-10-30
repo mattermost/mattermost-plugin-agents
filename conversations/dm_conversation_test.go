@@ -440,7 +440,7 @@ func (f *dmPolicyChecker) setPolicy(origin, name, policy string) {
 	f.policies[origin+":"+name] = policy
 }
 
-func (f *dmPolicyChecker) GetToolPolicy(serverBaseURL, toolName string, _ bool) (string, bool) {
+func (f *dmPolicyChecker) GetToolPolicy(serverBaseURL, toolName string) (string, bool) {
 	key := serverBaseURL + ":" + toolName
 	p, ok := f.policies[key]
 	if !ok {
