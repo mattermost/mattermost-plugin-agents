@@ -1,8 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {ReactNode, useContext, useMemo} from 'react';
-import {ReactReduxContext} from 'react-redux';
+import React, {ReactNode, useMemo} from 'react';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 import CodeBracketsIcon from '@mattermost/compass-icons/components/code-brackets';
@@ -27,9 +26,6 @@ interface ProductSidebarProps {
     activeView: AgentsView;
     onSelectAll: () => void;
     onSelectPrompts: () => void;
-
-    // Extension point for the "Your agents" section (rendered below the nav rows).
-    children?: ReactNode;
 }
 
 interface NavRowProps {
@@ -66,7 +62,7 @@ const YourAgentsSection = () => {
     const {threadsByBot, loading, error, refresh} = useAgentThreads(bots);
     const generatingRoots = useGeneratingThreadRoots();
     const listedRoots = useMemo(() => Object.values(threadsByBot).flat().map((t) => t.root_post_id).filter((id): id is string => Boolean(id)), [threadsByBot]);
-    const unreadRoots = useUnreadThreadRoots(listedRoots, route.view === 'chat' ? route.rootId ?? '' : '');
+    const unreadRoots = useUnreadThreadRoots(listedRoots, route.rootId ?? '');
     const chatActions = useChatActions();
 
     return (
@@ -76,8 +72,8 @@ const YourAgentsSection = () => {
                 threadsByBot={threadsByBot}
                 loading={loading && Object.keys(threadsByBot).length === 0}
                 error={error}
-                activeBotId={route.view === 'chat' ? route.botId : ''}
-                activeRootId={route.view === 'chat' ? route.rootId : ''}
+                activeBotId={route.botId}
+                activeRootId={route.rootId}
                 generatingRoots={generatingRoots}
                 unreadRoots={unreadRoots}
                 onSelectThread={route.toChat}
@@ -90,24 +86,19 @@ const YourAgentsSection = () => {
     );
 };
 
-const ProductSidebar = ({activeView, onSelectAll, onSelectPrompts, children}: ProductSidebarProps) => {
+const ProductSidebar = ({activeView, onSelectAll, onSelectPrompts}: ProductSidebarProps) => {
     const intl = useIntl();
     const title = intl.formatMessage({defaultMessage: 'Agents'});
-
-    // The section needs the plugin's redux store; without one there is nothing to list.
-    const hasStore = useContext(ReactReduxContext) !== null;
 
     return (
         <Aside aria-label={title}>
             <Header>
                 <ProductName>{title}</ProductName>
-                {hasStore && <SidebarAddMenu/>}
+                <SidebarAddMenu/>
             </Header>
-            {hasStore && (
-                <FindAgentsRow>
-                    <FindAgentsButton/>
-                </FindAgentsRow>
-            )}
+            <FindAgentsRow>
+                <FindAgentsButton/>
+            </FindAgentsRow>
             <ScrollArea color='--sidebar-text-rgb'>
                 <nav aria-label={title}>
                     <NavGroup>
@@ -125,8 +116,7 @@ const ProductSidebar = ({activeView, onSelectAll, onSelectPrompts, children}: Pr
                         />
                     </NavGroup>
                 </nav>
-                {hasStore && <YourAgentsSection/>}
-                {children}
+                <YourAgentsSection/>
             </ScrollArea>
         </Aside>
     );

@@ -2,55 +2,42 @@
 // See LICENSE.txt for license information.
 
 import React, {useEffect} from 'react';
+import {useSelector} from 'react-redux';
 import styled from 'styled-components';
 
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
 
-import {LLMBot, useBotlist} from '@/bots';
+import {getSelectedAgentId, resolvePreferredBot, useBotlist} from '@/bots';
 
-import AgentChatPage from './agent_chat_page';
 import type {AgentsNavigation} from './use_agents_route';
 
-// The server marks the configured default agent (DefaultBotUserID, matched by ID)
-// with isDefault, and only lists agents the user may use. Fail closed: no flag
-// means no default, never the first bot.
-export const resolveDefaultAgent = (bots: LLMBot[] | null): LLMBot | null => (
-    bots?.find((bot) => bot.isDefault) ?? null
-);
-
 interface AgentsLandingProps {
-    nav: AgentsNavigation;
+    nav: Pick<AgentsNavigation, 'replaceWithAll' | 'replaceWithChat'>;
 }
 
-// Product root: a new chat with the default agent, rendered in place (the URL
-// stays at the product root so Back never bounces through a redirect). Without
-// a usable default it hands over to the All agents view.
+// Product root: hands over to a new chat with the agent the RHS would pick (the user's selected
+// agent, else the system default), replacing the root entry so Back never bounces through it.
+// Without either it hands over to All agents (never the first agent listed).
 const AgentsLanding = ({nav}: AgentsLandingProps) => {
     const {bots} = useBotlist();
-    const defaultAgent = resolveDefaultAgent(bots);
-    const {replaceWithAll} = nav;
-    const noDefault = bots !== null && !defaultAgent;
+    const selectedId = useSelector(getSelectedAgentId);
+    const agent = resolvePreferredBot(bots, selectedId);
+    const agentId = agent?.id ?? '';
+    const loaded = bots !== null;
+    const {replaceWithAll, replaceWithChat} = nav;
 
     useEffect(() => {
-        if (noDefault) {
+        if (agentId) {
+            replaceWithChat(agentId);
+        } else if (loaded) {
             replaceWithAll();
         }
-    }, [noDefault, replaceWithAll]);
-
-    if (!defaultAgent) {
-        return (
-            <Loading>
-                <Spinner size='20'/>
-            </Loading>
-        );
-    }
+    }, [agentId, loaded, replaceWithAll, replaceWithChat]);
 
     return (
-        <AgentChatPage
-            botId={defaultAgent.id}
-            toChat={nav.toChat}
-            toAll={nav.toAll}
-        />
+        <Loading>
+            <Spinner size='20'/>
+        </Loading>
     );
 };
 

@@ -52,16 +52,32 @@ jest.mock('react-intl', () => {
     return {...actual, useIntl: () => intl};
 });
 
+// The plugin's real thread-list reducer, and the host's thread read state.
+const makeStore = (host: {collapsedThreads?: string; threads?: Record<string, {unread_replies: number}>} = {}) => createStore(combineReducers({
+    [`plugins-${manifest.id}`]: combineReducers({aiThreads}),
+    entities: (state = {
+        users: {currentUserId: 'me', profiles: {me: {id: 'me', roles: 'system_user'}}},
+        roles: {roles: {}},
+        posts: {posts: {}},
+        general: {config: {CollapsedThreads: host.collapsedThreads ?? 'always_on'}},
+        preferences: {myPreferences: {}},
+        threads: {threads: host.threads ?? {}},
+    }) => state,
+} as any));
+
 const renderSidebar = (props: Partial<React.ComponentProps<typeof ProductSidebar>> = {}) => {
     const onSelectAll = jest.fn();
     const onSelectPrompts = jest.fn();
+    mockGetAIThreads.mockResolvedValue([]);
     render(
-        <ProductSidebar
-            activeView='all'
-            onSelectAll={onSelectAll}
-            onSelectPrompts={onSelectPrompts}
-            {...props}
-        />,
+        <Provider store={makeStore()}>
+            <ProductSidebar
+                activeView='all'
+                onSelectAll={onSelectAll}
+                onSelectPrompts={onSelectPrompts}
+                {...props}
+            />
+        </Provider>,
     );
     return {onSelectAll, onSelectPrompts};
 };
@@ -81,11 +97,6 @@ describe('ProductSidebar', () => {
         expect(onSelectPrompts).toHaveBeenCalledTimes(1);
         expect(onSelectAll).toHaveBeenCalledTimes(1);
     });
-
-    test('renders the extension point children', () => {
-        renderSidebar({children: <div>{'Your agents section'}</div>});
-        expect(screen.getByText('Your agents section')).toBeTruthy();
-    });
 });
 
 describe('ProductSidebar "Your agents" section', () => {
@@ -104,19 +115,6 @@ describe('ProductSidebar "Your agents" section', () => {
         };
         return history;
     };
-
-    // The plugin's real thread-list reducer, and the host's thread read state.
-    const makeStore = (host: {collapsedThreads?: string; threads?: Record<string, {unread_replies: number}>} = {}) => createStore(combineReducers({
-        [`plugins-${manifest.id}`]: combineReducers({aiThreads}),
-        entities: (state = {
-            users: {currentUserId: 'me', profiles: {me: {id: 'me', roles: 'system_user'}}},
-            roles: {roles: {}},
-            posts: {posts: {}},
-            general: {config: {CollapsedThreads: host.collapsedThreads ?? 'always_on'}},
-            preferences: {myPreferences: {}},
-            threads: {threads: host.threads ?? {}},
-        }) => state,
-    } as any));
 
     const renderWithStore = (initialPath: string, store = makeStore()) => {
         const history = makeHistory(initialPath);

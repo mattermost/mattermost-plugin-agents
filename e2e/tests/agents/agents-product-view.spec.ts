@@ -215,6 +215,9 @@ test.describe('Agents product view', () => {
         await expect(chat).toBeVisible({timeout: 30000});
         await expect(chat.getByRole('heading', {name: botDisplayName, level: 1})).toBeVisible();
 
+        // The product root hands over to the agent's new-chat URL, replacing itself in the history.
+        await expect(page).toHaveURL(new RegExp(`/plug/mattermost-ai/agents/chat/${botUserId}$`));
+
         // Exactly one greeting out of the six, never the agents list.
         const greeting = chat.getByRole('heading', {level: 2, name: new RegExp(`^(${GREETINGS.map((g) => g.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})$`)});
         await expect(greeting).toHaveCount(1);

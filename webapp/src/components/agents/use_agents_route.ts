@@ -7,7 +7,7 @@ import manifest from '@/manifest';
 
 export const AGENTS_ROUTE = `/plug/${manifest.id}/agents`;
 
-// 'landing' is the product root: a new chat with the workspace default agent.
+// 'landing' is the product root, which hands over to a new chat with the user's agent (or All agents).
 export type AgentsView = 'landing' | 'all' | 'prompts' | 'chat';
 
 export interface AgentsRoute {
@@ -22,9 +22,12 @@ export interface AgentsRoute {
 export interface AgentsNavigation {
     toAll: () => void;
 
-    // The All agents view, replacing the current entry (the landing without a
-    // default agent) so Back does not return to it.
+    // The All agents view, replacing the current entry (the landing without an
+    // agent to open) so Back does not return to it.
     replaceWithAll: () => void;
+
+    // A new chat with the agent, replacing the current entry (the landing) so Back does not return to it.
+    replaceWithChat: (botId: string) => void;
 
     // The All agents view with the create-agent flow open.
     toNewAgent: () => void;
@@ -147,6 +150,7 @@ export const useAgentsRoute = (): AgentsRoute & AgentsNavigation => {
     const nav = useMemo<AgentsNavigation>(() => ({
         toAll: () => push(ALL_AGENTS_PATH),
         replaceWithAll: () => replace(ALL_AGENTS_PATH),
+        replaceWithChat: (botId) => replace(buildChatPath(botId)),
         toNewAgent: () => push(NEW_AGENT_PATH),
         closeNewAgent: () => replace(ALL_AGENTS_PATH),
         toPrompts: () => push(PROMPTS_PATH),

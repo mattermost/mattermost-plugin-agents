@@ -6,34 +6,46 @@ import {act, render, screen} from '@testing-library/react';
 import {Provider} from 'react-redux';
 import {createStore} from 'redux';
 
-import AgentsPage, {AGENTS_ROUTE, ContentRenderers} from './agents_page';
+import manifest from '@/manifest';
 
-jest.mock('react-intl', () => {
-    const actual = jest.requireActual('react-intl');
-    const real = actual.createIntl({locale: 'en', defaultLocale: 'en', onError: () => null});
-    const intl = {
-        formatMessage: (descriptor: {id?: string; defaultMessage: string}, values?: Record<string, string | number>) =>
-            real.formatMessage({id: descriptor.id ?? descriptor.defaultMessage, ...descriptor}, values),
-    };
-    return {...actual, useIntl: () => intl};
-});
+import AgentsPage, {AGENTS_ROUTE} from './agents_page';
 
-// The sidebar's "Your agents" section pulls in the plugin's redux-backed bots module.
-jest.mock('@/bots', () => ({useBotlist: () => ({bots: []})}));
+jest.mock('@/client', () => ({
+    getAIBots: jest.fn(() => new Promise(() => null)),
+}));
+
+// The sidebar has its own tests; here it only navigates.
+jest.mock('./product_sidebar', () => ({
+    __esModule: true,
+    default: ({onSelectAll, onSelectPrompts}: {onSelectAll: () => void; onSelectPrompts: () => void}) => (
+        <nav>
+            <button
+                type='button'
+                onClick={onSelectAll}
+            >{'All agents'}</button>
+            <button
+                type='button'
+                onClick={onSelectPrompts}
+            >{'Custom Prompts'}</button>
+        </nav>
+    ),
+}));
 
 // The host mounts root components only outside product routes; the page mounts the Custom Prompts modal.
 jest.mock('@/components/custom_prompts/custom_prompts_management', () => ({__esModule: true, default: () => <div data-testid='custom-prompts-modal-root'/>}));
-
-jest.mock('./agents_list', () => ({__esModule: true, default: () => <div>{'agents list'}</div>}));
-
-// The default chat renderer imports host components from window.Components.
-jest.mock('@/mm_webapp', () => ({AdvancedTextEditor: null, ThreadViewer: null}));
+jest.mock('@/components/custom_prompts/custom_prompts_page', () => ({__esModule: true, default: () => <div>{'prompts view'}</div>}));
+jest.mock('./agents_list', () => ({__esModule: true, default: ({openCreate}: {openCreate: boolean}) => <div>{openCreate ? 'create open' : 'agents list'}</div>}));
+jest.mock('./agent_chat_page', () => ({__esModule: true, default: ({botId, rootId}: {botId: string; rootId?: string}) => <div>{`chat ${botId} ${rootId ?? 'new'}`}</div>}));
 
 const makeHistory = (initial: string) => {
     const listeners = new Set<() => void>();
     const history = {
         location: {pathname: initial},
         push: jest.fn((path: string) => {
+            history.location = {pathname: path};
+            listeners.forEach((l) => l());
+        }),
+        replace: jest.fn((path: string) => {
             history.location = {pathname: path};
             listeners.forEach((l) => l());
         }),
@@ -45,80 +57,63 @@ const makeHistory = (initial: string) => {
     return history;
 };
 
-const renderPage = (renderers?: ContentRenderers) => render(
-    <AgentsPage renderers={renderers}/>,
-);
+const bot = (id: string, isDefault = false) => ({id, displayName: id, isDefault});
+
+const renderPage = (path: string, bots: Array<ReturnType<typeof bot>> | null = [], selected = '') => {
+    const history = makeHistory(path);
+    window.WebappUtils = {browserHistory: history} as any;
+    const state = {
+        [`plugins-${manifest.id}`]: {bots},
+        entities: {
+            users: {currentUserId: 'me'},
+            preferences: {myPreferences: selected ? {'agents--selected_agent': {value: selected}} : {}},
+        },
+    };
+    render(
+        <Provider store={createStore(() => state)}>
+            <AgentsPage/>
+        </Provider>,
+    );
+    return history;
+};
 
 describe('AgentsPage', () => {
-    test('mounts the Custom Prompts modal when the plugin store is available, and not without one', () => {
-        window.WebappUtils = {browserHistory: makeHistory(AGENTS_ROUTE)} as any;
-        const {unmount} = render(<AgentsPage/>);
-        expect(screen.queryByTestId('custom-prompts-modal-root')).toBeNull();
-        unmount();
-
-        render(
-            <Provider store={createStore(() => ({}))}>
-                <AgentsPage/>
-            </Provider>,
-        );
-        expect(screen.getByTestId('custom-prompts-modal-root')).toBeTruthy();
-    });
-
     afterEach(() => {
         delete window.WebappUtils;
     });
 
-    test('opens on the landing and navigates via the sidebar', () => {
-        const history = makeHistory(AGENTS_ROUTE);
-        window.WebappUtils = {browserHistory: history} as any;
-        const renderers: ContentRenderers = {
-            landing: () => <div>{'landing view'}</div>,
-            all: () => <div>{'all view'}</div>,
-            prompts: () => <div>{'prompts view'}</div>,
-            chat: (r) => <div>{`chat ${r.botId}`}</div>,
-        };
-        renderPage(renderers);
-        expect(screen.getByText('landing view')).toBeTruthy();
+    test('mounts the Custom Prompts modal', () => {
+        renderPage(`${AGENTS_ROUTE}/all`);
+        expect(screen.getByTestId('custom-prompts-modal-root')).toBeTruthy();
+    });
 
-        act(() => screen.getByRole('button', {name: /All agents/}).click());
-        expect(history.push).toHaveBeenCalledWith(`${AGENTS_ROUTE}/all`);
-        expect(screen.getByText('all view')).toBeTruthy();
+    test('each route shows its view, and the sidebar navigates between them', () => {
+        const history = renderPage(`${AGENTS_ROUTE}/all`);
+        expect(screen.getByText('agents list')).toBeTruthy();
 
-        act(() => screen.getByRole('button', {name: /Custom Prompts/}).click());
+        act(() => screen.getByRole('button', {name: 'Custom Prompts'}).click());
         expect(history.push).toHaveBeenCalledWith(`${AGENTS_ROUTE}/prompts`);
         expect(screen.getByText('prompts view')).toBeTruthy();
 
-        act(() => history.push(`${AGENTS_ROUTE}/chat/bot1`));
-        expect(screen.getByText('chat bot1')).toBeTruthy();
-    });
+        act(() => screen.getByRole('button', {name: 'All agents'}).click());
+        expect(history.push).toHaveBeenCalledWith(`${AGENTS_ROUTE}/all`);
+        expect(screen.getByText('agents list')).toBeTruthy();
 
-    test('the create route renders the all view with the create flag, the plain route without', () => {
-        const history = makeHistory(`${AGENTS_ROUTE}/all/new`);
-        window.WebappUtils = {browserHistory: history} as any;
-        const renderers: ContentRenderers = {
-            landing: () => null,
-            all: (r) => <div>{r.create ? 'create open' : 'plain list'}</div>,
-            prompts: () => null,
-            chat: () => null,
-        };
-        renderPage(renderers);
+        act(() => history.push(`${AGENTS_ROUTE}/chat/bot1/root1`));
+        expect(screen.getByText('chat bot1 root1')).toBeTruthy();
+
+        act(() => history.push(`${AGENTS_ROUTE}/all/new`));
         expect(screen.getByText('create open')).toBeTruthy();
-
-        act(() => history.push(`${AGENTS_ROUTE}/all`));
-        expect(screen.getByText('plain list')).toBeTruthy();
     });
 
-    test('renders the agents list for the all view by default', () => {
-        window.WebappUtils = {browserHistory: makeHistory(`${AGENTS_ROUTE}/all`)} as any;
-        renderPage();
-        expect(screen.getByText('agents list')).toBeTruthy();
-    });
-
-    test('the default landing becomes All agents when no default agent is available', () => {
-        const history = makeHistory(AGENTS_ROUTE);
-        window.WebappUtils = {browserHistory: history} as any;
-        renderPage();
-        expect(history.location.pathname).toBe(`${AGENTS_ROUTE}/all`);
-        expect(screen.getByText('agents list')).toBeTruthy();
+    test.each([
+        {name: 'the selected agent', bots: [bot('a'), bot('b', true)], selected: 'a', expected: `${AGENTS_ROUTE}/chat/a`, view: 'chat a new'},
+        {name: 'the default agent', bots: [bot('a'), bot('b', true)], selected: '', expected: `${AGENTS_ROUTE}/chat/b`, view: 'chat b new'},
+        {name: 'All agents without either', bots: [bot('a'), bot('b')], selected: '', expected: `${AGENTS_ROUTE}/all`, view: 'agents list'},
+    ])('the product root is replaced by $name', ({bots, selected, expected, view}) => {
+        const history = renderPage(AGENTS_ROUTE, bots, selected);
+        expect(history.replace).toHaveBeenCalledWith(expected);
+        expect(history.push).not.toHaveBeenCalled();
+        expect(screen.getByText(view)).toBeTruthy();
     });
 });

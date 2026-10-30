@@ -2,58 +2,65 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, screen} from '@testing-library/react';
+import {Provider} from 'react-redux';
+import {createStore} from 'redux';
+import {render} from '@testing-library/react';
 
-import AgentsLanding, {resolveDefaultAgent} from './agents_landing';
+import manifest from '@/manifest';
 
-const mockUseBotlist = jest.fn();
-jest.mock('@/bots', () => ({useBotlist: () => mockUseBotlist()}));
+import AgentsLanding from './agents_landing';
 
-jest.mock('./agent_chat_page', () => ({
-    __esModule: true,
-    default: ({botId}: {botId: string}) => <div>{`chat ${botId}`}</div>,
+jest.mock('@/client', () => ({
+    getAIBots: jest.fn(() => new Promise(() => null)),
 }));
+
 const bot = (id: string, isDefault?: boolean) => ({id, displayName: id, isDefault});
 
-const nav = {toAll: jest.fn(), replaceWithAll: jest.fn(), toNewAgent: jest.fn(), closeNewAgent: jest.fn(), toPrompts: jest.fn(), toChat: jest.fn()};
+const nav = {replaceWithAll: jest.fn(), replaceWithChat: jest.fn()};
 
-describe('resolveDefaultAgent', () => {
-    test.each([
-        {name: 'flagged default', bots: [bot('a'), bot('b', true)], expected: 'b'},
-        {name: 'no flag: never the first bot', bots: [bot('a'), bot('b')], expected: null},
-        {name: 'empty list', bots: [], expected: null},
-        {name: 'not loaded', bots: null, expected: null},
-    ])('$name', ({bots, expected}) => {
-        expect(resolveDefaultAgent(bots as any)?.id ?? null).toBe(expected);
-    });
-});
+const renderLanding = (bots: Array<ReturnType<typeof bot>> | null, selected = '') => {
+    const state = {
+        [`plugins-${manifest.id}`]: {bots},
+        entities: {
+            users: {currentUserId: 'me'},
+            preferences: {myPreferences: selected ? {'agents--selected_agent': {value: selected}} : {}},
+        },
+    };
+    return render(
+        <Provider store={createStore(() => state)}>
+            <AgentsLanding nav={nav}/>
+        </Provider>,
+    );
+};
 
 describe('AgentsLanding', () => {
     beforeEach(() => {
         nav.replaceWithAll.mockClear();
+        nav.replaceWithChat.mockClear();
     });
 
-    test('renders a new chat with the default agent', () => {
-        mockUseBotlist.mockReturnValue({bots: [bot('a'), bot('b', true)]});
-        render(<AgentsLanding nav={nav}/>);
-        expect(screen.getByText('chat b')).toBeTruthy();
+    test.each([
+        {name: 'the user\'s selected agent', bots: [bot('a'), bot('b', true), bot('c')], selected: 'c', expected: 'c'},
+        {name: 'the default agent when none is selected', bots: [bot('a'), bot('b', true)], selected: '', expected: 'b'},
+        {name: 'the default agent when the selected one is gone', bots: [bot('a'), bot('b', true)], selected: 'gone', expected: 'b'},
+    ])('opens a new chat with $name, replacing the root', ({bots, selected, expected}) => {
+        renderLanding(bots, selected);
+        expect(nav.replaceWithChat).toHaveBeenCalledWith(expected);
         expect(nav.replaceWithAll).not.toHaveBeenCalled();
     });
 
     test.each([
-        {name: 'unset default', bots: [bot('a'), bot('b')]},
+        {name: 'no selected or default agent (never the first one)', bots: [bot('a'), bot('b')]},
         {name: 'no accessible agents', bots: []},
     ])('hands over to All agents: $name', ({bots}) => {
-        mockUseBotlist.mockReturnValue({bots});
-        render(<AgentsLanding nav={nav}/>);
+        renderLanding(bots);
         expect(nav.replaceWithAll).toHaveBeenCalledTimes(1);
-        expect(screen.queryByText(/^chat /)).toBeNull();
+        expect(nav.replaceWithChat).not.toHaveBeenCalled();
     });
 
     test('waits for the agent list before choosing', () => {
-        mockUseBotlist.mockReturnValue({bots: null});
-        render(<AgentsLanding nav={nav}/>);
+        renderLanding(null, 'a');
         expect(nav.replaceWithAll).not.toHaveBeenCalled();
-        expect(screen.queryByText(/^chat /)).toBeNull();
+        expect(nav.replaceWithChat).not.toHaveBeenCalled();
     });
 });

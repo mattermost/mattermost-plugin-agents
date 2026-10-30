@@ -197,7 +197,7 @@ describe('ProductSidebar plus menu', () => {
         delete window.WebappUtils;
     });
 
-    const sidebar = (withStore: boolean) => {
+    const sidebar = () => {
         const body = (
             <ProductSidebar
                 activeView='all'
@@ -210,21 +210,15 @@ describe('ProductSidebar plus menu', () => {
                 locale='en'
                 onError={() => null}
             >
-                {withStore ? <Provider store={createStore(() => makeState([]))}>{body}</Provider> : body}
+                <Provider store={createStore(() => makeState([]))}>{body}</Provider>
             </IntlProvider>,
         );
     };
 
-    test('sits in the Agents header row when the store is present', () => {
+    test('sits in the Agents header row', () => {
         mockBots = [];
-        sidebar(true);
+        sidebar();
         const heading = screen.getByRole('heading', {name: 'Agents'});
         expect(heading.parentElement?.contains(trigger())).toBe(true);
-    });
-
-    test('is not rendered without the store', () => {
-        sidebar(false);
-        expect(screen.queryByRole('button', {name: 'Add agent or chat'})).toBeNull();
-        expect(screen.getByRole('heading', {name: 'Agents'})).toBeTruthy();
     });
 });

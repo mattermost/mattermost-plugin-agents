@@ -1,8 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {ReactNode, useContext, useEffect, useRef} from 'react';
-import {ReactReduxContext} from 'react-redux';
+import React, {useEffect, useRef} from 'react';
 import styled from 'styled-components';
 
 import CustomPromptsManagement from '@/components/custom_prompts/custom_prompts_management';
@@ -12,47 +11,42 @@ import AgentChatPage from './agent_chat_page';
 import AgentsLanding from './agents_landing';
 import AgentsList from './agents_list';
 import ProductSidebar from './product_sidebar';
-import {AGENTS_ROUTE, AgentsNavigation, AgentsRoute, AgentsView, useAgentsRoute} from './use_agents_route';
+import {AGENTS_ROUTE, AgentsNavigation, AgentsRoute, useAgentsRoute} from './use_agents_route';
 
 export {AGENTS_ROUTE};
 
-// Seam for the center pane: each view maps to its content.
-export type ContentRenderers = Record<AgentsView, (route: AgentsRoute & AgentsNavigation) => ReactNode>;
-
-export const defaultContentRenderers: ContentRenderers = {
-    landing: (route) => <AgentsLanding nav={route}/>,
-    all: (route) => (
-        <AgentsList
-            onStartChat={route.toChat}
-            openCreate={route.create === true}
-            onCloseCreate={route.closeNewAgent}
-        />
-    ),
-    prompts: () => <CustomPromptsPage/>,
-    chat: (route) => (
-        <AgentChatPage
-            botId={route.botId ?? ''}
-            rootId={route.rootId}
-            toChat={route.toChat}
-            toAll={route.toAll}
-        />
-    ),
+// The center pane for the current route.
+const Content = ({route}: {route: AgentsRoute & AgentsNavigation}) => {
+    switch (route.view) {
+    case 'landing':
+        return <AgentsLanding nav={route}/>;
+    case 'prompts':
+        return <CustomPromptsPage/>;
+    case 'chat':
+        return (
+            <AgentChatPage
+                botId={route.botId ?? ''}
+                rootId={route.rootId}
+                toChat={route.toChat}
+                toAll={route.toAll}
+            />
+        );
+    default:
+        return (
+            <AgentsList
+                onStartChat={route.toChat}
+                openCreate={route.create === true}
+                onCloseCreate={route.closeNewAgent}
+            />
+        );
+    }
 };
 
-interface AgentsPageProps {
-    renderers?: ContentRenderers;
-}
-
 // Product mainComponent — rendered by registerProduct when the route matches.
-const AgentsPage = ({renderers = defaultContentRenderers}: AgentsPageProps) => {
+const AgentsPage = () => {
     const pageRef = useRef<HTMLDivElement>(null);
     const route = useAgentsRoute();
     const {toAll, toPrompts} = route;
-
-    // The host renders the plugin's root components (the Custom Prompts modal among them) only in the
-    // channel, backstage and popout layouts, not in product routes, so the product mounts its own copy
-    // for the composer's "Manage prompts". It needs the plugin's redux store.
-    const hasStore = useContext(ReactReduxContext) !== null;
 
     useEffect(() => {
         // The host webapp owns `app__body` on document.body (see MM-67913 / Boards #188).
@@ -97,9 +91,13 @@ const AgentsPage = ({renderers = defaultContentRenderers}: AgentsPageProps) => {
                 onSelectPrompts={toPrompts}
             />
             <ContentOutlet>
-                {renderers[route.view](route)}
+                <Content route={route}/>
             </ContentOutlet>
-            {hasStore && <CustomPromptsManagement/>}
+
+            {/* The host renders the plugin's root components (the Custom Prompts modal among them) only
+                in the channel, backstage and popout layouts, not in product routes, so the product mounts
+                the modal for the composer's "Manage prompts". */}
+            <CustomPromptsManagement/>
         </PageWrapper>
     );
 };
