@@ -18,6 +18,7 @@ import {withDeadline} from 'helpers/deadline';
 import {buildTextResponse, TITLE_GENERATION_PROMPT_PREFIX} from 'helpers/aimock-fixtures';
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
+import {showAgentDMAsMessages} from 'helpers/agent-dm-view';
 import {AIMOCK_BOT_NAME, RunAIMockContainer} from 'helpers/plugincontainer';
 
 const username = 'regularuser';
@@ -499,6 +500,9 @@ test.describe('Agents product view', () => {
         const rootId = await seedThread(DM_CHAT);
         await login(page);
         await page.goto(`${mattermost.url()}/${teamName}/messages/@${AIMOCK_BOT_NAME}`, {waitUntil: 'domcontentloaded'});
+
+        // Hosts with registerChannelViewComponent show the agent chat here (agent-dm-channel-view.spec.ts); this checks the plain messages.
+        await showAgentDMAsMessages(page, dmChannelId);
 
         const channelView = page.getByTestId('channel_view');
         const messages = channelView.getByTestId('post-message-text');
