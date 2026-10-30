@@ -1183,7 +1183,7 @@ export async function savePluginConfig(config: PluginConfig): Promise<PluginConf
     }
 
     throw new ClientError(Client4.url, {
-        message: await readClientErrorMessage(response),
+        ...(await readAgentError(response)),
         status_code: response.status,
         url,
     });

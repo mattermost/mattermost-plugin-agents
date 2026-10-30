@@ -158,12 +158,11 @@ const ToolActivityDisplay: React.FC<ToolActivityDisplayProps> = (props) => {
                 disabled={!expandable}
                 onClick={toggle}
             >
-                <HeaderChevron
-                    $expanded={expanded}
-                    $visible={expandable}
-                >
-                    <ChevronRightIcon/>
-                </HeaderChevron>
+                {expandable && (
+                    <HeaderChevron $expanded={expanded}>
+                        <ChevronRightIcon/>
+                    </HeaderChevron>
+                )}
                 <RollingLine
                     lineKey={lineKey}
                     animate={liveRef.current}
@@ -215,9 +214,27 @@ const ActivityHeader = styled(CollapseHeaderRow)`
     }
 `;
 
-const HeaderChevron = styled(CollapseChevron)<{$visible: boolean}>`
-    opacity: ${(props) => (props.$visible ? 1 : 0)};
-    transition: transform 0.2s ease, opacity 0.2s ease;
+// Mounts only once there is something to expand. It grows in from zero width
+// (cancelling the header gap) so the status line eases over rather than jumping.
+const chevronIn = keyframes`
+    from {
+        width: 0;
+        margin-right: calc(-1 * var(--spacing-xs));
+        opacity: 0;
+    }
+    to {
+        width: 16px;
+        margin-right: 0;
+        opacity: 1;
+    }
+`;
+
+const HeaderChevron = styled(CollapseChevron)`
+    overflow: hidden;
+    transition: transform 0.2s ease;
+    animation: ${chevronIn} ${EXPAND_MS}ms ease;
+
+    ${noMotionWhenReduced}
 `;
 
 const Indicator = styled.div`
@@ -260,6 +277,10 @@ const collapseOut = keyframes`
 
 const ExpandedRounds = styled.div<{$closing: boolean}>`
     display: grid;
+
+    // The implicit auto track sizes to min-content, so a long nowrap tool
+    // title would widen it past the post instead of ellipsizing.
+    grid-template-columns: minmax(0, 1fr);
     ${(props) => css`
         animation: ${props.$closing ? collapseOut : expandIn} ${EXPAND_MS}ms ease forwards;
     `}

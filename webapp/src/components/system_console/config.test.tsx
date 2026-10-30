@@ -184,6 +184,26 @@ describe('Config save flow', () => {
         expect(screen.getByText('service:My Service:unsaved')).toBeTruthy();
         expect(screen.getByText('mcp:Jira:unsaved')).toBeTruthy();
     });
+
+    it('shows an inline error when the save is rejected for invalid allowed link domains, until the field is edited', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, allowUnsafeLinks: true, allowedLinkDomains: 'not a host'});
+        const {registerSaveAction} = renderConfig();
+        await screen.findByText('service:My Service:unsaved');
+
+        (savePluginConfig as jest.Mock).mockRejectedValue(Object.assign(new Error(''), {server_error_id: 'invalid_allowed_link_domains'}));
+
+        const save = registerSaveAction.mock.calls.at(-1)?.[0] as SaveAction;
+        let result: {error?: {message?: string}} = {};
+        await act(async () => {
+            result = await save();
+        });
+
+        expect(result.error?.message).toBe('Failed to save configuration.');
+        expect(await screen.findByText('One or more entries are not valid domains.')).toBeTruthy();
+
+        fireEvent.change(screen.getByLabelText('Allowed Link Domains (csv)'), {target: {value: 'example.com'}});
+        expect(screen.queryByText('One or more entries are not valid domains.')).toBeNull();
+    });
 });
 
 describe('Config MCP updates', () => {

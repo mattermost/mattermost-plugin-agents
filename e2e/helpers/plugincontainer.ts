@@ -82,6 +82,7 @@ export async function RunAIMockContainer(overrides?: {
   mcp?: Record<string, unknown>;
   webSearch?: Record<string, unknown>;
   enableChannelMentionToolCalling?: boolean;
+  config?: Record<string, unknown>;
 }): Promise<MattermostContainer> {
   const filename = findPluginTarball();
 
@@ -126,6 +127,7 @@ export async function RunAIMockContainer(overrides?: {
         },
       ],
       ...(overrides?.webSearch ? { webSearch: overrides.webSearch } : {}),
+      ...overrides?.config,
     },
   };
 

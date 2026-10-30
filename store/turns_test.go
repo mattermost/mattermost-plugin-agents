@@ -244,6 +244,72 @@ func TestUpdateTurnContent(t *testing.T) {
 	}
 }
 
+func TestCompareAndSwapTurnContent(t *testing.T) {
+	const original = `[{"type":"tool_use","id":"t1","status":"pending"}]`
+	const claimed = `[{"type":"tool_use","id":"t1","status":"accepted"}]`
+
+	tests := []struct {
+		name        string
+		turnID      string
+		expected    string
+		wantSwapped bool
+		wantContent string
+	}{
+		{
+			name:        "swaps when content still matches",
+			expected:    original,
+			wantSwapped: true,
+			wantContent: claimed,
+		},
+		{
+			name:        "compares as JSON, not bytes",
+			expected:    `[ { "status": "pending", "id": "t1", "type": "tool_use" } ]`,
+			wantSwapped: true,
+			wantContent: claimed,
+		},
+		{
+			name:        "leaves content alone when another writer got there first",
+			expected:    `[{"type":"tool_use","id":"t1","status":"success"}]`,
+			wantSwapped: false,
+			wantContent: original,
+		},
+		{
+			name:        "reports no swap for a missing turn",
+			turnID:      "missing-turn-id",
+			expected:    original,
+			wantSwapped: false,
+			wantContent: original,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestStore(t)
+			require.NoError(t, s.RunMigrations())
+
+			conv := makeConversation()
+			require.NoError(t, s.CreateConversation(conv))
+			turn := makeTurn(conv.ID, 1, func(tu *Turn) {
+				tu.Content = json.RawMessage(original)
+			})
+			require.NoError(t, s.CreateTurn(turn))
+
+			turnID := turn.ID
+			if tt.turnID != "" {
+				turnID = tt.turnID
+			}
+			swapped, err := s.CompareAndSwapTurnContent(turnID, json.RawMessage(tt.expected), json.RawMessage(claimed))
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantSwapped, swapped)
+
+			turns, err := s.GetTurnsForConversation(conv.ID)
+			require.NoError(t, err)
+			require.Len(t, turns, 1)
+			assert.JSONEq(t, tt.wantContent, string(turns[0].Content))
+		})
+	}
+}
+
 func TestUpdateTurnTokens(t *testing.T) {
 	tests := []struct {
 		name     string

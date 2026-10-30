@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -34,6 +35,12 @@ type loadedStateFlowStore struct {
 	conversations map[string]*store.Conversation
 	turns         map[string][]store.Turn
 	allTurns      map[string]*store.Turn
+
+	// afterTurnsRead, when set, runs after each GetTurnsForConversation with
+	// the running read count, outside the lock, so tests can interleave a
+	// second request between a read and the write that depends on it.
+	afterTurnsRead func(reads int)
+	turnsReads     int
 }
 
 func newLoadedStateFlowStore() *loadedStateFlowStore {
@@ -130,10 +137,15 @@ func (s *loadedStateFlowStore) CreateTurnAutoSequence(turn *store.Turn) error {
 
 func (s *loadedStateFlowStore) GetTurnsForConversation(conversationID string) ([]store.Turn, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	turns := s.turns[conversationID]
 	result := make([]store.Turn, len(turns))
 	copy(result, turns)
+	s.turnsReads++
+	reads, hook := s.turnsReads, s.afterTurnsRead
+	s.mu.Unlock()
+	if hook != nil {
+		hook(reads)
+	}
 	return result, nil
 }
 
@@ -152,6 +164,20 @@ func (s *loadedStateFlowStore) GetTurnByPostID(postID string) (*store.Turn, erro
 func (s *loadedStateFlowStore) UpdateTurnContent(id string, content json.RawMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.updateTurnContentLocked(id, content)
+}
+
+func (s *loadedStateFlowStore) CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	turn, ok := s.allTurns[id]
+	if !ok || !jsonContentEqual(turn.Content, expected) {
+		return false, nil
+	}
+	return true, s.updateTurnContentLocked(id, content)
+}
+
+func (s *loadedStateFlowStore) updateTurnContentLocked(id string, content json.RawMessage) error {
 	turn, ok := s.allTurns[id]
 	if !ok {
 		return fmt.Errorf("turn %s not found", id)
@@ -165,6 +191,15 @@ func (s *loadedStateFlowStore) UpdateTurnContent(id string, content json.RawMess
 		}
 	}
 	return nil
+}
+
+// jsonContentEqual mirrors the store's JSONB comparison.
+func jsonContentEqual(a, b json.RawMessage) bool {
+	var av, bv any
+	if json.Unmarshal(a, &av) != nil || json.Unmarshal(b, &bv) != nil {
+		return false
+	}
+	return reflect.DeepEqual(av, bv)
 }
 
 func (s *loadedStateFlowStore) UpdateTurnPostID(id string, postID *string) error {

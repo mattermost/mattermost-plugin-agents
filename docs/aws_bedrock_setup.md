@@ -1,12 +1,12 @@
 # Configure Mattermost Agents with AWS Bedrock
 
-This guide walks you through setting up the Mattermost Agents plugin with [Amazon Bedrock](https://aws.amazon.com/bedrock/) as the LLM provider. When running Mattermost on AWS EC2 infrastructure, you can use IAM instance profiles for seamless, credential-free authentication.
+Configure the Mattermost Agents plugin to use [Amazon Bedrock](https://aws.amazon.com/bedrock/) as its LLM provider. This guide covers model access, IAM permissions, and credential-free authentication with IAM instance profiles when Mattermost runs on AWS EC2.
 
 ## Prerequisites
 
 Before you begin, ensure you have:
 
-- A Mattermost server (v10.11 or later) running on an AWS EC2 instance
+- A Mattermost server (v12.0 or later) running on an AWS EC2 instance
 - An active Mattermost Enterprise license
 - AWS CLI configured with permissions to create IAM resources
 - Access to the Mattermost System Console as a system administrator

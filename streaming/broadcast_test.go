@@ -82,8 +82,9 @@ func TestPostUpdateEventsUseReliableClusterSend(t *testing.T) {
 		{
 			name: "tool call events are reliable for requester and channel broadcasts",
 			act: func(service *MMPostStreamService) {
-				service.broadcastToolCalls(post, []llm.ToolCall{
-					{ID: "tc1", Name: "search", Status: llm.ToolCallStatusSuccess},
+				service.broadcastToolCalls(post, llm.ToolCallBatch{
+					Phase: llm.ToolCallPhaseResolved,
+					Calls: []llm.ToolCall{{ID: "tc1", Name: "search", Status: llm.ToolCallStatusSuccess}},
 				}, requesterID)
 			},
 			assert: func(t *testing.T, events []publishedEvent) {

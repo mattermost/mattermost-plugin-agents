@@ -51,6 +51,7 @@ const groups = {
         'tests/agents/html-artifact.spec.ts',
         'tests/agents/agent-chat-bubbles.spec.ts',
         'tests/tool-activity/collapsed-activity.spec.ts',
+        'tests/rhs-core/link-domain-allowlist.spec.ts',
     ],
     'e2e-shard-3': [
         'tests/system-console/bot-native-tools.spec.ts',

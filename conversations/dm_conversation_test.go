@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -158,6 +159,29 @@ func (s *fakeConvStore) GetTurnsForConversation(conversationID string) ([]store.
 func (s *fakeConvStore) UpdateTurnContent(id string, content json.RawMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.updateTurnContentLocked(id, content)
+}
+
+func (s *fakeConvStore) CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.allTurns[id]
+	if !ok || !jsonContentEqual(t.Content, expected) {
+		return false, nil
+	}
+	return true, s.updateTurnContentLocked(id, content)
+}
+
+// jsonContentEqual mirrors the store's JSONB comparison.
+func jsonContentEqual(a, b json.RawMessage) bool {
+	var av, bv any
+	if json.Unmarshal(a, &av) != nil || json.Unmarshal(b, &bv) != nil {
+		return false
+	}
+	return reflect.DeepEqual(av, bv)
+}
+
+func (s *fakeConvStore) updateTurnContentLocked(id string, content json.RawMessage) error {
 	t, ok := s.allTurns[id]
 	if !ok {
 		return fmt.Errorf("turn %s not found", id)
@@ -932,7 +956,7 @@ func TestDMManualApprovalTools_ToolRunnerReturnsUnresolved(t *testing.T) {
 	// Consume stream and check for tool call events
 	var foundToolCalls bool
 	for event := range streamResult.Stream.Stream {
-		if event.Type == llm.EventTypeToolCalls {
+		if event.Type == llm.EventTypeToolCallBatch {
 			foundToolCalls = true
 		}
 	}

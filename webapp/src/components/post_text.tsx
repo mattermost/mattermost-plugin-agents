@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useMemo} from 'react';
+import React, {useCallback, useMemo} from 'react';
 import {useSelector} from 'react-redux';
 import styled, {keyframes, css} from 'styled-components';
 
@@ -9,7 +9,8 @@ import {GlobalState} from '@mattermost/types/store';
 import {Channel} from '@mattermost/types/channels';
 import {Team} from '@mattermost/types/teams';
 
-import manifest from '@/manifest';
+import {getLinkPolicy} from '@/selectors';
+import {LinkRendering, linkRendering} from '@/utils/link_allowlist';
 
 import {insertAnnotationMarkers, replaceCitationMarkers} from './citations/citation_processor';
 import {Annotation} from './citations/types';
@@ -92,15 +93,22 @@ interface RevealTextProps {
     reveal: boolean;
     team: Team;
     siteURL?: string;
-    allowUnsafeLinks: boolean;
+    links: LinkRendering;
 }
 
 const RevealText = (props: RevealTextProps) => {
     // @ts-ignore
-    const {formatText, messageHtmlToComponent} = window.PostUtils;
+    const {formatText: hostFormatText, messageHtmlToComponent} = window.PostUtils;
+
+    // Each block goes through the same link policy as the single-pass render.
+    const {links} = props;
+    const formatText = useCallback(
+        (source: string, options: unknown) => links.restrictLinks(hostFormatText(source, options)),
+        [hostFormatText, links],
+    );
     const markdownOptions = useMemo(
-        () => buildMarkdownOptions(props.team, props.allowUnsafeLinks, props.siteURL),
-        [props.team, props.allowUnsafeLinks, props.siteURL],
+        () => buildMarkdownOptions(props.team, links, props.siteURL),
+        [props.team, links, props.siteURL],
     );
     const htmlOptions = useMemo(() => buildHtmlOptions(props.postID), [props.postID]);
 
@@ -122,13 +130,13 @@ const RevealText = (props: RevealTextProps) => {
     );
 };
 
-function buildMarkdownOptions(team: Team, allowUnsafeLinks: boolean, siteURL: string | undefined) {
+function buildMarkdownOptions(team: Team, links: LinkRendering, siteURL: string | undefined) {
     return {
         singleline: false,
         mentionHighlight: true,
         atMentions: true,
         team,
-        unsafeLinks: !allowUnsafeLinks,
+        unsafeLinks: links.unsafeLinks,
         minimumHashtagLength: 1000000000,
         siteURL,
     };
@@ -147,11 +155,21 @@ const PostText = (props: Props) => {
     const channel = useSelector<GlobalState, Channel>((state) => state.entities.channels.channels[props.channelID]);
     const team = useSelector<GlobalState, Team>((state) => state.entities.teams.teams[channel?.team_id]);
     const siteURL = useSelector<GlobalState, string | undefined>((state) => state.entities.general.config.SiteURL);
-    const allowUnsafeLinks = useSelector<GlobalState, boolean>((state: any) => state['plugins-' + manifest.id]?.allowUnsafeLinks ?? false);
+    const linkPolicy = useSelector(getLinkPolicy);
+    const links = useMemo(() => linkRendering(linkPolicy, siteURL || window.location.origin), [linkPolicy, siteURL]);
+
+    // A citation whose URL the policy rejects keeps its marker but loses the
+    // URL, so the chip renders without a destination to open.
+    const annotations = useMemo(
+        () => props.annotations?.map((annotation) => (
+            annotation.url && !links.isCitationUrlAllowed(annotation.url) ? {...annotation, url: undefined} : annotation // eslint-disable-line no-undefined
+        )),
+        [props.annotations, links],
+    );
 
     // Citation markers index into the whole message, so annotated text keeps
     // the single-pass render.
-    if (props.reveal && !(props.annotations && props.annotations.length > 0)) {
+    if (props.reveal && !(annotations && annotations.length > 0)) {
         return (
             <RevealText
                 message={props.message}
@@ -160,7 +178,7 @@ const PostText = (props: Props) => {
                 reveal={props.reveal}
                 team={team}
                 siteURL={siteURL}
-                allowUnsafeLinks={allowUnsafeLinks}
+                links={links}
             />
         );
     }
@@ -168,17 +186,17 @@ const PostText = (props: Props) => {
     // @ts-ignore
     const {formatText, messageHtmlToComponent} = window.PostUtils;
 
-    const markdownOptions = buildMarkdownOptions(team, allowUnsafeLinks, siteURL);
+    const markdownOptions = buildMarkdownOptions(team, links, siteURL);
     const messageHtmlToComponentOptions = buildHtmlOptions(props.postID);
 
     // Process message with annotations if they exist
     let processedMessage = props.message;
-    if (props.annotations && props.annotations.length > 0) {
-        processedMessage = insertAnnotationMarkers(props.message, props.annotations);
+    if (annotations && annotations.length > 0) {
+        processedMessage = insertAnnotationMarkers(props.message, annotations);
     }
 
     const text = messageHtmlToComponent(
-        formatText(processedMessage, markdownOptions),
+        links.restrictLinks(formatText(processedMessage, markdownOptions)),
         messageHtmlToComponentOptions,
     );
 
@@ -187,7 +205,7 @@ const PostText = (props: Props) => {
     }
 
     // Post-process the rendered JSX to replace citation markers with React components
-    const processedText = props.annotations && props.annotations.length > 0 ? replaceCitationMarkers(text, props.annotations) : text;
+    const processedText = annotations && annotations.length > 0 ? replaceCitationMarkers(text, annotations) : text;
 
     return (
         // eslint-disable-next-line agents/click-events-have-key-events, agents/no-static-element-interactions -- delegates clicks from the links inside, which stay keyboard-operable

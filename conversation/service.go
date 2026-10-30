@@ -42,6 +42,9 @@ type Store interface {
 	GetTurnByPostID(postID string) (*store.Turn, error)
 	// UpdateTurnContent updates the content JSON of a turn.
 	UpdateTurnContent(id string, content json.RawMessage) error
+	// CompareAndSwapTurnContent replaces a turn's content only while it still
+	// equals expected, and reports whether it did.
+	CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error)
 	UpdateTurnTokens(id string, tokensIn, tokensOut int64) error
 	// UpdateTurnPostID sets or clears the PostID on a turn.
 	UpdateTurnPostID(id string, postID *string) error
@@ -229,6 +232,12 @@ func (s *Service) GetPreviousUserTurn(conversationID, currentUserTurnID string) 
 // UpdateTurnContent updates the content JSON of a turn.
 func (s *Service) UpdateTurnContent(turnID string, content json.RawMessage) error {
 	return s.store.UpdateTurnContent(turnID, content)
+}
+
+// CompareAndSwapTurnContent replaces a turn's content only while it still
+// equals expected, and reports whether it did.
+func (s *Service) CompareAndSwapTurnContent(turnID string, expected, content json.RawMessage) (bool, error) {
+	return s.store.CompareAndSwapTurnContent(turnID, expected, content)
 }
 
 // CreateTurnAutoSequence persists a new turn, atomically assigning the next sequence number.

@@ -1,0 +1,40 @@
+{
+    "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+    "name": "io.github.mattermost/mattermost-plugin-agents",
+    "title": "Mattermost",
+    "description": "Official Mattermost MCP server, built into the Mattermost Agents plugin. Read, search and post.",
+    "version": "0.0.0",
+    "websiteUrl": "https://github.com/mattermost/mattermost-plugin-agents/blob/master/docs/mcp_server.md",
+    "repository": {
+        "url": "https://github.com/mattermost/mattermost-plugin-agents",
+        "source": "github"
+    },
+    "remotes": [
+        {
+            "type": "streamable-http",
+            "url": "https://{mattermost_host}/plugins/mattermost-ai/mcp-server/mcp",
+            "variables": {
+                "mattermost_host": {
+                    "description": "Hostname of your own Mattermost server (add a port or subpath if your Site URL has one), for example chat.example.com. Requires the Mattermost Agents plugin with its HTTP MCP server enabled.",
+                    "isRequired": true,
+                    "placeholder": "chat.example.com"
+                }
+            },
+            "headers": [
+                {
+                    "name": "Authorization",
+                    "description": "Optional. OAuth 2.0 with dynamic client registration is the default and needs no header. To use a Mattermost Personal Access Token instead, set this to Bearer followed by the token.",
+                    "value": "Bearer {personal_access_token}",
+                    "isRequired": false,
+                    "isSecret": true,
+                    "variables": {
+                        "personal_access_token": {
+                            "description": "Mattermost Personal Access Token (User Settings > Security > Personal Access Tokens).",
+                            "isSecret": true
+                        }
+                    }
+                }
+            ]
+        }
+    ]
+}

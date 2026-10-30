@@ -36,6 +36,7 @@ type Config struct {
 	EnableTokenUsageLogToFile       *bool                            `json:"enableTokenUsageLogToFile,omitempty"`
 	AllowedUpstreamHostnames        string                           `json:"allowedUpstreamHostnames"`
 	AllowUnsafeLinks                bool                             `json:"allowUnsafeLinks"`
+	AllowedLinkDomains              string                           `json:"allowedLinkDomains"`
 	EnableHTMLArtifacts             bool                             `json:"enableHTMLArtifacts"`
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
 	EnableAmbientAutoReply          bool                             `json:"enableAmbientAutoReply"`
@@ -190,6 +191,11 @@ func (c *Container) MCP() MCPConfig {
 
 func (c *Container) AllowUnsafeLinks() bool {
 	return c.Config().AllowUnsafeLinks
+}
+
+func (c *Container) LinkPolicy() LinkPolicy {
+	cfg := c.Config()
+	return NewLinkPolicy(cfg.AllowUnsafeLinks, cfg.AllowedLinkDomains)
 }
 
 // EnableHTMLArtifacts reports whether agent-created HTML files are rendered
