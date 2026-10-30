@@ -686,8 +686,8 @@ test.describe('Agents product view', () => {
         // The user's root post carries the file.
         const thread = page.getByTestId('agent-chat-thread');
         const newRootId = new URL(page.url()).pathname.split('/').pop()!;
-        const userPost = thread.locator(`#post_${newRootId}`);
-        await expect(userPost.getByTestId('post-message-text').getByText(ATTACH_PROMPT, {exact: true})).toBeVisible({timeout: 30000});
+        const userPost = thread.locator(`#rhsPost_${newRootId}`);
+        await expect(userPost.getByText(ATTACH_PROMPT, {exact: true})).toBeVisible({timeout: 30000});
         await expect(userPost.getByText(ATTACH_FILE)).toBeVisible({timeout: 30000});
 
         const client = await mattermost.getClient(username, password);
