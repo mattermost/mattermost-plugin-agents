@@ -10,10 +10,11 @@ DLV_DEBUG_PORT := 2346
 DEFAULT_GOOS := $(shell go env GOOS)
 DEFAULT_GOARCH := $(shell go env GOARCH)
 
-# loadtest/controller is a nested Go module that keeps mattermost-load-test-ng out
-# of the production plugin build. It is invisible to the root-module gates, so the
-# loadtest-controller-* targets run the same lint/test/drift checks against it.
-LOADTEST_CONTROLLER_DIR := loadtest/controller
+# Nested Go modules keep their dependencies out of the production plugin build:
+# loadtest/controller (mattermost-load-test-ng) and build/releasenotes (the
+# Anthropic SDK). They are invisible to the root-module gates, so the
+# nested-modules-* targets run the same lint/test/drift checks against each.
+NESTED_GO_MODULES := loadtest/controller build/releasenotes
 
 export GO111MODULE=on
 
@@ -226,32 +227,35 @@ check-locks:
 
 ## Verify nested Go modules are tidy (no go.mod/go.sum drift).
 .PHONY: check-go-mods
-check-go-mods: loadtest-controller-mod-check
+check-go-mods: nested-modules-mod-check
 
-## Run the controller module unit tests (race-enabled, matching root).
-.PHONY: loadtest-controller-test
-loadtest-controller-test: install-go-tools
-	cd $(LOADTEST_CONTROLLER_DIR) && $(GOBIN)/gotestsum -- $(GO_TEST_FLAGS) ./...
+## Run the nested modules' unit tests (race-enabled, matching root).
+.PHONY: nested-modules-test
+nested-modules-test: install-go-tools
+	@for d in $(NESTED_GO_MODULES); do (cd $$d && $(GOBIN)/gotestsum -- $(GO_TEST_FLAGS) ./...) || exit 1; done
 
-## Lint the controller module: go vet, golangci-lint, and license headers.
+## Lint the nested modules: go vet, golangci-lint, and license headers.
 ## golangci-lint v2 walks up to the root config; pass it explicitly since we run
 ## from the module dir.
-.PHONY: loadtest-controller-lint
-loadtest-controller-lint: install-go-tools
-	cd $(LOADTEST_CONTROLLER_DIR) && $(GO) vet ./...
-	cd $(LOADTEST_CONTROLLER_DIR) && $(GOBIN)/golangci-lint run --config $(PWD)/.golangci.yml ./...
-	cd $(LOADTEST_CONTROLLER_DIR) && $(GO) vet -vettool=$(GOBIN)/agents-govet ./...
+.PHONY: nested-modules-lint
+nested-modules-lint: install-go-tools
+	@for d in $(NESTED_GO_MODULES); do \
+		(cd $$d && $(GO) vet ./... && \
+			$(GOBIN)/golangci-lint run --config $(PWD)/.golangci.yml ./... && \
+			$(GO) vet -vettool=$(GOBIN)/agents-govet ./...) || exit 1; \
+	done
 
-## Fail when the controller module's go.mod/go.sum drift from `go mod tidy`.
-.PHONY: loadtest-controller-mod-check
-loadtest-controller-mod-check:
-	cd $(LOADTEST_CONTROLLER_DIR) && $(GO) mod tidy
-	git diff --exit-code $(LOADTEST_CONTROLLER_DIR)/go.mod $(LOADTEST_CONTROLLER_DIR)/go.sum
+## Fail when a nested module's go.mod/go.sum drift from `go mod tidy`.
+.PHONY: nested-modules-mod-check
+nested-modules-mod-check:
+	@for d in $(NESTED_GO_MODULES); do \
+		(cd $$d && $(GO) mod tidy) && git diff --exit-code $$d/go.mod $$d/go.sum || exit 1; \
+	done
 
-## Compile-smoke the controller module.
-.PHONY: loadtest-controller-build
-loadtest-controller-build:
-	$(GO) build -C $(LOADTEST_CONTROLLER_DIR) ./...
+## Compile-smoke the nested modules.
+.PHONY: nested-modules-build
+nested-modules-build:
+	@for d in $(NESTED_GO_MODULES); do $(GO) build -C $$d ./... || exit 1; done
 
 ## Ensures the plugin manifest is valid
 .PHONY: manifest-check
@@ -306,7 +310,7 @@ ifneq ($(HAS_SERVER),)
 	$(GOBIN)/golangci-lint run ./...
 	# npm dependencies can contain Go packages; do not lint third-party sources.
 	$(GO) vet -vettool=$(GOBIN)/agents-govet $$($(GO) list ./... | awk '!/\/node_modules\//')
-	$(MAKE) loadtest-controller-lint
+	$(MAKE) nested-modules-lint
 endif
 
 ## Runs all style checks but fixes anything it can. Also re-extracts webapp
@@ -442,7 +446,8 @@ evalviewer:
 ## See build/releasenotes/README.md.
 .PHONY: release-notes
 release-notes:
-	$(GO) run ./build/releasenotes $(if $(BASE),--base $(BASE)) $(if $(HEAD),--head $(HEAD)) $(if $(TAG),--tag $(TAG)) $(if $(OUTPUT),--output $(OUTPUT)) $(if $(PRINT_PROMPT),--print-prompt)
+	$(GO) build -C build/releasenotes -o ../../bin/releasenotes .
+	./bin/releasenotes $(if $(BASE),--base $(BASE)) $(if $(HEAD),--head $(HEAD)) $(if $(TAG),--tag $(TAG)) $(if $(OUTPUT),--output $(OUTPUT)) $(if $(PRINT_PROMPT),--print-prompt)
 
 # Packages with evals. Eval test names end in "Eval" so -run skips unit tests;
 # mcpserver evals boot Mattermost containers and need Docker.
@@ -541,7 +546,7 @@ detach: setup-attach
 test: apply webapp/node_modules install-go-tools
 ifneq ($(HAS_SERVER),)
 	$(GOBIN)/gotestsum -- -v ./...
-	$(MAKE) loadtest-controller-test
+	$(MAKE) nested-modules-test
 endif
 ifneq ($(HAS_WEBAPP),)
 	cd webapp && $(NPM) run test;
@@ -553,7 +558,7 @@ endif
 test-ci: apply webapp/node_modules install-go-tools
 ifneq ($(HAS_SERVER),)
 	$(GOBIN)/gotestsum --format standard-verbose --junitfile report.xml -- ./...
-	$(MAKE) loadtest-controller-test
+	$(MAKE) nested-modules-test
 endif
 ifneq ($(HAS_WEBAPP),)
 	cd webapp && $(NPM) run test;

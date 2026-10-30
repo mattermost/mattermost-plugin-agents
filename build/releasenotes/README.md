@@ -3,6 +3,9 @@
 Writes the GitHub release notes for a Mattermost Agents release with an LLM,
 from the titles and descriptions of the pull requests in the release.
 
+It is a separate Go module, so its dependencies (the Anthropic SDK) stay out of
+the plugin build. `make nested-modules-lint nested-modules-test` checks it.
+
 ## How it runs
 
 `mattermost/actions/plugin-ci/build` writes `dist/release-notes.md` on every

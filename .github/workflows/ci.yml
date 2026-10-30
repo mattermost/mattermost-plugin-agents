@@ -293,7 +293,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_NOTES_MODEL: ${{ vars.RELEASE_NOTES_MODEL || vars.CLAUDE_MODEL || 'claude-sonnet-5-5' }}
-        run: go run ./build/releasenotes --output dist/release-notes.md
+        run: make release-notes OUTPUT=dist/release-notes.md
       - uses: mattermost/actions/plugin-ci/build-fips@c7a06bc642f72fc227deb2cae3af03cff72c0f0d
         with:
           chainguard-identity: ${{ secrets.CHAINGUARD_IDENTITY }}
@@ -308,9 +308,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # The nested loadtest/controller module is invisible to the root-module lint/build
-  # jobs above, so run its lint, tests, and go.mod drift check in a dedicated job.
-  loadtest-controller:
+  # The nested Go modules (loadtest/controller, build/releasenotes) are invisible
+  # to the root-module lint/build jobs above, so run their lint, tests, and go.mod
+  # drift checks in a dedicated job.
+  nested-modules:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -320,7 +321,7 @@ jobs:
         with:
           go-version-file: 'go.mod'
       - run: make install-go-tools
-      - run: make loadtest-controller-build loadtest-controller-lint loadtest-controller-test loadtest-controller-mod-check
+      - run: make nested-modules-build nested-modules-lint nested-modules-test nested-modules-mod-check
 
   upload-s3-pr:
     needs: [lint]

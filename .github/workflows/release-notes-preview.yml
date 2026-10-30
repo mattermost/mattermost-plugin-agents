@@ -28,7 +28,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: build/releasenotes/go.mod
 
       - name: Generate release notes
         env:
@@ -39,7 +39,7 @@ jobs:
           RELEASE_NOTES_MODEL: ${{ vars.RELEASE_NOTES_MODEL || vars.CLAUDE_MODEL || 'claude-sonnet-5-5' }}
         run: |
           set -euo pipefail
-          go run ./build/releasenotes --head "refs/tags/$TAG" --tag "$TAG" ${BASE:+--base "$BASE"} --output "$RUNNER_TEMP/release-notes.md"
+          make release-notes HEAD="refs/tags/$TAG" TAG="$TAG" BASE="$BASE" OUTPUT="$RUNNER_TEMP/release-notes.md"
           {
             echo "## Release notes preview for $TAG"
             echo
