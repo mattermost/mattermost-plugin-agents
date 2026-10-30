@@ -11,7 +11,7 @@ import { type OpenAIMockContainer } from './openai-mock';
  * client falls back to the legacy initialize handshake.
  */
 
-export type MockMCPTool = { name: string; description: string };
+export type MockMCPTool = { name: string; description: string; readOnlyHint?: boolean };
 
 const jsonRPCResponse = (payload: string): string => JSON.stringify({
     status: 200,
@@ -36,6 +36,7 @@ export function buildMCPToolsServerMocks(path: string, tools: MockMCPTool[]): un
         name: t.name,
         description: t.description,
         inputSchema: { type: 'object', properties: {} },
+        ...(t.readOnlyHint === undefined ? {} : { annotations: { readOnlyHint: t.readOnlyHint } }),
     })));
 
     return [

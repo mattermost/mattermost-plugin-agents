@@ -169,7 +169,17 @@ function jsonRPCResponse(payload: string): SmockerDynamicMock['dynamic_response'
  * not mocked: it lives on the Docker network, so tests intercept
  * MOCK_OAUTH_AUTHORIZE_URL in the browser instead.
  */
-export function buildMCPOAuthConnectedMocks(): Array<SmockerMock | SmockerDynamicMock> {
+export function buildMCPOAuthConnectedMocks(
+    tools: Array<{ name: string; description: string; readOnlyHint?: boolean }> = [
+        { name: MOCK_CONNECTED_TOOL_NAME, description: "List the user's open tickets" },
+    ],
+): Array<SmockerMock | SmockerDynamicMock> {
+    const toolList = JSON.stringify(tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: { type: 'object', properties: {} },
+        ...(t.readOnlyHint === undefined ? {} : { annotations: { readOnlyHint: t.readOnlyHint } }),
+    })));
     return [
         {
             request: { method: 'POST', path: '/token' },
@@ -211,9 +221,7 @@ export function buildMCPOAuthConnectedMocks(): Array<SmockerMock | SmockerDynami
         {
             request: authorizedMCPRequest('POST', 'tools/list'),
             context: { times: 100 },
-            dynamic_response: jsonRPCResponse(
-                `"result":{"tools":[{"name":"${MOCK_CONNECTED_TOOL_NAME}","description":"List the user's open tickets","inputSchema":{"type":"object","properties":{}}}]}`,
-            ),
+            dynamic_response: jsonRPCResponse(`"result":{"tools":${toolList}}`),
         },
     ];
 }
