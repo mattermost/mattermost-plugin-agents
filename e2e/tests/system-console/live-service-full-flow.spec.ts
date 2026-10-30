@@ -8,6 +8,7 @@ import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {buildTextResponse, buildTitleFixture, mergeFixtureFiles, stubAimockModelFetch} from 'helpers/aimock-fixtures';
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
+import {showAgentDMAsMessages} from 'helpers/agent-dm-view';
 import {SystemConsoleHelper} from 'helpers/system-console';
 import {AgentPageHelper} from 'helpers/agent-page';
 import {chooseCompassOption} from 'helpers/compass-select';
@@ -298,6 +299,7 @@ test.describe.serial('System Console Aimock Live Service Full Flow', () => {
         const dmChannel = await regularClient.createDirectChannel([regularUser.id, botUserID]);
 
         await page.goto(`${mattermost.url()}/test/messages/@${botUsername}`);
+        await showAgentDMAsMessages(page, dmChannel.id);
         await page.getByTestId('channel_view').waitFor({state: 'visible', timeout: 30000});
 
         const postTimeSkewMs = 5000;
