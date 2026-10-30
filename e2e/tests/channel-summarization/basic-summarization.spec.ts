@@ -82,7 +82,7 @@ test.describe('Channel Summarization - Basic Functionality', () => {
         // Set up the mock for summarization
         await openAIMock.addCompletionMock(summarizationResponse);
 
-        // Ask for the summary in the RHS. Not as "/summarize-channel": the
+        // Ask for the summary in the RHS. Not as "/summarize-channel": the host
         // composer runs a leading "/" as a slash command, and there is none.
         await aiPlugin.sendMessage('Summarize the channel');
 

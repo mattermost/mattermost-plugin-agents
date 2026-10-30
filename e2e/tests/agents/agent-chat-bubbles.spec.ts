@@ -38,17 +38,18 @@ let botUserId = '';
 async function sendNewChat(page: Page, prompt: string): Promise<void> {
     await new MattermostPage(page).login(mattermost.url(), username, password);
     await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
-    const textbox = page.getByTestId('agent-chat-new-composer').getByRole('textbox');
+    const composer = page.getByTestId('agent-chat-new-composer');
+    const textbox = composer.getByRole('textbox');
     await expect(textbox).toBeEnabled({timeout: 30000});
     await textbox.fill(prompt);
-    await textbox.press('Enter');
+    await composer.getByTestId('SendMessageButton').click();
 }
 
 // The finished agent post that contains `text`, once the reply has ended.
 async function finishedPost(page: Page, text: string): Promise<Locator> {
     const post = page.getByTestId('agent-chat-thread').getByTestId('llm-bot-post').filter({hasText: text}).last();
     await expect(post).toBeVisible({timeout: 60000});
-    await expect(page.getByTestId('agent-chat-thread').getByRole('button', {name: 'Send message'})).toBeVisible({timeout: 30000});
+    await expect(page.getByTestId('agent-chat-thread').getByTestId('stop-generating-button')).toHaveCount(0, {timeout: 30000});
     return post;
 }
 

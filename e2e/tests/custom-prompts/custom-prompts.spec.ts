@@ -607,7 +607,7 @@ test.describe('Context Variables', () => {
         }
     });
 
-    test('a custom prompt with a context variable is rendered when picked from the RHS composer\'s "+" menu', async ({ page }) => {
+    test('a custom prompt with a context variable is rendered when picked from the RHS composer\'s AI actions', async ({ page }) => {
         const prompt = await createPromptViaAPI(userClient, {
             name: 'Context Pill',
             description: 'Renders username',
@@ -619,11 +619,18 @@ test.describe('Context Variables', () => {
 
         const { aiPlugin } = await setupTestPage(page);
         await aiPlugin.openRHS();
+        await expect(aiPlugin.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
 
-        // Pick it from the composer's "+" menu: Custom prompts > Context Pill.
-        await aiPlugin.getRhsContainer().getByTestId('composer-plus-menu-button').click();
-        await page.getByTestId('composer-plus-menu-prompts').click();
-        await page.getByRole('menuitem', { name: 'Context Pill' }).click();
+        // The prompts are the host composer's AI action (registerAIActionMenuItemComponent). The
+        // AI actions button is only present when the server includes the pluggable AI actions menu.
+        const aiButton = aiPlugin.getRhsContainer().locator('#aiActionsMenu');
+        if (!await aiButton.isVisible({ timeout: 5000 }).catch(() => false)) {
+            test.skip(true, 'AI Actions menu not available (requires custom server build)');
+            return;
+        }
+        await aiButton.click();
+        await page.getByText('Custom prompts').hover();
+        await page.getByText('Context Pill').click();
 
         // The template is rendered with the real username, not shown as a template variable.
         await expect(aiPlugin.rhsPostTextarea).toHaveValue('Greetings regularuser!', { timeout: 30000 });

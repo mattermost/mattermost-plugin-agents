@@ -56,14 +56,14 @@ async function dispatchFileDrop(page: Page, selector: string, fileName: string, 
 }
 
 test.describe('Agents RHS drag-and-drop file upload', () => {
-    test('drops a file onto the RHS new chat, uploads it and sends it with the message', async ({page}) => {
+    test('drops a file onto the RHS new chat, attaches it to the host composer and sends it with the message', async ({page}) => {
         const {aiPlugin} = await setupTestPage(page);
 
         const rhs = aiPlugin.getRhsContainer();
         await expect(rhs).toBeVisible();
         const composer = rhs.getByTestId('agent-chat-new-composer');
 
-        // The pill composer offers attachments once the bot DM channel is ready.
+        // The host composer offers attachments once the bot DM channel is ready.
         await aiPlugin.expectComposerUploadsReady(composer);
 
         await dispatchFileDrop(
@@ -74,10 +74,9 @@ test.describe('Agents RHS drag-and-drop file upload', () => {
             'hello from the agents drag-and-drop test',
         );
 
-        const card = composer.getByRole('list', {name: 'Attachments'}).getByRole('listitem');
-        await expect(card).toHaveCount(1);
-        await expect(card).toContainText('agents-dnd.txt');
-        await expect(card).toHaveAttribute('data-status', 'done', {timeout: 30000});
+        // The drop zone hands the file to the host composer, which shows and uploads it.
+        await expect(composer.locator('.file-preview__container')).toContainText('agents-dnd.txt', {timeout: 30000});
+        await expect(composer.locator('.post-image__uploadingTxt')).toHaveCount(0, {timeout: 30000});
         await expect(rhs.getByTestId('agent-chat-drop-overlay')).toHaveCount(0);
 
         await aiPlugin.sendMessage('message with a dropped file');

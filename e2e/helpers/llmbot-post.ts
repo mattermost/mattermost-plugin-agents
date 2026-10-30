@@ -597,9 +597,7 @@ export class LLMBotPostHelper {
             throw new Error('Timeout waiting for bot post text to appear');
         }
 
-        // Wait for every Stop control to disappear (streaming complete): the
-        // post's own, or, in the agent chat views (plugin RHS, product view),
-        // the composer's send button while it is Stop.
+        // Wait for every post's Stop control to disappear (streaming complete).
         const stopButton = this.page.getByTestId('stop-generating-button');
 
         // Wait until the stop button disappears (streaming complete)

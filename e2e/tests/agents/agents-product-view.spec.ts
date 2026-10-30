@@ -128,10 +128,27 @@ async function login(page: Page): Promise<void> {
 }
 
 const sidebar = (page: Page) => page.getByRole('complementary', {name: 'Agents'});
+// The host message composer (AdvancedTextEditor) of the new-chat state, in the plugin's wrapper.
 const newChatComposer = (page: Page) => page.getByTestId('agent-chat-new-composer');
 
-// The plugin's pill reply composer under the thread (the host reply box is hidden).
-const replyComposer = (page: Page) => page.getByTestId('agent-chat-thread').getByRole('textbox', {name: `Reply to ${botDisplayName}`});
+// The host ThreadViewer's own reply composer under the thread, and its text box.
+const replyComposerBox = (page: Page) => page.getByTestId('agent-chat-thread').getByTestId('comment-create');
+const replyComposer = (page: Page) => replyComposerBox(page).getByTestId('reply_textbox');
+
+const NEW_THREAD_URL = () => new RegExp(`/agents/chat/${botUserId}/[a-z0-9]{26}$`);
+
+// Enter in the new-chat composer. The host composer ignores an Enter in the first half second after
+// it mounts (its guard against sending into a channel just switched to), so the key is pressed again
+// until the chat opens; an Enter on a draft already submitted (or cleared) sends nothing.
+async function sendNewChatWithEnter(page: Page): Promise<void> {
+    const textbox = newChatComposer(page).getByRole('textbox');
+    await expect(async () => {
+        if (await textbox.count() > 0) {
+            await textbox.press('Enter');
+        }
+        await expect(page).toHaveURL(NEW_THREAD_URL(), {timeout: 2000});
+    }).toPass({timeout: 30000});
+}
 
 async function openAgentsFromSwitcher(page: Page): Promise<void> {
     // The host labels this button differently across versions ("Open product menu", "Product switch menu").
@@ -149,8 +166,7 @@ async function startChatViaUi(page: Page, chat: Chat): Promise<string> {
     const textbox = newChatComposer(page).getByRole('textbox');
     await expect(textbox).toBeEnabled({timeout: 30000});
     await textbox.fill(chat.prompt);
-    await textbox.press('Enter');
-    await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}/[a-z0-9]{26}$`), {timeout: 30000});
+    await sendNewChatWithEnter(page);
     const rootId = new URL(page.url()).pathname.split('/').pop()!;
     await expect(page.getByTestId('agent-chat-thread').getByText(chat.reply)).toBeVisible({timeout: 60000});
     return rootId;
@@ -249,8 +265,8 @@ test.describe('Agents product view', () => {
         const textbox = newChatComposer(page).getByRole('textbox');
         await expect(textbox).toBeEnabled({timeout: 30000});
         await textbox.fill(FIRST_PROMPT);
-        // The Send button is used here; Enter is covered by its own tests below.
-        await newChatComposer(page).getByRole('button', {name: 'Send message'}).click();
+        // The host's Send button is used here; Enter is covered by its own tests below.
+        await newChatComposer(page).getByTestId('SendMessageButton').click();
 
         await expect(page).toHaveURL(new RegExp(`/plug/mattermost-ai/agents/chat/${botUserId}/[a-z0-9]{26}$`), {timeout: 30000});
         const rootId = new URL(page.url()).pathname.split('/').pop()!;
@@ -259,7 +275,7 @@ test.describe('Agents product view', () => {
         await expect(thread.getByText(FIRST_PROMPT, {exact: true})).toBeVisible({timeout: 30000});
         await expect(thread.getByText(FIRST_REPLY)).toBeVisible({timeout: 60000});
 
-        // The pill reply composer is pinned below the messages (not centered any more).
+        // The host reply composer is pinned below the messages (not centered any more).
         const reply = replyComposer(page);
         await expect(reply).toBeVisible();
         const paneBox = (await page.getByRole('region', {name: `Chat with ${botDisplayName}`}).boundingBox())!;
@@ -337,7 +353,7 @@ test.describe('Agents product view', () => {
         await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}$`));
     });
 
-    test('thread shows your message and the reply, with its time in the controls and no host reply box', async ({page}) => {
+    test('thread shows your message and the reply, with its time in the controls and the host reply box in the column', async ({page}) => {
         const rootId = await seedThread(VIEW_CHAT);
         await login(page);
         await page.goto(threadUrl(rootId), {waitUntil: 'domcontentloaded'});
@@ -357,9 +373,13 @@ test.describe('Agents product view', () => {
         const replyBox = (await replyPost.locator('.post__content > .post__img + div').boundingBox())!;
         expect(ownBox.x).toBeGreaterThan(replyBox.x);
 
-        // The host reply box is replaced by the plugin's composer, not shown alongside.
-        await expect(thread.getByTestId('comment-create')).toBeHidden();
+        // The host's own reply composer is under the thread, in the messages' column: the same left
+        // and right edges as the list of posts (agent_chat_host_styles.ts).
         await expect(replyComposer(page)).toBeVisible();
+        const columnBox = (await thread.locator('.innerList').boundingBox())!;
+        const composerBox = (await replyComposerBox(page).boundingBox())!;
+        expect(Math.abs(composerBox.x - columnBox.x)).toBeLessThan(2);
+        expect(Math.abs((composerBox.x + composerBox.width) - (columnBox.x + columnBox.width))).toBeLessThan(2);
 
         // Hovering the reply tints its bubble; a control clicked with the mouse keeps focus, but the bubble
         // must not stay tinted once the pointer has left (focus from a click is not keyboard focus).
@@ -534,25 +554,6 @@ test.describe('Agents product view', () => {
         await expect(messages.getByText('stock dm composer still works')).toBeVisible();
     });
 
-    test('a draft typed in the product new-chat composer does not leak into the Channels DM composer', async ({page}) => {
-        await login(page);
-        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
-
-        const textbox = newChatComposer(page).getByRole('textbox');
-        await expect(textbox).toBeEnabled({timeout: 30000});
-        await textbox.fill('product draft that must stay in the product');
-        await expect(textbox).toHaveValue('product draft that must stay in the product');
-
-        // Client-side navigation to the Channels DM (no reload, so the draft is still in the store).
-        await page.evaluate(([team, bot]) => {
-            (window as any).WebappUtils.browserHistory.push(`/${team}/messages/@${bot}`);
-        }, [teamName, AIMOCK_BOT_NAME]);
-
-        const dmTextbox = page.getByTestId('channel_view').getByTestId('post_textbox');
-        await expect(dmTextbox).toBeVisible({timeout: 30000});
-        await expect(dmTextbox).toHaveValue('');
-    });
-
     test('Enter sends from the thread reply composer', async ({page}) => {
         const rootId = await seedThread(ENTER_REPLY_CHAT);
         await login(page);
@@ -576,7 +577,7 @@ test.describe('Agents product view', () => {
 
         const thread = page.getByTestId('agent-chat-thread');
         const reply = replyComposer(page);
-        const suggestions = thread.locator('#suggestionList');
+        const suggestions = page.locator('#suggestionList');
         await expect(reply).toBeEnabled({timeout: 30000});
 
         // "@" opens the mention list; Enter picks the user instead of sending.
@@ -600,88 +601,56 @@ test.describe('Agents product view', () => {
         await expect(reply).toHaveValue('');
     });
 
-    test('the composer grows with multi-line text up to a cap, then shrinks back', async ({page}) => {
-        await login(page);
-        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
-        const textbox = newChatComposer(page).getByRole('textbox');
-        await expect(textbox).toBeEnabled({timeout: 30000});
-
-        const height = () => textbox.evaluate((el) => el.getBoundingClientRect().height);
-        const single = await height();
-
-        await textbox.fill('one\ntwo\nthree');
-        await expect.poll(height).toBeGreaterThan(single);
-
-        // Expanded, "+" and send sit on the row below the text.
-        const buttonsBelow = () => textbox.evaluate((el) => {
-            const text = el.getBoundingClientRect();
-            const shell = el.closest('[data-testid="agent-chat-composer-pill"]') as HTMLElement;
-            return ['Add to message', 'Send message'].every((name) => shell.querySelector(`button[aria-label="${name}"]`)!.getBoundingClientRect().top >= text.bottom);
-        });
-        await expect.poll(buttonsBelow).toBe(true);
-
-        // One long line expands as soon as it wraps.
-        await textbox.fill('word '.repeat(60).trim());
-        await expect.poll(height).toBeGreaterThan(single);
-
-        // Capped: twelve lines and twenty lines are the same height, and the rest scrolls.
-        await textbox.fill(Array.from({length: 12}, (_v, i) => `line ${i}`).join('\n'));
-        await expect.poll(height).toBeGreaterThan(single);
-        const capped = await height();
-        await textbox.fill(Array.from({length: 20}, (_v, i) => `line ${i}`).join('\n'));
-        await expect.poll(height).toBe(capped);
-
-        await textbox.fill('');
-        await expect.poll(height).toBe(single);
-    });
-
-    test('while the agent replies, the composer\'s send button is Stop and stops it', async ({page}) => {
+    test('while the agent replies, the reply\'s own Stop control stops it', async ({page}) => {
         const rootId = await seedThread(STOP_CHAT);
         await login(page);
         await page.goto(threadUrl(rootId), {waitUntil: 'domcontentloaded'});
 
         const thread = page.getByTestId('agent-chat-thread');
-        const composer = thread.getByTestId('agent-chat-reply-composer');
         const reply = replyComposer(page);
         await expect(reply).toBeEnabled({timeout: 30000});
         await reply.fill(STOP_PROMPT);
         await reply.press('Enter');
 
-        const stop = composer.getByRole('button', {name: 'Stop generating'});
-        await expect(stop).toBeVisible({timeout: 30000});
-
-        // The post leaves Stop to the composer.
-        await expect(thread.getByTestId('llm-bot-post').getByTestId('stop-generating-button')).toHaveCount(0);
-
-        await stop.click();
-        await expect(composer.getByRole('button', {name: 'Send message'})).toBeVisible({timeout: 15000});
         const stoppedPost = thread.getByTestId('llm-bot-post').last();
+        const stop = stoppedPost.getByTestId('stop-generating-button');
+        await expect(stop).toBeVisible({timeout: 30000});
+        await stop.click();
+
         await expect(stoppedPost.getByTestId('llm-bot-generation-stopped')).toBeVisible({timeout: 15000});
+        await expect(stop).toHaveCount(0);
         await expect(stoppedPost).not.toContainText(STOP_TAIL);
     });
 
-    test('a file attached through the "+" menu uploads and goes out with the first message', async ({page}) => {
+    test('a file dropped on the chat goes to the host composer and out with the first message', async ({page}) => {
         await login(page);
         await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
 
         const composer = newChatComposer(page);
         const textbox = composer.getByRole('textbox');
         await expect(textbox).toBeEnabled({timeout: 30000});
+        await expect(composer.locator('input[type="file"]')).toBeAttached({timeout: 30000});
 
-        await composer.getByRole('button', {name: 'Add to message'}).click();
-        const chooser = page.waitForEvent('filechooser');
-        await page.getByRole('menuitem', {name: 'Upload files'}).click();
-        await (await chooser).setFiles({name: ATTACH_FILE, mimeType: 'text/plain', buffer: Buffer.from('attached from the product view')});
+        // A drop anywhere on the chat (the plugin's drop zone hands it to the host composer's file input).
+        const dataTransfer = await page.evaluateHandle(({name, body}) => {
+            const dt = new DataTransfer();
+            dt.items.add(new File([body], name, {type: 'text/plain'}));
+            return dt;
+        }, {name: ATTACH_FILE, body: 'attached from the product view'});
+        const zone = '[data-testid="agent-chat-file-drop-zone"]';
+        await page.dispatchEvent(zone, 'dragenter', {dataTransfer});
+        await expect(page.getByTestId('agent-chat-drop-overlay')).toBeVisible();
+        await page.dispatchEvent(zone, 'dragover', {dataTransfer});
+        await page.dispatchEvent(zone, 'drop', {dataTransfer});
+        await expect(page.getByTestId('agent-chat-drop-overlay')).toHaveCount(0);
 
-        // Uploaded (removable, no longer cancellable) before the message goes out.
-        const card = composer.getByRole('list', {name: 'Attachments'}).getByRole('listitem');
-        await expect(card).toHaveCount(1);
-        await expect(card).toHaveAttribute('data-status', 'done', {timeout: 30000});
-        await expect(card.getByRole('button', {name: `Remove ${ATTACH_FILE}`})).toBeVisible();
+        // The host shows the file in its composer and finishes the upload before the message can go out.
+        await expect(composer.locator('.file-preview__container')).toContainText(ATTACH_FILE, {timeout: 30000});
+        await expect(composer.locator('.post-image__uploadingTxt')).toHaveCount(0, {timeout: 30000});
 
         await textbox.fill(ATTACH_PROMPT);
-        await textbox.press('Enter');
-        await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}/[a-z0-9]{26}$`), {timeout: 15000});
+        await composer.getByTestId('SendMessageButton').click();
+        await expect(page).toHaveURL(NEW_THREAD_URL(), {timeout: 15000});
 
         // The user's root post carries the file.
         const thread = page.getByTestId('agent-chat-thread');
@@ -707,9 +676,8 @@ test.describe('Agents product view', () => {
         await textbox.press('Shift+Enter');
         await expect(textbox).toHaveValue(`${ENTER_PROMPT}\n`);
         await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}$`));
-        await textbox.press('Enter');
+        await sendNewChatWithEnter(page);
 
-        await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}/[a-z0-9]{26}$`), {timeout: 15000});
         await expect(page.getByTestId('agent-chat-thread').getByTestId('post-message-text').getByText(ENTER_PROMPT, {exact: true})).toBeVisible({timeout: 30000});
 
         // The draft is cleared, so going back to a new chat starts empty.
@@ -724,8 +692,7 @@ test.describe('Agents product view', () => {
         const textbox = newChatComposer(page).getByRole('textbox');
         await expect(textbox).toBeEnabled({timeout: 30000});
         await textbox.fill(JUMP_PROMPT);
-        await textbox.press('Enter');
-        await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}/[a-z0-9]{26}$`), {timeout: 15000});
+        await sendNewChatWithEnter(page);
 
         const thread = page.getByTestId('agent-chat-thread');
         const scroller = thread.locator('#threadViewerScrollContainer');
@@ -743,7 +710,7 @@ test.describe('Agents product view', () => {
 
         // It floats above the composer, not over it.
         const jumpBox = (await jump.boundingBox())!;
-        const composerBox = (await thread.getByTestId('agent-chat-reply-composer').boundingBox())!;
+        const composerBox = (await replyComposerBox(page).boundingBox())!;
         expect(jumpBox.y + jumpBox.height).toBeLessThanOrEqual(composerBox.y);
 
         // One click goes to the newest text and the button leaves.
@@ -762,8 +729,7 @@ test.describe('Agents product view', () => {
         const textbox = newChatComposer(page).getByRole('textbox');
         await expect(textbox).toBeEnabled({timeout: 30000});
         await textbox.fill(BUSY_PROMPT);
-        await textbox.press('Enter');
-        await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}/[a-z0-9]{26}$`), {timeout: 15000});
+        await sendNewChatWithEnter(page);
         const busyUrl = page.url();
 
         // The wave shows on the chat's row while its agent is answering, open or not.

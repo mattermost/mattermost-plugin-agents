@@ -12,11 +12,14 @@ export class AIPlugin {
   constructor(page: Page) {
     this.page = page;
     this.appBarIcon = page.locator('#app-bar-icon-mattermost-ai');
-    // The plugin's pill composer, on the New chat tab ("Message <agent>") and
-    // under a thread ("Reply to <agent>", or "Reply"). Role queries skip the
-    // host reply box, which the plugin keeps mounted but hidden.
-    this.rhsPostTextarea = page.getByTestId('mattermost-ai-rhs').getByRole('textbox', { name: /^(Message |Reply\b)/ });
-    this.rhsSendButton = page.getByTestId('mattermost-ai-rhs').getByRole('button', { name: 'Send message' });
+    // The host message composer, on the New chat tab (AdvancedTextEditor) and
+    // under a thread (the ThreadViewer's reply box). Both are RHS composers,
+    // whose text box the host names reply_textbox. A view sliding out of the
+    // RHS (rhs-view-exiting) stays mounted for a moment and is skipped.
+    this.rhsPostTextarea = page.getByTestId('mattermost-ai-rhs').getByTestId('reply_textbox')
+      .and(page.locator(':not([data-testid="rhs-view-exiting"] *)'));
+    this.rhsSendButton = page.getByTestId('mattermost-ai-rhs').getByTestId('SendMessageButton')
+      .and(page.locator(':not([data-testid="rhs-view-exiting"] *)'));
     this.regenerateButton = page.getByRole('button', { name: 'Regenerate' });
     this.chatHistoryButton = page.getByTestId('chat-history');
     this.threadsListContainer = page.getByTestId('rhs-threads-list');
@@ -95,11 +98,13 @@ export class AIPlugin {
   }
 
   async sendMessage(message: string) {
-    // The new-chat tab and the thread view both use the plugin's pill
-    // composer; Enter sends as soon as it is enabled.
+    // The new-chat tab and the thread view both use the host composer. Its
+    // Send button, not Enter: the host ignores an Enter in the first half
+    // second after the composer mounts.
     await expect(this.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
     await this.rhsPostTextarea.fill(message);
-    await this.rhsPostTextarea.press('Enter');
+    await expect(this.rhsSendButton).toBeEnabled({ timeout: 10000 });
+    await this.rhsSendButton.click();
   }
 
   /** Wait until no in-progress generation remains in the plugin RHS. */
@@ -110,7 +115,7 @@ export class AIPlugin {
   /** Wait until ThreadViewer is not generating and the reply box accepts input. */
   async waitForThreadComposerIdle() {
     await this.waitForGeneratingToStop();
-    await expect(this.getRhsContainer().getByTestId('agent-chat-reply-composer').getByRole('textbox')).toBeEnabled({ timeout: 30000 });
+    await expect(this.getRhsContainer().getByTestId('comment-create').getByTestId('reply_textbox')).toBeEnabled({ timeout: 30000 });
   }
 
   async regenerateResponse() {
@@ -320,21 +325,10 @@ export class AIPlugin {
   }
 
   /**
-   * Waits until the pill composer inside `container` can attach files: its
-   * "+" (Add to message) menu offers Upload files. Closes the menu again.
+   * Waits until the host composer inside `container` can attach files: its
+   * file input is there (the host renders it once uploads are allowed).
    */
   async expectComposerUploadsReady(container: Locator): Promise<void> {
-    const menu = this.page.getByRole('menu', { name: 'Add to message' });
-    await expect(async () => {
-      // A menu opened before the channel was ready lacks the item: reopen it.
-      if (await menu.count() > 0) {
-        await this.page.keyboard.press('Escape');
-        await expect(menu).toHaveCount(0);
-      }
-      await container.getByRole('button', { name: 'Add to message' }).click();
-      await expect(menu.getByRole('menuitem', { name: 'Upload files' })).toBeVisible({ timeout: 2000 });
-    }).toPass({ timeout: 30000 });
-    await this.page.keyboard.press('Escape');
-    await expect(menu).toHaveCount(0);
+    await expect(container.locator('input[type="file"]')).toBeAttached({ timeout: 30000 });
   }
 }

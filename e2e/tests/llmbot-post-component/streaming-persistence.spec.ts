@@ -161,19 +161,14 @@ stopGeneratingTest.describe('Stop Generating Button - aimock', () => {
         const postText = llmBotHelper.getPostText();
         await expect(postText).toBeVisible({ timeout: 60000 });
 
-        // In the plugin RHS the composer's send button is the Stop control;
-        // the post shows none of its own.
-        const rhs = page.getByTestId('mattermost-ai-rhs');
-        const stopButton = rhs.getByRole('button', { name: 'Stop generating' });
+        const stopButton = llmBotHelper.getStopGeneratingButton();
         await expect(stopButton).toBeVisible({ timeout: 30000 });
-        await expect(llmBotHelper.getStopGeneratingButton()).toHaveCount(0);
         await expect
             .poll(async () => (await postText.textContent()) ?? '')
             .toContain(PHASE3_STOP_GENERATING_PREFIX);
 
-        await stopButton.click();
-        await expect(stopButton).toHaveCount(0, { timeout: 10000 });
-        await expect(rhs.getByRole('button', { name: 'Send message' })).toBeVisible();
+        await llmBotHelper.stopGenerating();
+        await expect(stopButton).not.toBeVisible({ timeout: 10000 });
 
         const content = await postText.textContent();
         expect(content).toContain(PHASE3_STOP_GENERATING_PREFIX);
