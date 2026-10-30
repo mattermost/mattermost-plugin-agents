@@ -26,6 +26,10 @@ type Store interface {
 	GetConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error)
 	// UpdateConversationTitle updates the title of a conversation.
 	UpdateConversationTitle(id, title string) error
+	// SetConversationTitleIfUnset sets the title only while the conversation
+	// has none, reporting whether it did. Used for generated titles so they
+	// never overwrite a title the user set.
+	SetConversationTitleIfUnset(id, title string) (bool, error)
 	// UpdateConversationRootPostID sets the RootPostID on a conversation.
 	// Used when the post ID is only known after post creation (e.g., thread analysis DM posts).
 	UpdateConversationRootPostID(id string, rootPostID string) error
@@ -772,7 +776,27 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 	return nil
 }
 
-// GenerateTitle generates a short title for the conversation and saves it.
+// WebsocketEventConversationUpdated is published to a conversation's owner
+// when its title changes (webapp: custom_mattermost-ai_conversation_updated).
+const WebsocketEventConversationUpdated = "conversation_updated"
+
+// PublishConversationTitleUpdated tells the conversation's owner, and only
+// them, that its title is now title.
+func PublishConversationTitleUpdated(client mmapi.Client, conv *store.Conversation, title string) {
+	client.PublishWebSocketEvent(
+		WebsocketEventConversationUpdated,
+		map[string]any{
+			"conversation_id": conv.ID,
+			"title":           title,
+		},
+		&model.WebsocketBroadcast{UserId: conv.UserID},
+	)
+}
+
+// GenerateTitle generates a short title for the conversation and saves it,
+// unless the conversation already has a title: a title the user set, before
+// or while this runs, is never overwritten. When the generated title is
+// saved, the owner is notified over the websocket.
 // This should be called asynchronously (in a goroutine) after conversation creation.
 // The lm parameter provides the language model for title generation.
 // The context parameter provides bot/user context for the LLM call; ctx
@@ -784,6 +808,14 @@ func (s *Service) GenerateTitle(
 	userMessage string,
 	context *llm.Context,
 ) error {
+	conv, err := s.store.GetConversation(conversationID)
+	if err != nil {
+		return fmt.Errorf("failed to get conversation: %w", err)
+	}
+	if conv.Title != "" {
+		return nil
+	}
+
 	request := "Write a short title for the following request. Include only the title and nothing else, no quotations. Request:\n" + userMessage
 
 	req := llm.CompletionRequest{
@@ -805,9 +837,18 @@ func (s *Service) GenerateTitle(
 	}
 
 	title = strings.Trim(title, "\n \"'")
+	if title == "" {
+		return nil
+	}
 
-	if err := s.store.UpdateConversationTitle(conversationID, title); err != nil {
+	// Conditional on the title still being unset: the user may have renamed
+	// the conversation while the title was generated.
+	updated, err := s.store.SetConversationTitleIfUnset(conversationID, title)
+	if err != nil {
 		return fmt.Errorf("failed to save title: %w", err)
+	}
+	if updated {
+		PublishConversationTitleUpdated(s.mmClient, conv, title)
 	}
 
 	return nil

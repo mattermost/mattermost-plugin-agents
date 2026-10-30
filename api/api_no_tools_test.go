@@ -121,6 +121,15 @@ func (m *mockConvServiceStore) UpdateConversationTitle(id, title string) error {
 	return nil
 }
 
+func (m *mockConvServiceStore) SetConversationTitleIfUnset(id, title string) (bool, error) {
+	conv, ok := m.conversations[id]
+	if !ok || conv.Title != "" || conv.DeleteAt != 0 {
+		return false, nil
+	}
+	conv.Title = title
+	return true, nil
+}
+
 func (m *mockConvServiceStore) UpdateConversationRootPostID(id string, rootPostID string) error {
 	if conv, ok := m.conversations[id]; ok {
 		conv.RootPostID = &rootPostID

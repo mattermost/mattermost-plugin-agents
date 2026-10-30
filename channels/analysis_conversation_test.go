@@ -64,6 +64,15 @@ func (s *inMemoryStore) UpdateConversationTitle(id, title string) error {
 	return nil
 }
 
+func (s *inMemoryStore) SetConversationTitleIfUnset(id, title string) (bool, error) {
+	conv, ok := s.conversations[id]
+	if !ok || conv.Title != "" || conv.DeleteAt != 0 {
+		return false, nil
+	}
+	conv.Title = title
+	return true, nil
+}
+
 func (s *inMemoryStore) UpdateConversationRootPostID(id string, rootPostID string) error {
 	conv, ok := s.conversations[id]
 	if !ok {
