@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback} from 'react';
+import React, {useCallback, useEffect, useState, useSyncExternalStore} from 'react';
 import styled from 'styled-components';
 import {useIntl} from 'react-intl';
 import {useSelector, useDispatch} from 'react-redux';
@@ -27,7 +27,39 @@ const PromptsModal = styled(Modal)`
     }
 `;
 
+// The modal is mounted wherever the composer's "Manage prompts" can open it: as a root component
+// (rendered by the host in the channel, backstage and popout layouts) and by the Agents product page
+// (product routes get no root components). Only the first copy mounted renders, so there is never
+// more than one modal however the host combines them.
+const mountedCopies: symbol[] = [];
+const copyListeners = new Set<() => void>();
+const subscribeCopies = (listener: () => void) => {
+    copyListeners.add(listener);
+    return () => {
+        copyListeners.delete(listener);
+    };
+};
+const notifyCopies = () => Array.from(copyListeners).forEach((listener) => listener());
+
+const useIsFirstCopy = (): boolean => {
+    const [id] = useState(() => Symbol('custom-prompts-modal'));
+    useEffect(() => {
+        mountedCopies.push(id);
+        notifyCopies();
+        return () => {
+            mountedCopies.splice(mountedCopies.indexOf(id), 1);
+            notifyCopies();
+        };
+    }, [id]);
+    return useSyncExternalStore(subscribeCopies, () => mountedCopies[0] === id);
+};
+
 const CustomPromptsManagement = () => {
+    const first = useIsFirstCopy();
+    return first ? <CustomPromptsModal/> : null;
+};
+
+const CustomPromptsModal = () => {
     const intl = useIntl();
     const dispatch = useDispatch();
     const show = useSelector(getShowCustomPromptsModal);

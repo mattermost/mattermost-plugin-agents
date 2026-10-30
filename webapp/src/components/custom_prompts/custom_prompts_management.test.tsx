@@ -144,6 +144,24 @@ describe('CustomPromptsManagement', () => {
         consoleError.mockRestore();
     });
 
+    test('only one of several mounted copies renders the modal, and another takes over when it unmounts', async () => {
+        const store = makeStore();
+        const Copies = ({keys}: {keys: string[]}) => (
+            <Provider store={store}>
+                {keys.map((k) => <CustomPromptsManagement key={k}/>)}
+            </Provider>
+        );
+        const {rerender} = render(<Copies keys={['root', 'product']}/>);
+        await act(async () => {
+            store.dispatch({type: ShowCustomPromptsModalHandler, show: true});
+        });
+        await screen.findByText(mine.name);
+        expect(screen.getAllByText(mine.name)).toHaveLength(1);
+
+        rerender(<Copies keys={['product']}/>);
+        expect(await screen.findAllByText(mine.name)).toHaveLength(1);
+    });
+
     test('renders nothing until shown, then fetches and lists prompts', async () => {
         const store = makeStore();
         render(

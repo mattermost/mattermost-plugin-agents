@@ -176,9 +176,6 @@ interface CustomPromptsContentProps {
      */
     active: boolean;
 
-    /** z-index of the delete confirmation, which must sit above the host's own layer. */
-    confirmZIndex?: number;
-
     /**
      * 'modal' (default) keeps the modal's inset tabs/toolbar. 'page' drops the
      * inset padding (the host column provides it), uses compass Tabs, and hands
@@ -190,7 +187,11 @@ interface CustomPromptsContentProps {
     children: (props: CustomPromptsContentRenderProps) => React.ReactNode;
 }
 
-const CustomPromptsContent = ({active, confirmZIndex = 3000, layout = 'modal', children}: CustomPromptsContentProps) => {
+// The delete confirmation sits above the host product header on the page, and above the modal (2000)
+// in the modal.
+const CONFIRM_Z_INDEX = {page: 1100, modal: 3000};
+
+const CustomPromptsContent = ({active, layout = 'modal', children}: CustomPromptsContentProps) => {
     const isPage = layout === 'page';
     const intl = useIntl();
     const dispatch = useDispatch();
@@ -504,7 +505,7 @@ const CustomPromptsContent = ({active, confirmZIndex = 3000, layout = 'modal', c
                 onCancel={() => setDeleteConfirmId(null)}
                 isDestructive={true}
                 managedAccessibility={true}
-                zIndex={confirmZIndex}
+                zIndex={CONFIRM_Z_INDEX[layout]}
             />
         </>
     );

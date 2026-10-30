@@ -12,10 +12,6 @@ import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 
 import CustomPromptsContent from './custom_prompts_content';
 
-// The delete confirmation must sit above the host product header; matches the
-// delete-agent dialog used elsewhere in the Agents product view.
-const CONFIRM_Z_INDEX = 1100;
-
 /**
  * Custom Prompts as a product page (the `prompts` view of the Agents product).
  * Same content and behavior as the modal, under page chrome. Fills the product
@@ -29,7 +25,6 @@ const CustomPromptsPage = () => {
         <CustomPromptsContent
             active={true}
             layout='page'
-            confirmZIndex={CONFIRM_Z_INDEX}
         >
             {({title, showBack, onBack, createAction, body}) => (
                 <PageContainer>

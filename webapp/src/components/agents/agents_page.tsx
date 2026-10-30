@@ -94,9 +94,8 @@ const AgentsPage = () => {
                 <Content route={route}/>
             </ContentOutlet>
 
-            {/* The host renders the plugin's root components (the Custom Prompts modal among them) only
-                in the channel, backstage and popout layouts, not in product routes, so the product mounts
-                the modal for the composer's "Manage prompts". */}
+            {/* Product routes get no root components, so the product mounts the Custom Prompts modal for
+                the composer's "Manage prompts" (only one mounted copy ever renders). */}
             <CustomPromptsManagement/>
         </PageWrapper>
     );
