@@ -70,7 +70,7 @@ const groups = {
         'tests/llmbot-post-component/reasoning-display.spec.ts',
         'tests/llmbot-post-component/streaming-persistence.spec.ts',
         'tests/llmbot-post-component/edge-cases.spec.ts',
-        'tests/tool-config/mock-api/dm-only-mcp-server.spec.ts',
+        'tests/tool-config/mock-api/dm_only_mcp_server.spec.ts',
     ],
     'e2e-shard-4': [
         'tests/channel-analysis/response-citations/response-citations.spec.ts',

@@ -266,6 +266,16 @@ describe('MCPServers direct messages only', () => {
         expect(servers[1].dmOnly).toBeFalsy();
     });
 
+    test('servers are available everywhere unless an admin turns it on', () => {
+        const {onChange} = renderServers(makeMCPConfig([existingServer]));
+        expect(dmOnlyRadio('False').checked).toBe(true);
+
+        fireEvent.click(screen.getByText('Add Remote MCP Server'));
+
+        const servers = lastChangedServers(onChange);
+        expect(servers[1].dmOnly).toBeFalsy();
+    });
+
     test('an edit to another field keeps a server limited to direct messages', () => {
         const {onChange} = renderServers(makeMCPConfig([{...existingServer, dmOnly: true}]));
         expect(dmOnlyRadio('True').checked).toBe(true);
