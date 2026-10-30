@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render, screen, waitFor, within} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 
 import {IntlProvider} from 'react-intl';
 
@@ -198,6 +198,29 @@ describe('AgentThreadsList', () => {
             await waitFor(() => expect(chatTitles()).toHaveLength(THREADS_PAGE_SIZE));
             expect(screen.getByRole('button', {name: 'Show more Alpha chats'})).toBeTruthy();
             expect(screen.queryByRole('button', {name: 'Show less Alpha chats'})).toBeNull();
+        });
+
+        test('Show more right after Show less is not undone when the fold would have ended', () => {
+            jest.useFakeTimers();
+            try {
+                renderList({threadsByBot: {a: manyThreads(25)}});
+                fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
+                fireEvent.click(screen.getByRole('button', {name: 'Show less Alpha chats'}));
+
+                // Collapsing and expanding mid-fold offers Show more again right away.
+                fireEvent.click(screen.getByRole('button', {name: 'Collapse Alpha chats'}));
+                fireEvent.click(screen.getByRole('button', {name: 'Expand Alpha chats'}));
+                fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
+                expect(chatTitles()).toHaveLength(25);
+
+                act(() => {
+                    jest.advanceTimersByTime(1000);
+                });
+                expect(chatTitles()).toHaveLength(25);
+                expect(screen.getByRole('button', {name: 'Show less Alpha chats'})).toBeTruthy();
+            } finally {
+                jest.useRealTimers();
+            }
         });
 
         test('Show less is immediate under reduced motion', () => {

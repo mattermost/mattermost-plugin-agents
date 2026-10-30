@@ -106,6 +106,7 @@ describe('AgentChatHeader', () => {
         clearConversationCache();
         resetToolPreferences();
         mockGetConversation.mockResolvedValue({id: CONVERSATION_ID, title: 'Quarterly plan', turns: []});
+
         // In the server's order: most recent turn first.
         mockGetThreads.mockResolvedValue([
             thread('t4', 'other-dm', 'Not in the DM', 9, 'elsewhere'),

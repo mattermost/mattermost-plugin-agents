@@ -93,33 +93,49 @@ const AgentThreadsList = ({
     // Agents whose revealed rows are folding away after "Show less"; the limit resets when that ends.
     const [folding, setFolding] = useState<Record<string, boolean>>({});
 
-    const mounted = useRef(true);
+    // The pending end of each agent's fold. Any later change to that agent's list cancels it, so a
+    // "Show more" right after "Show less" is not undone when the fold would have ended.
+    const foldTimers = useRef<Record<string, number>>({});
+    const cancelFold = (botId: string) => {
+        const timer = foldTimers.current[botId];
+        if (timer !== undefined) { // eslint-disable-line no-undefined
+            window.clearTimeout(timer);
+            delete foldTimers.current[botId];
+        }
+        setFolding((prev) => (prev[botId] ? Object.fromEntries(Object.entries(prev).filter(([id]) => id !== botId)) : prev));
+    };
     useEffect(() => {
-        mounted.current = true;
-        return () => {
-            mounted.current = false;
-        };
+        const timers = foldTimers.current;
+        return () => Object.values(timers).forEach((timer) => window.clearTimeout(timer));
     }, []);
+
+    const resetLimit = (botId: string) => {
+        setLimits((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => id !== botId)));
+    };
 
     // "Show less" folds the extra rows away over the quick duration, then drops them.
     const foldBack = (botId: string) => {
-        const reset = () => {
-            if (!mounted.current) {
-                return;
-            }
-            setLimits((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => id !== botId)));
-            setFolding((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => id !== botId)));
-        };
+        cancelFold(botId);
         const quick = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : quickDurationMs();
         if (quick === 0) {
-            reset();
+            resetLimit(botId);
             return;
         }
         setFolding((prev) => ({...prev, [botId]: true}));
-        window.setTimeout(reset, quick);
+        foldTimers.current[botId] = window.setTimeout(() => {
+            delete foldTimers.current[botId];
+            resetLimit(botId);
+            cancelFold(botId);
+        }, quick);
+    };
+
+    const showMore = (botId: string) => {
+        cancelFold(botId);
+        setLimits((prev) => ({...prev, [botId]: Infinity}));
     };
 
     const toggle = (botId: string) => {
+        cancelFold(botId);
         setCollapsed((prev) => ({...prev, [botId]: !prev[botId]}));
 
         // Collapsing starts the agent over at one page.
@@ -263,7 +279,7 @@ const AgentThreadsList = ({
                                                                 foldBack(bot.id);
                                                                 return;
                                                             }
-                                                            setLimits((prev) => ({...prev, [bot.id]: Infinity}));
+                                                            showMore(bot.id);
                                                         }}
                                                     >
                                                         {canShowLess ? intl.formatMessage({defaultMessage: 'Show less'}) : intl.formatMessage({defaultMessage: 'Show more'})}
