@@ -8,6 +8,7 @@ import {useIntl} from 'react-intl';
 
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {Tag} from '@mattermost/compass-ui/components/tag';
 import {TextInput} from '@mattermost/compass-ui/components/text-input';
 
 import {useIsLicensedFor} from '@/license';
@@ -39,9 +40,12 @@ type MCPToolConfigRowProps = {
     onToolConfigChange: (config: MCPToolConfig, policyChosen?: boolean) => void;
     serverDisabled?: boolean;
     displayName?: string;
+
+    // notReviewed marks a tool no admin has chosen a policy for.
+    notReviewed?: boolean;
 };
 
-const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled, displayName}: MCPToolConfigRowProps) => {
+const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled, displayName, notReviewed}: MCPToolConfigRowProps) => {
     const intl = useIntl();
     const approvalPoliciesLicensed = useIsLicensedFor('tool_approval_policies');
     const policyOptions = useToolPolicyOptions();
@@ -88,7 +92,15 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
         <ToolRowContainer $disabled={serverDisabled}>
             <ToolRowMain>
                 <ToolRowLeft>
-                    <ToolName>{displayName ?? tool.name}</ToolName>
+                    <ToolNameLine>
+                        <ToolName>{displayName ?? tool.name}</ToolName>
+                        {notReviewed && (
+                            <Tag
+                                label={intl.formatMessage({defaultMessage: 'Not reviewed'})}
+                                type='warning'
+                            />
+                        )}
+                    </ToolNameLine>
                     {tool.description && (
                         <ToolDescription>{tool.description}</ToolDescription>
                     )}
@@ -184,6 +196,12 @@ const ToolRowRight = styled.div`
     align-items: center;
     gap: var(--spacing-l);
     flex-shrink: 0;
+`;
+
+const ToolNameLine = styled.div`
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
 `;
 
 const ToolName = styled.div`

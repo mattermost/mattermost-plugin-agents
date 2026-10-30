@@ -13,7 +13,6 @@ import {Button} from '@mattermost/compass-ui/components/button';
 import {Divider} from '@mattermost/compass-ui/components/divider';
 import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
 import {Icon} from '@mattermost/compass-ui/components/icon';
-import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {Tag} from '@mattermost/compass-ui/components/tag';
 import {TextInput} from '@mattermost/compass-ui/components/text-input';
 
@@ -28,7 +27,9 @@ import {UnderlineTab, UnderlineTabs} from '../underline_tabs';
 
 import {CopyableTextItem} from './copyable_text_item';
 import {BuiltInPluginServersSection} from './mcp_builtin_servers_section';
+import {HeaderMapEditor} from './mcp_header_map_editor';
 import MCPServerDescription from './mcp_server_description';
+import MCPServerWizard, {MCPServerWizardMode, PersistMCPServer} from './mcp_server_wizard';
 import MCPToolsViewer from './mcp_tools_viewer';
 import type {
     MCPConfig as BaseMCPConfig,
@@ -71,6 +72,10 @@ type Props = {
     // the saved configuration.
     savedServers?: MCPServerConfig[];
     onChange: (update: MCPConfigUpdate) => void;
+
+    // onPersistServer saves one server straight away, for the flow that adds
+    // a server, connects to it and has the admin review its tools.
+    onPersistServer: PersistMCPServer;
 };
 
 // connectionSettings is what determines how the server is reached and as whom.
@@ -104,102 +109,6 @@ const normalizeMCPConfig = (mcpConfig: MCPConfig): MCPConfig => ({
     },
     idleTimeoutMinutes: mcpConfig?.idleTimeoutMinutes,
 });
-
-// Default configuration for a new MCP server
-const defaultServerConfig: MCPServerConfig = {
-    name: '',
-    enabled: true,
-    baseURL: '',
-    headers: {},
-    description: '',
-    serviceAccountHeaders: {},
-    clientID: '',
-    clientSecret: '',
-};
-
-// Renaming a key deletes the old entry; blank rows are legal (the backend ignores them).
-const HeaderMapEditor = ({
-    headers,
-    onChange,
-    namePlaceholder,
-    valuePlaceholder,
-    disableAdd,
-    disableEdit,
-}: {
-    headers: {[key: string]: string};
-    onChange: (headers: {[key: string]: string}) => void;
-    namePlaceholder?: string;
-    valuePlaceholder?: string;
-    disableAdd?: boolean;
-    disableEdit?: boolean;
-}) => {
-    const intl = useIntl();
-    const headerNamePlaceholder = namePlaceholder ?? intl.formatMessage({defaultMessage: 'Header name'});
-    const headerValuePlaceholder = valuePlaceholder ?? intl.formatMessage({defaultMessage: 'Value'});
-
-    const addHeader = () => {
-        onChange({...headers, '': ''});
-    };
-
-    // Rebuild in place: appending the renamed entry would reorder rows rendered by index.
-    const updateHeader = (oldKey: string, newKey: string, value: string) => {
-        const updated: {[key: string]: string} = {};
-        for (const [k, v] of Object.entries(headers)) {
-            if (k === oldKey) {
-                updated[newKey] = value;
-            } else {
-                updated[k] = v;
-            }
-        }
-        onChange(updated);
-    };
-
-    const removeHeader = (key: string) => {
-        const updated = {...headers};
-        delete updated[key];
-        onChange(updated);
-    };
-
-    return (
-        <>
-            <HeadersList>
-                {Object.entries(headers).map(([key, value], index) => (
-                    <HeaderRow key={index}>
-                        <HeaderInput
-                            placeholder={headerNamePlaceholder}
-                            value={key}
-                            disabled={disableEdit}
-                            onChange={(e) => updateHeader(key, e.target.value, value)}
-                        />
-                        <HeaderInput
-                            placeholder={headerValuePlaceholder}
-                            value={value}
-                            disabled={disableEdit}
-                            onChange={(e) => updateHeader(key, key, e.target.value)}
-                        />
-                        <IconButton
-                            icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
-                            aria-label={intl.formatMessage({defaultMessage: 'Remove header'})}
-                            size='small'
-                            destructive={true}
-                            onClick={() => removeHeader(key)}
-                        />
-                    </HeaderRow>
-                ))}
-            </HeadersList>
-            {!disableAdd && (
-                <AddHeaderButton
-                    emphasis='quaternary'
-                    size='small'
-                    leadingIcon={<Icon glyph={<PlusIcon/>}/>}
-                    onClick={addHeader}
-                >
-                    <FormattedMessage defaultMessage='Add Header'/>
-                </AddHeaderButton>
-            )}
-        </>
-    );
-};
 
 // Component for a single MCP server configuration
 const MCPServer = ({
@@ -505,12 +414,13 @@ const MCPServer = ({
 };
 
 // Main component for MCP servers configuration
-const MCPServers = ({mcpConfig, savedServers = [], onChange}: Props) => {
+const MCPServers = ({mcpConfig, savedServers = [], onChange, onPersistServer}: Props) => {
     const intl = useIntl();
     const titleId = useId();
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
     const [activeTab, setActiveTab] = useState<'config' | 'tools'>('config');
     const [preloadedToolsData, setPreloadedToolsData] = useState<MCPToolsResponse | null>(null);
+    const [wizardMode, setWizardMode] = useState<MCPServerWizardMode | null>(null);
     const [idleTimeoutInputValue, setIdleTimeoutInputValue] = useState<string>(() => getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
     const normalizedServers = Array.isArray(mcpConfig?.servers) ? mcpConfig.servers : [];
 
@@ -597,39 +507,9 @@ const MCPServers = ({mcpConfig, savedServers = [], onChange}: Props) => {
         (server) => server.serverType === 'plugin',
     );
 
-    // Generate a server name
-    const generateServerName = () => {
-        const prefix = 'MCP Server ';
-        let counter = normalizedServers.length + 1;
-
-        // Make sure the name is unique
-        const isNameTaken = (name: string) => normalizedServers.some((server) => server.name === name);
-
-        while (isNameTaken(`${prefix}${counter}`)) {
-            counter++;
-        }
-
-        return `${prefix}${counter}`;
-    };
-
-    // Add a new server. No id is assigned client-side: the server treats
-    // ID-less entries with no identity match as new and mints the stable ID
-    // on save (client-invented IDs are rejected as fabricated).
-    const addServer = () => {
-        // Use the auto-generated name
-        const serverName = generateServerName();
-
-        onChange({
-            ...config,
-            servers: [
-                ...normalizedServers,
-                {
-                    ...defaultServerConfig,
-                    name: serverName,
-                },
-            ],
-        });
-    };
+    // New servers are added through the wizard, which saves the server,
+    // connects to it and has the admin review its tools.
+    const addServer = () => setWizardMode({kind: 'add'});
 
     // Update a server's configuration
     const updateServer = (serverIndex: number, serverConfig: MCPServerConfig) => {
@@ -821,8 +701,17 @@ const MCPServers = ({mcpConfig, savedServers = [], onChange}: Props) => {
                             mcpConfig={config}
                             onConfigChange={(update) => (typeof update === 'function' ? updateConfigLater(update) : onChange(update))}
                             initialToolsData={preloadedToolsData}
+                            onReviewServer={(server) => setWizardMode({kind: 'review', server})}
                         />
                     </div>
+                )}
+                {wizardMode && (
+                    <MCPServerWizard
+                        mode={wizardMode}
+                        existingNames={[...new Set([...normalizedServers, ...savedServers].map((server) => server.name))]}
+                        onPersist={onPersistServer}
+                        onClose={() => setWizardMode(null)}
+                    />
                 )}
             </MCPPanelBody>
         </MCPPanel>
@@ -961,27 +850,6 @@ const SectionHelpText = styled.div`
     font-size: var(--font-size-75);
     color: rgba(var(--center-channel-color-rgb), 0.64);
     margin-bottom: var(--spacing-xxxs);
-`;
-
-const HeadersList = styled.div`
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-xs);
-`;
-
-const HeaderRow = styled.div`
-    display: flex;
-    gap: var(--spacing-xs);
-    align-items: center;
-`;
-
-const HeaderInput = styled(TextInput)`
-    flex: 1;
-    min-width: 0;
-`;
-
-const AddHeaderButton = styled(Button)`
-    align-self: flex-start;
 `;
 
 const AddServerContainer = styled.div`

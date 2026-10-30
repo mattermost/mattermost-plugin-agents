@@ -21,7 +21,7 @@ import NoServicesPage from './no_services_page';
 import BotsMovedNotice from './bots_moved_notice';
 import EmbeddingSearchPanel from './embedding_search/embedding_search_panel';
 import {HNSW_DEFAULTS, REINDEX_DEFAULTS, REINDEX_INDEX_STRATEGY, VECTOR_ELEMENT_TYPE} from './embedding_search/types';
-import MCPServers from './mcp_servers';
+import MCPServers, {MCPServerConfig} from './mcp_servers';
 import {PluginConfig} from './plugin_config_types';
 import WebSearchPanel from './web_search/web_search_panel';
 
@@ -264,6 +264,51 @@ const Config = (props: Props) => {
             props.unRegisterSaveAction(save);
         };
     }, [localConfig, intl, props.registerSaveAction, props.unRegisterSaveAction]);
+
+    // persistMCPServer saves one MCP server on its own, merged into the
+    // configuration as the server has it, so other unsaved edits on this page
+    // are not saved with it. A server without an id is added; with
+    // toolConfigsOnly only its tool_configs are written. The saved server is
+    // then reflected in the page's local configuration.
+    const persistMCPServer = useCallback(async (server: MCPServerConfig, toolConfigsOnly = false): Promise<MCPServerConfig> => {
+        const current = {...defaultConfig, ...(await getPluginConfig())};
+        const currentMCP = current.mcp || defaultConfig.mcp;
+        const currentServers: MCPServerConfig[] = currentMCP.servers ?? [];
+        const stored = server.id ? currentServers.find((s) => s.id === server.id) : undefined; // eslint-disable-line no-undefined
+        if (server.id && !stored) {
+            throw new Error(intl.formatMessage({defaultMessage: 'The server is no longer configured. Reload the page.'}));
+        }
+        const next = stored && toolConfigsOnly ? {...stored, tool_configs: server.tool_configs} : server;
+        const servers = stored ? currentServers.map((s) => (s.id === server.id ? next : s)) : [...currentServers, next];
+
+        let saved: Config;
+        try {
+            saved = {...defaultConfig, ...(await savePluginConfig({...current, mcp: {...currentMCP, servers}}))};
+        } catch (e: any) {
+            throw new Error(e?.message || intl.formatMessage({defaultMessage: 'Failed to save configuration.'}));
+        }
+        const savedServer = (saved.mcp?.servers ?? []).find((s: MCPServerConfig) => (
+            server.id ? s.id === server.id : s.name === next.name && s.baseURL === next.baseURL
+        ));
+        if (!savedServer) {
+            throw new Error(intl.formatMessage({defaultMessage: 'The saved server could not be found. Reload the page.'}));
+        }
+
+        setSavedConfig(saved);
+        setLocalConfig((prev) => {
+            const localMCP = prev.mcp || defaultConfig.mcp;
+            const localServers: MCPServerConfig[] = localMCP.servers ?? [];
+            const present = localServers.some((s) => s.id === savedServer.id);
+            const merged = present ? localServers.map((s) => {
+                if (s.id !== savedServer.id) {
+                    return s;
+                }
+                return toolConfigsOnly ? {...s, tool_configs: savedServer.tool_configs} : savedServer;
+            }) : [...localServers, savedServer];
+            return {...prev, mcp: {...localMCP, servers: merged}};
+        });
+        return savedServer;
+    }, [intl]);
 
     const updateConfig = useCallback((updates: Partial<Config>) => {
         setLocalConfig((prev) => ({...prev, ...updates}));
@@ -530,6 +575,7 @@ const Config = (props: Props) => {
             <MCPServers
                 mcpConfig={mcpConfig}
                 savedServers={savedConfig.mcp?.servers ?? []}
+                onPersistServer={persistMCPServer}
                 onChange={(update) => {
                     setLocalConfig((prev) => {
                         const updated = typeof update === 'function' ? update(prev.mcp || defaultConfig.mcp) : update;

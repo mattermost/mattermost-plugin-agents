@@ -351,3 +351,34 @@ describe('MCPToolsViewer — plugin branch', () => {
     });
 });
 
+describe('MCPToolsViewer — remote server review', () => {
+    test('offers a review of a saved remote server and opens it with that server', async () => {
+        const remote = {id: 'server-id', name: 'Remote', enabled: true, baseURL: 'https://mcp.example.com', headers: {}};
+        const onReviewServer = jest.fn();
+        render(
+            <IntlProvider locale='en'>
+                <MCPToolsViewer
+                    mcpConfig={makeMCPConfig({servers: [remote]})}
+                    onConfigChange={jest.fn()}
+                    onReviewServer={onReviewServer}
+                    initialToolsData={{
+                        servers: [{
+                            name: 'Remote',
+                            url: 'https://mcp.example.com',
+                            serverType: 'remote',
+                            enabled: true,
+                            id: 'server-id',
+                            tools: [{name: 'search', description: 'Search', inputSchema: null, defaultPolicy: 'ask'}],
+                            needsOAuth: false,
+                            error: null,
+                        }],
+                    }}
+                />
+            </IntlProvider>,
+        );
+
+        fireEvent.click(await screen.findByRole('button', {name: 'Review tools for Remote'}));
+
+        expect(onReviewServer).toHaveBeenCalledWith(remote);
+    });
+});

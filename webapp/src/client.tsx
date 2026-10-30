@@ -731,6 +731,24 @@ export async function getMCPTools() {
     });
 }
 
+// getMCPServerTools lists one saved remote MCP server's tools as the admin.
+export async function getMCPServerTools(serverID: string) {
+    const url = `${baseRoute()}/admin/mcp/${encodeURIComponent(serverID)}/tools`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function clearMCPToolsCache() {
     const url = `${baseRoute()}/admin/mcp/tools/cache/clear`;
     const response = await fetch(url, Client4.getOptions({

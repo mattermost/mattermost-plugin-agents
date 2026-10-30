@@ -318,6 +318,79 @@ describe('MCPServerToolRow — grouped tools and bulk policy controls', () => {
     });
 });
 
+describe('MCPServerToolRow — unreviewed tools', () => {
+    const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+
+    beforeEach(() => {
+        useIsLicensedFor.mockReturnValue(true);
+    });
+
+    const remoteServer: MCPServerInfo = {
+        name: 'Remote',
+        url: 'https://mcp.example.com',
+        serverType: 'remote',
+        enabled: true,
+        needsOAuth: false,
+        error: null,
+        tools: [
+            {name: 'reviewed_tool', description: 'Reviewed', inputSchema: null, defaultPolicy: 'ask'},
+            {name: 'toggled_tool', description: 'Toggled', inputSchema: null, defaultPolicy: 'ask'},
+            {name: 'new_tool', description: 'New', inputSchema: null, defaultPolicy: 'ask'},
+        ],
+    };
+    const remoteConfig: MCPServerConfig = {
+        id: 'server-id',
+        name: 'Remote',
+        enabled: true,
+        baseURL: 'https://mcp.example.com',
+        headers: {},
+        tool_configs: [
+            {name: 'reviewed_tool', policy: 'auto_run_in_dm', enabled: true},
+            {name: 'toggled_tool', policy: '', enabled: false},
+        ],
+    };
+
+    test('marks remote tools without a chosen policy and offers a review', () => {
+        const onReview = jest.fn();
+        render(
+            <IntlProvider locale='en'>
+                <MCPServerToolRow
+                    server={remoteServer}
+                    serverConfig={remoteConfig}
+                    onServerConfigChange={jest.fn()}
+                    onReview={onReview}
+                />
+            </IntlProvider>,
+        );
+
+        fireEvent.click(screen.getByRole('button', {name: 'Review tools for Remote'}));
+        expect(onReview).toHaveBeenCalledTimes(1);
+
+        fireEvent.click(screen.getByText('Remote'));
+        const toolName = (name: string) => screen.getByText(name).parentElement as HTMLElement;
+        expect(within(toolName('reviewed_tool')).queryByText('Not reviewed')).toBeNull();
+        expect(within(toolName('toggled_tool')).getByText('Not reviewed')).not.toBeNull();
+        expect(within(toolName('new_tool')).getByText('Not reviewed')).not.toBeNull();
+    });
+
+    test('does not mark plugin server tools or offer them a review', () => {
+        render(
+            <IntlProvider locale='en'>
+                <MCPServerToolRow
+                    server={{...remoteServer, serverType: 'plugin'}}
+                    serverConfig={remoteConfig}
+                    onServerConfigChange={jest.fn()}
+                    onReview={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        fireEvent.click(screen.getByText('Remote'));
+        expect(screen.queryByText('Not reviewed')).toBeNull();
+        expect(screen.queryByRole('button', {name: /Review tools/})).toBeNull();
+    });
+});
+
 describe('MCPServerToolRow license gating', () => {
     const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
 

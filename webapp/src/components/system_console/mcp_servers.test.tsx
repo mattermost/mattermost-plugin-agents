@@ -137,6 +137,7 @@ function renderServers(mcpConfig: MCPConfig, savedServers?: MCPServerConfig[]) {
         ...render(
             <IntlProvider locale='en'>
                 <MCPServers
+                    onPersistServer={jest.fn()}
                     mcpConfig={mcpConfig}
                     savedServers={savedServers}
                     onChange={onChange}
@@ -226,15 +227,13 @@ describe('MCPServers stable ID handling', () => {
         expect(servers[0].id).toBe(STABLE_ID);
     });
 
-    it('adds a new server without an id so the backend mints the stable ID on save', () => {
+    it('adds a server through the wizard instead of an unsaved blank entry', () => {
         const {onChange} = renderServers(makeMCPConfig([existingServer]));
 
         fireEvent.click(screen.getByText('Add Remote MCP Server'));
 
-        const servers = lastChangedServers(onChange);
-        expect(servers).toHaveLength(2);
-        expect(servers[1].id).toBeUndefined();
-        expect(servers[0].id).toBe(STABLE_ID);
+        expect(screen.getByRole('dialog', {name: 'Add remote MCP server'})).not.toBeNull();
+        expect(onChange).not.toHaveBeenCalled();
     });
 });
 
@@ -408,6 +407,7 @@ describe('MCPServers built-in & plugin section', () => {
         const {rerender} = render(
             <IntlProvider locale='en'>
                 <MCPServers
+                    onPersistServer={jest.fn()}
                     mcpConfig={makeMCPConfig()}
                     onChange={jest.fn()}
                 />
@@ -420,6 +420,7 @@ describe('MCPServers built-in & plugin section', () => {
         rerender(
             <IntlProvider locale='en'>
                 <MCPServers
+                    onPersistServer={jest.fn()}
                     mcpConfig={makeMCPConfig([], STABLE_ID)}
                     onChange={jest.fn()}
                 />
@@ -594,6 +595,7 @@ describe('MCPServers results that arrive after further edits', () => {
         return (
             <IntlProvider locale='en'>
                 <MCPServers
+                    onPersistServer={jest.fn()}
                     mcpConfig={mcpConfig}
                     savedServers={saved}
                     onChange={(update: MCPConfigUpdate) => setMCPConfig((current) => (typeof update === 'function' ? update(current) : update))}

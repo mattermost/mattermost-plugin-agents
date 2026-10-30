@@ -6,6 +6,7 @@ import styled from 'styled-components';
 import {ChevronDownIcon, ExclamationThickIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {Button} from '@mattermost/compass-ui/components/button';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 import {Tag} from '@mattermost/compass-ui/components/tag';
 
@@ -24,10 +25,18 @@ type MCPServerToolRowProps = {
     server: MCPServerInfo;
     serverConfig: MCPServerConfig | null;
     onServerConfigChange: (config: MCPServerConfig) => void;
+
+    // onReview, when set, offers the admin a review of the server's tools.
+    // Remote servers only: their unreviewed tools are marked.
+    onReview?: () => void;
+
+    // reviewing renders the row inside the tool review: expanded, without the
+    // server toggle or review markers.
+    reviewing?: boolean;
 };
 
-const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServerToolRowProps) => {
-    const [expanded, setExpanded] = useState(false);
+const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, onReview, reviewing = false}: MCPServerToolRowProps) => {
+    const [expanded, setExpanded] = useState(reviewing);
     const intl = useIntl();
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
     const approvalPoliciesLicensed = useIsLicensedFor('tool_approval_policies');
@@ -48,6 +57,11 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
         }
         return {name: tool.name, policy: defaultPolicy, enabled: true};
     };
+
+    // A remote server's tool is unreviewed until an admin chooses its policy.
+    const marksUnreviewed = server.serverType === 'remote' && !reviewing;
+    const isUnreviewed = (tool: MCPToolInfo) => marksUnreviewed && !findStoredConfig(tool.name)?.policy;
+    const unreviewedCount = server.tools.filter(isUnreviewed).length;
 
     const enabledToolCount = server.tools.filter((tool) => {
         const tc = getToolConfig(tool);
@@ -139,6 +153,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                 }
                 serverDisabled={!serverEnabled}
                 displayName={displayName}
+                notReviewed={isUnreviewed(tool)}
             />
         );
     };
@@ -201,6 +216,17 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                                     />
                                 </ToolCount>
                             )}
+                            {unreviewedCount > 0 && (
+                                <Tag
+                                    type='warning'
+                                    label={(
+                                        <FormattedMessage
+                                            defaultMessage='{count, plural, one {# tool not reviewed} other {# tools not reviewed}}'
+                                            values={{count: unreviewedCount}}
+                                        />
+                                    )}
+                                />
+                            )}
                         </ServerMeta>
                     </ServerInfo>
                     <ExpandChevron>
@@ -209,7 +235,18 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                         </StyledChevron>
                     </ExpandChevron>
                 </ServerRowExpandButton>
-                {serverConfig && (
+                {onReview && server.serverType === 'remote' && (
+                    <Button
+                        emphasis={unreviewedCount > 0 ? 'secondary' : 'tertiary'}
+                        size='small'
+                        onClick={onReview}
+                        disabled={!serverEnabled}
+                        aria-label={intl.formatMessage({defaultMessage: 'Review tools for {serverName}'}, {serverName: server.name})}
+                    >
+                        <FormattedMessage defaultMessage='Review tools'/>
+                    </Button>
+                )}
+                {serverConfig && !reviewing && (
                     <ToggleWrapper>
                         <ToggleSwitch
                             checked={serverEnabled}

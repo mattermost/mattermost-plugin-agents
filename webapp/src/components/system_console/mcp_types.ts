@@ -58,8 +58,12 @@ export type MCPToolInfo = {
     // Server-reported MCP readOnlyHint annotation.
     readOnlyHint?: boolean;
 
-    // Policy the tool runs with while it has no tool_configs entry.
+    // Policy the tool runs with while it has no chosen policy.
     defaultPolicy?: MCPToolConfig['policy'];
+
+    // Policy to pre-select when the admin reviews the tool: the default,
+    // raised to auto run in DMs for tools the server marks read-only.
+    suggestedPolicy?: MCPToolConfig['policy'];
 };
 
 export type MCPServerInfo = {
