@@ -25,6 +25,7 @@ import {
     MCPToolsResponse,
 } from './mcp_types';
 import {EMBEDDED_MATTERMOST_BASE_URL} from './vetted_tool_configs';
+import {useSettingsReadOnly} from './settings_read_only';
 
 type MCPToolsViewerProps = {
     mcpConfig: MCPConfig;
@@ -38,6 +39,7 @@ type MCPToolsViewerProps = {
 // Main component for MCP Tools viewer
 const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsViewerProps) => {
     const intl = useIntl();
+    const readOnly = useSettingsReadOnly();
     const [toolsData, setToolsData] = useState<MCPToolsResponse | null>(initialToolsData || null);
     const [loading, setLoading] = useState(false);
     const [clearing, setClearing] = useState(false);
@@ -278,14 +280,16 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
                     )}
                 </HeaderInfo>
                 <ButtonGroup>
-                    <Button
-                        emphasis='secondary'
-                        onClick={handleClearCache}
-                        loading={clearing}
-                        disabled={loading}
-                    >
-                        <FormattedMessage defaultMessage='Clear Cache'/>
-                    </Button>
+                    {!readOnly && (
+                        <Button
+                            emphasis='secondary'
+                            onClick={handleClearCache}
+                            loading={clearing}
+                            disabled={loading}
+                        >
+                            <FormattedMessage defaultMessage='Clear Cache'/>
+                        </Button>
+                    )}
                     <Button
                         emphasis='tertiary'
                         onClick={() => fetchTools({showLoading: true})}

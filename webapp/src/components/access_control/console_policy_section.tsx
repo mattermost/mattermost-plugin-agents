@@ -11,6 +11,7 @@ import {isValidMattermostId, useABACSupport} from '@/utils/access_control';
 import {useIsLicensedFor} from '@/license';
 
 import {LicenseChip} from '../system_console/enterprise_chip';
+import {useSettingsReadOnly} from '../system_console/settings_read_only';
 
 import PolicyEditor from './policy_editor';
 
@@ -47,6 +48,7 @@ const ConsolePolicySection = (props: Props) => {
     const {resourceType, resourceId, resourceDisplayName} = props;
     const {supported} = useABACSupport();
     const abacLicensed = useIsLicensedFor('attribute_based_access');
+    const readOnly = useSettingsReadOnly();
     const [expanded, setExpanded] = useState(false);
     const [hasOpened, setHasOpened] = useState(false);
 
@@ -95,7 +97,7 @@ const ConsolePolicySection = (props: Props) => {
                             resourceDisplayName={resourceDisplayName}
                             allowSimplified={true}
                             allowAdvanced={true}
-                            allowEdit={abacLicensed}
+                            allowEdit={abacLicensed && !readOnly}
                         />
                     ) : (
                         <LegacyIDNote>{legacyIDNote(resourceType)}</LegacyIDNote>

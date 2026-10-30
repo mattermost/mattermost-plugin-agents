@@ -16,6 +16,7 @@ import {pluginIDFromServerOrigin, stripPluginPrefix} from '../../utils/tool_name
 
 import {MCPServerConfig, MCPServerInfo, MCPToolConfig} from './mcp_types';
 import MCPToolConfigRow from './mcp_tool_config_row';
+import {useSettingsReadOnly} from './settings_read_only';
 
 type MCPServerToolRowProps = {
     server: MCPServerInfo;
@@ -24,6 +25,7 @@ type MCPServerToolRowProps = {
 };
 
 const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServerToolRowProps) => {
+    const readOnly = useSettingsReadOnly();
     const [expanded, setExpanded] = useState(false);
     const intl = useIntl();
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
@@ -123,7 +125,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                                 }
                                 handleServerToggle(enabled);
                             }}
-                            disabled={enableRemoteBlocked && !serverEnabled}
+                            disabled={readOnly || (enableRemoteBlocked && !serverEnabled)}
                             size='medium'
                             ariaLabel={intl.formatMessage(
                                 {defaultMessage: 'Enable {serverName}'},

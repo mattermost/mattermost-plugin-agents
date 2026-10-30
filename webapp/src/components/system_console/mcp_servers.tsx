@@ -39,6 +39,7 @@ import type {
 } from './mcp_types';
 
 import {LicenseChip} from './enterprise_chip';
+import {useSettingsReadOnly} from './settings_read_only';
 
 import {BooleanItem, FormRow, HelpText, ItemLabel, ItemList, TextFieldContainer, TextItem} from './item';
 
@@ -134,6 +135,7 @@ const HeaderMapEditor = ({
     disableEdit?: boolean;
 }) => {
     const intl = useIntl();
+    const readOnly = useSettingsReadOnly();
     const headerNamePlaceholder = namePlaceholder ?? intl.formatMessage({defaultMessage: 'Header name'});
     const headerValuePlaceholder = valuePlaceholder ?? intl.formatMessage({defaultMessage: 'Value'});
 
@@ -168,26 +170,28 @@ const HeaderMapEditor = ({
                         <HeaderInput
                             placeholder={headerNamePlaceholder}
                             value={key}
-                            disabled={disableEdit}
+                            disabled={disableEdit || readOnly}
                             onChange={(e) => updateHeader(key, e.target.value, value)}
                         />
                         <HeaderInput
                             placeholder={headerValuePlaceholder}
                             value={value}
-                            disabled={disableEdit}
+                            disabled={disableEdit || readOnly}
                             onChange={(e) => updateHeader(key, key, e.target.value)}
                         />
-                        <IconButton
-                            icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
-                            aria-label={intl.formatMessage({defaultMessage: 'Remove header'})}
-                            size='small'
-                            destructive={true}
-                            onClick={() => removeHeader(key)}
-                        />
+                        {!readOnly && (
+                            <IconButton
+                                icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
+                                aria-label={intl.formatMessage({defaultMessage: 'Remove header'})}
+                                size='small'
+                                destructive={true}
+                                onClick={() => removeHeader(key)}
+                            />
+                        )}
                     </HeaderRow>
                 ))}
             </HeadersList>
-            {!disableAdd && (
+            {!disableAdd && !readOnly && (
                 <AddHeaderButton
                     emphasis='quaternary'
                     size='small'
@@ -222,6 +226,7 @@ const MCPServer = ({
     const intl = useIntl();
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
     const serviceAccountLicensed = useIsLicensedFor('mcp_service_account');
+    const readOnly = useSettingsReadOnly();
     const [isEditingName, setIsEditingName] = useState(false);
     const serverTitleRef = useRef<HTMLButtonElement>(null);
     const focusTitleAfterEdit = useRef(false);
@@ -340,7 +345,11 @@ const MCPServer = ({
                             placeholder={intl.formatMessage({defaultMessage: 'Server name'})}
                         />
                     </ServerNameEditContainer>
-                ) : (
+                ) : null}
+                {!isEditingName && readOnly && (
+                    <ServerTitleText>{config.name || unnamedServerLabel}</ServerTitleText>
+                )}
+                {!isEditingName && !readOnly && (
                     <ServerTitle
                         ref={serverTitleRef}
                         type='button'
@@ -359,15 +368,17 @@ const MCPServer = ({
                         </ServerTitleEditIcon>
                     </ServerTitle>
                 )}
-                <Button
-                    emphasis='tertiary'
-                    destructive={true}
-                    size='small'
-                    leadingIcon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
-                    onClick={onDelete}
-                >
-                    <FormattedMessage defaultMessage='Delete Server'/>
-                </Button>
+                {!readOnly && (
+                    <Button
+                        emphasis='tertiary'
+                        destructive={true}
+                        size='small'
+                        leadingIcon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
+                        onClick={onDelete}
+                    >
+                        <FormattedMessage defaultMessage='Delete Server'/>
+                    </Button>
+                )}
             </ServerHeader>
 
             <BooleanItem
@@ -509,6 +520,7 @@ const MCPServers = ({mcpConfig, savedServers = [], onChange}: Props) => {
     const intl = useIntl();
     const titleId = useId();
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
+    const readOnly = useSettingsReadOnly();
     const [activeTab, setActiveTab] = useState<'config' | 'tools'>('config');
     const [preloadedToolsData, setPreloadedToolsData] = useState<MCPToolsResponse | null>(null);
     const [idleTimeoutInputValue, setIdleTimeoutInputValue] = useState<string>(() => getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
@@ -762,8 +774,8 @@ const MCPServers = ({mcpConfig, savedServers = [], onChange}: Props) => {
                                 <>
                                     <RemoteServersEmptyState
                                         title={<FormattedMessage defaultMessage='No remote MCP servers configured'/>}
-                                        description={<FormattedMessage defaultMessage='Add a server to connect to external MCP tools.'/>}
-                                        action={{
+                                        description={readOnly ? undefined : <FormattedMessage defaultMessage='Add a server to connect to external MCP tools.'/>} // eslint-disable-line no-undefined
+                                        action={readOnly ? undefined : { // eslint-disable-line no-undefined
                                             emphasis: 'primary',
                                             onClick: addServer,
                                             disabled: !remoteMcpLicensed,
@@ -792,19 +804,21 @@ const MCPServers = ({mcpConfig, savedServers = [], onChange}: Props) => {
                                             />
                                         ))}
                                     </ServersList>
-                                    <AddServerContainer>
-                                        <Button
-                                            emphasis='primary'
-                                            onClick={addServer}
-                                            disabled={!remoteMcpLicensed}
-                                            leadingIcon={<Icon glyph={<PlusIcon/>}/>}
-                                        >
-                                            <FormattedMessage defaultMessage='Add Remote MCP Server'/>
-                                        </Button>
-                                        {!remoteMcpLicensed && (
-                                            <LicenseChip capability='remote_mcp'/>
-                                        )}
-                                    </AddServerContainer>
+                                    {!readOnly && (
+                                        <AddServerContainer>
+                                            <Button
+                                                emphasis='primary'
+                                                onClick={addServer}
+                                                disabled={!remoteMcpLicensed}
+                                                leadingIcon={<Icon glyph={<PlusIcon/>}/>}
+                                            >
+                                                <FormattedMessage defaultMessage='Add Remote MCP Server'/>
+                                            </Button>
+                                            {!remoteMcpLicensed && (
+                                                <LicenseChip capability='remote_mcp'/>
+                                            )}
+                                        </AddServerContainer>
+                                    )}
                                 </>
                             )}
                         </RemoteServersSection>
@@ -886,6 +900,15 @@ const ServerTitleEditIcon = styled.span`
     color: rgba(var(--center-channel-color-rgb), 0.64);
     opacity: 0;
     transition: opacity 0.2s ease;
+`;
+
+const ServerTitleText = styled.h3`
+    margin: 0;
+    font-family: var(--font-family-heading);
+    font-size: var(--font-size-200);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-200);
+    color: var(--center-channel-color);
 `;
 
 const ServerTitle = styled.button`

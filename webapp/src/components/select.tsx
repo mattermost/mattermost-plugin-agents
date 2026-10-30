@@ -174,6 +174,59 @@ export const SelectUser = (props: SelectUserProps) => {
     );
 };
 
+type SelectUsersProps = {
+    userIDs: string[];
+    onChangeUserIDs: (userIds: string[]) => void;
+
+    // Also the picker's accessible name, so it must tell pickers on one page apart.
+    placeholder: string;
+    disabled?: boolean;
+};
+
+// SelectUsers picks people only, no teams or bots.
+export const SelectUsers = (props: SelectUsersProps) => {
+    const [selected, setSelected] = useState<ComboboxOption[]>([]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const loadSelected = async () => {
+            try {
+                const users = await getProfilesByIds(props.userIDs);
+                if (!cancelled) {
+                    setSelected(users.map(userOption));
+                }
+            } catch {
+                // Leave the selection as it was; the IDs are unchanged until the picker changes them.
+            }
+        };
+
+        loadSelected();
+        return () => {
+            cancelled = true;
+        };
+    }, [props.userIDs]);
+
+    const search = async (term: string) => {
+        const users = await getAutocompleteAllUsers(term);
+        return users.users.filter((user: UserProfile) => !user.is_bot).map(userOption);
+    };
+
+    const handleChange = (options: ComboboxOption[]) => {
+        setSelected(options);
+        props.onChangeUserIDs(options.map((option) => option.value));
+    };
+
+    return (
+        <AsyncMultiPicker
+            selected={selected}
+            search={search}
+            onChange={handleChange}
+            placeholder={props.placeholder}
+            disabled={props.disabled}
+        />
+    );
+};
+
 const channelOption = (channel: ChannelWithTeamData): ComboboxOption => ({
     value: channel.id,
     label: channel.display_name,
