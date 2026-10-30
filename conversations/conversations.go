@@ -248,7 +248,10 @@ func (c *Conversations) processDMRequest(
 		llmCtx = &llm.Context{}
 	}
 
-	conv, err := c.convService.GetConversation(convID)
+	// The turn was accepted, and its conversation activated, before this
+	// runs. If the owner archives it in the meantime the reply still
+	// completes on the archived row; it is not restored.
+	conv, err := c.convService.GetConversationIncludingArchived(convID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get conversation: %w", err)
 	}

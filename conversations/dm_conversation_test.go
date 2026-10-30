@@ -95,6 +95,75 @@ func (s *fakeConvStore) GetConversationByThreadBotUser(rootPostID, botID, userID
 	return nil, store.ErrConversationNotFound
 }
 
+func (s *fakeConvStore) GetConversationIncludingArchived(id string) (*store.Conversation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	conv, ok := s.conversations[id]
+	if !ok {
+		return nil, store.ErrConversationNotFound
+	}
+	c := *conv
+	return &c, nil
+}
+
+func (s *fakeConvStore) GetLatestConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lookupErr != nil {
+		return nil, s.lookupErr
+	}
+	var latest *store.Conversation
+	for _, conv := range s.conversations {
+		if conv.RootPostID == nil || *conv.RootPostID != rootPostID || conv.BotID != botID || conv.UserID != userID {
+			continue
+		}
+		if conv.DeleteAt == 0 {
+			latest = conv
+			break
+		}
+		if latest == nil || conv.DeleteAt > latest.DeleteAt {
+			latest = conv
+		}
+	}
+	if latest == nil {
+		return nil, store.ErrConversationNotFound
+	}
+	c := *latest
+	return &c, nil
+}
+
+func (s *fakeConvStore) RestoreConversation(id string) (*store.Conversation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	conv, ok := s.conversations[id]
+	if !ok || conv.DeleteAt == 0 {
+		return nil, store.ErrConversationNotFound
+	}
+	for _, other := range s.conversations {
+		if other.ID != id && other.DeleteAt == 0 && other.RootPostID != nil && conv.RootPostID != nil &&
+			*other.RootPostID == *conv.RootPostID && other.BotID == conv.BotID && other.UserID == conv.UserID {
+			return nil, store.ErrConversationConflict
+		}
+	}
+	conv.DeleteAt = 0
+	c := *conv
+	return &c, nil
+}
+
+// archive marks a conversation archived, as POST /conversations/:id/archive does.
+func (s *fakeConvStore) archive(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.conversations[id].DeleteAt = model.GetMillis()
+}
+
+// deleteAt reports a conversation's DeleteAt, archived or not.
+func (s *fakeConvStore) deleteAt(id string) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.conversations[id].DeleteAt
+}
+
 func (s *fakeConvStore) UpdateConversationTitle(id, title string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -740,6 +809,80 @@ func TestDMContinueConversation_ReadsTurnsNotPosts(t *testing.T) {
 	env.fakeLLM.mu.Unlock()
 	assert.Equal(t, llm.PostRoleSystem, req.Posts[0].Role)
 	assert.GreaterOrEqual(t, len(req.Posts), 3) // system + 2 user turns
+}
+
+// --- Test: a reply in an archived DM thread restores its conversation ------
+
+func TestDMReplyInArchivedThread(t *testing.T) {
+	tests := []struct {
+		name string
+		// rootPost is what the fake Mattermost returns for the thread root;
+		// nil means the post is gone.
+		rootPost     func(id string) *model.Post
+		wantRestored bool
+	}{
+		{
+			name:         "restores the conversation with its history",
+			rootPost:     func(id string) *model.Post { return &model.Post{Id: id} },
+			wantRestored: true,
+		},
+		{
+			name:     "never restores a conversation whose root post was deleted",
+			rootPost: func(id string) *model.Post { return &model.Post{Id: id, DeleteAt: model.GetMillis()} },
+		},
+		{
+			name:     "never restores a conversation whose root post is gone",
+			rootPost: func(string) *model.Post { return nil },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupDMTestEnv(t, dmMakeTextStream("Follow-up response"))
+
+			rootPostID := "root1"
+			if root := tt.rootPost(rootPostID); root != nil {
+				env.mmClient.posts = map[string]*model.Post{rootPostID: root}
+			}
+			channelID := env.channelID
+			createResult, err := env.convService.CreateConversation(conversation.CreateConversationParams{
+				UserID:       env.userID,
+				BotID:        env.botID,
+				ChannelID:    &channelID,
+				RootPostID:   &rootPostID,
+				Operation:    "conversation",
+				SystemPrompt: "You are helpful.",
+				UserMessage:  "First message",
+			})
+			require.NoError(t, err)
+			env.convStore.archive(createResult.ConversationID)
+			archivedAt := env.convStore.deleteAt(createResult.ConversationID)
+
+			post := &model.Post{
+				Id:        "post2",
+				UserId:    env.userID,
+				ChannelId: env.channelID,
+				RootId:    rootPostID,
+				Message:   "Follow up question",
+			}
+			convResult, err := env.conversations.CreateOrGetDMConversation(env.botID, env.user, env.channel, post, nil)
+
+			if !tt.wantRestored {
+				require.ErrorIs(t, err, conversation.ErrRootPostDeleted)
+				assert.Equal(t, archivedAt, env.convStore.deleteAt(createResult.ConversationID), "the conversation must stay archived")
+				assert.Len(t, env.convStore.turnsFor(createResult.ConversationID), 1, "no turn is added")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, createResult.ConversationID, convResult.ConversationID, "reply must continue the archived conversation, not start a new one")
+			assert.False(t, convResult.IsNew)
+
+			restored, err := env.convService.GetConversation(convResult.ConversationID)
+			require.NoError(t, err, "the conversation must be active again")
+			assert.Zero(t, restored.DeleteAt)
+			assert.Len(t, env.convStore.turnsFor(convResult.ConversationID), 2, "history and the new user turn")
+		})
+	}
 }
 
 // --- Test: auto-run tools use ToolRunner and write turns with shared=true -

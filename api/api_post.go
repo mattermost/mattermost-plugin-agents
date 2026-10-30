@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin/render"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
@@ -19,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/react"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost-plugin-agents/v2/threads"
@@ -351,6 +353,8 @@ func regenerateHTTPStatus(err error) int {
 	switch {
 	case errors.Is(err, conversations.ErrNotRegenerable):
 		return http.StatusBadRequest
+	case errors.Is(err, conversation.ErrConversationArchived):
+		return http.StatusConflict
 	case errors.Is(err, conversations.ErrNotRequester),
 		errors.Is(err, mmapi.ErrFileActionForbidden),
 		errors.Is(err, bots.ErrUsageRestriction),
@@ -402,6 +406,8 @@ func toolApprovalHTTPStatus(err error) int {
 		errors.Is(err, conversations.ErrPostMissingConversationID),
 		errors.Is(err, conversations.ErrInvalidToolAnswer):
 		return http.StatusBadRequest
+	case errors.Is(err, conversation.ErrConversationArchived):
+		return http.StatusConflict
 	case errors.Is(err, conversations.ErrNotRequester),
 		errors.Is(err, conversations.ErrRemoteMCPNotLicensed),
 		errors.Is(err, conversations.ErrToolCallingDisabled),
@@ -439,7 +445,9 @@ func (a *API) handleToolResult(c *gin.Context) {
 }
 
 // isConversationOwner checks whether the given user is the owner of the
-// conversation associated with the post (via the conversation_id prop).
+// conversation associated with the post (via the conversation_id prop). An
+// archived conversation keeps its posts and its owner; a conversation whose
+// root post was deleted has no owner here, and a failed lookup denies.
 //
 // Falls back to the llm_requester_user_id prop for legacy custom_llmbot posts
 // that were not produced via the conversation entity flow — currently only
@@ -452,21 +460,20 @@ func (a *API) isConversationOwner(post *model.Post, userID string) bool {
 	}
 
 	// Try the full conversation service first, then fall back to the store interface.
-	if a.convService != nil {
-		conv, err := a.convService.GetConversation(convID)
-		if err != nil {
-			return false
-		}
-		return conv.UserID == userID
+	var conv *store.Conversation
+	var err error
+	switch {
+	case a.convService != nil:
+		conv, err = a.convService.GetConversationIncludingArchived(convID)
+	case a.conversationStore != nil:
+		conv, err = a.conversationStore.GetConversationIncludingArchived(convID)
+	default:
+		return false
 	}
-	if a.conversationStore != nil {
-		conv, err := a.conversationStore.GetConversation(convID)
-		if err != nil {
-			return false
-		}
-		return conv.UserID == userID
+	if err != nil || a.checkRootPost(conv) != nil {
+		return false
 	}
-	return false
+	return conv.UserID == userID
 }
 
 func (a *API) handlePostbackSummary(c *gin.Context) {

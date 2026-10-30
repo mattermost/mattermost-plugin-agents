@@ -79,7 +79,19 @@ func setupTestStore(t *testing.T) *Store {
 		db.Close()
 	})
 
+	// The plugin store shares Mattermost's database; queries that check a
+	// conversation's root post read its Posts table.
+	_, err = db.Exec(`CREATE TABLE Posts (Id VARCHAR(26) PRIMARY KEY, DeleteAt BIGINT NOT NULL DEFAULT 0)`)
+	require.NoError(t, err)
+
 	return New(db)
+}
+
+// insertPost adds a Mattermost post row with the given DeleteAt.
+func insertPost(t *testing.T, s *Store, id string, deleteAt int64) {
+	t.Helper()
+	_, err := s.db.Exec(`INSERT INTO Posts (Id, DeleteAt) VALUES ($1, $2)`, id, deleteAt)
+	require.NoError(t, err)
 }
 
 func TestRunMigrations(t *testing.T) {
@@ -197,7 +209,22 @@ func TestRunMigrations(t *testing.T) {
 				err := s.db.Get(&count, `
 					SELECT COUNT(*) FROM Agents_DB_Migrations`)
 				require.NoError(t, err)
-				assert.Equal(t, 13, count, "Should have 13 migration records")
+				assert.Equal(t, 14, count, "Should have 14 migration records")
+			},
+		},
+		{
+			name: "conversation thread lookup index covers archived rows",
+			validate: func(t *testing.T, s *Store) {
+				var def string
+				err := s.db.Get(&def, `
+					SELECT pg_get_indexdef(i.indexrelid)
+					FROM pg_index i
+					JOIN pg_class c ON c.oid = i.indexrelid
+					WHERE c.relname = 'idx_llm_conversations_thread_bot_user_all'
+					AND i.indisvalid`)
+				require.NoError(t, err, "a valid idx_llm_conversations_thread_bot_user_all should exist")
+				assert.Contains(t, strings.ToLower(def), "(rootpostid, botid, userid)")
+				assert.NotContains(t, strings.ToLower(def), "where", "the index must not be partial on DeleteAt")
 			},
 		},
 		{

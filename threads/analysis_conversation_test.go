@@ -106,6 +106,11 @@ func setupTest(t *testing.T) testSetup {
 	err = s.RunMigrations()
 	require.NoError(t, err)
 
+	// The plugin store shares Mattermost's database; listing conversations
+	// reads its Posts table.
+	_, err = db.Exec(`CREATE TABLE Posts (Id VARCHAR(26) PRIMARY KEY, DeleteAt BIGINT NOT NULL DEFAULT 0)`)
+	require.NoError(t, err)
+
 	p, err := llm.NewPrompts(prompts.PromptsFolder)
 	require.NoError(t, err)
 

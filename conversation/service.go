@@ -23,7 +23,18 @@ type Store interface {
 	CreateConversation(conv *store.Conversation) error
 	// GetConversation retrieves a conversation by ID. Returns an error if not found.
 	GetConversation(id string) (*store.Conversation, error)
+	// GetConversationIncludingArchived retrieves a conversation by ID whether
+	// or not it is archived.
+	GetConversationIncludingArchived(id string) (*store.Conversation, error)
 	GetConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error)
+	// GetLatestConversationByThreadBotUser returns the tuple's active
+	// conversation, else its most recently archived one, without writing.
+	GetLatestConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error)
+	// RestoreConversation un-archives the conversation. Returns
+	// store.ErrConversationNotFound when it is not archived (or missing) and
+	// store.ErrConversationConflict when another active conversation owns its
+	// thread.
+	RestoreConversation(id string) (*store.Conversation, error)
 	// UpdateConversationTitle updates the title of a conversation.
 	UpdateConversationTitle(id, title string) error
 	// SetConversationTitleIfUnset sets the title only while the conversation
@@ -157,19 +168,127 @@ func (s *Service) CreateConversation(params CreateConversationParams) (*CreateCo
 	}, nil
 }
 
-// GetConversation retrieves a conversation by ID. Returns an error if not found.
+// ErrConversationArchived is returned when an archived conversation cannot be
+// continued because another active conversation now owns its thread.
+var ErrConversationArchived = errors.New("conversation is archived")
+
+// ErrRootPostDeleted is returned for a conversation whose root post was
+// deleted or no longer exists.
+var ErrRootPostDeleted = errors.New("conversation root post was deleted")
+
+// PostGetter looks up a Mattermost post. mmapi.Client and pluginapi's
+// PostService both satisfy it.
+type PostGetter interface {
+	GetPost(postID string) (*model.Post, error)
+}
+
+// CheckRootPost returns ErrRootPostDeleted when conv's root post was deleted
+// (or permanently removed), nil when the post exists or conv has no root
+// post, and the lookup error for any other failure, so callers fail closed.
+//
+// Deleting a root post does not change its conversation row: DeleteAt on
+// LLM_Conversations means "archived by its owner", like DeleteAt on a
+// Mattermost channel. Every path that serves, restores, or replays a
+// conversation by ID calls this so that content of a deleted thread, for
+// example one a moderator removed because it leaked a secret, stays
+// unreachable whether or not the conversation was archived. Turn paths
+// (reply, regenerate, tool decisions, wakes) act on a post of the thread,
+// which Mattermost deletes together with its root, so their own post lookup
+// already refuses them; restoring an archived conversation checks here too.
+func CheckRootPost(posts PostGetter, conv *store.Conversation) error {
+	if conv.RootPostID == nil || *conv.RootPostID == "" {
+		return nil
+	}
+	post, err := posts.GetPost(*conv.RootPostID)
+	if mmapi.IsNotFound(err) {
+		return ErrRootPostDeleted
+	}
+	if err != nil {
+		return fmt.Errorf("failed to get conversation root post: %w", err)
+	}
+	if post.DeleteAt != 0 {
+		return ErrRootPostDeleted
+	}
+	return nil
+}
+
+// GetConversation retrieves an active conversation by ID. Returns
+// store.ErrConversationNotFound when it is missing or archived.
 func (s *Service) GetConversation(id string) (*store.Conversation, error) {
 	return s.store.GetConversation(id)
 }
 
+// GetConversationIncludingArchived retrieves a conversation by ID whether or
+// not it is archived. Archiving keeps the conversation's Mattermost posts, so
+// every path that serves or acts on one of those posts looks it up this way;
+// callers that start or resume a turn then call ActivateConversation.
+func (s *Service) GetConversationIncludingArchived(id string) (*store.Conversation, error) {
+	return s.store.GetConversationIncludingArchived(id)
+}
+
 // GetConversationByThread returns the conversation rooted at rootPostID for
-// the bot and user, or nil when the thread has none.
+// the bot and user, archived or not, or nil when the thread has none. It
+// never writes: a turn that passes its gates restores the conversation via
+// GetOrCreateConversation or ActivateConversation.
 func (s *Service) GetConversationByThread(rootPostID, botID, userID string) (*store.Conversation, error) {
-	conv, err := s.store.GetConversationByThreadBotUser(rootPostID, botID, userID)
+	conv, err := s.store.GetLatestConversationByThreadBotUser(rootPostID, botID, userID)
 	if errors.Is(err, store.ErrConversationNotFound) {
 		return nil, nil
 	}
 	return conv, err
+}
+
+// ActivateConversation returns conv restored to active when it is archived,
+// and conv unchanged otherwise. Every entry point that starts or resumes a
+// turn on an existing conversation calls it once the turn is accepted, so a
+// refused turn never un-archives. The restore is conditional on the row still
+// being archived, so concurrent callers write at most once. Returns
+// ErrConversationArchived when another active conversation owns the thread or
+// the conversation was archived again concurrently.
+//
+// A conversation whose root post was deleted is never restored: it returns
+// ErrRootPostDeleted (see CheckRootPost).
+func (s *Service) ActivateConversation(conv *store.Conversation) (*store.Conversation, error) {
+	if conv.DeleteAt == 0 {
+		return conv, nil
+	}
+	if err := CheckRootPost(s.mmClient, conv); err != nil {
+		return nil, err
+	}
+	restored, err := s.store.RestoreConversation(conv.ID)
+	switch {
+	case err == nil:
+		return restored, nil
+	case errors.Is(err, store.ErrConversationConflict):
+		return nil, fmt.Errorf("%w: another conversation is active in its thread", ErrConversationArchived)
+	case errors.Is(err, store.ErrConversationNotFound):
+		// A concurrent caller restored it first.
+		active, getErr := s.store.GetConversation(conv.ID)
+		if errors.Is(getErr, store.ErrConversationNotFound) {
+			return nil, ErrConversationArchived
+		}
+		return active, getErr
+	default:
+		return nil, fmt.Errorf("failed to restore conversation: %w", err)
+	}
+}
+
+// findThreadConversation returns the active conversation for the thread, bot,
+// and user. A user-archived conversation is restored rather than replaced, so
+// a reply in an archived thread continues it with its history instead of
+// silently starting a new conversation. Returns store.ErrConversationNotFound
+// when the thread has no conversation at all.
+func (s *Service) findThreadConversation(rootPostID, botID, userID string) (*store.Conversation, error) {
+	conv, err := s.store.GetLatestConversationByThreadBotUser(rootPostID, botID, userID)
+	if err != nil {
+		return nil, err
+	}
+	active, err := s.ActivateConversation(conv)
+	if errors.Is(err, ErrConversationArchived) {
+		// A concurrent create made another conversation active first.
+		return s.store.GetConversationByThreadBotUser(rootPostID, botID, userID)
+	}
+	return active, err
 }
 
 // GetTurns returns all turns for a conversation, ordered by sequence.
@@ -287,7 +406,7 @@ type GetOrCreateResult struct {
 // GetOrCreateConversation looks up an existing conversation by (RootPostID, BotID),
 // or creates a new one if none exists.
 func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreateResult, error) {
-	existing, err := s.store.GetConversationByThreadBotUser(params.RootPostID, params.BotID, params.UserID)
+	existing, err := s.findThreadConversation(params.RootPostID, params.BotID, params.UserID)
 	if err != nil && !errors.Is(err, store.ErrConversationNotFound) {
 		return nil, fmt.Errorf("failed to look up conversation: %w", err)
 	}
@@ -786,7 +905,8 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 }
 
 // WebsocketEventConversationUpdated is published to a conversation's owner
-// when its title changes (webapp: custom_mattermost-ai_conversation_updated).
+// when its title changes or it is archived (webapp:
+// custom_mattermost-ai_conversation_updated).
 const WebsocketEventConversationUpdated = "conversation_updated"
 
 // PublishConversationTitleUpdated tells the conversation's owner, and only
@@ -797,6 +917,19 @@ func PublishConversationTitleUpdated(client mmapi.Client, conv *store.Conversati
 		map[string]any{
 			"conversation_id": conv.ID,
 			"title":           title,
+		},
+		&model.WebsocketBroadcast{UserId: conv.UserID},
+	)
+}
+
+// PublishConversationArchived tells the conversation's owner, and only them,
+// that it was archived, so every open view drops it from its thread list.
+func PublishConversationArchived(client mmapi.Client, conv *store.Conversation) {
+	client.PublishWebSocketEvent(
+		WebsocketEventConversationUpdated,
+		map[string]any{
+			"conversation_id": conv.ID,
+			"archived":        true,
 		},
 		&model.WebsocketBroadcast{UserId: conv.UserID},
 	)

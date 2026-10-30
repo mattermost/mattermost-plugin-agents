@@ -25,6 +25,7 @@ import (
 
 const (
 	testManagedConvID   = "conv1234567890123456789012"
+	testManagedRootID   = "root1234567890123456789012"
 	plantedStoredTitle  = "PLANTED-STORED-TITLE-plugh"
 	plantedRequestTitle = "PLANTED-REQUEST-TITLE-xyzzy"
 )
@@ -35,7 +36,7 @@ func TestConversationManagementRoutes(t *testing.T) {
 
 	ownedConversation := func(deleteAt int64) *store.Conversation {
 		dmChannelID := testChannelID
-		rootPostID := "root1234567890123456789012"
+		rootPostID := testManagedRootID
 		return &store.Conversation{
 			ID:         testManagedConvID,
 			UserID:     testUserID,
@@ -53,14 +54,17 @@ func TestConversationManagementRoutes(t *testing.T) {
 	}
 
 	tests := []struct {
-		name           string
-		event          string
-		method         string
-		path           string
-		body           string
-		userID         string
-		conv           *store.Conversation
-		storeErr       error
+		name     string
+		event    string
+		method   string
+		path     string
+		body     string
+		userID   string
+		conv     *store.Conversation
+		storeErr error
+		// rootPost is how the conversation's root post lookup answers;
+		// rootPostLive by default.
+		rootPost       rootPostState
 		expectedStatus int
 		// expectConvParams is false when validation rejects the request before
 		// the conversation is looked up.
@@ -108,7 +112,7 @@ func TestConversationManagementRoutes(t *testing.T) {
 			expectConvParams: true,
 		},
 		{
-			name:             "rename of deleted conversation",
+			name:             "rename of archived conversation",
 			event:            AuditEventRenameConversation,
 			method:           http.MethodPut,
 			path:             "/conversations/" + testManagedConvID + "/title",
@@ -117,6 +121,7 @@ func TestConversationManagementRoutes(t *testing.T) {
 			conv:             ownedConversation(1700000000000),
 			expectedStatus:   http.StatusNotFound,
 			expectConvParams: true,
+			expectBotID:      true,
 			validate: func(t *testing.T, e *TestEnvironment) {
 				assert.Equal(t, plantedStoredTitle, e.conversationStore.conversations[testManagedConvID].Title)
 			},
@@ -171,6 +176,112 @@ func TestConversationManagementRoutes(t *testing.T) {
 			expectedStatus:   http.StatusInternalServerError,
 			expectConvParams: true,
 		},
+		{
+			name:             "owner archives conversation",
+			event:            AuditEventArchiveConversation,
+			method:           http.MethodPost,
+			path:             "/conversations/" + testManagedConvID + "/archive",
+			userID:           testUserID,
+			conv:             ownedConversation(0),
+			expectedStatus:   http.StatusOK,
+			expectConvParams: true,
+			expectBotID:      true,
+			validate: func(t *testing.T, e *TestEnvironment) {
+				assert.NotZero(t, e.conversationStore.conversations[testManagedConvID].DeleteAt)
+				assert.Equal(t, 1, e.conversationStore.archiveWrites)
+			},
+		},
+		{
+			name:             "archiving an archived conversation succeeds without rewriting it",
+			event:            AuditEventArchiveConversation,
+			method:           http.MethodPost,
+			path:             "/conversations/" + testManagedConvID + "/archive",
+			userID:           testUserID,
+			conv:             ownedConversation(1700000000000),
+			expectedStatus:   http.StatusOK,
+			expectConvParams: true,
+			expectBotID:      true,
+			validate: func(t *testing.T, e *TestEnvironment) {
+				assert.Equal(t, int64(1700000000000), e.conversationStore.conversations[testManagedConvID].DeleteAt)
+				assert.Zero(t, e.conversationStore.archiveWrites)
+			},
+		},
+		{
+			name:             "other user cannot archive",
+			event:            AuditEventArchiveConversation,
+			method:           http.MethodPost,
+			path:             "/conversations/" + testManagedConvID + "/archive",
+			userID:           testOtherUserID,
+			conv:             ownedConversation(0),
+			expectedStatus:   http.StatusNotFound,
+			expectConvParams: true,
+			validate: func(t *testing.T, e *TestEnvironment) {
+				assert.Zero(t, e.conversationStore.conversations[testManagedConvID].DeleteAt)
+			},
+		},
+		{
+			name:             "archive of missing conversation",
+			event:            AuditEventArchiveConversation,
+			method:           http.MethodPost,
+			path:             "/conversations/" + testManagedConvID + "/archive",
+			userID:           testUserID,
+			expectedStatus:   http.StatusNotFound,
+			expectConvParams: true,
+		},
+		{
+			name:             "rename of a conversation whose root post was deleted",
+			event:            AuditEventRenameConversation,
+			method:           http.MethodPut,
+			path:             "/conversations/" + testManagedConvID + "/title",
+			body:             renameBody(plantedRequestTitle),
+			userID:           testUserID,
+			conv:             ownedConversation(0),
+			rootPost:         rootPostDeleted,
+			expectedStatus:   http.StatusNotFound,
+			expectConvParams: true,
+			validate: func(t *testing.T, e *TestEnvironment) {
+				assert.Equal(t, plantedStoredTitle, e.conversationStore.conversations[testManagedConvID].Title)
+			},
+		},
+		{
+			name:             "archive of a conversation whose root post was deleted",
+			event:            AuditEventArchiveConversation,
+			method:           http.MethodPost,
+			path:             "/conversations/" + testManagedConvID + "/archive",
+			userID:           testUserID,
+			conv:             ownedConversation(0),
+			rootPost:         rootPostDeleted,
+			expectedStatus:   http.StatusNotFound,
+			expectConvParams: true,
+			validate: func(t *testing.T, e *TestEnvironment) {
+				assert.Zero(t, e.conversationStore.archiveWrites)
+			},
+		},
+		{
+			name:             "archive when the root post lookup fails is a 500",
+			event:            AuditEventArchiveConversation,
+			method:           http.MethodPost,
+			path:             "/conversations/" + testManagedConvID + "/archive",
+			userID:           testUserID,
+			conv:             ownedConversation(0),
+			rootPost:         rootPostLookupFails,
+			expectedStatus:   http.StatusInternalServerError,
+			expectConvParams: true,
+			validate: func(t *testing.T, e *TestEnvironment) {
+				assert.Zero(t, e.conversationStore.archiveWrites)
+			},
+		},
+		{
+			name:             "archive store error is a 500, not a 404",
+			event:            AuditEventArchiveConversation,
+			method:           http.MethodPost,
+			path:             "/conversations/" + testManagedConvID + "/archive",
+			userID:           testUserID,
+			conv:             ownedConversation(0),
+			storeErr:         errors.New("db down"),
+			expectedStatus:   http.StatusInternalServerError,
+			expectConvParams: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -182,6 +293,7 @@ func TestConversationManagementRoutes(t *testing.T) {
 				e.conversationStore.conversations[tt.conv.ID] = tt.conv
 			}
 			e.conversationStore.err = tt.storeErr
+			e.mockRootPost(testManagedRootID, tt.rootPost)
 
 			type wsEvent struct {
 				name      string
@@ -206,15 +318,21 @@ func TestConversationManagementRoutes(t *testing.T) {
 			require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode)
 			if tt.expectedStatus == http.StatusOK {
 				assert.JSONEq(t, `{}`, recorder.Body.String())
-				// The owner, and only the owner, learns the new title.
-				stored := e.conversationStore.conversations[testManagedConvID].Title
-				require.Len(t, events, 1, "a successful rename publishes exactly one event")
+				// The owner, and only the owner, learns the new title, or that
+				// the conversation is archived.
+				want := map[string]any{"conversation_id": testManagedConvID, "title": e.conversationStore.conversations[testManagedConvID].Title}
+				if tt.event == AuditEventArchiveConversation {
+					want = map[string]any{"conversation_id": testManagedConvID, "archived": true}
+				}
+				require.Len(t, events, 1, "a successful request publishes exactly one event")
 				assert.Equal(t, "conversation_updated", events[0].name)
-				assert.Equal(t, map[string]any{"conversation_id": testManagedConvID, "title": stored}, events[0].payload)
+				assert.Equal(t, want, events[0].payload)
 				assert.Equal(t, &model.WebsocketBroadcast{UserId: testUserID}, events[0].broadcast)
 			} else {
-				assert.Empty(t, events, "a failed rename publishes nothing")
+				assert.Empty(t, events, "a failed request publishes nothing")
 			}
+			assert.NotContains(t, recorder.Body.String(), "db down", "store error detail must not reach the client")
+			assert.NotContains(t, recorder.Body.String(), plantedLookupError, "post lookup error detail must not reach the client")
 			if tt.validate != nil {
 				tt.validate(t, e)
 			}
@@ -244,5 +362,34 @@ func TestConversationManagementRoutes(t *testing.T) {
 			assert.NotContains(t, string(raw), plantedRequestTitle, "audit record must never carry the requested title")
 			assert.NotContains(t, string(raw), plantedStoredTitle, "audit record must never carry the stored title")
 		})
+	}
+}
+
+// rootPostState is how the mocked plugin API answers a conversation's root
+// post lookup.
+type rootPostState int
+
+const (
+	rootPostLive rootPostState = iota
+	// rootPostDeleted answers like the server does for a deleted post: 404.
+	rootPostDeleted
+	// rootPostSoftDeleted returns the post with DeleteAt set.
+	rootPostSoftDeleted
+	rootPostLookupFails
+)
+
+const plantedLookupError = "PLANTED-LOOKUP-ERROR-frotz"
+
+// mockRootPost registers the plugin API's answer for GetPost(rootPostID).
+func (e *TestEnvironment) mockRootPost(rootPostID string, state rootPostState) {
+	switch state {
+	case rootPostLive:
+		e.mockAPI.On("GetPost", rootPostID).Return(&model.Post{Id: rootPostID}, nil).Maybe()
+	case rootPostDeleted:
+		e.mockAPI.On("GetPost", rootPostID).Return(nil, model.NewAppError("GetSinglePost", "app.post.get.app_error", nil, "", http.StatusNotFound)).Maybe()
+	case rootPostSoftDeleted:
+		e.mockAPI.On("GetPost", rootPostID).Return(&model.Post{Id: rootPostID, DeleteAt: 1700000000000}, nil).Maybe()
+	case rootPostLookupFails:
+		e.mockAPI.On("GetPost", rootPostID).Return(nil, model.NewAppError("GetSinglePost", "app.post.get.app_error", nil, plantedLookupError, http.StatusInternalServerError)).Maybe()
 	}
 }

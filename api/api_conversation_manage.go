@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // MaxConversationTitleLength bounds a user-set conversation title, in runes.
@@ -33,10 +34,37 @@ type renameConversationRequest struct {
 	Title string `json:"title"`
 }
 
-// handleRenameConversation sets the title of one of the caller's
-// conversations. Deleted conversations cannot be renamed. A conversation owned
-// by someone else answers 404, exactly like a missing one, so the route never
-// confirms that another user's conversation exists. Store errors answer 500.
+// loadOwnedConversation loads the conversation named in the route, archived
+// or not, and requires that the requesting user owns it. A conversation owned
+// by someone else, or whose root post was deleted, answers 404 exactly like a
+// missing one, so the route never confirms that it exists. Store errors answer
+// 500 with a generic message; the detail is logged.
+func (a *API) loadOwnedConversation(c *gin.Context) (*store.Conversation, bool) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	conversationID := c.Param("conversationid")
+	audit.AddParam(auditRec(c), audit.KeyConversationID, audit.TruncateID(conversationID))
+
+	conv, err := a.getReadableConversation(conversationID)
+	if err != nil {
+		if errors.Is(err, store.ErrConversationNotFound) {
+			c.AbortWithError(http.StatusNotFound, errConversationNotFound)
+			return nil, false
+		}
+		a.pluginAPI.Log.Error("Failed to get conversation", "conversation_id", conversationID, "error", err.Error())
+		c.AbortWithError(http.StatusInternalServerError, errConversationInternal)
+		return nil, false
+	}
+	if conv.UserID != userID {
+		c.AbortWithError(http.StatusNotFound, errConversationNotFound)
+		return nil, false
+	}
+	audit.AddParam(auditRec(c), audit.KeyAgentID, conv.BotID)
+	return conv, true
+}
+
+// handleRenameConversation sets the title of one of the caller's active
+// conversations. Archived conversations cannot be renamed: the store's
+// conditional write reports them, like missing ones, as not renamed.
 func (a *API) handleRenameConversation(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, renameConversationMaxRequestBodyBytes)
 	var req renameConversationRequest
@@ -54,25 +82,10 @@ func (a *API) handleRenameConversation(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetHeader("Mattermost-User-Id")
-	conversationID := c.Param("conversationid")
-	audit.AddParam(auditRec(c), audit.KeyConversationID, audit.TruncateID(conversationID))
-
-	conv, err := a.conversationStore.GetConversation(conversationID)
-	if err != nil {
-		if errors.Is(err, store.ErrConversationNotFound) {
-			c.AbortWithError(http.StatusNotFound, errConversationNotFound)
-			return
-		}
-		a.pluginAPI.Log.Error("Failed to get conversation", "conversation_id", conversationID, "error", err.Error())
-		c.AbortWithError(http.StatusInternalServerError, errConversationInternal)
+	conv, ok := a.loadOwnedConversation(c)
+	if !ok {
 		return
 	}
-	if conv.UserID != userID {
-		c.AbortWithError(http.StatusNotFound, errConversationNotFound)
-		return
-	}
-	audit.AddParam(auditRec(c), audit.KeyAgentID, conv.BotID)
 
 	renamed, err := a.conversationStore.RenameConversation(conv.ID, title)
 	if err != nil {
@@ -81,12 +94,34 @@ func (a *API) handleRenameConversation(c *gin.Context) {
 		return
 	}
 	if !renamed {
-		// Deleted between the lookup and the write.
+		// Archived (before or after the lookup).
 		c.AbortWithError(http.StatusNotFound, errConversationNotFound)
 		return
 	}
 
 	conversation.PublishConversationTitleUpdated(a.mmClient, conv, title)
+
+	c.JSON(http.StatusOK, struct{}{})
+}
+
+// handleArchiveConversation hides one of the caller's conversations from their
+// thread lists. Its turns and Mattermost posts are kept, and a later reply in
+// the thread restores it. Archiving is idempotent: the store's write is
+// conditional on the row being active, so archiving an archived conversation
+// (or racing another archive) succeeds without writing.
+func (a *API) handleArchiveConversation(c *gin.Context) {
+	conv, ok := a.loadOwnedConversation(c)
+	if !ok {
+		return
+	}
+
+	if err := a.conversationStore.ArchiveConversation(conv.ID, model.GetMillis()); err != nil {
+		a.pluginAPI.Log.Error("Failed to archive conversation", "conversation_id", conv.ID, "error", err.Error())
+		c.AbortWithError(http.StatusInternalServerError, errConversationInternal)
+		return
+	}
+
+	conversation.PublishConversationArchived(a.mmClient, conv)
 
 	c.JSON(http.StatusOK, struct{}{})
 }

@@ -214,14 +214,14 @@ func TestGetConversation(t *testing.T) {
 			},
 		},
 		{
-			name:  "does not return soft-deleted conversation",
+			name:  "does not return an archived conversation",
 			setup: func(t *testing.T, s *Store) {},
 			validate: func(t *testing.T, s *Store) {
 				conv := makeConversation()
 				err := s.CreateConversation(conv)
 				require.NoError(t, err)
 
-				err = s.SoftDeleteConversation(conv.ID, model.GetMillis())
+				err = s.ArchiveConversation(conv.ID, model.GetMillis())
 				require.NoError(t, err)
 
 				got, err := s.GetConversation(conv.ID)
@@ -300,7 +300,7 @@ func TestGetConversationByThreadBotUser(t *testing.T) {
 			},
 		},
 		{
-			name:  "does not return soft-deleted conversation",
+			name:  "does not return an archived conversation",
 			setup: func(t *testing.T, s *Store) {},
 			validate: func(t *testing.T, s *Store) {
 				userID := model.NewId()
@@ -312,7 +312,7 @@ func TestGetConversationByThreadBotUser(t *testing.T) {
 				err := s.CreateConversation(conv)
 				require.NoError(t, err)
 
-				err = s.SoftDeleteConversation(conv.ID, model.GetMillis())
+				err = s.ArchiveConversation(conv.ID, model.GetMillis())
 				require.NoError(t, err)
 
 				got, err := s.GetConversationByThreadBotUser("post1", "bot1", userID)
@@ -356,51 +356,6 @@ func TestUpdateConversationTitle(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, "New Title", got.Title)
 				assert.Equal(t, conv.UpdatedAt, got.UpdatedAt, "a title is not activity")
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := setupTestStore(t)
-
-			err := s.RunMigrations()
-			require.NoError(t, err)
-
-			tt.setup(t, s)
-			tt.validate(t, s)
-		})
-	}
-}
-
-func TestSoftDeleteConversation(t *testing.T) {
-	tests := []struct {
-		name     string
-		setup    func(t *testing.T, s *Store)
-		validate func(t *testing.T, s *Store)
-	}{
-		{
-			name:  "sets DeleteAt on conversation",
-			setup: func(t *testing.T, s *Store) {},
-			validate: func(t *testing.T, s *Store) {
-				conv := makeConversation()
-				err := s.CreateConversation(conv)
-				require.NoError(t, err)
-
-				now := model.GetMillis()
-				err = s.SoftDeleteConversation(conv.ID, now)
-				require.NoError(t, err)
-
-				// Direct DB query to verify DeleteAt was set
-				var deleteAt int64
-				err = s.db.Get(&deleteAt, "SELECT DeleteAt FROM LLM_Conversations WHERE ID = $1", conv.ID)
-				require.NoError(t, err)
-				assert.Equal(t, now, deleteAt)
-
-				// GetConversation should not return it
-				got, err := s.GetConversation(conv.ID)
-				assert.Nil(t, got)
-				assert.ErrorIs(t, err, ErrConversationNotFound)
 			},
 		},
 	}
@@ -465,7 +420,7 @@ func TestGetConversationSummariesForUser(t *testing.T) {
 			},
 		},
 		{
-			name:  "excludes soft-deleted conversations",
+			name:  "excludes archived conversations",
 			setup: func(t *testing.T, s *Store) {},
 			validate: func(t *testing.T, s *Store) {
 				userID := model.NewId()
@@ -479,18 +434,52 @@ func TestGetConversationSummariesForUser(t *testing.T) {
 
 				conv2 := makeConversation(func(c *Conversation) {
 					c.UserID = userID
-					c.Title = "Deleted"
+					c.Title = "Archived"
 				})
 				err = s.CreateConversation(conv2)
 				require.NoError(t, err)
 
-				err = s.SoftDeleteConversation(conv2.ID, model.GetMillis())
+				err = s.ArchiveConversation(conv2.ID, model.GetMillis())
 				require.NoError(t, err)
 
 				summaries, err := s.GetConversationSummariesForUser(userID, 60, 0)
 				require.NoError(t, err)
 				require.Len(t, summaries, 1)
 				assert.Equal(t, "Active", summaries[0].Title)
+			},
+		},
+		{
+			name:  "excludes conversations whose root post was deleted or removed",
+			setup: func(t *testing.T, s *Store) {},
+			validate: func(t *testing.T, s *Store) {
+				userID := model.NewId()
+				rooted := func(title, rootPostID string) {
+					conv := makeConversation(func(c *Conversation) {
+						c.UserID = userID
+						c.Title = title
+						c.RootPostID = new(rootPostID)
+					})
+					require.NoError(t, s.CreateConversation(conv))
+				}
+
+				livePostID, deletedPostID := model.NewId(), model.NewId()
+				insertPost(t, s, livePostID, 0)
+				insertPost(t, s, deletedPostID, model.GetMillis())
+				rooted("Live root", livePostID)
+				rooted("Deleted root", deletedPostID)
+				rooted("Removed root", model.NewId())
+				require.NoError(t, s.CreateConversation(makeConversation(func(c *Conversation) {
+					c.UserID = userID
+					c.Title = "Threadless"
+				})))
+
+				summaries, err := s.GetConversationSummariesForUser(userID, 60, 0)
+				require.NoError(t, err)
+				titles := make([]string, 0, len(summaries))
+				for _, summary := range summaries {
+					titles = append(titles, summary.Title)
+				}
+				assert.ElementsMatch(t, []string{"Live root", "Threadless"}, titles)
 			},
 		},
 		{
@@ -597,6 +586,7 @@ func TestGetConversationSummariesForUser(t *testing.T) {
 				userID := model.NewId()
 				botID := model.NewId()
 				rootPostID := model.NewId()
+				insertPost(t, s, rootPostID, 0)
 
 				conv := makeConversation(func(c *Conversation) {
 					c.UserID = userID
@@ -637,7 +627,7 @@ func TestGetConversationSummariesForUserLastActivity(t *testing.T) {
 		id        string // optional fixed ID, for tie-break cases
 		updatedAt int64
 		turns     []int64 // CreatedAt of each turn
-		deleted   bool
+		archived  bool
 	}
 	type wantRow struct {
 		key       string
@@ -702,11 +692,11 @@ func TestGetConversationSummariesForUserLastActivity(t *testing.T) {
 			want:  []wantRow{{"continued", 7000}, {"untouched", 2000}},
 		},
 		{
-			name: "deleted conversations are excluded even with newer turns",
+			name: "archived conversations are excluded even with newer turns",
 			convs: []convSpec{
 				{key: "continued", user: "self", updatedAt: 1000, turns: []int64{7000}},
 				{key: "untouched", user: "self", updatedAt: 2000},
-				{key: "deleted", user: "self", updatedAt: 1000, turns: []int64{9000}, deleted: true},
+				{key: "archived", user: "self", updatedAt: 1000, turns: []int64{9000}, archived: true},
 			},
 			limit: 60,
 			want:  []wantRow{{"continued", 7000}, {"untouched", 2000}},
@@ -749,10 +739,8 @@ func TestGetConversationSummariesForUserLastActivity(t *testing.T) {
 						turn.CreatedAt = createdAt
 					})))
 				}
-				if spec.deleted {
-					// Soft-delete directly so UpdatedAt is not bumped past the turns.
-					_, err := s.db.Exec("UPDATE LLM_Conversations SET DeleteAt = $1 WHERE ID = $2", spec.updatedAt, conv.ID)
-					require.NoError(t, err)
+				if spec.archived {
+					require.NoError(t, s.ArchiveConversation(conv.ID, spec.updatedAt))
 				}
 			}
 
@@ -768,144 +756,159 @@ func TestGetConversationSummariesForUserLastActivity(t *testing.T) {
 	}
 }
 
-func TestCleanupDeletedConversations(t *testing.T) {
+func TestArchiveRenameRestoreConversation(t *testing.T) {
+	inThread := func(rootPostID, botID, userID string) func(*Conversation) {
+		return func(c *Conversation) {
+			c.RootPostID = new(rootPostID)
+			c.BotID = botID
+			c.UserID = userID
+		}
+	}
+
 	tests := []struct {
 		name     string
-		setup    func(t *testing.T, s *Store)
 		validate func(t *testing.T, s *Store)
 	}{
 		{
-			name:  "removes soft-deleted conversations and their turns",
-			setup: func(t *testing.T, s *Store) {},
-			validate: func(t *testing.T, s *Store) {
-				// Create two conversations
-				conv1 := makeConversation()
-				err := s.CreateConversation(conv1)
-				require.NoError(t, err)
-
-				conv2 := makeConversation()
-				err = s.CreateConversation(conv2)
-				require.NoError(t, err)
-
-				// Add turns to both
-				turn1 := makeTurn(conv1.ID, 1)
-				err = s.CreateTurn(turn1)
-				require.NoError(t, err)
-
-				turn2 := makeTurn(conv2.ID, 1)
-				err = s.CreateTurn(turn2)
-				require.NoError(t, err)
-
-				// Soft-delete conv1
-				err = s.SoftDeleteConversation(conv1.ID, model.GetMillis())
-				require.NoError(t, err)
-
-				// Cleanup
-				err = s.CleanupDeletedConversations()
-				require.NoError(t, err)
-
-				// conv1 and its turns should be gone
-				var count int
-				err = s.db.Get(&count, "SELECT COUNT(*) FROM LLM_Conversations WHERE ID = $1", conv1.ID)
-				require.NoError(t, err)
-				assert.Equal(t, 0, count)
-
-				err = s.db.Get(&count, "SELECT COUNT(*) FROM LLM_Turns WHERE ConversationID = $1", conv1.ID)
-				require.NoError(t, err)
-				assert.Equal(t, 0, count)
-
-				// conv2 and its turns should remain
-				got, err := s.GetConversation(conv2.ID)
-				require.NoError(t, err)
-				assert.Equal(t, conv2.ID, got.ID)
-
-				turns, err := s.GetTurnsForConversation(conv2.ID)
-				require.NoError(t, err)
-				assert.Len(t, turns, 1)
-			},
-		},
-		{
-			name:  "no-op when nothing soft-deleted",
-			setup: func(t *testing.T, s *Store) {},
+			name: "archive is conditional and keeps the row and turns",
 			validate: func(t *testing.T, s *Store) {
 				conv := makeConversation()
-				err := s.CreateConversation(conv)
+				require.NoError(t, s.CreateConversation(conv))
+				require.NoError(t, s.CreateTurn(makeTurn(conv.ID, 1)))
+				before, err := s.GetConversation(conv.ID)
 				require.NoError(t, err)
 
-				turn := makeTurn(conv.ID, 1)
-				err = s.CreateTurn(turn)
-				require.NoError(t, err)
+				require.NoError(t, s.ArchiveConversation(conv.ID, 1000))
+				require.NoError(t, s.ArchiveConversation(conv.ID, 2000), "archiving an archived conversation succeeds")
 
-				err = s.CleanupDeletedConversations()
+				got, err := s.GetConversationIncludingArchived(conv.ID)
 				require.NoError(t, err)
+				assert.Equal(t, int64(1000), got.DeleteAt, "the first archive time is kept")
+				assert.Equal(t, before.UpdatedAt, got.UpdatedAt, "archiving is not activity")
 
-				// Everything still exists
-				got, err := s.GetConversation(conv.ID)
-				require.NoError(t, err)
-				assert.Equal(t, conv.ID, got.ID)
+				_, err = s.GetConversation(conv.ID)
+				assert.ErrorIs(t, err, ErrConversationNotFound)
 
 				turns, err := s.GetTurnsForConversation(conv.ID)
 				require.NoError(t, err)
 				assert.Len(t, turns, 1)
 			},
 		},
-	}
+		{
+			name: "archive of a missing conversation changes nothing",
+			validate: func(t *testing.T, s *Store) {
+				missingID := model.NewId()
+				require.NoError(t, s.ArchiveConversation(missingID, 1000))
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := setupTestStore(t)
+				_, err := s.GetConversationIncludingArchived(missingID)
+				assert.ErrorIs(t, err, ErrConversationNotFound)
+			},
+		},
+		{
+			name: "rename applies only to active conversations",
+			validate: func(t *testing.T, s *Store) {
+				conv := makeConversation()
+				require.NoError(t, s.CreateConversation(conv))
 
-			err := s.RunMigrations()
-			require.NoError(t, err)
+				renamed, err := s.RenameConversation(conv.ID, "Renamed")
+				require.NoError(t, err)
+				assert.True(t, renamed)
 
-			tt.setup(t, s)
-			tt.validate(t, s)
-		})
-	}
-}
+				err = s.ArchiveConversation(conv.ID, 1000)
+				require.NoError(t, err)
 
-func TestRenameConversation(t *testing.T) {
-	tests := []struct {
-		name        string
-		softDelete  bool
-		missing     bool
-		wantRenamed bool
-		wantTitle   string
-	}{
-		{name: "renames an active conversation", wantRenamed: true, wantTitle: "Renamed"},
-		{name: "does not rename a deleted conversation", softDelete: true, wantRenamed: false, wantTitle: "Original"},
-		{name: "reports false for a missing conversation", missing: true, wantRenamed: false},
+				renamed, err = s.RenameConversation(conv.ID, "After archive")
+				require.NoError(t, err)
+				assert.False(t, renamed)
+
+				got, err := s.GetConversationIncludingArchived(conv.ID)
+				require.NoError(t, err)
+				assert.Equal(t, "Renamed", got.Title)
+				assert.Equal(t, int64(1000), got.DeleteAt, "a rename must never un-archive")
+			},
+		},
+		{
+			name: "restore brings back the archived conversation once",
+			validate: func(t *testing.T, s *Store) {
+				rootPostID, botID, userID := model.NewId(), model.NewId(), model.NewId()
+				conv := makeConversation(inThread(rootPostID, botID, userID), func(c *Conversation) { c.Title = "Kept" })
+				require.NoError(t, s.CreateConversation(conv))
+				err := s.ArchiveConversation(conv.ID, 1000)
+				require.NoError(t, err)
+
+				restored, err := s.RestoreConversation(conv.ID)
+				require.NoError(t, err)
+				assert.Equal(t, conv.ID, restored.ID)
+				assert.Equal(t, "Kept", restored.Title)
+				assert.Zero(t, restored.DeleteAt)
+				assert.Equal(t, conv.UpdatedAt, restored.UpdatedAt, "restoring is not activity; the next turn is")
+
+				active, err := s.GetConversationByThreadBotUser(rootPostID, botID, userID)
+				require.NoError(t, err)
+				assert.Equal(t, conv.ID, active.ID)
+
+				_, err = s.RestoreConversation(conv.ID)
+				assert.ErrorIs(t, err, ErrConversationNotFound, "nothing is left to restore")
+				_, err = s.RestoreConversation(model.NewId())
+				assert.ErrorIs(t, err, ErrConversationNotFound)
+			},
+		},
+		{
+			name: "restore conflicts when the thread already has an active conversation",
+			validate: func(t *testing.T, s *Store) {
+				rootPostID, botID, userID := model.NewId(), model.NewId(), model.NewId()
+				archivedConv := makeConversation(inThread(rootPostID, botID, userID))
+				require.NoError(t, s.CreateConversation(archivedConv))
+				err := s.ArchiveConversation(archivedConv.ID, 1000)
+				require.NoError(t, err)
+				activeConv := makeConversation(inThread(rootPostID, botID, userID))
+				require.NoError(t, s.CreateConversation(activeConv))
+
+				_, err = s.RestoreConversation(archivedConv.ID)
+				assert.ErrorIs(t, err, ErrConversationConflict)
+
+				got, err := s.GetConversationIncludingArchived(archivedConv.ID)
+				require.NoError(t, err)
+				assert.Equal(t, int64(1000), got.DeleteAt, "a failed restore leaves the archived row untouched")
+			},
+		},
+		{
+			name: "latest thread lookup prefers the active row, then the newest archive, and never writes",
+			validate: func(t *testing.T, s *Store) {
+				rootPostID, botID, userID := model.NewId(), model.NewId(), model.NewId()
+				older := makeConversation(inThread(rootPostID, botID, userID))
+				require.NoError(t, s.CreateConversation(older))
+				err := s.ArchiveConversation(older.ID, 1000)
+				require.NoError(t, err)
+				newer := makeConversation(inThread(rootPostID, botID, userID))
+				require.NoError(t, s.CreateConversation(newer))
+				err = s.ArchiveConversation(newer.ID, 2000)
+				require.NoError(t, err)
+
+				got, err := s.GetLatestConversationByThreadBotUser(rootPostID, botID, userID)
+				require.NoError(t, err)
+				assert.Equal(t, newer.ID, got.ID)
+				assert.Equal(t, int64(2000), got.DeleteAt, "the lookup must not restore")
+
+				_, err = s.GetLatestConversationByThreadBotUser(rootPostID, botID, model.NewId())
+				assert.ErrorIs(t, err, ErrConversationNotFound, "another user's thread conversation is not found")
+				_, err = s.GetLatestConversationByThreadBotUser(rootPostID, model.NewId(), userID)
+				assert.ErrorIs(t, err, ErrConversationNotFound)
+
+				active := makeConversation(inThread(rootPostID, botID, userID))
+				require.NoError(t, s.CreateConversation(active))
+				got, err = s.GetLatestConversationByThreadBotUser(rootPostID, botID, userID)
+				require.NoError(t, err)
+				assert.Equal(t, active.ID, got.ID)
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := setupTestStore(t)
 			require.NoError(t, s.RunMigrations())
-
-			conv := makeConversation(func(c *Conversation) { c.Title = "Original" })
-			id := model.NewId()
-			if !tt.missing {
-				require.NoError(t, s.CreateConversation(conv))
-				id = conv.ID
-				if tt.softDelete {
-					require.NoError(t, s.SoftDeleteConversation(conv.ID, 1000))
-				}
-			}
-
-			renamed, err := s.RenameConversation(id, "Renamed")
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantRenamed, renamed)
-
-			if tt.missing {
-				return
-			}
-			var title string
-			var deleteAt int64
-			require.NoError(t, s.db.QueryRow("SELECT Title, DeleteAt FROM LLM_Conversations WHERE ID = $1", id).Scan(&title, &deleteAt))
-			assert.Equal(t, tt.wantTitle, title)
-			if tt.softDelete {
-				assert.Equal(t, int64(1000), deleteAt, "a rename must never restore a deleted conversation")
-			}
+			tt.validate(t, s)
 		})
 	}
 }
@@ -914,14 +917,14 @@ func TestSetConversationTitleIfUnset(t *testing.T) {
 	tests := []struct {
 		name        string
 		title       string
-		softDelete  bool
+		archived    bool
 		missing     bool
 		wantUpdated bool
 		wantTitle   string
 	}{
 		{name: "sets the title of an untitled conversation", wantUpdated: true, wantTitle: "Generated"},
 		{name: "keeps a title already set", title: "Set by owner", wantUpdated: false, wantTitle: "Set by owner"},
-		{name: "does not title a deleted conversation", softDelete: true, wantUpdated: false, wantTitle: ""},
+		{name: "does not title an archived conversation", archived: true, wantUpdated: false, wantTitle: ""},
 		{name: "reports false for a missing conversation", missing: true, wantUpdated: false},
 	}
 
@@ -938,8 +941,8 @@ func TestSetConversationTitleIfUnset(t *testing.T) {
 			if !tt.missing {
 				require.NoError(t, s.CreateConversation(conv))
 				id = conv.ID
-				if tt.softDelete {
-					require.NoError(t, s.SoftDeleteConversation(conv.ID, 1000))
+				if tt.archived {
+					require.NoError(t, s.ArchiveConversation(conv.ID, 1000))
 				}
 			}
 
@@ -1006,6 +1009,16 @@ func TestConversationActivityOrdering(t *testing.T) {
 				renamed, err := s.RenameConversation(ids["old"], "Renamed")
 				require.NoError(t, err)
 				require.True(t, renamed)
+			},
+			wantOrder: []string{"new", "old"},
+			wantOld:   1000,
+		},
+		{
+			name: "archiving and restoring does not reorder",
+			act: func(t *testing.T, s *Store, ids map[string]string) {
+				require.NoError(t, s.ArchiveConversation(ids["old"], 9000))
+				_, err := s.RestoreConversation(ids["old"])
+				require.NoError(t, err)
 			},
 			wantOrder: []string{"new", "old"},
 			wantOld:   1000,
