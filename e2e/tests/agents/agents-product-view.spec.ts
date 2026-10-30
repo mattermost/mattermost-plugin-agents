@@ -14,7 +14,7 @@ import {expect, type Page} from '@playwright/test';
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {containerTest} from 'helpers/container-fixture';
 import {withDeadline} from 'helpers/deadline';
-import {buildTextResponse} from 'helpers/aimock-fixtures';
+import {buildTextResponse, TITLE_GENERATION_PROMPT_PREFIX} from 'helpers/aimock-fixtures';
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
 import {AIMOCK_BOT_NAME, RunAIMockContainer} from 'helpers/plugincontainer';
@@ -29,6 +29,18 @@ const FIRST_REPLY = 'Product view first reply marker.';
 const THREAD_TITLE = 'Product View Thread Title';
 const RENAMED_TITLE = 'Renamed Product View Chat';
 const ENTER_PROMPT = 'new chat sent with enter';
+
+// Every test that needs an existing conversation creates its own (through the UI, or through the API when
+// the test is not about creating one), so tests never depend on each other or on the order they run in.
+// Replies carry a marker that does not repeat the prompt, so text locators cannot match the wrong post.
+interface Chat {prompt: string; reply: string; title?: string}
+const SIDEBAR_CHAT: Chat = {prompt: 'product-view-sidebar-008', reply: 'Sidebar chat reply marker.', title: 'Product View Sidebar Chat'};
+const HEADER_CHAT: Chat = {prompt: 'product-view-header-009', reply: 'Header chat reply marker.', title: 'Product View Header Chat'};
+const VIEW_CHAT: Chat = {prompt: 'product-view-thread-010', reply: 'Thread view reply marker.'};
+const DM_CHAT: Chat = {prompt: 'product-view-dm-011', reply: 'Channels DM reply marker.'};
+const ENTER_REPLY_CHAT: Chat = {prompt: 'product-view-reply-enter-012', reply: 'Reply composer enter marker.'};
+const COMPLETE_CHAT: Chat = {prompt: 'product-view-autocomplete-013', reply: 'Autocomplete chat reply marker.'};
+const STOP_CHAT: Chat = {prompt: 'product-view-stop-seed-014', reply: 'Stop chat reply marker.'};
 const ATTACH_PROMPT = 'product-view-attach-004';
 const ATTACH_FILE = 'product-view-attachment.txt';
 const STOP_PROMPT = 'product-view-stop-005';
@@ -40,8 +52,14 @@ const JUMP_PARAGRAPHS = Array.from({length: 30}, (_, i) => `Paragraph ${i + 1} o
 const JUMP_LAST = JUMP_PARAGRAPHS[JUMP_PARAGRAPHS.length - 1];
 
 const replyFixtures = (prompts: string[]) => prompts.flatMap((prompt) => buildTextResponse({userMessage: prompt, content: `Reply to ${prompt}.`}).fixtures);
+
+// The title request embeds the prompt (after a newline), so its fixture must come before the one for the prompt itself.
+const chatFixtures = (...chats: Chat[]) => chats.flatMap(({prompt, reply, title}) => [
+    ...(title ? [{match: {userMessage: `${TITLE_GENERATION_PROMPT_PREFIX}\n${prompt}`}, response: {content: title}}] : []),
+    ...buildTextResponse({userMessage: prompt, content: reply}).fixtures,
+]);
 const baseFixtures = () => [
-    ...buildTextResponse({userMessage: FIRST_PROMPT, content: FIRST_REPLY, title: THREAD_TITLE}).fixtures,
+    ...chatFixtures({prompt: FIRST_PROMPT, reply: FIRST_REPLY, title: THREAD_TITLE}, SIDEBAR_CHAT, HEADER_CHAT, VIEW_CHAT, DM_CHAT, ENTER_REPLY_CHAT, COMPLETE_CHAT, STOP_CHAT),
     ...replyFixtures([ENTER_PROMPT, ATTACH_PROMPT]),
 
     // Streams slowly enough to be stopped mid-way.
@@ -97,9 +115,7 @@ const SCREENSHOT_DIR = process.env.AGENTS_PRODUCT_VIEW_SHOT_DIR || path.join(__d
 let mattermost: MattermostContainer;
 let aimock: AIMockContainer;
 let botUserId = '';
-
-// Set by the first-message test and reused by later tests in this serial file.
-let rootId = '';
+let dmChannelId = '';
 
 async function shot(page: Page, name: string): Promise<void> {
     fs.mkdirSync(SCREENSHOT_DIR, {recursive: true});
@@ -124,6 +140,33 @@ async function openAgentsFromSwitcher(page: Page): Promise<void> {
     await expect(page).toHaveURL(/\/plug\/mattermost-ai\/agents/);
 }
 
+const threadUrl = (rootId: string) => `${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}/${rootId}`;
+
+// Sends the chat's prompt from the new-chat composer and returns the new thread's root post id.
+async function startChatViaUi(page: Page, chat: Chat): Promise<string> {
+    await login(page);
+    await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
+    const textbox = newChatComposer(page).getByRole('textbox');
+    await expect(textbox).toBeEnabled({timeout: 30000});
+    await textbox.fill(chat.prompt);
+    await textbox.press('Enter');
+    await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}/[a-z0-9]{26}$`), {timeout: 30000});
+    const rootId = new URL(page.url()).pathname.split('/').pop()!;
+    await expect(page.getByTestId('agent-chat-thread').getByText(chat.reply)).toBeVisible({timeout: 60000});
+    return rootId;
+}
+
+// Creates a finished conversation through the API (a DM to the agent) and returns its root post id.
+async function seedThread(chat: Chat): Promise<string> {
+    const client = await mattermost.getClient(username, password);
+    const root = await client.createPost({channel_id: dmChannelId, message: chat.prompt} as any);
+    await expect.poll(async () => {
+        const thread = await client.getPostThread(root.id);
+        return Object.values(thread.posts).some((p) => p.user_id === botUserId && p.message.includes(chat.reply));
+    }, {timeout: 60000}).toBe(true);
+    return root.id;
+}
+
 const MATTERMOST_START_MS = 240000;
 const AIMOCK_START_MS = 120000;
 
@@ -134,15 +177,13 @@ const test = containerTest(async (own) => {
 });
 
 test.describe('Agents product view', () => {
-    test.describe.configure({mode: 'serial'});
-
     test.beforeAll(async ({containers}) => {
         ({mattermost, aimock} = containers);
         const client = await mattermost.getClient(username, password);
         const me = await client.getMe();
         const bot = await client.getUserByUsername(AIMOCK_BOT_NAME);
         botUserId = bot.id;
-        await client.createDirectChannel([me.id, botUserId]);
+        dmChannelId = (await client.createDirectChannel([me.id, botUserId])).id;
     });
 
     test.afterAll(async () => {
@@ -212,10 +253,10 @@ test.describe('Agents product view', () => {
         await newChatComposer(page).getByRole('button', {name: 'Send message'}).click();
 
         await expect(page).toHaveURL(new RegExp(`/plug/mattermost-ai/agents/chat/${botUserId}/[a-z0-9]{26}$`), {timeout: 30000});
-        rootId = new URL(page.url()).pathname.split('/').pop()!;
+        const rootId = new URL(page.url()).pathname.split('/').pop()!;
 
         const thread = page.getByTestId('agent-chat-thread');
-        await expect(thread.getByText(FIRST_PROMPT)).toBeVisible({timeout: 30000});
+        await expect(thread.getByText(FIRST_PROMPT, {exact: true})).toBeVisible({timeout: 30000});
         await expect(thread.getByText(FIRST_REPLY)).toBeVisible({timeout: 60000});
 
         // The pill reply composer is pinned below the messages (not centered any more).
@@ -250,13 +291,13 @@ test.describe('Agents product view', () => {
     });
 
     test('sidebar: All agents, new chat, thread selection, collapse and keyboard use', async ({page}) => {
-        await login(page);
-        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}/${rootId}`, {waitUntil: 'domcontentloaded'});
+        const rootId = await startChatViaUi(page, SIDEBAR_CHAT);
+        await page.goto(threadUrl(rootId), {waitUntil: 'domcontentloaded'});
 
         const nav = sidebar(page);
-        const threadRow = nav.getByRole('button', {name: THREAD_TITLE, exact: true});
+        const threadRow = nav.getByRole('button', {name: SIDEBAR_CHAT.title, exact: true});
         await expect(threadRow).toBeVisible({timeout: 30000});
-        await expect(page.getByTestId('agent-chat-thread').getByText(FIRST_REPLY)).toBeVisible({timeout: 30000});
+        await expect(page.getByTestId('agent-chat-thread').getByText(SIDEBAR_CHAT.reply)).toBeVisible({timeout: 30000});
 
         // All agents shows the existing agents list at /all.
         await nav.getByRole('button', {name: 'All agents'}).click();
@@ -272,7 +313,7 @@ test.describe('Agents product view', () => {
         // Clicking a thread opens it.
         await threadRow.click();
         await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}/${rootId}$`));
-        await expect(page.getByTestId('agent-chat-thread').getByText(FIRST_REPLY)).toBeVisible();
+        await expect(page.getByTestId('agent-chat-thread').getByText(SIDEBAR_CHAT.reply)).toBeVisible();
 
         // Chevron collapses and expands the agent's thread list.
         const collapse = nav.getByRole('button', {name: `Collapse ${botDisplayName} chats`});
@@ -297,13 +338,15 @@ test.describe('Agents product view', () => {
     });
 
     test('thread shows your message and the reply, with its time in the controls and no host reply box', async ({page}) => {
+        const rootId = await seedThread(VIEW_CHAT);
         await login(page);
-        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}/${rootId}`, {waitUntil: 'domcontentloaded'});
+        await page.goto(threadUrl(rootId), {waitUntil: 'domcontentloaded'});
         const thread = page.getByTestId('agent-chat-thread');
-        await expect(thread.getByText(FIRST_REPLY)).toBeVisible({timeout: 30000});
+        await expect(thread.getByText(VIEW_CHAT.reply)).toBeVisible({timeout: 30000});
 
-        const ownPost = thread.locator('.post').filter({hasText: FIRST_PROMPT}).first();
-        const replyPost = thread.locator('.post').filter({hasText: FIRST_REPLY}).first();
+        // This thread is the test's own, so each filter matches exactly one post.
+        const ownPost = thread.locator('.post').filter({hasText: VIEW_CHAT.prompt});
+        const replyPost = thread.locator('.post').filter({hasText: VIEW_CHAT.reply});
         await expect(ownPost).toBeVisible();
 
         // The reply's time is in its controls bar, not in a host header.
@@ -333,22 +376,22 @@ test.describe('Agents product view', () => {
 
     test('header: chat title opens the agent menu; the actions menu switches, renames and creates chats', async ({page}) => {
         recordConversationResponses(page, 'header rename');
-        await login(page);
-        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}/${rootId}`, {waitUntil: 'domcontentloaded'});
+        const rootId = await startChatViaUi(page, HEADER_CHAT);
+        await page.goto(threadUrl(rootId), {waitUntil: 'domcontentloaded'});
         const chat = page.getByRole('region', {name: `Chat with ${botDisplayName}`});
-        await expect(chat.getByTestId('agent-chat-thread').getByText(FIRST_REPLY)).toBeVisible({timeout: 30000});
+        await expect(chat.getByTestId('agent-chat-thread').getByText(HEADER_CHAT.reply)).toBeVisible({timeout: 30000});
 
         // The header is a <header> landmark named after the agent; in an open chat the h1 is the chat title.
         const header = chat.locator(`header[aria-label="${botDisplayName}"]`);
         await expect(header).toBeVisible();
-        await expect(header.getByRole('heading', {level: 1, name: THREAD_TITLE, exact: true})).toBeVisible({timeout: 15000});
+        await expect(header.getByRole('heading', {level: 1, name: HEADER_CHAT.title, exact: true})).toBeVisible({timeout: 15000});
 
         // The name button carries the full title and the agent name in its accessible name.
         const trigger = page.getByTestId('agent-chat-menu-button');
-        await expect(trigger).toHaveAttribute('aria-label', `${THREAD_TITLE}, ${botDisplayName} options`);
+        await expect(trigger).toHaveAttribute('aria-label', `${HEADER_CHAT.title}, ${botDisplayName} options`);
         await trigger.click();
         await expect(trigger).toHaveAttribute('aria-expanded', 'true');
-        const nameMenu = page.getByRole('menu', {name: `${THREAD_TITLE}, ${botDisplayName} options`});
+        const nameMenu = page.getByRole('menu', {name: `${HEADER_CHAT.title}, ${botDisplayName} options`});
         // The menu has a Recent chats submenu first, then the chat actions. A regular user cannot edit the agent, so no Agent settings.
         await expect(nameMenu.getByRole('menuitem')).toHaveText(['Recent chats', 'New chat', 'Rename chat', 'View all agents']);
         await page.keyboard.press('Escape');
@@ -356,16 +399,16 @@ test.describe('Agents product view', () => {
 
         // The Recent chats submenu lists this agent's chats, the open one marked.
         await trigger.click();
-        const menu = page.getByRole('menu', {name: `${THREAD_TITLE}, ${botDisplayName} options`});
+        const menu = page.getByRole('menu', {name: `${HEADER_CHAT.title}, ${botDisplayName} options`});
         await menu.getByRole('menuitem', {name: 'Recent chats'}).click();
         const recent = page.getByRole('menu', {name: 'Recent chats'});
-        await expect(recent.getByRole('menuitem', {name: THREAD_TITLE, exact: true})).toHaveAttribute('aria-current', 'true');
+        await expect(recent.getByRole('menuitem', {name: HEADER_CHAT.title, exact: true})).toHaveAttribute('aria-current', 'true');
         await expect(menu.getByRole('menuitem', {name: 'Rename chat'})).toBeEnabled();
 
         // Rename updates the sidebar title.
         await menu.getByRole('menuitem', {name: 'Rename chat'}).click();
         const name = page.getByLabel('Chat name');
-        await expect(name).toHaveValue(THREAD_TITLE, {timeout: 10000});
+        await expect(name).toHaveValue(HEADER_CHAT.title, {timeout: 10000});
         await name.fill(RENAMED_TITLE);
         const renameResponse = page.waitForResponse((r) => r.url().endsWith('/title') && r.request().method() === 'PUT');
         await page.getByRole('button', {name: 'Save'}).click();
@@ -468,17 +511,20 @@ test.describe('Agents product view', () => {
     });
 
     test('the same thread is visible in the Channels DM and the stock DM view still works', async ({page}) => {
+        const rootId = await seedThread(DM_CHAT);
         await login(page);
         await page.goto(`${mattermost.url()}/${teamName}/messages/@${AIMOCK_BOT_NAME}`, {waitUntil: 'domcontentloaded'});
 
         const channelView = page.getByTestId('channel_view');
         const messages = channelView.getByTestId('post-message-text');
-        await expect(messages.getByText(FIRST_PROMPT)).toBeVisible({timeout: 30000});
+        await expect(messages.getByText(DM_CHAT.prompt, {exact: true})).toBeVisible({timeout: 30000});
 
-        // With collapsed reply threads the DM shows the root; the bot reply is in its thread.
-        await channelView.getByRole('button', {name: /1 reply/i}).first().click();
-        await expect(page.locator('#rhsContainer').getByText(FIRST_REPLY)).toBeVisible({timeout: 15000});
-        await expect(page.locator('#rhsContainer').getByText(FIRST_PROMPT)).toBeVisible();
+        // With collapsed reply threads the DM shows the root; the bot reply is in its thread. The DM
+        // holds other tests' threads too, so use this thread's own root post.
+        const rootPost = channelView.locator(`#post_${rootId}`);
+        await rootPost.getByRole('button', {name: /1 reply/i}).click();
+        await expect(page.locator('#rhsContainer').getByText(DM_CHAT.reply)).toBeVisible({timeout: 15000});
+        await expect(page.locator('#rhsContainer').getByText(DM_CHAT.prompt, {exact: true})).toBeVisible();
 
         // Stock composer still posts into the DM.
         const textbox = page.getByTestId('post_textbox');
@@ -508,8 +554,9 @@ test.describe('Agents product view', () => {
     });
 
     test('Enter sends from the thread reply composer', async ({page}) => {
+        const rootId = await seedThread(ENTER_REPLY_CHAT);
         await login(page);
-        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}/${rootId}`, {waitUntil: 'domcontentloaded'});
+        await page.goto(threadUrl(rootId), {waitUntil: 'domcontentloaded'});
 
         const reply = replyComposer(page);
         await expect(reply).toBeEnabled({timeout: 30000});
@@ -523,8 +570,9 @@ test.describe('Agents product view', () => {
     });
 
     test('the reply composer autocompletes @mentions and :emoji:, and Enter sends once the list is closed', async ({page}) => {
+        const rootId = await seedThread(COMPLETE_CHAT);
         await login(page);
-        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}/${rootId}`, {waitUntil: 'domcontentloaded'});
+        await page.goto(threadUrl(rootId), {waitUntil: 'domcontentloaded'});
 
         const thread = page.getByTestId('agent-chat-thread');
         const reply = replyComposer(page);
@@ -588,8 +636,9 @@ test.describe('Agents product view', () => {
     });
 
     test('while the agent replies, the composer\'s send button is Stop and stops it', async ({page}) => {
+        const rootId = await seedThread(STOP_CHAT);
         await login(page);
-        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}/${rootId}`, {waitUntil: 'domcontentloaded'});
+        await page.goto(threadUrl(rootId), {waitUntil: 'domcontentloaded'});
 
         const thread = page.getByTestId('agent-chat-thread');
         const composer = thread.getByTestId('agent-chat-reply-composer');
@@ -636,11 +685,11 @@ test.describe('Agents product view', () => {
 
         // The user's root post carries the file.
         const thread = page.getByTestId('agent-chat-thread');
-        const userPost = thread.locator('.post').filter({has: page.getByTestId('post-message-text').getByText(ATTACH_PROMPT)}).first();
-        await expect(userPost).toBeVisible({timeout: 30000});
+        const newRootId = new URL(page.url()).pathname.split('/').pop()!;
+        const userPost = thread.locator(`#post_${newRootId}`);
+        await expect(userPost.getByTestId('post-message-text').getByText(ATTACH_PROMPT, {exact: true})).toBeVisible({timeout: 30000});
         await expect(userPost.getByText(ATTACH_FILE)).toBeVisible({timeout: 30000});
 
-        const newRootId = new URL(page.url()).pathname.split('/').pop()!;
         const client = await mattermost.getClient(username, password);
         const root = await client.getPost(newRootId);
         expect(root.file_ids).toHaveLength(1);
@@ -661,7 +710,7 @@ test.describe('Agents product view', () => {
         await textbox.press('Enter');
 
         await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}/[a-z0-9]{26}$`), {timeout: 15000});
-        await expect(page.getByTestId('agent-chat-thread').getByTestId('post-message-text').getByText(ENTER_PROMPT)).toBeVisible({timeout: 30000});
+        await expect(page.getByTestId('agent-chat-thread').getByTestId('post-message-text').getByText(ENTER_PROMPT, {exact: true})).toBeVisible({timeout: 30000});
 
         // The draft is cleared, so going back to a new chat starts empty.
         await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
