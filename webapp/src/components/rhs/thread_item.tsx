@@ -1,16 +1,16 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {useState} from 'react';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
-import DotsHorizontalIcon from '@mattermost/compass-icons/components/dots-horizontal';
 import ReplyOutlineIcon from '@mattermost/compass-icons/components/reply-outline';
 
 import {Icon} from '@mattermost/compass-ui/components/icon';
-import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
+import ChatRowActionsMenu from '@/components/agents/chat_row_actions_menu';
+import type {ChatActions} from '@/components/agents/use_chat_actions';
 import {Timestamp} from '@/mm_webapp';
 
 // No compass token for the translucent hover fill (the Agents chat header's name button uses the same).
@@ -20,6 +20,8 @@ const HOVER_PERCENT = '8%';
 const META_COLOR = 'rgba(var(--center-channel-color-rgb), 0.64)';
 
 type Props = {
+
+    conversationId: string;
 
     // The chat's title; the item's heading. Falls back to the first message, then a generic label.
     title: string;
@@ -34,8 +36,8 @@ type Props = {
     replyCount?: number;
     onClick: () => void;
 
-    // The item's actions button was used; the list opens the menu next to it.
-    onMenuClick: (anchor: HTMLElement) => void;
+    // The list's chat actions; the list renders their dialogs.
+    chatActions: ChatActions;
 }
 
 // A chat in the history: the agent's avatar, then the chat's title, the start of its first message,
@@ -43,6 +45,7 @@ type Props = {
 // hover and focus.
 export default function ThreadItem(props: Props) {
     const intl = useIntl();
+    const [menuOpen, setMenuOpen] = useState(false);
     const title = props.title.trim();
     const preview = props.preview.trim();
     const heading = title || preview || intl.formatMessage({defaultMessage: 'Conversation with Agents'});
@@ -60,7 +63,7 @@ export default function ThreadItem(props: Props) {
     };
 
     return (
-        <Item>
+        <Item {...(menuOpen && {'data-menu-open': true})}>
             <Main
                 role='button'
                 tabIndex={0}
@@ -106,16 +109,13 @@ export default function ThreadItem(props: Props) {
                 </Text>
             </Main>
             <Actions>
-                <IconButton
-                    size='small'
-                    padding='compact'
-                    icon={<Icon glyph={<DotsHorizontalIcon/>}/>}
-                    aria-label={actionsLabel}
-                    data-testid='thread-item-actions'
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        props.onMenuClick(e.currentTarget);
-                    }}
+                <ChatRowActionsMenu
+                    chat={{conversationId: props.conversationId, title: props.title}}
+                    actions={props.chatActions}
+                    label={actionsLabel}
+                    appearance='panel'
+                    testId='thread-item-actions'
+                    onOpenChange={setMenuOpen}
                 />
             </Actions>
         </Item>
@@ -238,7 +238,8 @@ const Actions = styled.div`
     transition: opacity var(--duration-quick) var(--ease-transition);
 
     ${Item}:hover &,
-    ${Item}:focus-within & {
+    ${Item}:focus-within &,
+    ${Item}[data-menu-open] & {
         opacity: 1;
     }
 

@@ -4,7 +4,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {useIntl} from 'react-intl';
 import styled, {css, keyframes} from 'styled-components';
-import DotsHorizontalIcon from '@mattermost/compass-icons/components/dots-horizontal';
 import ChevronDownIcon from '@mattermost/compass-icons/components/chevron-down';
 import ChevronRightIcon from '@mattermost/compass-icons/components/chevron-right';
 import MessageOutlineIcon from '@mattermost/compass-icons/components/message-outline';
@@ -14,18 +13,16 @@ import {Button} from '@mattermost/compass-ui/components/button';
 import {ChannelSidebarItem} from '@mattermost/compass-ui/components/channel-sidebar-item';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
-import {PopoverMenu} from '@mattermost/compass-ui/components/popover-menu';
 
 import {getProfilePictureUrl} from '@/client';
-import Dropdown from '@/components/dropdown';
 import {WaveDots} from '@/components/llmbot_post/thinking_dots';
 import {prefersReducedMotion} from '@/components/llmbot_post/motion';
-import {useMenuTransition} from '@/hooks/use_menu_transition';
 import type {LLMBot} from '@/bots';
 import type {AgentThreadsByBot} from '@/hooks/use_agent_threads';
 import type {AIThread} from '@/types/ai_thread';
 
-import ChatActionsMenuItems from './chat_actions_menu_items';
+import ChatRowActionsMenu from './chat_row_actions_menu';
+import type {ChatActions} from './use_chat_actions';
 
 interface AgentThreadsListProps {
     bots: LLMBot[];
@@ -44,8 +41,8 @@ interface AgentThreadsListProps {
     onNewChat: (botId: string) => void;
     onRetry: () => void;
 
-    // Rename chat was chosen for this chat (the owner shows the dialog).
-    onRenameThread: (thread: AIThread) => void;
+    // The chat rows' actions; the owner renders their dialogs.
+    chatActions: ChatActions;
 }
 
 // Threads shown per agent before "Show more", which reveals the rest at once ("Show less" folds back).
@@ -84,7 +81,7 @@ const AgentThreadsList = ({
     onSelectThread,
     onNewChat,
     onRetry,
-    onRenameThread,
+    chatActions,
 }: AgentThreadsListProps) => {
     const intl = useIntl();
     const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -262,7 +259,7 @@ const AgentThreadsList = ({
                                                 unread={Boolean(thread.root_post_id && unreadRoots?.has(thread.root_post_id))}
                                                 placeholder={newChatPlaceholder}
                                                 onSelect={() => onSelectThread(bot.id, thread.root_post_id as string)}
-                                                onRename={() => onRenameThread(thread)}
+                                                chatActions={chatActions}
                                             />
                                         ))}
                                         {(hiddenCount > 0 || canShowLess) && (
@@ -312,16 +309,15 @@ interface ThreadItemProps {
     // The row was revealed by "Show more" (enter), or is being folded away by "Show less" (leave).
     motion?: 'enter' | 'leave';
     onSelect: () => void;
-    onRename: () => void;
+    chatActions: ChatActions;
 }
 
 // A compass ChannelSidebarItem only renders its own kebab for channel and DM rows, so the
 // actions button is overlaid on the row (as the agent rows do for their chevron and [+]),
 // with the same hover/focus reveal as the compass kebab.
-const ThreadItem = ({thread, active, generating, unread, placeholder, motion, onSelect, onRename}: ThreadItemProps) => {
+const ThreadItem = ({thread, active, generating, unread, placeholder, motion, onSelect, chatActions}: ThreadItemProps) => {
     const intl = useIntl();
     const [menuOpen, setMenuOpen] = useState(false);
-    const {rendered, onExited} = useMenuTransition(menuOpen);
     const title = thread.title.trim() || placeholder;
     const actionsLabel = intl.formatMessage({defaultMessage: 'Actions for {title}'}, {title});
 
@@ -371,36 +367,13 @@ const ThreadItem = ({thread, active, generating, unread, placeholder, motion, on
                     onClick={onSelect}
                 />
                 <ThreadActionsSlot>
-                    <Dropdown
-                        isOpen={rendered}
+                    <ChatRowActionsMenu
+                        chat={{conversationId: thread.id, title: thread.title}}
+                        actions={chatActions}
+                        label={actionsLabel}
+                        appearance='sidebar'
                         onOpenChange={setMenuOpen}
-                        placement='bottom-end'
-                        tooltip={actionsLabel}
-                        target={(
-                            <IconButton
-                                size='x-small'
-                                // eslint-disable-next-line react/style-prop-object -- compass IconButton `style` is a variant prop, not CSS
-                                style='inverted'
-                                icon={<Icon glyph={<DotsHorizontalIcon/>}/>}
-                                aria-label={actionsLabel}
-                                aria-haspopup='menu'
-                                aria-expanded={menuOpen}
-                                active={menuOpen}
-                                onClick={() => setMenuOpen(!menuOpen)}
-                            />
-                        )}
-                    >
-                        <PopoverMenu
-                            open={menuOpen}
-                            onExited={onExited}
-                            onClick={(e: React.MouseEvent) => {
-                                e.stopPropagation();
-                                setMenuOpen(false);
-                            }}
-                        >
-                            <ChatActionsMenuItems onRename={onRename}/>
-                        </PopoverMenu>
-                    </Dropdown>
+                    />
                 </ThreadActionsSlot>
             </ThreadRowBody>
         </ThreadListItem>

@@ -60,7 +60,7 @@ const renderListResult = (props: Partial<React.ComponentProps<typeof AgentThread
         onSelectThread: jest.fn(),
         onNewChat: jest.fn(),
         onRetry: jest.fn(),
-        onRenameThread: jest.fn(),
+        startRename: jest.fn(),
     };
     const result = render(
         <IntlProvider
@@ -72,7 +72,10 @@ const renderListResult = (props: Partial<React.ComponentProps<typeof AgentThread
                 threadsByBot={threadsByBot}
                 loading={false}
                 error={false}
-                {...handlers}
+                onSelectThread={handlers.onSelectThread}
+                onNewChat={handlers.onNewChat}
+                onRetry={handlers.onRetry}
+                chatActions={{startRename: handlers.startRename, renameTarget: null, submitRename: jest.fn(), closeRename: jest.fn()}}
                 {...props}
             />
         </IntlProvider>,
@@ -268,12 +271,12 @@ describe('AgentThreadsList', () => {
         });
     });
 
-    test('Rename chat hands that chat to the owner, which shows the dialog', async () => {
+    test('Rename chat starts the rename of that chat', async () => {
         const h = renderList();
         fireEvent.click(screen.getByRole('button', {name: 'Actions for First chat'}));
         fireEvent.click(await screen.findByText('Rename chat'));
 
-        expect(h.onRenameThread).toHaveBeenCalledWith(expect.objectContaining({id: '1', title: 'First chat'}));
+        expect(h.startRename).toHaveBeenCalledWith({conversationId: '1', title: 'First chat'});
     });
 
     test('clicking a collapsed agent row opens it and expands its chats', () => {

@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {ReactNode, useCallback, useContext, useMemo} from 'react';
+import React, {ReactNode, useContext, useMemo} from 'react';
 import {ReactReduxContext} from 'react-redux';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
@@ -14,7 +14,6 @@ import {Scrollbar} from '@mattermost/compass-ui/components/scrollbar';
 import {useBotlist} from '@/bots';
 import {useUnreadThreadRoots} from '@/hooks/use_agent_thread_read';
 import {useAgentThreads} from '@/hooks/use_agent_threads';
-import type {AIThread} from '@/types/ai_thread';
 
 import {useGeneratingThreadRoots} from '@/components/agent_chat/use_thread_generating';
 
@@ -69,8 +68,6 @@ const YourAgentsSection = () => {
     const listedRoots = useMemo(() => Object.values(threadsByBot).flat().map((t) => t.root_post_id).filter((id): id is string => Boolean(id)), [threadsByBot]);
     const unreadRoots = useUnreadThreadRoots(listedRoots, route.view === 'chat' ? route.rootId ?? '' : '');
     const chatActions = useChatActions();
-    const {startRename} = chatActions;
-    const renameThread = useCallback((thread: AIThread) => startRename({conversationId: thread.id, title: thread.title}), [startRename]);
 
     return (
         <>
@@ -86,7 +83,7 @@ const YourAgentsSection = () => {
                 onSelectThread={route.toChat}
                 onNewChat={route.toChat}
                 onRetry={refresh}
-                onRenameThread={renameThread}
+                chatActions={chatActions}
             />
             <ChatActionsDialogs actions={chatActions}/>
         </>

@@ -19,16 +19,18 @@ jest.mock('react-intl', () => ({
 }));
 
 const renderItem = (props: Partial<React.ComponentProps<typeof ThreadItem>> = {}) => {
-    const handlers = {onClick: jest.fn(), onMenuClick: jest.fn()};
+    const handlers = {onClick: jest.fn(), startRename: jest.fn()};
     render(
         <ThreadItem
+            conversationId='c1'
+            chatActions={{startRename: handlers.startRename, renameTarget: null, submitRename: jest.fn(), closeRename: jest.fn()}}
+            onClick={handlers.onClick}
             title='Mattermost selling features overview'
             preview='Key selling points: self-hosted and air-gapped deployment'
             agentName='Matty'
             agentAvatarUrl='/users/bot/image'
             lastActivityDate={0}
             replyCount={15}
-            {...handlers}
             {...props}
         />,
     );
@@ -86,13 +88,13 @@ describe('ThreadItem', () => {
         expect(onClick).toHaveBeenCalledTimes(2);
     });
 
-    test('the actions button asks the list to open its menu next to it, without opening the chat', () => {
-        const {onClick, onMenuClick} = renderItem();
+    test('the actions button opens the chat\'s actions menu without opening the chat', async () => {
+        const {onClick, startRename} = renderItem();
 
-        const button = screen.getByRole('button', {name: 'Chat actions'});
-        fireEvent.click(button);
+        fireEvent.click(screen.getByRole('button', {name: 'Chat actions'}));
+        fireEvent.click(await screen.findByRole('menuitem', {name: 'Rename chat'}));
 
-        expect(onMenuClick).toHaveBeenCalledWith(button);
+        expect(startRename).toHaveBeenCalledWith({conversationId: 'c1', title: 'Mattermost selling features overview'});
         expect(onClick).not.toHaveBeenCalled();
     });
 });

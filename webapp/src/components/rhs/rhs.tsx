@@ -17,12 +17,9 @@ import {fetchAIThreads, selectAIThreadsState, useAgentThreads} from '@/hooks/use
 
 import {useBotlist} from '@/bots';
 
-import type {AIThread} from '@/types/ai_thread';
-
 import AgentChatDropZone from '../agent_chat/agent_chat_drop_zone';
 import AgentChatThreadView from '../agent_chat/agent_chat_thread_view';
 
-import ChatActionsPopover from './chat_actions_popover';
 import RHSViewTransition from './rhs_view_transition';
 import ThreadItem from './thread_item';
 
@@ -73,9 +70,6 @@ export default function RHS() {
     // Every chat of the user's, from the shared stored list; opening the history refetches it.
     const {threads} = useAgentThreads(bots);
     const chatActions = useChatActions();
-
-    // The history item whose actions menu is open, and the button it opened from.
-    const [menuFor, setMenuFor] = useState<{thread: AIThread; anchor: HTMLElement} | null>(null);
 
     // The chats' first messages and reply counts, loaded after the list. Until they arrive (or if
     // they cannot be loaded) the items show the chat title.
@@ -150,6 +144,7 @@ export default function RHS() {
                     {navigableThreads.map((p) => (
                         <ThreadItem
                             key={p.id}
+                            conversationId={p.id}
                             title={p.title}
                             preview={previews[p.root_post_id!]?.message ?? ''}
                             replyCount={previews[p.root_post_id!]?.replyCount}
@@ -157,7 +152,7 @@ export default function RHS() {
                             agentAvatarUrl={getProfilePictureUrl(p.bot_id, bots.find((bot) => bot.id === p.bot_id)?.lastIconUpdate ?? 0)}
                             lastActivityDate={p.update_at}
                             onClick={() => selectPost(p.root_post_id!)}
-                            onMenuClick={(anchor) => setMenuFor({thread: p, anchor})}
+                            chatActions={chatActions}
                         />))}
                 </ThreadsList>
             );
@@ -186,11 +181,6 @@ export default function RHS() {
                     <AgentChatDropZone testId='rhs-file-drop-zone'>{content}</AgentChatDropZone>
                 ) : content}
             </RHSViewTransition>
-            <ChatActionsPopover
-                anchor={menuFor?.anchor ?? null}
-                onClose={() => setMenuFor(null)}
-                onRename={() => menuFor && chatActions.startRename({conversationId: menuFor.thread.id, title: menuFor.thread.title})}
-            />
             <ChatActionsDialogs actions={chatActions}/>
         </RhsContainer>
     );

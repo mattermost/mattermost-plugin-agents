@@ -77,11 +77,11 @@ jest.mock('./thread_item', () => {
 
     return {
         __esModule: true,
-        default: (props: {title: string; preview: string; replyCount?: number; onMenuClick: (anchor: HTMLElement) => void}) => ReactActual.createElement(
+        default: (props: {conversationId: string; title: string; preview: string; replyCount?: number; chatActions: {startRename: (target: {conversationId: string; title: string}) => void}}) => ReactActual.createElement(
             'div',
             {'data-testid': 'rhs-thread-item'},
             `${props.title}|${props.preview}|${props.replyCount ?? 'none'}`,
-            ReactActual.createElement('button', {type: 'button', onClick: (e: React.MouseEvent<HTMLButtonElement>) => props.onMenuClick(e.currentTarget)}, `menu ${props.title}`),
+            ReactActual.createElement('button', {type: 'button', onClick: () => props.chatActions.startRename({conversationId: props.conversationId, title: props.title})}, `rename ${props.title}`),
         ),
     };
 });
@@ -268,8 +268,7 @@ describe('RHS', () => {
             mockRenameConversation.mockResolvedValue(true);
             await openHistory();
 
-            fireEvent.click(screen.getByRole('button', {name: 'menu Title one'}));
-            fireEvent.click(await screen.findByText('Rename chat'));
+            fireEvent.click(screen.getByRole('button', {name: 'rename Title one'}));
             const input = await screen.findByLabelText('Chat name');
             expect((input as HTMLInputElement).value).toBe('Title one');
             fireEvent.change(input, {target: {value: 'Renamed'}});
