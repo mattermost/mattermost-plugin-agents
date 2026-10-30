@@ -104,24 +104,40 @@ func (s *Store) GetConversationByThreadBotUser(rootPostID, botID, userID string)
 	return &conv, nil
 }
 
-// UpdateConversationTitle updates the title and UpdatedAt timestamp of a conversation.
+// UpdateConversationTitle sets the title of a conversation. A title is not
+// activity, so UpdatedAt (which orders the conversation list) is left alone.
 func (s *Store) UpdateConversationTitle(id, title string) error {
 	return s.execBuilder(s.builder.
 		Update("LLM_Conversations").
 		Set("Title", title).
-		Set("UpdatedAt", model.GetMillis()).
 		Where(sq.Eq{"ID": id}),
 		"update conversation title")
 }
 
+// SetConversationTitleIfUnset sets the title of a non-deleted conversation
+// only while it still has no title, for automatically generated titles. It
+// reports false, without error, when the conversation already has a title
+// (for example one its owner set while the title was being generated), or is
+// missing or deleted. User-set titles are never empty, so this never
+// overwrites one. UpdatedAt is left alone, as in UpdateConversationTitle.
+func (s *Store) SetConversationTitleIfUnset(id, title string) (bool, error) {
+	return s.execBuilderRows(s.builder.
+		Update("LLM_Conversations").
+		Set("Title", title).
+		Where(sq.Eq{"ID": id}).
+		Where(sq.Eq{"Title": ""}).
+		Where(sq.Eq{"DeleteAt": 0}),
+		"set conversation title if unset")
+}
+
 // RenameConversation sets the title of a non-deleted conversation. It reports
 // false, without error, when no non-deleted conversation with the ID exists, so
-// a rename that races a delete never edits it.
+// a rename that races a delete never edits it. UpdatedAt is left alone so a
+// rename does not reorder the conversation list.
 func (s *Store) RenameConversation(id, title string) (bool, error) {
 	return s.execBuilderRows(s.builder.
 		Update("LLM_Conversations").
 		Set("Title", title).
-		Set("UpdatedAt", model.GetMillis()).
 		Where(sq.Eq{"ID": id}).
 		Where(sq.Eq{"DeleteAt": 0}),
 		"rename conversation")
@@ -152,10 +168,9 @@ func (s *Store) SoftDeleteConversation(id string, deleteAt int64) error {
 // ConversationSummary is a lightweight view of a conversation with its turn count,
 // used for listing conversations in the RHS threads panel.
 //
-// UpdatedAt is the conversation's last activity: the later of the conversation
-// row's UpdatedAt and the CreatedAt of its newest turn. Adding a turn does not
-// touch LLM_Conversations.UpdatedAt, so the row value alone would sort a chat
-// continued today by when it was last renamed or created.
+// UpdatedAt is the conversation's last activity: creating a turn advances
+// LLM_Conversations.UpdatedAt to the turn's CreatedAt, while title changes
+// leave it alone.
 type ConversationSummary struct {
 	ID         string  `json:"id"           db:"id"`
 	UserID     string  `json:"user_id"      db:"userid"`
@@ -167,15 +182,12 @@ type ConversationSummary struct {
 	UpdatedAt  int64   `json:"updated_at"   db:"updatedat"`
 }
 
-// conversationLastActivityExpr is a conversation's last activity within a query
-// that LEFT JOINs LLM_Turns t onto LLM_Conversations c and groups by conversation.
-// The store targets PostgreSQL only, which provides GREATEST.
-const conversationLastActivityExpr = "GREATEST(c.UpdatedAt, COALESCE(MAX(t.CreatedAt), 0))"
-
 // GetConversationSummariesForUser returns a user's conversations ordered by last
 // activity (see ConversationSummary.UpdatedAt) descending, with ID as a
 // deterministic tie-breaker, including a turn count per conversation. Only
-// non-deleted conversations are returned.
+// non-deleted conversations are returned. The ordering reads the
+// (UserID, UpdatedAt DESC) WHERE DeleteAt = 0 index, and turns are counted
+// only for the returned page.
 func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int) ([]ConversationSummary, error) {
 	if limit < 0 {
 		limit = 0
@@ -192,15 +204,13 @@ func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int
 			"c.ChannelID",
 			"c.RootPostID",
 			"c.Title",
-			"COUNT(t.ID) AS TurnCount",
-			conversationLastActivityExpr+" AS UpdatedAt",
+			"(SELECT COUNT(*) FROM LLM_Turns t WHERE t.ConversationID = c.ID) AS TurnCount",
+			"c.UpdatedAt",
 		).
 		From("LLM_Conversations c").
-		LeftJoin("LLM_Turns t ON t.ConversationID = c.ID").
 		Where(sq.Eq{"c.UserID": userID}).
 		Where(sq.Eq{"c.DeleteAt": 0}).
-		GroupBy("c.ID", "c.UserID", "c.BotID", "c.ChannelID", "c.RootPostID", "c.Title", "c.UpdatedAt").
-		OrderBy(conversationLastActivityExpr+" DESC", "c.ID ASC").
+		OrderBy("c.UpdatedAt DESC", "c.ID ASC").
 		Limit(uint64(limit)).   // #nosec G115 -- guarded above
 		Offset(uint64(offset)), // #nosec G115 -- guarded above
 		"get conversation summaries"); err != nil {

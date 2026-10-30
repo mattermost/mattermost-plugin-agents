@@ -342,7 +342,7 @@ func TestUpdateConversationTitle(t *testing.T) {
 		validate func(t *testing.T, s *Store)
 	}{
 		{
-			name:  "updates title and UpdatedAt",
+			name:  "updates title without touching UpdatedAt",
 			setup: func(t *testing.T, s *Store) {},
 			validate: func(t *testing.T, s *Store) {
 				conv := makeConversation()
@@ -355,7 +355,7 @@ func TestUpdateConversationTitle(t *testing.T) {
 				got, err := s.GetConversation(conv.ID)
 				require.NoError(t, err)
 				assert.Equal(t, "New Title", got.Title)
-				assert.GreaterOrEqual(t, got.UpdatedAt, conv.UpdatedAt)
+				assert.Equal(t, conv.UpdatedAt, got.UpdatedAt, "a title is not activity")
 			},
 		},
 	}
@@ -906,6 +906,153 @@ func TestRenameConversation(t *testing.T) {
 			if tt.softDelete {
 				assert.Equal(t, int64(1000), deleteAt, "a rename must never restore a deleted conversation")
 			}
+		})
+	}
+}
+
+func TestSetConversationTitleIfUnset(t *testing.T) {
+	tests := []struct {
+		name        string
+		title       string
+		softDelete  bool
+		missing     bool
+		wantUpdated bool
+		wantTitle   string
+	}{
+		{name: "sets the title of an untitled conversation", wantUpdated: true, wantTitle: "Generated"},
+		{name: "keeps a title already set", title: "Set by owner", wantUpdated: false, wantTitle: "Set by owner"},
+		{name: "does not title a deleted conversation", softDelete: true, wantUpdated: false, wantTitle: ""},
+		{name: "reports false for a missing conversation", missing: true, wantUpdated: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestStore(t)
+			require.NoError(t, s.RunMigrations())
+
+			conv := makeConversation(func(c *Conversation) {
+				c.Title = tt.title
+				c.UpdatedAt = 1000
+			})
+			id := model.NewId()
+			if !tt.missing {
+				require.NoError(t, s.CreateConversation(conv))
+				id = conv.ID
+				if tt.softDelete {
+					require.NoError(t, s.SoftDeleteConversation(conv.ID, 1000))
+				}
+			}
+
+			updated, err := s.SetConversationTitleIfUnset(id, "Generated")
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantUpdated, updated)
+
+			if tt.missing {
+				return
+			}
+			var title string
+			var updatedAt int64
+			require.NoError(t, s.db.QueryRow("SELECT Title, UpdatedAt FROM LLM_Conversations WHERE ID = $1", id).Scan(&title, &updatedAt))
+			assert.Equal(t, tt.wantTitle, title)
+			assert.Equal(t, int64(1000), updatedAt, "a title is not activity")
+		})
+	}
+}
+
+// TestConversationActivityOrdering exercises the writes that do and do not
+// count as activity for the conversation list order.
+func TestConversationActivityOrdering(t *testing.T) {
+	tests := []struct {
+		name string
+		// act runs against conversations "old" (UpdatedAt 1000) and "new"
+		// (UpdatedAt 2000), both owned by the same user.
+		act       func(t *testing.T, s *Store, ids map[string]string)
+		wantOrder []string
+		wantOld   int64
+	}{
+		{
+			name:      "no activity keeps creation order",
+			act:       func(t *testing.T, s *Store, ids map[string]string) {},
+			wantOrder: []string{"new", "old"},
+			wantOld:   1000,
+		},
+		{
+			name: "a new turn moves a conversation to the top",
+			act: func(t *testing.T, s *Store, ids map[string]string) {
+				require.NoError(t, s.CreateTurn(makeTurn(ids["old"], 1, func(turn *Turn) { turn.CreatedAt = 5000 })))
+			},
+			wantOrder: []string{"old", "new"},
+			wantOld:   5000,
+		},
+		{
+			name: "an auto-sequenced turn moves a conversation to the top",
+			act: func(t *testing.T, s *Store, ids map[string]string) {
+				require.NoError(t, s.CreateTurnAutoSequence(makeTurn(ids["old"], 0, func(turn *Turn) { turn.CreatedAt = 5000 })))
+			},
+			wantOrder: []string{"old", "new"},
+			wantOld:   5000,
+		},
+		{
+			name: "a turn older than the last activity does not move it back",
+			act: func(t *testing.T, s *Store, ids map[string]string) {
+				require.NoError(t, s.CreateTurn(makeTurn(ids["old"], 1, func(turn *Turn) { turn.CreatedAt = 500 })))
+			},
+			wantOrder: []string{"new", "old"},
+			wantOld:   1000,
+		},
+		{
+			name: "a rename does not reorder",
+			act: func(t *testing.T, s *Store, ids map[string]string) {
+				renamed, err := s.RenameConversation(ids["old"], "Renamed")
+				require.NoError(t, err)
+				require.True(t, renamed)
+			},
+			wantOrder: []string{"new", "old"},
+			wantOld:   1000,
+		},
+		{
+			name: "a generated title does not reorder",
+			act: func(t *testing.T, s *Store, ids map[string]string) {
+				updated, err := s.SetConversationTitleIfUnset(ids["old"], "Generated")
+				require.NoError(t, err)
+				require.True(t, updated)
+			},
+			wantOrder: []string{"new", "old"},
+			wantOld:   1000,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestStore(t)
+			require.NoError(t, s.RunMigrations())
+
+			userID := model.NewId()
+			ids := map[string]string{}
+			keyByID := map[string]string{}
+			for key, updatedAt := range map[string]int64{"old": 1000, "new": 2000} {
+				conv := makeConversation(func(c *Conversation) {
+					c.UserID = userID
+					c.CreatedAt = updatedAt
+					c.UpdatedAt = updatedAt
+				})
+				require.NoError(t, s.CreateConversation(conv))
+				ids[key] = conv.ID
+				keyByID[conv.ID] = key
+			}
+
+			tt.act(t, s, ids)
+
+			summaries, err := s.GetConversationSummariesForUser(userID, 60, 0)
+			require.NoError(t, err)
+			got := make([]string, len(summaries))
+			for i, summary := range summaries {
+				got[i] = keyByID[summary.ID]
+				if summary.ID == ids["old"] {
+					assert.Equal(t, tt.wantOld, summary.UpdatedAt)
+				}
+			}
+			assert.Equal(t, tt.wantOrder, got)
 		})
 	}
 }

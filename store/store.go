@@ -39,14 +39,8 @@ func (s *Store) DB() *sqlx.DB {
 // execBuilder builds and executes a statement. Errors are wrapped as
 // "failed to build <desc> query" / "failed to <desc>".
 func (s *Store) execBuilder(b sq.Sqlizer, desc string) error {
-	query, args, err := b.ToSql()
-	if err != nil {
-		return fmt.Errorf("failed to build %s query: %w", desc, err)
-	}
-	if _, err := s.db.Exec(query, args...); err != nil {
-		return fmt.Errorf("failed to %s: %w", desc, err)
-	}
-	return nil
+	_, err := s.execBuilderRows(b, desc)
+	return err
 }
 
 // execBuilderRows is execBuilder that also reports whether any row changed.
