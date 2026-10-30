@@ -30,6 +30,7 @@ import {needsViewerDecision, selectDecisionToolCalls} from '../tool_decisions';
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
 import {Annotation} from '../citations/types';
 import {AgentChatSurfaceContext} from '../agent_chat/agent_chat_surface_context';
+import {markGenerationStopped} from '../agent_chat/use_thread_generating';
 
 import {
     Round,
@@ -143,7 +144,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const [reasoningSummary, setReasoningSummary] = useState('');
     const [isReasoningLoading, setIsReasoningLoading] = useState(false);
 
-    // In the agent chat views the composer's send button is the Stop control.
     const {isAgentChat} = useContext(AgentChatSurfaceContext);
 
     // Streamed text is revealed at a steady pace where the surface asks for
@@ -581,7 +581,14 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setStopped(true);
         setGenerating(false);
         setIsReasoningLoading(false);
-        doStopGenerating(props.post.id);
+        const postId = props.post.id;
+        doStopGenerating(postId).then(() => {
+            // The chat views' "responding" indicators (sidebar, jump button) stop at once, before
+            // the stream's end arrives.
+            markGenerationStopped(postId);
+        }).catch((e: unknown) => {
+            console.error('Failed to stop generating:', e); // eslint-disable-line no-console
+        });
     };
 
     const postSummary = async () => {
@@ -628,7 +635,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const meetingsLicensed = useIsLicensedFor('meetings');
     const showPostbackButton = meetingsLicensed && !isGenerationInProgress && requesterIsCurrentUser && isTranscriptionResult;
 
-    const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser && !isAgentChat;
+    const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser;
     const hasContent = renderedRounds.length > 0;
 
     // Only the anchor round gets a real approval stage: the latest persisted

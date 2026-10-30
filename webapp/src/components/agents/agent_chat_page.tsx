@@ -12,7 +12,7 @@ import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
 
 import {getPost} from '@/client';
-import {fetchAndStoreBots, useBotlist, type LLMBot} from '@/bots';
+import {fetchAndStoreBots, useBotlist} from '@/bots';
 import {useMarkAgentThreadRead} from '@/hooks/use_agent_thread_read';
 import {useRefreshAgentThreads} from '@/hooks/use_agent_threads';
 
@@ -99,7 +99,6 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
                 channelId={dm.channelId}
                 rootId={rootId}
                 agentName={bot.displayName}
-                bot={bot}
                 onNewChat={newChat}
                 toAll={toAll}
                 onValidated={setValidRootId}
@@ -169,7 +168,6 @@ interface AgentThreadProps {
     channelId: string;
     rootId: string;
     agentName: string;
-    bot: LLMBot;
     onNewChat: () => void;
     toAll: () => void;
     onValidated: (rootId: string | null) => void;
@@ -177,7 +175,7 @@ interface AgentThreadProps {
 
 // Renders one thread, but only after confirming the root post is a root post in
 // this agent's DM channel. Fails closed on mismatch and on lookup errors.
-const AgentThread = ({channelId, rootId, agentName, bot, onNewChat, toAll, onValidated}: AgentThreadProps) => {
+const AgentThread = ({channelId, rootId, agentName, onNewChat, toAll, onValidated}: AgentThreadProps) => {
     const intl = useIntl();
     const store = useStore<GlobalState>();
     const [check, setCheck] = useState<ThreadCheck>('loading');
@@ -246,7 +244,6 @@ const AgentThread = ({channelId, rootId, agentName, bot, onNewChat, toAll, onVal
             channelId={channelId}
             rootId={rootId}
             agentName={agentName}
-            bot={bot}
             isThreadView={true}
         />
     );

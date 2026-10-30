@@ -21,7 +21,7 @@ type Props = {
 }
 
 // The RHS new-chat tab: the same new-chat state as the Agents product view
-// (avatar, greeting, pill composer), sized to fill the RHS.
+// (avatar, greeting, host composer), sized to fill the RHS.
 const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
     // Creates the bot DM when missing, stores its id on the bot in Redux, and
     // loads the channel, membership and roles the host ThreadViewer needs.

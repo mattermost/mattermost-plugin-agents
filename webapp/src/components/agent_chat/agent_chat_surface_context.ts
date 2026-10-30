@@ -6,8 +6,7 @@ import {createContext} from 'react';
 export interface AgentChatSurface {
 
     // True inside the agent chat views (Agents product view, Agents RHS). Agent
-    // posts there: leave their own Stop control to the composer, show animated
-    // dots while a reply has produced nothing yet, reveal streamed text at a
+    // posts there: show animated dots while a reply has produced nothing yet, reveal streamed text at a
     // steady pace, hug short replies, put the controls under the bubble and
     // offer Copy. Anywhere else (the Channels DM, channel threads in the host
     // RHS) posts keep the plain host behavior.

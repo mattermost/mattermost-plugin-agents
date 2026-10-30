@@ -69,7 +69,7 @@ export interface ToolProviders {
 }
 
 // The disabled-provider list is one per-user preference, but several controls
-// hold a copy (the RHS and Agents header popovers, the composer's "+" menu).
+// hold a copy (the RHS title's and the Agents header's popovers).
 // A toggle in one is published here so every other mounted copy follows
 // without a reload. In memory only; the server stays the source of truth.
 type DisabledServersListener = (servers: string[], source: symbol) => void;
@@ -88,8 +88,7 @@ export function subscribeDisabledServers(listener: DisabledServersListener): () 
     };
 }
 
-// The tool provider data and actions behind ToolProviderPopover, shared with
-// the agent chat composer's "+" menu so both behave the same.
+// The tool provider data and actions behind ToolProviderPopover.
 export function useToolProviders({disabledServers, onDisabledServersChange, preloadedServers, enabledMCPTools, autoEnableNewMCPTools}: UseToolProvidersArgs): ToolProviders {
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
     const [allServers, setAllServers] = useState<UserMCPServerInfo[]>(preloadedServers || []);
@@ -186,7 +185,7 @@ export function useToolProviders({disabledServers, onDisabledServersChange, prel
 }
 
 // The Tools dropdown of the RHS header: a compass Button trigger opening a menu of the tool
-// providers (the same rows as the composer's "+" menu).
+// providers.
 const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloadedServers, enabledMCPTools, autoEnableNewMCPTools}: ToolProviderPopoverProps) => {
     const intl = useIntl();
     const providers = useToolProviders({

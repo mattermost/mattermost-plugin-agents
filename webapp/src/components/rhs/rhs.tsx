@@ -137,7 +137,6 @@ export default function RHS() {
                 channelId={channelId}
                 rootId={selectedPostId}
                 agentName={threadBot?.displayName ?? ''}
-                bot={threadBot ?? null}
                 isThreadView={false}
             />
         );

@@ -6,11 +6,16 @@ import {Provider} from 'react-redux';
 import {createStore} from 'redux';
 import {render, screen} from '@testing-library/react';
 
+import {lastAdvancedTextEditorProps} from '../../../tests/fake_advanced_text_editor';
+
 import AgentNewChat, {NEW_CHAT_GREETINGS} from './agent_new_chat';
 
 jest.mock('@/client', () => ({
-    createPost: jest.fn(),
     getProfilePictureUrl: (id: string) => `/users/${id}/image`,
+}));
+
+jest.mock('@/mm_webapp', () => ({
+    AdvancedTextEditor: jest.requireActual('../../../tests/fake_advanced_text_editor').FakeAdvancedTextEditor,
 }));
 
 jest.mock('react-intl', () => {
@@ -40,16 +45,14 @@ const bot = {
     autoEnableNewMCPTools: false,
 } as any;
 
-const ui = (children?: React.ReactNode) => (
+const ui = (layout: 'page' | 'panel' = 'panel', onCreated = jest.fn()) => (
     <Provider store={store}>
         <AgentNewChat
             bot={bot}
             channelId='dm1'
-            layout='panel'
-            onCreated={jest.fn()}
-        >
-            {children}
-        </AgentNewChat>
+            layout={layout}
+            onCreated={onCreated}
+        />
     </Provider>
 );
 
@@ -89,14 +92,17 @@ describe('AgentNewChat', () => {
         const first = shown();
 
         random.mockReturnValue(0);
-        rerender(ui(<span>{'extra'}</span>));
+        rerender(ui());
         expect(shown()).toEqual(first);
         expect(first.title).toBe(text(NEW_CHAT_GREETINGS[NEW_CHAT_GREETINGS.length - 1].title));
     });
 
-    test('renders the composer and the extra content', () => {
-        render(ui(<button>{'Pinned prompt'}</button>));
-        expect(screen.getByRole('textbox', {name: 'Message Matty'})).toBeTruthy();
-        expect(screen.getByRole('button', {name: 'Pinned prompt'})).toBeTruthy();
+    test.each([
+        {layout: 'page' as const, location: 'CENTER'},
+        {layout: 'panel' as const, location: 'RHS_COMMENT'},
+    ])('in the $layout layout, the host composer posts a root post to the agent\'s DM', ({layout, location}) => {
+        render(ui(layout));
+        expect(screen.getByTestId('agent-chat-new-composer')).toBeTruthy();
+        expect(lastAdvancedTextEditorProps()).toEqual(expect.objectContaining({location, channelId: 'dm1', rootId: '', placeholder: 'Message Matty'}));
     });
 });

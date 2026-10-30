@@ -53,8 +53,8 @@ export const ProviderRefreshButton = ({providers}: {providers: ToolProviders}) =
     );
 };
 
-// The tool providers as compass menu rows. The composer's Tools submenu and the RHS Tools
-// dropdown show the same rows through the same useToolProviders data and actions.
+// The tool providers as compass menu rows, for the Tools dropdown (ToolProviderPopover) through
+// its useToolProviders data and actions.
 const ToolProviderMenuBody = ({status, onRetry, disabledServers, providers, onError, refresh = true}: ToolProviderMenuBodyProps) => {
     const intl = useIntl();
     const {servers, loading, error, remoteMcpLicensed, toggle, connect, disconnect} = providers;

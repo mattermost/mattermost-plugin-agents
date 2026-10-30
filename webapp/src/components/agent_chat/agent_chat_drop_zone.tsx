@@ -1,20 +1,11 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {createContext, useCallback, useContext, useMemo, useRef, useState} from 'react';
+import React, {useRef, useState} from 'react';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 
-export type AttachmentDropHandler = (files: File[]) => void;
-
-// Registers the active composer's file handler; returns the unregister call.
-type RegisterDropHandler = (handler: AttachmentDropHandler) => () => void;
-
-const AttachmentDropContext = createContext<RegisterDropHandler | null>(null);
-
-// The composer inside a drop zone calls this to receive dropped files. Outside
-// a drop zone it is a no-op.
-export const useAttachmentDropTarget = (): RegisterDropHandler | null => useContext(AttachmentDropContext);
+import {HOST_COMPOSER_FILE_INPUT_SELECTOR} from './agent_chat_host_styles';
 
 const hasFiles = (dataTransfer: DataTransfer | null): boolean => Boolean(dataTransfer?.types && Array.from(dataTransfer.types).includes('Files'));
 
@@ -32,28 +23,21 @@ interface AgentChatDropZoneProps {
 }
 
 // Makes a whole chat surface (the product view chat, the RHS pane) a drop
-// target for the composer inside it: while files are dragged over it shows
+// target for the host composer inside it: while files are dragged over it shows
 // the prototype's "Drop file to attach" overlay, and a drop hands the files to
-// the composer, which uploads them. Drags that carry no files (text, links)
-// are left alone, and so is everything while no composer is ready to attach.
+// the composer's own file input, so the host uploads and attaches them as if
+// they were picked with its attach button. The host binds its own drop target
+// with a page-level selector (components/file_upload/file_upload.tsx) that
+// does not exist in the plugin's views. Drags that carry no files (text,
+// links) are left alone, and so is everything while no composer is there.
 const AgentChatDropZone = ({children, testId}: AgentChatDropZoneProps) => {
     const intl = useIntl();
-    const handlerRef = useRef<AttachmentDropHandler | null>(null);
+    const zoneRef = useRef<HTMLDivElement>(null);
     const depth = useRef(0);
     const [dragging, setDragging] = useState(false);
 
-    const register = useCallback<RegisterDropHandler>((handler) => {
-        handlerRef.current = handler;
-        return () => {
-            if (handlerRef.current === handler) {
-                handlerRef.current = null;
-                depth.current = 0;
-                setDragging(false);
-            }
-        };
-    }, []);
-
-    const accepts = (e: React.DragEvent) => Boolean(handlerRef.current) && hasFiles(e.dataTransfer);
+    const fileInput = () => zoneRef.current?.querySelector<HTMLInputElement>(HOST_COMPOSER_FILE_INPUT_SELECTOR) ?? null;
+    const accepts = (e: React.DragEvent) => hasFiles(e.dataTransfer) && fileInput() !== null;
 
     const onDragEnter = (e: React.DragEvent) => {
         if (!accepts(e)) {
@@ -83,40 +67,42 @@ const AgentChatDropZone = ({children, testId}: AgentChatDropZoneProps) => {
     };
 
     const onDrop = (e: React.DragEvent) => {
-        if (!accepts(e)) {
+        if (!hasFiles(e.dataTransfer)) {
             return;
         }
         e.preventDefault();
         depth.current = 0;
         setDragging(false);
-        const files = Array.from(e.dataTransfer.files ?? []);
-        if (files.length > 0) {
-            handlerRef.current?.(files);
+        const input = fileInput();
+        const files = e.dataTransfer.files;
+        if (!input || !files?.length) {
+            return;
         }
+
+        // The host's change handler on that input (FileUpload.handleChange) uploads input.files.
+        input.files = files;
+        input.dispatchEvent(new Event('change', {bubbles: true}));
     };
 
-    const value = useMemo(() => register, [register]);
-
     return (
-        <AttachmentDropContext.Provider value={value}>
-            <Zone
-                data-testid={testId}
-                onDragEnter={onDragEnter}
-                onDragOver={onDragOver}
-                onDragLeave={onDragLeave}
-                onDrop={onDrop}
-            >
-                {children}
-                {dragging && (
-                    <Overlay
-                        data-testid='agent-chat-drop-overlay'
-                        aria-hidden={true}
-                    >
-                        <OverlayLabel>{intl.formatMessage({defaultMessage: 'Drop file to attach'})}</OverlayLabel>
-                    </Overlay>
-                )}
-            </Zone>
-        </AttachmentDropContext.Provider>
+        <Zone
+            ref={zoneRef}
+            data-testid={testId}
+            onDragEnter={onDragEnter}
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            onDrop={onDrop}
+        >
+            {children}
+            {dragging && (
+                <Overlay
+                    data-testid='agent-chat-drop-overlay'
+                    aria-hidden={true}
+                >
+                    <OverlayLabel>{intl.formatMessage({defaultMessage: 'Drop file to attach'})}</OverlayLabel>
+                </Overlay>
+            )}
+        </Zone>
     );
 };
 

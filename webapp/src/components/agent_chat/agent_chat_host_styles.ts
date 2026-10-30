@@ -28,8 +28,9 @@ import {css} from 'styled-components';
 //     draws the line (`.separator__hr`) and label (`.separator__text`)
 // - components/threading/virtualized_thread_viewer/create_comment.tsx:
 //     [data-testid="comment-create"] (`.post-create__container`), the host reply
-//     composer, hidden here; virtualized_thread_viewer.tsx renders it after the
-//     list inside `.virtual-list__ctr` (flex column, virtualized_thread_viewer.scss)
+//     composer; virtualized_thread_viewer.tsx renders it after the list inside
+//     `.virtual-list__ctr` (flex column, virtualized_thread_viewer.scss). Only its
+//     width and outer spacing are set here (see hostComposerStyles below).
 // - sass/components/_post.scss lays `.post__content` out as a table; we switch it
 //   to flex inside the chat only.
 // - Row backgrounds the host paints on `.post` (all neutralized here, so only the
@@ -187,6 +188,110 @@ const paddedRows = css`
     }
 `;
 
+// --- The host message composer (components/advanced_text_editor) -------------------------------
+//
+// The agent chat uses the host's own composer everywhere: the ThreadViewer's reply composer under a
+// thread, and AdvancedTextEditor (window.Components) for a new chat. The plugin only places it: its
+// width, its side inset and the space under it. Everything inside the message box (frame, text,
+// buttons, formatting bar, attachments, suggestions) is the host's, unstyled here.
+//
+// Host dependencies (webapp/channels/src in mattermost/mattermost):
+// - components/threading/virtualized_thread_viewer/create_comment.tsx: the reply composer's wrapper,
+//     [data-testid="comment-create"] (also `.post-create__container`).
+// - components/channel_view/channel_view.tsx wraps the channel composer in
+//     `.post-create__container.AdvancedTextEditor__ctr`; the new-chat composer takes the same wrapper
+//     classes (HOST_COMPOSER_CONTAINER_CLASS), so the host's own composer CSS applies to it as in a
+//     channel (sass/components/_post.scss, advanced_text_editor.scss).
+// - components/advanced_text_editor/advanced_text_editor.tsx: `.AdvancedTextEditor`, the row holding
+//     the message box, which the host pads 24px on each side (advanced_text_editor.scss), and
+//     `.AdvancedTextEditor__footer` (footer.tsx, the same 24px), the help and error line under it.
+//     The plugin sets that side padding to its own column's.
+// - components/file_upload/file_upload.tsx: the composer's hidden `input[type="file"]`. The plugin's
+//     drop zone hands dropped files to it (AgentChatDropZone), because the host binds its own drop
+//     target by a page-level selector that does not exist in the plugin's views.
+
+// The wrapper classes the host gives the channel composer (channel_view.tsx).
+export const HOST_COMPOSER_CONTAINER_CLASS = 'post-create__container AdvancedTextEditor__ctr';
+
+// The host reply composer under a thread (create_comment.tsx).
+const HOST_REPLY_COMPOSER = "[data-testid='comment-create']";
+
+// The file input of a host composer in the plugin's views: the reply composer's (its wrapper is a
+// `.post-create__container` too) or the new-chat composer's. Not an edited post's editor.
+export const HOST_COMPOSER_FILE_INPUT_SELECTOR = ".post-create__container input[type='file']";
+
+// Sets the host composer's side inset (the message box row and the line under it). Interpolate
+// inside a plugin-owned container that holds a host composer.
+export const hostComposerInset = (inset: string) => css`
+    .AdvancedTextEditor,
+    .AdvancedTextEditor__footer {
+        padding-inline: ${inset};
+    }
+`;
+
+// The ThreadViewer's reply composer, lined up with the posts above it: with a column it is capped,
+// centered and inset like the column (centeredColumn); in a panel it takes the panel's padding
+// (paddedRows). The archived / deactivated-user notices the host renders instead are left alone.
+const hostReplyComposerStyles = ({columnMaxWidth}: HostThreadChatStylesOptions) => css`
+    ${HOST_REPLY_COMPOSER} {
+        box-sizing: border-box;
+        padding-bottom: ${columnMaxWidth ? 'var(--spacing-xxl)' : CHAT_PANEL_PADDING};
+
+        ${columnMaxWidth && css`
+            width: calc(100% - 2 * var(--spacing-m));
+            max-width: ${columnMaxWidth};
+            margin-inline: auto;
+        `}
+
+        ${hostComposerInset(columnMaxWidth ? CHAT_COLUMN_PADDING : CHAT_PANEL_PADDING)}
+    }
+`;
+
+// Every host hook the selectors in this file (and the new-chat composer's wrapper) rely on: a
+// literal the host source must still contain, and the file it is in. agent_chat_host_styles.test.ts
+// checks them against a host checkout when one is available (MM_WEBAPP_PATH), so a host change
+// that would silently drop a style shows up as a failing test. Keep it in step with the selectors.
+export const HOST_STYLE_HOOKS: ReadonlyArray<{token: string; file: string}> = [
+
+    // Posts (bubbles)
+    {token: "'post__content'", file: 'channels/src/components/post/post_component.tsx'},
+    {token: 'post__img', file: 'channels/src/components/post/post_component.tsx'},
+    {token: "'current--user'", file: 'channels/src/components/post/post_component.tsx'},
+    {token: "'post--compact'", file: 'channels/src/components/post/post_component.tsx'},
+    {token: 'post__header', file: 'channels/src/components/post/post_component.tsx'},
+    {token: 'badges-wrapper', file: 'channels/src/components/post/post_component.tsx'},
+    {token: "'post--hovered'", file: 'channels/src/components/post/post_component.tsx'},
+    {token: "'post--editing'", file: 'channels/src/components/post/post_component.tsx'},
+    {token: "'post--highlight'", file: 'channels/src/components/post/post_component.tsx'},
+    {token: "'post--pinned-or-flagged'", file: 'channels/src/components/post/post_component.tsx'},
+    {token: 'a11y--active', file: 'channels/src/utils/utils.tsx'},
+    {token: 'post__time', file: 'channels/src/components/post_view/post_time/post_time.tsx'},
+    {token: 'post__permalink', file: 'channels/src/components/post_view/post_time/post_time.tsx'},
+    {token: 'col__name', file: 'channels/src/components/post/user_profile.tsx'},
+    {token: 'post-menu', file: 'channels/src/components/post/post_options.tsx'},
+
+    // Thread viewer list
+    {token: 'threadViewerScrollContainer', file: 'channels/src/components/threading/virtualized_thread_viewer/virtualized_thread_viewer.tsx'},
+    {token: 'innerList', file: 'channels/src/components/dynamic_virtualized_list/index.tsx'},
+    {token: 'root-post__divider', file: 'channels/src/components/root_post_divider/root_post_divider.tsx'},
+    {token: 'BasicSeparator', file: 'channels/src/components/widgets/separator/basic-separator.tsx'},
+
+    // Content that keeps a bubble full width
+    {token: 'post-code', file: 'channels/src/components/code_block/code_block.tsx'},
+    {token: 'post-image__columns', file: 'channels/src/components/file_attachment_list/file_attachment_list.tsx'},
+    {token: 'file-view--single', file: 'channels/src/components/single_image_view/single_image_view.tsx'},
+    {token: 'post__embed-container', file: 'channels/src/components/post_view/post_image/post_image.tsx'},
+    {token: 'PostAttachmentOpenGraph', file: 'channels/src/components/post_view/post_attachment_opengraph/post_attachment_opengraph.tsx'},
+
+    // Composer
+    {token: "data-testid='comment-create'", file: 'channels/src/components/threading/virtualized_thread_viewer/create_comment.tsx'},
+    {token: "'post-create__container'", file: 'channels/src/components/threading/virtualized_thread_viewer/create_comment.tsx'},
+    {token: "'post-create__container AdvancedTextEditor__ctr'", file: 'channels/src/components/channel_view/channel_view.tsx'},
+    {token: "'AdvancedTextEditor'", file: 'channels/src/components/advanced_text_editor/advanced_text_editor.tsx'},
+    {token: 'AdvancedTextEditor__footer', file: 'channels/src/components/advanced_text_editor/footer.tsx'},
+    {token: "type='file'", file: 'channels/src/components/file_upload/file_upload.tsx'},
+];
+
 // Chat-bubble restyle of the host ThreadViewer. Interpolate it into the styled
 // wrapper that contains the ThreadViewer (the product view's thread pane, the
 // RHS thread pane); it is scoped under that wrapper and never applied globally.
@@ -198,16 +303,8 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         padding-bottom: var(--spacing-m);
     }
 
-    /*
-     * The plugin's pill composer replaces the host reply box. The host renders it
-     * as the last child of the flex column \`.virtual-list__ctr\`, after the
-     * list (\`.post-right__content\`, height 100% around an AutoSizer), so with it
-     * removed the list's AutoSizer simply takes the freed height. The archived /
-     * deactivated-user notices the host renders instead are not hidden.
-     */
-    [data-testid='comment-create'] {
-        display: none;
-    }
+    /* The host reply composer under the messages, in the same column as the posts. */
+    ${hostReplyComposerStyles({columnMaxWidth})}
 
     /*
      * No "N replies" divider under the root post: a chat has no root/replies

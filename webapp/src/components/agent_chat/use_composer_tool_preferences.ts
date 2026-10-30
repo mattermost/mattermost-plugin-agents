@@ -14,9 +14,9 @@ export interface ComposerToolPreferences {
     reload: () => void;
 }
 
-// The user's disabled tool providers, shared by every control that shows them: the composer's
-// Tools submenu, the RHS title's tools popover and the Agents chat header's. One copy, so a toggle
-// in one shows in the others, and one load at a time however many are mounted.
+// The user's disabled tool providers, shared by every control that shows them: the RHS title's
+// tools popover and the Agents chat header's. One copy, so a toggle in one shows in the other, and
+// one load at a time however many are mounted.
 interface Snapshot {
     status: ToolPreferencesStatus;
     disabledServers: string[];

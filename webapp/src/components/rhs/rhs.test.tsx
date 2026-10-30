@@ -8,15 +8,12 @@ import {createStore, type Store} from 'redux';
 
 import {aiThreads} from '@/redux';
 
-import {fakeHostTextboxRenders} from '../../../tests/fake_host_textbox';
-
 import Rhs from './rhs';
 
 const mockGetAIThreads = jest.fn();
 const mockGetUserMCPTools = jest.fn();
 const mockGetUserToolPreferences = jest.fn();
 const mockUpdateRead = jest.fn();
-const mockCreatePost = jest.fn();
 const mockRenameConversation = jest.fn();
 const mockGetPostsByIds = jest.fn();
 
@@ -24,7 +21,6 @@ jest.mock('@/client', () => ({
     getAIThreads: () => mockGetAIThreads(),
     getUserMCPTools: () => mockGetUserMCPTools(),
     getUserToolPreferences: () => mockGetUserToolPreferences(),
-    createPost: (...args: unknown[]) => mockCreatePost(...args),
     getProfilesByIds: () => Promise.resolve([]),
     getPostsByIds: (ids: string[]) => mockGetPostsByIds(ids),
     renameConversation: (id: string, title: string) => mockRenameConversation(id, title),
@@ -60,7 +56,6 @@ jest.mock('@/mm_webapp', () => {
     const ReactActual = jest.requireActual<typeof import('react')>('react');
 
     return {
-        Textbox: jest.requireActual('../../../tests/fake_host_textbox').FakeHostTextbox,
         ThreadViewer: (props: Record<string, unknown>) => {
             mockThreadViewer(props);
             return ReactActual.createElement('div', {'data-testid': 'rhs-thread-viewer'});
@@ -344,13 +339,11 @@ describe('RHS', () => {
     });
 
     test.each([
-        {name: 'the thread is in the agent\'s DM', post: {channel_id: 'dm-channel-id', user_id: 'user-id'}, label: 'Reply to Agents'},
-        {name: 'the agent started the thread', post: {channel_id: 'other-dm', user_id: 'bot-id'}, label: 'Reply to Agents'},
-        {name: 'the agent is unknown', post: {channel_id: 'other-dm', user_id: 'user-id'}, label: 'Reply'},
-        {name: 'it is a channel thread the agent was mentioned in', post: {channel_id: 'town-square', user_id: 'user-id'}, label: 'Reply'},
-    ])('replies from the pill composer into the selected thread when $name', async ({post, label}) => {
-        window.sessionStorage.clear();
-        mockCreatePost.mockResolvedValue({id: 'reply-id'});
+        {name: 'the thread is in the agent\'s DM', post: {channel_id: 'dm-channel-id', user_id: 'user-id'}, placeholder: 'Reply to Agents'},
+        {name: 'the agent started the thread', post: {channel_id: 'other-dm', user_id: 'bot-id'}, placeholder: 'Reply to Agents'},
+        {name: 'the agent is unknown', post: {channel_id: 'other-dm', user_id: 'user-id'}, placeholder: 'Reply…'},
+        {name: 'it is a channel thread the agent was mentioned in', post: {channel_id: 'town-square', user_id: 'user-id'}, placeholder: 'Reply…'},
+    ])('the host thread viewer brings its own reply composer when $name', async ({post, placeholder}) => {
         const state = {
             ...baseState,
             entities: {...baseState.entities, posts: {...baseState.entities.posts, posts: {'post-id': {...baseState.entities.posts.posts['post-id'], ...post}}}},
@@ -358,28 +351,8 @@ describe('RHS', () => {
         setState(state);
 
         const {unmount} = renderRHS();
-        const reply = screen.getByRole('textbox', {name: label});
-        fireEvent.change(reply, {target: {value: 'follow up'}});
-        await act(async () => {
-            fireEvent.keyDown(reply, {key: 'Enter'});
-        });
-        expect(mockCreatePost).toHaveBeenCalledWith(expect.objectContaining({channel_id: post.channel_id, root_id: 'post-id', message: 'follow up'}));
+        expect(mockThreadViewer).toHaveBeenLastCalledWith(expect.objectContaining({rootPostId: 'post-id', inputPlaceholder: placeholder}));
 
-        // Autocomplete and slash commands are scoped to that thread.
-        expect(fakeHostTextboxRenders[fakeHostTextboxRenders.length - 1]).toEqual(expect.objectContaining({channelId: post.channel_id, rootId: 'post-id'}));
-
-        await act(async () => {
-            unmount();
-        });
-    });
-
-    test('offers no reply composer until the thread root is loaded', async () => {
-        const state = {...baseState, entities: {...baseState.entities, posts: {posts: {}, postsInThread: {}}}};
-        setState(state);
-
-        const {unmount} = renderRHS();
-        expect(screen.getByTestId('rhs-thread-viewer')).toBeTruthy();
-        expect(screen.queryByRole('textbox')).toBeNull();
         await act(async () => {
             unmount();
         });

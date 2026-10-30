@@ -14,6 +14,10 @@ export interface ThreadScroll {
     // The host thread viewer is scrolled away from its newest content.
     scrolledUp: boolean;
     scrollToBottom: () => void;
+
+    // How far the scroller's bottom edge sits above the pane's (in px): the height of what the host
+    // renders under the messages, its reply composer. Floating controls over the messages sit above it.
+    bottomInset: number;
 }
 
 // Follows the host thread viewer's scroll container inside `paneRef`: scroll events (they do not
@@ -22,6 +26,7 @@ export interface ThreadScroll {
 // does, so it is looked up again whenever the pane's markup changes.
 export function useThreadScroll(paneRef: RefObject<HTMLElement | null>): ThreadScroll {
     const [scrolledUp, setScrolledUp] = useState(false);
+    const [bottomInset, setBottomInset] = useState(0);
 
     useEffect(() => {
         const pane = paneRef.current;
@@ -34,8 +39,10 @@ export function useThreadScroll(paneRef: RefObject<HTMLElement | null>): ThreadS
         function measure() {
             if (!scroller) {
                 setScrolledUp(false);
+                setBottomInset(0);
                 return;
             }
+            setBottomInset(Math.max(0, Math.round(pane!.getBoundingClientRect().bottom - scroller.getBoundingClientRect().bottom)));
             const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
             setScrolledUp(distance > SCROLLED_UP_THRESHOLD_PX);
         }
@@ -95,5 +102,5 @@ export function useThreadScroll(paneRef: RefObject<HTMLElement | null>): ThreadS
         scroller?.scrollTo({top: scroller.scrollHeight, behavior: 'smooth'});
     }, [paneRef]);
 
-    return {scrolledUp, scrollToBottom};
+    return {scrolledUp, scrollToBottom, bottomInset};
 }

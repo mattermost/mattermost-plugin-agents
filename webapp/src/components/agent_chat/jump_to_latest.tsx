@@ -21,12 +21,15 @@ interface JumpToLatestProps {
     // Otherwise it is a plain down-arrow button.
     responding: boolean;
     agentName: string;
+
+    // Space (px) under the message area taken by the composer, which the button floats above.
+    bottomInset?: number;
     onClick: () => void;
 }
 
 // Floats above the composer whenever the user is scrolled up. One click scrolls to the newest
 // message.
-const JumpToLatest = ({visible, responding, agentName, onClick}: JumpToLatestProps) => {
+const JumpToLatest = ({visible, responding, agentName, bottomInset = 0, onClick}: JumpToLatestProps) => {
     const intl = useIntl();
 
     // Not shown, but announced to screen readers.
@@ -35,6 +38,7 @@ const JumpToLatest = ({visible, responding, agentName, onClick}: JumpToLatestPro
 
     return (
         <Floating
+            $bottomInset={bottomInset}
             data-testid='jump-to-latest'
             data-visible={visible}
         >
@@ -68,12 +72,12 @@ const JumpToLatest = ({visible, responding, agentName, onClick}: JumpToLatestPro
 
 export default JumpToLatest;
 
-// Sits at the bottom of the message area, so just above the composer; only the pill takes clicks.
+// Sits at the bottom of the message area, just above the composer; only the pill takes clicks.
 // Hidden, it also leaves the tab order (visibility) once its fade has finished.
-const Floating = styled.div`
+const Floating = styled.div<{$bottomInset: number}>`
     position: absolute;
     right: 0;
-    bottom: var(--spacing-m);
+    bottom: calc(${({$bottomInset}) => $bottomInset}px + var(--spacing-m));
     left: 0;
     z-index: 2;
     display: flex;

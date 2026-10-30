@@ -43,7 +43,7 @@ jest.mock('react-intl', () => {
 jest.mock('@/client', () => ({
     doPostbackSummary: jest.fn(),
     doRegenerate: jest.fn(),
-    doStopGenerating: jest.fn(),
+    doStopGenerating: jest.fn(() => Promise.resolve()),
 }));
 
 jest.mock('@/license', () => ({
@@ -1505,9 +1505,9 @@ describe('LLMBotPost stopped generation notice', () => {
 
 describe('LLMBotPost Stop in agent chat surfaces', () => {
     test.each([
-        {name: 'no surface (Channels DM, host RHS)', wrap: false, stopShown: true},
-        {name: 'an agent chat view, whose composer stops', wrap: true, stopShown: false},
-    ])('while generating, $name', ({wrap, stopShown}) => {
+        {name: 'no surface (Channels DM, host RHS)', wrap: false},
+        {name: 'an agent chat view (the host composer has no Stop)', wrap: true},
+    ])('while generating, $name shows the post\'s Stop', ({wrap}) => {
         mockUseConversation.mockReturnValue({conversation: makeConversation([]), loading: false, error: null});
         let listener: PostUpdateHandler | undefined;
         const post = (
@@ -1528,7 +1528,7 @@ describe('LLMBotPost Stop in agent chat surfaces', () => {
             listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
             listener?.(postUpdateMessage({post_id: 'post_1', next: 'Partial'}));
         });
-        expect(screen.queryByTestId('stop-generating-button') !== null).toBe(stopShown);
+        expect(screen.queryByTestId('stop-generating-button')).not.toBeNull();
     });
 });
 

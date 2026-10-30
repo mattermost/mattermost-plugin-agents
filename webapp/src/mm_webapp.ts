@@ -25,8 +25,4 @@ export const MenuItem = (window as any).Components?.MenuItem;
 
 export const MenuSeparator = (window as any).Components?.MenuSeparator;
 
-// The host's suggestion-box textarea (components/textbox): @mention, ~channel,
-// :emoji: and slash command autocomplete. Absent on hosts that do not publish it.
-export const Textbox = (window as any).Components?.Textbox;
-
 export const useWebSocketClient = (window as any).ProductApi?.useWebSocketClient;

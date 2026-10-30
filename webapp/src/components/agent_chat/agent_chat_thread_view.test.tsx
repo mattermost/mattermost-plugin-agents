@@ -8,11 +8,6 @@ import {act, fireEvent, render, screen} from '@testing-library/react';
 
 import AgentChatThreadView from './agent_chat_thread_view';
 
-const mockCreatePost = jest.fn();
-jest.mock('@/client', () => ({
-    createPost: (...args: unknown[]) => mockCreatePost(...args),
-}));
-
 const mockThreadViewerProps = jest.fn();
 jest.mock('@/mm_webapp', () => {
     const ReactActual = jest.requireActual<typeof import('react')>('react');
@@ -133,45 +128,12 @@ describe('AgentChatThreadView', () => {
     });
 
     test.each([
-        {layout: 'page' as const, isThreadView: true},
-        {layout: 'panel' as const, isThreadView: false},
-    ])('$layout: renders the host thread and a reply composer that posts into the thread', async ({layout, isThreadView}) => {
-        mockCreatePost.mockResolvedValue({id: 'reply1'});
-        renderView({layout, isThreadView});
+        {layout: 'page' as const, isThreadView: true, agentName: 'Matty', placeholder: 'Reply to Matty'},
+        {layout: 'panel' as const, isThreadView: false, agentName: '', placeholder: 'Reply…'},
+    ])('$layout: the host thread viewer renders the thread and its own reply composer', ({layout, isThreadView, agentName, placeholder}) => {
+        renderView({layout, isThreadView, agentName});
 
-        expect(screen.getByTestId('thread-pane')).toBeTruthy();
-        expect(mockThreadViewerProps).toHaveBeenCalledWith(expect.objectContaining({rootPostId: 'root1', isThreadView}));
-
-        const reply = screen.getByRole('textbox', {name: 'Reply to Matty'}) as HTMLTextAreaElement;
-        fireEvent.change(reply, {target: {value: 'more please'}});
-        await act(async () => {
-            fireEvent.keyDown(reply, {key: 'Enter'});
-        });
-        expect(mockCreatePost).toHaveBeenCalledWith(expect.objectContaining({channel_id: 'dm1', root_id: 'root1', message: 'more please'}));
-        expect(reply.value).toBe('');
-        expect(document.activeElement).toBe(reply);
-    });
-
-    test('waits for the channel before offering the composer', () => {
-        renderView({channelId: ''});
-        expect(screen.getByTestId('thread-viewer')).toBeTruthy();
-        expect(screen.queryByRole('textbox')).toBeNull();
-    });
-
-    test('switching threads starts with an empty composer', () => {
-        const {rerender} = renderView();
-        fireEvent.change(screen.getByRole('textbox', {name: 'Reply to Matty'}), {target: {value: 'draft'}});
-        rerender(
-            <Provider store={store}>
-                <AgentChatThreadView
-                    channelId='dm1'
-                    rootId='root2'
-                    agentName='Matty'
-                    layout='panel'
-                    isThreadView={false}
-                />
-            </Provider>,
-        );
-        expect((screen.getByRole('textbox', {name: 'Reply to Matty'}) as HTMLTextAreaElement).value).toBe('');
+        expect(screen.getByTestId('thread-pane').contains(screen.getByTestId('thread-viewer'))).toBe(true);
+        expect(mockThreadViewerProps).toHaveBeenLastCalledWith(expect.objectContaining({rootPostId: 'root1', isThreadView, inputPlaceholder: placeholder}));
     });
 });

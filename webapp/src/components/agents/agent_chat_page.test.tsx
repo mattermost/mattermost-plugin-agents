@@ -12,6 +12,8 @@ import manifest from '@/manifest';
 
 import {NEW_CHAT_GREETINGS} from '../agent_chat/agent_new_chat';
 
+import {fakeAdvancedTextEditorUploads, lastAdvancedTextEditorProps} from '../../../tests/fake_advanced_text_editor';
+
 import AgentChatPage from './agent_chat_page';
 
 const mockGetBotDirectChannel = jest.fn();
@@ -20,20 +22,14 @@ const mockUpdateRead = jest.fn();
 const mockGetChannel = jest.fn();
 const mockGetChannelMember = jest.fn();
 const mockGetRolesByNames = jest.fn();
-const mockCreatePost = jest.fn();
 const mockGetAgents = jest.fn();
 const mockGetServices = jest.fn();
-const mockUploadFile = jest.fn();
 
 jest.mock('@/client', () => ({
-    uploadFile: (...args: unknown[]) => mockUploadFile(...args),
-    getFileThumbnailUrl: (id: string) => `/files/${id}/thumbnail`,
-    FileUploadAbortedError: class extends Error {},
     getBotDirectChannel: (...args: unknown[]) => mockGetBotDirectChannel(...args),
     getPost: (...args: unknown[]) => mockGetPost(...args),
     updateRead: (...args: unknown[]) => mockUpdateRead(...args),
     getProfilePictureUrl: (id: string) => `/users/${id}/image`,
-    createPost: (...args: unknown[]) => mockCreatePost(...args),
     getAgents: (...args: unknown[]) => mockGetAgents(...args),
     getServices: (...args: unknown[]) => mockGetServices(...args),
     getConversation: jest.fn(() => new Promise(() => null)),
@@ -59,6 +55,7 @@ const mockThreadViewerProps = jest.fn();
 jest.mock('@/mm_webapp', () => {
     const ReactActual = jest.requireActual<typeof import('react')>('react');
     return {
+        AdvancedTextEditor: jest.requireActual('../../../tests/fake_advanced_text_editor').FakeAdvancedTextEditor,
         ThreadViewer: (props: Record<string, unknown>) => {
             mockThreadViewerProps(props);
             return ReactActual.createElement('div', {'data-testid': 'thread-viewer'});
@@ -217,7 +214,7 @@ describe('AgentChatPage', () => {
     test('fails closed for an agent the user cannot access', () => {
         const {toAll} = renderPage(makeStore({bots: [makeBot('other', 'dm-other')]}));
         expect(screen.getByText('This agent isn\'t available')).toBeTruthy();
-        expect(screen.queryByRole('textbox')).toBeNull();
+        expect(screen.queryByTestId('host-advanced-text-editor')).toBeNull();
         expect(mockGetAgents).not.toHaveBeenCalled();
         fireEvent.click(screen.getByRole('button', {name: 'View all agents'}));
         expect(toAll).toHaveBeenCalled();
@@ -231,9 +228,9 @@ describe('AgentChatPage', () => {
         mockGetRolesByNames.mockResolvedValue([{name: 'channel_admin'}]);
 
         const {toChat} = renderPage(store);
-        expect(screen.queryByRole('textbox')).toBeNull();
+        expect(screen.queryByTestId('host-advanced-text-editor')).toBeNull();
 
-        const composer = await screen.findByRole('textbox', {name: 'Message Agent bot1'});
+        await screen.findByTestId('host-advanced-text-editor');
         expect(mockGetBotDirectChannel).toHaveBeenCalledWith('me', 'bot1');
         const state = store.getState() as any;
         expect(state[pluginKey].bots[0].dmChannelID).toBe('dm1');
@@ -242,47 +239,62 @@ describe('AgentChatPage', () => {
         expect(mockGetRolesByNames).toHaveBeenCalledWith(['channel_admin']);
         expect(state.entities.roles.roles.channel_admin).toBeTruthy();
 
-        // A root post (root_id '') in the agent's DM, which is what makes the agent answer.
+        // The host composer posts a root post (root_id '') in the agent's DM, which is what makes the agent answer.
+        expect(lastAdvancedTextEditorProps()).toEqual(expect.objectContaining({channelId: 'dm1', rootId: ''}));
         await waitFor(() => expect(mockGetAIThreads).toHaveBeenCalled());
         const listLoads = mockGetAIThreads.mock.calls.length;
-        mockCreatePost.mockResolvedValue({id: 'new-root'});
-        fireEvent.change(composer, {target: {value: 'hello'}});
-        await act(async () => {
-            fireEvent.keyDown(composer, {key: 'Enter'});
+        act(() => {
+            lastAdvancedTextEditorProps().afterSubmit?.({created: {id: 'new-root'}});
         });
-        expect(mockCreatePost).toHaveBeenCalledWith(expect.objectContaining({channel_id: 'dm1', root_id: '', message: 'hello'}));
         expect(toChat).toHaveBeenCalledWith('bot1', 'new-root');
 
         // The chat lists refetch to pick up the new chat.
         expect(mockGetAIThreads).toHaveBeenCalledTimes(listLoads + 1);
     });
 
-    test('a file dropped anywhere on the chat uploads to the DM and goes out with the post', async () => {
+    test('a file dropped anywhere on the chat goes to the host composer\'s file input', async () => {
+        fakeAdvancedTextEditorUploads.length = 0;
         mockGetBotDirectChannel.mockResolvedValue('dm1');
         mockGetChannel.mockResolvedValue({id: 'dm1'});
         mockGetChannelMember.mockResolvedValue({channel_id: 'dm1', roles: 'channel_user'});
-        mockUploadFile.mockReturnValue({promise: Promise.resolve({id: 'file1'}), abort: jest.fn()});
-        mockCreatePost.mockResolvedValue({id: 'new-root'});
         renderPage(makeStore({bots: [makeBot('bot1', '')]}));
-        const composer = await screen.findByRole('textbox', {name: 'Message Agent bot1'});
+        const input = await screen.findByLabelText<HTMLInputElement>('Upload files');
 
-        const dataTransfer = {types: ['Files'], files: [new File(['hi'], 'notes.txt', {type: 'text/plain'})], dropEffect: ''};
+        // jsdom only takes a real FileList: keep what the drop zone hands over.
+        let handed: unknown = null;
+        Object.defineProperty(input, 'files', {
+            configurable: true,
+            get: () => handed,
+            set: (v) => {
+                handed = v;
+            },
+        });
+        const file = new File(['hi'], 'notes.txt', {type: 'text/plain'});
+        const dataTransfer = {types: ['Files'], files: [file], dropEffect: ''};
         await act(async () => {
             fireEvent.drop(screen.getByTestId('agent-chat-file-drop-zone'), {dataTransfer});
         });
-        expect(mockUploadFile).toHaveBeenCalledWith(expect.any(File), 'dm1', expect.any(String), expect.any(Function));
+        expect(fakeAdvancedTextEditorUploads).toEqual([[file]]);
+    });
 
-        await act(async () => {
-            fireEvent.keyDown(composer, {key: 'Enter'});
-        });
-        expect(mockCreatePost).toHaveBeenCalledWith(expect.objectContaining({channel_id: 'dm1', root_id: '', message: '', file_ids: ['file1']}));
+    test('a file drag shows no drop overlay while there is no composer to take it', async () => {
+        fakeAdvancedTextEditorUploads.length = 0;
+        mockGetBotDirectChannel.mockRejectedValue(new Error('nope'));
+        jest.spyOn(console, 'error').mockImplementation(() => null);
+        renderPage(makeStore({bots: [makeBot('bot1', '')]}));
+        await screen.findByText('Couldn\'t open this chat');
+
+        const dataTransfer = {types: ['Files'], files: [new File(['hi'], 'notes.txt')], dropEffect: ''};
+        fireEvent.dragEnter(screen.getByTestId('agent-chat-file-drop-zone'), {dataTransfer});
+        expect(screen.queryByTestId('agent-chat-drop-overlay')).toBeNull();
+        expect(fakeAdvancedTextEditorUploads).toEqual([]);
     });
 
     test('shows an error and no composer when the DM channel cannot be created', async () => {
         mockGetBotDirectChannel.mockRejectedValue(new Error('nope'));
         renderPage(makeStore({bots: [makeBot('bot1', '')]}));
         expect(await screen.findByText('Couldn\'t open this chat')).toBeTruthy();
-        expect(screen.queryByRole('textbox')).toBeNull();
+        expect(screen.queryByTestId('host-advanced-text-editor')).toBeNull();
     });
 
     test('ignores a superseded DM channel response after switching agents', async () => {
@@ -292,28 +304,21 @@ describe('AgentChatPage', () => {
 
         const {rerender} = renderPage(store);
         rerender({botId: 'bot2'});
-        const composer = await screen.findByRole('textbox', {name: 'Message Agent bot2'});
+        await screen.findByText('Message Agent bot2');
 
         await act(async () => {
             pending.resolve('dm1');
         });
         expect((store.getState() as any)[pluginKey].bots[0].dmChannelID).toBe('');
-
-        mockCreatePost.mockResolvedValue({id: 'r2'});
-        fireEvent.change(composer, {target: {value: 'hi'}});
-        await act(async () => {
-            fireEvent.keyDown(composer, {key: 'Enter'});
-        });
-        expect(mockCreatePost).toHaveBeenCalledWith(expect.objectContaining({channel_id: 'dm2'}));
+        expect(lastAdvancedTextEditorProps()).toEqual(expect.objectContaining({channelId: 'dm2'}));
     });
 
-    test('auto-focuses the composer and keeps the greeting stable across re-renders', async () => {
+    test('keeps the greeting stable across re-renders', async () => {
         const random = jest.spyOn(Math, 'random').mockReturnValue(0.99);
         const store = makeStore({bots: [makeBot('bot1', 'dm1')], loadedChannels: ['dm1']});
         const {rerender} = renderPage(store);
 
-        const composer = await screen.findByRole('textbox', {name: 'Message Agent bot1'});
-        expect(document.activeElement).toBe(composer);
+        await screen.findByTestId('host-advanced-text-editor');
         expect(screen.getByRole('heading', {level: 2}).textContent).toBe(titles[titles.length - 1]);
 
         random.mockReturnValue(0);
@@ -470,7 +475,7 @@ describe('AgentChatPage', () => {
             mockGetAgents.mockRejectedValue(new Error('403'));
         }
         renderPage(makeStore({bots: [makeBot('bot1', 'dm1')], loadedChannels: ['dm1'], systemPermissions: permissions}));
-        await screen.findByRole('textbox', {name: 'Message Agent bot1'});
+        await screen.findByTestId('host-advanced-text-editor');
         await waitFor(() => expect(mockGetAgents).toHaveBeenCalled());
 
         // Let the lookup settle before reading the menu.
@@ -488,7 +493,7 @@ describe('AgentChatPage', () => {
         mockGetAgents.mockResolvedValue({agents: [agent({creatorID: 'me'})]});
         mockGetServices.mockResolvedValue([{id: 'svc1'}]);
         renderPage(makeStore({bots: [makeBot('bot1', 'dm1')], loadedChannels: ['dm1'], systemPermissions: ['manage_own_agent']}));
-        const composer = await screen.findByRole('textbox', {name: 'Message Agent bot1'});
+        const composer = await screen.findByTestId('host-advanced-text-editor');
         await act(async () => {
             await Promise.resolve();
         });
@@ -500,11 +505,11 @@ describe('AgentChatPage', () => {
         expect(mockConfigViewProps).toHaveBeenLastCalledWith(expect.objectContaining({mode: 'edit', variant: 'modal', services: [{id: 'svc1'}]}));
 
         // The chat is still there (hidden from assistive tech behind the modal), the same element.
-        expect(screen.getByRole('textbox', {name: 'Message Agent bot1', hidden: true})).toBe(composer);
+        expect(screen.getByTestId('host-advanced-text-editor')).toBe(composer);
 
         fireEvent.click(screen.getByRole('button', {name: 'Back'}));
         await waitFor(() => expect(screen.queryByText('config for agent1')).toBeNull());
-        expect(screen.getByRole('textbox', {name: 'Message Agent bot1'})).toBe(composer);
+        expect(screen.getByTestId('host-advanced-text-editor')).toBe(composer);
     });
 
     test('the thread renders inside the chat wrapper that carries the bubble and width styles', async () => {

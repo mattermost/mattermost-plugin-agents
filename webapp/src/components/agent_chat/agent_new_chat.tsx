@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState} from 'react';
+import React, {useCallback, useState} from 'react';
 import {defineMessages, useIntl, type MessageDescriptor} from 'react-intl';
 import styled, {css, keyframes} from 'styled-components';
 
@@ -9,9 +9,9 @@ import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
 import {getProfilePictureUrl} from '@/client';
 import type {LLMBot} from '@/bots';
+import {AdvancedTextEditor} from '@/mm_webapp';
 
-import {CHAT_CONTENT_MAX_WIDTH} from './agent_chat_host_styles';
-import AgentChatComposer from './agent_chat_composer';
+import {CHAT_CONTENT_MAX_WIDTH, HOST_COMPOSER_CONTAINER_CLASS, hostComposerInset} from './agent_chat_host_styles';
 
 // Greeting pairs for the new-chat state. The titles are the prototype's
 // EMPTY_CHAT_TITLES; each subtitle belongs to its title, so both are picked
@@ -53,15 +53,27 @@ interface AgentNewChatProps {
     channelId: string;
     onCreated: (rootId: string) => void;
     layout: AgentNewChatLayout;
-
-    // Extra content under the composer (e.g. the RHS pinned prompt buttons).
-    children?: React.ReactNode;
 }
 
-// The new-chat state: the agent's avatar, a greeting, and the pill composer,
-// centered until the first post creates the thread.
-const AgentNewChat = ({bot, channelId, onCreated, layout, children}: AgentNewChatProps) => {
+// What the host composer's afterSubmit receives (actions/views/create_comment.tsx
+// SubmitPostReturnType): the created post for a message, nothing for a slash command.
+interface HostSubmitResult {
+    created?: {id?: string};
+}
+
+// The new-chat state: the agent's avatar, a greeting, and the host's message
+// composer (AdvancedTextEditor), centered until the first post creates the
+// thread. The composer posts a root post to the agent's DM, exactly as the
+// Channels DM composer does (drafts, uploads, slash commands, AI actions
+// included), and its afterSubmit opens the new thread.
+const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) => {
     const intl = useIntl();
+
+    const afterSubmit = useCallback((result: HostSubmitResult) => {
+        if (result?.created?.id) {
+            onCreated(result.created.id);
+        }
+    }, [onCreated]);
 
     // One index per mount picks title and subtitle together, so they always
     // match and re-renders don't change them.
@@ -84,13 +96,21 @@ const AgentNewChat = ({bot, channelId, onCreated, layout, children}: AgentNewCha
                     <EmptySubtitle>{intl.formatMessage(greeting.subtitle)}</EmptySubtitle>
                 </Greeting>
             </EmptyIntro>
-            <AgentChatComposer
-                channelId={channelId}
-                agentName={bot.displayName}
-                bot={bot}
-                onCreated={onCreated}
-            />
-            {children}
+            {AdvancedTextEditor && (
+                <Composer
+                    className={HOST_COMPOSER_CONTAINER_CLASS}
+                    data-testid='agent-chat-new-composer'
+                >
+                    {/* In the RHS, RHS_COMMENT makes the host treat it as the RHS composer (focus, ids, suggestion list). */}
+                    <AdvancedTextEditor
+                        location={layout === 'page' ? 'CENTER' : 'RHS_COMMENT'}
+                        channelId={channelId}
+                        rootId=''
+                        placeholder={intl.formatMessage({defaultMessage: 'Message {name}'}, {name: bot.displayName})}
+                        afterSubmit={afterSubmit}
+                    />
+                </Composer>
+            )}
         </EmptyChat>
     );
 };
@@ -143,6 +163,16 @@ const EmptyChat = styled.div<{$layout: AgentNewChatLayout}>`
     @media (prefers-reduced-motion: reduce) {
         animation: none;
     }
+`;
+
+// The host composer fills the column; the column's own padding is its inset, so the host's is
+// removed. The host wrapper's own background and radius stay.
+const Composer = styled.div`
+    && {
+        width: 100%;
+    }
+
+    ${hostComposerInset('0')}
 `;
 
 const EmptyIntro = styled.div`
