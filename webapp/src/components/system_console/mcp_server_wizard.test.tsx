@@ -505,6 +505,18 @@ describe('MCPServerWizard edit mode', () => {
         expect((screen.getByRole('button', {name: 'Auto-fill from server'}) as HTMLButtonElement).disabled).toBe(true);
     });
 
+    test('a connection error after a sign-in-ending edit lets the admin fix the details', async () => {
+        mockGetMCPServerTools.mockResolvedValue(discoveredServer({tools: [], error: 'could not connect to the MCP server'}));
+        renderWizard({kind: 'edit', server: saved}, ['Tracker'], [saved]);
+
+        fireEvent.change(await screen.findByDisplayValue('Tracker'), {target: {value: 'Tracker 2'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Save and sign in again'}));
+
+        fireEvent.click(await screen.findByRole('button', {name: 'Edit details'}));
+        expect(screen.getByDisplayValue('Tracker 2')).not.toBeNull();
+    });
+
     test('a server that is no longer saved cannot be edited', async () => {
         const {onPersist} = renderWizard({kind: 'edit', server: saved}, ['Tracker'], []);
 

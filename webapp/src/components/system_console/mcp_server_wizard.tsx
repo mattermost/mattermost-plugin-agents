@@ -575,7 +575,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                     description={connection.message}
                     primaryButtonLabel={<FormattedMessage defaultMessage='Try again'/>}
                     onPrimaryAction={() => savedServer && discover(savedServer)}
-                    secondaryButtonLabel={mode.kind === 'add' ? <FormattedMessage defaultMessage='Edit details'/> : null}
+                    secondaryButtonLabel={mode.kind === 'review' ? null : <FormattedMessage defaultMessage='Edit details'/>}
                     onSecondaryAction={() => setStep('details')}
                 />
             );
