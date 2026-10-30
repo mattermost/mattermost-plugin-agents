@@ -21,6 +21,16 @@ import {MCPToolConfig, MCPToolInfo} from './mcp_types';
 
 type ToolPolicy = MCPToolConfig['policy'];
 
+// useToolPolicyOptions returns the approval policy choices, in display order.
+export const useToolPolicyOptions = () => {
+    const intl = useIntl();
+    return [
+        {value: 'auto_run_in_dm', label: intl.formatMessage({defaultMessage: 'Auto Run (DM)'})},
+        {value: 'auto_run_everywhere', label: intl.formatMessage({defaultMessage: 'Auto Run (Everywhere)'})},
+        {value: 'ask', label: intl.formatMessage({defaultMessage: 'Ask Every Time'})},
+    ];
+};
+
 type MCPToolConfigRowProps = {
     tool: MCPToolInfo;
     toolConfig: MCPToolConfig;
@@ -32,6 +42,7 @@ type MCPToolConfigRowProps = {
 const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled, displayName}: MCPToolConfigRowProps) => {
     const intl = useIntl();
     const approvalPoliciesLicensed = useIsLicensedFor('tool_approval_policies');
+    const policyOptions = useToolPolicyOptions();
     const [schemaExpanded, setSchemaExpanded] = useState(false);
     const overrideInputId = useId();
 
@@ -96,11 +107,7 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
                                     {defaultMessage: 'Approval policy for {toolName}'},
                                     {toolName: displayName ?? tool.name},
                                 )}
-                                options={[
-                                    {value: 'auto_run_in_dm', label: intl.formatMessage({defaultMessage: 'Auto Run (DM)'})},
-                                    {value: 'auto_run_everywhere', label: intl.formatMessage({defaultMessage: 'Auto Run (Everywhere)'})},
-                                    {value: 'ask', label: intl.formatMessage({defaultMessage: 'Ask Every Time'})},
-                                ]}
+                                options={policyOptions}
                             />
                         </PolicySelectContainer>
                         {!approvalPoliciesLicensed && (

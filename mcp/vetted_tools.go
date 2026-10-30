@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -25,8 +26,11 @@ func IsRemoteServerOrigin(origin string) bool {
 // Only Mattermost-curated READ-only tools are seeded. Most are enabled with
 // policy auto_run_in_dm; GitHub security-scanning reads default to policy ask
 // (admins may switch). Non-READ tools are intentionally not persisted here;
-// tools without config fall back to the runtime default of policy="ask",
-// enabled=true until an admin explicitly configures them.
+// tools without config fall back to DefaultToolPolicy (ask, or
+// auto_run_in_dm when the server marks the tool read-only), enabled=true,
+// until an admin explicitly configures them. A remote server whose read
+// tools are all verified to carry readOnlyHint needs no seed for them; only
+// deliberate exceptions (such as GitHub's security reads) stay listed.
 func SeedVettedToolConfigs(baseURL string) []ToolConfig {
 	if baseURL == EmbeddedClientKey {
 		return cloneToolConfigs(mattermostVettedToolConfigs)
@@ -136,72 +140,26 @@ var githubSecurityAskTools = map[string]struct{}{
 }
 
 func buildGithubVettedToolConfigs() []ToolConfig {
-	orderedNames := []string{
-		"get_me",
-		"get_team_members",
-		"get_teams",
-		"get_commit",
-		"get_file_contents",
-		"get_latest_release",
-		"get_release_by_tag",
-		"get_tag",
-		"list_branches",
-		"list_commits",
-		"list_releases",
-		"list_tags",
-		"search_code",
-		"search_repositories",
-		"get_label",
-		"issue_read",
-		"list_issue_types",
-		"list_issues",
-		"search_issues",
-		"list_pull_requests",
-		"pull_request_read",
-		"search_pull_requests",
-		"search_users",
-		"actions_get",
-		"actions_list",
-		"get_job_logs",
-		"get_code_scanning_alert",
-		"list_code_scanning_alerts",
-		"get_dependabot_alert",
-		"list_dependabot_alerts",
-		"get_discussion",
-		"get_discussion_comments",
-		"list_discussion_categories",
-		"list_discussions",
-		"get_gist",
-		"list_gists",
-		"get_repository_tree",
-		"list_label",
-		"get_notification_details",
-		"list_notifications",
-		"search_orgs",
-		"projects_get",
-		"projects_list",
-		"get_secret_scanning_alert",
-		"list_secret_scanning_alerts",
-		"get_global_security_advisory",
-		"list_global_security_advisories",
-		"list_org_repository_security_advisories",
-		"list_repository_security_advisories",
-		"list_starred_repositories",
+	// Every other GitHub read tool is left to DefaultToolPolicy: the GitHub
+	// MCP server (github/github-mcp-server, checked at v1.14.0) sets
+	// readOnlyHint on all of its read tools, so they already auto-run in DMs.
+	// The security reads above are listed to keep them at ask despite the
+	// hint. These remaining reads exist only on the hosted server, so their
+	// annotations could not be checked from source.
+	unverifiedReadTools := []string{
 		"get_copilot_job_status",
 		"get_copilot_space",
 		"list_copilot_spaces",
 		"github_support_docs_search",
 	}
 
-	out := make([]ToolConfig, 0, len(orderedNames))
-	for _, name := range orderedNames {
-		if _, securityAsk := githubSecurityAskTools[name]; securityAsk {
-			out = append(out, askToolConfigs([]string{name})...)
-		} else {
-			out = append(out, autoRunInDMToolConfigs([]string{name})...)
-		}
+	securityNames := make([]string, 0, len(githubSecurityAskTools))
+	for name := range githubSecurityAskTools {
+		securityNames = append(securityNames, name)
 	}
-	return out
+	slices.Sort(securityNames)
+
+	return append(askToolConfigs(securityNames), autoRunInDMToolConfigs(unverifiedReadTools)...)
 }
 
 var githubVettedToolConfigs = buildGithubVettedToolConfigs()

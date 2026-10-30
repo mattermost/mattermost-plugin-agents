@@ -23,9 +23,9 @@ func TestSeedVettedToolConfigs(t *testing.T) {
 			wantCount: 20,
 		},
 		{
-			name:      "GitHub seeds 54 read tools",
+			name:      "GitHub seeds security reads and unverified hosted reads",
 			baseURL:   "https://api.githubcopilot.com/mcp/",
-			wantCount: 54,
+			wantCount: 12,
 		},
 		{
 			name:      "Figma seeds 8 read tools",
@@ -98,11 +98,13 @@ func TestSeedVettedToolConfigsSpotChecks(t *testing.T) {
 
 	t.Run("GitHub", func(t *testing.T) {
 		configs := SeedVettedToolConfigs("https://api.githubcopilot.com/mcp/")
-		requireToolConfig(t, configs, "get_me", ToolPolicyAutoRunInDM, true)
-		requireToolConfig(t, configs, "pull_request_read", ToolPolicyAutoRunInDM, true)
 		requireToolConfig(t, configs, "get_code_scanning_alert", ToolPolicyAsk, true)
 		requireToolConfig(t, configs, "list_repository_security_advisories", ToolPolicyAsk, true)
-		requireToolConfig(t, configs, "get_global_security_advisory", ToolPolicyAutoRunInDM, true)
+		requireToolConfig(t, configs, "list_copilot_spaces", ToolPolicyAutoRunInDM, true)
+		// Read tools the GitHub server annotates read-only are left to the
+		// readOnlyHint default instead of being seeded.
+		requireNoToolConfig(t, configs, "get_me")
+		requireNoToolConfig(t, configs, "pull_request_read")
 		requireNoToolConfig(t, configs, "create_repository")
 	})
 

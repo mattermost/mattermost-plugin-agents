@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render, screen} from '@testing-library/react';
+import {fireEvent, render, screen, within} from '@testing-library/react';
 
 // Minimal react-intl shim — see mcp_tools_viewer.test.tsx for rationale.
 jest.mock('react-intl', () => {
@@ -165,6 +165,107 @@ describe('MCPServerToolRow — unconfigured tool defaults', () => {
         expect(onServerConfigChange).toHaveBeenCalledWith(expect.objectContaining({
             tool_configs: [{name: 'list_things', policy: 'auto_run_in_dm', enabled: false}],
         }));
+    });
+});
+
+describe('MCPServerToolRow — grouped tools and bulk policy controls', () => {
+    const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+
+    beforeEach(() => {
+        useIsLicensedFor.mockReturnValue(true);
+    });
+
+    function makeRemoteServer(tools: MCPServerInfo['tools']): MCPServerInfo {
+        return {
+            name: 'Remote',
+            url: 'https://mcp.example.com',
+            serverType: 'remote',
+            enabled: true,
+            tools,
+            needsOAuth: false,
+            error: null,
+        };
+    }
+
+    const annotatedTools: MCPServerInfo['tools'] = [
+        {name: 'list_things', description: 'List', inputSchema: null, readOnlyHint: true, defaultPolicy: 'auto_run_in_dm'},
+        {name: 'get_thing', description: 'Get', inputSchema: null, readOnlyHint: true, defaultPolicy: 'auto_run_in_dm'},
+        {name: 'delete_thing', description: 'Delete', inputSchema: null, defaultPolicy: 'ask'},
+    ];
+
+    function makeRemoteConfig(toolConfigs: MCPServerConfig['tool_configs']): MCPServerConfig {
+        return {name: 'Remote', enabled: true, baseURL: 'https://mcp.example.com', headers: {}, tool_configs: toolConfigs};
+    }
+
+    test('groups tools by the read-only annotation with counts', () => {
+        renderRow(makeRemoteServer(annotatedTools), makeRemoteConfig([]));
+        fireEvent.click(screen.getByText('Remote'));
+
+        const readGroup = screen.getByRole('group', {name: 'Read-only tools'});
+        const writeGroup = screen.getByRole('group', {name: 'Write tools'});
+        expect(within(readGroup).getByText('list_things')).not.toBeNull();
+        expect(within(readGroup).getByText('get_thing')).not.toBeNull();
+        expect(within(readGroup).queryByText('delete_thing')).toBeNull();
+        expect(within(writeGroup).getByText('delete_thing')).not.toBeNull();
+        expect(within(readGroup).getByText('2')).not.toBeNull();
+    });
+
+    test('does not group a server that annotates no tool as read-only', () => {
+        const tools = annotatedTools.map((tool) => ({...tool, readOnlyHint: false}));
+        renderRow(makeRemoteServer(tools), makeRemoteConfig([]));
+        fireEvent.click(screen.getByText('Remote'));
+
+        expect(screen.queryByRole('group')).toBeNull();
+        expect(screen.getByText('delete_thing')).not.toBeNull();
+        expect(getSelect('Approval policy for all tools on Remote')).not.toBeNull();
+    });
+
+    test('group control sets only that group, keeping enabled state and overrides', () => {
+        const {onServerConfigChange} = renderRow(makeRemoteServer(annotatedTools), makeRemoteConfig([
+            {name: 'list_things', policy: 'auto_run_in_dm', enabled: false, retrieval_description_override: 'Lists things'},
+            {name: 'delete_thing', policy: 'ask', enabled: true},
+        ]));
+        fireEvent.click(screen.getByText('Remote'));
+
+        chooseOption(getSelect('Approval policy for all read-only tools on Remote'), 'Auto Run (Everywhere)');
+
+        expect(onServerConfigChange).toHaveBeenCalledTimes(1);
+        expect(onServerConfigChange.mock.calls[0][0].tool_configs).toEqual([
+            {name: 'list_things', policy: 'auto_run_everywhere', enabled: false, retrieval_description_override: 'Lists things'},
+            {name: 'delete_thing', policy: 'ask', enabled: true},
+            {name: 'get_thing', policy: 'auto_run_everywhere', enabled: true},
+        ]);
+    });
+
+    test('all-tools control sets every tool on the server', () => {
+        const {onServerConfigChange} = renderRow(makeRemoteServer(annotatedTools), makeRemoteConfig([]));
+        fireEvent.click(screen.getByText('Remote'));
+
+        chooseOption(getSelect('Approval policy for all tools on Remote'), 'Ask Every Time');
+
+        expect(onServerConfigChange.mock.calls[0][0].tool_configs).toEqual([
+            {name: 'list_things', policy: 'ask', enabled: true},
+            {name: 'get_thing', policy: 'ask', enabled: true},
+            {name: 'delete_thing', policy: 'ask', enabled: true},
+        ]);
+    });
+
+    test('bulk controls show the shared policy, or Mixed when tools differ', () => {
+        renderRow(makeRemoteServer(annotatedTools), makeRemoteConfig([]));
+        fireEvent.click(screen.getByText('Remote'));
+
+        expect(selectedLabel(getSelect('Approval policy for all read-only tools on Remote'))).toBe('Auto Run (DM)');
+        expect(selectedLabel(getSelect('Approval policy for all write tools on Remote'))).toBe('Ask Every Time');
+        expect(selectedLabel(getSelect('Approval policy for all tools on Remote'))).toBe('Mixed');
+    });
+
+    test('bulk controls are disabled without tool approval policies', () => {
+        useIsLicensedFor.mockImplementation((capability: string) => capability !== 'tool_approval_policies');
+        renderRow(makeRemoteServer(annotatedTools), makeRemoteConfig([]));
+        fireEvent.click(screen.getByText('Remote'));
+
+        expect((getSelect('Approval policy for all tools on Remote') as HTMLButtonElement).disabled).toBe(true);
+        expect((getSelect('Approval policy for all read-only tools on Remote') as HTMLButtonElement).disabled).toBe(true);
     });
 });
 
