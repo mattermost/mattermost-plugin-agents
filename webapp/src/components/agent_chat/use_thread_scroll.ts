@@ -40,16 +40,26 @@ export function useThreadScroll(paneRef: RefObject<HTMLElement | null>): ThreadS
             setScrolledUp(distance > SCROLLED_UP_THRESHOLD_PX);
         }
 
+        function observeRows() {
+            if (scroller) {
+                Array.from(scroller.children).forEach((child) => resizeObserver?.observe(child));
+            }
+        }
+
         function attach() {
             const found = pane!.querySelector<HTMLElement>(THREAD_SCROLLER_SELECTOR);
             if (found === scroller) {
                 return;
             }
             resizeObserver?.disconnect();
+            rowsObserver.disconnect();
             scroller = found;
             if (scroller) {
                 resizeObserver?.observe(scroller);
-                Array.from(scroller.children).forEach((child) => resizeObserver?.observe(child));
+                observeRows();
+
+                // Rows added later (direct children only, not their subtrees).
+                rowsObserver.observe(scroller, {childList: true});
             }
             measure();
         }
@@ -60,13 +70,22 @@ export function useThreadScroll(paneRef: RefObject<HTMLElement | null>): ThreadS
             }
         };
         pane.addEventListener('scroll', onScroll, true);
-        const mutationObserver = new MutationObserver(attach);
+
+        // The scroller renders after the pane. Once found, only its replacement needs a new
+        // lookup, so a mutation (every streamed frame) costs a connectivity check, not a query.
+        const rowsObserver = new MutationObserver(observeRows);
+        const mutationObserver = new MutationObserver(() => {
+            if (!scroller?.isConnected || !pane.contains(scroller)) {
+                attach();
+            }
+        });
         mutationObserver.observe(pane, {childList: true, subtree: true});
         attach();
 
         return () => {
             pane.removeEventListener('scroll', onScroll, true);
             mutationObserver.disconnect();
+            rowsObserver.disconnect();
             resizeObserver?.disconnect();
         };
     }, [paneRef]);

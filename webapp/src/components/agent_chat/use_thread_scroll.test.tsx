@@ -75,4 +75,47 @@ describe('useThreadScroll', () => {
 
         expect(scrollTo).toHaveBeenCalledWith({top: 1000, behavior: 'smooth'});
     });
+
+    describe('with a ResizeObserver', () => {
+        const original = global.ResizeObserver;
+        let observed: Array<{target: Element; callback: () => void}> = [];
+
+        beforeEach(() => {
+            observed = [];
+            global.ResizeObserver = class {
+                callback: () => void;
+                constructor(callback: () => void) {
+                    this.callback = callback;
+                }
+                observe(target: Element) {
+                    observed.push({target, callback: this.callback});
+                }
+                disconnect() {
+                    observed = observed.filter((o) => o.callback !== this.callback);
+                }
+            } as unknown as typeof ResizeObserver;
+        });
+
+        afterEach(() => {
+            global.ResizeObserver = original;
+        });
+
+        const resize = (target: Element) => observed.filter((o) => o.target === target).forEach((o) => o.callback());
+
+        test('a row added after mount still updates the state when it resizes', async () => {
+            render(<Probe/>);
+            const scroller = screen.getByTestId('scroller');
+            scrollerMetrics(scroller, {scrollHeight: 400, clientHeight: 400, scrollTop: 0});
+            const row = document.createElement('div');
+            await act(async () => {
+                scroller.appendChild(row);
+                await Promise.resolve();
+            });
+
+            scrollerMetrics(scroller, {scrollHeight: 1000, clientHeight: 400, scrollTop: 0});
+            act(() => resize(row));
+
+            expect(screen.getByTestId('state').textContent).toBe('up');
+        });
+    });
 });
