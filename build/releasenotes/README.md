@@ -38,9 +38,9 @@ On tag builds (`v*`) the `build/release-notes` step of that job then runs
    are also sent by commit subject only, because a PR's title and description
    can be edited after merge without review.
 4. Sends everything to the Anthropic Messages API with a prompt that fixes the
-   style: sections in the order `## Breaking changes and upgrade notes`,
-   `## New features`, `## Improvements`, `## Fixes`; empty sections omitted; one
-   terse line per item that states the user or admin-visible effect and ends with
+   style: sections in the order `## New features`,
+   `## Breaking changes and upgrade notes`, `## Improvements`, `## Fixes`; empty
+   sections omitted; one terse line (one or two sentences) per item that states the user or admin-visible effect and ends with
    its PR link; no emoji, exclamation marks or marketing words; no intro or
    summary; internal changes (CI, lint, tests, refactors, docs-only,
    dependency bumps without user impact) left out; experimental features marked
@@ -105,16 +105,16 @@ and sends it to `MATTERMOST_RELEASE_WEBHOOK_URL`:
 
 Requires Mattermost Server 12.0.0+.
 
-**Breaking changes and upgrade notes**
+**New features**
 - ...
 
-**New features**
+**Breaking changes and upgrade notes**
 - ...
 
 [Release notes and downloads](https://github.com/mattermost/mattermost-plugin-agents/releases/tag/v2.12.0) | [Documentation](...)
 ```
 
-Only the breaking-changes and new-features sections are included; with none,
+Only the new-features and breaking-changes sections are included; with none,
 the post says so and points to the release notes. No LLM is involved. If
 `MATTERMOST_RELEASE_WEBHOOK_URL` is unset the tool prints the post and exits 0.
 Pre-releases and `latest-master` are skipped.

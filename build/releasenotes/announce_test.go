@@ -16,11 +16,11 @@ import (
 )
 
 const sampleNotes = "Supported Mattermost Server Versions: **12.0.0+** \n\n" +
-	"## Breaking changes and upgrade notes\n" +
-	"- Renamed the `Old` setting to `New`. ([#5](https://github.com/o/r/pull/5))\n\n" +
 	"## New features\n" +
 	"- Added experimental ambient auto-reply. ([#1](https://github.com/o/r/pull/1))\n" +
 	"- Added agent version history. ([#2](https://github.com/o/r/pull/2))\n\n" +
+	"## Breaking changes and upgrade notes\n" +
+	"- Renamed the `Old` setting to `New`. ([#5](https://github.com/o/r/pull/5))\n\n" +
 	"## Improvements\n" +
 	"- Sped up search. ([#3](https://github.com/o/r/pull/3))\n\n" +
 	"## Fixes\n" +
@@ -94,6 +94,14 @@ func TestFormatAnnouncement(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFormatAnnouncementListsFeaturesFirst(t *testing.T) {
+	got := formatAnnouncement(announceOptions{Repo: "o/r", Tag: "v1.0.0", Notes: sampleNotes})
+	features, breaking := strings.Index(got, "**New features**"), strings.Index(got, "**Breaking changes and upgrade notes**")
+	require.NotEqual(t, -1, features)
+	require.NotEqual(t, -1, breaking)
+	assert.Less(t, features, breaking)
 }
 
 func TestFormatAnnouncementWithoutDocsURL(t *testing.T) {

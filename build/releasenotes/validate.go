@@ -17,7 +17,7 @@ const (
 	sectionFixes        = "## Fixes"
 )
 
-var sectionOrder = []string{sectionBreaking, sectionFeatures, sectionImprovements, sectionFixes}
+var sectionOrder = []string{sectionFeatures, sectionBreaking, sectionImprovements, sectionFixes}
 
 // noChangesSentinel is what the model returns when nothing is user-visible.
 const noChangesSentinel = "NO_USER_VISIBLE_CHANGES"

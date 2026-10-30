@@ -83,7 +83,7 @@ func formatAnnouncement(o announceOptions) string {
 		lines []string
 	}
 	var blocks []block
-	for _, h := range []string{sectionBreaking, sectionFeatures} {
+	for _, h := range []string{sectionFeatures, sectionBreaking} {
 		if lines := bulletLines(p.Sections[h]); len(lines) > 0 {
 			blocks = append(blocks, block{title: strings.TrimPrefix(h, "## "), lines: lines})
 		}

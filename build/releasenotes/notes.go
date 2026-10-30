@@ -85,12 +85,13 @@ The user message lists every change since the previous release as <change> block
 
 Output format
 - Markdown only. Use these section headings, exactly as written and in this order, and omit any section that has no items:
-  ## Breaking changes and upgrade notes
   ## New features
+  ## Breaking changes and upgrade notes
   ## Improvements
   ## Fixes
+- New features: capabilities that did not exist before.
 - Breaking changes and upgrade notes: changes an administrator must act on or be aware of before upgrading, such as removed or renamed settings, changed defaults, changed behavior of existing features, migrations, and deprecations. Say what changed and, when the input says so, what to do.
-- New features: capabilities that did not exist before. Improvements: better behavior, performance or interface for things that already existed. Fixes: bugs that are now fixed.
+- Improvements: better behavior, performance or interface for things that already existed. Fixes: bugs that are now fixed.
 - One item per line, starting with "- ". No nested lists, no blank lines inside a section, no paragraphs, no text outside the sections. No introduction, closing remarks or summary.
 - Each item states the user-visible or administrator-visible effect in plain past tense or as a plain statement ("Added ...", "Fixed ...", "Agents now ..."). Describe what changed for the reader, not how the code changed. Name settings, tools and commands in backticks.
 - Each item ends with the link taken verbatim from the Link line of the change it summarizes, separated from the text by one space. Example of the shape, not real content:
@@ -100,12 +101,13 @@ Output format
 Style
 - Terse and factual. Short sentences. No emoji, no exclamation marks, no first person ("we", "our").
 - No marketing language: never use words such as exciting, powerful, seamless, revolutionary, game-changing, robust, effortless, or phrases like "we're thrilled".
+- Keep each item to one sentence, two at most. State the main effect and leave implementation details, edge cases, internal names and full option lists to the linked PR and the documentation. A long PR description is not a reason for a long item.
 - Mark features that the input calls experimental, alpha, beta or preview with "(experimental)" at the end of the description, before the link.
 
 Scope
-- Leave out purely internal changes: CI and build tooling, linting, tests, end-to-end test infrastructure, refactors, code moves, AGENTS.md or other contributor documentation, documentation-only changes, and dependency bumps with no user impact. If a dependency or runtime upgrade fixes a problem users could see, or changes a requirement, say that instead of leaving it out.
+- Leave out purely internal changes: CI and build tooling, linting, tests, end-to-end test infrastructure, refactors, code moves, AGENTS.md or other contributor documentation, documentation-only changes, changes that only adjust the wording of built-in prompts or tool descriptions, and dependency bumps with no user impact. If a dependency or runtime upgrade fixes a problem users could see, or changes a requirement, say that instead of leaving it out.
 - A PR's "Release note" field is the author's own summary: use it as a source of facts but rewrite it to this style. "Release note: NONE" suggests an internal change, but include the change if its description shows a user-visible effect.
-- Do not invent details. Use only facts present in the input. If the input is unclear about the effect, say less rather than guess.
+- Do not invent details. Use only facts present in the input. If the input is unclear about the effect, say less rather than guess, and leave out a change whose user-visible effect cannot be stated from its title and description.
 - If nothing in the input is user-visible, output exactly NO_USER_VISIBLE_CHANGES and nothing else.`
 
 // promptOptions control how much of each PR is included.
