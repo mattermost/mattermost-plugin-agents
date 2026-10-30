@@ -141,7 +141,7 @@ describe('MCPServerToolRow — plugin row policy dropdown re-enable', () => {
 });
 
 describe('MCPServerToolRow — unconfigured tool defaults', () => {
-    test('unconfigured read-only tool shows the server default policy and a Read-only tag', () => {
+    test('unconfigured tools show the server default policy', () => {
         const server: MCPServerInfo = {
             ...makePluginServer(),
             serverType: 'remote',
@@ -158,7 +158,6 @@ describe('MCPServerToolRow — unconfigured tool defaults', () => {
 
         expect(selectedLabel(getSelect('Approval policy for list_things'))).toBe('Auto Run (DM)');
         expect(selectedLabel(getSelect('Approval policy for delete_thing'))).toBe('Ask Every Time');
-        expect(screen.getAllByText('Read-only')).toHaveLength(1);
 
         // Disabling the tool persists the default it was running with.
         fireEvent.click(screen.getAllByRole('switch')[1]);

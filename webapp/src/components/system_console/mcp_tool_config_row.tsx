@@ -8,7 +8,6 @@ import {useIntl} from 'react-intl';
 
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
-import {Tag} from '@mattermost/compass-ui/components/tag';
 import {TextInput} from '@mattermost/compass-ui/components/text-input';
 
 import {useIsLicensedFor} from '@/license';
@@ -86,12 +85,7 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
         <ToolRowContainer $disabled={serverDisabled}>
             <ToolRowMain>
                 <ToolRowLeft>
-                    <ToolNameLine>
-                        <ToolName>{displayName ?? tool.name}</ToolName>
-                        {tool.readOnlyHint && (
-                            <Tag label={intl.formatMessage({defaultMessage: 'Read-only'})}/>
-                        )}
-                    </ToolNameLine>
+                    <ToolName>{displayName ?? tool.name}</ToolName>
                     {tool.description && (
                         <ToolDescription>{tool.description}</ToolDescription>
                     )}
@@ -187,12 +181,6 @@ const ToolRowRight = styled.div`
     align-items: center;
     gap: var(--spacing-l);
     flex-shrink: 0;
-`;
-
-const ToolNameLine = styled.div`
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-xs);
 `;
 
 const ToolName = styled.div`

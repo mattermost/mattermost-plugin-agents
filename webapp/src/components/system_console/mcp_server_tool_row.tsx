@@ -411,7 +411,7 @@ const BulkRow = styled.div`
     display: flex;
     align-items: center;
     gap: var(--spacing-m);
-    padding: 0 calc(var(--spacing-l) + 92px) 0 var(--spacing-l);
+    padding: 0 calc(var(--spacing-l) + 90px) 0 var(--spacing-l);
 `;
 
 const BulkLabel = styled.div`
