@@ -14,7 +14,7 @@ import {expect, type Page} from '@playwright/test';
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {containerTest} from 'helpers/container-fixture';
 import {withDeadline} from 'helpers/deadline';
-import {buildTextResponse, buildTitleFixture} from 'helpers/aimock-fixtures';
+import {buildTextResponse} from 'helpers/aimock-fixtures';
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
 import {AIMOCK_BOT_NAME, RunAIMockContainer} from 'helpers/plugincontainer';
@@ -29,8 +29,6 @@ const FIRST_REPLY = 'Product view first reply marker.';
 const THREAD_TITLE = 'Product View Thread Title';
 const RENAMED_TITLE = 'Renamed Product View Chat';
 const ENTER_PROMPT = 'new chat sent with enter';
-const SIDEBAR_ARCHIVE_PROMPT = 'product-view-sidebar-archive-002';
-const EMPTY_TITLE_PROMPT = 'product-view-empty-title-003';
 const ATTACH_PROMPT = 'product-view-attach-004';
 const ATTACH_FILE = 'product-view-attachment.txt';
 const STOP_PROMPT = 'product-view-stop-005';
@@ -44,7 +42,7 @@ const JUMP_LAST = JUMP_PARAGRAPHS[JUMP_PARAGRAPHS.length - 1];
 const replyFixtures = (prompts: string[]) => prompts.flatMap((prompt) => buildTextResponse({userMessage: prompt, content: `Reply to ${prompt}.`}).fixtures);
 const baseFixtures = () => [
     ...buildTextResponse({userMessage: FIRST_PROMPT, content: FIRST_REPLY, title: THREAD_TITLE}).fixtures,
-    ...replyFixtures([ENTER_PROMPT, SIDEBAR_ARCHIVE_PROMPT, ATTACH_PROMPT]),
+    ...replyFixtures([ENTER_PROMPT, ATTACH_PROMPT]),
 
     // Streams slowly enough to be stopped mid-way.
     {
@@ -71,13 +69,13 @@ const baseFixtures = () => [
     },
 ];
 
-// Rename/archive responses seen during the run, written next to the screenshots.
+// Rename responses seen during the run, written next to the screenshots.
 const conversationResponses: Array<{test: string; method: string; url: string; status: number; body: string}> = [];
 
 function recordConversationResponses(page: Page, testName: string): void {
     page.on('response', async (response) => {
         const url = response.url();
-        if (!(/\/conversations\/[^/]+\/(archive|title)$/).test(url)) {
+        if (!(/\/conversations\/[^/]+\/title$/).test(url)) {
             return;
         }
         const body = await response.text().catch((e) => `<unreadable: ${e}>`);
@@ -352,7 +350,7 @@ test.describe('Agents product view', () => {
         await expect(trigger).toHaveAttribute('aria-expanded', 'true');
         const nameMenu = page.getByRole('menu', {name: `${THREAD_TITLE}, ${botDisplayName} options`});
         // The menu has a Recent chats submenu first, then the chat actions. A regular user cannot edit the agent, so no Agent settings.
-        await expect(nameMenu.getByRole('menuitem')).toHaveText(['Recent chats', 'New chat', 'Rename chat', 'Archive chat', 'View all agents']);
+        await expect(nameMenu.getByRole('menuitem')).toHaveText(['Recent chats', 'New chat', 'Rename chat', 'View all agents']);
         await page.keyboard.press('Escape');
         await expect(nameMenu).toHaveCount(0);
 
@@ -380,104 +378,14 @@ test.describe('Agents product view', () => {
         await page.getByTestId('agent-chat-new-chat-button').click();
         await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}$`));
 
-        // The new-chat state shows the agent name and has no chat to rename or archive.
+        // The new-chat state shows the agent name and has no chat to rename.
         await expect(header.getByRole('heading', {level: 1, name: botDisplayName})).toBeVisible();
         await expect(page.getByTestId('agent-chat-new-chat-button')).toBeDisabled();
         await trigger.click();
         const newMenu = page.getByRole('menu', {name: `${botDisplayName} options`});
         await expect(newMenu.getByRole('menuitem', {name: 'View all agents'})).toBeVisible();
         await expect(newMenu.getByRole('menuitem', {name: 'Rename chat'})).toHaveCount(0);
-        await expect(newMenu.getByRole('menuitem', {name: 'Archive chat'})).toHaveCount(0);
         await page.keyboard.press('Escape');
-    });
-
-    // Starts a chat through the new-chat composer and waits for the agent's reply.
-    async function startChat(page: Page, prompt: string): Promise<string> {
-        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
-        const textbox = newChatComposer(page).getByRole('textbox');
-        await expect(textbox).toBeEnabled({timeout: 30000});
-        await textbox.fill(prompt);
-        await textbox.press('Enter');
-        await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}/[a-z0-9]{26}$`), {timeout: 15000});
-        await expect(page.getByTestId('agent-chat-thread').getByText(`Reply to ${prompt}.`)).toBeVisible({timeout: 60000});
-        return new URL(page.url()).pathname.split('/').pop()!;
-    }
-
-    // Opens a sidebar row's actions menu, picks Archive chat, and checks the
-    // confirmation sits above the product chrome before confirming.
-    async function archiveFromSidebar(page: Page, rowTitle: string): Promise<void> {
-        const list = sidebar(page).getByRole('list', {name: `${botDisplayName} chats`});
-        const row = list.getByRole('listitem').filter({has: page.getByRole('button', {name: rowTitle, exact: true})});
-        await expect(row).toHaveCount(1, {timeout: 60000});
-        await row.hover();
-        await row.getByRole('button', {name: `Actions for ${rowTitle}`}).click();
-        // The sidebar's menu items are plain compass MenuItem buttons (no menuitem role).
-        await page.locator('[data-open-popup]').getByRole('button', {name: 'Archive chat'}).click();
-
-        const dialog = page.getByRole('dialog', {name: 'Archive chat'});
-        await expect(dialog).toBeVisible();
-        const box = (await dialog.boundingBox())!;
-        const onTop = await page.evaluate(({x, y}) => {
-            const hit = document.elementFromPoint(x, y);
-            const header = document.getElementById('global-header');
-            const headerBox = header?.getBoundingClientRect();
-            const overHeader = headerBox ? document.elementFromPoint(headerBox.left + (headerBox.width / 2), headerBox.top + (headerBox.height / 2)) : null;
-            return {
-                dialogHit: Boolean(hit?.closest('[role="dialog"]')),
-                headerCovered: header ? !header.contains(overHeader) : null,
-            };
-        }, {x: box.x + (box.width / 2), y: box.y + (box.height / 2)});
-        expect(onTop.dialogHit).toBe(true);
-        if (onTop.headerCovered !== null) {
-            expect(onTop.headerCovered).toBe(true);
-        }
-
-        const archiveResponse = page.waitForResponse((r) => r.url().endsWith('/archive'));
-        await dialog.getByRole('button', {name: 'Archive'}).click();
-        const response = await archiveResponse;
-        expect(response.status(), await response.text()).toBe(200);
-        await expect(dialog).toBeHidden();
-        await expect(row).toHaveCount(0, {timeout: 15000});
-    }
-
-    test('sidebar archive of the open chat moves to a new chat', async ({page}) => {
-        recordConversationResponses(page, 'sidebar archive (open chat)');
-        await login(page);
-        await startChat(page, SIDEBAR_ARCHIVE_PROMPT);
-
-        // The first chat was renamed above, so this is the only row with the generated title.
-        await archiveFromSidebar(page, THREAD_TITLE);
-        await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}$`), {timeout: 15000});
-        await expect(newChatComposer(page).getByRole('textbox')).toBeVisible();
-    });
-
-    test('sidebar archive of a chat with an empty title ("New chat" row)', async ({page}) => {
-        recordConversationResponses(page, 'sidebar archive (empty title)');
-        await login(page);
-
-        // Only for this chat: the title generator answers with nothing, so the row keeps the "New chat" placeholder.
-        // A blank title (the sidebar trims titles); the generic title fixture must come before the reply fixture,
-        // which would otherwise also match the title request that quotes the prompt.
-        await aimock.setFixtures([buildTitleFixture(' '), ...replyFixtures([EMPTY_TITLE_PROMPT])]);
-        let emptyRootId: string;
-        try {
-            emptyRootId = await startChat(page, EMPTY_TITLE_PROMPT);
-            await expect(sidebar(page).getByRole('button', {name: 'New chat', exact: true})).toHaveCount(1, {timeout: 30000});
-        } finally {
-            await aimock.setFixtures(baseFixtures());
-        }
-
-        // Open another chat so archiving this one does not navigate.
-        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}/${rootId}`, {waitUntil: 'domcontentloaded'});
-        await expect(page.getByTestId('agent-chat-thread').getByText(FIRST_REPLY)).toBeVisible({timeout: 30000});
-        await archiveFromSidebar(page, 'New chat');
-        await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}/${rootId}$`));
-
-        const client = await mattermost.getClient(username, password);
-        const threads = await (await fetch(`${mattermost.url()}/plugins/mattermost-ai/ai_threads`, {
-            headers: {Authorization: `Bearer ${client.getToken()}`},
-        })).json();
-        expect(threads.some((t: {root_post_id: string}) => t.root_post_id === emptyRootId)).toBe(false);
     });
 
     test('Agent settings is offered to an admin and opens the agent editor', async ({page}) => {
@@ -738,8 +646,7 @@ test.describe('Agents product view', () => {
         expect(root.file_ids).toHaveLength(1);
     });
 
-    test('Enter sends from the new-chat composer, then the header archives it', async ({page}) => {
-        recordConversationResponses(page, 'header archive');
+    test('Enter sends from the new-chat composer', async ({page}) => {
         await login(page);
         await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
 
@@ -755,34 +662,6 @@ test.describe('Agents product view', () => {
 
         await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}/[a-z0-9]{26}$`), {timeout: 15000});
         await expect(page.getByTestId('agent-chat-thread').getByTestId('post-message-text').getByText(ENTER_PROMPT)).toBeVisible({timeout: 30000});
-        const newRootId = new URL(page.url()).pathname.split('/').pop()!;
-
-        // Archive it from the header once the agent's reply (which carries the conversation id) is in.
-        const chat = page.getByRole('region', {name: `Chat with ${botDisplayName}`});
-        const trigger = page.getByTestId('agent-chat-menu-button');
-        const menu = page.getByRole('menu', {name: /options$/});
-        await expect.poll(async () => {
-            await trigger.click();
-            await expect(menu.getByRole('menuitem', {name: 'Archive chat'})).toBeVisible();
-            const count = await menu.getByRole('menuitem', {name: 'Archive chat', disabled: false}).count();
-            if (count === 0) {
-                await page.keyboard.press('Escape');
-                await expect(menu).toHaveCount(0);
-            }
-            return count;
-        }, {timeout: 60000}).toBe(1);
-        await menu.getByRole('menuitem', {name: 'Archive chat'}).click();
-        const archiveResponse = page.waitForResponse((r) => r.url().endsWith('/archive'));
-        await page.getByRole('dialog', {name: 'Archive chat'}).getByRole('button', {name: 'Archive'}).click();
-        expect((await archiveResponse).status()).toBe(200);
-        await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}$`), {timeout: 15000});
-        const client = await mattermost.getClient(username, password);
-        await expect.poll(async () => {
-            const threads = await (await fetch(`${mattermost.url()}/plugins/mattermost-ai/ai_threads`, {
-                headers: {Authorization: `Bearer ${client.getToken()}`},
-            })).json();
-            return threads.some((t: {root_post_id: string}) => t.root_post_id === newRootId);
-        }, {timeout: 15000}).toBe(false);
 
         // The draft is cleared, so going back to a new chat starts empty.
         await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});

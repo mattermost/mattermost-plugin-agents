@@ -4,7 +4,6 @@
 import React, {useCallback, useEffect, useId, useMemo, useRef, useState} from 'react';
 import {useIntl} from 'react-intl';
 import AccountMultipleOutlineIcon from '@mattermost/compass-icons/components/account-multiple-outline';
-import ArchiveOutlineIcon from '@mattermost/compass-icons/components/archive-outline';
 import MessagePlusOutlineIcon from '@mattermost/compass-icons/components/message-plus-outline';
 import MessageOutlineIcon from '@mattermost/compass-icons/components/message-outline';
 import PencilOutlineIcon from '@mattermost/compass-icons/components/pencil-outline';
@@ -15,13 +14,11 @@ import {Icon} from '@mattermost/compass-ui/components/icon';
 import {MenuItem} from '@mattermost/compass-ui/components/menu-item';
 import {PopoverMenu, PopoverMenuDivider, PopoverMenuGroup, PopoverMenuScroll} from '@mattermost/compass-ui/components/popover-menu';
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
-import styled from 'styled-components';
 
-import {archiveConversation, getProfilePictureUrl, renameConversation} from '@/client';
+import {getProfilePictureUrl, renameConversation} from '@/client';
 import type {LLMBot} from '@/bots';
 import ComposerSubmenu from '@/components/agent_chat/composer_submenu';
 import {focusFirstItem, handleMenuNavigation} from '@/components/agent_chat/composer_menu_keyboard';
-import ConfirmationDialog from '@/components/confirmation_dialog';
 import Dropdown from '@/components/dropdown';
 import {useAgentThreads} from '@/hooks/use_agent_threads';
 import {useConversation} from '@/hooks/use_conversation';
@@ -31,9 +28,6 @@ import {isValidId} from '@/utils/ids';
 import {onAgentThreadsRefreshRequested, requestAgentThreadsRefresh, subscribeToAllPostUpdates} from '@/websocket';
 
 import AgentChatRenameDialog from './agent_chat_rename_dialog';
-
-// Same layer as the sidebar's archive confirmation.
-const DIALOG_Z_INDEX = 2000;
 
 // No compass token for the prototype's chat list max-height (200px).
 const CHATS_LIST_MAX_HEIGHT = 200;
@@ -57,9 +51,6 @@ interface AgentChatNameMenuProps {
     onNewChat: () => void;
     onViewAll: () => void;
 
-    // Called after the open chat was archived.
-    onArchived: () => void;
-
     // Offers a submenu to pick an agent: "Switch agent" in a new chat, and "New chat" in an open chat
     // (a new chat with the agent picked, the open chat's own included). `onSwitch` starts a new chat
     // with that agent. The RHS passes it always (it has no agent list of its own); the product header
@@ -72,10 +63,10 @@ interface AgentChatNameMenuProps {
 
 type Submenu = {kind: 'chats' | 'agents'; focus: boolean};
 
-// The agent chat's name menu: recent chats, the chat actions (new, rename, archive), switching
-// agents where offered, and the way to the agent pages. Shared by the Agents product header and the
-// RHS title, with the rename and archive dialogs it opens.
-const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat, onViewAll, onArchived, agents, renderTrigger}: AgentChatNameMenuProps) => {
+// The agent chat's name menu: recent chats, the chat actions (new, rename), switching agents where
+// offered, and the way to the agent pages. Shared by the Agents product header and the RHS title,
+// with the rename dialog it opens.
+const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat, onViewAll, agents, renderTrigger}: AgentChatNameMenuProps) => {
     const intl = useIntl();
     const [nameMenuOpen, setNameMenuOpen] = useState(false);
     const nameMenu = useMenuTransition(nameMenuOpen);
@@ -88,9 +79,6 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
         }
     }, []);
     const [renameOpen, setRenameOpen] = useState(false);
-    const [archiveOpen, setArchiveOpen] = useState(false);
-    const [archiving, setArchiving] = useState(false);
-    const [archiveFailed, setArchiveFailed] = useState(false);
     const [renamedTitle, setRenamedTitle] = useState<string | null>(null);
 
     // This agent's DM chats, the same data the sidebar lists.
@@ -149,32 +137,6 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
         setRenamedTitle(title);
         setRenameOpen(false);
         requestAgentThreadsRefresh();
-    };
-
-    const confirmArchive = async () => {
-        if (archiving || !conversationId) {
-            return;
-        }
-        setArchiving(true);
-        setArchiveFailed(false);
-        try {
-            await archiveConversation(conversationId);
-            if (!mounted.current) {
-                return;
-            }
-            setArchiveOpen(false);
-            requestAgentThreadsRefresh();
-            onArchived();
-        } catch (e) {
-            console.error('Failed to archive agent chat:', e); // eslint-disable-line no-console
-            if (mounted.current) {
-                setArchiveFailed(true);
-            }
-        } finally {
-            if (mounted.current) {
-                setArchiving(false);
-            }
-        }
     };
 
     // An open chat is named by its title; the agent's name labels the new-chat state.
@@ -322,16 +284,6 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                     disabled={!hasChat}
                                     onClick={closing(() => setRenameOpen(true))}
                                 />
-                                <ChatMenuItem
-                                    icon={<ArchiveOutlineIcon/>}
-                                    label={intl.formatMessage({defaultMessage: 'Archive chat'})}
-                                    destructive={true}
-                                    disabled={!hasChat}
-                                    onClick={closing(() => {
-                                        setArchiveFailed(false);
-                                        setArchiveOpen(true);
-                                    })}
-                                />
                             </PopoverMenuGroup>
                             <PopoverMenuDivider/>
                         </>
@@ -358,34 +310,6 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                 onSubmit={rename}
                 onClose={() => setRenameOpen(false)}
             />
-            <ConfirmationDialog
-                show={archiveOpen}
-                titleId='agent-chat-archive-dialog-title'
-                title={intl.formatMessage({defaultMessage: 'Archive chat'})}
-                message={(
-                    <>
-                        <p>
-                            {intl.formatMessage({defaultMessage: 'Archive this chat? It will be removed from your chats and can no longer be opened from here.'})}
-                        </p>
-                        {archiveFailed && (
-                            <ErrorText role='alert'>
-                                {intl.formatMessage({defaultMessage: 'Couldn\'t archive this chat. Try again.'})}
-                            </ErrorText>
-                        )}
-                    </>
-                )}
-                confirmButtonText={intl.formatMessage({defaultMessage: 'Archive'})}
-                onConfirm={confirmArchive}
-                onCancel={() => {
-                    if (!archiving) {
-                        setArchiveOpen(false);
-                    }
-                }}
-                isDestructive={true}
-                confirmPending={archiving}
-                managedAccessibility={true}
-                zIndex={DIALOG_Z_INDEX}
-            />
         </>
     );
 };
@@ -404,10 +328,5 @@ const ChatMenuItem = ({icon, ...props}: Omit<React.ComponentProps<typeof MenuIte
         {...props}
     />
 );
-
-const ErrorText = styled.p`
-    margin: 0;
-    color: var(--error-text);
-`;
 
 export default AgentChatNameMenu;

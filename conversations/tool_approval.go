@@ -136,7 +136,7 @@ func (c *Conversations) beginToolDecision(ctx context.Context, spanName, logMsg,
 		"accepted_count", acceptedCount,
 	)
 
-	conv, err := c.convService.GetConversationIncludingArchived(convID)
+	conv, err := c.convService.GetConversation(convID)
 	if err != nil {
 		return fail(fmt.Errorf("failed to get conversation: %w", err))
 	}
@@ -161,10 +161,6 @@ func (c *Conversations) beginToolDecision(ctx context.Context, spanName, logMsg,
 	if !policy.toolsEnabled {
 		return fail(ErrToolCallingDisabled)
 	}
-	if err := c.activateTurnConversation(policy); err != nil {
-		return fail(err)
-	}
-	conv = policy.conv
 
 	return &toolDecision{
 		ctx:      ctx,

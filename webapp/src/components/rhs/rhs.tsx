@@ -3,7 +3,6 @@
 
 import React, {useState, useEffect, useCallback} from 'react';
 import {useDispatch, useSelector} from 'react-redux';
-import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 
 import {GlobalState} from '@mattermost/types/store';
@@ -11,9 +10,8 @@ import {GlobalState} from '@mattermost/types/store';
 import manifest from '@/manifest';
 import type {RHSTab} from '@/redux';
 
-import {archiveConversation, getAIThreads, getPostsByIds, getProfilePictureUrl, renameConversation, updateRead} from '@/client';
+import {getAIThreads, getPostsByIds, getProfilePictureUrl, renameConversation, updateRead} from '@/client';
 import AgentChatRenameDialog from '@/components/agents/agent_chat_rename_dialog';
-import ConfirmationDialog from '@/components/confirmation_dialog';
 import {requestAgentThreadsRefresh} from '@/websocket';
 
 import {useBotlist} from '@/bots';
@@ -53,14 +51,6 @@ const RhsContainer = styled.div`
 
 type ChatPreview = {message: string; replyCount: number};
 
-// Above the plugin's other modals (2000), like the other archive confirmations.
-const ARCHIVE_DIALOG_Z_INDEX = 2000;
-
-const ErrorText = styled.p`
-    margin: 0;
-    color: var(--error-text);
-`;
-
 const twentyFourHoursInMS = 24 * 60 * 60 * 1000;
 
 export default function RHS() {
@@ -87,11 +77,7 @@ export default function RHS() {
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const currentTeamId = useSelector<GlobalState, string>((state) => state.entities.teams.currentTeamId);
 
-    const intl = useIntl();
     const [threads, setThreads] = useState<AIThread[] | null>(null);
-
-    // The chat the history's hover actions are archiving, once confirmed.
-    const [archiveTarget, setArchiveTarget] = useState<AIThread | null>(null);
     const [renameTarget, setRenameTarget] = useState<AIThread | null>(null);
 
     // The history item whose actions menu is open, and the button it opened from.
@@ -108,29 +94,6 @@ export default function RHS() {
         // The Agents product's sidebar lists the same chats.
         requestAgentThreadsRefresh();
     }, [renameTarget]);
-    const [archiving, setArchiving] = useState(false);
-    const [archiveFailed, setArchiveFailed] = useState(false);
-    const confirmArchive = useCallback(async () => {
-        if (!archiveTarget || archiving) {
-            return;
-        }
-        setArchiving(true);
-        setArchiveFailed(false);
-        try {
-            await archiveConversation(archiveTarget.id);
-            const archivedId = archiveTarget.id;
-            setThreads((current) => (current ? current.filter((t) => t.id !== archivedId) : current));
-            setArchiveTarget(null);
-
-            // The Agents product's sidebar lists the same chats.
-            requestAgentThreadsRefresh();
-        } catch (e) {
-            console.error('Failed to archive agent chat:', e); // eslint-disable-line no-console
-            setArchiveFailed(true);
-        } finally {
-            setArchiving(false);
-        }
-    }, [archiveTarget, archiving]);
 
     // The chats' first messages and reply counts, loaded after the list. Until they arrive (or if
     // they cannot be loaded) the items show the chat title.
@@ -271,46 +234,12 @@ export default function RHS() {
                 anchor={menuFor?.anchor ?? null}
                 onClose={() => setMenuFor(null)}
                 onRename={() => menuFor && setRenameTarget(menuFor.thread)}
-                onArchive={() => {
-                    if (menuFor) {
-                        setArchiveFailed(false);
-                        setArchiveTarget(menuFor.thread);
-                    }
-                }}
             />
             <AgentChatRenameDialog
                 show={renameTarget !== null}
                 initialTitle={renameTarget?.title ?? ''}
                 onSubmit={renameThread}
                 onClose={() => setRenameTarget(null)}
-            />
-            <ConfirmationDialog
-                show={archiveTarget !== null}
-                titleId='rhs-archive-dialog-title'
-                title={intl.formatMessage({defaultMessage: 'Archive chat'})}
-                message={(
-                    <>
-                        <p>
-                            {intl.formatMessage({defaultMessage: 'Archive this chat? It will be removed from your chats and can no longer be opened from here.'})}
-                        </p>
-                        {archiveFailed && (
-                            <ErrorText role='alert'>
-                                {intl.formatMessage({defaultMessage: 'Couldn\'t archive this chat. Try again.'})}
-                            </ErrorText>
-                        )}
-                    </>
-                )}
-                confirmButtonText={intl.formatMessage({defaultMessage: 'Archive'})}
-                onConfirm={confirmArchive}
-                onCancel={() => {
-                    if (!archiving) {
-                        setArchiveTarget(null);
-                    }
-                }}
-                isDestructive={true}
-                confirmPending={archiving}
-                managedAccessibility={true}
-                zIndex={ARCHIVE_DIALOG_Z_INDEX}
             />
         </RhsContainer>
     );

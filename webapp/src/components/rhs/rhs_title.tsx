@@ -41,9 +41,9 @@ const AgentAvatar = ({bot}: {bot: LLMBot}) => (
 );
 
 // The RHS header title: Back to the chat history, the chat (or the agent, in a new chat) with the
-// same menu as the Agents product's chat header (recent chats, new, rename, archive, view all
-// agents) plus a Switch agent submenu, and at the end the tools button on a new chat, or the
-// context usage ring and New chat everywhere else.
+// same menu as the Agents product's chat header (recent chats, new, rename, view all agents) plus
+// a Switch agent submenu, and at the end the tools button on a new chat, or the context usage ring
+// and New chat everywhere else.
 // The host wraps the title in its own heading landmark (a span#rhsPanelTitle), so none is added here.
 const RHSTitle = () => {
     const intl = useIntl();
@@ -171,7 +171,6 @@ const RHSTitle = () => {
                 agents={{bots, onSwitch: switchAgent}}
                 onSelectChat={(rootId) => dispatch({type: 'SELECT_AI_POST', postId: rootId})}
                 onNewChat={startNewChat}
-                onArchived={startNewChat}
                 onViewAll={toAll}
                 renderTrigger={({ariaLabel, label, expanded, onClick}) => (
                     <ChatTitleDropdown

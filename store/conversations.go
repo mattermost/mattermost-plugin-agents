@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
 	sq "github.com/Masterminds/squirrel"
 	"github.com/lib/pq"
@@ -115,27 +114,9 @@ func (s *Store) UpdateConversationTitle(id, title string) error {
 		"update conversation title")
 }
 
-// GetConversationIncludingArchived retrieves a conversation by ID whether or
-// not it is archived (DeleteAt > 0). Returns ErrConversationNotFound when no
-// row exists.
-func (s *Store) GetConversationIncludingArchived(id string) (*Conversation, error) {
-	var conv Conversation
-	if err := s.getBuilder(&conv, s.builder.
-		Select(conversationColumns...).
-		From("LLM_Conversations").
-		Where(sq.Eq{"ID": id}),
-		"get conversation including archived"); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrConversationNotFound
-		}
-		return nil, err
-	}
-	return &conv, nil
-}
-
-// RenameConversation sets the title of an active (non-archived) conversation.
-// It reports false, without error, when no active conversation with the ID
-// exists, so a rename that races an archive never resurrects or edits it.
+// RenameConversation sets the title of a non-deleted conversation. It reports
+// false, without error, when no non-deleted conversation with the ID exists, so
+// a rename that races a delete never edits it.
 func (s *Store) RenameConversation(id, title string) (bool, error) {
 	return s.execBuilderRows(s.builder.
 		Update("LLM_Conversations").
@@ -144,70 +125,6 @@ func (s *Store) RenameConversation(id, title string) (bool, error) {
 		Where(sq.Eq{"ID": id}).
 		Where(sq.Eq{"DeleteAt": 0}),
 		"rename conversation")
-}
-
-// ArchiveConversation marks an active conversation archived by setting
-// DeleteAt. Turns are kept and the conversation is restored by a later reply
-// in its thread or any other turn on it (RestoreConversation). It reports false,
-// without error, when the conversation was not active (already archived or
-// missing), so concurrent archives write at most once.
-func (s *Store) ArchiveConversation(id string, archivedAt int64) (bool, error) {
-	return s.execBuilderRows(s.builder.
-		Update("LLM_Conversations").
-		Set("DeleteAt", archivedAt).
-		Set("UpdatedAt", archivedAt).
-		Where(sq.Eq{"ID": id}).
-		Where(sq.Eq{"DeleteAt": 0}),
-		"archive conversation")
-}
-
-// GetLatestConversationByThreadBotUser looks up the conversation for
-// (RootPostID, BotID, UserID) whether or not it is archived: the active one
-// when it exists, otherwise the most recently archived one. It never writes;
-// callers that continue the conversation restore it with RestoreConversation.
-// Returns ErrConversationNotFound when the tuple has no conversation at all.
-func (s *Store) GetLatestConversationByThreadBotUser(rootPostID, botID, userID string) (*Conversation, error) {
-	var conv Conversation
-	if err := s.getBuilder(&conv, s.builder.
-		Select(conversationColumns...).
-		From("LLM_Conversations").
-		Where(sq.Eq{"RootPostID": rootPostID}).
-		Where(sq.Eq{"BotID": botID}).
-		Where(sq.Eq{"UserID": userID}).
-		OrderBy("(DeleteAt = 0) DESC", "DeleteAt DESC").
-		Limit(1),
-		"get latest conversation by thread/bot/user"); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrConversationNotFound
-		}
-		return nil, err
-	}
-	return &conv, nil
-}
-
-// RestoreConversation un-archives the conversation with the given ID and
-// returns it. The DeleteAt > 0 condition makes concurrent restores write at
-// most once. Returns ErrConversationNotFound when no archived conversation
-// with the ID exists (missing, or already active: a concurrent restore won),
-// and ErrConversationConflict when another active conversation already owns
-// its (RootPostID, BotID, UserID) tuple.
-func (s *Store) RestoreConversation(id string) (*Conversation, error) {
-	query := `UPDATE LLM_Conversations SET DeleteAt = 0, UpdatedAt = $1
-		WHERE ID = $2 AND DeleteAt > 0
-		RETURNING ` + strings.Join(conversationColumns, ", ")
-
-	var conv Conversation
-	err := s.db.Get(&conv, query, model.GetMillis(), id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrConversationNotFound
-	}
-	if isUniqueViolation(err) {
-		return nil, ErrConversationConflict
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to restore conversation: %w", err)
-	}
-	return &conv, nil
 }
 
 // UpdateConversationRootPostID sets the RootPostID and updates the UpdatedAt timestamp.
@@ -258,7 +175,7 @@ const conversationLastActivityExpr = "GREATEST(c.UpdatedAt, COALESCE(MAX(t.Creat
 // GetConversationSummariesForUser returns a user's conversations ordered by last
 // activity (see ConversationSummary.UpdatedAt) descending, with ID as a
 // deterministic tie-breaker, including a turn count per conversation. Only
-// non-deleted (non-archived) conversations are returned.
+// non-deleted conversations are returned.
 func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int) ([]ConversationSummary, error) {
 	if limit < 0 {
 		limit = 0
@@ -297,11 +214,6 @@ func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int
 
 // CleanupDeletedConversations permanently deletes all soft-deleted conversations
 // and their associated turns within a single transaction.
-//
-// DeleteAt > 0 also marks user-archived conversations (ArchiveConversation),
-// whose posts still render from their turns and which any later turn on
-// them restores (RestoreConversation). Do not schedule this without first distinguishing
-// archived conversations from deleted ones, or archiving destroys history.
 func (s *Store) CleanupDeletedConversations() error {
 	tx, err := s.db.Beginx()
 	if err != nil {

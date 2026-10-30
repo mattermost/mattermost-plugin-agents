@@ -51,18 +51,6 @@ func (s *inMemoryStore) GetConversation(id string) (*store.Conversation, error) 
 	return conv, nil
 }
 
-func (s *inMemoryStore) GetConversationIncludingArchived(id string) (*store.Conversation, error) {
-	return s.GetConversation(id)
-}
-
-func (s *inMemoryStore) GetLatestConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error) {
-	return s.GetConversationByThreadBotUser(rootPostID, botID, userID)
-}
-
-func (*inMemoryStore) RestoreConversation(_ string) (*store.Conversation, error) {
-	return nil, store.ErrConversationNotFound
-}
-
 func (s *inMemoryStore) GetConversationByThreadBotUser(_, _, _ string) (*store.Conversation, error) {
 	return nil, store.ErrConversationNotFound
 }

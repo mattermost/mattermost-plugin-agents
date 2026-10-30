@@ -13,7 +13,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
-	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // MaxConversationTitleLength bounds a user-set conversation title, in runes.
@@ -34,18 +33,12 @@ type renameConversationRequest struct {
 // requires that the requesting user owns it. A conversation owned by someone
 // else answers 404, exactly like a missing one, so the route never confirms
 // that another user's conversation exists. Store errors answer 500.
-func (a *API) loadOwnedConversation(c *gin.Context, includeArchived bool) (*store.Conversation, bool) {
+func (a *API) loadOwnedConversation(c *gin.Context) (*store.Conversation, bool) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	conversationID := c.Param("conversationid")
 	audit.AddParam(auditRec(c), audit.KeyConversationID, audit.TruncateID(conversationID))
 
-	var conv *store.Conversation
-	var err error
-	if includeArchived {
-		conv, err = a.conversationStore.GetConversationIncludingArchived(conversationID)
-	} else {
-		conv, err = a.conversationStore.GetConversation(conversationID)
-	}
+	conv, err := a.conversationStore.GetConversation(conversationID)
 	if err != nil {
 		if errors.Is(err, store.ErrConversationNotFound) {
 			c.AbortWithError(http.StatusNotFound, errConversationNotFound)
@@ -62,8 +55,8 @@ func (a *API) loadOwnedConversation(c *gin.Context, includeArchived bool) (*stor
 	return conv, true
 }
 
-// handleRenameConversation sets the title of one of the caller's active
-// conversations. Archived conversations cannot be renamed.
+// handleRenameConversation sets the title of one of the caller's
+// conversations. Deleted conversations cannot be renamed.
 func (a *API) handleRenameConversation(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, renameConversationMaxRequestBodyBytes)
 	var req renameConversationRequest
@@ -81,7 +74,7 @@ func (a *API) handleRenameConversation(c *gin.Context) {
 		return
 	}
 
-	conv, ok := a.loadOwnedConversation(c, false)
+	conv, ok := a.loadOwnedConversation(c)
 	if !ok {
 		return
 	}
@@ -92,29 +85,9 @@ func (a *API) handleRenameConversation(c *gin.Context) {
 		return
 	}
 	if !renamed {
-		// Archived between the lookup and the write.
+		// Deleted between the lookup and the write.
 		c.AbortWithError(http.StatusNotFound, errConversationNotFound)
 		return
-	}
-
-	c.JSON(http.StatusOK, struct{}{})
-}
-
-// handleArchiveConversation hides one of the caller's conversations from their
-// thread lists. Its turns and Mattermost posts are kept, and a later reply in
-// the thread restores it. Archiving an archived conversation succeeds.
-func (a *API) handleArchiveConversation(c *gin.Context) {
-	conv, ok := a.loadOwnedConversation(c, true)
-	if !ok {
-		return
-	}
-
-	if conv.DeleteAt == 0 {
-		// A false result means a concurrent archive won; either way it is archived.
-		if _, err := a.conversationStore.ArchiveConversation(conv.ID, model.GetMillis()); err != nil {
-			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to archive conversation: %w", err))
-			return
-		}
 	}
 
 	c.JSON(http.StatusOK, struct{}{})

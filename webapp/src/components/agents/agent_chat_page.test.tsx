@@ -37,7 +37,6 @@ jest.mock('@/client', () => ({
     getServices: (...args: unknown[]) => mockGetServices(...args),
     getConversation: jest.fn(() => new Promise(() => null)),
     renameConversation: jest.fn(),
-    archiveConversation: jest.fn(),
     getAIBots: jest.fn(),
     getAIThreads: jest.fn(() => Promise.resolve([])),
     getUserMCPTools: jest.fn(() => Promise.resolve({servers: []})),

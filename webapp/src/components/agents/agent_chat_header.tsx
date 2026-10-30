@@ -33,16 +33,13 @@ interface AgentChatHeaderProps {
     onOpenSettings?: () => void;
     onNewChat: () => void;
 
-    // Called after the open chat was archived.
-    onArchived: () => void;
-
     // The agents to offer in a new chat's "Switch agent" submenu. An open chat belongs to its agent,
     // so it never offers the switch.
     bots?: LLMBot[];
 }
 
 // The agent name opens the chat menu, as the prototype's header title button does.
-const AgentChatHeader = ({bot, rootId, inThread = Boolean(rootId), onOpenSettings, onNewChat, onArchived, bots}: AgentChatHeaderProps) => {
+const AgentChatHeader = ({bot, rootId, inThread = Boolean(rootId), onOpenSettings, onNewChat, bots}: AgentChatHeaderProps) => {
     const intl = useIntl();
     const {toChat, toAll} = useAgentsRoute();
 
@@ -80,7 +77,6 @@ const AgentChatHeader = ({bot, rootId, inThread = Boolean(rootId), onOpenSetting
                     onSelectChat={(chatRootId) => toChat(bot.id, chatRootId)}
                     onNewChat={onNewChat}
                     onViewAll={toAll}
-                    onArchived={onArchived}
                     {...(!inThread && bots ? {agents: {bots, onSwitch: (other: LLMBot) => toChat(other.id)}} : {})}
                     renderTrigger={({ariaLabel, label, expanded, onClick}) => (
                         <ChatTitleDropdown

@@ -67,10 +67,7 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		}
 	} else {
 		var err error
-		// Archiving keeps the posts, so a post of an archived conversation
-		// can still be regenerated; the conversation is restored below once
-		// the turn passes its gates.
-		conv, err = c.convService.GetConversationIncludingArchived(convIDProp)
+		conv, err = c.convService.GetConversation(convIDProp)
 		if err != nil {
 			return fmt.Errorf("failed to get conversation for ownership check: %w", err)
 		}
@@ -95,9 +92,6 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 
 	policy, err := c.resolveTurnPolicy(ctx, turnRequest{bot: bot, user: user, channel: channel, conv: conv, post: post})
 	if err != nil {
-		return err
-	}
-	if err = c.activateTurnConversation(policy); err != nil {
 		return err
 	}
 

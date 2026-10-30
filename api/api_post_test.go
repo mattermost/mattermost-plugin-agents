@@ -99,7 +99,6 @@ func TestHandleStop(t *testing.T) {
 		omitNotifier       bool
 		notifierErr        error
 		omitConversationID bool
-		archived           bool
 	}
 
 	tests := []struct {
@@ -145,20 +144,6 @@ func TestHandleStop(t *testing.T) {
 			expectPublished:  false,
 		},
 		{
-			name:             "owner can stop a stream on an archived conversation's post",
-			setup:            setup{postUserID: testBotUserID, conversationOwner: testUserID, archived: true},
-			expectedStatus:   http.StatusOK,
-			expectStopCalled: true,
-			expectPublished:  true,
-		},
-		{
-			name:             "non-owner cannot stop a stream on an archived conversation's post",
-			setup:            setup{postUserID: testBotUserID, conversationOwner: testOtherUserID, archived: true},
-			expectedStatus:   http.StatusForbidden,
-			expectStopCalled: false,
-			expectPublished:  false,
-		},
-		{
 			name:             "non-empty body is rejected before any side effect",
 			setup:            setup{postUserID: testBotUserID, conversationOwner: testUserID, body: `{"unexpected":"payload"}`},
 			expectedStatus:   http.StatusBadRequest,
@@ -191,15 +176,11 @@ func TestHandleStop(t *testing.T) {
 			}
 			if !test.setup.omitConversationID {
 				post.AddProp(streaming.ConversationIDProp, conversationID)
-				conv := &store.Conversation{
+				e.conversationStore.conversations[conversationID] = &store.Conversation{
 					ID:     conversationID,
 					UserID: test.setup.conversationOwner,
 					BotID:  testBotUserID,
 				}
-				if test.setup.archived {
-					conv.DeleteAt = 1700000000000
-				}
-				e.conversationStore.conversations[conversationID] = conv
 			}
 
 			e.mockAPI.On("GetPost", postID).Return(post, nil)

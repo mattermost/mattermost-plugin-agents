@@ -56,55 +56,9 @@ func (s *loadedStateFlowStore) GetConversation(id string) (*store.Conversation, 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	conv, ok := s.conversations[id]
-	if !ok || conv.DeleteAt != 0 {
-		return nil, store.ErrConversationNotFound
-	}
-	cp := *conv
-	return &cp, nil
-}
-
-func (s *loadedStateFlowStore) GetConversationIncludingArchived(id string) (*store.Conversation, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	conv, ok := s.conversations[id]
 	if !ok {
 		return nil, store.ErrConversationNotFound
 	}
-	cp := *conv
-	return &cp, nil
-}
-
-func (s *loadedStateFlowStore) GetLatestConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var latest *store.Conversation
-	for _, conv := range s.conversations {
-		if conv.RootPostID == nil || *conv.RootPostID != rootPostID || conv.BotID != botID || conv.UserID != userID {
-			continue
-		}
-		if conv.DeleteAt == 0 {
-			latest = conv
-			break
-		}
-		if latest == nil || conv.DeleteAt > latest.DeleteAt {
-			latest = conv
-		}
-	}
-	if latest == nil {
-		return nil, store.ErrConversationNotFound
-	}
-	cp := *latest
-	return &cp, nil
-}
-
-func (s *loadedStateFlowStore) RestoreConversation(id string) (*store.Conversation, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	conv, ok := s.conversations[id]
-	if !ok || conv.DeleteAt == 0 {
-		return nil, store.ErrConversationNotFound
-	}
-	conv.DeleteAt = 0
 	cp := *conv
 	return &cp, nil
 }
@@ -113,7 +67,7 @@ func (s *loadedStateFlowStore) GetConversationByThreadBotUser(rootPostID, botID,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, conv := range s.conversations {
-		if conv.RootPostID != nil && *conv.RootPostID == rootPostID && conv.BotID == botID && conv.UserID == userID && conv.DeleteAt == 0 {
+		if conv.RootPostID != nil && *conv.RootPostID == rootPostID && conv.BotID == botID && conv.UserID == userID {
 			cp := *conv
 			return &cp, nil
 		}

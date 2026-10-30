@@ -12,14 +12,12 @@ import {clearConversationCache} from '@/hooks/use_conversation';
 import AgentChatHeader from './agent_chat_header';
 
 const mockRename = jest.fn();
-const mockArchive = jest.fn();
 const mockGetConversation = jest.fn();
 const mockGetThreads = jest.fn();
 const mockGetTools = jest.fn();
 const mockPush = jest.fn();
 jest.mock('@/client', () => ({
     renameConversation: (...args: unknown[]) => mockRename(...args),
-    archiveConversation: (...args: unknown[]) => mockArchive(...args),
     getConversation: (...args: unknown[]) => mockGetConversation(...args),
     getProfilePictureUrl: (id: string) => `/users/${id}/image`,
     getAIThreads: () => mockGetThreads(),
@@ -68,7 +66,7 @@ const makeStore = (withBotReply: boolean) => createStore(() => ({
 }));
 
 const renderHeader = (props: Partial<React.ComponentProps<typeof AgentChatHeader>> = {}, withBotReply = true) => {
-    const handlers = {onNewChat: jest.fn(), onArchived: jest.fn()};
+    const handlers = {onNewChat: jest.fn()};
     render(
         <Provider store={makeStore(withBotReply)}>
             <AgentChatHeader
@@ -176,8 +174,8 @@ describe('AgentChatHeader', () => {
     test.each([
         {name: 'new chat, no edit access', props: {}, expected: ['Recent chats', 'View all agents']},
         {name: 'new chat, can edit', props: {onOpenSettings: jest.fn()}, expected: ['Recent chats', 'Agent settings', 'View all agents']},
-        {name: 'open chat, no edit access', props: {rootId: 'root1'}, expected: ['Recent chats', 'New chat', 'Rename chat', 'Archive chat', 'View all agents']},
-        {name: 'open chat, can edit', props: {rootId: 'root1', onOpenSettings: jest.fn()}, expected: ['Recent chats', 'New chat', 'Rename chat', 'Archive chat', 'Agent settings', 'View all agents']},
+        {name: 'open chat, no edit access', props: {rootId: 'root1'}, expected: ['Recent chats', 'New chat', 'Rename chat', 'View all agents']},
+        {name: 'open chat, can edit', props: {rootId: 'root1', onOpenSettings: jest.fn()}, expected: ['Recent chats', 'New chat', 'Rename chat', 'Agent settings', 'View all agents']},
     ])('name menu items, chats in a submenu: $name', async ({props, expected}) => {
         renderHeader(props);
         await openActions();
@@ -209,7 +207,7 @@ describe('AgentChatHeader', () => {
         await waitFor(() => expect(mockGetThreads).toHaveBeenCalled());
         openMenu();
         expect(screen.queryByRole('menuitem', {name: 'Recent chats'})).toBeNull();
-        expect(menuItems()).toEqual(['New chat', 'Rename chat', 'Archive chat', 'View all agents']);
+        expect(menuItems()).toEqual(['New chat', 'Rename chat', 'View all agents']);
     });
 
     test('name menu opens with the keyboard-reachable button and Escape returns focus', async () => {
@@ -268,19 +266,17 @@ describe('AgentChatHeader', () => {
     test.each([
         {name: 'confirmed thread', reply: true, disabled: false},
         {name: 'thread without a known conversation id', reply: false, disabled: true},
-    ])('name menu Rename and Archive enabled state: $name', ({reply, disabled}) => {
+    ])('name menu Rename enabled state: $name', ({reply, disabled}) => {
         renderHeader({rootId: 'root1'}, reply);
         openMenu();
-        for (const name of ['Rename chat', 'Archive chat']) {
-            expect((screen.getByRole('menuitem', {name}) as HTMLButtonElement).disabled).toBe(disabled);
-        }
+        expect((screen.getByRole('menuitem', {name: 'Rename chat'}) as HTMLButtonElement).disabled).toBe(disabled);
     });
 
     test.each([
         {name: 'listed in this agent\'s DM, no bot post in the store', rootId: 'listed-root', disabled: false},
         {name: 'listed only outside this agent\'s DM', rootId: 'foreign-root', disabled: true},
         {name: 'not listed at all', rootId: 'unlisted-root', disabled: true},
-    ])('Rename and Archive fall back to the thread list id: $name', async ({rootId, disabled}) => {
+    ])('Rename falls back to the thread list id: $name', async ({rootId, disabled}) => {
         renderHeader({rootId}, false);
         await waitFor(() => expect(mockGetThreads).toHaveBeenCalled());
         await waitFor(() => {
@@ -288,10 +284,9 @@ describe('AgentChatHeader', () => {
             const item = screen.getByRole('menuitem', {name: 'Rename chat'}) as HTMLButtonElement;
             expect(item.disabled).toBe(disabled);
         });
-        expect((screen.getByRole('menuitem', {name: 'Archive chat'}) as HTMLButtonElement).disabled).toBe(disabled);
     });
 
-    test('name menu New chat calls onNewChat; Rename and Archive open their dialogs', async () => {
+    test('name menu New chat calls onNewChat; Rename opens its dialog', async () => {
         const {onNewChat} = renderHeader({rootId: 'root1'});
         openMenu();
         await clickItem('New chat');
@@ -302,11 +297,6 @@ describe('AgentChatHeader', () => {
         expect(await screen.findByLabelText('Chat name')).toBeTruthy();
         fireEvent.click(screen.getByRole('button', {name: 'Cancel'}));
         await waitFor(() => expect(screen.queryByLabelText('Chat name')).toBeNull());
-
-        fireEvent.click(screen.getByTestId('agent-chat-menu-button'));
-        await clickItem('Archive chat');
-        expect(await screen.findByRole('button', {name: 'Archive'})).toBeTruthy();
-        expect(mockArchive).not.toHaveBeenCalled();
     });
 
     test('name menu View all agents navigates to the all-agents view', async () => {
@@ -408,33 +398,5 @@ describe('AgentChatHeader', () => {
         expect(save.disabled).toBe(true);
         fireEvent.change(input, {target: {value: '   '}});
         expect(save.disabled).toBe(true);
-    });
-
-    test('archive asks for confirmation, archives, refreshes and hands off', async () => {
-        mockArchive.mockResolvedValue({});
-        const {onArchived} = renderHeader({rootId: 'root1'});
-        await openActions();
-        await clickItem('Archive chat');
-        expect(mockArchive).not.toHaveBeenCalled();
-
-        await act(async () => {
-            fireEvent.click(await screen.findByRole('button', {name: 'Archive'}));
-        });
-        expect(mockArchive).toHaveBeenCalledWith(CONVERSATION_ID);
-        expect(mockRequestRefresh).toHaveBeenCalledTimes(1);
-        expect(onArchived).toHaveBeenCalledTimes(1);
-    });
-
-    test('archive failure shows an error and stays on the chat', async () => {
-        mockArchive.mockRejectedValue(new Error('500'));
-        const {onArchived} = renderHeader({rootId: 'root1'});
-        await openActions();
-        await clickItem('Archive chat');
-        await act(async () => {
-            fireEvent.click(await screen.findByRole('button', {name: 'Archive'}));
-        });
-        expect(screen.getByRole('alert').textContent).toBe('Couldn\'t archive this chat. Try again.');
-        expect(onArchived).not.toHaveBeenCalled();
-        expect(mockRequestRefresh).not.toHaveBeenCalled();
     });
 });

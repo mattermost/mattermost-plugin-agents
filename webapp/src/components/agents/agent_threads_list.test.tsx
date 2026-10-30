@@ -58,7 +58,6 @@ const renderList = (props: Partial<React.ComponentProps<typeof AgentThreadsList>
         onSelectThread: jest.fn(),
         onNewChat: jest.fn(),
         onRetry: jest.fn(),
-        onArchiveThread: jest.fn(() => Promise.resolve()),
         onRenameThread: jest.fn(() => Promise.resolve()),
     };
     render(
@@ -245,14 +244,6 @@ describe('AgentThreadsList', () => {
     });
 
     describe('rename', () => {
-        test('the actions menu offers Rename chat and Archive chat', async () => {
-            renderList();
-            fireEvent.click(screen.getByRole('button', {name: 'Actions for First chat'}));
-
-            expect(await screen.findByText('Rename chat')).toBeTruthy();
-            expect(screen.getByText('Archive chat')).toBeTruthy();
-        });
-
         test('Rename chat asks for a title and renames that chat', async () => {
             const h = renderList();
             fireEvent.click(screen.getByRole('button', {name: 'Actions for First chat'}));
@@ -268,44 +259,6 @@ describe('AgentThreadsList', () => {
         });
     });
 
-    describe('archive', () => {
-        const openArchive = async (name: string) => {
-            fireEvent.click(screen.getByRole('button', {name: `Actions for ${name}`}));
-            fireEvent.click(await screen.findByText('Archive chat'));
-        };
-
-        test('cancel closes the dialog without archiving', async () => {
-            const h = renderList();
-            await openArchive('First chat');
-            fireEvent.click(await screen.findByRole('button', {name: 'Cancel'}));
-            await waitFor(() => expect(screen.queryByRole('button', {name: 'Archive'})).toBeNull());
-            expect(h.onArchiveThread).not.toHaveBeenCalled();
-        });
-
-        test('confirm archives that thread and closes the dialog', async () => {
-            const h = renderList();
-            await openArchive('First chat');
-            fireEvent.click(await screen.findByRole('button', {name: 'Archive'}));
-            await waitFor(() => expect(h.onArchiveThread).toHaveBeenCalledWith(threadsByBot.a[0]));
-            await waitFor(() => expect(screen.queryByRole('button', {name: 'Archive'})).toBeNull());
-        });
-
-        test('works on a placeholder "New chat" row', async () => {
-            const h = renderList();
-            await openArchive('New chat');
-            fireEvent.click(await screen.findByRole('button', {name: 'Archive'}));
-            await waitFor(() => expect(h.onArchiveThread).toHaveBeenCalledWith(threadsByBot.a[1]));
-        });
-
-        test('failure keeps the dialog open with a visible error', async () => {
-            const h = renderList();
-            h.onArchiveThread.mockRejectedValue(new Error('nope'));
-            await openArchive('First chat');
-            fireEvent.click(await screen.findByRole('button', {name: 'Archive'}));
-            expect((await screen.findByRole('alert')).textContent).toContain('Couldn\'t archive this chat');
-            expect(screen.getByRole('button', {name: 'Archive'})).toBeTruthy();
-        });
-    });
     test('clicking a collapsed agent row opens it and expands its chats', () => {
         const h = renderList();
         fireEvent.click(screen.getByRole('button', {name: 'Collapse Alpha chats'}));

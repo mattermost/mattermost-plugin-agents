@@ -23,18 +23,7 @@ type Store interface {
 	CreateConversation(conv *store.Conversation) error
 	// GetConversation retrieves a conversation by ID. Returns an error if not found.
 	GetConversation(id string) (*store.Conversation, error)
-	// GetConversationIncludingArchived retrieves a conversation by ID whether
-	// or not it is archived.
-	GetConversationIncludingArchived(id string) (*store.Conversation, error)
 	GetConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error)
-	// GetLatestConversationByThreadBotUser returns the tuple's active
-	// conversation, else its most recently archived one, without writing.
-	GetLatestConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error)
-	// RestoreConversation un-archives the conversation. Returns
-	// store.ErrConversationNotFound when it is not archived (or missing) and
-	// store.ErrConversationConflict when another active conversation owns its
-	// thread.
-	RestoreConversation(id string) (*store.Conversation, error)
 	// UpdateConversationTitle updates the title of a conversation.
 	UpdateConversationTitle(id, title string) error
 	// UpdateConversationRootPostID sets the RootPostID on a conversation.
@@ -161,81 +150,19 @@ func (s *Service) CreateConversation(params CreateConversationParams) (*CreateCo
 	}, nil
 }
 
-// ErrConversationArchived is returned when an archived conversation cannot be
-// continued because another active conversation now owns its thread.
-var ErrConversationArchived = errors.New("conversation is archived")
-
-// GetConversation retrieves an active conversation by ID. Returns
-// store.ErrConversationNotFound when it is missing or archived.
+// GetConversation retrieves a conversation by ID. Returns an error if not found.
 func (s *Service) GetConversation(id string) (*store.Conversation, error) {
 	return s.store.GetConversation(id)
 }
 
-// GetConversationIncludingArchived retrieves a conversation by ID whether or
-// not it is archived. Archiving keeps the conversation's Mattermost posts, so
-// every path that serves or acts on one of those posts looks it up this way;
-// callers that start or resume a turn then call ActivateConversation.
-func (s *Service) GetConversationIncludingArchived(id string) (*store.Conversation, error) {
-	return s.store.GetConversationIncludingArchived(id)
-}
-
 // GetConversationByThread returns the conversation rooted at rootPostID for
-// the bot and user, archived or not, or nil when the thread has none. It
-// never writes: a turn that passes its gates restores the conversation via
-// GetOrCreateConversation or ActivateConversation.
+// the bot and user, or nil when the thread has none.
 func (s *Service) GetConversationByThread(rootPostID, botID, userID string) (*store.Conversation, error) {
-	conv, err := s.store.GetLatestConversationByThreadBotUser(rootPostID, botID, userID)
+	conv, err := s.store.GetConversationByThreadBotUser(rootPostID, botID, userID)
 	if errors.Is(err, store.ErrConversationNotFound) {
 		return nil, nil
 	}
 	return conv, err
-}
-
-// ActivateConversation returns conv restored to active when it is archived,
-// and conv unchanged otherwise. Every entry point that starts or resumes a
-// turn on an existing conversation calls it once the turn is accepted, so a
-// refused turn never un-archives. The restore is conditional on the row still
-// being archived, so concurrent callers write at most once. Returns
-// ErrConversationArchived when another active conversation owns the thread or
-// the conversation was archived again concurrently.
-func (s *Service) ActivateConversation(conv *store.Conversation) (*store.Conversation, error) {
-	if conv.DeleteAt == 0 {
-		return conv, nil
-	}
-	restored, err := s.store.RestoreConversation(conv.ID)
-	switch {
-	case err == nil:
-		return restored, nil
-	case errors.Is(err, store.ErrConversationConflict):
-		return nil, fmt.Errorf("%w: another conversation is active in its thread", ErrConversationArchived)
-	case errors.Is(err, store.ErrConversationNotFound):
-		// A concurrent caller restored it first.
-		active, getErr := s.store.GetConversation(conv.ID)
-		if errors.Is(getErr, store.ErrConversationNotFound) {
-			return nil, ErrConversationArchived
-		}
-		return active, getErr
-	default:
-		return nil, fmt.Errorf("failed to restore conversation: %w", err)
-	}
-}
-
-// findThreadConversation returns the active conversation for the thread, bot,
-// and user. A user-archived conversation is restored rather than replaced, so
-// a reply in an archived thread continues it with its history instead of
-// silently starting a new conversation. Returns store.ErrConversationNotFound
-// when the thread has no conversation at all.
-func (s *Service) findThreadConversation(rootPostID, botID, userID string) (*store.Conversation, error) {
-	conv, err := s.store.GetLatestConversationByThreadBotUser(rootPostID, botID, userID)
-	if err != nil {
-		return nil, err
-	}
-	active, err := s.ActivateConversation(conv)
-	if errors.Is(err, ErrConversationArchived) {
-		// A concurrent create made another conversation active first.
-		return s.store.GetConversationByThreadBotUser(rootPostID, botID, userID)
-	}
-	return active, err
 }
 
 // GetTurns returns all turns for a conversation, ordered by sequence.
@@ -347,7 +274,7 @@ type GetOrCreateResult struct {
 // GetOrCreateConversation looks up an existing conversation by (RootPostID, BotID),
 // or creates a new one if none exists.
 func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreateResult, error) {
-	existing, err := s.findThreadConversation(params.RootPostID, params.BotID, params.UserID)
+	existing, err := s.store.GetConversationByThreadBotUser(params.RootPostID, params.BotID, params.UserID)
 	if err != nil && !errors.Is(err, store.ErrConversationNotFound) {
 		return nil, fmt.Errorf("failed to look up conversation: %w", err)
 	}

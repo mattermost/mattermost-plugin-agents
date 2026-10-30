@@ -344,9 +344,6 @@ func TestResumeConversationDrops(t *testing.T) {
 		channel    *model.Channel
 		botCfg     func(*llm.BotConfig)
 		priorWakes int
-		// archived archives the conversation before the wake fires; a
-		// dropped wake must leave it archived.
-		archived bool
 	}{
 		{name: "post missing", postMissing: true},
 		{name: "conversation missing", jobConvID: "missing-conv"},
@@ -380,19 +377,6 @@ func TestResumeConversationDrops(t *testing.T) {
 			canRead:    true,
 			priorWakes: maxConsecutiveWakes,
 		},
-		{
-			name:     "archived conversation whose requester lost channel access",
-			user:     &model.User{Id: wakeUserID},
-			canRead:  false,
-			archived: true,
-		},
-		{
-			name:     "archived conversation whose agent no longer allows the requester",
-			user:     &model.User{Id: wakeUserID},
-			canRead:  true,
-			botCfg:   func(cfg *llm.BotConfig) { cfg.UserAccessLevel = llm.UserAccessLevelNone },
-			archived: true,
-		},
 	}
 
 	for _, tt := range tests {
@@ -410,9 +394,6 @@ func TestResumeConversationDrops(t *testing.T) {
 			channel := dmChannel
 			if tt.channel != nil {
 				channel = tt.channel
-			}
-			if tt.archived {
-				env.convStore.conversations[env.conv.ID].DeleteAt = wakeScheduledAt
 			}
 
 			convID := env.conv.ID
@@ -443,35 +424,8 @@ func TestResumeConversationDrops(t *testing.T) {
 			turns, err := env.convStore.GetTurnsForConversation(env.conv.ID)
 			require.NoError(t, err)
 			require.Len(t, turns, tt.priorWakes)
-			if tt.archived {
-				require.Equal(t, int64(wakeScheduledAt), env.convStore.conversations[env.conv.ID].DeleteAt,
-					"a dropped wake must not un-archive the conversation")
-			}
 		})
 	}
-}
-
-// TestResumeConversationRestoresArchivedConversation pins that a wake the
-// requester scheduled before archiving resumes the conversation, restoring
-// it, instead of being silently dropped.
-func TestResumeConversationRestoresArchivedConversation(t *testing.T) {
-	env := newWakeEnv(t, nil)
-	env.seedTurn(t, "user-1", "user", "please watch the job", nil, 1, 0)
-	env.convStore.conversations[env.conv.ID].DeleteAt = wakeScheduledAt
-
-	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
-	post := &model.Post{Id: "bot-post-id", UserId: "bot-id", ChannelId: channel.Id, RootId: "root-post-id"}
-	env.expectLiveWake(post, channel, wakeUserID)
-
-	env.resume(t, post, wakeUserID)
-
-	restored, err := env.convStore.GetConversation(env.conv.ID)
-	require.NoError(t, err, "the wake must restore the archived conversation")
-	require.Zero(t, restored.DeleteAt)
-	turns, err := env.convStore.GetTurnsForConversation(env.conv.ID)
-	require.NoError(t, err)
-	require.Len(t, turns, 2, "history plus the wake turn")
-	require.Len(t, env.lm.requests, 1)
 }
 
 func TestCountConsecutiveWakes(t *testing.T) {

@@ -17,7 +17,6 @@ import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {PopoverMenu} from '@mattermost/compass-ui/components/popover-menu';
 
 import {getProfilePictureUrl} from '@/client';
-import ConfirmationDialog from '@/components/confirmation_dialog';
 import Dropdown from '@/components/dropdown';
 import {WaveDots} from '@/components/llmbot_post/thinking_dots';
 import {prefersReducedMotion} from '@/components/llmbot_post/motion';
@@ -46,9 +45,6 @@ interface AgentThreadsListProps {
     onNewChat: (botId: string) => void;
     onRetry: () => void;
 
-    // Archives one chat. Rejects when it fails (the dialog then shows the error).
-    onArchiveThread: (thread: AIThread) => Promise<void>;
-
     // Renames one chat. Rejects when it fails (the dialog then shows the error).
     onRenameThread: (thread: AIThread, title: string) => Promise<void>;
 }
@@ -74,9 +70,6 @@ const rowMotion = (index: number, rootId: string | null | undefined, limit: numb
     return {motion: 'enter' as const};
 };
 
-// Above the plugin's other modals (2000), like every confirmation sheet on this page.
-const ARCHIVE_DIALOG_Z_INDEX = 2000;
-
 // The dimmed strength of the sidebar's quiet affordances (icons, the row chevron).
 const QUIET_OPACITY = 0.64;
 
@@ -92,7 +85,6 @@ const AgentThreadsList = ({
     onSelectThread,
     onNewChat,
     onRetry,
-    onArchiveThread,
     onRenameThread,
 }: AgentThreadsListProps) => {
     const intl = useIntl();
@@ -101,13 +93,7 @@ const AgentThreadsList = ({
 
     // Agents whose revealed rows are folding away after "Show less"; the limit resets when that ends.
     const [folding, setFolding] = useState<Record<string, boolean>>({});
-    const [archiveTarget, setArchiveTarget] = useState<AIThread | null>(null);
     const [renameTarget, setRenameTarget] = useState<AIThread | null>(null);
-    const [archiving, setArchiving] = useState(false);
-    const [archiveFailed, setArchiveFailed] = useState(false);
-
-    // Keeps the title visible while the dialog's exit animation runs.
-    const lastArchiveTitle = useRef('');
     const mounted = useRef(true);
     useEffect(() => {
         mounted.current = true;
@@ -141,43 +127,9 @@ const AgentThreadsList = ({
         setLimits((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => id !== botId)));
     };
 
-    const closeArchive = () => {
-        if (!archiving) {
-            setArchiveTarget(null);
-        }
-    };
-
-    const confirmArchive = async () => {
-        if (!archiveTarget || archiving) {
-            return;
-        }
-        setArchiving(true);
-        setArchiveFailed(false);
-        try {
-            await onArchiveThread(archiveTarget);
-            if (mounted.current) {
-                setArchiveTarget(null);
-            }
-        } catch {
-            if (mounted.current) {
-                setArchiveFailed(true);
-            }
-        } finally {
-            if (mounted.current) {
-                setArchiving(false);
-            }
-        }
-    };
-
-    if (archiveTarget) {
-        lastArchiveTitle.current = archiveTarget.title.trim() || intl.formatMessage({defaultMessage: 'New chat'});
-    }
-
     const sectionTitle = intl.formatMessage({defaultMessage: 'Your agents'});
 
     // Titles are generated asynchronously, so a blank title falls back to the placeholder.
-    // The actions menu does not depend on the thread being loadable, so a "New chat" row
-    // whose chat cannot be opened can still be archived.
     const newChatPlaceholder = intl.formatMessage({defaultMessage: 'New chat'});
 
     return (
@@ -296,10 +248,6 @@ const AgentThreadsList = ({
                                                 placeholder={newChatPlaceholder}
                                                 onSelect={() => onSelectThread(bot.id, thread.root_post_id as string)}
                                                 onRename={() => setRenameTarget(thread)}
-                                                onArchive={() => {
-                                                    setArchiveFailed(false);
-                                                    setArchiveTarget(thread);
-                                                }}
                                             />
                                         ))}
                                         {(hiddenCount > 0 || canShowLess) && (
@@ -344,34 +292,6 @@ const AgentThreadsList = ({
                 }}
                 onClose={() => setRenameTarget(null)}
             />
-            <ConfirmationDialog
-                show={archiveTarget !== null}
-                titleId='archive-chat-dialog-title'
-                title={intl.formatMessage({defaultMessage: 'Archive chat'})}
-                message={(
-                    <>
-                        <p>
-                            {intl.formatMessage(
-                                {defaultMessage: 'Archive "{title}"? It will be removed from your chats and can no longer be opened from here.'},
-                                {title: lastArchiveTitle.current},
-                            )}
-                        </p>
-                        {archiveFailed && (
-                            <ArchiveError role='alert'>
-                                {intl.formatMessage({defaultMessage: 'Couldn\'t archive this chat. Try again.'})}
-                            </ArchiveError>
-                        )}
-                    </>
-                )}
-                confirmButtonText={intl.formatMessage({defaultMessage: 'Archive'})}
-                cancelButtonText={intl.formatMessage({defaultMessage: 'Cancel'})}
-                onConfirm={confirmArchive}
-                onCancel={closeArchive}
-                isDestructive={true}
-                confirmPending={archiving}
-                managedAccessibility={true}
-                zIndex={ARCHIVE_DIALOG_Z_INDEX}
-            />
         </Section>
     );
 };
@@ -391,13 +311,12 @@ interface ThreadItemProps {
     motion?: 'enter' | 'leave';
     onSelect: () => void;
     onRename: () => void;
-    onArchive: () => void;
 }
 
 // A compass ChannelSidebarItem only renders its own kebab for channel and DM rows, so the
 // actions button is overlaid on the row (as the agent rows do for their chevron and [+]),
 // with the same hover/focus reveal as the compass kebab.
-const ThreadItem = ({thread, active, generating, unread, placeholder, motion, onSelect, onRename, onArchive}: ThreadItemProps) => {
+const ThreadItem = ({thread, active, generating, unread, placeholder, motion, onSelect, onRename}: ThreadItemProps) => {
     const intl = useIntl();
     const [menuOpen, setMenuOpen] = useState(false);
     const {rendered, onExited} = useMenuTransition(menuOpen);
@@ -477,10 +396,7 @@ const ThreadItem = ({thread, active, generating, unread, placeholder, motion, on
                                 setMenuOpen(false);
                             }}
                         >
-                            <ChatActionsMenuItems
-                                onRename={onRename}
-                                onArchive={onArchive}
-                            />
+                            <ChatActionsMenuItems onRename={onRename}/>
                         </PopoverMenu>
                     </Dropdown>
                 </ThreadActionsSlot>
@@ -799,11 +715,6 @@ const ThreadListItem = styled.li<{$motion?: 'enter' | 'leave'}>`
 const MoreRow = styled.div`
     display: flex;
     padding: var(--spacing-xxxxs) var(--spacing-l) var(--spacing-xxxxs) calc(var(--spacing-xxxxl) - var(--spacing-xxxxs));
-`;
-
-const ArchiveError = styled.p`
-    margin: var(--spacing-xs) 0 0;
-    color: var(--error-text);
 `;
 
 export default AgentThreadsList;

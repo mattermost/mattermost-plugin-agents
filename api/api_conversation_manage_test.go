@@ -106,7 +106,7 @@ func TestConversationManagementRoutes(t *testing.T) {
 			expectConvParams: true,
 		},
 		{
-			name:             "rename of archived conversation",
+			name:             "rename of deleted conversation",
 			event:            AuditEventRenameConversation,
 			method:           http.MethodPut,
 			path:             "/conversations/" + testManagedConvID + "/title",
@@ -163,69 +163,6 @@ func TestConversationManagementRoutes(t *testing.T) {
 			method:           http.MethodPut,
 			path:             "/conversations/" + testManagedConvID + "/title",
 			body:             renameBody(plantedRequestTitle),
-			userID:           testUserID,
-			conv:             ownedConversation(0),
-			storeErr:         errors.New("db down"),
-			expectedStatus:   http.StatusInternalServerError,
-			expectConvParams: true,
-		},
-		{
-			name:             "owner archives conversation",
-			event:            AuditEventArchiveConversation,
-			method:           http.MethodPost,
-			path:             "/conversations/" + testManagedConvID + "/archive",
-			userID:           testUserID,
-			conv:             ownedConversation(0),
-			expectedStatus:   http.StatusOK,
-			expectConvParams: true,
-			expectBotID:      true,
-			validate: func(t *testing.T, e *TestEnvironment) {
-				assert.NotZero(t, e.conversationStore.conversations[testManagedConvID].DeleteAt)
-				assert.Equal(t, 1, e.conversationStore.archiveWrites)
-			},
-		},
-		{
-			name:             "archiving an archived conversation succeeds without rewriting it",
-			event:            AuditEventArchiveConversation,
-			method:           http.MethodPost,
-			path:             "/conversations/" + testManagedConvID + "/archive",
-			userID:           testUserID,
-			conv:             ownedConversation(1700000000000),
-			expectedStatus:   http.StatusOK,
-			expectConvParams: true,
-			expectBotID:      true,
-			validate: func(t *testing.T, e *TestEnvironment) {
-				assert.Equal(t, int64(1700000000000), e.conversationStore.conversations[testManagedConvID].DeleteAt)
-				assert.Zero(t, e.conversationStore.archiveWrites)
-			},
-		},
-		{
-			name:             "other user cannot archive",
-			event:            AuditEventArchiveConversation,
-			method:           http.MethodPost,
-			path:             "/conversations/" + testManagedConvID + "/archive",
-			userID:           testOtherUserID,
-			conv:             ownedConversation(0),
-			expectedStatus:   http.StatusNotFound,
-			expectConvParams: true,
-			validate: func(t *testing.T, e *TestEnvironment) {
-				assert.Zero(t, e.conversationStore.conversations[testManagedConvID].DeleteAt)
-			},
-		},
-		{
-			name:             "archive of missing conversation",
-			event:            AuditEventArchiveConversation,
-			method:           http.MethodPost,
-			path:             "/conversations/" + testManagedConvID + "/archive",
-			userID:           testUserID,
-			expectedStatus:   http.StatusNotFound,
-			expectConvParams: true,
-		},
-		{
-			name:             "archive store error is a 500, not a 404",
-			event:            AuditEventArchiveConversation,
-			method:           http.MethodPost,
-			path:             "/conversations/" + testManagedConvID + "/archive",
 			userID:           testUserID,
 			conv:             ownedConversation(0),
 			storeErr:         errors.New("db down"),

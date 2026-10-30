@@ -251,63 +251,6 @@ func TestHandleGetConversationContext(t *testing.T) {
 			},
 		},
 		{
-			name:           "owner sees composition of an archived conversation",
-			userID:         testUserID,
-			conversationID: "conv-archived-ok",
-			setup: func(e *TestEnvironment) {
-				e.conversationStore.conversations["conv-archived-ok"] = &store.Conversation{
-					ID:        "conv-archived-ok",
-					UserID:    testUserID,
-					BotID:     testBotUserID,
-					ChannelID: &channelID,
-					Operation: "conversation",
-					DeleteAt:  1700000000000,
-				}
-				e.conversationStore.turns["conv-archived-ok"] = []store.Turn{
-					{ID: "turn-1", ConversationID: "conv-archived-ok", Role: "user", Content: textBlocks, Sequence: 1},
-				}
-				e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
-			},
-			expectedStatus: http.StatusOK,
-			validate: func(t *testing.T, resp *http.Response) {
-				var c llm.Composition
-				require.NoError(t, json.NewDecoder(resp.Body).Decode(&c))
-				assert.NotEmpty(t, c.Components)
-			},
-		},
-		{
-			name:           "archived conversation rejected for non-channel-member",
-			userID:         testOtherUserID,
-			conversationID: "conv-archived-blocked",
-			setup: func(e *TestEnvironment) {
-				e.conversationStore.conversations["conv-archived-blocked"] = &store.Conversation{
-					ID:        "conv-archived-blocked",
-					UserID:    testUserID,
-					BotID:     testBotUserID,
-					ChannelID: &channelID,
-					Operation: "conversation",
-					DeleteAt:  1700000000000,
-				}
-				e.mockAPI.On("HasPermissionToChannel", testOtherUserID, channelID, model.PermissionReadChannel).Return(false)
-			},
-			expectedStatus: http.StatusForbidden,
-		},
-		{
-			name:           "archived threadless conversation rejected for non-owner",
-			userID:         testOtherUserID,
-			conversationID: "conv-archived-threadless",
-			setup: func(e *TestEnvironment) {
-				e.conversationStore.conversations["conv-archived-threadless"] = &store.Conversation{
-					ID:        "conv-archived-threadless",
-					UserID:    testUserID,
-					BotID:     testBotUserID,
-					Operation: "conversation",
-					DeleteAt:  1700000000000,
-				}
-			},
-			expectedStatus: http.StatusForbidden,
-		},
-		{
 			name:           "nonexistent conversation returns 404",
 			userID:         testUserID,
 			conversationID: "no-such-conv",

@@ -31,7 +31,7 @@ func TestGetAIThreadsOrdersByLastActivity(t *testing.T) {
 		userID    string
 		updatedAt int64
 		turns     []int64
-		archived  bool
+		deleted   bool
 	}
 	type wantRow struct {
 		title    string
@@ -54,12 +54,12 @@ func TestGetAIThreadsOrdersByLastActivity(t *testing.T) {
 			want: []wantRow{{"continued", 5000}, {"untouched", 3000}},
 		},
 		{
-			name: "other users' and archived conversations are excluded",
+			name: "other users' and deleted conversations are excluded",
 			convs: []convSpec{
 				{title: "continued", userID: testUserID, updatedAt: 1000, turns: []int64{7000}},
 				{title: "untouched", userID: testUserID, updatedAt: 2000},
 				{title: "theirs", userID: otherUserID, updatedAt: 1000, turns: []int64{9000}},
-				{title: "archived", userID: testUserID, updatedAt: 1000, turns: []int64{9000}, archived: true},
+				{title: "deleted", userID: testUserID, updatedAt: 1000, turns: []int64{9000}, deleted: true},
 			},
 			want: []wantRow{{"continued", 7000}, {"untouched", 2000}},
 		},
@@ -100,8 +100,8 @@ func TestGetAIThreadsOrdersByLastActivity(t *testing.T) {
 						CreatedAt:      createdAt,
 					}))
 				}
-				if spec.archived {
-					// Set DeleteAt directly so archiving does not bump UpdatedAt past the turns.
+				if spec.deleted {
+					// Soft-delete directly so UpdatedAt is not bumped past the turns.
 					_, err := db.Exec("UPDATE LLM_Conversations SET DeleteAt = $1 WHERE ID = $2", spec.updatedAt, conv.ID)
 					require.NoError(t, err)
 				}

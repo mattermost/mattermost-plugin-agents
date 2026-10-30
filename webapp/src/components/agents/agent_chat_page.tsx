@@ -168,7 +168,6 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
                     rootId={dm.status === 'ready' && rootId && validRootId === rootId ? rootId : ''}
                     inThread={Boolean(rootId)}
                     onNewChat={newChat}
-                    onArchived={newChat}
                     bots={bots}
                     {...(access.status === 'allowed' ? {onOpenSettings: () => setSettingsOpen(true)} : {})}
                 />

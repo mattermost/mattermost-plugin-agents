@@ -13,7 +13,6 @@ const mockGetUserMCPTools = jest.fn();
 const mockGetUserToolPreferences = jest.fn();
 const mockUpdateRead = jest.fn();
 const mockCreatePost = jest.fn();
-const mockArchiveConversation = jest.fn();
 const mockRenameConversation = jest.fn();
 const mockGetPostsByIds = jest.fn();
 
@@ -24,7 +23,6 @@ jest.mock('@/client', () => ({
     createPost: (...args: unknown[]) => mockCreatePost(...args),
     getProfilesByIds: () => Promise.resolve([]),
     getPostsByIds: (ids: string[]) => mockGetPostsByIds(ids),
-    archiveConversation: (id: string) => mockArchiveConversation(id),
     renameConversation: (id: string, title: string) => mockRenameConversation(id, title),
     getProfilePictureUrl: (id: string) => `/users/${id}/image`,
     updateRead: (userId: string, teamId: string, postId: string, timestamp: number) => (
@@ -270,32 +268,6 @@ describe('RHS', () => {
 
             await waitFor(() => expect(mockRenameConversation).toHaveBeenCalledWith('c1', 'Renamed'));
             await waitFor(() => expect(screen.getAllByTestId('rhs-thread-item').map((el) => el.firstChild?.textContent)).toEqual(['Renamed||none', 'Title two||none']));
-        });
-
-        test('Archive chat confirms, archives that chat and removes it from the list', async () => {
-            mockArchiveConversation.mockResolvedValue(true);
-            await openHistory();
-
-            fireEvent.click(screen.getByRole('button', {name: 'menu Title two'}));
-            fireEvent.click(await screen.findByText('Archive chat'));
-            fireEvent.click(await screen.findByRole('button', {name: 'Archive'}));
-
-            await waitFor(() => expect(mockArchiveConversation).toHaveBeenCalledWith('c2'));
-            await waitFor(() => expect(screen.getAllByTestId('rhs-thread-item').map((el) => el.firstChild?.textContent)).toEqual(['Title one||none']));
-        });
-
-        test('a failed archive keeps the chat and shows an error', async () => {
-            const errorLog = jest.spyOn(console, 'error').mockImplementation(() => null);
-            mockArchiveConversation.mockRejectedValue(new Error('nope'));
-            await openHistory();
-
-            fireEvent.click(screen.getByRole('button', {name: 'menu Title one'}));
-            fireEvent.click(await screen.findByText('Archive chat'));
-            fireEvent.click(await screen.findByRole('button', {name: 'Archive'}));
-
-            expect((await screen.findByRole('alert')).textContent).toContain('Couldn\'t archive this chat');
-            expect(screen.getAllByTestId('rhs-thread-item')).toHaveLength(2);
-            errorLog.mockRestore();
         });
     });
 

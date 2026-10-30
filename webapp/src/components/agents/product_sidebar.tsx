@@ -12,7 +12,7 @@ import {Icon} from '@mattermost/compass-ui/components/icon';
 import {Scrollbar} from '@mattermost/compass-ui/components/scrollbar';
 
 import {useBotlist} from '@/bots';
-import {archiveConversation, renameConversation} from '@/client';
+import {renameConversation} from '@/client';
 import {useAgentThreads} from '@/hooks/use_agent_threads';
 import type {AIThread} from '@/types/ai_thread';
 import {onAgentThreadsRefreshRequested, requestAgentThreadsRefresh, subscribeToAllPostUpdates} from '@/websocket';
@@ -76,17 +76,6 @@ const YourAgentsSection = () => {
 
     useEffect(() => onAgentThreadsRefreshRequested(refreshWithTitleRetry), [refreshWithTitleRetry]);
 
-    const {rootId: openRootId, botId: openBotId, view, toChat} = route;
-    const archiveThread = useCallback(async (thread: AIThread) => {
-        await archiveConversation(thread.id);
-
-        // The open chat is gone: land on a fresh chat with the same agent.
-        if (view === 'chat' && openBotId === thread.bot_id && openRootId === thread.root_post_id) {
-            toChat(thread.bot_id);
-        }
-        await refresh();
-    }, [view, openBotId, openRootId, toChat, refresh]);
-
     const renameThread = useCallback(async (thread: AIThread, title: string) => {
         await renameConversation(thread.id, title);
 
@@ -107,7 +96,6 @@ const YourAgentsSection = () => {
             onSelectThread={route.toChat}
             onNewChat={route.toChat}
             onRetry={refresh}
-            onArchiveThread={archiveThread}
             onRenameThread={renameThread}
         />
     );

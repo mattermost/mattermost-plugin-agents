@@ -15,12 +15,11 @@ interface ChatActionsPopoverProps {
     anchor: HTMLElement | null;
     onClose: () => void;
     onRename: () => void;
-    onArchive: () => void;
 }
 
 // The chat actions menu of the RHS history, opened from the compass Thread List Item's own
 // overflow button (the menu belongs to the list, not to the item).
-const ChatActionsPopover = ({anchor, onClose, onRename, onArchive}: ChatActionsPopoverProps) => {
+const ChatActionsPopover = ({anchor, onClose, onRename}: ChatActionsPopoverProps) => {
     const open = anchor !== null;
     const menu = useMenuTransition(open);
 
@@ -52,10 +51,7 @@ const ChatActionsPopover = ({anchor, onClose, onRename, onArchive}: ChatActionsP
                     onClose();
                 }}
             >
-                <ChatActionsMenuItems
-                    onRename={onRename}
-                    onArchive={onArchive}
-                />
+                <ChatActionsMenuItems onRename={onRename}/>
             </PopoverMenu>
         </Dropdown>
     );

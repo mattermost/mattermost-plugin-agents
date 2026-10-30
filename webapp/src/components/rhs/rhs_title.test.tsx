@@ -155,7 +155,7 @@ describe('RHSTitle', () => {
         fireEvent.click(screen.getByTestId('bot-selector-rhs'));
 
         // In an open chat the agent picker is the New chat row, in place of Switch agent.
-        expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['New chat', 'Recent chats', 'Rename chat', 'Archive chat', 'View all agents']);
+        expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['New chat', 'Recent chats', 'Rename chat', 'View all agents']);
     });
 
     test('with a single agent an open chat has the plain New chat item', () => {
@@ -163,7 +163,7 @@ describe('RHSTitle', () => {
 
         fireEvent.click(screen.getByTestId('bot-selector-rhs'));
 
-        expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['New chat', 'Rename chat', 'Archive chat', 'View all agents']);
+        expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['New chat', 'Rename chat', 'View all agents']);
     });
 
     test('choosing a recent chat opens it in the RHS', () => {
