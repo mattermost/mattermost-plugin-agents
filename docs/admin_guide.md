@@ -1,6 +1,6 @@
 # Mattermost Agents Admin Guide
 
-This guide covers installing, configuring, and managing the Mattermost Agents plugin. You'll learn how to set up AI capabilities for your Mattermost instance and configure them for your organization's needs.
+Install, configure, and manage the Mattermost Agents plugin: LLM services, agents, MCP servers and the built-in Mattermost MCP server, tool approval policies, access control, web and semantic search, audit logging, OpenTelemetry tracing, and license requirements.
 
 ## Installation
 
@@ -920,6 +920,8 @@ For more information, see [Atlassian's documentation on MCP server settings](htt
 
 The Mattermost MCP Server enables AI agents and external applications to interact with your Mattermost instance through the Model Context Protocol (MCP). This is a standardized protocol that allows AI assistants to read messages, search content, create posts, and manage channels and teams programmatically. The built-in Mattermost tools are always available to Agents through the embedded server, and the optional HTTP endpoint for external clients can also aggregate eligible tools from compatible plugin-registered MCP servers.
 
+To connect Claude Code, Claude Desktop, Cursor, VS Code, or another external MCP client, see [Mattermost MCP Server](mcp_server.md) for client setup, authentication, and troubleshooting. This section covers the admin-side configuration.
+
 **Standalone MCP server (separate process / stdio):** Running the standalone `mattermost-mcp-server` binary outside the Mattermost server is for **development and local use only** and is **not** intended for production. Production deployments should rely on the embedded Mattermost MCP server and the supported configuration in this plugin (System Console, HTTP endpoint for external clients, and agent MCP settings below).
 
 ### Overview
@@ -976,7 +978,7 @@ The plugin also registers an extended catalog of read and write tools spanning M
 - **Users & profiles**: get_me, get_user, get_user_by_username, get_user_by_email, get_users_by_ids, get_users_by_usernames, get_user_stats, get_user_cpa_values, list_cpa_fields, ⚠ update_user
 - **Status & presence**: get_user_status, get_users_statuses, get_user_custom_status, ⚠ set_status, ⚠ set_dnd
 - **Teams & team members**: get_team_member, get_team_stats, get_user_teams, get_users_in_team, get_users_not_in_team, get_new_users_in_team, get_dm_common_teams, search_teams, search_users_in_team, ⚠ add_team_members, ⚠ remove_team_member, ⚠ update_team, ⚠ invite_users_to_team, ⚠ invite_users_to_team_and_channels
-- **Files & attachments**: get_file_info, get_post_files, get_file_link, search_files, ⚠ upload_file
+- **Files & attachments**: read_file, get_file_info, get_post_files, get_file_link, search_files, ⚠ upload_file
 - **Integrations**: get_bot, list_bots, list_incoming_webhooks, list_outgoing_webhooks
 - **Groups**: get_group_info, list_groups, get_user_groups, get_channel_groups, get_team_groups, get_users_in_group_channels
 - **Roles & permissions**: get_role, get_channel_moderations, ⚠ update_channel_member_roles, ⚠ update_team_member_roles
@@ -1004,7 +1006,7 @@ Per-tool admin policy applies to aggregated plugin tools. Proxied plugin tool ca
 If an exposed plugin tool name conflicts with a built-in Mattermost tool or with another exposed plugin tool, the conflicting plugin tool is skipped from the external endpoint. These conflicts are logged.
 
 **Requirements:**
-- Mattermost Server v11.2 or later
+- Mattermost Server v12.0 or later (the minimum version for the Agents plugin)
 - Valid authentication method (OAuth or Personal Access Token)
 
 **Note:** The server uses streamable HTTP transport and does not support traditional Server-Sent Events (SSE) transport. External clients must use the streamable HTTP transport available at the `/mcp` endpoint.

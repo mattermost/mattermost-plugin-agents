@@ -1,5 +1,7 @@
 # Multiplayer Tool Calling — Authentication Model
 
+This page describes how Mattermost Agents handle tool calls, tool approval, credentials, and result visibility when several people share a channel with an agent. It is the reference for admins, prompt authors, and security reviewers.
+
 ## 1. Overview
 
 When an Agent answers a question in a direct message, the authentication story is simple: only one human is in the conversation, so only one person can approve tools, see arguments, and read results. Channels break that assumption. The moment an Agent participates in a public or private channel, several people can read the conversation, several people might want to act on it, and several different identities could in principle be used to run a tool.
