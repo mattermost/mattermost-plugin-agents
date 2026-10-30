@@ -594,6 +594,33 @@ type testMCPClientManager struct {
 	tools      []llm.Tool
 	errors     *mcp.Errors
 	onGetTools func()
+	// dmOnly mirrors ServerConfig.DMOnly: these servers are left out of
+	// selections that exclude DM-only servers and described instead.
+	dmOnly []llm.DMOnlyMCPServer
+	// dmOnlyOrigins maps each dmOnly server name to its origin.
+	dmOnlyOrigins map[string]string
+}
+
+func (m *testMCPClientManager) isDMOnlyOrigin(origin string) bool {
+	for _, dmOnlyOrigin := range m.dmOnlyOrigins {
+		if dmOnlyOrigin == origin {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *testMCPClientManager) DescribeDMOnlyMCPServers(_ context.Context, _ mcp.CatalogRequest, selection mcp.ToolSelection) []llm.DMOnlyMCPServer {
+	if !selection.ExcludeDMOnlyServers {
+		return nil
+	}
+	var described []llm.DMOnlyMCPServer
+	for _, server := range m.dmOnly {
+		if selection.Allows(m.dmOnlyOrigins[server.Name]) {
+			described = append(described, server)
+		}
+	}
+	return described
 }
 
 func (m *testMCPClientManager) GetToolsWithSelection(_ context.Context, _ mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
@@ -603,9 +630,13 @@ func (m *testMCPClientManager) GetToolsWithSelection(_ context.Context, _ mcp.Ca
 
 	tools := make([]llm.Tool, 0, len(m.tools))
 	for _, tool := range m.tools {
-		if selection.Allows(tool.ServerOrigin) {
-			tools = append(tools, tool)
+		if !selection.Allows(tool.ServerOrigin) {
+			continue
 		}
+		if selection.ExcludeDMOnlyServers && m.isDMOnlyOrigin(tool.ServerOrigin) {
+			continue
+		}
+		tools = append(tools, tool)
 	}
 	return tools, m.errors
 }

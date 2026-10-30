@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
@@ -42,6 +43,14 @@ type MCPServerDescriber interface {
 }
 
 var _ MCPServerDescriber = (*mcp.ClientManager)(nil)
+
+// DMOnlyMCPServerDescriber names the servers a catalog selection left out
+// only because they are limited to direct messages.
+type DMOnlyMCPServerDescriber interface {
+	DescribeDMOnlyMCPServers(ctx stdcontext.Context, req mcp.CatalogRequest, selection mcp.ToolSelection) []llm.DMOnlyMCPServer
+}
+
+var _ DMOnlyMCPServerDescriber = (*mcp.ClientManager)(nil)
 
 // ConfigProvider provides configuration access
 type ConfigProvider interface {
@@ -165,11 +174,15 @@ func filterToolAuthErrorsForAllowlist(errors []llm.ToolAuthError, allowlist []ll
 // onto the set of MCP servers that may be contacted, so a disallowed server is
 // never connected rather than connected and then filtered out. The license
 // gate is enforced only here; the agent allowlist and user-disabled origins
-// are additionally narrowed per-tool by the filters that follow.
-func mcpToolSelection(botCfg llm.BotConfig, c *llm.Context, remoteMCPLicensed bool) mcp.ToolSelection {
+// are additionally narrowed per-tool by the filters that follow. DM-only
+// servers are selected only for the requester's direct message with the
+// agent, so every other request, including ones that never say where they
+// run, leaves them out.
+func mcpToolSelection(botCfg llm.BotConfig, c *llm.Context, remoteMCPLicensed, directMessage bool) mcp.ToolSelection {
 	selection := mcp.ToolSelection{
 		DeniedOrigins:        c.ToolCatalog.DisabledMCPServerOrigins,
 		ExcludeRemoteServers: !remoteMCPLicensed,
+		ExcludeDMOnlyServers: !directMessage,
 	}
 
 	if !botCfg.AutoEnableNewMCPTools {
@@ -220,6 +233,16 @@ func (b *Builder) WithLLMContextPreloadedMCPTools(tools []llm.EnabledMCPTool) ll
 func (b *Builder) WithLLMContextInteractive() llm.ContextOption {
 	return func(c *llm.Context) {
 		c.ToolCatalog.InteractiveUserPresent = true
+	}
+}
+
+// WithLLMContextDirectMessage marks the request as the requester's direct
+// message with the agent, so DM-only MCP servers are cataloged. It has no
+// effect unless the context's channel is that DM, and must be configured
+// before default tools are built.
+func (b *Builder) WithLLMContextDirectMessage() llm.ContextOption {
+	return func(c *llm.Context) {
+		c.ToolCatalog.DirectMessage = true
 	}
 }
 
@@ -322,8 +345,12 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		// Resolve server-level eligibility before connecting. The per-tool
 		// filters below remain as defense in depth for allowlist and context
 		// rules after the provider returns its selected catalog.
-		selection := mcpToolSelection(botCfg, c, remoteMCPLicensed)
+		directMessage := c.ToolCatalog.DirectMessage && mmapi.IsDMWith(bot.BotUserID(), c.Channel)
+		selection := mcpToolSelection(botCfg, c, remoteMCPLicensed, directMessage)
 		mcpTools, mcpErrors = b.mcpToolProvider.GetToolsWithSelection(ctx, req, selection)
+		if describer, ok := b.mcpToolProvider.(DMOnlyMCPServerDescriber); ok && c.ToolCatalog.InteractiveUserPresent {
+			c.DMOnlyMCPServers = describer.DescribeDMOnlyMCPServers(ctx, req, selection)
+		}
 
 		// Per-agent MCP tool filtering: unless the agent is configured to pick up
 		// every MCP tool automatically, retain only tools listed in its allowlist.

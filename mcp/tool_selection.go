@@ -31,6 +31,11 @@ type ToolSelection struct {
 	// server. Remote and plugin MCP servers are available at Enterprise and
 	// above, so below that level they are never contacted.
 	ExcludeRemoteServers bool
+
+	// ExcludeDMOnlyServers drops servers an admin limited to direct messages
+	// (ServerConfig.DMOnly). Runtime catalogs set it for every request that
+	// is not the requester's direct message with the agent.
+	ExcludeDMOnlyServers bool
 }
 
 // Allows reports whether origin is part of the selection.

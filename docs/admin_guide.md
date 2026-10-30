@@ -779,12 +779,25 @@ You can't disable MCP entirely from the System Console. To limit access, disable
 2. Configure server settings:
 
    - **Server URL**: The endpoint URL for your MCP server. Use the server's final address: redirects to a different origin (including `http` to `https` upgrades) are refused so credentials cannot leak to another host.
+   - **Direct Messages Only**: Limit the server to a user's direct message with an agent, including the Agents tab (optional). See [Limit an MCP server to direct messages](#limit-an-mcp-server-to-direct-messages).
    - **Description**: What the integration is for, in up to 500 characters (optional). Agents use it to offer the server to users who haven't connected it yet. After saving the server, select **Auto-fill from server** to start from the description the server reports about itself, or from its usage instructions when it has no description. Auto-fill connects as you, so for an OAuth-backed server you may be asked to connect your account first. Review and edit the text, then select **Save**: nothing is stored until you do.
    - **Custom Headers**: Additional headers required by your MCP server (optional).
    - **Service Account Authentication**: Static headers used in place of per-user OAuth by agents with **Use service accounts for authentication** enabled (optional). See [Service account authentication](#service-account-authentication).
    - **Server Name**: Descriptive name for the server (auto-generated if not provided).
 
 3. Select **Save** to add the server.
+
+### Limit an MCP server to direct messages
+
+Some MCP servers return data that not everyone in a channel may see. One example is a CRM where each user's OAuth connection reaches a different set of records. In a channel, the only thing stopping that data from reaching other members is the requester reviewing each tool call and its results before approving or sharing them. Set **Direct Messages Only** to **True** on such a server to take that decision out of users' hands.
+
+A server limited to direct messages:
+
+- Is available only when a user talks to an agent in their own direct message with it, or in the Agents tab. Tool approval policies on the **Tools** tab apply there as usual.
+- Is never connected for channel mentions, channel thread replies, ambient channel replies, group messages, channel analysis, or LLM Bridge requests from other plugins. Its tools are left out of those requests entirely, so there is nothing to approve or share.
+- Is named, with its **Description**, to agents in channels and group messages, so they can tell a user who asks for it to send them a direct message instead. The server is named only to users the server's access policy allows, and only by agents whose MCP allowlist includes it.
+
+This setting doesn't stop a user from copying or forwarding what an agent told them in a direct message. In a direct message, an agent can also pass the server's results to other tools, such as posting to a channel, subject to those tools' approval policies.
 
 ### Plugin-registered MCP servers
 

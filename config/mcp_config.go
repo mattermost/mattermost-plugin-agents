@@ -81,6 +81,10 @@ type MCPServerConfig struct {
 	// never shared across users.
 	Description string `json:"description,omitempty"`
 
+	// DMOnly limits the server's tools to the requester's direct message with
+	// an agent, for servers whose output must not reach a shared channel.
+	DMOnly bool `json:"dmOnly,omitempty"`
+
 	// ServiceAccountHeaders are static headers (e.g. a PAT Authorization header)
 	// sent in place of per-user OAuth on service-account-mode connections.
 	ServiceAccountHeaders map[string]string `json:"serviceAccountHeaders,omitempty"`

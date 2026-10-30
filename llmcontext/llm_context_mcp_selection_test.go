@@ -9,6 +9,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -138,6 +139,71 @@ func TestBuilderPassesServerEligibilityToMCPProvider(t *testing.T) {
 			require.Equal(t, tc.wantDenied, mcpProvider.selection.DeniedOrigins)
 			require.Equal(t, tc.wantExcludeRemo, mcpProvider.selection.ExcludeRemoteServers)
 			require.ElementsMatch(t, tc.wantToolNames, toolNames(context.Tools))
+		})
+	}
+}
+
+// dmOnlyDescribingMCPToolProvider also names the DM-only servers a selection
+// leaves out, recording whether it was asked.
+type dmOnlyDescribingMCPToolProvider struct {
+	recordingMCPToolProvider
+	described bool
+}
+
+func (p *dmOnlyDescribingMCPToolProvider) DescribeDMOnlyMCPServers(_ stdcontext.Context, _ mcp.CatalogRequest, selection mcp.ToolSelection) []llm.DMOnlyMCPServer {
+	p.described = true
+	if !selection.ExcludeDMOnlyServers {
+		return nil
+	}
+	return []llm.DMOnlyMCPServer{{Name: "Salesforce"}}
+}
+
+// DM-only servers are selected only when the caller marks the request as a DM
+// and its channel really is the requester's DM with this agent; everything
+// else, including callers that say nothing, excludes them.
+func TestBuilderSelectsDMOnlyServersOnlyInDirectMessage(t *testing.T) {
+	const botUserID = "bot-id"
+	dmWithBot := &model.Channel{Id: "dm", Type: model.ChannelTypeDirect, Name: model.GetDMNameFromIds("user-id", botUserID)}
+	dmWithOther := &model.Channel{Id: "dm-other", Type: model.ChannelTypeDirect, Name: model.GetDMNameFromIds("user-id", "someone-else")}
+	group := &model.Channel{Id: "gm", Type: model.ChannelTypeGroup, Name: "group"}
+	open := &model.Channel{Id: "open", Type: model.ChannelTypePrivate}
+
+	testCases := []struct {
+		name          string
+		channel       *model.Channel
+		directMessage bool
+		interactive   bool
+		wantExclude   bool
+		wantDescribed []llm.DMOnlyMCPServer
+	}{
+		{name: "marked DM with the agent selects DM-only servers", channel: dmWithBot, directMessage: true, interactive: true},
+		{name: "unmarked DM with the agent excludes them", channel: dmWithBot, interactive: true, wantExclude: true, wantDescribed: []llm.DMOnlyMCPServer{{Name: "Salesforce"}}},
+		{name: "marked DM with someone else excludes them", channel: dmWithOther, directMessage: true, interactive: true, wantExclude: true, wantDescribed: []llm.DMOnlyMCPServer{{Name: "Salesforce"}}},
+		{name: "marked group message excludes them", channel: group, directMessage: true, interactive: true, wantExclude: true, wantDescribed: []llm.DMOnlyMCPServer{{Name: "Salesforce"}}},
+		{name: "marked channel excludes them", channel: open, directMessage: true, interactive: true, wantExclude: true, wantDescribed: []llm.DMOnlyMCPServer{{Name: "Salesforce"}}},
+		{name: "a request with no channel excludes them", directMessage: true, interactive: true, wantExclude: true, wantDescribed: []llm.DMOnlyMCPServer{{Name: "Salesforce"}}},
+		{name: "a request nobody is present for names no servers", channel: open, wantExclude: true},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mcpProvider := &dmOnlyDescribingMCPToolProvider{}
+			builder := newLicenseTestBuilder(t, true, &staticToolProvider{}, mcpProvider)
+			bot := newTestBotWithConfig(llm.BotConfig{ID: "bot-id", Name: "matty", AutoEnableNewMCPTools: true})
+
+			var opts []llm.ContextOption
+			if tc.directMessage {
+				opts = append(opts, builder.WithLLMContextDirectMessage())
+			}
+			if tc.interactive {
+				opts = append(opts, builder.WithLLMContextInteractive())
+			}
+			opts = append(opts, builder.WithLLMContextTools(stdcontext.Background(), bot))
+			context := builder.BuildLLMContextUserRequest(bot, testUser(), tc.channel, opts...)
+
+			require.Equal(t, tc.wantExclude, mcpProvider.selection.ExcludeDMOnlyServers)
+			require.Equal(t, tc.interactive, mcpProvider.described)
+			require.Equal(t, tc.wantDescribed, context.DMOnlyMCPServers)
 		})
 	}
 }
