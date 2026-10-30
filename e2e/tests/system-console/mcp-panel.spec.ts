@@ -76,7 +76,7 @@ test.describe('MCP Panel', () => {
         const systemConsole = new SystemConsoleHelper(page);
 
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
-        await systemConsole.navigateToPluginConfig(mattermost.url());
+        await systemConsole.navigateToAgentsSettings(mattermost.url(), 'mcp');
 
         const timeoutField = page.getByLabel(/Connection Idle Timeout \(minutes\)/i).or(
             page.locator('text=Connection Idle Timeout (minutes)').locator('..').getByRole('spinbutton'),
@@ -103,7 +103,7 @@ test.describe('MCP Panel', () => {
         const systemConsole = new SystemConsoleHelper(page);
 
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
-        await systemConsole.navigateToPluginConfig(mattermost.url());
+        await systemConsole.navigateToAgentsSettings(mattermost.url(), 'mcp');
 
         const callbackField = page.getByLabel(/MCP OAuth Callback URL/i);
         const callbackRow = callbackField.locator('xpath=ancestor::*[.//button][1]');
@@ -144,7 +144,7 @@ test.describe('MCP Panel', () => {
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
-        await systemConsole.navigateToPluginConfig(mattermost.url());
+        await systemConsole.navigateToAgentsSettings(mattermost.url(), 'mcp');
 
         const description = page.getByLabel('Description', {exact: true});
         await description.scrollIntoViewIfNeeded();

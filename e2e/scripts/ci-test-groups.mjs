@@ -31,7 +31,6 @@ const groups = {
         'tests/tool-activity/activity-approval.spec.ts',
     ],
     'e2e-shard-2': [
-        'tests/system-console/bot-validation.spec.ts',
         'tests/channel-analysis/quick-actions/quick-actions.spec.ts',
         'tests/system-console/initial-state-navigation.spec.ts',
         'tests/advanced-error-scenarios/network-errors.spec.ts',
@@ -54,7 +53,6 @@ const groups = {
         'tests/rhs-core/link-domain-allowlist.spec.ts',
     ],
     'e2e-shard-3': [
-        'tests/system-console/bot-native-tools.spec.ts',
         'tests/channel-analysis/edge-cases/edge-cases.spec.ts',
         'tests/channel-analysis/custom-queries/custom-queries.spec.ts',
         'tests/edge-cases/input-validation.spec.ts',
@@ -83,7 +81,7 @@ const groups = {
         'tests/system-console/mcp-panel.spec.ts',
         'tests/system-console/service-management-ui.spec.ts',
         'tests/rhs-core/direct-channel-creation.spec.ts',
-        'tests/system-console/bot-management-ui.spec.ts',
+        'tests/system-console/settings-access.spec.ts',
         'tests/semantic-search/search-entry-points.spec.ts',
         'tests/agents-tour/no-bots.spec.ts',
         'tests/channel-summarization/basic-summarization.spec.ts',

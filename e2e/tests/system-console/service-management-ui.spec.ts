@@ -47,7 +47,7 @@ test.describe('Service Management', () => {
         });
 
         // Navigate to system console
-        await systemConsole.navigateToPluginConfig(mattermost.url());
+        await systemConsole.navigateToAgentsSettings(mattermost.url(), 'services');
 
         // Count existing service cards before adding
         const existingServiceCards = page.locator('[class*="ServiceContainer"]');
