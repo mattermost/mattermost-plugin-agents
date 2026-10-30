@@ -5,7 +5,7 @@ import React, {useCallback, useEffect, useId, useLayoutEffect, useRef, useState}
 import {useIntl} from 'react-intl';
 import {useDispatch, useSelector} from 'react-redux';
 import styled, {css} from 'styled-components';
-import SendGlyph from '@mattermost/compass-icons/components/send';
+import SendOutlineIcon from '@mattermost/compass-icons/components/send-outline';
 import SquareIcon from '@mattermost/compass-icons/components/square';
 
 import {WithTooltip} from '@mattermost/shared/components/tooltip';
@@ -20,7 +20,6 @@ import {Textbox as HostTextbox} from '@/mm_webapp';
 
 import AgentChatAttachments from './agent_chat_attachments';
 import {
-    HOST_COMPOSER_BODY_CLASS,
     TEXTAREA_EXPANDED_MAX_HEIGHT,
     TEXTAREA_EXPANDED_ONE_LINE_HEIGHT,
     TEXTAREA_EXPANDED_PADDING,
@@ -608,7 +607,6 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
                 ref={shellRef}
                 $hasLeadingAction={hasLeading}
                 $hostTextbox={Boolean(HostTextbox)}
-                className={HOST_COMPOSER_BODY_CLASS}
                 data-expanded={expanded}
                 aria-busy={rewriting}
                 onFocus={() => setFocused(true)}
@@ -678,6 +676,7 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
                         <StopSlot>
                             <IconButton
                                 size='small'
+                                rounded={true}
                                 icon={<Icon glyph={<SquareIcon/>}/>}
                                 aria-label={intl.formatMessage({defaultMessage: 'Stop generating'})}
                                 data-testid='stop-generating-button'
@@ -689,8 +688,9 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
                 ) : (
                     <SendButton
                         size='small'
+                        rounded={true}
                         data-emphasis='primary'
-                        icon={<SendIcon glyph={<SendGlyph/>}/>}
+                        icon={<SendIcon glyph={<SendOutlineIcon/>}/>}
                         aria-label={intl.formatMessage({defaultMessage: 'Send message'})}
                         disabled={!canSend}
                         loading={sending}
@@ -769,6 +769,18 @@ const ComposerColumn = styled.div`
     width: 100%;
 `;
 
+// Half the pill's single-line outer height (one 32px line + xs padding above
+// and below + the 1px border on each side = 50px), so one line reads as
+// a full pill while a taller, multi-line box keeps the same corners instead of
+// the stretched capsule --radius-pill would draw. No compass radius token is
+// that large (--radius-xl is 16px). Update it with the Shell's padding or
+// border, or with TEXTAREA_ONE_LINE_HEIGHT.
+const COMPOSER_RADIUS = `calc(${TEXTAREA_ONE_LINE_HEIGHT} / 2 + var(--spacing-xs) + 1px)`;
+
+// No compass or host token for the focused border: the resting border is --border-default and the
+// hover one --border-dark; focus raises the opacity above both, to 24% of the text color.
+const BORDER_FOCUS = 'rgba(var(--center-channel-color-rgb), 0.24)';
+
 // The prototype's ComposerShell row: "+", text, send, xs apart inside xs
 // padding. Items sit on the bottom row so the buttons stay by the last line as
 // the text grows. Without a leading button the text keeps the pill's l inset.
@@ -797,10 +809,25 @@ const Shell = styled.div<{$hasLeadingAction: boolean; $hostTextbox: boolean}>`
             ${({$hasLeadingAction}) => ($hasLeadingAction ? "'plus . send'" : "'. . send'")};
     }
     padding: var(--spacing-xs) var(--spacing-xs) var(--spacing-xs) ${({$hasLeadingAction}) => ($hasLeadingAction ? 'var(--spacing-xs)' : 'var(--spacing-l)')};
+    border: var(--border-default);
+    border-radius: ${COMPOSER_RADIUS};
+    background: var(--center-channel-bg);
+    box-shadow: var(--elevation-4);
+    transition: box-shadow var(--duration-quick) var(--ease-transition), border-color var(--duration-quick) var(--ease-transition);
 
-    /* The border, radius and hover and focus states come from the host's message box class (see HOST_COMPOSER_BODY_CLASS); the host's flex: 1 has no place in this column. */
-    && {
-        flex: none;
+    /* Hover and focus raise the border's opacity. */
+    &:hover {
+        border: var(--border-dark);
+    }
+
+    &:focus-within {
+        border: var(--border-dark);
+        border-color: ${BORDER_FOCUS};
+        box-shadow: var(--elevation-5);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        transition: none;
     }
 
     ${({$hostTextbox}) => $hostTextbox && hostTextboxPillStyles}
@@ -893,16 +920,19 @@ const Textarea = styled.textarea`
 `;
 
 // Optical correction for the send glyph's shape, not a layout value: the
-// paper plane's mass is the triangle from its left edge to the right tip, so it
-// sits left of the glyph box's center. Nudging it right by 1px makes it look
-// centered in the button. A transform, so the button's size and hit area stay.
-const SEND_ICON_OPTICAL_OFFSET = '1px';
+// paper plane's path spans x 2-22.2 of its 24-unit viewBox (box centered), but
+// its mass is the triangle from the left edge to the right tip, whose centroid
+// sits at x ~8.7, ~2.4px left of center at the small button's 16px glyph (~3px
+// at the old 20px one). Nudging it right by --spacing-xxxxs (2px; 1px leaves
+// it ~1.4px left-heavy) makes it look centered in the circle. A transform, so
+// the button's size and hit area stay.
+const SEND_ICON_OPTICAL_OFFSET = 'var(--spacing-xxxxs)';
 
 const SendIcon = styled(Icon)`
     transform: translateX(${SEND_ICON_OPTICAL_OFFSET});
 `;
 
-// Stop: the standard (neutral) compass IconButton, 32px like Send so
+// Stop: the standard (neutral) compass IconButton, round and 32px like Send so
 // swapping them does not move anything; quieter than the primary Send. The slot
 // takes the send grid area and carries the tooltip's trigger.
 const StopSlot = styled.span`
@@ -915,7 +945,8 @@ const HiddenFileInput = styled.input`
     ${visuallyHidden}
 `;
 
-// Send (and Stop): a small compass IconButton (32x32, the "+" size) colored like a compass primary Button
+// Send (and Stop): a round small compass IconButton (32x32, the "+" size,
+// circular through `rounded`) colored like a compass primary Button
 // (Button.css emphasis-primary: fill, 8%/16% black hover/active mixes,
 // disabled wash). The extra && outranks IconButton's own
 // :hover/:active/:disabled rules.

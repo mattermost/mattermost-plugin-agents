@@ -741,6 +741,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         return 'done';
     }, [anchorRoundId, anchorStage, onlookerWaitRoundId, onlookerWaitStage]);
 
+    const liveReveal = useMemo(
+        () => (smoothReveal ? {fresh: revealed.fresh, fadeAfter: revealed.fadeAfter} : undefined), // eslint-disable-line no-undefined
+        [smoothReveal, revealed.fresh, revealed.fadeAfter],
+    );
+
     const renderRound = useCallback((round: Round) => {
         const isLiveRound = round.id === LIVE_ROUND_ID;
         return (
@@ -757,11 +762,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 reasoningLoading={isLiveRound && isReasoningLoading}
                 reasoningCollapsed={!expandedReasoning[round.id]}
                 onToggleReasoning={toggleReasoning}
-                reveal={isLiveRound && smoothReveal}
+                reveal={isLiveRound ? liveReveal : undefined} // eslint-disable-line no-undefined
             />
         );
     }, [
-        smoothReveal,
+        liveReveal,
         props.post.id,
         props.post.channel_id,
         conversationId,
