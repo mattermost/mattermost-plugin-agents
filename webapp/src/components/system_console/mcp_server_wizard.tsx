@@ -11,21 +11,60 @@ import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
 
 import {getMCPServerTools, getPluginConfig} from '../../client';
+import {useIsLicensedFor} from '@/license';
+import ConsolePolicySection from '../access_control/console_policy_section';
 import {AnimatedModalShell, MODAL_SHEET_CLASS} from '../animated_modal_shell';
 import {useMCPConnectionEvents} from '../../hooks/use_mcp_connection_events';
 
-import {TextItem, ItemLabel} from './item';
+import {LicenseChip} from './enterprise_chip';
+import {BooleanItem, TextItem, ItemLabel} from './item';
 import {HeaderMapEditor} from './mcp_header_map_editor';
+import MCPServerDescription from './mcp_server_description';
 import MCPServerToolRow from './mcp_server_tool_row';
-import {MCPServerConfig, MCPServerInfo, MCPToolConfig, MCPToolInfo} from './mcp_types';
+import {MCPServerConfig, MCPServerInfo, MCPToolConfig, MCPToolInfo, PersistMCPServerScope} from './mcp_types';
 
-// persistServer saves server and returns it as saved. With toolConfigsOnly,
-// only the server's tool_configs are written to the saved server.
-export type PersistMCPServer = (server: MCPServerConfig, toolConfigsOnly?: boolean) => Promise<MCPServerConfig>;
+// persistServer saves server within scope and returns it as saved.
+export type PersistMCPServer = (server: MCPServerConfig, scope?: PersistMCPServerScope) => Promise<MCPServerConfig>;
 
 export type MCPServerWizardMode =
     | {kind: 'add'}
+    | {kind: 'edit'; server: MCPServerConfig}
     | {kind: 'review'; server: MCPServerConfig};
+
+// connectionSettings is what determines how the server is reached and as
+// whom; auto-fill connects with the saved settings, so it waits for these to
+// be saved.
+export const connectionSettings = (server: MCPServerConfig) => JSON.stringify([
+    server.baseURL || '',
+    server.headers || {},
+    server.clientID || '',
+    server.clientSecret || '',
+]);
+
+// A ReauthReason is an edit after which users' existing sign-ins to the server
+// stop working:
+//   - name: OAuth grants are stored under the server's name, so a renamed
+//     server finds none.
+//   - url: grants were issued for the old server; one that is not the same
+//     OAuth resource rejects them.
+//   - clientID: refreshes must use the client a grant was issued to, so a
+//     grant from another client cannot be renewed once its token expires.
+// The client secret, headers, and service account headers only reconnect.
+export type ReauthReason = 'name' | 'url' | 'clientID';
+
+export const reauthReasons = (before: MCPServerConfig, after: MCPServerConfig): ReauthReason[] => {
+    const reasons: ReauthReason[] = [];
+    if (before.name.trim() !== after.name.trim()) {
+        reasons.push('name');
+    }
+    if (before.baseURL.trim() !== after.baseURL.trim()) {
+        reasons.push('url');
+    }
+    if ((before.clientID ?? '').trim() !== (after.clientID ?? '').trim()) {
+        reasons.push('clientID');
+    }
+    return reasons;
+};
 
 type Props = {
     mode: MCPServerWizardMode;
@@ -36,7 +75,7 @@ type Props = {
     onClose: () => void;
 };
 
-type Step = 'details' | 'skip' | 'connect' | 'review';
+type Step = 'loading' | 'details' | 'skip' | 'reauth' | 'connect' | 'review';
 
 type Connection =
     | {status: 'connecting'}
@@ -76,11 +115,25 @@ export const reviewToolConfigs = (server: MCPServerConfig, tools: MCPToolInfo[])
 
 const errorMessage = (err: unknown, fallback: string) => (err instanceof Error && err.message ? err.message : fallback);
 
+const initialStep = (mode: MCPServerWizardMode): Step => {
+    switch (mode.kind) {
+    case 'add':
+        return 'details';
+    case 'edit':
+        return 'loading';
+    default:
+        return 'connect';
+    }
+};
+
 const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
     const intl = useIntl();
-    const [step, setStep] = useState<Step>(mode.kind === 'add' ? 'details' : 'connect');
+    const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
+    const serviceAccountLicensed = useIsLicensedFor('mcp_service_account');
+    const [step, setStep] = useState<Step>(initialStep(mode));
     const [details, setDetails] = useState<MCPServerConfig>(mode.kind === 'add' ? emptyServer : mode.server);
-    const [savedServer, setSavedServer] = useState<MCPServerConfig | null>(mode.kind === 'review' ? mode.server : null);
+    const [savedServer, setSavedServer] = useState<MCPServerConfig | null>(mode.kind === 'add' ? null : mode.server);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [connection, setConnection] = useState<Connection>({status: 'connecting'});
     const [discovered, setDiscovered] = useState<MCPServerInfo | null>(null);
     const [review, setReview] = useState<MCPServerConfig | null>(null);
@@ -140,7 +193,34 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
             discover(mode.server);
         }
 
-        // Only the server the review opened with is discovered on mount.
+        // An edit starts from the server as it is saved now, not this page's
+        // copy, and saves only what the admin changed on top of it.
+        if (mode.kind === 'edit') {
+            let cancelled = false;
+            getPluginConfig().then((pluginConfig: any) => {
+                if (cancelled) {
+                    return;
+                }
+                const stored: MCPServerConfig | undefined = pluginConfig?.mcp?.servers?.find((s: MCPServerConfig) => s.id === mode.server.id);
+                if (!stored) {
+                    setLoadError(intl.formatMessage({defaultMessage: 'The server is no longer configured. Reload the page.'}));
+                    return;
+                }
+                setSavedServer(stored);
+                setDetails(stored);
+                setStep('details');
+            }).catch(() => {
+                if (!cancelled) {
+                    setLoadError(intl.formatMessage({defaultMessage: 'Could not load the server’s settings.'}));
+                }
+            });
+            return () => {
+                cancelled = true;
+            };
+        }
+        return undefined; // eslint-disable-line no-undefined
+
+        // Only the server the dialog opened with is loaded on mount.
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => () => {
@@ -171,18 +251,28 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
     const urlError = (/^https?:\/\/\S+$/i).test(trimmedURL) ? '' : intl.formatMessage({defaultMessage: 'Enter the server URL, starting with https:// or http://.'});
     const detailsValid = !nameError && !urlError;
 
-    const saveDetails = async (): Promise<MCPServerConfig | null> => {
-        const server: MCPServerConfig = {
+    // editedServer is the server as the details step has it, without its tool
+    // policies, which a settings save keeps as saved. A server moved to
+    // another URL drops the old server's tool policies; they are reviewed again.
+    const editedServer = (): MCPServerConfig => {
+        const {tool_configs: toolConfigs, ...settings} = {
             ...(savedServer ?? emptyServer),
             ...details,
             name: trimmedName,
             baseURL: trimmedURL,
-            enabled: true,
         };
+        if (savedServer && savedServer.baseURL.trim() !== trimmedURL) {
+            return {...settings, tool_configs: []};
+        }
+        return mode.kind === 'add' && toolConfigs ? {...settings, tool_configs: toolConfigs} : settings;
+    };
+
+    const saveDetails = async (): Promise<MCPServerConfig | null> => {
+        const server: MCPServerConfig = mode.kind === 'add' ? {...editedServer(), enabled: true} : editedServer();
         setSaving(true);
         setSaveError(null);
         try {
-            const saved = await onPersist(server);
+            const saved = await onPersist(server, mode.kind === 'add' ? 'server' : 'settings');
             setSavedServer(saved);
             setDetails(saved);
             return saved;
@@ -219,6 +309,38 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
         }
     };
 
+    const reasons = savedServer && mode.kind === 'edit' ? reauthReasons(savedServer, {...details, name: trimmedName, baseURL: trimmedURL}) : [];
+
+    // An edit that ends users' sign-ins is confirmed first, then the admin
+    // signs in again and reviews the tools; any other edit just saves.
+    const handleEditSave = async () => {
+        setShowErrors(true);
+        if (!detailsValid) {
+            return;
+        }
+        if (reasons.length > 0) {
+            setStep('reauth');
+            return;
+        }
+        if (await saveDetails()) {
+            onClose();
+        }
+    };
+
+    const handleReauthConfirm = async () => {
+        const saved = await saveDetails();
+        if (!saved) {
+            return;
+        }
+        if (!saved.enabled) {
+            // A disabled server is not connected to; it is reviewed once enabled.
+            onClose();
+            return;
+        }
+        setStep('connect');
+        discover(saved);
+    };
+
     const handleAccept = async () => {
         if (!review || !savedServer) {
             return;
@@ -226,7 +348,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
         setSaving(true);
         setSaveError(null);
         try {
-            await onPersist({...savedServer, tool_configs: review.tool_configs}, true);
+            await onPersist({...savedServer, tool_configs: review.tool_configs}, 'tool_configs');
             onClose();
         } catch (err) {
             setSaveError(errorMessage(err, intl.formatMessage({defaultMessage: 'Failed to save the tool policies.'})));
@@ -236,14 +358,26 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
     };
 
     const serverName = savedServer?.name || trimmedName;
-    const title = mode.kind === 'add' ? (
-        <FormattedMessage defaultMessage='Add remote MCP server'/>
-    ) : (
-        <FormattedMessage
-            defaultMessage='Review tools for {serverName}'
-            values={{serverName}}
-        />
-    );
+    const title = (() => {
+        switch (mode.kind) {
+        case 'add':
+            return <FormattedMessage defaultMessage='Add remote MCP server'/>;
+        case 'edit':
+            return (
+                <FormattedMessage
+                    defaultMessage='Edit {serverName}'
+                    values={{serverName: mode.server.name}}
+                />
+            );
+        default:
+            return (
+                <FormattedMessage
+                    defaultMessage='Review tools for {serverName}'
+                    values={{serverName}}
+                />
+            );
+        }
+    })();
 
     const steps: Array<{key: Step; label: string}> = [
         {key: 'details', label: intl.formatMessage({defaultMessage: 'Server details'})},
@@ -251,6 +385,10 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
         {key: 'review', label: intl.formatMessage({defaultMessage: 'Review tools'})},
     ];
     const currentStepIndex = steps.findIndex((s) => s.key === (step === 'skip' ? 'details' : step));
+
+    // Auto-fill connects to the server with its saved settings, so it waits
+    // until the server is saved and its connection settings are unchanged.
+    const connectionSaved = Boolean(savedServer) && connectionSettings(savedServer as MCPServerConfig) === connectionSettings(details);
 
     const renderDetails = () => (
         <StepBody>
@@ -268,12 +406,29 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                 onChange={(e) => setDetails({...details, baseURL: e.target.value})}
                 error={showErrors ? urlError : undefined} // eslint-disable-line no-undefined
             />
-            <TextItem
-                label={intl.formatMessage({defaultMessage: 'Description'})}
-                value={details.description ?? ''}
-                multiline={true}
-                onChange={(e) => setDetails({...details, description: e.target.value})}
-                helptext={intl.formatMessage({defaultMessage: 'Optional. Tells agents what the server is for.'})}
+            {mode.kind === 'edit' && (
+                <BooleanItem
+                    label={intl.formatMessage({defaultMessage: 'Enable server'})}
+                    value={details.enabled}
+                    disableTrue={!remoteMcpLicensed}
+                    extra={!remoteMcpLicensed && (
+                        <LicenseChip capability='remote_mcp'/>
+                    )}
+                    onChange={(enabled) => setDetails({...details, enabled})}
+                    helpText={intl.formatMessage({defaultMessage: 'Disabled servers keep their settings, but no agent can use their tools.'})}
+                />
+            )}
+            <MCPServerDescription
+                serverID={savedServer?.id}
+                description={details.description ?? ''}
+                connectionSaved={connectionSaved}
+                onChange={(description) => setDetails({...details, description})}
+                onSuggestion={(description) => {
+                    // The suggestion came from the saved connection settings; it
+                    // is dropped if they were edited meanwhile.
+                    const requestedWith = connectionSettings(details);
+                    setDetails((current) => (connectionSettings(current) === requestedWith ? {...current, description} : current));
+                }}
             />
             <FieldGroup>
                 <ItemLabel as='div'>
@@ -285,6 +440,27 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                 <HeaderMapEditor
                     headers={details.headers ?? {}}
                     onChange={(headers) => setDetails({...details, headers})}
+                />
+            </FieldGroup>
+            <FieldGroup>
+                <FieldTitleRow>
+                    <ItemLabel as='div'>
+                        <FormattedMessage defaultMessage='Service Account Authentication'/>
+                    </ItemLabel>
+                    {!serviceAccountLicensed && (
+                        <LicenseChip capability='mcp_service_account'/>
+                    )}
+                </FieldTitleRow>
+                <FieldHelp>
+                    <FormattedMessage defaultMessage='Sent only when an agent uses service account authentication. Put the header name and value in separate fields — for example name Authorization and value Bearer token or Basic credentials, or a custom name like X-API-KEY. Do not repeat the header name in the value. Agents using service accounts can only access servers with at least one header configured here.'/>
+                </FieldHelp>
+                <HeaderMapEditor
+                    headers={details.serviceAccountHeaders ?? {}}
+                    onChange={(serviceAccountHeaders) => setDetails({...details, serviceAccountHeaders})}
+                    namePlaceholder={intl.formatMessage({defaultMessage: 'Header name (e.g. Authorization)'})}
+                    valuePlaceholder={intl.formatMessage({defaultMessage: 'Header value (e.g. Bearer token)'})}
+                    disableAdd={!serviceAccountLicensed}
+                    disableEdit={!serviceAccountLicensed}
                 />
             </FieldGroup>
             <TextItem
@@ -299,6 +475,43 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                 type='password'
                 onChange={(e) => setDetails({...details, clientSecret: e.target.value})}
             />
+            {mode.kind === 'edit' && savedServer?.id && (
+                <ConsolePolicySection
+                    resourceType='mcp'
+                    resourceId={savedServer.id}
+                    resourceDisplayName={savedServer.name}
+                />
+            )}
+        </StepBody>
+    );
+
+    const reasonText: Record<ReauthReason, string> = {
+        name: intl.formatMessage({defaultMessage: 'Renaming the server: sign-ins are saved under its name, so every user has to sign in again.'}),
+        url: intl.formatMessage({defaultMessage: 'Changing the URL: sign-ins were issued for the old server, so users have to sign in again unless the new URL is the same server. Its tool policies are cleared and reviewed again.'}),
+        clientID: intl.formatMessage({defaultMessage: 'Changing the OAuth client ID: sign-ins issued to the old client cannot be renewed, so every user has to sign in again.'}),
+    };
+
+    const renderReauth = () => (
+        <StepBody>
+            <SectionNotice
+                type='warning'
+                title={(
+                    <FormattedMessage
+                        defaultMessage='Users will have to sign in to {serverName} again'
+                        values={{serverName: trimmedName}}
+                    />
+                )}
+                description={(
+                    <ReasonList>
+                        {reasons.map((reason) => (
+                            <li key={reason}>{reasonText[reason]}</li>
+                        ))}
+                    </ReasonList>
+                )}
+            />
+            <ReviewIntro>
+                <FormattedMessage defaultMessage='After saving, you sign in to the server to check that it works, then review its tools.'/>
+            </ReviewIntro>
         </StepBody>
     );
 
@@ -387,7 +600,36 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
 
     const footer = (() => {
         switch (step) {
+        case 'loading':
+            return (
+                <Button
+                    emphasis='tertiary'
+                    onClick={requestClose}
+                >
+                    <FormattedMessage defaultMessage='Cancel'/>
+                </Button>
+            );
         case 'details':
+            if (mode.kind === 'edit') {
+                return (
+                    <>
+                        <Button
+                            emphasis='tertiary'
+                            onClick={requestClose}
+                            disabled={saving}
+                        >
+                            <FormattedMessage defaultMessage='Cancel'/>
+                        </Button>
+                        <Button
+                            emphasis='primary'
+                            onClick={handleEditSave}
+                            disabled={saving}
+                        >
+                            <FormattedMessage defaultMessage='Save'/>
+                        </Button>
+                    </>
+                );
+            }
             return (
                 <>
                     <Button
@@ -429,6 +671,26 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                         disabled={saving}
                     >
                         <FormattedMessage defaultMessage='Save without connecting'/>
+                    </Button>
+                </>
+            );
+        case 'reauth':
+            return (
+                <>
+                    <Button
+                        emphasis='tertiary'
+                        onClick={() => setStep('details')}
+                        disabled={saving}
+                    >
+                        <FormattedMessage defaultMessage='Back'/>
+                    </Button>
+                    <Button
+                        emphasis='primary'
+                        destructive={true}
+                        onClick={handleReauthConfirm}
+                        disabled={saving}
+                    >
+                        <FormattedMessage defaultMessage='Save and sign in again'/>
                     </Button>
                 </>
             );
@@ -506,8 +768,24 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                                 title={saveError}
                             />
                         )}
+                        {loadError && (
+                            <SectionNotice
+                                type='danger'
+                                title={loadError}
+                            />
+                        )}
+                        {step === 'loading' && !loadError && (
+                            <ConnectingRow role='status'>
+                                <Spinner
+                                    size='24'
+                                    aria-hidden={true}
+                                />
+                                <FormattedMessage defaultMessage='Loading the server’s settings…'/>
+                            </ConnectingRow>
+                        )}
                         {step === 'details' && renderDetails()}
                         {step === 'skip' && renderSkip()}
+                        {step === 'reauth' && renderReauth()}
                         {step === 'connect' && renderConnect()}
                         {step === 'review' && renderReview()}
                     </Body>
@@ -539,6 +817,17 @@ const FieldGroup = styled.div`
     display: flex;
     flex-direction: column;
     gap: var(--spacing-xs);
+`;
+
+const FieldTitleRow = styled.div`
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+`;
+
+const ReasonList = styled.ul`
+    margin: 0;
+    padding-left: var(--spacing-l);
 `;
 
 const FieldHelp = styled.div`

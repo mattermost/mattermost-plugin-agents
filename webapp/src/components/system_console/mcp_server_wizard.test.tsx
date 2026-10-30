@@ -36,21 +36,30 @@ jest.mock('@/license', () => ({
 jest.mock('../../client', () => ({
     getMCPServerTools: jest.fn(),
     getPluginConfig: jest.fn(),
+    getMCPSuggestedDescription: jest.fn(),
+}));
+
+jest.mock('../access_control/console_policy_section', () => ({
+    __esModule: true,
+    default: ({resourceId}: {resourceId: string}) => (
+        <div data-testid='console-policy-section'>{resourceId}</div>
+    ),
 }));
 
 /* eslint-disable import/first */
 import {IntlProvider} from 'react-intl';
 
-import {getMCPServerTools, getPluginConfig} from '../../client';
+import {getMCPServerTools, getMCPSuggestedDescription, getPluginConfig} from '../../client';
 import {notifyMCPConnectionUpdated} from '../../hooks/use_mcp_connection_events';
 import {chooseOption, getSelect, selectedLabel} from '../../../tests/compass_select';
 
-import MCPServerWizard, {MCPServerWizardMode} from './mcp_server_wizard';
+import MCPServerWizard, {MCPServerWizardMode, reauthReasons} from './mcp_server_wizard';
 import {MCPServerConfig, MCPServerInfo} from './mcp_types';
 /* eslint-enable import/first */
 
 const mockGetMCPServerTools = getMCPServerTools as jest.Mock;
 const mockGetPluginConfig = getPluginConfig as jest.Mock;
+const mockGetSuggestion = getMCPSuggestedDescription as jest.Mock;
 
 const SERVER_ID = 'srv1234567890abcdefghijklm';
 
@@ -113,11 +122,11 @@ describe('MCPServerWizard add flow', () => {
         fireEvent.click(screen.getByRole('button', {name: 'Save and connect'}));
 
         await waitFor(() => expect(onPersist).toHaveBeenCalledTimes(1));
-        const [created, createdToolConfigsOnly] = onPersist.mock.calls[0] as unknown as [MCPServerConfig, boolean | undefined];
+        const [created, createdScope] = onPersist.mock.calls[0] as unknown as [MCPServerConfig, string];
         expect(created).toEqual(expect.objectContaining({name: 'Tracker', baseURL: 'https://mcp.example.com/mcp', enabled: true}));
         expect(created.id).toBeUndefined();
         expect(created.tool_configs).toBeUndefined();
-        expect(createdToolConfigsOnly).toBeFalsy();
+        expect(createdScope).toBe('server');
         expect(mockGetMCPServerTools).toHaveBeenCalledWith(SERVER_ID);
 
         // Tools are pre-set to the suggested policies, grouped by the hint.
@@ -131,8 +140,8 @@ describe('MCPServerWizard add flow', () => {
 
         await waitFor(() => expect(onClose).toHaveBeenCalled());
         expect(onPersist).toHaveBeenCalledTimes(2);
-        const [reviewed, toolConfigsOnly] = onPersist.mock.calls[1] as unknown as [MCPServerConfig, boolean];
-        expect(toolConfigsOnly).toBe(true);
+        const [reviewed, reviewedScope] = onPersist.mock.calls[1] as unknown as [MCPServerConfig, string];
+        expect(reviewedScope).toBe('tool_configs');
         expect(reviewed.id).toBe(SERVER_ID);
         expect(reviewed.tool_configs).toEqual([
             {name: 'list_issues', policy: 'auto_run_in_dm', enabled: true},
@@ -244,8 +253,8 @@ describe('MCPServerWizard review of an existing server', () => {
         fireEvent.click(screen.getByRole('button', {name: 'Accept and save'}));
 
         await waitFor(() => expect(onClose).toHaveBeenCalled());
-        const [reviewed, toolConfigsOnly] = onPersist.mock.calls[0] as unknown as [MCPServerConfig, boolean];
-        expect(toolConfigsOnly).toBe(true);
+        const [reviewed, reviewedScope] = onPersist.mock.calls[0] as unknown as [MCPServerConfig, string];
+        expect(reviewedScope).toBe('tool_configs');
         expect(reviewed.tool_configs).toEqual([
             {name: 'list_issues', policy: 'ask', enabled: true},
             {name: 'delete_issue', policy: 'ask', enabled: false},
@@ -337,5 +346,191 @@ describe('MCPServerWizard saved-state handling', () => {
             finishSave({...pageCopy, id: SERVER_ID});
         });
         expect(onClose).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('reauthReasons', () => {
+    const base: MCPServerConfig = {
+        id: SERVER_ID,
+        name: 'Tracker',
+        enabled: true,
+        baseURL: 'https://mcp.example.com/mcp',
+        headers: {'X-Key': 'one'},
+        description: 'Issues',
+        clientID: 'client-a',
+        clientSecret: 'secret-a',
+        serviceAccountHeaders: {Authorization: 'Bearer a'},
+    };
+
+    test.each([
+        {name: 'renaming', change: {name: 'Tracker 2'}, want: ['name']},
+        {name: 'moving to another URL', change: {baseURL: 'https://other.example.com/mcp'}, want: ['url']},
+        {name: 'changing the OAuth client ID', change: {clientID: 'client-b'}, want: ['clientID']},
+        {name: 'removing the OAuth client ID', change: {clientID: ''}, want: ['clientID']},
+        {name: 'rotating the OAuth client secret', change: {clientSecret: 'secret-b'}, want: []},
+        {name: 'changing headers', change: {headers: {'X-Key': 'two'}}, want: []},
+        {name: 'changing service account headers', change: {serviceAccountHeaders: {Authorization: 'Bearer b'}}, want: []},
+        {name: 'editing the description', change: {description: 'Tickets'}, want: []},
+        {name: 'disabling the server', change: {enabled: false}, want: []},
+        {name: 'surrounding whitespace only', change: {name: ' Tracker ', baseURL: ' https://mcp.example.com/mcp '}, want: []},
+        {name: 'several at once', change: {name: 'T', baseURL: 'https://x.example.com', clientID: 'c'}, want: ['name', 'url', 'clientID']},
+    ])('$name', ({change, want}) => {
+        expect(reauthReasons(base, {...base, ...change})).toEqual(want);
+    });
+});
+
+describe('MCPServerWizard edit mode', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+    });
+
+    const saved: MCPServerConfig = {
+        id: SERVER_ID,
+        name: 'Tracker',
+        enabled: true,
+        baseURL: 'https://mcp.example.com/mcp',
+        headers: {},
+        description: 'Issues',
+        clientID: '',
+        clientSecret: '',
+        serviceAccountHeaders: {Authorization: 'Bearer pat'},
+        tool_configs: [{name: 'list_issues', policy: 'auto_run_in_dm', enabled: true}],
+    };
+
+    test('starts from the saved server and shows every setting', async () => {
+        const pageCopy = {...saved, description: 'stale'};
+        renderWizard({kind: 'edit', server: pageCopy}, ['Tracker'], [saved]);
+
+        expect(screen.getByRole('dialog', {name: 'Edit Tracker'})).not.toBeNull();
+        expect(await screen.findByDisplayValue('Issues')).not.toBeNull();
+        expect(screen.getByRole('button', {name: 'Auto-fill from server'})).not.toBeNull();
+        expect(screen.getByText('Service Account Authentication')).not.toBeNull();
+        expect(screen.getByDisplayValue('Bearer pat')).not.toBeNull();
+        expect(screen.getByLabelText('OAuth client ID')).not.toBeNull();
+        expect(screen.getByText('Enable server')).not.toBeNull();
+        expect(screen.getByTestId('console-policy-section').textContent).toBe(SERVER_ID);
+    });
+
+    test('an edit that keeps sign-ins saves its settings without a warning and keeps tool policies', async () => {
+        const {onPersist, onClose} = renderWizard({kind: 'edit', server: saved}, ['Tracker'], [saved]);
+
+        fireEvent.change(await screen.findByDisplayValue('Bearer pat'), {target: {value: 'Bearer rotated'}});
+        fireEvent.change(screen.getByDisplayValue('Issues'), {target: {value: 'Tickets'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(onClose).toHaveBeenCalled());
+        expect(screen.queryByText(/will have to sign in/)).toBeNull();
+        const [edited, scope] = onPersist.mock.calls[0] as unknown as [MCPServerConfig, string];
+        expect(scope).toBe('settings');
+        expect(edited).toEqual(expect.objectContaining({id: SERVER_ID, description: 'Tickets', serviceAccountHeaders: {Authorization: 'Bearer rotated'}}));
+        expect('tool_configs' in edited).toBe(false);
+        expect(mockGetMCPServerTools).not.toHaveBeenCalled();
+    });
+
+    test('a rename warns that users sign in again, then signs in and reviews the tools', async () => {
+        mockGetMCPServerTools.mockResolvedValue(discoveredServer({name: 'Tracker 2'}));
+        const {onPersist, onClose} = renderWizard({kind: 'edit', server: saved}, ['Tracker'], [saved]);
+
+        fireEvent.change(await screen.findByDisplayValue('Tracker'), {target: {value: 'Tracker 2'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        expect(screen.getByText('Users will have to sign in to Tracker 2 again')).not.toBeNull();
+        expect(screen.getByText(/Renaming the server/)).not.toBeNull();
+        expect(onPersist).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Back'}));
+        expect(screen.getByDisplayValue('Tracker 2')).not.toBeNull();
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Save and sign in again'}));
+
+        await waitFor(() => expect(mockGetMCPServerTools).toHaveBeenCalledWith(SERVER_ID));
+        const [edited, scope] = onPersist.mock.calls[0] as unknown as [MCPServerConfig, string];
+        expect(scope).toBe('settings');
+        expect(edited.name).toBe('Tracker 2');
+        expect('tool_configs' in edited).toBe(false);
+
+        // The review keeps the policy already chosen and pre-sets the rest.
+        expect(await screen.findByRole('group', {name: 'Read-only tools'})).not.toBeNull();
+        fireEvent.click(screen.getByRole('button', {name: 'Accept and save'}));
+        await waitFor(() => expect(onClose).toHaveBeenCalled());
+        const [reviewed, reviewedScope] = onPersist.mock.calls[1] as unknown as [MCPServerConfig, string];
+        expect(reviewedScope).toBe('tool_configs');
+        expect(reviewed.tool_configs).toEqual([
+            {name: 'list_issues', policy: 'auto_run_in_dm', enabled: true},
+            {name: 'delete_issue', policy: 'ask', enabled: true},
+        ]);
+    });
+
+    test('moving the server to another URL clears its tool policies for review', async () => {
+        mockGetMCPServerTools.mockResolvedValue(discoveredServer());
+        const {onPersist} = renderWizard({kind: 'edit', server: saved}, ['Tracker'], [saved]);
+
+        fireEvent.change(await screen.findByDisplayValue('https://mcp.example.com/mcp'), {target: {value: 'https://other.example.com/mcp'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+        expect(screen.getByText(/Changing the URL/)).not.toBeNull();
+        fireEvent.click(screen.getByRole('button', {name: 'Save and sign in again'}));
+
+        await waitFor(() => expect(onPersist).toHaveBeenCalled());
+        const [edited] = onPersist.mock.calls[0] as unknown as [MCPServerConfig, string];
+        expect(edited.baseURL).toBe('https://other.example.com/mcp');
+        expect(edited.tool_configs).toEqual([]);
+    });
+
+    test('a disabled server is saved without connecting after a sign-in-ending edit', async () => {
+        const {onPersist, onClose} = renderWizard({kind: 'edit', server: saved}, ['Tracker'], [saved]);
+
+        fireEvent.change(await screen.findByLabelText('OAuth client ID'), {target: {value: 'client-new'}});
+        fireEvent.click(screen.getAllByDisplayValue('false')[0]);
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+        expect(screen.getByText(/Changing the OAuth client ID/)).not.toBeNull();
+        fireEvent.click(screen.getByRole('button', {name: 'Save and sign in again'}));
+
+        await waitFor(() => expect(onClose).toHaveBeenCalled());
+        const [edited] = onPersist.mock.calls[0] as unknown as [MCPServerConfig, string];
+        expect(edited).toEqual(expect.objectContaining({clientID: 'client-new', enabled: false}));
+        expect(mockGetMCPServerTools).not.toHaveBeenCalled();
+    });
+
+    test('auto-fills the description from the saved server, until its connection settings are edited', async () => {
+        mockGetSuggestion.mockResolvedValue({description: 'Tracks issues', source: 'description', needsOAuth: false});
+        renderWizard({kind: 'edit', server: saved}, ['Tracker'], [saved]);
+
+        const autoFill = await screen.findByRole('button', {name: 'Auto-fill from server'}) as HTMLButtonElement;
+        expect(autoFill.disabled).toBe(false);
+        fireEvent.click(autoFill);
+        expect(await screen.findByDisplayValue('Tracks issues')).not.toBeNull();
+        expect(mockGetSuggestion).toHaveBeenCalledWith(SERVER_ID);
+
+        fireEvent.change(screen.getByDisplayValue('https://mcp.example.com/mcp'), {target: {value: 'https://other.example.com/mcp'}});
+        expect((screen.getByRole('button', {name: 'Auto-fill from server'}) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    test('a server that is no longer saved cannot be edited', async () => {
+        const {onPersist} = renderWizard({kind: 'edit', server: saved}, ['Tracker'], []);
+
+        expect(await screen.findByText('The server is no longer configured. Reload the page.')).not.toBeNull();
+        expect(screen.queryByRole('button', {name: 'Save'})).toBeNull();
+        expect(onPersist).not.toHaveBeenCalled();
+    });
+});
+
+describe('MCPServerWizard add mode fields', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+    });
+
+    test('includes service account headers, and auto-fill waits until the server is saved', async () => {
+        mockGetMCPServerTools.mockResolvedValue(discoveredServer({tools: [], error: 'could not connect'}));
+        const {onPersist} = renderWizard({kind: 'add'});
+
+        expect(screen.getByText('Service Account Authentication')).not.toBeNull();
+        expect((screen.getByRole('button', {name: 'Auto-fill from server'}) as HTMLButtonElement).disabled).toBe(true);
+
+        fillDetails('Tracker', 'https://mcp.example.com/mcp');
+        fireEvent.click(screen.getByRole('button', {name: 'Save and connect'}));
+        await waitFor(() => expect(onPersist).toHaveBeenCalledTimes(1));
+        fireEvent.click(await screen.findByRole('button', {name: 'Edit details'}));
+
+        expect((screen.getByRole('button', {name: 'Auto-fill from server'}) as HTMLButtonElement).disabled).toBe(false);
     });
 });

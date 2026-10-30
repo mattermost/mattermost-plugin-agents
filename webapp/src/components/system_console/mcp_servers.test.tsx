@@ -1,8 +1,8 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState} from 'react';
-import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
+import React from 'react';
+import {fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 
 // Minimal react-intl shim: ts-jest bypasses babel, so FormattedMessage needs an id at runtime.
 jest.mock('react-intl', () => {
@@ -14,6 +14,10 @@ jest.mock('react-intl', () => {
     ) => {
         let message = defaultMessage ?? '';
         if (values) {
+            // Simple ICU plurals: {count, plural, one {...} other {...}}.
+            message = message.replace(/\{(\w+), plural, one \{([^}]*)\} other \{([^}]*)\}\}/g, (_, key, one, other) => (
+                (values[key] === 1 ? one : other).replace(/#/g, String(values[key]))
+            ));
             for (const [key, value] of Object.entries(values)) {
                 message = message.replace(new RegExp(`\\{${key}\\}`, 'g'), String(value));
             }
@@ -76,6 +80,8 @@ jest.mock('../../client', () => ({
     getVettedToolSeed: jest.fn().mockResolvedValue([]),
     updatePluginServer: jest.fn().mockResolvedValue({}),
     getMCPSuggestedDescription: jest.fn(),
+    getMCPServerTools: jest.fn(),
+    getPluginConfig: jest.fn(),
 }));
 
 jest.mock('./mcp_tools_viewer', () => ({
@@ -95,16 +101,15 @@ import {IntlProvider} from 'react-intl';
 
 import {useIsLicensedFor} from '@/license';
 
-import {getMCPSuggestedDescription, getMCPTools, getVettedToolSeed} from '../../client';
+import {getMCPTools, getPluginConfig} from '../../client';
 
-import MCPServers, {type MCPConfig, type MCPConfigUpdate, type MCPServerConfig} from './mcp_servers';
+import MCPServers, {type MCPConfig, type MCPServerConfig} from './mcp_servers';
 import type {PluginServerConfig} from './mcp_types';
 /* eslint-enable import/first, import/order */
 
 const mockUseIsLicensedFor = useIsLicensedFor as jest.Mock;
 const mockGetMCPTools = getMCPTools as jest.Mock;
-const mockGetSuggestion = getMCPSuggestedDescription as jest.Mock;
-const mockGetVettedToolSeed = getVettedToolSeed as jest.Mock;
+const mockGetPluginConfig = getPluginConfig as jest.Mock;
 
 const STABLE_ID = 'abcdefghijklmnopqrstuvwxyz';
 
@@ -133,11 +138,13 @@ function makeRemoteServer(overrides: Partial<MCPServerConfig> = {}): MCPServerCo
 
 function renderServers(mcpConfig: MCPConfig, savedServers?: MCPServerConfig[]) {
     const onChange = jest.fn();
+    const onDeleteServer = jest.fn(async () => undefined); // eslint-disable-line no-undefined
     return {
         ...render(
             <IntlProvider locale='en'>
                 <MCPServers
                     onPersistServer={jest.fn()}
+                    onDeleteServer={onDeleteServer}
                     mcpConfig={mcpConfig}
                     savedServers={savedServers}
                     onChange={onChange}
@@ -145,13 +152,8 @@ function renderServers(mcpConfig: MCPConfig, savedServers?: MCPServerConfig[]) {
             </IntlProvider>,
         ),
         onChange,
+        onDeleteServer,
     };
-}
-
-function lastChangedServers(onChange: jest.Mock): MCPServerConfig[] {
-    expect(onChange).toHaveBeenCalled();
-    const config: MCPConfig = onChange.mock.calls[onChange.mock.calls.length - 1][0];
-    return config.servers ?? [];
 }
 
 const existingServer: MCPServerConfig = {
@@ -162,147 +164,82 @@ const existingServer: MCPServerConfig = {
     headers: {},
 };
 
-describe('MCPServers stable ID handling', () => {
+describe('MCPServers remote server list', () => {
     beforeEach(() => {
         jest.clearAllMocks();
-
-        // The remote-server UI these tests drive is behind the license gate.
         mockUseIsLicensedFor.mockReturnValue(true);
 
-        // Never resolves: these assertions are synchronous, so a resolving
-        // prefetch would update state outside act().
+        // Never resolves unless a test sets tools: a resolving prefetch would
+        // update state outside act().
         mockGetMCPTools.mockReturnValue(new Promise(() => null));
     });
 
-    it('preserves the server id through a name edit', () => {
-        const {onChange} = renderServers(makeMCPConfig([existingServer]));
+    test('lists each server compactly instead of an inline editor', () => {
+        renderServers(makeMCPConfig([existingServer, makeRemoteServer({id: 'zyxwvutsrqponmlkjihgfedcba', name: 'Docs', enabled: false})]));
 
-        fireEvent.click(screen.getByText('Jira'));
-        const nameInput = screen.getByPlaceholderText('Server name');
-        fireEvent.change(nameInput, {target: {value: 'Jira Cloud'}});
-        fireEvent.blur(nameInput);
-
-        const servers = lastChangedServers(onChange);
-        expect(servers[0].name).toBe('Jira Cloud');
-        expect(servers[0].id).toBe(STABLE_ID);
+        const list = screen.getByRole('list', {name: 'Remote MCP servers'});
+        expect(within(list).getByText('Jira')).not.toBeNull();
+        expect(within(list).getByText('https://jira.example.com')).not.toBeNull();
+        expect(within(list).getAllByText('Disabled')).toHaveLength(1);
+        expect(screen.queryByPlaceholderText('https://mcp.example.com')).toBeNull();
+        expect(screen.queryByText('Service Account Authentication')).toBeNull();
     });
 
-    it('opens the name editor from a focusable rename button', () => {
+    test('counts the tools of a server that have no chosen policy', async () => {
+        mockGetMCPTools.mockResolvedValue({servers: [{
+            name: 'Jira',
+            url: 'https://jira.example.com',
+            serverType: 'remote',
+            enabled: true,
+            id: STABLE_ID,
+            needsOAuth: false,
+            error: null,
+            tools: [
+                {name: 'search', description: '', inputSchema: null},
+                {name: 'create', description: '', inputSchema: null},
+                {name: 'delete', description: '', inputSchema: null},
+            ],
+        }]});
+        renderServers(makeMCPConfig([{...existingServer,
+            tool_configs: [
+                {name: 'search', policy: 'ask', enabled: true},
+                {name: 'create', policy: '', enabled: false},
+            ]}]));
+
+        expect(await screen.findByText('2 tools not reviewed')).not.toBeNull();
+    });
+
+    test('opens a server in the dialog from its row, by keyboard too', async () => {
+        mockGetPluginConfig.mockResolvedValue({mcp: {servers: [existingServer]}});
         renderServers(makeMCPConfig([existingServer]));
 
-        const rename = screen.getByRole('button', {name: 'Rename Jira'});
-        rename.focus();
-        expect(document.activeElement).toBe(rename);
+        const row = screen.getByRole('button', {name: 'Edit Jira'});
+        row.focus();
+        expect(document.activeElement).toBe(row);
+        fireEvent.click(row);
 
-        fireEvent.click(rename);
-        expect(screen.getByPlaceholderText('Server name')).toBeTruthy();
+        expect(screen.getByRole('dialog', {name: 'Edit Jira'})).not.toBeNull();
+        expect(await screen.findByDisplayValue('https://jira.example.com')).not.toBeNull();
     });
 
-    it.each(['Enter', 'Escape'])('returns focus to the rename button after %s', (key) => {
-        renderServers(makeMCPConfig([existingServer]));
+    test('deletes a saved server after confirming', async () => {
+        const {onDeleteServer, onChange} = renderServers(makeMCPConfig([existingServer]));
 
-        fireEvent.click(screen.getByRole('button', {name: 'Rename Jira'}));
-        fireEvent.keyDown(screen.getByPlaceholderText('Server name'), {key});
+        fireEvent.click(screen.getByRole('button', {name: 'Delete Jira'}));
+        expect(onDeleteServer).not.toHaveBeenCalled();
+        fireEvent.click(await screen.findByRole('button', {name: 'Delete'}));
 
-        expect(document.activeElement).toBe(screen.getByRole('button', {name: /^Rename /}));
+        await waitFor(() => expect(onDeleteServer).toHaveBeenCalledWith(STABLE_ID));
+        expect(onChange).not.toHaveBeenCalled();
     });
 
-    it('leaves focus alone when the name editor loses focus', () => {
-        renderServers(makeMCPConfig([existingServer]));
-
-        fireEvent.click(screen.getByRole('button', {name: 'Rename Jira'}));
-        fireEvent.blur(screen.getByPlaceholderText('Server name'));
-
-        expect(document.activeElement).not.toBe(screen.getByRole('button', {name: 'Rename Jira'}));
-    });
-
-    it('preserves the server id through a URL edit', () => {
-        const {onChange} = renderServers(makeMCPConfig([existingServer]));
-
-        const urlInput = screen.getByPlaceholderText('https://mcp.example.com');
-        fireEvent.change(urlInput, {target: {value: 'https://jira2.example.com'}});
-
-        const servers = lastChangedServers(onChange);
-        expect(servers[0].baseURL).toBe('https://jira2.example.com');
-        expect(servers[0].id).toBe(STABLE_ID);
-    });
-
-    it('adds a server through the wizard instead of an unsaved blank entry', () => {
+    test('adds a server through the dialog instead of an unsaved blank entry', () => {
         const {onChange} = renderServers(makeMCPConfig([existingServer]));
 
         fireEvent.click(screen.getByText('Add Remote MCP Server'));
 
         expect(screen.getByRole('dialog', {name: 'Add remote MCP server'})).not.toBeNull();
         expect(onChange).not.toHaveBeenCalled();
-    });
-});
-
-describe('MCPServers service account headers', () => {
-    beforeEach(() => {
-        jest.clearAllMocks();
-        mockUseIsLicensedFor.mockReturnValue(true);
-    });
-
-    // Rows render in DOM order: base Headers first, then Service Account headers.
-    const baseHeaderValueInput = () => screen.getAllByPlaceholderText('Value')[0];
-    const serviceAccountHeaderValueInput = () => screen.getByPlaceholderText('Header value (e.g. Bearer token)');
-
-    async function renderOneServer(server: MCPServerConfig) {
-        const rendered = renderServers(makeMCPConfig([server]));
-        await screen.findByText('Service Account Authentication');
-        return rendered;
-    }
-
-    function savedServer(onChange: jest.Mock): MCPServerConfig {
-        expect(onChange).toHaveBeenCalledTimes(1);
-        const saved = (onChange.mock.calls[0][0] as MCPConfig).servers;
-        expect(saved).not.toBeNull();
-        return saved![0];
-    }
-
-    // Editing either map must leave the other intact; the base-header half is
-    // also the regression pin for the config rebuild dropping serviceAccountHeaders.
-    test('editing one header map leaves the other map untouched', async () => {
-        const server = makeRemoteServer({
-            headers: {'X-Base': 'base-value'},
-            serviceAccountHeaders: {Authorization: 'Bearer pat'},
-        });
-
-        const base = await renderOneServer(server);
-        fireEvent.change(baseHeaderValueInput(), {target: {value: 'base-value-2'}});
-        expect(savedServer(base.onChange)).toEqual(expect.objectContaining({
-            headers: {'X-Base': 'base-value-2'},
-            serviceAccountHeaders: {Authorization: 'Bearer pat'},
-        }));
-        base.unmount();
-
-        const serviceAccount = await renderOneServer(server);
-        fireEvent.change(serviceAccountHeaderValueInput(), {target: {value: 'Bearer rotated'}});
-        expect(savedServer(serviceAccount.onChange)).toEqual(expect.objectContaining({
-            headers: {'X-Base': 'base-value'},
-            serviceAccountHeaders: {Authorization: 'Bearer rotated'},
-        }));
-    });
-
-    // Rows render by index, so a rename that appends would swap rows under the cursor.
-    test('renaming a header keeps its position in the emitted map', async () => {
-        const {onChange} = await renderOneServer(makeRemoteServer({
-            headers: {'X-First': 'one', 'X-Second': 'two'},
-        }));
-
-        fireEvent.change(screen.getAllByPlaceholderText('Header name')[0], {target: {value: 'X-Renamed'}});
-
-        expect(Object.keys(savedServer(onChange).headers)).toEqual(['X-Renamed', 'X-Second']);
-    });
-
-    test('service account header editor explains name and value are separate fields', async () => {
-        await renderOneServer(makeRemoteServer({
-            serviceAccountHeaders: {Authorization: 'Bearer pat'},
-        }));
-
-        expect(screen.getByPlaceholderText('Header name (e.g. Authorization)')).not.toBeNull();
-        expect(screen.getByPlaceholderText('Header value (e.g. Bearer token)')).not.toBeNull();
-        expect(screen.getByText(/Do not repeat the header name in the value/)).not.toBeNull();
     });
 });
 
@@ -408,6 +345,7 @@ describe('MCPServers built-in & plugin section', () => {
             <IntlProvider locale='en'>
                 <MCPServers
                     onPersistServer={jest.fn()}
+                    onDeleteServer={jest.fn()}
                     mcpConfig={makeMCPConfig()}
                     onChange={jest.fn()}
                 />
@@ -421,6 +359,7 @@ describe('MCPServers built-in & plugin section', () => {
             <IntlProvider locale='en'>
                 <MCPServers
                     onPersistServer={jest.fn()}
+                    onDeleteServer={jest.fn()}
                     mcpConfig={makeMCPConfig([], STABLE_ID)}
                     onChange={jest.fn()}
                 />
@@ -538,182 +477,5 @@ describe('MCPServers built-in & plugin section', () => {
         const config: MCPConfig = onChange.mock.calls[onChange.mock.calls.length - 1][0];
         expect(config.plugin_servers).toEqual(pluginServers);
         expect(config.enablePluginServer).toBe(true);
-    });
-});
-
-describe('MCPServers description auto-fill', () => {
-    beforeEach(() => {
-        jest.clearAllMocks();
-        mockUseIsLicensedFor.mockReturnValue(true);
-        mockGetMCPTools.mockReturnValue(new Promise(() => null));
-    });
-
-    const autoFillButton = () => screen.getByRole('button', {name: 'Auto-fill from server'}) as HTMLButtonElement;
-
-    test('is available for a server that matches its saved configuration', () => {
-        renderServers(makeMCPConfig([existingServer]), [existingServer]);
-
-        expect(autoFillButton().disabled).toBe(false);
-    });
-
-    test.each([
-        ['a server that was never saved', makeRemoteServer(), []],
-        ['a server whose URL has unsaved changes', {...existingServer, baseURL: 'https://jira-new.example.com'}, [existingServer]],
-    ])('is unavailable for %s', (_name, server, saved) => {
-        renderServers(makeMCPConfig([server]), saved);
-
-        expect(autoFillButton().disabled).toBe(true);
-    });
-
-    test('editing the description keeps the server id', () => {
-        const {onChange} = renderServers(makeMCPConfig([existingServer]), [existingServer]);
-
-        fireEvent.change(screen.getByPlaceholderText(/What this integration is for/), {target: {value: 'Jira issues'}});
-
-        const servers = lastChangedServers(onChange);
-        expect(servers[0].description).toBe('Jira issues');
-        expect(servers[0].id).toBe(STABLE_ID);
-    });
-});
-
-// Late results must land on the configuration as it is when they arrive, not
-// as it was when the request started.
-describe('MCPServers results that arrive after further edits', () => {
-    const github: MCPServerConfig = {
-        id: 'zyxwvutsrqponmlkjihgfedcba',
-        name: 'GitHub',
-        enabled: true,
-        baseURL: 'https://github.example.com',
-        headers: {},
-    };
-
-    // Holds the configuration the way config.tsx does, resolving update
-    // functions against the current state.
-    const StatefulServers = ({initial, saved}: {initial: MCPConfig; saved: MCPServerConfig[]}) => {
-        const [mcpConfig, setMCPConfig] = useState(initial);
-        latestConfig = mcpConfig;
-        return (
-            <IntlProvider locale='en'>
-                <MCPServers
-                    onPersistServer={jest.fn()}
-                    mcpConfig={mcpConfig}
-                    savedServers={saved}
-                    onChange={(update: MCPConfigUpdate) => setMCPConfig((current) => (typeof update === 'function' ? update(current) : update))}
-                />
-            </IntlProvider>
-        );
-    };
-    let latestConfig: MCPConfig;
-
-    const deferred = <T, >() => {
-        let resolve: (value: T) => void = () => null;
-        const promise = new Promise<T>((r) => {
-            resolve = r;
-        });
-        return {promise, resolve};
-    };
-
-    const urlInputs = () => screen.getAllByPlaceholderText('https://mcp.example.com');
-    const deleteGitHub = () => fireEvent.click(screen.getAllByRole('button', {name: 'Delete Server'})[1]);
-    const editGitHubURL = () => fireEvent.change(urlInputs()[1], {target: {value: 'https://gh2.example.com'}});
-    const editJiraURL = () => fireEvent.change(urlInputs()[0], {target: {value: 'https://jira2.example.com'}});
-
-    beforeEach(() => {
-        jest.clearAllMocks();
-        mockUseIsLicensedFor.mockReturnValue(true);
-        mockGetMCPTools.mockReturnValue(new Promise(() => null));
-        mockGetVettedToolSeed.mockResolvedValue([]);
-    });
-
-    describe('description auto-fill', () => {
-        test.each([
-            ['another server is deleted', deleteGitHub, (servers: MCPServerConfig[]) => expect(servers.map((s) => s.name)).toEqual(['Jira'])],
-            ['another server is edited', editGitHubURL, (servers: MCPServerConfig[]) => expect(servers[1].baseURL).toBe('https://gh2.example.com')],
-        ])('fills the description and keeps the change when %s meanwhile', async (_name, edit, check) => {
-            const suggestion = deferred<unknown>();
-            mockGetSuggestion.mockReturnValue(suggestion.promise);
-            render(
-                <StatefulServers
-                    initial={makeMCPConfig([existingServer, github])}
-                    saved={[existingServer, github]}
-                />,
-            );
-
-            fireEvent.click(screen.getAllByRole('button', {name: 'Auto-fill from server'})[0]);
-            edit();
-            suggestion.resolve({description: 'Jira issues', source: 'description', needsOAuth: false});
-
-            await waitFor(() => expect(latestConfig.servers?.[0].description).toBe('Jira issues'));
-            check(latestConfig.servers ?? []);
-        });
-
-        test('drops the description when the server is reached differently by then', async () => {
-            const suggestion = deferred<unknown>();
-            mockGetSuggestion.mockReturnValue(suggestion.promise);
-            render(
-                <StatefulServers
-                    initial={makeMCPConfig([existingServer, github])}
-                    saved={[existingServer, github]}
-                />,
-            );
-
-            fireEvent.click(screen.getAllByRole('button', {name: 'Auto-fill from server'})[0]);
-            editJiraURL();
-            await act(async () => {
-                suggestion.resolve({description: 'Jira issues', source: 'description', needsOAuth: false});
-            });
-
-            expect(mockGetSuggestion).toHaveBeenCalledWith(STABLE_ID);
-            expect(latestConfig.servers?.[0].description).toBeFalsy();
-            expect(latestConfig.servers?.[0].baseURL).toBe('https://jira2.example.com');
-        });
-    });
-
-    describe('tool seeding after a URL change', () => {
-        const seededTools = [{name: 'search', policy: 'ask' as const, enabled: true}];
-
-        test.each([
-            ['another server is deleted', deleteGitHub, (servers: MCPServerConfig[]) => expect(servers.map((s) => s.name)).toEqual(['Jira'])],
-            ['another server is edited', editGitHubURL, (servers: MCPServerConfig[]) => expect(servers[1].baseURL).toBe('https://gh2.example.com')],
-        ])('seeds the tools and keeps the change when %s meanwhile', async (_name, edit, check) => {
-            const seed = deferred<unknown>();
-            mockGetVettedToolSeed.mockReturnValue(seed.promise);
-            render(
-                <StatefulServers
-                    initial={makeMCPConfig([existingServer, github])}
-                    saved={[existingServer, github]}
-                />,
-            );
-
-            editJiraURL();
-            fireEvent.blur(urlInputs()[0]);
-            edit();
-            seed.resolve(seededTools);
-
-            await waitFor(() => expect(latestConfig.servers?.[0].tool_configs).toEqual(seededTools));
-            check(latestConfig.servers ?? []);
-        });
-
-        test('drops the seeded tools when the URL has changed again by then', async () => {
-            const seed = deferred<unknown>();
-            mockGetVettedToolSeed.mockReturnValue(seed.promise);
-            render(
-                <StatefulServers
-                    initial={makeMCPConfig([existingServer, github])}
-                    saved={[existingServer, github]}
-                />,
-            );
-
-            editJiraURL();
-            fireEvent.blur(urlInputs()[0]);
-            fireEvent.change(urlInputs()[0], {target: {value: 'https://jira3.example.com'}});
-            await act(async () => {
-                seed.resolve(seededTools);
-            });
-
-            expect(mockGetVettedToolSeed).toHaveBeenCalledWith('https://jira2.example.com');
-            expect(latestConfig.servers?.[0].baseURL).toBe('https://jira3.example.com');
-            expect(latestConfig.servers?.[0].tool_configs).toBeUndefined();
-        });
     });
 });

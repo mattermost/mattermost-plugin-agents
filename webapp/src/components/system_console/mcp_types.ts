@@ -22,7 +22,15 @@ export type MCPServerConfig = {
     tool_configs?: MCPToolConfig[];
     clientID?: string;
     clientSecret?: string;
+
+    // Sent in place of per-user OAuth by agents using service account
+    // authentication. The backend tag has omitempty, so it may be absent.
+    serviceAccountHeaders?: {[key: string]: string};
 };
+
+// What a per-server save writes: the whole server, only its tool policies,
+// or its settings while keeping the tool policies as saved.
+export type PersistMCPServerScope = 'server' | 'tool_configs' | 'settings';
 
 export type MCPEmbeddedServerConfig = {
     id?: string; // stable ABAC policy identity; may be absent until the server-side ID migration runs

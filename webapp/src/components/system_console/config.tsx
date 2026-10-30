@@ -22,6 +22,7 @@ import BotsMovedNotice from './bots_moved_notice';
 import EmbeddingSearchPanel from './embedding_search/embedding_search_panel';
 import {HNSW_DEFAULTS, REINDEX_DEFAULTS, REINDEX_INDEX_STRATEGY, VECTOR_ELEMENT_TYPE} from './embedding_search/types';
 import MCPServers, {MCPServerConfig} from './mcp_servers';
+import {PersistMCPServerScope} from './mcp_types';
 import {PluginConfig} from './plugin_config_types';
 import WebSearchPanel from './web_search/web_search_panel';
 
@@ -196,23 +197,29 @@ const BetaMessage = () => (
 );
 
 // withSavedMCPServer reflects a server saved on its own in the page's local
-// configuration. A review (toolConfigsOnly) updates only the tool policies of
-// a server still on the page: it does not bring back a server removed here
-// but not yet saved.
-export const withSavedMCPServer = (prev: Config, savedServer: MCPServerConfig, toolConfigsOnly: boolean): Config => {
+// configuration. Only a newly added server is appended: saving an existing
+// server's settings or tool policies does not bring back a server removed
+// here but not yet saved, and a tool policy save changes only tool_configs.
+export const withSavedMCPServer = (prev: Config, savedServer: MCPServerConfig, scope: PersistMCPServerScope): Config => {
     const localMCP = prev.mcp || defaultConfig.mcp;
     const localServers: MCPServerConfig[] = localMCP.servers ?? [];
     const present = localServers.some((s) => s.id === savedServer.id);
-    if (!present && toolConfigsOnly) {
+    if (!present && scope !== 'server') {
         return prev;
     }
     const merged = present ? localServers.map((s) => {
         if (s.id !== savedServer.id) {
             return s;
         }
-        return toolConfigsOnly ? {...s, tool_configs: savedServer.tool_configs} : savedServer;
+        return scope === 'tool_configs' ? {...s, tool_configs: savedServer.tool_configs} : savedServer;
     }) : [...localServers, savedServer];
     return {...prev, mcp: {...localMCP, servers: merged}};
+};
+
+// withoutMCPServer removes a server from the page's local configuration.
+export const withoutMCPServer = (prev: Config, serverID: string): Config => {
+    const localMCP = prev.mcp || defaultConfig.mcp;
+    return {...prev, mcp: {...localMCP, servers: (localMCP.servers ?? []).filter((s: MCPServerConfig) => s.id !== serverID)}};
 };
 
 const Config = (props: Props) => {
@@ -287,10 +294,12 @@ const Config = (props: Props) => {
 
     // persistMCPServer saves one MCP server on its own, merged into the
     // configuration as the server has it, so other unsaved edits on this page
-    // are not saved with it. A server without an id is added; with
-    // toolConfigsOnly only its tool_configs are written. The saved server is
-    // then reflected in the page's local configuration.
-    const persistMCPServer = useCallback(async (server: MCPServerConfig, toolConfigsOnly = false): Promise<MCPServerConfig> => {
+    // are not saved with it. A server without an id is added. Scope
+    // tool_configs writes only its tool policies; settings writes everything
+    // else and keeps the saved tool policies unless server carries
+    // tool_configs. The saved server is then reflected in the page's local
+    // configuration.
+    const persistMCPServer = useCallback(async (server: MCPServerConfig, scope: PersistMCPServerScope = 'server'): Promise<MCPServerConfig> => {
         const current = {...defaultConfig, ...(await getPluginConfig())};
         const currentMCP = current.mcp || defaultConfig.mcp;
         const currentServers: MCPServerConfig[] = currentMCP.servers ?? [];
@@ -298,7 +307,12 @@ const Config = (props: Props) => {
         if (server.id && !stored) {
             throw new Error(intl.formatMessage({defaultMessage: 'The server is no longer configured. Reload the page.'}));
         }
-        const next = stored && toolConfigsOnly ? {...stored, tool_configs: server.tool_configs} : server;
+        let next = server;
+        if (stored && scope === 'tool_configs') {
+            next = {...stored, tool_configs: server.tool_configs};
+        } else if (stored && scope === 'settings') {
+            next = {...stored, ...server, tool_configs: server.tool_configs ?? stored.tool_configs};
+        }
         const servers = stored ? currentServers.map((s) => (s.id === server.id ? next : s)) : [...currentServers, next];
 
         let saved: Config;
@@ -315,8 +329,24 @@ const Config = (props: Props) => {
         }
 
         setSavedConfig(saved);
-        setLocalConfig((prev) => withSavedMCPServer(prev, savedServer, toolConfigsOnly));
+        setLocalConfig((prev) => withSavedMCPServer(prev, savedServer, scope));
         return savedServer;
+    }, [intl]);
+
+    // deleteMCPServer removes one saved MCP server on its own, like
+    // persistMCPServer, leaving other unsaved edits on this page unsaved.
+    const deleteMCPServer = useCallback(async (serverID: string): Promise<void> => {
+        const current = {...defaultConfig, ...(await getPluginConfig())};
+        const currentMCP = current.mcp || defaultConfig.mcp;
+        const currentServers: MCPServerConfig[] = currentMCP.servers ?? [];
+        let saved: Config;
+        try {
+            saved = {...defaultConfig, ...(await savePluginConfig({...current, mcp: {...currentMCP, servers: currentServers.filter((s) => s.id !== serverID)}}))};
+        } catch (e: any) {
+            throw new Error(e?.message || intl.formatMessage({defaultMessage: 'Failed to save configuration.'}));
+        }
+        setSavedConfig(saved);
+        setLocalConfig((prev) => withoutMCPServer(prev, serverID));
     }, [intl]);
 
     const updateConfig = useCallback((updates: Partial<Config>) => {
@@ -585,6 +615,7 @@ const Config = (props: Props) => {
                 mcpConfig={mcpConfig}
                 savedServers={savedConfig.mcp?.servers ?? []}
                 onPersistServer={persistMCPServer}
+                onDeleteServer={deleteMCPServer}
                 onChange={(update) => {
                     setLocalConfig((prev) => {
                         const updated = typeof update === 'function' ? update(prev.mcp || defaultConfig.mcp) : update;

@@ -7,7 +7,7 @@ import {IntlProvider} from 'react-intl';
 
 import {getAIBots, getPluginConfig, savePluginConfig} from '@/client';
 
-import Config, {effectiveDefaultBotID, withSavedMCPServer} from './config';
+import Config, {effectiveDefaultBotID, withSavedMCPServer, withoutMCPServer} from './config';
 import {PluginConfig} from './plugin_config_types';
 
 jest.mock('react-intl', () => {
@@ -410,25 +410,36 @@ describe('Config agent version retention', () => {
 });
 
 describe('withSavedMCPServer', () => {
-    const server = (id: string, policy: 'ask' | 'auto_run_in_dm' = 'ask') => ({
+    const server = (id: string, policy: 'ask' | 'auto_run_in_dm' = 'ask', baseURL = `https://${id}.example.com`) => ({
         id,
         name: id,
         enabled: true,
-        baseURL: `https://${id}.example.com`,
+        baseURL,
         headers: {},
         tool_configs: [{name: 'tool', policy, enabled: true}],
     });
     const pageWith = (...servers: ReturnType<typeof server>[]) => ({mcp: {servers}} as unknown as PluginConfig);
 
     test.each([
-        {name: 'a new server is added to the page', prev: pageWith(server('a')), saved: server('b'), toolConfigsOnly: false, want: ['a', 'b']},
-        {name: 'a review updates the tool policies of a server on the page', prev: pageWith(server('a')), saved: server('a', 'auto_run_in_dm'), toolConfigsOnly: true, want: ['a']},
-        {name: 'a review does not bring back a server removed from the page', prev: pageWith(server('a')), saved: server('b'), toolConfigsOnly: true, want: ['a']},
-    ])('$name', ({prev, saved, toolConfigsOnly, want}) => {
-        const next = withSavedMCPServer(prev, saved, toolConfigsOnly);
+        {name: 'a new server is added to the page', prev: pageWith(server('a')), saved: server('b'), scope: 'server' as const, want: ['a', 'b']},
+        {name: 'a review updates the tool policies of a server on the page', prev: pageWith(server('a')), saved: server('a', 'auto_run_in_dm'), scope: 'tool_configs' as const, want: ['a']},
+        {name: 'a review does not bring back a server removed from the page', prev: pageWith(server('a')), saved: server('b'), scope: 'tool_configs' as const, want: ['a']},
+        {name: 'an edit does not bring back a server removed from the page', prev: pageWith(server('a')), saved: server('b'), scope: 'settings' as const, want: ['a']},
+    ])('$name', ({prev, saved, scope, want}) => {
+        const next = withSavedMCPServer(prev, saved, scope);
         expect((next.mcp.servers ?? []).map((s) => s.id)).toEqual(want);
-        if (toolConfigsOnly && want.includes(saved.id)) {
+        if (scope === 'tool_configs' && want.includes(saved.id)) {
             expect(next.mcp.servers?.find((s) => s.id === saved.id)?.tool_configs).toEqual(saved.tool_configs);
         }
+    });
+
+    test('an edit replaces the server on the page with the saved one', () => {
+        const next = withSavedMCPServer(pageWith(server('a')), server('a', 'ask', 'https://moved.example.com'), 'settings');
+        expect(next.mcp.servers?.[0].baseURL).toBe('https://moved.example.com');
+    });
+
+    test('withoutMCPServer removes only that server from the page', () => {
+        const next = withoutMCPServer(pageWith(server('a'), server('b')), 'a');
+        expect((next.mcp.servers ?? []).map((s) => s.id)).toEqual(['b']);
     });
 });
