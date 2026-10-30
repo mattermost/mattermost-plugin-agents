@@ -315,4 +315,27 @@ describe('MCPServerWizard saved-state handling', () => {
             finishSave({...pageCopy, id: SERVER_ID});
         });
     });
+
+    test('Finish later cannot close the review while its policies are being saved', async () => {
+        mockGetMCPServerTools.mockResolvedValue(discoveredServer());
+        const {onPersist, onClose} = renderWizard({kind: 'review', server: pageCopy});
+        let finishSave: (server: MCPServerConfig & {id: string}) => void = () => null;
+        onPersist.mockImplementation(() => new Promise((resolve) => {
+            finishSave = resolve;
+        }));
+
+        expect(await screen.findByRole('group', {name: 'Write tools'})).not.toBeNull();
+        fireEvent.click(screen.getByRole('button', {name: 'Accept and save'}));
+        await waitFor(() => expect(onPersist).toHaveBeenCalledTimes(1));
+
+        const finishLater = screen.getByRole('button', {name: 'Finish later'}) as HTMLButtonElement;
+        expect(finishLater.disabled).toBe(true);
+        fireEvent.click(finishLater);
+        expect(onClose).not.toHaveBeenCalled();
+
+        await act(async () => {
+            finishSave({...pageCopy, id: SERVER_ID});
+        });
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
 });

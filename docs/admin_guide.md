@@ -782,16 +782,17 @@ You can't disable MCP entirely from the System Console. To limit access, disable
 
 ### Add MCP servers
 
-1. On the **Configuration** tab, select **Add Remote MCP Server** to configure a new server.
-2. Configure server settings:
+1. On the **Configuration** tab, select **Add Remote MCP Server**. This opens the add-server dialog described in step 3 of the MCP **Configuration** section above.
+2. In **Server details**, enter:
 
    - **Server URL**: The endpoint URL for your MCP server. Use the server's final address: redirects to a different origin (including `http` to `https` upgrades) are refused so credentials cannot leak to another host.
    - **Description**: What the integration is for, in up to 500 characters (optional). Agents use it to offer the server to users who haven't connected it yet. After saving the server, select **Auto-fill from server** to start from the description the server reports about itself, or from its usage instructions when it has no description. Auto-fill connects as you, so for an OAuth-backed server you may be asked to connect your account first. Review and edit the text, then select **Save**: nothing is stored until you do.
    - **Custom Headers**: Additional headers required by your MCP server (optional).
-   - **Service Account Authentication**: Static headers used in place of per-user OAuth by agents with **Use service accounts for authentication** enabled (optional). See [Service account authentication](#service-account-authentication).
-   - **Server Name**: Descriptive name for the server (auto-generated if not provided).
+   - **Server Name**: Descriptive name for the server (required, and must differ from every other server's name).
 
-3. Select **Save** to add the server.
+   After the server is added, its card on the **Configuration** tab also has **Service Account Authentication**: Static headers used in place of per-user OAuth by agents with **Use service accounts for authentication** enabled (optional). See [Service account authentication](#service-account-authentication).
+
+3. Select **Save and connect** to save the server, connect to it, and review its tools, or **Skip connecting** and then **Save without connecting** to save it without reviewing its tools. The page's **Save** button does not add the server.
 
 ### Plugin-registered MCP servers
 

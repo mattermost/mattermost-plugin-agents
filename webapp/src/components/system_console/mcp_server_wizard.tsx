@@ -392,7 +392,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                 <>
                     <Button
                         emphasis='tertiary'
-                        onClick={onClose}
+                        onClick={requestClose}
                         disabled={saving}
                     >
                         <FormattedMessage defaultMessage='Cancel'/>
@@ -419,6 +419,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                     <Button
                         emphasis='tertiary'
                         onClick={() => setStep('details')}
+                        disabled={saving}
                     >
                         <FormattedMessage defaultMessage='Back'/>
                     </Button>
@@ -435,7 +436,8 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
             return (
                 <Button
                     emphasis='tertiary'
-                    onClick={onClose}
+                    onClick={requestClose}
+                    disabled={saving}
                 >
                     <FormattedMessage defaultMessage='Finish later'/>
                 </Button>
@@ -445,7 +447,8 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                 <>
                     <Button
                         emphasis='tertiary'
-                        onClick={onClose}
+                        onClick={requestClose}
+                        disabled={saving}
                     >
                         <FormattedMessage defaultMessage='Finish later'/>
                     </Button>
