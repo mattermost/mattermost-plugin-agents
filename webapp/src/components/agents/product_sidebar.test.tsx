@@ -2,20 +2,22 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 import {Provider} from 'react-redux';
-import {createStore} from 'redux';
+import {combineReducers, createStore} from 'redux';
 
-import {getAIThreads} from '@/client';
+import {getAIThreads, renameConversation} from '@/client';
+import manifest from '@/manifest';
+import {aiThreads} from '@/redux';
 import type {AIThread} from '@/types/ai_thread';
-import PostEventListener, {requestAgentThreadsRefresh} from '@/websocket';
 
 import ProductSidebar from './product_sidebar';
 import {AGENTS_ROUTE, buildChatPath} from './use_agents_route';
 
 jest.mock('@/client', () => ({
     getAIThreads: jest.fn(),
+    renameConversation: jest.fn(),
     getProfilePictureUrl: (id: string) => `/api/v4/users/${id}/image`,
 }));
 jest.mock('@/bots', () => ({
@@ -28,6 +30,7 @@ jest.mock('@mattermost/shared/components/tooltip', () => ({
 const mockBots = [{id: 'a', displayName: 'Alpha', dmChannelID: 'dm_a'}];
 
 const mockGetAIThreads = getAIThreads as jest.Mock;
+const mockRenameConversation = renameConversation as jest.Mock;
 
 const thread = (id: string, title: string): AIThread => ({
     id,
@@ -102,7 +105,20 @@ describe('ProductSidebar "Your agents" section', () => {
         return history;
     };
 
-    const renderWithStore = (initialPath: string) => {
+    // The plugin's real thread-list reducer, and the host's thread read state.
+    const makeStore = (host: {collapsedThreads?: string; threads?: Record<string, {unread_replies: number}>} = {}) => createStore(combineReducers({
+        [`plugins-${manifest.id}`]: combineReducers({aiThreads}),
+        entities: (state = {
+            users: {currentUserId: 'me', profiles: {me: {id: 'me', roles: 'system_user'}}},
+            roles: {roles: {}},
+            posts: {posts: {}},
+            general: {config: {CollapsedThreads: host.collapsedThreads ?? 'always_on'}},
+            preferences: {myPreferences: {}},
+            threads: {threads: host.threads ?? {}},
+        }) => state,
+    } as any));
+
+    const renderWithStore = (initialPath: string, store = makeStore()) => {
         const history = makeHistory(initialPath);
         window.WebappUtils = {browserHistory: history} as any;
         render(
@@ -110,7 +126,7 @@ describe('ProductSidebar "Your agents" section', () => {
                 locale='en'
                 onError={() => null}
             >
-                <Provider store={createStore(() => ({}))}>
+                <Provider store={store}>
                     <ProductSidebar
                         activeView='all'
                         onSelectAll={jest.fn()}
@@ -125,6 +141,7 @@ describe('ProductSidebar "Your agents" section', () => {
     afterEach(() => {
         delete window.WebappUtils;
         mockGetAIThreads.mockReset();
+        mockRenameConversation.mockReset();
     });
 
     test('lists fetched threads and navigates on click', async () => {
@@ -146,28 +163,42 @@ describe('ProductSidebar "Your agents" section', () => {
         expect((await screen.findByRole('alert')).textContent).toContain('Couldn\'t load your chats.');
     });
 
-    test('refreshes when a reply finishes, and on chat-page refresh requests, not on other updates', async () => {
-        mockGetAIThreads.mockResolvedValue([]);
+    test.each([
+        {name: 'collapsed reply threads on: the host\'s unread thread shows the dot', collapsedThreads: 'always_on', path: AGENTS_ROUTE, dots: ['Older']},
+        {name: 'the open chat never shows it', collapsedThreads: 'always_on', path: buildChatPath('a', 'root_1'), dots: []},
+        {name: 'collapsed reply threads off: no dot (the host keeps no thread read state)', collapsedThreads: 'disabled', path: AGENTS_ROUTE, dots: []},
+    ])('unread dot: $name', async ({collapsedThreads, path, dots}) => {
+        mockGetAIThreads.mockResolvedValue([thread('1', 'Older'), thread('2', 'Newest')]);
+        renderWithStore(path, makeStore({collapsedThreads, threads: {root_1: {unread_replies: 2}, root_2: {unread_replies: 0}}}));
+        await screen.findByRole('button', {name: 'Newest'});
+
+        const unread = screen.queryAllByTestId('thread-unread').map((dot) => dot.closest('li')?.textContent ?? '');
+        expect(unread).toHaveLength(dots.length);
+        dots.forEach((title, i) => expect(unread[i]).toContain(title));
+    });
+
+    test('renaming a chat shows the new title at once, and restores it when the rename fails', async () => {
+        mockGetAIThreads.mockResolvedValue([thread('1', 'Older')]);
+        let fail!: (e: Error) => void;
+        mockRenameConversation.mockReturnValue(new Promise((_resolve, reject) => {
+            fail = reject;
+        }));
         renderWithStore(AGENTS_ROUTE);
-        await waitFor(() => expect(mockGetAIThreads).toHaveBeenCalledTimes(1));
+        await screen.findByRole('button', {name: 'Older'});
 
-        const events = new PostEventListener();
-        const msg = (control: string) => ({data: {post_id: 'p', control}} as any);
-        await act(async () => {
-            events.handlePostUpdateWebsockets(msg('start'));
-        });
-        expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
+        fireEvent.click(screen.getByRole('button', {name: 'Actions for Older'}));
+        fireEvent.click(await screen.findByText('Rename chat'));
+        const input = await screen.findByLabelText('Chat name');
+        fireEvent.change(input, {target: {value: 'Renamed'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
 
-        await act(async () => {
-            events.handlePostUpdateWebsockets(msg('end'));
-        });
-        await waitFor(() => expect(mockGetAIThreads).toHaveBeenCalledTimes(2));
+        // The dialog hides the page from the accessibility tree while it is open.
+        const list = screen.getByRole('list', {name: 'Alpha chats', hidden: true});
+        await waitFor(() => expect(within(list).getByRole('button', {name: 'Renamed', hidden: true})).toBeTruthy());
+        expect(mockRenameConversation).toHaveBeenCalledWith('1', 'Renamed');
 
-        jest.useFakeTimers();
-        await act(async () => {
-            requestAgentThreadsRefresh();
-        });
-        expect(mockGetAIThreads).toHaveBeenCalledTimes(3);
-        jest.useRealTimers();
+        fail(new Error('nope'));
+        await waitFor(() => expect(within(list).getByRole('button', {name: 'Older', hidden: true})).toBeTruthy());
+        expect((await screen.findByRole('alert')).textContent).toBe('Couldn\'t rename this chat. Try again.');
     });
 });

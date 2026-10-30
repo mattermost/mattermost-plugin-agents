@@ -1,8 +1,8 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState, useEffect, useCallback} from 'react';
-import {useDispatch, useSelector} from 'react-redux';
+import React, {useState, useEffect, useCallback, useMemo} from 'react';
+import {useDispatch, useSelector, useStore} from 'react-redux';
 import styled from 'styled-components';
 
 import {GlobalState} from '@mattermost/types/store';
@@ -10,9 +10,10 @@ import {GlobalState} from '@mattermost/types/store';
 import manifest from '@/manifest';
 import type {RHSTab} from '@/redux';
 
-import {getAIThreads, getPostsByIds, getProfilePictureUrl, renameConversation, updateRead} from '@/client';
-import AgentChatRenameDialog from '@/components/agents/agent_chat_rename_dialog';
-import {requestAgentThreadsRefresh} from '@/websocket';
+import {getPostsByIds, getProfilePictureUrl} from '@/client';
+import {ChatActionsDialogs, useChatActions} from '@/components/agents/use_chat_actions';
+import {useMarkAgentThreadRead} from '@/hooks/use_agent_thread_read';
+import {fetchAIThreads, selectAIThreadsState, useAgentThreads} from '@/hooks/use_agent_threads';
 
 import {useBotlist} from '@/bots';
 
@@ -20,20 +21,12 @@ import type {AIThread} from '@/types/ai_thread';
 
 import AgentChatDropZone from '../agent_chat/agent_chat_drop_zone';
 import AgentChatThreadView from '../agent_chat/agent_chat_thread_view';
-import {useMarkThreadRead} from '../agent_chat/use_thread_generating';
 
 import ChatActionsPopover from './chat_actions_popover';
 import RHSViewTransition from './rhs_view_transition';
 import ThreadItem from './thread_item';
 
 import RHSNewTab from './rhs_new_tab';
-
-const missingThreadMembershipMessage = 'User thread membership doesn\'t exist';
-
-function isMissingThreadMembershipError(error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    return message.includes(missingThreadMembershipMessage);
-}
 
 const ThreadsList = styled.div`
     flex: 1;
@@ -51,12 +44,13 @@ const RhsContainer = styled.div`
 
 type ChatPreview = {message: string; replyCount: number};
 
-const twentyFourHoursInMS = 24 * 60 * 60 * 1000;
-
 export default function RHS() {
     const dispatch = useDispatch();
-    const selectedPostId = useSelector((state: any) => state['plugins-' + manifest.id].selectedPostId);
-    useMarkThreadRead(selectedPostId || '');
+    const store = useStore<GlobalState>();
+    const selectedPostId: string = useSelector((state: any) => state['plugins-' + manifest.id].selectedPostId) || '';
+
+    // The open chat is read, as in any thread view.
+    useMarkAgentThreadRead(selectedPostId, Boolean(selectedPostId));
 
     // The list view (new chat or history) is shared with the header title, which is rendered by
     // the host outside this component (it shows Back and the tools button by it). An open
@@ -74,87 +68,50 @@ export default function RHS() {
     const selectedRoot = useSelector<GlobalState, {channel_id: string; user_id: string} | null>((state) => (
         (selectedPostId && state.entities.posts.posts[selectedPostId]) || null
     ));
-    const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
-    const currentTeamId = useSelector<GlobalState, string>((state) => state.entities.teams.currentTeamId);
+    const {bots, activeBot} = useBotlist();
 
-    const [threads, setThreads] = useState<AIThread[] | null>(null);
-    const [renameTarget, setRenameTarget] = useState<AIThread | null>(null);
+    // Every chat of the user's, from the shared stored list; opening the history refetches it.
+    const {threads} = useAgentThreads(bots);
+    const chatActions = useChatActions();
 
     // The history item whose actions menu is open, and the button it opened from.
     const [menuFor, setMenuFor] = useState<{thread: AIThread; anchor: HTMLElement} | null>(null);
-    const renameThread = useCallback(async (title: string) => {
-        if (!renameTarget) {
-            return;
-        }
-        await renameConversation(renameTarget.id, title);
-        const renamedId = renameTarget.id;
-        setThreads((current) => (current ? current.map((t) => (t.id === renamedId ? {...t, title} : t)) : current));
-        setRenameTarget(null);
-
-        // The Agents product's sidebar lists the same chats.
-        requestAgentThreadsRefresh();
-    }, [renameTarget]);
 
     // The chats' first messages and reply counts, loaded after the list. Until they arrive (or if
     // they cannot be loaded) the items show the chat title.
     const [previews, setPreviews] = useState<Record<string, ChatPreview>>({});
 
-    const markSelectedThreadRead = useCallback((postId: string) => {
-        updateRead(currentUserId, currentTeamId, postId, Date.now() + twentyFourHoursInMS).catch((error) => {
-            if (isMissingThreadMembershipError(error)) {
-                console.warn('Skipping AI thread read marker because thread membership is missing.', error); // eslint-disable-line no-console
-                return;
-            }
-
-            console.error('Failed to update AI thread read marker:', error); // eslint-disable-line no-console
-        });
-    }, [currentTeamId, currentUserId]);
-
+    const showingHistory = currentTab === 'threads';
     useEffect(() => {
-        // Responses of a superseded request (the tab was left, or opened again) are dropped.
-        let superseded = false;
-        const fetchThreads = async () => {
-            const list: AIThread[] = await getAIThreads();
-            if (superseded) {
-                return;
-            }
-            setThreads(list);
-
-            const rootIds = list.map((t) => t.root_post_id).filter((id): id is string => Boolean(id));
-            if (rootIds.length === 0) {
-                setPreviews({});
-                return;
-            }
-            try {
-                const posts = await getPostsByIds(rootIds);
-                if (!superseded) {
-                    setPreviews(Object.fromEntries(posts.map((post) => [post.id, {message: post.message, replyCount: post.reply_count}])));
-                }
-            } catch (error) {
-                console.error('Failed to load chat history previews:', error); // eslint-disable-line no-console
-            }
-        };
-        if (currentTab === 'threads') {
-            fetchThreads();
-        } else if (currentTab === 'thread' && Boolean(selectedPostId)) {
-            // Update read for the thread to tomorrow. We don't really want the unreads thing to show up.
-            markSelectedThreadRead(selectedPostId);
+        // A load already under way (the first one) is fresh enough.
+        if (showingHistory && !selectAIThreadsState(store.getState()).loading) {
+            fetchAIThreads(store.dispatch);
         }
+    }, [showingHistory, store]);
+
+    const rootIdsKey = useMemo(() => (threads ?? []).map((t) => t.root_post_id).filter(Boolean).join(','), [threads]);
+    useEffect(() => {
+        if (!showingHistory || !rootIdsKey) {
+            return () => null;
+        }
+
+        // Responses of a superseded request (the tab was left, or the list changed) are dropped.
+        let superseded = false;
+        getPostsByIds(rootIdsKey.split(',')).then((posts) => {
+            if (!superseded) {
+                setPreviews(Object.fromEntries(posts.map((post) => [post.id, {message: post.message, replyCount: post.reply_count}])));
+            }
+        }).catch((error: unknown) => {
+            console.error('Failed to load chat history previews:', error); // eslint-disable-line no-console
+        });
         return () => {
             superseded = true;
-
-            // Sometimes we are too fast for the server, so try again on unmount/switch.
-            if (selectedPostId) {
-                markSelectedThreadRead(selectedPostId);
-            }
         };
-    }, [currentTab, markSelectedThreadRead, selectedPostId]);
+    }, [showingHistory, rootIdsKey]);
 
     const selectPost = useCallback((postId: string) => {
         dispatch({type: 'SELECT_AI_POST', postId});
     }, [dispatch]);
-
-    const {bots, activeBot} = useBotlist();
 
     // No bots available - hide the RHS entirely
     if (bots && bots.length === 0) {
@@ -233,14 +190,9 @@ export default function RHS() {
             <ChatActionsPopover
                 anchor={menuFor?.anchor ?? null}
                 onClose={() => setMenuFor(null)}
-                onRename={() => menuFor && setRenameTarget(menuFor.thread)}
+                onRename={() => menuFor && chatActions.startRename({conversationId: menuFor.thread.id, title: menuFor.thread.title})}
             />
-            <AgentChatRenameDialog
-                show={renameTarget !== null}
-                initialTitle={renameTarget?.title ?? ''}
-                onSubmit={renameThread}
-                onClose={() => setRenameTarget(null)}
-            />
+            <ChatActionsDialogs actions={chatActions}/>
         </RhsContainer>
     );
 }

@@ -6,7 +6,15 @@ import {Provider} from 'react-redux';
 import {createStore} from 'redux';
 import {act, renderHook} from '@testing-library/react';
 
-import {recordPostUpdate, resetGeneratingPosts, useGeneratingThreadRoots} from './use_thread_generating';
+import {
+    MAX_TRACKED_POSTS,
+    STALE_GENERATING_MS,
+    clearGeneratingPosts,
+    recordPostUpdate,
+    resetGeneratingPosts,
+    setGeneratingStateSource,
+    useGeneratingThreadRoots,
+} from './use_thread_generating';
 
 const post = (id: string, rootId: string, requester: string) => ({
     id,
@@ -37,6 +45,11 @@ describe('useGeneratingThreadRoots', () => {
         act(() => resetGeneratingPosts());
     });
 
+    afterEach(() => {
+        setGeneratingStateSource(null);
+        jest.restoreAllMocks();
+    });
+
     test('lists the roots of my chats while their agent generates, and drops them at the end', () => {
         const {result} = renderHook(() => useGeneratingThreadRoots(), {wrapper});
         expect(Array.from(result.current)).toEqual([]);
@@ -65,5 +78,43 @@ describe('useGeneratingThreadRoots', () => {
         act(() => update('rootPostWithReply', 'start'));
 
         expect(Array.from(result.current)).toEqual(['rootPostWithReply']);
+    });
+
+    test('a websocket reconnect clears generations whose end may have been missed', () => {
+        const {result} = renderHook(() => useGeneratingThreadRoots(), {wrapper});
+        act(() => update('reply1', 'start'));
+        expect(Array.from(result.current)).toEqual(['rootA']);
+
+        act(() => clearGeneratingPosts());
+        expect(Array.from(result.current)).toEqual([]);
+
+        // A stream still running is recorded again by its next chunk.
+        act(() => update('reply1', 'progress'));
+        expect(Array.from(result.current)).toEqual(['rootA']);
+    });
+
+    test('a generation with no events for too long is dropped when the next event arrives', () => {
+        const now = jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
+        const {result} = renderHook(() => useGeneratingThreadRoots(), {wrapper});
+        act(() => update('reply1', 'start'));
+
+        now.mockReturnValue(1_000_000 + STALE_GENERATING_MS + 1);
+        act(() => update('rootPostWithReply', 'start'));
+        expect(Array.from(result.current)).toEqual(['rootPostWithReply']);
+    });
+
+    test('other people\'s posts are not recorded, so a busy channel cannot crowd out the user\'s own generation', () => {
+        const others = Object.fromEntries(Array.from({length: MAX_TRACKED_POSTS + 5}, (_, i) => [`other${i}`, post(`other${i}`, `root${i}`, 'someone-else')]));
+        const busy = createStore(() => ({
+            entities: {users: {currentUserId: 'me'}, posts: {posts: {...others, reply1: post('reply1', 'rootA', 'me')}}},
+        }));
+        setGeneratingStateSource(busy.getState as never);
+        const {result} = renderHook(() => useGeneratingThreadRoots(), {wrapper: ({children}: {children: React.ReactNode}) => <Provider store={busy}>{children}</Provider>});
+
+        act(() => {
+            update('reply1', 'start');
+            Object.keys(others).forEach((id) => update(id, 'start'));
+        });
+        expect(Array.from(result.current)).toEqual(['rootA']);
     });
 });

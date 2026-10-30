@@ -26,21 +26,6 @@ export const subscribeToAllPostUpdates = (callback: WebsocketListener): (() => v
     };
 };
 
-// Tiny pub/sub so the chat page can ask the Agents sidebar to refresh its thread
-// list (with the delayed title retry) after a new chat is submitted.
-const agentThreadsRefreshSubscribers = new Set<() => void>();
-
-export const onAgentThreadsRefreshRequested = (callback: () => void): (() => void) => {
-    agentThreadsRefreshSubscribers.add(callback);
-    return () => {
-        agentThreadsRefreshSubscribers.delete(callback);
-    };
-};
-
-export const requestAgentThreadsRefresh = () => {
-    Array.from(agentThreadsRefreshSubscribers).forEach((callback) => callback());
-};
-
 export default class PostEventListener {
     postUpdateWebsocketListeners: WebsocketListeners = [];
     progressUpdates = new Map<string, ProgressUpdate>();

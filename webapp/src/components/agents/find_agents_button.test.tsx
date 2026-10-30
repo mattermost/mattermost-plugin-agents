@@ -2,9 +2,13 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {act, fireEvent, render as rtlRender, screen, waitFor} from '@testing-library/react';
+import {Provider} from 'react-redux';
+import {combineReducers, createStore} from 'redux';
 
 import {getAIThreads} from '@/client';
+import manifest from '@/manifest';
+import {aiThreads} from '@/redux';
 import type {AIThread} from '@/types/ai_thread';
 
 import {MAX_RECENT_CHATS} from './find_agents_search';
@@ -43,6 +47,13 @@ const thread = (id: string, botId: string, title: string, updateAt: number): AIT
 });
 
 const mockGetThreads = getAIThreads as jest.Mock;
+
+// A fresh plugin store (the real thread-list reducer) per render.
+const render = (ui: React.ReactElement) => rtlRender(
+    <Provider store={createStore(combineReducers({[`plugins-${manifest.id}`]: combineReducers({aiThreads})} as any))}>
+        {ui}
+    </Provider>,
+);
 const push = jest.fn();
 
 const openModal = async () => {

@@ -1,9 +1,9 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {useIntl} from 'react-intl';
-import {useDispatch, useSelector, useStore} from 'react-redux';
+import {useDispatch, useStore} from 'react-redux';
 import styled from 'styled-components';
 
 import {GlobalState} from '@mattermost/types/store';
@@ -11,9 +11,10 @@ import {Button} from '@mattermost/compass-ui/components/button';
 import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
 
-import {getPost, updateRead} from '@/client';
+import {getPost} from '@/client';
 import {fetchAndStoreBots, useBotlist, type LLMBot} from '@/bots';
-import {requestAgentThreadsRefresh} from '@/websocket';
+import {useMarkAgentThreadRead} from '@/hooks/use_agent_thread_read';
+import {useRefreshAgentThreads} from '@/hooks/use_agent_threads';
 
 import AgentChatDropZone from '../agent_chat/agent_chat_drop_zone';
 import AgentChatThreadView, {isThreadViewerAvailable} from '../agent_chat/agent_chat_thread_view';
@@ -23,44 +24,6 @@ import AgentChatHeader from './agent_chat_header';
 import AgentSettingsModal from './agent_settings_modal';
 import {useAgentDMChannel} from './use_agent_dm_channel';
 import {useAgentEditAccess} from './use_agent_edit_access';
-
-const READ_AHEAD_MS = 24 * 60 * 60 * 1000;
-const missingThreadMembershipMessage = 'User thread membership doesn\'t exist';
-
-const isMissingThreadMembershipError = (error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    return message.includes(missingThreadMembershipMessage);
-};
-
-// The product URL is not team-scoped, so currentTeamId may be empty on a cold
-// load. Fall back to the user's first team; '' means skip updateRead.
-export const resolveReadTeamId = (state: GlobalState): string => {
-    const {currentTeamId, myMembers} = state.entities.teams;
-    if (currentTeamId) {
-        return currentTeamId;
-    }
-    return Object.keys(myMembers ?? {})[0] ?? '';
-};
-
-const useMarkThreadRead = () => {
-    const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
-    const teamId = useSelector<GlobalState, string>(resolveReadTeamId);
-
-    return useCallback((rootId: string) => {
-        if (!teamId || !currentUserId) {
-            return;
-        }
-
-        // Mark read until tomorrow so agent threads never show as unread (as the RHS does).
-        updateRead(currentUserId, teamId, rootId, Date.now() + READ_AHEAD_MS).catch((error: unknown) => {
-            if (isMissingThreadMembershipError(error)) {
-                console.warn('Skipping AI thread read marker because thread membership is missing.', error); // eslint-disable-line no-console
-                return;
-            }
-            console.error('Failed to update AI thread read marker:', error); // eslint-disable-line no-console
-        });
-    }, [currentUserId, teamId]);
-};
 
 interface AgentChatPageProps {
     botId: string;
@@ -77,6 +40,7 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
     const dm = useAgentDMChannel(bot);
     const {access, reload: reloadAccess} = useAgentEditAccess(bot ? botId : '');
     const [settingsOpen, setSettingsOpen] = useState(false);
+    const refreshThreads = useRefreshAgentThreads();
 
     // Only a thread confirmed to be a root in this agent's DM gets chat actions.
     const [validRootId, setValidRootId] = useState<string | null>(null);
@@ -149,8 +113,8 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
                 bot={bot}
                 channelId={dm.channelId}
                 onCreated={(newRootId) => {
-                    // The sidebar refetches its threads, plus a delayed retry for the async title.
-                    requestAgentThreadsRefresh();
+                    // The chat lists pick up the new chat; its title follows over the websocket.
+                    refreshThreads();
                     toChat(bot.id, newRootId);
                 }}
             />
@@ -216,17 +180,8 @@ interface AgentThreadProps {
 const AgentThread = ({channelId, rootId, agentName, bot, onNewChat, toAll, onValidated}: AgentThreadProps) => {
     const intl = useIntl();
     const store = useStore<GlobalState>();
-    const markRead = useMarkThreadRead();
     const [check, setCheck] = useState<ThreadCheck>('loading');
     const [fetchedReplyCount, setFetchedReplyCount] = useState(0);
-
-    // The host keeps the root's reply_count (and the loaded replies) current as
-    // replies arrive over the websocket.
-    const storeReplyCount = useSelector<GlobalState, number>((state) => Math.max(
-        state.entities.posts.posts[rootId]?.reply_count ?? 0,
-        state.entities.posts.postsInThread?.[rootId]?.length ?? 0,
-    ));
-    const replyCount = Math.max(storeReplyCount, fetchedReplyCount);
 
     useEffect(() => {
         let current = true;
@@ -260,20 +215,7 @@ const AgentThread = ({channelId, rootId, agentName, bot, onNewChat, toAll, onVal
         onValidated(check === 'valid' ? rootId : null);
     }, [check, rootId, onValidated]);
 
-    // The user's thread membership only exists once the thread has a reply, so
-    // marking a reply-less thread 404s and leaves the agent's first reply unread.
-    // Mark once replies exist, and again whenever another arrives.
-    const canMarkRead = check === 'valid' && replyCount > 0;
-    useEffect(() => {
-        if (canMarkRead) {
-            markRead(rootId);
-        }
-    }, [canMarkRead, replyCount, markRead, rootId]);
-
-    // The server can lag behind the open; mark again on switch/unmount (as the RHS does).
-    const markOnLeave = useRef<(() => void) | null>(null);
-    markOnLeave.current = canMarkRead ? () => markRead(rootId) : null;
-    useEffect(() => () => markOnLeave.current?.(), [rootId]);
+    useMarkAgentThreadRead(rootId, check === 'valid', fetchedReplyCount);
 
     if (check === 'loading') {
         return <LoadingState/>;

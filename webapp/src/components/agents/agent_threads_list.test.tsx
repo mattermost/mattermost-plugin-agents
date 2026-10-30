@@ -53,14 +53,16 @@ const manyThreads = (n: number) => Array.from({length: n}, (_, i) => thread(Stri
 const chatTitles = () => within(screen.getByRole('list', {name: 'Alpha chats'})).
     getAllByRole('button', {name: /^Chat \d+$/}).map((b) => b.textContent);
 
-const renderList = (props: Partial<React.ComponentProps<typeof AgentThreadsList>> = {}) => {
+const renderList = (props: Partial<React.ComponentProps<typeof AgentThreadsList>> = {}) => renderListResult(props).handlers;
+
+const renderListResult = (props: Partial<React.ComponentProps<typeof AgentThreadsList>> = {}) => {
     const handlers = {
         onSelectThread: jest.fn(),
         onNewChat: jest.fn(),
         onRetry: jest.fn(),
-        onRenameThread: jest.fn(() => Promise.resolve()),
+        onRenameThread: jest.fn(),
     };
-    render(
+    const result = render(
         <IntlProvider
             locale='en'
             onError={() => null}
@@ -69,13 +71,13 @@ const renderList = (props: Partial<React.ComponentProps<typeof AgentThreadsList>
                 bots={bots}
                 threadsByBot={threadsByBot}
                 loading={false}
-                error={null}
+                error={false}
                 {...handlers}
                 {...props}
             />
         </IntlProvider>,
     );
-    return handlers;
+    return {...result, handlers};
 };
 
 describe('AgentThreadsList', () => {
@@ -141,7 +143,7 @@ describe('AgentThreadsList', () => {
     });
 
     test('shows a visible error with retry', () => {
-        const handlers = renderList({error: new Error('boom'), threadsByBot: {}});
+        const handlers = renderList({error: true, threadsByBot: {}});
         expect(screen.getByRole('alert').textContent).toContain('Couldn\'t load your chats.');
         fireEvent.click(screen.getByRole('button', {name: 'Try again'}));
         expect(handlers.onRetry).toHaveBeenCalledTimes(1);
@@ -243,20 +245,12 @@ describe('AgentThreadsList', () => {
         });
     });
 
-    describe('rename', () => {
-        test('Rename chat asks for a title and renames that chat', async () => {
-            const h = renderList();
-            fireEvent.click(screen.getByRole('button', {name: 'Actions for First chat'}));
-            fireEvent.click(await screen.findByText('Rename chat'));
+    test('Rename chat hands that chat to the owner, which shows the dialog', async () => {
+        const h = renderList();
+        fireEvent.click(screen.getByRole('button', {name: 'Actions for First chat'}));
+        fireEvent.click(await screen.findByText('Rename chat'));
 
-            const input = await screen.findByLabelText('Chat name');
-            expect((input as HTMLInputElement).value).toBe('First chat');
-            fireEvent.change(input, {target: {value: 'Renamed chat'}});
-            fireEvent.click(screen.getByRole('button', {name: 'Save'}));
-
-            await waitFor(() => expect(h.onRenameThread).toHaveBeenCalledWith(expect.objectContaining({id: '1'}), 'Renamed chat'));
-            await waitFor(() => expect(screen.queryByLabelText('Chat name')).toBeNull());
-        });
+        expect(h.onRenameThread).toHaveBeenCalledWith(expect.objectContaining({id: '1', title: 'First chat'}));
     });
 
     test('clicking a collapsed agent row opens it and expands its chats', () => {
@@ -281,7 +275,7 @@ describe('AgentThreadsList', () => {
     });
 
     test.each([
-        {name: 'a chat that finished while it was not open', unread: ['root_1'], generating: [], expectedUnread: 1, expectedGenerating: 0},
+        {name: 'a chat with replies the user has not read', unread: ['root_1'], generating: [], expectedUnread: 1, expectedGenerating: 0},
         {name: 'a chat that is answering shows the wave, not the dot', unread: ['root_1'], generating: ['root_1'], expectedUnread: 0, expectedGenerating: 1},
         {name: 'no unread chats', unread: [], generating: [], expectedUnread: 0, expectedGenerating: 0},
     ])('unread indicator: $name', ({unread, generating, expectedUnread, expectedGenerating}) => {

@@ -6,7 +6,8 @@ import {Provider} from 'react-redux';
 import {createStore} from 'redux';
 import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 
-import {BotsHandler} from '@/redux';
+import {BotsHandler, aiThreads} from '@/redux';
+import {getAIThreads} from '@/client';
 import manifest from '@/manifest';
 
 import {NEW_CHAT_GREETINGS} from '../agent_chat/agent_new_chat';
@@ -49,11 +50,9 @@ jest.mock('@/client', () => ({
     },
 }));
 
-const mockRequestRefresh = jest.fn();
+const mockGetAIThreads = getAIThreads as jest.Mock;
 jest.mock('@/websocket', () => ({
-    onAgentThreadsRefreshRequested: () => () => null,
     subscribeToAllPostUpdates: () => () => null,
-    requestAgentThreadsRefresh: () => mockRequestRefresh(),
 }));
 
 const mockThreadViewerProps = jest.fn();
@@ -167,7 +166,14 @@ const makeStore = ({bots, systemPermissions = [], loadedChannels = [], currentTe
             return state;
         }
     };
-    return createStore(reducer);
+
+    // The plugin's real thread-list reducer on top.
+    const withThreads = (state: any, action: any) => {
+        const next = reducer(state, action);
+        const threads = aiThreads(next[pluginKey].aiThreads, action);
+        return threads === next[pluginKey].aiThreads ? next : {...next, [pluginKey]: {...next[pluginKey], aiThreads: threads}};
+    };
+    return createStore(withThreads);
 };
 
 const deferred = <T, >() => {
@@ -237,6 +243,8 @@ describe('AgentChatPage', () => {
         expect(state.entities.roles.roles.channel_admin).toBeTruthy();
 
         // A root post (root_id '') in the agent's DM, which is what makes the agent answer.
+        await waitFor(() => expect(mockGetAIThreads).toHaveBeenCalled());
+        const listLoads = mockGetAIThreads.mock.calls.length;
         mockCreatePost.mockResolvedValue({id: 'new-root'});
         fireEvent.change(composer, {target: {value: 'hello'}});
         await act(async () => {
@@ -244,7 +252,9 @@ describe('AgentChatPage', () => {
         });
         expect(mockCreatePost).toHaveBeenCalledWith(expect.objectContaining({channel_id: 'dm1', root_id: '', message: 'hello'}));
         expect(toChat).toHaveBeenCalledWith('bot1', 'new-root');
-        expect(mockRequestRefresh).toHaveBeenCalledTimes(1);
+
+        // The chat lists refetch to pick up the new chat.
+        expect(mockGetAIThreads).toHaveBeenCalledTimes(listLoads + 1);
     });
 
     test('a file dropped anywhere on the chat uploads to the DM and goes out with the post', async () => {
@@ -383,6 +393,9 @@ describe('AgentChatPage', () => {
         }
         expect(mockUpdateRead).toHaveBeenCalledTimes(1);
         expect(mockUpdateRead).toHaveBeenLastCalledWith('me', expected, 'r1', expect.any(Number));
+
+        // Read now, not ahead of time: later replies stay unread in the host's thread state.
+        expect(mockUpdateRead.mock.calls[0][3]).toBeLessThanOrEqual(Date.now());
         unmount();
         expect(mockUpdateRead).toHaveBeenCalledTimes(2);
     });

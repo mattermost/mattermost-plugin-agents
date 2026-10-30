@@ -3,11 +3,14 @@
 
 import React from 'react';
 import {Provider} from 'react-redux';
-import {createStore} from 'redux';
+import {combineReducers, createStore} from 'redux';
 import {act, fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 
 import type {LLMBot} from '@/bots';
 import {clearConversationCache} from '@/hooks/use_conversation';
+import {resetToolPreferences} from '@/components/agent_chat/use_composer_tool_preferences';
+import manifest from '@/manifest';
+import {aiThreads} from '@/redux';
 
 import AgentChatHeader from './agent_chat_header';
 
@@ -25,11 +28,8 @@ jest.mock('@/client', () => ({
     getUserToolPreferences: () => Promise.resolve({disabled_servers: []}),
 }));
 
-const mockRequestRefresh = jest.fn();
 jest.mock('@/websocket', () => ({
-    onAgentThreadsRefreshRequested: () => () => null,
     subscribeToAllPostUpdates: () => () => null,
-    requestAgentThreadsRefresh: () => mockRequestRefresh(),
 }));
 
 jest.mock('@mattermost/shared/components/tooltip', () => ({
@@ -52,8 +52,10 @@ const bot = {id: 'bot1', displayName: 'Matty', lastIconUpdate: 0, dmChannelID: '
 const thread = (id: string, root: string, title: string, update: number, channel = 'dm1', botId = 'bot1') => ({id, channel_id: channel, bot_id: botId, root_post_id: root, title, turn_count: 1, update_at: update});
 
 // The conversation id comes from the bot reply's props, as the plugin writes it.
-const makeStore = (withBotReply: boolean) => createStore(() => ({
-    entities: {
+// The plugin's real thread-list reducer, so the name menu lists the fetched chats.
+const makeStore = (withBotReply: boolean) => createStore(combineReducers({
+    [`plugins-${manifest.id}`]: combineReducers({aiThreads}),
+    entities: (state = {
         general: {config: {EnableTesting: 'true', EnableDeveloper: 'true'}, license: {}},
         posts: {
             posts: {
@@ -62,8 +64,8 @@ const makeStore = (withBotReply: boolean) => createStore(() => ({
             },
             postsInThread: {root1: withBotReply ? ['reply1'] : []},
         },
-    },
-}));
+    }) => state,
+} as any));
 
 const renderHeader = (props: Partial<React.ComponentProps<typeof AgentChatHeader>> = {}, withBotReply = true) => {
     const handlers = {onNewChat: jest.fn()};
@@ -102,15 +104,17 @@ describe('AgentChatHeader', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         clearConversationCache();
+        resetToolPreferences();
         mockGetConversation.mockResolvedValue({id: CONVERSATION_ID, title: 'Quarterly plan', turns: []});
+        // In the server's order: most recent turn first.
         mockGetThreads.mockResolvedValue([
-            thread('t1', 'old', 'Older chat', 1),
-            thread('t2', 'root1', 'Quarterly plan', 3),
-            thread('t3', 'blank', '  ', 2),
             thread('t4', 'other-dm', 'Not in the DM', 9, 'elsewhere'),
             thread('t5', 'other-bot', 'Other bot', 9, 'dm1', 'bot2'),
-            thread(LISTED_CONVERSATION_ID, 'listed-root', 'Listed chat', 4),
             thread('d'.repeat(26), 'foreign-root', 'Not in the DM', 5, 'elsewhere'),
+            thread(LISTED_CONVERSATION_ID, 'listed-root', 'Listed chat', 4),
+            thread(CONVERSATION_ID, 'root1', 'Quarterly plan', 3),
+            thread('t3', 'blank', '  ', 2),
+            thread('t1', 'old', 'Older chat', 1),
         ]);
         mockGetTools.mockResolvedValue({servers: []});
         (window as any).WebappUtils = {browserHistory: {push: mockPush}};
@@ -353,7 +357,7 @@ describe('AgentChatHeader', () => {
         expect(screen.queryByText('Denied')).toBeNull();
     });
 
-    test('rename prefills the current title, saves the trimmed title and refreshes the sidebar', async () => {
+    test('rename prefills the current title, saves the trimmed title and shows it', async () => {
         mockRename.mockResolvedValue({});
         renderHeader({rootId: 'root1'});
         await waitFor(() => expect(mockGetConversation).toHaveBeenCalledWith(CONVERSATION_ID));
@@ -368,11 +372,11 @@ describe('AgentChatHeader', () => {
             fireEvent.click(screen.getByRole('button', {name: 'Save'}));
         });
         expect(mockRename).toHaveBeenCalledWith(CONVERSATION_ID, 'Q3 plan');
-        expect(mockRequestRefresh).toHaveBeenCalledTimes(1);
         await waitFor(() => expect(screen.queryByLabelText('Chat name')).toBeNull());
+        expect(screen.getByTestId('agent-chat-menu-button').textContent).toBe('Q3 plan');
     });
 
-    test('rename failure keeps the dialog open with an error and does not refresh', async () => {
+    test('rename failure keeps the dialog open with an error and the old title', async () => {
         mockRename.mockRejectedValue(new Error('500'));
         renderHeader({rootId: 'root1'});
         await openActions();
@@ -384,7 +388,7 @@ describe('AgentChatHeader', () => {
         });
         expect(screen.getByRole('alert').textContent).toBe('Couldn\'t rename this chat. Try again.');
         expect(screen.getByLabelText('Chat name')).toBeTruthy();
-        expect(mockRequestRefresh).not.toHaveBeenCalled();
+        expect(screen.getByTestId('agent-chat-menu-button').textContent).toBe('Quarterly plan');
     });
 
     test('rename with an empty or unchanged title cannot be saved', async () => {

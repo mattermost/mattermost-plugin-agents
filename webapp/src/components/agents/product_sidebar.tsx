@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {ReactNode, useCallback, useContext, useEffect} from 'react';
+import React, {ReactNode, useCallback, useContext, useMemo} from 'react';
 import {ReactReduxContext} from 'react-redux';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
@@ -12,17 +12,17 @@ import {Icon} from '@mattermost/compass-ui/components/icon';
 import {Scrollbar} from '@mattermost/compass-ui/components/scrollbar';
 
 import {useBotlist} from '@/bots';
-import {renameConversation} from '@/client';
+import {useUnreadThreadRoots} from '@/hooks/use_agent_thread_read';
 import {useAgentThreads} from '@/hooks/use_agent_threads';
 import type {AIThread} from '@/types/ai_thread';
-import {onAgentThreadsRefreshRequested, requestAgentThreadsRefresh, subscribeToAllPostUpdates} from '@/websocket';
 
-import {useGeneratingThreadRoots, useUnreadFinishedThreadRoots} from '@/components/agent_chat/use_thread_generating';
+import {useGeneratingThreadRoots} from '@/components/agent_chat/use_thread_generating';
 
 import AgentThreadsList from './agent_threads_list';
 import FindAgentsButton from './find_agents_button';
 import SidebarAddMenu from './sidebar_add_menu';
 import {useAgentsRoute, type AgentsView} from './use_agents_route';
+import {ChatActionsDialogs, useChatActions} from './use_chat_actions';
 
 interface ProductSidebarProps {
     activeView: AgentsView;
@@ -59,45 +59,37 @@ const NavRow = ({name, glyph, active, onClick}: NavRowProps) => (
     </NavRowWrapper>
 );
 
-// Data wiring for the "Your agents" section: bots, DM threads, route highlighting and
-// refresh triggers (reply finished over websocket; new-chat requests from the chat page).
+// Data wiring for the "Your agents" section: bots, DM threads (the shared stored list, kept current
+// over the websocket), route highlighting, and the chat actions' dialogs.
 const YourAgentsSection = () => {
     const route = useAgentsRoute();
     const {bots} = useBotlist();
-    const {threadsByBot, loading, error, refresh, refreshWithTitleRetry} = useAgentThreads(bots);
+    const {threadsByBot, loading, error, refresh} = useAgentThreads(bots);
     const generatingRoots = useGeneratingThreadRoots();
-    const unreadRoots = useUnreadFinishedThreadRoots(route.view === 'chat' ? route.rootId ?? '' : '');
-
-    useEffect(() => subscribeToAllPostUpdates((msg) => {
-        if (msg.data.control === 'end') {
-            refresh();
-        }
-    }), [refresh]);
-
-    useEffect(() => onAgentThreadsRefreshRequested(refreshWithTitleRetry), [refreshWithTitleRetry]);
-
-    const renameThread = useCallback(async (thread: AIThread, title: string) => {
-        await renameConversation(thread.id, title);
-
-        // The open chat's header and the RHS history list the same chats.
-        requestAgentThreadsRefresh();
-    }, []);
+    const listedRoots = useMemo(() => Object.values(threadsByBot).flat().map((t) => t.root_post_id).filter((id): id is string => Boolean(id)), [threadsByBot]);
+    const unreadRoots = useUnreadThreadRoots(listedRoots, route.view === 'chat' ? route.rootId ?? '' : '');
+    const chatActions = useChatActions();
+    const {startRename} = chatActions;
+    const renameThread = useCallback((thread: AIThread) => startRename({conversationId: thread.id, title: thread.title}), [startRename]);
 
     return (
-        <AgentThreadsList
-            bots={bots ?? []}
-            threadsByBot={threadsByBot}
-            loading={loading && Object.keys(threadsByBot).length === 0}
-            error={error}
-            activeBotId={route.view === 'chat' ? route.botId : ''}
-            activeRootId={route.view === 'chat' ? route.rootId : ''}
-            generatingRoots={generatingRoots}
-            unreadRoots={unreadRoots}
-            onSelectThread={route.toChat}
-            onNewChat={route.toChat}
-            onRetry={refresh}
-            onRenameThread={renameThread}
-        />
+        <>
+            <AgentThreadsList
+                bots={bots ?? []}
+                threadsByBot={threadsByBot}
+                loading={loading && Object.keys(threadsByBot).length === 0}
+                error={error}
+                activeBotId={route.view === 'chat' ? route.botId : ''}
+                activeRootId={route.view === 'chat' ? route.rootId : ''}
+                generatingRoots={generatingRoots}
+                unreadRoots={unreadRoots}
+                onSelectThread={route.toChat}
+                onNewChat={route.toChat}
+                onRetry={refresh}
+                onRenameThread={renameThread}
+            />
+            <ChatActionsDialogs actions={chatActions}/>
+        </>
     );
 };
 

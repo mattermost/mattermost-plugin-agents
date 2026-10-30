@@ -3,6 +3,10 @@
 
 import React from 'react';
 import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {Provider} from 'react-redux';
+import {createStore, type Store} from 'redux';
+
+import {aiThreads} from '@/redux';
 
 import {fakeHostTextboxRenders} from '../../../tests/fake_host_textbox';
 
@@ -28,15 +32,6 @@ jest.mock('@/client', () => ({
     updateRead: (userId: string, teamId: string, postId: string, timestamp: number) => (
         mockUpdateRead(userId, teamId, postId, timestamp)
     ),
-}));
-
-type SelectorFn = (state: unknown) => unknown;
-const mockUseSelector = jest.fn<unknown, [SelectorFn]>();
-const mockDispatch = jest.fn();
-
-jest.mock('react-redux', () => ({
-    useSelector: (selector: SelectorFn) => mockUseSelector(selector),
-    useDispatch: () => mockDispatch,
 }));
 
 const mockUseBotlist = jest.fn();
@@ -129,6 +124,7 @@ const baseState = {
                     id: 'post-id',
                     channel_id: 'dm-channel-id',
                     user_id: 'user-id',
+                    reply_count: 1,
                     props: {
                         conversation_id: 'conversation-id',
                     },
@@ -141,10 +137,33 @@ const baseState = {
     },
 };
 
+// The test sets the host and plugin state; the plugin's real thread-list reducer runs on top of it.
+const pluginKey = 'plugins-mattermost-ai';
+type TestState = Record<string, any>;
+const reducer = (state: TestState | undefined, action: {type: string; state?: TestState}): TestState => {
+    const base = action.type === 'TEST_SET_STATE' ? action.state! : state ?? {};
+    const plugin = base[pluginKey] ?? {};
+    return {...base, [pluginKey]: {...plugin, aiThreads: aiThreads(state?.[pluginKey]?.aiThreads, action)}};
+};
+let store: Store<TestState>;
+const setState = (state: TestState) => {
+    if (store) {
+        act(() => {
+            store.dispatch({type: 'TEST_SET_STATE', state});
+        });
+    } else {
+        store = createStore(reducer as never);
+        store.dispatch({type: 'TEST_SET_STATE', state});
+    }
+};
+
 function renderRHS() {
-    return render(
-        <Rhs/>,
+    const result = render(
+        <Provider store={store}>
+            <Rhs/>
+        </Provider>,
     );
+    return result;
 }
 
 describe('RHS', () => {
@@ -158,7 +177,8 @@ describe('RHS', () => {
             activeBot,
             setActiveBot: jest.fn(),
         });
-        mockUseSelector.mockImplementation((selector) => selector(baseState));
+        store = createStore(reducer as never);
+        store.dispatch({type: 'TEST_SET_STATE', state: baseState});
     });
 
     test('renders the thread viewer when the read marker rejects for missing thread membership', async () => {
@@ -191,26 +211,20 @@ describe('RHS', () => {
 
     test('the pane follows the tab shared with the header title', async () => {
         mockGetAIThreads.mockResolvedValue([]);
-        const state = {
-            ...baseState,
-            'plugins-mattermost-ai': {selectedPostId: '', rhsTab: 'new'},
-        };
-        mockUseSelector.mockImplementation((selector) => selector(state));
+        setState({...baseState, 'plugins-mattermost-ai': {selectedPostId: '', rhsTab: 'new'}});
 
-        const {rerender} = renderRHS();
+        renderRHS();
         expect(screen.getByTestId('rhs-new-tab')).toBeTruthy();
 
         // The header title changes the tab in the store.
-        state['plugins-mattermost-ai'] = {selectedPostId: '', rhsTab: 'threads'};
-        rerender(<Rhs/>);
+        setState({...baseState, 'plugins-mattermost-ai': {selectedPostId: '', rhsTab: 'threads'}});
         await waitFor(() => expect(screen.getByTestId('rhs-threads-list')).toBeTruthy());
 
         // The new chat leaves once its exit transition is over.
         await waitFor(() => expect(screen.queryByTestId('rhs-new-tab')).toBeNull());
 
         // An open thread takes over whichever list tab was last chosen.
-        state['plugins-mattermost-ai'] = {selectedPostId: 'post-id', rhsTab: 'threads'};
-        rerender(<Rhs/>);
+        setState({...baseState, 'plugins-mattermost-ai': {selectedPostId: 'post-id', rhsTab: 'threads'}});
         await waitFor(() => expect(screen.getByTestId('rhs-thread-viewer')).toBeTruthy());
     });
 
@@ -233,7 +247,7 @@ describe('RHS', () => {
         ]);
         mockGetPostsByIds.mockImplementation(posts);
         const state = {...baseState, 'plugins-mattermost-ai': {selectedPostId: '', rhsTab: 'threads'}};
-        mockUseSelector.mockImplementation((selector) => selector(state));
+        setState(state);
 
         renderRHS();
 
@@ -250,7 +264,7 @@ describe('RHS', () => {
             ]);
             mockGetPostsByIds.mockResolvedValue([]);
             const state = {...baseState, 'plugins-mattermost-ai': {selectedPostId: '', rhsTab: 'threads'}};
-            mockUseSelector.mockImplementation((selector) => selector(state));
+            setState(state);
             renderRHS();
             await waitFor(() => expect(screen.getAllByTestId('rhs-thread-item')).toHaveLength(2));
         };
@@ -269,6 +283,36 @@ describe('RHS', () => {
             await waitFor(() => expect(mockRenameConversation).toHaveBeenCalledWith('c1', 'Renamed'));
             await waitFor(() => expect(screen.getAllByTestId('rhs-thread-item').map((el) => el.firstChild?.textContent)).toEqual(['Renamed||none', 'Title two||none']));
         });
+    });
+
+    test('marks the open chat read now (not ahead of time), again on a new reply, and on leaving', async () => {
+        const {unmount} = renderRHS();
+        await waitFor(() => expect(mockUpdateRead).toHaveBeenCalledTimes(1));
+        const [, , postId, timestamp] = mockUpdateRead.mock.calls[0];
+        expect(postId).toBe('post-id');
+
+        // A future read time would hide every later reply from the host's unread state.
+        expect(timestamp).toBeLessThanOrEqual(Date.now());
+
+        const post = baseState.entities.posts.posts['post-id'];
+        setState({...baseState, entities: {...baseState.entities, posts: {...baseState.entities.posts, posts: {'post-id': {...post, reply_count: 2}}}}});
+        await waitFor(() => expect(mockUpdateRead).toHaveBeenCalledTimes(2));
+
+        await act(async () => {
+            unmount();
+        });
+        expect(mockUpdateRead).toHaveBeenCalledTimes(3);
+        expect(mockUpdateRead).toHaveBeenLastCalledWith('user-id', 'team-id', 'post-id', expect.any(Number));
+    });
+
+    test('a chat without replies is not marked (the user has no thread membership yet)', async () => {
+        const post = baseState.entities.posts.posts['post-id'];
+        setState({...baseState, entities: {...baseState.entities, posts: {...baseState.entities.posts, posts: {'post-id': {...post, reply_count: 0}}}}});
+        const {unmount} = renderRHS();
+        await act(async () => {
+            unmount();
+        });
+        expect(mockUpdateRead).not.toHaveBeenCalled();
     });
 
     test('logs generic read marker rejections', async () => {
@@ -311,7 +355,7 @@ describe('RHS', () => {
             ...baseState,
             entities: {...baseState.entities, posts: {...baseState.entities.posts, posts: {'post-id': {...baseState.entities.posts.posts['post-id'], ...post}}}},
         };
-        mockUseSelector.mockImplementation((selector) => selector(state));
+        setState(state);
 
         const {unmount} = renderRHS();
         const reply = screen.getByRole('textbox', {name: label});
@@ -331,7 +375,7 @@ describe('RHS', () => {
 
     test('offers no reply composer until the thread root is loaded', async () => {
         const state = {...baseState, entities: {...baseState.entities, posts: {posts: {}, postsInThread: {}}}};
-        mockUseSelector.mockImplementation((selector) => selector(state));
+        setState(state);
 
         const {unmount} = renderRHS();
         expect(screen.getByTestId('rhs-thread-viewer')).toBeTruthy();

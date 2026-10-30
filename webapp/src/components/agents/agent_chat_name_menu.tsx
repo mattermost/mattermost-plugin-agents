@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useId, useMemo, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useId, useMemo, useState} from 'react';
 import {useIntl} from 'react-intl';
 import AccountMultipleOutlineIcon from '@mattermost/compass-icons/components/account-multiple-outline';
 import MessagePlusOutlineIcon from '@mattermost/compass-icons/components/message-plus-outline';
@@ -15,7 +15,7 @@ import {MenuItem} from '@mattermost/compass-ui/components/menu-item';
 import {PopoverMenu, PopoverMenuDivider, PopoverMenuGroup, PopoverMenuScroll} from '@mattermost/compass-ui/components/popover-menu';
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
-import {getProfilePictureUrl, renameConversation} from '@/client';
+import {getProfilePictureUrl} from '@/client';
 import type {LLMBot} from '@/bots';
 import ComposerSubmenu from '@/components/agent_chat/composer_submenu';
 import {focusFirstItem, handleMenuNavigation} from '@/components/agent_chat/composer_menu_keyboard';
@@ -25,9 +25,8 @@ import {useConversation} from '@/hooks/use_conversation';
 import {useConversationIdForThread} from '@/hooks/use_conversation_id_for_thread';
 import {useMenuTransition} from '@/hooks/use_menu_transition';
 import {isValidId} from '@/utils/ids';
-import {onAgentThreadsRefreshRequested, requestAgentThreadsRefresh, subscribeToAllPostUpdates} from '@/websocket';
 
-import AgentChatRenameDialog from './agent_chat_rename_dialog';
+import {ChatActionsDialogs, useChatActions} from './use_chat_actions';
 
 // No compass token for the prototype's chat list max-height (200px).
 const CHATS_LIST_MAX_HEIGHT = 200;
@@ -78,19 +77,12 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
             setSubmenu(null);
         }
     }, []);
-    const [renameOpen, setRenameOpen] = useState(false);
-    const [renamedTitle, setRenamedTitle] = useState<string | null>(null);
+    const chatActions = useChatActions();
 
-    // This agent's DM chats, the same data the sidebar lists.
+    // This agent's DM chats, the same stored list the sidebar shows.
     const botList = useMemo(() => [bot], [bot]);
-    const {threadsByBot, refresh, refreshWithTitleRetry} = useAgentThreads(botList);
+    const {threadsByBot} = useAgentThreads(botList);
     const chats = threadsByBot[bot.id] ?? [];
-    useEffect(() => subscribeToAllPostUpdates((msg) => {
-        if (msg.data.control === 'end') {
-            refresh();
-        }
-    }), [refresh]);
-    useEffect(() => onAgentThreadsRefreshRequested(refreshWithTitleRetry), [refreshWithTitleRetry]);
 
     // The conversation id comes from a bot post in the store; until one is there (a reply that
     // failed or has not loaded) the open chat's row in this agent's DM list carries it too.
@@ -98,7 +90,7 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
     const postConversationId = useConversationIdForThread(rootId);
     const conversationId = postConversationId || (isValidId(openThread?.id) ? openThread.id : '');
     const {conversation} = useConversation(conversationId);
-    const currentTitle = renamedTitle ?? openThread?.title ?? conversation?.title ?? '';
+    const currentTitle = openThread?.title ?? conversation?.title ?? '';
 
     // The Dropdown's focus manager moves focus in on mount; a reopen during the exit
     // transition keeps it mounted, so move focus here too.
@@ -115,32 +107,10 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
         return () => cancelAnimationFrame(frame);
     }, [nameMenuOpen, nameMenuId]);
 
-    const mounted = useRef(true);
-    useEffect(() => {
-        mounted.current = true;
-        return () => {
-            mounted.current = false;
-        };
-    }, []);
-
-    useEffect(() => {
-        setRenamedTitle(null);
-    }, [conversationId]);
-
     const hasChat = Boolean(rootId && conversationId);
 
-    const rename = async (title: string) => {
-        await renameConversation(conversationId, title);
-        if (!mounted.current) {
-            return;
-        }
-        setRenamedTitle(title);
-        setRenameOpen(false);
-        requestAgentThreadsRefresh();
-    };
-
     // An open chat is named by its title; the agent's name labels the new-chat state.
-    const chatTitle = rootId ? ((renamedTitle ?? openThread?.title ?? conversation?.title ?? '').trim() || intl.formatMessage({defaultMessage: 'New chat'})) : '';
+    const chatTitle = rootId ? (currentTitle.trim() || intl.formatMessage({defaultMessage: 'New chat'})) : '';
     const nameLabel = rootId ? chatTitle : bot.displayName;
     const nameMenuLabel = rootId ? intl.formatMessage({defaultMessage: '{title}, {name} options'}, {title: chatTitle, name: bot.displayName}) : intl.formatMessage({defaultMessage: '{name} options'}, {name: bot.displayName});
     const newChatLabel = intl.formatMessage({defaultMessage: 'New chat'});
@@ -282,7 +252,7 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                     icon={<PencilOutlineIcon/>}
                                     label={intl.formatMessage({defaultMessage: 'Rename chat'})}
                                     disabled={!hasChat}
-                                    onClick={closing(() => setRenameOpen(true))}
+                                    onClick={closing(() => chatActions.startRename({conversationId, title: currentTitle}))}
                                 />
                             </PopoverMenuGroup>
                             <PopoverMenuDivider/>
@@ -304,12 +274,7 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                     </PopoverMenuGroup>
                 </PopoverMenu>
             </Dropdown>
-            <AgentChatRenameDialog
-                show={renameOpen}
-                initialTitle={currentTitle}
-                onSubmit={rename}
-                onClose={() => setRenameOpen(false)}
-            />
+            <ChatActionsDialogs actions={chatActions}/>
         </>
     );
 };

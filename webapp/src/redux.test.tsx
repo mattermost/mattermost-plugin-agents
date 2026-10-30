@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {rhsTab} from './redux';
+import {AIThreadTitleSet, AIThreadsReceived, AIThreadsRequested, aiThreads, initialAIThreadsState, rhsTab} from './redux';
 
 describe('rhsTab reducer', () => {
     test.each([
@@ -10,9 +10,39 @@ describe('rhsTab reducer', () => {
         {name: 'shows the chat history', state: 'new' as const, action: {type: 'AI_RHS_SET_TAB', tab: 'threads'}, expected: 'threads'},
         {name: 'shows the new chat', state: 'threads' as const, action: {type: 'AI_RHS_SET_TAB', tab: 'new'}, expected: 'new'},
         {name: 'ignores an unknown tab', state: 'threads' as const, action: {type: 'AI_RHS_SET_TAB', tab: 'bogus'}, expected: 'new'},
-        {name: 'switching agent starts a new chat', state: 'threads' as const, action: {type: 'AI_RHS_NEW_CHAT'}, expected: 'new'},
         {name: 'unrelated actions keep it', state: 'threads' as const, action: {type: 'SELECT_AI_POST', postId: ''}, expected: 'threads'},
     ])('$name', ({state, action, expected}) => {
         expect(rhsTab(state, action)).toBe(expected);
+    });
+});
+
+describe('aiThreads reducer', () => {
+    const thread = (id: string, title: string) => ({id, channel_id: 'dm', bot_id: 'b', root_post_id: `root_${id}`, title, turn_count: 1, update_at: 1});
+    const apply = (actions: Array<Record<string, unknown>>) => actions.reduce((state, action) => aiThreads(state, action as never), initialAIThreadsState);
+
+    test.each([
+        {
+            name: 'stores a response',
+            actions: [{type: AIThreadsRequested, requestId: 1}, {type: AIThreadsReceived, requestId: 1, threads: [thread('a', 'A')]}],
+            expected: ['a:A'],
+        },
+        {
+            name: 'drops a superseded response',
+            actions: [{type: AIThreadsRequested, requestId: 1}, {type: AIThreadsRequested, requestId: 2}, {type: AIThreadsReceived, requestId: 1, threads: [thread('a', 'stale')]}],
+            expected: null,
+        },
+        {
+            name: 'a title set after the request started wins over its response',
+            actions: [{type: AIThreadsRequested, requestId: 1}, {type: AIThreadTitleSet, conversationId: 'a', title: 'New'}, {type: AIThreadsReceived, requestId: 1, threads: [thread('a', '')]}],
+            expected: ['a:New'],
+        },
+        {
+            name: 'a title set before the request started is left to the response',
+            actions: [{type: AIThreadTitleSet, conversationId: 'a', title: 'Old edit'}, {type: AIThreadsRequested, requestId: 1}, {type: AIThreadsReceived, requestId: 1, threads: [thread('a', 'Server')]}],
+            expected: ['a:Server'],
+        },
+    ])('$name', ({actions, expected}) => {
+        const state = apply(actions);
+        expect(state.threads?.map((t) => `${t.id}:${t.title}`) ?? null).toEqual(expected);
     });
 });

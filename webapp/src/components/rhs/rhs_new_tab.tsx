@@ -9,7 +9,7 @@ import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
 
 import type {LLMBot} from '@/bots';
-import {requestAgentThreadsRefresh} from '@/websocket';
+import {useRefreshAgentThreads} from '@/hooks/use_agent_threads';
 
 import AgentNewChat from '../agent_chat/agent_new_chat';
 import {useAgentDMChannel} from '../agents/use_agent_dm_channel';
@@ -26,14 +26,15 @@ const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
     // Creates the bot DM when missing, stores its id on the bot in Redux, and
     // loads the channel, membership and roles the host ThreadViewer needs.
     const dm = useAgentDMChannel(activeBot);
+    const refreshThreads = useRefreshAgentThreads();
 
     const onCreated = useCallback((rootId: string) => {
         selectPost(rootId);
         setCurrentTab('thread');
 
-        // The Agents product sidebar refetches its threads (the RHS list refetches when opened).
-        requestAgentThreadsRefresh();
-    }, [selectPost, setCurrentTab]);
+        // The chat lists pick up the new chat; its title follows over the websocket.
+        refreshThreads();
+    }, [selectPost, setCurrentTab, refreshThreads]);
 
     let content;
     if (dm.status === 'error') {

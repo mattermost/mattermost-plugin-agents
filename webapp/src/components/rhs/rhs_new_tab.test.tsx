@@ -32,8 +32,10 @@ jest.mock('@/client', () => ({
 jest.mock('@/mm_webapp', () => ({}));
 
 const mockRequestRefresh = jest.fn();
+jest.mock('@/hooks/use_agent_threads', () => ({
+    useRefreshAgentThreads: () => mockRequestRefresh,
+}));
 jest.mock('@/websocket', () => ({
-    requestAgentThreadsRefresh: () => mockRequestRefresh(),
     subscribeToAllPostUpdates: () => () => null,
 }));
 

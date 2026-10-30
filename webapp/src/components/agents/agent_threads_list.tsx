@@ -25,28 +25,27 @@ import type {LLMBot} from '@/bots';
 import type {AgentThreadsByBot} from '@/hooks/use_agent_threads';
 import type {AIThread} from '@/types/ai_thread';
 
-import AgentChatRenameDialog from './agent_chat_rename_dialog';
 import ChatActionsMenuItems from './chat_actions_menu_items';
 
 interface AgentThreadsListProps {
     bots: LLMBot[];
     threadsByBot: AgentThreadsByBot;
     loading: boolean;
-    error: Error | null;
+    error: boolean;
     activeBotId?: string;
     activeRootId?: string;
 
     // Root post ids of the chats whose agent is answering right now; a chat that is not open shows it.
     generatingRoots?: ReadonlySet<string>;
 
-    // Root post ids of the chats whose agent finished answering while they were not open.
+    // Root post ids of the chats with replies the user has not read (the host's thread read state).
     unreadRoots?: ReadonlySet<string>;
     onSelectThread: (botId: string, rootId: string) => void;
     onNewChat: (botId: string) => void;
     onRetry: () => void;
 
-    // Renames one chat. Rejects when it fails (the dialog then shows the error).
-    onRenameThread: (thread: AIThread, title: string) => Promise<void>;
+    // Rename chat was chosen for this chat (the owner shows the dialog).
+    onRenameThread: (thread: AIThread) => void;
 }
 
 // Threads shown per agent before "Show more", which reveals the rest at once ("Show less" folds back).
@@ -93,7 +92,7 @@ const AgentThreadsList = ({
 
     // Agents whose revealed rows are folding away after "Show less"; the limit resets when that ends.
     const [folding, setFolding] = useState<Record<string, boolean>>({});
-    const [renameTarget, setRenameTarget] = useState<AIThread | null>(null);
+
     const mounted = useRef(true);
     useEffect(() => {
         mounted.current = true;
@@ -247,7 +246,7 @@ const AgentThreadsList = ({
                                                 unread={Boolean(thread.root_post_id && unreadRoots?.has(thread.root_post_id))}
                                                 placeholder={newChatPlaceholder}
                                                 onSelect={() => onSelectThread(bot.id, thread.root_post_id as string)}
-                                                onRename={() => setRenameTarget(thread)}
+                                                onRename={() => onRenameThread(thread)}
                                             />
                                         ))}
                                         {(hiddenCount > 0 || canShowLess) && (
@@ -279,19 +278,6 @@ const AgentThreadsList = ({
                     </AgentBlock>
                 );
             })}
-            <AgentChatRenameDialog
-                show={renameTarget !== null}
-                initialTitle={renameTarget?.title ?? ''}
-                onSubmit={async (title) => {
-                    if (renameTarget) {
-                        await onRenameThread(renameTarget, title);
-                    }
-                    if (mounted.current) {
-                        setRenameTarget(null);
-                    }
-                }}
-                onClose={() => setRenameTarget(null)}
-            />
         </Section>
     );
 };

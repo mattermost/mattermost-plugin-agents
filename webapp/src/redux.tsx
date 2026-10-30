@@ -9,6 +9,7 @@ import {getCustomPrompts as fetchCustomPromptsAPI, getCustomPromptPins} from './
 import {licenseAllows} from './license';
 import manifest from './manifest';
 import {CustomPrompt} from './types';
+import type {AIThread} from './types/ai_thread';
 
 type WebappStore = Store<GlobalState, UnknownAction>
 
@@ -23,8 +24,8 @@ export async function setupRedux(registry: any, store: WebappStore) {
         callsPostButtonClickedTranscription,
         bots,
         selectedPostId,
-        newChatRequest,
         rhsTab,
+        aiThreads,
         allowUnsafeLinks,
         htmlArtifactsEnabled,
         customPrompts,
@@ -96,17 +97,6 @@ function htmlArtifactsEnabled(state = false, action: any) {
     }
 }
 
-// Bumped when the RHS should show a fresh new-chat tab (e.g. the agent was switched in the
-// RHS header title, which lives outside the RHS body that owns the tab state).
-function newChatRequest(state = 0, action: any) {
-    switch (action.type) {
-    case 'AI_RHS_NEW_CHAT':
-        return state + 1;
-    default:
-        return state;
-    }
-}
-
 // The RHS's list view when no thread is open: the new-chat tab or the chat history. It lives here,
 // not in the RHS body, because the header title (rendered by the host) shows the Back button and
 // the tools button according to it.
@@ -116,8 +106,77 @@ export function rhsTab(state: RHSTab = 'new', action: any): RHSTab {
     switch (action.type) {
     case 'AI_RHS_SET_TAB':
         return action.tab === 'threads' ? 'threads' : 'new';
-    case 'AI_RHS_NEW_CHAT':
-        return 'new';
+    default:
+        return state;
+    }
+}
+
+// The current user's AI threads (GET /ai_threads), shared by every view that lists them: the
+// Agents sidebar, the chat name menus, Find agents and the RHS history. Only hooks/use_agent_threads
+// fetches it; views read it through its selectors.
+export const AIThreadsRequested = 'AI_THREADS_REQUESTED';
+export const AIThreadsReceived = 'AI_THREADS_RECEIVED';
+export const AIThreadsFailed = 'AI_THREADS_FAILED';
+export const AIThreadTitleSet = 'AI_THREAD_TITLE_SET';
+
+export interface AIThreadsState {
+
+    // null until the first successful load.
+    threads: AIThread[] | null;
+    loading: boolean;
+    error: boolean;
+
+    // The latest request: the response of a superseded one is dropped.
+    requestId: number;
+
+    // Title changes (a rename, a generated title) the latest request may predate, by conversation id,
+    // so its response cannot undo them. `seq` orders them against `requestSeq`.
+    titleEdits: Record<string, {title: string; seq: number}>;
+    titleSeq: number;
+    requestSeq: number;
+}
+
+export const initialAIThreadsState: AIThreadsState = {
+    threads: null,
+    loading: false,
+    error: false,
+    requestId: 0,
+    titleEdits: {},
+    titleSeq: 0,
+    requestSeq: 0,
+};
+
+export function aiThreads(state: AIThreadsState = initialAIThreadsState, action: any): AIThreadsState {
+    switch (action.type) {
+    case AIThreadsRequested:
+        return {...state, loading: true, requestId: action.requestId, requestSeq: state.titleSeq};
+    case AIThreadsReceived: {
+        if (action.requestId !== state.requestId) {
+            return state;
+        }
+
+        // Edits made after the request started win over its (older) titles; the rest it reflects.
+        const titleEdits = Object.fromEntries(Object.entries(state.titleEdits).filter(([, edit]) => edit.seq > state.requestSeq));
+        const received: AIThread[] = Array.isArray(action.threads) ? action.threads : [];
+        const threads = received.map((t) => (titleEdits[t.id] ? {...t, title: titleEdits[t.id].title} : t));
+        return {...state, threads, loading: false, error: false, titleEdits};
+    }
+    case AIThreadsFailed:
+        if (action.requestId !== state.requestId) {
+            return state;
+        }
+        return {...state, loading: false, error: true};
+    case AIThreadTitleSet: {
+        const id: string = action.conversationId;
+        const title: string = action.title;
+        const titleSeq = state.titleSeq + 1;
+        return {
+            ...state,
+            threads: state.threads ? state.threads.map((t) => (t.id === id ? {...t, title} : t)) : state.threads,
+            titleEdits: {...state.titleEdits, [id]: {title, seq: titleSeq}},
+            titleSeq,
+        };
+    }
     default:
         return state;
     }

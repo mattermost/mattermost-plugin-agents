@@ -1,20 +1,37 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {useCallback, useEffect, useMemo} from 'react';
+import {useSelector, useStore} from 'react-redux';
+import type {Dispatch, UnknownAction} from 'redux';
 
-import {getAIThreads} from '@/client';
+import {GlobalState} from '@mattermost/types/store';
+
+import {isCurrentUsersAgentPost} from '@/agent_posts';
+import {getAIThreads, renameConversation} from '@/client';
 import type {LLMBot} from '@/bots';
+import manifest from '@/manifest';
+import {
+    AIThreadsFailed,
+    AIThreadsReceived,
+    AIThreadsRequested,
+    AIThreadTitleSet,
+    initialAIThreadsState,
+    type AIThreadsState,
+} from '@/redux';
 import type {AIThread} from '@/types/ai_thread';
-
-// Titles are generated asynchronously and no websocket event announces them,
-// so a refresh after a new chat is retried once after this delay.
-export const TITLE_RETRY_DELAY_MS = 4000;
+import type {PluginWebSocketMessage} from '@/types';
+import type {PostUpdateWebsocketMessage} from '@/components/llmbot_post/llmbot_post';
 
 export type AgentThreadsByBot = Record<string, AIThread[]>;
 
-// Groups DM threads by bot. Fails closed: a bot without a dmChannelID
-// contributes no threads, and threads for unknown bots are dropped.
+interface ThreadsStore {
+    dispatch: Dispatch<UnknownAction>;
+    getState: () => unknown;
+}
+
+// Groups DM threads by bot, in the server's order (most recent turn first). Fails closed: a bot
+// without a dmChannelID contributes no threads, and threads for unknown bots are dropped.
 export function groupDMThreadsByBot(threads: AIThread[], bots: LLMBot[]): AgentThreadsByBot {
     const dmChannelByBot = new Map<string, string>();
     for (const bot of bots) {
@@ -31,103 +48,171 @@ export function groupDMThreadsByBot(threads: AIThread[], bots: LLMBot[]): AgentT
         }
         (grouped[thread.bot_id] ??= []).push(thread);
     }
-    for (const list of Object.values(grouped)) {
-        list.sort((a, b) => b.update_at - a.update_at);
-    }
     return grouped;
 }
 
-// Refreshes that different hook instances request in the same synchronous turn
-// (the header and the sidebar both react to the same websocket event) share one
-// request. An instance never joins its own earlier request, and the share ends
-// at the next microtask, so a refresh requested later, e.g. after a rename,
-// always fetches fresh data. Each instance still applies its own
-// superseded-response guard to the result.
-let sharedThreadsRequest: {promise: Promise<AIThread[]>; owners: Set<symbol>} | null = null;
+const pluginState = (state: unknown): Record<string, any> | undefined => (state as Record<string, any> | undefined)?.[`plugins-${manifest.id}`];
 
-const fetchThreadsCoalesced = (owner: symbol): Promise<AIThread[]> => {
-    if (sharedThreadsRequest && !sharedThreadsRequest.owners.has(owner)) {
-        sharedThreadsRequest.owners.add(owner);
-        return sharedThreadsRequest.promise;
-    }
-    const shared = {promise: getAIThreads() as Promise<AIThread[]>, owners: new Set([owner])};
-    sharedThreadsRequest = shared;
+export const selectAIThreadsState = (state: unknown): AIThreadsState => pluginState(state)?.aiThreads ?? initialAIThreadsState;
 
-    // Not queueMicrotask: fake timers in a consumer's tests can swallow it and strand the share.
-    Promise.resolve().then(() => {
-        if (sharedThreadsRequest === shared) {
-            sharedThreadsRequest = null;
-        }
-    });
-    return shared.promise;
+export const selectAIThreads = (state: unknown): AIThread[] | null => selectAIThreadsState(state).threads;
+
+// A view loaded the list (or tried to), so keep it current.
+const isInUse = (state: unknown) => {
+    const {threads, loading, error} = selectAIThreadsState(state);
+    return threads !== null || loading || error;
 };
 
+let lastRequestId = 0;
+
+// The one fetch path for the thread list. A newer request supersedes an older one in flight.
+export async function fetchAIThreads(dispatch: Dispatch<UnknownAction>): Promise<void> {
+    const requestId = ++lastRequestId;
+    dispatch({type: AIThreadsRequested, requestId});
+    try {
+        const threads = await getAIThreads();
+        dispatch({type: AIThreadsReceived, requestId, threads});
+    } catch (e) {
+        console.error('Failed to load AI threads:', e); // eslint-disable-line no-console
+        dispatch({type: AIThreadsFailed, requestId});
+    }
+}
+
+// Fetches unless the list is loaded or loading: views that mount together share one request.
+export function loadAIThreadsIfNeeded(store: ThreadsStore): Promise<void> {
+    const {threads, loading} = selectAIThreadsState(store.getState());
+    if (threads !== null || loading) {
+        return Promise.resolve();
+    }
+    return fetchAIThreads(store.dispatch);
+}
+
+// Refetches a list that is in use, e.g. after a new chat was created.
+export function refreshAIThreadsIfInUse(store: ThreadsStore): Promise<void> {
+    if (!isInUse(store.getState())) {
+        return Promise.resolve();
+    }
+    return fetchAIThreads(store.dispatch);
+}
+
+const storedTitle = (state: unknown, conversationId: string) => selectAIThreads(state)?.find((t) => t.id === conversationId)?.title;
+
+// Renames a chat, showing the new title right away. A failed rename restores the old one (unless a
+// newer title arrived meanwhile) and rejects.
+export async function renameAIThread(store: ThreadsStore, conversationId: string, title: string): Promise<void> {
+    const previous = storedTitle(store.getState(), conversationId);
+    if (typeof previous === 'string') {
+        store.dispatch({type: AIThreadTitleSet, conversationId, title});
+    }
+    try {
+        await renameConversation(conversationId, title);
+    } catch (e) {
+        if (typeof previous === 'string' && storedTitle(store.getState(), conversationId) === title) {
+            store.dispatch({type: AIThreadTitleSet, conversationId, title: previous});
+        }
+        throw e;
+    }
+}
+
+// Refetches after a burst of events settles, so a busy stream of replies costs one request.
+export const THREADS_REFRESH_DEBOUNCE_MS = 1000;
+
+export interface AgentThreadsSync {
+
+    // custom_mattermost-ai_postupdate.
+    handlePostUpdate: (msg: PluginWebSocketMessage<PostUpdateWebsocketMessage>) => void;
+
+    // custom_mattermost-ai_conversation_updated: a rename or a generated title.
+    handleConversationUpdated: (data: {conversation_id?: string; title?: string}) => void;
+
+    // The websocket reconnected, so events may have been missed.
+    handleReconnect: () => void;
+    dispose: () => void;
+}
+
+// Keeps the stored thread list current from websocket events; index.tsx creates one for the
+// plugin's lifetime. A list no view has loaded is never fetched.
+export function createAgentThreadsSync(store: {dispatch: Dispatch<UnknownAction>; getState: () => GlobalState}): AgentThreadsSync {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleRefresh = () => {
+        if (timer !== null) {
+            clearTimeout(timer);
+        }
+        timer = setTimeout(() => {
+            timer = null;
+            refreshAIThreadsIfInUse(store);
+        }, THREADS_REFRESH_DEBOUNCE_MS);
+    };
+
+    return {
+        handlePostUpdate: (msg) => {
+            // A finished turn moves its chat to the top. postupdate events reach every member of
+            // the channel, so only the current user's own agent chats count.
+            if (msg.data?.control === 'end' && isInUse(store.getState()) && isCurrentUsersAgentPost(store.getState(), msg.data.post_id)) {
+                scheduleRefresh();
+            }
+        },
+        handleConversationUpdated: (data) => {
+            const conversationId = data?.conversation_id;
+            if (!conversationId || typeof data.title !== 'string') {
+                return;
+            }
+            store.dispatch({type: AIThreadTitleSet, conversationId, title: data.title});
+
+            // A chat the list does not have yet: fetch it.
+            const threads = selectAIThreads(store.getState());
+            if (threads && !threads.some((t) => t.id === conversationId)) {
+                scheduleRefresh();
+            }
+        },
+        handleReconnect: () => {
+            if (isInUse(store.getState())) {
+                scheduleRefresh();
+            }
+        },
+        dispose: () => {
+            if (timer !== null) {
+                clearTimeout(timer);
+                timer = null;
+            }
+        },
+    };
+}
+
+// The list views' data: the stored thread list (loaded on first use) grouped by agent.
 export function useAgentThreads(bots: LLMBot[] | null) {
-    const [allThreads, setAllThreads] = useState<AIThread[] | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<Error | null>(null);
-
-    const instanceKey = useRef(Symbol('agent-threads'));
-    const requestCounter = useRef(0);
-    const mounted = useRef(true);
-    const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-    const clearRetry = useCallback(() => {
-        if (retryTimer.current !== null) {
-            clearTimeout(retryTimer.current);
-            retryTimer.current = null;
-        }
-    }, []);
+    const store = useStore<GlobalState>();
+    const {threads, loading, error} = useSelector<GlobalState, AIThreadsState>(selectAIThreadsState);
 
     useEffect(() => {
-        const counter = requestCounter;
-        mounted.current = true;
-        return () => {
-            mounted.current = false;
-            counter.current++;
-            clearRetry();
-        };
-    }, [clearRetry]);
+        loadAIThreadsIfNeeded(store);
+    }, [store]);
 
-    const refresh = useCallback(async () => {
-        const requestID = ++requestCounter.current;
-        setLoading(true);
-        try {
-            const result = await fetchThreadsCoalesced(instanceKey.current);
-            if (!mounted.current || requestID !== requestCounter.current) {
-                return;
-            }
-            setAllThreads(Array.isArray(result) ? result : []);
-            setError(null);
-            setLoading(false);
-        } catch (e) {
-            if (!mounted.current || requestID !== requestCounter.current) {
-                return;
-            }
-            setError(e instanceof Error ? e : new Error(String(e)));
-            setLoading(false);
-        }
-    }, []);
-
-    const refreshWithTitleRetry = useCallback(async () => {
-        clearRetry();
-        retryTimer.current = setTimeout(() => {
-            retryTimer.current = null;
-            refresh();
-        }, TITLE_RETRY_DELAY_MS);
-        await refresh();
-    }, [clearRetry, refresh]);
-
-    useEffect(() => {
-        refresh();
-    }, [refresh]);
+    const refresh = useCallback(() => fetchAIThreads(store.dispatch), [store]);
 
     const threadsByBot = useMemo<AgentThreadsByBot>(() => {
-        if (!allThreads || !bots) {
+        if (!threads || !bots) {
             return {};
         }
-        return groupDMThreadsByBot(allThreads, bots);
-    }, [allThreads, bots]);
+        return groupDMThreadsByBot(threads, bots);
+    }, [threads, bots]);
 
-    return {threadsByBot, loading, error, refresh, refreshWithTitleRetry};
+    return {
+        threads,
+        threadsByBot,
+
+        // Loading until the first response, even before the request starts.
+        loading: loading || (threads === null && !error),
+        error,
+        refresh,
+    };
+}
+
+// For a view that just created a chat: the list picks it up (its title follows over the websocket).
+export function useRefreshAgentThreads() {
+    const store = useStore<GlobalState>();
+    return useCallback(() => {
+        refreshAIThreadsIfInUse(store);
+    }, [store]);
 }

@@ -33,15 +33,10 @@ jest.mock('./tool_provider_popover', () => ({
 // The name menu's own data: this agent's chats and the open chat's conversation.
 let mockThreads: Array<{id: string; root_post_id: string; title: string}> = [];
 jest.mock('@/hooks/use_agent_threads', () => ({
-    useAgentThreads: (bots: Array<{id: string}>) => ({threadsByBot: {[bots[0].id]: mockThreads}, refresh: jest.fn(), refreshWithTitleRetry: jest.fn()}),
+    useAgentThreads: (bots: Array<{id: string}>) => ({threadsByBot: {[bots[0].id]: mockThreads}, refresh: jest.fn()}),
 }));
 jest.mock('@/hooks/use_conversation', () => ({
     useConversation: () => ({conversation: null}),
-}));
-jest.mock('@/websocket', () => ({
-    subscribeToAllPostUpdates: () => () => null,
-    onAgentThreadsRefreshRequested: () => () => null,
-    requestAgentThreadsRefresh: jest.fn(),
 }));
 
 jest.mock('@/hooks/use_conversation_id_for_thread', () => ({
@@ -75,7 +70,7 @@ const makeBot = (id: string, displayName: string): {id: string; displayName: str
 });
 
 // A reducer that applies the preference the title writes, so the title re-renders.
-const dispatched: Array<{type: string; postId?: string}> = [];
+const dispatched: Array<{type: string; postId?: string; tab?: string}> = [];
 
 const makeStore = (bots: ReturnType<typeof makeBot>[] | null, selected: string, rhs: {selectedPostId?: string; rhsTab?: string} = {}) => {
     const initial = {
@@ -112,7 +107,7 @@ describe('RHSTitle', () => {
         mockThreads = [];
     });
 
-    const rhsActions = () => dispatched.filter((a) => a.type === 'SELECT_AI_POST' || a.type === 'AI_RHS_NEW_CHAT');
+    const rhsActions = () => dispatched.filter((a) => a.type === 'SELECT_AI_POST' || a.type === 'AI_RHS_SET_TAB');
 
     test.each([
         ['bots still loading', null],
@@ -191,7 +186,7 @@ describe('RHSTitle', () => {
         expect(screen.getByTestId('bot-selector-rhs').textContent).toBe('Beta');
         expect(rhsActions()).toEqual([
             {type: 'SELECT_AI_POST', postId: ''},
-            {type: 'AI_RHS_NEW_CHAT'},
+            {type: 'AI_RHS_SET_TAB', tab: 'new'},
         ]);
     });
 
@@ -219,7 +214,7 @@ describe('RHSTitle', () => {
 
         expect(rhsActions()).toEqual([
             {type: 'SELECT_AI_POST', postId: ''},
-            {type: 'AI_RHS_NEW_CHAT'},
+            {type: 'AI_RHS_SET_TAB', tab: 'new'},
         ]);
     });
 

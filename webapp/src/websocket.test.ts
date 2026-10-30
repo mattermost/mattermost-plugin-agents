@@ -3,7 +3,7 @@
 
 import {PostUpdateWebsocketMessage} from './components/llmbot_post/llmbot_post';
 import {PluginWebSocketMessage} from './types';
-import PostEventListener, {onAgentThreadsRefreshRequested, requestAgentThreadsRefresh, subscribeToAllPostUpdates} from './websocket';
+import PostEventListener, {subscribeToAllPostUpdates} from './websocket';
 
 function message(data: PostUpdateWebsocketMessage): PluginWebSocketMessage<PostUpdateWebsocketMessage> {
     return {data} as PluginWebSocketMessage<PostUpdateWebsocketMessage>;
@@ -109,16 +109,5 @@ describe('subscribeToAllPostUpdates', () => {
         events.handlePostUpdateWebsockets(msg('p1', 'end'));
         events.handlePostUpdateWebsockets(msg('p2', 'end'));
         expect(listener).toHaveBeenCalledTimes(1);
-    });
-});
-
-describe('agent threads refresh requests', () => {
-    test('notifies subscribers until unsubscribed', () => {
-        const cb = jest.fn();
-        const unsubscribe = onAgentThreadsRefreshRequested(cb);
-        requestAgentThreadsRefresh();
-        unsubscribe();
-        requestAgentThreadsRefresh();
-        expect(cb).toHaveBeenCalledTimes(1);
     });
 });

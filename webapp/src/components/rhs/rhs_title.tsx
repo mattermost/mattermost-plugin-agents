@@ -64,9 +64,9 @@ const RHSTitle = () => {
         (pluginState?.selectedPostId && state.entities?.posts?.posts?.[pluginState.selectedPostId]) || null
     ));
 
-    // The tools button's data: the same per-user preferences and server list the RHS body used
-    // to load; a toggle here is published to the composer's tools menu too.
-    const toolPrefs = useComposerToolPreferences();
+    // The tools button's data: the shared per-user preferences (reloaded for a new agent) and the
+    // server list.
+    const toolPrefs = useComposerToolPreferences(activeBot?.id ?? '');
     const [preloadedServers, setPreloadedServers] = useState<UserMCPServerInfo[]>([]);
     useEffect(() => {
         getUserMCPTools().then((response) => setPreloadedServers(response.servers)).catch(() => null);
@@ -77,7 +77,7 @@ const RHSTitle = () => {
     const switchAgent = useCallback((bot: LLMBot) => {
         setActiveBot(bot);
         dispatch({type: 'SELECT_AI_POST', postId: ''});
-        dispatch({type: 'AI_RHS_NEW_CHAT'});
+        dispatch({type: 'AI_RHS_SET_TAB', tab: 'new'});
     }, [setActiveBot, dispatch]);
     const startNewChat = useCallback(() => {
         dispatch({type: 'SELECT_AI_POST', postId: ''});
