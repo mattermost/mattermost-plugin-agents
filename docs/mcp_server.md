@@ -38,7 +38,7 @@ The Agents plugin includes an embedded MCP server that its own agents use for Ma
 
 ## Enable the endpoint
 
-1. Go to **System Console > Plugins > Agents > Model Context Protocol (MCP)**.
+1. Go to **Agents > Settings > MCP servers**.
 2. On the **Configuration** tab, set **Enable Mattermost MCP Server (HTTP)** to **True**.
 3. Select **Save**.
 
@@ -235,7 +235,7 @@ Turning on the HTTP endpoint requires an Enterprise license or higher, the same 
 | Tools that change state (post, edit, create channels, and similar) | Enterprise |
 | Access policies for MCP servers | Enterprise Advanced |
 
-Without an Enterprise license, the System Console does not let you set **Enable Mattermost MCP Server (HTTP)** to **True**, and state-changing tools are hidden from the tool list and return a licensing message if called. Agents inside Mattermost can still use the read-only built-in tools at every level.
+Without an Enterprise license, the Agents settings do not let you set **Enable Mattermost MCP Server (HTTP)** to **True**, and state-changing tools are hidden from the tool list and return a licensing message if called. Agents inside Mattermost can still use the read-only built-in tools at every level.
 
 ## Troubleshooting
 

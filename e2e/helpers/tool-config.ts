@@ -33,20 +33,9 @@ export class ToolConfigUIHelper {
         this.page = page;
     }
 
-    /** Navigate to System Console > Agents > Tools tab */
+    /** Navigate to Agents > Settings > MCP servers > Tools tab */
     async navigateToToolsTab(baseUrl: string): Promise<void> {
-        await this.page.goto(`${baseUrl}/admin_console/plugins/plugin_mattermost-ai`);
-        await this.page.waitForLoadState('domcontentloaded');
-
-        // Handle mobile "View in Browser" if present
-        const viewBtn = this.page.getByRole('button', { name: /view in browser/i });
-        if (await viewBtn.isVisible().catch(() => false)) {
-            await viewBtn.click();
-            await this.page.waitForLoadState('domcontentloaded');
-        }
-
-        // Wait for plugin UI to render
-        await this.page.waitForSelector('text=To report a bug or to provide feedback', { timeout: 15000 });
+        await this.navigateToPluginConfig(baseUrl);
 
         // Click Tools tab
         const toolsTab = this.page.getByRole('tab', { name: 'Tools', exact: true });
@@ -56,9 +45,9 @@ export class ToolConfigUIHelper {
         await this.page.waitForSelector('text=MCP Tools Configuration', { timeout: 15000 });
     }
 
-    /** Navigate to System Console plugin config page (Configuration tab) */
+    /** Navigate to Agents > Settings > MCP servers (its Configuration tab) */
     async navigateToPluginConfig(baseUrl: string): Promise<void> {
-        await this.page.goto(`${baseUrl}/admin_console/plugins/plugin_mattermost-ai`);
+        await this.page.goto(`${baseUrl}/plug/mattermost-ai/agents/settings/mcp`);
         await this.page.waitForLoadState('domcontentloaded');
 
         // Handle mobile "View in Browser" if present
@@ -168,7 +157,7 @@ export class ToolConfigUIHelper {
 
     /** Get the Save button (page-level) */
     getSaveButton(): Locator {
-        return this.page.getByRole('button', { name: /save/i });
+        return this.page.getByRole('button', { name: 'Save', exact: true });
     }
 
     /** Click save and wait */

@@ -155,7 +155,7 @@ test.describe('AI Functions Panel', () => {
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
 
         // Navigate to system console AI plugin configuration page
-        await systemConsole.navigateToPluginConfig(mattermost.url());
+        await systemConsole.navigateToAgentsSettings(mattermost.url(), 'general');
 
         // Scroll to the AI Functions panel
         const functionsPanel = systemConsole.getFunctionsPanel();
@@ -198,7 +198,7 @@ test.describe('AI Functions Panel', () => {
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
 
         // Navigate to system console AI plugin configuration page
-        await systemConsole.navigateToPluginConfig(mattermost.url());
+        await systemConsole.navigateToAgentsSettings(mattermost.url(), 'general');
 
         // Scroll to the AI Functions panel
         const functionsPanel = systemConsole.getFunctionsPanel();
@@ -267,7 +267,7 @@ test.describe('AI Functions Panel', () => {
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
 
         // Navigate to system console AI plugin configuration page
-        await systemConsole.navigateToPluginConfig(mattermost.url());
+        await systemConsole.navigateToAgentsSettings(mattermost.url(), 'general');
 
         // Scroll to the AI Functions panel
         const functionsPanel = systemConsole.getFunctionsPanel();

@@ -54,7 +54,7 @@ Ensure your self-hosted solution has sufficient compute resources and test for c
 
 Obtain an [OpenAI API key](https://platform.openai.com/account/api-keys), then select **OpenAI** in the **Service** dropdown and enter your API key. Specify a model name in the **Default Model** field that corresponds with the model's label in the API. If your API key belongs to an OpenAI organization, you can optionally specify your **Organization ID**.
 
-Direct **OpenAI** services always use the OpenAI **Responses** API. There is no System Console setting to disable the Responses API for this service type.
+Direct **OpenAI** services always use the OpenAI **Responses** API. There is no setting to disable the Responses API for this service type.
 
 ### Configuration Options
 
@@ -255,11 +255,11 @@ Google Gemini uses the Generative Language API (AI Studio), which authenticates 
 ### Setup
 
 1. Sign in to [Google AI Studio](https://aistudio.google.com/) and create an API key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
-2. In Mattermost, open **System Console > Agents > LLM Services** and add a new service (or open an existing Gemini service).
+2. In Mattermost, open **Agents > Settings > AI services** and add a new service (or open an existing Gemini service).
 3. Select **Google Gemini** in the **Service** dropdown.
 4. Paste your AI Studio key into the **API Key** field.
 5. Enter a model identifier in the **Default Model** field (for example, `gemini-2.5-pro` or `gemini-2.5-flash`). Use [Google's model catalog](https://ai.google.dev/gemini-api/docs/models) to confirm the exact ID.
-6. Save the service. There is no API URL field in the System Console for the Gemini service type. The underlying `apiURL` config field is accepted by the API and forwarded to Bifrost as the base URL if non-empty, enabling egress-proxy use cases for operators who configure services programmatically.
+6. Save the service. There is no API URL field in the Agents settings for the Gemini service type. The underlying `apiURL` config field is accepted by the API and forwarded to Bifrost as the base URL if non-empty, enabling egress-proxy use cases for operators who configure services programmatically.
 
 ### Configuration Options
 
@@ -304,7 +304,7 @@ If a feature surface uses **NativeWebSearchAllowed** at request time (for exampl
 ### Example service configuration
 
 ```yaml
-# System Console > Agents > LLM Services > Add Service
+# Agents > Settings > AI services > Add an AI Service
 Service:           Google Gemini
 API Key:           ABcDef...   # from https://aistudio.google.com/apikey
 Default Model:     gemini-2.5-pro
@@ -352,7 +352,7 @@ To create a service-account key for the JSON path:
 ### Setup
 
 1. Complete the prerequisites above.
-2. In Mattermost, open **System Console > Agents > LLM Services** and add a new service.
+2. In Mattermost, open **Agents > Settings > AI services** and add a new service.
 3. Select **Google Vertex AI** in the **Service** dropdown.
 4. Fill in **GCP Project ID**, **GCP Region**, and (optionally) **GCP Project Number**.
 5. For ADC: leave **Service Account JSON** blank. For key-based auth: paste the full JSON.
@@ -392,7 +392,7 @@ OpenAI-style `file_search` and `code_interpreter` are not available in the Syste
 ### Example service configuration
 
 ```yaml
-# System Console > Agents > LLM Services > Add Service
+# Agents > Settings > AI services > Add an AI Service
 Service:               Google Vertex AI
 GCP Project ID:        my-project-123
 GCP Project Number:    123456789012   # optional
