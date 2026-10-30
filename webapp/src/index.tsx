@@ -59,6 +59,9 @@ import {shouldSuppressBotNotification} from './notifications';
 import AgentsTour from './components/tutorial/agents_tour';
 import AgentsHeaderSettings from './components/agents/agents_header_settings';
 import AgentsPage, {AGENTS_ROUTE} from './components/agents/agents_page';
+import AgentDMChannelView from './components/agents/agent_dm_channel_view';
+import AgentDMViewToggle from './components/agents/agent_dm_view_toggle';
+import {isAgentDMChannel} from './agent_dm_view';
 import IconAI from './components/assets/icon_ai';
 import {licenseAllows} from './license';
 
@@ -332,6 +335,20 @@ export default class Plugin {
                 () => null,
                 AgentsHeaderSettings,
             );
+        }
+
+        // An agent's DM in the Channels app shows the agent chat (servers with registerChannelViewComponent;
+        // older ones keep the plain DM). The view's "View as messages" switches one DM to its plain
+        // messages for this session, and a channel header icon switches it back (the host gives bot
+        // DMs no channel menu).
+        if (registry.registerChannelViewComponent) {
+            registry.registerChannelViewComponent({matcher: isAgentDMChannel, component: AgentDMChannelView});
+            registry.registerChannelHeaderIcon?.(AgentDMViewToggle);
+
+            // The matcher reads the bots list: load it before the first agent DM opens.
+            if (!registry.registerChannelSettingsTab) {
+                fetchAndStoreBots(store.dispatch).catch(() => { /* best effort */ });
+            }
         }
 
         if (registry.registerSearchComponents) {

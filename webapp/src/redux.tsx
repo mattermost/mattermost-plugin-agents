@@ -4,6 +4,7 @@
 import {combineReducers, Dispatch, Store, UnknownAction} from 'redux';
 import {GlobalState} from '@mattermost/types/store';
 
+import {agentDMRawView} from './agent_dm_view';
 import {makeCallsPostButtonClickedHandler} from './calls_button';
 import {getCustomPrompts as fetchCustomPromptsAPI, getCustomPromptPins} from './client';
 import {licenseAllows} from './license';
@@ -33,6 +34,7 @@ export async function setupRedux(registry: any, store: WebappStore) {
         customPrompts,
         pinnedPromptIds,
         showCustomPromptsModal,
+        agentDMRawView,
     });
     registry.registerReducer(reducer);
 

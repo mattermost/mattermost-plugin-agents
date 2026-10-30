@@ -77,8 +77,9 @@ type WebSocketHandlers = Map<string, (msg: unknown) => void>;
 // Only the registry members initialize() calls unconditionally, plus the
 // channel-settings tab (its presence is what makes the bots cache load-bearing
 // for a synchronous shouldRender).
-function makeRegistry(websocketHandlers: WebSocketHandlers) {
+function makeRegistry(websocketHandlers: WebSocketHandlers, extra: Record<string, unknown> = {}) {
     return {
+        ...extra,
         registerReducer: jest.fn(),
         registerDesktopNotificationHook: jest.fn(),
         registerTranslations: jest.fn(),
@@ -107,7 +108,7 @@ function makeStore(dispatch: jest.Mock, siteURL = 'http://localhost:8065') {
     };
 }
 
-async function initializePlugin(siteURL?: string) {
+async function initializePlugin(siteURL?: string, extraRegistry: Record<string, unknown> = {}) {
     const websocketHandlers: WebSocketHandlers = new Map();
     const dispatch = jest.fn();
 
@@ -116,7 +117,7 @@ async function initializePlugin(siteURL?: string) {
 
     // eslint-disable-next-line global-require
     const Plugin = require('./index').default;
-    await new Plugin().initialize(makeRegistry(websocketHandlers), makeStore(dispatch, siteURL));
+    await new Plugin().initialize(makeRegistry(websocketHandlers, extraRegistry), makeStore(dispatch, siteURL));
 
     return {websocketHandlers, dispatch};
 }
@@ -191,5 +192,37 @@ describe('bots cache websocket handlers', () => {
         await flush();
 
         expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({type: BotsHandler}));
+    });
+});
+
+describe('agent DM channel view', () => {
+    beforeEach(() => {
+        jest.resetModules();
+        mockGetAIBots.mockReset();
+        mockGetAIBots.mockResolvedValue({bots: [], searchEnabled: false, allowUnsafeLinks: false});
+    });
+
+    test('is not registered on a server without registerChannelViewComponent', async () => {
+        const registerChannelHeaderIcon = jest.fn();
+        await initializePlugin('http://localhost:8065', {registerChannelHeaderIcon});
+
+        // eslint-disable-next-line global-require
+        const AgentDMViewToggle = require('./components/agents/agent_dm_view_toggle').default;
+        expect(registerChannelHeaderIcon).not.toHaveBeenCalledWith(AgentDMViewToggle);
+    });
+
+    test('registers the agent DM matcher, the view and the header switch back to it', async () => {
+        const registerChannelViewComponent = jest.fn();
+        const registerChannelHeaderIcon = jest.fn();
+        await initializePlugin('http://localhost:8065', {registerChannelViewComponent, registerChannelHeaderIcon});
+
+        // eslint-disable-next-line global-require
+        const {isAgentDMChannel} = require('./agent_dm_view');
+        // eslint-disable-next-line global-require
+        const AgentDMChannelView = require('./components/agents/agent_dm_channel_view').default;
+        // eslint-disable-next-line global-require
+        const AgentDMViewToggle = require('./components/agents/agent_dm_view_toggle').default;
+        expect(registerChannelViewComponent).toHaveBeenCalledWith({matcher: isAgentDMChannel, component: AgentDMChannelView});
+        expect(registerChannelHeaderIcon).toHaveBeenCalledWith(AgentDMViewToggle);
     });
 });
