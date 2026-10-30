@@ -45,8 +45,8 @@ func TestToolCallBroadcastTiming(t *testing.T) {
 		{
 			name: "auto-run round is sent while it runs",
 			events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{autoRun}},
-				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{autoRunDone}},
+				{Type: llm.EventTypeToolCallBatch, Value: llm.ToolCallBatch{Phase: llm.ToolCallPhaseExecuting, Calls: []llm.ToolCall{autoRun}}},
+				{Type: llm.EventTypeToolCallBatch, Value: llm.ToolCallBatch{Phase: llm.ToolCallPhaseResolved, Calls: []llm.ToolCall{autoRunDone}}},
 				{Type: llm.EventTypeText, Value: "Found it."},
 				{Type: llm.EventTypeEnd},
 			},
@@ -58,7 +58,7 @@ func TestToolCallBroadcastTiming(t *testing.T) {
 		{
 			name: "batch awaiting approval is sent after its turn is stored",
 			events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{needsApproval}},
+				{Type: llm.EventTypeToolCallBatch, Value: llm.ToolCallBatch{Phase: llm.ToolCallPhaseAwaitingDecision, Calls: []llm.ToolCall{needsApproval}}},
 				{Type: llm.EventTypeEnd},
 			},
 			want: []sentBatch{{status: llm.ToolCallStatusPending, persisted: true}},
@@ -66,7 +66,7 @@ func TestToolCallBroadcastTiming(t *testing.T) {
 		{
 			name: "batch mixing auto-run and approval calls is sent after its turn is stored",
 			events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{autoRun, needsApproval}},
+				{Type: llm.EventTypeToolCallBatch, Value: llm.ToolCallBatch{Phase: llm.ToolCallPhaseAwaitingDecision, Calls: []llm.ToolCall{autoRun, needsApproval}}},
 				{Type: llm.EventTypeEnd},
 			},
 			want: []sentBatch{{status: llm.ToolCallStatusPending, persisted: true}},
@@ -74,9 +74,9 @@ func TestToolCallBroadcastTiming(t *testing.T) {
 		{
 			name: "approval batch after an auto-run round",
 			events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{autoRun}},
-				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{autoRunDone}},
-				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{needsApproval}},
+				{Type: llm.EventTypeToolCallBatch, Value: llm.ToolCallBatch{Phase: llm.ToolCallPhaseExecuting, Calls: []llm.ToolCall{autoRun}}},
+				{Type: llm.EventTypeToolCallBatch, Value: llm.ToolCallBatch{Phase: llm.ToolCallPhaseResolved, Calls: []llm.ToolCall{autoRunDone}}},
+				{Type: llm.EventTypeToolCallBatch, Value: llm.ToolCallBatch{Phase: llm.ToolCallPhaseAwaitingDecision, Calls: []llm.ToolCall{needsApproval}}},
 				{Type: llm.EventTypeEnd},
 			},
 			want: []sentBatch{

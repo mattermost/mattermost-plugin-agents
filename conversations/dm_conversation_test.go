@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -140,6 +141,29 @@ func (s *fakeConvStore) GetTurnsForConversation(conversationID string) ([]store.
 func (s *fakeConvStore) UpdateTurnContent(id string, content json.RawMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.updateTurnContentLocked(id, content)
+}
+
+func (s *fakeConvStore) CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.allTurns[id]
+	if !ok || !jsonContentEqual(t.Content, expected) {
+		return false, nil
+	}
+	return true, s.updateTurnContentLocked(id, content)
+}
+
+// jsonContentEqual mirrors the store's JSONB comparison.
+func jsonContentEqual(a, b json.RawMessage) bool {
+	var av, bv any
+	if json.Unmarshal(a, &av) != nil || json.Unmarshal(b, &bv) != nil {
+		return false
+	}
+	return reflect.DeepEqual(av, bv)
+}
+
+func (s *fakeConvStore) updateTurnContentLocked(id string, content json.RawMessage) error {
 	t, ok := s.allTurns[id]
 	if !ok {
 		return fmt.Errorf("turn %s not found", id)
@@ -300,8 +324,16 @@ type dmTestLLM struct {
 	onChat    func()
 	// callTraces records the trace each call ran under, in call order.
 	callTraces []trace.TraceID
-	// titleDone, when set, is signaled after each ChatCompletionNoStream.
+	// titleDone, when set, is signaled after each title ChatCompletionNoStream.
 	titleDone chan struct{}
+
+	noStreamResponseByOp map[string]string
+	noStreamErrByOp      map[string]error
+	// lastNoStreamReq and lastNoStreamCfg record the latest classifier call only,
+	// so asynchronous title generation cannot overwrite them.
+	lastNoStreamReq llm.CompletionRequest
+	lastNoStreamCfg llm.LanguageModelConfig
+	classifierCalls int
 }
 
 func newDMTestLLM(responses ...*llm.TextStreamResult) *dmTestLLM {
@@ -325,10 +357,37 @@ func (f *dmTestLLM) ChatCompletion(ctx context.Context, request llm.CompletionRe
 }
 
 func (f *dmTestLLM) ChatCompletionNoStream(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	var cfg llm.LanguageModelConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	isClassifier := request.Operation == llm.OperationAmbientClassification
 	f.mu.Lock()
 	f.callTraces = append(f.callTraces, trace.SpanContextFromContext(ctx).TraceID())
+	if isClassifier {
+		f.lastNoStreamReq = request
+		f.lastNoStreamCfg = cfg
+		f.classifierCalls++
+	}
+	opErr := f.noStreamErrByOp[request.Operation]
+	resp, hasResp := f.noStreamResponseByOp[request.Operation]
 	done := f.titleDone
 	f.mu.Unlock()
+
+	if opErr != nil {
+		return "", opErr
+	}
+	if hasResp {
+		return resp, nil
+	}
+	if isClassifier {
+		return "", fmt.Errorf("no classifier response configured")
+	}
 	if done != nil {
 		done <- struct{}{}
 	}
@@ -873,7 +932,7 @@ func TestDMManualApprovalTools_ToolRunnerReturnsUnresolved(t *testing.T) {
 	// Consume stream and check for tool call events
 	var foundToolCalls bool
 	for event := range streamResult.Stream.Stream {
-		if event.Type == llm.EventTypeToolCalls {
+		if event.Type == llm.EventTypeToolCallBatch {
 			foundToolCalls = true
 		}
 	}

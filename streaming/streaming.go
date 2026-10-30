@@ -341,9 +341,9 @@ func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator) {
 // broadcastToolCalls sends tool call WebSocket events with privacy scoping.
 // The requester receives full tool call data (arguments, results).
 // Other channel members receive redacted tool calls (names and status only).
-func (p *MMPostStreamService) broadcastToolCalls(post *model.Post, toolCalls []llm.ToolCall, requesterUserID string) {
+func (p *MMPostStreamService) broadcastToolCalls(post *model.Post, batch llm.ToolCallBatch, requesterUserID string) {
 	// Full data to the requester only.
-	fullJSON, err := json.Marshal(toolCalls)
+	fullJSON, err := json.Marshal(batch.Calls)
 	if err != nil {
 		p.mmClient.LogError("Failed to marshal tool calls", "error", err)
 		return
@@ -352,10 +352,10 @@ func (p *MMPostStreamService) broadcastToolCalls(post *model.Post, toolCalls []l
 		ChannelId:           post.ChannelId,
 		UserId:              requesterUserID,
 		ReliableClusterSend: true,
-	}, map[string]any{"control": "tool_call", "tool_call": string(fullJSON)})
+	}, map[string]any{"control": "tool_call", "tool_call": string(fullJSON), "tool_call_phase": string(batch.Phase)})
 
 	// Redacted data to the rest of the channel (omit requester to avoid duplicates).
-	redacted := redactToolCalls(toolCalls)
+	redacted := redactToolCalls(batch.Calls)
 	redactedJSON, err := json.Marshal(redacted)
 	if err != nil {
 		p.mmClient.LogError("Failed to marshal redacted tool calls", "error", err)
@@ -365,7 +365,7 @@ func (p *MMPostStreamService) broadcastToolCalls(post *model.Post, toolCalls []l
 		ChannelId:           post.ChannelId,
 		OmitUsers:           map[string]bool{requesterUserID: true},
 		ReliableClusterSend: true,
-	}, map[string]any{"control": "tool_call", "tool_call": string(redactedJSON)})
+	}, map[string]any{"control": "tool_call", "tool_call": string(redactedJSON), "tool_call_phase": string(batch.Phase)})
 }
 
 // redactToolCalls returns a copy of the tool calls with Arguments, Result, and
@@ -480,18 +480,16 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 		}
 	}
 
-	// A pending batch awaiting a user decision renders an approval card the
-	// user can click at once, and the click resolves against the stored
-	// turn, so that batch is only broadcast after finalizeTurn has persisted
-	// it. A pending batch that will auto-execute is broadcast right away so
-	// the UI shows progress while the tools run.
-	var heldPendingToolCalls []llm.ToolCall
+	// A batch awaiting a decision is broadcast only after finalizeTurn
+	// persists it, so an approval click can never reach the server before its
+	// turn exists.
+	var awaitingDecision *llm.ToolCallBatch
 	defer func() {
 		if acc != nil {
 			p.finalizeTurn(acc)
 		}
-		if heldPendingToolCalls != nil {
-			p.broadcastToolCalls(post, heldPendingToolCalls, requesterUserID)
+		if awaitingDecision != nil {
+			p.broadcastToolCalls(post, *awaitingDecision, requesterUserID)
 		}
 		p.sendPostStreamingEvent(post, broadcast, map[string]any{"control": PostStreamingControlEnd})
 	}()
@@ -647,13 +645,13 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 						acc.sequence.FinishReasoning(reasoningData)
 					}
 				}
-			case llm.EventTypeToolCalls:
+			case llm.EventTypeToolCallBatch:
 				// Tool calls are handled by toolrunner before streaming begins.
 				// Here we only accumulate them for turn persistence and send a
 				// WebSocket event so the webapp can display progress.
-				if toolCalls, ok := event.Value.([]llm.ToolCall); ok {
-					for i := range toolCalls {
-						toolCalls[i].SanitizeArguments()
+				if batch, ok := event.Value.(llm.ToolCallBatch); ok {
+					for i := range batch.Calls {
+						batch.Calls[i].SanitizeArguments()
 					}
 					if acc != nil {
 						// On resolved, reset the accumulator: toolrunner
@@ -661,11 +659,10 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 						// onToolTurns, and only the final round's content
 						// belongs on the anchor. Do NOT broadcast next: ""
 						// here — the webapp snapshots the round's preamble
-						// at the resolved tool_call event. On pending,
-						// retain the calls so a rejected-approval turn
+						// at the resolved tool_call event. Otherwise retain
+						// the calls so an interrupted or awaiting turn
 						// keeps them.
-						if llm.IsResolvedToolCallBatch(toolCalls) {
-							heldPendingToolCalls = nil
+						if batch.Phase == llm.ToolCallPhaseResolved {
 							acc.sequence.Reset()
 							acc.annotations = nil
 							acc.toolCalls = nil
@@ -677,14 +674,14 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 							messageBuilder.Reset()
 							post.Message = ""
 						} else {
-							acc.toolCalls = toolCalls
-							if slices.ContainsFunc(toolCalls, func(tc llm.ToolCall) bool { return !tc.WouldAutoExecute }) {
-								heldPendingToolCalls = toolCalls
-								break
-							}
+							acc.toolCalls = batch.Calls
 						}
 					}
-					p.broadcastToolCalls(post, toolCalls, requesterUserID)
+					if batch.Phase == llm.ToolCallPhaseAwaitingDecision {
+						awaitingDecision = &batch
+					} else {
+						p.broadcastToolCalls(post, batch, requesterUserID)
+					}
 				}
 			case llm.EventTypeAnnotations:
 				if annotationMap, ok := event.Value.(map[string]any); ok {

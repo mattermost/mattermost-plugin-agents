@@ -10,7 +10,9 @@ package autoreply
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -18,7 +20,8 @@ import (
 )
 
 // ErrValidation marks a Set rejection caused by invalid input (unknown mode,
-// missing bot, DM/GM channel, or the bot's channel restrictions). API handlers
+// missing bot, invalid instructions, DM/GM channel, or the bot's channel
+// restrictions). API handlers
 // use errors.Is(err, ErrValidation) to map failures to HTTP 400.
 var ErrValidation = errors.New("invalid channel auto-reply setting")
 
@@ -83,7 +86,9 @@ func (s *Service) LoadCache() error {
 
 	cache := make(map[string]Setting, len(settings))
 	for _, setting := range settings {
-		cache[setting.ChannelID] = setting
+		if s.servable(setting) {
+			cache[setting.ChannelID] = setting
+		}
 	}
 
 	s.mu.Lock()
@@ -112,29 +117,36 @@ func (s *Service) Get(channelID string) (*Setting, error) {
 }
 
 // Set validates and persists an auto-reply setting for a channel, updates the
-// local cache, and broadcasts an invalidation to peer nodes. mode must be
-// ModeRootPosts or ModeThreads; turning auto-reply off is Delete, not
-// Set(ModeOff). Validation failures wrap ErrValidation. Returns the stored
-// setting (with UpdateAt populated).
-func (s *Service) Set(channelID, botID string, mode Mode, updatedBy string) (*Setting, error) {
-	if channelID == "" {
+// local cache, and broadcasts an invalidation to peer nodes. The mode must be
+// storable (see Mode.IsStorable); turning auto-reply off is Delete, not
+// Set(ModeOff). UpdateAt is assigned here. Validation failures wrap
+// ErrValidation. Returns the stored setting.
+func (s *Service) Set(setting Setting) (*Setting, error) {
+	if setting.ChannelID == "" {
 		return nil, fmt.Errorf("channel ID is required: %w", ErrValidation)
 	}
-	if botID == "" {
+	if setting.BotID == "" {
 		return nil, fmt.Errorf("bot ID is required: %w", ErrValidation)
 	}
-	if !mode.IsStorable() {
-		return nil, fmt.Errorf("mode %q is not a storable auto-reply mode: %w", mode, ErrValidation)
+	if !setting.Mode.IsStorable() {
+		return nil, fmt.Errorf("mode %q is not a storable auto-reply mode: %w", setting.Mode, ErrValidation)
+	}
+	if utf8.RuneCountInString(setting.Instructions) > MaxInstructionsRunes {
+		return nil, fmt.Errorf("instructions exceed %d runes: %w", MaxInstructionsRunes, ErrValidation)
+	}
+	// PostgreSQL TEXT cannot store NUL.
+	if strings.ContainsRune(setting.Instructions, 0) {
+		return nil, fmt.Errorf("instructions must not contain NUL characters: %w", ErrValidation)
 	}
 
-	bot := s.bots.GetBotByID(botID)
+	bot := s.bots.GetBotByID(setting.BotID)
 	if bot == nil {
-		return nil, fmt.Errorf("bot %s not found: %w", botID, ErrValidation)
+		return nil, fmt.Errorf("bot %s not found: %w", setting.BotID, ErrValidation)
 	}
 
-	channel, err := s.mmClient.GetChannel(channelID)
+	channel, err := s.mmClient.GetChannel(setting.ChannelID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to look up channel %s: %w", channelID, err)
+		return nil, fmt.Errorf("failed to look up channel %s: %w", setting.ChannelID, err)
 	}
 	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
 		return nil, fmt.Errorf("auto-reply cannot be configured for direct or group channels: %w", ErrValidation)
@@ -144,13 +156,7 @@ func (s *Service) Set(channelID, botID string, mode Mode, updatedBy string) (*Se
 		return nil, fmt.Errorf("bot is not allowed in this channel (%v): %w", restrictionErr, ErrValidation)
 	}
 
-	setting := Setting{
-		ChannelID: channelID,
-		BotID:     botID,
-		Mode:      mode,
-		UpdatedBy: updatedBy,
-		UpdateAt:  model.GetMillis(),
-	}
+	setting.UpdateAt = model.GetMillis()
 
 	s.writeMu.Lock()
 	if storeErr := s.store.Set(setting); storeErr != nil {
@@ -158,11 +164,11 @@ func (s *Service) Set(channelID, botID string, mode Mode, updatedBy string) (*Se
 		return nil, storeErr
 	}
 	s.mu.Lock()
-	s.cache[channelID] = setting
+	s.cache[setting.ChannelID] = setting
 	s.mu.Unlock()
 	s.writeMu.Unlock()
 
-	s.notifyPeers(channelID)
+	s.notifyPeers(setting.ChannelID)
 
 	return &setting, nil
 }
@@ -203,15 +209,28 @@ func (s *Service) RefreshChannel(channelID string) error {
 		return err
 	}
 
+	servable := setting != nil && s.servable(*setting)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if setting == nil {
+	if !servable {
 		delete(s.cache, channelID)
 		return nil
 	}
 	s.cache[channelID] = *setting
 
 	return nil
+}
+
+// servable reports whether a stored row may be served from the cache. Rows
+// with a mode this version cannot store (written by a newer plugin version)
+// are never served, so they cannot trigger replies.
+func (s *Service) servable(setting Setting) bool {
+	if setting.Mode.IsStorable() {
+		return true
+	}
+	s.mmClient.LogWarn("Ignoring channel auto-reply setting with an unknown mode", "channel_id", setting.ChannelID, "mode", string(setting.Mode))
+	return false
 }
 
 // notifyPeers broadcasts the invalidation and logs on failure. A failed

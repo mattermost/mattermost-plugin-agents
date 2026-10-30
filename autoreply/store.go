@@ -22,21 +22,36 @@ const (
 	ModeRootPosts Mode = "root_posts"
 	// ModeThreads auto-replies to root posts and to non-bot thread replies.
 	ModeThreads Mode = "threads"
+	// ModeAmbient classifies each eligible post and replies only when the
+	// classifier returns should_reply=true.
+	ModeAmbient Mode = "ambient"
+	// ModeAmbientThreads is ModeAmbient restricted to thread replies in threads
+	// the agent has already replied in.
+	ModeAmbientThreads Mode = "ambient_threads"
 )
+
+// MaxInstructionsRunes is the stored/API cap for Setting.Instructions.
+const MaxInstructionsRunes = 8000
 
 // IsStorable reports whether the mode is one that may be persisted.
 func (m Mode) IsStorable() bool {
-	return m == ModeRootPosts || m == ModeThreads
+	return m == ModeRootPosts || m == ModeThreads || m.IsAmbient()
+}
+
+// IsAmbient reports whether the mode gates replies on the ambient classifier.
+func (m Mode) IsAmbient() bool {
+	return m == ModeAmbient || m == ModeAmbientThreads
 }
 
 // Setting is one channel's auto-reply configuration. A channel with no Setting
 // row is in ModeOff.
 type Setting struct {
-	ChannelID string `json:"channel_id" db:"channelid"`
-	BotID     string `json:"bot_id" db:"botid"`
-	Mode      Mode   `json:"mode" db:"mode"`
-	UpdatedBy string `json:"updated_by" db:"updatedby"`
-	UpdateAt  int64  `json:"update_at" db:"updateat"`
+	ChannelID    string `json:"channel_id" db:"channelid"`
+	BotID        string `json:"bot_id" db:"botid"`
+	Mode         Mode   `json:"mode" db:"mode"`
+	UpdatedBy    string `json:"updated_by" db:"updatedby"`
+	UpdateAt     int64  `json:"update_at" db:"updateat"`
+	Instructions string `json:"instructions,omitempty" db:"instructions"`
 }
 
 // Store provides access to the Agents_ChannelAutoReply table. It persists
@@ -55,7 +70,7 @@ func NewStore(db *mmapi.DBClient) *Store {
 func (s *Store) Get(channelID string) (*Setting, error) {
 	var settings []Setting
 	if err := s.db.DoQuery(&settings, s.db.Builder().
-		Select("ChannelID", "BotID", "Mode", "UpdatedBy", "UpdateAt").
+		Select("ChannelID", "BotID", "Mode", "UpdatedBy", "UpdateAt", "Instructions").
 		From("Agents_ChannelAutoReply").
 		Where(sq.Eq{"ChannelID": channelID}),
 	); err != nil {
@@ -74,9 +89,9 @@ func (s *Store) Get(channelID string) (*Setting, error) {
 func (s *Store) Set(setting Setting) error {
 	_, err := s.db.ExecBuilder(s.db.Builder().
 		Insert("Agents_ChannelAutoReply").
-		Columns("ChannelID", "BotID", "Mode", "UpdatedBy", "UpdateAt").
-		Values(setting.ChannelID, setting.BotID, string(setting.Mode), setting.UpdatedBy, setting.UpdateAt).
-		Suffix("ON CONFLICT (ChannelID) DO UPDATE SET BotID = EXCLUDED.BotID, Mode = EXCLUDED.Mode, UpdatedBy = EXCLUDED.UpdatedBy, UpdateAt = EXCLUDED.UpdateAt"))
+		Columns("ChannelID", "BotID", "Mode", "UpdatedBy", "UpdateAt", "Instructions").
+		Values(setting.ChannelID, setting.BotID, string(setting.Mode), setting.UpdatedBy, setting.UpdateAt, setting.Instructions).
+		Suffix("ON CONFLICT (ChannelID) DO UPDATE SET BotID = EXCLUDED.BotID, Mode = EXCLUDED.Mode, UpdatedBy = EXCLUDED.UpdatedBy, UpdateAt = EXCLUDED.UpdateAt, Instructions = EXCLUDED.Instructions"))
 	if err != nil {
 		return fmt.Errorf("failed to set channel auto-reply setting: %w", err)
 	}
@@ -103,7 +118,7 @@ func (s *Store) Delete(channelID string) error {
 func (s *Store) ListAll() ([]Setting, error) {
 	var settings []Setting
 	if err := s.db.DoQuery(&settings, s.db.Builder().
-		Select("ChannelID", "BotID", "Mode", "UpdatedBy", "UpdateAt").
+		Select("ChannelID", "BotID", "Mode", "UpdatedBy", "UpdateAt", "Instructions").
 		From("Agents_ChannelAutoReply"),
 	); err != nil {
 		return nil, fmt.Errorf("failed to list channel auto-reply settings: %w", err)

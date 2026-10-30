@@ -4,6 +4,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -71,6 +72,7 @@ type testConfigImpl struct {
 	allowedLinkDomains              string
 	enableHTMLArtifacts             bool
 	enableChannelMentionToolCalling bool
+	enableAmbientAutoReply          bool
 	mcpConfig                       mcp.Config
 	services                        []llm.ServiceConfig
 	defaultBotUserID                string
@@ -107,6 +109,10 @@ func (tc *testConfigImpl) EmbeddingSearchConfig() embeddings.EmbeddingSearchConf
 
 func (tc *testConfigImpl) EnableChannelMentionToolCalling() bool {
 	return tc.enableChannelMentionToolCalling
+}
+
+func (tc *testConfigImpl) EnableAmbientAutoReply() bool {
+	return tc.enableAmbientAutoReply
 }
 
 func (tc *testConfigImpl) AllowNativeWebSearchInChannels() bool {
@@ -411,19 +417,13 @@ func (f *fakeChannelAutoReplyStore) Get(channelID string) (*autoreply.Setting, e
 	return f.settings[channelID], nil
 }
 
-func (f *fakeChannelAutoReplyStore) Set(channelID, botID string, mode autoreply.Mode, updatedBy string) (*autoreply.Setting, error) {
+func (f *fakeChannelAutoReplyStore) Set(setting autoreply.Setting) (*autoreply.Setting, error) {
 	if f.setErr != nil {
 		return nil, f.setErr
 	}
-	setting := autoreply.Setting{
-		ChannelID: channelID,
-		BotID:     botID,
-		Mode:      mode,
-		UpdatedBy: updatedBy,
-		UpdateAt:  time.Now().UnixMilli(),
-	}
+	setting.UpdateAt = time.Now().UnixMilli()
 	f.setCalls = append(f.setCalls, setting)
-	f.settings[channelID] = &setting
+	f.settings[setting.ChannelID] = &setting
 	return &setting, nil
 }
 
@@ -493,6 +493,24 @@ func (m *mockConversationStore) GetTurnByPostID(postID string) (*store.Turn, err
 		return nil, nil
 	}
 	return turn, nil
+}
+
+func (m *mockConversationStore) CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error) {
+	if m.err != nil {
+		return false, m.err
+	}
+	for convID, turns := range m.turns {
+		for i, turn := range turns {
+			if turn.ID == id {
+				if !bytes.Equal(turn.Content, expected) {
+					return false, nil
+				}
+				m.turns[convID][i].Content = content
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func (m *mockConversationStore) UpdateTurnContent(id string, content json.RawMessage) error {

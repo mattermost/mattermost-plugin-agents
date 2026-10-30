@@ -1,0 +1,2 @@
+ALTER TABLE Agents_ChannelAutoReply
+    ADD COLUMN IF NOT EXISTS Instructions TEXT NOT NULL DEFAULT '';
