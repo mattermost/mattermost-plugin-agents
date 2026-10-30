@@ -5,13 +5,16 @@ import React from 'react';
 import {act, fireEvent, render, renderHook, screen, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
-import {getUserMCPTools, refreshUserMCPTools, updateUserToolPreferences} from '@/client';
+import type {LLMBot} from '@/bots';
+import {getUserMCPTools, getUserToolPreferences, refreshUserMCPTools, updateUserToolPreferences} from '@/client';
 
-import ToolProviderPopover, {UserMCPServerInfo, publishDisabledServers, useToolProviders} from './tool_provider_popover';
+import ToolProviderPopover, {UserMCPServerInfo, useToolProviders} from './tool_provider_popover';
+import {resetToolPreferences} from './use_tool_preferences';
 
 jest.mock('@/client', () => ({
     disconnectMCPOAuth: jest.fn(),
     getUserMCPTools: jest.fn(),
+    getUserToolPreferences: jest.fn(),
     refreshUserMCPTools: jest.fn(),
     updateUserToolPreferences: jest.fn(),
 }));
@@ -48,6 +51,7 @@ jest.mock('@mattermost/compass-icons/components', () => ({
 }));
 
 const mockGetUserMCPTools = getUserMCPTools as jest.MockedFunction<typeof getUserMCPTools>;
+const mockGetUserToolPreferences = getUserToolPreferences as jest.MockedFunction<typeof getUserToolPreferences>;
 const mockRefreshUserMCPTools = refreshUserMCPTools as jest.MockedFunction<typeof refreshUserMCPTools>;
 const mockUpdateUserToolPreferences = updateUserToolPreferences as jest.MockedFunction<typeof updateUserToolPreferences>;
 
@@ -81,22 +85,21 @@ const refreshedServer: UserMCPServerInfo = {
     tools: [],
 };
 
+const bot = {id: 'bot1', displayName: 'Bot', autoEnableNewMCPTools: true, enabledMCPTools: null} as LLMBot;
+
 function renderComponent(servers: UserMCPServerInfo[] = [initialServer]) {
-    const onDisabledServersChange = jest.fn();
-    return {
-        onDisabledServersChange,
-        ...render(
-            <IntlProvider locale='en'>
-                <ToolProviderPopover
-                    disabledServers={[]}
-                    onDisabledServersChange={onDisabledServersChange}
-                    preloadedServers={servers}
-                    autoEnableNewMCPTools={true}
-                />
-            </IntlProvider>,
-        ),
-    };
+    mockGetUserMCPTools.mockResolvedValue({servers});
+    return render(
+        <IntlProvider locale='en'>
+            <ToolProviderPopover bot={bot}/>
+        </IntlProvider>,
+    );
 }
+
+beforeEach(() => {
+    resetToolPreferences();
+    mockGetUserToolPreferences.mockResolvedValue({disabled_servers: []});
+});
 
 async function openToolsMenu() {
     fireEvent.click(screen.getByRole('button', {name: 'Tools'}));
@@ -127,15 +130,43 @@ describe('ToolProviderPopover', () => {
         expect(row.getAttribute('aria-checked')).toBe('true');
     });
 
-    test('a row toggles its provider', async () => {
-        const {onDisabledServersChange} = renderComponent([initialServer]);
-        mockUpdateUserToolPreferences.mockResolvedValue({disabled_servers: [initialServer.serverOrigin]});
+    test('a row toggles its provider, keeping the other saved ones', async () => {
+        mockGetUserToolPreferences.mockResolvedValue({disabled_servers: ['https://saved.example.com']});
+        renderComponent([initialServer]);
+        mockUpdateUserToolPreferences.mockResolvedValue({disabled_servers: []});
 
         await openToolsMenu();
-        fireEvent.click(await screen.findByRole('menuitemcheckbox', {name: 'Initial Server'}));
+        const row = await screen.findByRole('menuitemcheckbox', {name: 'Initial Server'});
+        fireEvent.click(row);
 
-        await waitFor(() => expect(mockUpdateUserToolPreferences).toHaveBeenCalledWith({disabled_servers: [initialServer.serverOrigin]}));
-        expect(onDisabledServersChange).toHaveBeenCalledWith([initialServer.serverOrigin]);
+        await waitFor(() => expect(mockUpdateUserToolPreferences).toHaveBeenCalledWith({disabled_servers: ['https://saved.example.com', initialServer.serverOrigin]}));
+        expect(row.getAttribute('aria-checked')).toBe('false');
+    });
+
+    test('preferences that failed to load show an error with a retry, and no toggles that could overwrite them', async () => {
+        jest.spyOn(console, 'error').mockImplementation(() => null);
+        mockGetUserToolPreferences.mockRejectedValueOnce(new Error('down'));
+        renderComponent([initialServer]);
+
+        await openToolsMenu();
+        await screen.findByText('Couldn\'t load your tool settings.');
+        expect(screen.queryByRole('menuitemcheckbox')).toBeNull();
+        expect(mockUpdateUserToolPreferences).not.toHaveBeenCalled();
+
+        mockGetUserToolPreferences.mockResolvedValueOnce({disabled_servers: [initialServer.serverOrigin]});
+        fireEvent.click(screen.getByRole('menuitem', {name: 'Try again'}));
+        const row = await screen.findByRole('menuitemcheckbox', {name: 'Initial Server'});
+        expect(row.getAttribute('aria-checked')).toBe('false');
+    });
+
+    test('shows loading instead of toggles while the preferences load', async () => {
+        mockGetUserToolPreferences.mockReturnValue(new Promise(() => null));
+        renderComponent([initialServer]);
+
+        await openToolsMenu();
+        await waitFor(() => expect(mockGetUserMCPTools).toHaveBeenCalled());
+        expect(screen.getByText('Loading providers...')).not.toBeNull();
+        expect(screen.queryByRole('menuitemcheckbox')).toBeNull();
     });
 
     test('refresh forces a user tools refresh', async () => {
@@ -149,8 +180,7 @@ describe('ToolProviderPopover', () => {
     });
 
     test('shows Unavailable with a disabled off toggle for an SA-only server', async () => {
-        mockGetUserMCPTools.mockResolvedValue({servers: [saOnlyServer]});
-        const {onDisabledServersChange} = renderComponent([saOnlyServer]);
+        renderComponent([saOnlyServer]);
 
         await openToolsMenu();
         await screen.findByText('n8n');
@@ -163,7 +193,6 @@ describe('ToolProviderPopover', () => {
         expect(row.getAttribute('aria-checked')).toBe('false');
         expect(row.disabled).toBe(true);
         expect(mockUpdateUserToolPreferences).not.toHaveBeenCalled();
-        expect(onDisabledServersChange).not.toHaveBeenCalled();
     });
 
     test('still shows Connect for an unauthenticated OAuth server', async () => {
@@ -238,8 +267,6 @@ describe('ToolProviderPopover', () => {
 });
 
 describe('useToolProviders', () => {
-    const hookArgs = {disabledServers: [], onDisabledServersChange: jest.fn(), autoEnableNewMCPTools: true};
-
     afterEach(() => {
         jest.clearAllMocks();
     });
@@ -250,7 +277,7 @@ describe('useToolProviders', () => {
             resolveSlow = resolve;
         }));
         mockRefreshUserMCPTools.mockResolvedValueOnce({servers: [refreshedServer]});
-        const {result} = renderHook(() => useToolProviders(hookArgs));
+        const {result} = renderHook(() => useToolProviders(bot));
 
         let slow!: Promise<void>;
         act(() => {
@@ -275,7 +302,7 @@ describe('useToolProviders', () => {
         }
         mockGetUserMCPTools.mockResolvedValue({servers: [initialServer]});
         jest.spyOn(console, 'error').mockImplementation(() => null);
-        const {result} = renderHook(() => useToolProviders(hookArgs));
+        const {result} = renderHook(() => useToolProviders(bot));
 
         await act(() => result.current.fetchServers());
         expect(result.current.error).toBe(fail);
@@ -287,8 +314,8 @@ describe('useToolProviders', () => {
 
     test('toggle reverts and resolves false when the save fails', async () => {
         mockUpdateUserToolPreferences.mockRejectedValueOnce(new Error('nope'));
-        const onDisabledServersChange = jest.fn();
-        const {result} = renderHook(() => useToolProviders({...hookArgs, onDisabledServersChange}));
+        const {result} = renderHook(() => useToolProviders(bot));
+        await waitFor(() => expect(result.current.prefs.status).toBe('ready'));
 
         let saved = true;
         await act(async () => {
@@ -296,46 +323,35 @@ describe('useToolProviders', () => {
         });
 
         expect(saved).toBe(false);
-        expect(onDisabledServersChange.mock.calls).toEqual([[[initialServer.serverOrigin]], [[]]]);
-    });
-});
-
-describe('useToolProviders preference sync', () => {
-    afterEach(() => {
-        jest.clearAllMocks();
+        expect(mockUpdateUserToolPreferences).toHaveBeenCalledWith({disabled_servers: [initialServer.serverOrigin]});
+        expect(result.current.prefs.disabledServers).toEqual([]);
     });
 
-    const twoCopies = () => {
-        const onA = jest.fn();
-        const onB = jest.fn();
-        const a = renderHook(() => useToolProviders({disabledServers: [], onDisabledServersChange: onA, autoEnableNewMCPTools: true}));
-        const b = renderHook(() => useToolProviders({disabledServers: [], onDisabledServersChange: onB, autoEnableNewMCPTools: true}));
-        return {onA, onB, a, b};
-    };
+    test('a toggle after the preferences failed to load saves nothing', async () => {
+        jest.spyOn(console, 'error').mockImplementation(() => null);
+        mockGetUserToolPreferences.mockRejectedValueOnce(new Error('down'));
+        const {result} = renderHook(() => useToolProviders(bot));
+        await waitFor(() => expect(result.current.prefs.status).toBe('error'));
 
-    test.each([
-        {name: 'a saved toggle reaches the other copy', fail: false, expectedB: [[[initialServer.serverOrigin]]]},
-        {name: 'a failed toggle reaches it, then its revert', fail: true, expectedB: [[[initialServer.serverOrigin]], [[]]]},
-    ])('$name, never echoing back to its own copy', async ({fail, expectedB}) => {
-        if (fail) {
-            mockUpdateUserToolPreferences.mockRejectedValueOnce(new Error('nope'));
-        } else {
-            mockUpdateUserToolPreferences.mockResolvedValueOnce({disabled_servers: [initialServer.serverOrigin]});
-        }
-        const {onA, onB, a} = twoCopies();
+        let saved = true;
+        await act(async () => {
+            saved = await result.current.toggle(initialServer.serverOrigin, false);
+        });
+
+        expect(saved).toBe(false);
+        expect(mockUpdateUserToolPreferences).not.toHaveBeenCalled();
+    });
+
+    test('a toggle in one copy shows in the other', async () => {
+        mockUpdateUserToolPreferences.mockResolvedValueOnce({disabled_servers: [initialServer.serverOrigin]});
+        const a = renderHook(() => useToolProviders(bot));
+        const b = renderHook(() => useToolProviders(bot));
+        await waitFor(() => expect(a.result.current.prefs.status).toBe('ready'));
 
         await act(async () => {
             await a.result.current.toggle(initialServer.serverOrigin, false);
         });
 
-        expect(onB.mock.calls).toEqual(expectedB);
-        expect(onA.mock.calls).toEqual(expectedB);
-    });
-
-    test('an unmounted copy stops listening', () => {
-        const {onB, b} = twoCopies();
-        b.unmount();
-        act(() => publishDisabledServers(['x'], Symbol('elsewhere')));
-        expect(onB).not.toHaveBeenCalled();
+        expect(b.result.current.prefs.disabledServers).toEqual([initialServer.serverOrigin]);
     });
 });

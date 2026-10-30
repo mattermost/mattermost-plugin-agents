@@ -13,25 +13,14 @@ import {PopoverMenuDivider, PopoverMenuGroup} from '@mattermost/compass-ui/compo
 import {Switch} from '@mattermost/compass-ui/components/switch';
 
 import {TooltipAboveModals} from '@/components/dropdown';
-import type {ToolProviders} from '@/components/rhs/tool_provider_popover';
+import {ErrorRow, LoadingRow, StatusRow, menuIcon} from '@/components/menu/menu_parts';
 import {mcpServerStatus} from '@/utils/mcp_availability';
 
-import {ErrorRow, LoadingRow, StatusRow, menuIcon} from './composer_menu_parts';
-import type {ToolPreferencesStatus} from './use_composer_tool_preferences';
+import type {ToolProviders} from './tool_provider_popover';
 
 export interface ToolProviderMenuBodyProps {
-
-    // The preferences' load state: an error offers a retry instead of rows (the toggles would
-    // otherwise show every provider as enabled).
-    status: ToolPreferencesStatus;
-    onRetry: () => void;
-    disabledServers: string[];
     providers: ToolProviders;
     onError: (message: string) => void;
-
-    // Whether the body shows the refresh button in a row of its own at the top (default). The RHS popover
-    // puts the same ProviderRefreshButton on its title row instead.
-    refresh?: boolean;
 }
 
 // Reloads the providers from the servers (OAuth state included), as the old "Refresh" menu row did.
@@ -55,15 +44,13 @@ export const ProviderRefreshButton = ({providers}: {providers: ToolProviders}) =
 
 // The tool providers as compass menu rows, for the Tools dropdown (ToolProviderPopover) through
 // its useToolProviders data and actions.
-const ToolProviderMenuBody = ({status, onRetry, disabledServers, providers, onError, refresh = true}: ToolProviderMenuBodyProps) => {
+const ToolProviderMenuBody = ({providers, onError}: ToolProviderMenuBodyProps) => {
     const intl = useIntl();
-    const {servers, loading, error, remoteMcpLicensed, toggle, connect, disconnect} = providers;
-    const refreshRow = refresh && (
-        <RefreshRow>
-            <ProviderRefreshButton providers={providers}/>
-        </RefreshRow>
-    );
+    const {prefs, servers, loading, error, remoteMcpLicensed, toggle, connect, disconnect} = providers;
+    const {status, disabledServers} = prefs;
 
+    // Until the saved preferences load, no provider rows: the toggles would show every provider as
+    // enabled, and a toggle would save over the saved list. A failed load offers a retry instead.
     if (status === 'error') {
         return (
             <>
@@ -75,24 +62,18 @@ const ToolProviderMenuBody = ({status, onRetry, disabledServers, providers, onEr
                     label={intl.formatMessage({defaultMessage: 'Try again'})}
                     leadingElement={true}
                     leadingVisual={menuIcon(<RefreshIcon/>)}
-                    onClick={onRetry}
+                    onClick={prefs.reload}
                 />
             </>
         );
     }
     if (status === 'loading' || (loading && servers.length === 0)) {
-        return (
-            <>
-                {refreshRow}
-                <LoadingRow label={intl.formatMessage({defaultMessage: 'Loading providers...'})}/>
-            </>
-        );
+        return <LoadingRow label={intl.formatMessage({defaultMessage: 'Loading providers...'})}/>;
     }
 
     const disconnectable = servers.filter((s) => s.authenticated && s.needsOAuth && mcpServerStatus(s, false) !== 'sa-only-unavailable');
     return (
         <>
-            {refreshRow}
             {error && (
                 <ErrorRow role='alert'>
                     {intl.formatMessage({defaultMessage: 'Couldn\'t load tool providers.'})}
@@ -210,13 +191,6 @@ const ConnectLabel = styled.span`
     font-size: var(--font-size-75);
     font-weight: var(--font-weight-semibold);
     line-height: var(--line-height-75);
-`;
-
-// The refresh button at the top right of the menu.
-const RefreshRow = styled.div`
-    display: flex;
-    justify-content: flex-end;
-    padding: 0 var(--spacing-xs);
 `;
 
 const TooltipTrigger = styled.span`

@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback} from 'react';
 import {useDispatch, useSelector} from 'react-redux';
 import {FormattedMessage, useIntl} from 'react-intl';
 import styled from 'styled-components';
@@ -17,18 +17,17 @@ import {WithTooltip} from '@mattermost/shared/components/tooltip';
 import aiIcon from '../../../../assets/bot_icon.png';
 
 import {useBotlist, type LLMBot} from '@/bots';
-import {getProfilePictureUrl, getUserMCPTools} from '@/client';
+import {getProfilePictureUrl} from '@/client';
 import AgentChatNameMenu from '@/components/agents/agent_chat_name_menu';
 import ChatTitleDropdown from '@/components/agents/chat_title_dropdown';
 import {useAgentsRoute} from '@/components/agents/use_agents_route';
-import {useComposerToolPreferences} from '@/components/agent_chat/use_composer_tool_preferences';
+import ToolProviderPopover from '@/components/tool_providers/tool_provider_popover';
 import manifest from '@/manifest';
 import type {RHSTab} from '@/redux';
 
 import {useConversationIdForThread} from '@/hooks/use_conversation_id_for_thread';
 
 import ContextUsageIndicator from './context_usage_indicator';
-import ToolProviderPopover, {type UserMCPServerInfo} from './tool_provider_popover';
 
 const AgentAvatar = ({bot}: {bot: LLMBot}) => (
     <UserAvatar
@@ -63,14 +62,6 @@ const RHSTitle = () => {
     const selectedRoot = useSelector((state: any) => (
         (pluginState?.selectedPostId && state.entities?.posts?.posts?.[pluginState.selectedPostId]) || null
     ));
-
-    // The tools button's data: the shared per-user preferences (reloaded for a new agent) and the
-    // server list.
-    const toolPrefs = useComposerToolPreferences(activeBot?.id ?? '');
-    const [preloadedServers, setPreloadedServers] = useState<UserMCPServerInfo[]>([]);
-    useEffect(() => {
-        getUserMCPTools().then((response) => setPreloadedServers(response.servers)).catch(() => null);
-    }, []);
 
     // Switching agents behaves like starting a new chat with the new agent (leave the open
     // thread and show the new-chat tab); choosing the current agent changes nothing.
@@ -109,15 +100,7 @@ const RHSTitle = () => {
     let actions: React.ReactNode = null;
     if (onNewChat) {
         if (activeBot && activeBot.useServiceAccountAuth !== true) {
-            actions = (
-                <ToolProviderPopover
-                    disabledServers={toolPrefs.disabledServers}
-                    onDisabledServersChange={toolPrefs.setDisabledServers}
-                    preloadedServers={preloadedServers}
-                    enabledMCPTools={activeBot.enabledMCPTools}
-                    autoEnableNewMCPTools={activeBot.autoEnableNewMCPTools}
-                />
-            );
+            actions = <ToolProviderPopover bot={activeBot}/>;
         }
     } else {
         actions = (

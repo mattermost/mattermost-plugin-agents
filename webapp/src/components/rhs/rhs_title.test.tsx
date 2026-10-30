@@ -25,7 +25,7 @@ jest.mock('@mattermost/shared/components/tooltip', () => ({
 }));
 
 // The popover's own behavior is covered by tool_provider_popover.test.tsx.
-jest.mock('./tool_provider_popover', () => ({
+jest.mock('@/components/tool_providers/tool_provider_popover', () => ({
     __esModule: true,
     default: () => <button type='button'>{'Tools'}</button>,
 }));

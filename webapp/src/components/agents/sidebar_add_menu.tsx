@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useId, useState} from 'react';
+import React, {useCallback, useId, useState} from 'react';
 import {useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
 import styled from 'styled-components';
@@ -11,14 +11,13 @@ import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {MenuItem} from '@mattermost/compass-ui/components/menu-item';
 import {PopoverMenu, PopoverMenuGroup, PopoverMenuScroll} from '@mattermost/compass-ui/components/popover-menu';
-import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
 import {useBotlist} from '@/bots';
-import {getProfilePictureUrl} from '@/client';
-import ComposerSubmenu from '@/components/agent_chat/composer_submenu';
-import {focusFirstItem, handleMenuNavigation} from '@/components/agent_chat/composer_menu_keyboard';
-import {LoadingRow, menuIcon} from '@/components/agent_chat/composer_menu_parts';
 import Dropdown from '@/components/dropdown';
+import {handleMenuNavigation} from '@/components/menu/menu_keyboard';
+import {AgentMenuItem, IconMenuItem, LoadingRow} from '@/components/menu/menu_parts';
+import Submenu from '@/components/menu/submenu';
+import {useFocusMenuOnOpen} from '@/components/menu/use_focus_menu_on_open';
 import {useMenuTransition} from '@/hooks/use_menu_transition';
 import {userHasSystemPermission} from '@/utils/permissions';
 
@@ -78,20 +77,7 @@ const SidebarAddMenu = () => {
         }
     }, []);
 
-    // The Dropdown's focus manager moves focus in on mount; a reopen during the exit
-    // transition keeps it mounted, so move focus here too.
-    useEffect(() => {
-        if (!open) {
-            return () => null;
-        }
-        const frame = requestAnimationFrame(() => {
-            const el = document.getElementById(menuId);
-            if (el && !el.contains(document.activeElement)) {
-                focusFirstItem(el);
-            }
-        });
-        return () => cancelAnimationFrame(frame);
-    }, [open, menuId]);
+    useFocusMenuOnOpen(open, menuId);
 
     const label = intl.formatMessage({defaultMessage: 'Add agent or chat'});
     const newChatLabel = intl.formatMessage({defaultMessage: 'New chat'});
@@ -116,20 +102,9 @@ const SidebarAddMenu = () => {
         );
     } else {
         agentItems = bots.map((bot) => (
-            <MenuItem
+            <AgentMenuItem
                 key={bot.id}
-                role='menuitem'
-                label={bot.displayName}
-                leadingElement={true}
-                leadingVisual={(
-                    <UserAvatar
-                        src={getProfilePictureUrl(bot.id, bot.lastIconUpdate)}
-                        alt=''
-                        aria-hidden='true'
-                        name={bot.displayName}
-                        size='20'
-                    />
-                )}
+                bot={bot}
                 onClick={() => {
                     setMenuOpen(false);
                     toChat(bot.id);
@@ -176,7 +151,7 @@ const SidebarAddMenu = () => {
                 onKeyDown={handleMenuNavigation}
             >
                 <PopoverMenuGroup>
-                    <ComposerSubmenu
+                    <Submenu
                         label={newChatLabel}
                         icon={<MessagePlusOutlineIcon/>}
                         menuLabel={intl.formatMessage({defaultMessage: 'Choose an agent'})}
@@ -192,13 +167,11 @@ const SidebarAddMenu = () => {
                                 {agentItems}
                             </PopoverMenuGroup>
                         </PopoverMenuScroll>
-                    </ComposerSubmenu>
+                    </Submenu>
                     {mayCreate && (
-                        <MenuItem
-                            role='menuitem'
+                        <IconMenuItem
                             label={intl.formatMessage({defaultMessage: 'Create new agent'})}
-                            leadingElement={true}
-                            leadingVisual={menuIcon(<PlusIcon/>)}
+                            icon={<PlusIcon/>}
                             data-testid='sidebar-add-menu-new-agent'
                             onMouseEnter={() => setSubmenu(null)}
                             onClick={() => {

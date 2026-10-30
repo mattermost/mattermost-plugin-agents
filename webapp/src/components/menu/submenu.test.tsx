@@ -4,13 +4,13 @@
 import React, {useState} from 'react';
 import {act, fireEvent, render, screen} from '@testing-library/react';
 
-import ComposerSubmenu from './composer_submenu';
+import Submenu from './submenu';
 
 const Harness = () => {
     const [state, setState] = useState<{focus: boolean} | null>(null);
     return (
         <div>
-            <ComposerSubmenu
+            <Submenu
                 label='Parent'
                 icon={<span/>}
                 menuLabel='Child menu'
@@ -20,7 +20,7 @@ const Harness = () => {
                 onClose={() => setState(null)}
             >
                 <button type='button'>{'Child item'}</button>
-            </ComposerSubmenu>
+            </Submenu>
             <button type='button'>{'Sibling'}</button>
         </div>
     );
@@ -32,7 +32,7 @@ const SiblingsHarness = () => {
     return (
         <div>
             {['First', 'Second'].map((name) => (
-                <ComposerSubmenu
+                <Submenu
                     key={name}
                     label={name}
                     icon={<span/>}
@@ -43,7 +43,7 @@ const SiblingsHarness = () => {
                     onClose={() => setOpenId(null)}
                 >
                     <button type='button'>{`${name} item`}</button>
-                </ComposerSubmenu>
+                </Submenu>
             ))}
         </div>
     );
@@ -55,7 +55,7 @@ const entry = () => row().parentElement as HTMLElement;
 // The row's state (the child menu stays mounted through its exit animation).
 const childOpen = () => row().getAttribute('aria-expanded') === 'true';
 
-describe('ComposerSubmenu closing', () => {
+describe('Submenu closing', () => {
     beforeEach(() => {
         jest.useFakeTimers();
     });
@@ -107,7 +107,7 @@ describe('ComposerSubmenu closing', () => {
     });
 });
 
-describe('ComposerSubmenu siblings', () => {
+describe('Submenu siblings', () => {
     beforeEach(() => {
         jest.useFakeTimers();
     });

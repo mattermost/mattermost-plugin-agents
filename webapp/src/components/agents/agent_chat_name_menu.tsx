@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useId, useMemo, useState} from 'react';
+import React, {useCallback, useId, useMemo, useState} from 'react';
 import {useIntl} from 'react-intl';
 import AccountMultipleOutlineIcon from '@mattermost/compass-icons/components/account-multiple-outline';
 import MessagePlusOutlineIcon from '@mattermost/compass-icons/components/message-plus-outline';
@@ -10,16 +10,14 @@ import PencilOutlineIcon from '@mattermost/compass-icons/components/pencil-outli
 import SettingsOutlineIcon from '@mattermost/compass-icons/components/settings-outline';
 import SyncIcon from '@mattermost/compass-icons/components/sync';
 
-import {Icon} from '@mattermost/compass-ui/components/icon';
-import {MenuItem} from '@mattermost/compass-ui/components/menu-item';
 import {PopoverMenu, PopoverMenuDivider, PopoverMenuGroup, PopoverMenuScroll} from '@mattermost/compass-ui/components/popover-menu';
-import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
-import {getProfilePictureUrl} from '@/client';
 import type {LLMBot} from '@/bots';
-import ComposerSubmenu from '@/components/agent_chat/composer_submenu';
-import {focusFirstItem, handleMenuNavigation} from '@/components/agent_chat/composer_menu_keyboard';
 import Dropdown from '@/components/dropdown';
+import {handleMenuNavigation} from '@/components/menu/menu_keyboard';
+import {AgentMenuItem, IconMenuItem} from '@/components/menu/menu_parts';
+import Submenu from '@/components/menu/submenu';
+import {useFocusMenuOnOpen} from '@/components/menu/use_focus_menu_on_open';
 import {useAgentThreads} from '@/hooks/use_agent_threads';
 import {useConversation} from '@/hooks/use_conversation';
 import {useConversationIdForThread} from '@/hooks/use_conversation_id_for_thread';
@@ -92,20 +90,7 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
     const {conversation} = useConversation(conversationId);
     const currentTitle = openThread?.title ?? conversation?.title ?? '';
 
-    // The Dropdown's focus manager moves focus in on mount; a reopen during the exit
-    // transition keeps it mounted, so move focus here too.
-    useEffect(() => {
-        if (!nameMenuOpen) {
-            return () => null;
-        }
-        const frame = requestAnimationFrame(() => {
-            const el = document.getElementById(nameMenuId);
-            if (el && !el.contains(document.activeElement)) {
-                focusFirstItem(el);
-            }
-        });
-        return () => cancelAnimationFrame(frame);
-    }, [nameMenuOpen, nameMenuId]);
+    useFocusMenuOnOpen(nameMenuOpen, nameMenuId);
 
     const hasChat = Boolean(rootId && conversationId);
 
@@ -158,7 +143,7 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                         <>
                             <PopoverMenuGroup>
                                 {switchable && (
-                                    <ComposerSubmenu
+                                    <Submenu
                                         label={agentsLabel}
                                         icon={newChatPicker ? <MessagePlusOutlineIcon/> : <SyncIcon/>}
                                         menuLabel={agentsLabel}
@@ -172,20 +157,9 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                                     // Picking the current agent switches nothing, but still starts a new chat.
                                                     const active = !newChatPicker && other.id === bot.id;
                                                     return (
-                                                        <MenuItem
+                                                        <AgentMenuItem
                                                             key={other.id}
-                                                            role='menuitem'
-                                                            label={other.displayName}
-                                                            leadingElement={true}
-                                                            leadingVisual={(
-                                                                <UserAvatar
-                                                                    src={getProfilePictureUrl(other.id, other.lastIconUpdate)}
-                                                                    alt=''
-                                                                    aria-hidden='true'
-                                                                    name={other.displayName}
-                                                                    size='20'
-                                                                />
-                                                            )}
+                                                            bot={other}
                                                             active={active}
                                                             trailingElement={active}
                                                             {...(active && {'aria-current': true})}
@@ -199,10 +173,10 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                                 })}
                                             </PopoverMenuGroup>
                                         </PopoverMenuScroll>
-                                    </ComposerSubmenu>
+                                    </Submenu>
                                 )}
                                 {chats.length > 0 && (
-                                    <ComposerSubmenu
+                                    <Submenu
                                         label={chatsLabel}
                                         icon={<MessageOutlineIcon/>}
                                         menuLabel={chatsLabel}
@@ -215,7 +189,7 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                                 {chats.map((thread) => {
                                                     const active = thread.root_post_id === rootId;
                                                     return (
-                                                        <ChatMenuItem
+                                                        <IconMenuItem
                                                             key={thread.id}
                                                             icon={<MessageOutlineIcon/>}
                                                             label={thread.title.trim() || newChatLabel}
@@ -232,7 +206,7 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                                 })}
                                             </PopoverMenuGroup>
                                         </PopoverMenuScroll>
-                                    </ComposerSubmenu>
+                                    </Submenu>
                                 )}
                             </PopoverMenuGroup>
                             <PopoverMenuDivider/>
@@ -242,13 +216,13 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                         <>
                             <PopoverMenuGroup>
                                 {!newChatPicker && (
-                                    <ChatMenuItem
+                                    <IconMenuItem
                                         icon={<MessagePlusOutlineIcon/>}
                                         label={newChatLabel}
                                         onClick={closing(onNewChat)}
                                     />
                                 )}
-                                <ChatMenuItem
+                                <IconMenuItem
                                     icon={<PencilOutlineIcon/>}
                                     label={intl.formatMessage({defaultMessage: 'Rename chat'})}
                                     disabled={!hasChat}
@@ -260,13 +234,13 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                     )}
                     <PopoverMenuGroup>
                         {onOpenSettings && (
-                            <ChatMenuItem
+                            <IconMenuItem
                                 icon={<SettingsOutlineIcon/>}
                                 label={intl.formatMessage({defaultMessage: 'Agent settings'})}
                                 onClick={closing(onOpenSettings)}
                             />
                         )}
-                        <ChatMenuItem
+                        <IconMenuItem
                             icon={<AccountMultipleOutlineIcon/>}
                             label={intl.formatMessage({defaultMessage: 'View all agents'})}
                             onClick={closing(onViewAll)}
@@ -278,20 +252,5 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
         </>
     );
 };
-
-// The prototype's MenuItem usage: menu semantics and a 16px leading icon.
-const ChatMenuItem = ({icon, ...props}: Omit<React.ComponentProps<typeof MenuItem>, 'leadingVisual'> & {icon: React.ReactNode}) => (
-    <MenuItem
-        role='menuitem'
-        leadingElement={true}
-        leadingVisual={(
-            <Icon
-                glyph={icon}
-                size='16'
-            />
-        )}
-        {...props}
-    />
-);
 
 export default AgentChatNameMenu;

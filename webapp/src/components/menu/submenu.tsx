@@ -11,9 +11,9 @@ import {PopoverMenu} from '@mattermost/compass-ui/components/popover-menu';
 
 import {useMenuTransition} from '@/hooks/use_menu_transition';
 
-import {focusFirstItem, handleMenuNavigation, isTextField} from './composer_menu_keyboard';
+import {focusFirstItem, handleMenuNavigation, isTextField} from './menu_keyboard';
 
-export interface ComposerSubmenuProps {
+export interface SubmenuProps {
 
     // The parent row.
     label: string;
@@ -26,7 +26,7 @@ export interface ComposerSubmenuProps {
     open: boolean;
 
     // Which way the child grows from the parent row: 'up' (default, for menus
-    // opening above their trigger, like the composer's) or 'down'.
+    // opening above their trigger) or 'down'.
     grow?: 'up' | 'down';
 
     // Keyboard opens move focus into the child menu; hover leaves it on the row.
@@ -49,14 +49,14 @@ const HOVER_CLOSE_DELAY_MS = 150;
 // leaves the row and the child menu; one opened by click or keyboard stays until closed. The child renders inside the parent menu's floating
 // element (not a second portal), so the parent's outside-click dismissal and
 // focus trap treat it as part of the menu.
-const ComposerSubmenu = ({label, icon, secondaryLabel, disabled, menuLabel, open, grow = 'up', focusOnOpen, onOpen, onClose, children, ...rest}: ComposerSubmenuProps) => {
-    const menuId = `composer-submenu-${useId().replace(/:/g, '')}`;
+const Submenu = ({label, icon, secondaryLabel, disabled, menuLabel, open, grow = 'up', focusOnOpen, onOpen, onClose, children, ...rest}: SubmenuProps) => {
+    const menuId = `submenu-${useId().replace(/:/g, '')}`;
     const rowRef = useRef<HTMLButtonElement>(null);
     const anchorRef = useRef<HTMLDivElement>(null);
     const {rendered, onExited} = useMenuTransition(open);
 
-    // Which side of the parent the child opens on: right and growing upward
-    // (the composer sits at the bottom), flipped where that leaves the viewport.
+    // Which side of the parent the child opens on: right and growing as `grow` says,
+    // flipped where that leaves the viewport.
     const [side, setSide] = useState<{x: 'right' | 'left'; y: 'up' | 'down'}>({x: 'right', y: grow});
     useLayoutEffect(() => {
         if (!open) {
@@ -237,4 +237,4 @@ const ChildMenu = styled(PopoverMenu)`
     }
 `;
 
-export default ComposerSubmenu;
+export default Submenu;

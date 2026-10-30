@@ -12,24 +12,25 @@ import {Icon} from '@mattermost/compass-ui/components/icon';
 import {PopoverMenu, PopoverMenuTitle} from '@mattermost/compass-ui/components/popover-menu';
 
 import {disconnectMCPOAuth, getUserMCPTools, refreshUserMCPTools, updateUserToolPreferences, type UserMCPServerInfo} from '@/client';
-import {EnabledMCPTool} from '@/bots';
+import type {EnabledMCPTool, LLMBot} from '@/bots';
 import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
 import {useMenuTransition} from '@/hooks/use_menu_transition';
 import {useIsLicensedFor} from '@/license';
 
-import {focusFirstItem, handleMenuNavigation} from '../agent_chat/composer_menu_keyboard';
-import {ErrorRow} from '../agent_chat/composer_menu_parts';
-import ToolProviderMenuBody, {ProviderRefreshButton} from '../agent_chat/tool_provider_menu_body';
-import Dropdown from '../dropdown';
+import Dropdown from '@/components/dropdown';
+import {handleMenuNavigation} from '@/components/menu/menu_keyboard';
+import {ErrorRow} from '@/components/menu/menu_parts';
+import {useFocusMenuOnOpen} from '@/components/menu/use_focus_menu_on_open';
+
+import ToolProviderMenuBody, {ProviderRefreshButton} from './tool_provider_menu_body';
+import {useToolPreferences, type ToolPreferences} from './use_tool_preferences';
 
 export type {UserMCPServerInfo};
 
 export type ToolProviderPopoverProps = {
-    disabledServers: string[];
-    onDisabledServersChange: (servers: string[]) => void;
-    preloadedServers?: UserMCPServerInfo[];
-    enabledMCPTools?: EnabledMCPTool[] | null;
-    autoEnableNewMCPTools?: boolean;
+
+    // The agent whose tool providers are shown (and whose agent change reloads the preferences).
+    bot: LLMBot;
 };
 
 // filterServersByEnabledTools filters the server list to only show servers
@@ -47,9 +48,10 @@ function filterServersByEnabledTools(
     return servers.filter((s) => allowedOrigins.has(s.serverOrigin));
 }
 
-export type UseToolProvidersArgs = ToolProviderPopoverProps;
-
 export interface ToolProviders {
+
+    // The user's saved preferences; providers can only be toggled once they are loaded.
+    prefs: ToolPreferences;
 
     // Servers the agent may use (see filterServersByEnabledTools).
     servers: UserMCPServerInfo[];
@@ -68,40 +70,15 @@ export interface ToolProviders {
     disconnect: (serverName: string) => Promise<boolean>;
 }
 
-// The disabled-provider list is one per-user preference, but several controls
-// hold a copy (the RHS title's and the Agents header's popovers).
-// A toggle in one is published here so every other mounted copy follows
-// without a reload. In memory only; the server stays the source of truth.
-type DisabledServersListener = (servers: string[], source: symbol) => void;
-const disabledServersListeners = new Set<DisabledServersListener>();
-
-export function publishDisabledServers(servers: string[], source: symbol) {
-    for (const listener of Array.from(disabledServersListeners)) {
-        listener(servers, source);
-    }
-}
-
-export function subscribeDisabledServers(listener: DisabledServersListener): () => void {
-    disabledServersListeners.add(listener);
-    return () => {
-        disabledServersListeners.delete(listener);
-    };
-}
-
 // The tool provider data and actions behind ToolProviderPopover.
-export function useToolProviders({disabledServers, onDisabledServersChange, preloadedServers, enabledMCPTools, autoEnableNewMCPTools}: UseToolProvidersArgs): ToolProviders {
+export function useToolProviders(bot: LLMBot): ToolProviders {
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
-    const [allServers, setAllServers] = useState<UserMCPServerInfo[]>(preloadedServers || []);
+    const prefs = useToolPreferences(bot.id);
+    const [allServers, setAllServers] = useState<UserMCPServerInfo[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(false);
 
-    useEffect(() => {
-        if (preloadedServers && preloadedServers.length > 0) {
-            setAllServers(preloadedServers);
-        }
-    }, [preloadedServers]);
-
-    const servers = filterServersByEnabledTools(allServers, enabledMCPTools, autoEnableNewMCPTools);
+    const servers = filterServersByEnabledTools(allServers, bot.enabledMCPTools, bot.autoEnableNewMCPTools);
 
     // Only the latest fetch may write, so a slow earlier response never
     // overwrites a newer list.
@@ -134,36 +111,25 @@ export function useToolProviders({disabledServers, onDisabledServersChange, prel
         fetchServers({showLoading: false});
     }, [fetchServers]));
 
-    // Other copies' changes land here; this copy's own are not echoed back.
-    const [source] = useState(() => Symbol('tool-providers'));
-    const onChangeRef = useRef(onDisabledServersChange);
-    onChangeRef.current = onDisabledServersChange;
-    useEffect(() => subscribeDisabledServers((servers, from) => {
-        if (from !== source) {
-            onChangeRef.current(servers);
-        }
-    }), [source]);
-
+    // The saved list is replaced as a whole, so a toggle before it loaded would overwrite it with
+    // just that one provider: refused until the preferences are ready.
+    const {status, disabledServers, setDisabledServers} = prefs;
     const toggle = useCallback(async (serverOrigin: string, enabled: boolean) => {
-        let updatedDisabled: string[];
-        if (enabled) {
-            updatedDisabled = disabledServers.filter((s) => s !== serverOrigin);
-        } else {
-            updatedDisabled = [...disabledServers, serverOrigin];
+        if (status !== 'ready') {
+            return false;
         }
-        onDisabledServersChange(updatedDisabled);
-        publishDisabledServers(updatedDisabled, source);
+        const updatedDisabled = enabled ? disabledServers.filter((s) => s !== serverOrigin) : [...disabledServers, serverOrigin];
+        setDisabledServers(updatedDisabled);
 
         try {
             await updateUserToolPreferences({disabled_servers: updatedDisabled});
             return true;
         } catch {
             // Revert on error
-            onDisabledServersChange(disabledServers);
-            publishDisabledServers(disabledServers, source);
+            setDisabledServers(disabledServers);
             return false;
         }
-    }, [disabledServers, onDisabledServersChange, source]);
+    }, [status, disabledServers, setDisabledServers]);
 
     const connect = useCallback((authURL: string) => {
         window.open(authURL, '_blank', 'noopener,noreferrer');
@@ -181,21 +147,21 @@ export function useToolProviders({disabledServers, onDisabledServersChange, prel
         }
     }, [fetchServers]);
 
-    return {servers, loading, error, remoteMcpLicensed, fetchServers, toggle, connect, disconnect};
+    return {prefs, servers, loading, error, remoteMcpLicensed, fetchServers, toggle, connect, disconnect};
 }
 
-// The Tools dropdown of the RHS header: a compass Button trigger opening a menu of the tool
+// The Tools dropdown of an agent chat's title: a compass Button trigger opening a menu of the tool
 // providers.
-const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloadedServers, enabledMCPTools, autoEnableNewMCPTools}: ToolProviderPopoverProps) => {
+const ToolProviderPopover = ({bot}: ToolProviderPopoverProps) => {
     const intl = useIntl();
-    const providers = useToolProviders({
-        disabledServers,
-        onDisabledServersChange,
-        preloadedServers,
-        enabledMCPTools,
-        autoEnableNewMCPTools,
-    });
+    const providers = useToolProviders(bot);
     const {fetchServers} = providers;
+
+    // Loaded quietly on mount, so the menu usually opens on the list (opening it fetches again).
+    useEffect(() => {
+        fetchServers({showLoading: false});
+    }, [fetchServers]);
+
     const [open, setOpen] = useState(false);
     const menu = useMenuTransition(open);
     const [errorMessage, setErrorMessage] = useState('');
@@ -209,20 +175,7 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
         }
     }, [fetchServers]);
 
-    // The Dropdown's focus manager moves focus in on mount; a reopen during the exit
-    // transition keeps it mounted, so move focus here too.
-    useEffect(() => {
-        if (!open) {
-            return () => null;
-        }
-        const frame = requestAnimationFrame(() => {
-            const el = document.getElementById(menuId);
-            if (el && !el.contains(document.activeElement)) {
-                focusFirstItem(el);
-            }
-        });
-        return () => cancelAnimationFrame(frame);
-    }, [open, menuId]);
+    useFocusMenuOnOpen(open, menuId);
 
     const title = intl.formatMessage({defaultMessage: 'Tool Providers'});
     return (
@@ -260,12 +213,8 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
                 </TitleRow>
                 {errorMessage && <ErrorRow role='alert'>{errorMessage}</ErrorRow>}
                 <ToolProviderMenuBody
-                    status='ready'
-                    onRetry={fetchServers}
-                    disabledServers={disabledServers}
                     providers={providers}
                     onError={setErrorMessage}
-                    refresh={false}
                 />
             </PopoverMenu>
         </Dropdown>

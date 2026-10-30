@@ -3,14 +3,14 @@
 
 import {act, renderHook, waitFor} from '@testing-library/react';
 
-import {resetToolPreferences, useComposerToolPreferences} from './use_composer_tool_preferences';
+import {resetToolPreferences, useToolPreferences} from './use_tool_preferences';
 
 const mockGetPrefs = jest.fn();
 jest.mock('@/client', () => ({
     getUserToolPreferences: () => mockGetPrefs(),
 }));
 
-describe('useComposerToolPreferences', () => {
+describe('useToolPreferences', () => {
     beforeEach(() => {
         resetToolPreferences();
         mockGetPrefs.mockReset();
@@ -23,18 +23,18 @@ describe('useComposerToolPreferences', () => {
 
     test('controls mounted together share one load and one copy', async () => {
         mockGetPrefs.mockResolvedValue({disabled_servers: ['jira']});
-        const header = renderHook(() => useComposerToolPreferences('a'));
-        const composer = renderHook(() => useComposerToolPreferences('a'));
+        const header = renderHook(() => useToolPreferences('a'));
+        const rhs = renderHook(() => useToolPreferences('a'));
         await waitFor(() => expect(header.result.current.status).toBe('ready'));
         expect(mockGetPrefs).toHaveBeenCalledTimes(1);
 
         act(() => header.result.current.setDisabledServers(['github']));
-        expect(composer.result.current.disabledServers).toEqual(['github']);
+        expect(rhs.result.current.disabledServers).toEqual(['github']);
     });
 
     test('reloads when the agent changes', async () => {
         mockGetPrefs.mockResolvedValueOnce({disabled_servers: []}).mockResolvedValueOnce({disabled_servers: ['jira']});
-        const {result, rerender} = renderHook(({agentId}) => useComposerToolPreferences(agentId), {initialProps: {agentId: 'a'}});
+        const {result, rerender} = renderHook(({agentId}) => useToolPreferences(agentId), {initialProps: {agentId: 'a'}});
         await waitFor(() => expect(result.current.status).toBe('ready'));
 
         rerender({agentId: 'b'});
@@ -44,7 +44,7 @@ describe('useComposerToolPreferences', () => {
 
     test('a failed reload keeps the loaded preferences instead of an error', async () => {
         mockGetPrefs.mockResolvedValueOnce({disabled_servers: ['jira']}).mockRejectedValueOnce(new Error('down'));
-        const {result, rerender} = renderHook(({agentId}) => useComposerToolPreferences(agentId), {initialProps: {agentId: 'a'}});
+        const {result, rerender} = renderHook(({agentId}) => useToolPreferences(agentId), {initialProps: {agentId: 'a'}});
         await waitFor(() => expect(result.current.status).toBe('ready'));
 
         rerender({agentId: 'b'});

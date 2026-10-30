@@ -8,7 +8,7 @@ import {act, fireEvent, render, screen, waitFor, within} from '@testing-library/
 
 import type {LLMBot} from '@/bots';
 import {clearConversationCache} from '@/hooks/use_conversation';
-import {resetToolPreferences} from '@/components/agent_chat/use_composer_tool_preferences';
+import {resetToolPreferences} from '@/components/tool_providers/use_tool_preferences';
 import manifest from '@/manifest';
 import {aiThreads} from '@/redux';
 

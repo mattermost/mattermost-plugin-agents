@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useState} from 'react';
+import React from 'react';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 import PlusIcon from '@mattermost/compass-icons/components/plus';
@@ -11,10 +11,9 @@ import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
-import {getProfilePictureUrl, getUserMCPTools} from '@/client';
+import {getProfilePictureUrl} from '@/client';
 import type {LLMBot} from '@/bots';
-import ToolProviderPopover, {type UserMCPServerInfo} from '@/components/rhs/tool_provider_popover';
-import {useComposerToolPreferences} from '@/components/agent_chat/use_composer_tool_preferences';
+import ToolProviderPopover from '@/components/tool_providers/tool_provider_popover';
 
 import AgentChatNameMenu from './agent_chat_name_menu';
 import ChatTitleDropdown from './chat_title_dropdown';
@@ -43,14 +42,6 @@ interface AgentChatHeaderProps {
 const AgentChatHeader = ({bot, rootId, inThread = Boolean(rootId), onOpenSettings, onNewChat, bots}: AgentChatHeaderProps) => {
     const intl = useIntl();
     const {toChat, toAll} = useAgentsRoute();
-
-    // Tool providers: fed exactly as the RHS feeds its popover, from the shared preferences
-    // (reloaded when the agent changes).
-    const toolPrefs = useComposerToolPreferences(bot.id);
-    const [preloadedServers, setPreloadedServers] = useState<UserMCPServerInfo[]>([]);
-    useEffect(() => {
-        getUserMCPTools().then((response) => setPreloadedServers(response.servers)).catch(() => null);
-    }, []);
 
     const newChatLabel = intl.formatMessage({defaultMessage: 'New chat'});
 
@@ -98,13 +89,7 @@ const AgentChatHeader = ({bot, rootId, inThread = Boolean(rootId), onOpenSetting
             </Title>
             <Actions>
                 {showTools && (
-                    <ToolProviderPopover
-                        disabledServers={toolPrefs.disabledServers}
-                        onDisabledServersChange={toolPrefs.setDisabledServers}
-                        preloadedServers={preloadedServers}
-                        enabledMCPTools={bot.enabledMCPTools}
-                        autoEnableNewMCPTools={bot.autoEnableNewMCPTools}
-                    />
+                    <ToolProviderPopover bot={bot}/>
                 )}
                 <WithTooltip title={inThread ? newChatLabel : intl.formatMessage({defaultMessage: 'You\'re already in a new chat'})}>
                     <TooltipTrigger>

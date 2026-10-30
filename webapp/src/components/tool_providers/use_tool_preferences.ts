@@ -1,22 +1,24 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {useCallback, useEffect, useSyncExternalStore} from 'react';
+import {useEffect, useSyncExternalStore} from 'react';
 
 import {getUserToolPreferences} from '@/client';
 
 export type ToolPreferencesStatus = 'loading' | 'ready' | 'error';
 
-export interface ComposerToolPreferences {
+export interface ToolPreferences {
     status: ToolPreferencesStatus;
     disabledServers: string[];
     setDisabledServers: (servers: string[]) => void;
+
+    // Loads them again (the error state's retry).
     reload: () => void;
 }
 
-// The user's disabled tool providers, shared by every control that shows them: the RHS title's
-// tools popover and the Agents chat header's. One copy, so a toggle in one shows in the other, and
-// one load at a time however many are mounted.
+// The user's disabled tool providers, shared by every control that shows them (each chat title's
+// tools popover). One copy, so a toggle in one shows in the other, and one load at a time however
+// many are mounted.
 interface Snapshot {
     status: ToolPreferencesStatus;
     disabledServers: string[];
@@ -43,7 +45,7 @@ const subscribe = (listener: () => void) => {
 };
 const getSnapshot = () => snapshot;
 
-// A toggle here, or one published by another control, supersedes a load still in flight, so its
+// A toggle supersedes a load still in flight, so its
 // older response cannot undo the change.
 const setDisabledServers = (servers: string[]) => {
     generation++;
@@ -92,16 +94,16 @@ export const resetToolPreferences = () => {
 
 // The shared preferences, (re)loaded when a control mounts and whenever its agent changes (the
 // agent decides which providers the control shows).
-export function useComposerToolPreferences(agentId = ''): ComposerToolPreferences {
+const reload = () => {
+    load();
+};
+
+export function useToolPreferences(agentId = ''): ToolPreferences {
     const current = useSyncExternalStore(subscribe, getSnapshot);
 
     useEffect(() => {
         load();
     }, [agentId]);
-
-    const reload = useCallback(() => {
-        load();
-    }, []);
 
     return {status: current.status, disabledServers: current.disabledServers, setDisabledServers, reload};
 }
