@@ -116,6 +116,10 @@ func FetchModelsForService(ctx context.Context, svc llm.ServiceConfig) ([]llm.Mo
 	if svc.Type == llm.ServiceTypeNorth {
 		return fetchNorthModels(ctx, svc.APIURL, svc.APIKey)
 	}
+	if svc.Type == llm.ServiceTypeGDCGemini {
+		// GDC lists models only over gRPC; admins enter the model name.
+		return nil, fmt.Errorf("model fetching not supported for service type: %s", svc.Type)
+	}
 
 	provider, err := MapServiceTypeToProvider(svc.Type)
 	if err != nil {

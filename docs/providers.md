@@ -17,6 +17,7 @@ The Mattermost Agents plugin currently supports these LLM providers:
 - Azure OpenAI
 - Google Gemini
 - Google Vertex AI
+- Gemini on Google Distributed Cloud air-gapped (preview)
 
 ## General Configuration Concepts
 
@@ -417,3 +418,45 @@ Native Google Tools:
 - **Requests fail with `PERMISSION_DENIED`.** Confirm the service account has `roles/aiplatform.user` on the project, and that the Vertex AI API is enabled. For ADC deployments, confirm the bound principal (workload identity, instance SA, etc.) has the same role.
 - **Model not found in region.** Vertex model IDs are region-scoped. Check the model is available in your **GCP Region**, or switch to a region that has it.
 - **Web search returns no citations.** Confirm **Web Search** is checked under **Native Google Tools** for the agent, verify the selected model supports grounding, and make sure your Google Cloud project meets the current Vertex AI grounding prerequisites.
+
+## Gemini on Google Distributed Cloud (preview)
+
+Use this service type for Gemini models hosted inside a Google Distributed Cloud (GDC) air-gapped organization. Requests go to the organization's inference gateway and authenticate with a GDC service account. Mattermost exchanges the account's key for short-lived access tokens and renews them before they expire, so there is no static API key to rotate.
+
+> This integration is a preview and has not yet been validated against a GDC deployment.
+
+### Prerequisites
+
+Run these steps as a GDC Application Operator, with `gdcloud` signed in to the organization:
+
+1. Create a service account in the project Mattermost runs in:
+   `gdcloud iam service-accounts create mm-sa-gemini --project=PROJECT`
+2. Grant it access to the Gemini endpoint:
+   `gdcloud iam service-accounts add-iam-policy-binding --project=PROJECT --iam-account=mm-sa-gemini --role=IAMRole/ai-large-gemini-developer`
+3. Create a key:
+   `gdcloud iam service-accounts keys create ./mm-sa-credentials.json --project=PROJECT --iam-account=mm-sa-gemini --ca-cert-path=./org-ca.crt`
+   The key's `token_uri` must point at the zonal service identity endpoint (for example `https://service-identity...ORG.ZONE.google.gdch.test/...`). If the key was created with the organization-level host, correct it before pasting the key into Mattermost.
+4. From the GDC console (**Vertex AI > Pre-trained APIs**), note the Gemini endpoint, the zone, and the model name.
+
+### Configuration Options
+
+| Setting | Required | Description |
+|---------|----------|-------------|
+| **Inference gateway URL** | Yes | The Gemini endpoint, for example `https://inference-gateway-aics-system.aics.ORG.ZONE.google.gdch.test`. Tokens are requested for this URL as their audience. |
+| **GDC project** | Yes | The project Mattermost is deployed in. Sent as `x-goog-user-project: projects/PROJECT`. |
+| **GDC zone** | Yes | The zone serving Gemini, for example `us-east92-a`. |
+| **API** | Yes | **Gemini GenerateContent** (default) or **OpenAI-compatible Chat Completions**. Google documents Chat Completions for GDC; switch to it if GenerateContent requests return `404`. |
+| **Service account key JSON** | Yes | The full `gdch_service_account` key file. The key's `ca_cert_path` is ignored; use **CA certificate** instead. |
+| **CA certificate** | No | PEM certificate of the organization CA, trusted for the token endpoint and the gateway in addition to the server's system roots. Leave blank if the Mattermost server already trusts it. |
+| **Default Model** | Yes | The Gemini model name, for example `gemini-3.5-flash`. Model listing is not available for this service type. |
+
+Requests use these endpoints on the gateway:
+
+- GenerateContent: `/v1/projects/PROJECT/locations/ZONE/publishers/google/models/MODEL:streamGenerateContent`
+- Chat Completions: `/v1/projects/PROJECT/locations/ZONE/chat/completions`
+
+### Capabilities and limitations
+
+- Reasoning settings apply in GenerateContent mode, the same way as for Google Gemini.
+- Provider-native tools, including Google Search grounding, are not available. A GDC service can't be a fallback for an agent that has native tools enabled.
+- Embeddings and transcription are not supported.

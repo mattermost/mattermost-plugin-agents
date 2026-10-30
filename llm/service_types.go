@@ -15,7 +15,20 @@ const (
 	ServiceTypeGemini           = "gemini"
 	ServiceTypeVertex           = "vertex"
 	ServiceTypeNorth            = "north"
+	ServiceTypeGDCGemini        = "gdcgemini"
 	ServiceTypeLoadTestMock     = "loadtest_mock"
+)
+
+// GDC Gemini API modes stored in ServiceConfig.GDCAPIMode. Google documents
+// only Chat Completions for air-gapped GDC, so both are offered until the
+// native route is confirmed.
+const (
+	// GDCAPIModeGenerateContent uses the native Gemini GenerateContent API.
+	// The empty value means this mode.
+	GDCAPIModeGenerateContent = "generate_content"
+	// GDCAPIModeChatCompletions uses the gateway's OpenAI-compatible Chat
+	// Completions API.
+	GDCAPIModeChatCompletions = "chat_completions"
 )
 
 // Native (provider-executed) tool ids stored in BotConfig.EnabledNativeTools.

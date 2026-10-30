@@ -93,7 +93,8 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
         props.service.type === 'openai' ||
         props.service.type === 'north' ||
         (['openaicompatible', 'azure'].includes(props.service.type) && props.service.useResponsesAPI);
-    const isGoogle = props.service.type === 'gemini' || props.service.type === 'vertex';
+    const isGoogle = props.service.type === 'gemini' || props.service.type === 'vertex' ||
+        (props.service.type === 'gdcgemini' && props.service.gdcAPIMode !== 'chat_completions');
 
     if (!isAnthropic && !isOpenAIWithResponses && !isGoogle) {
         return null;

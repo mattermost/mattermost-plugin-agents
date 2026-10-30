@@ -609,6 +609,66 @@ func TestIsValidService(t *testing.T) {
 			want: false,
 		},
 		{
+			name: "Valid GDC Gemini service",
+			service: ServiceConfig{
+				ID:                   "service-12",
+				Type:                 ServiceTypeGDCGemini,
+				APIURL:               "https://inference-gateway.example.gdch.test",
+				Region:               "us-east92-a",
+				GDCProjectID:         "mc-mm-510014",
+				GDCServiceAccountKey: `{"type":"gdch_service_account"}`,
+			},
+			want: true,
+		},
+		{
+			name: "Valid GDC Gemini service using Chat Completions",
+			service: ServiceConfig{
+				ID:                   "service-12",
+				Type:                 ServiceTypeGDCGemini,
+				APIURL:               "https://inference-gateway.example.gdch.test",
+				Region:               "us-east92-a",
+				GDCProjectID:         "mc-mm-510014",
+				GDCServiceAccountKey: `{"type":"gdch_service_account"}`,
+				GDCAPIMode:           GDCAPIModeChatCompletions,
+			},
+			want: true,
+		},
+		{
+			name: "GDC Gemini service missing service account key",
+			service: ServiceConfig{
+				ID:           "service-12",
+				Type:         ServiceTypeGDCGemini,
+				APIURL:       "https://inference-gateway.example.gdch.test",
+				Region:       "us-east92-a",
+				GDCProjectID: "mc-mm-510014",
+			},
+			want: false,
+		},
+		{
+			name: "GDC Gemini service missing zone",
+			service: ServiceConfig{
+				ID:                   "service-12",
+				Type:                 ServiceTypeGDCGemini,
+				APIURL:               "https://inference-gateway.example.gdch.test",
+				GDCProjectID:         "mc-mm-510014",
+				GDCServiceAccountKey: `{"type":"gdch_service_account"}`,
+			},
+			want: false,
+		},
+		{
+			name: "GDC Gemini service with unknown API mode",
+			service: ServiceConfig{
+				ID:                   "service-12",
+				Type:                 ServiceTypeGDCGemini,
+				APIURL:               "https://inference-gateway.example.gdch.test",
+				Region:               "us-east92-a",
+				GDCProjectID:         "mc-mm-510014",
+				GDCServiceAccountKey: `{"type":"gdch_service_account"}`,
+				GDCAPIMode:           "responses",
+			},
+			want: false,
+		},
+		{
 			name: "Service with empty ID",
 			service: ServiceConfig{
 				ID:     "", // bad
