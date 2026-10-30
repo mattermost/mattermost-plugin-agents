@@ -236,6 +236,7 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		bridge bool // authenticate as a plugin instead of a user
 	}{
 		{event: AuditEventSaveConfig, method: http.MethodPut, path: "/admin/config"},
+		{event: AuditEventSaveSettingsAccess, method: http.MethodPut, path: "/admin/settings-access"},
 		{event: AuditEventReindexPosts, method: http.MethodPost, path: "/admin/reindex"},
 		{event: AuditEventCancelReindexJob, method: http.MethodPost, path: "/admin/reindex/cancel"},
 		{event: AuditEventCatchUpReindex, method: http.MethodPost, path: "/admin/reindex/catchup"},
