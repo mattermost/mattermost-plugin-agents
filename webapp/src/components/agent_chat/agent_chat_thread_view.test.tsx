@@ -8,6 +8,11 @@ import {act, fireEvent, render, screen} from '@testing-library/react';
 
 import AgentChatThreadView from './agent_chat_thread_view';
 
+const mockGetProfilesByIds = jest.fn();
+jest.mock('@/client', () => ({
+    getProfilesByIds: (ids: string[]) => mockGetProfilesByIds(ids),
+}));
+
 const mockThreadViewerProps = jest.fn();
 jest.mock('@/mm_webapp', () => {
     const ReactActual = jest.requireActual<typeof import('react')>('react');
@@ -135,5 +140,35 @@ describe('AgentChatThreadView', () => {
 
         expect(screen.getByTestId('thread-pane').contains(screen.getByTestId('thread-viewer'))).toBe(true);
         expect(mockThreadViewerProps).toHaveBeenLastCalledWith(expect.objectContaining({rootPostId: 'root1', isThreadView, inputPlaceholder: placeholder}));
+    });
+
+    test('loads the profiles of thread posters the store lacks, for the host composer\'s @mention list', async () => {
+        mockGetProfilesByIds.mockResolvedValue([{id: 'bot1', username: 'matty'}]);
+        const actions: Array<{type: string; data?: unknown}> = [];
+        const threadStore = createStore((state: any = {
+            entities: {
+                users: {currentUserId: 'me', profiles: {me: {id: 'me'}}},
+                posts: {posts: {root1: {id: 'root1', user_id: 'me'}, reply1: {id: 'reply1', user_id: 'bot1'}}, postsInThread: {root1: ['reply1']}},
+            },
+        }, action: {type: string; data?: unknown}) => {
+            actions.push(action);
+            return state;
+        });
+        render(
+            <Provider store={threadStore}>
+                <AgentChatThreadView
+                    channelId='dm1'
+                    rootId='root1'
+                    agentName='Matty'
+                    layout='panel'
+                    isThreadView={false}
+                />
+            </Provider>,
+        );
+        await act(async () => {
+            await Promise.resolve();
+        });
+        expect(mockGetProfilesByIds).toHaveBeenCalledWith(['bot1']);
+        expect(actions).toContainEqual({type: 'RECEIVED_PROFILES', data: [{id: 'bot1', username: 'matty'}]});
     });
 });

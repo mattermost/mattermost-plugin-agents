@@ -9,6 +9,7 @@ import {ThreadViewer as UnstyledThreadViewer} from '@/mm_webapp';
 
 import JumpToLatest from './jump_to_latest';
 import {useThreadGenerating} from './use_thread_generating';
+import {useThreadProfiles} from './use_thread_profiles';
 import {useThreadScroll} from './use_thread_scroll';
 import {AGENT_CHAT_SURFACE, AgentChatSurfaceContext} from './agent_chat_surface_context';
 import {CHAT_CONTENT_MAX_WIDTH, hostThreadChatStyles} from './agent_chat_host_styles';
@@ -50,6 +51,9 @@ const AgentChatThreadView = ({channelId, rootId, agentName, layout, isThreadView
     const viewerRef = useRef<HTMLDivElement>(null);
     const {scrolledUp, scrollToBottom, bottomInset} = useThreadScroll(viewerRef);
     const generating = useThreadGenerating(channelId, rootId) !== null;
+
+    // The host reply composer's @mention list needs the posters' profiles.
+    useThreadProfiles(rootId);
 
     if (!ThreadViewer) {
         return null;
