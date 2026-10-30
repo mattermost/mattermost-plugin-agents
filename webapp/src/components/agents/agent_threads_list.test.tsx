@@ -61,6 +61,7 @@ const renderListResult = (props: Partial<React.ComponentProps<typeof AgentThread
         onNewChat: jest.fn(),
         onRetry: jest.fn(),
         startRename: jest.fn(),
+        startArchive: jest.fn(),
     };
     const result = render(
         <IntlProvider
@@ -75,7 +76,18 @@ const renderListResult = (props: Partial<React.ComponentProps<typeof AgentThread
                 onSelectThread={handlers.onSelectThread}
                 onNewChat={handlers.onNewChat}
                 onRetry={handlers.onRetry}
-                chatActions={{startRename: handlers.startRename, renameTarget: null, submitRename: jest.fn(), closeRename: jest.fn()}}
+                chatActions={{
+                    startRename: handlers.startRename,
+                    renameTarget: null,
+                    submitRename: jest.fn(),
+                    closeRename: jest.fn(),
+                    startArchive: handlers.startArchive,
+                    archiveTarget: null,
+                    archiving: false,
+                    archiveFailed: false,
+                    confirmArchive: jest.fn(),
+                    closeArchive: jest.fn(),
+                }}
                 {...props}
             />
         </IntlProvider>,
@@ -277,6 +289,31 @@ describe('AgentThreadsList', () => {
         fireEvent.click(await screen.findByText('Rename chat'));
 
         expect(h.startRename).toHaveBeenCalledWith({conversationId: '1', title: 'First chat'});
+    });
+
+    test.each([
+        {name: 'a titled chat', row: 'First chat', id: '1', title: 'First chat'},
+        {name: 'a placeholder "New chat" row', row: 'New chat', id: '2', title: '   '},
+    ])('Archive chat starts archiving $name', async ({row, id, title}) => {
+        const h = renderList();
+        fireEvent.click(screen.getByRole('button', {name: `Actions for ${row}`}));
+        fireEvent.click(await screen.findByText('Archive chat'));
+
+        expect(h.startArchive).toHaveBeenCalledTimes(1);
+        expect(h.startArchive.mock.calls[0][0]).toEqual({conversationId: id, title});
+
+        // Not the open chat: nothing to leave.
+        expect(h.startArchive.mock.calls[0][1]).toBeFalsy();
+    });
+
+    test('archiving the open chat lands on a new chat with its agent', async () => {
+        const h = renderList({activeBotId: 'a', activeRootId: 'root_1'});
+        fireEvent.click(screen.getByRole('button', {name: 'Actions for First chat'}));
+        fireEvent.click(await screen.findByText('Archive chat'));
+
+        expect(h.startArchive).toHaveBeenCalledWith({conversationId: '1', title: 'First chat'}, expect.any(Function));
+        h.startArchive.mock.calls[0][1]();
+        expect(h.onNewChat).toHaveBeenCalledWith('a');
     });
 
     test('clicking a collapsed agent row opens it and expands its chats', () => {

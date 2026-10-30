@@ -8,13 +8,15 @@ import type {Dispatch, UnknownAction} from 'redux';
 import {GlobalState} from '@mattermost/types/store';
 
 import {isCurrentUsersAgentPost} from '@/agent_posts';
-import {getAIThreads, renameConversation} from '@/client';
+import {archiveConversation, getAIThreads, renameConversation} from '@/client';
 import type {LLMBot} from '@/bots';
 import manifest from '@/manifest';
 import {
     AIThreadsFailed,
     AIThreadsReceived,
     AIThreadsRequested,
+    AIThreadRemoved,
+    AIThreadRestored,
     AIThreadTitleSet,
     initialAIThreadsState,
     type AIThreadsState,
@@ -95,19 +97,46 @@ export function refreshAIThreadsIfInUse(store: ThreadsStore): Promise<void> {
     return fetchAIThreads(store.dispatch);
 }
 
-// Shows a title the server already has. A fetch still in flight may predate it, so a fresh one
-// supersedes it.
-function applyTitle(store: ThreadsStore, conversationId: string, title: string) {
-    store.dispatch({type: AIThreadTitleSet, conversationId, title});
+// After a change the server already has (a title, an archive), a fetch still in flight may
+// predate it, so a fresh one supersedes it.
+function supersedeInFlightFetch(store: ThreadsStore) {
     if (selectAIThreadsState(store.getState()).loading) {
         fetchAIThreads(store.dispatch);
     }
+}
+
+function applyTitle(store: ThreadsStore, conversationId: string, title: string) {
+    store.dispatch({type: AIThreadTitleSet, conversationId, title});
+    supersedeInFlightFetch(store);
+}
+
+function applyRemoval(store: ThreadsStore, conversationId: string) {
+    store.dispatch({type: AIThreadRemoved, conversationId});
+    supersedeInFlightFetch(store);
 }
 
 // Renames a chat; the list shows the new title once the server has it. A failed rename rejects.
 export async function renameAIThread(store: ThreadsStore, conversationId: string, title: string): Promise<void> {
     await renameConversation(conversationId, title);
     applyTitle(store, conversationId, title);
+}
+
+// Archives a chat, taking it out of the list right away. A failed archive puts it back where it
+// was and rejects.
+export async function archiveAIThread(store: ThreadsStore, conversationId: string): Promise<void> {
+    const threads = selectAIThreads(store.getState()) ?? [];
+    const index = threads.findIndex((t) => t.id === conversationId);
+    const previous = index >= 0 ? threads[index] : null;
+    store.dispatch({type: AIThreadRemoved, conversationId});
+    try {
+        await archiveConversation(conversationId);
+    } catch (e) {
+        if (previous) {
+            store.dispatch({type: AIThreadRestored, thread: previous, index});
+        }
+        throw e;
+    }
+    supersedeInFlightFetch(store);
 }
 
 // Refetches after a burst of events settles, so a busy stream of replies costs one request.
@@ -118,8 +147,8 @@ export interface AgentThreadsSync {
     // custom_mattermost-ai_postupdate.
     handlePostUpdate: (msg: PluginWebSocketMessage<PostUpdateWebsocketMessage>) => void;
 
-    // custom_mattermost-ai_conversation_updated: a rename or a generated title.
-    handleConversationUpdated: (data: {conversation_id?: string; title?: string}) => void;
+    // custom_mattermost-ai_conversation_updated: a rename, a generated title, or an archive.
+    handleConversationUpdated: (data: {conversation_id?: string; title?: string; archived?: boolean}) => void;
 
     // The websocket reconnected, so events may have been missed.
     handleReconnect: () => void;
@@ -150,7 +179,17 @@ export function createAgentThreadsSync(store: {dispatch: Dispatch<UnknownAction>
         },
         handleConversationUpdated: (data) => {
             const conversationId = data?.conversation_id;
-            if (!conversationId || typeof data.title !== 'string') {
+            if (!conversationId) {
+                return;
+            }
+
+            // Archived here or in another window: a reply in it restores it, and the finished
+            // turn's refetch brings it back.
+            if (data.archived === true) {
+                applyRemoval(store, conversationId);
+                return;
+            }
+            if (typeof data.title !== 'string') {
                 return;
             }
             applyTitle(store, conversationId, data.title);
