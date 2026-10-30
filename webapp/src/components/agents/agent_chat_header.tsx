@@ -11,9 +11,10 @@ import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
-import {getProfilePictureUrl, getUserMCPTools, getUserToolPreferences} from '@/client';
+import {getProfilePictureUrl, getUserMCPTools} from '@/client';
 import type {LLMBot} from '@/bots';
 import ToolProviderPopover, {type UserMCPServerInfo} from '@/components/rhs/tool_provider_popover';
+import {useComposerToolPreferences} from '@/components/agent_chat/use_composer_tool_preferences';
 
 import AgentChatNameMenu from './agent_chat_name_menu';
 import ChatTitleDropdown from './chat_title_dropdown';
@@ -43,11 +44,11 @@ const AgentChatHeader = ({bot, rootId, inThread = Boolean(rootId), onOpenSetting
     const intl = useIntl();
     const {toChat, toAll} = useAgentsRoute();
 
-    // Tool providers: fed exactly as the RHS feeds its popover.
-    const [disabledServers, setDisabledServers] = useState<string[]>([]);
+    // Tool providers: fed exactly as the RHS feeds its popover, from the shared preferences
+    // (reloaded when the agent changes).
+    const toolPrefs = useComposerToolPreferences(bot.id);
     const [preloadedServers, setPreloadedServers] = useState<UserMCPServerInfo[]>([]);
     useEffect(() => {
-        getUserToolPreferences().then((prefs) => setDisabledServers(prefs.disabled_servers || [])).catch(() => null);
         getUserMCPTools().then((response) => setPreloadedServers(response.servers)).catch(() => null);
     }, []);
 
@@ -98,8 +99,8 @@ const AgentChatHeader = ({bot, rootId, inThread = Boolean(rootId), onOpenSetting
             <Actions>
                 {showTools && (
                     <ToolProviderPopover
-                        disabledServers={disabledServers}
-                        onDisabledServersChange={setDisabledServers}
+                        disabledServers={toolPrefs.disabledServers}
+                        onDisabledServersChange={toolPrefs.setDisabledServers}
                         preloadedServers={preloadedServers}
                         enabledMCPTools={bot.enabledMCPTools}
                         autoEnableNewMCPTools={bot.autoEnableNewMCPTools}

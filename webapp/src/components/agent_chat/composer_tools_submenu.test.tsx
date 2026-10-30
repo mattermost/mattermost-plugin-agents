@@ -7,6 +7,7 @@ import type {UserMCPServerInfo} from '@/client';
 import {publishDisabledServers} from '@/components/rhs/tool_provider_popover';
 
 import {bot, openSubmenu, renderMenu} from './composer_plus_menu_test_harness';
+import {resetToolPreferences} from './use_composer_tool_preferences';
 
 const mockClient = {
     getUserToolPreferences: jest.fn(),
@@ -60,6 +61,7 @@ const github = server('GitHub');
 const jira = server('Jira');
 
 beforeEach(() => {
+    resetToolPreferences();
     Object.values(mockClient).forEach((fn) => fn.mockReset());
     mockLicensed.mockReturnValue(true);
     mockClient.getUserToolPreferences.mockResolvedValue({disabled_servers: [jira.serverOrigin]});

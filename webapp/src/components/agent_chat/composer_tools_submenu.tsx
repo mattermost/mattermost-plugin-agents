@@ -31,7 +31,7 @@ interface Props {
 // useToolProviders data and actions.
 const ComposerToolsSubmenu = ({bot, open, focusOnOpen, onOpen, onClose, onError}: Props) => {
     const intl = useIntl();
-    const prefs = useComposerToolPreferences();
+    const prefs = useComposerToolPreferences(bot.id);
     const providers = useToolProviders({
         disabledServers: prefs.disabledServers,
         onDisabledServersChange: prefs.setDisabledServers,
