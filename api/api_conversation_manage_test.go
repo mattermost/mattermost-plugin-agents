@@ -14,10 +14,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -181,6 +183,21 @@ func TestConversationManagementRoutes(t *testing.T) {
 			}
 			e.conversationStore.err = tt.storeErr
 
+			type wsEvent struct {
+				name      string
+				payload   map[string]any
+				broadcast *model.WebsocketBroadcast
+			}
+			var events []wsEvent
+			mmClient := mmapimocks.NewMockClient(t)
+			mmClient.On("PublishWebSocketEvent", mock.AnythingOfType("string"), mock.AnythingOfType("map[string]interface {}"), mock.AnythingOfType("*model.WebsocketBroadcast")).
+				Run(func(args mock.Arguments) {
+					payload, _ := args.Get(1).(map[string]any)
+					broadcast, _ := args.Get(2).(*model.WebsocketBroadcast)
+					events = append(events, wsEvent{name: args.String(0), payload: payload, broadcast: broadcast})
+				}).Return().Maybe()
+			e.api.mmClient = mmClient
+
 			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
 			req.Header.Set("Mattermost-User-Id", tt.userID)
 			recorder := httptest.NewRecorder()
@@ -189,6 +206,14 @@ func TestConversationManagementRoutes(t *testing.T) {
 			require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode)
 			if tt.expectedStatus == http.StatusOK {
 				assert.JSONEq(t, `{}`, recorder.Body.String())
+				// The owner, and only the owner, learns the new title.
+				stored := e.conversationStore.conversations[testManagedConvID].Title
+				require.Len(t, events, 1, "a successful rename publishes exactly one event")
+				assert.Equal(t, "conversation_updated", events[0].name)
+				assert.Equal(t, map[string]any{"conversation_id": testManagedConvID, "title": stored}, events[0].payload)
+				assert.Equal(t, &model.WebsocketBroadcast{UserId: testUserID}, events[0].broadcast)
+			} else {
+				assert.Empty(t, events, "a failed rename publishes nothing")
 			}
 			if tt.validate != nil {
 				tt.validate(t, e)

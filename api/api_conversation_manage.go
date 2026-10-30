@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 )
 
@@ -23,7 +24,10 @@ const MaxConversationTitleLength = 256
 // MaxConversationTitleLength 4-byte runes plus JSON framing and escapes.
 const renameConversationMaxRequestBodyBytes = 8 * 1024
 
-var errConversationNotFound = errors.New("conversation not found")
+var (
+	errConversationNotFound = errors.New("conversation not found")
+	errConversationInternal = errors.New("internal error")
+)
 
 type renameConversationRequest struct {
 	Title string `json:"title"`
@@ -44,7 +48,8 @@ func (a *API) loadOwnedConversation(c *gin.Context) (*store.Conversation, bool) 
 			c.AbortWithError(http.StatusNotFound, errConversationNotFound)
 			return nil, false
 		}
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get conversation: %w", err))
+		a.pluginAPI.Log.Error("Failed to get conversation", "conversation_id", conversationID, "error", err.Error())
+		c.AbortWithError(http.StatusInternalServerError, errConversationInternal)
 		return nil, false
 	}
 	if conv.UserID != userID {
@@ -81,7 +86,8 @@ func (a *API) handleRenameConversation(c *gin.Context) {
 
 	renamed, err := a.conversationStore.RenameConversation(conv.ID, title)
 	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to rename conversation: %w", err))
+		a.pluginAPI.Log.Error("Failed to rename conversation", "conversation_id", conv.ID, "error", err.Error())
+		c.AbortWithError(http.StatusInternalServerError, errConversationInternal)
 		return
 	}
 	if !renamed {
@@ -89,6 +95,8 @@ func (a *API) handleRenameConversation(c *gin.Context) {
 		c.AbortWithError(http.StatusNotFound, errConversationNotFound)
 		return
 	}
+
+	conversation.PublishConversationTitleUpdated(a.mmClient, conv, title)
 
 	c.JSON(http.StatusOK, struct{}{})
 }

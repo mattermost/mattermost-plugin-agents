@@ -4,6 +4,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -21,7 +23,7 @@ import (
 
 // TestGetAIThreadsOrdersByLastActivity drives GET /ai_threads against the real
 // PostgreSQL conversation store: a conversation continued with a new turn must
-// sort by that turn, not by the conversation row's UpdatedAt.
+// sort by that turn's time, while renaming a conversation must not reorder it.
 func TestGetAIThreadsOrdersByLastActivity(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -32,6 +34,9 @@ func TestGetAIThreadsOrdersByLastActivity(t *testing.T) {
 		updatedAt int64
 		turns     []int64
 		deleted   bool
+		// renameTo, when set, renames the conversation through the API
+		// after its turns are added.
+		renameTo string
 	}
 	type wantRow struct {
 		title    string
@@ -64,6 +69,14 @@ func TestGetAIThreadsOrdersByLastActivity(t *testing.T) {
 			want: []wantRow{{"continued", 7000}, {"untouched", 2000}},
 		},
 		{
+			name: "a rename does not move a conversation up",
+			convs: []convSpec{
+				{title: "older", userID: testUserID, updatedAt: 1000, turns: []int64{1000}, renameTo: "renamed"},
+				{title: "newer", userID: testUserID, updatedAt: 2000, turns: []int64{2000}},
+			},
+			want: []wantRow{{"newer", 2000}, {"renamed", 1000}},
+		},
+		{
 			name:  "no conversations returns an empty array",
 			convs: nil,
 			want:  []wantRow{},
@@ -78,6 +91,9 @@ func TestGetAIThreadsOrdersByLastActivity(t *testing.T) {
 			defer e.Cleanup(t)
 			e.mockAPI.On("LogError", mock.Anything).Maybe()
 			e.api.conversationStore = convStore
+			mmClient := mmapimocks.NewMockClient(t)
+			mmClient.On("PublishWebSocketEvent", mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+			e.api.mmClient = mmClient
 
 			for _, spec := range tt.convs {
 				conv := &store.Conversation{
@@ -104,6 +120,15 @@ func TestGetAIThreadsOrdersByLastActivity(t *testing.T) {
 					// Soft-delete directly so UpdatedAt is not bumped past the turns.
 					_, err := db.Exec("UPDATE LLM_Conversations SET DeleteAt = $1 WHERE ID = $2", spec.updatedAt, conv.ID)
 					require.NoError(t, err)
+				}
+				if spec.renameTo != "" {
+					body, err := json.Marshal(renameConversationRequest{Title: spec.renameTo})
+					require.NoError(t, err)
+					req := httptest.NewRequest(http.MethodPut, "/conversations/"+conv.ID+"/title", bytes.NewReader(body))
+					req.Header.Set("Mattermost-User-Id", spec.userID)
+					recorder := httptest.NewRecorder()
+					e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+					require.Equal(t, http.StatusOK, recorder.Code)
 				}
 			}
 
