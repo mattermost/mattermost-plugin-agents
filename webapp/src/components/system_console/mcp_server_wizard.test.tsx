@@ -35,12 +35,13 @@ jest.mock('@/license', () => ({
 
 jest.mock('../../client', () => ({
     getMCPServerTools: jest.fn(),
+    getPluginConfig: jest.fn(),
 }));
 
 /* eslint-disable import/first */
 import {IntlProvider} from 'react-intl';
 
-import {getMCPServerTools} from '../../client';
+import {getMCPServerTools, getPluginConfig} from '../../client';
 import {notifyMCPConnectionUpdated} from '../../hooks/use_mcp_connection_events';
 import {chooseOption, getSelect, selectedLabel} from '../../../tests/compass_select';
 
@@ -49,6 +50,7 @@ import {MCPServerConfig, MCPServerInfo} from './mcp_types';
 /* eslint-enable import/first */
 
 const mockGetMCPServerTools = getMCPServerTools as jest.Mock;
+const mockGetPluginConfig = getPluginConfig as jest.Mock;
 
 const SERVER_ID = 'srv1234567890abcdefghijklm';
 
@@ -69,8 +71,16 @@ function discoveredServer(overrides: Partial<MCPServerInfo> = {}): MCPServerInfo
     };
 }
 
-function renderWizard(mode: MCPServerWizardMode, existingNames: string[] = []) {
-    const onPersist = jest.fn(async (server: MCPServerConfig) => ({...server, id: server.id ?? SERVER_ID}));
+// renderWizard renders the wizard against a saved configuration holding
+// storedServers; servers the wizard persists are saved into it.
+function renderWizard(mode: MCPServerWizardMode, existingNames: string[] = [], storedServers: MCPServerConfig[] = mode.kind === 'review' ? [mode.server] : []) {
+    let stored = storedServers;
+    mockGetPluginConfig.mockImplementation(async () => ({mcp: {servers: stored}}));
+    const onPersist = jest.fn(async (server: MCPServerConfig) => {
+        const saved = {...server, id: server.id ?? SERVER_ID};
+        stored = [...stored.filter((s) => s.id !== saved.id), saved];
+        return saved;
+    });
     const onClose = jest.fn();
     render(
         <IntlProvider locale='en'>
@@ -241,5 +251,68 @@ describe('MCPServerWizard review of an existing server', () => {
             {name: 'delete_issue', policy: 'ask', enabled: false},
             {name: 'retired_tool', policy: 'ask', enabled: true},
         ]);
+    });
+});
+
+describe('MCPServerWizard saved-state handling', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+    });
+
+    const pageCopy: MCPServerConfig = {
+        id: SERVER_ID,
+        name: 'Tracker',
+        enabled: true,
+        baseURL: 'https://mcp.example.com/mcp',
+        headers: {},
+        tool_configs: [],
+    };
+
+    test('a review starts from the saved server, keeping policies saved since the page loaded', async () => {
+        mockGetMCPServerTools.mockResolvedValue(discoveredServer());
+        const savedSince = {...pageCopy, tool_configs: [{name: 'delete_issue', policy: 'auto_run_everywhere' as const, enabled: true}]};
+        const {onPersist, onClose} = renderWizard({kind: 'review', server: pageCopy}, [], [savedSince]);
+
+        expect(await screen.findByRole('group', {name: 'Write tools'})).not.toBeNull();
+        expect(selectedLabel(getSelect('Approval policy for delete_issue'))).toBe('Auto Run (Everywhere)');
+
+        fireEvent.click(screen.getByRole('button', {name: 'Accept and save'}));
+
+        await waitFor(() => expect(onClose).toHaveBeenCalled());
+        const [reviewed] = onPersist.mock.calls[0] as unknown as [MCPServerConfig, boolean];
+        expect(reviewed.tool_configs).toEqual([
+            {name: 'list_issues', policy: 'auto_run_in_dm', enabled: true},
+            {name: 'delete_issue', policy: 'auto_run_everywhere', enabled: true},
+        ]);
+    });
+
+    test('a review of a server that is no longer saved shows an error and saves nothing', async () => {
+        mockGetMCPServerTools.mockResolvedValue(discoveredServer());
+        const {onPersist} = renderWizard({kind: 'review', server: pageCopy}, [], []);
+
+        expect(await screen.findByText('The server is no longer configured. Reload the page.')).not.toBeNull();
+        expect(screen.queryByRole('button', {name: 'Accept and save'})).toBeNull();
+        expect(onPersist).not.toHaveBeenCalled();
+    });
+
+    test('the dialog cannot be closed while the server is being saved', async () => {
+        let finishSave: (server: MCPServerConfig & {id: string}) => void = () => null;
+        const {onPersist, onClose} = renderWizard({kind: 'add'});
+        onPersist.mockImplementation(() => new Promise((resolve) => {
+            finishSave = resolve;
+        }));
+
+        fillDetails('Tracker', 'https://mcp.example.com/mcp');
+        fireEvent.click(screen.getByRole('button', {name: 'Save and connect'}));
+
+        await waitFor(() => expect(onPersist).toHaveBeenCalledTimes(1));
+        expect((screen.getByRole('button', {name: 'Cancel'}) as HTMLButtonElement).disabled).toBe(true);
+        fireEvent.click(screen.getByRole('button', {name: 'Close'}));
+        expect(onClose).not.toHaveBeenCalled();
+
+        mockGetMCPServerTools.mockResolvedValue(discoveredServer());
+        await act(async () => {
+            finishSave({...pageCopy, id: SERVER_ID});
+        });
     });
 });

@@ -195,6 +195,26 @@ const BetaMessage = () => (
     />
 );
 
+// withSavedMCPServer reflects a server saved on its own in the page's local
+// configuration. A review (toolConfigsOnly) updates only the tool policies of
+// a server still on the page: it does not bring back a server removed here
+// but not yet saved.
+export const withSavedMCPServer = (prev: Config, savedServer: MCPServerConfig, toolConfigsOnly: boolean): Config => {
+    const localMCP = prev.mcp || defaultConfig.mcp;
+    const localServers: MCPServerConfig[] = localMCP.servers ?? [];
+    const present = localServers.some((s) => s.id === savedServer.id);
+    if (!present && toolConfigsOnly) {
+        return prev;
+    }
+    const merged = present ? localServers.map((s) => {
+        if (s.id !== savedServer.id) {
+            return s;
+        }
+        return toolConfigsOnly ? {...s, tool_configs: savedServer.tool_configs} : savedServer;
+    }) : [...localServers, savedServer];
+    return {...prev, mcp: {...localMCP, servers: merged}};
+};
+
 const Config = (props: Props) => {
     const [localConfig, setLocalConfig] = useState<Config>(defaultConfig);
 
@@ -295,18 +315,7 @@ const Config = (props: Props) => {
         }
 
         setSavedConfig(saved);
-        setLocalConfig((prev) => {
-            const localMCP = prev.mcp || defaultConfig.mcp;
-            const localServers: MCPServerConfig[] = localMCP.servers ?? [];
-            const present = localServers.some((s) => s.id === savedServer.id);
-            const merged = present ? localServers.map((s) => {
-                if (s.id !== savedServer.id) {
-                    return s;
-                }
-                return toolConfigsOnly ? {...s, tool_configs: savedServer.tool_configs} : savedServer;
-            }) : [...localServers, savedServer];
-            return {...prev, mcp: {...localMCP, servers: merged}};
-        });
+        setLocalConfig((prev) => withSavedMCPServer(prev, savedServer, toolConfigsOnly));
         return savedServer;
     }, [intl]);
 

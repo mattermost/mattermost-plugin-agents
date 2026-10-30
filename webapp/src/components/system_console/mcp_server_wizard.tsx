@@ -10,7 +10,7 @@ import {Modal} from '@mattermost/compass-ui/components/modal';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
 
-import {getMCPServerTools} from '../../client';
+import {getMCPServerTools, getPluginConfig} from '../../client';
 import {AnimatedModalShell, MODAL_SHEET_CLASS} from '../animated_modal_shell';
 import {useMCPConnectionEvents} from '../../hooks/use_mcp_connection_events';
 
@@ -88,6 +88,13 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
     const [saving, setSaving] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
 
+    // Closing while a save is in flight would leave its outcome unseen.
+    const requestClose = () => {
+        if (!saving) {
+            onClose();
+        }
+    };
+
     // Responses from a superseded discovery are ignored.
     const discoveryRef = useRef(0);
 
@@ -98,8 +105,16 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
         const request = ++discoveryRef.current;
         setConnection({status: 'connecting'});
         try {
-            const info: MCPServerInfo = await getMCPServerTools(server.id);
+            // The review starts from the server as it is saved now, not this
+            // page's copy, so tool policies another admin saved since the page
+            // loaded are not overwritten.
+            const [info, pluginConfig]: [MCPServerInfo, any] = await Promise.all([getMCPServerTools(server.id), getPluginConfig()]);
             if (request !== discoveryRef.current) {
+                return;
+            }
+            const stored: MCPServerConfig | undefined = pluginConfig?.mcp?.servers?.find((s: MCPServerConfig) => s.id === server.id);
+            if (!stored) {
+                setConnection({status: 'error', message: intl.formatMessage({defaultMessage: 'The server is no longer configured. Reload the page.'})});
                 return;
             }
             if (info.error) {
@@ -110,7 +125,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                 setConnection({status: 'error', message: intl.formatMessage({defaultMessage: 'The server did not list any tools.'})});
             } else {
                 setDiscovered(info);
-                setReview({...server, tool_configs: reviewToolConfigs(server, info.tools)});
+                setReview({...stored, tool_configs: reviewToolConfigs(stored, info.tools)});
                 setStep('review');
             }
         } catch (err) {
@@ -378,6 +393,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                     <Button
                         emphasis='tertiary'
                         onClick={onClose}
+                        disabled={saving}
                     >
                         <FormattedMessage defaultMessage='Cancel'/>
                     </Button>
@@ -450,14 +466,14 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
     return (
         <AnimatedModalShell
             show={true}
-            onBackdropClick={onClose}
+            onBackdropClick={requestClose}
             zIndex={2000}
         >
             <Sheet className={MODAL_SHEET_CLASS}>
                 <Modal
                     size='large'
                     title={title}
-                    onClose={onClose}
+                    onClose={requestClose}
                     closeLabel={intl.formatMessage({defaultMessage: 'Close'})}
                     footer={footer}
                     headerSlot={mode.kind === 'add' ? (

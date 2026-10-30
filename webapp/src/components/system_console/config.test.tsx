@@ -7,7 +7,7 @@ import {IntlProvider} from 'react-intl';
 
 import {getAIBots, getPluginConfig, savePluginConfig} from '@/client';
 
-import Config, {effectiveDefaultBotID} from './config';
+import Config, {effectiveDefaultBotID, withSavedMCPServer} from './config';
 import {PluginConfig} from './plugin_config_types';
 
 jest.mock('react-intl', () => {
@@ -406,5 +406,29 @@ describe('Config agent version retention', () => {
 
         expect(limitRadio('True').checked).toBe(true);
         expect((screen.getByLabelText('Versions to keep per agent') as HTMLInputElement).value).toBe('25');
+    });
+});
+
+describe('withSavedMCPServer', () => {
+    const server = (id: string, policy: 'ask' | 'auto_run_in_dm' = 'ask') => ({
+        id,
+        name: id,
+        enabled: true,
+        baseURL: `https://${id}.example.com`,
+        headers: {},
+        tool_configs: [{name: 'tool', policy, enabled: true}],
+    });
+    const pageWith = (...servers: ReturnType<typeof server>[]) => ({mcp: {servers}} as unknown as PluginConfig);
+
+    test.each([
+        {name: 'a new server is added to the page', prev: pageWith(server('a')), saved: server('b'), toolConfigsOnly: false, want: ['a', 'b']},
+        {name: 'a review updates the tool policies of a server on the page', prev: pageWith(server('a')), saved: server('a', 'auto_run_in_dm'), toolConfigsOnly: true, want: ['a']},
+        {name: 'a review does not bring back a server removed from the page', prev: pageWith(server('a')), saved: server('b'), toolConfigsOnly: true, want: ['a']},
+    ])('$name', ({prev, saved, toolConfigsOnly, want}) => {
+        const next = withSavedMCPServer(prev, saved, toolConfigsOnly);
+        expect((next.mcp.servers ?? []).map((s) => s.id)).toEqual(want);
+        if (toolConfigsOnly && want.includes(saved.id)) {
+            expect(next.mcp.servers?.find((s) => s.id === saved.id)?.tool_configs).toEqual(saved.tool_configs);
+        }
     });
 });
