@@ -196,6 +196,25 @@ describe('MCPServerToolRow — unconfigured tool defaults', () => {
             tool_configs: [{name: 'list_things', policy: 'ask', enabled: false}],
         }));
     });
+
+    test('picking the policy a tool already defaults to stores it', () => {
+        const server: MCPServerInfo = {
+            ...makePluginServer(),
+            serverType: 'remote',
+            name: 'Remote',
+            url: 'https://mcp.example.com',
+            tools: [{name: 'list_things', description: 'List', inputSchema: null, readOnlyHint: true, defaultPolicy: 'auto_run_in_dm'}],
+        };
+        const config = {...makePluginServerConfig(), name: 'Remote', baseURL: 'https://mcp.example.com', tool_configs: []};
+        const {onServerConfigChange} = renderRow(server, config);
+        fireEvent.click(screen.getByText('Remote'));
+
+        chooseOption(getSelect('Approval policy for list_things'), 'Auto Run (DM)');
+
+        expect(onServerConfigChange).toHaveBeenLastCalledWith(expect.objectContaining({
+            tool_configs: [{name: 'list_things', policy: 'auto_run_in_dm', enabled: true}],
+        }));
+    });
 });
 
 describe('MCPServerToolRow — grouped tools and bulk policy controls', () => {

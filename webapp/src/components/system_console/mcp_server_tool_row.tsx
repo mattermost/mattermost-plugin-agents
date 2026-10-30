@@ -62,7 +62,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
         }
     };
 
-    const handleToolConfigChange = (tool: MCPToolInfo, changedToolConfig: MCPToolConfig) => {
+    const handleToolConfigChange = (tool: MCPToolInfo, changedToolConfig: MCPToolConfig, policyPicked = false) => {
         if (!serverConfig) {
             return;
         }
@@ -70,7 +70,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
         // Only a policy the admin picks is stored. Toggling the tool or
         // editing its override keeps an unchosen policy empty, so the tool
         // keeps following its default.
-        const policyChosen = Boolean(findStoredConfig(tool.name)?.policy) || changedToolConfig.policy !== getToolConfig(tool).policy;
+        const policyChosen = policyPicked || Boolean(findStoredConfig(tool.name)?.policy);
         const updatedToolConfig = policyChosen ? changedToolConfig : {...changedToolConfig, policy: '' as const};
 
         const existingConfigs = serverConfig.tool_configs || [];
@@ -134,8 +134,8 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                 key={tool.name}
                 tool={tool}
                 toolConfig={getToolConfig(tool)}
-                onToolConfigChange={(updatedConfig) =>
-                    handleToolConfigChange(tool, updatedConfig)
+                onToolConfigChange={(updatedConfig, policyChosen) =>
+                    handleToolConfigChange(tool, updatedConfig, policyChosen)
                 }
                 serverDisabled={!serverEnabled}
                 displayName={displayName}

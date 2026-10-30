@@ -33,7 +33,9 @@ export const useToolPolicyOptions = () => {
 type MCPToolConfigRowProps = {
     tool: MCPToolInfo;
     toolConfig: MCPToolConfig;
-    onToolConfigChange: (config: MCPToolConfig) => void;
+    // policyChosen is true when the admin picked the policy, so it is stored
+    // even if it equals the tool's default.
+    onToolConfigChange: (config: MCPToolConfig, policyChosen?: boolean) => void;
     serverDisabled?: boolean;
     displayName?: string;
 };
@@ -49,7 +51,7 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
         onToolConfigChange({
             ...toolConfig,
             policy: policy as ToolPolicy,
-        });
+        }, true);
     };
 
     const handleEnabledChange = (checked: boolean) => {
