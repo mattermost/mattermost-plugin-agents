@@ -115,7 +115,8 @@ export class AIPlugin {
   /** Wait until ThreadViewer is not generating and the reply box accepts input. */
   async waitForThreadComposerIdle() {
     await this.waitForGeneratingToStop();
-    await expect(this.getRhsContainer().getByTestId('comment-create').getByTestId('reply_textbox')).toBeEnabled({ timeout: 30000 });
+    await expect(this.getRhsContainer().getByTestId('comment-create').getByTestId('reply_textbox')
+      .and(this.page.locator(':not([data-testid="rhs-view-exiting"] *)'))).toBeEnabled({ timeout: 30000 });
   }
 
   async regenerateResponse() {

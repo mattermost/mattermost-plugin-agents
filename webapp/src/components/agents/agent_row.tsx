@@ -317,6 +317,12 @@ const ActionsColumn = styled.div`
     position: relative;
     z-index: 1;
     flex-shrink: 0;
+
+    /* The open menu hangs below the row, over the rows after it. Their badges and buttons are positioned at
+       the same level and later in the DOM, so they would paint over the menu items and take the clicks. */
+    &:has([aria-expanded='true']) {
+        z-index: 2;
+    }
 `;
 
 const VisuallyHidden = styled.span`
