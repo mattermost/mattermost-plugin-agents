@@ -165,6 +165,9 @@ func TestBuilderSelectsDMOnlyServersOnlyInDirectMessage(t *testing.T) {
 	const botUserID = "bot-id"
 	dmWithBot := &model.Channel{Id: "dm", Type: model.ChannelTypeDirect, Name: model.GetDMNameFromIds("user-id", botUserID)}
 	dmWithOther := &model.Channel{Id: "dm-other", Type: model.ChannelTypeDirect, Name: model.GetDMNameFromIds("user-id", "someone-else")}
+	// A direct channel whose name merely contains the agent's ID, such as a
+	// DM between two other users renamed to include it.
+	containsBotID := &model.Channel{Id: "dm-renamed", Type: model.ChannelTypeDirect, Name: "someone-else__" + botUserID}
 	group := &model.Channel{Id: "gm", Type: model.ChannelTypeGroup, Name: "group"}
 	open := &model.Channel{Id: "open", Type: model.ChannelTypePrivate}
 
@@ -179,6 +182,7 @@ func TestBuilderSelectsDMOnlyServersOnlyInDirectMessage(t *testing.T) {
 		{name: "marked DM with the agent selects DM-only servers", channel: dmWithBot, directMessage: true, interactive: true},
 		{name: "unmarked DM with the agent excludes them", channel: dmWithBot, interactive: true, wantExclude: true, wantDescribed: []llm.DMOnlyMCPServer{{Name: "Salesforce"}}},
 		{name: "marked DM with someone else excludes them", channel: dmWithOther, directMessage: true, interactive: true, wantExclude: true, wantDescribed: []llm.DMOnlyMCPServer{{Name: "Salesforce"}}},
+		{name: "marked direct channel that only contains the agent's ID excludes them", channel: containsBotID, directMessage: true, interactive: true, wantExclude: true, wantDescribed: []llm.DMOnlyMCPServer{{Name: "Salesforce"}}},
 		{name: "marked group message excludes them", channel: group, directMessage: true, interactive: true, wantExclude: true, wantDescribed: []llm.DMOnlyMCPServer{{Name: "Salesforce"}}},
 		{name: "marked channel excludes them", channel: open, directMessage: true, interactive: true, wantExclude: true, wantDescribed: []llm.DMOnlyMCPServer{{Name: "Salesforce"}}},
 		{name: "a request with no channel excludes them", directMessage: true, interactive: true, wantExclude: true, wantDescribed: []llm.DMOnlyMCPServer{{Name: "Salesforce"}}},

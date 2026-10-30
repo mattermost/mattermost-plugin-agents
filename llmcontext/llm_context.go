@@ -14,7 +14,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
-	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
@@ -236,9 +235,17 @@ func (b *Builder) WithLLMContextInteractive() llm.ContextOption {
 	}
 }
 
+// isRequesterDMWithBot reports whether the context's channel is exactly the
+// requesting user's direct message with botUserID.
+func isRequesterDMWithBot(c *llm.Context, botUserID string) bool {
+	return c.Channel != nil && c.RequestingUser != nil && botUserID != "" && c.RequestingUser.Id != "" &&
+		c.Channel.Type == model.ChannelTypeDirect &&
+		c.Channel.Name == model.GetDMNameFromIds(botUserID, c.RequestingUser.Id)
+}
+
 // WithLLMContextDirectMessage marks the request as the requester's direct
 // message with the agent, so DM-only MCP servers are cataloged. It has no
-// effect unless the context's channel is that DM, and must be configured
+// effect unless the context's channel is exactly that DM, and must be configured
 // before default tools are built.
 func (b *Builder) WithLLMContextDirectMessage() llm.ContextOption {
 	return func(c *llm.Context) {
@@ -345,7 +352,7 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		// Resolve server-level eligibility before connecting. The per-tool
 		// filters below remain as defense in depth for allowlist and context
 		// rules after the provider returns its selected catalog.
-		directMessage := c.ToolCatalog.DirectMessage && mmapi.IsDMWith(bot.BotUserID(), c.Channel)
+		directMessage := c.ToolCatalog.DirectMessage && isRequesterDMWithBot(c, bot.BotUserID())
 		selection := mcpToolSelection(botCfg, c, remoteMCPLicensed, directMessage)
 		mcpTools, mcpErrors = b.mcpToolProvider.GetToolsWithSelection(ctx, req, selection)
 		if describer, ok := b.mcpToolProvider.(DMOnlyMCPServerDescriber); ok && c.ToolCatalog.InteractiveUserPresent {

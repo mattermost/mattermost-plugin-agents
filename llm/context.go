@@ -121,7 +121,7 @@ type ToolCatalogContext struct {
 
 	// DirectMessage marks the request as the requester's direct message with
 	// the agent, the only place DM-only MCP servers are cataloged. It counts
-	// only when Channel really is that DM.
+	// only when Channel is exactly the requester's DM with the agent.
 	DirectMessage bool
 
 	// MCPServerOrigins maps configured remote MCP server names to their

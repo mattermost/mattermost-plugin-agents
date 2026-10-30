@@ -795,9 +795,9 @@ A server limited to direct messages:
 
 - Is available only when a user talks to an agent in their own direct message with it, or in the Agents tab. Tool approval policies on the **Tools** tab apply there as usual.
 - Is never connected for channel mentions, channel thread replies, ambient channel replies, group messages, channel analysis, or LLM Bridge requests from other plugins. Its tools are left out of those requests entirely, so there is nothing to approve or share.
-- Is named, with its **Description**, to agents in channels and group messages, so they can tell a user who asks for it to send them a direct message instead. The server is named only to users the server's access policy allows, and only by agents whose MCP allowlist includes it.
+- Is named, with its **Description**, to agents in channels and group messages, so they can tell a user who asks for it to send them a direct message instead. The server is named only in requests from users the server's access policy allows, and only by agents whose MCP allowlist includes it. Other channel members can see the agent's reply, so they can see the server's name.
 
-This setting doesn't stop a user from copying or forwarding what an agent told them in a direct message. In a direct message, an agent can also pass the server's results to other tools, such as posting to a channel, subject to those tools' approval policies.
+This setting doesn't stop a user from copying or forwarding what an agent told them in a direct message. In a direct message, an agent can also pass the server's results to other tools, such as posting to a channel, subject to those tools' approval policies. In a channel, an agent can read a user's earlier direct messages with it through the built-in Mattermost tools, again subject to those tools' approval policies and to sharing results.
 
 ### Plugin-registered MCP servers
 
