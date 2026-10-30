@@ -366,7 +366,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
             return (
                 <FormattedMessage
                     defaultMessage='Edit {serverName}'
-                    values={{serverName: mode.server.name}}
+                    values={{serverName: savedServer?.name || mode.server.name}}
                 />
             );
         default:
