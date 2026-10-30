@@ -214,6 +214,9 @@ describe('MCPServers remote server list', () => {
         renderServers(makeMCPConfig([existingServer]));
 
         const row = screen.getByRole('button', {name: 'Edit Jira'});
+        expect(row.getAttribute('aria-describedby')).toBeTruthy();
+        const description = (row.getAttribute('aria-describedby') ?? '').split(' ').map((id) => document.getElementById(id)?.textContent ?? '').join(' ');
+        expect(description).toContain('https://jira.example.com');
         row.focus();
         expect(document.activeElement).toBe(row);
         fireEvent.click(row);

@@ -372,10 +372,13 @@ describe('reauthReasons', () => {
         {name: 'changing service account headers', change: {serviceAccountHeaders: {Authorization: 'Bearer b'}}, want: []},
         {name: 'editing the description', change: {description: 'Tickets'}, want: []},
         {name: 'disabling the server', change: {enabled: false}, want: []},
-        {name: 'surrounding whitespace only', change: {name: ' Tracker ', baseURL: ' https://mcp.example.com/mcp '}, want: []},
         {name: 'several at once', change: {name: 'T', baseURL: 'https://x.example.com', clientID: 'c'}, want: ['name', 'url', 'clientID']},
     ])('$name', ({change, want}) => {
         expect(reauthReasons(base, {...base, ...change})).toEqual(want);
+    });
+
+    test('a save that trims a stored name moves its sign-ins', () => {
+        expect(reauthReasons({...base, name: ' Tracker '}, base)).toEqual(['name']);
     });
 });
 
@@ -515,6 +518,39 @@ describe('MCPServerWizard edit mode', () => {
 
         fireEvent.click(await screen.findByRole('button', {name: 'Edit details'}));
         expect(screen.getByDisplayValue('Tracker 2')).not.toBeNull();
+    });
+
+    test('the OAuth client ID is saved trimmed, so stray spaces do not end sign-ins', async () => {
+        const withClient = {...saved, clientID: 'client-a'};
+        const {onPersist, onClose} = renderWizard({kind: 'edit', server: withClient}, ['Tracker'], [withClient]);
+
+        fireEvent.change(await screen.findByDisplayValue('client-a'), {target: {value: 'client-a '}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(onClose).toHaveBeenCalled());
+        expect(screen.queryByRole('button', {name: 'Save and sign in again'})).toBeNull();
+        const [edited] = onPersist.mock.calls[0] as unknown as [MCPServerConfig, string];
+        expect(edited.clientID).toBe('client-a');
+    });
+
+    test('fixing a setting after a failed reconnect connects and reviews again', async () => {
+        mockGetMCPServerTools.
+            mockResolvedValueOnce(discoveredServer({tools: [], error: 'could not connect to the MCP server'})).
+            mockResolvedValueOnce(discoveredServer());
+        const {onClose} = renderWizard({kind: 'edit', server: saved}, ['Tracker'], [saved]);
+
+        fireEvent.change(await screen.findByDisplayValue('Tracker'), {target: {value: 'Tracker 2'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Save and sign in again'}));
+        fireEvent.click(await screen.findByRole('button', {name: 'Edit details'}));
+
+        // A description fix does not end sign-ins on its own, but the server still
+        // has to be connected to and reviewed.
+        fireEvent.change(screen.getByDisplayValue('Issues'), {target: {value: 'Issues and bugs'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        expect(await screen.findByRole('group', {name: 'Read-only tools'})).not.toBeNull();
+        expect(onClose).not.toHaveBeenCalled();
     });
 
     test('a server that is no longer saved cannot be edited', async () => {

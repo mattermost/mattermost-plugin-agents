@@ -211,7 +211,16 @@ export const withSavedMCPServer = (prev: Config, savedServer: MCPServerConfig, s
         if (s.id !== savedServer.id) {
             return s;
         }
-        return scope === 'tool_configs' ? {...s, tool_configs: savedServer.tool_configs} : savedServer;
+        if (scope === 'tool_configs') {
+            return {...s, tool_configs: savedServer.tool_configs};
+        }
+
+        // A settings save keeps tool policy edits still pending on this page,
+        // unless the server moved to another URL, which drops its policies.
+        if (scope === 'settings' && s.baseURL === savedServer.baseURL) {
+            return {...savedServer, tool_configs: s.tool_configs};
+        }
+        return savedServer;
     }) : [...localServers, savedServer];
     return {...prev, mcp: {...localMCP, servers: merged}};
 };

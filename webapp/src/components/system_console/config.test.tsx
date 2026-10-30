@@ -433,6 +433,18 @@ describe('withSavedMCPServer', () => {
         }
     });
 
+    test('an edit keeps tool policy changes still pending on the page', () => {
+        const pending = server('a', 'auto_run_in_dm');
+        const next = withSavedMCPServer(pageWith(pending), {...server('a'), description: 'edited'} as ReturnType<typeof server>, 'settings');
+        expect(next.mcp.servers?.[0]).toEqual(expect.objectContaining({description: 'edited', tool_configs: pending.tool_configs}));
+    });
+
+    test('an edit that moves the server to another URL drops its tool policies', () => {
+        const moved = {...server('a', 'ask', 'https://moved.example.com'), tool_configs: []};
+        const next = withSavedMCPServer(pageWith(server('a', 'auto_run_in_dm')), moved, 'settings');
+        expect(next.mcp.servers?.[0].tool_configs).toEqual([]);
+    });
+
     test('an edit replaces the server on the page with the saved one', () => {
         const next = withSavedMCPServer(pageWith(server('a')), server('a', 'ask', 'https://moved.example.com'), 'settings');
         expect(next.mcp.servers?.[0].baseURL).toBe('https://moved.example.com');

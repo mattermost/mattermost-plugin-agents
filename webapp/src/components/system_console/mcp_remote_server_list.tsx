@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState} from 'react';
+import React, {useId, useState} from 'react';
 import styled from 'styled-components';
 import {ChevronRightIcon, TrashCanOutlineIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
@@ -39,6 +39,9 @@ const unreviewedCount = (server: MCPServerConfig, toolsData: MCPToolsResponse | 
 
 const MCPRemoteServerList = ({servers, toolsData, onEdit, onDelete}: Props) => {
     const intl = useIntl();
+
+    // The row's URL and status describe its Edit button to screen readers.
+    const detailsID = useId();
     const [pendingDelete, setPendingDelete] = useState<MCPServerConfig | null>(null);
     const [deleting, setDeleting] = useState(false);
     const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -79,13 +82,14 @@ const MCPRemoteServerList = ({servers, toolsData, onEdit, onDelete}: Props) => {
                                 onClick={() => onEdit(server)}
                                 disabled={!server.id}
                                 aria-label={intl.formatMessage({defaultMessage: 'Edit {name}'}, {name})}
+                                aria-describedby={`${detailsID}-${index}-url ${detailsID}-${index}-tags`}
                             >
                                 <Avatar aria-hidden={true}>{name.charAt(0).toUpperCase()}</Avatar>
                                 <RowText>
                                     <RowName>{name}</RowName>
-                                    <RowURL>{server.baseURL}</RowURL>
+                                    <RowURL id={`${detailsID}-${index}-url`}>{server.baseURL}</RowURL>
                                 </RowText>
-                                <RowTags>
+                                <RowTags id={`${detailsID}-${index}-tags`}>
                                     {!server.enabled && (
                                         <Tag label={<FormattedMessage defaultMessage='Disabled'/>}/>
                                     )}

@@ -52,15 +52,18 @@ export const connectionSettings = (server: MCPServerConfig) => JSON.stringify([
 // The client secret, headers, and service account headers only reconnect.
 export type ReauthReason = 'name' | 'url' | 'clientID';
 
+// after is the server exactly as it will be saved. Values are compared as the
+// server compares them, untrimmed: a stored name with stray spaces that the
+// save trims still moves its sign-ins.
 export const reauthReasons = (before: MCPServerConfig, after: MCPServerConfig): ReauthReason[] => {
     const reasons: ReauthReason[] = [];
-    if (before.name.trim() !== after.name.trim()) {
+    if (before.name !== after.name) {
         reasons.push('name');
     }
-    if (before.baseURL.trim() !== after.baseURL.trim()) {
+    if (before.baseURL !== after.baseURL) {
         reasons.push('url');
     }
-    if ((before.clientID ?? '').trim() !== (after.clientID ?? '').trim()) {
+    if ((before.clientID ?? '') !== (after.clientID ?? '')) {
         reasons.push('clientID');
     }
     return reasons;
@@ -138,6 +141,9 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
     const [discovered, setDiscovered] = useState<MCPServerInfo | null>(null);
     const [review, setReview] = useState<MCPServerConfig | null>(null);
     const [showErrors, setShowErrors] = useState(false);
+
+    // Set once an edit has ended sign-ins, until the admin reconnects.
+    const [reconnecting, setReconnecting] = useState(false);
     const [saving, setSaving] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -260,6 +266,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
             ...details,
             name: trimmedName,
             baseURL: trimmedURL,
+            clientID: (details.clientID ?? '').trim(),
         };
         if (savedServer && savedServer.baseURL.trim() !== trimmedURL) {
             return {...settings, tool_configs: []};
@@ -309,7 +316,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
         }
     };
 
-    const reasons = savedServer && mode.kind === 'edit' ? reauthReasons(savedServer, {...details, name: trimmedName, baseURL: trimmedURL}) : [];
+    const reasons = savedServer && mode.kind === 'edit' ? reauthReasons(savedServer, editedServer()) : [];
 
     // An edit that ends users' sign-ins is confirmed first, then the admin
     // signs in again and reviews the tools; any other edit just saves.
@@ -322,9 +329,18 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
             setStep('reauth');
             return;
         }
-        if (await saveDetails()) {
-            onClose();
+        const saved = await saveDetails();
+        if (!saved) {
+            return;
         }
+
+        // A fix made after a failed reconnect still has to connect and review.
+        if (reconnecting && saved.enabled) {
+            setStep('connect');
+            discover(saved);
+            return;
+        }
+        onClose();
     };
 
     const handleReauthConfirm = async () => {
@@ -337,6 +353,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
             onClose();
             return;
         }
+        setReconnecting(true);
         setStep('connect');
         discover(saved);
     };
