@@ -1,5 +1,8 @@
 import { Page, Locator, expect } from '@playwright/test';
 
+// A view sliding out of the RHS (rhs-view-exiting) stays mounted for a moment; locators skip it.
+const OUTSIDE_EXITING_RHS_VIEW = ':not([data-testid="rhs-view-exiting"] *)';
+
 export class AIPlugin {
   readonly page: Page;
   readonly appBarIcon: Locator;
@@ -15,11 +18,11 @@ export class AIPlugin {
     // The host message composer, on the New chat tab (AdvancedTextEditor) and
     // under a thread (the ThreadViewer's reply box). Both are RHS composers,
     // whose text box the host names reply_textbox. A view sliding out of the
-    // RHS (rhs-view-exiting) stays mounted for a moment and is skipped.
+    // RHS is skipped.
     this.rhsPostTextarea = page.getByTestId('mattermost-ai-rhs').getByTestId('reply_textbox')
-      .and(page.locator(':not([data-testid="rhs-view-exiting"] *)'));
+      .and(page.locator(OUTSIDE_EXITING_RHS_VIEW));
     this.rhsSendButton = page.getByTestId('mattermost-ai-rhs').getByTestId('SendMessageButton')
-      .and(page.locator(':not([data-testid="rhs-view-exiting"] *)'));
+      .and(page.locator(OUTSIDE_EXITING_RHS_VIEW));
     this.regenerateButton = page.getByRole('button', { name: 'Regenerate' });
     this.chatHistoryButton = page.getByTestId('chat-history');
     this.threadsListContainer = page.getByTestId('rhs-threads-list');
@@ -115,8 +118,7 @@ export class AIPlugin {
   /** Wait until ThreadViewer is not generating and the reply box accepts input. */
   async waitForThreadComposerIdle() {
     await this.waitForGeneratingToStop();
-    await expect(this.getRhsContainer().getByTestId('comment-create').getByTestId('reply_textbox')
-      .and(this.page.locator(':not([data-testid="rhs-view-exiting"] *)'))).toBeEnabled({ timeout: 30000 });
+    await expect(this.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
   }
 
   async regenerateResponse() {

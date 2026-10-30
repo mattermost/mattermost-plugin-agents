@@ -7,6 +7,7 @@
 
 import {expect, type Locator, type Page} from '@playwright/test';
 
+import {AgentChatPage} from 'helpers/agent-chat-page';
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {containerTest} from 'helpers/container-fixture';
 import {withDeadline} from 'helpers/deadline';
@@ -37,12 +38,9 @@ let botUserId = '';
 
 async function sendNewChat(page: Page, prompt: string): Promise<void> {
     await new MattermostPage(page).login(mattermost.url(), username, password);
-    await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
-    const composer = page.getByTestId('agent-chat-new-composer');
-    const textbox = composer.getByRole('textbox');
-    await expect(textbox).toBeEnabled({timeout: 30000});
-    await textbox.fill(prompt);
-    await composer.getByTestId('SendMessageButton').click();
+    const chatPage = new AgentChatPage(page);
+    await chatPage.openNewChat(mattermost.url(), botUserId);
+    await chatPage.sendNewChat(botUserId, prompt, 'button');
 }
 
 // The finished agent post that contains `text`, once the reply has ended.

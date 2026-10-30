@@ -33,35 +33,10 @@ type renameConversationRequest struct {
 	Title string `json:"title"`
 }
 
-// loadOwnedConversation loads the conversation named in the route and
-// requires that the requesting user owns it. A conversation owned by someone
-// else answers 404, exactly like a missing one, so the route never confirms
-// that another user's conversation exists. Store errors answer 500.
-func (a *API) loadOwnedConversation(c *gin.Context) (*store.Conversation, bool) {
-	userID := c.GetHeader("Mattermost-User-Id")
-	conversationID := c.Param("conversationid")
-	audit.AddParam(auditRec(c), audit.KeyConversationID, audit.TruncateID(conversationID))
-
-	conv, err := a.conversationStore.GetConversation(conversationID)
-	if err != nil {
-		if errors.Is(err, store.ErrConversationNotFound) {
-			c.AbortWithError(http.StatusNotFound, errConversationNotFound)
-			return nil, false
-		}
-		a.pluginAPI.Log.Error("Failed to get conversation", "conversation_id", conversationID, "error", err.Error())
-		c.AbortWithError(http.StatusInternalServerError, errConversationInternal)
-		return nil, false
-	}
-	if conv.UserID != userID {
-		c.AbortWithError(http.StatusNotFound, errConversationNotFound)
-		return nil, false
-	}
-	audit.AddParam(auditRec(c), audit.KeyAgentID, conv.BotID)
-	return conv, true
-}
-
 // handleRenameConversation sets the title of one of the caller's
-// conversations. Deleted conversations cannot be renamed.
+// conversations. Deleted conversations cannot be renamed. A conversation owned
+// by someone else answers 404, exactly like a missing one, so the route never
+// confirms that another user's conversation exists. Store errors answer 500.
 func (a *API) handleRenameConversation(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, renameConversationMaxRequestBodyBytes)
 	var req renameConversationRequest
@@ -79,10 +54,25 @@ func (a *API) handleRenameConversation(c *gin.Context) {
 		return
 	}
 
-	conv, ok := a.loadOwnedConversation(c)
-	if !ok {
+	userID := c.GetHeader("Mattermost-User-Id")
+	conversationID := c.Param("conversationid")
+	audit.AddParam(auditRec(c), audit.KeyConversationID, audit.TruncateID(conversationID))
+
+	conv, err := a.conversationStore.GetConversation(conversationID)
+	if err != nil {
+		if errors.Is(err, store.ErrConversationNotFound) {
+			c.AbortWithError(http.StatusNotFound, errConversationNotFound)
+			return
+		}
+		a.pluginAPI.Log.Error("Failed to get conversation", "conversation_id", conversationID, "error", err.Error())
+		c.AbortWithError(http.StatusInternalServerError, errConversationInternal)
 		return
 	}
+	if conv.UserID != userID {
+		c.AbortWithError(http.StatusNotFound, errConversationNotFound)
+		return
+	}
+	audit.AddParam(auditRec(c), audit.KeyAgentID, conv.BotID)
 
 	renamed, err := a.conversationStore.RenameConversation(conv.ID, title)
 	if err != nil {

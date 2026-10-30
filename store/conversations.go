@@ -104,14 +104,13 @@ func (s *Store) GetConversationByThreadBotUser(rootPostID, botID, userID string)
 	return &conv, nil
 }
 
-// UpdateConversationTitle sets the title of a conversation. A title is not
-// activity, so UpdatedAt (which orders the conversation list) is left alone.
+// UpdateConversationTitle sets the title of a non-deleted conversation, as
+// RenameConversation does, for callers that need no report of whether it
+// existed. A title is not activity, so UpdatedAt (which orders the
+// conversation list) is left alone.
 func (s *Store) UpdateConversationTitle(id, title string) error {
-	return s.execBuilder(s.builder.
-		Update("LLM_Conversations").
-		Set("Title", title).
-		Where(sq.Eq{"ID": id}),
-		"update conversation title")
+	_, err := s.RenameConversation(id, title)
+	return err
 }
 
 // SetConversationTitleIfUnset sets the title of a non-deleted conversation
@@ -119,7 +118,7 @@ func (s *Store) UpdateConversationTitle(id, title string) error {
 // reports false, without error, when the conversation already has a title
 // (for example one its owner set while the title was being generated), or is
 // missing or deleted. User-set titles are never empty, so this never
-// overwrites one. UpdatedAt is left alone, as in UpdateConversationTitle.
+// overwrites one. UpdatedAt is left alone, as in RenameConversation.
 func (s *Store) SetConversationTitleIfUnset(id, title string) (bool, error) {
 	return s.execBuilderRows(s.builder.
 		Update("LLM_Conversations").

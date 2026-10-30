@@ -11,6 +11,7 @@ import path from 'path';
 
 import {expect, type Page} from '@playwright/test';
 
+import {AgentChatPage} from 'helpers/agent-chat-page';
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {containerTest} from 'helpers/container-fixture';
 import {withDeadline} from 'helpers/deadline';
@@ -114,27 +115,11 @@ async function login(page: Page): Promise<void> {
 }
 
 const sidebar = (page: Page) => page.getByRole('complementary', {name: 'Agents'});
-// The host message composer (AdvancedTextEditor) of the new-chat state, in the plugin's wrapper.
-const newChatComposer = (page: Page) => page.getByTestId('agent-chat-new-composer');
+const newChatComposer = (page: Page) => new AgentChatPage(page).newChatComposer();
 
 // The host ThreadViewer's own reply composer under the thread, and its text box.
 const replyComposerBox = (page: Page) => page.getByTestId('agent-chat-thread').getByTestId('comment-create');
 const replyComposer = (page: Page) => replyComposerBox(page).getByTestId('reply_textbox');
-
-const NEW_THREAD_URL = () => new RegExp(`/agents/chat/${botUserId}/[a-z0-9]{26}$`);
-
-// Enter in the new-chat composer. The host composer ignores an Enter in the first half second after
-// it mounts (its guard against sending into a channel just switched to), so the key is pressed again
-// until the chat opens; an Enter on a draft already submitted (or cleared) sends nothing.
-async function sendNewChatWithEnter(page: Page): Promise<void> {
-    const textbox = newChatComposer(page).getByRole('textbox');
-    await expect(async () => {
-        if (await textbox.count() > 0) {
-            await textbox.press('Enter');
-        }
-        await expect(page).toHaveURL(NEW_THREAD_URL(), {timeout: 2000});
-    }).toPass({timeout: 30000});
-}
 
 async function openAgentsFromSwitcher(page: Page): Promise<void> {
     // The host labels this button differently across versions ("Open product menu", "Product switch menu").
@@ -148,12 +133,9 @@ const threadUrl = (rootId: string) => `${mattermost.url()}/plug/mattermost-ai/ag
 // Sends the chat's prompt from the new-chat composer and returns the new thread's root post id.
 async function startChatViaUi(page: Page, chat: Chat): Promise<string> {
     await login(page);
-    await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
-    const textbox = newChatComposer(page).getByRole('textbox');
-    await expect(textbox).toBeEnabled({timeout: 30000});
-    await textbox.fill(chat.prompt);
-    await sendNewChatWithEnter(page);
-    const rootId = new URL(page.url()).pathname.split('/').pop()!;
+    const chatPage = new AgentChatPage(page);
+    await chatPage.openNewChat(mattermost.url(), botUserId);
+    const rootId = await chatPage.sendNewChat(botUserId, chat.prompt);
     await expect(page.getByTestId('agent-chat-thread').getByText(chat.reply)).toBeVisible({timeout: 60000});
     return rootId;
 }
@@ -633,7 +615,7 @@ test.describe('Agents product view', () => {
 
         await textbox.fill(ATTACH_PROMPT);
         await composer.getByTestId('SendMessageButton').click();
-        await expect(page).toHaveURL(NEW_THREAD_URL(), {timeout: 15000});
+        await expect(page).toHaveURL(new AgentChatPage(page).threadUrlPattern(botUserId), {timeout: 15000});
 
         // The user's root post carries the file.
         const thread = page.getByTestId('agent-chat-thread');
@@ -659,7 +641,7 @@ test.describe('Agents product view', () => {
         await textbox.press('Shift+Enter');
         await expect(textbox).toHaveValue(`${ENTER_PROMPT}\n`);
         await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}$`));
-        await sendNewChatWithEnter(page);
+        await new AgentChatPage(page).pressEnterUntilSent(botUserId);
 
         await expect(page.getByTestId('agent-chat-thread').getByTestId('post-message-text').getByText(ENTER_PROMPT, {exact: true})).toBeVisible({timeout: 30000});
 
@@ -671,11 +653,9 @@ test.describe('Agents product view', () => {
     test('scrolled up while the agent answers, a jump button appears above the composer and scrolls back down', async ({page}) => {
         test.setTimeout(120000);
         await login(page);
-        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
-        const textbox = newChatComposer(page).getByRole('textbox');
-        await expect(textbox).toBeEnabled({timeout: 30000});
-        await textbox.fill(JUMP_PROMPT);
-        await sendNewChatWithEnter(page);
+        const chatPage = new AgentChatPage(page);
+        await chatPage.openNewChat(mattermost.url(), botUserId);
+        await chatPage.sendNewChat(botUserId, JUMP_PROMPT);
 
         const thread = page.getByTestId('agent-chat-thread');
         const scroller = thread.locator('#threadViewerScrollContainer');
@@ -708,11 +688,9 @@ test.describe('Agents product view', () => {
     test('a chat whose agent is answering shows the wave in the sidebar until the reply finishes', async ({page}) => {
         test.setTimeout(120000);
         await login(page);
-        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
-        const textbox = newChatComposer(page).getByRole('textbox');
-        await expect(textbox).toBeEnabled({timeout: 30000});
-        await textbox.fill(BUSY_PROMPT);
-        await sendNewChatWithEnter(page);
+        const chatPage = new AgentChatPage(page);
+        await chatPage.openNewChat(mattermost.url(), botUserId);
+        await chatPage.sendNewChat(botUserId, BUSY_PROMPT);
         const busyUrl = page.url();
 
         // The wave shows on the chat's row while its agent is answering, open or not.

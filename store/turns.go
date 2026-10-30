@@ -38,16 +38,21 @@ var turnColumns = []string{
 // Arguments: the turn's CreatedAt, then its ConversationID.
 const bumpConversationActivity = "WITH bumped_conversation AS (UPDATE LLM_Conversations SET UpdatedAt = GREATEST(UpdatedAt, ?) WHERE ID = ?)"
 
+// insertTurn is the insert of a turn that also records it as the conversation's latest activity
+// (bumpConversationActivity). sequence is the turn's Sequence value or an expression for it.
+func (s *Store) insertTurn(turn *Turn, sequence any) sq.InsertBuilder {
+	return s.builder.Insert("LLM_Turns").
+		Prefix(bumpConversationActivity, turn.CreatedAt, turn.ConversationID).
+		Columns(turnColumns...).
+		Values(turn.ID, turn.ConversationID, turn.PostID, turn.Role, string(turn.Content),
+			turn.TokensIn, turn.TokensOut, sequence, turn.CreatedAt)
+}
+
 // CreateTurn inserts a new turn row and records it as the conversation's
 // latest activity.
 // The caller must set ID, ConversationID, Role, Content, Sequence, and CreatedAt before calling.
 func (s *Store) CreateTurn(turn *Turn) error {
-	return s.execBuilder(s.builder.Insert("LLM_Turns").
-		Prefix(bumpConversationActivity, turn.CreatedAt, turn.ConversationID).
-		Columns(turnColumns...).
-		Values(turn.ID, turn.ConversationID, turn.PostID, turn.Role, string(turn.Content),
-			turn.TokensIn, turn.TokensOut, turn.Sequence, turn.CreatedAt),
-		"create turn")
+	return s.execBuilder(s.insertTurn(turn, turn.Sequence), "create turn")
 }
 
 // GetTurnsForConversation retrieves all turns for a conversation ordered by Sequence ascending.
@@ -122,21 +127,16 @@ const maxAutoSequenceRetries = 3
 // The UNIQUE index on (ConversationID, Sequence) catches this, and the
 // method retries (up to 3 times) so the second writer succeeds.
 func (s *Store) CreateTurnAutoSequence(turn *Turn) error {
-	const query = `
-WITH bumped_conversation AS (UPDATE LLM_Conversations SET UpdatedAt = GREATEST(UpdatedAt, $8) WHERE ID = $2)
-INSERT INTO LLM_Turns (ID, ConversationID, PostID, Role, Content, TokensIn, TokensOut, Sequence, CreatedAt)
-VALUES ($1, $2, $3, $4, $5, $6, $7,
-        COALESCE((SELECT MAX(Sequence) FROM LLM_Turns WHERE ConversationID = $2), 0) + 1,
-        $8)
-RETURNING Sequence`
+	nextSequence := sq.Expr("COALESCE((SELECT MAX(Sequence) FROM LLM_Turns WHERE ConversationID = ?), 0) + 1", turn.ConversationID)
+	query, args, err := s.insertTurn(turn, nextSequence).Suffix("RETURNING Sequence").ToSql()
+	if err != nil {
+		return fmt.Errorf("failed to build create turn query: %w", err)
+	}
 
 	var lastErr error
 	for range maxAutoSequenceRetries {
 		var seq int
-		lastErr = s.db.QueryRow(query,
-			turn.ID, turn.ConversationID, turn.PostID, turn.Role,
-			string(turn.Content), turn.TokensIn, turn.TokensOut, turn.CreatedAt,
-		).Scan(&seq)
+		lastErr = s.db.QueryRow(query, args...).Scan(&seq)
 		if lastErr == nil {
 			turn.Sequence = seq
 			return nil
