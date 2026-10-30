@@ -8,6 +8,7 @@ import MagnifyIcon from '@mattermost/compass-icons/components/magnify';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 
 import FindAgentsModal from './find_agents_modal';
+import {isAgentsPathActive} from './use_agents_route';
 
 const isMacPlatform = () => (/Mac|iPhone|iPad|iPod/i).test(navigator.platform || navigator.userAgent || '');
 
@@ -19,9 +20,12 @@ export const isFindAgentsShortcut = (e: KeyboardEvent, mac: boolean) => {
     return modifier && !e.shiftKey && !e.altKey && isK;
 };
 
+// Any open dialog (the host's modals, plugin modals, the quick switcher).
+const OPEN_DIALOG_SELECTOR = '[role="dialog"], [role="alertdialog"], [aria-modal="true"], .modal.show';
+
 // Styled like the host's "Find channels" sidebar button. The host's own Cmd/Ctrl+K belongs to the
 // Channels sidebar's channel navigator, which is not mounted in the Agents product, so this
-// registers the shortcut while the Agents sidebar (and so this button) is on screen.
+// handles the shortcut while the Agents product is the active route.
 const FindAgentsButton = () => {
     const intl = useIntl();
     const buttonRef = useRef<HTMLButtonElement>(null);
@@ -33,9 +37,18 @@ const FindAgentsButton = () => {
         buttonRef.current?.focus();
     }, []);
 
+    const openRef = useRef(open);
+    openRef.current = open;
+
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
-            if (!isFindAgentsShortcut(e, mac)) {
+            if (e.defaultPrevented || !isFindAgentsShortcut(e, mac)) {
+                return;
+            }
+
+            // Only inside the Agents product, and never over another dialog; our own modal
+            // being open is what lets the shortcut close it again.
+            if (!isAgentsPathActive() || (!openRef.current && document.querySelector(OPEN_DIALOG_SELECTOR))) {
                 return;
             }
             e.preventDefault();

@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 
 import {getAIThreads} from '@/client';
 import type {AIThread} from '@/types/ai_thread';
@@ -284,6 +284,42 @@ describe('Find agents keyboard shortcut', () => {
         fireEvent.keyDown(document, {key: 'k', ctrlKey: true});
 
         await waitFor(() => expect(screen.queryByRole('combobox')).toBeNull());
+    });
+
+    test.each([
+        {name: 'outside the Agents product', pathname: '/team/channels/town-square', dialog: false},
+        {name: 'a similarly named path', pathname: '/plug/mattermost-ai/agents-other', dialog: false},
+        {name: 'while another dialog is open', pathname: '/plug/mattermost-ai/agents', dialog: true},
+    ])('the shortcut does nothing $name', ({pathname, dialog}) => {
+        setPlatform('Win32');
+        window.WebappUtils = {browserHistory: {location: {pathname}, push}} as any;
+        let other: HTMLElement | null = null;
+        if (dialog) {
+            other = document.createElement('div');
+            other.setAttribute('role', 'dialog');
+            document.body.appendChild(other);
+        }
+        render(<FindAgentsButton/>);
+
+        const event = new KeyboardEvent('keydown', {key: 'k', ctrlKey: true, bubbles: true, cancelable: true});
+        document.dispatchEvent(event);
+
+        expect(event.defaultPrevented).toBe(false);
+        expect(screen.queryByRole('combobox')).toBeNull();
+        other?.remove();
+    });
+
+    test('the shortcut leaves an event another handler already took', async () => {
+        setPlatform('Win32');
+        const take = (e: Event) => e.preventDefault();
+        document.addEventListener('keydown', take, {once: true});
+        render(<FindAgentsButton/>);
+        const event = new KeyboardEvent('keydown', {key: 'k', ctrlKey: true, bubbles: true, cancelable: true});
+        await act(async () => {
+            document.dispatchEvent(event);
+        });
+
+        expect(screen.queryByRole('combobox')).toBeNull();
     });
 
     test('advertises the shortcut to assistive technology and stops listening on unmount', () => {

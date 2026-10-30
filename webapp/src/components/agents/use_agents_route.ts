@@ -99,6 +99,12 @@ export const buildChatPath = (botId: string, rootId?: string): string => {
     return rootId ? `${base}/${encodeURIComponent(rootId)}` : base;
 };
 
+// True while the host's current location is inside the Agents product (read at call time).
+export const isAgentsPathActive = (): boolean => {
+    const pathname = getHistory()?.location?.pathname ?? '';
+    return pathname === AGENTS_ROUTE || pathname.startsWith(`${AGENTS_ROUTE}/`);
+};
+
 const readRoute = (): AgentsRoute => parseAgentsRoute(getHistory()?.location?.pathname);
 
 export const useAgentsRoute = (): AgentsRoute & AgentsNavigation => {
