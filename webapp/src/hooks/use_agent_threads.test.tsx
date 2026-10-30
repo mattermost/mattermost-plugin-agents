@@ -209,7 +209,6 @@ describe('stored AI threads', () => {
         await fetching;
 
         expect(titles(store)).toEqual(['c1:Generated title']);
-        sync.dispose();
     });
 
     describe('rename', () => {
@@ -254,7 +253,6 @@ describe('stored AI threads', () => {
 
             await expect(renaming).rejects.toThrow('nope');
             expect(titles(store)).toEqual(['c1:From elsewhere', 'c2:Other']);
-            sync.dispose();
         });
     });
 
@@ -299,7 +297,6 @@ describe('stored AI threads', () => {
             sync.handlePostUpdate(end(postId));
             await settle();
             expect(mockGetAIThreads).toHaveBeenCalledTimes(refetch ? 1 : 0);
-            sync.dispose();
         });
 
         test('a burst of finished turns costs one request', async () => {
@@ -309,7 +306,6 @@ describe('stored AI threads', () => {
             sync.handlePostUpdate(end('mine'));
             await settle();
             expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
-            sync.dispose();
         });
 
         test('nothing is fetched for a list no view has loaded', async () => {
@@ -319,7 +315,6 @@ describe('stored AI threads', () => {
             sync.handleReconnect();
             await settle();
             expect(mockGetAIThreads).not.toHaveBeenCalled();
-            sync.dispose();
         });
 
         test('a title update renames the listed chat without a refetch', async () => {
@@ -328,7 +323,6 @@ describe('stored AI threads', () => {
             await settle();
             expect(titles(store)).toEqual(['c1:Generated']);
             expect(mockGetAIThreads).not.toHaveBeenCalled();
-            sync.dispose();
         });
 
         test('a title for a chat the list does not have yet fetches it', async () => {
@@ -336,7 +330,6 @@ describe('stored AI threads', () => {
             sync.handleConversationUpdated({conversation_id: 'new-chat', title: 'Generated'});
             await settle();
             expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
-            sync.dispose();
         });
 
         test('a reconnect refetches a loaded list', async () => {
@@ -344,7 +337,6 @@ describe('stored AI threads', () => {
             sync.handleReconnect();
             await settle();
             expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
-            sync.dispose();
         });
     });
 });

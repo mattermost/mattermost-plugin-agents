@@ -127,7 +127,6 @@ export interface AgentThreadsSync {
 
     // The websocket reconnected, so events may have been missed.
     handleReconnect: () => void;
-    dispose: () => void;
 }
 
 // Keeps the stored thread list current from websocket events; index.tsx creates one for the
@@ -169,12 +168,6 @@ export function createAgentThreadsSync(store: {dispatch: Dispatch<UnknownAction>
         handleReconnect: () => {
             if (isInUse(store.getState())) {
                 scheduleRefresh();
-            }
-        },
-        dispose: () => {
-            if (timer !== null) {
-                clearTimeout(timer);
-                timer = null;
             }
         },
     };

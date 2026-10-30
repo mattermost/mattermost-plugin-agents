@@ -12,7 +12,7 @@ import {TextInput} from '@mattermost/compass-ui/components/text-input';
 import {AnimatedModalShell, MODAL_SHEET_CLASS} from '@/components/animated_modal_shell';
 
 // Mirrors api.MaxConversationTitleLength (the server rejects longer titles).
-export const MAX_CHAT_TITLE_LENGTH = 256;
+const MAX_CHAT_TITLE_LENGTH = 256;
 
 interface AgentChatRenameDialogProps {
     show: boolean;

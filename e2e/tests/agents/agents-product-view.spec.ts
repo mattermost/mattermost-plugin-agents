@@ -87,20 +87,6 @@ const baseFixtures = () => [
     },
 ];
 
-// Rename responses seen during the run, written next to the screenshots.
-const conversationResponses: Array<{test: string; method: string; url: string; status: number; body: string}> = [];
-
-function recordConversationResponses(page: Page, testName: string): void {
-    page.on('response', async (response) => {
-        const url = response.url();
-        if (!(/\/conversations\/[^/]+\/title$/).test(url)) {
-            return;
-        }
-        const body = await response.text().catch((e) => `<unreadable: ${e}>`);
-        conversationResponses.push({test: testName, method: response.request().method(), url: new URL(url).pathname, status: response.status(), body});
-    });
-}
-
 const GREETINGS = [
     'How can I help today?',
     'Let\'s get some work done',
@@ -200,11 +186,6 @@ test.describe('Agents product view', () => {
         const bot = await client.getUserByUsername(AIMOCK_BOT_NAME);
         botUserId = bot.id;
         dmChannelId = (await client.createDirectChannel([me.id, botUserId])).id;
-    });
-
-    test.afterAll(async () => {
-        fs.mkdirSync(SCREENSHOT_DIR, {recursive: true});
-        fs.writeFileSync(path.join(SCREENSHOT_DIR, 'conversation_responses.json'), JSON.stringify(conversationResponses, null, 2));
     });
 
     test('product switcher opens a new chat with the default agent, not the agents list', async ({page}) => {
@@ -398,7 +379,6 @@ test.describe('Agents product view', () => {
     });
 
     test('header: chat title opens the agent menu; the actions menu switches, renames and creates chats', async ({page}) => {
-        recordConversationResponses(page, 'header rename');
         const rootId = await startChatViaUi(page, HEADER_CHAT);
         await page.goto(threadUrl(rootId), {waitUntil: 'domcontentloaded'});
         const chat = page.getByRole('region', {name: `Chat with ${botDisplayName}`});
