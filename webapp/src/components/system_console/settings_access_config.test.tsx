@@ -100,10 +100,24 @@ describe('SettingsAccessConfig', () => {
         expect(saveSettingsAccess).toHaveBeenCalledWith({readOnlyUserIDs: [], readWriteUserIDs: ['alice', 'bob']});
     });
 
+    it.each([
+        {name: 'still loading', load: () => new Promise(() => null)},
+        {name: 'failed to load', load: () => Promise.reject(new Error('500'))},
+        {name: 'loaded but untouched', load: () => Promise.resolve({readOnlyUserIDs: ['bob'], readWriteUserIDs: ['alice']})},
+    ])('leaves the stored lists alone when the host saves other settings while they are $name', async ({load}) => {
+        (getSettingsAccess as jest.Mock).mockImplementation(load);
+        const {save} = renderConfig();
+        await act(async () => {/* let the load settle */});
+
+        expect(await save()).toEqual({});
+        expect(saveSettingsAccess).not.toHaveBeenCalled();
+    });
+
     it('reports a failed save to the host', async () => {
         (saveSettingsAccess as jest.Mock).mockRejectedValue(new Error('403'));
         const {save} = renderConfig();
         await screen.findByText(`${READ_WRITE}: alice`);
+        fireEvent.click(screen.getByRole('button', {name: `add bob (${READ_WRITE})`}));
 
         expect((await save()).error?.message).toBe('Failed to save who has access to the Agents settings.');
     });
