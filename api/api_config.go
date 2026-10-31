@@ -4,10 +4,12 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"slices"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
@@ -200,9 +202,10 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		}
 	}
 
-	// Remove saved sign-ins the change would otherwise orphan or send to
-	// another server, before any node runs with the new configuration.
-	clearErr := a.clearMCPServerOAuthState(c, prevServers, saved.MCP.Servers)
+	// Remove saved sign-ins the change orphaned or that were issued for a
+	// server's old origin. This is cleanup only: a grant is never used for a
+	// server whose origin differs from the one it was issued for.
+	a.clearMCPServerOAuthState(c, prevServers, saved.MCP.Servers)
 
 	// Update in-memory config on this node
 	a.configUpdater.Update(&saved)
@@ -213,11 +216,6 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 
-	if clearErr != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("the configuration was saved, but removing users' saved MCP sign-ins failed; save again to retry: %w", clearErr))
-		return
-	}
-
 	c.JSON(http.StatusOK, saved)
 }
 
@@ -225,10 +223,15 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 // servers that a configuration change deleted, renamed, moved to another
 // origin, or added under a name an earlier server used (see
 // mcp.OAuthStateToClear). The audit record carries the IDs of those servers.
-func (a *API) clearMCPServerOAuthState(c *gin.Context, prev, next []config.MCPServerConfig) error {
+//
+// The configuration is already saved, so the sweep is not tied to the request:
+// an admin closing the page must not stop it halfway. A failure is logged and
+// marked in the audit record; it cannot let a grant reach the wrong server,
+// because grants are only used with the origin they were issued for.
+func (a *API) clearMCPServerOAuthState(c *gin.Context, prev, next []config.MCPServerConfig) {
 	clears := mcp.OAuthStateToClear(prev, next)
 	if len(clears) == 0 {
-		return nil
+		return
 	}
 	names := make([]string, 0, len(clears))
 	serverIDs := make([]string, 0, len(clears))
@@ -238,19 +241,24 @@ func (a *API) clearMCPServerOAuthState(c *gin.Context, prev, next []config.MCPSe
 			serverIDs = append(serverIDs, entry.ServerID)
 		}
 	}
-	audit.AddParam(auditRec(c), "mcp_oauth_cleared_server_ids", serverIDs)
+	audit.AddParam(auditRec(c), audit.KeyMCPSignInsClearedServerIDs, audit.TruncateIDs(serverIDs))
 
-	deleted, err := mcp.ClearServerOAuthState(c.Request.Context(), &a.pluginAPI.KV, names)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), mcpSignInClearTimeout)
+	defer cancel()
+	deleted, err := mcp.ClearServerOAuthState(ctx, &a.pluginAPI.KV, names)
 	if err != nil {
-		a.pluginAPI.Log.Error("Failed to remove saved MCP sign-ins after a configuration change", "server_ids", serverIDs, "deleted", deleted, "error", err)
-		audit.AddParam(auditRec(c), "mcp_oauth_clear_failed", true)
-		return err
+		a.pluginAPI.Log.Warn("Failed to remove saved MCP sign-ins after a configuration change; they can no longer be used with the changed servers", "server_ids", serverIDs, "deleted", deleted, "error", err)
+		audit.AddParam(auditRec(c), audit.KeyMCPSignInsClearFailed, true)
+		return
 	}
 	if deleted > 0 {
 		a.pluginAPI.Log.Info("Removed saved MCP sign-ins after a configuration change", "server_ids", serverIDs, "deleted", deleted)
 	}
-	return nil
 }
+
+// mcpSignInClearTimeout bounds the sweep of saved MCP sign-ins after a
+// configuration change. It is a variable only so tests can shorten it.
+var mcpSignInClearTimeout = 2 * time.Minute
 
 // vettedDefaultToolPolicy returns the vetted default policy the System Console
 // seeds for a tool on a server, so seeded defaults are not treated as an

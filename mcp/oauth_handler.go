@@ -62,7 +62,7 @@ func newUserOAuthHandler(userID string, serverConfig ServerConfig, manager *OAut
 // compromised MCP server that starts advertising different authorization
 // server metadata therefore never sees the refresh token or client secret.
 func (h *userOAuthHandler) TokenSource(ctx context.Context) (oauth2.TokenSource, error) {
-	envelope, raw, err := h.manager.loadTokenEnvelope(h.userID, h.serverName)
+	envelope, raw, err := h.manager.loadGrantForServer(h.userID, h.serverName, h.serverURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load token: %w", err)
 	}
@@ -78,6 +78,7 @@ func (h *userOAuthHandler) TokenSource(ctx context.Context) (oauth2.TokenSource,
 		manager:     h.manager,
 		userID:      h.userID,
 		serverName:  h.serverName,
+		serverURL:   h.serverURL,
 	}, nil
 }
 
@@ -265,6 +266,9 @@ type persistingTokenSource struct {
 	manager     *OAuthManager
 	userID      string
 	serverName  string
+	// serverURL is the configured server URL the grant must still match
+	// when it is reloaded.
+	serverURL string
 }
 
 func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
@@ -431,7 +435,7 @@ func (s *persistingTokenSource) waitForConcurrentRefresh() (*oauth2.Token, error
 // adoptLatestGrant reloads the stored grant and adopts it when it carries a
 // valid token, returning that token (nil otherwise). Callers hold s.mu.
 func (s *persistingTokenSource) adoptLatestGrant() *oauth2.Token {
-	latest, raw, err := s.manager.loadTokenEnvelope(s.userID, s.serverName)
+	latest, raw, err := s.manager.loadGrantForServer(s.userID, s.serverName, s.serverURL)
 	if err != nil || latest == nil || latest.Token == nil {
 		return nil
 	}

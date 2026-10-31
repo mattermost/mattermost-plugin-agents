@@ -5,6 +5,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
@@ -135,8 +137,9 @@ func TestHandleSaveConfigClearsMCPServerSignIns(t *testing.T) {
 	}
 }
 
-// A failure to remove sign-ins is reported, but the saved configuration
-// still takes effect, and the audit record names the affected server.
+// A failure to remove sign-ins does not fail the save: the sign-ins can no
+// longer be used with the changed server anyway. The audit record names the
+// affected server and marks the failure.
 func TestHandleSaveConfigReportsSignInRemovalFailure(t *testing.T) {
 	const alice = "aaaaaaaaaaaaaaaaaaaaaaaaaa"
 	const jiraID = "jirajirajirajirajirajira00"
@@ -156,7 +159,7 @@ func TestHandleSaveConfigReportsSignInRemovalFailure(t *testing.T) {
 	e.mockAPI.On("KVList", 0, 1000).Return([]string{failing}, nil)
 	e.mockAPI.On("KVSetWithOptions", failing, []byte(nil), model.PluginKVSetOptions{}).
 		Return(false, model.NewAppError("KVSetWithOptions", "kv.unavailable", nil, "", http.StatusInternalServerError))
-	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+	e.mockAPI.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
 
 	body, err := json.Marshal(config.Config{MCP: config.MCPConfig{Servers: []config.MCPServerConfig{}}})
 	require.NoError(t, err)
@@ -166,17 +169,44 @@ func TestHandleSaveConfigReportsSignInRemovalFailure(t *testing.T) {
 	w := httptest.NewRecorder()
 	e.api.ServeHTTP(nil, w, req)
 
-	require.Equal(t, http.StatusInternalServerError, w.Code)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	assert.Empty(t, cfgStore.cfg.MCP.Servers, "the configuration change is saved")
 	assert.Equal(t, 1, updater.callCount, "the saved configuration is applied on this node")
 	assert.Equal(t, 1, notifier.callCount, "other nodes are told to reload")
 
 	require.Len(t, *records, 1)
 	params := (*records)[0].EventData.Parameters
-	assert.Equal(t, []string{jiraID}, params["mcp_oauth_cleared_server_ids"])
-	assert.Equal(t, true, params["mcp_oauth_clear_failed"])
+	assert.Equal(t, []string{jiraID}, params[audit.KeyMCPSignInsClearedServerIDs])
+	assert.Equal(t, true, params[audit.KeyMCPSignInsClearFailed])
 	assert.Equal(t, true, params["persisted"])
 	raw, err := json.Marshal((*records)[0])
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), failing, "stored keys never enter audit records")
+}
+
+// The sweep is not tied to the request: an admin closing the page right after
+// saving does not stop users' sign-ins from being removed.
+func TestHandleSaveConfigClearsSignInsAfterRequestCancelled(t *testing.T) {
+	const alice = "aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	jira := config.MCPServerConfig{ID: "jirajirajirajirajirajira00", Name: "Jira", Enabled: true, BaseURL: "https://jira.example.com/mcp"}
+	signIn := "mcp_oauth_token_v1_" + alice + "_Jira"
+
+	pluginClient, deleted := kvKeysPluginClient([]string{signIn})
+	router := setupConfigTestRouter(&API{
+		configStore:     &testConfigStore{cfg: &config.Config{MCP: config.MCPConfig{Servers: []config.MCPServerConfig{jira}}}},
+		configUpdater:   &testConfigUpdater{},
+		clusterNotifier: &testClusterNotifier{},
+		licenseChecker:  enterprisetest.CheckerAt(enterprise.LevelEnterpriseAdvanced),
+		pluginAPI:       pluginClient,
+	})
+
+	body, err := json.Marshal(config.Config{MCP: config.MCPConfig{Servers: []config.MCPServerConfig{}}})
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(httptest.NewRecorder(), req)
+
+	assert.Equal(t, []string{signIn}, deleted())
 }

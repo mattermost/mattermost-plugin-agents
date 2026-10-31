@@ -39,6 +39,14 @@ const (
 	// plugin-backed MCP server. Distinct from KeyCallerPluginID (the actor).
 	KeyMCPPluginID = "agents.mcp_plugin.id"
 
+	// KeyMCPSignInsClearedServerIDs lists the remote MCP servers whose users'
+	// saved sign-ins a configuration change removed.
+	KeyMCPSignInsClearedServerIDs = "agents.mcp_server.signins_cleared.ids"
+
+	// KeyMCPSignInsClearFailed marks a configuration change whose removal of
+	// saved MCP sign-ins did not complete.
+	KeyMCPSignInsClearFailed = "agents.mcp_server.signins_clear_failed"
+
 	// MetaTraceID is the meta key carrying the OpenTelemetry trace ID of the
 	// request, letting an auditor pivot from an audit record to the full
 	// trace of what happened.

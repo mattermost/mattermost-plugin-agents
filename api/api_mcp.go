@@ -290,7 +290,7 @@ func (a *API) buildUserMCPServerInfo(
 	hasStoredToken := false
 	if oauthManager != nil {
 		var err error
-		hasStoredToken, err = oauthManager.HasStoredToken(userID, serverConfig.Name)
+		hasStoredToken, err = oauthManager.HasStoredToken(userID, *serverConfig)
 		if err != nil {
 			hasStoredToken = false
 			a.pluginAPI.Log.Debug("Failed to check MCP OAuth token presence", "userID", userID, "serverName", serverConfig.Name, "serverOrigin", serverConfig.BaseURL, "error", err)

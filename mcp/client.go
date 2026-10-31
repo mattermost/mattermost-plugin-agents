@@ -167,7 +167,7 @@ func maybeInvalidateSharedToolsBeforeOAuthListTools(userID string, serverConfig 
 	}
 
 	serverID := serverConfig.Name
-	hasStoredToken, tokenErr := oauthManager.HasStoredToken(userID, serverID)
+	hasStoredToken, tokenErr := oauthManager.HasStoredToken(userID, serverConfig)
 	if tokenErr != nil {
 		log.Warn("Failed to check stored OAuth token before MCP tool discovery",
 			"serverID", serverID,

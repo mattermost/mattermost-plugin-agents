@@ -79,6 +79,14 @@ type storedTokenEnvelope struct {
 	// for grants stored before this field existed (revocation is skipped) or
 	// when the AS advertises no revocation endpoint.
 	RevocationEndpoint string `json:"revocationEndpoint,omitempty"`
+	// ServerOrigin is the canonical origin of the configured MCP server URL
+	// the sign-in was started for (not the server-advertised resource). A
+	// grant is only used while the server under its name still has this
+	// origin, so a server moved to another host never receives grants issued
+	// for the old one, whatever order config saves, cleanup, and sign-ins
+	// complete in. Empty for grants stored before the field existed; those
+	// are bound to the current origin the first time they are loaded.
+	ServerOrigin string `json:"serverOrigin,omitempty"`
 }
 
 // loadTokenEnvelope retrieves the stored OAuth grant for a user and server.
@@ -127,19 +135,6 @@ func (m *OAuthManager) loadTokenEnvelope(userID, serverID string) (*storedTokenE
 		return nil, raw, nil
 	}
 	return &storedTokenEnvelope{Version: 0, Token: &legacy}, raw, nil
-}
-
-// loadToken retrieves the OAuth token for a user and server from the KV store
-// If no token is found, it returns nil to indicate no token exists
-func (m *OAuthManager) loadToken(userID, serverID string) (*oauth2.Token, error) {
-	envelope, _, err := m.loadTokenEnvelope(userID, serverID)
-	if err != nil {
-		return nil, err
-	}
-	if envelope == nil {
-		return nil, nil
-	}
-	return envelope.Token, nil
 }
 
 // storeTokenEnvelope persists an OAuth grant with its authorization server
@@ -196,14 +191,58 @@ func (m *OAuthManager) releaseRefreshLease(userID, serverID, leaseID string) {
 	}
 }
 
-// HasStoredToken returns true when a non-expired OAuth token exists for the
-// given user and server. It does not refresh the token or contact upstream.
-func (m *OAuthManager) HasStoredToken(userID, serverID string) (bool, error) {
-	tok, err := m.loadToken(userID, serverID)
+// grantBindAttempts bounds how often loadGrantForServer retries binding a
+// legacy grant that a concurrent write keeps changing.
+const grantBindAttempts = 3
+
+// loadGrantForServer loads the user's grant for a server, but only one issued
+// for the server's current origin (serverURL is the configured BaseURL). A
+// grant issued for another origin is treated as absent, so the user is asked
+// to sign in again and the grant is never sent to the new origin. A grant
+// stored before ServerOrigin existed is bound to the current origin with a
+// compare-and-set the first time it is loaded, so existing users stay signed
+// in across the upgrade. Pre-envelope (version 0) grants carry no binding
+// fields to extend and are used as before.
+func (m *OAuthManager) loadGrantForServer(userID, serverName, serverURL string) (*storedTokenEnvelope, []byte, error) {
+	for range grantBindAttempts {
+		envelope, raw, err := m.loadTokenEnvelope(userID, serverName)
+		if err != nil {
+			return nil, nil, err
+		}
+		if envelope == nil || envelope.Version == 0 {
+			return envelope, raw, nil
+		}
+		if envelope.ServerOrigin != "" {
+			if originChanged(envelope.ServerOrigin, serverURL) {
+				return nil, nil, nil
+			}
+			return envelope, raw, nil
+		}
+
+		origin := canonicalOriginFromString(serverURL)
+		if origin == "" {
+			return nil, nil, nil
+		}
+		bound := *envelope
+		bound.ServerOrigin = origin
+		if _, err := m.casTokenEnvelope(userID, serverName, raw, &bound); err != nil {
+			return nil, nil, fmt.Errorf("failed to bind stored grant to its server: %w", err)
+		}
+		// Reload whether or not this write won, so the caller holds the
+		// stored bytes for its own compare-and-set.
+	}
+	return nil, nil, nil
+}
+
+// HasStoredToken returns true when an OAuth token exists for the user and
+// server that may be used with the server's current URL. It does not refresh
+// the token or contact upstream.
+func (m *OAuthManager) HasStoredToken(userID string, serverConfig ServerConfig) (bool, error) {
+	envelope, _, err := m.loadGrantForServer(userID, serverConfig.Name, serverConfig.BaseURL)
 	if err != nil {
 		return false, err
 	}
-	if tok == nil {
+	if envelope == nil || envelope.Token == nil {
 		return false, nil
 	}
 	// Consider a token present even if it might be expired — the caller only

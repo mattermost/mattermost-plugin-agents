@@ -611,6 +611,7 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 		AuthMethod:         clientCreds.TokenEndpointAuthMethod,
 		Resource:           session.ResourceURL,
 		RevocationEndpoint: session.RevocationEndpoint,
+		ServerOrigin:       canonicalOriginFromString(session.ServerURL),
 	}); err != nil {
 		return nil, fmt.Errorf("failed to save token: %w", err)
 	}
