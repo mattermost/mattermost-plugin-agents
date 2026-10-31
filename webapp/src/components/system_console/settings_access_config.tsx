@@ -136,7 +136,7 @@ const SettingsAccessConfig = (props: Props) => {
                             placeholder={intl.formatMessage({defaultMessage: 'Search for people to give read and write access'})}
                         />
                         <HelpText>
-                            <FormattedMessage defaultMessage='These people can view and change every Agents setting, including API keys and other credentials. They cannot change who has access.'/>
+                            <FormattedMessage defaultMessage='These people can view and change every Agents setting, including API keys and other credentials. Because they choose which AI services and MCP servers agents use, they can direct what users send to agents, including private channel and direct message content, to a service they control. Give this access only to people you would trust as a system admin for Agents. They cannot change who has access or the legacy agents defined in the plugin configuration.'/>
                         </HelpText>
                     </TextFieldContainer>
                 </FormRow>
