@@ -45,6 +45,10 @@ const SettingsAccessConfig = (props: Props) => {
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
 
+    // Whether the lists were edited since they were loaded or saved. The lists
+    // can only be edited once loaded, so this also means they were loaded.
+    const [changed, setChanged] = useState(false);
+
     useEffect(() => {
         let current = true;
         getSettingsAccess().
@@ -69,11 +73,17 @@ const SettingsAccessConfig = (props: Props) => {
         };
     }, [intl]);
 
-    // The host's Save button runs this; it PUTs only the two lists.
+    // The host's Save button runs this for any change on the page, Enable Plugin
+    // included. It PUTs the two lists only when they were edited: lists that are
+    // still loading, failed to load, or untouched would overwrite the stored ones.
     useEffect(() => {
         const save = async () => {
+            if (!changed) {
+                return {};
+            }
             try {
                 setAccess(await saveSettingsAccess(access));
+                setChanged(false);
                 return {};
             } catch {
                 return {error: {message: intl.formatMessage({defaultMessage: 'Failed to save who has access to the Agents settings.'})}};
@@ -83,10 +93,11 @@ const SettingsAccessConfig = (props: Props) => {
         return () => {
             props.unRegisterSaveAction(save);
         };
-    }, [access, intl, props.registerSaveAction, props.unRegisterSaveAction]);
+    }, [access, changed, intl, props.registerSaveAction, props.unRegisterSaveAction]);
 
     const update = useCallback((updates: Partial<SettingsAccess>) => {
         setAccess((prev) => ({...prev, ...updates}));
+        setChanged(true);
         props.setSaveNeeded();
     }, [props.setSaveNeeded]);
 
