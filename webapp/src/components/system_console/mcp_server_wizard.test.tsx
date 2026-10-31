@@ -364,7 +364,11 @@ describe('reauthReasons', () => {
 
     test.each([
         {name: 'renaming', change: {name: 'Tracker 2'}, want: ['name']},
-        {name: 'moving to another URL', change: {baseURL: 'https://other.example.com/mcp'}, want: ['url']},
+        {name: 'moving to another host', change: {baseURL: 'https://other.example.com/mcp'}, want: ['url']},
+        {name: 'moving to another port', change: {baseURL: 'https://mcp.example.com:8443/mcp'}, want: ['url']},
+        {name: 'moving to another scheme', change: {baseURL: 'http://mcp.example.com/mcp'}, want: ['url']},
+        {name: 'changing only the path', change: {baseURL: 'https://mcp.example.com/v2/mcp'}, want: []},
+        {name: 'changing only the host case or default port', change: {baseURL: 'https://MCP.example.com:443/mcp'}, want: []},
         {name: 'changing the OAuth client ID', change: {clientID: 'client-b'}, want: ['clientID']},
         {name: 'removing the OAuth client ID', change: {clientID: ''}, want: ['clientID']},
         {name: 'rotating the OAuth client secret', change: {clientSecret: 'secret-b'}, want: []},
@@ -470,13 +474,26 @@ describe('MCPServerWizard edit mode', () => {
 
         fireEvent.change(await screen.findByDisplayValue('https://mcp.example.com/mcp'), {target: {value: 'https://other.example.com/mcp'}});
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));
-        expect(screen.getByText(/Changing the URL/)).not.toBeNull();
+        expect(screen.getByText(/Moving the server to another host/)).not.toBeNull();
         fireEvent.click(screen.getByRole('button', {name: 'Save and sign in again'}));
 
         await waitFor(() => expect(onPersist).toHaveBeenCalled());
         const [edited] = onPersist.mock.calls[0] as unknown as [MCPServerConfig, string];
         expect(edited.baseURL).toBe('https://other.example.com/mcp');
         expect(edited.tool_configs).toEqual([]);
+    });
+
+    test('a path-only URL change saves without a warning and keeps tool policies', async () => {
+        const {onPersist, onClose} = renderWizard({kind: 'edit', server: saved}, ['Tracker'], [saved]);
+
+        fireEvent.change(await screen.findByDisplayValue('https://mcp.example.com/mcp'), {target: {value: 'https://mcp.example.com/v2/mcp'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(onClose).toHaveBeenCalled());
+        expect(screen.queryByRole('button', {name: 'Save and sign in again'})).toBeNull();
+        const [edited] = onPersist.mock.calls[0] as unknown as [MCPServerConfig, string];
+        expect(edited.baseURL).toBe('https://mcp.example.com/v2/mcp');
+        expect(edited.tool_configs).toBeUndefined();
     });
 
     test('a disabled server is saved without connecting after a sign-in-ending edit', async () => {

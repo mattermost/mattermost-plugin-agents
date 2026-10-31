@@ -41,12 +41,34 @@ export const connectionSettings = (server: MCPServerConfig) => JSON.stringify([
     server.clientSecret || '',
 ]);
 
+// serverOrigin returns a server URL's origin (scheme, host, and port), or ''
+// when the URL cannot be parsed.
+const serverOrigin = (url: string): string => {
+    try {
+        const origin = new URL(url).origin;
+        return origin === 'null' ? '' : origin.toLowerCase();
+    } catch {
+        return '';
+    }
+};
+
+// originChanged mirrors the server's rule for removing saved sign-ins: a URL
+// with another scheme, host, or port is another server; a path change is not.
+export const originChanged = (before: string, after: string): boolean => {
+    const a = serverOrigin(before);
+    const b = serverOrigin(after);
+    if (!a || !b) {
+        return before !== after;
+    }
+    return a !== b;
+};
+
 // A ReauthReason is an edit after which users' existing sign-ins to the server
 // stop working:
-//   - name: OAuth grants are stored under the server's name, so a renamed
-//     server finds none.
-//   - url: grants were issued for the old server; one that is not the same
-//     OAuth resource rejects them.
+//   - name: OAuth grants are stored under the server's name; saving a rename
+//     removes them.
+//   - url: saving a move to another origin removes the server's grants, which
+//     were issued for the old server. A path-only change keeps them.
 //   - clientID: refreshes must use the client a grant was issued to, so a
 //     grant from another client cannot be renewed once its token expires.
 // The client secret, headers, and service account headers only reconnect.
@@ -60,7 +82,7 @@ export const reauthReasons = (before: MCPServerConfig, after: MCPServerConfig): 
     if (before.name !== after.name) {
         reasons.push('name');
     }
-    if (before.baseURL !== after.baseURL) {
+    if (originChanged(before.baseURL, after.baseURL)) {
         reasons.push('url');
     }
     if ((before.clientID ?? '') !== (after.clientID ?? '')) {
@@ -259,7 +281,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
 
     // editedServer is the server as the details step has it, without its tool
     // policies, which a settings save keeps as saved. A server moved to
-    // another URL drops the old server's tool policies; they are reviewed again.
+    // another origin drops the old server's tool policies; they are reviewed again.
     const editedServer = (): MCPServerConfig => {
         const {tool_configs: toolConfigs, ...settings} = {
             ...(savedServer ?? emptyServer),
@@ -268,7 +290,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
             baseURL: trimmedURL,
             clientID: (details.clientID ?? '').trim(),
         };
-        if (savedServer && savedServer.baseURL.trim() !== trimmedURL) {
+        if (savedServer && originChanged(savedServer.baseURL, trimmedURL)) {
             return {...settings, tool_configs: []};
         }
         return mode.kind === 'add' && toolConfigs ? {...settings, tool_configs: toolConfigs} : settings;
@@ -503,8 +525,8 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
     );
 
     const reasonText: Record<ReauthReason, string> = {
-        name: intl.formatMessage({defaultMessage: 'Renaming the server: sign-ins are saved under its name, so every user has to sign in again.'}),
-        url: intl.formatMessage({defaultMessage: 'Changing the URL: sign-ins were issued for the old server, so users have to sign in again unless the new URL is the same server. Its tool policies are cleared and reviewed again.'}),
+        name: intl.formatMessage({defaultMessage: 'Renaming the server: sign-ins are saved under its name and are removed, so every user has to sign in again.'}),
+        url: intl.formatMessage({defaultMessage: 'Moving the server to another host: sign-ins issued for the old server are removed, so every user has to sign in again. Its tool policies are cleared and reviewed again.'}),
         clientID: intl.formatMessage({defaultMessage: 'Changing the OAuth client ID: sign-ins issued to the old client cannot be renewed, so every user has to sign in again.'}),
     };
 

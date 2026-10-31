@@ -230,6 +230,7 @@ describe('MCPServers remote server list', () => {
 
         fireEvent.click(screen.getByRole('button', {name: 'Delete Jira'}));
         expect(onDeleteServer).not.toHaveBeenCalled();
+        expect(await screen.findByText(/users’ saved sign-ins to it are removed/)).not.toBeNull();
         fireEvent.click(await screen.findByRole('button', {name: 'Delete'}));
 
         await waitFor(() => expect(onDeleteServer).toHaveBeenCalledWith(STABLE_ID));
