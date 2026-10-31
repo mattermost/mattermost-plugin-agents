@@ -180,12 +180,13 @@ func configWithEverySecret() *config.Config {
 			AWSAccessKeyID:        "sentinel-aws-access-key-id",
 			AWSSecretAccessKey:    "sentinel-aws-secret",
 			VertexAuthCredentials: "sentinel-vertex-credentials",
+			APIURL:                "https://proxyuser:sentinel-service-url-password@llm.example.com/v1?api-key=sentinel-service-url-key",
 		}},
 		MCP: config.MCPConfig{
 			Servers: []config.MCPServerConfig{{
 				ID:                    "server1",
 				Name:                  "Tracker",
-				BaseURL:               "https://mcp.example.com",
+				BaseURL:               "https://mcp.example.com/sse?token=sentinel-mcp-url-token",
 				Headers:               map[string]string{"X-Api-Key": "sentinel-mcp-header"},
 				ServiceAccountHeaders: map[string]string{"Authorization": "sentinel-mcp-service-account"},
 				ClientID:              "client-id",
@@ -193,16 +194,18 @@ func configWithEverySecret() *config.Config {
 			}},
 		},
 		WebSearch: config.WebSearchConfig{
-			Google: config.WebSearchGoogleConfig{APIKey: "sentinel-google-key"},
-			Brave:  config.WebSearchBraveConfig{APIKey: "sentinel-brave-key"},
+			Google:  config.WebSearchGoogleConfig{APIKey: "sentinel-google-key"},
+			Brave:   config.WebSearchBraveConfig{APIKey: "sentinel-brave-key"},
+			SearXNG: config.WebSearchSearXNGConfig{BaseURL: "https://searx:sentinel-searxng-password@searx.example.com"},
 		},
 		EmbeddingSearchConfig: embeddings.EmbeddingSearchConfig{
 			EmbeddingProvider: embeddings.UpstreamConfig{
 				Type:       "openai",
-				Parameters: json.RawMessage(`{"apiKey":"sentinel-embedding-key","embeddingModel":"text-embedding-3-small"}`),
+				Parameters: json.RawMessage(`{"apiKey":"sentinel-embedding-key","embeddingModel":"text-embedding-3-small","apiURL":"https://embed.example.com/v1?key=sentinel-embedding-url-key","fallbacks":[{"apiKey":"sentinel-embedding-nested-key"}]}`),
 			},
 		},
-		OpenTelemetryHeaders: "Authorization=sentinel-otlp-header",
+		OpenTelemetryHeaders:  "Authorization=sentinel-otlp-header",
+		OpenTelemetryEndpoint: "https://otlp:sentinel-otlp-url-password@collector.example.com:4317",
 	}
 }
 
@@ -218,6 +221,13 @@ var everySecret = []string{
 	"sentinel-brave-key",
 	"sentinel-embedding-key",
 	"sentinel-otlp-header",
+	"sentinel-service-url-password",
+	"sentinel-service-url-key",
+	"sentinel-mcp-url-token",
+	"sentinel-searxng-password",
+	"sentinel-embedding-url-key",
+	"sentinel-embedding-nested-key",
+	"sentinel-otlp-url-password",
 }
 
 func TestGetConfigSecretsByAccessLevel(t *testing.T) {
@@ -253,6 +263,7 @@ func TestGetConfigSecretsByAccessLevel(t *testing.T) {
 			assert.Contains(t, body, "Primary")
 			assert.Contains(t, body, "text-embedding-3-small")
 			assert.Contains(t, body, "X-Api-Key")
+			assert.Contains(t, body, "llm.example.com/v1")
 			assert.NotContains(t, body, "settingsAccess")
 			assert.NotContains(t, body, users.readOnly)
 		})
@@ -279,6 +290,46 @@ func TestSaveConfigKeepsDelegationLists(t *testing.T) {
 	assert.Equal(t, []string{users.readOnly}, store.cfg.SettingsAccess.ReadOnlyUserIDs)
 	assert.Equal(t, []string{users.readWrite}, store.cfg.SettingsAccess.ReadWriteUserIDs)
 	assert.NotContains(t, recorder.Body.String(), "settingsAccess")
+}
+
+func TestSaveConfigLegacyBotsAreSystemAdminOnly(t *testing.T) {
+	stored := []llm.BotConfig{{ID: "legacy1", Name: "legacy", ServiceID: "service1"}}
+	planted := []llm.BotConfig{
+		{ID: "legacy1", Name: "legacy", ServiceID: "service1", UseServiceAccountAuth: true},
+		{ID: "planted", Name: "planted", ServiceID: "service1", UseServiceAccountAuth: true},
+	}
+
+	tests := []struct {
+		name     string
+		role     string
+		wantBots []llm.BotConfig
+	}{
+		{name: "a read/write delegate cannot add or change them", role: "readWrite", wantBots: stored},
+		{name: "a system admin can", role: "admin", wantBots: planted},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, users, store, _ := setupSettingsAccessEnv(t, &config.Config{
+				Services: []llm.ServiceConfig{{ID: "service1", Name: "Primary", Type: llm.ServiceTypeOpenAICompatible}},
+				Bots:     stored,
+			})
+			defer e.Cleanup(t)
+			userID := map[string]string{"admin": users.admin, "readWrite": users.readWrite}[tt.role]
+
+			body := map[string]any{
+				"services": store.cfg.Services,
+				"bots":     planted,
+			}
+			recorder := doRequest(e.api, http.MethodPut, "/admin/config", body, userID)
+			require.Equal(t, http.StatusOK, recorder.Code)
+
+			require.Len(t, store.cfg.Bots, len(tt.wantBots))
+			for i, bot := range tt.wantBots {
+				assert.Equal(t, bot.ID, store.cfg.Bots[i].ID)
+				assert.Equal(t, bot.UseServiceAccountAuth, store.cfg.Bots[i].UseServiceAccountAuth)
+			}
+		})
+	}
 }
 
 func TestPutSettingsAccess(t *testing.T) {

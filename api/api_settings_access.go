@@ -13,18 +13,28 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 )
 
-const settingsAccessLevelKey = "settings_access_level"
+const (
+	settingsAccessLevelKey       = "settings_access_level"
+	settingsAccessSystemAdminKey = "settings_access_system_admin"
+)
 
 // settingsAccessLevel returns how much of the plugin configuration userID may
 // reach: system admins everything, other users what the delegation lists grant.
 func (a *API) settingsAccessLevel(userID string) config.SettingsAccessLevel {
+	level, _ := a.settingsAccess(userID)
+	return level
+}
+
+// settingsAccess returns userID's level and whether that level comes from
+// being a system admin rather than from the delegation lists.
+func (a *API) settingsAccess(userID string) (config.SettingsAccessLevel, bool) {
 	if userID == "" {
-		return config.SettingsAccessNone
+		return config.SettingsAccessNone, false
 	}
 	if isSystemAdmin(a.pluginAPI, userID) {
-		return config.SettingsAccessWrite
+		return config.SettingsAccessWrite, true
 	}
-	return a.config.SettingsAccess().LevelFor(userID)
+	return a.config.SettingsAccess().LevelFor(userID), false
 }
 
 // settingsAccessFromContext returns the level the authorization middleware
@@ -38,13 +48,20 @@ func settingsAccessFromContext(c *gin.Context) config.SettingsAccessLevel {
 	return config.SettingsAccessNone
 }
 
+// settingsCallerIsSystemAdmin reports whether the authorization middleware
+// admitted this request as a system admin, false when it did not run.
+func settingsCallerIsSystemAdmin(c *gin.Context) bool {
+	return c.GetBool(settingsAccessSystemAdminKey)
+}
+
 func (a *API) requireSettingsAccess(c *gin.Context, minimum config.SettingsAccessLevel) {
-	level := a.settingsAccessLevel(c.GetHeader("Mattermost-User-Id"))
+	level, systemAdmin := a.settingsAccess(c.GetHeader("Mattermost-User-Id"))
 	if level < minimum {
 		c.AbortWithError(http.StatusForbidden, fmt.Errorf("must be a system admin or have %s access to the Agents settings", minimum))
 		return
 	}
 	c.Set(settingsAccessLevelKey, level)
+	c.Set(settingsAccessSystemAdminKey, systemAdmin)
 }
 
 // settingsReadAuthorizationRequired admits system admins and users with

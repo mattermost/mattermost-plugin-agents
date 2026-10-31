@@ -5,6 +5,7 @@ package config
 
 import (
 	"encoding/json"
+	"net/url"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -18,6 +19,8 @@ var secretParameterMarkers = []string{"key", "secret", "token", "password", "cre
 // service API keys and cloud credentials, MCP server headers and OAuth client
 // secrets, web search API keys, embedding provider keys, and OTLP export
 // headers. Header names are kept so viewers can see which headers are set.
+// Every URL loses its user info and query values, where admins sometimes put
+// credentials.
 func (c *Config) WithoutSecrets() Config {
 	out := *c.Clone()
 
@@ -32,25 +35,31 @@ func (c *Config) WithoutSecrets() Config {
 
 	for i := range out.MCP.Servers {
 		server := &out.MCP.Servers[i]
+		server.BaseURL = RedactURL(server.BaseURL)
 		server.Headers = blankValues(server.Headers)
 		server.ServiceAccountHeaders = blankValues(server.ServiceAccountHeaders)
 		server.ClientSecret = ""
 	}
 
 	out.WebSearch.Google.APIKey = ""
+	out.WebSearch.Google.APIURL = RedactURL(out.WebSearch.Google.APIURL)
 	out.WebSearch.Brave.APIKey = ""
+	out.WebSearch.Brave.APIURL = RedactURL(out.WebSearch.Brave.APIURL)
+	out.WebSearch.SearXNG.BaseURL = RedactURL(out.WebSearch.SearXNG.BaseURL)
 
 	out.EmbeddingSearchConfig.EmbeddingProvider.Parameters = redactParameters(out.EmbeddingSearchConfig.EmbeddingProvider.Parameters)
 	out.EmbeddingSearchConfig.VectorStore.Parameters = redactParameters(out.EmbeddingSearchConfig.VectorStore.Parameters)
 	out.EmbeddingSearchConfig.Parameters = redactParameters(out.EmbeddingSearchConfig.Parameters)
 
 	out.OpenTelemetryHeaders = ""
+	out.OpenTelemetryEndpoint = RedactURL(out.OpenTelemetryEndpoint)
 
 	return out
 }
 
 func redactService(svc *llm.ServiceConfig) {
 	svc.APIKey = ""
+	svc.APIURL = RedactURL(svc.APIURL)
 	svc.AWSAccessKeyID = ""
 	svc.AWSSecretAccessKey = ""
 	svc.VertexAuthCredentials = ""
@@ -92,9 +101,29 @@ func redactParameterMap(params map[string]any) {
 			params[name] = ""
 			continue
 		}
-		if nested, ok := value.(map[string]any); ok {
-			redactParameterMap(nested)
+		params[name] = redactParameterValue(name, value)
+	}
+}
+
+// redactParameterValue redacts URLs among string values and walks nested
+// objects and arrays.
+func redactParameterValue(name string, value any) any {
+	switch v := value.(type) {
+	case string:
+		if strings.Contains(strings.ToLower(name), "url") {
+			return RedactURL(v)
 		}
+		return v
+	case map[string]any:
+		redactParameterMap(v)
+		return v
+	case []any:
+		for i := range v {
+			v[i] = redactParameterValue(name, v[i])
+		}
+		return v
+	default:
+		return v
 	}
 }
 
@@ -106,4 +135,33 @@ func isSecretParameter(name string) bool {
 		}
 	}
 	return false
+}
+
+// RedactURL removes the user info and blanks the query values of a URL, the
+// places a credential can hide in one. A value that has user info or a query
+// but cannot be parsed is dropped.
+func RedactURL(raw string) string {
+	if !strings.ContainsAny(raw, "@?#") {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	// Without a scheme, "user:pass@host" parses as an opaque URL with the
+	// credentials in Opaque instead of User.
+	if strings.Contains(u.Opaque, "@") {
+		return ""
+	}
+	u.User = nil
+	u.Fragment = ""
+	u.RawFragment = ""
+	if u.RawQuery != "" {
+		query := u.Query()
+		for key := range query {
+			query[key] = []string{""}
+		}
+		u.RawQuery = query.Encode()
+	}
+	return u.String()
 }

@@ -133,3 +133,24 @@ func TestSettingsAccessNormalize(t *testing.T) {
 		})
 	}
 }
+
+func TestRedactURL(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "plain URL is kept", in: "https://api.example.com/v1", want: "https://api.example.com/v1"},
+		{name: "host and port without a scheme are kept", in: "collector:4317", want: "collector:4317"},
+		{name: "user info is removed", in: "https://user:pass@api.example.com/v1", want: "https://api.example.com/v1"},
+		{name: "query values are blanked, names kept", in: "https://api.example.com/v1?api-key=secret&region=eu", want: "https://api.example.com/v1?api-key=&region="},
+		{name: "fragment is removed", in: "https://api.example.com/#token=secret", want: "https://api.example.com/"},
+		{name: "credentials without a scheme are dropped", in: "user:pass@collector:4317", want: ""},
+		{name: "empty stays empty", in: "", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, RedactURL(tt.in))
+		})
+	}
+}

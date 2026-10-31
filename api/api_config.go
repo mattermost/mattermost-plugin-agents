@@ -167,6 +167,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 	resolvedAgentNames := a.resolveAgentReferenceUsernames(cfg)
+	systemAdmin := settingsCallerIsSystemAdmin(c)
 
 	// Read-previous → identity checks → mint empty IDs → save runs atomically
 	// under the config advisory lock. Duplicate IDs and embedded ID mismatch
@@ -189,10 +190,18 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		}
 		next.MCP = reconciledMCP
 		normalized := mintEmptyAdminIDs(normalizeAdminConfig(next))
-		// The delegation lists change only through their own route.
+		// The delegation lists change only through their own route. Legacy
+		// file bots are live agents whose access, ownership and service
+		// account use are system admin decisions, so delegates cannot change them.
 		normalized.SettingsAccess = nil
 		if prev != nil {
 			normalized.SettingsAccess = prev.SettingsAccess
+		}
+		if !systemAdmin {
+			normalized.Bots = nil
+			if prev != nil {
+				normalized.Bots = prev.Bots
+			}
 		}
 		if err := config.ValidateLicenseTransition(prev, normalized, a.licenseChecker, vettedDefaultToolPolicy); err != nil {
 			return config.Config{}, err

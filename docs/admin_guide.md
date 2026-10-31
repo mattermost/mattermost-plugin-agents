@@ -39,8 +39,8 @@ Create and manage agents from the top-level **Agents** product page. If an agent
 
 System admins can always view and change the Agents settings. To let other people in, go to **System Console > Plugins > Agents** and add them under **Settings access**, then select **Save**:
 
-- **Read and write access**: these people can view and change every Agents setting, including API keys and other credentials, run reindexing, and author service and MCP server access policies. They can't change who has access.
-- **Read-only access**: these people can view the Agents settings, but credentials (service API keys and cloud credentials, MCP server header values and OAuth client secrets, web search and embedding API keys, OTLP export headers) are blanked before the settings reach their browser, and they can't change anything.
+- **Read and write access**: these people can view and change every Agents setting, including API keys and other credentials, run reindexing, and author service and MCP server access policies. Because they choose the AI services and MCP servers agents use, they can direct what users send to agents, including private channel and direct message content, to a service they control, so grant this only to people you would trust as an Agents system admin. They can't change who has access, or the legacy agents defined in the plugin configuration (`bots`).
+- **Read-only access**: these people can view the Agents settings, but credentials (service API keys and cloud credentials, MCP server header values and OAuth client secrets, web search and embedding API keys, OTLP export headers, and user names, passwords and query values in URLs) are blanked before the settings reach their browser, and they can't change anything. Their MCP **Tools** view lists remote servers' tools from the shared tools cache instead of connecting to the servers.
 
 People with either kind of access see **Settings** in the Agents sidebar. Access is per user; Mattermost's delegated admin roles don't grant it. The lists are stored with the plugin configuration but can only be changed from the System Console, by a system admin.
 
