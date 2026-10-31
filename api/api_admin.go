@@ -725,7 +725,7 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 	// disappear from the aggregate server.
 	if updated.ExposeExternal || live.ExposeExternal {
 		if rb := a.resolveExternalServerRebuilder(); rb != nil {
-			rb.RebuildExternalServer()
+			rb.RequestRebuild()
 		}
 	}
 

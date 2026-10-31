@@ -25,29 +25,62 @@ const (
 var unregisterTimeout = 5 * time.Second
 
 // Register asynchronously registers this server with the Agents plugin and
-// returns immediately. The background goroutine is tracked via s.regWG so
-// Unregister() can wait for it to drain before posting /unregister.
+// returns immediately. Retries continue until the Agents plugin accepts the
+// registration, rejects it permanently, or Unregister is called. The
+// background goroutine is tracked via s.regWG so Unregister() can wait for it
+// to drain before posting /unregister.
 func (s *Server) Register() error {
-	s.regWG.Go(func() {
-		s.registerWithBackoff(s.regCtx)
-	})
+	s.startRegistration()
 	return nil
+}
+
+// startRegistration starts the register goroutine, or asks a running one to
+// register once more. It reports false after Unregister.
+func (s *Server) startRegistration() bool {
+	s.regMu.Lock()
+	defer s.regMu.Unlock()
+	if s.regCtx.Err() != nil {
+		return false
+	}
+	if s.registering {
+		s.registerAgain = true
+		return true
+	}
+	s.registering = true
+	s.regWG.Go(func() {
+		for {
+			s.registerWithBackoff(s.regCtx)
+
+			s.regMu.Lock()
+			if !s.registerAgain || s.regCtx.Err() != nil {
+				s.registering = false
+				s.registerAgain = false
+				s.regMu.Unlock()
+				return
+			}
+			s.registerAgain = false
+			s.regMu.Unlock()
+		}
+	})
+	return true
 }
 
 func (s *Server) registerWithBackoff(ctx context.Context) {
 	delay := s.retry.baseDelay
-	for attempt := 1; attempt <= s.retry.maxAttempts; attempt++ {
+	for attempt := 1; ; attempt++ {
 		retriable, err := s.postRegistration(ctx, registerPath, s.config)
 		if err == nil {
+			if attempt > s.retry.warnAfterAttempts {
+				log.Printf("pluginmcp: registered with Agents plugin after %d attempts (plugin_id=%s)", attempt, s.config.PluginID) //nolint:gosec // logs this plugin's configured ID and the Agents plugin's response, not request data
+			}
 			return
 		}
 		if !retriable {
-			log.Printf("pluginmcp: registration with Agents plugin failed permanently (plugin_id=%s): %v", s.config.PluginID, err)
+			log.Printf("pluginmcp: registration with Agents plugin failed permanently (plugin_id=%s): %v", s.config.PluginID, err) //nolint:gosec // logs this plugin's configured ID and the Agents plugin's response, not request data
 			return
 		}
-		if attempt == s.retry.maxAttempts {
-			log.Printf("pluginmcp: registration with Agents plugin gave up after %d attempts (plugin_id=%s): %v", attempt, s.config.PluginID, err)
-			return
+		if attempt == s.retry.warnAfterAttempts {
+			log.Printf("pluginmcp: still unable to register with Agents plugin after %d attempts, will keep retrying (plugin_id=%s): %v", attempt, s.config.PluginID, err) //nolint:gosec // logs this plugin's configured ID and the Agents plugin's response, not request data
 		}
 		select {
 		case <-time.After(delay):
@@ -117,7 +150,9 @@ func (s *Server) postRegistration(ctx context.Context, path string, body any) (b
 // /unregister, then fires one POST. Intended for OnDeactivate: bounded
 // wait, single attempt.
 func (s *Server) Unregister() error {
+	s.regMu.Lock()
 	s.regCancel()
+	s.regMu.Unlock()
 
 	done := make(chan struct{})
 	go func() {

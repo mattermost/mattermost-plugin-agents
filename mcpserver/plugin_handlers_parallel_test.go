@@ -109,6 +109,7 @@ func TestRebuildExternalServerDiscoversPluginsConcurrently(t *testing.T) {
 	require.NoError(t, err)
 	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI, nil, nil, allowAllStateChangingTools)
 	require.NoError(t, err)
+	t.Cleanup(handlers.Close)
 
 	exposed := make([]mcppkg.PluginServerConfig, 0, len(servers))
 	for pluginID := range servers {
@@ -158,6 +159,7 @@ func TestRebuildExternalServerBoundsDiscoveryConcurrency(t *testing.T) {
 	require.NoError(t, err)
 	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI, nil, nil, allowAllStateChangingTools)
 	require.NoError(t, err)
+	t.Cleanup(handlers.Close)
 
 	const serverCount = maxConcurrentProxyDiscoveries*2 + 3
 	servers := make([]mcppkg.PluginServerConfig, 0, serverCount)
@@ -199,6 +201,7 @@ func TestRebuildExternalServerCollisionWinnerIgnoresCompletionOrder(t *testing.T
 	require.NoError(t, err)
 	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI, nil, nil, allowAllStateChangingTools)
 	require.NoError(t, err)
+	t.Cleanup(handlers.Close)
 
 	descriptions := listToolDescriptions(t, handlers)
 	require.Contains(t, descriptions, "first_only")
@@ -221,6 +224,7 @@ func TestRebuildExternalServerNativeToolWinsOverSlowProxy(t *testing.T) {
 	require.NoError(t, err)
 	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI, nil, nil, allowAllStateChangingTools)
 	require.NoError(t, err)
+	t.Cleanup(handlers.Close)
 
 	toolNames := listToolNames(t, handlers)
 	require.Equal(t, 1, countToolName(toolNames, "create_post"), "the native tool must stay registered exactly once")

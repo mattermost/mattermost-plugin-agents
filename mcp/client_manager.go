@@ -23,7 +23,11 @@ import (
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
-// Only PluginID, Name, Path, and ExposeExternal are authoritative here; Enabled and ToolConfigs come from admin config.
+// pluginRegistrationsKVKey holds every plugin server that has registered, so a
+// restarted Agents plugin knows which source plugins to ask to register again.
+// Entries survive unregister and are pruned on restore once their plugin is
+// disabled. Only PluginID, Name, Path, and ExposeExternal are authoritative
+// here; Enabled and ToolConfigs come from admin config.
 const pluginRegistrationsKVKey = "mcp_plugin_registrations_v1"
 
 var ErrOAuthNotConfigured = errors.New("oauth not configured")
@@ -78,8 +82,10 @@ type ClientManager struct {
 	// pluginServersMu must not be held across PluginHTTP round trips.
 	pluginServersMu sync.RWMutex
 	pluginServers   map[string]PluginServerConfig // keyed by PluginID
-	// pluginRegistered marks entries backed by a source-plugin registration;
-	// config-only orphan entries are absent.
+	// pluginRegistered marks live entries: the source plugin registered with
+	// this process, or answered a probe. Entries restored from the KV store or
+	// unregistered stay in pluginServers as known but not live, and are never
+	// connected.
 	pluginRegistered map[string]bool
 	// sourcePluginAPI is the agents-plugin mmapi.Client; used by
 	// PluginHTTPRoundTripper to dispatch to source plugins.
@@ -126,8 +132,6 @@ func NewClientManager(config Config, log pluginapi.LogService, pluginAPI *plugin
 		remoteAllowed:    remoteAllowed,
 	}
 	manager.hydratePluginRegistrations()
-	// PluginMCPHandlers is constructed later and builds the external aggregate
-	// from this hydrated registry.
 	manager.ReInit(config, embeddedServer)
 	return manager
 }
@@ -954,14 +958,56 @@ func (m *ClientManager) UpdatePluginServer(cfg PluginServerConfig) {
 	})
 }
 
+// UnregisterPluginServer takes a plugin server out of service. The entry is
+// kept as known, in memory and in the KV store, so the source plugin can be
+// asked to register again: plugins also unregister when the server shuts down.
 func (m *ClientManager) UnregisterPluginServer(pluginID string) {
 	m.updatePluginRegistry(pluginID, func() {
-		delete(m.pluginServers, pluginID)
 		delete(m.pluginRegistered, pluginID)
-		m.mutatePersistedPluginRegistrations(func(registrations map[string]PluginServerConfig) {
-			delete(registrations, pluginID)
-		})
 	})
+}
+
+// PromoteKnownPluginServer makes a known plugin server live again without a
+// new registration, applying the admin-owned fields from the current config.
+// It is for source plugins built before they could be asked to register
+// again, after they answered a probe. It reports false when pluginID is not a
+// known, non-live entry.
+func (m *ClientManager) PromoteKnownPluginServer(pluginID string) bool {
+	promoted := false
+	m.updatePluginRegistry(pluginID, func() {
+		known, ok := m.pluginServers[pluginID]
+		if !ok || m.pluginRegistered[pluginID] {
+			return
+		}
+		for _, persisted := range m.config.PluginServers {
+			if persisted.PluginID == pluginID {
+				known = ApplyPersistedPluginServerFields(known, persisted)
+				break
+			}
+		}
+		m.pluginServers[pluginID] = known
+		m.pluginRegistered[pluginID] = true
+		promoted = true
+	})
+	return promoted
+}
+
+// KnownPluginServers returns the known plugin servers that are not live,
+// sorted by plugin ID.
+func (m *ClientManager) KnownPluginServers() []PluginServerConfig {
+	m.pluginServersMu.RLock()
+	defer m.pluginServersMu.RUnlock()
+
+	out := make([]PluginServerConfig, 0, len(m.pluginServers))
+	for pluginID, cfg := range m.pluginServers {
+		if !m.pluginRegistered[pluginID] {
+			out = append(out, cfg)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].PluginID < out[j].PluginID
+	})
+	return out
 }
 
 // updatePluginRegistry applies mutate to the plugin registry and drops every
@@ -1042,8 +1088,8 @@ func (m *ClientManager) GetPluginServer(pluginID string) (PluginServerConfig, bo
 	return cfg, ok
 }
 
-// IsPluginRegistered reports whether an entry is backed by a source-plugin
-// registration, including one restored from the KV store.
+// IsPluginRegistered reports whether an entry is live: the source plugin
+// registered with this process or answered a probe.
 func (m *ClientManager) IsPluginRegistered(pluginID string) bool {
 	m.pluginServersMu.RLock()
 	defer m.pluginServersMu.RUnlock()
@@ -1082,8 +1128,9 @@ func (m *ClientManager) hydratePluginRegistrations() {
 			}
 		}
 
+		// Known, not live: the source plugin may not be running yet, so it
+		// must register again (or answer a probe) before it is connected.
 		m.pluginServers[pluginID] = cfg
-		m.pluginRegistered[pluginID] = true
 		restored++
 	}
 
@@ -1094,7 +1141,7 @@ func (m *ClientManager) hydratePluginRegistrations() {
 			}
 		})
 	}
-	m.log.Debug("Restored plugin MCP registrations from KV store", "count", restored, "pruned", len(prunedPluginIDs))
+	m.log.Debug("Restored known plugin MCP servers from KV store", "count", restored, "pruned", len(prunedPluginIDs))
 }
 
 func (m *ClientManager) mutatePersistedPluginRegistrations(update func(map[string]PluginServerConfig)) {

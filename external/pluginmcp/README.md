@@ -131,10 +131,11 @@ type PluginAPI interface {
   tool schema. Free function (not a method) because Go doesn't allow
   type parameters on methods.
 - `(*Server).ServeHTTP(w, r)`: `http.Handler` for the MCP endpoint. Wire
-  it from your plugin's `ServeHTTP` for requests under `cfg.Path`.
+  it from your plugin's `ServeHTTP` for requests under `cfg.Path`. It also
+  answers the Agents plugin's requests to register again.
 - `(*Server).Register() error`: start async registration with the
   Agents plugin. Returns `nil` immediately; retries happen in a
-  goroutine.
+  goroutine until the Agents plugin accepts the registration.
 - `(*Server).Unregister() error`: synchronously cancel pending retries
   and POST one unregister request. Call from `OnDeactivate`.
 - `GetUserID(ctx context.Context) string`: read the user ID extracted
@@ -162,8 +163,10 @@ type EchoArgs struct {
 ## How it works
 
 `Register` POSTs `cfg` to the Agents plugin's
-`/bridge/v1/mcp/register` with backoff (1s -> 2s -> 4s -> 8s, max 15
-attempts) until the Agents plugin responds 200. The Agents plugin then
+`/bridge/v1/mcp/register` with backoff (1s, doubling up to 30s) until the
+Agents plugin responds 200. There is no attempt limit, because the server
+activates plugins in no particular order and the Agents plugin may start
+long after yours; `Unregister` stops the retries. The Agents plugin then
 issues MCP `tools/list` and `tools/call` requests back through
 `PluginHTTP` to your plugin's `ServeHTTP`, which delegates to the go-sdk
 streamable HTTP handler in stateless / JSON-response mode (PluginHTTP
@@ -213,12 +216,25 @@ External callers can't inject one. Don't add a second auth gate in
 your outer `ServeHTTP`, and don't read `X-Mattermost-UserID` directly
 from headers in handlers; always go through `GetUserID`.
 
-**Registration retries are bounded.** The retry goroutine exits on
-success or after 15 attempts. After a successful registration, the
-Agents plugin persists it and restores it across its own restarts while
-your plugin remains enabled. Permanent non-retriable errors (4xx other
-than 404/429) log
-`registration with Agents plugin failed permanently` and stop.
+**Registration retries until it succeeds.** The retry goroutine exits on
+success, on a permanent error, or when `Unregister` is called. After 15
+failed attempts it logs `still unable to register with Agents plugin` once
+and keeps going. Permanent non-retriable errors (4xx other than 404/429)
+log `registration with Agents plugin failed permanently` and stop.
+
+**The Agents plugin can ask you to register again.** The Agents plugin
+remembers every plugin that has registered. When it restarts, or when the
+license starts allowing plugin MCP servers, it POSTs to your `Path` with
+the `X-Mattermost-Mcp-Reregister` header, and `ServeHTTP` starts another
+registration. Plugins built with an older `pluginmcp` don't recognize the
+request; the Agents plugin then probes the MCP endpoint and restores the
+registration it saved earlier if the endpoint answers.
+
+**Activation order.** On Mattermost 12.2 and newer, the Agents plugin is
+notified when your plugin finishes activating and when it is deactivated,
+so it only calls your MCP endpoint while your plugin is running and drops
+your tools when your plugin stops, even if `Unregister` never runs (for
+example after a crash).
 
 **Tool-count budget.** Each tool costs ~20-200 schema tokens in every
 LLM request. Aim for ~10 tools per plugin, with union-typed args, over
@@ -236,8 +252,8 @@ endpoint.
 - *Tool doesn't appear in the admin Tools tab.* Look for `Connected to
   plugin MCP server <pluginID>` in the Agents plugin log; absence
   indicates `Register()` was never called or kept failing. The retry
-  loop logs `registration with Agents plugin gave up after N attempts`
-  on terminal failure and `failed permanently` on a 4xx.
+  loop logs `still unable to register with Agents plugin` while it keeps
+  failing and `failed permanently` on a 4xx.
 - *`GetUserID` returns `""`.* Either the request didn't go through
   `pluginmcp.Server.ServeHTTP` (typical in unit tests, inject a
   context yourself) or your outer `ServeHTTP` isn't routing to it.

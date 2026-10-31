@@ -60,6 +60,8 @@ type Plugin struct {
 	indexerService       *indexer.Indexer
 	conversationsService *conversations.Conversations
 	mcpClientManager     *mcp.ClientManager
+	mcpHandlers          *mcpserver.PluginMCPHandlers
+	mcpLifecycle         *pluginMCPLifecycle
 	streamingService     streaming.Service
 	telemetryShutdown    telemetry.ShutdownFunc
 	telemetryMu          sync.Mutex
@@ -596,7 +598,7 @@ func (p *Plugin) OnActivate() error {
 	} else {
 		mcpHandlers = handlers
 		pluginAPI.Log.Info("Embedded MCP server handlers initialized successfully")
-		p.licenseChangeListeners = append(p.licenseChangeListeners, handlers.RebuildExternalServer)
+		p.licenseChangeListeners = append(p.licenseChangeListeners, handlers.RequestRebuild)
 	}
 
 	customPromptsStore := customprompts.NewStore(dbClient)
@@ -647,7 +649,16 @@ func (p *Plugin) OnActivate() error {
 	p.indexerService = indexerService
 	p.conversationsService = conversationsService
 	p.mcpClientManager = mcpClientManager
+	p.mcpHandlers = mcpHandlers
 	p.streamingService = streamingService
+
+	var rebuilder externalMCPRebuilder
+	if mcpHandlers != nil {
+		rebuilder = mcpHandlers
+	}
+	p.mcpLifecycle = newPluginMCPLifecycle(mcpClientManager, rebuilder, &pluginAPI.Log)
+	p.licenseChangeListeners = append(p.licenseChangeListeners, p.mcpLifecycle.reconcileKnown)
+	p.mcpLifecycle.reconcileKnown()
 
 	return nil
 }
@@ -669,7 +680,10 @@ func (p *Plugin) OnDeactivate() error {
 		p.bots.ShutdownServiceLLMs()
 	}
 
-	// Clean up MCP client manager if it exists
+	p.mcpLifecycle.close()
+	if p.mcpHandlers != nil {
+		p.mcpHandlers.Close()
+	}
 	p.mcpClientManager.Close()
 
 	return nil
