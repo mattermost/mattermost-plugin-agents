@@ -17,6 +17,7 @@ export type MCPServerConfig = {
     baseURL: string;
     headers: {[key: string]: string};
     description?: string;
+    dmOnly?: boolean;
     tool_configs?: MCPToolConfig[];
     clientID?: string;
     clientSecret?: string;

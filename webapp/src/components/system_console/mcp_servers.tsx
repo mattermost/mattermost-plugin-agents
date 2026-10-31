@@ -242,6 +242,7 @@ const MCPServer = ({
         baseURL: serverConfig.baseURL || '',
         headers: serverConfig.headers || {},
         description: serverConfig.description || '',
+        dmOnly: serverConfig.dmOnly ?? false,
         serviceAccountHeaders: serverConfig.serviceAccountHeaders || {},
         tool_configs: serverConfig.tool_configs,
         clientID: serverConfig.clientID || '',
@@ -381,6 +382,13 @@ const MCPServer = ({
                     updateServerEnabled(enabled);
                 }}
                 helpText={intl.formatMessage({defaultMessage: 'Enable or disable this MCP server.'})}
+            />
+
+            <BooleanItem
+                label={intl.formatMessage({defaultMessage: 'Direct Messages Only'})}
+                value={config.dmOnly}
+                onChange={(dmOnly) => onChange(serverIndex, {...config, dmOnly})}
+                helpText={intl.formatMessage({defaultMessage: 'Only allow agents to use this server in a direct message with the requesting user. In channels and group messages, agents never connect to it and tell users to message them directly instead. Use this for servers that return data some channel members may not be allowed to see.'})}
             />
 
             <TextItem

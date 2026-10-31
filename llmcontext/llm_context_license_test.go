@@ -43,6 +43,7 @@ func newLicenseTestBuilderAt(t *testing.T, level enterprise.Level, toolProvider 
 		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
 	}).Maybe()
 	mockAPI.On("GetLicense").Return(enterprisetest.LicenseFor(level)).Maybe()
+	mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: "team-id", Name: "team"}, nil).Maybe()
 	for i := 1; i <= 10; i++ {
 		args := make([]any, i)
 		for j := range args {

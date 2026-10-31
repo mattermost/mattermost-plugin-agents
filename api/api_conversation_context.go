@@ -96,12 +96,15 @@ func (a *API) buildContextForConversation(ctx context.Context, userID string, co
 		}
 	}
 	// Interactive: mirror the tool catalog a real DM/channel request would
-	// get, so token estimates include user-interaction tools.
+	// get, so token estimates include user-interaction tools. DirectMessage
+	// adds DM-only servers only when channel is the viewer's DM with the
+	// agent, as a DM turn there would.
 	return a.contextBuilder.BuildLLMContextUserRequest(
 		bot,
 		user,
 		channel,
 		a.contextBuilder.WithLLMContextInteractive(),
+		a.contextBuilder.WithLLMContextDirectMessage(),
 		a.contextBuilder.WithLLMContextTools(ctx, bot),
 	)
 }

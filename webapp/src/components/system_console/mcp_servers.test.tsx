@@ -238,6 +238,54 @@ describe('MCPServers stable ID handling', () => {
     });
 });
 
+describe('MCPServers direct messages only', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockUseIsLicensedFor.mockReturnValue(true);
+        mockGetMCPTools.mockReturnValue(new Promise(() => null));
+    });
+
+    function dmOnlyRadio(value: 'True' | 'False') {
+        const group = screen.getByRole('radiogroup', {name: 'Direct Messages Only'});
+        const radio = Array.from(group.querySelectorAll('label')).find((label) => label.textContent === value)?.querySelector('input');
+        expect(radio).toBeTruthy();
+        return radio as HTMLInputElement;
+    }
+
+    test('turning it on emits dmOnly for that server only', () => {
+        const other = {...existingServer, id: 'otherserverid0123456789abc', name: 'Docs', baseURL: 'https://docs.example.com'};
+        const {onChange} = renderServers(makeMCPConfig([existingServer, other]));
+
+        const groups = screen.getAllByRole('radiogroup', {name: 'Direct Messages Only'});
+        expect(groups).toHaveLength(2);
+        const trueRadio = Array.from(groups[0].querySelectorAll('label')).find((label) => label.textContent === 'True')?.querySelector('input');
+        fireEvent.click(trueRadio as HTMLInputElement);
+
+        const servers = lastChangedServers(onChange);
+        expect(servers[0]).toEqual(expect.objectContaining({id: STABLE_ID, dmOnly: true}));
+        expect(servers[1].dmOnly).toBeFalsy();
+    });
+
+    test('servers are available everywhere unless an admin turns it on', () => {
+        const {onChange} = renderServers(makeMCPConfig([existingServer]));
+        expect(dmOnlyRadio('False').checked).toBe(true);
+
+        fireEvent.click(screen.getByText('Add Remote MCP Server'));
+
+        const servers = lastChangedServers(onChange);
+        expect(servers[1].dmOnly).toBeFalsy();
+    });
+
+    test('an edit to another field keeps a server limited to direct messages', () => {
+        const {onChange} = renderServers(makeMCPConfig([{...existingServer, dmOnly: true}]));
+        expect(dmOnlyRadio('True').checked).toBe(true);
+
+        fireEvent.change(screen.getByPlaceholderText('https://mcp.example.com'), {target: {value: 'https://jira2.example.com'}});
+
+        expect(lastChangedServers(onChange)[0].dmOnly).toBe(true);
+    });
+});
+
 describe('MCPServers service account headers', () => {
     beforeEach(() => {
         jest.clearAllMocks();
