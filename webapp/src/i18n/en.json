@@ -507,6 +507,8 @@
   "ai.tool_call.auto_approved": "Auto-approved",
   "ai.tool_call.awaiting_answer": "Awaiting answer",
   "ai.tool_call.awaiting_approval": "Awaiting approval",
+  "ai.tool_call.channel_membership.add": "Add <name>{members}</name> to <name>{channel}</name>",
+  "ai.tool_call.channel_membership.remove": "Remove <name>{members}</name> from <name>{channel}</name>",
   "ai.tool_call.hide_raw": "Hide raw",
   "ai.tool_call.keep_private": "Keep private",
   "ai.tool_call.learn_more": "Learn more",

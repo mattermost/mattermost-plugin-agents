@@ -18,6 +18,7 @@ import ConnectionRequestCard, {parseConnectionRequestArgs} from '../connection_r
 import {RichCardProps} from './tool_card_shell';
 import ReadPostPreviewCard from './posts/read_post';
 import CreatePostPreviewCard from './posts/create_post';
+import ChannelMembershipCard from './channel_membership';
 
 // Everything ToolApprovalSet knows about a single tool call; entries pull the
 // subset they need.
@@ -116,6 +117,9 @@ const registry: RendererEntry[] = [
     },
     embeddedEntry('read_post', ReadPostPreviewCard),
     embeddedEntry('create_post', CreatePostPreviewCard),
+    embeddedEntry('add_channel_member', ChannelMembershipCard),
+    embeddedEntry('add_channel_members', ChannelMembershipCard),
+    embeddedEntry('remove_channel_member', ChannelMembershipCard),
 ];
 
 /**
