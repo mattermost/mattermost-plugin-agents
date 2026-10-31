@@ -6,6 +6,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver"
@@ -122,15 +123,18 @@ func newSessionTokenResolver(getSession func(string) (*model.Session, error), lo
 // in-process and survives external port remapping (e.g. Docker), but when
 // Mattermost terminates TLS itself we fall back to SiteURL — hitting localhost
 // on the HTTPS listener fails cert verification because the cert is issued for
-// the public hostname (MM-69180).
+// the public hostname (MM-69180). The SiteURL path is kept on the localhost
+// URL; without it, subpath deployments answer with a redirect that turns POST
+// requests into GETs.
 func deriveInternalServerURL(pluginAPI *pluginapi.Client, siteURL string) string {
 	return deriveInternalServerURLFromConfig(pluginAPI.Configuration.GetConfig(), siteURL)
 }
 
 func deriveInternalServerURLFromConfig(config *model.Config, siteURL string) string {
 	const defaultURL = "http://localhost:8065"
+	path := siteURLPath(siteURL)
 	if config == nil {
-		return defaultURL
+		return defaultURL + path
 	}
 
 	tlsTerminated := config.ServiceSettings.ConnectionSecurity != nil &&
@@ -146,17 +150,27 @@ func deriveInternalServerURLFromConfig(config *model.Config, siteURL string) str
 	}
 
 	if config.ServiceSettings.ListenAddress == nil || *config.ServiceSettings.ListenAddress == "" {
-		return defaultURL
+		return defaultURL + path
 	}
 	listenAddr := *config.ServiceSettings.ListenAddress
 	switch {
 	case listenAddr[0] == ':':
-		return scheme + "localhost" + listenAddr
+		return scheme + "localhost" + listenAddr + path
 	case strings.HasPrefix(listenAddr, "0.0.0.0"):
-		return scheme + "localhost" + listenAddr[len("0.0.0.0"):]
+		return scheme + "localhost" + listenAddr[len("0.0.0.0"):] + path
 	case strings.HasPrefix(listenAddr, "[::]:"):
-		return scheme + "localhost:" + listenAddr[len("[::]:"):]
+		return scheme + "localhost:" + listenAddr[len("[::]:"):] + path
 	default:
-		return scheme + listenAddr
+		return scheme + listenAddr + path
 	}
+}
+
+// siteURLPath returns the path of siteURL without a trailing slash, or "" when
+// Mattermost is served from the root.
+func siteURLPath(siteURL string) string {
+	u, err := url.Parse(siteURL)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimRight(u.EscapedPath(), "/")
 }
