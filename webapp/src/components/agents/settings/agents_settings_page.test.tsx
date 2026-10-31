@@ -244,6 +244,49 @@ describe('AgentsSettingsPage save flow', () => {
         expect(screen.queryByText('One or more entries are not valid domains.')).toBeNull();
     });
 
+    it('keeps the editors read-only while a save is pending, so no edit is lost to its response', async () => {
+        renderPage('services');
+        await screen.findByText('service:My Service:unsaved');
+        act(() => {
+            mockServices.onChange?.([{id: '', name: 'Renamed'}]);
+        });
+        expect(screen.queryByText('read-only editors')).toBeNull();
+
+        let finish: (cfg: PluginConfig) => void = () => {/* set below */};
+        (savePluginConfig as jest.Mock).mockImplementation((cfg: PluginConfig) => new Promise((resolve) => {
+            finish = () => resolve(cfg);
+        }));
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+        expect(await screen.findByText('read-only editors')).toBeTruthy();
+
+        await act(async () => finish({} as PluginConfig));
+        expect(screen.queryByText('read-only editors')).toBeNull();
+    });
+
+    it('asks before leaving the settings with unsaved changes, but not when switching sections', async () => {
+        const unblock = jest.fn();
+        const block = jest.fn().mockReturnValue(unblock);
+        window.WebappUtils = {browserHistory: {push: jest.fn(), block}} as any;
+        try {
+            renderPage('services');
+            await screen.findByText('service:My Service:unsaved');
+            expect(block).not.toHaveBeenCalled();
+
+            act(() => {
+                mockServices.onChange?.([{id: '', name: 'Renamed'}]);
+            });
+            expect(block).toHaveBeenCalledTimes(1);
+            const prompt = block.mock.calls[0][0] as (location: {pathname: string}) => string | undefined;
+            expect(prompt({pathname: '/plug/mattermost-ai/agents/all'})).toBe('You have unsaved changes to the Agents settings. Leave without saving?');
+            expect(prompt({pathname: '/plug/mattermost-ai/agents/settings/mcp'})).toBeUndefined();
+
+            await clickSave();
+            expect(unblock).toHaveBeenCalledTimes(1);
+        } finally {
+            delete window.WebappUtils;
+        }
+    });
+
     it('discards changes back to the saved configuration', async () => {
         renderPage('services');
         await screen.findByText('service:My Service:unsaved');

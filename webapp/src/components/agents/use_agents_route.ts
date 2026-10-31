@@ -53,6 +53,9 @@ interface HostHistory {
     push: (path: string) => void;
     replace?: (path: string) => void;
     listen?: (listener: () => void) => (() => void) | void;
+
+    // history v4: a string asks the user to confirm the transition, undefined lets it through.
+    block?: (prompt: (location: {pathname: string}) => string | undefined) => (() => void) | void;
 }
 
 const getHistory = (): HostHistory | undefined => {
@@ -127,6 +130,22 @@ export const buildChatPath = (botId: string, rootId?: string): string => {
 export const isAgentsPathActive = (): boolean => {
     const pathname = getHistory()?.location?.pathname ?? '';
     return pathname === AGENTS_ROUTE || pathname.startsWith(`${AGENTS_ROUTE}/`);
+};
+
+// While active, the host router asks the user to confirm before leaving for a
+// path that allow rejects. Reloads and closing the tab are not covered.
+export const useNavigationGuard = (active: boolean, allow: (pathname: string) => boolean, message: string) => {
+    useEffect(() => {
+        if (!active) {
+            return () => {/* nothing to remove */};
+        }
+        const unblock = getHistory()?.block?.((location) => (allow(location.pathname) ? undefined : message)); // eslint-disable-line no-undefined
+        return () => {
+            if (typeof unblock === 'function') {
+                unblock();
+            }
+        };
+    }, [active, allow, message]);
 };
 
 const readRoute = (): AgentsRoute => parseAgentsRoute(getHistory()?.location?.pathname);
