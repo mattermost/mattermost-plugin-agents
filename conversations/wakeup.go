@@ -72,9 +72,25 @@ const wakeMarkerTTL = 2 * time.Hour
 
 // wakeMarker identifies one scheduled wake: its owning conversation and when
 // it was scheduled. A wake only runs while the marker still holds its identity.
+//
+// The display fields (ResponsePostID, RequesterUserID, ResumeAt,
+// DurationMinutes) let the webapp render a live "waiting" indicator and the
+// requester's controls without a second store. They carry omitempty so a
+// marker written before this change still compares equal under the
+// create-if-absent / compare-and-delete flow that gates every wake.
 type wakeMarker struct {
 	ConversationID string `json:"conversation_id"`
 	ScheduledAt    int64  `json:"scheduled_at"`
+
+	// ResponsePostID is the bot response post the wait is shown on.
+	ResponsePostID string `json:"response_post_id,omitempty"`
+	// RequesterUserID is the user whose turn scheduled the wait; only they may
+	// check-now or cancel it.
+	RequesterUserID string `json:"requester_user_id,omitempty"`
+	// ResumeAt is when the bot is scheduled to resume, in unix millis.
+	ResumeAt int64 `json:"resume_at,omitempty"`
+	// DurationMinutes is the clamped wait length the bot was told.
+	DurationMinutes int `json:"duration_minutes,omitempty"`
 }
 
 // threadRootID is the root of the thread post belongs to.
@@ -139,7 +155,13 @@ func (c *Conversations) ScheduleWake(postID, userID string, wait time.Duration) 
 	}
 
 	now := time.Now()
-	job := WakeJob{PostID: postID, UserID: userID, ConversationID: convID, ScheduledAt: now.UnixMilli()}
+	job := WakeJob{PostID: postID, UserID: userID,
+		ConversationID:  convID,
+		ScheduledAt:     now.UnixMilli(),
+		ResponsePostID:  postID,
+		RequesterUserID: userID,
+		ResumeAt:        now.Add(wait).UnixMilli(),
+		DurationMinutes: int(wait / time.Minute)}
 	markerKey := responsePostMarkerKey(post)
 	claimed, err := c.mmClient.KVCompareAndSetWithExpiry(markerKey, nil, job.wakeMarker, wakeMarkerTTL)
 	if err != nil {
@@ -166,8 +188,9 @@ func (c *Conversations) consumeWakeMarker(key string, expected wakeMarker) (bool
 }
 
 // cancelThreadWake cancels the thread's pending wake, whichever user's
-// conversation scheduled it, and reports whether there was one.
-func (c *Conversations) cancelThreadWake(markerKey string) bool {
+// conversation scheduled it, and reports whether there was one. channelID
+// scopes the resolve notification; pass "" when the caller has no channel.
+func (c *Conversations) cancelThreadWake(markerKey, channelID string) bool {
 	if c.wakeScheduler == nil {
 		return false
 	}
@@ -186,7 +209,147 @@ func (c *Conversations) cancelThreadWake(markerKey string) bool {
 		return false
 	}
 	c.wakeScheduler.Cancel(WakeJobKeyPrefix + marker.ConversationID)
+	c.notifyConversationUpdated(marker.ConversationID, channelID, marker.RequesterUserID)
 	return true
+}
+
+// WebsocketEventConversationUpdated tells the webapp to refetch a conversation
+// (received there as custom_mattermost-ai_conversation_updated). Emitted when a
+// pending wait resolves so the "waiting" footer clears from server state rather
+// than from the client's countdown alone.
+const WebsocketEventConversationUpdated = "conversation_updated"
+
+// notifyConversationUpdated asks clients in the conversation's channel to
+// refetch it. The payload carries only an id, but the broadcast is scoped to
+// the channel so the resolve timing is not disclosed outside it; it falls back
+// to the requester when no channel is known, and never broadcasts unscoped.
+func (c *Conversations) notifyConversationUpdated(conversationID, channelID, fallbackUserID string) {
+	if conversationID == "" {
+		return
+	}
+	broadcast := &model.WebsocketBroadcast{}
+	switch {
+	case channelID != "":
+		broadcast.ChannelId = channelID
+	case fallbackUserID != "":
+		broadcast.UserId = fallbackUserID
+	default:
+		return
+	}
+	c.mmClient.PublishWebSocketEvent(
+		WebsocketEventConversationUpdated,
+		map[string]any{"conversation_id": conversationID},
+		broadcast,
+	)
+}
+
+// ErrNoPendingWait is returned by a wait control when the post has no pending
+// wait: it was never scheduled, already fired, or already canceled.
+var ErrNoPendingWait = errors.New("no pending wait for this post")
+
+// ErrNotWaitOwner is returned when a user other than the wait's requester
+// tries to check-now or cancel it.
+var ErrNotWaitOwner = errors.New("only the wait requester can control it")
+
+// WaitInfo is the pending-wait metadata surfaced to the webapp so it can show
+// a live countdown and gate the requester's controls. It never carries the
+// model-supplied reason, which is redacted from onlookers elsewhere.
+type WaitInfo struct {
+	ResponsePostID  string
+	RequesterUserID string
+	ScheduledAt     int64
+	ResumeAt        int64
+	DurationMinutes int
+}
+
+// ActiveWaitForConversation returns the pending wait the given conversation
+// scheduled in its thread, or nil when none is pending. The marker is keyed by
+// thread root and bot, so a wait another participant's conversation scheduled
+// in the same thread is deliberately not reported here.
+func (c *Conversations) ActiveWaitForConversation(conversationID, rootPostID, botID string) (*WaitInfo, error) {
+	if c.wakeScheduler == nil || rootPostID == "" || botID == "" {
+		return nil, nil
+	}
+	var marker wakeMarker
+	if err := c.mmClient.KVGet(threadWakeMarkerKey(rootPostID, botID), &marker); err != nil {
+		if mmapi.IsKVNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read pending wake: %w", err)
+	}
+	if marker.ConversationID != conversationID || marker.ResponsePostID == "" {
+		return nil, nil
+	}
+	return &WaitInfo{
+		ResponsePostID:  marker.ResponsePostID,
+		RequesterUserID: marker.RequesterUserID,
+		ScheduledAt:     marker.ScheduledAt,
+		ResumeAt:        marker.ResumeAt,
+		DurationMinutes: marker.DurationMinutes,
+	}, nil
+}
+
+// pendingWaitForPost reads the pending wake marker for a bot response post, or
+// ErrNoPendingWait when none is pending.
+func (c *Conversations) pendingWaitForPost(post *model.Post) (wakeMarker, error) {
+	if c.wakeScheduler == nil {
+		return wakeMarker{}, ErrNoPendingWait
+	}
+	var marker wakeMarker
+	if err := c.mmClient.KVGet(responsePostMarkerKey(post), &marker); err != nil {
+		if mmapi.IsKVNotFound(err) {
+			return wakeMarker{}, ErrNoPendingWait
+		}
+		return wakeMarker{}, fmt.Errorf("failed to read pending wake: %w", err)
+	}
+	if marker.ConversationID == "" {
+		return wakeMarker{}, ErrNoPendingWait
+	}
+	return marker, nil
+}
+
+// HandleWaitCheckNow ends the post's pending wait early and resumes the bot
+// immediately on behalf of userID, who must be the wait's requester. The
+// scheduled trigger is canceled first so it cannot also fire; the marker's
+// compare-and-delete then lets exactly one of the two resumes proceed.
+func (c *Conversations) HandleWaitCheckNow(userID string, post *model.Post) error {
+	marker, err := c.pendingWaitForPost(post)
+	if err != nil {
+		return err
+	}
+	if marker.RequesterUserID != userID {
+		return ErrNotWaitOwner
+	}
+	c.wakeScheduler.Cancel(WakeJobKeyPrefix + marker.ConversationID)
+	responsePostID := marker.ResponsePostID
+	if responsePostID == "" {
+		responsePostID = post.Id
+	}
+	job := WakeJob{PostID: responsePostID, UserID: marker.RequesterUserID, wakeMarker: marker}
+	resume := c.resumeWake
+	if resume == nil {
+		// runWake locks the conversation's resume mutex and runs a full turn,
+		// so it must not block the request, mirroring HandleWakeJob.
+		resume = func(j WakeJob) { go c.runWake(j) }
+	}
+	resume(job)
+	return nil
+}
+
+// HandleWaitCancel cancels the post's pending wait on behalf of userID, who
+// must be the wait's requester; the bot does not resume from it.
+func (c *Conversations) HandleWaitCancel(userID string, post *model.Post) error {
+	marker, err := c.pendingWaitForPost(post)
+	if err != nil {
+		return err
+	}
+	if marker.RequesterUserID != userID {
+		return ErrNotWaitOwner
+	}
+	if !c.cancelThreadWake(responsePostMarkerKey(post), post.ChannelId) {
+		return ErrNoPendingWait
+	}
+	return nil
 }
 
 // getOrCreateConversation wraps convService.GetOrCreateConversation for live
@@ -199,7 +362,7 @@ func (c *Conversations) getOrCreateConversation(params conversation.GetOrCreateP
 	if err != nil {
 		return nil, err
 	}
-	if c.cancelThreadWake(threadWakeMarkerKey(params.RootPostID, params.BotID)) {
+	if c.cancelThreadWake(threadWakeMarkerKey(params.RootPostID, params.BotID), params.ChannelID) {
 		if err := c.convService.AppendSyntheticUserTurn(result.Conversation.ID, conversation.SyntheticKindWakeCanceled, mmtools.WakeCanceledUserMessage); err != nil {
 			c.mmClient.LogError("wait_for_async_work: failed to record canceled wait", "error", err, "conversation_id", result.Conversation.ID)
 		}
@@ -293,6 +456,9 @@ func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) (er
 	if !consumed {
 		return c.dropWake("steered or superseded", nil, "conversation_id", job.ConversationID)
 	}
+	// The wait is resolving; tell clients to drop the "waiting" footer now
+	// rather than waiting for the countdown to run out.
+	c.notifyConversationUpdated(job.ConversationID, post.ChannelId, job.RequesterUserID)
 
 	conv, err := c.convService.GetConversation(job.ConversationID)
 	if err != nil {

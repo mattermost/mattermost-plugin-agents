@@ -59,6 +59,11 @@ type Conversations struct {
 	convService       *conversation.Service
 	autoReplySettings AutoReplySettings
 	ambientLimiter    *ambientLimiter
+
+	// resumeWake runs a check-now resume. Production leaves it nil and uses
+	// runWake on a goroutine (a full turn must not block the request); tests
+	// set it to observe the resume deterministically.
+	resumeWake func(WakeJob)
 }
 
 // MeetingsService defines the interface for meetings functionality needed by conversations

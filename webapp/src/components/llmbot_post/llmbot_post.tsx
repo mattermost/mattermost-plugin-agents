@@ -13,7 +13,7 @@ import {CancelIcon} from '@mattermost/compass-icons/components';
 import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 
-import {doPostbackSummary, doRegenerate, doStopGenerating} from '@/client';
+import {doPostbackSummary, doRegenerate, doStopGenerating, doWaitCancel, doWaitCheckNow} from '@/client';
 import {useIsLicensedFor} from '@/license';
 import {PluginWebSocketMessage} from '@/types';
 import {useSelectNotAIPost} from '@/hooks';
@@ -42,6 +42,7 @@ import {extractPermalinkData} from './permalink_data';
 import {FoldingText, useFoldingText} from './folding_text';
 import {RoundView} from './round_view';
 import ToolActivityDisplay from './tool_activity_display';
+import {WaitStatusFooter, WaitToolContext} from './wait_status';
 
 // Sentinel id for the in-progress streaming round; persisted rounds use turn ids.
 const LIVE_ROUND_ID = 'live';
@@ -648,6 +649,61 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         (state) => (requesterUserId ? state.entities.users.profiles?.[requesterUserId]?.username : undefined), // eslint-disable-line no-undefined
     );
 
+    // A pending wait_for_async_work pause on this post, surfaced by the
+    // conversation API while the bot is sleeping on the wait tool.
+    const activeWait = knownConversation?.active_wait;
+    const waitForThisPost = activeWait && activeWait.post_id === props.post.id ? activeWait : null;
+    const waitIsOwner = waitForThisPost != null && waitForThisPost.requester_user_id === currentUserId;
+    const [waitCancelled, setWaitCancelled] = useState(false);
+    const [waitBusy, setWaitBusy] = useState(false);
+
+    // A fresh wait on this post (new resume time) clears a prior cancel/busy.
+    const waitResumeAt = waitForThisPost?.resume_at;
+    useEffect(() => {
+        setWaitCancelled(false);
+        setWaitBusy(false);
+    }, [waitResumeAt]);
+
+    const botDisplayName = useSelector<GlobalState, string | undefined>((state) => {
+        const profile = state.entities.users.profiles?.[props.post.user_id];
+        return profile ? displayNameFor(profile, selectTeammateNameDisplay(state)) : undefined; // eslint-disable-line no-undefined
+    });
+
+    const handleWaitCheckNow = useCallback(async () => {
+        setWaitBusy(true);
+        try {
+            await doWaitCheckNow(props.post.id);
+        } catch {
+            // Re-enable the controls so a transient failure can be retried; a
+            // wait that already resolved reconciles via the refetch below.
+            setWaitBusy(false);
+        }
+        if (conversationId) {
+            invalidateConversation(conversationId);
+        }
+    }, [props.post.id, conversationId]);
+
+    const handleWaitCancel = useCallback(async () => {
+        setWaitBusy(true);
+        try {
+            await doWaitCancel(props.post.id);
+            setWaitCancelled(true);
+        } catch {
+            // Re-enable the controls so a transient failure can be retried; a
+            // wait that already resolved reconciles via the refetch below.
+            setWaitBusy(false);
+        }
+        if (conversationId) {
+            invalidateConversation(conversationId);
+        }
+    }, [props.post.id, conversationId]);
+
+    // Provided to the wait tool's row so it can show "waiting" vs "waited Nm".
+    const waitToolState = useMemo(
+        () => ({active: waitForThisPost !== null && !waitCancelled}),
+        [waitForThisPost, waitCancelled],
+    );
+
     // A question to the requester is answered, not approved.
     const awaitingAnswer = awaitingRequester && onlookerWaitRound !== null && onlookerWaitStage === 'call' &&
         onlookerWaitRound.toolCalls.some((call) => Boolean(call.user_interaction) && call.status === ToolCallStatus.Pending);
@@ -754,71 +810,85 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     }
 
     return (
-        <PostBody
-            data-testid='llm-bot-post'
-        >
-            {error && <ErrorMessage message={error}/>}
-            {conversationError && !generating && (
-                <ErrorMessage message={<FormattedMessage defaultMessage='Failed to load conversation data'/>}/>
-            )}
-            {isThreadSummaryPost && permalinkView &&
-            <>
-                {permalinkView}
-            </>
-            }
-            {(showWorking || awaitingRequester || activity.items.length > 0) && (
-                <ToolActivityDisplay
-                    activity={activity}
-                    expanded={activityExpanded}
-                    onToggleExpanded={setActivityExpanded}
-                    inProgress={isGenerationInProgress || awaitingDecision || awaitingRequester}
-                    working={isGenerationInProgress || progressPhase !== null}
-                    statusMessage={statusMessage}
-                    statusWaiting={awaitingRequester}
-                    renderRound={renderRound}
-                />
-            )}
-            {foldingText !== null && (
-                <FoldingText
-                    text={foldingText}
-                    channelID={props.post.channel_id}
-                    postID={props.post.id}
-                />
-            )}
-            <AnswerArea $afterActivity={activity.items.length > 0}>
-                {activity.answerRounds.map(renderRound)}
-            </AnswerArea>
-            {generationStopped && (
-                <GenerationStoppedNotice data-testid='llm-bot-generation-stopped'>
-                    <GenerationStoppedIcon
-                        size={14}
-                        aria-hidden={true}
+        <WaitToolContext.Provider value={waitToolState}>
+            <PostBody
+                data-testid='llm-bot-post'
+            >
+                {error && <ErrorMessage message={error}/>}
+                {conversationError && !generating && (
+                    <ErrorMessage message={<FormattedMessage defaultMessage='Failed to load conversation data'/>}/>
+                )}
+                {isThreadSummaryPost && permalinkView &&
+                <>
+                    {permalinkView}
+                </>
+                }
+                {(showWorking || awaitingRequester || activity.items.length > 0) && (
+                    <ToolActivityDisplay
+                        activity={activity}
+                        expanded={activityExpanded}
+                        onToggleExpanded={setActivityExpanded}
+                        inProgress={isGenerationInProgress || awaitingDecision || awaitingRequester}
+                        working={isGenerationInProgress || progressPhase !== null}
+                        statusMessage={statusMessage}
+                        statusWaiting={awaitingRequester}
+                        renderRound={renderRound}
                     />
-                    {generationStoppedMessage}
-                </GenerationStoppedNotice>
-            )}
-            <HTMLArtifacts
-                postId={props.post.id}
-                files={props.post.metadata?.files}
-            />
-            { showPostbackButton &&
-            <PostSummaryHelpMessage
-                data-testid='llm-bot-post-summary-help'
-                type='hint'
-                title={<FormattedMessage defaultMessage='Would you like to post this summary to the original call thread? You can also ask Agents to make changes.'/>}
-            />
-            }
-            { showControlsBar &&
-            <ControlsBarComponent
-                showStopGeneratingButton={showStopGeneratingButton}
-                showPostbackButton={showPostbackButton}
-                showRegenerate={showRegenerate}
-                onStopGenerating={stopGenerating}
-                onPostSummary={postSummary}
-                onRegenerate={regnerate}
-            />
-            }
-        </PostBody>
+                )}
+                {foldingText !== null && (
+                    <FoldingText
+                        text={foldingText}
+                        channelID={props.post.channel_id}
+                        postID={props.post.id}
+                    />
+                )}
+                <AnswerArea $afterActivity={activity.items.length > 0}>
+                    {activity.answerRounds.map(renderRound)}
+                </AnswerArea>
+                {waitForThisPost && (
+                    <WaitStatusFooter
+                        resumeAt={waitForThisPost.resume_at}
+                        isOwner={waitIsOwner}
+                        requesterUsername={requesterUsername}
+                        botDisplayName={botDisplayName}
+                        resolution={waitCancelled ? 'cancelled' : 'pending'}
+                        busy={waitBusy}
+                        onCheckNow={handleWaitCheckNow}
+                        onCancel={handleWaitCancel}
+                    />
+                )}
+                {generationStopped && (
+                    <GenerationStoppedNotice data-testid='llm-bot-generation-stopped'>
+                        <GenerationStoppedIcon
+                            size={14}
+                            aria-hidden={true}
+                        />
+                        {generationStoppedMessage}
+                    </GenerationStoppedNotice>
+                )}
+                <HTMLArtifacts
+                    postId={props.post.id}
+                    files={props.post.metadata?.files}
+                />
+                { showPostbackButton &&
+                <PostSummaryHelpMessage
+                    data-testid='llm-bot-post-summary-help'
+                    type='hint'
+                    title={<FormattedMessage defaultMessage='Would you like to post this summary to the original call thread? You can also ask Agents to make changes.'/>}
+                />
+                }
+                { showControlsBar &&
+                <ControlsBarComponent
+                    showStopGeneratingButton={showStopGeneratingButton}
+                    showPostbackButton={showPostbackButton}
+                    showRegenerate={showRegenerate}
+                    onStopGenerating={stopGenerating}
+                    onPostSummary={postSummary}
+                    onRegenerate={regnerate}
+                />
+                }
+            </PostBody>
+        </WaitToolContext.Provider>
     );
 };
 

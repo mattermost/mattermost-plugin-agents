@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Audit event names for every state-changing operation in the plugin: 31
+// Audit event names for every state-changing operation in the plugin: 33
 // routed events plus the non-gin MCP session grant. All are declared here,
 // including ones whose instrumentation lands in later changes, so call sites
 // never use inline string literals; new state-changing routes add their
@@ -62,6 +62,10 @@ const (
 	// In-channel tool approval: the human decision the server cannot see.
 	AuditEventToolCallApproval   = "toolCallApproval"
 	AuditEventToolResultApproval = "toolResultApproval"
+
+	// wait_for_async_work controls: the requester ending or canceling a pause.
+	AuditEventWaitCheckNow = "waitCheckNow"
+	AuditEventWaitCancel   = "waitCancel"
 
 	// MCP session grant: an external MCP client obtained a dedicated session
 	// holding API access as the user. Not a gin route — emitted directly by
@@ -138,6 +142,10 @@ func buildAuditEventRegistry(a *API) map[string]string {
 		// Tool approval.
 		handlerFuncName(a.handleToolCall):   AuditEventToolCallApproval,
 		handlerFuncName(a.handleToolResult): AuditEventToolResultApproval,
+
+		// wait_for_async_work controls.
+		handlerFuncName(a.handleWaitCheckNow): AuditEventWaitCheckNow,
+		handlerFuncName(a.handleWaitCancel):   AuditEventWaitCancel,
 
 		// Access-policy authoring.
 		handlerFuncName(a.handlePutAgentPolicy):      AuditEventPutAgentPolicy,
