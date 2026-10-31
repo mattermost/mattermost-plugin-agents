@@ -294,9 +294,18 @@ func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) (er
 		return c.dropWake("steered or superseded", nil, "conversation_id", job.ConversationID)
 	}
 
-	conv, err := c.convService.GetConversation(job.ConversationID)
+	conv, err := c.convService.GetConversationIncludingArchived(job.ConversationID)
 	if err != nil {
 		return c.dropIfMissing("conversation", err, "conversation_id", job.ConversationID)
+	}
+	// A wake never restores an archived conversation. Archiving is the
+	// owner's choice, and only the owner's own action (a reply, regenerate,
+	// or tool decision) brings a conversation back, so a wait that is still
+	// pending when the conversation is archived, whether it was scheduled
+	// before or after the archive, is dropped when it fires instead of
+	// reviving the chat unattended.
+	if conv.DeleteAt != 0 {
+		return c.dropWake("conversation archived", nil, "conversation_id", conv.ID)
 	}
 
 	turns, err := c.convService.GetTurns(conv.ID)

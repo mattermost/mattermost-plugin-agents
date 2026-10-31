@@ -71,6 +71,11 @@ func setupPostgresTestStore(t *testing.T, dbPrefix string) (*sqlx.DB, *store.Sto
 	s := store.New(db)
 	require.NoError(t, s.RunMigrations())
 
+	// The plugin store shares Mattermost's database; listing conversations
+	// reads its Posts table.
+	_, err = db.Exec(`CREATE TABLE Posts (Id VARCHAR(26) PRIMARY KEY, DeleteAt BIGINT NOT NULL DEFAULT 0)`)
+	require.NoError(t, err)
+
 	return db, s
 }
 

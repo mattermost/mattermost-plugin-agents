@@ -238,6 +238,207 @@ func TestHandleGetConversation(t *testing.T) {
 			expectedStatus: http.StatusForbidden,
 		},
 		{
+			name:           "owner reads an archived conversation whose posts are still visible",
+			userID:         testUserID,
+			conversationID: "conv-archived-owner",
+			setup: func(e *TestEnvironment) {
+				dmChannelID := "dmchan123456789012345678"
+				e.conversationStore.conversations["conv-archived-owner"] = &store.Conversation{
+					ID:        "conv-archived-owner",
+					UserID:    testUserID,
+					BotID:     testBotUserID,
+					ChannelID: &dmChannelID,
+					Operation: "conversation",
+					DeleteAt:  1700000000000,
+				}
+				e.conversationStore.turns["conv-archived-owner"] = []store.Turn{
+					{ID: "turn-1", ConversationID: "conv-archived-owner", Role: "assistant", Content: unsharedToolBlocks, Sequence: 1},
+				}
+				e.mockAPI.On("HasPermissionToChannel", testUserID, dmChannelID, model.PermissionReadChannel).Return(true)
+			},
+			expectedStatus: http.StatusOK,
+			validate: func(t *testing.T, resp *http.Response) {
+				var response ConversationResponse
+				require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+				require.Len(t, response.Turns, 1)
+				var blocks []conversation.ContentBlock
+				require.NoError(t, json.Unmarshal(response.Turns[0].Content, &blocks))
+				require.Len(t, blocks, 2)
+				assert.JSONEq(t, `{"city":"NYC"}`, string(blocks[1].Input), "owner keeps tool activity on an archived conversation")
+			},
+		},
+		{
+			name:           "archived conversation still hides unshared tool content from channel members",
+			userID:         testOtherUserID,
+			conversationID: "conv-archived-member",
+			setup: func(e *TestEnvironment) {
+				e.conversationStore.conversations["conv-archived-member"] = &store.Conversation{
+					ID:        "conv-archived-member",
+					UserID:    testUserID,
+					BotID:     testBotUserID,
+					ChannelID: &channelID,
+					Operation: "conversation",
+					DeleteAt:  1700000000000,
+				}
+				e.conversationStore.turns["conv-archived-member"] = []store.Turn{
+					{ID: "turn-1", ConversationID: "conv-archived-member", Role: "assistant", Content: unsharedToolBlocks, Sequence: 1},
+				}
+				e.mockAPI.On("HasPermissionToChannel", testOtherUserID, channelID, model.PermissionReadChannel).Return(true)
+			},
+			expectedStatus: http.StatusOK,
+			validate: func(t *testing.T, resp *http.Response) {
+				var response ConversationResponse
+				require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+				require.Len(t, response.Turns, 1)
+				var blocks []conversation.ContentBlock
+				require.NoError(t, json.Unmarshal(response.Turns[0].Content, &blocks))
+				require.Len(t, blocks, 2)
+				assert.Nil(t, blocks[1].Input, "non-owner must not see tool_use input")
+			},
+		},
+		{
+			name:           "archived conversation rejected for non-channel-member",
+			userID:         testOtherUserID,
+			conversationID: "conv-archived-blocked",
+			setup: func(e *TestEnvironment) {
+				e.conversationStore.conversations["conv-archived-blocked"] = &store.Conversation{
+					ID:        "conv-archived-blocked",
+					UserID:    testUserID,
+					BotID:     testBotUserID,
+					ChannelID: &channelID,
+					Operation: "conversation",
+					DeleteAt:  1700000000000,
+				}
+				e.mockAPI.On("HasPermissionToChannel", testOtherUserID, channelID, model.PermissionReadChannel).Return(false)
+			},
+			expectedStatus: http.StatusForbidden,
+		},
+		{
+			name:           "archived threadless conversation rejected for non-owner",
+			userID:         testOtherUserID,
+			conversationID: "conv-archived-threadless",
+			setup: func(e *TestEnvironment) {
+				e.conversationStore.conversations["conv-archived-threadless"] = &store.Conversation{
+					ID:        "conv-archived-threadless",
+					UserID:    testUserID,
+					BotID:     testBotUserID,
+					Operation: "conversation",
+					DeleteAt:  1700000000000,
+				}
+			},
+			expectedStatus: http.StatusForbidden,
+		},
+		{
+			name:           "owner cannot read a conversation whose root post was deleted",
+			userID:         testUserID,
+			conversationID: "conv-deleted-root",
+			setup: func(e *TestEnvironment) {
+				rootPostID := "rootdeleted123456789012345"
+				e.conversationStore.conversations["conv-deleted-root"] = &store.Conversation{
+					ID:         "conv-deleted-root",
+					UserID:     testUserID,
+					BotID:      testBotUserID,
+					ChannelID:  &channelID,
+					RootPostID: &rootPostID,
+					DeleteAt:   0,
+				}
+				e.conversationStore.turns["conv-deleted-root"] = []store.Turn{
+					{ID: "turn-1", ConversationID: "conv-deleted-root", Role: "user", Content: textOnlyBlocks, Sequence: 1},
+				}
+				e.mockAPI.On("HasPermissionToChannel", mock.Anything, channelID, model.PermissionReadChannel).Return(true).Maybe()
+				e.mockRootPost(rootPostID, rootPostDeleted)
+			},
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:           "channel member cannot read a conversation whose root post was deleted",
+			userID:         testOtherUserID,
+			conversationID: "conv-deleted-root",
+			setup: func(e *TestEnvironment) {
+				rootPostID := "rootdeleted123456789012345"
+				e.conversationStore.conversations["conv-deleted-root"] = &store.Conversation{
+					ID:         "conv-deleted-root",
+					UserID:     testUserID,
+					BotID:      testBotUserID,
+					ChannelID:  &channelID,
+					RootPostID: &rootPostID,
+					DeleteAt:   0,
+				}
+				e.conversationStore.turns["conv-deleted-root"] = []store.Turn{
+					{ID: "turn-1", ConversationID: "conv-deleted-root", Role: "user", Content: textOnlyBlocks, Sequence: 1},
+				}
+				e.mockAPI.On("HasPermissionToChannel", mock.Anything, channelID, model.PermissionReadChannel).Return(true).Maybe()
+				e.mockRootPost(rootPostID, rootPostDeleted)
+			},
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:           "channel member cannot read an archived conversation whose root post was deleted",
+			userID:         testOtherUserID,
+			conversationID: "conv-deleted-root",
+			setup: func(e *TestEnvironment) {
+				rootPostID := "rootdeleted123456789012345"
+				e.conversationStore.conversations["conv-deleted-root"] = &store.Conversation{
+					ID:         "conv-deleted-root",
+					UserID:     testUserID,
+					BotID:      testBotUserID,
+					ChannelID:  &channelID,
+					RootPostID: &rootPostID,
+					DeleteAt:   1700000000000,
+				}
+				e.conversationStore.turns["conv-deleted-root"] = []store.Turn{
+					{ID: "turn-1", ConversationID: "conv-deleted-root", Role: "user", Content: textOnlyBlocks, Sequence: 1},
+				}
+				e.mockAPI.On("HasPermissionToChannel", mock.Anything, channelID, model.PermissionReadChannel).Return(true).Maybe()
+				e.mockRootPost(rootPostID, rootPostDeleted)
+			},
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:           "owner cannot read an archived conversation whose root post is soft-deleted",
+			userID:         testUserID,
+			conversationID: "conv-deleted-root",
+			setup: func(e *TestEnvironment) {
+				rootPostID := "rootdeleted123456789012345"
+				e.conversationStore.conversations["conv-deleted-root"] = &store.Conversation{
+					ID:         "conv-deleted-root",
+					UserID:     testUserID,
+					BotID:      testBotUserID,
+					ChannelID:  &channelID,
+					RootPostID: &rootPostID,
+					DeleteAt:   1700000000000,
+				}
+				e.conversationStore.turns["conv-deleted-root"] = []store.Turn{
+					{ID: "turn-1", ConversationID: "conv-deleted-root", Role: "user", Content: textOnlyBlocks, Sequence: 1},
+				}
+				e.mockAPI.On("HasPermissionToChannel", mock.Anything, channelID, model.PermissionReadChannel).Return(true).Maybe()
+				e.mockRootPost(rootPostID, rootPostSoftDeleted)
+			},
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:           "root post lookup failure is a 500, never a read",
+			userID:         testUserID,
+			conversationID: "conv-deleted-root",
+			setup: func(e *TestEnvironment) {
+				rootPostID := "rootdeleted123456789012345"
+				e.conversationStore.conversations["conv-deleted-root"] = &store.Conversation{
+					ID:         "conv-deleted-root",
+					UserID:     testUserID,
+					BotID:      testBotUserID,
+					ChannelID:  &channelID,
+					RootPostID: &rootPostID,
+					DeleteAt:   0,
+				}
+				e.conversationStore.turns["conv-deleted-root"] = []store.Turn{
+					{ID: "turn-1", ConversationID: "conv-deleted-root", Role: "user", Content: textOnlyBlocks, Sequence: 1},
+				}
+				e.mockAPI.On("HasPermissionToChannel", mock.Anything, channelID, model.PermissionReadChannel).Return(true).Maybe()
+				e.mockRootPost(rootPostID, rootPostLookupFails)
+			},
+			expectedStatus: http.StatusInternalServerError,
+		},
+		{
 			name:           "nonexistent conversation returns 404",
 			userID:         testUserID,
 			conversationID: "nonexistent",
@@ -338,6 +539,7 @@ func TestHandleGetConversation(t *testing.T) {
 					{ID: "turn-2", ConversationID: "conv-json-shape", PostID: &postID, Role: "assistant", Content: textOnlyBlocks, TokensIn: 1500, TokensOut: 200, Sequence: 2},
 				}
 				e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
+				e.mockRootPost(rootPostID, rootPostLive)
 			},
 			expectedStatus: http.StatusOK,
 			validate: func(t *testing.T, resp *http.Response) {

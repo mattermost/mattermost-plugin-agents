@@ -7,7 +7,7 @@ import {IntlProvider} from 'react-intl';
 import {Provider} from 'react-redux';
 import {combineReducers, createStore} from 'redux';
 
-import {getAIThreads, renameConversation} from '@/client';
+import {archiveConversation, getAIThreads, renameConversation} from '@/client';
 import manifest from '@/manifest';
 import {aiThreads} from '@/redux';
 import type {AIThread} from '@/types/ai_thread';
@@ -18,6 +18,7 @@ import {AGENTS_ROUTE, buildChatPath} from './use_agents_route';
 jest.mock('@/client', () => ({
     getAIThreads: jest.fn(),
     renameConversation: jest.fn(),
+    archiveConversation: jest.fn(),
     getProfilePictureUrl: (id: string) => `/api/v4/users/${id}/image`,
 }));
 jest.mock('@/bots', () => ({
@@ -31,6 +32,7 @@ const mockBots = [{id: 'a', displayName: 'Alpha', dmChannelID: 'dm_a'}];
 
 const mockGetAIThreads = getAIThreads as jest.Mock;
 const mockRenameConversation = renameConversation as jest.Mock;
+const mockArchiveConversation = archiveConversation as jest.Mock;
 
 const thread = (id: string, title: string): AIThread => ({
     id,
@@ -140,6 +142,7 @@ describe('ProductSidebar "Your agents" section', () => {
         delete window.WebappUtils;
         mockGetAIThreads.mockReset();
         mockRenameConversation.mockReset();
+        mockArchiveConversation.mockReset();
     });
 
     test('lists fetched threads and navigates on click', async () => {
@@ -198,5 +201,59 @@ describe('ProductSidebar "Your agents" section', () => {
         fail(new Error('nope'));
         await waitFor(() => expect(within(list).getByRole('button', {name: 'Older', hidden: true})).toBeTruthy());
         expect((await screen.findByRole('alert')).textContent).toBe('Couldn\'t rename this chat. Try again.');
+    });
+
+    describe('archiving a chat', () => {
+        const chatTitles = () => within(screen.getByRole('list', {name: 'Alpha chats', hidden: true})).
+            queryAllByRole('button', {hidden: true}).
+            map((b) => b.getAttribute('aria-label') ?? b.textContent).
+            filter((name) => name === 'Open one' || name === 'Other');
+        const archive = async (title: string) => {
+            fireEvent.click(await screen.findByRole('button', {name: `Actions for ${title}`}));
+            fireEvent.click(await screen.findByText('Archive chat'));
+            fireEvent.click(await screen.findByRole('button', {name: 'Archive'}));
+        };
+
+        test.each([
+            {name: 'the open chat: lands on a new chat with its agent', path: buildChatPath('a', 'root_2'), navigates: true},
+            {name: 'another chat: stays on the open one', path: buildChatPath('a', 'root_1'), navigates: false},
+        ])('$name, and the row leaves before the server answers', async ({path, navigates}) => {
+            mockGetAIThreads.mockResolvedValue([thread('2', 'Open one'), thread('1', 'Other')]);
+            let succeed!: () => void;
+            mockArchiveConversation.mockReturnValue(new Promise<void>((resolve) => {
+                succeed = resolve;
+            }));
+            const history = renderWithStore(path);
+            await screen.findByRole('button', {name: 'Open one'});
+
+            await archive('Open one');
+            await waitFor(() => expect(chatTitles()).toEqual(['Other']));
+            expect(mockArchiveConversation).toHaveBeenCalledWith('2');
+            expect(history.push).not.toHaveBeenCalled();
+
+            succeed();
+            await waitFor(() => expect(screen.queryByRole('button', {name: 'Archive'})).toBeNull());
+            if (navigates) {
+                expect(history.push).toHaveBeenCalledWith(buildChatPath('a'));
+            } else {
+                expect(history.push).not.toHaveBeenCalled();
+            }
+            expect(chatTitles()).toEqual(['Other']);
+            expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
+        });
+
+        test('a failed archive puts the row back where it was and shows an error', async () => {
+            jest.spyOn(console, 'error').mockImplementation(() => null);
+            mockGetAIThreads.mockResolvedValue([thread('2', 'Open one'), thread('1', 'Other')]);
+            mockArchiveConversation.mockRejectedValue(new Error('server said no'));
+            const history = renderWithStore(buildChatPath('a', 'root_2'));
+            await screen.findByRole('button', {name: 'Open one'});
+
+            await archive('Open one');
+            expect((await screen.findByRole('alert')).textContent).toBe('Couldn\'t archive this chat. Try again.');
+            expect(chatTitles()).toEqual(['Open one', 'Other']);
+            expect(history.push).not.toHaveBeenCalled();
+            jest.restoreAllMocks();
+        });
     });
 });

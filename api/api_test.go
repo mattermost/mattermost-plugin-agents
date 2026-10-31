@@ -452,6 +452,7 @@ type mockConversationStore struct {
 	turns         map[string][]store.Turn // keyed by conversation ID
 	turnsByPost   map[string]*store.Turn  // keyed by post ID
 	err           error                   // if set, all methods return this error
+	archiveWrites int                     // ArchiveConversation calls that changed a row
 }
 
 func newMockConversationStore() *mockConversationStore {
@@ -473,6 +474,17 @@ func (m *mockConversationStore) GetConversation(id string) (*store.Conversation,
 	return conv, nil
 }
 
+func (m *mockConversationStore) GetConversationIncludingArchived(id string) (*store.Conversation, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	conv, ok := m.conversations[id]
+	if !ok {
+		return nil, store.ErrConversationNotFound
+	}
+	return conv, nil
+}
+
 func (m *mockConversationStore) RenameConversation(id, title string) (bool, error) {
 	if m.err != nil {
 		return false, m.err
@@ -483,6 +495,19 @@ func (m *mockConversationStore) RenameConversation(id, title string) (bool, erro
 	}
 	conv.Title = title
 	return true, nil
+}
+
+func (m *mockConversationStore) ArchiveConversation(id string, archivedAt int64) error {
+	if m.err != nil {
+		return m.err
+	}
+	conv, ok := m.conversations[id]
+	if !ok || conv.DeleteAt != 0 {
+		return nil
+	}
+	conv.DeleteAt = archivedAt
+	m.archiveWrites++
+	return nil
 }
 
 func (m *mockConversationStore) GetTurnsForConversation(conversationID string) ([]store.Turn, error) {

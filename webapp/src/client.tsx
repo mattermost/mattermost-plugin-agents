@@ -442,6 +442,28 @@ export async function renameConversation(conversationId: string, title: string):
     });
 }
 
+// archiveConversation hides one of the caller's conversations from their thread lists.
+export async function archiveConversation(conversationId: string): Promise<void> {
+    if (!isValidId(conversationId)) {
+        throw invalidConversationIdError();
+    }
+
+    const url = `${conversationRoute(conversationId)}/archive`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
 // normalizeConversationResponse coerces every turn's content to a non-null
 // array. The backend may persist a turn whose content column is the JSON
 // literal `null` (e.g. when a stream finalizes before any blocks accumulate),

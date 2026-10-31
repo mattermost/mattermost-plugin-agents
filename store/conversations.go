@@ -6,7 +6,7 @@ package store
 import (
 	"database/sql"
 	"errors"
-	"fmt"
+	"strings"
 
 	sq "github.com/Masterminds/squirrel"
 	"github.com/lib/pq"
@@ -65,46 +65,40 @@ func (s *Store) CreateConversation(conv *Conversation) error {
 	return err
 }
 
-// GetConversation retrieves a non-deleted conversation by ID.
-// Returns ErrConversationNotFound if the conversation does not exist or is soft-deleted.
+// getConversation returns the single conversation row the query selects,
+// or ErrConversationNotFound when it selects none. where narrows
+// SELECT conversationColumns FROM LLM_Conversations.
+func (s *Store) getConversation(desc string, where func(sq.SelectBuilder) sq.SelectBuilder) (*Conversation, error) {
+	var conv Conversation
+	if err := s.getBuilder(&conv, where(s.builder.
+		Select(conversationColumns...).
+		From("LLM_Conversations")), desc); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrConversationNotFound
+		}
+		return nil, err
+	}
+	return &conv, nil
+}
+
+// GetConversation retrieves an active (non-archived) conversation by ID.
+// Returns ErrConversationNotFound if the conversation does not exist or is archived.
 func (s *Store) GetConversation(id string) (*Conversation, error) {
-	var conv Conversation
-	if err := s.getBuilder(&conv, s.builder.
-		Select(conversationColumns...).
-		From("LLM_Conversations").
-		Where(sq.Eq{"ID": id}).
-		Where(sq.Eq{"DeleteAt": 0}),
-		"get conversation"); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrConversationNotFound
-		}
-		return nil, err
-	}
-	return &conv, nil
+	return s.getConversation("get conversation", func(b sq.SelectBuilder) sq.SelectBuilder {
+		return b.Where(sq.Eq{"ID": id, "DeleteAt": 0})
+	})
 }
 
-// GetConversationByThreadBotUser looks up a non-deleted conversation by
-// (RootPostID, BotID, UserID). Returns ErrConversationNotFound when no
-// conversation exists for the given tuple.
+// GetConversationByThreadBotUser looks up the active conversation for
+// (RootPostID, BotID, UserID). Returns ErrConversationNotFound when the tuple
+// has no active conversation.
 func (s *Store) GetConversationByThreadBotUser(rootPostID, botID, userID string) (*Conversation, error) {
-	var conv Conversation
-	if err := s.getBuilder(&conv, s.builder.
-		Select(conversationColumns...).
-		From("LLM_Conversations").
-		Where(sq.Eq{"RootPostID": rootPostID}).
-		Where(sq.Eq{"BotID": botID}).
-		Where(sq.Eq{"UserID": userID}).
-		Where(sq.Eq{"DeleteAt": 0}),
-		"get conversation by thread/bot/user"); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrConversationNotFound
-		}
-		return nil, err
-	}
-	return &conv, nil
+	return s.getConversation("get conversation by thread/bot/user", func(b sq.SelectBuilder) sq.SelectBuilder {
+		return b.Where(sq.Eq{"RootPostID": rootPostID, "BotID": botID, "UserID": userID, "DeleteAt": 0})
+	})
 }
 
-// UpdateConversationTitle sets the title of a non-deleted conversation, as
+// UpdateConversationTitle sets the title of an active conversation, as
 // RenameConversation does, for callers that need no report of whether it
 // existed. A title is not activity, so UpdatedAt (which orders the
 // conversation list) is left alone.
@@ -113,11 +107,11 @@ func (s *Store) UpdateConversationTitle(id, title string) error {
 	return err
 }
 
-// SetConversationTitleIfUnset sets the title of a non-deleted conversation
-// only while it still has no title, for automatically generated titles. It
+// SetConversationTitleIfUnset sets the title of an active (non-archived)
+// conversation only while it still has no title, for automatically generated titles. It
 // reports false, without error, when the conversation already has a title
 // (for example one its owner set while the title was being generated), or is
-// missing or deleted. User-set titles are never empty, so this never
+// missing or archived. User-set titles are never empty, so this never
 // overwrites one. UpdatedAt is left alone, as in RenameConversation.
 func (s *Store) SetConversationTitleIfUnset(id, title string) (bool, error) {
 	return s.execBuilderRows(s.builder.
@@ -129,10 +123,19 @@ func (s *Store) SetConversationTitleIfUnset(id, title string) (bool, error) {
 		"set conversation title if unset")
 }
 
-// RenameConversation sets the title of a non-deleted conversation. It reports
-// false, without error, when no non-deleted conversation with the ID exists, so
-// a rename that races a delete never edits it. UpdatedAt is left alone so a
-// rename does not reorder the conversation list.
+// GetConversationIncludingArchived retrieves a conversation by ID whether or
+// not it is archived (DeleteAt > 0). Returns ErrConversationNotFound when no
+// row exists.
+func (s *Store) GetConversationIncludingArchived(id string) (*Conversation, error) {
+	return s.getConversation("get conversation including archived", func(b sq.SelectBuilder) sq.SelectBuilder {
+		return b.Where(sq.Eq{"ID": id})
+	})
+}
+
+// RenameConversation sets the title of an active (non-archived) conversation.
+// It reports false, without error, when no active conversation with the ID
+// exists, so a rename that races an archive never resurrects or edits it.
+// UpdatedAt is left alone so a rename does not reorder the conversation list.
 func (s *Store) RenameConversation(id, title string) (bool, error) {
 	return s.execBuilderRows(s.builder.
 		Update("LLM_Conversations").
@@ -140,6 +143,63 @@ func (s *Store) RenameConversation(id, title string) (bool, error) {
 		Where(sq.Eq{"ID": id}).
 		Where(sq.Eq{"DeleteAt": 0}),
 		"rename conversation")
+}
+
+// ArchiveConversation marks an active conversation archived by setting
+// DeleteAt, as Mattermost does for an archived channel. Turns are kept and the
+// conversation is restored by a later turn on it (RestoreConversation). The
+// write is conditional on the row being active, so archiving an archived or
+// missing conversation, or racing another archive, is a no-op. UpdatedAt is
+// the conversation's last activity, so archiving leaves it alone.
+func (s *Store) ArchiveConversation(id string, archivedAt int64) error {
+	return s.execBuilder(s.builder.
+		Update("LLM_Conversations").
+		Set("DeleteAt", archivedAt).
+		Where(sq.Eq{"ID": id, "DeleteAt": 0}),
+		"archive conversation")
+}
+
+// GetLatestConversationByThreadBotUser looks up the conversation for
+// (RootPostID, BotID, UserID) whether or not it is archived: the active one
+// when it exists, otherwise the most recently archived one. It never writes;
+// callers that continue the conversation restore it with RestoreConversation.
+// Returns ErrConversationNotFound when the tuple has no conversation at all.
+// idx_llm_conversations_thread_bot_user_all (migration 000014) serves it.
+func (s *Store) GetLatestConversationByThreadBotUser(rootPostID, botID, userID string) (*Conversation, error) {
+	return s.getConversation("get latest conversation by thread/bot/user", func(b sq.SelectBuilder) sq.SelectBuilder {
+		return b.Where(sq.Eq{"RootPostID": rootPostID, "BotID": botID, "UserID": userID}).
+			OrderBy("(DeleteAt = 0) DESC", "DeleteAt DESC").
+			Limit(1)
+	})
+}
+
+// RestoreConversation un-archives the conversation with the given ID and
+// returns it. The DeleteAt > 0 condition makes concurrent restores write at
+// most once. Returns ErrConversationNotFound when no archived conversation
+// with the ID exists (missing, or already active: a concurrent restore won),
+// and ErrConversationConflict when another active conversation already owns
+// its (RootPostID, BotID, UserID) tuple. UpdatedAt is left alone: the turn the
+// restore precedes advances it (see CreateTurn), and a restore with no turn is
+// not activity.
+func (s *Store) RestoreConversation(id string) (*Conversation, error) {
+	var conv Conversation
+	err := s.getBuilder(&conv, s.builder.
+		Update("LLM_Conversations").
+		Set("DeleteAt", 0).
+		Where(sq.Eq{"ID": id}).
+		Where(sq.Gt{"DeleteAt": 0}).
+		Suffix("RETURNING "+strings.Join(conversationColumns, ", ")),
+		"restore conversation")
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, ErrConversationNotFound
+	case isUniqueViolation(err):
+		return nil, ErrConversationConflict
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &conv, nil
 }
 
 // UpdateConversationRootPostID sets the RootPostID and updates the UpdatedAt timestamp.
@@ -151,17 +211,6 @@ func (s *Store) UpdateConversationRootPostID(id string, rootPostID string) error
 		Set("UpdatedAt", model.GetMillis()).
 		Where(sq.Eq{"ID": id}),
 		"update conversation root post ID")
-}
-
-// SoftDeleteConversation sets the DeleteAt timestamp on a conversation.
-// Turns are not deleted until CleanupDeletedConversations runs.
-func (s *Store) SoftDeleteConversation(id string, deleteAt int64) error {
-	return s.execBuilder(s.builder.
-		Update("LLM_Conversations").
-		Set("DeleteAt", deleteAt).
-		Set("UpdatedAt", deleteAt).
-		Where(sq.Eq{"ID": id}),
-		"soft delete conversation")
 }
 
 // ConversationSummary is a lightweight view of a conversation with its turn count,
@@ -184,9 +233,12 @@ type ConversationSummary struct {
 // GetConversationSummariesForUser returns a user's conversations ordered by last
 // activity (see ConversationSummary.UpdatedAt) descending, with ID as a
 // deterministic tie-breaker, including a turn count per conversation. Only
-// non-deleted conversations are returned. The ordering reads the
-// (UserID, UpdatedAt DESC) WHERE DeleteAt = 0 index, and turns are counted
-// only for the returned page.
+// active (non-archived) conversations whose root post, if any, still exists
+// and is not deleted are returned: a conversation of a deleted thread is
+// unreachable (see conversation.CheckRootPost), so it is not listed either.
+// Posts is Mattermost's own table; the plugin store shares its database. The
+// ordering reads the (UserID, UpdatedAt DESC) WHERE DeleteAt = 0 index, and
+// turns are counted only for the returned page.
 func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int) ([]ConversationSummary, error) {
 	if limit < 0 {
 		limit = 0
@@ -209,6 +261,11 @@ func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int
 		From("LLM_Conversations c").
 		Where(sq.Eq{"c.UserID": userID}).
 		Where(sq.Eq{"c.DeleteAt": 0}).
+		Where(sq.Or{
+			sq.Eq{"c.RootPostID": nil},
+			sq.Eq{"c.RootPostID": ""},
+			sq.Expr("EXISTS (SELECT 1 FROM Posts p WHERE p.Id = c.RootPostID AND p.DeleteAt = 0)"),
+		}).
 		OrderBy("c.UpdatedAt DESC", "c.ID ASC").
 		Limit(uint64(limit)).   // #nosec G115 -- guarded above
 		Offset(uint64(offset)), // #nosec G115 -- guarded above
@@ -219,32 +276,4 @@ func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int
 		summaries = []ConversationSummary{}
 	}
 	return summaries, nil
-}
-
-// CleanupDeletedConversations permanently deletes all soft-deleted conversations
-// and their associated turns within a single transaction.
-func (s *Store) CleanupDeletedConversations() error {
-	tx, err := s.db.Beginx()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-
-	_, err = tx.Exec("DELETE FROM LLM_Turns WHERE ConversationID IN (SELECT ID FROM LLM_Conversations WHERE DeleteAt > 0)")
-	if err != nil {
-		return fmt.Errorf("failed to delete turns for deleted conversations: %w", err)
-	}
-	_, err = tx.Exec("DELETE FROM LLM_Conversations WHERE DeleteAt > 0")
-	if err != nil {
-		return fmt.Errorf("failed to delete soft-deleted conversations: %w", err)
-	}
-
-	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit cleanup transaction: %w", err)
-	}
-	return nil
 }

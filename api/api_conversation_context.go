@@ -24,7 +24,7 @@ func (a *API) handleGetConversationContext(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	conversationID := c.Param("conversationid")
 
-	conv, err := a.conversationStore.GetConversation(conversationID)
+	conv, err := a.getReadableConversation(conversationID)
 	if err != nil {
 		if errors.Is(err, store.ErrConversationNotFound) {
 			c.AbortWithError(http.StatusNotFound, fmt.Errorf("conversation not found"))

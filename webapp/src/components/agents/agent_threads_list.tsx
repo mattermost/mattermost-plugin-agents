@@ -257,6 +257,9 @@ const AgentThreadsList = ({
                                                 unread={Boolean(thread.root_post_id && unreadRoots?.has(thread.root_post_id))}
                                                 onSelect={() => onSelectThread(bot.id, thread.root_post_id as string)}
                                                 chatActions={chatActions}
+
+                                                // Archiving the open chat lands on a new chat with its agent.
+                                                {...(isActiveAgent && activeRootId === thread.root_post_id ? {onArchived: () => onNewChat(bot.id)} : {})}
                                             />
                                         ))}
                                         {(hiddenCount > 0 || canShowLess) && (
@@ -306,12 +309,15 @@ interface ThreadItemProps {
     motion?: 'enter' | 'leave';
     onSelect: () => void;
     chatActions: ChatActions;
+
+    // Runs after this chat is archived from its actions menu.
+    onArchived?: () => void;
 }
 
 // A compass ChannelSidebarItem only renders its own kebab for channel and DM rows, so the
 // actions button is overlaid on the row (as the agent rows do for their chevron and [+]),
 // with the same hover/focus reveal as the compass kebab.
-const ThreadItem = ({thread, active, generating, unread, motion, onSelect, chatActions}: ThreadItemProps) => {
+const ThreadItem = ({thread, active, generating, unread, motion, onSelect, chatActions, onArchived}: ThreadItemProps) => {
     const intl = useIntl();
     const [menuOpen, setMenuOpen] = useState(false);
     const title = chatTitle(intl, thread.title);
@@ -369,6 +375,7 @@ const ThreadItem = ({thread, active, generating, unread, motion, onSelect, chatA
                         label={actionsLabel}
                         appearance='sidebar'
                         onOpenChange={setMenuOpen}
+                        onArchived={onArchived}
                     />
                 </ThreadActionsSlot>
             </ThreadRowBody>
