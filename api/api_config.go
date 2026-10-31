@@ -230,9 +230,11 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 // an admin closing the page must not stop it halfway. A failure is logged and
 // marked in the audit record. It leaves unusable grants behind rather than
 // letting one reach another server: a grant is only used by a server with the
-// origin and configuration ID it was issued for. The one exception is a
-// server saved before configuration IDs existed, which is matched by origin
-// alone, so reusing its name at the same origin relies on this sweep.
+// origin and configuration ID it was issued for. The exception is a grant
+// saved before grants recorded a configuration ID: it is bound to the ID of
+// whichever server holds its name when it is first used, so deleting a server
+// and adding another under the same name at the same origin relies on this
+// sweep to remove such grants.
 func (a *API) clearMCPServerOAuthState(c *gin.Context, prev, next []config.MCPServerConfig) {
 	clears := mcp.OAuthStateToClear(prev, next)
 	if len(clears) == 0 {

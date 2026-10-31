@@ -7,8 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -321,4 +324,36 @@ func TestSignInCallbackIsBoundToItsServerConfiguration(t *testing.T) {
 			assert.Equal(t, tt.wantBind, kv.storedEnvelope(t, userID, serverName).ServerConfigID)
 		})
 	}
+}
+
+// Starting a sign-in records the configuration ID of the server it is for, so
+// a callback for a server replaced in the meantime is rejected rather than
+// bound to whichever server holds the name when it completes.
+func TestSignInStartRecordsServerConfigurationID(t *testing.T) {
+	const userID = "user123"
+
+	// Discovery finds no metadata, so the sign-in falls back to the server's
+	// conventional OAuth endpoints.
+	notFound := &http.Client{Transport: notFoundRoundTripper(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}}, nil
+	})}
+	server := ServerConfig{ID: "id-1", Name: "Jira", BaseURL: "https://jira.example.com/mcp", ClientID: "client", ClientSecret: "secret"}
+	manager, _ := newStatefulKVManager(t, func(name string) (ServerConfig, bool) { return server, name == server.Name }, notFound)
+
+	authURL, err := manager.InitiateOAuthFlowForServer(context.Background(), userID, server)
+	require.NoError(t, err)
+	parsed, err := url.Parse(authURL)
+	require.NoError(t, err)
+	state := parsed.Query().Get("state")
+	require.NotEmpty(t, state)
+
+	session, err := manager.loadSession(userID, state)
+	require.NoError(t, err)
+	assert.Equal(t, "id-1", session.ServerConfigID)
+}
+
+type notFoundRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f notFoundRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
 }
