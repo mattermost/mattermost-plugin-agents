@@ -4,16 +4,49 @@
 import React, {useEffect, useRef} from 'react';
 import styled from 'styled-components';
 
-import manifest from '@/manifest';
+import CustomPromptsManagement from '@/components/custom_prompts/custom_prompts_management';
+import CustomPromptsPage from '@/components/custom_prompts/custom_prompts_page';
 
+import AgentChatPage from './agent_chat_page';
+import AgentsLanding from './agents_landing';
 import AgentsList from './agents_list';
+import ProductSidebar from './product_sidebar';
+import {AGENTS_ROUTE, AgentsNavigation, AgentsRoute, useAgentsRoute} from './use_agents_route';
 
-export const AGENTS_ROUTE = `/plug/${manifest.id}/agents`;
+export {AGENTS_ROUTE};
+
+// The center pane for the current route.
+const Content = ({route}: {route: AgentsRoute & AgentsNavigation}) => {
+    switch (route.view) {
+    case 'landing':
+        return <AgentsLanding nav={route}/>;
+    case 'prompts':
+        return <CustomPromptsPage/>;
+    case 'chat':
+        return (
+            <AgentChatPage
+                botId={route.botId ?? ''}
+                rootId={route.rootId}
+                toChat={route.toChat}
+                toAll={route.toAll}
+            />
+        );
+    default:
+        return (
+            <AgentsList
+                onStartChat={route.toChat}
+                openCreate={route.create === true}
+                onCloseCreate={route.closeNewAgent}
+            />
+        );
+    }
+};
 
 // Product mainComponent — rendered by registerProduct when the route matches.
-// No URL-matching or overlay needed; Mattermost's product routing handles it.
 const AgentsPage = () => {
     const pageRef = useRef<HTMLDivElement>(null);
+    const route = useAgentsRoute();
+    const {toAll, toPrompts} = route;
 
     useEffect(() => {
         // The host webapp owns `app__body` on document.body (see MM-67913 / Boards #188).
@@ -31,7 +64,7 @@ const AgentsPage = () => {
 
         if (wrapper) {
             // Mattermost's product shell may scroll when our page grows taller than the viewport.
-            // Pin overflow on those ancestors so only the agents list viewport scrolls.
+            // Pin overflow on those ancestors so only the content outlet scrolls.
             let node: HTMLElement | null = wrapper.parentElement;
             while (node) {
                 const {overflowY} = window.getComputedStyle(node);
@@ -52,9 +85,18 @@ const AgentsPage = () => {
 
     return (
         <PageWrapper ref={pageRef}>
-            <PageLayout>
-                <AgentsList/>
-            </PageLayout>
+            <ProductSidebar
+                activeView={route.view}
+                onSelectAll={toAll}
+                onSelectPrompts={toPrompts}
+            />
+            <ContentOutlet>
+                <Content route={route}/>
+            </ContentOutlet>
+
+            {/* Product routes get no root components, so the product mounts the Custom Prompts modal for
+                the composer's "Manage prompts" (only one mounted copy ever renders). */}
+            <CustomPromptsManagement/>
         </PageWrapper>
     );
 };
@@ -66,19 +108,28 @@ const PageWrapper = styled.div`
     bottom: 0;
     left: 0;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     width: 100%;
-    background: var(--center-channel-bg, #fff);
+
+    /* Same look as the Channels view: the sidebar-colored page behind a rounded center card. */
+    background: var(--sidebar-bg);
     overflow: hidden;
 `;
 
-const PageLayout = styled.div`
+// The outlet owns the definite height (min-height: 0) and its own scroll region.
+// Chat content (host ThreadViewer) must fill it and must not scroll itself.
+const ContentOutlet = styled.main`
     display: flex;
+    flex: 1 1 0;
     flex-direction: column;
-    flex: 1;
+    min-width: 0;
     min-height: 0;
-    width: 100%;
-    overflow: hidden;
+    border: var(--border-light);
+    border-radius: var(--radius-l);
+    background: var(--center-channel-bg);
+    box-shadow: var(--elevation-1);
+    overflow-x: hidden;
+    overflow-y: auto;
 `;
 
 export default AgentsPage;

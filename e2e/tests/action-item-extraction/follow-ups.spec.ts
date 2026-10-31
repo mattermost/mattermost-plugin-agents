@@ -108,7 +108,7 @@ test.describe('Follow-Up Interactions After Extraction', () => {
 
         // 3. Wait for the initial response with action items
         await aiPlugin.expectRHSOpenWithPost();
-        await expect(page.getByText(/action items/i)).toBeVisible();
+        await expect(page.getByTestId('posttext').getByText(/action items/i)).toBeVisible();
 
         // 4. In the RHS textarea, type follow-up question
         await openAIMock.addCompletionMock(followUpResponse);

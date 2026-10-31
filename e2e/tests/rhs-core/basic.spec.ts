@@ -84,7 +84,8 @@ test.describe('RHS Bot Interactions', () => {
     await aiPlugin.switchBot('Second Bot');
 
     await aiPlugin.sendMessage('Hello!');
-    await expect(page.getByRole('button', { name: 'second', exact: true })).toBeVisible();
+    // The reply is authored by the second bot (its name is hidden in the chat's post header).
+    await expect(page.getByRole('button', { name: 'second', exact: true, includeHidden: true })).toBeAttached();
     await aiPlugin.waitForBotResponse(responseTestText);
   });
 });
@@ -162,12 +163,14 @@ test.describe('Chat History', () => {
     // Click on the first history item
     await aiPlugin.clickChatHistoryItem(0);
 
-    // Verify we can see the conversation content we created
-    await expect(page.getByText('Test conversation')).toBeVisible();
-    await expect(page.getByText(responseTestText)).toBeVisible();
+    // Verify we can see the conversation content we created (in the opened chat: the history view
+    // is still sliding away for a moment and has the same message as its preview).
+    const openedChat = page.getByTestId('rhs-thread');
+    await expect(openedChat.getByText('Test conversation')).toBeVisible();
+    await expect(openedChat.getByText(responseTestText)).toBeVisible();
   });
 
-  test('chat history button is visible and functional', async ({ page }) => {
+  test('back button in the header opens the chat history', async ({ page }) => {
     const { aiPlugin } = await setupTestPage(page);
     await aiPlugin.openRHS();
 
@@ -176,7 +179,7 @@ test.describe('Chat History', () => {
     await aiPlugin.sendMessage('Test for history button');
     await aiPlugin.waitForBotResponse(responseTestText);
 
-    // Chat history button should be visible
+    // The Back button (in the RHS header) should be visible
     await expect(aiPlugin.chatHistoryButton).toBeVisible();
 
     // Should be clickable
@@ -185,6 +188,15 @@ test.describe('Chat History', () => {
     // Should show threads list with content
     await expect(aiPlugin.threadsListContainer).toBeVisible();
     await expect(aiPlugin.threadsListContainer.locator('div').first()).toBeVisible();
+
+    // Each chat reads like an item of the Threads list: its first message and the reply count.
+    const item = aiPlugin.threadsListContainer.getByRole('button').filter({ hasText: 'Test for history button' });
+    await expect(item).toHaveCount(1);
+    await expect(item).toContainText(/1 reply/);
+
+    // The history has the generic title, and Back is not offered there.
+    await expect(page.getByTestId('rhs-title')).toContainText('Agents');
+    await expect(aiPlugin.chatHistoryButton).toHaveCount(0);
   });
 });
 

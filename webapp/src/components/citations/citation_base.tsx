@@ -3,6 +3,7 @@
 
 import React, {useRef} from 'react';
 import styled from 'styled-components';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 interface CitationBaseProps {
     icon: React.ReactNode;
@@ -24,22 +25,22 @@ export const CitationBase = (props: CitationBaseProps) => {
     };
 
     return (
-        <CitationWrapper
-            ref={markerRef}
-            onClick={props.onClick}
-            onKeyDown={handleKeyDown}
-            role='button'
-            tabIndex={0}
-            aria-label={props.ariaLabel}
-            data-testid={props.testId}
-            data-citation-index={props.citationIndex}
+        <WithTooltip
+            title={<span data-testid={props.tooltipTestId}>{props.tooltipContent}</span>}
         >
-            {props.icon}
-            <TooltipContainer data-testid={props.tooltipTestId}>
-                {props.tooltipContent}
-                <TooltipArrow/>
-            </TooltipContainer>
-        </CitationWrapper>
+            <CitationWrapper
+                ref={markerRef}
+                onClick={props.onClick}
+                onKeyDown={handleKeyDown}
+                role='button'
+                tabIndex={0}
+                aria-label={props.ariaLabel}
+                data-testid={props.testId}
+                data-citation-index={props.citationIndex}
+            >
+                {props.icon}
+            </CitationWrapper>
+        </WithTooltip>
     );
 };
 
@@ -67,34 +68,4 @@ export const CitationWrapper = styled.span`
     &:focus-visible {
         box-shadow: 0 0 0 2px var(--button-bg);
     }
-`;
-
-const TooltipContainer = styled.div`
-    position: absolute;
-    bottom: calc(100% + 8px);
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 1000;
-    pointer-events: none;
-    opacity: 0;
-    visibility: hidden;
-    transition: opacity 0.2s ease, visibility 0.2s ease;
-
-    ${CitationWrapper}:hover &,
-    ${CitationWrapper}:focus & {
-        opacity: 1;
-        visibility: visible;
-    }
-`;
-
-const TooltipArrow = styled.div`
-    position: absolute;
-    bottom: -4px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 0;
-    height: 0;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-top: 4px solid var(--center-channel-color);
 `;

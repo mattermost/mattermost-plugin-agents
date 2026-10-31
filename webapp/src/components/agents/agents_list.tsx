@@ -1,13 +1,10 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
-import {useSelector} from 'react-redux';
 import {ImportIcon, PlusIcon} from '@mattermost/compass-icons/components';
-
-import {GlobalState} from '@mattermost/types/store';
 
 import {Button} from '@mattermost/compass-ui/components/button';
 import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
@@ -19,11 +16,11 @@ import {Tabs} from '@mattermost/compass-ui/components/tabs';
 import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {getAgents, getServices, deleteAgent as deleteAgentAPI} from '@/client';
-import {userHasSystemPermission} from '@/utils/permissions';
 import {downloadAgentExport} from '@/utils/agent_export';
 import {AgentExportDocument, UserAgent, ServiceInfo} from '@/types/agents';
 import {LicenseLevel, useAgentLimit, useLicenseLevel, useLicenseLevelName} from '@/license';
 
+import {canManageAgent, useAgentPermissions} from './agent_access';
 import AgentRow from './agent_row';
 import DeleteAgentDialog from './delete_agent_dialog';
 import AgentConfigView from './agent_config_view';
@@ -31,20 +28,22 @@ import {useAgentFilePicker} from './use_agent_file_picker';
 
 type Tab = 'all' | 'yours';
 
-const AgentsList = () => {
-    const intl = useIntl();
-    const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
-    const hasManageOthersAgent = useSelector((state: GlobalState) =>
-        userHasSystemPermission(state, currentUserId, 'manage_others_agent'));
-    const hasManageOwnAgent = useSelector((state: GlobalState) =>
-        userHasSystemPermission(state, currentUserId, 'manage_own_agent'));
-    const hasManageSystem = useSelector((state: GlobalState) =>
-        userHasSystemPermission(state, currentUserId, 'manage_system'));
-    const userCanCreateAgent = hasManageOwnAgent || hasManageSystem;
+type AgentsListProps = {
+    onStartChat: (botUserId: string) => void;
 
-    // Mirrors api.canConfigureAgentServices. Users without these permissions
-    // browse read-only; requesting /services would 403 and wrongly flag every agent.
-    const canViewServices = hasManageOwnAgent || hasManageOthersAgent || hasManageSystem;
+    // The route asks for the create flow (/agents/all/new). Closing it, or being
+    // refused (no permission, plan limit), reports through onCloseCreate so the
+    // route returns to the plain list.
+    openCreate?: boolean;
+    onCloseCreate?: () => void;
+}
+
+const AgentsList = ({onStartChat, openCreate = false, onCloseCreate}: AgentsListProps) => {
+    const intl = useIntl();
+
+    // Users without canViewServices browse read-only; requesting /services would 403 and wrongly flag
+    // every agent.
+    const {currentUserId, hasManageOthersAgent, hasManageSystem, canCreate: userCanCreateAgent, canViewServices} = useAgentPermissions();
     const agentLimit = useAgentLimit();
     const licenseLevel = useLicenseLevel();
     const licenseLevelName = useLicenseLevelName();
@@ -148,6 +147,36 @@ const AgentsList = () => {
         setViewOpen(true);
     }, [createButtonDisabled]);
 
+    // Route-driven create (sidebar "New agent"): opens once the agent count is known so the
+    // plan limit applies, and is refused when the user may not create. Closing the view
+    // (or leaving the route) clears the route flag again.
+    const openedByRoute = useRef(false);
+    const createHandled = useRef(false);
+    useEffect(() => {
+        if (!openCreate) {
+            createHandled.current = false;
+            if (openedByRoute.current) {
+                openedByRoute.current = false;
+                setViewOpen(false);
+                setEditingAgent(null);
+                setImportedDocument(null);
+            }
+            return;
+        }
+        if (loading || viewOpen || createHandled.current) {
+            return;
+        }
+        createHandled.current = true;
+        if (!userCanCreateAgent || createQuotaReached) {
+            onCloseCreate?.();
+            return;
+        }
+        openedByRoute.current = true;
+        setEditingAgent(null);
+        setViewMode('create');
+        setViewOpen(true);
+    }, [openCreate, loading, viewOpen, userCanCreateAgent, createQuotaReached, onCloseCreate]);
+
     const handleImportedDocument = useCallback((doc: AgentExportDocument) => {
         setActionError('');
         setImportedDocument(doc);
@@ -162,25 +191,27 @@ const AgentsList = () => {
         setViewOpen(false);
         setEditingAgent(null);
         setImportedDocument(null);
-    }, []);
+        if (openedByRoute.current) {
+            openedByRoute.current = false;
+            onCloseCreate?.();
+        }
+    }, [onCloseCreate]);
 
     const handleViewSaved = useCallback(() => {
         setViewOpen(false);
         setEditingAgent(null);
         setImportedDocument(null);
+        if (openedByRoute.current) {
+            openedByRoute.current = false;
+            onCloseCreate?.();
+        }
         fetchAgents();
-    }, [fetchAgents]);
+    }, [fetchAgents, onCloseCreate]);
 
     // Filter agents based on active tab and search query
-    const userCanManageAgent = useCallback((a: UserAgent) => {
-        const isOwner = a.creatorID === currentUserId || (a.adminUserIDs?.includes(currentUserId) ?? false);
-        if (isOwner || hasManageOthersAgent) {
-            return true;
-        }
-
-        // Migrated legacy bots have no creator; system admins had full control via System Console.
-        return Boolean(!a.creatorID && hasManageSystem);
-    }, [currentUserId, hasManageOthersAgent, hasManageSystem]);
+    const userCanManageAgent = useCallback((a: UserAgent) => (
+        canManageAgent(a, currentUserId, {hasManageOthersAgent, hasManageSystem})
+    ), [currentUserId, hasManageOthersAgent, hasManageSystem]);
 
     const handleExportAgent = useCallback(async (agent: UserAgent) => {
         setActionError('');
@@ -362,6 +393,7 @@ const AgentsList = () => {
                                     services={services}
                                     servicesLoaded={servicesLoaded}
                                     canManage={userCanManageAgent(agent)}
+                                    onStartChat={onStartChat}
                                     onEdit={handleEdit}
                                     onDelete={handleDeleteRequest}
                                     onExport={handleExportAgent}

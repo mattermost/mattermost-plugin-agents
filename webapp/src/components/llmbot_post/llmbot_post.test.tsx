@@ -12,8 +12,12 @@ import type {ConversationResponse, Turn} from '@/types/conversation';
 
 import {ToolCallStatus} from '../tool_types';
 
+import {AGENT_CHAT_SURFACE, AgentChatSurfaceContext} from '../agent_chat/agent_chat_surface_context';
+
 import {LLMBotPost, PostUpdateWebsocketMessage} from './llmbot_post';
 import {advanceAnimation} from './test_support';
+import {THINKING_DELAY_MS, THINKING_FADE_MS, THINKING_MIN_VISIBLE_MS} from './thinking_dots';
+import {BACKLOG_DRAIN_MS, FLUSH_MAX_MS} from './use_smooth_text';
 
 jest.mock('react-redux', () => ({
     useSelector: jest.fn(),
@@ -39,7 +43,7 @@ jest.mock('react-intl', () => {
 jest.mock('@/client', () => ({
     doPostbackSummary: jest.fn(),
     doRegenerate: jest.fn(),
-    doStopGenerating: jest.fn(),
+    doStopGenerating: jest.fn(() => Promise.resolve()),
 }));
 
 jest.mock('@/license', () => ({
@@ -1501,6 +1505,35 @@ describe('LLMBotPost stopped generation notice', () => {
     });
 });
 
+describe('LLMBotPost Stop in agent chat surfaces', () => {
+    test.each([
+        {name: 'no surface (Channels DM, host RHS)', wrap: false},
+        {name: 'an agent chat view (the host composer has no Stop)', wrap: true},
+    ])('while generating, $name shows the post\'s Stop', ({wrap}) => {
+        mockUseConversation.mockReturnValue({conversation: makeConversation([]), loading: false, error: null});
+        let listener: PostUpdateHandler | undefined;
+        const post = (
+            <LLMBotPost
+                post={makePost()}
+                websocketRegister={(_postID, _listenerID, handler) => {
+                    listener = handler;
+                }}
+                websocketUnregister={jest.fn()}
+            />
+        );
+        render(
+            <IntlProvider locale='en'>
+                {wrap ? <AgentChatSurfaceContext.Provider value={AGENT_CHAT_SURFACE}>{post}</AgentChatSurfaceContext.Provider> : post}
+            </IntlProvider>,
+        );
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Partial'}));
+        });
+        expect(screen.queryByTestId('stop-generating-button')).not.toBeNull();
+    });
+});
+
 describe('LLMBotPost meetings license gating', () => {
     const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
 
@@ -1542,5 +1575,349 @@ describe('LLMBotPost meetings license gating', () => {
         }));
 
         expect(screen.queryByText('Post summary')).toBeNull();
+    });
+});
+
+describe('LLMBotPost thinking indicator', () => {
+    const dots = () => screen.queryByTestId('llm-bot-thinking');
+    let listener: PostUpdateHandler | undefined;
+
+    function renderPost(wrap: boolean) {
+        listener = undefined; // eslint-disable-line no-undefined
+        const post = (
+            <LLMBotPost
+                post={{...makePost(), user_id: 'bot_1'}}
+                websocketRegister={(_postID, _listenerID, handler) => {
+                    listener = handler;
+                }}
+                websocketUnregister={jest.fn()}
+            />
+        );
+        return render(
+            <IntlProvider locale='en'>
+                {wrap ? <AgentChatSurfaceContext.Provider value={AGENT_CHAT_SURFACE}>{post}</AgentChatSurfaceContext.Provider> : post}
+            </IntlProvider>,
+        );
+    }
+
+    const send = (data: Partial<PostUpdateWebsocketMessage>) => act(() => {
+        listener?.(postUpdateMessage({post_id: 'post_1', ...data}));
+    });
+    const wait = (ms: number) => act(() => {
+        jest.advanceTimersByTime(ms);
+    });
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        mockUseConversation.mockReturnValue({conversation: makeConversation([]), loading: false, error: null});
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('shows after the delay while generating with nothing yet, and replaces Working...', () => {
+        renderPost(true);
+        send({control: 'start'});
+        expect(dots()).toBeNull();
+        expect(screen.queryByText('Working...')).toBeNull();
+        wait(THINKING_DELAY_MS);
+        expect(dots()).not.toBeNull();
+        expect(screen.queryByText('Working...')).toBeNull();
+        expect(screen.getByRole('status').textContent).toBe('The agent is thinking');
+    });
+
+    test('is absent without the agent chat surface', () => {
+        renderPost(false);
+        send({control: 'start'});
+        wait(THINKING_DELAY_MS * 4);
+        expect(dots()).toBeNull();
+        expect(screen.queryByText('Working...')).not.toBeNull();
+    });
+
+    test.each([
+        {name: 'text', data: {next: 'Hello'}},
+        {name: 'reasoning', data: {control: 'reasoning_summary', reasoning: 'Thinking it over'}},
+        {name: 'a tool call', data: {control: 'tool_call', tool_call: JSON.stringify([{id: 'tc1', name: 'search', description: '', arguments: {}, status: ToolCallStatus.Pending}])}},
+    ])('hides once $name arrives, and never coexists after the hold', ({data}) => {
+        renderPost(true);
+        send({control: 'start'});
+        wait(THINKING_DELAY_MS);
+        expect(dots()).not.toBeNull();
+        send(data);
+        wait(THINKING_MIN_VISIBLE_MS + THINKING_FADE_MS);
+        expect(dots()).toBeNull();
+    });
+
+    test('content before the delay means the dots never appear', () => {
+        renderPost(true);
+        send({control: 'start'});
+        wait(THINKING_DELAY_MS - 10);
+        send({next: 'Fast'});
+        wait(THINKING_DELAY_MS * 4);
+        expect(dots()).toBeNull();
+    });
+
+    test('stop while only dots show ends them', () => {
+        renderPost(true);
+        send({control: 'start'});
+        wait(THINKING_DELAY_MS);
+        send({control: 'cancel'});
+        wait(THINKING_MIN_VISIBLE_MS + THINKING_FADE_MS);
+        expect(dots()).toBeNull();
+    });
+
+    test('a new generation shows the dots again', () => {
+        renderPost(true);
+        send({control: 'start'});
+        wait(THINKING_DELAY_MS);
+        send({next: 'Done'});
+        send({control: 'cancel'});
+        wait(THINKING_MIN_VISIBLE_MS + THINKING_FADE_MS);
+        expect(dots()).toBeNull();
+        send({control: 'continue'});
+        wait(THINKING_DELAY_MS);
+        expect(dots()).not.toBeNull();
+    });
+});
+
+describe('LLMBotPost smooth streaming', () => {
+    let listener: PostUpdateHandler | undefined;
+    const longText = Array.from({length: 120}, (_, i) => `word${i}`).join(' ');
+
+    function renderSurfacePost(wrap: boolean, message = '') {
+        listener = undefined; // eslint-disable-line no-undefined
+        const post = (
+            <LLMBotPost
+                post={makePost(message)}
+                websocketRegister={(_postID, _listenerID, handler) => {
+                    listener = handler;
+                }}
+                websocketUnregister={jest.fn()}
+            />
+        );
+        return render(
+            <IntlProvider locale='en'>
+                {wrap ? <AgentChatSurfaceContext.Provider value={AGENT_CHAT_SURFACE}>{post}</AgentChatSurfaceContext.Provider> : post}
+            </IntlProvider>,
+        );
+    }
+
+    const send = (data: Partial<PostUpdateWebsocketMessage>) => act(() => {
+        listener?.(postUpdateMessage({post_id: 'post_1', ...data}));
+    });
+    const wait = (ms: number) => act(() => {
+        jest.advanceTimersByTime(ms);
+    });
+
+    // The text the answer's PostText last rendered.
+    const shown = () => mockPostTextRender.mock.calls.at(-1)?.[0] ?? '';
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+
+        // No refetch lands, so the live round stays on screen after end.
+        mockUseConversation.mockReturnValue({conversation: null, loading: false, error: null});
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test.each([
+        {name: 'outside the agent chat views text shows as it arrives', wrap: false, immediate: true},
+        {name: 'in the agent chat views text is revealed over frames', wrap: true, immediate: false},
+    ])('$name', ({wrap, immediate}) => {
+        renderSurfacePost(wrap);
+        send({control: 'start'});
+        send({next: longText});
+        expect(shown() === longText).toBe(immediate);
+        expect(longText.startsWith(shown())).toBe(true);
+        wait(BACKLOG_DRAIN_MS + 50);
+        expect(shown()).toBe(longText);
+    });
+
+    test.each([
+        {name: 'end flushes the buffer within the flush time', data: {control: 'end'}, waitMs: FLUSH_MAX_MS + 20},
+        {name: 'cancel (Stop) shows everything at once', data: {control: 'cancel'}, waitMs: 0},
+    ])('$name', ({data, waitMs}) => {
+        renderSurfacePost(true);
+        send({control: 'start'});
+        send({next: longText});
+        expect(shown()).not.toBe(longText);
+        send(data);
+        if (waitMs > 0) {
+            expect(shown()).not.toBe(longText);
+            wait(waitMs);
+        }
+        expect(shown()).toBe(longText);
+    });
+
+    test('a finished post renders in full at once', () => {
+        renderSurfacePost(true, longText);
+        expect(shown()).toBe(longText);
+    });
+
+    test('regenerate starts the new generation from nothing', () => {
+        renderSurfacePost(true);
+        send({control: 'start'});
+        send({next: longText});
+        send({control: 'cancel'});
+        expect(shown()).toBe(longText);
+        send({control: 'start'});
+        send({next: 'Fresh '});
+        expect(shown()).toBe('Fresh ');
+    });
+});
+
+describe('LLMBotPost bubble fit', () => {
+    test.each([
+        {name: 'agent chat views mark the bubble fit', wrap: true, marked: true},
+        {name: 'other surfaces leave the bubble alone', wrap: false, marked: false},
+    ])('$name', ({wrap, marked}) => {
+        const post = (
+            <LLMBotPost
+                post={makePost('Short reply')}
+                websocketUnregister={jest.fn()}
+            />
+        );
+
+        // Host markup around the post: the bubble is the avatar slot's sibling.
+        render(
+            <IntlProvider locale='en'>
+                <div className='post__content'>
+                    <div className='post__img'/>
+                    <div>
+                        {wrap ? <AgentChatSurfaceContext.Provider value={AGENT_CHAT_SURFACE}>{post}</AgentChatSurfaceContext.Provider> : post}
+                    </div>
+                </div>
+            </IntlProvider>,
+        );
+        expect(screen.getByTestId('llm-bot-post').hasAttribute('data-bubble-hug')).toBe(marked);
+    });
+});
+
+describe('LLMBotPost controls below the bubble', () => {
+    test.each([
+        {name: 'agent chat views mark the controls bar', wrap: true, marker: 'below'},
+        {name: 'other surfaces keep the controls inside the bubble', wrap: false, marker: null},
+    ])('$name', ({wrap, marker}) => {
+        mockUseConversation.mockReturnValue({
+            conversation: makeConversation([makeTurn({content: [{type: 'text', text: 'Old answer'}]})]),
+            loading: false,
+            error: null,
+        });
+        const post = (
+            <LLMBotPost
+                post={makePost('Old answer')}
+                websocketUnregister={jest.fn()}
+            />
+        );
+        render(
+            <IntlProvider locale='en'>
+                {wrap ? <AgentChatSurfaceContext.Provider value={AGENT_CHAT_SURFACE}>{post}</AgentChatSurfaceContext.Provider> : post}
+            </IntlProvider>,
+        );
+        const bar = screen.getByTestId('regenerate-button').closest('[data-bubble-controls]');
+        expect(bar?.getAttribute('data-bubble-controls') ?? null).toBe(marker);
+        if (!wrap) {
+            expect(screen.getByTestId('regenerate-button')).toBeTruthy();
+        }
+    });
+});
+
+describe('LLMBotPost Copy button', () => {
+    const answerConversation = () => makeConversation([makeTurn({content: [{type: 'text', text: 'Old **answer**'}]})]);
+
+    const renderSurface = (surface: typeof AGENT_CHAT_SURFACE | null, post = makePost('Old **answer**')) => {
+        const node = (
+            <LLMBotPost
+                post={post}
+                websocketUnregister={jest.fn()}
+            />
+        );
+        render(
+            <IntlProvider locale='en'>
+                {surface ? <AgentChatSurfaceContext.Provider value={surface}>{node}</AgentChatSurfaceContext.Provider> : node}
+            </IntlProvider>,
+        );
+    };
+
+    beforeEach(() => {
+        mockUseConversation.mockReturnValue({conversation: answerConversation(), loading: false, error: null});
+    });
+
+    test.each([
+        {name: 'agent chat views show it', surface: AGENT_CHAT_SURFACE, shown: true},
+        {name: 'other surfaces do not', surface: null, shown: false},
+    ])('$name', ({surface, shown}) => {
+        renderSurface(surface);
+        expect(Boolean(screen.queryByTestId('copy-button'))).toBe(shown);
+    });
+
+    test('copies the answer markdown even for a viewer who is not the requester', async () => {
+        const writeText = jest.fn().mockResolvedValue(null);
+        Object.defineProperty(navigator, 'clipboard', {value: {writeText}, configurable: true});
+        renderSurface(AGENT_CHAT_SURFACE);
+
+        await act(async () => {
+            fireEvent.click(screen.getByTestId('copy-button'));
+        });
+        expect(writeText).toHaveBeenCalledWith('Old **answer**');
+    });
+
+    test('is absent while the reply generates', () => {
+        mockUseConversation.mockReturnValue({conversation: makeConversation([]), loading: false, error: null});
+        let listener: PostUpdateHandler | undefined;
+        render(
+            <IntlProvider locale='en'>
+                <AgentChatSurfaceContext.Provider value={AGENT_CHAT_SURFACE}>
+                    <LLMBotPost
+                        post={makePost()}
+                        websocketRegister={(_postID, _listenerID, handler) => {
+                            listener = handler;
+                        }}
+                        websocketUnregister={jest.fn()}
+                    />
+                </AgentChatSurfaceContext.Provider>
+            </IntlProvider>,
+        );
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Partial'}));
+        });
+        expect(screen.queryByTestId('copy-button')).toBeNull();
+    });
+
+    test('copies only the final answer, not tool rounds or reasoning', async () => {
+        const writeText = jest.fn().mockResolvedValue(null);
+        Object.defineProperty(navigator, 'clipboard', {value: {writeText}, configurable: true});
+        mockUseConversation.mockReturnValue({
+            conversation: {
+                ...makeConversation([]),
+                turns: [
+                    {id: 'u', post_id: null, role: 'user', sequence: 1, tokens_in: 0, tokens_out: 0, content: [{type: 'text', text: 'go'}]},
+                    {
+                        id: 'r1',
+                        post_id: null,
+                        role: 'assistant',
+                        sequence: 2,
+                        tokens_in: 0,
+                        tokens_out: 0,
+                        content: [{type: 'thinking', text: 'secret'}, {type: 'text', text: 'Looking it up'}, {type: 'tool_use', id: 'tc_a', name: 'search_tools', status: 'auto_approved'}],
+                    },
+                    {id: 'tr1', post_id: null, role: 'tool_result', sequence: 3, tokens_in: 0, tokens_out: 0, content: [{type: 'tool_result', tool_use_id: 'tc_a', content: 'ok', status: 'success'}]},
+                    {id: 'anchor', post_id: 'post_1', role: 'assistant', sequence: 4, approval_state: 'done', tokens_in: 0, tokens_out: 0, content: [{type: 'text', text: 'Final answer'}]},
+                ],
+            },
+            loading: false,
+            error: null,
+        });
+        renderSurface(AGENT_CHAT_SURFACE, makePost('Final answer'));
+
+        await act(async () => {
+            fireEvent.click(screen.getByTestId('copy-button'));
+        });
+        expect(writeText).toHaveBeenCalledWith('Final answer');
     });
 });

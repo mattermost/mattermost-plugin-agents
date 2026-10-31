@@ -273,7 +273,7 @@ data: [DONE]
 
         await aiPlugin.waitForThreadComposerIdle();
         await aiPlugin.ensureRhsNewChatTab();
-        await expect(aiPlugin.getRhsContainer().getByTestId('rhs-new-tab-create-post')).toBeVisible({ timeout: 10000 });
+        await expect(aiPlugin.getRhsContainer().getByTestId('agent-chat-new-composer')).toBeVisible({ timeout: 10000 });
         await aiPlugin.sendMessage(followUpUserText);
 
         await expect(aiPlugin.getRhsContainer().getByText(followUpText)).toBeVisible({ timeout: 30000 });

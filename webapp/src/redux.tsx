@@ -9,6 +9,7 @@ import {getCustomPrompts as fetchCustomPromptsAPI, getCustomPromptPins} from './
 import {licenseAllows} from './license';
 import manifest from './manifest';
 import {CustomPrompt} from './types';
+import type {AIThread} from './types/ai_thread';
 import {LinkPolicy, PLAIN_TEXT_LINK_POLICY} from './utils/link_allowlist';
 
 type WebappStore = Store<GlobalState, UnknownAction>
@@ -25,6 +26,8 @@ export async function setupRedux(registry: any, store: WebappStore) {
         callsPostButtonClickedTranscription,
         bots,
         selectedPostId,
+        rhsTab,
+        aiThreads,
         linkPolicy,
         htmlArtifactsEnabled,
         customPrompts,
@@ -96,10 +99,97 @@ function htmlArtifactsEnabled(state = false, action: any) {
     }
 }
 
-function selectedPostId(state = '', action: any) {
+// The RHS's list view when no thread is open: the new-chat tab or the chat history. It lives here,
+// not in the RHS body, because the header title (rendered by the host) shows the Back button and
+// the tools button according to it. Showing a list view (showRHSList) also closes the open thread.
+export type RHSTab = 'new' | 'threads';
+
+export function rhsTab(state: RHSTab = 'new', action: any): RHSTab {
+    switch (action.type) {
+    case 'AI_RHS_SET_TAB':
+        return action.tab === 'threads' ? 'threads' : 'new';
+    default:
+        return state;
+    }
+}
+
+// The current user's AI threads (GET /ai_threads), shared by every view that lists them: the
+// Agents sidebar, the chat name menus, Find agents and the RHS history. Only hooks/use_agent_threads
+// fetches it; views read it through its selectors.
+export const AIThreadsRequested = 'AI_THREADS_REQUESTED';
+export const AIThreadsReceived = 'AI_THREADS_RECEIVED';
+export const AIThreadsFailed = 'AI_THREADS_FAILED';
+export const AIThreadTitleSet = 'AI_THREAD_TITLE_SET';
+
+export interface AIThreadsState {
+
+    // null until the first successful load.
+    threads: AIThread[] | null;
+    loading: boolean;
+    error: boolean;
+
+    // The latest request: the response of a superseded one is dropped.
+    requestId: number;
+
+    // Title changes (a rename, a generated title) the latest request may predate, by conversation id,
+    // so its response cannot undo them. `seq` orders them against `requestSeq`.
+    titleEdits: Record<string, {title: string; seq: number}>;
+    titleSeq: number;
+    requestSeq: number;
+}
+
+export const initialAIThreadsState: AIThreadsState = {
+    threads: null,
+    loading: false,
+    error: false,
+    requestId: 0,
+    titleEdits: {},
+    titleSeq: 0,
+    requestSeq: 0,
+};
+
+export function aiThreads(state: AIThreadsState = initialAIThreadsState, action: any): AIThreadsState {
+    switch (action.type) {
+    case AIThreadsRequested:
+        return {...state, loading: true, requestId: action.requestId, requestSeq: state.titleSeq};
+    case AIThreadsReceived: {
+        if (action.requestId !== state.requestId) {
+            return state;
+        }
+
+        // Edits made after the request started win over its (older) titles; the rest it reflects.
+        const titleEdits = Object.fromEntries(Object.entries(state.titleEdits).filter(([, edit]) => edit.seq > state.requestSeq));
+        const received: AIThread[] = Array.isArray(action.threads) ? action.threads : [];
+        const threads = received.map((t) => (titleEdits[t.id] ? {...t, title: titleEdits[t.id].title} : t));
+        return {...state, threads, loading: false, error: false, titleEdits};
+    }
+    case AIThreadsFailed:
+        if (action.requestId !== state.requestId) {
+            return state;
+        }
+        return {...state, loading: false, error: true};
+    case AIThreadTitleSet: {
+        const id: string = action.conversationId;
+        const title: string = action.title;
+        const titleSeq = state.titleSeq + 1;
+        return {
+            ...state,
+            threads: state.threads ? state.threads.map((t) => (t.id === id ? {...t, title} : t)) : state.threads,
+            titleEdits: {...state.titleEdits, [id]: {title, seq: titleSeq}},
+            titleSeq,
+        };
+    }
+    default:
+        return state;
+    }
+}
+
+export function selectedPostId(state = '', action: any) {
     switch (action.type) {
     case 'SELECT_AI_POST':
         return action.postId;
+    case 'AI_RHS_SET_TAB':
+        return '';
     default:
         return state;
     }

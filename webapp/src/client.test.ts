@@ -16,6 +16,7 @@ import {
     doRunSearch,
     doThreadAnalysis,
     deleteAgentVersions,
+    getAgentsBridgeStatus,
     getAgentVersion,
     getAgentVersions,
     restoreAgentVersion,
@@ -26,10 +27,13 @@ import {
     getConversationContext,
     normalizeConversationResponse,
     renderCustomPrompt,
+    rewriteMessage,
     searchAllChannels,
     setSiteURL,
     updateChannelAutoReply,
+    UPLOAD_TIMEOUT_MS,
     updateRead,
+    uploadFile,
 } from './client';
 
 type SearchAllChannelsOpts = Omit<ChannelSearchOpts, 'page' | 'per_page'> & OptsSignalExt;
@@ -51,6 +55,18 @@ jest.mock('@mattermost/client', () => {
 
             setUrl(url: string) {
                 this.url = url;
+            }
+
+            getFilesRoute() {
+                return '/api/v4/files';
+            }
+
+            getPostsRoute() {
+                return `${this.url}/api/v4/posts`;
+            }
+
+            getAgentsRoute() {
+                return `${this.url}/api/v4/agents`;
             }
 
             getOptions(options: Record<string, unknown>) {
@@ -494,5 +510,119 @@ describe('agent versioning client', () => {
             status_code: 400,
             message: 'the current version of an agent cannot be deleted',
         });
+    });
+});
+
+describe('uploadFile', () => {
+    const created: Array<{timeout: number; ontimeout?: () => void; onerror?: () => void}> = [];
+    const lastXHR = () => created[created.length - 1];
+    class FakeXHR {
+        timeout = 0;
+        status = 0;
+        responseText = '';
+        upload = {} as {onprogress?: unknown};
+        onload?: () => void;
+        onerror?: () => void;
+        ontimeout?: () => void;
+        onabort?: () => void;
+        open = jest.fn();
+        setRequestHeader = jest.fn();
+        send = jest.fn();
+        abort = jest.fn();
+        constructor() {
+            created.push(this);
+        }
+    }
+    const realXHR = global.XMLHttpRequest;
+
+    beforeEach(() => {
+        (global as unknown as {XMLHttpRequest: unknown}).XMLHttpRequest = FakeXHR;
+    });
+    afterEach(() => {
+        global.XMLHttpRequest = realXHR;
+    });
+
+    test('sets a generous timeout and fails with a clear error when it fires', async () => {
+        const upload = uploadFile(new File(['x'], 'a.txt'), 'dm1', 'client1');
+        expect(lastXHR().timeout).toBe(UPLOAD_TIMEOUT_MS);
+        expect(UPLOAD_TIMEOUT_MS).toBeGreaterThanOrEqual(60 * 1000);
+
+        lastXHR().ontimeout?.();
+        await expect(upload.promise).rejects.toThrow('File upload failed: timed out');
+    });
+
+    test('a network error still fails through the same path', async () => {
+        const upload = uploadFile(new File(['x'], 'a.txt'), 'dm1', 'client1');
+        lastXHR().onerror?.();
+        await expect(upload.promise).rejects.toThrow('File upload failed: network error');
+    });
+});
+
+describe('rewriteMessage', () => {
+    const jsonResponse = (status: number, body: unknown) => ({ok: status < 300, status, json: () => Promise.resolve(body)} as unknown as Response);
+
+    test.each([
+        {
+            name: 'a plain action',
+            args: {action: 'shorten' as const, opts: {}},
+            body: {agent_id: BOT_ID, message: 'hello there', action: 'shorten'},
+        },
+        {
+            name: 'a custom prompt in a thread',
+            args: {action: 'custom' as const, opts: {customPrompt: 'make it formal', rootId: WELL_FORMED_ID}},
+            body: {agent_id: BOT_ID, message: 'hello there', action: 'custom', custom_prompt: 'make it formal', root_id: WELL_FORMED_ID},
+        },
+    ])('posts $name to the core rewrite route and returns the rewritten text', async ({args, body}) => {
+        mockFetch.mockResolvedValue(jsonResponse(200, {rewritten_text: 'Hi.', changes_made: []}));
+
+        await expect(rewriteMessage(BOT_ID, 'hello there', args.action, args.opts)).resolves.toBe('Hi.');
+
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/api/v4/posts/rewrite`);
+        expect(options.method).toBe('POST');
+        expect(JSON.parse(options.body as string)).toEqual(body);
+    });
+
+    test('passes the abort signal through', async () => {
+        mockFetch.mockResolvedValue(jsonResponse(200, {rewritten_text: 'x'}));
+        const controller = new AbortController();
+
+        await rewriteMessage(BOT_ID, 'm', 'simplify', {signal: controller.signal});
+
+        expect(mockFetch.mock.calls[0][1].signal).toBe(controller.signal);
+    });
+
+    test.each([
+        {name: 'an AppError keeps its summary, never its detail', response: jsonResponse(500, {id: 'app.post.rewrite.agent_call_failed', message: 'Rewrite failed', detailed_error: 'upstream body'}), message: 'Rewrite failed', status: 500},
+        {name: 'a non-JSON body', response: {ok: false, status: 502, json: () => Promise.reject(new Error('bad json'))} as unknown as Response, message: '', status: 502},
+        {name: 'a success without rewritten text', response: jsonResponse(200, {}), message: '', status: 200},
+    ])('rejects on $name', async ({response, message, status}) => {
+        mockFetch.mockResolvedValue(response);
+
+        const error = await rewriteMessage(BOT_ID, 'm', 'shorten').catch((e) => e);
+
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toBe(message);
+        expect(error.status_code).toBe(status);
+        expect(JSON.stringify(error)).not.toContain('upstream body');
+    });
+});
+
+describe('getAgentsBridgeStatus', () => {
+    test.each([
+        {name: 'available', body: {available: true}, expected: {available: true}},
+        {name: 'unavailable with a reason', body: {available: false, reason: 'plugin_disabled'}, expected: {available: false, reason: 'plugin_disabled'}},
+        {name: 'a malformed body as unavailable', body: {available: 'yes'}, expected: {available: false}},
+    ])('reads $name', async ({body, expected}) => {
+        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve(body)} as unknown as Response);
+
+        await expect(getAgentsBridgeStatus()).resolves.toEqual(expected);
+        expect(mockFetch.mock.calls[0][0]).toBe(`${siteURL}/api/v4/agents/status`);
+    });
+
+    test('rejects when the status request fails', async () => {
+        mockFetch.mockResolvedValue({ok: false, status: 500, json: () => Promise.resolve({message: 'nope'})} as unknown as Response);
+
+        await expect(getAgentsBridgeStatus()).rejects.toMatchObject({status_code: 500});
     });
 });

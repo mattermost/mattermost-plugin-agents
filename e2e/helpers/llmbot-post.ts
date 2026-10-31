@@ -213,11 +213,10 @@ export class LLMBotPostHelper {
 
     /**
      * Get citation tooltip (appears on hover)
-     * @param postId - Optional post ID to scope the search
      */
-    getCitationTooltip(postId?: string): Locator {
-        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
-        return baseLocator.locator('[data-testid="llm-citation"] [data-testid="llm-citation-tooltip"]:visible').last();
+    getCitationTooltip(): Locator {
+        // The standard tooltip renders in a portal at the page root, not inside the citation.
+        return this.page.locator('[data-testid="llm-citation-tooltip"]:visible').last();
     }
 
     /**
@@ -286,7 +285,7 @@ export class LLMBotPostHelper {
     async hoverCitation(index: number, postId?: string): Promise<void> {
         const citationWrapper = this.getCitationWrapper(index, postId);
         await citationWrapper.hover();
-        await expect(this.getCitationTooltip(postId)).toBeVisible();
+        await expect(this.getCitationTooltip()).toBeVisible();
     }
 
     /**
@@ -401,7 +400,7 @@ export class LLMBotPostHelper {
      * @param postId - Optional post ID (tooltip is typically global)
      */
     async expectCitationTooltip(domain: string, postId?: string): Promise<void> {
-        const tooltip = this.getCitationTooltip(postId);
+        const tooltip = this.getCitationTooltip();
         await expect(tooltip).toBeVisible();
         await expect(tooltip).toContainText(domain);
     }
@@ -598,8 +597,8 @@ export class LLMBotPostHelper {
             throw new Error('Timeout waiting for bot post text to appear');
         }
 
-        // Wait for "Stop Generating" button to disappear (streaming complete)
-        const stopButton = this.getStopGeneratingButton();
+        // Wait for every post's Stop control to disappear (streaming complete).
+        const stopButton = this.page.getByTestId('stop-generating-button');
 
         // Wait until the stop button disappears (streaming complete)
         try {

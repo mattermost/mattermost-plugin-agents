@@ -86,6 +86,10 @@ func (s *loadedStateFlowStore) UpdateConversationTitle(id, title string) error {
 	return nil
 }
 
+func (s *loadedStateFlowStore) SetConversationTitleIfUnset(id, title string) (bool, error) {
+	return false, nil
+}
+
 func (s *loadedStateFlowStore) UpdateConversationRootPostID(id string, rootPostID string) error {
 	return nil
 }

@@ -112,6 +112,6 @@ test.describe('Basic Action Item Extraction', () => {
 
         // Verify the AI RHS opens with the action items response
         await aiPlugin.expectRHSOpenWithPost();
-        await expect(page.getByText('action items')).toBeVisible();
+        await expect(page.getByTestId('posttext').getByText('action items')).toBeVisible();
     });
 });
