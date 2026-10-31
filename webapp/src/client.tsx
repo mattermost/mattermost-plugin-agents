@@ -384,6 +384,23 @@ export async function doLoopInAgent(postid: string, botId: string) {
     });
 }
 
+export async function doDisableAgentMentionReminder() {
+    const url = `${baseRoute()}/agent_mention_reminder/opt_out`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function viewMyChannel(channelID: string) {
     return Client4.viewMyChannel(channelID);
 }

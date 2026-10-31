@@ -18,6 +18,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -105,7 +106,7 @@ func (c *fakeMMClient) UpdatePost(post *model.Post) error {
 func (c *fakeMMClient) KVGet(key string, value any) error {
 	stored, ok := c.kv[key]
 	if !ok {
-		return errors.New("not found")
+		return mmapi.ErrKVNotFound
 	}
 	data, err := json.Marshal(stored)
 	if err != nil {

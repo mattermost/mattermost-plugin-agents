@@ -6,12 +6,19 @@ import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 
 import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
+import {Button} from '@mattermost/compass-ui/components/button';
 
-import {doLoopInAgent} from '@/client';
+import {doDisableAgentMentionReminder, doLoopInAgent} from '@/client';
 import {isValidId} from '@/utils/ids';
 
 const Hint = styled.div`
     color: rgba(var(--center-channel-color-rgb), 0.64);
+`;
+
+const Actions = styled.div`
+    display: flex;
+    gap: var(--spacing-2, 8px);
+    margin-top: var(--spacing-1, 4px);
 `;
 
 const LoopInError = styled(ErrorMessage)`
@@ -52,6 +59,7 @@ interface Props {
 }
 
 type LoopInStatus = 'idle' | 'pending' | 'done' | 'error';
+type DismissStatus = 'idle' | 'pending' | 'done' | 'error';
 
 export const AgentMentionReminderPost = ({post}: Props) => {
     const botUserId = stringProp(post.props?.bot_user_id);
@@ -62,7 +70,9 @@ export const AgentMentionReminderPost = ({post}: Props) => {
     const canLoopIn = post.type === EphemeralPostType && isValidId(botUserId) && loopInPostId !== '';
 
     const [status, setStatus] = useState<LoopInStatus>('idle');
+    const [dismissStatus, setDismissStatus] = useState<DismissStatus>('idle');
     const pending = status === 'pending';
+    const dismissPending = dismissStatus === 'pending';
 
     const onClick = async (event: React.MouseEvent<HTMLAnchorElement>) => {
         event.preventDefault();
@@ -79,13 +89,32 @@ export const AgentMentionReminderPost = ({post}: Props) => {
         }
     };
 
+    const onDismiss = async () => {
+        if (dismissPending || dismissStatus === 'done') {
+            return;
+        }
+        setDismissStatus('pending');
+        try {
+            await doDisableAgentMentionReminder();
+            setDismissStatus('done');
+        } catch (err) {
+            console.error('Failed to disable agent mention reminder:', err); // eslint-disable-line no-console
+            setDismissStatus('error');
+        }
+    };
+
     if (!canLoopIn) {
         return (
             <Hint>{post.message}</Hint>
         );
     }
 
-    if (status === 'done') {
+    const loopInDone = status === 'done';
+    const loopInError = status === 'error';
+    const dismissDone = dismissStatus === 'done';
+
+    // Loop-in succeeded and the user never started a dismissal: compact confirmation.
+    if (loopInDone && dismissStatus === 'idle') {
         return (
             <Hint>
                 <FormattedMessage
@@ -97,32 +126,88 @@ export const AgentMentionReminderPost = ({post}: Props) => {
         );
     }
 
+    // Dismissal succeeded: the reminder is gone. Keep rendering the loop-in
+    // error and retry link, though, if loop-in is still in a failed state that
+    // the user may want to retry.
+    if (dismissDone && !loopInError) {
+        return (
+            <Hint>
+                <FormattedMessage
+                    id='agents.agent_mention_reminder_dismissed'
+                    defaultMessage="You won't see this reminder again."
+                />
+            </Hint>
+        );
+    }
+
     return (
         <Hint>
-            <FormattedMessage
-                id='agents.agent_mention_reminder_body'
-                defaultMessage='To respond to an agent you must @mention them. <link>Click here to loop in @{botDisplayName}</link>'
-                values={{
-                    botDisplayName,
-                    link: (chunks: React.ReactNode) => (
-                        <LoopInLink
-                            href='#'
-                            onClick={onClick}
-                            $pending={pending}
-                            aria-disabled={pending}
-                        >
-                            {chunks}
-                        </LoopInLink>
-                    ),
-                }}
-            />
-            {status === 'error' && (
+            <div>
+                {loopInDone ? (
+                    <FormattedMessage
+                        id='agents.agent_mention_reminder_done'
+                        defaultMessage='Looped in @{botDisplayName}.'
+                        values={{botDisplayName}}
+                    />
+                ) : (
+                    <FormattedMessage
+                        id='agents.agent_mention_reminder_body'
+                        defaultMessage='To respond to an agent you must @mention them. <link>Click here to loop in @{botDisplayName}</link>'
+                        values={{
+                            botDisplayName,
+                            link: (chunks: React.ReactNode) => (
+                                <LoopInLink
+                                    href='#'
+                                    onClick={onClick}
+                                    $pending={pending}
+                                    aria-disabled={pending}
+                                >
+                                    {chunks}
+                                </LoopInLink>
+                            ),
+                        }}
+                    />
+                )}
+            </div>
+            {dismissDone ? (
+                <div>
+                    <FormattedMessage
+                        id='agents.agent_mention_reminder_dismissed'
+                        defaultMessage="You won't see this reminder again."
+                    />
+                </div>
+            ) : (
+                <Actions>
+                    <Button
+                        emphasis='link'
+                        size='x-small'
+                        loading={dismissPending}
+                        onClick={onDismiss}
+                    >
+                        <FormattedMessage
+                            id='agents.agent_mention_reminder_dismiss'
+                            defaultMessage="Don't show again"
+                        />
+                    </Button>
+                </Actions>
+            )}
+            {loopInError && (
                 <LoopInError
                     message={
                         <FormattedMessage
                             id='agents.agent_mention_reminder_error'
                             defaultMessage='Failed to loop in @{botDisplayName}. Please try again.'
                             values={{botDisplayName}}
+                        />
+                    }
+                />
+            )}
+            {dismissStatus === 'error' && (
+                <LoopInError
+                    message={
+                        <FormattedMessage
+                            id='agents.agent_mention_reminder_dismiss_error'
+                            defaultMessage='Failed to update your preference. Please try again.'
                         />
                     }
                 />
