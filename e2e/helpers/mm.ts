@@ -2,6 +2,7 @@ import { Page, Locator, expect } from '@playwright/test';
 import type { Client4 } from '@mattermost/client';
 import type { Post } from '@mattermost/types/posts';
 import MattermostContainer from './mmcontainer';
+import { showAgentDMAsMessages } from './agent-dm-view';
 
 function getPostsArray(postsResponse: {posts?: Record<string, Post>}): Post[] {
     return Object.values(postsResponse.posts || {});
@@ -314,6 +315,9 @@ export class MattermostPage {
         const team = teams[0];
 
         await this.page.goto(`${mattermost.url()}/${team.name}/messages/@${botUsername}`);
+
+        // Callers drive the stock DM (post list and composer), not the agent chat view.
+        await showAgentDMAsMessages(this.page, channel.id);
         await expect(this.postTextbox).toBeVisible({ timeout: 30000 });
     }
 }

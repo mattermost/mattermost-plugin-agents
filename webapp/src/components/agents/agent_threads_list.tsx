@@ -44,6 +44,9 @@ interface AgentThreadsListProps {
 
     // The chat rows' actions; the owner renders their dialogs.
     chatActions: ChatActions;
+
+    // The section's heading; defaults to "Your agents".
+    title?: string;
 }
 
 // Threads shown per agent before "Show more", which reveals the rest at once ("Show less" folds back).
@@ -83,6 +86,7 @@ const AgentThreadsList = ({
     onNewChat,
     onRetry,
     chatActions,
+    title,
 }: AgentThreadsListProps) => {
     const intl = useIntl();
     const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -140,7 +144,7 @@ const AgentThreadsList = ({
         setLimits((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => id !== botId)));
     };
 
-    const sectionTitle = intl.formatMessage({defaultMessage: 'Your agents'});
+    const sectionTitle = title ?? intl.formatMessage({defaultMessage: 'Your agents'});
 
     return (
         <Section aria-label={sectionTitle}>

@@ -211,6 +211,16 @@ describe('AgentChatTitleBar', () => {
         expect(onSelectChat).toHaveBeenCalledWith('old');
     });
 
+    test.each([
+        {name: 'shows the agent avatar and name', compact: false, shown: true},
+        {name: 'compact (under the host header of an agent DM) leaves them out', compact: true, shown: false},
+    ])('open chat title: $name', async ({compact, shown}) => {
+        renderHeader({rootId: 'root1', compact});
+        await waitFor(() => expect(screen.getByRole('heading', {level: 1}).textContent).toBe('Quarterly plan'));
+        expect(Boolean(document.querySelector('header img'))).toBe(shown);
+        expect(Boolean(screen.queryByTestId('agent-chat-agent-name'))).toBe(shown);
+    });
+
     test('name menu omits the chats submenu when the agent has no chats', async () => {
         mockGetThreads.mockResolvedValue([]);
         renderHeader({rootId: 'root1'});

@@ -23,6 +23,7 @@ import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {buildCreateFileSequence, buildTitleFixture, mergeFixtureFiles} from 'helpers/aimock-fixtures';
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
+import {showAgentDMAsMessages} from 'helpers/agent-dm-view';
 import {AIPlugin} from 'helpers/ai-plugin';
 import {RunToolConfigAIMockContainer, setupRegularTestUser} from 'helpers/tool-config-container';
 import {
@@ -148,6 +149,7 @@ async function openArtifactInBotDM(page: Page): Promise<{botPost: Locator; card:
         (window as unknown as {WebappUtils: {browserHistory: {push: (u: string) => void}}}).WebappUtils.browserHistory.push(url);
     }, `/test/messages/@${botName}`);
     await expect(page).toHaveURL(new RegExp(`/test/messages/@${botName}$`));
+    await showAgentDMAsMessages(page);
     await new AIPlugin(page).closeRHS();
     await expect(page.getByTestId('mattermost-ai-rhs')).toBeHidden();
 
