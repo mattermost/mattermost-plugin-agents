@@ -56,7 +56,9 @@ func IsToolPolicyAutoRunEverywhere(policy string) bool {
 type EmbeddedMCPServer interface {
 	// sessionToken is the session's token when the caller already holds it
 	// (empty otherwise); the server can use it when a lookup by ID misses.
-	CreateClientTransport(userID, sessionID, sessionToken string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error)
+	// connCtx is the context the server side of the connection runs under;
+	// its values, not its cancellation, reach every tool call.
+	CreateClientTransport(connCtx context.Context, userID, sessionID, sessionToken string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error)
 }
 
 // EmbeddedServerClient handles connections to the embedded MCP server
@@ -80,6 +82,7 @@ type Client struct {
 	toolsCache     *ToolsCache
 	embeddedClient *EmbeddedServerClient // for reconnection (nil for remote servers)
 	sessionID      string                // session ID for embedded server reconnection
+	connCtx        context.Context       // embedded connection context, reused on reconnection
 	serviceAccount bool                  // auth via static ServiceAccountHeaders; remotes only, oauthManager nil
 }
 
@@ -301,6 +304,10 @@ func (c *Client) adoptSession(ctx context.Context, session *mcp.ClientSession, s
 // CreateClient creates an embedded MCP client using session ID for authentication.
 // If sessionID is empty, creates an unauthenticated client (used for tool discovery).
 func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, sessionID string) (*Client, error) {
+	return c.createClient(ctx, context.Background(), userID, sessionID)
+}
+
+func (c *EmbeddedServerClient) createClient(ctx, connCtx context.Context, userID, sessionID string) (*Client, error) {
 	// Validate session exists before creating transport (unless empty for tool discovery)
 	var sessionToken string
 	if sessionID != "" {
@@ -320,25 +327,29 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 		sessionToken = mmSession.Token
 	}
 
-	return c.connect(ctx, userID, sessionID, sessionToken)
+	return c.connect(ctx, connCtx, userID, sessionID, sessionToken)
 }
 
 // CreateClientForSession connects using a session the caller has already
 // created or validated. It skips re-reading the session: the plugin API reads
 // sessions by ID from a DB read replica, which can miss a just-created session.
 func (c *EmbeddedServerClient) CreateClientForSession(ctx context.Context, userID string, session *model.Session) (*Client, error) {
+	return c.createClientForSession(ctx, context.Background(), userID, session)
+}
+
+func (c *EmbeddedServerClient) createClientForSession(ctx, connCtx context.Context, userID string, session *model.Session) (*Client, error) {
 	if session == nil || session.Id == "" {
 		return nil, fmt.Errorf("session not found")
 	}
 	if session.UserId != userID {
 		return nil, fmt.Errorf("session user ID does not match: expected %s, got %s", userID, session.UserId)
 	}
-	return c.connect(ctx, userID, session.Id, session.Token)
+	return c.connect(ctx, connCtx, userID, session.Id, session.Token)
 }
 
-func (c *EmbeddedServerClient) connect(ctx context.Context, userID, sessionID, sessionToken string) (*Client, error) {
+func (c *EmbeddedServerClient) connect(ctx, connCtx context.Context, userID, sessionID, sessionToken string) (*Client, error) {
 	// Get the in-memory transport from the embedded server
-	transport, err := c.server.CreateClientTransport(userID, sessionID, sessionToken, c.pluginAPI)
+	transport, err := c.server.CreateClientTransport(connCtx, userID, sessionID, sessionToken, c.pluginAPI)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create in-memory transport: %w", err)
 	}
@@ -368,6 +379,7 @@ func (c *EmbeddedServerClient) connect(ctx context.Context, userID, sessionID, s
 		toolsCache:     c.toolsCache,
 		embeddedClient: c,         // Store client helper for reconnection
 		sessionID:      sessionID, // Store session ID for reconnection
+		connCtx:        connCtx,
 	}
 	if err := client.adoptSession(ctx, mcpSession, EmbeddedClientKey); err != nil {
 		return nil, err
@@ -729,7 +741,7 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 					return "", fmt.Errorf("embedded server connection lost and cannot be reconnected: missing session ID")
 				}
 
-				newClient, reconnectErr := c.embeddedClient.CreateClient(ctx, c.userID, c.sessionID)
+				newClient, reconnectErr := c.embeddedClient.createClient(ctx, c.connCtx, c.userID, c.sessionID)
 				if reconnectErr != nil {
 					return "", fmt.Errorf("failed to reconnect to embedded MCP server: %w", reconnectErr)
 				}

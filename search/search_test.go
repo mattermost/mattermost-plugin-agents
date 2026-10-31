@@ -15,8 +15,10 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -622,4 +624,58 @@ func TestExecuteSearchNotConfigured(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "embedding search not configured")
 	require.Nil(t, results)
+}
+
+func TestSearchUnderScopedSession(t *testing.T) {
+	scope := &model.SessionScope{
+		Permissions: model.ScopeReadPermissions,
+		Resources:   model.SessionScopeResources{ChannelIDs: []string{"trigger"}, OpenTeamPublicChannels: true},
+	}
+
+	tests := []struct {
+		name       string
+		compliance bool
+		noJoin     bool
+		expected   model.SessionScopeResources
+	}{
+		{name: "searches the scope instead of memberships", expected: scope.Resources},
+		{name: "compliance mode drops open-team channels", compliance: true, expected: model.SessionScopeResources{ChannelIDs: []string{"trigger"}}},
+		{name: "system_user without join_public_teams drops open-team channels", noJoin: true, expected: model.SessionScopeResources{ChannelIDs: []string{"trigger"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sessionID := model.NewId()
+			ctx := scopedsession.WithBinding(auth.WithSessionID(context.Background(), sessionID), scopedsession.NewBinding(scope))
+
+			mockEmbedding := mocks.NewMockEmbeddingSearch(t)
+			mockClient := mmapimocks.NewMockClient(t)
+			allowVectorIndexStateRead(mockClient)
+			mockClient.On("GetConfig").Return(&model.Config{ComplianceSettings: model.ComplianceSettings{Enable: new(tt.compliance)}})
+			if !tt.compliance {
+				mockClient.On("RolesGrantPermission", []string{model.SystemUserRoleId}, model.PermissionJoinPublicTeams.Id).Return(!tt.noJoin)
+			}
+			expected := tt.expected
+			mockEmbedding.On("Search", mock.Anything, "evidence", embeddings.SearchOptions{
+				Limit:  5,
+				UserID: "bot",
+				Scope:  &expected,
+			}).Return([]embeddings.SearchResult{}, nil)
+
+			s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, licensedChecker())
+			_, err := s.Search(ctx, "evidence", Options{UserID: "bot"})
+			require.NoError(t, err)
+		})
+	}
+
+	t.Run("a search after the run ended fails", func(t *testing.T) {
+		mockEmbedding := mocks.NewMockEmbeddingSearch(t)
+		mockClient := mmapimocks.NewMockClient(t)
+		allowVectorIndexStateRead(mockClient)
+		binding := scopedsession.NewBinding(scope)
+		binding.End()
+
+		s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, licensedChecker())
+		_, err := s.Search(scopedsession.WithBinding(context.Background(), binding), "evidence", Options{UserID: "bot"})
+		require.ErrorIs(t, err, scopedsession.ErrRunEnded)
+	})
 }

@@ -282,6 +282,7 @@ func TestAgentVersionSnapshotKeys(t *testing.T) {
 		"enabledMCPTools", "autoEnableNewMCPTools", "mcpDynamicToolLoading",
 		"useServiceAccountAuth", "reasoningEnabled", "reasoningEffort",
 		"thinkingBudget", "structuredOutputEnabled", "maxToolTurns", "adminUserIDs",
+		"scopedChannelMode", "scopedExtraChannelIDs",
 	}
 	// Cleared by agentVersionSnapshot: secrets, lifecycle metadata and IDs
 	// that restore must not change.
