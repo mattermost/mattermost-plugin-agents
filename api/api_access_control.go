@@ -365,10 +365,12 @@ func (a *API) canAuthorAgentCEL(c *gin.Context, userID string) bool {
 }
 
 // celRouteAuthzRequired: schema/lint editor routes (check, visual_ast,
-// autocomplete). /cel/test uses canAuthorCELTest instead.
+// autocomplete). /cel/test uses canAuthorCELTest instead. Users with access
+// to the plugin configuration view (read-only) or author (read/write) service
+// and MCP server policies there, and the editor renders through these routes.
 func (a *API) celRouteAuthzRequired(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
-	if a.canAuthorAgentCEL(c, userID) {
+	if a.canAuthorAgentCEL(c, userID) || a.settingsAccessLevel(userID) >= config.SettingsAccessRead {
 		c.Next()
 		return
 	}
@@ -377,13 +379,13 @@ func (a *API) celRouteAuthzRequired(c *gin.Context) {
 
 // canAuthorCELTest: people who could save that policy may Test it. Agent
 // policies are authorable by agent managers; service/MCP policies are /admin
-// CRUD, so only manage_system.
+// CRUD, so system admins and users with read/write settings access.
 func (a *API) canAuthorCELTest(c *gin.Context, userID, resourceType string) bool {
 	switch resourceType {
 	case accesscontrol.ResourceTypeAgent:
 		return a.canAuthorAgentCEL(c, userID)
 	case accesscontrol.ResourceTypeService, accesscontrol.ResourceTypeMCP:
-		return isSystemAdmin(a.pluginAPI, userID)
+		return a.settingsAccessLevel(userID) == config.SettingsAccessWrite
 	default:
 		return false
 	}

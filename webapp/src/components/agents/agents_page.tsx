@@ -11,6 +11,7 @@ import AgentChatPage from './agent_chat_page';
 import AgentsLanding from './agents_landing';
 import AgentsList from './agents_list';
 import ProductSidebar from './product_sidebar';
+import AgentsSettingsPage from './settings/agents_settings_page';
 import {AGENTS_ROUTE, AgentsNavigation, AgentsRoute, useAgentsRoute} from './use_agents_route';
 
 export {AGENTS_ROUTE};
@@ -22,6 +23,13 @@ const Content = ({route}: {route: AgentsRoute & AgentsNavigation}) => {
         return <AgentsLanding nav={route}/>;
     case 'prompts':
         return <CustomPromptsPage/>;
+    case 'settings':
+        return (
+            <AgentsSettingsPage
+                section={route.section}
+                onSelectSection={route.toSettings}
+            />
+        );
     case 'chat':
         return (
             <AgentChatPage
@@ -46,7 +54,7 @@ const Content = ({route}: {route: AgentsRoute & AgentsNavigation}) => {
 const AgentsPage = () => {
     const pageRef = useRef<HTMLDivElement>(null);
     const route = useAgentsRoute();
-    const {toAll, toPrompts} = route;
+    const {toAll, toPrompts, toSettings} = route;
 
     useEffect(() => {
         // The host webapp owns `app__body` on document.body (see MM-67913 / Boards #188).
@@ -89,6 +97,7 @@ const AgentsPage = () => {
                 activeView={route.view}
                 onSelectAll={toAll}
                 onSelectPrompts={toPrompts}
+                onSelectSettings={() => toSettings()}
             />
             <ContentOutlet>
                 <Content route={route}/>

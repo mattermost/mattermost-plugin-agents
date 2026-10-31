@@ -16,6 +16,8 @@ import {TextInput} from '@mattermost/compass-ui/components/text-input';
 
 import {getPortalTarget} from '../../utils/dom';
 
+import {useSettingsReadOnly} from './settings_read_only';
+
 // Portaled menus must stack above the agent config modal overlay (z-index 2000).
 export const PORTALED_MENU_Z_INDEX = 10000;
 
@@ -76,6 +78,7 @@ export type TextItemProps = {
 
 export const TextItem = (props: TextItemProps) => {
     const id = useId();
+    const settingsReadOnly = useSettingsReadOnly();
     const label = props.readOnly ? (
         <ItemLabelWithTag
             htmlFor={id}
@@ -97,7 +100,7 @@ export const TextItem = (props: TextItemProps) => {
         value: props.value,
         placeholder: props.placeholder ? props.placeholder : props.label,
         maxLength: props.maxLength,
-        disabled: props.disabled,
+        disabled: props.disabled || settingsReadOnly,
         readOnly: props.readOnly,
         invalid: Boolean(props.error),
     };
@@ -165,6 +168,7 @@ type SelectFieldProps = {
 };
 
 export const SelectField = (props: SelectFieldProps) => {
+    const settingsReadOnly = useSettingsReadOnly();
     const hasEmptyOption = props.options.some((option) => option.value === '');
     return (
         <SelectFieldWrapper $maxWidth={props.maxWidth}>
@@ -174,7 +178,7 @@ export const SelectField = (props: SelectFieldProps) => {
                 options={props.options.map((option) => ({...option, value: toSelectValue(option.value)}))}
                 placeholder={props.placeholder}
                 onChange={(value) => props.onChange(fromSelectValue(value))}
-                disabled={props.disabled}
+                disabled={props.disabled || settingsReadOnly}
                 invalid={props.invalid}
                 aria-label={props.ariaLabel}
                 listboxLabel={props.ariaLabel ?? props.placeholder}
@@ -242,6 +246,7 @@ export type ComboboxItemProps = {
 export const ComboboxItem = (props: ComboboxItemProps) => {
     const intl = useIntl();
     const id = useId();
+    const settingsReadOnly = useSettingsReadOnly();
 
     return (
         <FormRow>
@@ -255,6 +260,7 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
                         onChange={(value) => props.onChange(typeof value === 'string' ? value : '')}
                         creatable={true}
                         onCreateOption={props.onChange}
+                        disabled={settingsReadOnly}
                         formatCreateLabel={(inputValue: string) => intl.formatMessage(
                             {defaultMessage: 'Use custom model: {modelName}'},
                             {modelName: inputValue},
@@ -365,11 +371,12 @@ export type InlineCheckboxProps = {
 };
 
 export const InlineCheckbox = (props: InlineCheckboxProps) => {
+    const settingsReadOnly = useSettingsReadOnly();
     return (
         <Checkbox
             data-testid={props.testId}
             checked={props.checked}
-            disabled={props.disabled}
+            disabled={props.disabled || settingsReadOnly}
             aria-label={props.inputAriaLabel}
             onChange={(e) => props.onChange(e.target.checked)}
         >
@@ -394,6 +401,8 @@ type BooleanItemProps = {
 export const BooleanItem = (props: BooleanItemProps) => {
     const name = useId();
     const labelId = useId();
+    const settingsReadOnly = useSettingsReadOnly();
+    const disabled = props.disabled || settingsReadOnly;
     return (
         <FormRow>
             <CompactItemLabel id={labelId}>{props.label}</CompactItemLabel>
@@ -407,7 +416,7 @@ export const BooleanItem = (props: BooleanItemProps) => {
                             name={name}
                             value='true'
                             checked={props.value}
-                            disabled={props.disabled || props.disableTrue}
+                            disabled={disabled || props.disableTrue}
                             onChange={() => props.onChange(true)}
                         >
                             <FormattedMessage defaultMessage='True'/>
@@ -416,7 +425,7 @@ export const BooleanItem = (props: BooleanItemProps) => {
                             name={name}
                             value='false'
                             checked={!props.value}
-                            disabled={props.disabled}
+                            disabled={disabled}
                             onChange={() => props.onChange(false)}
                         >
                             <FormattedMessage defaultMessage='False'/>

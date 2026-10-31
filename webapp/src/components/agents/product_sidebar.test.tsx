@@ -2,12 +2,12 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render, screen, waitFor, within} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 import {Provider} from 'react-redux';
 import {combineReducers, createStore} from 'redux';
 
-import {getAIThreads, renameConversation} from '@/client';
+import {getAIThreads, getMySettingsAccess, renameConversation} from '@/client';
 import manifest from '@/manifest';
 import {aiThreads} from '@/redux';
 import type {AIThread} from '@/types/ai_thread';
@@ -18,6 +18,7 @@ import {AGENTS_ROUTE, buildChatPath} from './use_agents_route';
 jest.mock('@/client', () => ({
     getAIThreads: jest.fn(),
     renameConversation: jest.fn(),
+    getMySettingsAccess: jest.fn(),
     getProfilePictureUrl: (id: string) => `/api/v4/users/${id}/image`,
 }));
 jest.mock('@/bots', () => ({
@@ -68,6 +69,7 @@ const makeStore = (host: {collapsedThreads?: string; threads?: Record<string, {u
 const renderSidebar = (props: Partial<React.ComponentProps<typeof ProductSidebar>> = {}) => {
     const onSelectAll = jest.fn();
     const onSelectPrompts = jest.fn();
+    const onSelectSettings = jest.fn();
     mockGetAIThreads.mockResolvedValue([]);
     render(
         <Provider store={makeStore()}>
@@ -75,12 +77,17 @@ const renderSidebar = (props: Partial<React.ComponentProps<typeof ProductSidebar
                 activeView='all'
                 onSelectAll={onSelectAll}
                 onSelectPrompts={onSelectPrompts}
+                onSelectSettings={onSelectSettings}
                 {...props}
             />
         </Provider>,
     );
-    return {onSelectAll, onSelectPrompts};
+    return {onSelectAll, onSelectPrompts, onSelectSettings};
 };
+
+beforeEach(() => {
+    (getMySettingsAccess as jest.Mock).mockResolvedValue('none');
+});
 
 describe('ProductSidebar', () => {
     test('exposes a labelled landmark with the two nav rows as buttons', () => {
@@ -96,6 +103,21 @@ describe('ProductSidebar', () => {
         fireEvent.click(screen.getByRole('button', {name: /All agents/}));
         expect(onSelectPrompts).toHaveBeenCalledTimes(1);
         expect(onSelectAll).toHaveBeenCalledTimes(1);
+    });
+
+    test.each(['read', 'write'])('shows Settings to a user with %s access', async (level) => {
+        (getMySettingsAccess as jest.Mock).mockResolvedValue(level);
+        const {onSelectSettings} = renderSidebar();
+        fireEvent.click(await screen.findByRole('button', {name: /Settings/}));
+        expect(onSelectSettings).toHaveBeenCalledTimes(1);
+    });
+
+    test('hides Settings from a user without access, and when the lookup fails', async () => {
+        (getMySettingsAccess as jest.Mock).mockRejectedValue(new Error('offline'));
+        renderSidebar();
+        await waitFor(() => expect(getMySettingsAccess).toHaveBeenCalled());
+        await act(async () => {/* let the lookup settle */});
+        expect(screen.queryByRole('button', {name: /Settings/})).toBeNull();
     });
 });
 
@@ -129,6 +151,7 @@ describe('ProductSidebar "Your agents" section', () => {
                         activeView='all'
                         onSelectAll={jest.fn()}
                         onSelectPrompts={jest.fn()}
+                        onSelectSettings={jest.fn()}
                     />
                 </Provider>
             </IntlProvider>,

@@ -107,7 +107,18 @@ func (a *API) handleGetConfig(c *gin.Context) {
 
 	// Clone before normalizeAdminConfig: it mutates Services (e.g. UseResponsesAPI); the store
 	// pointer may alias the in-memory cached config, and GET must not mutate shared state.
-	c.JSON(http.StatusOK, normalizeAdminConfig(*cfg.Clone()))
+	c.JSON(http.StatusOK, adminConfigResponse(settingsAccessFromContext(c), normalizeAdminConfig(*cfg.Clone())))
+}
+
+// adminConfigResponse shapes a configuration for a user with the given access:
+// read-only users get it without credentials. Nobody gets the delegation
+// lists, which have their own system admin route.
+func adminConfigResponse(level config.SettingsAccessLevel, cfg config.Config) config.Config {
+	if level < config.SettingsAccessWrite {
+		cfg = cfg.WithoutSecrets()
+	}
+	cfg.SettingsAccess = nil
+	return cfg
 }
 
 // handleSaveConfig saves a new plugin configuration to the database,
@@ -156,6 +167,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 	resolvedAgentNames := a.resolveAgentReferenceUsernames(cfg)
+	systemAdmin := settingsCallerIsSystemAdmin(c)
 
 	// Read-previous → identity checks → mint empty IDs → save runs atomically
 	// under the config advisory lock. Duplicate IDs and embedded ID mismatch
@@ -178,6 +190,19 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		}
 		next.MCP = reconciledMCP
 		normalized := mintEmptyAdminIDs(normalizeAdminConfig(next))
+		// The delegation lists change only through their own route. Legacy
+		// file bots are live agents whose access, ownership and service
+		// account use are system admin decisions, so delegates cannot change them.
+		normalized.SettingsAccess = nil
+		if prev != nil {
+			normalized.SettingsAccess = prev.SettingsAccess
+		}
+		if !systemAdmin {
+			normalized.Bots = nil
+			if prev != nil {
+				normalized.Bots = prev.Bots
+			}
+		}
 		if err := config.ValidateLicenseTransition(prev, normalized, a.licenseChecker, vettedDefaultToolPolicy); err != nil {
 			return config.Config{}, err
 		}
@@ -222,7 +247,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, saved)
+	c.JSON(http.StatusOK, adminConfigResponse(settingsAccessFromContext(c), saved))
 }
 
 // vettedDefaultToolPolicy returns the vetted default policy the System Console

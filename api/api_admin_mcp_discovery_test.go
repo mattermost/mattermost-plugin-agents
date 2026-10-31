@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -367,4 +368,77 @@ func TestHandleGetMCPToolsKeepsPartialPluginFailuresPerServer(t *testing.T) {
 	require.NotNil(t, brokenRow.Error)
 	require.Contains(t, *brokenRow.Error, "connection refused")
 	require.Empty(t, brokenRow.Tools)
+}
+
+func TestHandleGetMCPToolsReadOnlyConflictErrorsCarryNoURLCredentials(t *testing.T) {
+	api, mockAPI, _ := setupAdminTestEnvironment(t)
+	mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(false).Maybe()
+	allowAnyPluginAPILogging(mockAPI)
+	api.config.(*testConfigImpl).settingsAccess = config.SettingsAccess{ReadOnlyUserIDs: []string{"admin-user"}}
+
+	// Two stored entries on the same endpoint, saved before duplicates were rejected.
+	endpoint := "https://mcpuser:sentinel-conflict-password@mcp.example.com/mcp?token=sentinel-conflict-token"
+	api.config.(*testConfigImpl).mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{
+			{Name: "First", BaseURL: endpoint, Enabled: true},
+			{Name: "Second", BaseURL: endpoint, Enabled: true},
+		},
+	}
+
+	response := getAdminMCPTools(t, api)
+	conflicted := 0
+	for _, row := range response.Servers {
+		if row.Error == nil {
+			continue
+		}
+		conflicted++
+		require.Contains(t, *row.Error, "mcp.example.com", "the message still names the endpoint")
+		require.NotContains(t, *row.Error, "sentinel-conflict-password")
+		require.NotContains(t, *row.Error, "sentinel-conflict-token")
+	}
+	require.Positive(t, conflicted, "the duplicate endpoint is reported")
+}
+
+func TestHandleGetMCPToolsReadOnlyViewersDoNotReachRemoteServers(t *testing.T) {
+	const secretQuery = "token=sentinel-mcp-url-token"
+
+	tests := []struct {
+		name          string
+		readOnly      bool
+		wantContacted bool
+	}{
+		{name: "system admin discovers live", readOnly: false, wantContacted: true},
+		{name: "read-only delegate gets no connection and no URL credentials", readOnly: true, wantContacted: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api, mockAPI, _ := setupAdminTestEnvironment(t)
+			mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(!tt.readOnly).Maybe()
+			allowAnyPluginAPILogging(mockAPI)
+			if tt.readOnly {
+				api.config.(*testConfigImpl).settingsAccess = config.SettingsAccess{ReadOnlyUserIDs: []string{"admin-user"}}
+			}
+
+			remote := newDiscoveryMCPServer(t, "remote_tool", 0)
+			api.config.(*testConfigImpl).mcpConfig = mcp.Config{
+				Enabled: true,
+				Servers: []mcp.ServerConfig{{Name: "Remote", BaseURL: remote.URL + "/?" + secretQuery, Enabled: true}},
+			}
+			api.mcpClientManager.(*mockMCPClientManager).httpClient = &http.Client{}
+
+			response := getAdminMCPTools(t, api)
+			row := serverRowByName(t, response, "Remote")
+			require.Nil(t, row.Error)
+
+			if tt.wantContacted {
+				require.Positive(t, remote.requests.Load())
+				require.NotEmpty(t, row.Tools)
+				return
+			}
+			require.Zero(t, remote.requests.Load(), "a read-only viewer must not make the server connect with the admin's headers")
+			require.Empty(t, row.Tools, "nothing is cached, so nothing is listed")
+			require.NotContains(t, row.URL, "sentinel-mcp-url-token")
+		})
+	}
 }

@@ -11,37 +11,17 @@ import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers
 /**
  * Test Suite: Debug Panel
  *
- * Tests configuration options in the Debug panel of the system console.
+ * Tests configuration options in the Debug section of the Agents settings.
  */
 
 /**
- * Radio button indices on the system console page.
- * Each BooleanItem setting renders two radio buttons (true at index 0, false at index 1).
- * Specific accessors were not reliable enough to use, this approach is much more consistent.
- *
- * UPDATE THESE if the page structure changes (e.g., settings added/removed/reordered):
- *
- * Current order of radio button pairs on the page:
- *   0-1:  Plugin Enable (Mattermost built-in)
- *   2-3:  Render AI-generated links
- *   4-5:  Enable Channel Mention Tool Calling
- *   6-7:  Allow native web search in channels
- *   8-9:  Enable OpenTelemetry
- *   10-11: Enable Token Usage Logging
- *   12+:  Web Search, MCP settings...
+ * The True and False radios of a boolean setting, found by its label.
  */
-const RADIO_INDICES = {
-    enableTokenUsageLogging: { true: 10, false: 11 },
-} as const;
-
-/**
- * Helper to get radio buttons for a debug panel setting.
- */
-function getSettingRadios(page: Page, setting: keyof typeof RADIO_INDICES) {
-    const indices = RADIO_INDICES[setting];
+function getSettingRadios(page: Page, label: string) {
+    const group = page.getByRole('radiogroup', { name: label });
     return {
-        true: page.getByRole('radio').nth(indices.true),
-        false: page.getByRole('radio').nth(indices.false),
+        true: group.getByRole('radio', { name: 'True' }),
+        false: group.getByRole('radio', { name: 'False' }),
     };
 }
 
@@ -89,15 +69,15 @@ test.describe.serial('Debug Panel', () => {
         // Login as sysadmin user
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
 
-        // Navigate to system console AI plugin configuration page
-        await systemConsole.navigateToPluginConfig(mattermost.url());
+        // Open the Debug section of the Agents settings
+        await systemConsole.navigateToAgentsSettings(mattermost.url(), 'debug');
 
         // Scroll to the Debug panel
         const debugPanel = systemConsole.getDebugPanel();
         await debugPanel.scrollIntoViewIfNeeded();
 
         // Locate the 'Enable Token Usage Logging' radio buttons
-        const tokenLogging = getSettingRadios(page, 'enableTokenUsageLogging');
+        const tokenLogging = getSettingRadios(page, 'Enable Token Usage Logging');
 
         // Verify the toggle is currently OFF
         await expect(tokenLogging.false).toBeChecked();
@@ -119,7 +99,7 @@ test.describe.serial('Debug Panel', () => {
         await page.reload();
 
         // Verify 'Enable Token Usage Logging' toggle is ON after reload
-        const reloadedTokenLogging = getSettingRadios(page, 'enableTokenUsageLogging');
+        const reloadedTokenLogging = getSettingRadios(page, 'Enable Token Usage Logging');
         await expect(reloadedTokenLogging.true).toBeChecked();
 
         // Toggle it OFF
@@ -129,12 +109,12 @@ test.describe.serial('Debug Panel', () => {
         await expect(reloadedTokenLogging.false).toBeChecked();
 
         // Save the change
-        await saveButton.click();
+        await systemConsole.clickSave();
 
         // Reload and verify it's OFF
         await page.reload();
 
-        const finalTokenLogging = getSettingRadios(page, 'enableTokenUsageLogging');
+        const finalTokenLogging = getSettingRadios(page, 'Enable Token Usage Logging');
         await expect(finalTokenLogging.false).toBeChecked();
     });
 });

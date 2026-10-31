@@ -31,13 +31,22 @@ Install the plugin through the System Console by navigating to **System Console 
 
 ### Access plugin settings
 
-Navigate to **System Console > Plugins > Agents** to configure plugin-wide settings such as AI services, the default bot, web search, embedding search, and MCP settings.
+Plugin-wide settings such as AI services, the default agent, MCP servers, embedding search, web search, and debug options live in the **Agents** product: open **Agents** from the product switcher and select **Settings** in its sidebar. The settings are split into the **General**, **AI services**, **MCP servers**, **Embedding search**, **Web search**, and **Debug** sections, and changes take effect when you select **Save**. **System Console > Plugins > Agents** has an **Open Agents settings** button that goes there.
 
-Create and manage agents from the top-level **Agents** product page. If an agent selector dropdown is available in the Agents experience, use its **Manage** link to open the same page. The **AI Bots** section in the System Console links to the Agents page instead of hosting the full agent editor.
+Create and manage agents from the top-level **Agents** product page. If an agent selector dropdown is available in the Agents experience, use its **Manage** link to open the same page.
+
+#### Delegate settings access
+
+System admins can always view and change the Agents settings. To let other people in, go to **System Console > Plugins > Agents** and add them under **Settings access**, then select **Save**:
+
+- **Read and write access**: these people can view and change every Agents setting, including API keys and other credentials, run reindexing, and author service and MCP server access policies. Because they choose the AI services and MCP servers agents use, they can direct what users send to agents, including private channel and direct message content, to a service they control, so grant this only to people you would trust as an Agents system admin. They can't change who has access, or the legacy agents defined in the plugin configuration (`bots`).
+- **Read-only access**: these people can view the Agents settings, but credentials (service API keys and cloud credentials, MCP server header values and OAuth client secrets, web search and embedding API keys, OTLP export headers, and user names, passwords and query values in URLs) are blanked before the settings reach their browser, and they can't change anything. Their MCP **Tools** view lists remote servers' tools from the shared tools cache instead of connecting to the servers.
+
+People with either kind of access see **Settings** in the Agents sidebar. Access is per user; Mattermost's delegated admin roles don't grant it. The lists are stored with the plugin configuration but can only be changed from the System Console, by a system admin.
 
 ### Enable the plugin
 
-Agents is enabled automatically when using the pre-installed version. If you've manually installed a newer version, you may need to enable it by going to **System Console > Plugins > Agents** and setting **Enable Plugin** to **True**, then complete configuration in the System Console.
+Agents is enabled automatically when using the pre-installed version. If you've manually installed a newer version, you may need to enable it by going to **System Console > Plugins > Agents** and setting **Enable Plugin** to **True**, then complete configuration in **Agents > Settings**.
 
 ### Basic configuration
 
@@ -49,7 +58,7 @@ For general settings, you can toggle to enable or disable the plugin system-wide
 
 Mattermost Agents includes a setting that controls whether AI-generated Markdown links are rendered as clickable links in responses:
 
-- **System Console label**: **Render AI-generated links**
+- **Settings label** (**Agents > Settings > General**): **Render AI-generated links**
 - **Configuration key**: `allowUnsafeLinks`
 - **Default value**: `false`
 
@@ -63,7 +72,7 @@ Enable this setting only in trusted or otherwise mitigated environments, such as
 
 To limit which destinations can become clickable, set an allowlist of domains. This reduces the risk of a prompt injection steering users to an attacker-controlled site.
 
-- **System Console label**: **Allowed Link Domains (csv)** (shown when **Render AI-generated links** is **True**)
+- **Settings label** (**Agents > Settings > General**): **Allowed Link Domains (csv)** (shown when **Render AI-generated links** is **True**)
 - **Configuration key**: `allowedLinkDomains`
 - **Default value**: empty (links to any domain are clickable)
 
@@ -82,7 +91,7 @@ A link to a domain that isn't on the allowlist is shown as plain text followed b
 
 Every save of an agent records a version in its history. By default every version is kept.
 
-- **System Console labels**: **Limit agent version history** and **Versions to keep per agent**
+- **Settings labels** (**Agents > Settings > General**): **Limit agent version history** and **Versions to keep per agent**
 - **Configuration key**: `agentVersionsToKeep` (`0` keeps every version)
 - **Default value**: `0`
 
@@ -92,7 +101,7 @@ When a limit is set, each agent keeps only its most recent versions, including t
 
 Configure an LLM provider (Service) for your Agents integration. Services manage the connection to the LLM provider, including authentication, model defaults, and optional fallback behavior. You can create multiple services for different providers or configurations, and share them across multiple agents.
 
-Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
+Navigate to **Agents > Settings > AI services** and select **Add an AI Service**.
 
 | Setting | Description |
 |---------|-------------|
@@ -155,7 +164,7 @@ See the [Provider Guide](https://docs.mattermost.com/agents/docs/providers.html)
 
 ### Agent configuration
 
-Create and manage agents from the **Agents** product page. Open it from the top-level **Agents** product entry, or use the **Manage** link in an agent selector dropdown to navigate there. Agents use the service inventory configured in **System Console > Plugins > Agents**, and multiple agents can reuse the same service configuration. See [license requirements](#license-requirements) for details on features that require a license.
+Create and manage agents from the **Agents** product page. Open it from the top-level **Agents** product entry, or use the **Manage** link in an agent selector dropdown to navigate there. Agents use the service inventory configured in **Agents > Settings > AI services**, and multiple agents can reuse the same service configuration. See [license requirements](#license-requirements) for details on features that require a license.
 
 If you can manage an agent, select its row in the Agents list to open the full-page configuration view directly. The overflow menu remains available for **Edit** and **Delete**. Use **Back to agents** to return to the list.
 
@@ -278,7 +287,7 @@ Due to these limitations, Google Custom Search may not always provide optimal re
 
 To enable built-in web search:
 
-1. Navigate to **System Console > Plugins > Agents > Web Search**
+1. Navigate to **Agents > Settings > Web search**
 2. Set **Enable Web Search** to **True**
 3. Select your preferred provider from the **Provider** dropdown
 4. Configure provider-specific settings
@@ -376,7 +385,7 @@ Notes on deferred reindex:
 
 Configure who can access AI features by setting team-level, channel-level, and user-level permissions for each agent.
 
-Per-channel agent auto-reply is governed by the channel-management permission (`manage_public_channel_properties` or `manage_private_channel_properties`, depending on the channel type), checked server-side on writes; channel members can read the current mode and agent, while the ambient instructions are returned only to users with that permission. The auto-reply endpoints do not depend on the workspace default agent: reads and writes work even when the default agent is restricted from the channel or user (or when no agents are configured at all), and writes validate the *selected* agent's channel access instead. Channel agent auto-reply is available at Enterprise Advanced; below that level the channel settings tab is hidden and any stored setting is inactive. Turning auto-reply off through the REST endpoint never requires a license, so an existing setting is always clearable. The two experimental ambient modes (**Ambient** and **Ambient in mentioned threads**) additionally require **Enable ambient auto-replies** in the plugin's system console settings, which is off by default. Ambient modes run an LLM classification call for each eligible message, so expect extra token usage in channels that use them. To bound that cost, each server node runs at most 8 classifications at once and classifies at most a burst of 6 messages per channel, then about one every 5 seconds; messages over those limits get no ambient reply. Turning the setting off immediately stops ambient replies in every channel and blocks saving ambient modes; stored ambient settings are kept, so they resume if the setting is turned back on. Before downgrading the plugin to a version without ambient modes, switch every ambient channel to another mode or off: older versions treat an unknown mode as replying to every message. The channel settings tab UI requires Mattermost v11.10 or later; on older servers the tab is hidden, but the REST endpoint (`GET`/`PUT /plugins/mattermost-ai/channel/{channelid}/autoreply`) remains available.
+Per-channel agent auto-reply is governed by the channel-management permission (`manage_public_channel_properties` or `manage_private_channel_properties`, depending on the channel type), checked server-side on writes; channel members can read the current mode and agent, while the ambient instructions are returned only to users with that permission. The auto-reply endpoints do not depend on the workspace default agent: reads and writes work even when the default agent is restricted from the channel or user (or when no agents are configured at all), and writes validate the *selected* agent's channel access instead. Channel agent auto-reply is available at Enterprise Advanced; below that level the channel settings tab is hidden and any stored setting is inactive. Turning auto-reply off through the REST endpoint never requires a license, so an existing setting is always clearable. The two experimental ambient modes (**Ambient** and **Ambient in mentioned threads**) additionally require **Enable ambient auto-replies** in **Agents > Settings > General**, which is off by default. Ambient modes run an LLM classification call for each eligible message, so expect extra token usage in channels that use them. To bound that cost, each server node runs at most 8 classifications at once and classifies at most a burst of 6 messages per channel, then about one every 5 seconds; messages over those limits get no ambient reply. Turning the setting off immediately stops ambient replies in every channel and blocks saving ambient modes; stored ambient settings are kept, so they resume if the setting is turned back on. Before downgrading the plugin to a version without ambient modes, switch every ambient channel to another mode or off: older versions treat an unknown mode as replying to every message. The channel settings tab UI requires Mattermost v11.10 or later; on older servers the tab is hidden, but the REST endpoint (`GET`/`PUT /plugins/mattermost-ai/channel/{channelid}/autoreply`) remains available.
 
 ### Attribute-based access control (ABAC)
 
@@ -390,7 +399,7 @@ Attribute-based access control lets you restrict who can use agents, LLM service
 **Policy-addressable resources.** Policies always grant or deny the `use` action for one resource:
 
 - **Agents** — set the agent's user access to **Attribute-based (access policy)** in the agent's Access tab, then author the policy there. In this mode, the agent's allow/block user and team lists are ignored; the policy is the only user-access gate. Anyone who can manage the agent — its creator, its agent admins, and users with the manage-others'-agents permission — can author the policy with the simplified (table) editor; system admins additionally get the advanced (CEL) editor.
-- **LLM services** — authored by system admins in **System Console > Plugins > Agents** on the service panel. System admins get the simplified (table) editor and the advanced (CEL) editor, the same as on the agent Access tab; Advanced is used for expressions the table can't display. A service policy restricts every agent backed by that service, on top of any per-agent restrictions. It also drives list/picker visibility for non–system-admins (see [Visibility (services and agents)](#visibility-services-and-agents)).
+- **LLM services** — authored by system admins (and users with read/write [settings access](#delegate-settings-access)) in **Agents > Settings > AI services** on the service panel. They get the simplified (table) editor and the advanced (CEL) editor, the same as on the agent Access tab; Advanced is used for expressions the table can't display. A service policy restricts every agent backed by that service, on top of any per-agent restrictions. It also drives list/picker visibility for non–system-admins (see [Visibility (services and agents)](#visibility-services-and-agents)).
 - **MCP servers** — authored by system admins on the MCP **Configuration** tab (same Simple and Advanced editors as agents; Advanced is used for expressions the table can't display). Policies apply to remote servers, the built-in (embedded) Mattermost MCP server, and plugin-registered MCP servers. Users denied by an MCP server policy silently lose that server's tools; there is no notification in chat, the tools simply don't appear. Denying the built-in Mattermost server removes nearly all in-product Mattermost tools for matching users.
 
 **Allow and deny semantics.** For each request the plugin evaluates the applicable policies and applies these rules:
@@ -450,7 +459,7 @@ The Agents plugin can track token usage for all LLM interactions to support bill
 - **Reasoning Tokens**: Number of tokens used for provider reasoning or thinking, when reported
 - **Cost**: Provider-reported request cost, when reported
 
-To enable token usage tracking, navigate to **System Console > Plugins > Agents** and set **Enable Token Usage Logging** to **True**. When enabled, log files automatically rotate when they reach 100MB in size, and rotated log files are compressed to save disk space. The token usage logs provide administrators with visibility into LLM usage patterns and can be used for cost tracking, chargeback, resource planning, and debugging. Providers that report usage data populate these fields. When a provider does not expose cached token, reasoning token, or cost details, those values remain `0`.
+To enable token usage tracking, navigate to **Agents > Settings > Debug** and set **Enable Token Usage Logging** to **True**. When enabled, log files automatically rotate when they reach 100MB in size, and rotated log files are compressed to save disk space. The token usage logs provide administrators with visibility into LLM usage patterns and can be used for cost tracking, chargeback, resource planning, and debugging. Providers that report usage data populate these fields. When a provider does not expose cached token, reasoning token, or cost details, those values remain `0`.
 
 `service_id` and `service_name` are additive, so the log schema version stays `1` and existing queries and dashboards keep working.
 
@@ -484,7 +493,7 @@ Post indexing occurs automatically during initial setup. Changing the embedding 
 - Saving N does **not** start Catch Up or Full Reindex automatically. Use the banner and the Catch Up button.
 - Changing N while a job is running does not change that job's window; abort and start a new job if you want the new bounds.
 
-1. Navigate to **System Console > Plugins > Agents > Embedding Search**
+1. Navigate to **Agents > Settings > Embedding search**
 2. Use the reindex controls to:
    
    - Monitor indexing progress during initial setup.
@@ -521,7 +530,7 @@ HTTP POST /post/:postid/react
 
 #### Enabling tracing
 
-The plugin offers three trace output modes, configurable via **Trace Output** in the System Console:
+The plugin offers three trace output modes, configurable via **Trace Output** in **Agents > Settings > Debug**:
 
 - **Off** — tracing disabled, zero overhead.
 - **Server Logs** — finished spans are written to the Mattermost server log via the standard plugin logger. No collector required; pick this if you don't run Tempo, Jaeger, or another OTLP backend.
@@ -768,13 +777,13 @@ Artifact navigation is blocked in every supported browser, and in Chromium 152 o
 
 The Model Context Protocol (MCP) integration lets Agents use tools exposed by MCP servers, including the embedded Mattermost tools, plugin-registered MCP servers from compatible Mattermost plugins, and optional remote servers.
 
-The MCP client and the embedded Mattermost MCP server are always enabled. Admins manage remote MCP servers and connection timeout from the MCP UI in the System Console. The **Tools** tab also shows plugin-registered MCP servers, where admins can enable or disable each plugin server and set per-tool enabled state and approval policies. Agent-level MCP access is configured separately on each agent's **MCPs** tab.
+The MCP client and the embedded Mattermost MCP server are always enabled. Admins manage remote MCP servers and connection timeout in **Agents > Settings > MCP servers**. The **Tools** tab also shows plugin-registered MCP servers, where admins can enable or disable each plugin server and set per-tool enabled state and approval policies. Agent-level MCP access is configured separately on each agent's **MCPs** tab.
 
 Remote and external MCP servers are available at Enterprise and above (see [license requirements](#license-requirements)). Below that level, stored remote servers remain visible but cannot be added or enabled, and tools from remote servers are not made available to agents; the embedded Mattermost MCP tools remain available on all plans (read-only tools at every level, state-changing tools at Enterprise and above).
 
 ### Configuration
 
-1. Navigate to **System Console > Plugins > Agents > Model Context Protocol (MCP)**.
+1. Navigate to **Agents > Settings > MCP servers**.
 2. Use the **Configuration** tab for:
 
    - **Enable Mattermost MCP Server (HTTP)**: Optional HTTP endpoint for external MCP clients. See [Mattermost MCP Server](#mattermost-mcp-server).
@@ -789,7 +798,7 @@ Agent MCP access is filtered by admin tool policy, MCP server access policies (w
 
 The **Tools** tab refreshes automatically after the current user connects or disconnects an OAuth-backed MCP server. Because MCP OAuth connections are per-user, this live refresh applies only to the user who completed the connection or disconnection action.
 
-You can't disable MCP entirely from the System Console. To limit access, disable individual tools or change their policy in the **Tools** tab.
+You can't disable MCP entirely from the Agents settings. To limit access, disable individual tools or change their policy in the **Tools** tab.
 
 
 ### Add MCP servers
@@ -840,7 +849,7 @@ By default, MCP tool calls run with the credentials of the user who triggered th
 
 To set it up:
 
-1. Navigate to **System Console > Plugins > Agents > Model Context Protocol (MCP)**, open the remote MCP server on the **Configuration** tab, and add the static headers the server should receive from service account agents in the **Service Account Authentication** section. Put the header **name** and **value** in separate fields — for example name `Authorization` and value `Bearer <token>` or `Basic <base64>`, or a custom name such as `X-API-KEY`. Do not repeat the header name in the value. Rows with a blank name or value are ignored, so a server whose entries are all blank counts as having no service account credentials. Select **Save**.
+1. Navigate to **Agents > Settings > MCP servers**, open the remote MCP server on the **Configuration** tab, and add the static headers the server should receive from service account agents in the **Service Account Authentication** section. Put the header **name** and **value** in separate fields — for example name `Authorization` and value `Bearer <token>` or `Basic <base64>`, or a custom name such as `X-API-KEY`. Do not repeat the header name in the value. Rows with a blank name or value are ignored, so a server whose entries are all blank counts as having no service account credentials. Select **Save**.
 2. On the agent's **MCPs** tab (Agents page), turn on **Use service accounts for authentication**. Only system administrators can turn this setting on. While it is enabled, managers may still edit non-sensitive config; Access and MCP grants (including auto-enable) remain system-admin-only — see [What's editable vs locked](features/managing_agents.md#whats-editable-vs-locked). Anyone who can manage the agent can still turn the setting off or delete the agent.
 
 The agent setting is all-or-nothing:
@@ -880,7 +889,7 @@ Some MCP servers require OAuth per Mattermost user. For those servers, the plugi
 
 **Agents panel (web and desktop):** In the Agents right-hand sidebar, start a new chat and open **Tools**. OAuth-backed servers show **Connect** when the signed-in user is not authenticated, and **Disconnect** when an OAuth session applies.
 
-**System Console (admin tool configuration):** On **System Console > Plugins > Agents > MCP Servers**, expanding an OAuth-backed server shows that you must authenticate to fetch that server's tool list and configure per-tool approval policies. That sign-in only applies to your administrator account. Each end user must authenticate separately, even after an admin has connected in the System Console.
+**Agents settings (admin tool configuration):** On **Agents > Settings > MCP servers**, expanding an OAuth-backed server shows that you must authenticate to fetch that server's tool list and configure per-tool approval policies. That sign-in only applies to your administrator account. Each end user must authenticate separately, even after an admin has connected in the Agents settings.
 
 **Conversations:** The plugin no longer posts ephemeral in-channel or in-thread messages to prompt MCP OAuth. Instead, when a user who hasn't connected an OAuth-backed server asks for something that needs it, the agent can ask them to connect from inside the conversation. The agent is told which allowed servers the user hasn't connected yet, using only what you configured: the server's **Name**, its **Description**, and any tools you've configured for it on the **Tools** tab, with their retrieval description overrides. Admin-disabled tools and tools outside the agent's allowlist are left out. Nothing a server reports to another user's connection is shown, so write a description for servers whose name alone doesn't say what they're for. The user then sees a **Connect** card with **Connect** and **Skip**; once they finish signing in, the conversation continues automatically. If a user's sign-in to a server expires or is revoked partway through a conversation, the agent drops that connection and offers the same card in the same reply instead of failing the request. Agents using service account authentication never show the card. The recorded outcome of a card, which other channel members can read, says only whether the user connected; it doesn't list the tools their account unlocked. The agent gets those tools in its next step, the same way as any connected server's tools. Users can also use the Agents webapp **Tools** menu to view connection state and run **Connect** or **Disconnect**.
 
@@ -922,7 +931,7 @@ The Mattermost MCP Server enables AI agents and external applications to interac
 
 To connect Claude Code, Claude Desktop, Cursor, VS Code, or another external MCP client, see [Mattermost MCP Server](mcp_server.md) for client setup, authentication, and troubleshooting. This section covers the admin-side configuration.
 
-**Standalone MCP server (separate process / stdio):** Running the standalone `mattermost-mcp-server` binary outside the Mattermost server is for **development and local use only** and is **not** intended for production. Production deployments should rely on the embedded Mattermost MCP server and the supported configuration in this plugin (System Console, HTTP endpoint for external clients, and agent MCP settings below).
+**Standalone MCP server (separate process / stdio):** Running the standalone `mattermost-mcp-server` binary outside the Mattermost server is for **development and local use only** and is **not** intended for production. Production deployments should rely on the embedded Mattermost MCP server and the supported configuration in this plugin (Agents settings, HTTP endpoint for external clients, and agent MCP settings below).
 
 ### Overview
 
@@ -989,9 +998,9 @@ These are the native Mattermost tools included by the Agents plugin itself. Plug
 
 #### For AI Agents
 
-The embedded Mattermost MCP server is available automatically to configured AI agents. No System Console switch is required to enable embedded MCP for in-product agents.
+The embedded Mattermost MCP server is available automatically to configured AI agents. No settings switch is required to enable embedded MCP for in-product agents.
 
-Use **System Console > Plugins > Agents > Model Context Protocol (MCP)** to configure remote MCP servers, review plugin-registered MCP servers, set the idle timeout, control the optional HTTP endpoint for external clients, and manage per-tool enablement and approval policies. Then use each agent's **MCPs** tab on the **Agents** page to either automatically enable all MCP tools or restrict that agent to specific tools.
+Use **Agents > Settings > MCP servers** to configure remote MCP servers, review plugin-registered MCP servers, set the idle timeout, control the optional HTTP endpoint for external clients, and manage per-tool enablement and approval policies. Then use each agent's **MCPs** tab on the **Agents** page to either automatically enable all MCP tools or restrict that agent to specific tools.
 
 Configured agents can use these tools subject to their own MCP settings, admin tool policies, user permissions, and any required approval flow.
 
@@ -1013,7 +1022,7 @@ If an exposed plugin tool name conflicts with a built-in Mattermost tool or with
 
 To enable an external MCP client:
 
-1. Go to **System Console > Plugins > Agents > Model Context Protocol (MCP)**
+1. Go to **Agents > Settings > MCP servers**
 2. Set **Enable Mattermost MCP Server (HTTP)** to **True**.
 The MCP server will be available at: `https://your-mattermost-server/plugins/mattermost-ai/mcp-server/mcp`
 
