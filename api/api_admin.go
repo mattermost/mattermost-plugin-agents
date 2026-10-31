@@ -387,6 +387,10 @@ func (a *API) buildMCPDiscoveryRows(ctx context.Context, userID string, readOnly
 	// can see why the server is not working.
 	conflictMessages := make(map[int]string)
 	for _, conflict := range mcpConfig.ServerConflicts() {
+		if readOnly {
+			// A duplicate-URL message names the endpoint.
+			conflict.BaseURL = config.RedactURL(conflict.BaseURL)
+		}
 		conflictMessages[conflict.Index] = conflict.Error()
 	}
 
