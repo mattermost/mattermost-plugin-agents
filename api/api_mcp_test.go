@@ -408,7 +408,12 @@ func TestHandleGetUserMCPToolsStoredTokenMarksZeroToolServerAuthenticated(t *tes
 	mmClient.On("KVGet", "mcp_oauth_token_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*[]uint8")).
 		Run(func(args mock.Arguments) {
 			raw := args.Get(1).(*[]byte)
-			b, _ := json.Marshal(oauth2.Token{AccessToken: "stored-token"})
+			// A grant bound to this server's origin (version 1 envelope).
+			b, _ := json.Marshal(map[string]any{
+				"version":      1,
+				"token":        oauth2.Token{AccessToken: "stored-token"},
+				"serverOrigin": "https://oauth.example.com:443",
+			})
 			*raw = b
 		}).
 		Return(nil)

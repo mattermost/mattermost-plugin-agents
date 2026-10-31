@@ -355,10 +355,16 @@ func (m *OAuthManager) InitiateOAuthFlowForServer(ctx context.Context, userID st
 // space-separated scope from an insufficient_scope challenge when present
 // (treated as authoritative per the MCP specification).
 func (m *OAuthManager) InitiateOAuthFlowForServerWithMetadata(ctx context.Context, userID string, serverConfig ServerConfig, metadataURL, challengeScope string) (string, error) {
-	return m.InitiateOAuthFlow(ctx, userID, serverConfig.Name, serverConfig.BaseURL, metadataURL, challengeScope, staticOAuthCreds(serverConfig))
+	return m.initiateOAuthFlow(ctx, userID, serverConfig.ID, serverConfig.Name, serverConfig.BaseURL, metadataURL, challengeScope, staticOAuthCreds(serverConfig))
 }
 
+// InitiateOAuthFlow starts a sign-in for a server known only by name and URL;
+// its grant is bound to the server's configuration ID at callback time.
 func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, serverURL, metadataURL, challengeScope string, staticCreds *StaticOAuthCredentials) (string, error) {
+	return m.initiateOAuthFlow(ctx, userID, "", serverID, serverURL, metadataURL, challengeScope, staticCreds)
+}
+
+func (m *OAuthManager) initiateOAuthFlow(ctx context.Context, userID, serverConfigID, serverID, serverURL, metadataURL, challengeScope string, staticCreds *StaticOAuthCredentials) (string, error) {
 	// Generate PKCE parameters
 	codeVerifier := oauth2.GenerateVerifier()
 
@@ -404,6 +410,7 @@ func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, 
 		UserID:             userID,
 		ServerID:           serverID,
 		ServerURL:          serverURL,
+		ServerConfigID:     serverConfigID,
 		ServerMetadataURL:  metadataURL,
 		CodeVerifier:       codeVerifier,
 		State:              state,
@@ -537,13 +544,20 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 	// A sign-in started before the server was renamed, deleted, or moved to
 	// another origin must not store a grant under its name: the grant would
 	// be sent to whatever server holds that name now.
+	// The same holds for a different server (another configuration ID) now
+	// holding the name at the same origin.
 	var serverCfg ServerConfig
+	serverConfigID := session.ServerConfigID
 	if m.serverConfigLookup != nil {
 		cfg, ok := m.serverConfigLookup(session.ServerID)
-		if !ok || !sameServerOrigin(cfg.BaseURL, session.ServerURL) {
+		if !ok || !sameServerOrigin(cfg.BaseURL, session.ServerURL) ||
+			(session.ServerConfigID != "" && cfg.ID != "" && cfg.ID != session.ServerConfigID) {
 			return nil, fmt.Errorf("the MCP server's configuration changed during sign-in; please sign in again")
 		}
 		serverCfg = cfg
+		if serverConfigID == "" {
+			serverConfigID = cfg.ID
+		}
 	}
 
 	// Sessions created before the binding fields existed cannot be verified
@@ -612,6 +626,7 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 		Resource:           session.ResourceURL,
 		RevocationEndpoint: session.RevocationEndpoint,
 		ServerOrigin:       canonicalOriginFromString(session.ServerURL),
+		ServerConfigID:     serverConfigID,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to save token: %w", err)
 	}

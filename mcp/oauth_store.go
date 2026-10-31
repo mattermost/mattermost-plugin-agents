@@ -54,8 +54,8 @@ const tokenEnvelopeVersion = 1
 // receive the refresh token nor the client secret.
 //
 // Version 0 (a bare oauth2.Token, written before the envelope existed) is
-// still readable: the access token remains usable until it expires, but it
-// cannot be refreshed (no pinned destination), forcing one re-authorization.
+// still readable, but it carries nothing that ties it to a server, so it is
+// never used: the user signs in again (see loadGrantForServer).
 type storedTokenEnvelope struct {
 	Version int           `json:"version"`
 	Token   *oauth2.Token `json:"token"`
@@ -84,9 +84,16 @@ type storedTokenEnvelope struct {
 	// grant is only used while the server under its name still has this
 	// origin, so a server moved to another host never receives grants issued
 	// for the old one, whatever order config saves, cleanup, and sign-ins
-	// complete in. Empty for grants stored before the field existed; those
-	// are bound to the current origin the first time they are loaded.
+	// complete in. Empty for grants stored before the field existed; see
+	// loadGrantForServer for how those are bound.
 	ServerOrigin string `json:"serverOrigin,omitempty"`
+	// ServerConfigID is the stable ID of the server configuration the
+	// sign-in was for. A grant is only used by the server with this ID, so a
+	// different server later given the same name at the same origin never
+	// receives it. Empty for grants stored before the field existed (bound to
+	// the current server's ID when first loaded) and for servers saved before
+	// server IDs existed.
+	ServerConfigID string `json:"serverConfigID,omitempty"`
 }
 
 // loadTokenEnvelope retrieves the stored OAuth grant for a user and server.
@@ -196,36 +203,53 @@ func (m *OAuthManager) releaseRefreshLease(userID, serverID, leaseID string) {
 const grantBindAttempts = 3
 
 // loadGrantForServer loads the user's grant for a server, but only one issued
-// for the server's current origin (serverURL is the configured BaseURL). A
-// grant issued for another origin is treated as absent, so the user is asked
-// to sign in again and the grant is never sent to the new origin. A grant
-// stored before ServerOrigin existed is bound to the current origin with a
-// compare-and-set the first time it is loaded, so existing users stay signed
-// in across the upgrade. Pre-envelope (version 0) grants carry no binding
-// fields to extend and are used as before.
-func (m *OAuthManager) loadGrantForServer(userID, serverName, serverURL string) (*storedTokenEnvelope, []byte, error) {
+// for that server: the server's configured origin and, when both carry one,
+// its configuration ID must match the ones the grant was issued for. Any
+// other grant is treated as absent, so the user is asked to sign in again and
+// the grant is never sent to a server it was not issued for.
+//
+// Grants stored before the binding fields existed are bound with a
+// compare-and-set the first time they are loaded, so existing users stay
+// signed in across the upgrade: the origin comes from the grant's RFC 8707
+// resource when it has one (the configured server URL at sign-in, or the
+// protected-resource metadata resource, which must equal it), else from the
+// current configuration; the configuration ID comes from the current
+// configuration. A legacy grant whose resource names another origin is not
+// used. Pre-envelope (version 0) grants carry nothing that ties them to a
+// server and are never used.
+func (m *OAuthManager) loadGrantForServer(userID string, server ServerConfig) (*storedTokenEnvelope, []byte, error) {
 	for range grantBindAttempts {
-		envelope, raw, err := m.loadTokenEnvelope(userID, serverName)
+		envelope, raw, err := m.loadTokenEnvelope(userID, server.Name)
 		if err != nil {
 			return nil, nil, err
 		}
 		if envelope == nil || envelope.Version == 0 {
-			return envelope, raw, nil
-		}
-		if envelope.ServerOrigin != "" {
-			if originChanged(envelope.ServerOrigin, serverURL) {
-				return nil, nil, nil
-			}
-			return envelope, raw, nil
-		}
-
-		origin := canonicalOriginFromString(serverURL)
-		if origin == "" {
 			return nil, nil, nil
 		}
+
 		bound := *envelope
-		bound.ServerOrigin = origin
-		if _, err := m.casTokenEnvelope(userID, serverName, raw, &bound); err != nil {
+		if bound.ServerOrigin == "" {
+			bound.ServerOrigin = canonicalOriginFromString(bound.Resource)
+			if bound.ServerOrigin == "" {
+				bound.ServerOrigin = canonicalOriginFromString(server.BaseURL)
+			}
+			if bound.ServerOrigin == "" {
+				return nil, nil, nil
+			}
+		}
+		if originChanged(bound.ServerOrigin, server.BaseURL) {
+			return nil, nil, nil
+		}
+		if bound.ServerConfigID == "" {
+			bound.ServerConfigID = server.ID
+		} else if server.ID != "" && bound.ServerConfigID != server.ID {
+			return nil, nil, nil
+		}
+
+		if bound.ServerOrigin == envelope.ServerOrigin && bound.ServerConfigID == envelope.ServerConfigID {
+			return envelope, raw, nil
+		}
+		if _, err := m.casTokenEnvelope(userID, server.Name, raw, &bound); err != nil {
 			return nil, nil, fmt.Errorf("failed to bind stored grant to its server: %w", err)
 		}
 		// Reload whether or not this write won, so the caller holds the
@@ -238,7 +262,7 @@ func (m *OAuthManager) loadGrantForServer(userID, serverName, serverURL string) 
 // server that may be used with the server's current URL. It does not refresh
 // the token or contact upstream.
 func (m *OAuthManager) HasStoredToken(userID string, serverConfig ServerConfig) (bool, error) {
-	envelope, _, err := m.loadGrantForServer(userID, serverConfig.Name, serverConfig.BaseURL)
+	envelope, _, err := m.loadGrantForServer(userID, serverConfig)
 	if err != nil {
 		return false, err
 	}
@@ -386,9 +410,12 @@ func (m *OAuthManager) storeClientCredentials(creds *ClientCredentials) error {
 }
 
 type OAuthSession struct {
-	UserID            string    `json:"userID"`
-	ServerID          string    `json:"serverID"`
-	ServerURL         string    `json:"serverURL"`
+	UserID    string `json:"userID"`
+	ServerID  string `json:"serverID"`
+	ServerURL string `json:"serverURL"`
+	// ServerConfigID is the stable ID of the server configuration the
+	// sign-in was started for (ServerID holds its name).
+	ServerConfigID    string    `json:"serverConfigID,omitempty"`
 	ServerMetadataURL string    `json:"serverMetadataURL"`
 	CodeVerifier      string    `json:"codeVerifier"`
 	State             string    `json:"state"`
