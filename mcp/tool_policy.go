@@ -50,8 +50,54 @@ func ToolPolicyLookupName(sc *ServerConfig, toolName string) string {
 	return llm.BareMCPToolName(toolName)
 }
 
+// DefaultToolPolicy returns the policy for a tool that has no stored policy:
+// the server's vetted seed policy when it has one, otherwise ask. Tool
+// annotations reported by the server never change it; they only feed
+// SuggestedToolPolicy, which an admin accepts or changes when reviewing the
+// server's tools.
+func DefaultToolPolicy(serverBaseURL, toolName string) string {
+	for _, seed := range SeedVettedToolConfigs(serverBaseURL) {
+		if seed.Name == toolName {
+			return seed.Policy
+		}
+	}
+	return ToolPolicyAsk
+}
+
+// EffectiveDefaultToolPolicy is the default LookupEffectiveToolPolicy applies
+// to a tool with no stored policy: DefaultToolPolicy when tool-approval
+// policies are licensed, otherwise the product default (see
+// LookupEffectiveToolPolicy).
+func EffectiveDefaultToolPolicy(serverBaseURL, toolName string, policiesLicensed bool) string {
+	if policiesLicensed {
+		return DefaultToolPolicy(serverBaseURL, toolName)
+	}
+	return unlicensedDefaultToolPolicy(serverBaseURL, toolName)
+}
+
+// SuggestedToolPolicy is the policy the System Console pre-selects when an
+// admin reviews a server's tools: the effective default, raised to
+// auto_run_in_dm for a tool the server annotates as read-only. The annotation
+// is reported by the server and is only a suggestion: it takes effect only
+// once an admin saves it. The embedded server keeps its curated defaults,
+// which deliberately leave some read-only tools (get_file_link, webhook
+// listings) at ask, and nothing is raised when tool-approval policies are not
+// licensed.
+func SuggestedToolPolicy(serverBaseURL, toolName string, readOnlyHint, policiesLicensed bool) string {
+	if !policiesLicensed || !readOnlyHint || serverBaseURL == EmbeddedClientKey {
+		return EffectiveDefaultToolPolicy(serverBaseURL, toolName, policiesLicensed)
+	}
+	for _, seed := range SeedVettedToolConfigs(serverBaseURL) {
+		if seed.Name == toolName {
+			return seed.Policy
+		}
+	}
+	return ToolPolicyAutoRunInDM
+}
+
 // LookupToolPolicy resolves a tool's policy for embedded, remote, and plugin
-// origins. Unknown or disabled origins never auto-execute.
+// origins. Unknown or disabled origins never auto-execute. Tools without a
+// stored policy get DefaultToolPolicy.
 func LookupToolPolicy(cfg Config, serverBaseURL, toolName string) (string, bool) {
 	if serverBaseURL == EmbeddedClientKey {
 		// Backfill the vetted seed for embedded tools the admin hasn't stored a
@@ -64,12 +110,14 @@ func LookupToolPolicy(cfg Config, serverBaseURL, toolName string) (string, bool)
 			BaseURL:     EmbeddedClientKey,
 			ToolConfigs: toolConfigs,
 		}
-		return embeddedCfg.GetToolPolicy(ToolPolicyLookupName(embeddedCfg, toolName))
+		lookupName := ToolPolicyLookupName(embeddedCfg, toolName)
+		return embeddedCfg.GetToolPolicyOrDefault(lookupName, DefaultToolPolicy(EmbeddedClientKey, lookupName))
 	}
 
 	for i := range cfg.Servers {
 		if cfg.Servers[i].BaseURL == serverBaseURL {
-			return cfg.Servers[i].GetToolPolicy(ToolPolicyLookupName(&cfg.Servers[i], toolName))
+			lookupName := ToolPolicyLookupName(&cfg.Servers[i], toolName)
+			return cfg.Servers[i].GetToolPolicyOrDefault(lookupName, DefaultToolPolicy(serverBaseURL, lookupName))
 		}
 	}
 
@@ -92,7 +140,8 @@ func LookupToolPolicy(cfg Config, serverBaseURL, toolName string) (string, bool)
 			BaseURL:     serverBaseURL,
 			ToolConfigs: ps.ToolConfigs,
 		}
-		return synthetic.GetToolPolicy(ToolPolicyLookupName(synthetic, toolName))
+		lookupName := ToolPolicyLookupName(synthetic, toolName)
+		return synthetic.GetToolPolicyOrDefault(lookupName, DefaultToolPolicy(serverBaseURL, lookupName))
 	}
 
 	return ToolPolicyAsk, false
@@ -111,6 +160,16 @@ func LookupEffectiveToolPolicy(cfg Config, serverBaseURL, toolName string, polic
 		return policy, enabled
 	}
 
+	defaultPolicy := unlicensedDefaultToolPolicy(serverBaseURL, toolName)
+	if config.ToolPolicyReach(policy) < config.ToolPolicyReach(defaultPolicy) {
+		return policy, enabled
+	}
+	return defaultPolicy, enabled
+}
+
+// unlicensedDefaultToolPolicy is the product-default policy that applies when
+// tool-approval policies are not licensed.
+func unlicensedDefaultToolPolicy(serverBaseURL, toolName string) string {
 	defaultPolicy := ToolPolicyAsk
 	if serverBaseURL == EmbeddedClientKey {
 		lookupName := ToolPolicyLookupName(&ServerConfig{
@@ -126,8 +185,5 @@ func LookupEffectiveToolPolicy(cfg Config, serverBaseURL, toolName string, polic
 			}
 		}
 	}
-	if config.ToolPolicyReach(policy) < config.ToolPolicyReach(defaultPolicy) {
-		return policy, enabled
-	}
-	return defaultPolicy, enabled
+	return defaultPolicy
 }

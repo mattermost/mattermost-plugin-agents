@@ -5,7 +5,9 @@
 
 export type MCPToolConfig = {
     name: string;
-    policy: 'auto_run_in_dm' | 'auto_run_everywhere' | 'ask';
+
+    // '' means no policy was chosen for the tool, so it keeps its default.
+    policy: 'auto_run_in_dm' | 'auto_run_everywhere' | 'ask' | '';
     enabled: boolean;
     retrieval_description_override?: string;
 };
@@ -20,7 +22,15 @@ export type MCPServerConfig = {
     tool_configs?: MCPToolConfig[];
     clientID?: string;
     clientSecret?: string;
+
+    // Sent in place of per-user OAuth by agents using service account
+    // authentication. The backend tag has omitempty, so it may be absent.
+    serviceAccountHeaders?: {[key: string]: string};
 };
+
+// What a per-server save writes: the whole server, only its tool policies,
+// or its settings while keeping the tool policies as saved.
+export type PersistMCPServerScope = 'server' | 'tool_configs' | 'settings';
 
 export type MCPEmbeddedServerConfig = {
     id?: string; // stable ABAC policy identity; may be absent until the server-side ID migration runs
@@ -52,6 +62,16 @@ export type MCPToolInfo = {
     name: string;
     description: string;
     inputSchema: Record<string, unknown> | null;
+
+    // Server-reported MCP readOnlyHint annotation.
+    readOnlyHint?: boolean;
+
+    // Policy the tool runs with while it has no chosen policy.
+    defaultPolicy?: MCPToolConfig['policy'];
+
+    // Policy to pre-select when the admin reviews the tool: the default,
+    // raised to auto run in DMs for tools the server marks read-only.
+    suggestedPolicy?: MCPToolConfig['policy'];
 };
 
 export type MCPServerInfo = {

@@ -37,7 +37,7 @@ import (
 type userOAuthHandler struct {
 	userID      string
 	serverName  string
-	serverURL   string
+	server      ServerConfig
 	staticCreds *StaticOAuthCredentials
 	manager     *OAuthManager
 }
@@ -46,7 +46,7 @@ func newUserOAuthHandler(userID string, serverConfig ServerConfig, manager *OAut
 	return &userOAuthHandler{
 		userID:      userID,
 		serverName:  serverConfig.Name,
-		serverURL:   serverConfig.BaseURL,
+		server:      serverConfig,
 		staticCreds: staticOAuthCreds(serverConfig),
 		manager:     manager,
 	}
@@ -62,7 +62,7 @@ func newUserOAuthHandler(userID string, serverConfig ServerConfig, manager *OAut
 // compromised MCP server that starts advertising different authorization
 // server metadata therefore never sees the refresh token or client secret.
 func (h *userOAuthHandler) TokenSource(ctx context.Context) (oauth2.TokenSource, error) {
-	envelope, raw, err := h.manager.loadTokenEnvelope(h.userID, h.serverName)
+	envelope, raw, err := h.manager.loadGrantForServer(h.userID, h.server)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load token: %w", err)
 	}
@@ -78,6 +78,7 @@ func (h *userOAuthHandler) TokenSource(ctx context.Context) (oauth2.TokenSource,
 		manager:     h.manager,
 		userID:      h.userID,
 		serverName:  h.serverName,
+		server:      h.server,
 	}, nil
 }
 
@@ -265,6 +266,9 @@ type persistingTokenSource struct {
 	manager     *OAuthManager
 	userID      string
 	serverName  string
+	// server is the server configuration the grant must still be bound to
+	// when it is reloaded.
+	server ServerConfig
 }
 
 func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
@@ -431,7 +435,7 @@ func (s *persistingTokenSource) waitForConcurrentRefresh() (*oauth2.Token, error
 // adoptLatestGrant reloads the stored grant and adopts it when it carries a
 // valid token, returning that token (nil otherwise). Callers hold s.mu.
 func (s *persistingTokenSource) adoptLatestGrant() *oauth2.Token {
-	latest, raw, err := s.manager.loadTokenEnvelope(s.userID, s.serverName)
+	latest, raw, err := s.manager.loadGrantForServer(s.userID, s.server)
 	if err != nil || latest == nil || latest.Token == nil {
 		return nil
 	}

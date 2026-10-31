@@ -365,62 +365,34 @@ func TestPersistingTokenSourceRefreshTimeout(t *testing.T) {
 	require.Less(t, elapsed, 5*time.Second, "refresh must be bounded by oauthPrepTimeout, not hang")
 }
 
-// TestPersistingTokenSourceLegacyTokenForcesReauth verifies that a
-// pre-envelope grant (bare token, no pinned refresh destination) is usable
-// while valid but cannot be refreshed: refreshing through rediscovery would
-// let a compromised server redirect the refresh token, so the grant is
-// cleared and re-authentication is required.
-func TestPersistingTokenSourceLegacyTokenForcesReauth(t *testing.T) {
+// TestPreEnvelopeTokenIsNeverUsed verifies that a bare oauth2.Token stored
+// before grant envelopes existed is never sent: it carries nothing that ties
+// it to a server, so the user signs in again instead.
+func TestPreEnvelopeTokenIsNeverUsed(t *testing.T) {
 	const userID = "user123"
 	const serverID = "legacy-server"
 
 	tests := []struct {
-		name       string
-		token      *oauth2.Token
-		wantReAuth bool
+		name  string
+		token *oauth2.Token
 	}{
-		{
-			name: "valid legacy token is still usable",
-			token: &oauth2.Token{
-				AccessToken: "legacy-access",
-				TokenType:   "Bearer",
-				Expiry:      time.Now().Add(time.Hour),
-			},
-		},
-		{
-			name: "expired legacy token forces re-authentication",
-			token: &oauth2.Token{
-				AccessToken:  "legacy-access",
-				RefreshToken: "legacy-refresh",
-				TokenType:    "Bearer",
-				Expiry:       time.Now().Add(-time.Hour),
-			},
-			wantReAuth: true,
-		},
+		{name: "unexpired token", token: &oauth2.Token{AccessToken: "legacy-access", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour)}},
+		{name: "token without an expiry", token: &oauth2.Token{AccessToken: "legacy-access", TokenType: "Bearer"}},
+		{name: "expired token", token: &oauth2.Token{AccessToken: "legacy-access", RefreshToken: "legacy-refresh", TokenType: "Bearer", Expiry: time.Now().Add(-time.Hour)}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			manager, kv := newStatefulKVManager(t, nil, &http.Client{})
-			// A bare oauth2.Token in the KV store (pre-envelope layout).
 			kv.putLegacyToken(t, userID, serverID, tt.token)
+			server := ServerConfig{Name: serverID, BaseURL: "https://mcp.example.com"}
 
-			handler := newUserOAuthHandler(userID, ServerConfig{Name: serverID, BaseURL: "https://mcp.example.com"}, manager)
-			tokenSource, err := handler.TokenSource(context.Background())
+			tokenSource, err := newUserOAuthHandler(userID, server, manager).TokenSource(context.Background())
 			require.NoError(t, err)
-			require.NotNil(t, tokenSource)
-
-			token, err := tokenSource.Token()
-			if tt.wantReAuth {
-				require.Error(t, err)
-				var unauthorized *mcpUnauthorized
-				require.ErrorAs(t, err, &unauthorized)
-				require.Contains(t, err.Error(), "re-authentication required")
-				require.False(t, kv.exists(userID, serverID), "expired legacy token must be cleared")
-				return
-			}
+			require.Nil(t, tokenSource)
+			hasToken, err := manager.HasStoredToken(userID, server)
 			require.NoError(t, err)
-			require.Equal(t, "legacy-access", token.AccessToken)
+			require.False(t, hasToken)
 		})
 	}
 }
@@ -612,9 +584,12 @@ func TestPersistingTokenSourceRefresh(t *testing.T) {
 				TokenType:    "Bearer",
 				Expiry:       time.Now().Add(-time.Hour),
 			})
+			expiredEnvelope.ServerOrigin = canonicalOriginFromString(server.URL)
+			expiredEnvelope.ServerConfigID = "server-config-id"
 			kv.putEnvelope(t, userID, serverID, expiredEnvelope)
 
 			handler := newUserOAuthHandler(userID, ServerConfig{
+				ID:           "server-config-id",
 				Name:         serverID,
 				BaseURL:      server.URL,
 				ClientID:     "static-client",
@@ -643,6 +618,10 @@ func TestPersistingTokenSourceRefresh(t *testing.T) {
 			require.Equal(t, "new-refresh", storedEnvelope.Token.RefreshToken)
 			require.Equal(t, expiredEnvelope.TokenEndpoint, storedEnvelope.TokenEndpoint,
 				"the refreshed grant must keep its authorization server binding")
+			require.Equal(t, expiredEnvelope.ServerOrigin, storedEnvelope.ServerOrigin,
+				"the refreshed grant must stay bound to its server origin")
+			require.Equal(t, expiredEnvelope.ServerConfigID, storedEnvelope.ServerConfigID,
+				"the refreshed grant must stay bound to its server configuration")
 		})
 	}
 }

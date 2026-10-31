@@ -33,10 +33,13 @@ type MCPToolsViewerProps = {
     // configuration as it is when the change is applied.
     onConfigChange: (update: MCPConfig | ((current: MCPConfig) => MCPConfig)) => void;
     initialToolsData?: MCPToolsResponse | null;
+
+    // onReviewServer opens the tool review for a saved remote server.
+    onReviewServer?: (server: MCPServerConfig) => void;
 };
 
 // Main component for MCP Tools viewer
-const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsViewerProps) => {
+const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData, onReviewServer}: MCPToolsViewerProps) => {
     const intl = useIntl();
     const [toolsData, setToolsData] = useState<MCPToolsResponse | null>(initialToolsData || null);
     const [loading, setLoading] = useState(false);
@@ -233,9 +236,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
                 then(() => fetchTools({propagateError: true})).
                 catch((err) => {
                     setError(
-                        err instanceof Error ?
-                            err.message :
-                            intl.formatMessage({id: 'mcp_tools.update_plugin_server_failed', defaultMessage: 'Failed to update plugin server'}),
+                        err instanceof Error ? err.message : intl.formatMessage({id: 'mcp_tools.update_plugin_server_failed', defaultMessage: 'Failed to update plugin server'}),
                     );
                 });
             return;
@@ -329,16 +330,21 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
 
                 {toolsData && toolsData.servers.length > 0 && (
                     <ServersList>
-                        {toolsData.servers.map((server) => (
-                            <MCPServerToolRow
-                                key={server.url}
-                                server={server}
-                                serverConfig={findServerConfig(server)}
-                                onServerConfigChange={(updatedConfig) =>
-                                    handleServerConfigChange(server, updatedConfig)
-                                }
-                            />
-                        ))}
+                        {toolsData.servers.map((server) => {
+                            const serverConfig = findServerConfig(server);
+                            const reviewable = onReviewServer && server.serverType === 'remote' && serverConfig?.id;
+                            return (
+                                <MCPServerToolRow
+                                    key={server.url}
+                                    server={server}
+                                    serverConfig={serverConfig}
+                                    onServerConfigChange={(updatedConfig) =>
+                                        handleServerConfigChange(server, updatedConfig)
+                                    }
+                                    onReview={reviewable ? () => onReviewServer(serverConfig) : undefined} // eslint-disable-line no-undefined
+                                />
+                            );
+                        })}
                     </ServersList>
                 )}
             </Content>

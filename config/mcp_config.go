@@ -4,6 +4,7 @@
 package config
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net/textproto"
@@ -28,8 +29,11 @@ func PluginServerOrigin(pluginID string) string {
 
 // MCPToolConfig represents per-tool configuration for an MCP server.
 type MCPToolConfig struct {
-	Name                         string `json:"name"`
-	Policy                       string `json:"policy"` // "auto_run_in_dm" | "auto_run_everywhere" | "ask"
+	Name string `json:"name"`
+	// Policy is "auto_run_in_dm", "auto_run_everywhere" or "ask". Empty means
+	// the admin configured the tool (enabled state, override) without choosing
+	// a policy, so the tool keeps its default policy.
+	Policy                       string `json:"policy"`
 	Enabled                      bool   `json:"enabled"`
 	RetrievalDescriptionOverride string `json:"retrieval_description_override,omitempty"`
 }
@@ -96,6 +100,13 @@ type MCPServerConfig struct {
 // tools default to enabled with ask policy. Invalid or empty policies are
 // normalized to "ask". When duplicate entries exist the last matching entry wins.
 func (s *MCPServerConfig) GetToolPolicy(toolName string) (string, bool) {
+	return s.GetToolPolicyOrDefault(toolName, MCPToolPolicyAsk)
+}
+
+// GetToolPolicyOrDefault is GetToolPolicy with defaultPolicy, instead of ask,
+// for an enabled server's tools that have no config entry or whose entry has
+// an empty policy. An invalid defaultPolicy is normalized to "ask".
+func (s *MCPServerConfig) GetToolPolicyOrDefault(toolName, defaultPolicy string) (string, bool) {
 	if s == nil || toolName == "" {
 		return MCPToolPolicyAsk, false
 	}
@@ -104,20 +115,14 @@ func (s *MCPServerConfig) GetToolPolicy(toolName string) (string, bool) {
 		return MCPToolPolicyAsk, false
 	}
 
-	found := false
-	policy := MCPToolPolicyAsk
-	enabled := false
+	policy := defaultPolicy
+	enabled := true
 
 	for _, tc := range s.ToolConfigs {
 		if tc.Name == toolName {
-			found = true
-			policy = tc.Policy
+			policy = cmp.Or(tc.Policy, defaultPolicy)
 			enabled = tc.Enabled
 		}
-	}
-
-	if !found {
-		return MCPToolPolicyAsk, true
 	}
 
 	if !IsToolPolicyAutoRunInDM(policy) && policy != MCPToolPolicyAsk {

@@ -35,9 +35,10 @@ const (
 
 // ToolInfo represents a tool's metadata for discovery purposes
 type ToolInfo struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	InputSchema any    `json:"inputSchema"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	InputSchema  any    `json:"inputSchema"`
+	ReadOnlyHint bool   `json:"readOnlyHint"`
 }
 
 // UserClients represents a pooled MCP client bag. kind determines which

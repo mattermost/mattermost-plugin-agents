@@ -779,11 +779,20 @@ Remote and external MCP servers are available at Enterprise and above (see [lice
 
    - **Enable Mattermost MCP Server (HTTP)**: Optional HTTP endpoint for external MCP clients. See [Mattermost MCP Server](#mattermost-mcp-server).
    - **Connection Idle Timeout (minutes)**: Timeout for inactive user MCP connections (default: 30 minutes).
-   - Remote MCP servers, including URL, custom headers, OAuth client settings, service account headers, and per-server enablement.
+   - **Remote MCP servers**: a list of the configured servers, showing each server's URL, whether it is disabled, and how many of its tools are not reviewed. Select a server to edit it, or the delete icon to remove it; both take effect right away.
    - **Built-in & plugin servers**: Read-only cards for the embedded Mattermost MCP server and any currently registered plugin MCP servers. Use each card's **Access policy** section to restrict which users can use that server's tools (see [Attribute-based access control (ABAC)](#attribute-based-access-control-abac)). Denying the built-in server removes nearly all in-product Mattermost tools for matching users. Plugin enablement and per-tool approval remain on the **Tools** tab.
 
-3. Use the **Tools** tab to review discovered tools and set each tool's enabled state and approval policy. Expand a tool row to add an optional **Retrieval description override** for dynamic tool loading search; this helps the agent find the tool but does not change the tool schema sent after loading. Plugin-registered MCP servers appear as separate plugin rows in this tab.
-4. When creating or editing an agent on the **Agents** page, use the **MCPs** tab to choose whether that agent can use all MCP tools automatically or only a selected set of tools, and whether MCP tool schemas are loaded dynamically or exposed up front.
+3. To add a remote MCP server, select **Add Remote MCP Server**. The dialog walks through three steps:
+
+   - **Server details**: name, URL, and optional description, headers, service account headers, and OAuth client settings.
+   - **Connect**: the server is saved and Mattermost connects to it as you. When the server uses OAuth, select **Sign in** to complete the provider's sign-in; this checks that OAuth works for the server and connects only your account.
+   - **Review tools**: the server's tools are listed in **Read-only tools** and **Write tools** groups, with each tool's approval policy pre-set from what the server reports about it. Tools the server marks as read-only (the `readOnlyHint` tool annotation) are set to **Auto Run (DM)**; all other tools are set to **Ask Every Time**. Each group, and **All tools**, has a control that sets every tool in it. Check the policies, then select **Accept and save** to save a policy for every tool.
+
+   You can select **Skip connecting** to save the server without connecting to it. Its tools then use default policies until you review them: they ask for approval before every run, except where Mattermost has curated defaults for known servers (Atlassian, Figma, and the embedded Mattermost server).
+
+   Selecting a server in the list opens the same dialog to edit it, with every setting, including **Enable server**, **Auto-fill from server** for the description, service account headers, and the server's **Access policy**. **Save** applies the change right away. Some changes end the sign-ins users already have, so Mattermost warns that every user will have to sign in again before saving: renaming the server, moving it to another host (a different scheme, host, or port; its tool policies are also cleared), and changing the OAuth client ID (existing sign-ins cannot be renewed with a different client). Saving a rename or a move to another host removes every user's saved sign-ins for the server, so they are never sent to a different server; deleting a server removes them too, and adding a server removes any sign-ins left under its name by an earlier server. Changing only the URL's path keeps sign-ins and tool policies. A saved sign-in is only ever used by the server it was issued for (the same host and the same server entry), even if removing it fails. Sign-ins saved by plugin versions that predate this protection are tied to their server the first time they are used; very old sign-ins that cannot be tied to a server are discarded, and those users sign in again. Automation that changes MCP servers must read the configuration with `GET /plugins/mattermost-ai/admin/config` and send it back with `PUT` keeping each server's `id`: a server sent without its `id` is treated as deleted and added again, which removes its users' saved sign-ins. After a change that ends sign-ins you sign in to the server again and review its tools; policies you already chose are kept unless the server moved to another host. Changing the client secret, headers, service account headers, description, or whether the server is enabled does not affect users' sign-ins. Annotations reported by a server never change how its tools run until you save a policy.
+4. Use the **Tools** tab to set each tool's enabled state and approval policy. Remote servers show how many of their tools are **Not reviewed**, meaning no administrator has chosen a policy for them; select **Review tools** to open the review step for that server. Turning a tool on or off does not set its approval policy. Approval policies require tool approval policies to be licensed. Expand a tool row to add an optional **Retrieval description override** for dynamic tool loading search; this helps the agent find the tool but does not change the tool schema sent after loading. Plugin-registered MCP servers appear as separate plugin rows in this tab.
+5. When creating or editing an agent on the **Agents** page, use the **MCPs** tab to choose whether that agent can use all MCP tools automatically or only a selected set of tools, and whether MCP tool schemas are loaded dynamically or exposed up front.
 
 Agent MCP access is filtered by admin tool policy, MCP server access policies (when configured), the agent's MCP allowlist or **Automatically enable all MCP tools** setting, user-disabled provider preferences, and any context restrictions for the current request. For agents using [service account authentication](#service-account-authentication), user-disabled provider preferences don't apply.
 
@@ -794,16 +803,19 @@ You can't disable MCP entirely from the System Console. To limit access, disable
 
 ### Add MCP servers
 
-1. On the **Configuration** tab, select **Add Remote MCP Server** to configure a new server.
-2. Configure server settings:
+1. On the **Configuration** tab, select **Add Remote MCP Server**. This opens the add-server dialog described in step 3 of the MCP **Configuration** section above.
+2. In **Server details**, enter:
 
+   - **Server Name**: Descriptive name for the server (required, and must differ from every other server's name).
    - **Server URL**: The endpoint URL for your MCP server. Use the server's final address: redirects to a different origin (including `http` to `https` upgrades) are refused so credentials cannot leak to another host.
-   - **Description**: What the integration is for, in up to 500 characters (optional). Agents use it to offer the server to users who haven't connected it yet. After saving the server, select **Auto-fill from server** to start from the description the server reports about itself, or from its usage instructions when it has no description. Auto-fill connects as you, so for an OAuth-backed server you may be asked to connect your account first. Review and edit the text, then select **Save**: nothing is stored until you do.
-   - **Custom Headers**: Additional headers required by your MCP server (optional).
+   - **Description**: What the integration is for, in up to 500 characters (optional). Agents use it to offer the server to users who haven't connected it yet. Once the server is saved, select **Auto-fill from server** to start from the description the server reports about itself, or from its usage instructions when it has no description. Auto-fill connects as you with the saved settings, so for an OAuth-backed server you may be asked to connect your account first. Review and edit the text, then save.
+   - **Headers**: Additional headers required by your MCP server (optional).
    - **Service Account Authentication**: Static headers used in place of per-user OAuth by agents with **Use service accounts for authentication** enabled (optional). See [Service account authentication](#service-account-authentication).
-   - **Server Name**: Descriptive name for the server (auto-generated if not provided).
+   - **OAuth client ID** and **OAuth client secret**: Only needed when the server does not support dynamic client registration.
 
-3. Select **Save** to add the server.
+3. Select **Save and connect** to save the server, connect to it, and review its tools, or **Skip connecting** and then **Save without connecting** to save it without reviewing its tools. The page's **Save** button does not add the server.
+
+To change a server later, select it in the **Remote MCP servers** list.
 
 ### Plugin-registered MCP servers
 

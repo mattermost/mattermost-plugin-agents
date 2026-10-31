@@ -271,6 +271,15 @@ type MCPToolInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	InputSchema any    `json:"inputSchema"`
+	// ReadOnlyHint is the server's readOnlyHint annotation for the tool.
+	ReadOnlyHint bool `json:"readOnlyHint"`
+	// DefaultPolicy is the policy the tool runs with while it has no stored
+	// policy (mcp.EffectiveDefaultToolPolicy).
+	DefaultPolicy string `json:"defaultPolicy"`
+	// SuggestedPolicy is the policy the System Console pre-selects when an
+	// admin reviews the tool (mcp.SuggestedToolPolicy). It has no effect
+	// until the admin saves it.
+	SuggestedPolicy string `json:"suggestedPolicy"`
 }
 
 // MCPServerInfo represents a server and its tools for API response
@@ -468,14 +477,19 @@ func applyMCPDiscoveryResult(info *MCPServerInfo, tools []MCPToolInfo, err error
 	info.Error = new(err.Error())
 }
 
-// toMCPToolInfos converts discovered mcp tool metadata to the API response shape.
-func toMCPToolInfos(toolInfos []mcp.ToolInfo) []MCPToolInfo {
+// toMCPToolInfos converts tool metadata discovered on the server at
+// serverOrigin to the API response shape.
+func (a *API) toMCPToolInfos(serverOrigin string, toolInfos []mcp.ToolInfo) []MCPToolInfo {
+	policiesLicensed := a.licenseChecker.Allows(enterprise.CapToolApprovalPolicies)
 	tools := make([]MCPToolInfo, 0, len(toolInfos))
 	for _, toolInfo := range toolInfos {
 		tools = append(tools, MCPToolInfo{
-			Name:        toolInfo.Name,
-			Description: toolInfo.Description,
-			InputSchema: toolInfo.InputSchema,
+			Name:            toolInfo.Name,
+			Description:     toolInfo.Description,
+			InputSchema:     toolInfo.InputSchema,
+			ReadOnlyHint:    toolInfo.ReadOnlyHint,
+			DefaultPolicy:   mcp.EffectiveDefaultToolPolicy(serverOrigin, toolInfo.Name, policiesLicensed),
+			SuggestedPolicy: mcp.SuggestedToolPolicy(serverOrigin, toolInfo.Name, toolInfo.ReadOnlyHint, policiesLicensed),
 		})
 	}
 	return tools
@@ -527,6 +541,59 @@ func (a *API) handleGetMCPSuggestedDescription(c *gin.Context) {
 	c.JSON(http.StatusOK, MCPSuggestedDescriptionResponse{Description: suggestion.Text, Source: suggestion.Source})
 }
 
+// handleGetMCPServerTools lists one saved remote MCP server's tools as the
+// requesting admin, for the System Console flow that connects a new server
+// and has the admin review its tools. A server that needs the admin to sign
+// in reports needsOAuth with the URL that starts the flow. It is read-only,
+// so it is not audited.
+func (a *API) handleGetMCPServerTools(c *gin.Context) {
+	if !a.requireCapability(c, enterprise.CapRemoteMCP) {
+		return
+	}
+
+	mcpConfig := a.config.MCP()
+	index := slices.IndexFunc(mcpConfig.Servers, func(server mcp.ServerConfig) bool {
+		return server.ID == c.Param("serverid")
+	})
+	if index < 0 {
+		c.AbortWithError(http.StatusNotFound, errors.New("MCP server not found"))
+		return
+	}
+	serverConfig := mcpConfig.Servers[index]
+
+	info := MCPServerInfo{
+		Name:       serverConfig.Name,
+		URL:        serverConfig.BaseURL,
+		Tools:      []MCPToolInfo{},
+		ServerType: "remote",
+		Enabled:    serverConfig.Enabled,
+		ID:         serverConfig.ID,
+	}
+	if !serverConfig.Enabled {
+		info.Error = new("The MCP server is disabled.")
+		c.JSON(http.StatusOK, info)
+		return
+	}
+	for _, conflict := range mcpConfig.ServerConflicts() {
+		if conflict.Index == index {
+			info.Error = new(conflict.Error())
+			c.JSON(http.StatusOK, info)
+			return
+		}
+	}
+
+	tools, err := a.discoverRemoteServerTools(c.Request.Context(), c.GetHeader("Mattermost-User-Id"), serverConfig)
+	if err != nil {
+		if _, needsOAuth := errors.AsType[*mcp.OAuthNeededError](err); !needsOAuth {
+			// Connection errors can carry server-supplied text; it stays in the log.
+			a.pluginAPI.Log.Warn("Failed to list MCP server tools", "server", serverConfig.Name, "error", err)
+			err = errors.New("could not connect to the MCP server or list its tools; the server log has details")
+		}
+	}
+	applyMCPDiscoveryResult(&info, tools, err)
+	c.JSON(http.StatusOK, info)
+}
+
 // discoverRemoteServerTools connects to a single remote MCP server and discovers its tools
 func (a *API) discoverRemoteServerTools(ctx context.Context, userID string, serverConfig mcp.ServerConfig) ([]MCPToolInfo, error) {
 	toolInfos, err := mcp.DiscoverRemoteServerTools(ctx, userID, serverConfig, a.pluginAPI.Log, a.mcpClientManager.GetOAuthManager(), a.mcpClientManager.GetHTTPClient(), a.mcpClientManager.GetToolsCache())
@@ -534,7 +601,7 @@ func (a *API) discoverRemoteServerTools(ctx context.Context, userID string, serv
 		return nil, err
 	}
 
-	return toMCPToolInfos(toolInfos), nil
+	return a.toMCPToolInfos(serverConfig.BaseURL, toolInfos), nil
 }
 
 // discoverEmbeddedServerTools connects to the embedded MCP server and discovers its tools
@@ -546,7 +613,7 @@ func (a *API) discoverEmbeddedServerTools(ctx context.Context, requestingAdminID
 		return nil, err
 	}
 
-	return toMCPToolInfos(toolInfos), nil
+	return a.toMCPToolInfos(mcp.EmbeddedClientKey, toolInfos), nil
 }
 
 // ClearMCPToolsCacheResponse represents the response for clearing the cache
@@ -589,7 +656,7 @@ func (a *API) discoverPluginServerTools(ctx context.Context, userID string, cfg 
 		return nil, err
 	}
 
-	return toMCPToolInfos(toolInfos), nil
+	return a.toMCPToolInfos(config.PluginServerOrigin(cfg.PluginID), toolInfos), nil
 }
 
 // UpdatePluginServerRequest is the body shape for PUT /admin/mcp/plugin-servers/:pluginID.

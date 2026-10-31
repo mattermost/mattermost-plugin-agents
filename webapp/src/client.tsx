@@ -55,7 +55,7 @@ export type UserMCPToolsResponse = {
 // avoid client.tsx depending on UI components.
 type MCPToolConfig = {
     name: string;
-    policy: MCPToolPolicy;
+    policy: MCPToolPolicy | ''; // '' keeps the tool's default policy
     enabled: boolean;
 };
 
@@ -716,6 +716,24 @@ export async function checkIndexHealth() {
 
 export async function getMCPTools() {
     const url = `${baseRoute()}/admin/mcp/tools`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+// getMCPServerTools lists one saved remote MCP server's tools as the admin.
+export async function getMCPServerTools(serverID: string) {
+    const url = `${baseRoute()}/admin/mcp/${encodeURIComponent(serverID)}/tools`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));

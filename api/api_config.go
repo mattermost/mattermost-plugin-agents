@@ -4,9 +4,12 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
@@ -162,6 +165,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	// abort with 409. Empty list-item IDs represent creates and receive fresh
 	// IDs; they never reclaim an existing identity by name or origin.
 	var changedKeys []string
+	var prevServers []config.MCPServerConfig
 	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
 		next := config.ReconcileAgentReferences(prev, cfg)
 		next, _ = next.MigrateAgentReferences(resolvedAgentNames)
@@ -172,6 +176,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		if prev != nil {
 			prevMCP = prev.MCP
 		}
+		prevServers = append([]config.MCPServerConfig(nil), prevMCP.Servers...)
 		reconciledMCP, reconcileErr := config.ReconcileMCPConfigIDs(next.MCP, prevMCP)
 		if reconcileErr != nil {
 			return config.Config{}, reconcileErr
@@ -213,6 +218,13 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		}
 	}
 
+	// Remove saved sign-ins the change orphaned or that were issued for a
+	// server's old origin. Grants are only used by the server they were
+	// issued for (its origin and configuration ID; see
+	// mcp.OAuthManager.loadGrantForServer), so this removes what the change
+	// made unusable rather than guarding against misuse.
+	a.clearMCPServerOAuthState(c, prevServers, saved.MCP.Servers)
+
 	// Update in-memory config on this node
 	a.configUpdater.Update(&saved)
 
@@ -224,6 +236,52 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 
 	c.JSON(http.StatusOK, saved)
 }
+
+// clearMCPServerOAuthState deletes users' stored OAuth state for remote MCP
+// servers that a configuration change deleted, renamed, moved to another
+// origin, or added under a name an earlier server used (see
+// mcp.OAuthStateToClear). The audit record carries the IDs of those servers.
+//
+// The configuration is already saved, so the sweep is not tied to the request:
+// an admin closing the page must not stop it halfway. A failure is logged and
+// marked in the audit record. It leaves unusable grants behind rather than
+// letting one reach another server: a grant is only used by a server with the
+// origin and configuration ID it was issued for. The exception is a grant
+// saved before grants recorded a configuration ID: it is bound to the ID of
+// whichever server holds its name when it is first used, so deleting a server
+// and adding another under the same name at the same origin relies on this
+// sweep to remove such grants.
+func (a *API) clearMCPServerOAuthState(c *gin.Context, prev, next []config.MCPServerConfig) {
+	clears := mcp.OAuthStateToClear(prev, next)
+	if len(clears) == 0 {
+		return
+	}
+	names := make([]string, 0, len(clears))
+	serverIDs := make([]string, 0, len(clears))
+	for _, entry := range clears {
+		names = append(names, entry.Name)
+		if entry.ServerID != "" && !slices.Contains(serverIDs, entry.ServerID) {
+			serverIDs = append(serverIDs, entry.ServerID)
+		}
+	}
+	audit.AddParam(auditRec(c), audit.KeyMCPSignInsClearedServerIDs, audit.TruncateIDs(serverIDs))
+
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), mcpSignInClearTimeout)
+	defer cancel()
+	deleted, err := mcp.ClearServerOAuthState(ctx, &a.pluginAPI.KV, names)
+	if err != nil {
+		a.pluginAPI.Log.Warn("Failed to remove saved MCP sign-ins after a configuration change; they can no longer be used with the changed servers", "server_ids", serverIDs, "deleted", deleted, "error", err)
+		audit.AddParam(auditRec(c), audit.KeyMCPSignInsClearFailed, true)
+		return
+	}
+	if deleted > 0 {
+		a.pluginAPI.Log.Info("Removed saved MCP sign-ins after a configuration change", "server_ids", serverIDs, "deleted", deleted)
+	}
+}
+
+// mcpSignInClearTimeout bounds the sweep of saved MCP sign-ins after a
+// configuration change. It is a variable only so tests can shorten it.
+var mcpSignInClearTimeout = 2 * time.Minute
 
 // vettedDefaultToolPolicy returns the vetted default policy the System Console
 // seeds for a tool on a server, so seeded defaults are not treated as an
