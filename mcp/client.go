@@ -20,7 +20,6 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -692,7 +691,9 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 	return c.CallToolWithMetadata(ctx, toolName, args, nil)
 }
 
-// CallToolWithMetadata calls a tool on this MCP server with optional metadata
+// CallToolWithMetadata calls a tool on this MCP server with optional metadata.
+// Every tool call, whether auto-run or run after approval, passes through here,
+// so a failure is recorded once on the span and in the log.
 func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args map[string]any, metadata map[string]any) (string, error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "mcp call tool",
 		trace.WithAttributes(
@@ -702,11 +703,16 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 	)
 	defer span.End()
 
+	text, err := c.callTool(ctx, toolName, args, metadata)
+	if err != nil {
+		c.recordToolCallFailure(span, toolName, err)
+	}
+	return text, err
+}
+
+func (c *Client) callTool(ctx context.Context, toolName string, args map[string]any, metadata map[string]any) (string, error) {
 	if c.session == nil {
-		err := fmt.Errorf("MCP client not connected")
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return "", err
+		return "", &classifiedError{class: toolFailureNotConnected, msg: "MCP client not connected"}
 	}
 
 	// Call the tool using new SDK
@@ -776,14 +782,14 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 	if result.IsError {
 		trimmed := strings.TrimSpace(text)
 		if trimmed == "" {
-			return "", fmt.Errorf("tool %s on server %s returned an error", toolName, c.config.Name)
+			return "", &classifiedError{class: toolFailureReturnedError, msg: fmt.Sprintf("tool %s on server %s returned an error", toolName, c.config.Name)}
 		}
-		return trimmed, errors.New(trimmed)
+		return trimmed, &classifiedError{class: toolFailureReturnedError, msg: trimmed}
 	}
 
 	if text != "" {
 		return text, nil
 	}
 
-	return "", fmt.Errorf("no text content found in response from tool %s on server %s", toolName, c.config.Name)
+	return "", &classifiedError{class: toolFailureEmptyResult, msg: fmt.Sprintf("no text content found in response from tool %s on server %s", toolName, c.config.Name)}
 }

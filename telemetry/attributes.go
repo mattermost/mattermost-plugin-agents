@@ -93,6 +93,12 @@ const (
 var (
 	MCPServer = attribute.Key("agents.mcp.server")
 	MCPTool   = attribute.Key("agents.mcp.tool")
+
+	// MCPErrorClass and MCPErrorCode classify a failed tool call. The class is
+	// from a fixed vocabulary and the code is an HTTP status or JSON-RPC code;
+	// neither carries error text, arguments, or result content.
+	MCPErrorClass = attribute.Key("agents.mcp.error_class")
+	MCPErrorCode  = attribute.Key("agents.mcp.error_code")
 )
 
 // Attribute keys for web search operations

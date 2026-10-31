@@ -580,6 +580,7 @@ func TestUserClientsGetToolsResolverUsesResolverContext(t *testing.T) {
 			"jira": {
 				session: session,
 				config:  ServerConfig{Name: "Jira", BaseURL: "https://mcp.atlassian.com", Enabled: true},
+				log:     newTestLogService(),
 				tools: map[string]*gomcp.Tool{
 					"search": {
 						Name:        "search",
