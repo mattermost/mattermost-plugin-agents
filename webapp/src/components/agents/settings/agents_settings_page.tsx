@@ -18,9 +18,13 @@ import NoServicesPage from '@/components/system_console/no_services_page';
 import {SettingsReadOnlyContext} from '@/components/system_console/settings_read_only';
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
 
+import {SETTINGS_PATH, useNavigationGuard} from '../use_agents_route';
+
 import {DEFAULT_SETTINGS_SECTION, SETTINGS_SECTIONS, SettingsSection} from './sections';
 import SettingsSectionContent, {BetaMessage, RuntimeBotOption, defaultConfig} from './settings_sections';
 import {useSettingsAccess} from './use_settings_access';
+
+const isSettingsPath = (pathname: string) => pathname === SETTINGS_PATH || pathname.startsWith(`${SETTINGS_PATH}/`);
 
 type Props = {
     section?: SettingsSection;
@@ -99,6 +103,10 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
             current = false;
         };
     }, [canView, loading, loadError, intl]);
+
+    // Leaving the settings within the webapp drops unsaved changes; switching
+    // sections keeps them.
+    useNavigationGuard(dirty, isSettingsPath, intl.formatMessage({defaultMessage: 'You have unsaved changes to the Agents settings. Leave without saving?'}));
 
     // Leaving the page for another site or a reload drops unsaved changes.
     useEffect(() => {
@@ -221,8 +229,10 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
         );
     }
 
+    // Editors are read-only while a save is pending: its response replaces the
+    // local configuration, so an edit made meanwhile would be lost.
     return (
-        <SettingsReadOnlyContext.Provider value={readOnly}>
+        <SettingsReadOnlyContext.Provider value={readOnly || saving}>
             <PageContainer>
                 <PageHeader>
                     <PageTitle>
