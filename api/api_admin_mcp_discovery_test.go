@@ -370,6 +370,36 @@ func TestHandleGetMCPToolsKeepsPartialPluginFailuresPerServer(t *testing.T) {
 	require.Empty(t, brokenRow.Tools)
 }
 
+func TestHandleGetMCPToolsReadOnlyConflictErrorsCarryNoURLCredentials(t *testing.T) {
+	api, mockAPI, _ := setupAdminTestEnvironment(t)
+	mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(false).Maybe()
+	allowAnyPluginAPILogging(mockAPI)
+	api.config.(*testConfigImpl).settingsAccess = config.SettingsAccess{ReadOnlyUserIDs: []string{"admin-user"}}
+
+	// Two stored entries on the same endpoint, saved before duplicates were rejected.
+	endpoint := "https://mcpuser:sentinel-conflict-password@mcp.example.com/mcp?token=sentinel-conflict-token"
+	api.config.(*testConfigImpl).mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{
+			{Name: "First", BaseURL: endpoint, Enabled: true},
+			{Name: "Second", BaseURL: endpoint, Enabled: true},
+		},
+	}
+
+	response := getAdminMCPTools(t, api)
+	conflicted := 0
+	for _, row := range response.Servers {
+		if row.Error == nil {
+			continue
+		}
+		conflicted++
+		require.Contains(t, *row.Error, "mcp.example.com", "the message still names the endpoint")
+		require.NotContains(t, *row.Error, "sentinel-conflict-password")
+		require.NotContains(t, *row.Error, "sentinel-conflict-token")
+	}
+	require.Positive(t, conflicted, "the duplicate endpoint is reported")
+}
+
 func TestHandleGetMCPToolsReadOnlyViewersDoNotReachRemoteServers(t *testing.T) {
 	const secretQuery = "token=sentinel-mcp-url-token"
 
