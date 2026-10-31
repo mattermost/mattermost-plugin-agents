@@ -19,7 +19,10 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -99,7 +102,16 @@ func setupTestRouter(store ConfigStore, updater ConfigUpdater, notifier ClusterN
 		configUpdater:   updater,
 		clusterNotifier: notifier,
 		licenseChecker:  enterprisetest.CheckerAt(enterprise.LevelEnterpriseAdvanced),
+		pluginAPI:       emptyKVPluginClient(),
 	})
+}
+
+// emptyKVPluginClient is a plugin API client whose KV store holds no keys, for
+// config saves that look for saved MCP sign-ins to remove.
+func emptyKVPluginClient() *pluginapi.Client {
+	mockAPI := &plugintest.API{}
+	mockAPI.On("KVList", mock.Anything, mock.Anything).Return([]string{}, nil).Maybe()
+	return pluginapi.NewClient(mockAPI, nil)
 }
 
 func setupConfigTestRouter(a *API) *gin.Engine {

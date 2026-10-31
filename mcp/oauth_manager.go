@@ -534,6 +534,18 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 		return nil, fmt.Errorf("user ID mismatch: expected %s, got %s", session.UserID, loggedInUserID)
 	}
 
+	// A sign-in started before the server was renamed, deleted, or moved to
+	// another origin must not store a grant under its name: the grant would
+	// be sent to whatever server holds that name now.
+	var serverCfg ServerConfig
+	if m.serverConfigLookup != nil {
+		cfg, ok := m.serverConfigLookup(session.ServerID)
+		if !ok || !sameServerOrigin(cfg.BaseURL, session.ServerURL) {
+			return nil, fmt.Errorf("the MCP server's configuration changed during sign-in; please sign in again")
+		}
+		serverCfg = cfg
+	}
+
 	// Sessions created before the binding fields existed cannot be verified
 	// against the discovery outcome they were initiated with; re-running
 	// discovery here would let a server that swapped its metadata mid-flow
@@ -561,12 +573,7 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 	// never needs to be persisted in the KV store session.
 	var staticCreds *StaticOAuthCredentials
 	if session.StaticClientID != "" && m.serverConfigLookup != nil {
-		if cfg, ok := m.serverConfigLookup(session.ServerID); ok {
-			staticCreds = staticOAuthCreds(cfg)
-		} else {
-			m.pluginAPI.LogWarn("Static OAuth credentials were expected but server config not found",
-				"serverID", session.ServerID)
-		}
+		staticCreds = staticOAuthCreds(serverCfg)
 	}
 
 	// Exchange the code against exactly the endpoints and client the session
