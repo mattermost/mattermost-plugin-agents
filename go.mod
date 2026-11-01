@@ -147,7 +147,7 @@ require (
 	github.com/mattermost/go-i18n v1.11.1-0.20211013152124-5c415071e404 // indirect
 	github.com/mattermost/gosaml2 v0.10.0 // indirect
 	github.com/mattermost/ldap v3.0.4+incompatible // indirect
-	github.com/mattermost/logr/v2 v2.0.22 // indirect
+	github.com/mattermost/logr/v2 v2.0.25 // indirect
 	github.com/mattermost/xml-roundtrip-validator v0.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.16 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
@@ -246,7 +246,7 @@ replace github.com/antchfx/xpath => github.com/antchfx/xpath v1.3.8
 // cursor/scoped-sessions-enforcement-88d9) for CreateScopedSession and
 // model.SessionScope. Remove it and require a released server/public once that
 // PR merges.
-replace github.com/mattermost/mattermost/server/public => github.com/mattermost/mattermost/server/public v0.6.1-0.20261026165017-4a0c2b86aeb7
+replace github.com/mattermost/mattermost/server/public => github.com/mattermost/mattermost/server/public v0.6.1-0.20261101071008-e639400063e3
 
 // TEMPORARY, with the server/public replace above: that server/public needs
 // testcontainers-go v0.44, which github.com/mattermost/testcontainers-mattermost-go
