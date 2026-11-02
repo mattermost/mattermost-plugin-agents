@@ -116,6 +116,13 @@ const defaultConfig: Config = {
     allowUnsafeLinks: false,
     allowedLinkDomains: '',
     enableHTMLArtifacts: false,
+    enableChannelArtifacts: false,
+    channelArtifactsMaxPerChannel: 50,
+    channelArtifactsMaxSitewide: 0,
+    channelArtifactVersionsToKeep: 20,
+    disableChannelArtifactDownload: false,
+    disableChannelArtifactRendering: false,
+    disableHumanChannelArtifacts: false,
     enableChannelMentionToolCalling: false,
     enableAmbientAutoReply: false,
     allowNativeWebSearchInChannels: false,
@@ -436,6 +443,77 @@ const Config = (props: Props) => {
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, HTML files that agents attach to their replies are rendered as sandboxed interactive artifacts that run only when a viewer clicks Run. Artifacts have no access to the user\'s Mattermost session, and they read the viewer\'s basic profile only after the viewer explicitly allows it. Network access is blocked, fully only in Chromium 152 or later; in other browsers an artifact can still send its content, any profile data the viewer allowed, and anything the viewer types into it to external sites via WebRTC. An artifact can also place content on the clipboard that differs from what it displays, so treat anything copied from an artifact as untrusted. The Site URL must match the address users open Mattermost at, or artifacts fail to load. Enable only where these risks are acceptable.'})}
                     />
+                    <BooleanItem
+                        label={
+                            <Horizontal>
+                                <FormattedMessage defaultMessage='Enable channel artifacts'/>
+                                <Tag
+                                    type='info'
+                                    label={<FormattedMessage defaultMessage='EXPERIMENTAL'/>}
+                                />
+                            </Horizontal>
+                        }
+                        value={Boolean(value.enableChannelArtifacts)}
+                        onChange={(to) => {
+                            updateConfig({enableChannelArtifacts: to});
+                        }}
+                        helpText={intl.formatMessage({defaultMessage: 'When enabled (and HTML artifacts are enabled), channel admins can save HTML artifacts to a long-lived per-channel library. Members can open them from the Channel artifacts panel. Saved copies survive deletion of the original message. Replacing content keeps prior versions until the versions-to-keep limit prunes them.'})}
+                    />
+                    {Boolean(value.enableChannelArtifacts) && (
+                        <>
+                            <TextItem
+                                label={intl.formatMessage({defaultMessage: 'Max artifacts per channel'})}
+                                type='number'
+                                min='1'
+                                value={String(value.channelArtifactsMaxPerChannel ?? 50)}
+                                onChange={(e) => {
+                                    const parsed = parseInt(e.target.value, 10);
+                                    updateConfig({channelArtifactsMaxPerChannel: Number.isNaN(parsed) || parsed < 1 ? 50 : parsed});
+                                }}
+                                helptext={intl.formatMessage({defaultMessage: 'Maximum number of saved artifacts in one channel. Default is 50.'})}
+                            />
+                            <TextItem
+                                label={intl.formatMessage({defaultMessage: 'Max artifacts sitewide'})}
+                                type='number'
+                                min='0'
+                                value={String(value.channelArtifactsMaxSitewide ?? 0)}
+                                onChange={(e) => {
+                                    const parsed = parseInt(e.target.value, 10);
+                                    updateConfig({channelArtifactsMaxSitewide: Number.isNaN(parsed) || parsed < 0 ? 0 : parsed});
+                                }}
+                                helptext={intl.formatMessage({defaultMessage: 'Optional sitewide cap across all channels. 0 means unlimited.'})}
+                            />
+                            <TextItem
+                                label={intl.formatMessage({defaultMessage: 'Versions to keep per artifact'})}
+                                type='number'
+                                min='0'
+                                value={String(value.channelArtifactVersionsToKeep ?? 20)}
+                                onChange={(e) => {
+                                    const parsed = parseInt(e.target.value, 10);
+                                    updateConfig({channelArtifactVersionsToKeep: Number.isNaN(parsed) || parsed < 0 ? 0 : parsed});
+                                }}
+                                helptext={intl.formatMessage({defaultMessage: 'How many content versions to retain when an artifact is replaced. 0 keeps every version. Older versions are pruned after each replace.'})}
+                            />
+                            <BooleanItem
+                                label={<FormattedMessage defaultMessage='Disable channel artifact download'/>}
+                                value={Boolean(value.disableChannelArtifactDownload)}
+                                onChange={(to) => updateConfig({disableChannelArtifactDownload: to})}
+                                helpText={intl.formatMessage({defaultMessage: 'When enabled, users cannot download saved channel artifacts. Rendering can still work unless rendering is also disabled.'})}
+                            />
+                            <BooleanItem
+                                label={<FormattedMessage defaultMessage='Disable channel artifact rendering'/>}
+                                value={Boolean(value.disableChannelArtifactRendering)}
+                                onChange={(to) => updateConfig({disableChannelArtifactRendering: to})}
+                                helpText={intl.formatMessage({defaultMessage: 'When enabled, iframe rendering of saved channel artifacts is blocked. Download can still work unless download is also disabled.'})}
+                            />
+                            <BooleanItem
+                                label={<FormattedMessage defaultMessage='Disable saving human-authored artifacts'/>}
+                                value={Boolean(value.disableHumanChannelArtifacts)}
+                                onChange={(to) => updateConfig({disableHumanChannelArtifacts: to})}
+                                helpText={intl.formatMessage({defaultMessage: 'When enabled, only bot-authored HTML posts can be saved to the channel library. When disabled (default), human-authored HTML attachments can also be saved.'})}
+                            />
+                        </>
+                    )}
                     <BooleanItem
                         label={
                             <Horizontal>

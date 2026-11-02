@@ -20,6 +20,8 @@ import (
 const (
 	SemanticSearchCallbackPath = "/search/raw"
 	FileContentCallbackPath    = "/files/content"
+	ChannelArtifactsListPath   = "/channel-artifacts/mcp/list"
+	ChannelArtifactsGetPath    = "/channel-artifacts/mcp/get"
 )
 
 // postPluginJSON marshals reqBody to JSON and POSTs it to a plugin callback

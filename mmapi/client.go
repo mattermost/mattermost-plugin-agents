@@ -52,6 +52,8 @@ type Client interface {
 	KVCompareAndSet(key string, oldValue, newValue any) (bool, error)
 	KVCompareAndSetWithExpiry(key string, oldValue, newValue any, ttl time.Duration) (bool, error)
 	KVDelete(key string) error
+	// KVList pages plugin KV keys (Mattermost KV.ListKeys semantics).
+	KVList(page, perPage int) ([]string, error)
 	GetUserByUsername(username string) (*model.User, error)
 	GetUserStatus(userID string) (*model.Status, error)
 	HasPermissionTo(userID string, permission *model.Permission) bool
@@ -166,6 +168,10 @@ func (m *client) KVCompareAndSetWithExpiry(key string, oldValue, newValue any, t
 
 func (m *client) KVDelete(key string) error {
 	return m.pluginAPI.KV.Delete(key)
+}
+
+func (m *client) KVList(page, perPage int) ([]string, error) {
+	return m.pluginAPI.KV.ListKeys(page, perPage)
 }
 
 func (m *client) GetUserByUsername(username string) (*model.User, error) {

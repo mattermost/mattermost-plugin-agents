@@ -188,7 +188,7 @@ func (suite *TestSuite) createMCPServerWithConfig(devMode bool, fileContentServi
 		DevMode:             devMode,
 		PersonalAccessToken: suite.adminToken,
 	}
-	mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, fileContentService)
+	mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, fileContentService, nil)
 	require.NoError(suite.t, err, "Failed to create MCP server")
 
 	suite.mcpServer = mcpServer

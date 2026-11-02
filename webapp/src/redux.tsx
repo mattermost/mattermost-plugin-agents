@@ -30,6 +30,9 @@ export async function setupRedux(registry: any, store: WebappStore) {
         aiThreads,
         linkPolicy,
         htmlArtifactsEnabled,
+        channelArtifactsEnabled,
+        channelArtifactDownloadEnabled,
+        channelArtifactRenderingEnabled,
         customPrompts,
         pinnedPromptIds,
         showCustomPromptsModal,
@@ -94,6 +97,33 @@ function htmlArtifactsEnabled(state = false, action: any) {
     switch (action.type) {
     case 'SET_HTML_ARTIFACTS_ENABLED':
         return action.htmlArtifactsEnabled;
+    default:
+        return state;
+    }
+}
+
+function channelArtifactsEnabled(state = false, action: any) {
+    switch (action.type) {
+    case 'SET_CHANNEL_ARTIFACTS_ENABLED':
+        return action.channelArtifactsEnabled;
+    default:
+        return state;
+    }
+}
+
+function channelArtifactDownloadEnabled(state = true, action: any) {
+    switch (action.type) {
+    case 'SET_CHANNEL_ARTIFACTS_ENABLED':
+        return action.channelArtifactDownloadEnabled !== false;
+    default:
+        return state;
+    }
+}
+
+function channelArtifactRenderingEnabled(state = true, action: any) {
+    switch (action.type) {
+    case 'SET_CHANNEL_ARTIFACTS_ENABLED':
+        return action.channelArtifactRenderingEnabled !== false;
     default:
         return state;
     }

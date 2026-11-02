@@ -1284,6 +1284,59 @@ func (_mock *MockClient) KVDelete(key string) error {
 	return r0
 }
 
+// KVList provides a mock function for the type MockClient
+func (_mock *MockClient) KVList(page int, perPage int) ([]string, error) {
+	ret := _mock.Called(page, perPage)
+
+	if len(ret) == 0 {
+		panic("no return value specified for KVList")
+	}
+
+	var r0 []string
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(int, int) ([]string, error)); ok {
+		return returnFunc(page, perPage)
+	}
+	if returnFunc, ok := ret.Get(0).(func(int, int) []string); ok {
+		r0 = returnFunc(page, perPage)
+	} else if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]string)
+	}
+	if returnFunc, ok := ret.Get(1).(func(int, int) error); ok {
+		r1 = returnFunc(page, perPage)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockClient_KVList_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'KVList'
+type MockClient_KVList_Call struct {
+	*mock.Call
+}
+
+// KVList is a helper method to define mock.On call
+func (_e *MockClient_Expecter) KVList(page interface{}, perPage interface{}) *MockClient_KVList_Call {
+	return &MockClient_KVList_Call{Call: _e.mock.On("KVList", page, perPage)}
+}
+
+func (_c *MockClient_KVList_Call) Run(run func(page int, perPage int)) *MockClient_KVList_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(int), args[1].(int))
+	})
+	return _c
+}
+
+func (_c *MockClient_KVList_Call) Return(keys []string, err error) *MockClient_KVList_Call {
+	_c.Call.Return(keys, err)
+	return _c
+}
+
+func (_c *MockClient_KVList_Call) RunAndReturn(run func(page int, perPage int) ([]string, error)) *MockClient_KVList_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // MockClient_KVDelete_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'KVDelete'
 type MockClient_KVDelete_Call struct {
 	*mock.Call

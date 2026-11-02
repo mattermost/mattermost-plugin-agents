@@ -71,15 +71,38 @@ export function baseRoute(): string {
     return `${Client4.url}/plugins/${manifest.id}`;
 }
 
+export type ArtifactKind = 'file' | 'library';
+
+export type ArtifactRef = {
+    kind: ArtifactKind;
+    id: string;
+};
+
 // Path of the sandboxed HTML artifact document served by the plugin, without
 // the per-load nonce the server requires.
 export function artifactPath(fileId: string): string {
-    return `${baseRoute()}/artifacts/${encodeURIComponent(fileId)}`;
+    return artifactPathFor({kind: 'file', id: fileId});
+}
+
+export function artifactPathFor(ref: ArtifactRef): string {
+    if (ref.kind === 'library') {
+        return `${baseRoute()}/channel-artifacts/${encodeURIComponent(ref.id)}`;
+    }
+    return `${baseRoute()}/artifacts/${encodeURIComponent(ref.id)}`;
 }
 
 // URL of the artifact document for one host load of its frame.
 export function artifactURL(fileId: string, nonce: string): string {
-    return `${artifactPath(fileId)}?n=${encodeURIComponent(nonce)}`;
+    return artifactURLFor({kind: 'file', id: fileId}, nonce);
+}
+
+export function artifactURLFor(ref: ArtifactRef, nonce: string, version?: number): string {
+    const params = new URLSearchParams();
+    params.set('n', nonce);
+    if (version && version > 0) {
+        params.set('version', String(version));
+    }
+    return `${artifactPathFor(ref)}?${params.toString()}`;
 }
 
 export interface ArtifactTokenInfo {
@@ -93,7 +116,11 @@ export interface ArtifactTokenInfo {
 // bridge script to this page. The token is only valid for the frame load
 // that uses the same nonce.
 export async function getArtifactToken(fileId: string, nonce: string): Promise<ArtifactTokenInfo> {
-    const url = `${artifactPath(fileId)}/token?n=${encodeURIComponent(nonce)}`;
+    return getArtifactTokenFor({kind: 'file', id: fileId}, nonce);
+}
+
+export async function getArtifactTokenFor(ref: ArtifactRef, nonce: string): Promise<ArtifactTokenInfo> {
+    const url = `${artifactPathFor(ref)}/token?n=${encodeURIComponent(nonce)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
@@ -111,6 +138,169 @@ export async function getArtifactToken(fileId: string, nonce: string): Promise<A
         status_code: response.status,
         url,
     });
+}
+
+export type ChannelArtifactEntry = {
+    id: string;
+    channel_id: string;
+    team_id: string;
+    title: string;
+    description?: string;
+    source_post_id: string;
+    source_file_id: string;
+    source_file_name: string;
+    source_bot_user_id: string;
+    source_agent_display_name?: string;
+    source_root_post_id?: string;
+    created_by: string;
+    create_at: number;
+    update_at: number;
+    updated_by?: string;
+    size: number;
+    sha256: string;
+    version?: number;
+};
+
+export type ChannelArtifactList = {
+    entries: ChannelArtifactEntry[];
+    can_manage: boolean;
+    max_per_channel?: number;
+    download_enabled?: boolean;
+    render_enabled?: boolean;
+};
+
+export async function listChannelArtifacts(channelId: string): Promise<ChannelArtifactList> {
+    const url = `${baseRoute()}/channel-artifacts?channel_id=${encodeURIComponent(channelId)}`;
+    const response = await fetch(url, Client4.getOptions({method: 'GET'}));
+    if (response.ok) {
+        return response.json();
+    }
+    throw new ClientError(Client4.url, {message: '', status_code: response.status, url});
+}
+
+/** Team/system-admin catalog of every library entry on a team. */
+export async function listTeamChannelArtifacts(teamId: string): Promise<{entries: ChannelArtifactEntry[]}> {
+    const url = `${baseRoute()}/channel-artifacts/team?team_id=${encodeURIComponent(teamId)}`;
+    const response = await fetch(url, Client4.getOptions({method: 'GET'}));
+    if (response.ok) {
+        return response.json();
+    }
+    throw new ClientError(Client4.url, {message: '', status_code: response.status, url});
+}
+
+export async function createChannelArtifact(body: {
+    channel_id: string;
+    post_id: string;
+    file_id: string;
+    title: string;
+    description?: string;
+    replace_id?: string;
+}): Promise<ChannelArtifactEntry> {
+    const url = `${baseRoute()}/channel-artifacts`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify(body),
+    }));
+    if (response.ok) {
+        return response.json();
+    }
+    if (response.status === 409) {
+        const data: unknown = await response.json().catch(() => null);
+        const artifactId = (data as {artifact_id?: string} | null)?.artifact_id;
+        throw new ClientError(Client4.url, {
+            message: artifactId ? `duplicate:${artifactId}` : 'duplicate',
+            status_code: response.status,
+            url,
+        });
+    }
+    throw new ClientError(Client4.url, {message: '', status_code: response.status, url});
+}
+
+export async function patchChannelArtifact(id: string, body: {title?: string; description?: string}): Promise<ChannelArtifactEntry> {
+    const url = `${baseRoute()}/channel-artifacts/${encodeURIComponent(id)}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PATCH',
+        body: JSON.stringify(body),
+    }));
+    if (response.ok) {
+        return response.json();
+    }
+    throw new ClientError(Client4.url, {message: '', status_code: response.status, url});
+}
+
+export async function replaceChannelArtifactContent(id: string, body: {post_id: string; file_id: string}): Promise<ChannelArtifactEntry> {
+    const url = `${baseRoute()}/channel-artifacts/${encodeURIComponent(id)}/content`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify(body),
+    }));
+    if (response.ok) {
+        return response.json();
+    }
+    throw new ClientError(Client4.url, {message: '', status_code: response.status, url});
+}
+
+export async function deleteChannelArtifact(id: string, opts?: {purge?: boolean}): Promise<void> {
+    const qs = opts?.purge ? '?purge=true' : '';
+    const url = `${baseRoute()}/channel-artifacts/${encodeURIComponent(id)}${qs}`;
+    const response = await fetch(url, Client4.getOptions({method: 'DELETE'}));
+    if (response.ok || response.status === 204) {
+        return;
+    }
+    throw new ClientError(Client4.url, {message: '', status_code: response.status, url});
+}
+
+export function channelArtifactDownloadURL(id: string, version?: number): string {
+    const base = `${baseRoute()}/channel-artifacts/${encodeURIComponent(id)}/download`;
+    if (version && version > 0) {
+        return `${base}?version=${version}`;
+    }
+    return base;
+}
+
+export type ChannelArtifactVersionRecord = {
+    version: number;
+    sha256: string;
+    size: number;
+    chunk_count?: number;
+    source_post_id?: string;
+    source_file_id?: string;
+    source_file_name?: string;
+    source_bot_user_id?: string;
+    source_agent_display_name?: string;
+    source_root_post_id?: string;
+    title?: string;
+    description?: string;
+    updated_by?: string;
+    update_at: number;
+};
+
+/** Alias matching the backend VersionRecord JSON shape. */
+export type VersionRecord = ChannelArtifactVersionRecord;
+
+export type ChannelArtifactVersionsResponse = {
+    versions: ChannelArtifactVersionRecord[];
+};
+
+export async function listChannelArtifactVersions(id: string): Promise<ChannelArtifactVersionsResponse> {
+    const url = `${baseRoute()}/channel-artifacts/${encodeURIComponent(id)}/versions`;
+    const response = await fetch(url, Client4.getOptions({method: 'GET'}));
+    if (response.ok) {
+        return response.json();
+    }
+    throw new ClientError(Client4.url, {message: '', status_code: response.status, url});
+}
+
+export async function rollbackChannelArtifact(id: string, version: number): Promise<ChannelArtifactEntry> {
+    const url = `${baseRoute()}/channel-artifacts/${encodeURIComponent(id)}/rollback`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify({version}),
+    }));
+    if (response.ok) {
+        return response.json();
+    }
+    throw new ClientError(Client4.url, {message: '', status_code: response.status, url});
 }
 
 export function fileDownloadURL(fileId: string): string {

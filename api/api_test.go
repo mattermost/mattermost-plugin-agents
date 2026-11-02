@@ -68,15 +68,22 @@ type TestEnvironment struct {
 
 // testConfigImpl is a minimal implementation of Config for testing
 type testConfigImpl struct {
-	allowUnsafeLinks                bool
-	allowedLinkDomains              string
-	enableHTMLArtifacts             bool
-	enableChannelMentionToolCalling bool
-	enableAmbientAutoReply          bool
-	mcpConfig                       mcp.Config
-	services                        []llm.ServiceConfig
-	defaultBotUserID                string
-	defaultBotName                  string
+	allowUnsafeLinks                   bool
+	allowedLinkDomains                 string
+	enableHTMLArtifacts                bool
+	enableChannelArtifacts             bool
+	channelArtifactsMaxPerChannel      int
+	channelArtifactsMaxSitewide        int
+	channelArtifactVersionsToKeep      int
+	disableChannelArtifactDownload     bool
+	disableChannelArtifactRendering    bool
+	disableHumanChannelArtifacts       bool
+	enableChannelMentionToolCalling    bool
+	enableAmbientAutoReply             bool
+	mcpConfig                          mcp.Config
+	services                           []llm.ServiceConfig
+	defaultBotUserID                   string
+	defaultBotName                     string
 }
 
 func (tc *testConfigImpl) GetDefaultBotUserID() string {
@@ -101,6 +108,43 @@ func (tc *testConfigImpl) LinkPolicy() config.LinkPolicy {
 
 func (tc *testConfigImpl) EnableHTMLArtifacts() bool {
 	return tc.enableHTMLArtifacts
+}
+
+func (tc *testConfigImpl) EnableChannelArtifacts() bool {
+	return tc.enableHTMLArtifacts && tc.enableChannelArtifacts
+}
+
+func (tc *testConfigImpl) ChannelArtifactsMaxPerChannel() int {
+	if tc.channelArtifactsMaxPerChannel <= 0 {
+		return 50
+	}
+	return tc.channelArtifactsMaxPerChannel
+}
+
+func (tc *testConfigImpl) ChannelArtifactsMaxSitewide() int {
+	if tc.channelArtifactsMaxSitewide < 0 {
+		return 0
+	}
+	return tc.channelArtifactsMaxSitewide
+}
+
+func (tc *testConfigImpl) ChannelArtifactVersionsToKeep() int {
+	if tc.channelArtifactVersionsToKeep < 0 {
+		return 0
+	}
+	return tc.channelArtifactVersionsToKeep
+}
+
+func (tc *testConfigImpl) DisableChannelArtifactDownload() bool {
+	return tc.disableChannelArtifactDownload
+}
+
+func (tc *testConfigImpl) DisableChannelArtifactRendering() bool {
+	return tc.disableChannelArtifactRendering
+}
+
+func (tc *testConfigImpl) DisableHumanChannelArtifacts() bool {
+	return tc.disableHumanChannelArtifacts
 }
 
 func (tc *testConfigImpl) EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig {
