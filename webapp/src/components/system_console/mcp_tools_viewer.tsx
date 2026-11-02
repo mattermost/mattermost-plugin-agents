@@ -55,7 +55,10 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, toolsData, toolsError, onRef
     const [clearSuccess, setClearSuccess] = useState<string | null>(null);
     const seededRef = useRef(false);
 
+    // An explicit reload starts over: an earlier action's failure no longer
+    // describes what is shown.
     const refreshTools = async () => {
+        setError(null);
         setLoading(true);
         try {
             await onRefreshTools();
@@ -307,7 +310,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, toolsData, toolsError, onRef
                 {error && (
                     <SectionNotice
                         type='danger'
-                        title={<FormattedMessage defaultMessage='Failed to load MCP tools'/>}
+                        title={<FormattedMessage defaultMessage='MCP tools action failed'/>}
                         description={error}
                     />
                 )}

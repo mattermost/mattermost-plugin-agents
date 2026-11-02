@@ -435,6 +435,21 @@ describe('MCPToolsViewer — tools list owned by the MCP page', () => {
         expect(screen.queryByText('Needs OAuth')).toBeNull();
     });
 
+    test('a failed action notice clears when the admin reloads the tools', async () => {
+        mockGetMCPTools.mockResolvedValue(toolsList(false));
+        mockClearMCPToolsCache.mockRejectedValueOnce(new Error('cache unavailable'));
+        renderPage();
+        expect(await screen.findByText('1/1 tools enabled')).not.toBeNull();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Clear Cache'}));
+        expect(await screen.findByText('MCP tools action failed')).not.toBeNull();
+        expect(screen.getByText('cache unavailable')).not.toBeNull();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Refresh Tools'}));
+        await waitFor(() => expect(screen.queryByText('MCP tools action failed')).toBeNull());
+        expect(screen.getByText('1/1 tools enabled')).not.toBeNull();
+    });
+
     test('a failed load notice clears once a later load succeeds', async () => {
         mockGetMCPTools.mockRejectedValueOnce(new Error('backend unavailable'));
         mockGetMCPTools.mockResolvedValueOnce(toolsList(false));
