@@ -9,6 +9,7 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import {Button} from '@mattermost/compass-ui/components/button';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 import {Tag} from '@mattermost/compass-ui/components/tag';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {useIsLicensedFor} from '@/license';
 
@@ -186,6 +187,18 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
         },
     ].filter((group) => group.tools.length > 0) : [];
 
+    const markReviewedButton = (
+        <Button
+            emphasis='secondary'
+            size='small'
+            onClick={handleMarkReviewed}
+            disabled={!serverEnabled || !expanded}
+            aria-label={intl.formatMessage({defaultMessage: 'Mark tools on {serverName} as reviewed'}, {serverName: server.name})}
+        >
+            <FormattedMessage defaultMessage='Mark tools as reviewed'/>
+        </Button>
+    );
+
     return (
         <ServerRowContainer>
             <ServerRowHeader>
@@ -241,17 +254,15 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
                         </StyledChevron>
                     </ExpandChevron>
                 </ServerRowExpandButton>
-                {unreviewedCount > 0 && serverConfig && (
-                    <Button
-                        emphasis='secondary'
-                        size='small'
-                        onClick={handleMarkReviewed}
-                        disabled={!serverEnabled}
-                        aria-label={intl.formatMessage({defaultMessage: 'Mark tools on {serverName} as reviewed'}, {serverName: server.name})}
-                    >
-                        <FormattedMessage defaultMessage='Mark tools as reviewed'/>
-                    </Button>
-                )}
+                {unreviewedCount > 0 && serverConfig && (expanded ? markReviewedButton : (
+
+                    // Until the tool list is open the button only tells the
+                    // admin there is something to review: tools are marked
+                    // reviewed only after the admin has seen them.
+                    <WithTooltip title={intl.formatMessage({defaultMessage: 'Open the tool list to review its tools'})}>
+                        <InactiveButtonAnchor>{markReviewedButton}</InactiveButtonAnchor>
+                    </WithTooltip>
+                ))}
                 {serverConfig && !reviewing && (
                     <ToggleWrapper>
                         <ToggleSwitch
@@ -353,6 +364,16 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
 };
 
 // Styled components
+// Hovering a disabled button reaches no handler, so the tooltip anchors on
+// this wrapper instead.
+const InactiveButtonAnchor = styled.span`
+    display: inline-flex;
+
+    button {
+        pointer-events: none;
+    }
+`;
+
 const ServerRowContainer = styled.div`
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
     border-radius: var(--radius-s);

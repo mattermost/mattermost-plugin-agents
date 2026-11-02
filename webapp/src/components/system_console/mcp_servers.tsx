@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useId, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useId, useState} from 'react';
 import styled from 'styled-components';
 import {PlusIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
@@ -14,7 +14,6 @@ import {Divider} from '@mattermost/compass-ui/components/divider';
 import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 
-import {getMCPTools} from '../../client';
 import {useMCPConnectionEvents} from '../../hooks/use_mcp_connection_events';
 
 import manifest from '@/manifest';
@@ -28,12 +27,12 @@ import {BuiltInPluginServersSection} from './mcp_builtin_servers_section';
 import MCPRemoteServerList from './mcp_remote_server_list';
 import MCPServerWizard, {MCPServerWizardMode, PersistMCPServer} from './mcp_server_wizard';
 import MCPToolsViewer from './mcp_tools_viewer';
+import {useMCPToolsList} from './use_mcp_tools_list';
 import type {
     MCPConfig as BaseMCPConfig,
     MCPEmbeddedServerConfig as BaseMCPEmbeddedServerConfig,
     MCPServerConfig as BaseMCPServerConfig,
     MCPToolConfig as BaseMCPToolConfig,
-    MCPToolsResponse,
 } from './mcp_types';
 
 import {LicenseChip} from './enterprise_chip';
@@ -104,7 +103,6 @@ const MCPServers = ({mcpConfig, savedServers = [], onChange, onPersistServer, on
     const titleId = useId();
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
     const [activeTab, setActiveTab] = useState<'config' | 'tools'>('config');
-    const [preloadedToolsData, setPreloadedToolsData] = useState<MCPToolsResponse | null>(null);
     const [wizardMode, setWizardMode] = useState<MCPServerWizardMode | null>(null);
     const [idleTimeoutInputValue, setIdleTimeoutInputValue] = useState<string>(() => getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
     const normalizedServers = Array.isArray(mcpConfig?.servers) ? mcpConfig.servers : [];
@@ -128,39 +126,23 @@ const MCPServers = ({mcpConfig, savedServers = [], onChange, onPersistServer, on
         enablePluginServer: mcpConfig?.enablePluginServer,
     });
 
-    // The tools list is loaded ahead of the Tools tab, and loaded again
-    // whenever it may have changed: on a tool-affecting config change, when
-    // the admin signs in to or disconnects from a server (sign-in often
-    // finishes in the server dialog, after the list was loaded while the
-    // server still needed it), and when the
-    // dialog closes. Only the latest request's response is used.
-    const toolsRequestRef = useRef(0);
-    const refreshTools = useCallback(() => {
-        const request = ++toolsRequestRef.current;
-        getMCPTools().
-            then((response) => {
-                if (request === toolsRequestRef.current) {
-                    setPreloadedToolsData(response);
-                }
-            }).
-            catch((error) => {
-                if (request === toolsRequestRef.current) {
-                    // eslint-disable-next-line no-console
-                    console.error('Failed to preload MCP tools:', error);
-                }
-            });
-    }, []);
-
-    useEffect(() => () => {
-        toolsRequestRef.current++;
-    }, []);
+    // The page owns the tools list: it is loaded ahead of the Tools tab, and
+    // loaded again whenever it may have changed: on a tool-affecting config
+    // change, when the admin signs in to or disconnects from a server (sign-in
+    // often finishes in the server dialog, after the list was loaded while
+    // the server still needed it), when the dialog closes, and when the Tools
+    // tab asks.
+    const tools = useMCPToolsList();
+    const {refresh: refreshTools} = tools;
+    const preloadedToolsData = tools.toolsData;
 
     useEffect(() => {
-        setPreloadedToolsData(null);
         refreshTools();
     }, [configFingerprint, refreshTools]);
 
-    useMCPConnectionEvents(refreshTools);
+    useMCPConnectionEvents(useCallback(() => {
+        refreshTools();
+    }, [refreshTools]));
 
     useEffect(() => {
         setIdleTimeoutInputValue(getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
@@ -350,7 +332,9 @@ const MCPServers = ({mcpConfig, savedServers = [], onChange, onPersistServer, on
                         <MCPToolsViewer
                             mcpConfig={config}
                             onConfigChange={(update) => (typeof update === 'function' ? updateConfigLater(update) : onChange(update))}
-                            initialToolsData={preloadedToolsData}
+                            toolsData={tools.toolsData}
+                            toolsError={tools.error}
+                            onRefreshTools={refreshTools}
                         />
                     </div>
                 )}

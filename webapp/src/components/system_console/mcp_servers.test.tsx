@@ -87,9 +87,9 @@ jest.mock('../../client', () => ({
 // The viewer shows each server's sign-in state from the tools list it is given.
 jest.mock('./mcp_tools_viewer', () => ({
     __esModule: true,
-    default: ({initialToolsData}: {initialToolsData?: {servers: Array<{name: string; needsOAuth: boolean}>} | null}) => (
+    default: ({toolsData}: {toolsData: {servers: Array<{name: string; needsOAuth: boolean}>} | null}) => (
         <div data-testid='mcp-tools-viewer'>
-            {initialToolsData?.servers.map((s) => `${s.name}: ${s.needsOAuth ? 'needs sign-in' : 'signed in'}`).join(', ')}
+            {toolsData?.servers.map((s) => `${s.name}: ${s.needsOAuth ? 'needs sign-in' : 'signed in'}`).join(', ')}
         </div>
     ),
 }));

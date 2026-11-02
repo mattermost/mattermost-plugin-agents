@@ -215,8 +215,12 @@ test.describe('MCP add server wizard', () => {
         await page.getByRole('tab', {name: 'Tools', exact: true}).click();
         const markReviewed = page.getByRole('button', {name: `Mark tools on ${PLAIN_SERVER_NAME} as reviewed`});
         await expect(markReviewed).toBeVisible({timeout: 30000});
+
+        // It only informs until the admin opens the tool list.
+        await expect(markReviewed).toBeDisabled();
         const serverRow = page.getByRole('button', {name: new RegExp(PLAIN_SERVER_NAME)}).first();
         await serverRow.click();
+        await expect(markReviewed).toBeEnabled();
         const notReviewed = page.getByText('Not reviewed', {exact: true});
         await expect(notReviewed).toHaveCount(2);
         await expect(page.getByText('2 tools not reviewed')).toBeVisible();

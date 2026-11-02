@@ -389,6 +389,27 @@ describe('MCPServerToolRow — unreviewed tools', () => {
             ]});
     });
 
+    test('mark-as-reviewed only informs while the tool list is closed', () => {
+        const onServerConfigChange = jest.fn();
+        render(
+            <IntlProvider locale='en'>
+                <MCPServerToolRow
+                    server={remoteServer}
+                    serverConfig={remoteConfig}
+                    onServerConfigChange={onServerConfigChange}
+                />
+            </IntlProvider>,
+        );
+
+        const markReviewed = screen.getByRole('button', {name: 'Mark tools on Remote as reviewed'}) as HTMLButtonElement;
+        expect(markReviewed.disabled).toBe(true);
+        fireEvent.click(markReviewed);
+        expect(onServerConfigChange).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByText('Remote'));
+        expect((screen.getByRole('button', {name: 'Mark tools on Remote as reviewed'}) as HTMLButtonElement).disabled).toBe(false);
+    });
+
     test('offers no mark-as-reviewed once every tool has a chosen policy', () => {
         renderUnreviewed(remoteServer, {...remoteConfig, tool_configs: remoteServer.tools.map((tool) => ({name: tool.name, policy: 'ask' as const, enabled: true}))});
 
