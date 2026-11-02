@@ -278,3 +278,45 @@ func TestClaimStaleStreamingTurnMovesAfterToolRounds(t *testing.T) {
 	require.Equal(t, turn.ID, turns[len(turns)-1].ID, "the interrupted response stays after its tool rounds")
 	assert.Equal(t, TurnStatusInterrupted, turns[len(turns)-1].Status)
 }
+
+func TestSettlingStreamingTurnKeepsLaterUserTurnsInPlace(t *testing.T) {
+	tests := []struct {
+		name   string
+		settle func(t *testing.T, s *Store, id string)
+	}{
+		{name: "sweep claims a dead node's turn", settle: func(t *testing.T, s *Store, id string) {
+			ageTurn(t, s, id, 2*testStaleMillis)
+			claimed, err := s.ClaimStaleStreamingTurn(id, testStaleMillis)
+			require.NoError(t, err)
+			require.True(t, claimed)
+		}},
+		{name: "stream finalizes", settle: func(t *testing.T, s *Store, id string) {
+			require.NoError(t, s.FinalizeStreamingTurn(id, json.RawMessage(`[]`), 0, 0, TurnStatusComplete))
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, convID := setupStreamStore(t)
+			appendTurn := func(role string) string {
+				turn := makeTurn(convID, 0, func(tu *Turn) { tu.Role = role })
+				require.NoError(t, s.CreateTurnAutoSequence(turn))
+				return turn.ID
+			}
+			first := appendTurn("user")
+			anchor := createTurnWithStatus(t, s, convID, TurnStatusStreaming)
+			toolRound := appendTurn("tool_result")
+			followUp := appendTurn("user")
+			followUpReply := appendTurn("assistant")
+
+			tc.settle(t, s, anchor.ID)
+
+			turns, err := s.GetTurnsForConversation(convID)
+			require.NoError(t, err)
+			var order []string
+			for _, turn := range turns {
+				order = append(order, turn.ID)
+			}
+			assert.Equal(t, []string{first, toolRound, anchor.ID, followUp, followUpReply}, order)
+		})
+	}
+}
