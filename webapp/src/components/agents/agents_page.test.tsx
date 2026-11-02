@@ -31,8 +31,6 @@ jest.mock('./product_sidebar', () => ({
     ),
 }));
 
-// The host mounts root components only outside product routes; the page mounts the Custom Prompts modal.
-jest.mock('@/components/custom_prompts/custom_prompts_management', () => ({__esModule: true, default: () => <div data-testid='custom-prompts-modal-root'/>}));
 jest.mock('@/components/custom_prompts/custom_prompts_page', () => ({__esModule: true, default: () => <div>{'prompts view'}</div>}));
 jest.mock('./agents_list', () => ({__esModule: true, default: ({openCreate}: {openCreate: boolean}) => <div>{openCreate ? 'create open' : 'agents list'}</div>}));
 jest.mock('./agent_chat_page', () => ({__esModule: true, default: ({botId, rootId}: {botId: string; rootId?: string}) => <div>{`chat ${botId} ${rootId ?? 'new'}`}</div>}));
@@ -80,11 +78,6 @@ const renderPage = (path: string, bots: Array<ReturnType<typeof bot>> | null = [
 describe('AgentsPage', () => {
     afterEach(() => {
         delete window.WebappUtils;
-    });
-
-    test('mounts the Custom Prompts modal', () => {
-        renderPage(`${AGENTS_ROUTE}/all`);
-        expect(screen.getByTestId('custom-prompts-modal-root')).toBeTruthy();
     });
 
     test('each route shows its view, and the sidebar navigates between them', () => {

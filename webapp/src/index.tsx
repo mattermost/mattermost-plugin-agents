@@ -28,7 +28,7 @@ import IconReactForMe from './components/assets/icon_react_for_me';
 import RHS from './components/rhs/rhs';
 import RHSTitle from './components/rhs/rhs_title';
 import CustomPromptsDropdown from './components/custom_prompts/custom_prompts_dropdown';
-import CustomPromptsManagement from './components/custom_prompts/custom_prompts_management';
+import CustomPromptsManagement, {PopoutCustomPromptsManagement} from './components/custom_prompts/custom_prompts_management';
 import Config from './components/system_console/config';
 import {setSiteURL, doReaction, doRunSearch, doThreadAnalysis} from './client';
 
@@ -320,8 +320,9 @@ export default class Plugin {
 
         if (registry.registerRootComponent) {
             registry.registerRootComponent(AgentsTour);
-            registry.registerRootComponent(CustomPromptsManagement);
+            registry.registerRootComponent(PopoutCustomPromptsManagement);
         }
+        registry.registerGlobalComponent(CustomPromptsManagement);
 
         // Register Agents as a product so it appears in the product switcher (grid icon).
         // registerProduct is an internal Mattermost API available on the plugin registry.

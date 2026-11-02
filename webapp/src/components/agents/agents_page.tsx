@@ -4,7 +4,6 @@
 import React, {useEffect, useRef} from 'react';
 import styled from 'styled-components';
 
-import CustomPromptsManagement from '@/components/custom_prompts/custom_prompts_management';
 import CustomPromptsPage from '@/components/custom_prompts/custom_prompts_page';
 
 import AgentChatPage from './agent_chat_page';
@@ -93,10 +92,6 @@ const AgentsPage = () => {
             <ContentOutlet>
                 <Content route={route}/>
             </ContentOutlet>
-
-            {/* Product routes get no root components, so the product mounts the Custom Prompts modal for
-                the composer's "Manage prompts" (only one mounted copy ever renders). */}
-            <CustomPromptsManagement/>
         </PageWrapper>
     );
 };
