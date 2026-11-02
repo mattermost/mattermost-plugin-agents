@@ -17,7 +17,6 @@ jest.mock('@/client', () => ({
 }));
 
 jest.mock('@/utils/permissions', () => ({userHasSystemPermission: () => true}));
-jest.mock('./agent_access', () => ({...jest.requireActual('./agent_access'), canManageAgent: () => true}));
 
 const wrapper = ({children}: {children: React.ReactNode}) => (
     <Provider store={createStore(() => ({entities: {users: {currentUserId: 'me'}}}))}>{children}</Provider>
@@ -30,7 +29,7 @@ describe('useAgentEditAccess', () => {
     });
 
     test('a reload keeps the resolved access until the new one arrives', async () => {
-        mockGetAgents.mockResolvedValueOnce({agents: [{id: 'a1', botUserID: 'bot1', displayName: 'One'}]});
+        mockGetAgents.mockResolvedValueOnce({agents: [{id: 'a1', botUserID: 'bot1', displayName: 'One', canManage: true}]});
         const {result} = renderHook(() => useAgentEditAccess('bot1'), {wrapper});
         expect(result.current.access.status).toBe('loading');
         await waitFor(() => expect(result.current.access.status).toBe('allowed'));
@@ -45,13 +44,13 @@ describe('useAgentEditAccess', () => {
         expect(result.current.access.status).toBe('allowed');
 
         await act(async () => {
-            resolveReload({agents: [{id: 'a1', botUserID: 'bot1', displayName: 'Renamed'}]});
+            resolveReload({agents: [{id: 'a1', botUserID: 'bot1', displayName: 'Renamed', canManage: true}]});
         });
         await waitFor(() => expect((result.current.access as {agent: {displayName: string}}).agent.displayName).toBe('Renamed'));
     });
 
     test('another agent starts from loading, not the previous agent\'s access', async () => {
-        mockGetAgents.mockResolvedValue({agents: [{id: 'a1', botUserID: 'bot1'}, {id: 'a2', botUserID: 'bot2'}]});
+        mockGetAgents.mockResolvedValue({agents: [{id: 'a1', botUserID: 'bot1', canManage: true}, {id: 'a2', botUserID: 'bot2', canManage: true}]});
         const {result, rerender} = renderHook(({botId}) => useAgentEditAccess(botId), {wrapper, initialProps: {botId: 'bot1'}});
         await waitFor(() => expect(result.current.access.status).toBe('allowed'));
 

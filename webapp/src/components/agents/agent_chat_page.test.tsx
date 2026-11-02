@@ -454,14 +454,13 @@ describe('AgentChatPage', () => {
     });
 
     const agent = (overrides: Record<string, unknown>) => ({id: 'agent1', botUserID: 'bot1', creatorID: 'someone', adminUserIDs: [], ...overrides});
+
+    // Who may manage an agent is the server's rule (api.canManageAgent); the page follows its flag.
     test.each([
-        {name: 'creator', agents: [agent({creatorID: 'me'})], permissions: [], allowed: true},
-        {name: 'listed agent admin', agents: [agent({adminUserIDs: ['me']})], permissions: [], allowed: true},
-        {name: 'manage_others_agent', agents: [agent({})], permissions: ['manage_others_agent'], allowed: true},
-        {name: 'system admin on a legacy bot without creator', agents: [agent({creatorID: ''})], permissions: ['manage_system'], allowed: true},
-        {name: 'system admin on a created agent they do not own', agents: [agent({})], permissions: ['manage_system'], allowed: false},
-        {name: 'regular user', agents: [agent({})], permissions: [], allowed: false},
-        {name: 'agent not in the list (fail closed)', agents: [agent({botUserID: 'other-bot', creatorID: 'me'})], permissions: ['manage_others_agent'], allowed: false},
+        {name: 'the server says the user may manage the agent', agents: [agent({canManage: true})], permissions: [], allowed: true},
+        {name: 'the server says the user may not', agents: [agent({creatorID: 'me', canManage: false})], permissions: ['manage_others_agent'], allowed: false},
+        {name: 'no flag (fail closed)', agents: [agent({creatorID: 'me'})], permissions: ['manage_others_agent'], allowed: false},
+        {name: 'agent not in the list (fail closed)', agents: [agent({botUserID: 'other-bot', canManage: true})], permissions: ['manage_others_agent'], allowed: false},
         {name: 'agents lookup fails (fail closed)', agents: null, permissions: ['manage_others_agent'], allowed: false},
     ])('Agent settings menu item: $name', async ({agents, permissions, allowed}) => {
         const error = jest.spyOn(console, 'error').mockImplementation(() => null);
@@ -486,7 +485,7 @@ describe('AgentChatPage', () => {
     });
 
     test('Agent settings opens the agent editor in a modal over the chat, which stays mounted', async () => {
-        mockGetAgents.mockResolvedValue({agents: [agent({creatorID: 'me'})]});
+        mockGetAgents.mockResolvedValue({agents: [agent({creatorID: 'me', canManage: true})]});
         mockGetServices.mockResolvedValue([{id: 'svc1'}]);
         renderPage(makeStore({bots: [makeBot('bot1', 'dm1')], loadedChannels: ['dm1'], systemPermissions: ['manage_own_agent']}));
         const composer = await screen.findByTestId('host-advanced-text-editor');
