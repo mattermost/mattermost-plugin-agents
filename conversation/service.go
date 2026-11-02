@@ -58,6 +58,9 @@ type Store interface {
 	// HasLiveStreamingTurn reports whether postID has a streaming turn whose
 	// heartbeat is newer than staleAfterMillis by the DB clock.
 	HasLiveStreamingTurn(postID string, staleAfterMillis int64) (bool, error)
+	// ClaimStaleStreamingTurn moves a stale streaming turn to interrupted at
+	// the end of its run, and reports whether this caller did.
+	ClaimStaleStreamingTurn(id string, staleAfterMillis int64) (bool, error)
 }
 
 // BotLookup answers bot-membership and per-bot config queries.
@@ -182,9 +185,22 @@ func (s *Service) GetTurns(conversationID string) ([]store.Turn, error) {
 	return s.store.GetTurnsForConversation(conversationID)
 }
 
-// HasLiveStreamingTurn reports whether postID's turn is still streaming with a
-// heartbeat newer than staleAfter, measured on the DB clock.
-func (s *Service) HasLiveStreamingTurn(postID string, staleAfter time.Duration) (bool, error) {
+// SettleAbandonedStreamingTurn prepares postID for a new run. It reports live
+// when the post's turn is still streaming with a heartbeat newer than
+// staleAfter (DB clock). A stale streaming turn belongs to a run whose node
+// died before settling it: it is claimed now, as the recovery sweep would, so
+// it sits after the tool rounds that run already saved and scrubbing its
+// response removes them too.
+func (s *Service) SettleAbandonedStreamingTurn(postID string, staleAfter time.Duration) (live bool, err error) {
+	turn, err := s.store.GetTurnByPostID(postID)
+	if err != nil {
+		return false, fmt.Errorf("failed to get turn for post: %w", err)
+	}
+	if turn != nil && turn.Status == store.TurnStatusStreaming {
+		if _, err = s.store.ClaimStaleStreamingTurn(turn.ID, staleAfter.Milliseconds()); err != nil {
+			return false, fmt.Errorf("failed to settle abandoned streaming turn: %w", err)
+		}
+	}
 	return s.store.HasLiveStreamingTurn(postID, staleAfter.Milliseconds())
 }
 

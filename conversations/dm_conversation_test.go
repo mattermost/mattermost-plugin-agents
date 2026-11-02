@@ -1393,3 +1393,7 @@ func TestDMTitleGenerationKeepsUserRename(t *testing.T) {
 		})
 	}
 }
+
+func (*fakeConvStore) ClaimStaleStreamingTurn(string, int64) (bool, error) {
+	return false, nil
+}

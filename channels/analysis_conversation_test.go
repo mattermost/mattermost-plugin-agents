@@ -911,3 +911,7 @@ func TestRegenerateAnalysisReusesConversation(t *testing.T) {
 func (s *inMemoryStore) HasLiveStreamingTurn(string, int64) (bool, error) {
 	return false, nil
 }
+
+func (*inMemoryStore) ClaimStaleStreamingTurn(string, int64) (bool, error) {
+	return false, nil
+}

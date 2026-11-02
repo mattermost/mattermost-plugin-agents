@@ -137,8 +137,9 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 
 	// The local stream map only covers this node. A fresh heartbeat on the
 	// post's turn means a stream (and possibly its tool loop) is still running
-	// on some node, so refuse rather than start a second run.
-	live, err := c.convService.HasLiveStreamingTurn(post.Id, streaming.StaleStreamThreshold)
+	// on some node, so refuse rather than start a second run. An abandoned one
+	// is settled first so the scrub below covers its saved tool rounds.
+	live, err := c.convService.SettleAbandonedStreamingTurn(post.Id, streaming.StaleStreamThreshold)
 	if err != nil {
 		return fmt.Errorf("failed to check for a live stream before regeneration: %w", err)
 	}

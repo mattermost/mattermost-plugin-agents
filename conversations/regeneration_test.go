@@ -146,6 +146,8 @@ func TestHandleRegenerate(t *testing.T) {
 		reservedElsewhere  bool
 		waitForRenewal     bool
 		stolenMidRun       bool
+		// savedToolRounds leaves tool rounds the dead run saved after its anchor.
+		savedToolRounds bool
 	}{
 		{
 			name:       "thread analysis post regenerates from its stored turn",
@@ -306,6 +308,14 @@ func TestHandleRegenerate(t *testing.T) {
 			wantPath:     pathMeeting,
 		},
 		{
+			name:               "an abandoned run's saved tool rounds are scrubbed too",
+			operation:          llm.OperationConversation,
+			postProps:          followUpProps,
+			anchorStreamingAge: 2 * streaming.StaleStreamThreshold.Milliseconds(),
+			savedToolRounds:    true,
+			wantPath:           pathConversation,
+		},
+		{
 			name:              "concurrent regenerate holding the reservation is refused",
 			operation:         llm.OperationConversation,
 			postProps:         followUpProps,
@@ -387,6 +397,10 @@ func TestHandleRegenerate(t *testing.T) {
 				anchor.UpdatedAt = model.GetMillis() - tt.anchorStreamingAge
 			}
 			require.NoError(t, convStore.CreateTurn(anchor))
+			if tt.savedToolRounds {
+				require.NoError(t, convStore.CreateTurn(&store.Turn{ID: "dead-run-tool-call", ConversationID: conv.ID, Role: "assistant", Content: oldContent, Sequence: 3}))
+				require.NoError(t, convStore.CreateTurn(&store.Turn{ID: "dead-run-tool-result", ConversationID: conv.ID, Role: "tool_result", Content: oldContent, Sequence: 4}))
+			}
 
 			mm := mocks.NewMockClient(t)
 			mm.On("GetUser", userID).Return(&model.User{Id: userID, Locale: "en"}, nil).Maybe()

@@ -287,6 +287,40 @@ func (s *loadedStateFlowStore) HasLiveStreamingTurn(postID string, staleAfterMil
 	return false, nil
 }
 
+// ClaimStaleStreamingTurn mirrors the store: a stale streaming turn becomes
+// interrupted and moves after the turns its run saved, up to the next user turn.
+func (s *loadedStateFlowStore) ClaimStaleStreamingTurn(id string, staleAfterMillis int64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for convID, turns := range s.turns {
+		idx := slices.IndexFunc(turns, func(t store.Turn) bool { return t.ID == id })
+		if idx < 0 {
+			continue
+		}
+		if turns[idx].Status != store.TurnStatusStreaming || turns[idx].UpdatedAt >= model.GetMillis()-staleAfterMillis {
+			return false, nil
+		}
+		end := idx + 1
+		for end < len(turns) && turns[end].Role != "user" {
+			end++
+		}
+		free := turns[idx].Sequence
+		for j := idx + 1; j < end; j++ {
+			turns[j].Sequence, free = free, turns[j].Sequence
+		}
+		turns[idx].Sequence = free
+		turns[idx].Status = store.TurnStatusInterrupted
+		slices.SortFunc(turns, func(a, b store.Turn) int { return a.Sequence - b.Sequence })
+		for i := range turns {
+			cp := turns[i]
+			s.allTurns[cp.ID] = &cp
+		}
+		s.turns[convID] = turns
+		return true, nil
+	}
+	return false, nil
+}
+
 type loadedStateLLM struct {
 	mu       sync.Mutex
 	requests []llm.CompletionRequest

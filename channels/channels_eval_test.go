@@ -285,3 +285,7 @@ func setupChannelMocksFromThreadData(mmClient *mocks.MockClient, threadData *eva
 func (s *evalInMemoryStore) HasLiveStreamingTurn(string, int64) (bool, error) {
 	return false, nil
 }
+
+func (*evalInMemoryStore) ClaimStaleStreamingTurn(string, int64) (bool, error) {
+	return false, nil
+}

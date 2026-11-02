@@ -576,3 +576,7 @@ func TestAnalysisFixedTitlesAreSentToTheRequester(t *testing.T) {
 		})
 	}
 }
+
+func (*mockConvServiceStore) ClaimStaleStreamingTurn(string, int64) (bool, error) {
+	return false, nil
+}
