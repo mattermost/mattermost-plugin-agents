@@ -1,6 +1,6 @@
 # Tool approval and credentials
 
-Only the person who started a conversation can approve an agent's tool calls, and tools run with that person's credentials. This page covers the approval rules, the policies admins set for each tool, and what other people in a channel can see. It's for admins and security reviewers. To see what to click, read [Use tools and approve actions](using_tools.md).
+Only the person who started a conversation can approve an agent's tool calls, and tools run with that person's credentials. This page is for admins and security reviewers. To see what to click, read [Use tools and approve actions](using_tools.md).
 
 ## Roles
 

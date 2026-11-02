@@ -2,7 +2,7 @@
 
 Set up Mattermost Agents (plugin `mattermost-ai`): connect LLMs, create agents, connect MCP servers and tools, and control access, approval, and licensing.
 
-An agent is a Mattermost bot backed by an LLM that you choose, including a model that runs on your own infrastructure. Agents act through tools: the built-in Mattermost tools, remote MCP servers, and tools registered by other plugins. The plugin also ships a built-in Mattermost MCP server for external AI clients such as Claude Code and Cursor. This page covers requirements, setup, a map of every setting, and license requirements.
+An agent is a Mattermost bot backed by an LLM that you choose, including a model that runs on your own infrastructure. Agents act through tools: the built-in Mattermost tools, remote MCP servers, and tools registered by other plugins. The plugin also ships a built-in Mattermost MCP server for external AI clients such as Claude Code and Cursor.
 
 ## How the pieces fit
 

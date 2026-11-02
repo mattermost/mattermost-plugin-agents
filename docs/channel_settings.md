@@ -1,6 +1,6 @@
 # Control agents in channels
 
-Three settings under **System Console > Plugins > Agents > AI Functions** decide how agents behave in channels: tool calling, ambient auto-replies, and native web search. This page covers those settings, who can configure auto-reply, and the limits that apply. Agents in channels need a Professional license, and auto-reply needs Enterprise Advanced.
+Three settings under **System Console > Plugins > Agents > AI Functions** decide how agents behave in channels: tool calling, ambient auto-replies, and native web search. Agents in channels need a Professional license, and auto-reply needs Enterprise Advanced.
 
 ## Settings
 
