@@ -61,6 +61,7 @@ func TestConversationManagementRoutes(t *testing.T) {
 		userID         string
 		conv           *store.Conversation
 		storeErr       error
+		renameErr      error
 		expectedStatus int
 		// expectConvParams is false when validation rejects the request before
 		// the conversation is looked up.
@@ -160,7 +161,7 @@ func TestConversationManagementRoutes(t *testing.T) {
 			expectBotID:      true,
 		},
 		{
-			name:             "rename store error is a 500, not a 404",
+			name:             "lookup store error is a 500, not a 404",
 			event:            AuditEventRenameConversation,
 			method:           http.MethodPut,
 			path:             "/conversations/" + testManagedConvID + "/title",
@@ -170,6 +171,19 @@ func TestConversationManagementRoutes(t *testing.T) {
 			storeErr:         errors.New("db down"),
 			expectedStatus:   http.StatusInternalServerError,
 			expectConvParams: true,
+		},
+		{
+			name:             "rename store error is a 500, not a 404",
+			event:            AuditEventRenameConversation,
+			method:           http.MethodPut,
+			path:             "/conversations/" + testManagedConvID + "/title",
+			body:             renameBody(plantedRequestTitle),
+			userID:           testUserID,
+			conv:             ownedConversation(0),
+			renameErr:        errors.New("db down"),
+			expectedStatus:   http.StatusInternalServerError,
+			expectConvParams: true,
+			expectBotID:      true,
 		},
 	}
 
@@ -182,6 +196,7 @@ func TestConversationManagementRoutes(t *testing.T) {
 				e.conversationStore.conversations[tt.conv.ID] = tt.conv
 			}
 			e.conversationStore.err = tt.storeErr
+			e.conversationStore.renameErr = tt.renameErr
 
 			type wsEvent struct {
 				name      string
