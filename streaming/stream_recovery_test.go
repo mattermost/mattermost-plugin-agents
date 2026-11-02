@@ -316,6 +316,7 @@ func TestStreamStopsWhenItsTurnIsClaimed(t *testing.T) {
 		return true
 	}, 2*time.Second, time.Millisecond)
 	updatesAtClaim := client.updateCount()
+	heartbeatsAtClaim := client.controlCount(PostStreamingControlHeartbeat)
 
 	select {
 	case <-done:
@@ -325,6 +326,10 @@ func TestStreamStopsWhenItsTurnIsClaimed(t *testing.T) {
 	require.ErrorIs(t, context.Cause(ctx), errTurnClaimed)
 	assert.Equal(t, updatesAtClaim, client.updateCount(), "the claiming node owns the post")
 	assert.Zero(t, client.controlCount(PostStreamingControlEnd), "no end event may cut off the claiming node's stream")
+	assert.LessOrEqual(t, client.controlCount(PostStreamingControlHeartbeat), heartbeatsAtClaim+1, "no heartbeats after the claim is seen")
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	assert.Zero(t, ts.finalizes, "a claimed turn must not be finalized by the old run")
 }
 
 func TestNewStreamClearsInterruptedMarker(t *testing.T) {

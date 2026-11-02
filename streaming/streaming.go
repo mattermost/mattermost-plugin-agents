@@ -680,14 +680,17 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 	// turn exists.
 	var awaitingDecision *llm.ToolCallBatch
 	defer func() {
+		// A claimed turn belongs to the node that claimed it: write nothing
+		// more, or a finalize could undo a released claim and events could
+		// cross that node's stream.
+		if errors.Is(context.Cause(ctx), errTurnClaimed) {
+			return
+		}
 		if acc != nil {
 			p.finalizeTurn(acc, finalStatus)
 		}
 		if awaitingDecision != nil && finalStatus == store.TurnStatusComplete {
 			p.broadcastToolCalls(post, *awaitingDecision, requesterUserID)
-		}
-		if errors.Is(context.Cause(ctx), errTurnClaimed) {
-			return
 		}
 		p.sendPostStreamingEvent(post, broadcast, map[string]any{"control": PostStreamingControlEnd})
 	}()
@@ -743,8 +746,14 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 			if acc != nil {
 				p.heartbeatTurn(acc)
 			}
+			if errors.Is(context.Cause(ctx), errTurnClaimed) {
+				return
+			}
 			p.sendPostStreamingEvent(post, broadcast, map[string]any{"control": PostStreamingControlHeartbeat})
 		case event, ok := <-stream.Stream:
+			if errors.Is(context.Cause(ctx), errTurnClaimed) {
+				return
+			}
 			// When the upstream shares this context it ends, errors or closes
 			// on cancel too, and select may pick that over ctx.Done(). Treat
 			// any of those as the cancellation so a shutdown interruption is
