@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useRef, useState} from 'react';
+import React, {useCallback, useState} from 'react';
 import {useStore} from 'react-redux';
 
 import {GlobalState} from '@mattermost/types/store';
@@ -30,13 +30,6 @@ export interface ChatActions {
 export function useChatActions(): ChatActions {
     const store = useStore<GlobalState>();
     const [renameTarget, setRenameTarget] = useState<ChatActionTarget | null>(null);
-    const mounted = useRef(true);
-    useEffect(() => {
-        mounted.current = true;
-        return () => {
-            mounted.current = false;
-        };
-    }, []);
 
     const startRename = useCallback((target: ChatActionTarget) => setRenameTarget(target), []);
     const closeRename = useCallback(() => setRenameTarget(null), []);
@@ -50,9 +43,7 @@ export function useChatActions(): ChatActions {
         }
         await renameAIThread(store, renameTarget.conversationId, title);
         invalidateConversation(renameTarget.conversationId);
-        if (mounted.current) {
-            setRenameTarget(null);
-        }
+        setRenameTarget(null);
     }, [renameTarget, store]);
 
     return {startRename, renameTarget, submitRename, closeRename};

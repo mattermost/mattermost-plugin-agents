@@ -9,7 +9,7 @@ import {Button} from '@mattermost/compass-ui/components/button';
 import {Modal} from '@mattermost/compass-ui/components/modal';
 import {TextInput} from '@mattermost/compass-ui/components/text-input';
 
-import {AnimatedModalShell, MODAL_SHEET_CLASS} from '@/components/animated_modal_shell';
+import {AnimatedModalShell} from '@/components/animated_modal_shell';
 
 // Mirrors api.MaxConversationTitleLength (the server rejects longer titles).
 const MAX_CHAT_TITLE_LENGTH = 256;
@@ -23,21 +23,12 @@ interface AgentChatRenameDialogProps {
     onClose: () => void;
 }
 
-// The prototype uses window.prompt; this is the same single field as a compass modal.
 const AgentChatRenameDialog = ({show, initialTitle, onSubmit, onClose}: AgentChatRenameDialogProps) => {
     const intl = useIntl();
     const inputRef = useRef<HTMLInputElement>(null);
     const [title, setTitle] = useState(initialTitle);
     const [saving, setSaving] = useState(false);
     const [failed, setFailed] = useState(false);
-    const mounted = useRef(true);
-    useEffect(() => {
-        mounted.current = true;
-        return () => {
-            mounted.current = false;
-        };
-    }, []);
-
     useEffect(() => {
         let frame = 0;
         if (show) {
@@ -66,13 +57,9 @@ const AgentChatRenameDialog = ({show, initialTitle, onSubmit, onClose}: AgentCha
         try {
             await onSubmit(trimmed);
         } catch {
-            if (mounted.current) {
-                setFailed(true);
-            }
+            setFailed(true);
         } finally {
-            if (mounted.current) {
-                setSaving(false);
-            }
+            setSaving(false);
         }
     };
 
@@ -81,11 +68,7 @@ const AgentChatRenameDialog = ({show, initialTitle, onSubmit, onClose}: AgentCha
             show={show}
             onBackdropClick={close}
         >
-            {/* eslint-disable-next-line agents/click-events-have-key-events, agents/no-static-element-interactions -- only stops clicks inside the sheet from reaching the backdrop */}
-            <Sheet
-                className={MODAL_SHEET_CLASS}
-                onClick={(e) => e.stopPropagation()}
-            >
+            <Sheet>
                 <Modal
                     size='small'
                     closeOnEscape={false}
