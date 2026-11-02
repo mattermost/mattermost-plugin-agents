@@ -88,6 +88,7 @@ function makeRegistry(websocketHandlers: WebSocketHandlers, options: {channelSet
         registerPostActionComponent: jest.fn(),
         registerAdminConsoleCustomSetting: jest.fn(),
         ...(options.channelSettingsTab === false ? {} : {registerChannelSettingsTab: jest.fn()}),
+        registerGlobalComponent: jest.fn(),
         registerWebSocketEventHandler: (event: string, handler: (msg: unknown) => void) => {
             websocketHandlers.set(event, handler);
         },
