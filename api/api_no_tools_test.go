@@ -163,15 +163,16 @@ func (m *mockConvServiceStore) CompareAndSwapTurnContent(_ string, _, _ json.Raw
 	return true, nil
 }
 
-func (m *mockConvServiceStore) HeartbeatStreamingTurn(id string, content json.RawMessage) error {
+func (m *mockConvServiceStore) HeartbeatStreamingTurn(id string, content json.RawMessage) (bool, error) {
 	for _, turns := range m.turns {
 		for i := range turns {
 			if turns[i].ID == id && turns[i].Status == store.TurnStatusStreaming {
 				turns[i].Content = content
+				return true, nil
 			}
 		}
 	}
-	return nil
+	return false, nil
 }
 
 func (m *mockConvServiceStore) FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) error {

@@ -92,19 +92,20 @@ func (f *fakeTurnStore) UpdateTurnPostID(id string, postID *string) error {
 	return nil
 }
 
-func (f *fakeTurnStore) HeartbeatStreamingTurn(id string, content json.RawMessage) error {
+func (f *fakeTurnStore) HeartbeatStreamingTurn(id string, content json.RawMessage) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.heartbeats++
 	if f.heartbeatErr != nil {
-		return f.heartbeatErr
+		return false, f.heartbeatErr
 	}
 	for _, t := range f.turns {
 		if t.ID == id && t.Status == store.TurnStatusStreaming {
 			t.Content = content
+			return true, nil
 		}
 	}
-	return nil
+	return false, nil
 }
 
 // FinalizeStreamingTurn mirrors the store: writes final state and moves the

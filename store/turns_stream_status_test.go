@@ -171,7 +171,9 @@ func TestHeartbeatStreamingTurn(t *testing.T) {
 	before := getTurn(t, s, turn.ID)
 
 	content := json.RawMessage(`[{"type":"text","text":"partial"}]`)
-	require.NoError(t, s.HeartbeatStreamingTurn(turn.ID, content))
+	alive, err := s.HeartbeatStreamingTurn(turn.ID, content)
+	require.NoError(t, err)
+	assert.True(t, alive)
 
 	after := getTurn(t, s, turn.ID)
 	assert.JSONEq(t, string(content), string(after.Content))
@@ -187,7 +189,9 @@ func TestHeartbeatStreamingTurn(t *testing.T) {
 	claimed, err = s.ClaimStaleStreamingTurn(turn.ID, testStaleMillis)
 	require.NoError(t, err)
 	require.True(t, claimed)
-	require.NoError(t, s.HeartbeatStreamingTurn(turn.ID, json.RawMessage(`[]`)))
+	alive, err = s.HeartbeatStreamingTurn(turn.ID, json.RawMessage(`[]`))
+	require.NoError(t, err)
+	assert.False(t, alive, "a heartbeat on a claimed turn reports it lost")
 	final := getTurn(t, s, turn.ID)
 	assert.Equal(t, TurnStatusInterrupted, final.Status)
 	assert.JSONEq(t, string(content), string(final.Content))

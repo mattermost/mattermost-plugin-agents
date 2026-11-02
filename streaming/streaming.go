@@ -104,6 +104,10 @@ var errStoppedByUser = errors.New("generation stopped by user")
 // regenerate it, so it must not keep running tools.
 var errTurnLeaseLost = errors.New("streaming turn could not be persisted")
 
+// errTurnClaimed cancels a stream whose turn another node already claimed as
+// abandoned. That node owns the post now, so this run stops without touching it.
+var errTurnClaimed = errors.New("streaming turn was claimed by recovery")
+
 // turnLeaseMaxAge is how long a stream runs without a successful turn write
 // before it stops itself, kept well under StaleStreamThreshold so it stops
 // before peers can consider it abandoned.
@@ -117,7 +121,7 @@ type TurnStore interface {
 	CreateTurnAutoSequence(turn *store.Turn) error
 	GetTurnByPostID(postID string) (*store.Turn, error)
 	UpdateTurnPostID(id string, postID *string) error
-	HeartbeatStreamingTurn(id string, content json.RawMessage) error
+	HeartbeatStreamingTurn(id string, content json.RawMessage) (bool, error)
 	FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) error
 }
 
@@ -460,7 +464,15 @@ func (p *MMPostStreamService) heartbeatTurn(acc *turnAccumulator) {
 		p.mmClient.LogError("Failed to marshal turn content blocks", "error", err, "post_id", acc.postID)
 		return
 	}
-	if err := p.turnStore.HeartbeatStreamingTurn(acc.turnID, contentJSON); err != nil {
+	alive, err := p.turnStore.HeartbeatStreamingTurn(acc.turnID, contentJSON)
+	if err == nil && !alive {
+		// Another node claimed the turn as abandoned and may already be
+		// regenerating the post: this run must not keep calling tools.
+		p.mmClient.LogWarn("Streaming turn was claimed by recovery; stopping the stream", "post_id", acc.postID)
+		p.cancelStream(acc.postID, errTurnClaimed)
+		return
+	}
+	if err != nil {
 		p.mmClient.LogWarn("Failed to heartbeat streaming turn", "error", err, "post_id", acc.postID)
 		if time.Since(acc.persistedAt) >= turnLeaseMaxAge {
 			p.mmClient.LogError("Streaming turn heartbeat kept failing; stopping the stream", "post_id", acc.postID)
@@ -674,6 +686,9 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 		if awaitingDecision != nil && finalStatus == store.TurnStatusComplete {
 			p.broadcastToolCalls(post, *awaitingDecision, requesterUserID)
 		}
+		if errors.Is(context.Cause(ctx), errTurnClaimed) {
+			return
+		}
 		p.sendPostStreamingEvent(post, broadcast, map[string]any{"control": PostStreamingControlEnd})
 	}()
 
@@ -697,6 +712,9 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 	// the user should be told about.
 	stopStream := func() {
 		outcome = telemetry.StreamOutcomeCancelled
+		if errors.Is(context.Cause(ctx), errTurnClaimed) {
+			return
+		}
 		switch {
 		case shuttingDown():
 			finalStatus = store.TurnStatusInterrupted

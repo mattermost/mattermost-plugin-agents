@@ -249,15 +249,27 @@ func (s *Store) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {
 }
 
 // HeartbeatStreamingTurn records the partial content of an in-progress turn
-// and bumps UpdatedAt to the DB clock. It is a no-op once the turn has left
-// the streaming state (e.g. a sweep already marked it interrupted).
-func (s *Store) HeartbeatStreamingTurn(id string, content json.RawMessage) error {
-	return s.execBuilder(s.builder.
+// and bumps UpdatedAt to the DB clock. It reports false, writing nothing, once
+// the turn has left the streaming state (e.g. a sweep marked it interrupted).
+func (s *Store) HeartbeatStreamingTurn(id string, content json.RawMessage) (bool, error) {
+	query, args, err := s.builder.
 		Update("LLM_Turns").
 		Set("Content", string(content)).
 		Set("UpdatedAt", sq.Expr(dbNowMillis)).
-		Where(sq.Eq{"ID": id, "Status": TurnStatusStreaming}),
-		"heartbeat streaming turn")
+		Where(sq.Eq{"ID": id, "Status": TurnStatusStreaming}).
+		ToSql()
+	if err != nil {
+		return false, fmt.Errorf("failed to build heartbeat streaming turn query: %w", err)
+	}
+	res, err := s.db.Exec(query, args...)
+	if err != nil {
+		return false, fmt.Errorf("failed to heartbeat streaming turn: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to read heartbeat rows: %w", err)
+	}
+	return n == 1, nil
 }
 
 // FinalizeStreamingTurn writes the final content, token usage and status of

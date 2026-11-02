@@ -55,6 +55,12 @@ func (c *lockedStreamingClient) lastUpdate() *model.Post {
 	return c.updatedPosts[len(c.updatedPosts)-1]
 }
 
+func (c *lockedStreamingClient) updateCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.updatedPosts)
+}
+
 func (c *lockedStreamingClient) controlCount(control string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -279,6 +285,46 @@ func TestStreamStopsWhenItsTurnCannotBePersisted(t *testing.T) {
 			assert.Equal(t, InterruptedReasonLost, last.GetProp(InterruptedProp))
 		})
 	}
+}
+
+// Once another node claims the turn as abandoned it owns the post (it may be
+// regenerating it), so this run stops calling tools and leaves the post alone.
+func TestStreamStopsWhenItsTurnIsClaimed(t *testing.T) {
+	service, client, ts := newRecoveryTestService(t)
+	service.SetHeartbeatInterval(5 * time.Millisecond)
+
+	post := newStreamPost()
+	ctx, err := service.GetStreamingContext(context.Background(), post.Id)
+	require.NoError(t, err)
+	stream := make(chan llm.TextStreamEvent)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer service.FinishStreaming(post.Id)
+		service.StreamToPost(ctx, &llm.TextStreamResult{Stream: stream}, post, "en", "requester-id")
+	}()
+
+	require.Eventually(t, func() bool {
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+		turn := findStreamTurn(ts.turns, post.Id)
+		if turn == nil {
+			return false
+		}
+		turn.Status = store.TurnStatusInterrupted
+		return true
+	}, 2*time.Second, time.Millisecond)
+	updatesAtClaim := client.updateCount()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "the stream must stop once its turn is claimed")
+	}
+	require.ErrorIs(t, context.Cause(ctx), errTurnClaimed)
+	assert.Equal(t, updatesAtClaim, client.updateCount(), "the claiming node owns the post")
+	assert.Zero(t, client.controlCount(PostStreamingControlEnd), "no end event may cut off the claiming node's stream")
 }
 
 func TestNewStreamClearsInterruptedMarker(t *testing.T) {
