@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -50,6 +51,9 @@ type Store interface {
 	// completion request before calling this — ExcludeAfterPostID needs the anchor.
 	DeleteResponseTurns(conversationID, postID string) error
 	GetMaxSequenceForConversation(conversationID string) (int, error)
+	// HasLiveStreamingTurn reports whether postID has a streaming turn whose
+	// heartbeat is newer than staleAfterMillis by the DB clock.
+	HasLiveStreamingTurn(postID string, staleAfterMillis int64) (bool, error)
 }
 
 // BotLookup answers bot-membership and per-bot config queries.
@@ -172,6 +176,12 @@ func (s *Service) GetConversationByThread(rootPostID, botID, userID string) (*st
 // GetTurns returns all turns for a conversation, ordered by sequence.
 func (s *Service) GetTurns(conversationID string) ([]store.Turn, error) {
 	return s.store.GetTurnsForConversation(conversationID)
+}
+
+// HasLiveStreamingTurn reports whether postID's turn is still streaming with a
+// heartbeat newer than staleAfter, measured on the DB clock.
+func (s *Service) HasLiveStreamingTurn(postID string, staleAfter time.Duration) (bool, error) {
+	return s.store.HasLiveStreamingTurn(postID, staleAfter.Milliseconds())
 }
 
 // GetInitiatingUserTurn returns the user turn that started the agent run

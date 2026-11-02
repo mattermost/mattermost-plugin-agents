@@ -134,6 +134,10 @@ func TestHandleRegenerate(t *testing.T) {
 		wantErr      string
 		wantErrIs    error
 		wantLicense  enterprise.Capability
+		// anchorStreamingAge, when set, leaves the post's turn streaming with a
+		// heartbeat that many milliseconds old.
+		anchorStreamingAge int64
+		reservedElsewhere  bool
 	}{
 		{
 			name:       "thread analysis post regenerates from its stored turn",
@@ -266,6 +270,27 @@ func TestHandleRegenerate(t *testing.T) {
 			wantErr:   "not supported",
 		},
 		{
+			name:               "post still streaming on another node is refused",
+			operation:          llm.OperationConversation,
+			postProps:          followUpProps,
+			anchorStreamingAge: 1_000,
+			wantErrIs:          streaming.ErrAlreadyStreamingToPost,
+		},
+		{
+			name:               "stale streaming turn from a dead node does not block",
+			operation:          llm.OperationConversation,
+			postProps:          followUpProps,
+			anchorStreamingAge: 2 * streaming.StaleStreamThreshold.Milliseconds(),
+			wantPath:           pathConversation,
+		},
+		{
+			name:              "concurrent regenerate holding the reservation is refused",
+			operation:         llm.OperationConversation,
+			postProps:         followUpProps,
+			reservedElsewhere: true,
+			wantErrIs:         streaming.ErrAlreadyStreamingToPost,
+		},
+		{
 			name:         "thread analysis below Professional",
 			operation:    llm.OperationThreadAnalysis,
 			rootIsPost:   true,
@@ -334,7 +359,12 @@ func TestHandleRegenerate(t *testing.T) {
 			require.NoError(t, err)
 			postID := regenPostID
 			require.NoError(t, convStore.CreateTurn(&store.Turn{ID: "user-turn", ConversationID: conv.ID, Role: "user", Content: userContent, Sequence: 1}))
-			require.NoError(t, convStore.CreateTurn(&store.Turn{ID: "old-anchor", ConversationID: conv.ID, PostID: &postID, Role: "assistant", Content: oldContent, Sequence: 2}))
+			anchor := &store.Turn{ID: "old-anchor", ConversationID: conv.ID, PostID: &postID, Role: "assistant", Content: oldContent, Sequence: 2}
+			if tt.anchorStreamingAge != 0 {
+				anchor.Status = store.TurnStatusStreaming
+				anchor.UpdatedAt = model.GetMillis() - tt.anchorStreamingAge
+			}
+			require.NoError(t, convStore.CreateTurn(anchor))
 
 			mm := mocks.NewMockClient(t)
 			mm.On("GetUser", userID).Return(&model.User{Id: userID, Locale: "en"}, nil).Maybe()
@@ -343,6 +373,27 @@ func TestHandleRegenerate(t *testing.T) {
 			mm.On("KVGet", mock.Anything, mock.Anything).Return(nil).Maybe()
 			mm.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
 			mm.On("LogDebug", mock.Anything, mock.Anything, mock.Anything).Maybe()
+			kv := map[string]any{}
+			reservationKey := regenerateReservationKeyPrefix + regenPostID
+			if tt.reservedElsewhere {
+				kv[reservationKey] = "other-node-token"
+			}
+			mm.On("KVCompareAndSetWithExpiry", reservationKey, nil, mock.Anything, streaming.StaleStreamThreshold).
+				Return(func(key string, _, newValue any, _ time.Duration) (bool, error) {
+					if _, held := kv[key]; held {
+						return false, nil
+					}
+					kv[key] = newValue
+					return true, nil
+				}).Maybe()
+			mm.On("KVCompareAndSet", reservationKey, mock.Anything, nil).
+				Return(func(key string, oldValue, _ any) (bool, error) {
+					if kv[key] != oldValue {
+						return false, nil
+					}
+					delete(kv, key)
+					return true, nil
+				}).Maybe()
 			if tt.setupMM != nil {
 				tt.setupMM(mm)
 			}
@@ -426,6 +477,7 @@ func TestHandleRegenerate(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+			require.NotContains(t, kv, reservationKey, "a finished regenerate must release its reservation")
 
 			require.Len(t, streamSvc.streamed, 1)
 			require.Same(t, post, streamSvc.streamed[0])
@@ -492,26 +544,3 @@ func TestHandleRegenerateRequiresConversation(t *testing.T) {
 	require.ErrorContains(t, err, "missing conversation_id")
 }
 
-func TestHasLiveStreamingTurn(t *testing.T) {
-	now := time.UnixMilli(1_000_000_000)
-	postID := "post-1"
-	other := "post-2"
-	fresh := now.UnixMilli() - 5_000
-	stale := now.UnixMilli() - streaming.StaleStreamThreshold.Milliseconds() - 1
-
-	tests := []struct {
-		name string
-		turn store.Turn
-		want bool
-	}{
-		{name: "fresh streaming turn on the post blocks", turn: store.Turn{PostID: &postID, Status: store.TurnStatusStreaming, UpdatedAt: fresh}, want: true},
-		{name: "stale streaming turn from a dead node does not block", turn: store.Turn{PostID: &postID, Status: store.TurnStatusStreaming, UpdatedAt: stale}, want: false},
-		{name: "finished turn does not block", turn: store.Turn{PostID: &postID, Status: store.TurnStatusComplete, UpdatedAt: fresh}, want: false},
-		{name: "streaming turn on another post does not block", turn: store.Turn{PostID: &other, Status: store.TurnStatusStreaming, UpdatedAt: fresh}, want: false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, hasLiveStreamingTurn([]store.Turn{tc.turn}, postID, now))
-		})
-	}
-}

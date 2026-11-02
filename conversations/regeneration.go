@@ -7,7 +7,6 @@ import (
 	stdcontext "context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/channels"
@@ -23,6 +22,8 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"go.opentelemetry.io/otel/trace"
 )
+
+const regenerateReservationKeyPrefix = "regen_reservation_"
 
 // MeetingSummaryRegenerator re-runs a meeting summary from the transcript
 // file its conversation references.
@@ -127,15 +128,20 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		return ErrNotRegenerable
 	}
 
-	turns, err := c.convService.GetTurns(conv.ID)
+	release, err := c.reserveRegenerate(post.Id)
 	if err != nil {
-		return fmt.Errorf("failed to get turns for regeneration: %w", err)
+		return err
 	}
+	defer release()
 
 	// The local stream map only covers this node. A fresh heartbeat on the
 	// post's turn means a stream (and possibly its tool loop) is still running
 	// on some node, so refuse rather than start a second run.
-	if hasLiveStreamingTurn(turns, post.Id, time.Now()) {
+	live, err := c.convService.HasLiveStreamingTurn(post.Id, streaming.StaleStreamThreshold)
+	if err != nil {
+		return fmt.Errorf("failed to check for a live stream before regeneration: %w", err)
+	}
+	if live {
 		return fmt.Errorf("unable to regenerate post: %w", streaming.ErrAlreadyStreamingToPost)
 	}
 
@@ -204,19 +210,24 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	return nil
 }
 
-// hasLiveStreamingTurn reports whether postID's turn is still streaming with a
-// heartbeat newer than streaming.StaleStreamThreshold. An older one belongs to
-// a dead node and must not block regenerate.
-func hasLiveStreamingTurn(turns []store.Turn, postID string, now time.Time) bool {
-	for _, turn := range turns {
-		if turn.PostID == nil || *turn.PostID != postID || turn.Status != store.TurnStatusStreaming {
-			continue
-		}
-		if now.UnixMilli()-turn.UpdatedAt < streaming.StaleStreamThreshold.Milliseconds() {
-			return true
-		}
+// reserveRegenerate atomically claims postID for one regenerate across all
+// nodes, so two concurrent requests can't both pass the live-stream check
+// before either stream has started. The TTL frees the claim if this node dies.
+func (c *Conversations) reserveRegenerate(postID string) (func(), error) {
+	key := regenerateReservationKeyPrefix + postID
+	token := model.NewId()
+	claimed, err := c.mmClient.KVCompareAndSetWithExpiry(key, nil, token, streaming.StaleStreamThreshold)
+	if err != nil {
+		return nil, fmt.Errorf("failed to reserve post for regeneration: %w", err)
 	}
-	return false
+	if !claimed {
+		return nil, fmt.Errorf("unable to regenerate post: %w", streaming.ErrAlreadyStreamingToPost)
+	}
+	return func() {
+		if _, err := c.mmClient.KVCompareAndSet(key, token, nil); err != nil {
+			c.mmClient.LogWarn("Failed to release regenerate reservation", "error", err, "post_id", postID)
+		}
+	}, nil
 }
 
 // checkRegenerateLicense gates regenerating any post of a conversation by the

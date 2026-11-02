@@ -898,3 +898,7 @@ func TestRegenerateAnalysisReusesConversation(t *testing.T) {
 	require.Len(t, turns, 3)
 	require.Equal(t, "user", turns[0].Role)
 }
+
+func (s *inMemoryStore) HasLiveStreamingTurn(string, int64) (bool, error) {
+	return false, nil
+}

@@ -267,6 +267,22 @@ func (s *loadedStateFlowStore) GetMaxSequenceForConversation(conversationID stri
 	return maxSeq, nil
 }
 
+// HasLiveStreamingTurn mirrors the store query, with UpdatedAt read against
+// the local clock.
+func (s *loadedStateFlowStore) HasLiveStreamingTurn(postID string, staleAfterMillis int64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cutoff := model.GetMillis() - staleAfterMillis
+	for _, turns := range s.turns {
+		for _, turn := range turns {
+			if turn.PostID != nil && *turn.PostID == postID && turn.Status == store.TurnStatusStreaming && turn.UpdatedAt >= cutoff {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 type loadedStateLLM struct {
 	mu       sync.Mutex
 	requests []llm.CompletionRequest

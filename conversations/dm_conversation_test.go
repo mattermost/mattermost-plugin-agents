@@ -1284,3 +1284,7 @@ func TestDMCompletionRequest_BuiltFromTurns(t *testing.T) {
 	assert.Contains(t, req.Posts[1].Message, "What is 2+2?")
 	assert.Contains(t, req.Posts[2].Message, "And what is 3+3?")
 }
+
+func (s *fakeConvStore) HasLiveStreamingTurn(string, int64) (bool, error) {
+	return false, nil
+}

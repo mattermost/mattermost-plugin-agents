@@ -472,3 +472,7 @@ func TestChannelAnalysisPostsRecordTheAnalyzedChannel(t *testing.T) {
 		})
 	}
 }
+
+func (*mockConvServiceStore) HasLiveStreamingTurn(string, int64) (bool, error) {
+	return false, nil
+}

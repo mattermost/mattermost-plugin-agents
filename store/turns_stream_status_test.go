@@ -104,6 +104,37 @@ func TestGetStaleStreamingTurns(t *testing.T) {
 	}
 }
 
+func TestHasLiveStreamingTurn(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   string
+		ageMs    int64
+		wantLive bool
+	}{
+		{name: "fresh streaming turn is live", status: TurnStatusStreaming, wantLive: true},
+		{name: "stale streaming turn is not live", status: TurnStatusStreaming, ageMs: 2 * testStaleMillis},
+		{name: "complete turn is not live", status: TurnStatusComplete},
+		{name: "interrupted turn is not live", status: TurnStatusInterrupted},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, convID := setupStreamStore(t)
+			turn := createTurnWithStatus(t, s, convID, tc.status)
+			if tc.ageMs != 0 {
+				ageTurn(t, s, turn.ID, tc.ageMs)
+			}
+
+			live, err := s.HasLiveStreamingTurn(*turn.PostID, testStaleMillis)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantLive, live)
+
+			live, err = s.HasLiveStreamingTurn("other-post", testStaleMillis)
+			require.NoError(t, err)
+			assert.False(t, live)
+		})
+	}
+}
+
 func TestClaimStaleStreamingTurnConcurrent(t *testing.T) {
 	s, convID := setupStreamStore(t)
 	turn := createTurnWithStatus(t, s, convID, TurnStatusStreaming)

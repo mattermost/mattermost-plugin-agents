@@ -308,6 +308,20 @@ func (s *Store) GetStaleStreamingTurns(staleAfterMillis int64, limit uint64) ([]
 	return turns, nil
 }
 
+// HasLiveStreamingTurn reports whether postID has a streaming turn whose last
+// heartbeat is newer than staleAfterMillis by the DB clock, i.e. a stream that
+// is still running on some node.
+func (s *Store) HasLiveStreamingTurn(postID string, staleAfterMillis int64) (bool, error) {
+	var live bool
+	if err := s.db.Get(&live, `SELECT EXISTS (
+  SELECT 1 FROM LLM_Turns
+  WHERE PostID = $1 AND Status = $2 AND UpdatedAt >= `+dbNowMillis+` - $3
+)`, postID, TurnStatusStreaming, staleAfterMillis); err != nil {
+		return false, fmt.Errorf("failed to check live streaming turn: %w", err)
+	}
+	return live, nil
+}
+
 // ClaimStaleStreamingTurn atomically moves a stale streaming turn to the
 // interrupted state. It returns true only for the single caller whose update
 // won, so concurrent sweeps on several HA nodes never both repair the same
