@@ -2,6 +2,12 @@ import {StartedTestContainer, GenericContainer, StartedNetwork, Network, Wait} f
 
 import { withDeadline } from "./deadline";
 
+/** A registered rule as returned by GET /mocks, including how often it matched. */
+export type SmockerMockState = {
+	request?: {body?: {value?: string}};
+	state?: {times_count?: number};
+};
+
 /**
  * Smocker matches request paths exactly. Bifrost may POST to /v1/chat/completions or /chat/completions.
  * Use a single path regex so we do not register two mocks with the same body matchers (which would
@@ -261,6 +267,11 @@ export class OpenAIMockContainer {
 		})
 	}
 
+	getMocks = async (): Promise<SmockerMockState[]> => {
+		const response = await fetch(`http://localhost:${this.container.getMappedPort(8081)}/mocks`);
+		return response.json();
+	}
+
 	// Add error mock for testing error handling
 	addErrorMock = async (statusCode: number, errorMessage: string, botPrefix?: string) => {
 		const prefix = botPrefix ? ("/"+botPrefix) : ""
@@ -359,18 +370,18 @@ export function buildChatCompletionMockRule(
  * Create a streaming SSE text response (for after tool execution).
  */
 export function buildTextResponse(text: string): string {
-	const words = text.split(' ');
-	const chunks = [
-		`data: {"id":"chatcmpl-tr1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-mock","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}`,
-	];
-	for (const word of words) {
-		chunks.push(
-			`data: {"id":"chatcmpl-tr1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-mock","choices":[{"index":0,"delta":{"content":"${word} "},"finish_reason":null}]}`,
-		);
+	const chunk = (delta: Record<string, string>, finishReason: string | null) => `data: ${JSON.stringify({
+		id: 'chatcmpl-tr1',
+		object: 'chat.completion.chunk',
+		created: 1708124577,
+		model: 'gpt-mock',
+		choices: [{index: 0, delta, finish_reason: finishReason}],
+	})}`;
+	const chunks = [chunk({role: 'assistant', content: ''}, null)];
+	for (const word of text.split(' ')) {
+		chunks.push(chunk({content: `${word} `}, null));
 	}
-	chunks.push(
-		`data: {"id":"chatcmpl-tr1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-mock","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
-	);
+	chunks.push(chunk({}, 'stop'));
 	chunks.push('data: [DONE]');
 	return chunks.join('\n\n') + '\n\n';
 }

@@ -226,19 +226,25 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) er
 	// features work in tandem. When auto-reply declines for a normal reason
 	// (root_posts mode skipping a thread reply, missing license, stale bot),
 	// fall through to the reminder so the user still learns that @mentioning
-	// the agent works — it does in every one of those cases. Only a real
-	// failure returns without the reminder.
+	// the agent works — it does in every one of those cases. A real failure
+	// returns without the reminder, and when the ambient classifier
+	// deliberately stays silent there is no reminder about the configured
+	// agent.
 	if setting := c.autoReplySettingForChannel(channel); setting != nil {
 		autoReplyErr := c.handleAutoReply(ctx, setting, post, postingUser, channel)
 		if errors.Is(autoReplyErr, ErrNoResponse) {
-			c.maybeNotifyAgentMentionNeeded(ctx, post, channel)
+			skipBotID := ""
+			if errors.Is(autoReplyErr, errAmbientDeclined) {
+				skipBotID = setting.BotID
+			}
+			c.maybeNotifyAgentMentionNeeded(ctx, post, channel, skipBotID)
 		}
 		return autoReplyErr
 	}
 
 	// Reply in a thread that did not @mention an agent: when the previous post
 	// was authored by an agent, nudge the user with an ephemeral reminder.
-	c.maybeNotifyAgentMentionNeeded(ctx, post, channel)
+	c.maybeNotifyAgentMentionNeeded(ctx, post, channel, "")
 
 	return nil
 }
@@ -262,7 +268,7 @@ func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post 
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
-	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); placeholderErr != nil {
+	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, responsePost, post.Id); placeholderErr != nil {
 		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
 	}
 	progress := newResponseProgressReporter(ctx, c.mmClient, responsePost)
@@ -270,7 +276,7 @@ func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post 
 	progress.Advance(responseProgressCheckingMCP)
 	defer func() {
 		if err != nil {
-			c.failResponsePlaceholder(ctx, responsePost, postingUser.Locale)
+			c.failResponsePlaceholder(ctx, responsePost, postingUser)
 		}
 	}()
 
@@ -404,20 +410,20 @@ func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *m
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
-	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); placeholderErr != nil {
+	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, responsePost, post.Id); placeholderErr != nil {
 		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
 	}
 	progress := newResponseProgressReporter(ctx, c.mmClient, responsePost)
 	defer progress.Flush()
 	progress.Advance(responseProgressCheckingMCP)
 	if errors.Is(policyErr, ErrAnalysisSourceUnavailable) {
-		c.setPlaceholderMessage(ctx, responsePost, postingUser.Locale, "agents.analysis_source_unavailable",
+		c.setPlaceholderMessage(ctx, responsePost, postingUser, "agents.analysis_source_unavailable",
 			"I can't continue this conversation because you no longer have access to what it is about.")
 		return fmt.Errorf("%w: %w", policyErr, ErrNoResponse)
 	}
 	defer func() {
 		if err != nil {
-			c.failResponsePlaceholder(ctx, responsePost, postingUser.Locale)
+			c.failResponsePlaceholder(ctx, responsePost, postingUser)
 		}
 	}()
 	if policyErr != nil {
@@ -606,8 +612,8 @@ func cloneWithAgentMention(post *model.Post, botUsername string) *model.Post {
 	return mentionPost
 }
 
-func (c *Conversations) createResponsePlaceholder(botID, requesterUserID string, post *model.Post, respondingToPostID string) error {
-	streaming.ModifyPostForBot(botID, requesterUserID, post, respondingToPostID)
+func (c *Conversations) createResponsePlaceholder(botID string, post *model.Post, respondingToPostID string) error {
+	streaming.ModifyPostForBot(botID, post, respondingToPostID)
 	if c.notifier != nil {
 		c.notifier.MarkDeferred(post)
 	}
@@ -643,14 +649,18 @@ func (c *Conversations) streamToExistingPost(ctx context.Context, stream *llm.Te
 	return nil
 }
 
-func (c *Conversations) failResponsePlaceholder(ctx context.Context, post *model.Post, userLocale string) {
-	c.setPlaceholderMessage(ctx, post, userLocale, "agents.stream_to_post_access_llm_error",
+func (c *Conversations) failResponsePlaceholder(ctx context.Context, post *model.Post, requester *model.User) {
+	c.setPlaceholderMessage(ctx, post, requester, "agents.stream_to_post_access_llm_error",
 		"Sorry! An error occurred while accessing the LLM. See server logs for details.")
 }
 
 // setPlaceholderMessage ends a run that never streamed by replacing the
 // placeholder with an explanation and notifying the requester about it.
-func (c *Conversations) setPlaceholderMessage(ctx context.Context, post *model.Post, userLocale, messageID, fallback string) {
+func (c *Conversations) setPlaceholderMessage(ctx context.Context, post *model.Post, requester *model.User, messageID, fallback string) {
+	var userLocale, requesterID string
+	if requester != nil {
+		userLocale, requesterID = requester.Locale, requester.Id
+	}
 	message := fallback
 	if c.i18n != nil {
 		T := i18n.LocalizerFunc(c.i18n, c.fallbackLocale(userLocale))
@@ -661,21 +671,17 @@ func (c *Conversations) setPlaceholderMessage(ctx context.Context, post *model.P
 	if updateErr != nil {
 		c.mmClient.LogError("Failed to update response placeholder", "error", updateErr)
 	}
-	c.notifyRunEnd(ctx, post, "", notifications.StreamEnd{
+	c.notifyRunEnd(ctx, post, requesterID, notifications.StreamEnd{
 		Outcome:      notifications.OutcomeErrored,
 		UpdateFailed: updateErr != nil,
 	})
 }
 
 // notifyRunEnd notifies about a run on post that ended without the streaming
-// service, which notifies for runs it streams. requesterID defaults to the
-// requester recorded on the post.
+// service, which notifies for runs it streams.
 func (c *Conversations) notifyRunEnd(ctx context.Context, post *model.Post, requesterID string, end notifications.StreamEnd) {
 	if c.notifier == nil {
 		return
-	}
-	if requesterID == "" {
-		requesterID, _ = post.GetProp(streaming.LLMRequesterUserIDProp).(string)
 	}
 	end.PostID = post.Id
 	end.ChannelID = post.ChannelId

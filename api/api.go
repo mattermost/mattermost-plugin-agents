@@ -63,9 +63,11 @@ type Config interface {
 	GetDefaultBotName() string
 	MCP() mcp.Config
 	AllowUnsafeLinks() bool
+	LinkPolicy() config.LinkPolicy
 	EnableHTMLArtifacts() bool
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
+	EnableAmbientAutoReply() bool
 
 	// GetServices returns a snapshot of the stored service configurations, in
 	// configuration order. The bridge service endpoints operate on this
@@ -153,7 +155,7 @@ type ConversationStore interface {
 // cluster cache invalidation internally.
 type ChannelAutoReplyStore interface {
 	Get(channelID string) (*autoreply.Setting, error)
-	Set(channelID, botID string, mode autoreply.Mode, updatedBy string) (*autoreply.Setting, error)
+	Set(setting autoreply.Setting) (*autoreply.Setting, error)
 	Delete(channelID string) error
 }
 
@@ -731,10 +733,13 @@ type AIBotInfo struct {
 }
 
 type AIBotsResponse struct {
-	Bots                 []AIBotInfo `json:"bots"`
-	SearchEnabled        bool        `json:"searchEnabled"`
-	AllowUnsafeLinks     bool        `json:"allowUnsafeLinks"`
-	HTMLArtifactsEnabled bool        `json:"htmlArtifactsEnabled"`
+	Bots             []AIBotInfo `json:"bots"`
+	SearchEnabled    bool        `json:"searchEnabled"`
+	AllowUnsafeLinks bool        `json:"allowUnsafeLinks"`
+	// LinkPolicy is what the webapp enforces; AllowUnsafeLinks is kept for
+	// API compatibility.
+	LinkPolicy           config.LinkPolicy `json:"linkPolicy"`
+	HTMLArtifactsEnabled bool              `json:"htmlArtifactsEnabled"`
 	// DeferredNotifications reports that the server holds agent post
 	// notifications until the response ends, so the webapp no longer needs
 	// to suppress every agent desktop notification itself.
@@ -830,6 +835,7 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 		Bots:                  bots,
 		SearchEnabled:         searchEnabled,
 		AllowUnsafeLinks:      a.config.AllowUnsafeLinks(),
+		LinkPolicy:            a.config.LinkPolicy(),
 		HTMLArtifactsEnabled:  a.config.EnableHTMLArtifacts(),
 		DeferredNotifications: a.notifications != nil && a.notifications.Supported(),
 	})

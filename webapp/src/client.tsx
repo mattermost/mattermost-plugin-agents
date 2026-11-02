@@ -10,6 +10,7 @@ import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import type {LLMBot} from '@/bots';
 import type {ToolAnswer} from '@/components/tool_types';
+import type {LinkPolicy} from '@/utils/link_allowlist';
 import type {Composition, ConversationResponse} from '@/types/conversation';
 import {
     UserAgent,
@@ -510,6 +511,7 @@ export type AIBotsResponse = {
     bots: LLMBot[];
     searchEnabled: boolean;
     allowUnsafeLinks: boolean;
+    linkPolicy: LinkPolicy;
     htmlArtifactsEnabled: boolean;
     deferredNotifications: boolean;
 };
@@ -973,11 +975,12 @@ export async function updateUserToolPreferences(prefs: {disabled_servers: string
     });
 }
 
-export type ChannelAutoReplyMode = 'off' | 'root_posts' | 'threads';
+export type ChannelAutoReplyMode = 'off' | 'root_posts' | 'threads' | 'ambient' | 'ambient_threads';
 
 export type ChannelAutoReplySettings = {
     bot_id: string;
     mode: ChannelAutoReplyMode;
+    instructions: string;
 };
 
 export async function getChannelAutoReply(channelId: string): Promise<ChannelAutoReplySettings> {
@@ -1099,7 +1102,7 @@ export async function savePluginConfig(config: PluginConfig): Promise<PluginConf
     }
 
     throw new ClientError(Client4.url, {
-        message: await readClientErrorMessage(response),
+        ...(await readAgentError(response)),
         status_code: response.status,
         url,
     });

@@ -51,13 +51,9 @@ func (s *Service) HandleTranscribeFile(ctx context.Context, userID string, bot *
 		return nil, errors.New("file not attached to specified post")
 	}
 
-	createdPost, err := s.newCallRecordingThread(ctx, bot, user, post, channel, fileID, mm)
+	createdPost, err := s.newCallRecordingThread(ctx, bot, user, post, channel, fileID, mm, sessionID)
 	if err != nil {
 		return nil, err
-	}
-
-	if err := s.conversations.SaveTitle(createdPost.Id, TitleMeetingSummary); err != nil {
-		return nil, fmt.Errorf("failed to save title: %w", err)
 	}
 
 	return map[string]string{
@@ -86,12 +82,10 @@ func (s *Service) HandleSummarizeTranscription(ctx context.Context, userID strin
 		return nil, ErrNotMeetingBotPost
 	}
 
-	createdPost, err := s.newCallTranscriptionSummaryThread(ctx, bot, user, post, channel, mmapi.WithFilePolicy(s.mmClient, sessionID))
+	createdPost, err := s.newCallTranscriptionSummaryThread(ctx, bot, user, post, channel, mmapi.WithFilePolicy(s.mmClient, sessionID), sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("unable to summarize transcription: %w", err)
 	}
-
-	s.conversations.SaveTitleAsync(createdPost.Id, TitleMeetingSummary)
 
 	return map[string]string{
 		"postid":    createdPost.Id,

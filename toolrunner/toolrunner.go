@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
@@ -286,7 +287,7 @@ func (r *ToolRunner) runLoop(
 			resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
 			appendToolTurnAndPost(result, &request, resp.text, resp.reasoningData, resp.serverTools, resp.segments, resolvedToolCalls, toolResults, resp.usage)
 
-			if !send(llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}) {
+			if !send(toolCallBatchEvent(llm.ToolCallPhaseResolved, resolvedToolCalls)) {
 				abandon()
 				return
 			}
@@ -317,20 +318,19 @@ func (r *ToolRunner) runLoop(
 				toolCalls[i].WouldAutoExecute = approved[i]
 			}
 			r.deliverToolTurns(result, onToolTurns)
-			if send(llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}) {
+			if send(toolCallBatchEvent(llm.ToolCallPhaseAwaitingDecision, toolCalls)) {
 				send(llm.TextStreamEvent{Type: llm.EventTypeEnd})
 			}
 			return
 		}
 
-		// All calls passed the policy: stamp them so the pending broadcast
-		// (and, if the stream is interrupted mid-execution, the persisted
-		// blocks) carry the auto-execute signal instead of implying an
-		// approval request, then forward so the UI can show spinners.
+		// All calls passed the policy. The marker keeps persisted blocks from
+		// implying an approval request if the stream is interrupted
+		// mid-execution.
 		for i := range toolCalls {
 			toolCalls[i].WouldAutoExecute = true
 		}
-		if !send(llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}) {
+		if !send(toolCallBatchEvent(llm.ToolCallPhaseExecuting, toolCalls)) {
 			abandon()
 			return
 		}
@@ -350,7 +350,7 @@ func (r *ToolRunner) runLoop(
 		appendToolTurnAndPost(result, &request, resp.text, resp.reasoningData, resp.serverTools, resp.segments, resolvedToolCalls, toolResults, resp.usage)
 
 		// Forward resolved tool calls so the UI can show success/error states.
-		if !send(llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}) {
+		if !send(toolCallBatchEvent(llm.ToolCallPhaseResolved, resolvedToolCalls)) {
 			abandon()
 			return
 		}
@@ -365,6 +365,12 @@ func (r *ToolRunner) runLoop(
 		Type:  llm.EventTypeError,
 		Value: fmt.Errorf("tool loop stopped after %d rounds without a final response", r.maxRounds+1),
 	})
+}
+
+// toolCallBatchEvent copies calls because consumers sanitize them in place
+// while the runner is still executing and replaying the originals.
+func toolCallBatchEvent(phase llm.ToolCallPhase, calls []llm.ToolCall) llm.TextStreamEvent {
+	return llm.TextStreamEvent{Type: llm.EventTypeToolCallBatch, Value: llm.ToolCallBatch{Phase: phase, Calls: slices.Clone(calls)}}
 }
 
 // assistantResponse holds the accumulated contents of one fully consumed

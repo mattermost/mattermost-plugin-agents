@@ -190,6 +190,15 @@ func (s *evalInMemoryStore) UpdateTurnContent(id string, content json.RawMessage
 	return nil
 }
 
+func (s *evalInMemoryStore) CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error) {
+	t, ok := s.turns[id]
+	if !ok || !bytes.Equal(t.Content, expected) {
+		return false, nil
+	}
+	t.Content = content
+	return true, nil
+}
+
 func (s *evalInMemoryStore) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {
 	if t, ok := s.turns[id]; ok {
 		t.TokensIn = tokensIn

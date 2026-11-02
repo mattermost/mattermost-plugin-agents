@@ -230,7 +230,6 @@ func TestShareDecisionPauseNotifiesTheRequester(t *testing.T) {
 	w.checker.setPolicy(policyToolOrigin, policyToolName, mcp.ToolPolicyAsk)
 
 	botPost := w.seedRun(t, w.channel, nil, humanPost("what is the weather"), pendingWeatherBlock(), nil)
-	botPost.AddProp(streaming.LLMRequesterUserIDProp, autoReplyUserID)
 	botPost.AddProp(model.PostPropsDeferredNotification, true)
 
 	require.NoError(t, w.conversations.HandleToolCall(context.Background(), autoReplyUserID, botPost, w.channel, []string{policyWeatherCall.ID}, nil))
@@ -246,7 +245,6 @@ func TestRegenerateOfDeliveredPostNotifiesTheRequester(t *testing.T) {
 	w := setupNotificationWiring(t, true, dmMakeTextStream("It's still sunny"))
 	answer := []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: "It's sunny"}}
 	botPost := w.seedRun(t, w.dm, nil, humanPost("what is the weather"), answer, nil)
-	botPost.AddProp(streaming.LLMRequesterUserIDProp, autoReplyUserID)
 
 	require.NoError(t, w.conversations.HandleRegenerate(context.Background(), autoReplyUserID, botPost, w.dm))
 

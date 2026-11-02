@@ -103,7 +103,7 @@ func (c *Conversations) runSearch(ctx context.Context, policy *turnPolicy, quest
 		ChannelId: channel.Id,
 		RootId:    questionPost.Id,
 	}
-	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, user.Id, responsePost, questionPost.Id); placeholderErr != nil {
+	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, responsePost, questionPost.Id); placeholderErr != nil {
 		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
 	}
 	progress := newResponseProgressReporter(ctx, c.mmClient, responsePost)
@@ -112,10 +112,10 @@ func (c *Conversations) runSearch(ctx context.Context, policy *turnPolicy, quest
 	defer func() {
 		switch {
 		case errors.Is(err, ErrSearchToolsUnavailable):
-			c.setPlaceholderMessage(ctx, responsePost, user.Locale, "agents.search_tools_unavailable",
+			c.setPlaceholderMessage(ctx, responsePost, user, "agents.search_tools_unavailable",
 				"I can't search Mattermost because the Mattermost search tool isn't available to this agent. Ask your system admin to enable the embedded Mattermost MCP server and the search_posts tool for this agent.")
 		case err != nil:
-			c.failResponsePlaceholder(ctx, responsePost, user.Locale)
+			c.failResponsePlaceholder(ctx, responsePost, user)
 		}
 	}()
 

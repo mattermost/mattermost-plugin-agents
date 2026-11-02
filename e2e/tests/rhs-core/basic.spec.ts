@@ -163,8 +163,8 @@ test.describe('Chat History', () => {
     await aiPlugin.clickChatHistoryItem(0);
 
     // Verify we can see the conversation content we created
-    await expect(page.getByText('Test conversation')).toBeVisible();
-    await expect(page.getByText(responseTestText)).toBeVisible();
+    await aiPlugin.expectUserPostText('Test conversation');
+    await aiPlugin.expectBotPostText(responseTestText);
   });
 
   test('chat history button is visible and functional', async ({ page }) => {

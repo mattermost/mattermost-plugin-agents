@@ -42,7 +42,31 @@ const (
 	// OpenAI web_search / code_interpreter. The value is the cumulative
 	// []ServerToolUse for the current round; receivers replace prior state.
 	EventTypeServerToolUse
+	// EventTypeToolCallBatch carries a ToolCallBatch emitted by the tool
+	// runner. Provider streams use EventTypeToolCalls for the raw calls the
+	// model requested; only the tool runner knows a batch's phase.
+	EventTypeToolCallBatch
 )
+
+// ToolCallPhase is where a tool call batch is in its lifecycle.
+type ToolCallPhase string
+
+const (
+	// ToolCallPhaseExecuting: every call passed the auto-run policy and is
+	// running now. A ToolCallPhaseResolved batch for the same calls follows.
+	ToolCallPhaseExecuting ToolCallPhase = "executing"
+	// ToolCallPhaseAwaitingDecision: the run stops here until the user
+	// decides. Always the last batch of a run.
+	ToolCallPhaseAwaitingDecision ToolCallPhase = "awaiting_decision"
+	// ToolCallPhaseResolved: every call has a final result. Closes the round.
+	ToolCallPhaseResolved ToolCallPhase = "resolved"
+)
+
+// ToolCallBatch is one round's tool calls together with their phase.
+type ToolCallBatch struct {
+	Phase ToolCallPhase
+	Calls []ToolCall
+}
 
 // Server tool activity status values. They intentionally match the
 // conversation content-block status strings so the streaming layer can persist
@@ -189,7 +213,7 @@ func (t *TextStreamResult) ReadAll() (string, error) {
 			return "", fmt.Errorf("unknown stream error")
 		case EventTypeEnd:
 			return result.String(), nil
-		case EventTypeToolCalls:
+		case EventTypeToolCalls, EventTypeToolCallBatch:
 			// Tool calls may appear as progress events from auto-run tools; skip them.
 			continue
 		case EventTypeAnnotations, EventTypeReasoning, EventTypeReasoningEnd, EventTypeUsage, EventTypeFiles, EventTypeServerToolUse:

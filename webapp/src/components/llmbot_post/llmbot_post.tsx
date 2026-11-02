@@ -28,7 +28,7 @@ import {ServerToolUse} from '@/types/conversation';
 
 import HTMLArtifacts from '../html_artifacts/html_artifacts';
 import {needsViewerDecision, selectDecisionToolCalls} from '../tool_decisions';
-import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
+import {ToolApprovalStage, ToolCall, ToolCallPhase, ToolCallStatus} from '../tool_types';
 import {Annotation} from '../citations/types';
 
 import {
@@ -37,7 +37,7 @@ import {
     computeRenderedRounds,
     deriveApprovalStageForPost,
 } from './turn_content_utils';
-import {deriveActivity, isTerminalToolStatus} from './activity_items';
+import {deriveActivity} from './activity_items';
 import {ControlsBarComponent} from './controls_bar';
 import {extractPermalinkData} from './permalink_data';
 import {FoldingText, useFoldingText} from './folding_text';
@@ -60,6 +60,7 @@ export interface PostUpdateWebsocketMessage {
     progress_phase?: AgentProgressPhase
     progress_seq?: number
     tool_call?: string
+    tool_call_phase?: ToolCallPhase
     reasoning?: string
     annotations?: string
     server_tool?: string
@@ -76,12 +77,6 @@ interface LLMBotPostProps {
     post: any;
     websocketRegister?: (postID: string, listenerID: string, handler: (msg: PluginWebSocketMessage<PostUpdateWebsocketMessage>) => void) => void;
     websocketUnregister?: (postID: string, listenerID: string) => void;
-}
-
-// ToolRunner emits one tool_call event per round with pending statuses, then one
-// with terminal statuses after execution. The terminal one is the round boundary.
-function isResolvedToolCallEvent(toolCalls: ToolCall[]): boolean {
-    return toolCalls.length > 0 && toolCalls.every((tc) => isTerminalToolStatus(tc.status));
 }
 
 export const LLMBotPost = (props: LLMBotPostProps) => {
@@ -103,14 +98,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     }
     const knownConversation = conversation ?? (lastConversationRef.current?.id === conversationId ? lastConversationRef.current : null);
 
-    // Meeting summarization posts have no conversation entity yet; fall back to
-    // the legacy llm_requester_user_id prop.
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
-    const legacyRequester: string | undefined = props.post.props?.llm_requester_user_id;
-    const requesterIsCurrentUser = Boolean(
-        (knownConversation && knownConversation.user_id === currentUserId) ||
-        (!conversationId && legacyRequester && legacyRequester === currentUserId),
-    );
+    const requesterIsCurrentUser = Boolean(knownConversation && knownConversation.user_id === currentUserId);
 
     const channel = useSelector<GlobalState, {type?: string} | undefined>(
         (state) => state.entities.channels.channels[props.post.channel_id],
@@ -303,7 +292,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 setGenerating(true);
                 try {
                     const parsedToolCalls = JSON.parse(data.tool_call) as ToolCall[];
-                    if (isResolvedToolCallEvent(parsedToolCalls)) {
+                    if (data.tool_call_phase === 'resolved') {
                         const live = liveRef.current;
                         setLiveRounds((prev) => [
                             ...prev,
@@ -599,7 +588,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     const showRegenerate = isDM && !isGenerationInProgress && requesterIsCurrentUser && !isNoShowRegen;
     const meetingsLicensed = useIsLicensedFor('meetings');
-    const showPostbackButton = meetingsLicensed && !isGenerationInProgress && requesterIsCurrentUser && isTranscriptionResult;
+
+    // The server authorizes postback by DM membership, not conversation ownership.
+    const showPostbackButton = meetingsLicensed && !isGenerationInProgress && isDM && isTranscriptionResult;
     const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser;
     const hasContent = renderedRounds.length > 0;
     const showControlsBar = ((showRegenerate || showPostbackButton) && hasContent) || showStopGeneratingButton;
@@ -636,7 +627,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     // Onlookers owe no decision, but should see that the requester does instead
     // of an empty post. Tool calls reach them redacted; only statuses are used.
-    const requesterUserId = knownConversation?.user_id ?? (conversationId ? undefined : legacyRequester); // eslint-disable-line no-undefined
+    const requesterUserId = knownConversation?.user_id;
     const isOnlooker = Boolean(requesterUserId) && requesterUserId !== currentUserId;
     const isLivePending = lastRendered?.id === LIVE_ROUND_ID &&
         selectDecisionToolCalls(lastRendered.toolCalls, 'call', true).length > 0;

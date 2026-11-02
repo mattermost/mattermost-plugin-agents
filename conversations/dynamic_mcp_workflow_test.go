@@ -164,10 +164,10 @@ func TestDynamicMCPStrictSearchLoadCallDerivesLoadedTools(t *testing.T) {
 					value, ok := event.Value.(string)
 					require.True(t, ok)
 					text += value
-				case llm.EventTypeToolCalls:
-					toolCalls, ok := event.Value.([]llm.ToolCall)
+				case llm.EventTypeToolCallBatch:
+					batch, ok := event.Value.(llm.ToolCallBatch)
 					require.True(t, ok)
-					for _, toolCall := range toolCalls {
+					for _, toolCall := range batch.Calls {
 						if toolCall.Name == "jira__get_issue" {
 							foundBusinessToolCall = true
 						}

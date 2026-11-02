@@ -17,7 +17,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/notifications"
-	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
 	"github.com/stretchr/testify/assert"
@@ -64,7 +63,6 @@ func setupEntryPointWiring(t *testing.T, llmResponses ...*llm.TextStreamResult) 
 func (w *notificationWiring) pausedRun(t *testing.T, channel *model.Channel, toolUse, toolResults []conversation.ContentBlock) *model.Post {
 	t.Helper()
 	botPost := w.seedRun(t, channel, nil, humanPost("what is the weather"), toolUse, toolResults)
-	botPost.AddProp(streaming.LLMRequesterUserIDProp, autoReplyUserID)
 	botPost.AddProp(model.PostPropsDeferredNotification, true)
 	return botPost
 }

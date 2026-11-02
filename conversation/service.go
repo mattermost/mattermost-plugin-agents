@@ -38,6 +38,9 @@ type Store interface {
 	GetTurnByPostID(postID string) (*store.Turn, error)
 	// UpdateTurnContent updates the content JSON of a turn.
 	UpdateTurnContent(id string, content json.RawMessage) error
+	// CompareAndSwapTurnContent replaces a turn's content only while it still
+	// equals expected, and reports whether it did.
+	CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error)
 	UpdateTurnTokens(id string, tokensIn, tokensOut int64) error
 	// UpdateTurnPostID sets or clears the PostID on a turn.
 	UpdateTurnPostID(id string, postID *string) error
@@ -227,6 +230,12 @@ func (s *Service) UpdateTurnContent(turnID string, content json.RawMessage) erro
 	return s.store.UpdateTurnContent(turnID, content)
 }
 
+// CompareAndSwapTurnContent replaces a turn's content only while it still
+// equals expected, and reports whether it did.
+func (s *Service) CompareAndSwapTurnContent(turnID string, expected, content json.RawMessage) (bool, error) {
+	return s.store.CompareAndSwapTurnContent(turnID, expected, content)
+}
+
 // CreateTurnAutoSequence persists a new turn, atomically assigning the next sequence number.
 func (s *Service) CreateTurnAutoSequence(turn *store.Turn) error {
 	return s.store.CreateTurnAutoSequence(turn)
@@ -237,6 +246,24 @@ func (s *Service) CreateTurnAutoSequence(turn *store.Turn) error {
 // completion request before calling this — ExcludeAfterPostID needs the anchor.
 func (s *Service) DeleteResponseTurns(conversationID, postID string) error {
 	return s.store.DeleteResponseTurns(conversationID, postID)
+}
+
+// BuildRegenerateRequest builds the request that regenerates postID's
+// response from the turns before it, then scrubs that prior response so the
+// new stream runs like a first one.
+func (s *Service) BuildRegenerateRequest(conv *store.Conversation, context *llm.Context, postID string, opts BuildOptions) (*llm.CompletionRequest, error) {
+	// Build before scrubbing: ExcludeAfterPostID needs the anchor.
+	opts.ExcludeAfterPostID = postID
+	req, err := s.BuildCompletionRequest(conv, context, opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build completion request for regen: %w", err)
+	}
+	req.OperationSubType = llm.SubTypeRegenerate
+
+	if err := s.DeleteResponseTurns(conv.ID, postID); err != nil {
+		return nil, fmt.Errorf("failed to scrub prior response turns on regen: %w", err)
+	}
+	return req, nil
 }
 
 // UpdateConversationRootPostID sets the RootPostID on a conversation.
@@ -494,6 +521,7 @@ func AssembleRequest(
 	conversionOpts := PostConversionOptions{
 		RedactUnshared: redactUnshared,
 		MMClient:       mmClient,
+		UserID:         conv.UserID,
 		EnableVision:   enableVision,
 		MaxFileSize:    maxFileSize,
 	}
@@ -963,6 +991,7 @@ func (s *Service) BuildChannelMentionRequest(
 	conversionOpts := PostConversionOptions{
 		RedactUnshared: redactUnshared,
 		MMClient:       mmClient,
+		UserID:         conv.UserID,
 		EnableVision:   enableVision,
 		MaxFileSize:    maxFileSize,
 	}
@@ -1033,7 +1062,7 @@ func (s *Service) BuildChannelMentionRequest(
 				username = user.Username
 			}
 			blocks := userBlocksWithAttachments(format.AuthoredPost(threadPost, username), threadPost.FileIds, mmClient)
-			posts = append(posts, BlocksToPost(blocks, "user", PostConversionOptions{RedactUnshared: redactUnshared, MMClient: mmClient, EnableVision: enableVision, MaxFileSize: maxFileSize}))
+			posts = append(posts, BlocksToPost(blocks, "user", PostConversionOptions{RedactUnshared: redactUnshared, MMClient: mmClient, UserID: conv.UserID, EnableVision: enableVision, MaxFileSize: maxFileSize}))
 		}
 		if latestPostLinkedRole == "user" && threadPost.Id == latestPostLinkedPostID {
 			break

@@ -70,6 +70,7 @@ type autoReplyTestEnv struct {
 	toolProvider  *testToolProvider
 	settings      *fakeAutoReplySettings
 	channel       *model.Channel
+	llm           *dmTestLLM
 	config        *testToolCallingConfig
 	checker       *dmPolicyChecker
 	streaming     *fakeStreamingService
@@ -102,7 +103,7 @@ func autoReplySecondBotConfig() llm.BotConfig {
 // LLM), a licensed server, and a fake auto-reply settings lookup wired in.
 func setupAutoReplyTestEnv(t *testing.T, botConfigs []llm.BotConfig, llmResponses ...*llm.TextStreamResult) *autoReplyTestEnv {
 	t.Helper()
-	return setupAutoReplyTestEnvWithTools(t, botConfigs, nil, &testToolCallingConfig{}, llmResponses...)
+	return setupAutoReplyTestEnvWithTools(t, botConfigs, nil, &testToolCallingConfig{enableAmbientAutoReply: true}, llmResponses...)
 }
 
 // setupAutoReplyTestEnvWithTools is setupAutoReplyTestEnv with the given
@@ -180,7 +181,6 @@ func setupAutoReplyTestEnvWithTools(
 		nil, // db
 		licenseChecker,
 		i18n.Init(),
-		nil, // meetings
 		config,
 		checker,
 	)
@@ -200,6 +200,7 @@ func setupAutoReplyTestEnvWithTools(
 		toolProvider:  toolProvider,
 		settings:      settings,
 		channel:       channel,
+		llm:           fLLM,
 		config:        config,
 		checker:       checker,
 		streaming:     streamingService,
@@ -758,7 +759,7 @@ func TestAutoReplyLicenseGate(t *testing.T) {
 			BotID:     autoReplyBotUserID,
 			Mode:      autoreply.ModeThreads,
 		})
-		nilConv := conversations.New(nil, env.mmClient, nil, nil, env.botService, nil, nil, nil, nil, nil, env.checker)
+		nilConv := conversations.New(nil, env.mmClient, nil, nil, env.botService, nil, nil, nil, nil, env.checker)
 		nilConv.SetAutoReplySettings(env.settings)
 
 		nilConv.MessageHasBeenPosted(nil, env.rootPost(autoReplyUserID, "hello there"))

@@ -67,6 +67,30 @@ func (s *Store) UpdateTurnContent(id string, content json.RawMessage) error {
 		"update turn content")
 }
 
+// CompareAndSwapTurnContent replaces a turn's Content only while it still
+// equals expected (compared as JSONB), and reports whether it did. A missing
+// turn reports false.
+func (s *Store) CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error) {
+	query, args, err := s.builder.
+		Update("LLM_Turns").
+		Set("Content", string(content)).
+		Where(sq.Eq{"ID": id}).
+		Where(sq.Expr("Content = ?::jsonb", string(expected))).
+		ToSql()
+	if err != nil {
+		return false, fmt.Errorf("failed to build compare-and-swap turn content query: %w", err)
+	}
+	result, err := s.db.Exec(query, args...)
+	if err != nil {
+		return false, fmt.Errorf("failed to compare-and-swap turn content: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to read compare-and-swap turn content result: %w", err)
+	}
+	return rows == 1, nil
+}
+
 // GetMaxSequenceForConversation returns the maximum sequence number for turns in the
 // given conversation, or 0 if no turns exist.
 func (s *Store) GetMaxSequenceForConversation(conversationID string) (int, error) {

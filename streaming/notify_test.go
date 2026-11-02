@@ -78,9 +78,10 @@ func TestStreamToPostNotifiesOnceAtRunEnd(t *testing.T) {
 	pendingInteraction := []llm.ToolCall{{ID: "call-1", Name: "ask_user", Status: llm.ToolCallStatusPending, UserInteraction: "select"}}
 	pendingConnect := []llm.ToolCall{{ID: "call-1", Name: "connect", Status: llm.ToolCallStatusPending, UserInteraction: "connect"}}
 	text := func(s string) llm.TextStreamEvent { return llm.TextStreamEvent{Type: llm.EventTypeText, Value: s} }
-	tools := func(calls []llm.ToolCall) llm.TextStreamEvent {
-		return llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: append([]llm.ToolCall(nil), calls...)}
+	batch := func(phase llm.ToolCallPhase, calls []llm.ToolCall) llm.TextStreamEvent {
+		return llm.TextStreamEvent{Type: llm.EventTypeToolCallBatch, Value: llm.ToolCallBatch{Phase: phase, Calls: append([]llm.ToolCall(nil), calls...)}}
 	}
+	awaiting := func(calls []llm.ToolCall) llm.TextStreamEvent { return batch(llm.ToolCallPhaseAwaitingDecision, calls) }
 	end := llm.TextStreamEvent{Type: llm.EventTypeEnd}
 
 	tests := []struct {
@@ -108,31 +109,31 @@ func TestStreamToPostNotifiesOnceAtRunEnd(t *testing.T) {
 		},
 		{
 			name:         "auto-executed batch resolves then text",
-			events:       []llm.TextStreamEvent{text("checking"), tools(pendingAuto), tools(resolved), text("answer"), end},
+			events:       []llm.TextStreamEvent{text("checking"), batch(llm.ToolCallPhaseExecuting, pendingAuto), batch(llm.ToolCallPhaseResolved, resolved), text("answer"), end},
 			wantEnd:      notifications.StreamEnd{Outcome: notifications.OutcomeCompleted, PostDeferred: true},
 			wantDelivery: notifications.DeliveryEveryone,
 		},
 		{
 			name:         "pending approval then end",
-			events:       []llm.TextStreamEvent{text("I need approval"), tools(pendingApproval), end},
+			events:       []llm.TextStreamEvent{text("I need approval"), awaiting(pendingApproval), end},
 			wantEnd:      notifications.StreamEnd{Outcome: notifications.OutcomeCompleted, PausedForRequester: true, PostDeferred: true},
 			wantDelivery: notifications.DeliveryRequesterOnly,
 		},
 		{
 			name:         "partly auto-approved batch still waits for the requester",
-			events:       []llm.TextStreamEvent{text("I need approval"), tools(pendingMixed), end},
+			events:       []llm.TextStreamEvent{text("I need approval"), awaiting(pendingMixed), end},
 			wantEnd:      notifications.StreamEnd{Outcome: notifications.OutcomeCompleted, PausedForRequester: true, PostDeferred: true},
 			wantDelivery: notifications.DeliveryRequesterOnly,
 		},
 		{
 			name:         "ask-user interaction tool pending",
-			events:       []llm.TextStreamEvent{text("Which one?"), tools(pendingInteraction), end},
+			events:       []llm.TextStreamEvent{text("Which one?"), awaiting(pendingInteraction), end},
 			wantEnd:      notifications.StreamEnd{Outcome: notifications.OutcomeCompleted, PausedForRequester: true, PostDeferred: true},
 			wantDelivery: notifications.DeliveryRequesterOnly,
 		},
 		{
 			name:         "connect interaction tool pending",
-			events:       []llm.TextStreamEvent{text("Connect first"), tools(pendingConnect), end},
+			events:       []llm.TextStreamEvent{text("Connect first"), awaiting(pendingConnect), end},
 			wantEnd:      notifications.StreamEnd{Outcome: notifications.OutcomeCompleted, PausedForRequester: true, PostDeferred: true},
 			wantDelivery: notifications.DeliveryRequesterOnly,
 		},

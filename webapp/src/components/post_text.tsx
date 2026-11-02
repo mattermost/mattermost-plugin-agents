@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {useMemo} from 'react';
 import {useSelector} from 'react-redux';
 import styled, {keyframes, css} from 'styled-components';
 
@@ -9,7 +9,8 @@ import {GlobalState} from '@mattermost/types/store';
 import {Channel} from '@mattermost/types/channels';
 import {Team} from '@mattermost/types/teams';
 
-import manifest from '@/manifest';
+import {getLinkPolicy} from '@/selectors';
+import {linkRendering} from '@/utils/link_allowlist';
 
 import {insertAnnotationMarkers, replaceCitationMarkers} from './citations/citation_processor';
 import {Annotation} from './citations/types';
@@ -85,7 +86,8 @@ const PostText = (props: Props) => {
     const channel = useSelector<GlobalState, Channel>((state) => state.entities.channels.channels[props.channelID]);
     const team = useSelector<GlobalState, Team>((state) => state.entities.teams.teams[channel?.team_id]);
     const siteURL = useSelector<GlobalState, string | undefined>((state) => state.entities.general.config.SiteURL);
-    const allowUnsafeLinks = useSelector<GlobalState, boolean>((state: any) => state['plugins-' + manifest.id]?.allowUnsafeLinks ?? false);
+    const linkPolicy = useSelector(getLinkPolicy);
+    const links = useMemo(() => linkRendering(linkPolicy, siteURL || window.location.origin), [linkPolicy, siteURL]);
 
     // @ts-ignore
     const {formatText, messageHtmlToComponent} = window.PostUtils;
@@ -95,7 +97,7 @@ const PostText = (props: Props) => {
         mentionHighlight: true,
         atMentions: true,
         team,
-        unsafeLinks: !allowUnsafeLinks,
+        unsafeLinks: links.unsafeLinks,
         minimumHashtagLength: 1000000000,
         siteURL,
     };
@@ -107,14 +109,23 @@ const PostText = (props: Props) => {
         postId: props.postID,
     };
 
+    // A citation whose URL the policy rejects keeps its marker but loses the
+    // URL, so the chip renders without a destination to open.
+    const annotations = useMemo(
+        () => props.annotations?.map((annotation) => (
+            annotation.url && !links.isCitationUrlAllowed(annotation.url) ? {...annotation, url: undefined} : annotation // eslint-disable-line no-undefined
+        )),
+        [props.annotations, links],
+    );
+
     // Process message with annotations if they exist
     let processedMessage = props.message;
-    if (props.annotations && props.annotations.length > 0) {
-        processedMessage = insertAnnotationMarkers(props.message, props.annotations);
+    if (annotations && annotations.length > 0) {
+        processedMessage = insertAnnotationMarkers(props.message, annotations);
     }
 
     const text = messageHtmlToComponent(
-        formatText(processedMessage, markdownOptions),
+        links.restrictLinks(formatText(processedMessage, markdownOptions)),
         messageHtmlToComponentOptions,
     );
 
@@ -123,8 +134,8 @@ const PostText = (props: Props) => {
     }
 
     // Post-process the rendered JSX to replace citation markers with React components
-    const processedText = props.annotations && props.annotations.length > 0 ?
-        replaceCitationMarkers(text, props.annotations) :
+    const processedText = annotations && annotations.length > 0 ?
+        replaceCitationMarkers(text, annotations) :
         text;
 
     return (

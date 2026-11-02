@@ -114,8 +114,10 @@ const defaultConfig: Config = {
     enableCallSummary: false,
     allowedUpstreamHostnames: '',
     allowUnsafeLinks: false,
+    allowedLinkDomains: '',
     enableHTMLArtifacts: false,
     enableChannelMentionToolCalling: false,
+    enableAmbientAutoReply: false,
     allowNativeWebSearchInChannels: false,
     embeddingSearchConfig: {
         type: '',
@@ -204,9 +206,14 @@ const Config = (props: Props) => {
     const [loadError, setLoadError] = useState<string | null>(null);
     const [runtimeBots, setRuntimeBots] = useState<RuntimeBotOption[]>([]);
     const [runtimeBotsError, setRuntimeBotsError] = useState<string | null>(null);
+
+    // Core's admin console only uses a save action's error to keep Save
+    // enabled, so field-level errors have to be rendered here.
+    const [linkDomainsError, setLinkDomainsError] = useState('');
     const intl = useIntl();
     const tokenAccountingLicensed = useIsLicensedFor('token_accounting');
     const providerWebSearchLicensed = useIsLicensedFor('provider_web_search');
+    const channelAutoReplyLicensed = useIsLicensedFor('channel_auto_reply');
 
     // Load config from plugin API on mount
     useEffect(() => {
@@ -252,8 +259,12 @@ const Config = (props: Props) => {
                 // immediately instead of after a page reload.
                 setLocalConfig({...defaultConfig, ...saved});
                 setSavedConfig({...defaultConfig, ...saved});
+                setLinkDomainsError('');
                 return {};
             } catch (e: any) {
+                if (e?.server_error_id === 'invalid_allowed_link_domains') {
+                    setLinkDomainsError(intl.formatMessage({defaultMessage: 'One or more entries are not valid domains.'}));
+                }
                 return {error: {message: intl.formatMessage({defaultMessage: 'Failed to save configuration.'})}};
             }
         };
@@ -396,6 +407,19 @@ const Config = (props: Props) => {
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, AI responses may contain clickable links, including potentially malicious destinations. Enable only if you trust the LLM output and have mitigations for exfiltration risks.'})}
                     />
+                    {value.allowUnsafeLinks && (
+                        <TextItem
+                            label={intl.formatMessage({defaultMessage: 'Allowed Link Domains (csv)'})}
+                            value={value.allowedLinkDomains}
+                            onChange={(e) => {
+                                setLinkDomainsError('');
+                                updateConfig({allowedLinkDomains: e.target.value});
+                            }}
+                            error={linkDomainsError}
+                            helptext={intl.formatMessage({defaultMessage: 'Comma separated list of domains that AI-generated links may point to. Links to any other domain are shown as plain text. Supports wildcards like *.mydomain.com, which matches subdomains but not mydomain.com itself. Links to this Mattermost server are always allowed. Leave empty to allow links to any domain.'})}
+                            placeholder={'example.com, *.mydomain.com'}
+                        />
+                    )}
                     <BooleanItem
                         label={
                             <Horizontal>
@@ -427,6 +451,26 @@ const Config = (props: Props) => {
                             updateConfig({enableChannelMentionToolCalling: to});
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, @mentioning a bot in public channels allows tool calling (e.g., web search, integrations). When disabled, channel mentions still work but tools are disabled—only DMs allow tool usage. This is an experimental feature for multi-player tool calling in channels.'})}
+                    />
+                    <BooleanItem
+                        label={
+                            <Horizontal>
+                                <FormattedMessage defaultMessage='Enable ambient auto-replies'/>
+                                <Tag
+                                    type='info'
+                                    label={<FormattedMessage defaultMessage='EXPERIMENTAL'/>}
+                                />
+                            </Horizontal>
+                        }
+                        value={Boolean(value.enableAmbientAutoReply)}
+                        disableTrue={!channelAutoReplyLicensed}
+                        extra={!channelAutoReplyLicensed && (
+                            <LicenseChip capability='channel_auto_reply'/>
+                        )}
+                        onChange={(to) => {
+                            updateConfig({enableAmbientAutoReply: to});
+                        }}
+                        helpText={intl.formatMessage({defaultMessage: 'Lets channel managers choose the ambient auto-reply modes, where the agent’s model reads each new message and decides whether the agent should reply. Every analyzed message costs an LLM call. When disabled, ambient modes cannot be saved and channels using them stop replying automatically; @mentions keep working.'})}
                     />
                     <BooleanItem
                         label={<FormattedMessage defaultMessage='Allow native web search in channels'/>}
