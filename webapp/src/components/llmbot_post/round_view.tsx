@@ -76,7 +76,7 @@ export const RoundView = React.memo((props: RoundViewProps) => {
 });
 RoundView.displayName = 'RoundView';
 
-// Reasoning and tool UI need the full bubble width (use_bubble_width.ts).
+// Reasoning and tool UI need the full bubble width.
 // Collapsed reasoning is one short "Thinking" line, which the bubble measures
 // like text; expanded, its panel needs the row.
 function hasWideContent(round: Round, reasoningCollapsed: boolean): boolean {

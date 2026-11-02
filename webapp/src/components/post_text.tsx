@@ -90,7 +90,6 @@ interface RevealTextProps {
     message: string;
     postID: string;
     showCursor?: boolean;
-    reveal: boolean;
     team: Team;
     siteURL?: string;
     links: LinkRendering;
@@ -175,7 +174,6 @@ const PostText = (props: Props) => {
                 message={props.message}
                 postID={props.postID}
                 showCursor={props.showCursor}
-                reveal={props.reveal}
                 team={team}
                 siteURL={siteURL}
                 links={links}
