@@ -132,6 +132,24 @@ describe('ScopedAccessView', () => {
         expect(screen.queryByTestId('scoped-access-closed-teams')).toBeNull();
     });
 
+    test.each([
+        {name: 'compliance mode', reason: 'compliance_mode' as const, text: /Not included: compliance mode is on/},
+        {name: 'unreadable settings', reason: 'unknown' as const, text: /Not included: the server's settings couldn't be read/},
+    ])('says the triggering team grant is off for $name', async ({reason, text}) => {
+        mockedGetAccess.mockResolvedValue(report({
+            channels: {
+                ...report().channels,
+                triggeringTeamPublicChannels: false,
+                openTeams: {enabled: false, disabledReason: reason, openCount: 0, closedCount: 3, open: [], closed: []},
+            },
+        }));
+        renderView();
+
+        const channels = await screen.findByTestId('scoped-access-channels');
+        expect(channels.textContent).toMatch(text);
+        expect(channels.textContent).not.toContain('Always included');
+    });
+
     test('lists the unmet prerequisites when the mode cannot run', async () => {
         mockedGetAccess.mockResolvedValue(report({active: false, blockers: ['server_unsupported', 'channel_tool_calling_off']}));
         renderView();

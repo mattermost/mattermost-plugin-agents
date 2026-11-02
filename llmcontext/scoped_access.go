@@ -62,7 +62,8 @@ type ScopedAccessReport struct {
 
 type ScopedAccessChannels struct {
 	// TriggeringTeamPublicChannels is whether every run can read all public
-	// channels on the team of the channel it was triggered in.
+	// channels on the team of the channel it was triggered in. Only
+	// compliance mode, or settings the plugin cannot read, turn it off.
 	TriggeringTeamPublicChannels bool                  `json:"triggeringTeamPublicChannels"`
 	OpenTeams                    ScopedAccessOpenTeams `json:"openTeams"`
 	ExtraChannels                []ScopedAccessChannel `json:"extraChannels"`
@@ -72,7 +73,7 @@ type ScopedAccessChannels struct {
 // open team.
 type ScopedAccessOpenTeams struct {
 	Enabled        bool                           `json:"enabled"`
-	DisabledReason scopedsession.OpenTeamGrantOff `json:"disabledReason,omitempty"`
+	DisabledReason scopedsession.PublicGrantsOff `json:"disabledReason,omitempty"`
 	OpenCount      int                            `json:"openCount"`
 	ClosedCount    int                            `json:"closedCount"`
 	Open           []ScopedAccessTeam             `json:"open"`
@@ -138,7 +139,6 @@ func (b *Builder) ScopedAccessReport(ctx stdcontext.Context, bot *bots.Bot, view
 		Active:     b.ScopedChannelModeAvailable(bot),
 		Blockers:   b.ScopedChannelModeBlockers(bot),
 	}
-	report.Channels.TriggeringTeamPublicChannels = true
 	if report.Blockers == nil {
 		report.Blockers = []ScopedChannelModeBlocker{}
 	}
@@ -148,6 +148,7 @@ func (b *Builder) ScopedAccessReport(ctx stdcontext.Context, bot *bots.Bot, view
 		return nil, err
 	}
 	report.Channels.OpenTeams = openTeams
+	report.Channels.TriggeringTeamPublicChannels = !scopedsession.TeamGrantOff(openTeams.DisabledReason)
 
 	extras, err := b.scopedExtraChannels(bot.GetConfig().ScopedExtraChannelIDs)
 	if err != nil {
@@ -165,11 +166,11 @@ func (b *Builder) ScopedAccessReport(ctx stdcontext.Context, bot *bots.Bot, view
 
 func (b *Builder) scopedOpenTeams() (ScopedAccessOpenTeams, error) {
 	result := ScopedAccessOpenTeams{
-		DisabledReason: scopedsession.OpenTeamGrantOffReason(pluginServerSettings{b.pluginAPI}),
+		DisabledReason: scopedsession.PublicGrantsOffReason(pluginServerSettings{b.pluginAPI}),
 		Open:           []ScopedAccessTeam{},
 		Closed:         []ScopedAccessClosedTeam{},
 	}
-	result.Enabled = result.DisabledReason == scopedsession.OpenTeamGrantOn
+	result.Enabled = result.DisabledReason == scopedsession.PublicGrantsOn
 
 	teams, err := b.pluginAPI.Team.List()
 	if err != nil {
@@ -222,7 +223,7 @@ func (b *Builder) scopedExtraChannels(channelIDs []string) ([]ScopedAccessChanne
 		}
 
 		switch {
-		case model.SessionScopeAllowsChannel(scopedsession.NewRunScope("", []string{id}), channel, nil, true):
+		case model.SessionScopeAllowsChannel(scopedsession.NewRunScope("", []string{id}, ""), channel, nil, model.SessionScopeLimits{}):
 			entry.Status = ScopedExtraChannelReadable
 		case channel.DeleteAt != 0:
 			entry.Status = ScopedExtraChannelArchived

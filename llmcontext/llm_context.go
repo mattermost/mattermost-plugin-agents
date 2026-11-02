@@ -432,6 +432,7 @@ func (b *Builder) mintScopedRun(ctx stdcontext.Context, c *llm.Context, bot *bot
 	audit.AddParam(rec, audit.KeyThreadRootPostID, c.ToolCatalog.ScopedTurn.ThreadRootID)
 	audit.AddParam(rec, audit.KeyConversationID, c.ToolCatalog.ScopedTurn.ConversationID)
 	audit.AddParam(rec, audit.KeyScopeOpenTeamPublicChannels, true)
+	audit.AddParam(rec, audit.KeyScopeTriggeringTeamPublicChannels, true)
 	grantDeferred := false
 	defer func() {
 		if !grantDeferred {
@@ -454,6 +455,7 @@ func (b *Builder) mintScopedRun(ctx stdcontext.Context, c *llm.Context, bot *bot
 		BotUserID:       bot.BotUserID(),
 		RequesterID:     requesterID,
 		ChannelID:       c.Channel.Id,
+		TeamID:          c.Channel.TeamId,
 		ExtraChannelIDs: cfg.ScopedExtraChannelIDs,
 		EnabledTools:    cfg.EnabledMCPTools,
 	})

@@ -75,7 +75,7 @@ func scopedServer(t *testing.T, team *model.Team, channel *model.Channel) *httpt
 
 func scopedContext(t *testing.T) context.Context {
 	t.Helper()
-	scope := scopedsession.NewRunScope(model.NewId(), []string{model.NewId()})
+	scope := scopedsession.NewRunScope(model.NewId(), []string{model.NewId()}, model.NewId())
 	return scopedsession.WithBinding(t.Context(), scopedsession.NewBinding(scope))
 }
 

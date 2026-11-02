@@ -30,6 +30,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var scopedTestTeamID = model.NewId()
+
 type scopedTestConfig struct {
 	channelToolCalling bool
 }
@@ -232,7 +234,7 @@ func scopedTestMCPCatalog() []llm.Tool {
 
 func TestScopedChannelTurnCatalog(t *testing.T) {
 	requester := &model.User{Id: model.NewId(), Username: "alice"}
-	channel := &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypePrivate}
+	channel := &model.Channel{Id: model.NewId(), TeamId: scopedTestTeamID, Type: model.ChannelTypePrivate}
 	turn := llm.ScopedTurn{TriggerPostID: model.NewId(), ThreadRootID: model.NewId(), ConversationID: model.NewId()}
 
 	minter := &recordingScopedMinter{}
@@ -261,6 +263,7 @@ func TestScopedChannelTurnCatalog(t *testing.T) {
 	scope := minter.scopes[0]
 	assert.Equal(t, append([]string{channel.Id}, cfg.ScopedExtraChannelIDs...), scope.Resources.ChannelIDs)
 	assert.True(t, scope.Resources.OpenTeamPublicChannels)
+	assert.Equal(t, []string{scopedTestTeamID}, scope.Resources.PublicChannelTeamIDs, "the run reads the public channels of the triggering channel's team")
 	assert.Equal(t, requester.Id, scope.OnBehalfOfUserID)
 
 	records := auditRecords()
@@ -290,7 +293,7 @@ func TestScopedChannelTurnCatalog(t *testing.T) {
 }
 
 func TestScopedChannelTurnGrantCountsOnlyChannelsInScope(t *testing.T) {
-	channel := &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypePrivate}
+	channel := &model.Channel{Id: model.NewId(), TeamId: scopedTestTeamID, Type: model.ChannelTypePrivate}
 	existing, other, missing := model.NewId(), model.NewId(), model.NewId()
 
 	tests := []struct {
@@ -359,7 +362,7 @@ func TestScopedChannelTurnCatalogNeedsNamedTools(t *testing.T) {
 			cfg := scopedTestBotConfig()
 			cfg.EnabledMCPTools = tt.enabled
 			bot := newScopedTestBot(cfg)
-			channel := &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypeOpen}
+			channel := &model.Channel{Id: model.NewId(), TeamId: scopedTestTeamID, Type: model.ChannelTypeOpen}
 
 			llmContext := builder.BuildLLMContextUserRequest(bot, &model.User{Id: model.NewId()}, channel,
 				builder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{TriggerPostID: model.NewId(), ConversationID: model.NewId()}),
@@ -379,7 +382,7 @@ func TestScopedChannelTurnSeesRevocation(t *testing.T) {
 	builder, _ := newScopedTestBuilder(t, defaultScopedTestEnv(), &emptyToolProvider{}, provider)
 	bot := newScopedTestBot(scopedTestBotConfig())
 
-	llmContext := builder.BuildLLMContextUserRequest(bot, &model.User{Id: model.NewId()}, &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypeOpen},
+	llmContext := builder.BuildLLMContextUserRequest(bot, &model.User{Id: model.NewId()}, &model.Channel{Id: model.NewId(), TeamId: scopedTestTeamID, Type: model.ChannelTypeOpen},
 		builder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{TriggerPostID: model.NewId()}),
 		builder.WithLLMContextTools(stdcontext.Background(), bot),
 	)
@@ -407,7 +410,7 @@ func TestScopedChannelTurnGrantWaitsForConversation(t *testing.T) {
 			builder, auditRecords := newScopedTestBuilder(t, defaultScopedTestEnv(), &emptyToolProvider{}, provider)
 			bot := newScopedTestBot(scopedTestBotConfig())
 
-			llmContext := builder.BuildLLMContextUserRequest(bot, &model.User{Id: model.NewId()}, &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypeOpen},
+			llmContext := builder.BuildLLMContextUserRequest(bot, &model.User{Id: model.NewId()}, &model.Channel{Id: model.NewId(), TeamId: scopedTestTeamID, Type: model.ChannelTypeOpen},
 				builder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{TriggerPostID: model.NewId(), ConversationPending: true}),
 				builder.WithLLMContextTools(stdcontext.Background(), bot),
 			)
@@ -430,7 +433,7 @@ func TestScopedChannelTurnGrantWaitsForConversation(t *testing.T) {
 }
 
 func TestScopedChannelTurnFallsBackOnlyWithApproval(t *testing.T) {
-	publicChannel := &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypeOpen}
+	publicChannel := &model.Channel{Id: model.NewId(), TeamId: scopedTestTeamID, Type: model.ChannelTypeOpen}
 	dm := &model.Channel{Id: model.NewId(), Type: model.ChannelTypeDirect}
 
 	tests := []struct {
@@ -492,7 +495,7 @@ func TestScopedChannelTurnMintFailureHasNoMCPTools(t *testing.T) {
 			bot := newScopedTestBot(scopedTestBotConfig())
 			requester := &model.User{Id: model.NewId()}
 
-			llmContext := builder.BuildLLMContextUserRequest(bot, requester, &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypePrivate},
+			llmContext := builder.BuildLLMContextUserRequest(bot, requester, &model.Channel{Id: model.NewId(), TeamId: scopedTestTeamID, Type: model.ChannelTypePrivate},
 				builder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{TriggerPostID: model.NewId()}),
 				builder.WithLLMContextTools(stdcontext.Background(), bot),
 			)
@@ -526,7 +529,7 @@ func TestScopedChannelTurnPanicRevokesSession(t *testing.T) {
 	bot := newScopedTestBot(scopedTestBotConfig())
 
 	require.PanicsWithValue(t, "catalog failed", func() {
-		builder.BuildLLMContextUserRequest(bot, &model.User{Id: model.NewId()}, &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypeOpen},
+		builder.BuildLLMContextUserRequest(bot, &model.User{Id: model.NewId()}, &model.Channel{Id: model.NewId(), TeamId: scopedTestTeamID, Type: model.ChannelTypeOpen},
 			builder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{TriggerPostID: model.NewId()}),
 			builder.WithLLMContextTools(stdcontext.Background(), bot),
 		)
@@ -602,7 +605,7 @@ func TestScopedChannelTurnWebSearchNeedsNamedTools(t *testing.T) {
 			bot := newScopedTestBot(cfg)
 			channel := tt.channel
 			if channel == nil {
-				channel = &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypeOpen}
+				channel = &model.Channel{Id: model.NewId(), TeamId: scopedTestTeamID, Type: model.ChannelTypeOpen}
 			}
 
 			opts := []llm.ContextOption{}
@@ -630,7 +633,7 @@ func TestScopedChannelTurnWithoutSessionStillNeedsNamedWebSearch(t *testing.T) {
 	builder, _ := newScopedTestBuilder(t, defaultScopedTestEnv(), toolProvider, provider)
 	bot := newScopedTestBot(scopedTestBotConfig())
 
-	llmContext := builder.BuildLLMContextUserRequest(bot, &model.User{Id: model.NewId()}, &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypeOpen},
+	llmContext := builder.BuildLLMContextUserRequest(bot, &model.User{Id: model.NewId()}, &model.Channel{Id: model.NewId(), TeamId: scopedTestTeamID, Type: model.ChannelTypeOpen},
 		builder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{TriggerPostID: model.NewId()}),
 		builder.WithLLMContextTools(stdcontext.Background(), bot),
 	)
@@ -678,6 +681,7 @@ func TestScopedRunLapsed(t *testing.T) {
 				BotUserID:       bot.BotUserID(),
 				RequesterID:     model.NewId(),
 				ChannelID:       model.NewId(),
+				TeamID:          scopedTestTeamID,
 				ExtraChannelIDs: cfg.ScopedExtraChannelIDs,
 				EnabledTools:    cfg.EnabledMCPTools,
 			})
@@ -714,7 +718,7 @@ func TestScopedCatalogPreviewMirrorsWebSearchOptIn(t *testing.T) {
 				cfg.EnabledMCPTools = append(cfg.EnabledMCPTools, llm.EnabledMCPTool{ServerOrigin: llm.BuiltinToolsOrigin, ToolName: name})
 			}
 			bot := newScopedTestBot(cfg)
-			channel := &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypeOpen}
+			channel := &model.Channel{Id: model.NewId(), TeamId: scopedTestTeamID, Type: model.ChannelTypeOpen}
 
 			llmContext := builder.BuildLLMContextUserRequest(bot, &model.User{Id: model.NewId()}, channel,
 				builder.WithLLMContextScopedCatalogPreview(bot),

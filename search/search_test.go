@@ -629,7 +629,7 @@ func TestExecuteSearchNotConfigured(t *testing.T) {
 func TestSearchUnderScopedSession(t *testing.T) {
 	scope := &model.SessionScope{
 		Permissions: model.ScopeReadPermissions,
-		Resources:   model.SessionScopeResources{ChannelIDs: []string{"trigger"}, OpenTeamPublicChannels: true},
+		Resources:   model.SessionScopeResources{ChannelIDs: []string{"trigger"}, OpenTeamPublicChannels: true, PublicChannelTeamIDs: []string{"trigger_team"}},
 	}
 
 	tests := []struct {
@@ -639,8 +639,8 @@ func TestSearchUnderScopedSession(t *testing.T) {
 		expected   model.SessionScopeResources
 	}{
 		{name: "searches the scope instead of memberships", expected: scope.Resources},
-		{name: "compliance mode drops open-team channels", compliance: true, expected: model.SessionScopeResources{ChannelIDs: []string{"trigger"}}},
-		{name: "system_user without join_public_teams drops open-team channels", noJoin: true, expected: model.SessionScopeResources{ChannelIDs: []string{"trigger"}}},
+		{name: "compliance mode drops both public-channel grants", compliance: true, expected: model.SessionScopeResources{ChannelIDs: []string{"trigger"}}},
+		{name: "system_user without join_public_teams drops only the open-team grant", noJoin: true, expected: model.SessionScopeResources{ChannelIDs: []string{"trigger"}, PublicChannelTeamIDs: []string{"trigger_team"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

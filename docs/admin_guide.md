@@ -860,8 +860,8 @@ An agent using service account authentication can also run its tools in channels
 
 In a channel turn, the agent's Mattermost tools run as the **agent's bot account** on a session that:
 
-- can read the channel the agent was used in, every public channel on a team anyone on the server can join, and any **additional channels** you pick for the agent;
-- can read nothing else. Channel and team membership neither add to nor is required for this. The bot's direct messages, group messages, private channels someone added the bot to, channels and teams under an access policy, and teams that only some users can join (invite-only, restricted to email domains, or group-synced) are all out of reach. With compliance mode on, the open-team part is turned off;
+- can read the channel the agent was used in, every public channel on that channel's team (even if the team is invite-only), every public channel on a team anyone on the server can join, and any **additional channels** you pick for the agent;
+- can read nothing else. Channel and team membership neither add to nor is required for this. The bot's direct messages, group messages, private channels someone added the bot to, channels and teams under an access policy, and public channels on other teams that only some users can join (invite-only, restricted to email domains, or group-synced) are all out of reach. With compliance mode on, both public-channel parts are turned off, and the open-team part is also off when regular users cannot join teams on their own;
 - cannot change anything in Mattermost. The only post is the agent's normal reply in the thread;
 - lasts for one run of the agent and is revoked when the run ends, or after 30 minutes at most.
 

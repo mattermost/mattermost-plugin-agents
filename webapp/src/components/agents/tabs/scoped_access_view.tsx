@@ -135,13 +135,15 @@ const ChannelsSection = ({channels}: {channels: ScopedAccessReport['channels']})
                     {' '}
                     <Muted><FormattedMessage defaultMessage="Including private channels, even if the agent isn't a member."/></Muted>
                 </li>
-                {channels.triggeringTeamPublicChannels && (
-                    <li>
-                        <Strong><FormattedMessage defaultMessage="Public channels on that channel's team"/></Strong>
-                        {' '}
-                        <Muted><FormattedMessage defaultMessage='Always included, even if the team is invite-only.'/></Muted>
-                    </li>
-                )}
+                <li>
+                    <Strong><FormattedMessage defaultMessage="Public channels on that channel's team"/></Strong>
+                    {' '}
+                    <Muted>
+                        {channels.triggeringTeamPublicChannels ? (
+                            <FormattedMessage defaultMessage='Always included, even if the team is invite-only.'/>
+                        ) : teamGrantOffText(openTeams.disabledReason)}
+                    </Muted>
+                </li>
                 <li>
                     <Strong><FormattedMessage defaultMessage='Public channels on open teams'/></Strong>
                     {' '}
@@ -297,6 +299,13 @@ function openGrantOffText(reason?: ScopedOpenTeamGrantOff): React.ReactNode {
     default:
         return <FormattedMessage defaultMessage="The server's settings couldn't be read, so no team counts as open."/>;
     }
+}
+
+function teamGrantOffText(reason?: ScopedOpenTeamGrantOff): React.ReactNode {
+    if (reason === 'compliance_mode') {
+        return <FormattedMessage defaultMessage='Not included: compliance mode is on.'/>;
+    }
+    return <FormattedMessage defaultMessage="Not included: the server's settings couldn't be read."/>;
 }
 
 function teamClosedText(reason: ScopedTeamClosedReason): React.ReactNode {

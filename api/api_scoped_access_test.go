@@ -127,19 +127,22 @@ func TestScopedAccessReport(t *testing.T) {
 	readableID, archivedID, missingID, dmID := model.NewId(), model.NewId(), model.NewId(), model.NewId()
 
 	tests := []struct {
-		name         string
-		compliance   bool
-		wantEnabled  bool
-		wantReason   string
-		wantOpen     []string
-		wantClosed   map[string][]string
-		wantClosedN  int
-		wantStatuses map[string]string
+		name          string
+		compliance    bool
+		noJoin        bool
+		wantEnabled   bool
+		wantTeamGrant bool
+		wantReason    string
+		wantOpen      []string
+		wantClosed    map[string][]string
+		wantClosedN   int
+		wantStatuses  map[string]string
 	}{
 		{
-			name:        "open-team grant on",
-			wantEnabled: true,
-			wantOpen:    []string{openID},
+			name:          "open-team grant on",
+			wantEnabled:   true,
+			wantTeamGrant: true,
+			wantOpen:      []string{openID},
 			wantClosed: map[string][]string{
 				inviteOnlyID: {"invite_only"},
 				domainID:     {"domain_restricted"},
@@ -149,7 +152,15 @@ func TestScopedAccessReport(t *testing.T) {
 			wantClosedN: 4,
 		},
 		{
-			name:       "compliance mode turns the open-team grant off",
+			name:          "people who cannot join teams turn only the open-team grant off",
+			noJoin:        true,
+			wantReason:    "users_cannot_join_teams",
+			wantTeamGrant: true,
+			wantClosed:    map[string][]string{},
+			wantClosedN:   5,
+		},
+		{
+			name:       "compliance mode turns both public grants off",
 			compliance: true,
 			wantReason: "compliance_mode",
 			wantClosed: map[string][]string{},
@@ -161,7 +172,7 @@ func TestScopedAccessReport(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			e := scopedAccessEnvironment(t, scopedAccessAgent("", []string{readableID, archivedID, missingID, dmID}))
 			e.OverrideConfig(&model.Config{ComplianceSettings: model.ComplianceSettings{Enable: model.NewPointer(tt.compliance)}})
-			e.mockAPI.On("RolesGrantPermission", []string{model.SystemUserRoleId}, model.PermissionJoinPublicTeams.Id).Return(true).Maybe()
+			e.mockAPI.On("RolesGrantPermission", []string{model.SystemUserRoleId}, model.PermissionJoinPublicTeams.Id).Return(!tt.noJoin).Maybe()
 			e.mockAPI.On("GetTeams").Return(teams, nil)
 			e.mockAPI.On("GetTeam", openID).Return(teams[0], nil).Maybe()
 			e.mockAPI.On("GetChannel", readableID).Return(&model.Channel{Id: readableID, TeamId: openID, Type: model.ChannelTypePrivate, DisplayName: "Private"}, nil)
@@ -178,7 +189,7 @@ func TestScopedAccessReport(t *testing.T) {
 			assert.True(t, report.Configured)
 			assert.True(t, report.Active)
 			assert.Empty(t, report.Blockers)
-			assert.True(t, report.Channels.TriggeringTeamPublicChannels)
+			assert.Equal(t, tt.wantTeamGrant, report.Channels.TriggeringTeamPublicChannels)
 
 			openTeams := report.Channels.OpenTeams
 			assert.Equal(t, tt.wantEnabled, openTeams.Enabled)

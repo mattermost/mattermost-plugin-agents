@@ -33,6 +33,8 @@ type ScopedSessionRequest struct {
 	RequesterID string
 	// ChannelID is the channel the run was triggered in.
 	ChannelID string
+	// TeamID is the team of ChannelID; every public channel on it is in scope.
+	TeamID string
 	// ExtraChannelIDs are admin-picked channels the agent may also read.
 	ExtraChannelIDs []string
 	// EnabledTools is the agent's tool allowlist when the run was started.
@@ -139,8 +141,8 @@ func (m *ClientManager) ScopedSessionsAvailable() bool {
 }
 
 // MintScopedSession creates a scoped session for req's bot. The session can
-// read req's channel, its extra channels, and every public channel on an open
-// team, and nothing else. The caller owns the run and must Close it when the
+// read req's channel, its extra channels, every public channel on its team and
+// on every open team, and nothing else. The caller owns the run and must Close it when the
 // run ends.
 func (m *ClientManager) MintScopedSession(ctx context.Context, req ScopedSessionRequest) (*ScopedRun, error) {
 	_, span := telemetry.Tracer().Start(ctx, "mcp mint scoped session")
@@ -154,7 +156,7 @@ func (m *ClientManager) MintScopedSession(ctx context.Context, req ScopedSession
 }
 
 func (m *ClientManager) mintScopedSession(req ScopedSessionRequest) (*ScopedRun, error) {
-	for name, id := range map[string]string{"bot user": req.BotUserID, "requester": req.RequesterID, "channel": req.ChannelID} {
+	for name, id := range map[string]string{"bot user": req.BotUserID, "requester": req.RequesterID, "channel": req.ChannelID, "team": req.TeamID} {
 		if !model.IsValidId(id) {
 			return nil, fmt.Errorf("scoped session %s ID is invalid", name)
 		}
@@ -173,7 +175,7 @@ func (m *ClientManager) mintScopedSession(req ScopedSessionRequest) (*ScopedRun,
 			channelIDs = append(channelIDs, id)
 		}
 	}
-	scope := scopedsession.NewRunScope(req.RequesterID, channelIDs)
+	scope := scopedsession.NewRunScope(req.RequesterID, channelIDs, req.TeamID)
 
 	expiresAt := time.Now().Add(scopedsession.RunTTL).UnixMilli()
 	session, err := minter.CreateScopedSession(req.BotUserID, scope, expiresAt)
