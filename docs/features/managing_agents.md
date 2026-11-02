@@ -50,7 +50,7 @@ Agent management uses three Mattermost system permissions plus a license check.
 | Permission | Capability |
 |---|---|
 | `manage_own_agent` | Create new agents and edit/delete agents the user is an admin of. |
-| `manage_others_agent` | Edit and delete any agent on the server, including agents the user did not create. |
+| `manage_others_agent` | Edit and delete any agent on the server, including agents the user did not create. System admins can also grant this to individual users with the **Agent managers** list in **System Console > Plugins > Agents** (see [Delegate settings access](../admin_guide.md#delegate-settings-access)). |
 | `manage_system` | System administrator. Always allowed to manage agents that have no creator (migrated legacy bots) and may create agents in the absence of `manage_own_agent`. |
 
 The Agents page applies these rules consistently between the UI and the API:
@@ -59,7 +59,7 @@ The Agents page applies these rules consistently between the UI and the API:
 - A row's **Edit/Delete** actions are available to:
   - The agent's creator,
   - Anyone listed in the agent's **Agent admins** field,
-  - Anyone with `manage_others_agent`,
+  - Anyone with `manage_others_agent`, or on the **Agent managers** list,
   - System administrators, when the agent has no creator (a migrated legacy bot — see [Legacy bot migration](#legacy-bot-migration)).
 - The same checks gate the underlying `POST /agents`, `PUT /agents/:id`, and `DELETE /agents/:id` API routes, so direct API calls cannot bypass the UI rules.
 
@@ -145,7 +145,7 @@ The MCPs tab is available only when **Enable Tools** is on (Configuration tab). 
 - **Automatically enable all MCP tools**: the agent isn't limited to a list of tools. It can use any MCP tool the requesting user can use, including MCP tools added later. MCP server access policies, the servers the user has turned off, and license limits still apply. This is the default for new agents and the setting used by all migrated legacy bots.
 - When the auto-grant is off, pick the specific MCP tools to enable. Tools that are no longer present on the server are dropped from the agent's allowlist when you save.
 - For OAuth-backed MCP servers, you can also start the per-user **Connect** flow directly from this tab. Enabling a server that is currently disconnected stores a wildcard grant — once you finish the OAuth flow, the agent gets every tool that server exposes. The tab refreshes automatically when you connect or disconnect (`mcp_connection_updated` websocket event). **Connect** is not shown while **Use service accounts for authentication** is on; the tab lists that agent's service-account catalog instead of your personal connections.
-- **Use service accounts for authentication** switches the agent from per-user credentials to admin-configured service account credentials for **external** MCP servers. External MCP servers without service account headers configured in the System Console are excluded from the agent (fail closed). Mattermost (embedded) and plugin tools run with each requesting user's own permissions, and users are never asked to connect accounts. The MCPs tab then shows **Connected** for servers whose service account credentials work, and **No service account credentials** for servers that have none. Turning it on shows a warning because it flattens permissions on those external servers — anyone who can use the agent acts with the agent's shared access there — so restrict usage on the **Access** tab. Only system administrators can turn this setting on. While it is enabled, some fields are system-admin-only; see [What's editable vs locked](#whats-editable-vs-locked). Anyone who can manage the agent can still turn the setting off or delete the agent. Requires the same license as remote MCP servers. See [Service account authentication](../admin_guide.md#service-account-authentication) in the Admin Guide.
+- **Use service accounts for authentication** switches the agent from per-user credentials to admin-configured service account credentials for **external** MCP servers. External MCP servers without service account headers configured in **Agents > Settings > MCP servers** are excluded from the agent (fail closed). Mattermost (embedded) and plugin tools run with each requesting user's own permissions, and users are never asked to connect accounts. The MCPs tab then shows **Connected** for servers whose service account credentials work, and **No service account credentials** for servers that have none. Turning it on shows a warning because it flattens permissions on those external servers — anyone who can use the agent acts with the agent's shared access there — so restrict usage on the **Access** tab. Only system administrators and people with read and write access to the Agents settings can turn this setting on. While it is enabled, some fields are limited to those same people; see [What's editable vs locked](#whats-editable-vs-locked). Anyone who can manage the agent can still turn the setting off or delete the agent. Requires the same license as remote MCP servers. See [Service account authentication](../admin_guide.md#service-account-authentication) in the Admin Guide.
 
 Dynamic tool loading and the auto-grant are separate controls: dynamic loading decides when schemas are shown to the model, while the auto-grant decides which MCP tools the agent is allowed to use.
 
@@ -171,7 +171,7 @@ While **Use service accounts for authentication** is off, anyone who can manage 
 While **Use service accounts for authentication** is enabled:
 
 - **Editable by anyone who can manage the agent:** display name, username, avatar, AI service, model, max tool turns, custom instructions, vision, Enable Tools, native tools, dynamic tool loading, and reasoning.
-- **System-admin-only (sensitive):** channel access, user access, and agent admins; MCP tool grants and **Automatically enable all MCP tools**; and enabling service account authentication itself.
+- **System admins and read and write settings delegates only (sensitive):** channel access, user access, and agent admins; MCP tool grants and **Automatically enable all MCP tools**; and enabling service account authentication itself. See [Delegate settings access](../admin_guide.md#delegate-settings-access).
 - Anyone who can manage the agent may still turn service account authentication **off** or delete the agent.
 
 ### Renaming an agent
@@ -354,7 +354,7 @@ The signed-in user does not have `manage_own_agent` or `manage_system`. Grant `m
 
 ### "Edit" and "Delete" actions are not shown for an agent
 
-The signed-in user is not the agent's creator, not in **Agent admins**, and does not have `manage_others_agent`. For migrated legacy bots (no creator), only system administrators see these actions.
+The signed-in user is not the agent's creator, not in **Agent admins**, does not have `manage_others_agent`, and is not on the **Agent managers** list in **System Console > Plugins > Agents**. For migrated legacy bots (no creator), system administrators also see these actions.
 
 ### Agent shows an "Inactive" badge
 
@@ -390,7 +390,7 @@ The agent has **Enable Tools** turned off in the Configuration tab. Turn it back
 
 For agents using per-user authentication with OAuth-backed MCP servers, each user must complete the OAuth flow before tools are visible. Use the **Connect** button on the MCPs tab — or in the Agents RHS **Tools** popover — to start the flow. Until you connect, you can still toggle the server on; this stores a wildcard grant so the agent gets every tool the server exposes once you authenticate. See [OAuth-backed MCP servers](../admin_guide.md#oauth-backed-mcp-servers) for details.
 
-For agents with **Use service accounts for authentication** enabled, an empty tools list with **No service account credentials** means that server has no Service Account Authentication headers in System Console MCP settings and is excluded from the agent. **Couldn't connect** means those headers are present but the server rejected them — check the header name/value split (the value should not repeat the header name) and the plugin logs.
+For agents with **Use service accounts for authentication** enabled, an empty tools list with **No service account credentials** means that server has no Service Account Authentication headers in **Agents > Settings > MCP servers** and is excluded from the agent. **Couldn't connect** means those headers are present but the server rejected them — check the header name/value split (the value should not repeat the header name) and the plugin logs.
 
 ### Agent change isn't visible on another cluster node
 
@@ -398,7 +398,7 @@ Cluster propagation is fast but not synchronous. Wait a few seconds and refresh 
 
 ### Cannot delete a migrated legacy bot
 
-Migrated legacy bots have no creator and no agent admins, so only system administrators (`manage_system`) can delete them. Sign in as a system administrator and try again.
+Migrated legacy bots have no creator and no agent admins, so only system administrators (`manage_system`) and people with `manage_others_agent` or on the **Agent managers** list can delete them. Sign in as one of them and try again.
 
 ## Related docs
 

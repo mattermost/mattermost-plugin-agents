@@ -42,6 +42,7 @@ type SaveAction = () => Promise<{error?: {message?: string}}>;
 
 const READ_WRITE = 'Search for people to give read and write access';
 const READ_ONLY = 'Search for people to give read-only access';
+const AGENT_MANAGERS = 'Search for people to make agent managers';
 
 function renderConfig() {
     const registerSaveAction = jest.fn();
@@ -82,7 +83,7 @@ function renderConfig() {
 describe('SettingsAccessConfig', () => {
     beforeEach(() => {
         jest.clearAllMocks();
-        (getSettingsAccess as jest.Mock).mockResolvedValue({readOnlyUserIDs: ['bob'], readWriteUserIDs: ['alice']});
+        (getSettingsAccess as jest.Mock).mockResolvedValue({readOnlyUserIDs: ['bob'], readWriteUserIDs: ['alice'], agentManagerUserIDs: ['carol']});
         (saveSettingsAccess as jest.Mock).mockImplementation(async (access) => access);
     });
 
@@ -97,13 +98,25 @@ describe('SettingsAccessConfig', () => {
         expect(screen.getByText(`${READ_ONLY}: nobody`)).toBeTruthy();
 
         expect(await save()).toEqual({});
-        expect(saveSettingsAccess).toHaveBeenCalledWith({readOnlyUserIDs: [], readWriteUserIDs: ['alice', 'bob']});
+        expect(saveSettingsAccess).toHaveBeenCalledWith({readOnlyUserIDs: [], readWriteUserIDs: ['alice', 'bob'], agentManagerUserIDs: ['carol']});
+    });
+
+    it('saves agent managers independently of settings access', async () => {
+        const {save} = renderConfig();
+        await screen.findByText(`${AGENT_MANAGERS}: carol`);
+
+        // bob keeps read-only settings access and also manages every agent.
+        fireEvent.click(screen.getByRole('button', {name: `add bob (${AGENT_MANAGERS})`}));
+        expect(screen.getByText(`${READ_ONLY}: bob`)).toBeTruthy();
+
+        expect(await save()).toEqual({});
+        expect(saveSettingsAccess).toHaveBeenCalledWith({readOnlyUserIDs: ['bob'], readWriteUserIDs: ['alice'], agentManagerUserIDs: ['carol', 'bob']});
     });
 
     it.each([
         {name: 'still loading', load: () => new Promise(() => null)},
         {name: 'failed to load', load: () => Promise.reject(new Error('500'))},
-        {name: 'loaded but untouched', load: () => Promise.resolve({readOnlyUserIDs: ['bob'], readWriteUserIDs: ['alice']})},
+        {name: 'loaded but untouched', load: () => Promise.resolve({readOnlyUserIDs: ['bob'], readWriteUserIDs: ['alice'], agentManagerUserIDs: ['carol']})},
     ])('leaves the stored lists alone when the host saves other settings while they are $name', async ({load}) => {
         (getSettingsAccess as jest.Mock).mockImplementation(load);
         const {save} = renderConfig();

@@ -79,14 +79,22 @@ func (a *API) settingsWriteAuthorizationRequired(c *gin.Context) {
 type mySettingsAccessResponse struct {
 	// Level is "none", "read" or "write".
 	Level string `json:"level"`
+
+	// ManageOthersAgents is whether the user may edit and delete every agent,
+	// through the manage_others_agent permission or the agent managers list.
+	ManageOthersAgents bool `json:"manageOthersAgents"`
 }
 
 // handleGetMySettingsAccess tells the requesting user how much of the plugin
-// configuration they may reach, so the webapp can show the Settings view.
+// configuration they may reach, so the webapp can show the Settings view, and
+// whether they manage every agent, which a role alone does not tell it.
 // GET /settings/access
 func (a *API) handleGetMySettingsAccess(c *gin.Context) {
-	level := a.settingsAccessLevel(c.GetHeader("Mattermost-User-Id"))
-	c.JSON(http.StatusOK, mySettingsAccessResponse{Level: level.String()})
+	userID := c.GetHeader("Mattermost-User-Id")
+	c.JSON(http.StatusOK, mySettingsAccessResponse{
+		Level:              a.settingsAccessLevel(userID).String(),
+		ManageOthersAgents: a.canManageOthersAgents(userID),
+	})
 }
 
 // handleGetSettingsAccess returns the delegation lists.
@@ -139,6 +147,7 @@ func (a *API) handlePutSettingsAccess(c *gin.Context) {
 
 	audit.AddParam(auditRec(c), "read_only_user_ids", audit.TruncateIDs(normalized.ReadOnlyUserIDs))
 	audit.AddParam(auditRec(c), "read_write_user_ids", audit.TruncateIDs(normalized.ReadWriteUserIDs))
+	audit.AddParam(auditRec(c), "agent_manager_user_ids", audit.TruncateIDs(normalized.AgentManagerUserIDs))
 	audit.AddParam(auditRec(c), "persisted", true)
 
 	a.configUpdater.Update(&saved)

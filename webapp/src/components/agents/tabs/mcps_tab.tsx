@@ -38,7 +38,7 @@ type Props = {
     /** Soft-lock auto-enable + tool grants while SA is on for non-admins; SA checkbox stays reachable. */
     serviceAccountFieldsLocked: boolean;
 
-    /** From parent: whether the current user may enable service account auth (manage_system). */
+    /** From parent: whether the current user may enable service account auth (system admin or read/write settings delegate). */
     canEditServiceAccountAuth: boolean;
     onChange: (updates: {
         enabledTools?: EnabledTool[];
@@ -377,7 +377,7 @@ const McpsTab = (props: Props) => {
             <Container>
                 {serviceAccountSection}
                 <EmptyState
-                    title={<FormattedMessage defaultMessage='No MCP servers are configured. Ask your system administrator to configure MCP servers in the system console.'/>}
+                    title={<FormattedMessage defaultMessage='No MCP servers are configured. Ask your system administrator to add MCP servers in the Agents settings.'/>}
                 />
             </Container>
         );

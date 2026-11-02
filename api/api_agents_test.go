@@ -869,13 +869,15 @@ func TestUpdateAgentOwnedByOtherWithManageOthersPermission(t *testing.T) {
 }
 
 // Service account auth hands the agent the admin-provisioned MCP credentials, so
-// only system admins may create/update an agent that keeps the flag on. Anyone who
-// can manage the agent may turn it off (and change other fields in that same request).
-func TestAgentServiceAccountAuthRequiresSystemAdmin(t *testing.T) {
+// only system admins and read/write settings delegates, who provision those
+// credentials, may create/update an agent that keeps the flag on. Anyone who can
+// manage the agent may turn it off (and change other fields in that same request).
+func TestAgentServiceAccountAuthRequiresSettingsWriteAccess(t *testing.T) {
 	tests := []struct {
 		name           string
 		create         bool
 		systemAdmin    bool
+		settingsAccess config.SettingsAccessLevel
 		storedValue    bool
 		requestValue   bool
 		omitField      bool // send a body without the useServiceAccountAuth key
@@ -898,9 +900,48 @@ func TestAgentServiceAccountAuthRequiresSystemAdmin(t *testing.T) {
 			expectStored:   true,
 		},
 		{
+			name:           "read/write settings delegate can create with service account auth",
+			create:         true,
+			settingsAccess: config.SettingsAccessWrite,
+			requestValue:   true,
+			expectedStatus: http.StatusCreated,
+			expectStored:   true,
+		},
+		{
+			name:           "read-only settings delegate cannot create with service account auth",
+			create:         true,
+			settingsAccess: config.SettingsAccessRead,
+			requestValue:   true,
+			expectedStatus: http.StatusForbidden,
+		},
+		{
 			name:           "non-admin cannot turn service account auth on",
 			requestValue:   true,
 			expectedStatus: http.StatusForbidden,
+		},
+		{
+			name:           "read/write settings delegate can turn service account auth on",
+			settingsAccess: config.SettingsAccessWrite,
+			requestValue:   true,
+			expectedStatus: http.StatusOK,
+			expectStored:   true,
+		},
+		{
+			name:           "read-only settings delegate cannot turn service account auth on",
+			settingsAccess: config.SettingsAccessRead,
+			requestValue:   true,
+			expectedStatus: http.StatusForbidden,
+		},
+		{
+			name:           "read/write settings delegate can keep service account auth and change userAccessLevel",
+			settingsAccess: config.SettingsAccessWrite,
+			storedValue:    true,
+			requestValue:   true,
+			extraOverrides: map[string]any{
+				"userAccessLevel": int(llm.UserAccessLevelAll),
+			},
+			expectedStatus: http.StatusOK,
+			expectStored:   true,
 		},
 		{
 			name:           "admin can turn service account auth on",
@@ -1058,6 +1099,12 @@ func TestAgentServiceAccountAuthRequiresSystemAdmin(t *testing.T) {
 			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true).Maybe()
 			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(tc.systemAdmin).Maybe()
 			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+			switch tc.settingsAccess {
+			case config.SettingsAccessWrite:
+				e.config.settingsAccess = config.SettingsAccess{ReadWriteUserIDs: []string{testUserID}}
+			case config.SettingsAccessRead:
+				e.config.settingsAccess = config.SettingsAccess{ReadOnlyUserIDs: []string{testUserID}}
+			}
 
 			// Cases that retarget serviceID need that service present in config validation.
 			if sid, ok := tc.extraOverrides["serviceID"].(string); ok && sid != "" {
@@ -3020,5 +3067,99 @@ func TestAuditUploadAgentAvatar(t *testing.T) {
 			assert.Equal(t, testUserID, rec.Actor.UserId)
 			tt.validateRecord(t, rec)
 		})
+	}
+}
+
+// The agent managers list in the System Console grants individual users what
+// the manage_others_agent permission does: every agent's editor, including
+// migrated legacy bots, and the services the editor offers. Settings access
+// alone grants none of it.
+func TestAgentManagersListGrantsManageOthersAgent(t *testing.T) {
+	type user int
+	const (
+		listedManager user = iota
+		settingsWriteDelegate
+		plainUser
+	)
+	accessFor := map[user]config.SettingsAccess{
+		listedManager:         {AgentManagerUserIDs: []string{testUserID}},
+		settingsWriteDelegate: {ReadWriteUserIDs: []string{testUserID}},
+		plainUser:             {},
+	}
+
+	type action struct {
+		name      string
+		creatorID string
+		do        func(t *testing.T, e *TestEnvironment) int
+		allowed   int
+	}
+	editAgent := func(t *testing.T, e *TestEnvironment) int {
+		body := updateAgentBodyFromStored(e.agentStore.agents["agent-1"], map[string]any{"displayName": "Renamed by a manager"})
+		recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
+		if recorder.Code == http.StatusOK {
+			assert.Equal(t, "Renamed by a manager", e.agentStore.agents["agent-1"].DisplayName)
+		}
+		return recorder.Code
+	}
+	actions := []action{
+		{name: "edits another user's agent", creatorID: "other-user", do: editAgent, allowed: http.StatusOK},
+		{name: "edits a migrated legacy bot", creatorID: "", do: editAgent, allowed: http.StatusOK},
+		{name: "deletes another user's agent", creatorID: "other-user", allowed: http.StatusOK, do: func(t *testing.T, e *TestEnvironment) int {
+			recorder := doRequest(e.api, http.MethodDelete, "/agents/agent-1", nil, testUserID)
+			if recorder.Code == http.StatusOK {
+				assert.NotZero(t, e.agentStore.agents["agent-1"].DeleteAt)
+			}
+			return recorder.Code
+		}},
+		{name: "lists services for the agent editor", creatorID: "other-user", allowed: http.StatusOK, do: func(t *testing.T, e *TestEnvironment) int {
+			return doRequest(e.api, http.MethodGet, "/services", nil, testUserID).Code
+		}},
+		{name: "sees another user's agent as manageable", creatorID: "other-user", allowed: http.StatusOK, do: func(t *testing.T, e *TestEnvironment) int {
+			recorder := doRequest(e.api, http.MethodGet, "/agents", nil, testUserID)
+			require.Equal(t, http.StatusOK, recorder.Code)
+			var agents []struct {
+				CanManage          bool   `json:"canManage"`
+				CustomInstructions string `json:"customInstructions"`
+			}
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &agents))
+			require.Len(t, agents, 1)
+			assert.Equal(t, agents[0].CanManage, agents[0].CustomInstructions != "", "managers, and only managers, read the instructions")
+			if agents[0].CanManage {
+				return http.StatusOK
+			}
+			return http.StatusForbidden
+		}},
+	}
+
+	for _, act := range actions {
+		for _, who := range []user{listedManager, settingsWriteDelegate, plainUser} {
+			name := map[user]string{listedManager: "agent manager", settingsWriteDelegate: "read/write settings delegate", plainUser: "plain user"}[who]
+			t.Run(name+" "+act.name, func(t *testing.T) {
+				e := setupAgentTestEnvironment(t)
+				defer e.Cleanup(t)
+
+				mockLicensed(e.mockAPI)
+				e.mockAPI.On("HasPermissionTo", testUserID, mock.Anything).Return(false).Maybe()
+				e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+				e.mockAPI.On("PatchBot", "bot-1", mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
+				e.mockAPI.On("UpdateBotActive", "bot-1", false).Return(&model.Bot{}, nil).Maybe()
+				e.config.settingsAccess = accessFor[who]
+
+				e.agentStore.agents["agent-1"] = &llm.BotConfig{
+					ID: "agent-1", CreatorID: act.creatorID, BotUserID: "bot-1",
+					DisplayName: "Theirs", Name: "theirs", ServiceID: "svc-1",
+					UserAccessLevel: llm.UserAccessLevelAll, CustomInstructions: "internal procedures",
+				}
+
+				status := act.do(t, e)
+				if who == listedManager {
+					assert.Equal(t, act.allowed, status)
+				} else {
+					assert.Equal(t, http.StatusForbidden, status)
+					assert.Zero(t, e.agentStore.agents["agent-1"].DeleteAt)
+					assert.Equal(t, "Theirs", e.agentStore.agents["agent-1"].DisplayName)
+				}
+			})
+		}
 	}
 }

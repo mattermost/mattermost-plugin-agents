@@ -102,7 +102,7 @@ func (a *API) loadManagedAgent(c *gin.Context) *llm.BotConfig {
 		c.AbortWithStatus(http.StatusNotFound)
 		return nil
 	}
-	if !canManageAgent(a.pluginAPI, cfg, userID) {
+	if !a.canManageAgent(cfg, userID) {
 		abortAgentRequest(c, http.StatusForbidden, errors.New("not authorized to manage this agent's access policy"))
 		return nil
 	}
@@ -140,7 +140,7 @@ func (a *API) handlePutAgentPolicy(c *gin.Context) {
 		return
 	}
 	auditPolicyMutation(c, accesscontrol.ResourceTypeAgent, cfg.ID)
-	if serviceAccountPolicyWriteNeedsAdmin(cfg) && !isSystemAdmin(a.pluginAPI, userID) {
+	if serviceAccountPolicyWriteNeedsAdmin(cfg) && !a.canManageServiceAccounts(userID) {
 		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
 		return
 	}
@@ -166,7 +166,7 @@ func (a *API) handleDeleteAgentPolicy(c *gin.Context) {
 		return
 	}
 	auditPolicyMutation(c, accesscontrol.ResourceTypeAgent, cfg.ID)
-	if serviceAccountPolicyWriteNeedsAdmin(cfg) && !isSystemAdmin(a.pluginAPI, userID) {
+	if serviceAccountPolicyWriteNeedsAdmin(cfg) && !a.canManageServiceAccounts(userID) {
 		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
 		return
 	}
@@ -352,12 +352,12 @@ func (a *API) handleDeleteMCPPolicy(c *gin.Context) {
 // manage_own_agent / manage_others_agent / manage_system, or ?agent_id= plus
 // canManageAgent. Mirrors "anyone can create a channel" for agents.
 func (a *API) canAuthorAgentCEL(c *gin.Context, userID string) bool {
-	if canConfigureAgentServices(a.pluginAPI, userID) {
+	if a.canConfigureAgentServices(userID) {
 		return true
 	}
 	if agentID := c.Query("agent_id"); agentID != "" {
 		cfg, err := a.agentStore.GetAgent(agentID)
-		if err == nil && cfg != nil && canManageAgent(a.pluginAPI, cfg, userID) {
+		if err == nil && cfg != nil && a.canManageAgent(cfg, userID) {
 			return true
 		}
 	}

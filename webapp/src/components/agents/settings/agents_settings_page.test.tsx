@@ -139,7 +139,7 @@ function radioFor(label: string, value: 'true' | 'false'): HTMLInputElement {
 
 beforeEach(() => {
     jest.clearAllMocks();
-    (getMySettingsAccess as jest.Mock).mockResolvedValue('write');
+    (getMySettingsAccess as jest.Mock).mockResolvedValue({level: 'write', manageOthersAgents: false});
     (getPluginConfig as jest.Mock).mockResolvedValue(loadedConfig);
     (getAIBots as jest.Mock).mockResolvedValue({bots: []});
     (savePluginConfig as jest.Mock).mockImplementation(async (cfg) => cfg);
@@ -147,7 +147,7 @@ beforeEach(() => {
 
 describe('AgentsSettingsPage access', () => {
     it('tells a user without access so and does not load the configuration', async () => {
-        (getMySettingsAccess as jest.Mock).mockResolvedValue('none');
+        (getMySettingsAccess as jest.Mock).mockResolvedValue({level: 'none', manageOthersAgents: false});
         renderPage();
 
         await screen.findByText("You don't have access to the Agents settings");
@@ -155,7 +155,7 @@ describe('AgentsSettingsPage access', () => {
     });
 
     it('shows read-only users the settings with every editor read-only and nothing to save', async () => {
-        (getMySettingsAccess as jest.Mock).mockResolvedValue('read');
+        (getMySettingsAccess as jest.Mock).mockResolvedValue({level: 'read', manageOthersAgents: false});
         renderPage('services');
 
         await screen.findByText('service:My Service:unsaved');
@@ -182,7 +182,7 @@ describe('AgentsSettingsPage access', () => {
         window.WebappUtils = {browserHistory: {push: jest.fn(), block}} as any;
         const addEventListener = jest.spyOn(window, 'addEventListener');
         try {
-            (getMySettingsAccess as jest.Mock).mockResolvedValue('read');
+            (getMySettingsAccess as jest.Mock).mockResolvedValue({level: 'read', manageOthersAgents: false});
             renderPage('services');
             await screen.findByText('service:My Service:unsaved');
 
@@ -200,7 +200,7 @@ describe('AgentsSettingsPage access', () => {
     });
 
     it('disables the general settings for read-only users', async () => {
-        (getMySettingsAccess as jest.Mock).mockResolvedValue('read');
+        (getMySettingsAccess as jest.Mock).mockResolvedValue({level: 'read', manageOthersAgents: false});
         renderPage('general');
 
         await screen.findByText('Render AI-generated links');
@@ -210,13 +210,13 @@ describe('AgentsSettingsPage access', () => {
 
     it('offers to add the first service only to users who can save it', async () => {
         (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, services: []});
-        (getMySettingsAccess as jest.Mock).mockResolvedValue('read');
+        (getMySettingsAccess as jest.Mock).mockResolvedValue({level: 'read', manageOthersAgents: false});
         const {unmount} = renderPage();
         await screen.findByText('no-services');
         expect(screen.queryByRole('button', {name: 'Add an AI Service'})).toBeNull();
         unmount();
 
-        (getMySettingsAccess as jest.Mock).mockResolvedValue('write');
+        (getMySettingsAccess as jest.Mock).mockResolvedValue({level: 'write', manageOthersAgents: false});
         const {onSelectSection} = renderPage();
         fireEvent.click(await screen.findByRole('button', {name: 'Add an AI Service'}));
         expect(onSelectSection).toHaveBeenCalledWith('services');

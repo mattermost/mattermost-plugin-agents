@@ -86,7 +86,7 @@ const renderSidebar = (props: Partial<React.ComponentProps<typeof ProductSidebar
 };
 
 beforeEach(() => {
-    (getMySettingsAccess as jest.Mock).mockResolvedValue('none');
+    (getMySettingsAccess as jest.Mock).mockResolvedValue({level: 'none', manageOthersAgents: false});
 });
 
 describe('ProductSidebar', () => {
@@ -106,7 +106,7 @@ describe('ProductSidebar', () => {
     });
 
     test.each(['read', 'write'])('shows Settings to a user with %s access', async (level) => {
-        (getMySettingsAccess as jest.Mock).mockResolvedValue(level);
+        (getMySettingsAccess as jest.Mock).mockResolvedValue({level, manageOthersAgents: false});
         const {onSelectSettings} = renderSidebar();
         fireEvent.click(await screen.findByRole('button', {name: /Settings/}));
         expect(onSelectSettings).toHaveBeenCalledTimes(1);

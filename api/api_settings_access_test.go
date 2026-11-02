@@ -21,34 +21,40 @@ import (
 )
 
 type settingsAccessUsers struct {
-	admin     string
-	readOnly  string
-	readWrite string
-	other     string
+	admin        string
+	readOnly     string
+	readWrite    string
+	agentManager string
+	roleManager  string // has manage_others_agent through a role
+	other        string
 }
 
-// setupSettingsAccessEnv wires a config store holding stored and an in-memory
-// delegation list granting users.readOnly and users.readWrite, with
-// users.admin the only system admin.
+// setupSettingsAccessEnv wires a config store holding stored and in-memory
+// delegation lists granting users.readOnly, users.readWrite and
+// users.agentManager, with users.admin the only system admin.
 func setupSettingsAccessEnv(t *testing.T, stored *config.Config) (*TestEnvironment, settingsAccessUsers, *testConfigStore, *testConfigUpdater) {
 	t.Helper()
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
 	users := settingsAccessUsers{
-		admin:     model.NewId(),
-		readOnly:  model.NewId(),
-		readWrite: model.NewId(),
-		other:     model.NewId(),
+		admin:        model.NewId(),
+		readOnly:     model.NewId(),
+		readWrite:    model.NewId(),
+		agentManager: model.NewId(),
+		roleManager:  model.NewId(),
+		other:        model.NewId(),
 	}
 
 	e := SetupTestEnvironment(t)
 	e.mockAPI.On("HasPermissionTo", users.admin, model.PermissionManageSystem).Return(true).Maybe()
+	e.mockAPI.On("HasPermissionTo", users.roleManager, model.PermissionManageOthersAgent).Return(true).Maybe()
 	e.mockAPI.On("HasPermissionTo", mock.Anything, mock.Anything).Return(false).Maybe()
 
 	access := config.SettingsAccess{
-		ReadOnlyUserIDs:  []string{users.readOnly},
-		ReadWriteUserIDs: []string{users.readWrite},
+		ReadOnlyUserIDs:     []string{users.readOnly},
+		ReadWriteUserIDs:    []string{users.readWrite},
+		AgentManagerUserIDs: []string{users.agentManager},
 	}
 	e.config.settingsAccess = access
 	if stored != nil {
@@ -152,20 +158,29 @@ func TestGetMySettingsAccess(t *testing.T) {
 	defer e.Cleanup(t)
 
 	tests := []struct {
-		name   string
-		userID string
-		level  string
+		name         string
+		userID       string
+		level        string
+		manageOthers bool
 	}{
 		{name: "system admin", userID: users.admin, level: "write"},
 		{name: "read/write delegate", userID: users.readWrite, level: "write"},
 		{name: "read-only delegate", userID: users.readOnly, level: "read"},
+		{name: "agent manager from the list", userID: users.agentManager, level: "none", manageOthers: true},
+		{name: "agent manager from a role", userID: users.roleManager, level: "none", manageOthers: true},
 		{name: "anyone else", userID: users.other, level: "none"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			recorder := doRequest(e.api, http.MethodGet, "/settings/access", nil, tt.userID)
 			require.Equal(t, http.StatusOK, recorder.Code)
-			assert.JSONEq(t, `{"level":"`+tt.level+`"}`, recorder.Body.String())
+			var got struct {
+				Level              string `json:"level"`
+				ManageOthersAgents bool   `json:"manageOthersAgents"`
+			}
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &got))
+			assert.Equal(t, tt.level, got.Level)
+			assert.Equal(t, tt.manageOthers, got.ManageOthersAgents)
 		})
 	}
 }
@@ -279,8 +294,9 @@ func TestSaveConfigKeepsDelegationLists(t *testing.T) {
 		"services": []any{},
 		"bots":     []any{},
 		"settingsAccess": map[string]any{
-			"readOnlyUserIDs":  []string{},
-			"readWriteUserIDs": []string{users.readWrite, users.other},
+			"readOnlyUserIDs":     []string{},
+			"readWriteUserIDs":    []string{users.readWrite, users.other},
+			"agentManagerUserIDs": []string{users.readWrite},
 		},
 	}
 	recorder := doRequest(e.api, http.MethodPut, "/admin/config", body, users.readWrite)
@@ -289,6 +305,7 @@ func TestSaveConfigKeepsDelegationLists(t *testing.T) {
 	require.NotNil(t, store.cfg.SettingsAccess)
 	assert.Equal(t, []string{users.readOnly}, store.cfg.SettingsAccess.ReadOnlyUserIDs)
 	assert.Equal(t, []string{users.readWrite}, store.cfg.SettingsAccess.ReadWriteUserIDs)
+	assert.Equal(t, []string{users.agentManager}, store.cfg.SettingsAccess.AgentManagerUserIDs)
 	assert.NotContains(t, recorder.Body.String(), "settingsAccess")
 }
 
@@ -335,6 +352,7 @@ func TestSaveConfigLegacyBotsAreSystemAdminOnly(t *testing.T) {
 func TestPutSettingsAccess(t *testing.T) {
 	newReadOnly := model.NewId()
 	newReadWrite := model.NewId()
+	newAgentManager := model.NewId()
 
 	tests := []struct {
 		name           string
@@ -343,15 +361,17 @@ func TestPutSettingsAccess(t *testing.T) {
 		expected       *config.SettingsAccess
 	}{
 		{
-			name: "replaces both lists",
+			name: "replaces every list",
 			body: config.SettingsAccess{
-				ReadOnlyUserIDs:  []string{newReadOnly},
-				ReadWriteUserIDs: []string{newReadWrite},
+				ReadOnlyUserIDs:     []string{newReadOnly},
+				ReadWriteUserIDs:    []string{newReadWrite},
+				AgentManagerUserIDs: []string{newAgentManager, newReadWrite},
 			},
 			expectedStatus: http.StatusOK,
 			expected: &config.SettingsAccess{
-				ReadOnlyUserIDs:  []string{newReadOnly},
-				ReadWriteUserIDs: []string{newReadWrite},
+				ReadOnlyUserIDs:     []string{newReadOnly},
+				ReadWriteUserIDs:    []string{newReadWrite},
+				AgentManagerUserIDs: []string{newAgentManager, newReadWrite},
 			},
 		},
 		{
@@ -362,19 +382,25 @@ func TestPutSettingsAccess(t *testing.T) {
 			},
 			expectedStatus: http.StatusOK,
 			expected: &config.SettingsAccess{
-				ReadOnlyUserIDs:  []string{newReadOnly},
-				ReadWriteUserIDs: []string{newReadWrite},
+				ReadOnlyUserIDs:     []string{newReadOnly},
+				ReadWriteUserIDs:    []string{newReadWrite},
+				AgentManagerUserIDs: []string{},
 			},
 		},
 		{
-			name:           "clears both lists",
+			name:           "clears every list",
 			body:           map[string]any{},
 			expectedStatus: http.StatusOK,
-			expected:       &config.SettingsAccess{ReadOnlyUserIDs: []string{}, ReadWriteUserIDs: []string{}},
+			expected:       &config.SettingsAccess{ReadOnlyUserIDs: []string{}, ReadWriteUserIDs: []string{}, AgentManagerUserIDs: []string{}},
 		},
 		{
 			name:           "rejects something that is not a user ID",
 			body:           config.SettingsAccess{ReadWriteUserIDs: []string{"alice"}},
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "rejects an agent manager that is not a user ID",
+			body:           config.SettingsAccess{AgentManagerUserIDs: []string{"alice"}},
 			expectedStatus: http.StatusBadRequest,
 		},
 	}
@@ -416,7 +442,7 @@ func TestGetSettingsAccessEncodesEmptyLists(t *testing.T) {
 
 	recorder := doRequest(e.api, http.MethodGet, "/admin/settings-access", nil, users.admin)
 	require.Equal(t, http.StatusOK, recorder.Code)
-	assert.JSONEq(t, `{"readOnlyUserIDs":[],"readWriteUserIDs":[]}`, recorder.Body.String())
+	assert.JSONEq(t, `{"readOnlyUserIDs":[],"readWriteUserIDs":[],"agentManagerUserIDs":[]}`, recorder.Body.String())
 }
 
 func TestPutSettingsAccessAuditRecord(t *testing.T) {
@@ -425,7 +451,8 @@ func TestPutSettingsAccessAuditRecord(t *testing.T) {
 	records := e.CaptureAuditRecords()
 
 	granted := model.NewId()
-	recorder := doRequest(e.api, http.MethodPut, "/admin/settings-access", config.SettingsAccess{ReadWriteUserIDs: []string{granted}}, users.admin)
+	manager := model.NewId()
+	recorder := doRequest(e.api, http.MethodPut, "/admin/settings-access", config.SettingsAccess{ReadWriteUserIDs: []string{granted}, AgentManagerUserIDs: []string{manager}}, users.admin)
 	require.Equal(t, http.StatusOK, recorder.Code)
 
 	require.Len(t, *records, 1)
@@ -434,6 +461,7 @@ func TestPutSettingsAccessAuditRecord(t *testing.T) {
 	assert.Equal(t, model.AuditStatusSuccess, rec.Status)
 	assert.Equal(t, users.admin, rec.Actor.UserId)
 	assert.Equal(t, []string{granted}, rec.EventData.Parameters["read_write_user_ids"])
+	assert.Equal(t, []string{manager}, rec.EventData.Parameters["agent_manager_user_ids"])
 }
 
 func TestCELTestForServicePoliciesFollowsSettingsAccess(t *testing.T) {

@@ -41,6 +41,30 @@ func TestSettingsAccessLevelFor(t *testing.T) {
 	}
 }
 
+func TestSettingsAccessManagesAllAgents(t *testing.T) {
+	manager := model.NewId()
+	access := SettingsAccess{
+		ReadWriteUserIDs:    []string{model.NewId()},
+		AgentManagerUserIDs: []string{manager},
+	}
+
+	tests := []struct {
+		name   string
+		userID string
+		want   bool
+	}{
+		{name: "agent manager", userID: manager, want: true},
+		{name: "read/write user who is not an agent manager", userID: access.ReadWriteUserIDs[0], want: false},
+		{name: "anyone else", userID: model.NewId(), want: false},
+		{name: "no user", userID: "", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, access.ManagesAllAgents(tt.userID))
+		})
+	}
+}
+
 func TestContainerSettingsAccessWithoutLists(t *testing.T) {
 	var c Container
 	c.Update(&Config{})
@@ -103,21 +127,31 @@ func TestSettingsAccessNormalize(t *testing.T) {
 		{
 			name: "nil lists become empty",
 			in:   SettingsAccess{},
-			want: SettingsAccess{ReadOnlyUserIDs: []string{}, ReadWriteUserIDs: []string{}},
+			want: SettingsAccess{ReadOnlyUserIDs: []string{}, ReadWriteUserIDs: []string{}, AgentManagerUserIDs: []string{}},
 		},
 		{
 			name: "duplicates are dropped",
-			in:   SettingsAccess{ReadOnlyUserIDs: []string{a, a}, ReadWriteUserIDs: []string{b, b}},
-			want: SettingsAccess{ReadOnlyUserIDs: []string{a}, ReadWriteUserIDs: []string{b}},
+			in:   SettingsAccess{ReadOnlyUserIDs: []string{a, a}, ReadWriteUserIDs: []string{b, b}, AgentManagerUserIDs: []string{a, a}},
+			want: SettingsAccess{ReadOnlyUserIDs: []string{a}, ReadWriteUserIDs: []string{b}, AgentManagerUserIDs: []string{a}},
 		},
 		{
 			name: "read/write users leave the read-only list",
 			in:   SettingsAccess{ReadOnlyUserIDs: []string{a, b}, ReadWriteUserIDs: []string{b}},
-			want: SettingsAccess{ReadOnlyUserIDs: []string{a}, ReadWriteUserIDs: []string{b}},
+			want: SettingsAccess{ReadOnlyUserIDs: []string{a}, ReadWriteUserIDs: []string{b}, AgentManagerUserIDs: []string{}},
+		},
+		{
+			name: "agent managers keep their settings access",
+			in:   SettingsAccess{ReadOnlyUserIDs: []string{a}, ReadWriteUserIDs: []string{b}, AgentManagerUserIDs: []string{a, b}},
+			want: SettingsAccess{ReadOnlyUserIDs: []string{a}, ReadWriteUserIDs: []string{b}, AgentManagerUserIDs: []string{a, b}},
 		},
 		{
 			name:    "usernames are rejected",
 			in:      SettingsAccess{ReadOnlyUserIDs: []string{"alice"}},
+			wantErr: true,
+		},
+		{
+			name:    "agent manager usernames are rejected",
+			in:      SettingsAccess{AgentManagerUserIDs: []string{"alice"}},
 			wantErr: true,
 		},
 	}

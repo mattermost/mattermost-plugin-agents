@@ -34,6 +34,7 @@ import {useABACSupport} from '@/utils/access_control';
 import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
 import {downloadAgentExport, matchImportedMCPTools} from '@/utils/agent_export';
 
+import {useSettingsAccess} from './settings/use_settings_access';
 import {useAgentFilePicker} from './use_agent_file_picker';
 import ConfigTab from './tabs/config_tab';
 import AccessTab from './tabs/access_tab';
@@ -256,8 +257,12 @@ const AgentConfigView = (props: Props) => {
     const inModal = Boolean(renderFrame);
     const intl = useIntl();
 
-    // Parent owns the manage_system check via useCurrentUserHasSystemPermission.
-    const canEditServiceAccountAuth = useCurrentUserHasSystemPermission('manage_system');
+    const isSystemAdmin = useCurrentUserHasSystemPermission('manage_system');
+
+    // Mirrors api.canManageServiceAccounts: system admins and read/write Agents settings delegates,
+    // who set the MCP servers' service account credentials. Locked while the level loads.
+    const settingsAccess = useSettingsAccess();
+    const canEditServiceAccountAuth = isSystemAdmin || settingsAccess.level === 'write';
     const {supported: abacSupported} = useABACSupport();
     const providerWebSearchLicensed = useIsLicensedFor('provider_web_search');
 
@@ -746,7 +751,7 @@ const AgentConfigView = (props: Props) => {
                 <div role='status'>
                     <Notice
                         type='warning'
-                        title={<FormattedMessage defaultMessage='This agent uses service account authentication. Access and MCP tool grants require a system administrator while that setting is enabled. Other settings can still be saved, or turn the setting off on the MCPs tab.'/>}
+                        title={<FormattedMessage defaultMessage='This agent uses service account authentication. Access and MCP tool grants require a system administrator or read and write access to the Agents settings while that setting is enabled. Other settings can still be saved, or turn the setting off on the MCPs tab.'/>}
                     />
                 </div>
             )}
@@ -782,7 +787,7 @@ const AgentConfigView = (props: Props) => {
                         serviceAccountFieldsLocked={serviceAccountFieldsLocked}
                         agentId={agent?.id}
                         abacSupported={abacSupported}
-                        isSystemAdmin={canEditServiceAccountAuth}
+                        isSystemAdmin={isSystemAdmin}
                     />
                 </div>
             )}

@@ -1,5 +1,5 @@
 // spec: Agents settings access — the System Console delegates the Agents
-// settings to read-only and read/write users.
+// settings to read-only and read/write users, and every agent to agent managers.
 
 import { expect, type Page } from '@playwright/test';
 import { containerTest } from 'helpers/container-fixture';
@@ -7,6 +7,8 @@ import { withDeadline } from 'helpers/deadline';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { MATTERMOST_AI_PLUGIN_ID, mattermostAIAdminConfigApiFromClient } from 'helpers/plugin-http';
+import { AgentAPIHelper } from 'helpers/agent-api';
+import { AgentPageHelper } from 'helpers/agent-page';
 import { SystemConsoleHelper } from 'helpers/system-console';
 import { RunOpenAIMocks } from 'helpers/openai-mock';
 import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers/system-console-container';
@@ -16,19 +18,22 @@ import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers
  *
  * The plugin configuration lives in the Agents product's Settings view. The
  * System Console only lists who besides system admins may view (read-only,
- * without credentials) or change (read/write) it.
+ * without credentials) or change (read/write) it, and who may manage every
+ * agent (agent managers).
  */
 
+const SERVICE_ID = 'delegationservice000000000';
 const SERVICE_API_KEY = 'sk-delegation-sentinel-key';
 const PASSWORD = 'Delegate-pass1';
 const VIEWER = 'settingsviewer';
 const EDITOR = 'settingseditor';
 const OUTSIDER = 'settingsoutsider';
+const MANAGER = 'agentsmanager';
 
 const test = containerTest(async (own) => {
     const mattermost = own(await RunSystemConsoleContainer({
         services: [{
-            id: 'delegationservice000000000',
+            id: SERVICE_ID,
             name: 'Delegation Service',
             type: 'openaicompatible',
             apiURL: 'http://openai-mock:11434',
@@ -75,6 +80,7 @@ test.describe.serial('Agents settings access', () => {
             await seedUser(mattermost, VIEWER);
             await seedUser(mattermost, EDITOR);
             await seedUser(mattermost, OUTSIDER);
+            await seedUser(mattermost, MANAGER);
         });
     });
 
@@ -88,6 +94,7 @@ test.describe.serial('Agents settings access', () => {
 
         await grant(page, 'Search for people to give read and write access', EDITOR);
         await grant(page, 'Search for people to give read-only access', VIEWER);
+        await grant(page, 'Search for people to make agent managers', MANAGER);
         const [response] = await Promise.all([
             page.waitForResponse((r) => r.request().method() === 'PUT' && r.url().includes(`/plugins/${MATTERMOST_AI_PLUGIN_ID}/admin/settings-access`)),
             page.getByRole('button', { name: 'Save', exact: true }).click(),
@@ -139,6 +146,34 @@ test.describe.serial('Agents settings access', () => {
         const adminClient = await mattermost.getClient(adminUsername, adminPassword);
         const config = await mattermostAIAdminConfigApiFromClient(adminClient, mattermost.url()).get();
         expect(config.allowUnsafeLinks).toBe(true);
+    });
+
+    test('an agent manager edits an agent someone else created, without the settings', async ({ page }) => {
+        test.setTimeout(90000);
+        const mmPage = new MattermostPage(page);
+        const agentPage = new AgentPageHelper(page);
+
+        const adminClient = await mattermost.getClient(adminUsername, adminPassword);
+        const agent = await new AgentAPIHelper(mattermost.url()).createTestAgent(adminClient.getToken(), {
+            displayName: 'Admin Agent',
+            username: 'adminagent',
+            serviceID: SERVICE_ID,
+        });
+
+        await mmPage.login(mattermost.url(), MANAGER, PASSWORD);
+        await agentPage.navigateToAgents(mattermost.url());
+        await agentPage.openAgentEditor('Admin Agent');
+        await agentPage.getDisplayNameInput().clear();
+        await agentPage.getDisplayNameInput().fill('Managed Agent');
+        await agentPage.getModalSaveButton().click();
+        await agentPage.waitForModalClosed();
+        await expect(agentPage.getAgentRowByName('Managed Agent')).toBeVisible({ timeout: 10000 });
+
+        const saved = await new AgentAPIHelper(mattermost.url()).getAgent(adminClient.getToken(), agent.id);
+        expect(saved.displayName).toBe('Managed Agent');
+
+        // Managing agents gives no access to the Agents settings.
+        await expect(settingsRow(page)).toHaveCount(0);
     });
 
     test('anyone else gets no Settings entry and no settings', async ({ page }) => {

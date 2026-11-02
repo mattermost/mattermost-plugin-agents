@@ -32,12 +32,13 @@ type Props = {
     unRegisterSaveAction: (action: () => Promise<{ error?: { message?: string } }>) => void
 }
 
-const emptyAccess: SettingsAccess = {readOnlyUserIDs: [], readWriteUserIDs: []};
+const emptyAccess: SettingsAccess = {readOnlyUserIDs: [], readWriteUserIDs: [], agentManagerUserIDs: []};
 
 /**
  * The plugin's System Console page. Everything the plugin configures lives in
  * the Agents product's Settings view; system admins only decide here who else
- * may view (read-only) or change (read/write) it.
+ * may view (read-only) or change (read/write) it, and who may manage every
+ * agent.
  */
 const SettingsAccessConfig = (props: Props) => {
     const intl = useIntl();
@@ -54,7 +55,7 @@ const SettingsAccessConfig = (props: Props) => {
         getSettingsAccess().
             then((loaded) => {
                 if (current) {
-                    setAccess(loaded);
+                    setAccess({...emptyAccess, ...loaded});
                     setLoadError(null);
                 }
             }).
@@ -82,7 +83,7 @@ const SettingsAccessConfig = (props: Props) => {
                 return {};
             }
             try {
-                setAccess(await saveSettingsAccess(access));
+                setAccess({...emptyAccess, ...await saveSettingsAccess(access)});
                 setChanged(false);
                 return {};
             } catch {
@@ -147,7 +148,7 @@ const SettingsAccessConfig = (props: Props) => {
                             placeholder={intl.formatMessage({defaultMessage: 'Search for people to give read and write access'})}
                         />
                         <HelpText>
-                            <FormattedMessage defaultMessage='These people can view and change every Agents setting, including API keys and other credentials. Because they choose which AI services and MCP servers agents use, they can direct what users send to agents, including private channel and direct message content, to a service they control. Give this access only to people you would trust as a system admin for Agents. They cannot change who has access or the legacy agents defined in the plugin configuration.'/>
+                            <FormattedMessage defaultMessage='These people can view and change every Agents setting, including API keys and other credentials, and can turn on service account authentication for the agents they manage. Because they choose which AI services and MCP servers agents use, they can direct what users send to agents, including private channel and direct message content, to a service they control. Give this access only to people you would trust as a system admin for Agents. They cannot change who has access or the legacy agents defined in the plugin configuration.'/>
                         </HelpText>
                     </TextFieldContainer>
                 </FormRow>
@@ -169,6 +170,21 @@ const SettingsAccessConfig = (props: Props) => {
                         </HelpText>
                     </TextFieldContainer>
                 </FormRow>
+                <FormRow>
+                    <ItemLabel>
+                        <FormattedMessage defaultMessage='Agent managers'/>
+                    </ItemLabel>
+                    <TextFieldContainer>
+                        <SelectUsers
+                            userIDs={access.agentManagerUserIDs}
+                            onChangeUserIDs={(agentManagerUserIDs) => update({agentManagerUserIDs})}
+                            placeholder={intl.formatMessage({defaultMessage: 'Search for people to make agent managers'})}
+                        />
+                        <HelpText>
+                            <FormattedMessage defaultMessage='These people can edit and delete every agent, including agents other people created, as the manage_others_agent permission allows. This does not give them access to the Agents settings.'/>
+                        </HelpText>
+                    </TextFieldContainer>
+                </FormRow>
             </ItemList>
         );
     }
@@ -184,7 +200,7 @@ const SettingsAccessConfig = (props: Props) => {
             />
             <AdminPanel
                 title={intl.formatMessage({defaultMessage: 'Settings access'})}
-                subtitle={intl.formatMessage({defaultMessage: 'Let people who are not system admins view or change the Agents settings.'})}
+                subtitle={intl.formatMessage({defaultMessage: 'Let people who are not system admins view or change the Agents settings, or manage every agent.'})}
             >
                 {lists}
             </AdminPanel>
