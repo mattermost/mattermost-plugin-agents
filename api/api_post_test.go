@@ -28,6 +28,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -534,6 +535,8 @@ func (e *TestEnvironment) useConversations() *mockConvServiceStore {
 	svc.SetConversationService(convService)
 	e.api.conversationsService = svc
 	e.api.SetConversationService(convService)
+	// Regenerate reserves the post in the KV store for the length of the run.
+	e.mockAPI.On("KVSetWithOptions", mock.Anything, mock.Anything, mock.Anything).Return(true, (*model.AppError)(nil)).Maybe()
 	return convStore
 }
 
