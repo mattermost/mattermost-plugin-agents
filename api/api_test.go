@@ -452,6 +452,7 @@ type mockConversationStore struct {
 	turns         map[string][]store.Turn // keyed by conversation ID
 	turnsByPost   map[string]*store.Turn  // keyed by post ID
 	err           error                   // if set, all methods return this error
+	renameErr     error                   // if set, RenameConversation returns this error
 }
 
 func newMockConversationStore() *mockConversationStore {
@@ -467,10 +468,25 @@ func (m *mockConversationStore) GetConversation(id string) (*store.Conversation,
 		return nil, m.err
 	}
 	conv, ok := m.conversations[id]
-	if !ok {
+	if !ok || conv.DeleteAt != 0 {
 		return nil, store.ErrConversationNotFound
 	}
 	return conv, nil
+}
+
+func (m *mockConversationStore) RenameConversation(id, title string) (bool, error) {
+	if m.err != nil {
+		return false, m.err
+	}
+	if m.renameErr != nil {
+		return false, m.renameErr
+	}
+	conv, ok := m.conversations[id]
+	if !ok || conv.DeleteAt != 0 {
+		return false, nil
+	}
+	conv.Title = title
+	return true, nil
 }
 
 func (m *mockConversationStore) GetTurnsForConversation(conversationID string) ([]store.Turn, error) {

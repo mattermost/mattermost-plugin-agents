@@ -319,6 +319,11 @@ test.describe('Agent CRUD', () => {
         await mmPage.login(mattermost.url(), agentRegularUsername, agentRegularPassword);
         await agentPage.navigateToAgents(mattermost.url());
         await expect(agentPage.getAgentRowByName(`Visible To Regular ${suffix}`)).toBeVisible({ timeout: 10000 });
+
+        // The row's primary action starts a new chat for everyone, including users who cannot edit the agent.
+        await agentPage.clickAgentRow(`Visible To Regular ${suffix}`);
+        await expect(page).toHaveURL(/\/plug\/mattermost-ai\/agents\/chat\/[a-z0-9]{26}$/, { timeout: 15000 });
+        await expect(page.getByTestId('agent-chat-new-composer').getByRole('textbox')).toBeVisible({ timeout: 15000 });
     });
 
     test('denies create in UI when user lacks manage_own_agent permission', async ({ page }) => {

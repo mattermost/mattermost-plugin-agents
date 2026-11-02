@@ -183,3 +183,57 @@ describe('PostText citations', () => {
         }
     });
 });
+
+describe('PostText streaming reveal', () => {
+    beforeEach(() => {
+        mockState = stateWithLinkPolicy({kind: 'any_domain'} as LinkPolicy);
+        (window as any).PostUtils = {
+            formatText: (text: string) => text,
+            messageHtmlToComponent: (html: string) => <p>{html}</p>,
+        };
+    });
+
+    afterEach(() => {
+        delete (window as any).PostUtils;
+    });
+
+    test.each([
+        {name: 'without reveal, one pass over the whole message', reveal: false, annotations: undefined, paragraphs: 1}, // eslint-disable-line no-undefined
+        {name: 'with reveal, block by block', reveal: true, annotations: undefined, paragraphs: 2}, // eslint-disable-line no-undefined
+        {name: 'with reveal but citations, one pass', reveal: true, annotations: [{type: 'url_citation' as const, start_index: 0, end_index: 3, index: 1}], paragraphs: 1},
+    ])('$name', ({reveal, annotations, paragraphs}) => {
+        render(
+            <PostText
+                message={'One\n\nTwo words'}
+                channelID='channel'
+                postID='post'
+                annotations={annotations}
+                reveal={reveal}
+            />,
+        );
+        const container = screen.getByTestId('posttext');
+        expect(container.querySelectorAll(':scope > p')).toHaveLength(paragraphs);
+    });
+
+    test('applies the link policy to each revealed block', () => {
+        mockState = stateWithLinkPolicy({kind: 'allowlist', allowedDomains: [{host: 'other.com', wildcard: false}]} as LinkPolicy);
+        const formatText = jest.fn<string, [string, {unsafeLinks: boolean}]>(() => renderedHTML);
+        (window as any).PostUtils = {
+            formatText,
+            messageHtmlToComponent: (html: string) => <span dangerouslySetInnerHTML={{__html: html}}/>,
+        };
+
+        render(
+            <PostText
+                message='ignored'
+                channelID='channel'
+                postID='post'
+                reveal={true}
+            />,
+        );
+
+        expect(formatText.mock.calls[0][1].unsafeLinks).toBe(false);
+        expect(screen.getByText('internal').closest('a')).not.toBeNull();
+        expect(screen.queryByRole('link', {name: 'external'})).toBeNull();
+    });
+});
