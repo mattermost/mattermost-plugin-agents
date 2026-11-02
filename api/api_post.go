@@ -440,15 +440,11 @@ func (a *API) handleToolResult(c *gin.Context) {
 
 // isConversationOwner checks whether the given user is the owner of the
 // conversation associated with the post (via the conversation_id prop).
-//
-// Falls back to the llm_requester_user_id prop for legacy custom_llmbot posts
-// that were not produced via the conversation entity flow — currently only
-// meeting summarization. Remove the fallback once meeting flows migrate.
+// Posts without a conversation have no owner.
 func (a *API) isConversationOwner(post *model.Post, userID string) bool {
 	convID, ok := post.GetProp(streaming.ConversationIDProp).(string)
 	if !ok || convID == "" {
-		requester, _ := post.GetProp(streaming.LLMRequesterUserIDProp).(string)
-		return requester != "" && requester == userID
+		return false
 	}
 
 	// Try the full conversation service first, then fall back to the store interface.
@@ -552,11 +548,9 @@ func makeAnalysisPost(postIDToAnalyze string, analysisType string, conversationI
 	return post
 }
 
-// makeChannelAnalysisPost creates a post for channel analysis results. The
-// post is not regenerable; see conversations.ErrNotRegenerable.
+// makeChannelAnalysisPost creates a post for channel analysis results.
 func makeChannelAnalysisPost(channelID string, analysisType string, conversationID string) *model.Post {
 	post := &model.Post{}
-	post.AddProp(streaming.NoRegen, "true")
 	post.AddProp(conversations.AnalyzedChannelIDProp, channelID)
 	post.AddProp(conversations.AnalysisTypeProp, analysisType)
 	if conversationID != "" {

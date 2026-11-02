@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func assertInitialResponsePlaceholder(t *testing.T, post *model.Post, botID, requesterID, channelID, rootID, respondingToID string) {
+func assertInitialResponsePlaceholder(t *testing.T, post *model.Post, botID, channelID, rootID, respondingToID string) {
 	t.Helper()
 	require.Equal(t, "custom_llmbot", post.Type)
 	require.Empty(t, post.Message)
@@ -24,7 +24,6 @@ func assertInitialResponsePlaceholder(t *testing.T, post *model.Post, botID, req
 	require.Equal(t, channelID, post.ChannelId)
 	require.Equal(t, rootID, post.RootId)
 	require.Equal(t, respondingToID, post.GetProp(streaming.RespondingToProp))
-	require.Equal(t, requesterID, post.GetProp(streaming.LLMRequesterUserIDProp))
 	require.Equal(t, "true", post.GetProp(streaming.UnsafeLinksPostProp))
 	require.Empty(t, post.GetProp(streaming.ConversationIDProp))
 }
@@ -68,7 +67,6 @@ func TestMessagePostedCreatesChannelPlaceholderBeforeMCPDiscovery(t *testing.T) 
 		name           string
 		configure      func(*autoReplyTestEnv)
 		post           func(*autoReplyTestEnv) *model.Post
-		requesterID    string
 		rootID         string
 		respondingToID string
 	}{
@@ -77,7 +75,6 @@ func TestMessagePostedCreatesChannelPlaceholderBeforeMCPDiscovery(t *testing.T) 
 			post: func(env *autoReplyTestEnv) *model.Post {
 				return env.rootPost(autoReplyUserID, "@"+autoReplyBotUsername+" help me")
 			},
-			requesterID:    autoReplyUserID,
 			rootID:         autoReplyRootID,
 			respondingToID: autoReplyRootID,
 		},
@@ -93,7 +90,6 @@ func TestMessagePostedCreatesChannelPlaceholderBeforeMCPDiscovery(t *testing.T) 
 			post: func(env *autoReplyTestEnv) *model.Post {
 				return env.rootPost(autoReplyUserID, "help me")
 			},
-			requesterID:    autoReplyUserID,
 			rootID:         autoReplyRootID,
 			respondingToID: autoReplyRootID,
 		},
@@ -102,7 +98,6 @@ func TestMessagePostedCreatesChannelPlaceholderBeforeMCPDiscovery(t *testing.T) 
 			post: func(env *autoReplyTestEnv) *model.Post {
 				return env.threadReply(autoReplyUserID, "@"+autoReplyBotUsername+" help me", false)
 			},
-			requesterID:    autoReplyUserID,
 			rootID:         autoReplyRootID,
 			respondingToID: autoReplyReplyID,
 		},
@@ -113,7 +108,6 @@ func TestMessagePostedCreatesChannelPlaceholderBeforeMCPDiscovery(t *testing.T) 
 				post.AddProp(conversations.ActivateAIProp, true)
 				return post
 			},
-			requesterID:    autoReplyForeignBotID,
 			rootID:         autoReplyRootID,
 			respondingToID: autoReplyRootID,
 		},
@@ -134,7 +128,6 @@ func TestMessagePostedCreatesChannelPlaceholderBeforeMCPDiscovery(t *testing.T) 
 					t,
 					env.mmClient.createdPosts[0],
 					autoReplyBotUserID,
-					tt.requesterID,
 					autoReplyChannelID,
 					tt.rootID,
 					tt.respondingToID,
@@ -171,7 +164,6 @@ func TestMessagePostedCreatesDMPlaceholderBeforeMCPDiscovery(t *testing.T) {
 			t,
 			env.mmClient.createdPosts[0],
 			env.botID,
-			env.userID,
 			env.channelID,
 			"post1",
 			"post1",
