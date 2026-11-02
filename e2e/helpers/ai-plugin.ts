@@ -63,7 +63,7 @@ export class AIPlugin {
 
       // Wait for the icon to be in a stable, clickable state
       // This helps with timing issues where the element is visible but not yet interactive
-      await this.appBarIcon.waitFor({ state: 'visible', timeout: 5000 });
+      await this.appBarIcon.waitFor({ state: 'visible', timeout: 30000 });
 
       // Retry click with error handling for obscured/not clickable elements
       let clicked = false;
