@@ -69,8 +69,7 @@ test.describe('Search bar conversation', () => {
         await aiPlugin.triggerEmbeddingSearch(query);
         await aiPlugin.waitForBotResponse(answer);
 
-        const rhs = page.getByTestId('mattermost-ai-rhs');
-        await expect(rhs.getByText(query)).toBeVisible();
+        await aiPlugin.expectUserPostText(query);
     });
 
     test('/ask-channel points the agent at the current channel', async ({ page }) => {
