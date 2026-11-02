@@ -102,14 +102,12 @@ const ConfigTab = (props: Props) => {
             const sameServiceType = Boolean(prevSvc && nextSvc && prevSvc.type === nextSvc.type);
             onChange({
                 model: '',
-                ...(sameServiceType ?
-                    {} :
-                    {
-                        enabledNativeTools: providerWebSearchLicensed ? ['web_search'] : [],
-                        reasoningEnabled: true,
-                        reasoningEffort: defaultReasoningEffort(nextSvc?.type),
-                        thinkingBudget: 0,
-                    }),
+                ...(sameServiceType ? {} : {
+                    enabledNativeTools: providerWebSearchLicensed ? ['web_search'] : [],
+                    reasoningEnabled: true,
+                    reasoningEffort: defaultReasoningEffort(nextSvc?.type),
+                    thinkingBudget: 0,
+                }),
             });
         }
         prevServiceIdRef.current = draft.serviceId;
@@ -228,9 +226,7 @@ const ConfigTab = (props: Props) => {
     const maxTokens = selectedService?.outputTokenLimit || 4096;
     const serviceDefaultModel = selectedService?.defaultModel?.trim() || '';
 
-    const modelPlaceholder = serviceDefaultModel ?
-        intl.formatMessage({defaultMessage: 'Default: {model}'}, {model: serviceDefaultModel}) :
-        intl.formatMessage({defaultMessage: 'Leave empty to use service default'});
+    const modelPlaceholder = serviceDefaultModel ? intl.formatMessage({defaultMessage: 'Default: {model}'}, {model: serviceDefaultModel}) : intl.formatMessage({defaultMessage: 'Leave empty to use service default'});
 
     const modelHelptext = (() => {
         if (supportsModelFetching && loadingModels) {
@@ -248,16 +244,12 @@ const ConfigTab = (props: Props) => {
         return intl.formatMessage({defaultMessage: 'Optional: Override the service\'s default model for this agent. Leave empty to use the service default.'});
     })();
 
-    const comboboxModelHelptext = serviceDefaultModel ?
-        intl.formatMessage(
-            {defaultMessage: 'Optional: Override the service\'s default model ({defaultModel}) for this agent. Select from the list or type a custom model name.'},
-            {defaultModel: serviceDefaultModel},
-        ) :
-        intl.formatMessage({defaultMessage: 'Optional: Override the service\'s default model for this agent. Select from the list or type a custom model name.'});
+    const comboboxModelHelptext = serviceDefaultModel ? intl.formatMessage(
+        {defaultMessage: 'Optional: Override the service\'s default model ({defaultModel}) for this agent. Select from the list or type a custom model name.'},
+        {defaultModel: serviceDefaultModel},
+    ) : intl.formatMessage({defaultMessage: 'Optional: Override the service\'s default model for this agent. Select from the list or type a custom model name.'});
 
-    const comboboxModelPlaceholder = serviceDefaultModel ?
-        intl.formatMessage({defaultMessage: 'Default: {model}'}, {model: serviceDefaultModel}) :
-        intl.formatMessage({defaultMessage: 'Use service default'});
+    const comboboxModelPlaceholder = serviceDefaultModel ? intl.formatMessage({defaultMessage: 'Default: {model}'}, {model: serviceDefaultModel}) : intl.formatMessage({defaultMessage: 'Use service default'});
 
     const usernameRulesHelptext = intl.formatMessage({
         defaultMessage: 'Users will mention this name to interact with the agent. Must start with a letter and contain only lowercase letters, numbers, dots, hyphens, or underscores.',
@@ -305,15 +297,13 @@ const ConfigTab = (props: Props) => {
                     onChange={(serviceId) => onChange({serviceId})}
                     error={errors.serviceId}
                     helptext={
-                        serviceLimit !== null && services.length > 1 ?
-                            intl.formatMessage(
-                                {defaultMessage: 'Only the first configured service is active on your current plan. Additional services are available on {plan} plans and above.'},
-                                {plan: levelName(LicenseLevel.Enterprise)},
-                            ) :
-                            intl.formatMessage({
-                                defaultMessage:
+                        serviceLimit !== null && services.length > 1 ? intl.formatMessage(
+                            {defaultMessage: 'Only the first configured service is active on your current plan. Additional services are available on {plan} plans and above.'},
+                            {plan: levelName(LicenseLevel.Enterprise)},
+                        ) : intl.formatMessage({
+                            defaultMessage:
                                     'Select an AI service to load model suggestions and configure vision, tools, native provider tools, and reasoning.',
-                            })
+                        })
                     }
                     options={[
                         {value: '', label: intl.formatMessage({defaultMessage: 'Select a service'})},

@@ -9,6 +9,7 @@ import {PreferenceType} from '@mattermost/types/preferences';
 
 import {
     resolveActiveBot,
+    resolvePreferredBot,
     getSelectedAgentId,
     useBotlist,
     useBotlistForChannel,
@@ -90,6 +91,22 @@ describe('resolveActiveBot precedence', () => {
     test('falls back to first bot when no preference and no default', () => {
         const noDefault = [first, other];
         expect(resolveActiveBot(noDefault, '')).toBe(first);
+    });
+});
+
+describe('resolvePreferredBot', () => {
+    const first = makeBot('first');
+    const def = makeBot('def', {isDefault: true});
+    const other = makeBot('other');
+
+    test.each([
+        {name: 'the saved preference', bots: [first, def, other], preferred: 'other', expected: 'other'},
+        {name: 'the default when the preference is gone', bots: [first, def, other], preferred: 'gone', expected: 'def'},
+        {name: 'the default when unset', bots: [first, def], preferred: '', expected: 'def'},
+        {name: 'nothing without either: never the first bot', bots: [first, other], preferred: 'gone', expected: null},
+        {name: 'nothing before the list loads', bots: null, preferred: 'other', expected: null},
+    ])('$name', ({bots, preferred, expected}) => {
+        expect(resolvePreferredBot(bots, preferred)?.id ?? null).toBe(expected);
     });
 });
 
