@@ -5,6 +5,7 @@ import React from 'react';
 import {render, screen, fireEvent, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
+import {AnimatedModalShell} from './animated_modal_shell';
 import ConfirmationDialog from './confirmation_dialog';
 
 jest.mock('react-intl', () => {
@@ -65,12 +66,47 @@ describe('ConfirmationDialog', () => {
         expect(screen.getByRole('dialog', {name: 'Delete agent?'})).toBeTruthy();
     });
 
-    it('Escape cancels with managed accessibility', () => {
-        const {onCancel} = renderDialog({managedAccessibility: true});
+    it.each([
+        {name: 'without managed accessibility', managed: false},
+        {name: 'with managed accessibility', managed: true},
+    ])('Escape cancels $name', ({managed}) => {
+        const {onCancel} = renderDialog({managedAccessibility: managed});
 
-        fireEvent.keyDown(document, {key: 'Escape'});
+        fireEvent.keyDown(document.body, {key: 'Escape'});
 
         expect(onCancel).toHaveBeenCalledTimes(1);
+    });
+
+    it('Escape cancels the dialog stacked over a modal, and leaves the modal open', () => {
+        const onModalEscape = jest.fn();
+        const onCancel = jest.fn();
+        render(
+            <IntlProvider locale='en'>
+                <AnimatedModalShell
+                    show={true}
+                    onEscape={onModalEscape}
+                >
+                    <div role='dialog'>{'Settings'}</div>
+                </AnimatedModalShell>
+                <ConfirmationDialog
+                    title='Discard changes?'
+                    message='Your edits will be lost.'
+                    confirmButtonText='Discard'
+                    cancelButtonText='Cancel'
+                    onConfirm={jest.fn()}
+                    onCancel={onCancel}
+                />
+            </IntlProvider>,
+        );
+
+        // jsdom has no layout: give the dialogs a box so the shells see them as open.
+        document.querySelectorAll<HTMLElement>('[role="dialog"]').forEach((el) => {
+            el.getClientRects = () => [{}] as unknown as DOMRectList;
+        });
+        fireEvent.keyDown(document.body, {key: 'Escape'});
+
+        expect(onCancel).toHaveBeenCalledTimes(1);
+        expect(onModalEscape).not.toHaveBeenCalled();
     });
 
     describe('Tab trap with managed accessibility', () => {
@@ -133,15 +169,7 @@ describe('ConfirmationDialog', () => {
     it('Escape does not cancel while pending', () => {
         const {onCancel} = renderDialog({managedAccessibility: true, confirmPending: true});
 
-        fireEvent.keyDown(document, {key: 'Escape'});
-
-        expect(onCancel).not.toHaveBeenCalled();
-    });
-
-    it('Escape is ignored without managed accessibility', () => {
-        const {onCancel} = renderDialog();
-
-        fireEvent.keyDown(document, {key: 'Escape'});
+        fireEvent.keyDown(document.body, {key: 'Escape'});
 
         expect(onCancel).not.toHaveBeenCalled();
     });
