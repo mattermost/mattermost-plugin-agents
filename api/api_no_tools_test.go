@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -114,11 +116,13 @@ func (m *mockConvServiceStore) GetConversationByThreadBotUser(_, _, _ string) (*
 	return nil, store.ErrConversationNotFound
 }
 
-func (m *mockConvServiceStore) UpdateConversationTitle(id, title string) error {
-	if conv, ok := m.conversations[id]; ok {
-		conv.Title = title
+func (m *mockConvServiceStore) RenameConversation(id, title string) (bool, error) {
+	conv, ok := m.conversations[id]
+	if !ok || conv.DeleteAt != 0 {
+		return false, nil
 	}
-	return nil
+	conv.Title = title
+	return true, nil
 }
 
 func (m *mockConvServiceStore) SetConversationTitleIfUnset(id, title string) (bool, error) {
@@ -179,6 +183,12 @@ func (m *mockConvServiceStore) GetMaxSequenceForConversation(conversationID stri
 	return len(m.turns[conversationID]), nil
 }
 
+// expectConversationTitleEvents allows the conversation_updated event that
+// setting an analysis conversation's fixed title sends to its owner.
+func expectConversationTitleEvents(mmClient *mmapimocks.MockClient) {
+	mmClient.On("PublishWebSocketEvent", conversation.WebsocketEventConversationUpdated, mock.Anything, mock.Anything).Return().Maybe()
+}
+
 func setupNoToolsAPI(t *testing.T, mcpProvider *noToolsTestMCPProvider, mmClient *mmapimocks.MockClient) (*TestEnvironment, *noToolsStreamingService, *mockConvServiceStore) {
 	t.Helper()
 
@@ -212,6 +222,7 @@ func setupNoToolsAPI(t *testing.T, mcpProvider *noToolsTestMCPProvider, mmClient
 	convStore := newMockConvServiceStore()
 	convService := conversation.NewService(convStore, promptsObj, mmClient, e.bots)
 	e.api.SetConversationService(convService)
+	expectConversationTitleEvents(mmClient)
 
 	fakeLLM := NewFakeLLM("summary response")
 	bot := bots.NewBot(
@@ -452,6 +463,86 @@ func TestChannelAnalysisPostsRecordTheAnalyzedChannel(t *testing.T) {
 			assert.Equal(t, testChannelID, post.GetProp(conversations.AnalyzedChannelIDProp))
 			assert.Nil(t, post.GetProp(conversations.ThreadIDProp), "a channel analysis analyzed no thread")
 			assert.NotNil(t, post.GetProp(streaming.NoRegen), "a channel analysis cannot be regenerated")
+		})
+	}
+}
+
+func TestAnalysisFixedTitlesAreSentToTheRequester(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name      string
+		path      string
+		body      string
+		wantTitle string
+		setup     func(e *TestEnvironment, mmClient *mmapimocks.MockClient)
+	}{
+		{
+			name:      "thread summary",
+			path:      "/post/postid/analyze",
+			body:      `{"analysis_type":"summarize_thread"}`,
+			wantTitle: TitleThreadSummary,
+			setup: func(e *TestEnvironment, mmClient *mmapimocks.MockClient) {
+				threadPost := &model.Post{Id: "postid", ChannelId: testChannelID, UserId: testOtherUserID, Message: "hello"}
+				e.mockAPI.On("GetPost", "postid").Return(threadPost, nil)
+				mmClient.On("GetPostThread", "postid").Return(&model.PostList{Order: []string{"postid"}, Posts: map[string]*model.Post{"postid": threadPost}}, nil)
+			},
+		},
+		{
+			name:      "channel summary",
+			path:      "/channel/" + testChannelID + "/interval",
+			body:      `{"start_time":1,"end_time":0,"preset_prompt":"summarize_range"}`,
+			wantTitle: TitleSummarizeChannel,
+			setup: func(_ *TestEnvironment, mmClient *mmapimocks.MockClient) {
+				channelPost := &model.Post{Id: "post-1", ChannelId: testChannelID, UserId: testOtherUserID, Message: "hello", CreateAt: 2}
+				mmClient.On("GetPostsSince", testChannelID, int64(1)).Return(&model.PostList{Order: []string{"post-1"}, Posts: map[string]*model.Post{"post-1": channelPost}}, nil)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mmClient := mmapimocks.NewMockClient(t)
+			e, _, convStore := setupNoToolsAPI(t, &noToolsTestMCPProvider{}, mmClient)
+			defer e.Cleanup(t)
+
+			channel := &model.Channel{Id: testChannelID, Type: model.ChannelTypeOpen, TeamId: "teamid"}
+			e.mockAPI.On("GetChannel", testChannelID).Return(channel, nil)
+			e.mockAPI.On("GetTeam", "teamid").Return(&model.Team{Id: "teamid", Name: "team"}, nil)
+			e.mockAPI.On("HasPermissionToChannel", testUserID, testChannelID, model.PermissionReadChannel).Return(true)
+			e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Username: "requester", Locale: "en"}, nil)
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+			mmClient.On("GetUser", testOtherUserID).Return(&model.User{Id: testOtherUserID, Username: "author"}, nil)
+			tt.setup(e, mmClient)
+
+			mmClient.ExpectedCalls = slices.DeleteFunc(mmClient.ExpectedCalls, func(c *mock.Call) bool {
+				return c.Method == "PublishWebSocketEvent"
+			})
+			var payloads []map[string]any
+			var broadcasts []*model.WebsocketBroadcast
+			mmClient.On("PublishWebSocketEvent", conversation.WebsocketEventConversationUpdated, mock.Anything, mock.Anything).
+				Run(func(args mock.Arguments) {
+					payload, _ := args.Get(1).(map[string]any)
+					broadcast, _ := args.Get(2).(*model.WebsocketBroadcast)
+					payloads = append(payloads, payload)
+					broadcasts = append(broadcasts, broadcast)
+				}).Return().Maybe()
+
+			request := httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader(tt.body))
+			request.Header.Add("Mattermost-User-ID", testUserID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+			require.Equal(t, http.StatusOK, recorder.Code)
+
+			require.Len(t, convStore.conversations, 1)
+			var convID string
+			for id := range convStore.conversations {
+				convID = id
+			}
+			require.Len(t, payloads, 1)
+			assert.Equal(t, map[string]any{"conversation_id": convID, "title": tt.wantTitle}, payloads[0])
+			assert.Equal(t, &model.WebsocketBroadcast{UserId: testUserID}, broadcasts[0])
 		})
 	}
 }

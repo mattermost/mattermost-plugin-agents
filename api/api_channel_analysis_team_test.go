@@ -70,6 +70,7 @@ func setupChannelAnalysisAPIForChannel(t *testing.T, channel *model.Channel) (*T
 	e.api.streamingService = streamingService
 	convStore := newMockConvServiceStore()
 	e.api.SetConversationService(conversation.NewService(convStore, promptsObj, mmClient, e.bots))
+	expectConversationTitleEvents(mmClient)
 
 	fakeLLM := &channelAnalysisSequenceLLM{
 		calls: [][]llm.TextStreamEvent{

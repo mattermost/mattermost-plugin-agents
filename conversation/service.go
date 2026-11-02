@@ -24,11 +24,11 @@ type Store interface {
 	// GetConversation retrieves a conversation by ID. Returns an error if not found.
 	GetConversation(id string) (*store.Conversation, error)
 	GetConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error)
-	// UpdateConversationTitle updates the title of a conversation.
-	UpdateConversationTitle(id, title string) error
-	// SetConversationTitleIfUnset sets the title only while the conversation
-	// has none, reporting whether it did. Used for generated titles so they
-	// never overwrite a title the user set.
+	// RenameConversation sets the title of a non-deleted conversation,
+	// reporting whether one was changed.
+	RenameConversation(id, title string) (bool, error)
+	// SetConversationTitleIfUnset sets a generated title only while the
+	// conversation has none, reporting whether it did.
 	SetConversationTitleIfUnset(id, title string) (bool, error)
 	// UpdateConversationRootPostID sets the RootPostID on a conversation.
 	// Used when the post ID is only known after post creation (e.g., thread analysis DM posts).
@@ -258,9 +258,20 @@ func (s *Service) UpdateConversationRootPostID(id string, rootPostID string) err
 	return s.store.UpdateConversationRootPostID(id, rootPostID)
 }
 
-// UpdateConversationTitle updates the title of a conversation.
+// UpdateConversationTitle sets a conversation's title and tells its owner.
 func (s *Service) UpdateConversationTitle(id, title string) error {
-	return s.store.UpdateConversationTitle(id, title)
+	conv, err := s.store.GetConversation(id)
+	if err != nil {
+		return fmt.Errorf("failed to get conversation: %w", err)
+	}
+	renamed, err := s.store.RenameConversation(id, title)
+	if err != nil {
+		return fmt.Errorf("failed to set conversation title: %w", err)
+	}
+	if renamed {
+		PublishConversationTitleUpdated(s.mmClient, conv, title)
+	}
+	return nil
 }
 
 // GetOrCreateParams contains parameters for GetOrCreateConversation.
@@ -789,8 +800,7 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 // when its title changes (webapp: custom_mattermost-ai_conversation_updated).
 const WebsocketEventConversationUpdated = "conversation_updated"
 
-// PublishConversationTitleUpdated tells the conversation's owner, and only
-// them, that its title is now title.
+// PublishConversationTitleUpdated tells only the conversation's owner its new title.
 func PublishConversationTitleUpdated(client mmapi.Client, conv *store.Conversation, title string) {
 	client.PublishWebSocketEvent(
 		WebsocketEventConversationUpdated,
@@ -802,10 +812,8 @@ func PublishConversationTitleUpdated(client mmapi.Client, conv *store.Conversati
 	)
 }
 
-// GenerateTitle generates a short title for the conversation and saves it,
-// unless the conversation already has a title: a title the user set, before
-// or while this runs, is never overwritten. When the generated title is
-// saved, the owner is notified over the websocket.
+// GenerateTitle generates a short title for an untitled conversation, saves it
+// unless the user set one meanwhile, and tells the owner.
 // This should be called asynchronously (in a goroutine) after conversation creation.
 // The lm parameter provides the language model for title generation.
 // The context parameter provides bot/user context for the LLM call; ctx
