@@ -19,6 +19,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
+	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession/scopedtest"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -650,7 +651,7 @@ func TestSearchUnderScopedSession(t *testing.T) {
 			mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 			mockClient := mmapimocks.NewMockClient(t)
 			allowVectorIndexStateRead(mockClient)
-			mockClient.On("GetConfig").Return(&model.Config{ComplianceSettings: model.ComplianceSettings{Enable: new(tt.compliance)}})
+			mockClient.On("GetConfig").Return(scopedtest.RPCConfig(t, &model.Config{ComplianceSettings: model.ComplianceSettings{Enable: new(tt.compliance)}}))
 			if !tt.compliance {
 				mockClient.On("RolesGrantPermission", []string{model.SystemUserRoleId}, model.PermissionJoinPublicTeams.Id).Return(!tt.noJoin)
 			}

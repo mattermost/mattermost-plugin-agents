@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
+	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession/scopedtest"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -426,7 +427,7 @@ func TestGetContentUnderScopedSession(t *testing.T) {
 			if tt.team != nil {
 				m.EXPECT().GetTeam(tt.team.Id).Return(tt.team, nil)
 			}
-			m.EXPECT().GetConfig().Return(&model.Config{ComplianceSettings: model.ComplianceSettings{Enable: new(tt.compliance)}})
+			m.EXPECT().GetConfig().Return(scopedtest.RPCConfig(t, &model.Config{ComplianceSettings: model.ComplianceSettings{Enable: new(tt.compliance)}}))
 			if !tt.compliance {
 				m.EXPECT().RolesGrantPermission([]string{model.SystemUserRoleId}, model.PermissionJoinPublicTeams.Id).Return(!tt.noJoin)
 			}

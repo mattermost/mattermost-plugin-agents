@@ -8,6 +8,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession/scopedtest"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -189,7 +190,8 @@ func TestServerLimits(t *testing.T) {
 		{name: "no limits when compliance is off and system_user can join", settings: fakeSettings{cfg: cfg(&off), join: true}, reason: PublicGrantsOn},
 		{name: "compliance mode", settings: fakeSettings{cfg: cfg(&on), join: true}, limits: model.SessionScopeLimits{ComplianceMode: true}, reason: PublicGrantsOffCompliance},
 		{name: "system_user cannot join public teams", settings: fakeSettings{cfg: cfg(&off)}, limits: model.SessionScopeLimits{UsersCannotJoinOpenTeams: true}, reason: PublicGrantsOffUsersCannotJoin},
-		{name: "compliance setting missing", settings: fakeSettings{cfg: cfg(nil), join: true}, limits: failClosed, reason: PublicGrantsOffUnknown},
+		{name: "compliance setting missing means compliance is off", settings: fakeSettings{cfg: cfg(nil), join: true}, reason: PublicGrantsOn},
+		{name: "compliance setting missing and system_user cannot join", settings: fakeSettings{cfg: cfg(nil)}, limits: model.SessionScopeLimits{UsersCannotJoinOpenTeams: true}, reason: PublicGrantsOffUsersCannotJoin},
 		{name: "config missing", settings: fakeSettings{join: true}, limits: failClosed, reason: PublicGrantsOffUnknown},
 		{name: "no settings", limits: failClosed, reason: PublicGrantsOffUnknown},
 	}
@@ -241,6 +243,28 @@ func TestTeamGrantOff(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(string(tt.reason), func(t *testing.T) {
 			assert.Equal(t, tt.off, TeamGrantOff(tt.reason))
+		})
+	}
+}
+
+// A false compliance setting reaches the plugin as nil over the plugin RPC, so
+// the grants must stay on for it.
+func TestServerLimitsWithRPCDecodedConfig(t *testing.T) {
+	tests := []struct {
+		name       string
+		compliance bool
+		limits     model.SessionScopeLimits
+	}{
+		{name: "compliance off", limits: model.SessionScopeLimits{}},
+		{name: "compliance on", compliance: true, limits: model.SessionScopeLimits{ComplianceMode: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := scopedtest.RPCConfig(t, &model.Config{ComplianceSettings: model.ComplianceSettings{Enable: model.NewPointer(tt.compliance)}})
+			if !tt.compliance {
+				require.Nil(t, cfg.ComplianceSettings.Enable, "the RPC drops a false pointer; this test is about that")
+			}
+			assert.Equal(t, tt.limits, ServerLimits(fakeSettings{cfg: cfg, join: true}))
 		})
 	}
 }

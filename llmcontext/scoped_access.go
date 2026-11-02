@@ -72,12 +72,12 @@ type ScopedAccessChannels struct {
 // ScopedAccessOpenTeams summarizes the grant to every public channel on an
 // open team.
 type ScopedAccessOpenTeams struct {
-	Enabled        bool                           `json:"enabled"`
+	Enabled        bool                          `json:"enabled"`
 	DisabledReason scopedsession.PublicGrantsOff `json:"disabledReason,omitempty"`
-	OpenCount      int                            `json:"openCount"`
-	ClosedCount    int                            `json:"closedCount"`
-	Open           []ScopedAccessTeam             `json:"open"`
-	Closed         []ScopedAccessClosedTeam       `json:"closed"`
+	OpenCount      int                           `json:"openCount"`
+	ClosedCount    int                           `json:"closedCount"`
+	Open           []ScopedAccessTeam            `json:"open"`
+	Closed         []ScopedAccessClosedTeam      `json:"closed"`
 }
 
 type ScopedAccessTeam struct {

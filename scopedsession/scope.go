@@ -44,7 +44,7 @@ type ServerSettings interface {
 
 // ServerLimits mirrors the server: compliance mode turns both public-channel
 // grants off, and a system_user role without join_public_teams turns the
-// open-team grant off. Without readable settings both are off, so public
+// open-team grant off. Without a readable config both are off, so public
 // reads fail closed.
 func ServerLimits(settings ServerSettings) model.SessionScopeLimits {
 	limits, _ := serverLimits(settings)
@@ -57,10 +57,12 @@ func serverLimits(settings ServerSettings) (limits model.SessionScopeLimits, rea
 		return failClosed, false
 	}
 	cfg := settings.GetConfig()
-	if cfg == nil || cfg.ComplianceSettings.Enable == nil {
+	if cfg == nil {
 		return failClosed, false
 	}
-	if *cfg.ComplianceSettings.Enable {
+	// The plugin RPC transmits a false pointer as nil, so a missing setting is
+	// compliance mode off, the default.
+	if cfg.ComplianceSettings.Enable != nil && *cfg.ComplianceSettings.Enable {
 		return model.SessionScopeLimits{ComplianceMode: true}, true
 	}
 	return model.SessionScopeLimits{

@@ -11,8 +11,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -185,4 +187,75 @@ func TestUnscopedRunStillListsItsOwnMemberships(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, team.Id)
 	assert.Len(t, paths, 2, "an unscoped run reads the user's own memberships")
+}
+
+// The server answers a missing item and an out-of-scope one the same way, and
+// the model must be told just that, not the server's internal error.
+func TestScopedOutOfScopeErrorsReachTheModelAsNotFound(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     int
+		body       string
+		wantText   string
+		wantHidden string
+	}{
+		{
+			name:       "out of scope",
+			status:     http.StatusForbidden,
+			body:       `{"id":"api.context.scoped_session_out_of_scope.app_error","message":"route not allowed for scoped sessions","status_code":403}`,
+			wantText:   "Error: not found, or not accessible in this agent's scope",
+			wantHidden: "scoped_session_out_of_scope",
+		},
+		{
+			name:     "other failures keep their text",
+			status:   http.StatusInternalServerError,
+			body:     `{"id":"app.channel.get.find.app_error","message":"channel store exploded","status_code":500}`,
+			wantText: "channel store exploded",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userID := model.NewId()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v4/users/me" {
+					w.Header().Set("Content-Type", "application/json")
+					assert.NoError(t, json.NewEncoder(w).Encode(&model.User{Id: userID, Username: "bot"}))
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+
+			provider := newTestProvider(t, server.URL)
+			provider.authProvider = auth.NewSessionAuthenticationProvider(server.URL, "", &testLogger{t: t})
+			provider.accessMode = AccessModeRemote
+			mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+			provider.ProvideTools(mcpServer)
+
+			ctx := context.WithValue(t.Context(), auth.SessionIDContextKey, "session-id")
+			ctx = context.WithValue(ctx, auth.TokenResolverContextKey, auth.TokenResolver(func(string) (string, error) { return "token", nil }))
+			serverTransport, clientTransport := mcp.NewInMemoryTransports()
+			serverSession, err := mcpServer.Connect(ctx, serverTransport, nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = serverSession.Close() })
+			session, err := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil).Connect(t.Context(), clientTransport, nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = session.Close() })
+
+			result, err := session.CallTool(t.Context(), &mcp.CallToolParams{
+				Name:      "get_channel_info",
+				Arguments: map[string]any{"channel_id": model.NewId()},
+			})
+			require.NoError(t, err)
+			require.True(t, result.IsError)
+			require.Len(t, result.Content, 1)
+			text := result.Content[0].(*mcp.TextContent).Text
+			assert.Contains(t, text, tt.wantText)
+			if tt.wantHidden != "" {
+				assert.NotContains(t, text, tt.wantHidden)
+			}
+		})
+	}
 }

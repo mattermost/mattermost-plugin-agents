@@ -21,6 +21,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
+	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -108,7 +109,7 @@ func newScopedTestBuilder(t *testing.T, env scopedTestEnv, toolProvider ToolProv
 	mockAPI := &plugintest.API{}
 	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
 	mockAPI.On("GetLicense").Return(enterprisetest.LicenseFor(env.level)).Maybe()
-	mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: "team-id"}, nil).Maybe()
+	mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: scopedTestTeamID, Name: "acme", DisplayName: "Acme"}, nil).Maybe()
 	mockAPI.On("HasPermissionToChannel", mock.Anything, mock.Anything, model.PermissionReadChannel).Return(!env.requesterCannotRead).Maybe()
 	for i := 1; i <= 10; i++ {
 		args := make([]any, i)
@@ -733,6 +734,60 @@ func TestScopedCatalogPreviewMirrorsWebSearchOptIn(t *testing.T) {
 			}
 			assert.ElementsMatch(t, tt.expected, got)
 			assert.Empty(t, minter.userIDs, "a preview never mints a session")
+		})
+	}
+}
+
+// A scoped turn's system prompt gives the model the IDs it cannot look up and
+// says what it can reach; an unscoped channel turn does not.
+func TestScopedChannelTurnPromptNamesTheScope(t *testing.T) {
+	promptsEngine, err := llm.NewPrompts(prompts.PromptsFolder)
+	require.NoError(t, err)
+	channel := &model.Channel{Id: model.NewId(), TeamId: scopedTestTeamID, Name: "incidents", DisplayName: "Incidents", Type: model.ChannelTypePrivate}
+
+	tests := []struct {
+		name       string
+		scopedTurn bool
+		contains   []string
+		excludes   []string
+	}{
+		{
+			name:       "scoped turn",
+			scopedTurn: true,
+			contains: []string{
+				"Its channel ID is '" + channel.Id + "'",
+				"Its team ID is '" + scopedTestTeamID + "'",
+				"read-only access to this channel",
+				"not accessible in this agent's scope",
+			},
+			excludes: []string{"should use tools to look them up"},
+		},
+		{
+			name:     "unscoped channel turn",
+			excludes: []string{"Its channel ID is", "read-only access to this channel"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := newScopedCatalogProvider(t, &recordingScopedMinter{}, scopedTestMCPCatalog())
+			builder, _ := newScopedTestBuilder(t, defaultScopedTestEnv(), &emptyToolProvider{}, provider)
+			bot := newScopedTestBot(scopedTestBotConfig())
+			opts := []llm.ContextOption{builder.WithLLMContextTools(stdcontext.Background(), bot)}
+			if tt.scopedTurn {
+				opts = append([]llm.ContextOption{builder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{TriggerPostID: model.NewId()})}, opts...)
+			}
+			llmContext := builder.BuildLLMContextUserRequest(bot, &model.User{Id: model.NewId(), Username: "alice"}, channel, opts...)
+			t.Cleanup(llmContext.ReleaseScopedSession)
+			require.Equal(t, tt.scopedTurn, llmContext.ToolsScoped)
+
+			prompt, err := promptsEngine.Format(prompts.PromptStandardPersonalityWithoutLocale, llmContext)
+			require.NoError(t, err)
+			for _, want := range tt.contains {
+				assert.Contains(t, prompt, want)
+			}
+			for _, unwanted := range tt.excludes {
+				assert.NotContains(t, prompt, unwanted)
+			}
 		})
 	}
 }

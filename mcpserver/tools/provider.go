@@ -6,6 +6,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -342,7 +343,7 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 			p.logger.Debug("MCP tool failed", "tool", mcpTool.Name, "error", err.Error())
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{
-					&mcp.TextContent{Text: "Error: " + err.Error()},
+					&mcp.TextContent{Text: toolErrorText(err)},
 				},
 				IsError: true,
 			}, nil
@@ -363,6 +364,24 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 
 	// Register the tool using the Server.AddTool method
 	server.AddTool(tool, handler)
+}
+
+// scopedOutOfScopeErrorID is the Mattermost error ID of a request a scoped
+// session may not make. The server answers the same way for something that
+// does not exist and for something outside the scope, so the model is told
+// both.
+const scopedOutOfScopeErrorID = "api.context.scoped_session_out_of_scope"
+
+// scopedOutOfScopeMessage is what a scoped agent's model sees for such a
+// failure, in place of the server's internal error.
+const scopedOutOfScopeMessage = "Error: not found, or not accessible in this agent's scope"
+
+func toolErrorText(err error) string {
+	var appErr *model.AppError
+	if (errors.As(err, &appErr) && strings.HasPrefix(appErr.Id, scopedOutOfScopeErrorID)) || strings.Contains(err.Error(), scopedOutOfScopeErrorID) {
+		return scopedOutOfScopeMessage
+	}
+	return "Error: " + err.Error()
 }
 
 // authenticatedClientAndUserID returns the authenticated client and, when the
