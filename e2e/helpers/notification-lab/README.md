@@ -58,7 +58,7 @@ TESTCONTAINERS_HOST_OVERRIDE=localhost npx playwright test tests/notifications/a
 ```
 
 Helpers in `matrix.ts`: `slowAnswer` / `toolCallFor` / `slowAnswerAfterTool` / `withTitle` (fixtures,
-`SLOW_STREAM` ≈ 10 s per answer), `placeElsewhere` (other channel, blurred, away), `startDiscussion`
+`SLOW_STREAM` ≈ 10 s per answer), `placeElsewhere` (another channel, blurred, away), `startDiscussion`
 (channel + thread started by `member`, read by everyone), `receivedAbout` / `expectNotifiedOnce` /
 `expectNotNotified` / `expectNothingAtAll` (per-post assertions; emails are attributed by excluding
 other posts' texts), `waitForPostState` and `settlePost` (the latter never fails, so a test can
