@@ -2147,9 +2147,17 @@ func TestBuildRequests_UnexecutedToolCallsReplayAsNotExecuted(t *testing.T) {
 		name       string
 		status     string
 		result     *string
+		autoRun    bool
 		wantResult string
 		wantStatus llm.ToolCallStatus
 	}{
+		{
+			name:       "auto-run call interrupted mid-execution may have run",
+			status:     StatusPending,
+			autoRun:    true,
+			wantResult: InterruptedToolResult,
+			wantStatus: llm.ToolCallStatusError,
+		},
 		{
 			name:       "pending without result",
 			status:     StatusPending,
@@ -2199,7 +2207,7 @@ func TestBuildRequests_UnexecutedToolCallsReplayAsNotExecuted(t *testing.T) {
 
 			blocks := []ContentBlock{
 				{Type: BlockTypeText, Text: "Let me check."},
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "get_weather", Input: json.RawMessage(`{}`), Status: tc.status, Shared: new(true)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "get_weather", Input: json.RawMessage(`{}`), Status: tc.status, Shared: new(true), WouldAutoExecute: tc.autoRun},
 			}
 			if tc.result != nil {
 				blocks = append(blocks, ContentBlock{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: *tc.result, Status: StatusSuccess, Shared: new(true)})
