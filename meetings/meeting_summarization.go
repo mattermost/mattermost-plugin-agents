@@ -399,11 +399,12 @@ func (s *Service) SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, 
 	}, nil
 }
 
-// RegenerateSummary re-runs the meeting summary answered by postID. The
-// transcript is re-read, with the requester's file policy, from the file
-// referenced by the conversation's first user turn, and the prior response
-// turns anchored to postID are scrubbed.
-func (s *Service) RegenerateSummary(ctx stdcontext.Context, bot *bots.Bot, llmContext *llm.Context, conv *store.Conversation, postID string) (*llm.TextStreamResult, error) {
+// RegenerateSummary re-runs the meeting summary answered by post. The
+// transcript is re-read from the file referenced by the conversation's first
+// user turn, and the prior response turns anchored to post are scrubbed. The
+// requester must still pass the download policy and channel read check for the
+// transcript and, for a call recording, for the recording it was made from.
+func (s *Service) RegenerateSummary(ctx stdcontext.Context, bot *bots.Bot, llmContext *llm.Context, conv *store.Conversation, post *model.Post) (*llm.TextStreamResult, error) {
 	if err := s.checkMeetingsLicense(); err != nil {
 		return nil, err
 	}
@@ -412,13 +413,20 @@ func (s *Service) RegenerateSummary(ctx stdcontext.Context, bot *bots.Bot, llmCo
 	if err != nil {
 		return nil, err
 	}
-	mm := mmapi.WithFilePolicy(s.mmClient, auth.SessionIDFromContext(ctx))
-	transcription, filePost, err := readTranscript(mm, fileID)
+	sessionID := auth.SessionIDFromContext(ctx)
+	sourceFileIDs := []string{fileID}
+	if recordingID, _ := post.GetProp(ReferencedRecordingFileID).(string); recordingID != "" {
+		sourceFileIDs = append(sourceFileIDs, recordingID)
+	}
+	for _, sourceFileID := range sourceFileIDs {
+		if _, err = mmapi.GetReadableFileInfo(s.mmClient, sessionID, conv.UserID, sourceFileID); err != nil {
+			return nil, err
+		}
+	}
+
+	transcription, _, err := readTranscript(mmapi.WithFilePolicy(s.mmClient, sessionID), fileID)
 	if err != nil {
 		return nil, err
-	}
-	if !s.mmClient.HasPermissionToChannel(conv.UserID, filePost.ChannelId, model.PermissionReadChannel) {
-		return nil, errors.New("user doesn't have permission to read the meeting transcript's channel")
 	}
 
 	request, err := s.buildSummaryRequest(ctx, bot, transcription, llmContext)
@@ -427,7 +435,7 @@ func (s *Service) RegenerateSummary(ctx stdcontext.Context, bot *bots.Bot, llmCo
 	}
 	request.OperationSubType = llm.SubTypeRegenerate
 
-	if err := s.convService.DeleteResponseTurns(conv.ID, postID); err != nil {
+	if err := s.convService.DeleteResponseTurns(conv.ID, post.Id); err != nil {
 		return nil, fmt.Errorf("unable to scrub prior meeting summary: %w", err)
 	}
 

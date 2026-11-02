@@ -57,7 +57,7 @@ func TestMeetingsServiceLicenseGate(t *testing.T) {
 		{
 			name: "RegenerateSummary",
 			call: func(s *Service) error {
-				_, err := s.RegenerateSummary(t.Context(), nil, nil, &store.Conversation{}, "post")
+				_, err := s.RegenerateSummary(t.Context(), nil, nil, &store.Conversation{}, &model.Post{Id: "post"})
 				return err
 			},
 		},

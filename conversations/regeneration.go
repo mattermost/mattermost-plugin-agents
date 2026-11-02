@@ -26,7 +26,7 @@ import (
 // MeetingSummaryRegenerator re-runs a meeting summary from the transcript
 // file its conversation references.
 type MeetingSummaryRegenerator interface {
-	RegenerateSummary(ctx stdcontext.Context, bot *bots.Bot, llmContext *llm.Context, conv *store.Conversation, postID string) (*llm.TextStreamResult, error)
+	RegenerateSummary(ctx stdcontext.Context, bot *bots.Bot, llmContext *llm.Context, conv *store.Conversation, post *model.Post) (*llm.TextStreamResult, error)
 }
 
 // SetMeetingSummaryRegenerator sets the service that regenerates meeting
@@ -161,7 +161,7 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 			return errors.New("meeting summary regeneration not available")
 		}
 		llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, c.contextBuilder.WithLLMContextNoTools())
-		result, err = c.meetingSummaries.RegenerateSummary(ctx, bot, llmContext, conv, post.Id)
+		result, err = c.meetingSummaries.RegenerateSummary(ctx, bot, llmContext, conv, post)
 
 	case regenerateChannelSummary:
 		result, err = c.regenerateChannelAnalysis(ctx, bot, user, conv, post)
