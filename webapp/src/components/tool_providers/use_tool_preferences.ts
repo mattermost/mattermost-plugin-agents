@@ -3,14 +3,17 @@
 
 import {useEffect, useSyncExternalStore} from 'react';
 
-import {getUserToolPreferences} from '@/client';
+import {getUserToolPreferences, updateUserToolPreferences} from '@/client';
 
 export type ToolPreferencesStatus = 'loading' | 'ready' | 'error';
 
 export interface ToolPreferences {
     status: ToolPreferencesStatus;
     disabledServers: string[];
-    setDisabledServers: (servers: string[]) => void;
+
+    // Enables or disables one provider, shown at once. Resolves false, with the saved list shown
+    // again, when the save fails or the preferences are not loaded yet.
+    toggle: (serverOrigin: string, enabled: boolean) => Promise<boolean>;
 
     // Loads them again (the error state's retry).
     reload: () => void;
@@ -45,12 +48,60 @@ const subscribe = (listener: () => void) => {
 };
 const getSnapshot = () => snapshot;
 
-// A toggle supersedes a load still in flight, so its
-// older response cannot undo the change.
-const setDisabledServers = (servers: string[]) => {
+// The list the server last confirmed, which a failed save shows again.
+let saved: string[] = [];
+
+// One save at a time, each sending the latest list. A toggle made during a save rides on the
+// next one; a failure fails every toggle not yet saved, so the shown list always matches the
+// server's.
+let saving: Promise<boolean> | null = null;
+let pending: Promise<boolean> | null = null;
+
+const saveLatest = async (): Promise<boolean> => {
+    const servers = snapshot.disabledServers;
+    try {
+        await updateUserToolPreferences({disabled_servers: servers});
+        saved = servers;
+        return true;
+    } catch (e) {
+        console.error('Failed to save tool preferences:', e); // eslint-disable-line no-console
+        pending = null;
+        set({status: 'ready', disabledServers: saved});
+        return false;
+    }
+};
+
+const save = (): Promise<boolean> => {
+    if (!saving) {
+        saving = saveLatest().finally(() => {
+            saving = null;
+        });
+        return saving;
+    }
+    if (!pending) {
+        pending = saving.then((ok) => {
+            if (!ok || !pending) {
+                return false;
+            }
+            pending = null;
+            return save();
+        });
+    }
+    return pending;
+};
+
+// A toggle supersedes a load still in flight, so its older response cannot undo the change. The
+// saved list is replaced as a whole, so a toggle before it loaded would overwrite it with just
+// that one provider: refused until the preferences are ready.
+const toggle = (serverOrigin: string, enabled: boolean): Promise<boolean> => {
+    if (snapshot.status !== 'ready') {
+        return Promise.resolve(false);
+    }
+    const current = snapshot.disabledServers;
     generation++;
     inFlight = null;
-    set({status: 'ready', disabledServers: servers});
+    set({status: 'ready', disabledServers: enabled ? current.filter((s) => s !== serverOrigin) : [...current.filter((s) => s !== serverOrigin), serverOrigin]});
+    return save();
 };
 
 // Loads the preferences, joining a load already under way. Loaded preferences stay shown while
@@ -68,7 +119,8 @@ const load = (): Promise<void> => {
         try {
             const prefs = await getUserToolPreferences();
             if (id === generation) {
-                set({status: 'ready', disabledServers: prefs.disabled_servers || []});
+                saved = prefs.disabled_servers || [];
+                set({status: 'ready', disabledServers: saved});
             }
         } catch (e) {
             console.error('Failed to load tool preferences:', e); // eslint-disable-line no-console
@@ -90,13 +142,13 @@ export const resetToolPreferences = () => {
     generation++;
     inFlight = null;
     snapshot = initial;
+    saved = [];
+    saving = null;
+    pending = null;
 };
 
 // The shared preferences, (re)loaded when a control mounts and whenever its agent changes (the
 // agent decides which providers the control shows).
-const reload = () => {
-    load();
-};
 
 export function useToolPreferences(agentId = ''): ToolPreferences {
     const current = useSyncExternalStore(subscribe, getSnapshot);
@@ -105,5 +157,5 @@ export function useToolPreferences(agentId = ''): ToolPreferences {
         load();
     }, [agentId]);
 
-    return {status: current.status, disabledServers: current.disabledServers, setDisabledServers, reload};
+    return {status: current.status, disabledServers: current.disabledServers, toggle, reload: load};
 }
