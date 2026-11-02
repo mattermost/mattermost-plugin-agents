@@ -6,6 +6,7 @@ import {useIntl} from 'react-intl';
 import styled, {keyframes} from 'styled-components';
 
 import {ThreadViewer as UnstyledThreadViewer} from '@/mm_webapp';
+import {noMotionWhenReduced} from '@/components/llmbot_post/motion';
 
 import JumpToLatest from './jump_to_latest';
 import {useIsThreadGenerating} from './use_thread_generating';
@@ -103,9 +104,7 @@ const ThreadPane = styled.div<{$layout: AgentNewChatLayout}>`
     overflow: hidden;
     animation: ${fadeIn} var(--duration-moderate) var(--ease-entrance);
 
-    @media (prefers-reduced-motion: reduce) {
-        animation: none;
-    }
+    ${noMotionWhenReduced}
 
     ${({$layout}) => hostThreadChatStyles($layout === 'page' ? {columnMaxWidth: CHAT_CONTENT_MAX_WIDTH} : {})}
 `;

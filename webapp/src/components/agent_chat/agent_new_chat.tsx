@@ -10,6 +10,7 @@ import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 import {getProfilePictureUrl} from '@/client';
 import type {LLMBot} from '@/bots';
 import {AdvancedTextEditor} from '@/mm_webapp';
+import {noMotionWhenReduced} from '@/components/llmbot_post/motion';
 
 import {CHAT_CONTENT_MAX_WIDTH, HOST_COMPOSER_CONTAINER_CLASS, hostComposerInset} from './agent_chat_host_styles';
 
@@ -160,9 +161,7 @@ const EmptyChat = styled.div<{$layout: AgentNewChatLayout}>`
     transform: translateY(calc(-1 * var(--empty-chat-lift)));
     animation: ${emptyChatEnter} var(--duration-moderate) var(--ease-entrance) backwards;
 
-    @media (prefers-reduced-motion: reduce) {
-        animation: none;
-    }
+    ${noMotionWhenReduced}
 `;
 
 // The host composer fills the column; the column's own padding is its inset, so the host's is

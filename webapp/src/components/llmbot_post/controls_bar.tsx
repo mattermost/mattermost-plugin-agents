@@ -3,7 +3,7 @@
 
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
-import styled, {css} from 'styled-components';
+import styled from 'styled-components';
 
 import {CheckIcon, CloseIcon, ContentCopyIcon, RefreshIcon, SendIcon} from '@mattermost/compass-icons/components';
 
@@ -14,6 +14,8 @@ import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {Timestamp} from '@/mm_webapp';
+import {visuallyHidden} from '@/components/visually_hidden';
+import {TooltipTrigger} from '@/components/dropdown';
 
 import {BUBBLE_CONTROLS_ATTRIBUTE, BUBBLE_CONTROLS_BELOW, CONTROLS_BAR_HEIGHT} from '../agent_chat/agent_chat_host_styles';
 
@@ -223,18 +225,6 @@ const CopyButton: React.FC<{text: string}> = ({text}) => {
     );
 };
 
-const visuallyHidden = css`
-	position: absolute;
-	width: 1px;
-	height: 1px;
-	margin: -1px;
-	padding: 0;
-	overflow: hidden;
-	clip: rect(0, 0, 0, 0);
-	white-space: nowrap;
-	border: 0;
-`;
-
 const LiveStatus = styled.span`
 	${visuallyHidden}
 `;
@@ -254,9 +244,4 @@ const Time = styled.span`
 	font-size: var(--font-size-75);
 	line-height: var(--line-height-75);
 	white-space: nowrap;
-`;
-
-// WithTooltip needs a single element that takes a ref and mouse/focus handlers.
-const TooltipTrigger = styled.span`
-	display: inline-flex;
 `;

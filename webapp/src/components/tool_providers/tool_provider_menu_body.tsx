@@ -12,7 +12,7 @@ import {MenuItem} from '@mattermost/compass-ui/components/menu-item';
 import {PopoverMenuDivider, PopoverMenuGroup} from '@mattermost/compass-ui/components/popover-menu';
 import {Switch} from '@mattermost/compass-ui/components/switch';
 
-import {TooltipAboveModals} from '@/components/dropdown';
+import {TooltipAboveModals, TooltipTrigger} from '@/components/dropdown';
 import {ErrorRow, LoadingRow, StatusRow, menuIcon} from '@/components/menu/menu_parts';
 import {mcpServerStatus} from '@/utils/mcp_availability';
 
@@ -191,8 +191,4 @@ const ConnectLabel = styled.span`
     font-size: var(--font-size-75);
     font-weight: var(--font-weight-semibold);
     line-height: var(--line-height-75);
-`;
-
-const TooltipTrigger = styled.span`
-    display: inline-flex;
 `;

@@ -4,6 +4,8 @@
 import React, {useEffect, useLayoutEffect, useRef, useState} from 'react';
 import styled, {css, keyframes} from 'styled-components';
 
+import {noMotionWhenReduced} from '@/components/llmbot_post/motion';
+
 import {prefersReducedMotion} from '../llmbot_post/motion';
 
 // How long the outgoing view stays mounted: --duration-moderate (300ms) plus a little, so the exit
@@ -281,7 +283,5 @@ const Layer = styled.div`
         ${motion(fadeOut, 'var(--ease-exit)')}
     }
 
-    @media (prefers-reduced-motion: reduce) {
-        animation: none;
-    }
+    ${noMotionWhenReduced}
 `;

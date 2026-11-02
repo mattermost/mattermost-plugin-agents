@@ -3,6 +3,8 @@
 
 import {css} from 'styled-components';
 
+import {noMotionWhenReduced} from '@/components/llmbot_post/motion';
+
 // Every selector that reaches into host (Mattermost webapp) DOM for the agent
 // chat (Agents product view and Agents RHS) lives in this file, so a host
 // markup change has one place to fix.
@@ -349,9 +351,7 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         background: transparent;
         transition: background var(--duration-quick) var(--ease-transition);
 
-        @media (prefers-reduced-motion: reduce) {
-            transition: none;
-        }
+        ${noMotionWhenReduced}
     }
 
     /* The agent's reply shows its bubble shape only while the user is on it. */
