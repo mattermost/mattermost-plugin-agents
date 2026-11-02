@@ -210,6 +210,18 @@ export class AIPlugin {
     }
   }
 
+  /**
+   * Wait for a bot post in the plugin RHS whose body contains `text`. Match on the post, not the
+   * panel: the panel also renders the conversation title (e.g. "Action Items") and the user's own
+   * messages, so a panel-wide text match is ambiguous or passes before the bot has answered.
+   */
+  async expectBotPostText(text: string | RegExp, timeout = 30000) {
+    const botPost = this.getRhsContainer()
+      .locator('[data-testid="llm-bot-post"]')
+      .filter({ hasText: text });
+    await expect(botPost.last()).toBeVisible({ timeout });
+  }
+
   async closeRHS() {
     const closeButton = this.page.locator('#rhsContainer button[aria-label="Close"]').first();
     const isVisible = await closeButton.isVisible().catch(() => false);
