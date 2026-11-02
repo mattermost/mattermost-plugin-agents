@@ -1,10 +1,14 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import type {IntlShape} from 'react-intl';
+
 import type {LLMBot} from '@/bots';
 import type {AIThread} from '@/types/ai_thread';
 
 import {MAX_RECENT_AGENTS, MAX_RECENT_CHATS, recentAgents, recentChats, searchAgents} from './find_agents_search';
+
+const intl = {formatMessage: () => 'New chat'} as unknown as IntlShape;
 
 const bot = (id: string, displayName: string, username = id): LLMBot => ({id, displayName, username} as LLMBot);
 
@@ -41,14 +45,19 @@ describe('searchAgents', () => {
     ];
 
     test.each(cases)('$name', ({query, agents, chats}) => {
-        const result = searchAgents(bots, threadsByBot, query, 'New chat');
+        const result = searchAgents(bots, threadsByBot, query, intl);
         expect(result.agents.map((b) => b.id)).toEqual(agents);
         expect(result.chats.map((c) => c.thread.id)).toEqual(chats);
     });
 
+    test('a word that starts with the query ranks above a substring, even after an earlier substring match', () => {
+        const result = searchAgents([bot('x', 'Bobcat'), bot('y', 'Scat Cat')], {}, 'cat', intl);
+        expect(result.agents.map((b) => b.id)).toEqual(['y', 'x']);
+    });
+
     test('chats rank by title match tier, then recency', () => {
         const byBot = {a: [thread('1', 'a', 'my plan', 99), thread('2', 'a', 'plan b', 1), thread('3', 'a', 'plan c', 5)]};
-        const result = searchAgents(bots, byBot, 'plan', 'New chat');
+        const result = searchAgents(bots, byBot, 'plan', intl);
         expect(result.chats.map((c) => c.thread.id)).toEqual(['3', '2', '1']);
     });
 });
@@ -68,19 +77,19 @@ describe('recentAgents', () => {
 
 describe('recentChats', () => {
     test('lists chats across agents newest first, with the placeholder for blank titles', () => {
-        const result = recentChats(bots, threadsByBot, 'New chat');
+        const result = recentChats(bots, threadsByBot, intl);
         expect(result.map((c) => c.thread.id)).toEqual(['a2', 'b1', 'a1']);
         expect(result.map((c) => c.title)).toEqual(['Reader notes', 'Plans', 'New chat']);
     });
 
     test('caps the list at the newest chats', () => {
         const many = {a: Array.from({length: MAX_RECENT_CHATS + 3}, (_, i) => thread(`t${i}`, 'a', `Chat ${i}`, i))};
-        const result = recentChats(bots, many, 'New chat');
+        const result = recentChats(bots, many, intl);
         expect(result).toHaveLength(MAX_RECENT_CHATS);
         expect(result[0].thread.id).toBe(`t${MAX_RECENT_CHATS + 2}`);
     });
 
     test('is empty without chats', () => {
-        expect(recentChats(bots, {}, 'New chat')).toEqual([]);
+        expect(recentChats(bots, {}, intl)).toEqual([]);
     });
 });

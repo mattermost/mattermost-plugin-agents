@@ -18,7 +18,6 @@ import {useBotlist, type LLMBot} from '@/bots';
 import {getProfilePictureUrl} from '@/client';
 import {useAgentThreads} from '@/hooks/use_agent_threads';
 
-import {chatTitle} from './chat_title';
 import {recentAgents, recentChats, searchAgents, type ChatResult} from './find_agents_search';
 import {useAgentsRoute} from './use_agents_route';
 
@@ -89,7 +88,6 @@ const Content = ({onClose}: {onClose: () => void}) => {
         return () => window.cancelAnimationFrame(frame);
     }, []);
 
-    const placeholderTitle = chatTitle(intl, '');
     const searching = query.trim() !== '';
 
     // True once the first threads fetch has settled (success or error). Until then the empty
@@ -106,7 +104,7 @@ const Content = ({onClose}: {onClose: () => void}) => {
             if (!settled) {
                 return [];
             }
-            const chats = recentChats(allBots, threadsByBot, placeholderTitle);
+            const chats = recentChats(allBots, threadsByBot, intl);
             if (chats.length > 0) {
                 return [{
                     key: 'recentChats',
@@ -118,12 +116,12 @@ const Content = ({onClose}: {onClose: () => void}) => {
                 items: recentAgents(allBots, threadsByBot).map((bot): ResultItem => ({kind: 'agent', key: `agent-${bot.id}`, bot})),
             }];
         }
-        const results = searchAgents(allBots, threadsByBot, query, placeholderTitle);
+        const results = searchAgents(allBots, threadsByBot, query, intl);
         return [
             {key: 'agents', items: results.agents.map((bot): ResultItem => ({kind: 'agent', key: `agent-${bot.id}`, bot}))},
             {key: 'chats', items: results.chats.map((chat): ResultItem => ({kind: 'chat', key: `chat-${chat.thread.id}`, bot: chat.bot, chat}))},
         ].filter((section): section is Section => section.items.length > 0);
-    }, [bots, threadsByBot, query, searching, settled, placeholderTitle]);
+    }, [bots, threadsByBot, query, searching, settled, intl]);
 
     const flat = useMemo(() => sections.flatMap((section) => section.items), [sections]);
     const activeIndex = flat.length === 0 ? -1 : Math.min(selected, flat.length - 1);

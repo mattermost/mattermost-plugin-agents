@@ -25,6 +25,7 @@ import AgentRow from './agent_row';
 import DeleteAgentDialog from './delete_agent_dialog';
 import AgentConfigView from './agent_config_view';
 import {useAgentFilePicker} from './use_agent_file_picker';
+import {matchesQuery} from './find_agents_search';
 
 type Tab = 'all' | 'yours';
 
@@ -227,11 +228,7 @@ const AgentsList = ({onStartChat, openCreate = false, onCloseCreate}: AgentsList
         if (activeTab === 'yours' && a.creatorID !== currentUserId) {
             return false;
         }
-        if (searchQuery.trim()) {
-            const query = searchQuery.toLowerCase();
-            return a.displayName.toLowerCase().includes(query) || a.name.toLowerCase().includes(query);
-        }
-        return true;
+        return !searchQuery.trim() || matchesQuery([a.displayName, a.name], searchQuery);
     });
 
     if (viewOpen) {
