@@ -387,7 +387,7 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 				fmt.Fprintf(&notFoundMsg, "%d. If you know the team, call get_channel_info with team_id parameter to narrow the search\n", stepNum)
 				stepNum++
 			}
-			fmt.Fprintf(&notFoundMsg, "%d. Call get_user_channels to list all channels you have access to\n", stepNum)
+			fmt.Fprintf(&notFoundMsg, "%d. %s\n", stepNum, notFoundChannelHint(ctx))
 			notFoundMsg.WriteString("\nOnly ask the user for help after trying all alternatives above.")
 
 			return notFoundMsg.String(), nil
@@ -587,12 +587,7 @@ func (p *MattermostToolProvider) toolAddChannelMember(mcpContext *MCPToolContext
 func (p *MattermostToolProvider) tryFindChannelByDisplayName(ctx context.Context, client *model.Client4, displayName, teamID string) ([]*model.Channel, error) {
 	if teamID != "" {
 		// Search within specific team - should only return one result
-		user, _, userErr := client.GetMe(ctx, "")
-		if userErr != nil {
-			return nil, fmt.Errorf("error getting current user: %w", userErr)
-		}
-
-		channels, _, channelErr := client.GetChannelsForTeamForUser(ctx, teamID, user.Id, false, "")
+		channels, channelErr := channelsOnTeam(ctx, client, teamID)
 		if channelErr != nil {
 			return nil, fmt.Errorf("error fetching team channels: %w", channelErr)
 		}
@@ -701,12 +696,7 @@ func (p *MattermostToolProvider) tryFindChannelByName(ctx context.Context, clien
 // tryFindChannelBySubstring does a case-insensitive substring match on display names
 // within a specific team. Used as a fallback when exact matches fail.
 func (p *MattermostToolProvider) tryFindChannelBySubstring(ctx context.Context, client *model.Client4, term, teamID string) ([]*model.Channel, error) {
-	user, _, userErr := client.GetMe(ctx, "")
-	if userErr != nil {
-		return nil, fmt.Errorf("error getting current user: %w", userErr)
-	}
-
-	channels, _, channelErr := client.GetChannelsForTeamForUser(ctx, teamID, user.Id, false, "")
+	channels, channelErr := channelsOnTeam(ctx, client, teamID)
 	if channelErr != nil {
 		return nil, fmt.Errorf("error fetching team channels: %w", channelErr)
 	}

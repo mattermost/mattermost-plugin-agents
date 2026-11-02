@@ -142,14 +142,24 @@ func (p *MattermostToolProvider) resolveTeamByName(mcpContext *MCPToolContext, n
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
-	user, _, userErr := client.GetMe(ctx, "")
-	if userErr != nil {
-		return nil, "", fmt.Errorf("error getting current user: %w", userErr)
-	}
+	var teams []*model.Team
+	if runsScoped(ctx) {
+		// A scoped session has no team memberships to list; the team lookups
+		// below work on whatever teams are in scope.
+		if team, _, err := client.GetTeamByName(ctx, name, ""); err == nil && team != nil {
+			return team, "", nil
+		}
+	} else {
+		user, _, userErr := client.GetMe(ctx, "")
+		if userErr != nil {
+			return nil, "", fmt.Errorf("error getting current user: %w", userErr)
+		}
 
-	teams, _, teamsErr := client.GetTeamsForUser(ctx, user.Id, "")
-	if teamsErr != nil {
-		return nil, "", fmt.Errorf("error fetching user teams: %w", teamsErr)
+		var teamsErr error
+		teams, _, teamsErr = client.GetTeamsForUser(ctx, user.Id, "")
+		if teamsErr != nil {
+			return nil, "", fmt.Errorf("error fetching user teams: %w", teamsErr)
+		}
 	}
 
 	// 1. Exact display name match (case-insensitive)
@@ -198,7 +208,7 @@ func (p *MattermostToolProvider) resolveTeamByName(mcpContext *MCPToolContext, n
 	// result (not an error), so the guidance actually reaches the model.
 	msg := fmt.Sprintf("No team found matching '%s'.", name)
 	msg += "\n\nACTION REQUIRED - Try these alternatives before asking the user:\n"
-	msg += "1. Call get_user_channels to list all channels (includes team info) you have access to\n"
+	msg += "1. " + notFoundTeamHint(ctx) + "\n"
 	msg += "2. Only ask the user for help after trying alternatives above."
 	return nil, msg, nil
 }
