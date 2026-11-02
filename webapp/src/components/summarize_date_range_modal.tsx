@@ -217,11 +217,13 @@ export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName
             onBackdropClick={onClose}
             zIndex={2000}
         >
+            {/* eslint-disable-next-line agents/click-events-have-key-events, agents/no-static-element-interactions -- only stops clicks inside the sheet from reaching the backdrop */}
             <Sheet
                 className={MODAL_SHEET_CLASS}
                 onClick={handleModalClick}
             >
                 <SummarizeModal
+                    closeOnEscape={false}
                     size='small'
                     title={<FormattedMessage defaultMessage='Summarize channel'/>}
                     subtitle={channelName}

@@ -392,9 +392,9 @@ func TestToolRunner_PartialApproval_NoneExecuted(t *testing.T) {
 		switch event.Type {
 		case llm.EventTypeText:
 			gotText = true
-		case llm.EventTypeToolCalls:
+		case llm.EventTypeToolCallBatch:
 			gotToolCalls = true
-			tcs := event.Value.([]llm.ToolCall)
+			tcs := event.Value.(llm.ToolCallBatch).Calls
 			assert.Equal(t, "tc1", tcs[0].ID)
 		}
 	}
@@ -442,8 +442,8 @@ func TestToolRunner_MixedBatch_AllOrNothing(t *testing.T) {
 	// All tool calls returned unresolved.
 	var toolCallEvents []llm.ToolCall
 	for event := range result.Stream.Stream {
-		if event.Type == llm.EventTypeToolCalls {
-			toolCallEvents = append(toolCallEvents, event.Value.([]llm.ToolCall)...)
+		if event.Type == llm.EventTypeToolCallBatch {
+			toolCallEvents = append(toolCallEvents, event.Value.(llm.ToolCallBatch).Calls...)
 		}
 	}
 	require.Len(t, toolCallEvents, 2)
@@ -480,7 +480,7 @@ func TestToolRunner_UnknownToolReturnsErrorInsteadOfApproval(t *testing.T) {
 	shouldExecuteCalls := 0
 	result, err := runner.Run(context.Background(), request, func(llm.ToolCall) bool {
 		shouldExecuteCalls++
-		t.Fatal("shouldExecute must not be called for unknown tools")
+		require.FailNow(t, "shouldExecute must not be called for unknown tools")
 		return true
 	}, nil)
 	require.NoError(t, err)
@@ -526,7 +526,7 @@ func TestToolRunner_UnknownToolWithNilContextReturnsError(t *testing.T) {
 	}
 
 	result, err := runner.Run(context.Background(), request, func(llm.ToolCall) bool {
-		t.Fatal("shouldExecute must not be called for unknown tools")
+		require.FailNow(t, "shouldExecute must not be called for unknown tools")
 		return true
 	}, nil)
 	require.NoError(t, err)
@@ -604,7 +604,7 @@ func TestToolRunner_UnknownToolEdgeNamesReturnErrors(t *testing.T) {
 				Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "run tool"}},
 				Context: tt.context,
 			}, func(llm.ToolCall) bool {
-				t.Fatal("shouldExecute must not be called for unknown tools")
+				require.FailNow(t, "shouldExecute must not be called for unknown tools")
 				return true
 			}, nil)
 			require.NoError(t, err)
@@ -653,7 +653,7 @@ func TestToolRunner_UnknownBatchSkipsKnownToolWithoutApproval(t *testing.T) {
 	}
 
 	result, err := runner.Run(context.Background(), request, func(llm.ToolCall) bool {
-		t.Fatal("shouldExecute must not be called for batches with unknown tools")
+		require.FailNow(t, "shouldExecute must not be called for batches with unknown tools")
 		return true
 	}, nil)
 	require.NoError(t, err)
@@ -1423,8 +1423,10 @@ func TestToolRunner_UserInteractionToolsNeverAutoExecute(t *testing.T) {
 
 			var pending []llm.ToolCall
 			for event := range result.Stream.Stream {
-				if event.Type == llm.EventTypeToolCalls {
-					pending = append(pending, event.Value.([]llm.ToolCall)...)
+				if event.Type == llm.EventTypeToolCallBatch {
+					batch := event.Value.(llm.ToolCallBatch)
+					assert.Equal(t, llm.ToolCallPhaseAwaitingDecision, batch.Phase)
+					pending = append(pending, batch.Calls...)
 				}
 			}
 

@@ -113,7 +113,7 @@ func TestCreateAndGetEmptyDescription(t *testing.T) {
 
 	got, err := store.Get(created.ID)
 	require.NoError(t, err)
-	require.Equal(t, "", got.Description)
+	require.Empty(t, got.Description)
 }
 
 func TestGetNonExistent(t *testing.T) {

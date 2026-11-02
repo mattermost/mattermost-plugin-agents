@@ -83,7 +83,7 @@ func (env *policyEnv) waitForStream(t *testing.T) {
 	select {
 	case <-env.streaming.finished:
 	case <-time.After(5 * time.Second):
-		t.Fatal("response stream never finished")
+		require.FailNow(t, "response stream never finished")
 	}
 }
 

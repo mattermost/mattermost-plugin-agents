@@ -63,9 +63,11 @@ type Config interface {
 	GetDefaultBotName() string
 	MCP() mcp.Config
 	AllowUnsafeLinks() bool
+	LinkPolicy() config.LinkPolicy
 	EnableHTMLArtifacts() bool
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
+	EnableAmbientAutoReply() bool
 
 	// GetServices returns a snapshot of the stored service configurations, in
 	// configuration order. The bridge service endpoints operate on this
@@ -107,13 +109,25 @@ type ConfigStore interface {
 
 // AgentStore provides CRUD access to user-created agents in the database.
 type AgentStore interface {
-	CreateAgent(cfg *llm.BotConfig) error
+	// CreateAgent and UpdateAgent record every write as a new agent version.
+	CreateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error
 	GetAgent(id string) (*llm.BotConfig, error)
 	ListAgents() ([]*llm.BotConfig, error)
 	ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error)
 	CountActiveAgents() (int, error)
-	UpdateAgent(cfg *llm.BotConfig) error
+	UpdateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error
 	DeleteAgent(id string) error
+
+	// ListAgentVersions returns up to limit versions older than before (no
+	// upper bound when before is 0), newest first.
+	ListAgentVersions(agentID string, before, limit int) (store.AgentVersionPage, error)
+	// GetAgentVersion returns nil, nil when the version does not exist.
+	GetAgentVersion(agentID string, version int) (*store.AgentVersionDetail, error)
+	// DeleteAgentVersions deletes the given versions; it returns
+	// store.ErrCurrentAgentVersion, deleting nothing, when they include the current one.
+	DeleteAgentVersions(agentID string, versions []int) (int64, error)
+	// DeletePreviousAgentVersions deletes every version but the current one.
+	DeletePreviousAgentVersions(agentID string) (int64, error)
 }
 
 // ConfigUpdater updates the in-memory plugin configuration.
@@ -141,7 +155,7 @@ type ConversationStore interface {
 // cluster cache invalidation internally.
 type ChannelAutoReplyStore interface {
 	Get(channelID string) (*autoreply.Setting, error)
-	Set(channelID, botID string, mode autoreply.Mode, updatedBy string) (*autoreply.Setting, error)
+	Set(setting autoreply.Setting) (*autoreply.Setting, error)
 	Delete(channelID string) error
 }
 
@@ -383,6 +397,10 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	agentRouter.PUT("/:agentid", a.handleUpdateAgent)
 	agentRouter.DELETE("/:agentid", a.handleDeleteAgent)
 	agentRouter.POST("/:agentid/avatar", a.handleUploadAgentAvatar)
+	agentRouter.GET("/:agentid/versions", a.handleListAgentVersions)
+	agentRouter.GET("/:agentid/versions/:version", a.handleGetAgentVersion)
+	agentRouter.POST("/:agentid/versions/:version/restore", a.handleRestoreAgentVersion)
+	agentRouter.DELETE("/:agentid/versions", a.handleDeleteAgentVersions)
 	// Access policy authoring: agent managers.
 	agentRouter.GET("/:agentid/access_policy", a.handleGetAgentPolicy)
 	agentRouter.PUT("/:agentid/access_policy", a.handlePutAgentPolicy)
@@ -713,10 +731,13 @@ type AIBotInfo struct {
 }
 
 type AIBotsResponse struct {
-	Bots                 []AIBotInfo `json:"bots"`
-	SearchEnabled        bool        `json:"searchEnabled"`
-	AllowUnsafeLinks     bool        `json:"allowUnsafeLinks"`
-	HTMLArtifactsEnabled bool        `json:"htmlArtifactsEnabled"`
+	Bots             []AIBotInfo `json:"bots"`
+	SearchEnabled    bool        `json:"searchEnabled"`
+	AllowUnsafeLinks bool        `json:"allowUnsafeLinks"`
+	// LinkPolicy is what the webapp enforces; AllowUnsafeLinks is kept for
+	// API compatibility.
+	LinkPolicy           config.LinkPolicy `json:"linkPolicy"`
+	HTMLArtifactsEnabled bool              `json:"htmlArtifactsEnabled"`
 }
 
 // usesServiceAccountAuth reports the effective service account mode for a bot:
@@ -808,6 +829,7 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 		Bots:                 bots,
 		SearchEnabled:        searchEnabled,
 		AllowUnsafeLinks:     a.config.AllowUnsafeLinks(),
+		LinkPolicy:           a.config.LinkPolicy(),
 		HTMLArtifactsEnabled: a.config.EnableHTMLArtifacts(),
 	})
 }

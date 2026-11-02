@@ -50,6 +50,7 @@ const groups = {
         'tests/agents/create-file-attachment.spec.ts',
         'tests/agents/html-artifact.spec.ts',
         'tests/tool-activity/collapsed-activity.spec.ts',
+        'tests/rhs-core/link-domain-allowlist.spec.ts',
     ],
     'e2e-shard-3': [
         'tests/system-console/bot-native-tools.spec.ts',
@@ -96,6 +97,7 @@ const groups = {
         'tests/tool-config/real-api/channel-auto-run.spec.ts',
         'tests/tool-config/real-api/disabled-tool.spec.ts',
         'tests/channel-autoreply/channel_autoreply.spec.ts',
+        'tests/agents/versioning-import-export.spec.ts',
     ],
 };
 

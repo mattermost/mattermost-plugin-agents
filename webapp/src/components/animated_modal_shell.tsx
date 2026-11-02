@@ -5,6 +5,8 @@ import React, {useEffect, useRef} from 'react';
 import {CSSTransition} from 'react-transition-group';
 import styled, {css} from 'styled-components';
 
+import {OPEN_POPUP_ATTRIBUTE} from './dropdown';
+
 /** Apply to the centered panel (card) inside the overlay so enter/exit slide + fade run on the sheet. */
 export const MODAL_SHEET_CLASS = 'mmAiModal__sheet';
 
@@ -100,6 +102,9 @@ type ShellProps = {
     show: boolean;
     children: React.ReactNode;
     onBackdropClick?: () => void;
+
+    /** Escape handler when it should differ from a backdrop click (defaults to `onBackdropClick`). */
+    onEscape?: () => void;
     zIndex?: number;
 };
 
@@ -107,12 +112,12 @@ type ShellProps = {
  * Full-screen dimmed overlay with enter/exit animation (fade + sheet from top),
  * aligned with Mattermost GenericModal (Bootstrap fade + modal-dialog motion).
  */
-export const AnimatedModalShell = ({show, children, onBackdropClick, zIndex = 2000}: ShellProps) => {
+export const AnimatedModalShell = ({show, children, onBackdropClick, onEscape, zIndex = 2000}: ShellProps) => {
     const nodeRef = useRef<HTMLDivElement>(null);
     const returnFocusRef = useRef<HTMLElement | null>(null);
 
-    const onCloseRef = useRef(onBackdropClick);
-    onCloseRef.current = onBackdropClick;
+    const onCloseRef = useRef(onEscape ?? onBackdropClick);
+    onCloseRef.current = onEscape ?? onBackdropClick;
 
     const handleEnter = () => {
         returnFocusRef.current = document.activeElement as HTMLElement | null;
@@ -134,6 +139,12 @@ export const AnimatedModalShell = ({show, children, onBackdropClick, zIndex = 20
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
             if (e.key !== 'Escape' || e.defaultPrevented) {
+                return;
+            }
+
+            // An open popup menu (see Dropdown) takes Escape first: its own dismiss
+            // handler closes the menu, and the modal stays.
+            if (document.querySelector(`[${OPEN_POPUP_ATTRIBUTE}]`)) {
                 return;
             }
             const root = nodeRef.current;
@@ -190,6 +201,7 @@ export const AnimatedModalShell = ({show, children, onBackdropClick, zIndex = 20
             onEntered={handleEntered}
             onExited={handleExited}
         >
+            {/* eslint-disable-next-line agents/no-static-element-interactions -- backdrop click dismisses; Escape is handled by onKeyDown */}
             <ShellRoot
                 ref={nodeRef}
                 $zIndex={zIndex}

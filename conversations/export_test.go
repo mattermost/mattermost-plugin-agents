@@ -15,3 +15,7 @@ import (
 func (c *Conversations) ProcessDMRequest(ctx context.Context, convID string, bot *bots.Bot, llmCtx *llm.Context) (*DMStreamResult, error) {
 	return c.processDMRequest(ctx, convID, testDMTurnPolicy(c, bot), llmCtx, nil)
 }
+
+// AmbientChannelBurst is the number of posts an ambient channel may classify
+// before its rate limit applies.
+const AmbientChannelBurst = ambientChannelBurst

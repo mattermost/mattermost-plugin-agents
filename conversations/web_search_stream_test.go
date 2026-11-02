@@ -152,7 +152,7 @@ func TestStreamToolFollowUpDecoratesWebSearchAnnotations(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = c.streamToolFollowUp(context.Background(), policy, post, conv, false, testWebSearchApprovalContext())
+	err = c.streamToolFollowUp(context.Background(), policy, post, conv, followUpOptions{ApprovalContext: testWebSearchApprovalContext()})
 	require.NoError(t, err)
 	streamingService.waitForStreaming()
 
@@ -192,7 +192,7 @@ func TestStreamToolFollowUpSkipsAnnotationDecorationWithoutApprovalContext(t *te
 	})
 	require.NoError(t, err)
 
-	err = c.streamToolFollowUp(context.Background(), policy, post, conv, false, nil)
+	err = c.streamToolFollowUp(context.Background(), policy, post, conv, followUpOptions{})
 	require.NoError(t, err)
 	streamingService.waitForStreaming()
 

@@ -1285,6 +1285,58 @@ func TestBridgeClientAgentCompletionAllowedToolsEnablesAutoRun(t *testing.T) {
 	require.Len(t, fakeLLM.LastConversation.Context.Tools.GetTools(), 1)
 }
 
+// Bridge clients are other plugins that decode tool call events as a bare
+// list of calls; the runner's internal batch phases must not leak onto the
+// wire.
+func TestBridgeClientAgentCompletionStreamKeepsToolCallWireFormat(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := e.setupMCPWithEligibleTools(t, []string{"eligible_tool"})
+	defer server.Close()
+
+	e.setupTestBot(llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	})
+
+	fakeLLM := NewFakeLLM("auto run enabled")
+	fakeLLM.StreamEventSequence = fakeLLMAutoRunSequence("tc1", "eligible_tool", "auto run enabled")
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetLLMForTest(fakeLLM)
+	}
+
+	client := e.CreateBridgeClient()
+	result, err := client.AgentCompletionStream(testBotUserID, bridgeclient.CompletionRequest{
+		Posts:        []bridgeclient.Post{{Role: "user", Message: "Use the tool"}},
+		AllowedTools: []string{"eligible_tool"},
+		UserID:       testUserID,
+	})
+	require.NoError(t, err)
+
+	var toolCallEvents [][]any
+	for event := range result.Stream {
+		require.NotEqual(t, llm.EventTypeToolCallBatch, event.Type)
+		if event.Type == llm.EventTypeToolCalls {
+			calls, ok := event.Value.([]any)
+			require.True(t, ok, "tool call event value must be a list of calls, got %T", event.Value)
+			toolCallEvents = append(toolCallEvents, calls)
+		}
+	}
+
+	require.Len(t, toolCallEvents, 2, "the executing and resolved batches both reach the client")
+	for _, calls := range toolCallEvents {
+		require.Len(t, calls, 1)
+		call, ok := calls[0].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "tc1", call["id"])
+	}
+}
+
 // fakeBridgeMCPToolProvider is a minimal llmcontext.MCPToolProvider with
 // separate user-mode and service-account catalogs. Unlike
 // testLLMContextToolProvider (which feeds the built-in tool path), this exercises

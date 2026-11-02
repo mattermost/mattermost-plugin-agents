@@ -11,6 +11,7 @@ import {Radio} from '@mattermost/compass-ui/components/radio';
 import {TextArea} from '@mattermost/compass-ui/components/text-area';
 import {TextInput} from '@mattermost/compass-ui/components/text-input';
 
+import {useMenuTransition} from '@/hooks/use_menu_transition';
 import {useIsLicensedFor} from '@/license';
 
 import {CustomPrompt} from '@/types';
@@ -146,6 +147,7 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
     const sharedPromptsLicensed = useIsLicensedFor('shared_prompts');
     const canShare = sharedPromptsLicensed || isShared;
     const [showContextVars, setShowContextVars] = useState(false);
+    const contextVarsMenu = useMenuTransition(showContextVars);
     const [errors, setErrors] = useState<{name?: boolean; template?: boolean}>({});
     const [isSaving, setIsSaving] = useState(false);
     const templateRef = useRef<HTMLTextAreaElement>(null);
@@ -337,12 +339,14 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
                                     <FormattedMessage defaultMessage='Context Variables'/>
                                 </Button>
                             }
-                            isOpen={showContextVars}
+                            isOpen={contextVarsMenu.rendered}
                             onOpenChange={setShowContextVars}
                             placement='bottom-end'
                         >
                             <ContextVariablesDropdown
                                 onSelect={handleInsertVariable}
+                                open={showContextVars}
+                                onExited={contextVarsMenu.onExited}
                             />
                         </Dropdown>
                     </SystemPromptHeader>

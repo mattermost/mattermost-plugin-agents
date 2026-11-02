@@ -6,6 +6,7 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {
     DotsHorizontalIcon,
+    ExportVariantIcon,
     PencilOutlineIcon,
     TrashCanOutlineIcon,
 } from '@mattermost/compass-icons/components';
@@ -25,10 +26,11 @@ type Props = {
     canManage: boolean;
     onEdit: (agent: UserAgent) => void;
     onDelete: (agent: UserAgent) => void;
+    onExport: (agent: UserAgent) => void;
 }
 
 const AgentRow = (props: Props) => {
-    const {agent, services, servicesLoaded, canManage, onEdit, onDelete} = props;
+    const {agent, services, servicesLoaded, canManage, onEdit, onDelete, onExport} = props;
     const [menuOpen, setMenuOpen] = useState(false);
     const intl = useIntl();
 
@@ -68,6 +70,10 @@ const AgentRow = (props: Props) => {
     const handleMenuItemDelete = useCallback(() => {
         onDelete(agent);
     }, [agent, onDelete]);
+
+    const handleMenuItemExport = useCallback(() => {
+        onExport(agent);
+    }, [agent, onExport]);
 
     const handleRowActivate = useCallback(() => {
         if (!canManage || menuOpen) {
@@ -158,6 +164,11 @@ const AgentRow = (props: Props) => {
                             icon={<PencilOutlineIcon/>}
                             label={<FormattedMessage defaultMessage='Edit'/>}
                             onClick={handleMenuItemEdit}
+                        />
+                        <DropdownMenuItem
+                            icon={<ExportVariantIcon/>}
+                            label={<FormattedMessage defaultMessage='Export'/>}
+                            onClick={handleMenuItemExport}
                         />
                         <DropdownMenuItem
                             icon={<TrashCanOutlineIcon/>}

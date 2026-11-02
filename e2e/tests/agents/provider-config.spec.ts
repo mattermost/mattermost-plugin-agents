@@ -5,9 +5,9 @@ import {test, expect, Page} from '@playwright/test';
 
 import {AgentPageHelper} from 'helpers/agent-page';
 import {chooseCompassOption} from 'helpers/compass-select';
+import {containerTest} from 'helpers/container-fixture';
 import {MattermostPage} from 'helpers/mm';
-import MattermostContainer from 'helpers/mmcontainer';
-import {OpenAIMockContainer, RunOpenAIMocks} from 'helpers/openai-mock';
+import {RunOpenAIMocks} from 'helpers/openai-mock';
 import RunSystemConsoleContainer, {adminUsername, adminPassword} from 'helpers/system-console-container';
 
 const providerConfigTestTimeoutMs = 180000;
@@ -74,35 +74,86 @@ async function stubAgentModelFetch(page: Page): Promise<void> {
     });
 }
 
+const providerTest = (config: ProviderFixtureConfig) => containerTest(async (own) => {
+    const mattermost = own(await RunSystemConsoleContainer(config));
+    own(await RunOpenAIMocks(mattermost.network));
+    return {mattermost};
+});
+
+const validationTest = providerTest({
+    services: [
+        createCompatibleService({
+            id: 'validation-service',
+            name: 'Validation Service',
+        }),
+    ],
+    bots: [],
+});
+
+const openAIDirectTest = providerTest({
+    services: [
+        createOpenAIService({
+            id: 'openai-direct-service',
+            name: 'OpenAI Direct Service',
+            useResponsesAPI: false,
+        }),
+    ],
+    bots: [],
+});
+
+const compatibleMigrationTest = providerTest({
+    services: [
+        createCompatibleService({
+            id: 'responses-service',
+            name: 'Responses Compatible Service',
+            useResponsesAPI: true,
+        }),
+        createCompatibleService({
+            id: 'plain-service',
+            name: 'Plain Compatible Service',
+            useResponsesAPI: false,
+        }),
+    ],
+    bots: [
+        {
+            id: 'legacy-openai-bot',
+            name: 'legacyresponsesbot',
+            displayName: 'Legacy Responses Agent',
+            serviceID: 'responses-service',
+            customInstructions: 'You are a helpful migration test agent.',
+            enableVision: true,
+            disableTools: false,
+            enabledNativeTools: ['web_search'],
+            reasoningEnabled: true,
+            reasoningEffort: 'high',
+        },
+    ],
+});
+
+const anthropicMigrationTest = providerTest({
+    services: [
+        createAnthropicService(),
+    ],
+    bots: [
+        {
+            id: 'legacy-anthropic-bot',
+            name: 'legacyanthropicbot',
+            displayName: 'Legacy Anthropic Agent',
+            serviceID: 'anthropic-service',
+            customInstructions: 'You are a thoughtful migration test agent.',
+            enableVision: true,
+            disableTools: false,
+            enabledNativeTools: ['web_search'],
+            reasoningEnabled: true,
+            thinkingBudget: 2048,
+            structuredOutputEnabled: false,
+        },
+    ],
+});
+
 test.describe('Agent provider configuration', () => {
-    let mattermost: MattermostContainer | undefined;
-    let openAIMock: OpenAIMockContainer | undefined;
-
-    const startFixture = async (config: ProviderFixtureConfig): Promise<MattermostContainer> => {
-        mattermost = await RunSystemConsoleContainer(config);
-        openAIMock = await RunOpenAIMocks(mattermost.network);
-        return mattermost;
-    };
-
-    test.afterEach(async () => {
-        await openAIMock?.stop();
-        await mattermost?.stop();
-        openAIMock = undefined;
-        mattermost = undefined;
-    });
-
-    test('shows validation errors for required fields and invalid usernames in the agent builder', async ({page}) => {
+    validationTest('shows validation errors for required fields and invalid usernames in the agent builder', async ({page, containers: {mattermost: mm}}) => {
         test.setTimeout(providerConfigTestTimeoutMs);
-
-        const mm = await startFixture({
-            services: [
-                createCompatibleService({
-                    id: 'validation-service',
-                    name: 'Validation Service',
-                }),
-            ],
-            bots: [],
-        });
 
         const mmPage = new MattermostPage(page);
         const agentPage = new AgentPageHelper(page);
@@ -129,19 +180,8 @@ test.describe('Agent provider configuration', () => {
         });
     });
 
-    test('creates direct OpenAI agents with native tools on by default and no structured output control', async ({page}) => {
+    openAIDirectTest('creates direct OpenAI agents with native tools on by default and no structured output control', async ({page, containers: {mattermost: mm}}) => {
         test.setTimeout(providerConfigTestTimeoutMs);
-
-        const mm = await startFixture({
-            services: [
-                createOpenAIService({
-                    id: 'openai-direct-service',
-                    name: 'OpenAI Direct Service',
-                    useResponsesAPI: false,
-                }),
-            ],
-            bots: [],
-        });
 
         const mmPage = new MattermostPage(page);
         const agentPage = new AgentPageHelper(page);
@@ -173,37 +213,8 @@ test.describe('Agent provider configuration', () => {
         await expect(page.getByText('Structured Output', {exact: true})).toHaveCount(0);
     });
 
-    test('edits migrated OpenAI-compatible settings from the agent builder', async ({page}) => {
+    compatibleMigrationTest('edits migrated OpenAI-compatible settings from the agent builder', async ({page, containers: {mattermost: mm}}) => {
         test.setTimeout(providerConfigTestTimeoutMs);
-
-        const mm = await startFixture({
-            services: [
-                createCompatibleService({
-                    id: 'responses-service',
-                    name: 'Responses Compatible Service',
-                    useResponsesAPI: true,
-                }),
-                createCompatibleService({
-                    id: 'plain-service',
-                    name: 'Plain Compatible Service',
-                    useResponsesAPI: false,
-                }),
-            ],
-            bots: [
-                {
-                    id: 'legacy-openai-bot',
-                    name: 'legacyresponsesbot',
-                    displayName: 'Legacy Responses Agent',
-                    serviceID: 'responses-service',
-                    customInstructions: 'You are a helpful migration test agent.',
-                    enableVision: true,
-                    disableTools: false,
-                    enabledNativeTools: ['web_search'],
-                    reasoningEnabled: true,
-                    reasoningEffort: 'high',
-                },
-            ],
-        });
 
         const mmPage = new MattermostPage(page);
         const agentPage = new AgentPageHelper(page);
@@ -248,29 +259,8 @@ test.describe('Agent provider configuration', () => {
         await expect(agentPage.getReasoningEffortSelect()).toHaveText('Minimal');
     });
 
-    test('edits migrated Anthropic settings from the agent builder', async ({page}) => {
+    anthropicMigrationTest('edits migrated Anthropic settings from the agent builder', async ({page, containers: {mattermost: mm}}) => {
         test.setTimeout(providerConfigTestTimeoutMs);
-
-        const mm = await startFixture({
-            services: [
-                createAnthropicService(),
-            ],
-            bots: [
-                {
-                    id: 'legacy-anthropic-bot',
-                    name: 'legacyanthropicbot',
-                    displayName: 'Legacy Anthropic Agent',
-                    serviceID: 'anthropic-service',
-                    customInstructions: 'You are a thoughtful migration test agent.',
-                    enableVision: true,
-                    disableTools: false,
-                    enabledNativeTools: ['web_search'],
-                    reasoningEnabled: true,
-                    thinkingBudget: 2048,
-                    structuredOutputEnabled: false,
-                },
-            ],
-        });
 
         const mmPage = new MattermostPage(page);
         const agentPage = new AgentPageHelper(page);

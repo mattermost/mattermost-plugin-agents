@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import { Client4 } from '@mattermost/client';
 
 import RunContainer from 'helpers/plugincontainer';
@@ -25,25 +26,23 @@ Alice: We should ship the feature by Friday.
 Bob: Agreed, I'll handle the backend work.
 `;
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
-test.beforeAll(async () => {
-    test.setTimeout(180000);
-    mattermost = await RunContainer();
-    openAIMock = await RunOpenAIMocks(mattermost.network);
-
+test.beforeAll(async ({ containers }) => {
+    ({ mattermost, openAIMock } = containers);
     // Bot accounts + tokens are needed to author the calls transcription post,
     // and inline replies (CRT off) keep the streamed summary in the center
     // channel where the helper can find it by post id.
-    await mattermost.container.exec(['mmctl', '--local', 'config', 'set', 'ServiceSettings.EnableBotAccountCreation', 'true']);
-    await mattermost.container.exec(['mmctl', '--local', 'config', 'set', 'ServiceSettings.EnableUserAccessTokens', 'true']);
-    await mattermost.container.exec(['mmctl', '--local', 'config', 'set', 'ServiceSettings.CollapsedThreads', 'disabled']);
-});
-
-test.afterAll(async () => {
-    await openAIMock?.stop();
-    await mattermost?.stop();
+    await mattermost.mmctl('config', 'set', 'ServiceSettings.EnableBotAccountCreation', 'true');
+    await mattermost.mmctl('config', 'set', 'ServiceSettings.EnableUserAccessTokens', 'true');
+    await mattermost.mmctl('config', 'set', 'ServiceSettings.CollapsedThreads', 'disabled');
 });
 
 test.beforeEach(async () => {

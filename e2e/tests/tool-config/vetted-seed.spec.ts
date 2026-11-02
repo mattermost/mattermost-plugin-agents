@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { OpenAIMockContainer, RunOpenAIMocks } from 'helpers/openai-mock';
@@ -29,15 +30,15 @@ const VETTED_READ_TOOLS = [
     'get_user_channels',
 ];
 
-test.describe('Vetted Server Seed', () => {
-    test.beforeAll(async () => {
-        mattermost = await RunToolConfigContainer();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
-    });
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
 
-    test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
+test.describe('Vetted Server Seed', () => {
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test('should show vetted Mattermost tools pre-seeded as Auto Run (DM)', async ({ page }) => {

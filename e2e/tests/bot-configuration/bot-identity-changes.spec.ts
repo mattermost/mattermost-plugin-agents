@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -10,6 +11,12 @@ import { createBotConfigHelper } from 'helpers/bot-config';
 // Test configuration
 const username = 'regularuser';
 const password = 'regularuser';
+
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
 
 function createTestSuite() {
     let mattermost: MattermostContainer;
@@ -27,16 +34,8 @@ function createTestSuite() {
     }
 
     test.describe('Bot Identity Changes', () => {
-    // Setup for all tests in the file
-    test.beforeAll(async () => {
-        mattermost = await RunContainer();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
-    });
-
-    // Cleanup after all tests
-    test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test('should update bot display name and reflect in UI', async ({ page }) => {

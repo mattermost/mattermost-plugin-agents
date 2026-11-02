@@ -168,3 +168,62 @@ export type ServiceInfo = {
     outputTokenLimit: number;
     useResponsesAPI: boolean;
 }
+
+// Mirrors the Source column of the agent versions table on the backend.
+export type AgentVersionSource = 'initial' | 'create' | 'update' | 'restore' | 'system';
+
+// AgentVersionSummary is one entry of GET /agents/:id/versions (newest first).
+// changedFields holds BotConfig JSON keys (e.g. "customInstructions"); names only.
+export type AgentVersionSummary = {
+    version: number;
+    createdBy: string; // user ID, '' for system writes
+    createAt: number;
+    source: AgentVersionSource;
+    restoredFromVersion: number;
+    changedFields: string[] | null;
+}
+
+// AgentVersionList is one page of GET /agents/:id/versions. currentVersion is
+// the agent's latest version on every page.
+export type AgentVersionList = {
+    currentVersion: number;
+    versions: AgentVersionSummary[];
+    hasMore: boolean;
+}
+
+// AgentVersionDetail is GET /agents/:id/versions/:version. config is the stored
+// llm.BotConfig snapshot, so any field may be missing in older snapshots.
+export type AgentVersionDetail = AgentVersionSummary & {
+    config: Partial<UserAgent>;
+}
+
+export const AgentExportKind = 'mattermost-agent';
+export const AgentExportSchemaVersion = 1;
+
+// MCP tool reference inside an export document. Imports match it to a server
+// on this instance by serverOrigin.
+export type AgentExportMCPTool = {
+    serverOrigin: string;
+    toolName: string;
+}
+
+// The `agent` section of an export document: only configuration that means
+// the same thing on every server.
+export type AgentExportAgent = {
+    name: string;
+    displayName: string;
+    customInstructions: string;
+    disableTools: boolean;
+    maxToolTurns: number;
+    mcpDynamicToolLoading: boolean;
+    autoEnableNewMCPTools: boolean;
+    mcpTools: AgentExportMCPTool[];
+}
+
+export type AgentExportDocument = {
+    kind: typeof AgentExportKind;
+    schemaVersion: typeof AgentExportSchemaVersion;
+    exportedAt: number;
+    agentVersion: number;
+    agent: AgentExportAgent;
+}
