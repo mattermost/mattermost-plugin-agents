@@ -9,16 +9,16 @@ import {Button} from '@mattermost/compass-ui/components/button';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {MenuItem} from '@mattermost/compass-ui/components/menu-item';
 import {MenuGroupHeading} from '@mattermost/compass-ui/components/menu-group-heading';
-import {Modal, ModalOverlay} from '@mattermost/compass-ui/components/modal';
+import {Modal} from '@mattermost/compass-ui/components/modal';
 import {Scrollbar} from '@mattermost/compass-ui/components/scrollbar';
 import {SearchInput} from '@mattermost/compass-ui/components/search-input';
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
 import {useBotlist, type LLMBot} from '@/bots';
+import {AnimatedModalShell} from '@/components/animated_modal_shell';
 import {getProfilePictureUrl} from '@/client';
 import {useAgentThreads} from '@/hooks/use_agent_threads';
 
-import {chatTitle} from './chat_title';
 import {recentAgents, recentChats, searchAgents, type ChatResult} from './find_agents_search';
 import {useAgentsRoute} from './use_agents_route';
 
@@ -40,19 +40,19 @@ interface Props {
     onClose: () => void;
 }
 
-// ModalOverlay and Modal share `open`, so the scrim and the dialog enter and exit together. Modal
-// unmounts its children after the exit, so every open mounts a fresh Content: empty query, first
-// row selected, threads refetched.
+// The shell and Modal share `open`, so the scrim and the dialog enter and exit together. Modal
+// unmounts its children after the exit, so every open mounts a fresh Content: empty query and
+// first row selected.
 const FindAgentsModal = ({show, onClose}: Props) => {
     const intl = useIntl();
     return (
-        <ModalOverlay
-            open={show}
-            onClose={onClose}
-            zIndex={2000}
+        <AnimatedModalShell
+            show={show}
+            onBackdropClick={onClose}
         >
             <FindModal
                 open={show}
+                closeOnEscape={false}
                 size='small'
                 title={intl.formatMessage({defaultMessage: 'Find agents'})}
                 subtitle={intl.formatMessage(
@@ -68,7 +68,7 @@ const FindAgentsModal = ({show, onClose}: Props) => {
             >
                 <Content onClose={onClose}/>
             </FindModal>
-        </ModalOverlay>
+        </AnimatedModalShell>
     );
 };
 
@@ -83,13 +83,12 @@ const Content = ({onClose}: {onClose: () => void}) => {
     const inputRef = useRef<HTMLInputElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
 
-    // The shell focuses the dialog while it enters; claim focus for the input afterwards.
+    // Modal focuses the dialog while it enters; claim focus for the input afterwards.
     useEffect(() => {
         const frame = window.requestAnimationFrame(() => inputRef.current?.focus());
         return () => window.cancelAnimationFrame(frame);
     }, []);
 
-    const placeholderTitle = chatTitle(intl, '');
     const searching = query.trim() !== '';
 
     // True once the first threads fetch has settled (success or error). Until then the empty
@@ -106,7 +105,7 @@ const Content = ({onClose}: {onClose: () => void}) => {
             if (!settled) {
                 return [];
             }
-            const chats = recentChats(allBots, threadsByBot, placeholderTitle);
+            const chats = recentChats(allBots, threadsByBot, intl);
             if (chats.length > 0) {
                 return [{
                     key: 'recentChats',
@@ -118,12 +117,12 @@ const Content = ({onClose}: {onClose: () => void}) => {
                 items: recentAgents(allBots, threadsByBot).map((bot): ResultItem => ({kind: 'agent', key: `agent-${bot.id}`, bot})),
             }];
         }
-        const results = searchAgents(allBots, threadsByBot, query, placeholderTitle);
+        const results = searchAgents(allBots, threadsByBot, query, intl);
         return [
             {key: 'agents', items: results.agents.map((bot): ResultItem => ({kind: 'agent', key: `agent-${bot.id}`, bot}))},
             {key: 'chats', items: results.chats.map((chat): ResultItem => ({kind: 'chat', key: `chat-${chat.thread.id}`, bot: chat.bot, chat}))},
         ].filter((section): section is Section => section.items.length > 0);
-    }, [bots, threadsByBot, query, searching, settled, placeholderTitle]);
+    }, [bots, threadsByBot, query, searching, settled, intl]);
 
     const flat = useMemo(() => sections.flatMap((section) => section.items), [sections]);
     const activeIndex = flat.length === 0 ? -1 : Math.min(selected, flat.length - 1);

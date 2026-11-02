@@ -95,15 +95,15 @@ func (s *fakeConvStore) GetConversationByThreadBotUser(rootPostID, botID, userID
 	return nil, store.ErrConversationNotFound
 }
 
-func (s *fakeConvStore) UpdateConversationTitle(id, title string) error {
+func (s *fakeConvStore) RenameConversation(id, title string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	conv, ok := s.conversations[id]
-	if !ok {
-		return store.ErrConversationNotFound
+	if !ok || conv.DeleteAt != 0 {
+		return false, nil
 	}
 	conv.Title = title
-	return nil
+	return true, nil
 }
 
 func (s *fakeConvStore) SetConversationTitleIfUnset(id, title string) (bool, error) {

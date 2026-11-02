@@ -6,25 +6,26 @@ import {useCallback, useEffect, useState} from 'react';
 import {getAgents, getServices} from '@/client';
 import type {ServiceInfo, UserAgent} from '@/types/agents';
 
-import {canManageAgent, useAgentPermissions} from './agent_access';
+import {useAgentPermissions} from './agent_access';
 
 export type AgentEditAccess =
     | {status: 'loading'}
     | {status: 'denied'}
     | {status: 'allowed'; agent: UserAgent; services: ServiceInfo[]};
 
-// Resolves whether the current user may edit the agent behind a bot user, with
-// the same rule the All agents list uses (canManageAgent). The agent is matched
-// by bot user ID. Fails closed: a missing agent or a failed lookup is 'denied'.
+// Resolves whether the current user may edit the agent behind a bot user, as the
+// server reports it on GET /agents (canManage), the same flag the All agents list
+// uses. The agent is matched by bot user ID. Fails closed: a missing agent, a
+// missing flag or a failed lookup is 'denied'.
 export function useAgentEditAccess(botId: string): {access: AgentEditAccess; reload: () => void} {
-    const {currentUserId, hasManageOthersAgent, hasManageSystem, canViewServices} = useAgentPermissions();
+    const {currentUserId, canViewServices} = useAgentPermissions();
 
     const [result, setResult] = useState<{identity: string; access: AgentEditAccess} | null>(null);
     const [revision, setRevision] = useState(0);
 
     // Who and what the access was resolved for. A reload (the revision) keeps the previous result until
     // the new one arrives, so an open editor is not unmounted (and its unsaved edits lost) meanwhile.
-    const identity = `${botId}:${currentUserId}:${hasManageOthersAgent}:${hasManageSystem}:${canViewServices}`;
+    const identity = `${botId}:${currentUserId}:${canViewServices}`;
     const key = `${identity}:${revision}`;
 
     useEffect(() => {
@@ -35,7 +36,7 @@ export function useAgentEditAccess(botId: string): {access: AgentEditAccess; rel
             try {
                 const {agents} = await getAgents();
                 const agent = (agents ?? []).find((a) => Boolean(a.botUserID) && a.botUserID === botId);
-                if (agent && canManageAgent(agent, currentUserId, {hasManageOthersAgent, hasManageSystem})) {
+                if (agent?.canManage === true) {
                     let services: ServiceInfo[] = [];
                     if (canViewServices) {
                         try {
@@ -60,7 +61,7 @@ export function useAgentEditAccess(botId: string): {access: AgentEditAccess; rel
         return () => {
             cancelled = true;
         };
-    }, [key, identity, botId, currentUserId, hasManageOthersAgent, hasManageSystem, canViewServices]);
+    }, [key, identity, botId, currentUserId, canViewServices]);
 
     const reload = useCallback(() => setRevision((n) => n + 1), []);
 

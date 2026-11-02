@@ -30,16 +30,14 @@ var turnColumns = []string{
 	"TokensIn", "TokensOut", "Sequence", "CreatedAt",
 }
 
-// bumpConversationActivity is a data-modifying CTE that advances the parent
-// conversation's UpdatedAt to the new turn's CreatedAt in the same statement
-// as the turn insert. LLM_Conversations.UpdatedAt is the conversation's last
-// activity, and the conversation list orders by it so it can use the
-// (UserID, UpdatedAt DESC) index. GREATEST keeps it from moving backwards.
+// bumpConversationActivity advances the conversation's UpdatedAt (its last
+// activity, which orders the conversation list) to the new turn's CreatedAt in
+// the same statement as the insert; GREATEST keeps it from moving backwards.
 // Arguments: the turn's CreatedAt, then its ConversationID.
 const bumpConversationActivity = "WITH bumped_conversation AS (UPDATE LLM_Conversations SET UpdatedAt = GREATEST(UpdatedAt, ?) WHERE ID = ?)"
 
-// insertTurn is the insert of a turn that also records it as the conversation's latest activity
-// (bumpConversationActivity). sequence is the turn's Sequence value or an expression for it.
+// insertTurn inserts a turn and bumps its conversation's activity. sequence is
+// the turn's Sequence value or an expression for it.
 func (s *Store) insertTurn(turn *Turn, sequence any) sq.InsertBuilder {
 	return s.builder.Insert("LLM_Turns").
 		Prefix(bumpConversationActivity, turn.CreatedAt, turn.ConversationID).
@@ -48,8 +46,7 @@ func (s *Store) insertTurn(turn *Turn, sequence any) sq.InsertBuilder {
 			turn.TokensIn, turn.TokensOut, sequence, turn.CreatedAt)
 }
 
-// CreateTurn inserts a new turn row and records it as the conversation's
-// latest activity.
+// CreateTurn inserts a new turn row and bumps its conversation's activity.
 // The caller must set ID, ConversationID, Role, Content, Sequence, and CreatedAt before calling.
 func (s *Store) CreateTurn(turn *Turn) error {
 	return s.execBuilder(s.insertTurn(turn, turn.Sequence), "create turn")

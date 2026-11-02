@@ -7,13 +7,6 @@ import {ModalOverlay} from '@mattermost/compass-ui/components/modal';
 
 import {OPEN_POPUP_ATTRIBUTE} from './dropdown';
 
-/**
- * Marker class callers put on their centered panel. Compass `ModalOverlay` now owns
- * the enter/exit motion, so this no longer carries any styles; it is only kept so
- * existing callers keep compiling and can drop it at their leisure.
- */
-export const MODAL_SHEET_CLASS = 'mmAiModal__sheet';
-
 const SHELL_ATTRIBUTE = 'data-mm-ai-modal-shell';
 
 // Ignores hidden dialogs and ones mid exit animation (bootstrap drops `in`/`show` first).

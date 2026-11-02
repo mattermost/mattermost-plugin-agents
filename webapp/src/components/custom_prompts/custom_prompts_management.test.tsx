@@ -10,7 +10,7 @@ import {CustomPromptsHandler, PinnedPromptIdsHandler, ShowCustomPromptsModalHand
 import manifest from '@/manifest';
 import {CustomPrompt} from '@/types';
 
-import CustomPromptsManagement from './custom_prompts_management';
+import CustomPromptsManagement, {PopoutCustomPromptsManagement} from './custom_prompts_management';
 
 jest.mock('@/mm_webapp', () => ({
     AdvancedTextEditor: null,
@@ -144,22 +144,27 @@ describe('CustomPromptsManagement', () => {
         consoleError.mockRestore();
     });
 
-    test('only one of several mounted copies renders the modal, and another takes over when it unmounts', async () => {
+    test.each([
+        {name: 'renders the modal in a popout window', popout: true, shown: true},
+        {name: 'renders nothing elsewhere, where the global copy renders it', popout: false, shown: false},
+    ])('the root copy $name', async ({popout, shown}) => {
+        window.WebappUtils = {popouts: {isPopoutWindow: () => popout}} as never;
         const store = makeStore();
-        const Copies = ({keys}: {keys: string[]}) => (
+        render(
             <Provider store={store}>
-                {keys.map((k) => <CustomPromptsManagement key={k}/>)}
-            </Provider>
+                <PopoutCustomPromptsManagement/>
+            </Provider>,
         );
-        const {rerender} = render(<Copies keys={['root', 'product']}/>);
         await act(async () => {
             store.dispatch({type: ShowCustomPromptsModalHandler, show: true});
         });
-        await screen.findByText(mine.name);
-        expect(screen.getAllByText(mine.name)).toHaveLength(1);
 
-        rerender(<Copies keys={['product']}/>);
-        expect(await screen.findAllByText(mine.name)).toHaveLength(1);
+        if (shown) {
+            expect(await screen.findByText(mine.name)).not.toBeNull();
+        } else {
+            expect(screen.queryByText('All Prompts')).toBeNull();
+        }
+        delete window.WebappUtils;
     });
 
     test('renders nothing until shown, then fetches and lists prompts', async () => {

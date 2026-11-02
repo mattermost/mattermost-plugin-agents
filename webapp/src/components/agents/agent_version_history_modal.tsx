@@ -19,7 +19,7 @@ import {Tag} from '@mattermost/compass-ui/components/tag';
 
 import {deleteAgentVersions, getAgentVersion, restoreAgentVersion} from '@/client';
 import {AgentVersionDetail, ServiceInfo, UserAgent} from '@/types/agents';
-import {AnimatedModalShell, MODAL_SHEET_CLASS} from '@/components/animated_modal_shell';
+import {AnimatedModalShell} from '@/components/animated_modal_shell';
 import ConfirmationDialog from '@/components/confirmation_dialog';
 import DotMenu, {DropdownMenuItem} from '@/components/dot_menu';
 import {TooltipAboveModals} from '@/components/dropdown';
@@ -552,7 +552,7 @@ const AgentVersionHistoryModal = ({show, onClose, agentId, agentName, services, 
                 onEscape={handleEscape}
                 zIndex={2000}
             >
-                <Sheet className={MODAL_SHEET_CLASS}>
+                <Sheet>
                     <HistoryModal
                         open={show}
                         closeOnEscape={false}

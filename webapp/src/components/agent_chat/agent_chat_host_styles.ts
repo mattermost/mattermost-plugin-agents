@@ -3,6 +3,8 @@
 
 import {css} from 'styled-components';
 
+import {noMotionWhenReduced} from '@/components/llmbot_post/motion';
+
 // Every selector that reaches into host (Mattermost webapp) DOM for the agent
 // chat (Agents product view and Agents RHS) lives in this file, so a host
 // markup change has one place to fix.
@@ -247,51 +249,6 @@ const hostReplyComposerStyles = ({columnMaxWidth}: HostThreadChatStylesOptions) 
     }
 `;
 
-// Every host hook the selectors in this file (and the new-chat composer's wrapper) rely on: a
-// literal the host source must still contain, and the file it is in. agent_chat_host_styles.test.ts
-// checks them against a host checkout when one is available (MM_WEBAPP_PATH), so a host change
-// that would silently drop a style shows up as a failing test. Keep it in step with the selectors.
-export const HOST_STYLE_HOOKS: ReadonlyArray<{token: string; file: string}> = [
-
-    // Posts (bubbles)
-    {token: "'post__content'", file: 'channels/src/components/post/post_component.tsx'},
-    {token: 'post__img', file: 'channels/src/components/post/post_component.tsx'},
-    {token: "'current--user'", file: 'channels/src/components/post/post_component.tsx'},
-    {token: "'post--compact'", file: 'channels/src/components/post/post_component.tsx'},
-    {token: 'post__header', file: 'channels/src/components/post/post_component.tsx'},
-    {token: 'badges-wrapper', file: 'channels/src/components/post/post_component.tsx'},
-    {token: "'post--hovered'", file: 'channels/src/components/post/post_component.tsx'},
-    {token: "'post--editing'", file: 'channels/src/components/post/post_component.tsx'},
-    {token: "'post--highlight'", file: 'channels/src/components/post/post_component.tsx'},
-    {token: "'post--pinned-or-flagged'", file: 'channels/src/components/post/post_component.tsx'},
-    {token: 'a11y--active', file: 'channels/src/utils/utils.tsx'},
-    {token: 'post__time', file: 'channels/src/components/post_view/post_time/post_time.tsx'},
-    {token: 'post__permalink', file: 'channels/src/components/post_view/post_time/post_time.tsx'},
-    {token: 'col__name', file: 'channels/src/components/post/user_profile.tsx'},
-    {token: 'post-menu', file: 'channels/src/components/post/post_options.tsx'},
-
-    // Thread viewer list
-    {token: 'threadViewerScrollContainer', file: 'channels/src/components/threading/virtualized_thread_viewer/virtualized_thread_viewer.tsx'},
-    {token: 'innerList', file: 'channels/src/components/dynamic_virtualized_list/index.tsx'},
-    {token: 'root-post__divider', file: 'channels/src/components/root_post_divider/root_post_divider.tsx'},
-    {token: 'BasicSeparator', file: 'channels/src/components/widgets/separator/basic-separator.tsx'},
-
-    // Content that keeps a bubble full width
-    {token: 'post-code', file: 'channels/src/components/code_block/code_block.tsx'},
-    {token: 'post-image__columns', file: 'channels/src/components/file_attachment_list/file_attachment_list.tsx'},
-    {token: 'file-view--single', file: 'channels/src/components/single_image_view/single_image_view.tsx'},
-    {token: 'post__embed-container', file: 'channels/src/components/post_view/post_image/post_image.tsx'},
-    {token: 'PostAttachmentOpenGraph', file: 'channels/src/components/post_view/post_attachment_opengraph/post_attachment_opengraph.tsx'},
-
-    // Composer
-    {token: "data-testid='comment-create'", file: 'channels/src/components/threading/virtualized_thread_viewer/create_comment.tsx'},
-    {token: "'post-create__container'", file: 'channels/src/components/threading/virtualized_thread_viewer/create_comment.tsx'},
-    {token: "'post-create__container AdvancedTextEditor__ctr'", file: 'channels/src/components/channel_view/channel_view.tsx'},
-    {token: "'AdvancedTextEditor'", file: 'channels/src/components/advanced_text_editor/advanced_text_editor.tsx'},
-    {token: 'AdvancedTextEditor__footer', file: 'channels/src/components/advanced_text_editor/footer.tsx'},
-    {token: "type='file'", file: 'channels/src/components/file_upload/file_upload.tsx'},
-];
-
 // Chat-bubble restyle of the host ThreadViewer. Interpolate it into the styled
 // wrapper that contains the ThreadViewer (the product view's thread pane, the
 // RHS thread pane); it is scoped under that wrapper and never applied globally.
@@ -394,9 +351,7 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         background: transparent;
         transition: background var(--duration-quick) var(--ease-transition);
 
-        @media (prefers-reduced-motion: reduce) {
-            transition: none;
-        }
+        ${noMotionWhenReduced}
     }
 
     /* The agent's reply shows its bubble shape only while the user is on it. */

@@ -327,6 +327,54 @@ describe('useToolProviders', () => {
         expect(result.current.prefs.disabledServers).toEqual([]);
     });
 
+    test('quick toggles where the first save fails leave the shown list matching the server', async () => {
+        let serverList: string[] = [];
+        let failFirst: (e: Error) => void = () => null;
+        mockUpdateUserToolPreferences.
+            mockImplementationOnce(() => new Promise((_resolve, reject) => {
+                failFirst = reject;
+            })).
+            mockImplementation(async (prefs) => {
+                serverList = prefs.disabled_servers;
+                return prefs;
+            });
+        const {result} = renderHook(() => useToolProviders(bot));
+        await waitFor(() => expect(result.current.prefs.status).toBe('ready'));
+
+        let first: Promise<boolean> = Promise.resolve(true);
+        let second: Promise<boolean> = Promise.resolve(true);
+        act(() => {
+            first = result.current.toggle(initialServer.serverOrigin, false);
+        });
+        act(() => {
+            second = result.current.toggle(refreshedServer.serverOrigin, false);
+        });
+        await act(async () => {
+            failFirst(new Error('nope'));
+            await Promise.allSettled([first, second]);
+        });
+
+        expect(await first).toBe(false);
+        expect(result.current.prefs.disabledServers).toEqual(serverList);
+    });
+
+    test('a toggle made while another saves is saved next, with both changes', async () => {
+        mockUpdateUserToolPreferences.mockImplementation(async (prefs) => prefs);
+        const {result} = renderHook(() => useToolProviders(bot));
+        await waitFor(() => expect(result.current.prefs.status).toBe('ready'));
+
+        let saves: Array<Promise<boolean>> = [];
+        await act(async () => {
+            saves = [result.current.toggle(initialServer.serverOrigin, false)];
+            saves.push(result.current.toggle(refreshedServer.serverOrigin, false));
+            await Promise.all(saves);
+        });
+
+        expect(await Promise.all(saves)).toEqual([true, true]);
+        expect(mockUpdateUserToolPreferences).toHaveBeenLastCalledWith({disabled_servers: [initialServer.serverOrigin, refreshedServer.serverOrigin]});
+        expect(result.current.prefs.disabledServers).toEqual([initialServer.serverOrigin, refreshedServer.serverOrigin]);
+    });
+
     test('a toggle after the preferences failed to load saves nothing', async () => {
         jest.spyOn(console, 'error').mockImplementation(() => null);
         mockGetUserToolPreferences.mockRejectedValueOnce(new Error('down'));

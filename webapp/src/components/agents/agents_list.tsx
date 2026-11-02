@@ -20,11 +20,12 @@ import {downloadAgentExport} from '@/utils/agent_export';
 import {AgentExportDocument, UserAgent, ServiceInfo} from '@/types/agents';
 import {LicenseLevel, useAgentLimit, useLicenseLevel, useLicenseLevelName} from '@/license';
 
-import {canManageAgent, useAgentPermissions} from './agent_access';
+import {useAgentPermissions} from './agent_access';
 import AgentRow from './agent_row';
 import DeleteAgentDialog from './delete_agent_dialog';
 import AgentConfigView from './agent_config_view';
 import {useAgentFilePicker} from './use_agent_file_picker';
+import {matchesQuery} from './find_agents_search';
 
 type Tab = 'all' | 'yours';
 
@@ -43,7 +44,7 @@ const AgentsList = ({onStartChat, openCreate = false, onCloseCreate}: AgentsList
 
     // Users without canViewServices browse read-only; requesting /services would 403 and wrongly flag
     // every agent.
-    const {currentUserId, hasManageOthersAgent, hasManageSystem, canCreate: userCanCreateAgent, canViewServices} = useAgentPermissions();
+    const {currentUserId, canCreate: userCanCreateAgent, canViewServices} = useAgentPermissions();
     const agentLimit = useAgentLimit();
     const licenseLevel = useLicenseLevel();
     const licenseLevelName = useLicenseLevelName();
@@ -209,9 +210,7 @@ const AgentsList = ({onStartChat, openCreate = false, onCloseCreate}: AgentsList
     }, [fetchAgents, onCloseCreate]);
 
     // Filter agents based on active tab and search query
-    const userCanManageAgent = useCallback((a: UserAgent) => (
-        canManageAgent(a, currentUserId, {hasManageOthersAgent, hasManageSystem})
-    ), [currentUserId, hasManageOthersAgent, hasManageSystem]);
+    const userCanManageAgent = useCallback((a: UserAgent) => a.canManage === true, []);
 
     const handleExportAgent = useCallback(async (agent: UserAgent) => {
         setActionError('');
@@ -227,11 +226,7 @@ const AgentsList = ({onStartChat, openCreate = false, onCloseCreate}: AgentsList
         if (activeTab === 'yours' && a.creatorID !== currentUserId) {
             return false;
         }
-        if (searchQuery.trim()) {
-            const query = searchQuery.toLowerCase();
-            return a.displayName.toLowerCase().includes(query) || a.name.toLowerCase().includes(query);
-        }
-        return true;
+        return !searchQuery.trim() || matchesQuery([a.displayName, a.name], searchQuery);
     });
 
     if (viewOpen) {

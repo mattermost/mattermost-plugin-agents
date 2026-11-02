@@ -11,7 +11,7 @@ import {Button} from '@mattermost/compass-ui/components/button';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {PopoverMenu, PopoverMenuTitle} from '@mattermost/compass-ui/components/popover-menu';
 
-import {disconnectMCPOAuth, getUserMCPTools, refreshUserMCPTools, updateUserToolPreferences, type UserMCPServerInfo} from '@/client';
+import {disconnectMCPOAuth, getUserMCPTools, refreshUserMCPTools, type UserMCPServerInfo} from '@/client';
 import type {EnabledMCPTool, LLMBot} from '@/bots';
 import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
 import {useMenuTransition} from '@/hooks/use_menu_transition';
@@ -62,8 +62,7 @@ export interface ToolProviders {
     remoteMcpLicensed: boolean;
     fetchServers: (opts?: {showLoading?: boolean; forceRefresh?: boolean}) => Promise<void>;
 
-    // Optimistic; reverts and resolves false when the preference save fails.
-    toggle: (serverOrigin: string, enabled: boolean) => Promise<boolean>;
+    toggle: ToolPreferences['toggle'];
     connect: (authURL: string) => void;
 
     // Resolves false when the disconnect fails.
@@ -111,26 +110,6 @@ export function useToolProviders(bot: LLMBot): ToolProviders {
         fetchServers({showLoading: false});
     }, [fetchServers]));
 
-    // The saved list is replaced as a whole, so a toggle before it loaded would overwrite it with
-    // just that one provider: refused until the preferences are ready.
-    const {status, disabledServers, setDisabledServers} = prefs;
-    const toggle = useCallback(async (serverOrigin: string, enabled: boolean) => {
-        if (status !== 'ready') {
-            return false;
-        }
-        const updatedDisabled = enabled ? disabledServers.filter((s) => s !== serverOrigin) : [...disabledServers, serverOrigin];
-        setDisabledServers(updatedDisabled);
-
-        try {
-            await updateUserToolPreferences({disabled_servers: updatedDisabled});
-            return true;
-        } catch {
-            // Revert on error
-            setDisabledServers(disabledServers);
-            return false;
-        }
-    }, [status, disabledServers, setDisabledServers]);
-
     const connect = useCallback((authURL: string) => {
         window.open(authURL, '_blank', 'noopener,noreferrer');
     }, []);
@@ -147,7 +126,7 @@ export function useToolProviders(bot: LLMBot): ToolProviders {
         }
     }, [fetchServers]);
 
-    return {prefs, servers, loading, error, remoteMcpLicensed, fetchServers, toggle, connect, disconnect};
+    return {prefs, servers, loading, error, remoteMcpLicensed, fetchServers, toggle: prefs.toggle, connect, disconnect};
 }
 
 // The Tools dropdown of an agent chat's title: a compass Button trigger opening a menu of the tool

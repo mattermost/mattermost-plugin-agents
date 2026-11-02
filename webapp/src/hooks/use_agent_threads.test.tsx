@@ -197,18 +197,19 @@ describe('stored AI threads', () => {
         jest.restoreAllMocks();
     });
 
-    test('a title set while a fetch is in flight survives its older response', async () => {
-        const pending = deferred<AIThread[]>();
-        mockGetAIThreads.mockReturnValue(pending.promise);
+    test('a title set while a fetch is in flight is not undone by its older response', async () => {
+        const stale = deferred<AIThread[]>();
+        mockGetAIThreads.mockReturnValueOnce(stale.promise).mockResolvedValueOnce([makeThread({id: 'c1', title: 'Generated title'})]);
         const store = makeStore();
         const sync = createAgentThreadsSync(store as never);
 
         const fetching = fetchAIThreads(store.dispatch);
         sync.handleConversationUpdated({conversation_id: 'c1', title: 'Generated title'});
-        pending.resolve([makeThread({id: 'c1', title: ''})]);
+        stale.resolve([makeThread({id: 'c1', title: ''})]);
         await fetching;
+        await waitFor(() => expect(mockGetAIThreads).toHaveBeenCalledTimes(2));
 
-        expect(titles(store)).toEqual(['c1:Generated title']);
+        await waitFor(() => expect(titles(store)).toEqual(['c1:Generated title']));
     });
 
     describe('rename', () => {
@@ -219,13 +220,13 @@ describe('stored AI threads', () => {
             return store;
         };
 
-        test('shows the new title before the server answers', async () => {
+        test('shows the new title once the server has it', async () => {
             const store = await loaded();
             const pending = deferred<void>();
             mockRenameConversation.mockReturnValue(pending.promise);
 
             const renaming = renameAIThread(store, 'c1', 'New');
-            expect(titles(store)).toEqual(['c1:New', 'c2:Other']);
+            expect(titles(store)).toEqual(['c1:Old', 'c2:Other']);
 
             pending.resolve();
             await renaming;
@@ -233,7 +234,7 @@ describe('stored AI threads', () => {
             expect(titles(store)).toEqual(['c1:New', 'c2:Other']);
         });
 
-        test('a failed rename restores the old title and rejects', async () => {
+        test('a failed rename keeps the old title and rejects', async () => {
             const store = await loaded();
             mockRenameConversation.mockRejectedValue(new Error('nope'));
 
@@ -241,18 +242,21 @@ describe('stored AI threads', () => {
             expect(titles(store)).toEqual(['c1:Old', 'c2:Other']);
         });
 
-        test('a failed rename keeps a newer title that arrived meanwhile', async () => {
+        test('a rename while the list reloads is not undone by the reload\'s older response', async () => {
             const store = await loaded();
-            const pending = deferred<void>();
-            mockRenameConversation.mockReturnValue(pending.promise);
-            const sync = createAgentThreadsSync(store as never);
+            const stale = deferred<AIThread[]>();
+            mockGetAIThreads.mockReset().
+                mockReturnValueOnce(stale.promise).
+                mockResolvedValueOnce([makeThread({id: 'c1', title: 'New'}), makeThread({id: 'c2', title: 'Other'})]);
+            mockRenameConversation.mockResolvedValue(undefined); // eslint-disable-line no-undefined
 
-            const renaming = renameAIThread(store, 'c1', 'New');
-            sync.handleConversationUpdated({conversation_id: 'c1', title: 'From elsewhere'});
-            pending.reject(new Error('nope'));
+            const reloading = fetchAIThreads(store.dispatch);
+            await renameAIThread(store, 'c1', 'New');
+            stale.resolve([makeThread({id: 'c1', title: 'Old'}), makeThread({id: 'c2', title: 'Other'})]);
+            await reloading;
 
-            await expect(renaming).rejects.toThrow('nope');
-            expect(titles(store)).toEqual(['c1:From elsewhere', 'c2:Other']);
+            await waitFor(() => expect(titles(store)).toEqual(['c1:New', 'c2:Other']));
+            expect(mockGetAIThreads).toHaveBeenCalledTimes(2);
         });
     });
 

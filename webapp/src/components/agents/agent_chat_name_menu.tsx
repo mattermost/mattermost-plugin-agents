@@ -15,7 +15,7 @@ import {PopoverMenu, PopoverMenuDivider, PopoverMenuGroup, PopoverMenuScroll} fr
 import type {LLMBot} from '@/bots';
 import Dropdown from '@/components/dropdown';
 import {handleMenuNavigation} from '@/components/menu/menu_keyboard';
-import {AgentMenuItem, IconMenuItem} from '@/components/menu/menu_parts';
+import {AgentPickerList, IconMenuItem} from '@/components/menu/menu_parts';
 import Submenu from '@/components/menu/submenu';
 import {useFocusMenuOnOpen} from '@/components/menu/use_focus_menu_on_open';
 import {useAgentThreads} from '@/hooks/use_agent_threads';
@@ -143,32 +143,21 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                         label={agentsLabel}
                                         icon={<SyncIcon/>}
                                         menuLabel={agentsLabel}
-                                        grow='down'
                                         data-testid='agent-chat-switch-agent'
                                         {...submenuProps('agents')}
                                     >
-                                        <PopoverMenuScroll maxHeight={CHATS_LIST_MAX_HEIGHT}>
-                                            <PopoverMenuGroup>
-                                                {switchable.bots.map((other) => {
-                                                    // Picking the current agent switches nothing.
-                                                    const active = other.id === bot.id;
-                                                    return (
-                                                        <AgentMenuItem
-                                                            key={other.id}
-                                                            bot={other}
-                                                            active={active}
-                                                            trailingElement={active}
-                                                            {...(active && {'aria-current': true})}
-                                                            onClick={closing(() => {
-                                                                if (!active) {
-                                                                    switchable.onSwitch(other);
-                                                                }
-                                                            })}
-                                                        />
-                                                    );
-                                                })}
-                                            </PopoverMenuGroup>
-                                        </PopoverMenuScroll>
+                                        <AgentPickerList
+                                            bots={switchable.bots}
+                                            activeId={bot.id}
+                                            maxHeight={CHATS_LIST_MAX_HEIGHT}
+
+                                            // Picking the current agent switches nothing.
+                                            onPick={(other) => closing(() => {
+                                                if (other.id !== bot.id) {
+                                                    switchable.onSwitch(other);
+                                                }
+                                            })()}
+                                        />
                                     </Submenu>
                                 )}
                                 {chats.length > 0 && (
@@ -176,7 +165,6 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                         label={chatsLabel}
                                         icon={<MessageOutlineIcon/>}
                                         menuLabel={chatsLabel}
-                                        grow='down'
                                         data-testid='agent-chat-recent-chats'
                                         {...submenuProps('chats')}
                                     >

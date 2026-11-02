@@ -28,6 +28,11 @@ declare global {
             // Published host API; absent on older hosts. Returns the Redux action that opens the
             // modal: the caller must dispatch it.
             openUserSettings?: (dialogProps: {isContentProductSettings: boolean}) => UnknownAction;
+
+            // Absent on older hosts.
+            popouts?: {
+                isPopoutWindow?: () => boolean;
+            };
         };
     }
 }

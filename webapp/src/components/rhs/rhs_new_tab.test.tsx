@@ -36,10 +36,6 @@ const mockRequestRefresh = jest.fn();
 jest.mock('@/hooks/use_agent_threads', () => ({
     useRefreshAgentThreads: () => mockRequestRefresh,
 }));
-jest.mock('@/websocket', () => ({
-    subscribeToAllPostUpdates: () => () => null,
-}));
-
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
     const intl = {

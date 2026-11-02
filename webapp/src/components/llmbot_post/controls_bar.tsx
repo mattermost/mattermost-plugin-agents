@@ -3,7 +3,7 @@
 
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
-import styled, {css} from 'styled-components';
+import styled from 'styled-components';
 
 import {CheckIcon, CloseIcon, ContentCopyIcon, RefreshIcon, SendIcon} from '@mattermost/compass-icons/components';
 
@@ -14,6 +14,9 @@ import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {Timestamp} from '@/mm_webapp';
+import {copyToClipboard} from '@/utils/clipboard';
+import {visuallyHidden} from '@/components/visually_hidden';
+import {TooltipTrigger} from '@/components/dropdown';
 
 import {BUBBLE_CONTROLS_ATTRIBUTE, BUBBLE_CONTROLS_BELOW, CONTROLS_BAR_HEIGHT} from '../agent_chat/agent_chat_host_styles';
 
@@ -105,60 +108,6 @@ export const COPY_FEEDBACK_MS = 2000;
 
 type CopyState = 'idle' | 'copied' | 'failed';
 
-// Set on the DOM node (not JSX) so the temporary fallback textarea never shifts layout.
-const OFFSCREEN_TEXTAREA_STYLE: Partial<CSSStyleDeclaration> = {
-    position: 'fixed',
-    top: '0',
-    left: '0',
-    width: '1px',
-    height: '1px',
-    opacity: '0',
-    pointerEvents: 'none',
-};
-
-async function copyToClipboard(text: string): Promise<boolean> {
-    try {
-        if (navigator.clipboard?.writeText) {
-            await navigator.clipboard.writeText(text);
-            return true;
-        }
-    } catch {
-        // Fall through to the textarea fallback (permission denied, insecure context).
-    }
-    return copyWithTextarea(text);
-}
-
-function copyWithTextarea(text: string): boolean {
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    const selection = document.getSelection();
-    const savedRanges = Array.from({length: selection?.rangeCount ?? 0}, (_, i) => selection!.getRangeAt(i));
-
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.setAttribute('readonly', '');
-    textarea.setAttribute('aria-hidden', 'true');
-    textarea.setAttribute('tabindex', '-1');
-    textarea.setAttribute('data-copy-fallback', 'true');
-    Object.assign(textarea.style, OFFSCREEN_TEXTAREA_STYLE);
-    document.body.appendChild(textarea);
-
-    let ok = false;
-    try {
-        textarea.select();
-        ok = typeof document.execCommand === 'function' && document.execCommand('copy');
-    } catch {
-        ok = false;
-    }
-
-    document.body.removeChild(textarea);
-    if (selection) {
-        selection.removeAllRanges();
-        savedRanges.forEach((range) => selection.addRange(range));
-    }
-    previouslyFocused?.focus?.();
-    return ok;
-}
-
 const CopyButton: React.FC<{text: string}> = ({text}) => {
     const intl = useIntl();
     const [state, setState] = useState<CopyState>('idle');
@@ -223,18 +172,6 @@ const CopyButton: React.FC<{text: string}> = ({text}) => {
     );
 };
 
-const visuallyHidden = css`
-	position: absolute;
-	width: 1px;
-	height: 1px;
-	margin: -1px;
-	padding: 0;
-	overflow: hidden;
-	clip: rect(0, 0, 0, 0);
-	white-space: nowrap;
-	border: 0;
-`;
-
 const LiveStatus = styled.span`
 	${visuallyHidden}
 `;
@@ -254,9 +191,4 @@ const Time = styled.span`
 	font-size: var(--font-size-75);
 	line-height: var(--line-height-75);
 	white-space: nowrap;
-`;
-
-// WithTooltip needs a single element that takes a ref and mouse/focus handlers.
-const TooltipTrigger = styled.span`
-	display: inline-flex;
 `;

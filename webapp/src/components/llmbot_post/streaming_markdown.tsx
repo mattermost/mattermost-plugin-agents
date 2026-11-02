@@ -66,11 +66,7 @@ interface BlockProps {
 // Memoized on the block's source: a settled block is not formatted again while the block after it grows.
 const MarkdownBlockView = React.memo(({source, formatText, messageHtmlToComponent, markdownOptions, htmlOptions}: BlockProps) => (
     <>{messageHtmlToComponent(formatText(source, markdownOptions), htmlOptions)}</>
-), (prev, next) => prev.source === next.source &&
-    prev.formatText === next.formatText &&
-    prev.messageHtmlToComponent === next.messageHtmlToComponent &&
-    prev.markdownOptions === next.markdownOptions &&
-    prev.htmlOptions === next.htmlOptions);
+));
 MarkdownBlockView.displayName = 'MarkdownBlockView';
 
 interface StreamingMarkdownProps {

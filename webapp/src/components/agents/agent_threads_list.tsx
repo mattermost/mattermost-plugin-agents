@@ -16,10 +16,12 @@ import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 
 import {getProfilePictureUrl} from '@/client';
 import {WaveDots} from '@/components/llmbot_post/thinking_dots';
-import {prefersReducedMotion} from '@/components/llmbot_post/motion';
+import {noMotionWhenReduced, prefersReducedMotion} from '@/components/llmbot_post/motion';
 import type {LLMBot} from '@/bots';
 import type {AgentThreadsByBot} from '@/hooks/use_agent_threads';
 import type {AIThread} from '@/types/ai_thread';
+import {VisuallyHidden} from '@/components/visually_hidden';
+import {TooltipTrigger} from '@/components/dropdown';
 
 import ChatRowActionsMenu from './chat_row_actions_menu';
 import {chatTitle} from './chat_title';
@@ -114,7 +116,7 @@ const AgentThreadsList = ({
     // "Show less" folds the extra rows away over the quick duration, then drops them.
     const foldBack = (botId: string) => {
         cancelFold(botId);
-        const quick = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : quickDurationMs();
+        const quick = prefersReducedMotion() ? 0 : quickDurationMs();
         if (quick === 0) {
             resetLimit(botId);
             return;
@@ -445,9 +447,7 @@ const ChevronSlot = styled.span`
         opacity: ${QUIET_OPACITY};
     }
 
-    @media (prefers-reduced-motion: reduce) {
-        transition: none;
-    }
+    ${noMotionWhenReduced}
 `;
 
 // Just the chevron glyph (right when collapsed, down when expanded), with no button chrome.
@@ -492,9 +492,7 @@ const NewChatSlot = styled.span`
         opacity: 1;
     }
 
-    @media (prefers-reduced-motion: reduce) {
-        transition: none;
-    }
+    ${noMotionWhenReduced}
 `;
 
 const AgentRow = styled.div`
@@ -518,10 +516,6 @@ const AgentRow = styled.div`
     }
 `;
 
-const TooltipTrigger = styled.span`
-    display: inline-flex;
-`;
-
 // Height animates by transitioning the grid row between 0fr and 1fr. The list stays mounted
 // (so aria-controls resolves and the open chat is not remounted) and is taken out of the
 // tab order and the accessibility tree with visibility once the collapse finishes.
@@ -533,9 +527,7 @@ const ThreadCollapse = styled.div<{$collapsed: boolean}>`
         grid-template-rows var(--duration-moderate) var(--ease-transition),
         visibility 0s linear ${(p) => (p.$collapsed ? 'var(--duration-moderate)' : '0s')};
 
-    @media (prefers-reduced-motion: reduce) {
-        transition: none;
-    }
+    ${noMotionWhenReduced}
 `;
 
 const ThreadCollapseInner = styled.div`
@@ -565,21 +557,7 @@ const ThreadActionsSlot = styled.span`
     opacity: 0;
     transition: opacity var(--duration-quick) var(--ease-transition);
 
-    @media (prefers-reduced-motion: reduce) {
-        transition: none;
-    }
-`;
-
-const VisuallyHidden = styled.span`
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    padding: 0;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
+    ${noMotionWhenReduced}
 `;
 
 // Over the item's own 16px icon slot (its padding plus the container's 6px offset), centered in it: a 12px
@@ -663,9 +641,7 @@ const ThreadListItem = styled.li<{$motion?: 'enter' | 'leave'}>`
         display: grid;
         animation: ${$motion === 'enter' ? rowReveal : rowFold} var(--duration-quick) var(--ease-transition) both;
 
-        @media (prefers-reduced-motion: reduce) {
-            animation: none;
-        }
+        ${noMotionWhenReduced}
     `}
 
     /* The item's built-in icon cannot be swapped (no custom-icon slot), so it is hidden and the

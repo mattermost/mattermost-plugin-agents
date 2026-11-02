@@ -16,6 +16,8 @@ import type {LLMBot} from '@/bots';
 import ContextUsageIndicator from '@/components/rhs/context_usage_indicator';
 import ToolProviderPopover from '@/components/tool_providers/tool_provider_popover';
 import {useConversationIdForThread} from '@/hooks/use_conversation_id_for_thread';
+import {TooltipTrigger} from '@/components/dropdown';
+import {noMotionWhenReduced} from '@/components/llmbot_post/motion';
 
 import AgentChatNameMenu from './agent_chat_name_menu';
 import ChatTitleDropdown from './chat_title_dropdown';
@@ -178,10 +180,6 @@ const FilledIconButton = styled(IconButton)`
     }
 `;
 
-const TooltipTrigger = styled.span`
-    display: inline-flex;
-`;
-
 // The prototype's agent-chat header: 56px bar (spacing-m padding around a 32px row).
 const PageHeader = styled.header<{$bordered: boolean}>`
     /* Above the new-chat body, whose lift (translateY) can overlap this bar and block its clicks. */
@@ -199,9 +197,7 @@ const PageHeader = styled.header<{$bordered: boolean}>`
     ${({$bordered}) => !$bordered && 'border-bottom-color: transparent;'}
     transition: border-color var(--duration-moderate) var(--ease-transition);
 
-    @media (prefers-reduced-motion: reduce) {
-        transition: none;
-    }
+    ${noMotionWhenReduced}
 `;
 
 const PageTitle = styled.div`

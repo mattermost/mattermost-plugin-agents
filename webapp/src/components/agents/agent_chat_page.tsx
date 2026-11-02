@@ -242,7 +242,6 @@ const AgentThread = ({channelId, rootId, agentName, onNewChat, toAll, onValidate
         <AgentChatThreadView
             layout='page'
             testId='agent-chat-thread'
-            channelId={channelId}
             rootId={rootId}
             agentName={agentName}
             isThreadView={true}

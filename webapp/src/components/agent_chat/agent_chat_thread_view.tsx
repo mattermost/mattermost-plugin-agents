@@ -6,9 +6,10 @@ import {useIntl} from 'react-intl';
 import styled, {keyframes} from 'styled-components';
 
 import {ThreadViewer as UnstyledThreadViewer} from '@/mm_webapp';
+import {noMotionWhenReduced} from '@/components/llmbot_post/motion';
 
 import JumpToLatest from './jump_to_latest';
-import {useThreadGenerating} from './use_thread_generating';
+import {useIsThreadGenerating} from './use_thread_generating';
 import {useThreadProfiles} from './use_thread_profiles';
 import {useThreadScroll} from './use_thread_scroll';
 import {AGENT_CHAT_SURFACE, AgentChatSurfaceContext} from './agent_chat_surface_context';
@@ -16,9 +17,6 @@ import {CHAT_CONTENT_MAX_WIDTH, hostThreadChatStyles} from './agent_chat_host_st
 import type {AgentNewChatLayout} from './agent_new_chat';
 
 interface AgentChatThreadViewProps {
-
-    // The thread's channel; '' while unknown.
-    channelId: string;
     rootId: string;
     agentName: string;
 
@@ -46,11 +44,11 @@ export const isThreadViewerAvailable = Boolean(UnstyledThreadViewer);
 // One agent thread as a chat: the host ThreadViewer renders the posts (as
 // bubbles, through hostThreadChatStyles) and its own reply composer under
 // them, placed in the chat's column.
-const AgentChatThreadView = ({channelId, rootId, agentName, layout, isThreadView, testId, viewerTestId}: AgentChatThreadViewProps) => {
+const AgentChatThreadView = ({rootId, agentName, layout, isThreadView, testId, viewerTestId}: AgentChatThreadViewProps) => {
     const intl = useIntl();
     const viewerRef = useRef<HTMLDivElement>(null);
     const {scrolledUp, scrollToBottom, bottomInset} = useThreadScroll(viewerRef);
-    const generating = useThreadGenerating(channelId, rootId) !== null;
+    const generating = useIsThreadGenerating(rootId);
 
     // The host reply composer's @mention list needs the posters' profiles.
     useThreadProfiles(rootId);
@@ -106,9 +104,7 @@ const ThreadPane = styled.div<{$layout: AgentNewChatLayout}>`
     overflow: hidden;
     animation: ${fadeIn} var(--duration-moderate) var(--ease-entrance);
 
-    @media (prefers-reduced-motion: reduce) {
-        animation: none;
-    }
+    ${noMotionWhenReduced}
 
     ${({$layout}) => hostThreadChatStyles($layout === 'page' ? {columnMaxWidth: CHAT_CONTENT_MAX_WIDTH} : {})}
 `;

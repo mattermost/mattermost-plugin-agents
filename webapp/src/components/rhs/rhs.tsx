@@ -47,7 +47,7 @@ export default function RHS() {
     const dispatch = useDispatch();
     const store = useStore<GlobalState>();
     const {bots, activeBot} = useBotlist();
-    const {rootId: selectedPostId, channelId, bot: threadBot} = useSelectedThreadBot(bots);
+    const {rootId: selectedPostId, bot: threadBot} = useSelectedThreadBot(bots);
 
     // The open chat is read, as in any thread view.
     useMarkAgentThreadRead(selectedPostId, Boolean(selectedPostId));
@@ -114,7 +114,6 @@ export default function RHS() {
                 layout='panel'
                 testId='rhs-thread'
                 viewerTestId='rhs-thread-viewer'
-                channelId={channelId}
                 rootId={selectedPostId}
                 agentName={threadBot?.displayName ?? ''}
                 isThreadView={false}

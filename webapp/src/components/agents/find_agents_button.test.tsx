@@ -246,7 +246,13 @@ describe('FindAgentsButton and modal', () => {
 });
 
 describe('Find agents keyboard shortcut', () => {
-    const setPlatform = (platform: string) => jest.spyOn(window.navigator, 'platform', 'get').mockReturnValue(platform);
+    // The host's isMac reads the user agent.
+    const userAgents: Record<string, string> = {
+        MacIntel: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+        Win32: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        'Linux x86_64': 'Mozilla/5.0 (X11; Linux x86_64)',
+    };
+    const setPlatform = (platform: string) => jest.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue(userAgents[platform]);
 
     beforeEach(() => {
         mockGetThreads.mockResolvedValue([]);

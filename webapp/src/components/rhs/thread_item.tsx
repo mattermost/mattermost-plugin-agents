@@ -13,6 +13,8 @@ import ChatRowActionsMenu from '@/components/agents/chat_row_actions_menu';
 import {chatTitle} from '@/components/agents/chat_title';
 import type {ChatActions} from '@/components/agents/use_chat_actions';
 import {Timestamp} from '@/mm_webapp';
+import {VisuallyHidden} from '@/components/visually_hidden';
+import {noMotionWhenReduced} from '@/components/llmbot_post/motion';
 
 // No compass token for the translucent hover fill (the Agents chat header's name button uses the same).
 const HOVER_PERCENT = '8%';
@@ -244,19 +246,5 @@ const Actions = styled.div`
         opacity: 1;
     }
 
-    @media (prefers-reduced-motion: reduce) {
-        transition: none;
-    }
-`;
-
-const VisuallyHidden = styled.span`
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    padding: 0;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
+    ${noMotionWhenReduced}
 `;

@@ -56,13 +56,13 @@ func (s *inMemoryStore) GetConversationByThreadBotUser(_, _, _ string) (*store.C
 	return nil, store.ErrConversationNotFound
 }
 
-func (s *inMemoryStore) UpdateConversationTitle(id, title string) error {
+func (s *inMemoryStore) RenameConversation(id, title string) (bool, error) {
 	conv, ok := s.conversations[id]
-	if !ok {
-		return store.ErrConversationNotFound
+	if !ok || conv.DeleteAt != 0 {
+		return false, nil
 	}
 	conv.Title = title
-	return nil
+	return true, nil
 }
 
 func (s *inMemoryStore) SetConversationTitleIfUnset(id, title string) (bool, error) {

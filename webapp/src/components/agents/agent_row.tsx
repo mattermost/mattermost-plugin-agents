@@ -21,6 +21,8 @@ import {getProfilePictureUrl} from '@/client';
 import DotMenu, {DropdownMenuItem} from '@/components/dot_menu';
 
 import {AgentInactiveReason, UserAgent, ServiceInfo} from '@/types/agents';
+import {VisuallyHidden} from '@/components/visually_hidden';
+import {noMotionWhenReduced} from '@/components/llmbot_post/motion';
 
 type Props = {
     agent: UserAgent;
@@ -297,9 +299,7 @@ const NewChatSlot = styled.span`
         opacity: 1;
     }
 
-    @media (prefers-reduced-motion: reduce) {
-        transition: none;
-    }
+    ${noMotionWhenReduced}
 `;
 
 const BadgesColumn = styled.div`
@@ -323,15 +323,6 @@ const ActionsColumn = styled.div`
     &:has([aria-expanded='true']) {
         z-index: 2;
     }
-`;
-
-const VisuallyHidden = styled.span`
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
 `;
 
 export default AgentRow;

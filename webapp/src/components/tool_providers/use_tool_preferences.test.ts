@@ -8,6 +8,7 @@ import {resetToolPreferences, useToolPreferences} from './use_tool_preferences';
 const mockGetPrefs = jest.fn();
 jest.mock('@/client', () => ({
     getUserToolPreferences: () => mockGetPrefs(),
+    updateUserToolPreferences: () => Promise.resolve(),
 }));
 
 describe('useToolPreferences', () => {
@@ -28,8 +29,8 @@ describe('useToolPreferences', () => {
         await waitFor(() => expect(header.result.current.status).toBe('ready'));
         expect(mockGetPrefs).toHaveBeenCalledTimes(1);
 
-        act(() => header.result.current.setDisabledServers(['github']));
-        expect(rhs.result.current.disabledServers).toEqual(['github']);
+        await act(() => header.result.current.toggle('github', false));
+        expect(rhs.result.current.disabledServers).toEqual(['jira', 'github']);
     });
 
     test('reloads when the agent changes', async () => {

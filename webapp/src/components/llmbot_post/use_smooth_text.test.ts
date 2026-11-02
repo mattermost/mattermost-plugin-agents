@@ -1,6 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import {StrictMode} from 'react';
 import {act, renderHook} from '@testing-library/react';
 
 import {
@@ -51,6 +52,10 @@ interface Props {
     flushImmediately?: boolean;
 }
 
+// Every hook test runs as rendered normally and under StrictMode, which renders twice and mounts,
+// unmounts and remounts effects.
+let strict = false;
+
 function setup(initial: Props) {
     const frames = makeFrames();
     const hook = renderHook((props: Props) => {
@@ -62,7 +67,7 @@ function setup(initial: Props) {
             now: frames.now,
         };
         return useSmoothText(props.text, options);
-    }, {initialProps: initial});
+    }, {initialProps: initial, wrapper: strict ? StrictMode : undefined}); // eslint-disable-line no-undefined
     let current = initial;
     const update = (props: Partial<Props>) => {
         current = {...current, ...props};
@@ -105,7 +110,17 @@ describe('revealBoundary', () => {
     });
 });
 
-describe('useSmoothText', () => {
+describe.each([
+    {mode: 'default', isStrict: false},
+    {mode: 'StrictMode', isStrict: true},
+])('useSmoothText ($mode)', ({isStrict}) => {
+    beforeAll(() => {
+        strict = isStrict;
+    });
+    afterAll(() => {
+        strict = false;
+    });
+
     test('a burst drains at the minimum steady rate, word by word', () => {
         const t = startStream();
         const text = 'one two three four five six seven eight nine ten ';

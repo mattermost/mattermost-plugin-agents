@@ -20,6 +20,7 @@ import {useAgentsRoute} from '@/components/agents/use_agents_route';
 import manifest from '@/manifest';
 import type {RHSTab} from '@/redux';
 import {selectPost, showRHSList} from '@/redux_actions';
+import {TooltipTrigger} from '@/components/dropdown';
 
 import {useSelectedThreadBot} from './use_selected_thread_bot';
 
@@ -118,10 +119,6 @@ const Actions = styled.span`
     flex: 0 0 auto;
     align-items: center;
     margin-inline-start: auto;
-`;
-
-const TooltipTrigger = styled.span`
-    display: inline-flex;
 `;
 
 const FallbackIcon = styled.img`

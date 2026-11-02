@@ -3,11 +3,6 @@
 
 import type {Round} from './turn_content_utils';
 
-// The smooth-streaming fade wraps revealed text in private-use markers
-// (streaming_markdown.tsx: U+E000 + one id char in U+E100..U+EFFF, and U+E001).
-// They only exist in the revealed text; a copy never carries them.
-const FADE_MARKERS = /[-]|/g;
-
 /**
  * The text the Copy button puts on the clipboard: the markdown of the answer
  * rounds (the text the post shows as its message), in order, joined by a blank
@@ -17,7 +12,7 @@ const FADE_MARKERS = /[-]|/g;
  */
 export function getCopyableText(answerRounds: Round[]): string {
     return answerRounds.
-        map((round) => round.text.replace(FADE_MARKERS, '')).
+        map((round) => round.text).
         filter((text) => text.trim() !== '').
         join('\n\n');
 }

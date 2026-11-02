@@ -42,14 +42,14 @@ describe('aiThreads reducer', () => {
             expected: null,
         },
         {
-            name: 'a title set after the request started wins over its response',
-            actions: [{type: AIThreadsRequested, requestId: 1}, {type: AIThreadTitleSet, conversationId: 'a', title: 'New'}, {type: AIThreadsReceived, requestId: 1, threads: [thread('a', '')]}],
-            expected: ['a:New'],
+            name: 'a title set renames the listed chat',
+            actions: [{type: AIThreadsRequested, requestId: 1}, {type: AIThreadsReceived, requestId: 1, threads: [thread('a', 'Old'), thread('b', 'B')]}, {type: AIThreadTitleSet, conversationId: 'a', title: 'New'}],
+            expected: ['a:New', 'b:B'],
         },
         {
-            name: 'a title set before the request started is left to the response',
-            actions: [{type: AIThreadTitleSet, conversationId: 'a', title: 'Old edit'}, {type: AIThreadsRequested, requestId: 1}, {type: AIThreadsReceived, requestId: 1, threads: [thread('a', 'Server')]}],
-            expected: ['a:Server'],
+            name: 'a title set before any list loaded leaves it unloaded',
+            actions: [{type: AIThreadTitleSet, conversationId: 'a', title: 'New'}],
+            expected: null,
         },
     ])('$name', ({actions, expected}) => {
         const state = apply(actions);

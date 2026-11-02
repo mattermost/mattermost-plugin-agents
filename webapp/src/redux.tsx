@@ -130,12 +130,6 @@ export interface AIThreadsState {
 
     // The latest request: the response of a superseded one is dropped.
     requestId: number;
-
-    // Title changes (a rename, a generated title) the latest request may predate, by conversation id,
-    // so its response cannot undo them. `seq` orders them against `requestSeq`.
-    titleEdits: Record<string, {title: string; seq: number}>;
-    titleSeq: number;
-    requestSeq: number;
 }
 
 export const initialAIThreadsState: AIThreadsState = {
@@ -143,42 +137,27 @@ export const initialAIThreadsState: AIThreadsState = {
     loading: false,
     error: false,
     requestId: 0,
-    titleEdits: {},
-    titleSeq: 0,
-    requestSeq: 0,
 };
 
 export function aiThreads(state: AIThreadsState = initialAIThreadsState, action: any): AIThreadsState {
     switch (action.type) {
     case AIThreadsRequested:
-        return {...state, loading: true, requestId: action.requestId, requestSeq: state.titleSeq};
-    case AIThreadsReceived: {
+        return {...state, loading: true, requestId: action.requestId};
+    case AIThreadsReceived:
         if (action.requestId !== state.requestId) {
             return state;
         }
-
-        // Edits made after the request started win over its (older) titles; the rest it reflects.
-        const titleEdits = Object.fromEntries(Object.entries(state.titleEdits).filter(([, edit]) => edit.seq > state.requestSeq));
-        const received: AIThread[] = Array.isArray(action.threads) ? action.threads : [];
-        const threads = received.map((t) => (titleEdits[t.id] ? {...t, title: titleEdits[t.id].title} : t));
-        return {...state, threads, loading: false, error: false, titleEdits};
-    }
+        return {...state, threads: Array.isArray(action.threads) ? action.threads : [], loading: false, error: false};
     case AIThreadsFailed:
         if (action.requestId !== state.requestId) {
             return state;
         }
         return {...state, loading: false, error: true};
-    case AIThreadTitleSet: {
-        const id: string = action.conversationId;
-        const title: string = action.title;
-        const titleSeq = state.titleSeq + 1;
+    case AIThreadTitleSet:
         return {
             ...state,
-            threads: state.threads ? state.threads.map((t) => (t.id === id ? {...t, title} : t)) : state.threads,
-            titleEdits: {...state.titleEdits, [id]: {title, seq: titleSeq}},
-            titleSeq,
+            threads: state.threads?.map((t) => (t.id === action.conversationId ? {...t, title: action.title} : t)) ?? null,
         };
-    }
     default:
         return state;
     }

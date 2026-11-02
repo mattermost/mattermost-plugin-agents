@@ -21,19 +21,19 @@ import aiIcon from '../../assets/bot_icon.png';
 import manifest from '@/manifest';
 import {PluginWebSocketMessage} from '@/types';
 
-import {LLMBotPost} from './components/llmbot_post/llmbot_post';
+import {LLMBotPost, PostUpdateWebsocketMessage} from './components/llmbot_post/llmbot_post';
 import PostMenu from './components/post_menu';
 import IconThreadSummarization from './components/assets/icon_thread_summarization';
 import IconReactForMe from './components/assets/icon_react_for_me';
 import RHS from './components/rhs/rhs';
 import RHSTitle from './components/rhs/rhs_title';
 import CustomPromptsDropdown from './components/custom_prompts/custom_prompts_dropdown';
-import CustomPromptsManagement from './components/custom_prompts/custom_prompts_management';
+import CustomPromptsManagement, {PopoutCustomPromptsManagement} from './components/custom_prompts/custom_prompts_management';
 import Config from './components/system_console/config';
 import {setSiteURL, doReaction, doRunSearch, doThreadAnalysis} from './client';
 
 import {setOpenRHSAction} from './redux_actions';
-import PostEventListener, {subscribeToAllPostUpdates} from './websocket';
+import PostEventListener from './websocket';
 import {setupRedux} from './redux';
 import UnreadsSummarize from './components/unreads_summarize';
 import {PostbackPost} from './components/postback_post';
@@ -44,7 +44,7 @@ import AskChannelButton from './components/ask_channel_button';
 import {doSelectPost} from './hooks';
 import {invalidateConversation} from './hooks/use_conversation';
 import {createAgentThreadsSync} from './hooks/use_agent_threads';
-import {clearGeneratingPosts, setGeneratingStateSource} from './components/agent_chat/use_thread_generating';
+import {clearGeneratingPosts, recordPostUpdate} from './components/agent_chat/use_thread_generating';
 
 // Side-effect import: registers a listener so invalidateConversation also
 // clears the matching composition cache.
@@ -166,15 +166,18 @@ export default class Plugin {
             setOpenRHSAction(rhs.showRHSPlugin);
         }
 
-        // Handle all post-related websocket events with one handler
-        registry.registerWebSocketEventHandler('custom_mattermost-ai_postupdate', this.postEventListener.handlePostUpdateWebsockets);
-        registry.registerWebSocketEventHandler('custom_mattermost-ai_tool_call_status_updated', this.postEventListener.handlePostUpdateWebsockets);
-
         // The stored AI thread list follows the user's own agent chats: a finished turn, a rename
-        // or a generated title. The generating state only tracks the user's own agent posts.
+        // or a generated title.
         const agentThreadsSync = createAgentThreadsSync(store);
-        subscribeToAllPostUpdates(agentThreadsSync.handlePostUpdate);
-        setGeneratingStateSource(store.getState);
+
+        // Handle all post-related websocket events with one handler
+        const handlePostUpdate = (msg: PluginWebSocketMessage<PostUpdateWebsocketMessage>) => {
+            this.postEventListener.handlePostUpdateWebsockets(msg);
+            recordPostUpdate(store.getState(), msg);
+            agentThreadsSync.handlePostUpdate(msg);
+        };
+        registry.registerWebSocketEventHandler('custom_mattermost-ai_postupdate', handlePostUpdate);
+        registry.registerWebSocketEventHandler('custom_mattermost-ai_tool_call_status_updated', handlePostUpdate);
 
         // Invalidate conversation cache when backend publishes conversation updates
         registry.registerWebSocketEventHandler(
@@ -317,8 +320,9 @@ export default class Plugin {
 
         if (registry.registerRootComponent) {
             registry.registerRootComponent(AgentsTour);
-            registry.registerRootComponent(CustomPromptsManagement);
+            registry.registerRootComponent(PopoutCustomPromptsManagement);
         }
+        registry.registerGlobalComponent(CustomPromptsManagement);
 
         // Register Agents as a product so it appears in the product switcher (grid icon).
         // registerProduct is an internal Mattermost API available on the plugin registry.

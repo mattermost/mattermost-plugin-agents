@@ -128,8 +128,7 @@ export class AgentPageHelper {
     getModal(): Locator {
         // Keep the legacy name for existing tests. The agent editor is now a full-page view,
         // but confirmation dialogs still render as dialogs.
-        return this.page.locator('.mmAiModal__sheet')
-            .or(this.page.locator('[class*="ModalOverlay"]'))
+        return this.page.locator('[class*="ModalOverlay"]')
             .or(this.page.locator('[class*="modal-content"]'));
     }
 

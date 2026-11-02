@@ -6,11 +6,10 @@ import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 import MagnifyIcon from '@mattermost/compass-icons/components/magnify';
 import {Icon} from '@mattermost/compass-ui/components/icon';
+import {isMac} from '@mattermost/shared/utils/user_agent';
 
 import FindAgentsModal from './find_agents_modal';
 import {isAgentsPathActive} from './use_agents_route';
-
-const isMacPlatform = () => (/Mac|iPhone|iPad|iPod/i).test(navigator.platform || navigator.userAgent || '');
 
 // Cmd+K on Mac, Ctrl+K on Windows and Linux (the same split the host uses for its channel
 // switcher). Shift/Alt variants and the other platform's modifier are left alone.
@@ -30,7 +29,7 @@ const FindAgentsButton = () => {
     const intl = useIntl();
     const buttonRef = useRef<HTMLButtonElement>(null);
     const [open, setOpen] = useState(false);
-    const [mac] = useState(isMacPlatform);
+    const [mac] = useState(isMac);
 
     const close = useCallback(() => {
         setOpen(false);

@@ -25,10 +25,6 @@ export interface SubmenuProps {
     menuLabel: string;
     open: boolean;
 
-    // Which way the child grows from the parent row: 'up' (default, for menus
-    // opening above their trigger) or 'down'.
-    grow?: 'up' | 'down';
-
     // Keyboard opens move focus into the child menu; hover leaves it on the row.
     focusOnOpen: boolean;
     onOpen: (focus: boolean) => void;
@@ -43,24 +39,26 @@ export interface SubmenuProps {
 // closes (covers the gap between them and a quick slip). No compass token for this.
 const HOVER_CLOSE_DELAY_MS = 150;
 
+const INITIAL_SIDE = {x: 'right', y: 'down'} as const;
+
 // A parent menu row with a cascading child menu, as the host's AI actions menu
 // has: it opens on click, Enter, Space, ArrowRight or hover, and ArrowLeft or
 // Escape close it again. A menu that hover opened also closes when the pointer
 // leaves the row and the child menu; one opened by click or keyboard stays until closed. The child renders inside the parent menu's floating
 // element (not a second portal), so the parent's outside-click dismissal and
 // focus trap treat it as part of the menu.
-const Submenu = ({label, icon, secondaryLabel, disabled, menuLabel, open, grow = 'up', focusOnOpen, onOpen, onClose, children, ...rest}: SubmenuProps) => {
+const Submenu = ({label, icon, secondaryLabel, disabled, menuLabel, open, focusOnOpen, onOpen, onClose, children, ...rest}: SubmenuProps) => {
     const menuId = `submenu-${useId().replace(/:/g, '')}`;
     const rowRef = useRef<HTMLButtonElement>(null);
     const anchorRef = useRef<HTMLDivElement>(null);
     const {rendered, onExited} = useMenuTransition(open);
 
-    // Which side of the parent the child opens on: right and growing as `grow` says,
-    // flipped where that leaves the viewport.
-    const [side, setSide] = useState<{x: 'right' | 'left'; y: 'up' | 'down'}>({x: 'right', y: grow});
+    // Which side of the parent the child opens on: right and growing down, each flipped where that
+    // leaves the viewport.
+    const [side, setSide] = useState<{x: 'right' | 'left'; y: 'up' | 'down'}>(INITIAL_SIDE);
     useLayoutEffect(() => {
         if (!open) {
-            setSide({x: 'right', y: grow});
+            setSide(INITIAL_SIDE);
             return;
         }
         const rect = anchorRef.current?.getBoundingClientRect();
@@ -69,9 +67,9 @@ const Submenu = ({label, icon, secondaryLabel, disabled, menuLabel, open, grow =
         }
         setSide((prev) => ({
             x: prev.x === 'right' && rect.right > window.innerWidth ? 'left' : prev.x,
-            y: prev.y === 'up' && rect.top < 0 ? 'down' : prev.y,
+            y: prev.y === 'down' && rect.bottom > window.innerHeight ? 'up' : prev.y,
         }));
-    }, [open, grow]);
+    }, [open]);
 
     useEffect(() => {
         if (open && focusOnOpen) {
@@ -207,7 +205,7 @@ const Entry = styled.div`
 `;
 
 // Beside the parent row: past the parent menu's edge, aligned with the row's
-// bottom (growing upward) or, flipped, its top (growing downward).
+// top (growing downward) or, flipped, its bottom (growing upward).
 const ChildAnchor = styled.div`
     position: absolute;
     z-index: 1;

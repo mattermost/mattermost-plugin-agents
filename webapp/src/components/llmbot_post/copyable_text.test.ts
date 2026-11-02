@@ -35,7 +35,6 @@ describe('getCopyableText', () => {
         {name: 'skips rounds without text', rounds: [round(''), round('Kept'), round('  \n')], want: 'Kept'},
         {name: 'nothing to copy', rounds: [round('')], want: ''},
         {name: 'no rounds', rounds: [], want: ''},
-        {name: 'drops the smooth-streaming fade markers', rounds: [round('Hello world')], want: 'Hello world'},
     ])('$name', ({rounds, want}) => {
         expect(getCopyableText(rounds)).toBe(want);
     });

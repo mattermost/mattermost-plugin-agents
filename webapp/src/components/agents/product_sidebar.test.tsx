@@ -175,12 +175,16 @@ describe('ProductSidebar "Your agents" section', () => {
         dots.forEach((title, i) => expect(unread[i]).toContain(title));
     });
 
-    test('renaming a chat shows the new title at once, and restores it when the rename fails', async () => {
+    test.each([
+        {name: 'a saved rename shows the new title', fails: false, shown: 'Renamed'},
+        {name: 'a failed rename keeps the old title and says so', fails: true, shown: 'Older'},
+    ])('$name', async ({fails, shown}) => {
         mockGetAIThreads.mockResolvedValue([thread('1', 'Older')]);
-        let fail!: (e: Error) => void;
-        mockRenameConversation.mockReturnValue(new Promise((_resolve, reject) => {
-            fail = reject;
-        }));
+        if (fails) {
+            mockRenameConversation.mockRejectedValue(new Error('nope'));
+        } else {
+            mockRenameConversation.mockResolvedValue(undefined); // eslint-disable-line no-undefined
+        }
         renderWithStore(AGENTS_ROUTE);
         await screen.findByRole('button', {name: 'Older'});
 
@@ -192,11 +196,10 @@ describe('ProductSidebar "Your agents" section', () => {
 
         // The dialog hides the page from the accessibility tree while it is open.
         const list = screen.getByRole('list', {name: 'Alpha chats', hidden: true});
-        await waitFor(() => expect(within(list).getByRole('button', {name: 'Renamed', hidden: true})).toBeTruthy());
+        await waitFor(() => expect(within(list).getByRole('button', {name: shown, hidden: true})).toBeTruthy());
         expect(mockRenameConversation).toHaveBeenCalledWith('1', 'Renamed');
-
-        fail(new Error('nope'));
-        await waitFor(() => expect(within(list).getByRole('button', {name: 'Older', hidden: true})).toBeTruthy());
-        expect((await screen.findByRole('alert')).textContent).toBe('Couldn\'t rename this chat. Try again.');
+        if (fails) {
+            expect((await screen.findByRole('alert')).textContent).toBe('Couldn\'t rename this chat. Try again.');
+        }
     });
 });

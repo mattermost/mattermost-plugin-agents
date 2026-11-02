@@ -5,6 +5,8 @@ import React, {useEffect, useRef, useState} from 'react';
 import {useIntl} from 'react-intl';
 import styled, {css, keyframes} from 'styled-components';
 
+import {visuallyHidden} from '@/components/visually_hidden';
+
 import {noMotionWhenReduced, prefersReducedMotion} from './motion';
 
 // Replies that start within this long never show the dots, so fast replies do not flash.
@@ -141,18 +143,6 @@ const wave = keyframes`
     30% {
         transform: translateY(calc(-1 * var(--wave-dot-rise, var(--spacing-xxxs))));
     }
-`;
-
-const visuallyHidden = css`
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    padding: 0;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
 `;
 
 const LiveStatus = styled.span`

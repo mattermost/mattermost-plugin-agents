@@ -90,19 +90,16 @@ type BotDropdownProps = {
     floatingClassName?: string
 }
 
-type BotMenuContentProps = {
-    bots: LLMBot[]
-    activeBot: LLMBot | null
-    setActiveBot: (bot: LLMBot) => void
-
-    /** Role of the agent rows; buttons by default, 'menuitem' inside a role='menu' popup. */
-    itemRole?: 'menuitem'
-}
-
-/** The "Choose an Agent" header and agent list, shared by every agent selector menu. */
-export const BotMenuContent = (props: BotMenuContentProps) => {
+export const BotDropdown = (props: BotDropdownProps) => {
     return (
-        <>
+        <DotMenu
+            floatingClassName={props.floatingClassName}
+            icon={props.children}
+            title={props.activeBot?.displayName}
+            dotMenuButton={props.container}
+            dropdownMenu={StyledDropdownMenu}
+            testId={props.testId}
+        >
             <MenuHeader>
                 <MenuGroupHeading label={<FormattedMessage defaultMessage='Choose an Agent'/>}/>
                 <Button
@@ -134,7 +131,6 @@ export const BotMenuContent = (props: BotMenuContentProps) => {
                                 />
                             )}
                             selected={props.activeBot?.id === bot.id}
-                            role={props.itemRole}
                             onClick={() => {
                                 props.setActiveBot(bot);
                             }}
@@ -142,30 +138,11 @@ export const BotMenuContent = (props: BotMenuContentProps) => {
                     );
                 })}
             </BotList>
-        </>
-    );
-};
-
-export const BotDropdown = (props: BotDropdownProps) => {
-    return (
-        <DotMenu
-            floatingClassName={props.floatingClassName}
-            icon={props.children}
-            title={props.activeBot?.displayName}
-            dotMenuButton={props.container}
-            dropdownMenu={BotDropdownMenu}
-            testId={props.testId}
-        >
-            <BotMenuContent
-                bots={props.bots}
-                activeBot={props.activeBot}
-                setActiveBot={props.setActiveBot}
-            />
         </DotMenu>
     );
 };
 
-export const BotDropdownMenu = styled(DropdownMenu)`
+const StyledDropdownMenu = styled(DropdownMenu)`
 	min-width: 270px;
 	max-height: 400px;
 	display: flex;
