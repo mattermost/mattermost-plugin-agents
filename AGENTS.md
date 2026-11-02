@@ -52,6 +52,7 @@ Repo-specific guards also run in `make check-style`: the `build/govet` vet tool 
 - File names: `snake_case.go` / `snake_case.ts(x)`.
 - TypeScript/React: PascalCase components, strict typing, **always styled-components**, never inline `style={{...}}`.
 - New user-facing strings must go through i18n (`make i18n-extract` picks them up).
+- A change that users, admins or integrators would need to know about (a feature, setting, default, tool, permission or license gate) updates the docs in `docs/` in the same PR. Follow `docs/AGENTS.md`.
 - Go tests must be table-driven when there is more than one case.
 - Never introduce a new test/mocking library; prefer to test against real implementations instead.
 - Test-only LLM helpers (mock stream generators, logging wrappers) live in `llm/llmtest`; never import `testing` from a production package.
