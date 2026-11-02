@@ -129,7 +129,7 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		return ErrNotRegenerable
 	}
 
-	release, err := c.reserveRegenerate(post.Id)
+	ctx, release, err := c.reserveRegenerate(ctx, post.Id)
 	if err != nil {
 		return err
 	}
@@ -219,24 +219,27 @@ var regenerateReservationRenewInterval = streaming.StaleStreamThreshold / 3
 // reserveRegenerate atomically claims postID for one regenerate across all
 // nodes, so two concurrent requests can't both pass the live-stream check
 // before either stream has started. The claim is renewed until released, and
-// its TTL frees it if this node dies.
-func (c *Conversations) reserveRegenerate(postID string) (func(), error) {
+// its TTL frees it if this node dies. The returned context is cancelled if the
+// claim is lost, so the run stops before another node's can overlap it.
+func (c *Conversations) reserveRegenerate(ctx stdcontext.Context, postID string) (stdcontext.Context, func(), error) {
 	key := regenerateReservationKeyPrefix + postID
 	token := model.NewId()
 	claimed, err := c.mmClient.KVCompareAndSetWithExpiry(key, nil, token, streaming.StaleStreamThreshold)
 	if err != nil {
-		return nil, fmt.Errorf("failed to reserve post for regeneration: %w", err)
+		return nil, nil, fmt.Errorf("failed to reserve post for regeneration: %w", err)
 	}
 	if !claimed {
-		return nil, fmt.Errorf("unable to regenerate post: %w", streaming.ErrAlreadyStreamingToPost)
+		return nil, nil, fmt.Errorf("unable to regenerate post: %w", streaming.ErrAlreadyStreamingToPost)
 	}
 
+	ctx, cancel := stdcontext.WithCancel(ctx)
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		ticker := time.NewTicker(regenerateReservationRenewInterval)
 		defer ticker.Stop()
+		lastRenewed := time.Now()
 		for {
 			select {
 			case <-stop:
@@ -245,19 +248,24 @@ func (c *Conversations) reserveRegenerate(postID string) (func(), error) {
 				renewed, renewErr := c.mmClient.KVCompareAndSetWithExpiry(key, token, token, streaming.StaleStreamThreshold)
 				if renewErr != nil {
 					c.mmClient.LogWarn("Failed to renew regenerate reservation", "error", renewErr, "post_id", postID)
+					if time.Since(lastRenewed) < streaming.StaleStreamThreshold {
+						continue
+					}
+				} else if renewed {
+					lastRenewed = time.Now()
 					continue
 				}
-				if !renewed {
-					c.mmClient.LogWarn("Regenerate reservation was lost", "post_id", postID)
-					return
-				}
+				c.mmClient.LogWarn("Regenerate reservation was lost; stopping the run", "post_id", postID)
+				cancel()
+				return
 			}
 		}
 	}()
 
-	return func() {
+	return ctx, func() {
 		close(stop)
 		<-done
+		cancel()
 		if _, err := c.mmClient.KVCompareAndSet(key, token, nil); err != nil {
 			c.mmClient.LogWarn("Failed to release regenerate reservation", "error", err, "post_id", postID)
 		}

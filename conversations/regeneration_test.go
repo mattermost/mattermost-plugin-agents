@@ -50,14 +50,14 @@ func (s *regenRecordingStreaming) GetStreamingContext(ctx context.Context, _ str
 // fakeMeetingRegenerator records meeting summary regenerations.
 type fakeMeetingRegenerator struct {
 	postIDs []string
-	during  func()
+	during  func(ctx context.Context)
 	err     error
 }
 
-func (f *fakeMeetingRegenerator) RegenerateSummary(_ context.Context, _ *bots.Bot, _ *llm.Context, _ *store.Conversation, post *model.Post) (*llm.TextStreamResult, error) {
+func (f *fakeMeetingRegenerator) RegenerateSummary(ctx context.Context, _ *bots.Bot, _ *llm.Context, _ *store.Conversation, post *model.Post) (*llm.TextStreamResult, error) {
 	f.postIDs = append(f.postIDs, post.Id)
 	if f.during != nil {
-		f.during()
+		f.during(ctx)
 	}
 	if f.err != nil {
 		return nil, f.err
@@ -145,6 +145,7 @@ func TestHandleRegenerate(t *testing.T) {
 		anchorStreamingAge int64
 		reservedElsewhere  bool
 		waitForRenewal     bool
+		stolenMidRun       bool
 	}{
 		{
 			name:       "thread analysis post regenerates from its stored turn",
@@ -296,6 +297,13 @@ func TestHandleRegenerate(t *testing.T) {
 			postProps:      map[string]any{meetings.ReferencedTranscriptPostID: "transcript-post"},
 			waitForRenewal: true,
 			wantPath:       pathMeeting,
+		},
+		{
+			name:         "losing the reservation mid-run stops the run",
+			operation:    llm.OperationMeetingSummary,
+			postProps:    map[string]any{meetings.ReferencedTranscriptPostID: "transcript-post"},
+			stolenMidRun: true,
+			wantPath:     pathMeeting,
 		},
 		{
 			name:              "concurrent regenerate holding the reservation is refused",
@@ -465,10 +473,24 @@ func TestHandleRegenerate(t *testing.T) {
 				licenseLevel = tt.licenseLevel
 			}
 			meetingRegen := &fakeMeetingRegenerator{err: tt.meetingErr}
+			if tt.stolenMidRun {
+				regenerateReservationRenewInterval = time.Millisecond
+				t.Cleanup(func() { regenerateReservationRenewInterval = streaming.StaleStreamThreshold / 3 })
+				meetingRegen.during = func(ctx context.Context) {
+					kvMu.Lock()
+					kv[reservationKey] = "other-node-token"
+					kvMu.Unlock()
+					select {
+					case <-ctx.Done():
+					case <-time.After(5 * time.Second):
+						assert.Fail(t, "a run that lost its reservation must be cancelled")
+					}
+				}
+			}
 			if tt.waitForRenewal {
 				regenerateReservationRenewInterval = time.Millisecond
 				t.Cleanup(func() { regenerateReservationRenewInterval = streaming.StaleStreamThreshold / 3 })
-				meetingRegen.during = func() {
+				meetingRegen.during = func(context.Context) {
 					select {
 					case <-renewals:
 					case <-time.After(5 * time.Second):
@@ -521,7 +543,11 @@ func TestHandleRegenerate(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.NotContains(t, kv, reservationKey, "a finished regenerate must release its reservation")
+			if tt.stolenMidRun {
+				require.Equal(t, "other-node-token", kv[reservationKey], "a run must not release a reservation it lost")
+			} else {
+				require.NotContains(t, kv, reservationKey, "a finished regenerate must release its reservation")
+			}
 
 			require.Len(t, streamSvc.streamed, 1)
 			require.Same(t, post, streamSvc.streamed[0])
