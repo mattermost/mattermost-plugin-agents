@@ -236,6 +236,51 @@ func TestStreamHeartbeat(t *testing.T) {
 	assert.Equal(t, store.TurnStatusComplete, turn.Status)
 }
 
+// A stream whose turn can't be kept fresh would soon look abandoned to other
+// nodes, which may recover or regenerate it; it must stop instead of running on.
+func TestStreamStopsWhenItsTurnCannotBePersisted(t *testing.T) {
+	tests := []struct {
+		name         string
+		createErr    error
+		heartbeatErr error
+	}{
+		{name: "streaming turn insert fails", createErr: errors.New("db down")},
+		{name: "heartbeats keep failing", heartbeatErr: errors.New("db down")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service, client, ts := newRecoveryTestService(t)
+			service.SetHeartbeatInterval(5 * time.Millisecond)
+			turnLeaseMaxAge = 20 * time.Millisecond
+			t.Cleanup(func() { turnLeaseMaxAge = StaleStreamThreshold / 2 })
+			ts.createErr = tt.createErr
+			ts.heartbeatErr = tt.heartbeatErr
+
+			post := newStreamPost()
+			ctx, err := service.GetStreamingContext(context.Background(), post.Id)
+			require.NoError(t, err)
+			stream := make(chan llm.TextStreamEvent)
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				defer service.FinishStreaming(post.Id)
+				service.StreamToPost(ctx, &llm.TextStreamResult{Stream: stream}, post, "en", "requester-id")
+			}()
+
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				require.Fail(t, "the stream must stop on its own")
+			}
+			require.ErrorIs(t, context.Cause(ctx), errTurnLeaseLost, "the run's context is canceled so its tools stop")
+			last := client.lastUpdate()
+			require.NotNil(t, last)
+			assert.Equal(t, InterruptedReasonLost, last.GetProp(InterruptedProp))
+		})
+	}
+}
+
 func TestNewStreamClearsInterruptedMarker(t *testing.T) {
 	service, client, _ := newRecoveryTestService(t)
 	post := newStreamPost()

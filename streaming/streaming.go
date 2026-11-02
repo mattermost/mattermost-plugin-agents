@@ -99,6 +99,16 @@ type postStreamContext struct {
 // stopped, distinguishing it from shutdown or a superseded run.
 var errStoppedByUser = errors.New("generation stopped by user")
 
+// errTurnLeaseLost cancels a stream whose turn can no longer be kept fresh in
+// the DB: other nodes would soon treat the run as dead and recover or
+// regenerate it, so it must not keep running tools.
+var errTurnLeaseLost = errors.New("streaming turn could not be persisted")
+
+// turnLeaseMaxAge is how long a stream runs without a successful turn write
+// before it stops itself, kept well under StaleStreamThreshold so it stops
+// before peers can consider it abandoned.
+var turnLeaseMaxAge = StaleStreamThreshold / 2
+
 // TurnStore is the subset of store operations needed by the streaming layer.
 // Finalize either creates a fresh anchor (first stream / regen, with the caller
 // having scrubbed any prior turns) or demotes the existing anchor and creates
@@ -126,6 +136,8 @@ type turnAccumulator struct {
 	// turnID is the streaming turn inserted at stream start. Empty when that
 	// insert failed; finalize then falls back to creating the turn.
 	turnID string
+	// persistedAt is when the turn was last written successfully.
+	persistedAt time.Time
 
 	sequence    llm.TurnSequence
 	annotations []llm.Annotation
@@ -409,10 +421,23 @@ func (p *MMPostStreamService) beginTurn(acc *turnAccumulator) {
 		Status:         store.TurnStatusStreaming,
 	}
 	if err := p.turnStore.CreateTurnAutoSequence(turn); err != nil {
-		p.mmClient.LogError("Failed to create streaming assistant turn", "error", err, "post_id", acc.postID)
+		p.mmClient.LogError("Failed to create streaming assistant turn; stopping the stream", "error", err, "post_id", acc.postID)
+		p.cancelStream(acc.postID, errTurnLeaseLost)
 		return
 	}
 	acc.turnID = turn.ID
+	acc.persistedAt = time.Now()
+}
+
+// cancelStream cancels postID's stream context with cause, as Stop does,
+// without waiting for it to finish (the caller may be the stream itself).
+func (p *MMPostStreamService) cancelStream(postID string, cause error) {
+	p.contextsMutex.Lock()
+	sc, ok := p.contexts[postID]
+	p.contextsMutex.Unlock()
+	if ok {
+		sc.cancel(cause)
+	}
 }
 
 func (p *MMPostStreamService) demotePriorAnchor(acc *turnAccumulator) {
@@ -437,7 +462,13 @@ func (p *MMPostStreamService) heartbeatTurn(acc *turnAccumulator) {
 	}
 	if err := p.turnStore.HeartbeatStreamingTurn(acc.turnID, contentJSON); err != nil {
 		p.mmClient.LogWarn("Failed to heartbeat streaming turn", "error", err, "post_id", acc.postID)
+		if time.Since(acc.persistedAt) >= turnLeaseMaxAge {
+			p.mmClient.LogError("Streaming turn heartbeat kept failing; stopping the stream", "post_id", acc.postID)
+			p.cancelStream(acc.postID, errTurnLeaseLost)
+		}
+		return
 	}
+	acc.persistedAt = time.Now()
 }
 
 // finalizeTurn writes the accumulated content and final status onto the turn
@@ -670,6 +701,9 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 		case shuttingDown():
 			finalStatus = store.TurnStatusInterrupted
 			MarkInterrupted(post, InterruptedReasonShutdown, model.GetMillis())
+		case errors.Is(context.Cause(ctx), errTurnLeaseLost):
+			finalStatus = store.TurnStatusInterrupted
+			MarkInterrupted(post, InterruptedReasonLost, model.GetMillis())
 		case errors.Is(context.Cause(ctx), errStoppedByUser):
 			post.AddProp(GenerationStoppedProp, true)
 		}
