@@ -39,7 +39,7 @@ const (
 	autoReplyOtherUserID  = "arotherid123456789012345ab"
 	autoReplyForeignBotID = "arforeignbot1234567890123a"
 	autoReplyChannelID    = "archannelid1234567890123ab"
-	autoReplyTeamID       = "arteam-id"
+	autoReplyTeamID       = "arteam123456789012345678ab"
 	autoReplyRootID       = "arroot-id"
 	autoReplyReplyID      = "arreply-id"
 	autoReplyAgentPostID  = "aragent-post-id"

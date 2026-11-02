@@ -281,6 +281,7 @@ func TestScopedAccessReportBlockers(t *testing.T) {
 	e := scopedAccessEnvironment(t, cfg)
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(true)
 	e.mockAPI.On("GetTeams").Return([]*model.Team{}, nil)
+	e.mockAPI.On("RolesGrantPermission", []string{model.SystemUserRoleId}, model.PermissionJoinPublicTeams.Id).Return(true).Maybe()
 
 	recorder := doRequest(e.api, http.MethodGet, "/admin/agents/"+scopedAccessAgentID+"/scoped_access", nil, testUserID)
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
