@@ -55,7 +55,7 @@ func TestHandleSummarizeTranscriptionDeniedByFilePolicy(t *testing.T) {
 	mockAPI.On("UpdatePost", mock.Anything).Return(&model.Post{}, nil).Once()
 	// The worker logs this as the last step of its denied path, after UpdatePost
 	// has returned and pluginapi has copied the response into the worker's post.
-	// Signalling from the UpdatePost mock instead would let AssertExpectations
+	// Signaling from the UpdatePost mock instead would let AssertExpectations
 	// read the recorded post while the worker is still writing to it.
 	mockAPI.On("LogError", "Error in call recording post", mock.Anything, mock.Anything).Run(func(mock.Arguments) {
 		close(workerDone)
