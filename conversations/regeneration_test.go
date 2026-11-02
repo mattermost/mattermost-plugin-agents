@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -48,11 +50,15 @@ func (s *regenRecordingStreaming) GetStreamingContext(ctx context.Context, _ str
 // fakeMeetingRegenerator records meeting summary regenerations.
 type fakeMeetingRegenerator struct {
 	postIDs []string
+	during  func()
 	err     error
 }
 
 func (f *fakeMeetingRegenerator) RegenerateSummary(_ context.Context, _ *bots.Bot, _ *llm.Context, _ *store.Conversation, post *model.Post) (*llm.TextStreamResult, error) {
 	f.postIDs = append(f.postIDs, post.Id)
+	if f.during != nil {
+		f.during()
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -138,6 +144,7 @@ func TestHandleRegenerate(t *testing.T) {
 		// heartbeat that many milliseconds old.
 		anchorStreamingAge int64
 		reservedElsewhere  bool
+		waitForRenewal     bool
 	}{
 		{
 			name:       "thread analysis post regenerates from its stored turn",
@@ -284,6 +291,13 @@ func TestHandleRegenerate(t *testing.T) {
 			wantPath:           pathConversation,
 		},
 		{
+			name:           "a regenerate outlasting the reservation TTL renews it",
+			operation:      llm.OperationMeetingSummary,
+			postProps:      map[string]any{meetings.ReferencedTranscriptPostID: "transcript-post"},
+			waitForRenewal: true,
+			wantPath:       pathMeeting,
+		},
+		{
 			name:              "concurrent regenerate holding the reservation is refused",
 			operation:         llm.OperationConversation,
 			postProps:         followUpProps,
@@ -373,27 +387,46 @@ func TestHandleRegenerate(t *testing.T) {
 			mm.On("KVGet", mock.Anything, mock.Anything).Return(nil).Maybe()
 			mm.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
 			mm.On("LogDebug", mock.Anything, mock.Anything, mock.Anything).Maybe()
+			var kvMu sync.Mutex
 			kv := map[string]any{}
+			renewals := make(chan struct{}, 1)
 			reservationKey := regenerateReservationKeyPrefix + regenPostID
 			if tt.reservedElsewhere {
 				kv[reservationKey] = "other-node-token"
 			}
-			mm.On("KVCompareAndSetWithExpiry", reservationKey, nil, mock.Anything, streaming.StaleStreamThreshold).
-				Return(func(key string, _, newValue any, _ time.Duration) (bool, error) {
-					if _, held := kv[key]; held {
+			mm.On("KVCompareAndSetWithExpiry", reservationKey, mock.Anything, mock.Anything, streaming.StaleStreamThreshold).
+				Return(func(key string, oldValue, newValue any, _ time.Duration) (bool, error) {
+					kvMu.Lock()
+					defer kvMu.Unlock()
+					current, held := kv[key]
+					if oldValue == nil {
+						if held {
+							return false, nil
+						}
+						kv[key] = newValue
+						return true, nil
+					}
+					if current != oldValue {
 						return false, nil
 					}
 					kv[key] = newValue
+					select {
+					case renewals <- struct{}{}:
+					default:
+					}
 					return true, nil
 				}).Maybe()
 			mm.On("KVCompareAndSet", reservationKey, mock.Anything, nil).
 				Return(func(key string, oldValue, _ any) (bool, error) {
+					kvMu.Lock()
+					defer kvMu.Unlock()
 					if kv[key] != oldValue {
 						return false, nil
 					}
 					delete(kv, key)
 					return true, nil
 				}).Maybe()
+			mm.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
 			if tt.setupMM != nil {
 				tt.setupMM(mm)
 			}
@@ -432,6 +465,17 @@ func TestHandleRegenerate(t *testing.T) {
 				licenseLevel = tt.licenseLevel
 			}
 			meetingRegen := &fakeMeetingRegenerator{err: tt.meetingErr}
+			if tt.waitForRenewal {
+				regenerateReservationRenewInterval = time.Millisecond
+				t.Cleanup(func() { regenerateReservationRenewInterval = streaming.StaleStreamThreshold / 3 })
+				meetingRegen.during = func() {
+					select {
+					case <-renewals:
+					case <-time.After(5 * time.Second):
+						assert.Fail(t, "a long regenerate must renew its reservation")
+					}
+				}
+			}
 			streamSvc := &regenRecordingStreaming{}
 			c := &Conversations{
 				mmClient:         mm,

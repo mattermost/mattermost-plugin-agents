@@ -7,6 +7,7 @@ import (
 	stdcontext "context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/channels"
@@ -210,9 +211,15 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	return nil
 }
 
+// regenerateReservationRenewInterval is how often a running regenerate
+// extends its reservation; tool rounds can outlast the TTL before the new
+// stream's turn starts heartbeating.
+var regenerateReservationRenewInterval = streaming.StaleStreamThreshold / 3
+
 // reserveRegenerate atomically claims postID for one regenerate across all
 // nodes, so two concurrent requests can't both pass the live-stream check
-// before either stream has started. The TTL frees the claim if this node dies.
+// before either stream has started. The claim is renewed until released, and
+// its TTL frees it if this node dies.
 func (c *Conversations) reserveRegenerate(postID string) (func(), error) {
 	key := regenerateReservationKeyPrefix + postID
 	token := model.NewId()
@@ -223,7 +230,34 @@ func (c *Conversations) reserveRegenerate(postID string) (func(), error) {
 	if !claimed {
 		return nil, fmt.Errorf("unable to regenerate post: %w", streaming.ErrAlreadyStreamingToPost)
 	}
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(regenerateReservationRenewInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				renewed, renewErr := c.mmClient.KVCompareAndSetWithExpiry(key, token, token, streaming.StaleStreamThreshold)
+				if renewErr != nil {
+					c.mmClient.LogWarn("Failed to renew regenerate reservation", "error", renewErr, "post_id", postID)
+					continue
+				}
+				if !renewed {
+					c.mmClient.LogWarn("Regenerate reservation was lost", "post_id", postID)
+					return
+				}
+			}
+		}
+	}()
+
 	return func() {
+		close(stop)
+		<-done
 		if _, err := c.mmClient.KVCompareAndSet(key, token, nil); err != nil {
 			c.mmClient.LogWarn("Failed to release regenerate reservation", "error", err, "post_id", postID)
 		}
