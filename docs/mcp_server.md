@@ -158,7 +158,7 @@ Any client that supports remote MCP servers over streamable HTTP can connect. Gi
 1. In Claude Code, run `/mcp`. **mattermost** should show as connected. In other clients, open the server list and check that the Mattermost tools appear.
 2. Ask a read-only question first, for example "Who am I on Mattermost, and which teams am I in?". A reply that names your account confirms the client signed in as you.
 3. Then try tasks that use several tools:
-   - "Read the thread at <permalink> and list the open questions."
+   - "Read this thread (paste a post permalink) and list the open questions."
    - "Find posts from this week about the login bug and summarize them."
    - "Post a short release note for this branch in ~dev-releases." The client asks you to confirm because this changes something.
 
