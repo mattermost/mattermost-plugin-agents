@@ -143,7 +143,6 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                         label={agentsLabel}
                                         icon={<SyncIcon/>}
                                         menuLabel={agentsLabel}
-                                        grow='down'
                                         data-testid='agent-chat-switch-agent'
                                         {...submenuProps('agents')}
                                     >
@@ -176,7 +175,6 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                         label={chatsLabel}
                                         icon={<MessageOutlineIcon/>}
                                         menuLabel={chatsLabel}
-                                        grow='down'
                                         data-testid='agent-chat-recent-chats'
                                         {...submenuProps('chats')}
                                     >

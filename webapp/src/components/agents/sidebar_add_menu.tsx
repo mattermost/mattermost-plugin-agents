@@ -141,7 +141,6 @@ const SidebarAddMenu = () => {
                         label={newChatLabel}
                         icon={<MessagePlusOutlineIcon/>}
                         menuLabel={intl.formatMessage({defaultMessage: 'Choose an agent'})}
-                        grow='down'
                         open={submenu !== null}
                         focusOnOpen={submenu?.focus ?? false}
                         onOpen={(focus) => setSubmenu({focus})}

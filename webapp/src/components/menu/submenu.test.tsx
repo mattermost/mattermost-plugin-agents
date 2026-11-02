@@ -132,3 +132,26 @@ describe('Submenu siblings', () => {
         expect(first.getAttribute('aria-expanded')).toBe('false');
     });
 });
+
+describe('Submenu placement', () => {
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    test.each([
+        {name: 'opens to the right, growing down, when it fits', rect: {top: 100, bottom: 300, right: 500}, x: 'right', y: 'down'},
+        {name: 'grows up when growing down would pass the bottom of the window', rect: {top: 600, bottom: 900, right: 500}, x: 'right', y: 'up'},
+        {name: 'opens to the left when the right side would pass the edge of the window', rect: {top: 100, bottom: 300, right: 1200}, x: 'left', y: 'down'},
+    ])('$name', ({rect, x, y}) => {
+        Object.defineProperty(window, 'innerWidth', {configurable: true, value: 1024});
+        Object.defineProperty(window, 'innerHeight', {configurable: true, value: 768});
+        jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({...rect, left: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => null} as DOMRect);
+        render(<Harness/>);
+
+        fireEvent.click(row());
+
+        const anchor = screen.getByRole('menu', {name: 'Child menu'}).parentElement as HTMLElement;
+        expect(anchor.getAttribute('data-x')).toBe(x);
+        expect(anchor.getAttribute('data-y')).toBe(y);
+    });
+});
