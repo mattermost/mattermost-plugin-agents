@@ -320,3 +320,32 @@ func TestSettlingStreamingTurnKeepsLaterUserTurnsInPlace(t *testing.T) {
 		})
 	}
 }
+
+func TestConcurrentSettlesInOneConversation(t *testing.T) {
+	s, convID := setupStreamStore(t)
+	const streams = 6
+	ids := make([]string, streams)
+	for i := range ids {
+		turn := makeTurn(convID, 0, func(tu *Turn) { tu.Role = "assistant"; tu.Status = TurnStatusStreaming })
+		require.NoError(t, s.CreateTurnAutoSequence(turn))
+		require.NoError(t, s.CreateTurnAutoSequence(makeTurn(convID, 0, func(tu *Turn) { tu.Role = "tool_result" })))
+		ids[i] = turn.ID
+	}
+
+	var wg sync.WaitGroup
+	errs := make([]error, streams)
+	start := make(chan struct{})
+	for i, id := range ids {
+		wg.Go(func() {
+			<-start
+			errs[i] = s.FinalizeStreamingTurn(id, json.RawMessage(`[]`), 0, 0, TurnStatusComplete)
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	for i, id := range ids {
+		require.NoError(t, errs[i])
+		assert.Equal(t, TurnStatusComplete, getTurn(t, s, id).Status)
+	}
+}

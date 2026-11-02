@@ -293,6 +293,21 @@ func (s *Store) settleStreamingTurn(id string, staleAfterMillis int64, update st
 		}
 	}()
 
+	// Lock the conversation before the turn, the same order a turn insert
+	// takes them. One settle at a time per conversation: each reorders
+	// sequences, including other streaming turns, and parks its turn at
+	// MIN(Sequence)-1.
+	var conversationID string
+	if err = tx.Get(&conversationID, `SELECT ConversationID FROM LLM_Turns WHERE ID = $1`, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to read streaming turn: %w", err)
+	}
+	if _, err = tx.Exec(`SELECT 1 FROM LLM_Conversations WHERE ID = $1 FOR UPDATE`, conversationID); err != nil {
+		return false, fmt.Errorf("failed to lock conversation: %w", err)
+	}
+
 	var anchor struct {
 		ConversationID string `db:"conversationid"`
 		Sequence       int    `db:"sequence"`
