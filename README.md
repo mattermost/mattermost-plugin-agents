@@ -18,7 +18,7 @@ Mattermost Agents (plugin ID `mattermost-ai`) adds AI agents to a Mattermost ser
 - **Tools and MCP**: Agents use built-in Mattermost tools, remote MCP servers with per-user OAuth (with a **Connect** card in the conversation), and tools registered by other Mattermost plugins. Dynamic tool loading keeps large tool catalogs out of the model's context.
 - **Built-in Mattermost MCP server**: Connect Claude Code, Claude Desktop, Cursor, VS Code, or any MCP client that supports streamable HTTP to Mattermost, using OAuth with dynamic client registration or a personal access token. Over 100 tools run with the signed-in user's own permissions. See [Mattermost MCP Server](docs/mcp_server.md).
 - **Governance**: Per-tool approval policies, user, team, and channel access controls for agents, attribute-based access control, server audit logging, token usage tracking, and OpenTelemetry tracing. Admins decide which tools exist and which need approval. See the [Admin Guide](docs/admin_guide.md).
-- **Bring your own LLM**: Use local models through OpenAI-compatible APIs (Ollama, vLLM), or OpenAI, Anthropic, AWS Bedrock, Azure OpenAI, Google Gemini and Vertex AI, Cohere, Mistral, and Scale AI. See [LLM Provider Configuration](docs/providers.md) and [Implementing Sovereign AI](docs/sovereign_ai.md).
+- **Bring your own LLM**: Use local models through OpenAI-compatible APIs (Ollama, vLLM), or OpenAI, Anthropic, AWS Bedrock, Azure OpenAI, Google Gemini and Vertex AI, Cohere (including Cohere North), and Mistral. See [Provider configuration](docs/providers.md) and [Sovereign AI deployments](docs/sovereign_ai.md).
 - **Summaries, search, and meetings**: Summarize threads, unread messages, and channels; ask questions about a channel; search with keyword and semantic search; and summarize Mattermost Calls and Zoom meeting recordings.
 - **Files and artifacts**: Agents create text files attached to their replies, read attachments, analyze images with vision-capable models, and render HTML artifacts in the conversation.
 - **Channel use**: @mention an agent in a channel, or set a channel to auto-reply. Tool results in channels can be shared or kept private by the person who asked.
@@ -28,23 +28,37 @@ Some features depend on your Mattermost license level. See the [license requirem
 
 ## Documentation
 
-Documentation is available in the [`docs`](docs/) directory:
+Documentation is in the [`docs`](docs/) directory. The same pages are published on docs.mattermost.com.
 
-- [User Guide](docs/user_guide.md): Use agents, tools, summaries, search, and meeting summaries
-- [Use Mattermost Agents as your personal AI assistant](docs/personal_agent.md): What a personal agent can do across channels, MCP servers, and integrations
-- [Admin Guide](docs/admin_guide.md): Installation, configuration, MCP servers, tool policies, access control, audit logging, tracing, and license requirements
-- [Mattermost MCP Server](docs/mcp_server.md): Connect Claude Code, Claude Desktop, Cursor, VS Code, and other MCP clients to Mattermost
-- [LLM Provider Configuration](docs/providers.md): Configuration for supported LLM providers
-- [AWS Bedrock Setup](docs/aws_bedrock_setup.md): Use Amazon Bedrock with IAM instance profiles
-- [Implementing Sovereign AI](docs/sovereign_ai.md): Deploy agents with local models and data control
-- [Usage Tips](docs/usage_tips.md): Voice dictation, prompting techniques, and workflow tips
-- [Upgrading to Agents V2](docs/upgrading_to_2.0.md): Upgrade path, automatic migrations, and breaking changes from v1.x
-- [Load Testing](docs/load-testing.md): Configure the in-process mock LLM and load-test-ng Agents controller
-- Feature documentation:
-  - [Managing Agents](docs/features/managing_agents.md): Create, edit, and version agents and control their access and MCP tools
-  - [Custom Prompts](docs/features/custom_prompts.md): Save, share, and pin reusable prompts
-  - [Channel Summaries](docs/features/channel_summaries.md): Use the **Ask Agents about this channel** button to summarize and analyze channel activity
-  - [Multiplayer Tool Calling](docs/features/multiplayer_tool_calling.md): Tool approval, credentials, and result visibility in shared channels
+**For users**
+
+- [Use Mattermost Agents](docs/user_guide.md): Start a conversation, choose an agent, attach files, and find every user feature
+- [Use Agents as your personal AI assistant](docs/personal_agent.md): What an agent can do across channels, MCP servers, and integrations, and how to prompt it
+- [Use tools and approve actions](docs/using_tools.md): Accept or reject tool calls and connect your accounts
+- [Use agents in channels](docs/agents_in_channels.md): Mentions, tool use in channels, and auto-reply
+- [Summaries and AI search](docs/summaries_and_search.md): Summarize threads and channels, and search with AI
+- [Meeting summaries](docs/meeting_summaries.md): Summarize Calls and Zoom meetings
+- [Custom prompts](docs/custom_prompts.md): Save, share, and pin reusable prompts
+- [Data handling](docs/data_handling.md): What Agents sends to the LLM and what it stores
+
+**For admins**
+
+- [Admin guide](docs/admin_guide.md): Requirements, quick start, settings map, and license requirements
+- [Configure LLM services](docs/llm_services.md), [Provider configuration](docs/providers.md), and [AWS Bedrock setup](docs/aws_bedrock_setup.md)
+- [Create and manage agents](docs/managing_agents.md) and [Control who can use agents](docs/access_control.md)
+- [Connect agents to MCP servers](docs/mcp_integrations.md) and [Tool approval and credentials](docs/tool_approval.md)
+- [Web search](docs/web_search.md) and [Set up semantic search](docs/embedding_search.md)
+- [Secure AI-generated links and HTML](docs/ai_output_security.md)
+- [Monitor Agents](docs/observability.md), [Back up and automate](docs/backup_and_automation.md), and [Troubleshooting](docs/troubleshooting.md)
+- [Sovereign AI deployments](docs/sovereign_ai.md)
+- [Upgrade from Agents 1.x](docs/upgrading_to_2.0.md)
+
+**For developers**
+
+- [Mattermost MCP server](docs/mcp_server.md): Connect Claude Code, Claude Desktop, Cursor, VS Code, and other MCP clients to Mattermost
+- [Mattermost MCP tool reference](docs/mcp_tools.md): All 121 built-in tools
+- [LLM Bridge for plugins](docs/llm_bridge.md): Call agents and services from another plugin
+- [Load testing](docs/load-testing.md): Configure the in-process mock LLM and the load-test-ng Agents controller
 
 ## Installation
 
@@ -55,20 +69,20 @@ Documentation is available in the [`docs`](docs/) directory:
 ### System Requirements
 
 - Mattermost Server v12.0.0+
-- PostgreSQL database with pgvector extension for semantic search capabilities
+- PostgreSQL database, with the pgvector extension for semantic search
+- **Site URL** set on the Mattermost server
 - Network access to your chosen LLM provider
 
 ## Quick Start
 
 After installation, complete these steps to get started:
 
-1. Navigate to **System Console > Plugins > Agents**
-2. Create an agent and configure it with your LLM provider credentials
-3. Set permissions for who can access the agent
-4. Open the Agents panel from any channel using the AI icon in the right sidebar
-5. Start interacting with your AI assistant
+1. Go to **System Console > Plugins > Agents** and select **Add a Service**. Choose your LLM provider and enter its credentials and a default model.
+2. Open the **Agents** page from the product switcher (grid icon) and select **Create agent**. Choose a username and the service.
+3. Optionally set who can use the agent on its **Access** tab.
+4. Send the agent a direct message, or open the Agents pane from the apps bar.
 
-For detailed configuration instructions, see the [Admin Guide](docs/admin_guide.md).
+For more, see the [Admin guide](docs/admin_guide.md).
 
 ## Integration
 

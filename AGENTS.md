@@ -92,7 +92,7 @@ The plugin emits OpenTelemetry traces. Agent-relevant rules:
 - Existing spans live in `bifrost/` (LLM calls), `llm/tools.go`, `conversations/tool_handling.go`, `mcp/`, `search/`, `websearch/`, and `streaming/`. The `otelgin` middleware adds HTTP spans automatically.
 - To add a span: `ctx, span := telemetry.Tracer().Start(ctx, "span name", trace.WithAttributes(...))`, then `defer span.End()`. Record errors with `span.RecordError(err)` and `span.SetStatus(codes.Error, msg)`. Reuse attribute keys from `telemetry/attributes.go` instead of inventing new ones.
 - When a `*llm.Context` parameter would shadow the `context` package in the same file, import `"context"` as `stdcontext`.
-- Config fields (`TelemetryOutput`, `OpenTelemetryEndpoint`) and local Tempo/Grafana setup live in `docs/admin_guide.md`.
+- Config fields (`TelemetryOutput`, `OpenTelemetryEndpoint`) and local Tempo/Grafana setup live in `docs/observability.md`.
 
 ## Never do
 
@@ -131,5 +131,5 @@ Read these only when the trigger applies:
 - Working inside `mcp/` (MCP client, OAuth, tool caches): `mcp/AGENTS.md`.
 - Working inside `webapp/`: `webapp/AGENTS.md`.
 - Writing or editing Playwright specs in `e2e/`: `e2e/AGENTS.md`.
-- Configuring providers, agents, or the admin UI: `docs/admin_guide.md`.
+- Configuring providers, agents, or the admin UI: `docs/admin_guide.md` (settings map and links to the task pages).
 - When working on prompt evals or modifying the eval harness: `cmd/evalviewer/README.md`.

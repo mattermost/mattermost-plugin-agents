@@ -1,223 +1,75 @@
-# Mattermost Agents User Guide
+# Use Mattermost Agents
 
-Use Mattermost Agents to chat with AI agents in direct messages, the Agents pane, and channels; summarize threads, channels, and meetings; search with AI; and let agents act on your behalf with tools and MCP servers. This guide covers each feature for end users.
+Mattermost Agents adds AI agents to Mattermost. An agent is a bot backed by a large language model (LLM) that your system admin chose. You can ask it questions, have it summarize and search, and let it act for you in Mattermost and in other systems through tools and MCP servers. Agents act with your permissions, and you approve actions that change something. Mattermost Agents was formerly called Mattermost Copilot.
 
-With Mattermost Agents, you can summarize call and meeting recordings, turn long threads and unread channel messages into concise summaries, stay on top of your messages by identifying next steps and decisions, extract learnings and transform content into charts and documentation, dig further into any topic by asking for insights, and leverage voice dictation tools for hands-free communication.
+This page is for people who chat with agents. To set up Agents, see the [Admin guide](admin_guide.md).
 
-## Access AI features
+## What you can do
 
-You can access AI features in Mattermost in the following ways:
+| I want to | Go to |
+|---|---|
+| Have an agent search, read, and post in Mattermost and other systems for me | [Use Agents as your personal AI assistant](personal_agent.md) |
+| Approve what an agent does, or connect my account to a tool | [Use tools and approve actions](using_tools.md) |
+| Bring an agent into a channel or thread | [Use agents in channels](agents_in_channels.md) |
+| Summarize a thread, channel, or unread messages, or search with AI | [Summaries and AI search](summaries_and_search.md) |
+| Summarize a Calls recording or Zoom meeting | [Meeting summaries](meeting_summaries.md) |
+| Save a prompt I reuse | [Custom prompts](custom_prompts.md) |
+| Know what data an agent sends to the LLM | [Data handling](data_handling.md) |
 
-### Web and desktop
+Some features depend on your Mattermost license level. If a feature described here is missing, ask your system admin. The full list is in [License requirements](admin_guide.md#license-requirements).
 
-Access AI features in one of the following ways:
+## Start a conversation
 
-- Select the **Agents** icon in the apps sidebar.
-- @mention an AI bot in any channel where you have access (such as `@copilot`).
-- Open the **AI Actions** menu in the message composer to insert saved **Custom prompts** templates or open **Manage prompts**.
-- Use the **AI Actions** menu by hovering over the first message in any conversation thread (see [license requirements](admin_guide.md#license-requirements))
-- Use the **Ask AI** option in channels with unread messages (see [license requirements](admin_guide.md#license-requirements))
-- Use **Ask Agents about this channel** in a channel header to summarize recent activity, focus on a date range, or ask a question about the current channel. See [Channel Summaries](features/channel_summaries.md).
+| Where | How | Notes |
+|---|---|---|
+| Direct message | Open a direct message with an agent's bot account. | Private. Tools can run here by default. |
+| Agents pane | Select the **Agents** icon in the apps bar to open the right-hand pane, then start a new chat. | Private. Has suggested prompts, pinned custom prompts, file attachments, and the **Tools** menu. |
+| Channel or thread | @mention the agent by its username, for example `@assistant`. | Visible to everyone in the channel. Needs a Professional license or higher. See [Use agents in channels](agents_in_channels.md). |
+| Mobile | Open a direct message with the agent. | Mobile can't start MCP OAuth. Use web or desktop to connect tools that need your account. |
 
-![AI Actions menu in the message composer, including the Custom prompts entry.](img/ai-actions-menu-composer.png)
+To see which agents exist on your server, select the product switcher (grid icon) and choose **Agents**. The page lists every agent you can use. Agents you can't edit are marked **Read only**. People with permission to manage agents can create and edit them there. See [Create and manage agents](managing_agents.md).
 
-### Mobile
+## Choose an agent
 
-Start or open a direct message with an agent. If your system admin has configured multiple agents, select one from any agent picker on web or desktop — that choice syncs to mobile. You can also switch agents on mobile by starting or opening a direct message with each agent by name.
+If your workspace has several agents, pick one from any agent picker, such as the Agents pane, the **Custom prompts** menu, or the search bar. Your choice is saved to your account and applies on web, desktop, and mobile. Until you choose, Mattermost uses the default agent your admin set. You can also @mention a specific agent by name.
 
-## Conversational AI features
+An agent doesn't remember other conversations. It knows only the current conversation, plus whatever it reads with its tools.
 
-### Chat with agents
+## Attach files and images
 
-You can have conversations with Agents in several ways:
+You can attach files in the Agents pane, in direct messages, and when you @mention an agent in a channel.
 
-**Agents pane**: Use the Agents right-hand pane for a streamlined experience. Begin with suggested prompts or pinned custom prompt buttons, or engage in a private thread with an Agent for a tailored experience. If you have follow-up questions or need further insights, simply ask. You can also attach files for AI analysis or reference.
+- Images are used only when your admin turned on vision for that agent and the model supports it. Images larger than the provider's maximum dimensions are left out, and the agent tells you so.
+- Other files contribute text only when Mattermost can read text from them, such as plain-text files or documents with extracted text. Text extraction for PDF and Office documents depends on the server setting **Enable document search by content** (`FileSettings.ExtractContent`, on by default) under **System Console > Environment > File Storage**. Very large text may be shortened. If one attachment can't be read, the agent skips it and continues.
+- In a thread, a later @mention can include images attached to earlier posts in that thread.
 
-**Direct messages**: Start a direct message with an Agent bot to have a private conversation. Chat privately with an Agent in direct message threads like you would any other Mattermost user.
+## Ask for output as a file
 
-**Channel mentions**: [@mention](https://docs.mattermost.com/collaborate/mention-people.html) Agent bots by their username, such as `@copilot`, in any thread to bring Agents capabilities to your conversation. The bot responds in a thread to keep channels organized, and other team members can view and contribute to the conversation. An Agent can help extract information quickly or transform discussions into charts, resources, documentation, and more, and can find action items and open questions in new messages. When you @mention an Agent in a thread, it uses earlier thread context up to that mention, including earlier posts in the thread. Later replies posted after that mention, and temporary placeholder bot posts, aren't included in that request.
+Ask the agent to put long output in a file, for example "the meeting notes as a Markdown file" or "a Python script that parses this log, as a file". The agent attaches the file to its reply.
 
-When you attach files in the Agents pane, direct messages, or channel @mentions, Agents can use them as conversation context. Images are included only when vision is enabled for the bot. Other files contribute text only when Mattermost can read text from them, such as plain-text files or files with extracted text. Very large attachment text may be shortened, and if one attachment can't be read, that attachment is skipped while the conversation continues.
+- Files are text only. The file extension sets the type (`.md`, `.csv`, `.py`, `.html`).
+- An agent can attach up to 10 files to one reply. Each file is limited by the server's maximum file size.
+- In direct messages this is always available. In channels it follows the admin setting **Enable Channel Mention Tool Calling**.
+- When an agent posts for you with `create_post`, `dm`, or `group_message`, it can attach text files to that post too.
+- If your admin enabled HTML artifacts, an `.html` file the agent creates renders as an interactive page in the reply after you select **Run**. See [Secure AI-generated links and HTML](ai_output_security.md#html-artifacts).
 
-> **Note:** Whether AI-generated links are clickable depends on your system admin configuration. Treat links in AI responses with caution and verify destinations before opening them.
+## Actions on a message
 
-### Select an agent
+Hover over a message and select the **AI Actions** icon.
 
-If multiple agents are configured for your Mattermost workspace, select your preferred agent from any agent picker — such as the Agents pane, **Custom prompts**, or semantic search. Your choice is saved to your account and syncs across web, desktop, and mobile. Until you choose an agent, Mattermost uses the workspace default configured by your system administrator.
+| Action | What it does | Minimum license |
+|---|---|---|
+| **Summarize Thread** | Summarizes the thread in the Agents pane. Only you see it. | Professional |
+| **Find action items** | Lists action items in the thread. | Professional |
+| **Find open questions** | Lists unanswered questions in the thread. | Professional |
+| **React for me** | Picks an emoji that fits the message and adds the reaction as you. | Any |
 
-You can also @mention a specific agent by name in channels.
+The menu has an agent selector at the top. See [Summaries and AI search](summaries_and_search.md) for the details.
 
-### Channel auto-reply
+## Voice dictation
 
-Channel members with permission to manage channel settings can configure one agent to reply automatically in a channel, without being @mentioned. Auto-reply supports five modes, matching the options in the channel settings UI:
+Agents has no built-in dictation. Use your operating system's: **Windows key + H** on Windows, or **System Settings > Keyboard > Dictation** on macOS. Linux needs a separate speech recognition tool.
 
-- **Off** (default): The agent replies only when @mentioned or in direct messages.
-- **Top-level posts only**: The agent automatically replies to each new top-level post, starting a thread. Further replies in that thread still require an @mention (or the "loop in" link).
-- **Threads too**: Everything above, plus the agent automatically replies to every non-bot reply in the channel's threads.
-- **Ambient (Experimental)**: The agent watches the channel and replies only after a separate classification step decides a response is useful; that step uses the selected agent's model. Optional **Ambient instructions** describe when to reply. If classification fails or returns no, the agent stays silent. When Ambient does reply, that reply uses the selected agent's model, tools, and permissions.
-- **Ambient in mentioned threads (Experimental)**: Like Ambient, with the same instructions, but only in threads the agent has already replied in. @mention the agent in a thread to bring it in; after that, later messages in the thread go through the same classification step.
+## Links in AI responses
 
-Ambient modes are available only when a system admin turns on **Enable ambient auto-replies** in the plugin settings. When it's off, ambient modes can't be saved and channels already using them stop replying automatically.
-
-To configure auto-reply, select the channel name to open the channel dropdown, select **Channel Settings**, and open the **Agents** tab. Choose the auto-reply mode and the auto-replying agent, then select **Save**. For either ambient mode, you can also set instructions. The tab appears only in public and private channels (not direct or group messages), only for users with the channel-management permission, and only when at least one agent is available in the channel.
-
-An automatic reply behaves exactly as if you had @mentioned the agent: the same tool permissions, usage restrictions, and conversation model apply, using the posting user's permissions. Posts from webhooks and system messages never trigger auto-replies, and posts from other bots don't either unless the integration explicitly opts in with the `activate_ai` post property. The "you must @mention an agent" reminder still works alongside auto-reply: when the agent does not reply automatically — for example a thread reply in a channel using the **Top-level posts only** mode — replying to an agent's thread without a mention shows the usual reminder.
-
-> **Note:** The channel settings tab requires Mattermost Server v11.10 or later; on older servers, users with permission to manage channel settings can still configure auto-reply through the plugin REST API. Channel auto-reply is available at Enterprise Advanced; on other plans the **Agents** channel settings tab is not shown. See [license requirements](admin_guide.md#license-requirements) for details.
-
-### Use custom prompt templates
-
-Custom prompts are saved prompt templates that you can reuse from the message composer or from pinned buttons in the Agents pane.
-
-To manage custom prompts:
-
-1. Open the message composer in any channel or direct message.
-2. Select **AI Actions**.
-3. Open **Custom prompts**, then select **Manage prompts**.
-4. Select **Create new** to open the prompt editor and add a prompt with an **Action Title**, optional description, and template.
-5. Choose **Public** to share the prompt with other users, or **Private** to keep it visible only to you.
-6. Pin or unpin prompts directly from the prompt list. Pinned prompts appear as shortcuts in the Agents pane.
-
-The **All Prompts** tab shows prompts you created plus shared prompts from other users. The **Your Prompts** tab shows only prompts you created. Selecting a prompt from either list opens a dedicated prompt view inside the modal, with a back arrow to return to the list and the prompt name as the title. Shared prompts from other users open read-only. Only the prompt creator can edit or delete a prompt. Prompt titles can be up to 64 characters, and every prompt requires a template.
-
-When you select a saved prompt from **Custom prompts**, Mattermost renders the template with the current context and inserts the result into your draft. If you use this menu outside a bot direct message, Mattermost adds the currently selected bot mention before the rendered text. Pinned prompts in the Agents pane render the current saved template and send it immediately as a message.
-
-Custom prompt templates support the following variables:
-
-| Variable | Inserts |
-|----------|---------|
-| `{{.Username}}` | Your Mattermost username |
-| `{{.FirstName}}` | Your first name |
-| `{{.LastName}}` | Your last name |
-| `{{.Channel}}` | The current channel display name |
-| `{{.ChannelName}}` | The current channel name |
-| `{{.Team}}` | The current team display name |
-| `{{.TeamName}}` | The current team name |
-| `{{.Time}}` | The current UTC time |
-| `{{.BotName}}` | The selected agent display name, when available |
-
-If a value isn't available in the current context, the rendered prompt leaves it blank.
-
-### Use tools
-
-When Agents use external tools or integrations, Mattermost may prompt you to review tool usage based on the tool approval policy configured by your system admin. When review is required, only the person who requested the Agent interaction can accept or reject pending tools. For those pending tools, you'll see a card showing the tool name and description, arguments being passed to the tool, and **Accept** and **Reject** options. If multiple tools are waiting for a decision, Mattermost may also show **Accept all** and **Reject all** controls.
-
-By default, tool calls are available in direct messages. If your system admin enables the experimental **Enable Channel Mention Tool Calling** setting, some tools can also run in channels. Depending on the configured tool policy, each tool call may require approval before execution or run automatically. A single Agent response can include both auto-approved tools and tools still waiting for approval. In that case, the auto-approved badge applies only to the individual tool that ran automatically, while pending tools continue to show **Accept** and **Reject** options. Tool results are shown after execution, and if a result needs a visibility decision, you'll see **Share** and **Keep private** options.
-
-Only the person who started the conversation can approve or reject tool calls. In direct messages with an agent, approved tool results are shared automatically because only you can view that conversation.
-
-In channels, tool approval can be a two-step process. After you approve a tool call and it runs, Mattermost can prompt you again to decide whether the tool arguments and results should be shared with the channel or kept private. If you choose **Keep Private**, other channel members don't see that tool data, and the channel-visible follow-up response is generated without the private content.
-
-If a tool execution fails, the Agent can continue with a follow-up response instead of stopping immediately. After three consecutive failed tool executions, the Agent stops calling further tools and is instructed to explain the latest error and ask you for guidance or any missing information. A successful tool execution resets that count.
-
-On web and desktop, start a new chat in the Agents right-hand pane and open the **Tools** menu in the header. The menu lists configured tool providers. Use **Refresh tool providers** in the menu header to rediscover available MCP tools—for example, after your admin adds or changes providers, or after you connect an OAuth-backed provider. For MCP servers that use OAuth, you'll see **Connect** when you're not authenticated and **Disconnect** when an OAuth session applies. You can turn individual providers on or off from this menu, and your choices are saved as your personal preferences. Mattermost doesn't send OAuth connection prompts as ephemeral posts in the conversation; use the **Tools** menu to check connection state and complete **Connect** or **Disconnect** flows.
-
-> **Note:** The Mattermost mobile apps don't currently support starting MCP OAuth connections from the Agents experience. Use web or desktop to connect OAuth-backed MCP providers.
-
-Depending on your workspace configuration, available tools in direct messages, and in channels when enabled by your system admin, can include:
-
-- Mattermost MCP tools, including tools to search posts, find users, and discover available agents. These tools are available through embedded MCP by default when your workspace and agent tool settings allow them
-- MCP tools provided by compatible installed Mattermost plugins that register tools with Agents, after an admin enables those plugin tools
-- MCP tools provided by separately configured remote MCP servers, after an admin enables them
-
-Tool availability depends on your user permissions, provider connection status, workspace configuration, and context.
-
-Some MCP providers require each user to connect their own account before those tools become available. When that applies, open the **Tools** menu in the Agents pane or RHS, select **Connect** for the provider, and wait for the list to refresh with the newly available tools.
-
-You don't have to connect providers ahead of time. When you ask for something that needs a provider you haven't connected, the agent can show a **Connect** card in the conversation explaining why it needs that provider. Select **Connect** to sign in with your own account in a new window. As soon as you're connected, the agent picks up where it left off with the provider's tools. If you close the window before finishing, select **Connect** again to retry. Select **Skip** if you'd rather not connect; the agent continues without it. If your sign-in to a provider expires during a conversation, the agent shows the card again so you can reconnect. Only the person who started the conversation can respond to the card.
-
-Some agents are configured by an admin to use **service account authentication** instead of per-user connections. When you chat with one of those agents, you're never asked to connect an account and the **Tools** menu isn't shown for that agent. External MCP tools run under admin-configured credentials; Mattermost and plugin tools still run with your own permissions. Tool approval works the same as with any other agent: if a tool call requires review, you still see the **Accept** and **Reject** options.
-
-### Ask agents to create files
-
-You can ask an agent to produce content as a file instead of pasting it into the chat. For example, ask for "the meeting notes as a markdown file" or "a Python script that parses this log, as a file". The agent creates the files and attaches them to its reply, so you can download or share them like any other Mattermost attachment.
-
-File creation supports text-based formats — the file name's extension determines the file type (such as `.md`, `.csv`, `.py`, or `.html`) — and an agent can attach up to 10 files to a single reply, with each file's content limited by the server's maximum file size setting. In direct messages, file creation is always available. In channels, it follows the same admin setting as other channel tool calling (see [Use tools](#use-tools)).
-
-Agents can also attach created files to posts they make on your behalf. When you ask an agent to post a message for you using the create-post tooling, it can include files it generates inline, and those files are attached to the new post.
-
-## Analyze threads and channels
-
-### Summarize discussion threads
-
-Summarizing a discussion thread is available at Professional and above. See [license requirements](admin_guide.md#license-requirements) for details.
-
-To summarize a discussion thread:
-
-1. Hover over the first message in any [conversation thread](https://docs.mattermost.com/collaborate/organize-conversations.html).
-2. Select the **AI Actions** icon.
-3. Select **Summarize Thread**. 
-
-The thread summary is generated in the Agents pane, and only you can view the summary.
-
-This is particularly useful for catching up on long discussions, creating meeting notes, and sharing outcomes with team members. You can also extract action items or find open questions in the same menu.
-
-### Summarize unread channels
-
-Summarizing unread Mattermost channels is available at Professional and above. See [license requirements](admin_guide.md#license-requirements) for details.
-
-To summarize unread Mattermost channels:
-
-1. Scroll to the **New Messages** cutoff line in a channel with unread messages.
-2. Select **Ask AI**.
-3. Select **Summarize new messages**. 
-
-The channel summary is generated in the Agents pane, and only you can view the summary.
-
-For more flexible channel analysis options, including **Ask Agents about this channel**, prompts, and date ranges, see [Channel Summaries](features/channel_summaries.md).
-
-## Search with AI
-
-You can enhance Mattermost [search](https://docs.mattermost.com/collaborate/search-for-messages.html) with AI capabilities. AI search is available at Enterprise and above (see [license requirements](admin_guide.md#license-requirements)), and AI search is an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature.
-
-Select the Mattermost search bar, choose **Agents**, and ask a question or enter search terms (such as "what did we decide about the new product launch?"). The selected agent opens a conversation in the Agents pane and searches Mattermost for you: it can run several keyword searches and read the surrounding threads before it answers. If your system admin has set up embedding search, the agent also uses semantic search, which finds related content even without the exact keywords. The answer cites the posts it's based on with inline links, and you can reply in the thread to ask follow-up questions. Searches run as you, so the agent only finds content you have access to.
-
-To ask about the channel you're viewing, use the `/ask-channel` slash command followed by your question. The agent starts by searching that channel and, if the answer isn't there, can search other content you have access to.
-
-Searching requires the agent to have access to the built-in Mattermost tools. Contact your system admin if the agent replies that it can't search.
-
-This feature accelerates decision-making and improves information flows by making it easier to find relevant content across threads, channels, and teams.
-
-Contact your system admin if this feature isn't available for your Mattermost instance.
-
-## Analyze images
-
-For AI models with vision capabilities, attach an image file to your message when chatting with an Agent or @mentioning an Agent in a channel to ask questions about the image or request analysis. The Agent responds based on the visual content. Images that exceed the provider's documented maximum dimensions are omitted and replaced with a short note so the rest of the conversation can continue.
-
-In channel threads, a later @mention can also include image attachments from earlier posts in the same thread when those posts are part of the thread context.
-
-Your system admin must enable vision capabilities for your bot, and the underlying AI model must support vision features.
-
-## Record calls to summarize meetings
-
-You can leverage Mattermost Calls to turn meeting recordings into actionable summaries with a single action. Ensure key points of your calls and meetings are captured and shared easily, and share meeting insights with your team and the broader organization.
-
-To summarize a Mattermost call recording:
-
-1. [Start a call](https://docs.mattermost.com/collaborate/make-calls.html#start-a-call) in Mattermost and [record the call](https://docs.mattermost.com/collaborate/make-calls.html#record-a-call) during the meeting.
-2. Once the call ends and the call recording and transcription is ready, select the **Create meeting summary** option located directly above the call recording.
-
-The meeting summary is generated and shared as a direct message with the person who requested the meeting summary.
-
-Both call recordings and recorded meeting summarization are available at Enterprise and above. See [license requirements](admin_guide.md#license-requirements) for details. Contact your system admin if these features aren't available for your Mattermost instance.
-
-
-## Summarize Zoom meetings in Mattermost
-
-The Zoom plugin must be [enabled and configured](https://docs.mattermost.com/integrate/zoom.html) by a Mattermost system admin and Zoom cloud recordings and transcripts must be enabled before you can summarize Zoom meetings.
-
-If the Zoom plugin is enabled and configured, subscribe a Mattermost channel to a Zoom meeting (`/zoom subscription add [meeting ID]`) and record the meeting. Once the recording and transcription are available, they are automatically shared back to the channel.
-
-Use Mattermost to turn Zoom meeting recordings into actionable AI-generated summaries with any model of your choosing, including your own. By summarizing your Zoom meeting recordings in Mattermost, you can easily share the insights with your team and the broader organization, enhancing communication and productivity without sacrificing data privacy and control.
-
-To summarize a Zoom meeting in Mattermost:
-
-1. Subscribe a Mattermost channel to a recurring Zoom meeting with `/zoom subscription add [meeting ID]` or start a meeting using the Zoom button in the Mattermost right-hand sidebar (RHS).
-2. Record the Zoom meeting.
-3. Once the meeting ends and the transcript file is posted to Mattermost, select the **Create meeting summary** option located directly above the file.
-
-![Select the Create meeting summary option to summarize your Zoom meeting in Mattermost.](img/create-meeting-summary-zoom.png)
-
-4. The meeting summary is generated and shared as a direct message with the person who requested the meeting summary.
-
-![Easily share the updates from your Zoom meetings with your team and broader organization by turning recordings into detailed summaries at the click of a button.](img/copilot-Zoom-Meeting-Summary.png)
+By default, an agent's Markdown links to other sites appear as plain text with the address shown, so you can read the destination but can't click it. Citations from web search stay clickable. Your admin can allow clickable links, optionally limited to specific domains. A model can be tricked into pointing a link at a harmful site, so check where a link goes before you open it.
