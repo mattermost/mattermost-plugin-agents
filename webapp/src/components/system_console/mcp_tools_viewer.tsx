@@ -32,14 +32,14 @@ type MCPToolsViewerProps = {
     // Like a React state setter: pass a function to apply the change to the
     // configuration as it is when the change is applied.
     onConfigChange: (update: MCPConfig | ((current: MCPConfig) => MCPConfig)) => void;
-    initialToolsData?: MCPToolsResponse | null;
 
-    // onReviewServer opens the tool review for a saved remote server.
-    onReviewServer?: (server: MCPServerConfig) => void;
+    // initialToolsData, when passed, is the tools list kept current by the
+    // parent (null while it loads). The viewer shows each new list it gets.
+    initialToolsData?: MCPToolsResponse | null;
 };
 
 // Main component for MCP Tools viewer
-const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData, onReviewServer}: MCPToolsViewerProps) => {
+const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsViewerProps) => {
     const intl = useIntl();
     const [toolsData, setToolsData] = useState<MCPToolsResponse | null>(initialToolsData || null);
     const [loading, setLoading] = useState(false);
@@ -48,15 +48,33 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData, onReviewSe
     const [clearSuccess, setClearSuccess] = useState<string | null>(null);
     const seededRef = useRef(false);
 
+    // Responses from a superseded fetch, or older than the parent's latest
+    // list, are ignored.
+    const requestRef = useRef(0);
+
+    useEffect(() => {
+        if (initialToolsData) {
+            requestRef.current++;
+            setToolsData(initialToolsData);
+        }
+    }, [initialToolsData]);
+
     const fetchTools = useCallback(async (opts: {showLoading?: boolean; propagateError?: boolean} = {}) => {
+        const request = ++requestRef.current;
         try {
             if (opts.showLoading) {
                 setLoading(true);
             }
             const response = await getMCPTools();
+            if (request !== requestRef.current) {
+                return;
+            }
             setToolsData(response);
             setError(null);
         } catch (err) {
+            if (request !== requestRef.current) {
+                return;
+            }
             if (opts.propagateError) {
                 throw err;
             }
@@ -98,10 +116,14 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData, onReviewSe
         }
     }, [initialToolsData, fetchTools]);
 
+    // A parent passing initialToolsData refreshes it on sign-in itself.
+    const parentRefreshes = initialToolsData !== undefined; // eslint-disable-line no-undefined
     useMCPConnectionEvents(
         useCallback(() => {
-            fetchTools();
-        }, [fetchTools]),
+            if (!parentRefreshes) {
+                fetchTools();
+            }
+        }, [fetchTools, parentRefreshes]),
     );
 
     // Retroactively seed vetted tool configs for existing servers.
@@ -331,17 +353,14 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData, onReviewSe
                 {toolsData && toolsData.servers.length > 0 && (
                     <ServersList>
                         {toolsData.servers.map((server) => {
-                            const serverConfig = findServerConfig(server);
-                            const reviewable = onReviewServer && server.serverType === 'remote' && serverConfig?.id;
                             return (
                                 <MCPServerToolRow
                                     key={server.url}
                                     server={server}
-                                    serverConfig={serverConfig}
+                                    serverConfig={findServerConfig(server)}
                                     onServerConfigChange={(updatedConfig) =>
                                         handleServerConfigChange(server, updatedConfig)
                                     }
-                                    onReview={reviewable ? () => onReviewServer(serverConfig) : undefined} // eslint-disable-line no-undefined
                                 />
                             );
                         })}

@@ -351,34 +351,38 @@ describe('MCPToolsViewer — plugin branch', () => {
     });
 });
 
-describe('MCPToolsViewer — remote server review', () => {
-    test('offers a review of a saved remote server and opens it with that server', async () => {
+describe('MCPToolsViewer — tools list from the parent', () => {
+    const toolsList = (needsOAuth: boolean): MCPToolsResponse => ({
+        servers: [{
+            name: 'Remote',
+            url: 'https://mcp.example.com',
+            serverType: 'remote',
+            enabled: true,
+            id: 'server-id',
+            tools: needsOAuth ? [] : [{name: 'search', description: 'Search', inputSchema: null, defaultPolicy: 'ask'}],
+            needsOAuth,
+            oauthURL: needsOAuth ? 'https://auth.example.com' : undefined, // eslint-disable-line no-undefined
+            error: null,
+        }],
+    });
+
+    test('shows each newer list the parent passes', async () => {
         const remote = {id: 'server-id', name: 'Remote', enabled: true, baseURL: 'https://mcp.example.com', headers: {}};
-        const onReviewServer = jest.fn();
-        render(
+        const renderViewer = (data: MCPToolsResponse) => (
             <IntlProvider locale='en'>
                 <MCPToolsViewer
                     mcpConfig={makeMCPConfig({servers: [remote]})}
                     onConfigChange={jest.fn()}
-                    onReviewServer={onReviewServer}
-                    initialToolsData={{
-                        servers: [{
-                            name: 'Remote',
-                            url: 'https://mcp.example.com',
-                            serverType: 'remote',
-                            enabled: true,
-                            id: 'server-id',
-                            tools: [{name: 'search', description: 'Search', inputSchema: null, defaultPolicy: 'ask'}],
-                            needsOAuth: false,
-                            error: null,
-                        }],
-                    }}
+                    initialToolsData={data}
                 />
-            </IntlProvider>,
+            </IntlProvider>
         );
+        const {rerender} = render(renderViewer(toolsList(true)));
+        expect(await screen.findByText('Needs OAuth')).not.toBeNull();
 
-        fireEvent.click(await screen.findByRole('button', {name: 'Review tools for Remote'}));
+        rerender(renderViewer(toolsList(false)));
 
-        expect(onReviewServer).toHaveBeenCalledWith(remote);
+        expect(await screen.findByText('1/1 tools enabled')).not.toBeNull();
+        expect(screen.queryByText('Needs OAuth')).toBeNull();
     });
 });

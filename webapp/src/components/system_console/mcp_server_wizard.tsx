@@ -21,15 +21,15 @@ import {BooleanItem, TextItem, ItemLabel} from './item';
 import {HeaderMapEditor} from './mcp_header_map_editor';
 import MCPServerDescription from './mcp_server_description';
 import MCPServerToolRow from './mcp_server_tool_row';
-import {MCPServerConfig, MCPServerInfo, MCPToolConfig, MCPToolInfo, PersistMCPServerScope} from './mcp_types';
+import {reviewToolConfigs} from './mcp_tool_review';
+import {MCPServerConfig, MCPServerInfo, PersistMCPServerScope} from './mcp_types';
 
 // persistServer saves server within scope and returns it as saved.
 export type PersistMCPServer = (server: MCPServerConfig, scope?: PersistMCPServerScope) => Promise<MCPServerConfig>;
 
 export type MCPServerWizardMode =
     | {kind: 'add'}
-    | {kind: 'edit'; server: MCPServerConfig}
-    | {kind: 'review'; server: MCPServerConfig};
+    | {kind: 'edit'; server: MCPServerConfig};
 
 // connectionSettings is what determines how the server is reached and as
 // whom; auto-fill connects with the saved settings, so it waits for these to
@@ -117,39 +117,9 @@ const emptyServer: MCPServerConfig = {
     clientSecret: '',
 };
 
-// reviewToolConfigs gives every discovered tool an explicit policy: the one an
-// admin already chose, else the server-computed suggestion. Stored entries for
-// tools the server no longer lists are kept.
-export const reviewToolConfigs = (server: MCPServerConfig, tools: MCPToolInfo[]): MCPToolConfig[] => {
-    const stored = server.tool_configs ?? [];
-    const discovered = new Set(tools.map((tool) => tool.name));
-    const reviewed = tools.map((tool): MCPToolConfig => {
-        const existing = stored.find((tc) => tc.name === tool.name);
-        if (existing?.policy) {
-            return existing;
-        }
-        return {
-            ...existing,
-            name: tool.name,
-            policy: tool.suggestedPolicy || tool.defaultPolicy || 'ask',
-            enabled: existing?.enabled ?? true,
-        };
-    });
-    return [...reviewed, ...stored.filter((tc) => !discovered.has(tc.name))];
-};
-
 const errorMessage = (err: unknown, fallback: string) => (err instanceof Error && err.message ? err.message : fallback);
 
-const initialStep = (mode: MCPServerWizardMode): Step => {
-    switch (mode.kind) {
-    case 'add':
-        return 'details';
-    case 'edit':
-        return 'loading';
-    default:
-        return 'connect';
-    }
-};
+const initialStep = (mode: MCPServerWizardMode): Step => (mode.kind === 'add' ? 'details' : 'loading');
 
 const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
     const intl = useIntl();
@@ -217,10 +187,6 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
     }, [intl]);
 
     useEffect(() => {
-        if (mode.kind === 'review') {
-            discover(mode.server);
-        }
-
         // An edit starts from the server as it is saved now, not this page's
         // copy, and saves only what the admin changed on top of it.
         if (mode.kind === 'edit') {
@@ -398,24 +364,15 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
 
     const serverName = savedServer?.name || trimmedName;
     const title = (() => {
-        switch (mode.kind) {
-        case 'add':
+        if (mode.kind === 'add') {
             return <FormattedMessage defaultMessage='Add remote MCP server'/>;
-        case 'edit':
-            return (
-                <FormattedMessage
-                    defaultMessage='Edit {serverName}'
-                    values={{serverName: savedServer?.name || mode.server.name}}
-                />
-            );
-        default:
-            return (
-                <FormattedMessage
-                    defaultMessage='Review tools for {serverName}'
-                    values={{serverName}}
-                />
-            );
         }
+        return (
+            <FormattedMessage
+                defaultMessage='Edit {serverName}'
+                values={{serverName: savedServer?.name || mode.server.name}}
+            />
+        );
     })();
 
     const steps: Array<{key: Step; label: string}> = [
@@ -614,7 +571,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                     description={connection.message}
                     primaryButtonLabel={<FormattedMessage defaultMessage='Try again'/>}
                     onPrimaryAction={() => savedServer && discover(savedServer)}
-                    secondaryButtonLabel={mode.kind === 'review' ? null : <FormattedMessage defaultMessage='Edit details'/>}
+                    secondaryButtonLabel={<FormattedMessage defaultMessage='Edit details'/>}
                     onSecondaryAction={() => setStep('details')}
                 />
             );

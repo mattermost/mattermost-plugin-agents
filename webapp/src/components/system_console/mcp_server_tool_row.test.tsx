@@ -334,8 +334,8 @@ describe('MCPServerToolRow — unreviewed tools', () => {
         error: null,
         tools: [
             {name: 'reviewed_tool', description: 'Reviewed', inputSchema: null, defaultPolicy: 'ask'},
-            {name: 'toggled_tool', description: 'Toggled', inputSchema: null, defaultPolicy: 'ask'},
-            {name: 'new_tool', description: 'New', inputSchema: null, defaultPolicy: 'ask'},
+            {name: 'toggled_tool', description: 'Toggled', inputSchema: null, defaultPolicy: 'ask', suggestedPolicy: 'ask'},
+            {name: 'new_tool', description: 'New', inputSchema: null, readOnlyHint: true, defaultPolicy: 'ask', suggestedPolicy: 'auto_run_in_dm'},
         ],
     };
     const remoteConfig: MCPServerConfig = {
@@ -350,44 +350,58 @@ describe('MCPServerToolRow — unreviewed tools', () => {
         ],
     };
 
-    test('marks remote tools without a chosen policy and offers a review', () => {
-        const onReview = jest.fn();
+    const renderUnreviewed = (server: MCPServerInfo, serverConfig: MCPServerConfig) => {
+        const onServerConfigChange = jest.fn();
         render(
             <IntlProvider locale='en'>
                 <MCPServerToolRow
-                    server={remoteServer}
-                    serverConfig={remoteConfig}
-                    onServerConfigChange={jest.fn()}
-                    onReview={onReview}
+                    server={server}
+                    serverConfig={serverConfig}
+                    onServerConfigChange={onServerConfigChange}
                 />
             </IntlProvider>,
         );
-
-        fireEvent.click(screen.getByRole('button', {name: 'Review tools for Remote'}));
-        expect(onReview).toHaveBeenCalledTimes(1);
-
         fireEvent.click(screen.getByText('Remote'));
+        return onServerConfigChange;
+    };
+
+    test('marks remote tools without a chosen policy and shows their suggested policy', () => {
+        renderUnreviewed(remoteServer, remoteConfig);
+
         const toolName = (name: string) => screen.getByText(name).parentElement as HTMLElement;
         expect(within(toolName('reviewed_tool')).queryByText('Not reviewed')).toBeNull();
         expect(within(toolName('toggled_tool')).getByText('Not reviewed')).not.toBeNull();
         expect(within(toolName('new_tool')).getByText('Not reviewed')).not.toBeNull();
+        expect(selectedLabel(getSelect('Approval policy for new_tool'))).toBe('Auto Run (DM)');
+        expect(screen.getByText(/have not been reviewed/)).not.toBeNull();
     });
 
-    test('does not mark plugin server tools or offer them a review', () => {
-        render(
-            <IntlProvider locale='en'>
-                <MCPServerToolRow
-                    server={{...remoteServer, serverType: 'plugin'}}
-                    serverConfig={remoteConfig}
-                    onServerConfigChange={jest.fn()}
-                    onReview={jest.fn()}
-                />
-            </IntlProvider>,
-        );
+    test('marking tools as reviewed stores the shown policies and keeps chosen ones', () => {
+        const onServerConfigChange = renderUnreviewed(remoteServer, remoteConfig);
 
-        fireEvent.click(screen.getByText('Remote'));
+        fireEvent.click(screen.getByRole('button', {name: 'Mark tools on Remote as reviewed'}));
+
+        expect(onServerConfigChange).toHaveBeenCalledWith({...remoteConfig,
+            tool_configs: [
+                {name: 'reviewed_tool', policy: 'auto_run_in_dm', enabled: true},
+                {name: 'toggled_tool', policy: 'ask', enabled: false},
+                {name: 'new_tool', policy: 'auto_run_in_dm', enabled: true},
+            ]});
+    });
+
+    test('offers no mark-as-reviewed once every tool has a chosen policy', () => {
+        renderUnreviewed(remoteServer, {...remoteConfig, tool_configs: remoteServer.tools.map((tool) => ({name: tool.name, policy: 'ask' as const, enabled: true}))});
+
         expect(screen.queryByText('Not reviewed')).toBeNull();
-        expect(screen.queryByRole('button', {name: /Review tools/})).toBeNull();
+        expect(screen.queryByRole('button', {name: /as reviewed/})).toBeNull();
+    });
+
+    test('does not mark plugin server tools or offer to mark them reviewed', () => {
+        renderUnreviewed({...remoteServer, serverType: 'plugin'}, remoteConfig);
+
+        expect(screen.queryByText('Not reviewed')).toBeNull();
+        expect(screen.queryByRole('button', {name: /as reviewed/})).toBeNull();
+        expect(selectedLabel(getSelect('Approval policy for new_tool'))).toBe('Ask Every Time');
     });
 });
 

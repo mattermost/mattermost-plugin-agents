@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render, screen, waitFor, within} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 
 // Minimal react-intl shim: ts-jest bypasses babel, so FormattedMessage needs an id at runtime.
 jest.mock('react-intl', () => {
@@ -84,9 +84,14 @@ jest.mock('../../client', () => ({
     getPluginConfig: jest.fn(),
 }));
 
+// The viewer shows each server's sign-in state from the tools list it is given.
 jest.mock('./mcp_tools_viewer', () => ({
     __esModule: true,
-    default: () => <div data-testid='mcp-tools-viewer'/>,
+    default: ({initialToolsData}: {initialToolsData?: {servers: Array<{name: string; needsOAuth: boolean}>} | null}) => (
+        <div data-testid='mcp-tools-viewer'>
+            {initialToolsData?.servers.map((s) => `${s.name}: ${s.needsOAuth ? 'needs sign-in' : 'signed in'}`).join(', ')}
+        </div>
+    ),
 }));
 
 jest.mock('../access_control/console_policy_section', () => ({
@@ -102,6 +107,7 @@ import {IntlProvider} from 'react-intl';
 import {useIsLicensedFor} from '@/license';
 
 import {getMCPTools, getPluginConfig} from '../../client';
+import {notifyMCPConnectionUpdated} from '../../hooks/use_mcp_connection_events';
 
 import MCPServers, {type MCPConfig, type MCPServerConfig} from './mcp_servers';
 import type {PluginServerConfig} from './mcp_types';
@@ -163,6 +169,52 @@ const existingServer: MCPServerConfig = {
     baseURL: 'https://jira.example.com',
     headers: {},
 };
+
+describe('MCPServers tools list', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockUseIsLicensedFor.mockReturnValue(true);
+    });
+
+    const toolsList = (needsOAuth: boolean) => ({
+        servers: [{name: 'Jira', url: existingServer.baseURL, id: STABLE_ID, serverType: 'remote', enabled: true, tools: [], needsOAuth, error: null}],
+    });
+
+    test('the Tools tab shows the list as it is after the admin signs in, not as it was loaded before', async () => {
+        mockGetMCPTools.mockResolvedValueOnce(toolsList(true));
+        renderServers(makeMCPConfig([existingServer]), [existingServer]);
+        await waitFor(() => expect(mockGetMCPTools).toHaveBeenCalledTimes(1));
+
+        // The admin signs in (for example in the server dialog) after the
+        // list was loaded.
+        mockGetMCPTools.mockResolvedValueOnce(toolsList(false));
+        await act(async () => {
+            notifyMCPConnectionUpdated({status: 'connected', serverName: 'Jira'});
+        });
+
+        fireEvent.click(screen.getByRole('tab', {name: 'Tools'}));
+        await waitFor(() => expect(screen.getByTestId('mcp-tools-viewer').textContent).toBe('Jira: signed in'));
+    });
+
+    test('a slower, older load does not replace a newer list', async () => {
+        let finishFirst: (value: unknown) => void = () => null;
+        mockGetMCPTools.mockReturnValueOnce(new Promise((resolve) => {
+            finishFirst = resolve;
+        }));
+        renderServers(makeMCPConfig([existingServer]), [existingServer]);
+
+        mockGetMCPTools.mockResolvedValueOnce(toolsList(false));
+        await act(async () => {
+            notifyMCPConnectionUpdated({status: 'connected', serverName: 'Jira'});
+        });
+        await act(async () => {
+            finishFirst(toolsList(true));
+        });
+
+        fireEvent.click(screen.getByRole('tab', {name: 'Tools'}));
+        expect(screen.getByTestId('mcp-tools-viewer').textContent).toBe('Jira: signed in');
+    });
+});
 
 describe('MCPServers remote server list', () => {
     beforeEach(() => {

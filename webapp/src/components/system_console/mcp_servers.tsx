@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useId, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useId, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {PlusIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
@@ -15,6 +15,7 @@ import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 
 import {getMCPTools} from '../../client';
+import {useMCPConnectionEvents} from '../../hooks/use_mcp_connection_events';
 
 import manifest from '@/manifest';
 
@@ -126,44 +127,40 @@ const MCPServers = ({mcpConfig, savedServers = [], onChange, onPersistServer, on
         embeddedEnabled: mcpConfig?.embeddedServer?.enabled,
         enablePluginServer: mcpConfig?.enablePluginServer,
     });
-    const prevFingerprintRef = useRef(configFingerprint);
 
-    // Invalidate prefetched tools when tool-affecting config fields change
-    useEffect(() => {
-        if (prevFingerprintRef.current !== configFingerprint) {
-            prevFingerprintRef.current = configFingerprint;
-            setPreloadedToolsData(null);
-        }
-    }, [configFingerprint]);
-
-    // Pre-fetch tools data so they're ready when the Tools tab is clicked.
-    // Ignore responses from outdated requests (cleanup + fingerprint match) so config changes cannot apply stale data.
-    useEffect(() => {
-        const fingerprintAtFetchStart = configFingerprint;
-        let cancelled = false;
-
+    // The tools list is loaded ahead of the Tools tab, and loaded again
+    // whenever it may have changed: on a tool-affecting config change, when
+    // the admin signs in to or disconnects from a server (sign-in often
+    // finishes in the server dialog, after the list was loaded while the
+    // server still needed it), and when the
+    // dialog closes. Only the latest request's response is used.
+    const toolsRequestRef = useRef(0);
+    const refreshTools = useCallback(() => {
+        const request = ++toolsRequestRef.current;
         getMCPTools().
             then((response) => {
-                if (cancelled) {
-                    return;
+                if (request === toolsRequestRef.current) {
+                    setPreloadedToolsData(response);
                 }
-                if (fingerprintAtFetchStart !== prevFingerprintRef.current) {
-                    return;
-                }
-                setPreloadedToolsData(response);
             }).
             catch((error) => {
-                if (cancelled) {
-                    return;
+                if (request === toolsRequestRef.current) {
+                    // eslint-disable-next-line no-console
+                    console.error('Failed to preload MCP tools:', error);
                 }
-                // eslint-disable-next-line no-console
-                console.error('Failed to preload MCP tools:', error);
             });
+    }, []);
 
-        return () => {
-            cancelled = true;
-        };
-    }, [configFingerprint]);
+    useEffect(() => () => {
+        toolsRequestRef.current++;
+    }, []);
+
+    useEffect(() => {
+        setPreloadedToolsData(null);
+        refreshTools();
+    }, [configFingerprint, refreshTools]);
+
+    useMCPConnectionEvents(refreshTools);
 
     useEffect(() => {
         setIdleTimeoutInputValue(getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
@@ -354,7 +351,6 @@ const MCPServers = ({mcpConfig, savedServers = [], onChange, onPersistServer, on
                             mcpConfig={config}
                             onConfigChange={(update) => (typeof update === 'function' ? updateConfigLater(update) : onChange(update))}
                             initialToolsData={preloadedToolsData}
-                            onReviewServer={(server) => setWizardMode({kind: 'review', server})}
                         />
                     </div>
                 )}
@@ -363,7 +359,10 @@ const MCPServers = ({mcpConfig, savedServers = [], onChange, onPersistServer, on
                         mode={wizardMode}
                         existingNames={[...new Set([...normalizedServers, ...savedServers].map((server) => server.name))]}
                         onPersist={onPersistServer}
-                        onClose={() => setWizardMode(null)}
+                        onClose={() => {
+                            setWizardMode(null);
+                            refreshTools();
+                        }}
                     />
                 )}
             </MCPPanelBody>

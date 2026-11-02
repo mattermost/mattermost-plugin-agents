@@ -20,22 +20,19 @@ import {SelectField} from './item';
 
 import {MCPServerConfig, MCPServerInfo, MCPToolConfig, MCPToolInfo} from './mcp_types';
 import MCPToolConfigRow, {useToolPolicyOptions} from './mcp_tool_config_row';
+import {reviewToolConfigs} from './mcp_tool_review';
 
 type MCPServerToolRowProps = {
     server: MCPServerInfo;
     serverConfig: MCPServerConfig | null;
     onServerConfigChange: (config: MCPServerConfig) => void;
 
-    // onReview, when set, offers the admin a review of the server's tools.
-    // Remote servers only: their unreviewed tools are marked.
-    onReview?: () => void;
-
     // reviewing renders the row inside the tool review: expanded, without the
     // server toggle or review markers.
     reviewing?: boolean;
 };
 
-const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, onReview, reviewing = false}: MCPServerToolRowProps) => {
+const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing = false}: MCPServerToolRowProps) => {
     const [expanded, setExpanded] = useState(reviewing);
     const intl = useIntl();
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
@@ -46,11 +43,17 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, onReview,
 
     const findStoredConfig = (toolName: string) => serverConfig?.tool_configs?.find((tc) => tc.name === toolName);
 
-    // The tool's config as it applies: a tool with no stored entry is enabled,
-    // and a tool with no chosen policy shows the server-computed default
-    // (auto run in DMs for tools the MCP server marks read-only).
+    // A remote server's tool is unreviewed until an admin chooses its policy.
+    const marksUnreviewed = server.serverType === 'remote' && !reviewing;
+    const isUnreviewed = (tool: MCPToolInfo) => marksUnreviewed && !findStoredConfig(tool.name)?.policy;
+    const unreviewedCount = server.tools.filter(isUnreviewed).length;
+
+    // The tool's config as shown: a tool with no stored entry is enabled. A
+    // tool with no chosen policy shows its default, or, while unreviewed, the
+    // suggestion that marking it reviewed stores (auto run in DMs for tools
+    // the MCP server marks read-only).
     const getToolConfig = (tool: MCPToolInfo): MCPToolConfig => {
-        const defaultPolicy = tool.defaultPolicy ?? 'ask';
+        const defaultPolicy = (isUnreviewed(tool) && tool.suggestedPolicy) || tool.defaultPolicy || 'ask';
         const existing = findStoredConfig(tool.name);
         if (existing) {
             return existing.policy ? existing : {...existing, policy: defaultPolicy};
@@ -58,10 +61,13 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, onReview,
         return {name: tool.name, policy: defaultPolicy, enabled: true};
     };
 
-    // A remote server's tool is unreviewed until an admin chooses its policy.
-    const marksUnreviewed = server.serverType === 'remote' && !reviewing;
-    const isUnreviewed = (tool: MCPToolInfo) => marksUnreviewed && !findStoredConfig(tool.name)?.policy;
-    const unreviewedCount = server.tools.filter(isUnreviewed).length;
+    // Stores the shown suggestion as the chosen policy of every unreviewed
+    // tool; policies an admin already chose are kept.
+    const handleMarkReviewed = () => {
+        if (serverConfig) {
+            onServerConfigChange({...serverConfig, tool_configs: reviewToolConfigs(serverConfig, server.tools)});
+        }
+    };
 
     const enabledToolCount = server.tools.filter((tool) => {
         const tc = getToolConfig(tool);
@@ -235,15 +241,15 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, onReview,
                         </StyledChevron>
                     </ExpandChevron>
                 </ServerRowExpandButton>
-                {onReview && server.serverType === 'remote' && (
+                {unreviewedCount > 0 && serverConfig && (
                     <Button
-                        emphasis={unreviewedCount > 0 ? 'secondary' : 'tertiary'}
+                        emphasis='secondary'
                         size='small'
-                        onClick={onReview}
+                        onClick={handleMarkReviewed}
                         disabled={!serverEnabled}
-                        aria-label={intl.formatMessage({defaultMessage: 'Review tools for {serverName}'}, {serverName: server.name})}
+                        aria-label={intl.formatMessage({defaultMessage: 'Mark tools on {serverName} as reviewed'}, {serverName: server.name})}
                     >
-                        <FormattedMessage defaultMessage='Review tools'/>
+                        <FormattedMessage defaultMessage='Mark tools as reviewed'/>
                     </Button>
                 )}
                 {serverConfig && !reviewing && (
@@ -292,6 +298,18 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, onReview,
                     )}
                     {!server.error && !server.needsOAuth && server.tools.length > 0 && (
                         <>
+                            {unreviewedCount > 0 && (
+                                <RowNotice
+                                    type='warning'
+                                    title={(
+                                        <FormattedMessage
+                                            defaultMessage='{count, plural, one {# tool has not been reviewed} other {# tools have not been reviewed}}'
+                                            values={{count: unreviewedCount}}
+                                        />
+                                    )}
+                                    description={<FormattedMessage defaultMessage='Tools marked Not reviewed show the policy suggested from what the server reports about them. It applies once you mark the tools as reviewed, or choose a policy, and save. Until then they keep their default policy, usually Ask Every Time.'/>}
+                                />
+                            )}
                             <BulkRow>
                                 <BulkLabel>
                                     <BulkTitle>

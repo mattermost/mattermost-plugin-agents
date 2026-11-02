@@ -210,29 +210,26 @@ test.describe('MCP add server wizard', () => {
         await expect.poll(async () => (await savedServer(page, PLAIN_SERVER_NAME))?.name).toBe(PLAIN_SERVER_NAME);
         expect((await savedServer(page, PLAIN_SERVER_NAME))?.tool_configs ?? []).toEqual([]);
 
-        // The Tools tab marks the server's tools as not reviewed.
+        // The Tools tab marks the server's tools as not reviewed, showing the
+        // policy marking them reviewed stores.
         await page.getByRole('tab', {name: 'Tools', exact: true}).click();
-        const reviewButton = page.getByRole('button', {name: `Review tools for ${PLAIN_SERVER_NAME}`});
-        await expect(reviewButton).toBeVisible({timeout: 30000});
+        const markReviewed = page.getByRole('button', {name: `Mark tools on ${PLAIN_SERVER_NAME} as reviewed`});
+        await expect(markReviewed).toBeVisible({timeout: 30000});
         const serverRow = page.getByRole('button', {name: new RegExp(PLAIN_SERVER_NAME)}).first();
         await serverRow.click();
         const notReviewed = page.getByText('Not reviewed', {exact: true});
         await expect(notReviewed).toHaveCount(2);
         await expect(page.getByText('2 tools not reviewed')).toBeVisible();
-        // The innermost element holding both the Review button and a tool is the server's row.
-        const serverCard = page.locator('div').filter({has: reviewButton}).filter({has: page.getByText('search_docs', {exact: true})}).last();
+        await expect(page.getByRole('combobox', {name: 'Approval policy for search_docs'})).toHaveText('Auto Run (DM)');
+        await expect(page.getByRole('combobox', {name: 'Approval policy for publish_doc'})).toHaveText('Ask Every Time');
+        // The innermost element holding both the button and a tool is the server's row.
+        const serverCard = page.locator('div').filter({has: markReviewed}).filter({has: page.getByText('search_docs', {exact: true})}).last();
         await shot(serverCard, 'add5');
 
-        await reviewButton.click();
-        const review = page.getByRole('dialog', {name: `Review tools for ${PLAIN_SERVER_NAME}`});
-        await expect(review.getByRole('group', {name: 'Read-only tools'})).toBeVisible({timeout: 30000});
-        await expect(review.getByRole('combobox', {name: 'Approval policy for search_docs'})).toHaveText('Auto Run (DM)');
-        await expect(review.getByRole('combobox', {name: 'Approval policy for publish_doc'})).toHaveText('Ask Every Time');
-        await shot(review, 'add6');
-
-        await review.getByRole('button', {name: 'Accept and save'}).click();
-        await expect(review).toBeHidden({timeout: 30000});
+        await markReviewed.click();
         await expect(notReviewed).toHaveCount(0);
+        await expect(markReviewed).toHaveCount(0);
+        await new SystemConsoleHelper(page).clickSave();
         await expect.poll(() => savedToolConfigs(page, PLAIN_SERVER_NAME)).toEqual([
             {name: 'publish_doc', policy: 'ask', enabled: true},
             {name: 'search_docs', policy: 'auto_run_in_dm', enabled: true},

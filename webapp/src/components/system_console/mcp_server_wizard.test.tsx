@@ -82,7 +82,7 @@ function discoveredServer(overrides: Partial<MCPServerInfo> = {}): MCPServerInfo
 
 // renderWizard renders the wizard against a saved configuration holding
 // storedServers; servers the wizard persists are saved into it.
-function renderWizard(mode: MCPServerWizardMode, existingNames: string[] = [], storedServers: MCPServerConfig[] = mode.kind === 'review' ? [mode.server] : []) {
+function renderWizard(mode: MCPServerWizardMode, existingNames: string[] = [], storedServers: MCPServerConfig[] = []) {
     let stored = storedServers;
     mockGetPluginConfig.mockImplementation(async () => ({mcp: {servers: stored}}));
     const onPersist = jest.fn(async (server: MCPServerConfig) => {
@@ -225,44 +225,6 @@ describe('MCPServerWizard add flow', () => {
     });
 });
 
-describe('MCPServerWizard review of an existing server', () => {
-    beforeEach(() => {
-        jest.clearAllMocks();
-    });
-
-    test('keeps chosen policies, pre-sets the rest, and saves only tool policies', async () => {
-        mockGetMCPServerTools.mockResolvedValue(discoveredServer());
-        const existing: MCPServerConfig = {
-            id: SERVER_ID,
-            name: 'Tracker',
-            enabled: true,
-            baseURL: 'https://mcp.example.com/mcp',
-            headers: {},
-            tool_configs: [
-                {name: 'list_issues', policy: 'ask', enabled: true},
-                {name: 'delete_issue', policy: '', enabled: false},
-                {name: 'retired_tool', policy: 'ask', enabled: true},
-            ],
-        };
-        const {onPersist, onClose} = renderWizard({kind: 'review', server: existing});
-
-        expect(await screen.findByRole('dialog', {name: 'Review tools for Tracker'})).not.toBeNull();
-        expect(await screen.findByRole('group', {name: 'Read-only tools'})).not.toBeNull();
-        expect(selectedLabel(getSelect('Approval policy for list_issues'))).toBe('Ask Every Time');
-
-        fireEvent.click(screen.getByRole('button', {name: 'Accept and save'}));
-
-        await waitFor(() => expect(onClose).toHaveBeenCalled());
-        const [reviewed, reviewedScope] = onPersist.mock.calls[0] as unknown as [MCPServerConfig, string];
-        expect(reviewedScope).toBe('tool_configs');
-        expect(reviewed.tool_configs).toEqual([
-            {name: 'list_issues', policy: 'ask', enabled: true},
-            {name: 'delete_issue', policy: 'ask', enabled: false},
-            {name: 'retired_tool', policy: 'ask', enabled: true},
-        ]);
-    });
-});
-
 describe('MCPServerWizard saved-state handling', () => {
     beforeEach(() => {
         jest.clearAllMocks();
@@ -277,10 +239,20 @@ describe('MCPServerWizard saved-state handling', () => {
         tool_configs: [],
     };
 
-    test('a review starts from the saved server, keeping policies saved since the page loaded', async () => {
+    // addAndConnect adds a server and connects to it, with getPluginConfig
+    // returning savedServers once the server is saved.
+    const addAndConnect = (savedServers: MCPServerConfig[]) => {
+        const rendered = renderWizard({kind: 'add'});
+        fillDetails('Tracker', 'https://mcp.example.com/mcp');
+        mockGetPluginConfig.mockImplementation(async () => ({mcp: {servers: savedServers}}));
+        fireEvent.click(screen.getByRole('button', {name: 'Save and connect'}));
+        return rendered;
+    };
+
+    test('a review starts from the saved server, keeping policies saved since', async () => {
         mockGetMCPServerTools.mockResolvedValue(discoveredServer());
         const savedSince = {...pageCopy, tool_configs: [{name: 'delete_issue', policy: 'auto_run_everywhere' as const, enabled: true}]};
-        const {onPersist, onClose} = renderWizard({kind: 'review', server: pageCopy}, [], [savedSince]);
+        const {onPersist, onClose} = addAndConnect([savedSince]);
 
         expect(await screen.findByRole('group', {name: 'Write tools'})).not.toBeNull();
         expect(selectedLabel(getSelect('Approval policy for delete_issue'))).toBe('Auto Run (Everywhere)');
@@ -288,20 +260,21 @@ describe('MCPServerWizard saved-state handling', () => {
         fireEvent.click(screen.getByRole('button', {name: 'Accept and save'}));
 
         await waitFor(() => expect(onClose).toHaveBeenCalled());
-        const [reviewed] = onPersist.mock.calls[0] as unknown as [MCPServerConfig, boolean];
+        const [reviewed, scope] = onPersist.mock.calls[1] as unknown as [MCPServerConfig, string];
+        expect(scope).toBe('tool_configs');
         expect(reviewed.tool_configs).toEqual([
             {name: 'list_issues', policy: 'auto_run_in_dm', enabled: true},
             {name: 'delete_issue', policy: 'auto_run_everywhere', enabled: true},
         ]);
     });
 
-    test('a review of a server that is no longer saved shows an error and saves nothing', async () => {
+    test('a review of a server that is no longer saved shows an error and saves nothing more', async () => {
         mockGetMCPServerTools.mockResolvedValue(discoveredServer());
-        const {onPersist} = renderWizard({kind: 'review', server: pageCopy}, [], []);
+        const {onPersist} = addAndConnect([]);
 
         expect(await screen.findByText('The server is no longer configured. Reload the page.')).not.toBeNull();
         expect(screen.queryByRole('button', {name: 'Accept and save'})).toBeNull();
-        expect(onPersist).not.toHaveBeenCalled();
+        expect(onPersist).toHaveBeenCalledTimes(1);
     });
 
     test('the dialog cannot be closed while the server is being saved', async () => {
@@ -327,15 +300,15 @@ describe('MCPServerWizard saved-state handling', () => {
 
     test('Finish later cannot close the review while its policies are being saved', async () => {
         mockGetMCPServerTools.mockResolvedValue(discoveredServer());
-        const {onPersist, onClose} = renderWizard({kind: 'review', server: pageCopy});
+        const {onPersist, onClose} = addAndConnect([pageCopy]);
+        expect(await screen.findByRole('group', {name: 'Write tools'})).not.toBeNull();
         let finishSave: (server: MCPServerConfig & {id: string}) => void = () => null;
         onPersist.mockImplementation(() => new Promise((resolve) => {
             finishSave = resolve;
         }));
 
-        expect(await screen.findByRole('group', {name: 'Write tools'})).not.toBeNull();
         fireEvent.click(screen.getByRole('button', {name: 'Accept and save'}));
-        await waitFor(() => expect(onPersist).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(onPersist).toHaveBeenCalledTimes(2));
 
         const finishLater = screen.getByRole('button', {name: 'Finish later'}) as HTMLButtonElement;
         expect(finishLater.disabled).toBe(true);
