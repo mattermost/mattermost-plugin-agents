@@ -1,12 +1,13 @@
 # Create and manage agents
 
-An agent is a Mattermost bot with its own name, instructions, model, access rules, and tool grants. Agents are stored in the Mattermost database and managed on the **Agents** page, not in the System Console. This page covers who can create and edit agents, every setting in the agent editor, version history, export and import, and deleting agents. Services and the default agent are configured in the System Console. See [Configure LLM services](llm_services.md).
+Create, edit, version, export, and delete agents on the Agents page: every editor setting, who can manage agents, and why an agent shows Inactive.
+
+Agents are stored in the Mattermost database and managed on the **Agents** page, not in the System Console. Services and the default agent are configured in the System Console. See [Configure LLM services](llm_services.md).
 
 ## Open the Agents page
 
 - Select the product switcher (grid icon) and choose **Agents**, or open `/plug/mattermost-ai/agents`.
-- From the message composer, open the **AI Actions** menu and select **Manage agents**.
-- From any agent picker, select **Manage**.
+- From any agent picker, including the one in the composer's **AI Actions > Custom prompts** menu, select **Manage**.
 
 The page lists the agents you can use, on two tabs: **All agents** and **Your agents** (agents you created). Search filters by display name or username. Each row shows the avatar, display name, `@username`, and badges:
 
@@ -22,17 +23,15 @@ The page lists the agents you can use, on two tabs: **All agents** and **Your ag
 
 | Permission | What it allows |
 |---|---|
-| `manage_own_agent` | Create agents. Edit and delete agents you created or are an admin of. |
+| `manage_own_agent` | Create agents. Creators and agent admins can always edit and delete their agents, so removing the permission doesn't stop that. |
 | `manage_others_agent` | Edit and delete any agent. |
 | `manage_system` (System Admin) | Does everything above. Also manages agents with no creator, which are migrated v1 bots. |
 
 By default the System User role includes `manage_own_agent`, so every user can create agents, up to the license's agent cap. Each agent uses an LLM service you configured, so its usage is your cost. To restrict creation, remove the permission from the System User role under **System Console > User Management > Permissions**, and grant it to specific roles. `manage_others_agent` is held only by System Admins by default.
 
-A user can edit or delete an agent when they're its creator, listed in its **Agent admins**, hold `manage_others_agent`, or are a System Admin and the agent has no creator. The server applies the same rules to the API, so direct API calls can't bypass them.
+A user can edit or delete an agent when they're its creator, listed in its **Agent admins**, hold `manage_others_agent`, or are a System Admin and the agent has no creator. The server applies the same rules to the API.
 
-**Who sees which agents.** Manage permissions don't decide visibility. A user sees an agent only if they can use it, which means they pass both the agent's access rules and access to the agent's service. System Admins are the exception, so they can see agents that service policies deny them and repair those agents. If a non-admin agent admin loses access to an agent's service, the agent disappears from their page until a System Admin restores access or changes the service. See [Control who can use agents](access_control.md).
-
-**License.** Free allows 1 agent and Professional allows 3. Enterprise and above are unlimited. At the cap, **Create agent** is disabled with a hint, and the API returns HTTP 403 naming the level that raises the cap. See [License requirements](admin_guide.md#license-requirements).
+A user sees an agent only if they can use it. See [Visibility](access_control.md#visibility). Agent counts are capped by license. See [License requirements](admin_guide.md#license-requirements).
 
 ## Create an agent
 
@@ -72,14 +71,14 @@ Under **Advanced configuration**:
 
 | Setting | Notes |
 |---|---|
-| **Dynamic tool loading** | Default on. The agent starts with search and load helpers and loads MCP tool schemas only when needed. Turn it off to expose the full tool list up front. See [Dynamic tool loading](mcp_integrations.md#dynamic-tool-loading). |
-| **Max tool turns** | Maximum consecutive tool-call rounds per response, 1 to 250, default 30. After the last round, the agent answers without tools. Lower it for small models that loop on tools. Raise it for agents that chain many tools. A blank field saves the default. |
+| **Dynamic tool loading** | The agent starts with search and load helpers and loads MCP tool schemas only when needed. Turn it off to expose the full tool list up front. See [Dynamic tool loading](mcp_integrations.md#dynamic-tool-loading). |
+| **Max tool turns** | Maximum consecutive tool-call rounds per response, 1 to 250. After the last round, the agent answers without tools. Lower it for small models that loop on tools. Raise it for agents that chain many tools. A blank field saves the default. |
 | **Enable Vision** | Lets the agent read attached images. Needs a vision-capable model. |
-| **Enable Tools** | Default on. When off, the agent runs without tools and the **MCPs** tab is disabled. Some features don't work without tools, such as free-form channel questions. Turn it off only for models that don't support tool calling. |
+| **Enable Tools** | When off, the agent runs without tools and the **MCPs** tab is disabled. Some features don't work without tools, such as free-form channel questions. Turn it off only for models that don't support tool calling. |
 | **Native Claude Tools**, **Native Google Tools**, **Native OpenAI Tools** | Provider tools such as Web Search. See [Web search](web_search.md) and [Provider configuration](providers.md). |
 | **Extended Thinking** or **Reasoning** | Reasoning controls. See [Provider configuration](providers.md). |
 
-**Enable Vision**, **Enable Tools**, native tools, and reasoning are shown for OpenAI, OpenAI Compatible, Azure, Anthropic, Cohere, Mistral, Gemini, Vertex AI, and Cohere North services. They aren't shown for AWS Bedrock.
+Which service types show these settings is in [Provider configuration](providers.md#capabilities-by-provider).
 
 ### Access tab
 
@@ -112,9 +111,7 @@ If you leave the editor with unsaved changes, a **Discard changes?** prompt appe
 
 While **Use service accounts for authentication** is off, anyone who can manage the agent can edit everything. While it's on:
 
-- Anyone who can manage the agent can edit the display name, username, avatar, service, model, max tool turns, instructions, vision, **Enable Tools**, native tools, dynamic tool loading, and reasoning.
-- Only System Admins can edit channel access, user access, agent admins, MCP tool grants, **Automatically enable all MCP tools**, and the service account setting.
-- Anyone who can manage the agent can still turn the setting off or delete the agent.
+Only System Admins can edit channel access, user access, agent admins, MCP tool grants, **Automatically enable all MCP tools**, and the service account setting. Everything else stays editable by anyone who can manage the agent, who can also turn the setting off or delete the agent.
 
 ### Rename an agent
 

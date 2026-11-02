@@ -1,17 +1,10 @@
 # Tool approval and credentials
 
-This page explains who approves a tool call, whose credentials run it, what other people in a channel can see, and how admins set approval policies. It's the reference for admins, security reviewers, and anyone designing prompts for shared channels. Users who only want to know what to click should read [Use tools and approve actions](using_tools.md).
+Only the person who started a conversation can approve an agent's tool calls, and tools run with that person's credentials. This page covers the approval rules, the policies admins set for each tool, and what other people in a channel can see. It's for admins and security reviewers. To see what to click, read [Use tools and approve actions](using_tools.md).
 
-## The four roles
+## Roles
 
-| Role | Who |
-|---|---|
-| **Initiator** | The person who triggered the agent, by mentioning it or writing in an Agents pane or direct message thread. |
-| **Approver** | The person who can accept or reject a pending call. Always the initiator. Never another channel member or an admin. |
-| **Executor** | The identity a tool runs as. By default the initiator. See [Whose credentials run a tool](#whose-credentials-run-a-tool). |
-| **Observer** | Anyone else who can read the channel. Observers can't approve, and by default can't see tool arguments or private results. |
-
-Roles don't change mid-conversation. If you hand your keyboard to someone else, they're still you to Mattermost.
+The **initiator** is the person who mentioned the agent or wrote in a direct message or Agents pane thread. Only the initiator can approve, and the initiator is the **executor**: tools run as them, unless the agent uses a service account. Anyone else who can read the channel is an **observer**. Observers can't approve, and by default can't see tool arguments or private results. Roles don't change mid-conversation.
 
 ## Whose credentials run a tool
 
@@ -20,11 +13,11 @@ An agent runs tools in one of two modes. The mode is a setting on the agent, not
 **Per-user authentication (default).** Tools run as the initiator.
 
 - Mattermost tools use the initiator's user record, channel memberships, and team memberships. They see only what the initiator can see.
-- OAuth-backed MCP servers use the initiator's own token. Two people running the same tool can get different results, because they have different scopes. A call can succeed for one and fail with a 401 or 403 for the other. A 401 from an MCP server prompts the initiator to sign in again.
+- OAuth-backed MCP servers use the initiator's own token. Two people running the same tool can get different results, because they have different scopes. A call can succeed for one and fail with a 401 or 403 for the other. A 401 from an MCP server prompts the initiator to authorize again.
 - The agent's bot account never runs third-party tools. It only posts the reply and tool cards.
 - For an MCP server without OAuth, the server's own configured credential decides what the call can do. The initiator rule still decides whether the call happens.
 
-**Service account authentication.** External MCP servers get admin-configured shared credentials. Mattermost and plugin tools still run as the initiator. The initiator still approves each call. Setup and risks are in [Connect agents to MCP servers](mcp_integrations.md#service-account-authentication). This mode needs an Enterprise license.
+**Service account authentication.** External MCP servers get shared credentials, while Mattermost and plugin tools still run as the initiator. The initiator still approves each call. See [Service account authentication](mcp_integrations.md#service-account-authentication).
 
 ## Approval policies
 
@@ -52,7 +45,7 @@ Some tools have no policy:
 
 ### Choose a policy
 
-- Use **Ask Every Time** for any tool that writes data, sends notifications, costs money, or returns something the initiator shouldn't see without consent. It's the safe default and the easiest to loosen later.
+- Use **Ask Every Time** for any tool that writes data, sends notifications, costs money, or returns something the initiator shouldn't see without consent. It's the safe default.
 - Use **Auto Run (DM)** for read-only tools whose results are fine in a private conversation but might leak context in a shared channel. Examples: search the initiator's own mail, list their calendar. Mattermost seeds its own read-only tools at this level.
 - Use **Auto Run (Everywhere)** only for read-only tools whose results are safe for every channel member, and that enforce per-user permissions themselves. Tools that call external APIs rarely qualify. Results of these tools are shared with the channel at once, with no per-call privacy choice.
 - A policy controls the prompt. It isn't a substitute for credential scope. Limit scopes in the OAuth provider, and give service accounts the least access they need.
@@ -63,26 +56,23 @@ Setting a policy that runs tools automatically needs an Enterprise license. Belo
 
 ## Tools in channels
 
-In a direct message or the Agents pane, tools are on. In a channel, tools are off unless an admin sets **Enable Channel Mention Tool Calling**, which is experimental and off by default. When it's on, the rules below apply in any channel that isn't a direct message with the agent.
+In a direct message or the Agents pane, tools are on. In a channel, tools are off unless an admin turns on **Enable Channel Mention Tool Calling**, which is experimental and off by default. When it's on, the rules on this page apply in any channel that isn't a direct message with the agent. The setting and its limits are in [Control agents in channels](channel_settings.md).
 
-When it's off, mentions still work, but the agent has no tools. It tells the user to use a direct message or the Agents pane for tool work. Native provider web search in channels is a separate setting, **Allow native web search in channels**, which needs a Professional license.
+## Approval rules
 
-## Approval is initiator-only
-
-Only the initiator can accept or reject a pending tool call. The server checks that the clicking user is the conversation's recorded initiator and rejects any other request before a tool runs.
-
-- Admins aren't implicit approvers. Admin authority is in the policy, not in the call.
-- A pending call that nobody answers stays pending. It never approves itself, and it never moves to someone else. The reply stops at the card and nothing runs. Starting a new conversation creates a new initiator.
-- A reply can mix automatic and pending tools. Automatic ones show an **Auto-approved** badge. Pending ones keep **Accept** and **Reject**. When several wait, **Accept all** and **Reject all** appear. They follow the same initiator-only rule.
+- Only the initiator can accept or reject a pending call. The server checks that the clicking user is the conversation's recorded initiator and rejects any other request before a tool runs. Admins aren't implicit approvers. Admin authority is in the policy, not in the call.
+- A pending call that nobody answers stays pending. It never approves itself or moves to someone else, and nothing runs. Starting a new conversation creates a new initiator.
+- A reply can mix automatic and pending tools. Automatic ones show an **Auto-approved** badge. Pending ones keep **Accept** and **Reject**. When several wait, **Accept all** and **Reject all** follow the same initiator-only rule.
+- There's no mode where any channel member can approve, no channel admin override, and no silent fallback to the bot's identity or to a shared credential when a user's token is missing or rejected. Another member approving would commit the initiator's credentials, or the service account, without the initiator's consent.
 
 ## Share or keep private
 
-In a channel, a call that ran after approval has a second step because its result might not suit everyone. When the tool returns, the initiator chooses:
+In a channel, a call that ran after approval has a second step, because its result might not suit everyone. When the tool returns, the initiator chooses:
 
 - **Share:** other members see the arguments and the result, and the agent's follow-up uses the result openly.
-- **Keep private:** the result stays on the conversation for the agent to use privately, but other members don't see the arguments or result, and the agent's channel-visible reply is written without that content.
+- **Keep private:** the result stays on the conversation for the agent to use privately. Other members don't see the arguments or result, and the agent's channel-visible reply is written without that content.
 
-Only the initiator can choose. The decision is recorded once, and clicking again does nothing. There's no unshare. Tools set to **Auto Run (Everywhere)** skip this step and are shared immediately. Direct messages skip it too, because only the initiator is there.
+Only the initiator can choose. The decision is recorded once, and there's no unshare. Tools set to **Auto Run (Everywhere)** skip this step and are shared immediately. Direct messages skip it too, because only the initiator is there.
 
 ## What observers see
 
@@ -95,20 +85,13 @@ Only the initiator can choose. The decision is recorded once, and clicking again
 
 ## Automated triggers
 
-A post written by a bot, webhook, plugin, or OAuth app has no human who can approve. Mattermost handles these cases:
+A post written by a bot, plugin, or OAuth app has no human who can approve.
 
-- Without the `activate_ai` post property, the agent doesn't respond to a bot, webhook, or plugin post at all.
-- A bot or integration that sets `activate_ai` can start a channel turn. With channel tool calling on, Mattermost removes every tool except those set to **Auto Run (Everywhere)** and the built-in helpers. With it off, the run has no tools.
+- Webhook posts never trigger an agent. Bot and plugin posts do only when they set the `activate_ai` post property.
+- A bot post that sets `activate_ai` can start a channel turn. With channel tool calling on, Mattermost removes every tool except those set to **Auto Run (Everywhere)** and the built-in helpers. With it off, the run has no tools.
 - Any other automated post starts a run with no tools.
 
 There's no path where a bot approves its own call. To let an automated flow use a tool, set that tool to **Auto Run (Everywhere)** after a security review, or keep a person in the loop.
-
-## What isn't supported
-
-- No mode where any channel member can approve. That would commit a side effect, under the initiator's credentials or the service account, on the say-so of someone with no standing to consent.
-- No channel admin override of the initiator-only rule.
-- No timeout-based approval.
-- No silent fallback to the bot's identity or to a shared credential when a user's token is missing or rejected. Service account mode is an explicit opt-in per agent, and servers without service account credentials drop out of the agent instead of borrowing someone else's.
 
 ## Audit
 

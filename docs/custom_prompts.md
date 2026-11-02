@@ -1,6 +1,6 @@
 # Custom prompts
 
-Custom prompts are saved prompt templates you can reuse from the message composer or as one-click buttons in the Agents pane. Use them for requests you repeat, such as incident triage, document review, runbook steps, or status updates. This page covers creating, sharing, pinning, and running them. Personal prompts work at every license level. Sharing prompts with others needs an Enterprise license or higher.
+Save prompt templates with variables like `{{.ChannelName}}`, run them from the composer or a pinned button, and share them with your workspace. Personal prompts work at every license level, and sharing needs Enterprise.
 
 ## Create a prompt
 
@@ -87,4 +87,3 @@ Apply our review checklist to the diff I paste next: naming, error handling, tes
 
 - Titles are limited to 64 characters. There's no set limit on template length, but very long templates leave less room for the agent's answer.
 - The agent is chosen when you run the prompt. After a composer prompt is inserted, the @mention is already in your draft, so edit it by hand to change agents.
-- If you used the fixed starter buttons from Agents 1.x, such as **Brainstorm ideas**, recreate them as custom prompts and pin them. They were removed.

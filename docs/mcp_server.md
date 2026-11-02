@@ -3,66 +3,41 @@ Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 See LICENSE.txt for license information.
 -->
 
-# Mattermost MCP Server
+# Mattermost MCP server
 
-The Mattermost MCP server is built into the Mattermost Agents plugin. It lets MCP clients such as Claude Code, Claude Desktop, Cursor, and VS Code read Mattermost, search it, and post to it as the signed-in user, over streamable HTTP at `/plugins/mattermost-ai/mcp-server/mcp`. No separate server or binary is needed.
+Connect Claude Code, Claude Desktop, Cursor, VS Code, or any MCP client to Mattermost over streamable HTTP at `/plugins/mattermost-ai/mcp-server/mcp`. The server is built into the Agents plugin, so there's nothing else to install, and each request runs as the Mattermost user who signed in.
 
-This page is for developers and admins connecting an external AI client to Mattermost. To let agents inside Mattermost use MCP tools, see [Connect agents to MCP servers](mcp_integrations.md) and [Use Mattermost Agents as your personal AI assistant](personal_agent.md).
+An admin has to turn the endpoint on first. See [External client endpoint](mcp_integrations.md#external-client-endpoint). To let agents inside Mattermost use MCP tools, see [Connect agents to MCP servers](mcp_integrations.md).
 
 ## What it is
 
 The Agents plugin includes an embedded MCP server that its own agents use for Mattermost tools. When an admin turns on the HTTP endpoint, the same tools are available to any MCP client that can reach your Mattermost Server and authenticate as a Mattermost user.
 
-- **Endpoint:** `https://your-mattermost-server/plugins/mattermost-ai/mcp-server/mcp`
-- **Transport:** streamable HTTP. Server-Sent Events (SSE) transport is not supported.
-- **Identity:** each request runs as the Mattermost user who authenticated. The client sees only what that user can see and can do only what that user can do.
-- **Tools:** 121 tools, 74 read-only and 47 that change state, for posts, channels, teams, users, files, search, reactions, bookmarks, scheduled posts, and more. See [Available tools](#available-tools) and the [tool reference](mcp_tools.md).
+- **Endpoint:** `https://your-mattermost-server/plugins/mattermost-ai/mcp-server/mcp`. Replace `your-mattermost-server` with your Site URL.
+- **Transport:** streamable HTTP. SSE and stdio clients can't connect.
+- **Identity:** each request runs as the user who authenticated. The client sees and does only what that user can.
+- **Tools:** 121 tools, 74 read-only and 47 that change state. See the [tool reference](mcp_tools.md). State-changing tools need an Enterprise license.
+- **Attribution and audit:** posts the server creates are marked as AI-generated, and an external client's first use of a session is recorded in the audit log as `mcpSessionGrant`.
 
 ## Why use the official Mattermost MCP server
 
-- **Runs inside Mattermost.** There is no extra service to deploy or secure. It's installed and upgraded with the Agents plugin.
-- **Uses each user's own permissions.** Tools call Mattermost with the authenticated user's session, so channel membership, team membership, and role permissions apply to every call.
-- **OAuth with dynamic client registration.** Clients that support MCP OAuth can register themselves and sign the user in through Mattermost, so users do not create or paste tokens. Personal access tokens are also supported for clients that need a static credential.
-- **Admin controls.** Admins decide whether the endpoint is on, which users may use the built-in and plugin servers (access policies at Enterprise Advanced), and which tools from plugin-registered MCP servers are exposed.
-- **Audit logging.** An external client's first use of a session is recorded in the Mattermost Server audit log as an `mcpSessionGrant` event with the actor and trace ID.
-- **Broad coverage.** The 121 tools cover most day-to-day Mattermost activity. Posts the server creates are marked as AI-generated.
+It runs inside Mattermost and is installed and upgraded with the Agents plugin, so there's no separate service to run. It calls Mattermost with the signed-in user's session, so channel, team, and role permissions apply to every call. Clients that support MCP OAuth with dynamic client registration can sign users in without tokens, and personal access tokens work for clients that need a static credential.
 
 ## Requirements
 
-- Mattermost Server v12.0 or later, which is the minimum version for the Agents plugin.
-- The Agents plugin installed and enabled.
-- **Site URL** set under **System Console > Environment > Web Server**. The plugin does not start without it, and the OAuth discovery response that clients use to sign in is built from it.
-- A Mattermost Enterprise license or higher to turn on the HTTP endpoint. See [License requirements](#license-requirements).
-- Mattermost reachable from the MCP client. Clients that run on a vendor's cloud, such as the Claude web app, connect from the vendor's network, so a Mattermost Server on a private network must be reachable from it.
-
-## Enable the endpoint
-
-1. Go to **System Console > Plugins > Agents > Model Context Protocol (MCP)**.
-2. On the **Configuration** tab, set **Enable Mattermost MCP Server (HTTP)** to **True**.
-3. Select **Save**.
-
-The setting takes effect without restarting the server. The endpoint is then available at:
-
-```text
-https://your-mattermost-server/plugins/mattermost-ai/mcp-server/mcp
-```
-
-Replace `your-mattermost-server` with your Site URL. The embedded server that Mattermost agents use is always on and does not depend on this setting.
+- Mattermost Server v12.0 or later, with the Agents plugin enabled and **Site URL** set. The OAuth discovery response that clients use to sign in is built from the Site URL.
+- An admin has enabled the endpoint, which needs an Enterprise license. See [External client endpoint](mcp_integrations.md#external-client-endpoint).
+- Mattermost reachable from the MCP client. Clients that run in a vendor's cloud, such as the Claude web app, connect from the vendor's network, so a Mattermost Server on a private network must be reachable from it.
 
 ## Authentication
 
-A request with no Mattermost credentials gets `401 Unauthorized` with a `WWW-Authenticate` header that points to the OAuth protected resource metadata at `/plugins/mattermost-ai/mcp-server/.well-known/oauth-protected-resource`. MCP clients use that response to start sign in.
+A request with no Mattermost credentials gets `401 Unauthorized` with a `WWW-Authenticate` header that points to the OAuth protected resource metadata at `/plugins/mattermost-ai/mcp-server/.well-known/oauth-protected-resource`. MCP clients use that response to start signing in.
 
 ### OAuth 2.0
 
-OAuth is the recommended method. The user signs in through Mattermost in a browser and approves the client. No token is copied or stored by hand.
+OAuth is the recommended method. The user signs in through Mattermost in a browser and approves the client, and no token is copied or stored by hand. An admin has to enable OAuth and, for clients that register themselves, dynamic client registration. See [External client endpoint](mcp_integrations.md#external-client-endpoint).
 
-Prerequisites, set in **System Console > Integrations > Integration Management**:
-
-- **Enable OAuth 2.0 Service Provider** set to **True**.
-- For clients that register themselves, **Enable Dynamic Client Registration** set to **True**. Dynamic client registration (RFC 7591) uses a public endpoint that does not require authentication, so anyone who can reach the server can register an OAuth client. See the [Mattermost OAuth 2.0 documentation](https://docs.mattermost.com/developers/integrate/apps/authentication/oauth2) before enabling it.
-
-If you do not want to enable dynamic client registration, create an OAuth application under **Product menu > Integrations > OAuth 2.0 Applications** and enter its client ID in a client that supports pre-registered credentials.
+If dynamic client registration is off, create an OAuth application under **Product menu > Integrations > OAuth 2.0 Applications** and enter its client ID in a client that supports pre-registered credentials.
 
 Discovery endpoints:
 
@@ -71,17 +46,17 @@ Discovery endpoints:
 
 ### Personal access tokens
 
-For clients that cannot do OAuth, create a personal access token under **Profile > Security > Personal Access Tokens** and send it as a bearer token:
+For clients that can't do OAuth, create a personal access token under **Profile > Security > Personal Access Tokens** and send it as a bearer token:
 
 ```text
 Authorization: Bearer <your-token>
 ```
 
-A personal access token acts with that user's permissions. Treat it like a password, and prefer OAuth where the client supports it. An admin must set **Enable Personal Access Tokens** to **True** under **System Console > Integrations > Integration Management**, and by default only system admins can create tokens unless an admin grants other users that permission.
+A personal access token acts with that user's permissions. Treat it like a password, and prefer OAuth where the client supports it. An admin must turn on **Enable Personal Access Tokens**, and by default only System Admins can create tokens.
 
 ## Connect a client
 
-Replace `https://your-mattermost-server` with your Mattermost Site URL in every example. Client menus and file formats change, so check the client's own documentation if a step does not match.
+Replace `https://your-mattermost-server` with your Mattermost Site URL in every example. Client menus and file formats change, so check the client's own documentation if a step doesn't match.
 
 ### Claude Code
 
@@ -100,7 +75,7 @@ claude mcp add --transport http mattermost https://your-mattermost-server/plugin
   --header "Authorization: Bearer $MM_TOKEN"
 ```
 
-By default the server is added at local scope, for you in the current project. Add `--scope user` to use it in all projects, or `--scope project` to write it to a shared `.mcp.json`. Do not commit a token to `.mcp.json`.
+By default the server is added at local scope, for you in the current project. Add `--scope user` to use it in all projects, or `--scope project` to write it to a shared `.mcp.json`. Don't commit a token to `.mcp.json`.
 
 ### Claude Desktop and claude.ai
 
@@ -186,80 +161,46 @@ You can also run **MCP: Add Server** from the Command Palette and choose the HTT
 
 ### Other clients
 
-Any client that supports remote MCP servers over streamable HTTP can connect. Give it the endpoint URL and either let it run the OAuth flow or configure a bearer token header. Clients that only support SSE or stdio cannot connect to this endpoint.
+Any client that supports remote MCP servers over streamable HTTP can connect. Give it the endpoint URL and either let it run the OAuth flow or configure a bearer token header. Clients that only support SSE or stdio can't connect to this endpoint.
 
-## Available tools
+## Tools
 
-The server exposes tools in these areas:
+The [tool reference](mcp_tools.md) lists all 121 tools by area, each marked read-only or state-changing. Some tools take local file paths or URLs, for example to upload a file. Those options exist only on the standalone development server, not over HTTP. To attach content to a post over HTTP, pass text files inline in the `files` parameter of `create_post`, `dm`, or `group_message`.
 
-- **Posts and threads:** read, search, create, reply, edit, delete, pin, save, thread and mention lookups
-- **Channels:** find, read, create, update, archive, members, bookmarks, unread state
-- **Teams, users, and groups:** look up and search people and teams, membership and roles
-- **Direct and group messages:** send a DM or group message
-- **Scheduled posts, reminders, and drafts:** create, update, and list scheduled posts, set post reminders, manage drafts
-- **Files:** file info, post attachments, file search, and reading file contents
-- **Search:** keyword search, plus semantic search when it's configured on the server
-- **Agents:** list the Mattermost agents available to the user
-
-Tools that change state are marked as such in the tool metadata and need an Enterprise license. Read-only tools are available whenever the endpoint is on. The full list, with a read-only or state-changing label for each, is in the [tool reference](mcp_tools.md).
-
-Some tools take local file paths or URLs, for example to upload a file or attach a file to a post. Those options exist only on the standalone development server, not over HTTP. To attach content to a post over HTTP, pass text files inline in the `files` parameter of `create_post`, `dm`, or `group_message`.
-
-### Plugin-registered tools
-
-Compatible Mattermost plugins can register MCP servers with Agents. When a plugin marks its server for external exposure and an admin enables that server in the **Tools** tab, its enabled tools also appear on this endpoint. Per-tool admin policy applies. If a plugin tool has the same name as a built-in tool or another plugin's tool, it's skipped and a message is logged. See [Plugin-registered MCP servers](mcp_integrations.md#plugin-registered-mcp-servers).
-
-### Access policies
-
-At Enterprise Advanced, attribute-based access policies on the built-in server and on plugin servers control which users see those tools, on this endpoint as well as in the product. See [Control who can use agents](access_control.md#attribute-based-access-control).
+Tools from plugin-registered MCP servers also appear here when the plugin marks its server for external exposure and an admin enables it. See [Plugin-registered MCP servers](mcp_integrations.md#plugin-registered-mcp-servers). Attribute-based access policies, at Enterprise Advanced, control which users see the built-in and plugin tools on this endpoint as well as in the product. See [Control who can use agents](access_control.md#attribute-based-access-control).
 
 ## Approval and safety
 
-The MCP client decides how to confirm tool calls. Most MCP clients ask the user before running a tool unless the user has chosen to auto-approve it. Tool approval policies configured in Mattermost apply to agents running inside Mattermost, described in [Tool approval and credentials](tool_approval.md), and not to calls an external client makes.
+The MCP client decides how to confirm tool calls. Most clients ask the user before running a tool unless the user chose to auto-approve it. Tool approval policies configured in Mattermost apply to agents running inside Mattermost, described in [Tool approval and credentials](tool_approval.md), and not to calls an external client makes.
 
-For that reason, give external clients only what the signed-in user should be able to do:
+Give external clients only what the signed-in user should be able to do:
 
 - Prefer OAuth over long-lived personal access tokens, and revoke tokens you no longer use.
 - Ask users to turn on per-call confirmation in their client for tools that change state.
 - Review the audit log for `mcpSessionGrant` events.
 
-## License requirements
-
-Turning on the HTTP endpoint requires an Enterprise license or higher, the same as remote and external MCP servers. See the [license requirements](admin_guide.md#license-requirements) table.
-
-| Capability | Minimum level |
-|---|---|
-| Enable the Mattermost MCP server HTTP endpoint | Enterprise |
-| Read-only tools (read, search, list, get) | Available whenever the endpoint is on |
-| Tools that change state (post, edit, create channels, and similar) | Enterprise |
-| Access policies for MCP servers | Enterprise Advanced |
-
-Without an Enterprise license, the System Console does not let you set **Enable Mattermost MCP Server (HTTP)** to **True**, and state-changing tools are hidden from the tool list and return a licensing message if called. Agents inside Mattermost can still use the read-only built-in tools at every level.
-
 ## Troubleshooting
 
-**The endpoint returns 404.** The route exists only while **Enable Mattermost MCP Server (HTTP)** is **True** and the Agents plugin is enabled. Check the setting and that the plugin is running, and check that the URL ends in `/plugins/mattermost-ai/mcp-server/mcp`.
+**The endpoint returns 404.** The route exists only while the endpoint is enabled and the Agents plugin is running. Check that the URL ends in `/plugins/mattermost-ai/mcp-server/mcp`, then ask your admin to check the setting.
 
-**The client reports 401 and cannot sign in.** Confirm the Mattermost **Site URL** is set and matches the URL the client uses; the OAuth discovery response is built from it, and the Agents plugin does not activate without a Site URL. If you use a personal access token, confirm the token is active and that **Enable Personal Access Tokens** is **True**.
+**The client reports 401 and can't sign in.** Check that the URL matches the Mattermost Site URL, because the OAuth discovery response is built from it. With a personal access token, check that the token is active and that your admin turned on personal access tokens.
 
-**The client cannot register an OAuth client.** Confirm **Enable OAuth 2.0 Service Provider** and **Enable Dynamic Client Registration** are **True** in **System Console > Integrations > Integration Management**. If **DCR redirect URI allowlist** is set under the same section, the client's redirect URI must match an entry in it. On Mattermost Cloud, these settings may not be changeable by workspace admins; ask Mattermost support if they are off.
+**The client can't register an OAuth client.** Your admin needs to turn on the OAuth 2.0 service provider and dynamic client registration, and any redirect URI allowlist must match the client. See [External client endpoint](mcp_integrations.md#external-client-endpoint).
 
-**The client only supports SSE or stdio.** This endpoint supports streamable HTTP only. Use a client version that supports streamable HTTP, or a client option for remote HTTP servers.
+**The client only supports SSE or stdio.** Use a client version that supports streamable HTTP, or a client option for remote HTTP servers.
 
-**Write tools are missing from the list.** State-changing tools need an Enterprise license. A license change takes effect without restarting the plugin on Mattermost Server v12.0 and later.
+**Write tools are missing.** State-changing tools need an Enterprise license. See [External client endpoint](mcp_integrations.md#external-client-endpoint).
 
-**A user is missing tools that others have.** The user may be blocked by an access policy on the built-in server or a plugin server, or a plugin tool may be disabled by an admin in the **Tools** tab.
-
-**A plugin's tools do not appear.** The plugin must register its server for external exposure, an admin must enable that plugin server in the **Tools** tab, and its tool names must not collide with built-in tools. Check the server log for skipped tools.
+**You're missing tools that others have.** An access policy on the built-in or a plugin server, or an admin disabling a tool, can remove tools for you. Ask your admin.
 
 **You get 429 Too Many Requests.** Each user can have up to 32 MCP requests in flight at once. Close unused client sessions and retry after the `Retry-After` interval.
 
 **Streams end after a while.** Requests are limited to 30 minutes. Compliant clients reconnect on their own.
 
-## Related docs
+## Related
 
+- [External client endpoint](mcp_integrations.md#external-client-endpoint) for admins
 - [Tool reference](mcp_tools.md)
 - [Connect agents to MCP servers](mcp_integrations.md)
 - [Tool approval and credentials](tool_approval.md)
-- [Use Mattermost Agents as your personal AI assistant](personal_agent.md)
 - [Model Context Protocol specification](https://modelcontextprotocol.io)

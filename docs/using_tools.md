@@ -1,6 +1,6 @@
 # Use tools and approve actions
 
-Agents call tools to do things: search Mattermost, post messages, create files, and use systems like Jira or GitHub through MCP servers. This page explains how to approve or reject a tool call, how to connect your account to a tool provider, and what happens when a tool fails. Your admin decides which tools exist and which ones need your approval.
+Approve or reject an agent's tool calls, share or hide results in channels, and connect your accounts to MCP tool providers. Your admin decides which tools exist and which need your approval.
 
 ## Where tools run
 
@@ -8,7 +8,7 @@ Agents call tools to do things: search Mattermost, post messages, create files, 
 - **Channels:** tools are off unless your admin turned on **Enable Channel Mention Tool Calling**. When it's off and you ask for something that needs a tool, the agent tells you to use a direct message or the Agents pane.
 - **Which tools:** Mattermost tools, tools from remote MCP servers your admin connected, and tools from Mattermost plugins that register with Agents. Availability also depends on your permissions and on whether your account is connected to each provider.
 
-Mattermost and plugin tools run as you. See [Tool approval and credentials](tool_approval.md) for the full model.
+Tools run as you. See [Tool approval and credentials](tool_approval.md) for the full model.
 
 ## Approve or reject a tool call
 
@@ -17,7 +17,7 @@ When a tool needs your approval, the agent's reply shows a card with the tool na
 - If several tools wait at once, use **Accept all** or **Reject all**, or decide each one.
 - A reply can mix tools that ran automatically and tools that wait. Automatic ones show an **Auto-approved** badge. The others keep their buttons.
 - Only the person who started the conversation can approve. Other people in a channel see the tool name but not its arguments, and they can't approve.
-- An unanswered call stays pending. It never approves itself and never moves to someone else.
+- An unanswered call stays pending. It never approves itself.
 
 ## Share or keep private (channels only)
 
@@ -42,13 +42,11 @@ Some MCP servers need you to sign in with your own account before their tools ap
 - Turn providers on or off for yourself. Your choices are saved to your account.
 - Select **Refresh tool providers** to rediscover tools after an admin changes providers or you connect one.
 
-Only the person who started the conversation can answer a **Connect** card. Everyone else sees "Waiting for the requester to connect".
-
-You must use web or desktop to connect. The mobile apps can't start MCP OAuth.
+Use web or desktop to connect. The mobile apps can't start MCP OAuth.
 
 ## Agents that use a service account
 
-An admin can set an agent to use shared service account credentials for external MCP servers. With that agent you're never asked to connect, and the **Tools** menu isn't shown. External tools act as the shared account, not as you. Mattermost and plugin tools still run as you, and you still approve tool calls the same way.
+For an agent your admin set to use a shared service account, you're never asked to connect and the **Tools** menu isn't shown. External tools act as the shared account, not as you. See [Service account authentication](mcp_integrations.md#service-account-authentication).
 
 ## When a tool fails
 
@@ -58,4 +56,4 @@ An agent also stops calling tools after its **Max tool turns** limit (30 by defa
 
 ## Ask the agent a question back
 
-When the agent needs a decision before it continues, it asks a multiple-choice question in the conversation. Select an option, type your own answer under **Something else…**, or select **Skip**. In a channel, only the person who started the conversation can answer.
+When the agent needs a decision before it continues, it asks a multiple-choice question in the conversation. Select an option, type your own answer under **Something else…**, or select **Skip**.

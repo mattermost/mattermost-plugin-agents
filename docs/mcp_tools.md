@@ -1,6 +1,6 @@
 # Mattermost MCP tool reference
 
-The built-in Mattermost MCP server provides 121 tools: 74 read-only and 47 that change state. This page lists every tool with its type, for admins deciding on approval policies and developers connecting external clients. The same tools serve agents inside Mattermost and, when an admin enables the HTTP endpoint, external MCP clients. See [Mattermost MCP server](mcp_server.md) for connecting a client.
+All 121 tools of the built-in Mattermost MCP server, each marked read-only or state-changing. The same tools serve agents inside Mattermost and, when an admin enables the HTTP endpoint, external MCP clients. See [Mattermost MCP server](mcp_server.md) for connecting a client.
 
 ## How the tools behave
 

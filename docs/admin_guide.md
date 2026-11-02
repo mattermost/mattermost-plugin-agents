@@ -1,13 +1,15 @@
 # Mattermost Agents admin guide
 
-Mattermost Agents (plugin ID `mattermost-ai`) adds AI agents to Mattermost. An agent is a Mattermost bot backed by an LLM that you choose, including a model that runs on your own infrastructure. Agents act through tools: the built-in Mattermost tools, remote MCP servers, and tools registered by other plugins. The plugin also ships a built-in Mattermost MCP server that external AI clients such as Claude Code and Cursor can use. This page is the starting point for system admins: requirements, setup, a map of every setting, and license requirements.
+Set up Mattermost Agents (plugin `mattermost-ai`): connect LLMs, create agents, connect MCP servers and tools, and control access, approval, and licensing.
+
+An agent is a Mattermost bot backed by an LLM that you choose, including a model that runs on your own infrastructure. Agents act through tools: the built-in Mattermost tools, remote MCP servers, and tools registered by other plugins. The plugin also ships a built-in Mattermost MCP server for external AI clients such as Claude Code and Cursor. This page covers requirements, setup, a map of every setting, and license requirements.
 
 ## How the pieces fit
 
 1. An **LLM service** holds the connection to a provider: type, credentials, default model, and optional fallback. You configure services in the System Console.
 2. An **agent** is a bot with a name, instructions, a model, access rules, and tool grants. Agents use a service. You create them on the **Agents** page.
 3. **Tools** give an agent abilities. Admins decide which tools exist, which need approval, and which users can reach each MCP server.
-4. **Users** talk to agents in direct messages, the Agents pane, and channels. Every tool call runs with the permissions of the person who asked, unless you set an agent to use a shared service account.
+4. **Users** talk to agents in direct messages, the Agents pane, and channels. Every tool call runs with the permissions of the person who asked, unless an agent uses a shared service account for external MCP servers.
 
 The Mattermost Server enforces authorization, such as agent access and tool policies. Prompt text never does.
 
@@ -26,9 +28,9 @@ Mattermost Server can ship with Agents pre-installed. Check **System Console > P
 
 ## Quick start
 
-1. Go to **System Console > Plugins > Agents** and select **Add a Service**. Choose a **Service type**, enter the credentials and a **Default model**, and save. See [Configure LLM services](llm_services.md) and [Provider configuration](providers.md).
+1. Go to **System Console > Plugins > Agents** and select **Add an AI Service**. Choose a **Service type**, enter the credentials and a **Default model**, and save. See [Configure LLM services](llm_services.md) and [Provider configuration](providers.md).
 2. Open the **Agents** page from the product switcher (grid icon). Select **Create agent**, choose a username, the service, and optional instructions. See [Create and manage agents](managing_agents.md).
-3. Back in **System Console > Plugins > Agents**, pick the **Default bot**. Users who haven't chosen an agent get this one.
+3. Back in **System Console > Plugins > Agents**, pick the **Default bot**. Users who haven't chosen an agent get this one, and so do features that don't let users choose, such as meeting summaries. If the default agent becomes unavailable, those features fail until you pick another. Mattermost never substitutes a different agent.
 4. Send the agent a direct message to test it.
 5. Optionally add [MCP servers](mcp_integrations.md), [web search](web_search.md), or [semantic search](embedding_search.md), and set [access controls](access_control.md).
 
@@ -41,6 +43,7 @@ Mattermost Server can ship with Agents pre-installed. Check **System Console > P
 | Restrict who can use an agent, service, or MCP server | [Control who can use agents](access_control.md) |
 | Connect remote MCP servers and let agents use tools | [Connect agents to MCP servers](mcp_integrations.md) |
 | Decide which tool calls need approval | [Tool approval and credentials](tool_approval.md) |
+| Control tools, auto-reply, and web search in channels | [Control agents in channels](channel_settings.md) |
 | Let external AI clients use Mattermost | [Mattermost MCP server](mcp_server.md), [Tool reference](mcp_tools.md) |
 | Give agents web search | [Web search](web_search.md) |
 | Turn on semantic search | [Set up semantic search](embedding_search.md) |
@@ -55,7 +58,7 @@ Mattermost Server can ship with Agents pre-installed. Check **System Console > P
 
 ## Plugin settings
 
-Everything is under **System Console > Plugins > Agents**. The plugin stores its configuration in the plugin settings under `PluginSettings.Plugins["mattermost-ai"]`. Agents themselves live in the database, not in this configuration.
+Everything is under **System Console > Plugins > Agents**. The plugin stores its configuration, and agents, in its own database tables. See [Back up and automate](backup_and_automation.md).
 
 | Panel | Setting | Config key | Default | Details |
 |---|---|---|---|---|
@@ -65,9 +68,9 @@ Everything is under **System Console > Plugins > Agents**. The plugin stores its
 | AI Functions | Render AI-generated links | `allowUnsafeLinks` | Off | [Secure AI-generated links and HTML](ai_output_security.md) |
 | AI Functions | Allowed Link Domains (csv) | `allowedLinkDomains` | Empty (any domain, when links are on) | [Secure AI-generated links and HTML](ai_output_security.md) |
 | AI Functions | Enable HTML artifacts (experimental) | `enableHTMLArtifacts` | Off | [Secure AI-generated links and HTML](ai_output_security.md#html-artifacts) |
-| AI Functions | Enable Channel Mention Tool Calling (experimental) | `enableChannelMentionToolCalling` | Off | [Tool approval and credentials](tool_approval.md#tools-in-channels) |
-| AI Functions | Enable ambient auto-replies (experimental) | `enableAmbientAutoReply` | Off | [Use agents in channels](agents_in_channels.md#ambient-modes) |
-| AI Functions | Allow native web search in channels | `allowNativeWebSearchInChannels` | Off | [Web search](web_search.md#native-web-search) |
+| AI Functions | Enable Channel Mention Tool Calling (experimental) | `enableChannelMentionToolCalling` | Off | [Control agents in channels](channel_settings.md) |
+| AI Functions | Enable ambient auto-replies (experimental) | `enableAmbientAutoReply` | Off | [Control agents in channels](channel_settings.md#ambient-limits-and-cost) |
+| AI Functions | Allow native web search in channels | `allowNativeWebSearchInChannels` | Off | [Control agents in channels](channel_settings.md) |
 | Debug | Trace Output, OpenTelemetry Endpoint, Use TLS for OTLP Export, OTLP Export Headers | `telemetryOutput`, `openTelemetryEndpoint`, `openTelemetryTLS`, `openTelemetryHeaders` | Off | [Monitor Agents](observability.md#opentelemetry-tracing) |
 | Debug | Enable Token Usage Logging | `enableTokenUsageLogging` | Off | [Monitor Agents](observability.md#token-usage-log) |
 | Embedding Search (experimental) | Embedding settings and reindex controls | `embeddingSearchConfig` | Off | [Set up semantic search](embedding_search.md) |

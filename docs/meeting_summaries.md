@@ -1,10 +1,10 @@
 # Meeting summaries
 
-Agents can turn a meeting transcript from Mattermost Calls or Zoom into a structured summary with key discussion points and action items. This page covers how to create a summary, what it needs, and what to check if the button is missing. Meeting summaries need an Enterprise license or higher.
+Turn a Mattermost Calls or Zoom transcript into a summary with key points and action items. It's private to you until you post it to the call thread. Needs an Enterprise license.
 
 ## Create a summary
 
-1. Record the meeting. For Calls, [start a call and record it](https://docs.mattermost.com/collaborate/make-calls.html) with transcription turned on. For Zoom, see [Zoom prerequisites](#zoom-prerequisites).
+1. Record the meeting. For Calls, [start a call and record it](/end-user-guide/collaborate/make-calls) with transcription turned on. For Zoom, see [Zoom prerequisites](#zoom-prerequisites).
 2. When the transcript is posted, select **Create meeting summary** on the post.
 3. The agent replies in a direct message thread with you: it posts a link to the transcript, then streams the summary. Open the thread in the Agents pane.
 
@@ -18,7 +18,7 @@ While it generates you can select **Stop Generating**, and afterward **Regenerat
 
 ## Zoom prerequisites
 
-A system admin must [enable and configure the Zoom plugin](https://docs.mattermost.com/integrate/zoom.html), and Zoom cloud recordings and transcripts must be turned on in Zoom. Then:
+A System Admin must [enable and configure the Zoom plugin](/integrations-guide/zoom), and Zoom cloud recordings and transcripts must be turned on in Zoom. Then:
 
 1. Subscribe a channel to a recurring Zoom meeting with `/zoom subscription add [meeting ID]`, or start a meeting from the Zoom button in the right-hand sidebar.
 2. Record the meeting.
@@ -26,7 +26,7 @@ A system admin must [enable and configure the Zoom plugin](https://docs.mattermo
 
 ## How it works
 
-- **Which agent:** the workspace's default agent writes the summary, not the agent you selected in a picker. Set the default in **System Console > Plugins > Agents** under **Default bot**.
+- **Which agent:** the workspace's default agent writes the summary, not the agent you selected in a picker. Your admin sets the default agent.
 - **Which transcripts:** only posts from the `calls`, `zoom`, and `google-meet` bot accounts can be summarized. Zoom chat exports and WebVTT transcripts are supported.
 - **No tools:** the agent summarizes the transcript text and doesn't call tools.
 - **Privacy:** the transcript text is sent to the LLM service the default agent uses. With a self-hosted model, it stays in your environment. See [Data handling](data_handling.md).
@@ -34,11 +34,4 @@ A system admin must [enable and configure the Zoom plugin](https://docs.mattermo
 
 ## If the button is missing or the summary fails
 
-| Symptom | Likely cause |
-|---|---|
-| Selecting **Create meeting summary** does nothing | The server doesn't have an Enterprise license or higher. |
-| No **Create meeting summary** button | The Calls or Zoom plugin adds the button, so check that the plugin is enabled, that the transcript was posted, and that the post comes from the `calls`, `zoom`, or `google-meet` bot. |
-| "Sorry! Something went wrong" reply | Check the Mattermost Server log for the error. The default agent might be inactive or its LLM service unreachable. |
-| The summary comes from a different agent than you expected | Meeting summaries always use the default agent. Change it in the System Console. |
-
-For Calls recording and transcription, see the Calls documentation.
+A feature or button that's missing or does nothing usually means a license below Enterprise. The Calls or Zoom plugin adds the button, so also check that the plugin is enabled, that the transcript was posted, and that the post comes from the `calls`, `zoom`, or `google-meet` bot. If you get "Sorry! Something went wrong", check the Mattermost Server log. The default agent might be inactive or its LLM service unreachable. If the summary comes from an agent you didn't expect, ask your admin to change the default agent.

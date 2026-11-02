@@ -1,6 +1,8 @@
 # Set up semantic search
 
-Semantic search finds posts by meaning, not exact words. When it's on, agents add semantic results to the keyword results they already get from the `search_posts` tool, and AI search from the search bar and `/ask-channel` use it. This page covers requirements, settings, indexing, and when to run each reindex action. Semantic search is experimental and needs an Enterprise license. Without it, agents still search with keywords.
+Semantic search indexes posts as vectors in PostgreSQL with pgvector, so agents and AI search find posts by meaning. Setup, settings, and reindexing.
+
+When it's on, agents add semantic results to the keyword results they already get from `search_posts`. It's experimental and needs an Enterprise license. Without it, agents still search with keywords.
 
 ## How it works
 
@@ -76,7 +78,7 @@ For tens of millions of posts, set **Reindex Index Strategy** to **Drop and rebu
 - **Crash recovery.** State is durable. After a restart, **Index Health** shows the index state, and search stays off until you resume or start a full reindex. The plugin never rebuilds during activation. A cancelled or failed bulk load leaves the index dropped, so the next run continues the same way.
 - **Widening the window.** Catch Up after a large increase, such as one year to all posts, can take a long time because it maintains the index as it inserts. On a very large corpus a deferred Full Reindex can be faster, at the cost of search downtime.
 
-## Notes for admins
+## Model changes, license, and audit
 
 - If the saved model, provider, dimensions, or precision no longer match the index, the panel shows **Embedding Model Changed** and search is disabled until a Full Reindex.
 - After a license downgrade below Enterprise, semantic search stops. Turning it off is always allowed.

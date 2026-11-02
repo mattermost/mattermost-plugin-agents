@@ -47,6 +47,7 @@ Documentation is in the [`docs`](docs/) directory. The same pages are published 
 - [Configure LLM services](docs/llm_services.md), [Provider configuration](docs/providers.md), and [AWS Bedrock setup](docs/aws_bedrock_setup.md)
 - [Create and manage agents](docs/managing_agents.md) and [Control who can use agents](docs/access_control.md)
 - [Connect agents to MCP servers](docs/mcp_integrations.md) and [Tool approval and credentials](docs/tool_approval.md)
+- [Control agents in channels](docs/channel_settings.md)
 - [Web search](docs/web_search.md) and [Set up semantic search](docs/embedding_search.md)
 - [Secure AI-generated links and HTML](docs/ai_output_security.md)
 - [Monitor Agents](docs/observability.md), [Back up and automate](docs/backup_and_automation.md), and [Troubleshooting](docs/troubleshooting.md)

@@ -1,6 +1,8 @@
 # Configure Agents with AWS Bedrock
 
-This page shows how to use Amazon Bedrock as the LLM provider for Agents: enable model access, create an IAM policy and instance profile, add the service, and verify it. The recommended setup runs Mattermost on EC2 with an IAM instance profile, so no credentials are stored in Mattermost. For other credential options and the service fields, see [Provider configuration](providers.md#aws-bedrock).
+Use Amazon Bedrock with Agents: enable model access, create an IAM policy and EC2 instance profile, and add the service with no stored credentials.
+
+The recommended setup runs Mattermost on EC2 with an IAM instance profile. For other credential options and the service fields, see [Provider configuration](providers.md#aws-bedrock).
 
 ## Before you begin
 
@@ -94,7 +96,7 @@ aws ec2 associate-iam-instance-profile \
 
 ## Add the service and an agent
 
-1. Go to **System Console > Plugins > Agents** and select **Add a Service**.
+1. Go to **System Console > Plugins > Agents** and select **Add an AI Service**.
 2. Set **Service type** to **AWS Bedrock**, **AWS Region** to a region where Bedrock is available, and **Default model** to the model or inference profile ID.
 3. Leave **AWS Access Key ID**, **AWS Secret Access Key**, and **API Key** empty so the plugin uses the instance profile. Select **Save**.
 4. Create an agent that uses this service. See [Create and manage agents](managing_agents.md).

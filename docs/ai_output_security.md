@@ -1,6 +1,6 @@
 # Secure AI-generated links and HTML
 
-A model can be steered, by a prompt injection or a poisoned document, into writing a link or an HTML page that harms the reader. This page covers the two settings that control how Agents renders that output: **Render AI-generated links**, with an optional domain allowlist, and **Enable HTML artifacts**. Both are under **System Console > Plugins > Agents > AI Functions**, and both are off by default.
+A model can be steered by a prompt injection or a poisoned document into writing a link or HTML page that harms the reader. Two settings, both off by default and under **System Console > Plugins > Agents > AI Functions**, control this: **Render AI-generated links**, with an optional domain allowlist, and **Enable HTML artifacts**.
 
 ## Render AI-generated links
 

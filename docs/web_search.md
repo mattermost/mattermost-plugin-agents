@@ -1,6 +1,6 @@
 # Web search
 
-Agents can search the web two ways: through the model provider's own search tool, or through a search provider that Mattermost calls. This page explains how to choose, how to turn each on, and what each one limits. If your provider has native web search, use that. Use built-in web search for models that don't.
+Give agents web search through the provider's native tool (Professional) or Mattermost's built-in Brave, Google, or SearXNG search (Enterprise). If your provider has native web search, use that. Use built-in search for models that don't.
 
 | | Native web search | Built-in web search |
 |---|---|---|
@@ -11,6 +11,7 @@ Agents can search the web two ways: through the model provider's own search tool
 | Approval | No approval card | Asks for approval on every call |
 
 When an agent has native web search enabled, the built-in tool isn't offered to it.
+
 
 ## Native web search
 
@@ -46,7 +47,7 @@ Mattermost's own search tool lets an agent retrieve current information when the
 
 | Provider | Settings | Notes |
 |---|---|---|
-| **Brave Search** | **Brave API Key**, **Brave Result Limit** (1 to 10, default 5), **Brave API URL (optional)** | Built for AI use and returns LLM-ready summaries, so agents often need fewer follow-up fetches. You must have Brave's **Pro AI plan**. Using another Brave plan for AI use violates Brave's terms and can get the account suspended. |
+| **Brave Search** | **Brave API Key**, **Brave Result Limit** (1 to 10, default 5), **Brave API URL (optional)** | Returns summaries with each result, which reduces page fetches. You must have Brave's **Pro AI plan**. Using another Brave plan for AI use violates Brave's terms and can get the account suspended. |
 | **Google Custom Search** | **Google API Key**, **Search Engine ID**, **Result Limit** (1 to 10, default 5), **API URL (optional)** | Uses Google's Custom Search API, which returns weaker results than google.com, and has strict daily quotas. Mattermost scrapes the pages it needs, and many sites block that. |
 | **SearXNG (self-hosted)** | **SearXNG Base URL**, **SearXNG Result Limit** | Good for air-gapped or sovereign setups. The instance must allow the `json` format (`search.formats` in its settings). If it's on a private or reserved address, add it to the Mattermost Server's `AllowedUntrustedInternalConnections` setting. |
 

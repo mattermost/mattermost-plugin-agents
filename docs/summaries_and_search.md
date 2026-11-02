@@ -1,8 +1,8 @@
 # Summaries and AI search
 
-Use an agent to summarize a thread, catch up on a channel, pull out action items, or search Mattermost in plain language. This page covers each entry point, what it needs, and how it behaves. Summaries need a Professional license or higher. AI search needs Enterprise.
+Summarize a thread, channel, or unread messages with an agent, and search Mattermost with AI. Summaries need Professional and AI search needs Enterprise. Results stay private to you.
 
-In every case the agent works only with content you can already read. Results open in the Agents pane in a private conversation with the agent, and only you can see them.
+The agent works only with content you can already read, and results open in the Agents pane in a private conversation.
 
 ## Summarize a thread
 
@@ -10,7 +10,7 @@ In every case the agent works only with content you can already read. Results op
 2. Choose the agent at the top of the menu if you have more than one.
 3. Select **Summarize Thread**, **Find action items**, or **Find open questions**.
 
-The same menu has **React for me**, which isn't a summary action.
+**React for me** in the same menu picks an emoji that fits the message and adds the reaction as you. It works at any license level.
 
 ## Summarize a channel
 
@@ -28,7 +28,7 @@ To summarize only what's new, scroll to the **New Messages** line in a channel w
 
 How channel summaries read the channel:
 
-- **Ask Agents about this channel** reads the channel with the built-in `read_channel` and `get_channel_info` tools, limited to the channel you're in. This works even if the selected agent has a narrower tool list. If those tools are unavailable to you, the request fails with an error about embedded MCP tools. Ask your admin to check the built-in Mattermost MCP server.
+- **Ask Agents about this channel** reads the channel with the built-in `read_channel` and `get_channel_info` tools, limited to the channel you're in. This works even if the selected agent has a narrower tool list. If it fails with an error about MCP tools, ask your admin.
 - **Ask AI** at the **New Messages** line and `/summarize-channel` read the channel's posts directly and don't use tools.
 
 ### Summarize from the message box
@@ -52,20 +52,9 @@ AI search is an experimental feature. The agent runs several searches and reads 
 
 To ask about the channel you're viewing, type `/ask-channel` followed by your question. The command always uses the workspace's default agent. The agent searches that channel first and then, if the answer isn't there, other content you can access. When the answer comes from another channel, it tells you which one.
 
-Things to know:
+### Search behavior
 
 - Searches run as you. The agent can't find content you can't access.
 - By default the agent uses keyword search. If your admin set up [semantic search](embedding_search.md), it also finds related content that doesn't contain your exact words.
 - The agent needs access to the built-in Mattermost tools. If it says it can't search, ask your admin.
 - If no relevant posts turn up, the agent says so instead of answering from general knowledge.
-
-## Availability
-
-| Feature | Minimum license |
-|---|---|
-| Summarize Thread, Find action items, Find open questions | Professional |
-| Ask Agents about this channel, Ask AI at the **New Messages** line, `/summarize-channel` | Professional |
-| Search with AI, `/ask-channel` | Enterprise |
-| React for me | Any |
-
-If a button is missing, your license level or an agent restriction is the usual cause. Ask your system admin.

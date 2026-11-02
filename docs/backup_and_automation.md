@@ -1,6 +1,6 @@
 # Back up and automate Agents
 
-Agents keeps its configuration and data in the Mattermost PostgreSQL database, not in `config.json`. This page lists what's stored where, what to back up, and how to read and write the configuration through the plugin's admin API for automation.
+Agents keeps its configuration and data in the Mattermost database, not `config.json`. What to back up, and how to read and write configuration with the admin API.
 
 ## What's stored where
 
@@ -71,7 +71,7 @@ A trimmed example of the shape:
 Service types are `openai`, `anthropic`, `azure`, `openaicompatible`, `bedrock`, `cohere`, `north`, `mistral`, `gemini`, and `vertex`. Config keys for each System Console setting are in the [settings table](admin_guide.md#plugin-settings).
 
 - **Service IDs** are 26-character Mattermost IDs. Leave `id` empty on a new service and the server assigns one. Configurations from before this format used UUIDs and were rewritten once on upgrade. A write that carries a UUID service ID is rejected.
-- **Default and transcript agents** are chosen by bot user ID in `defaultBotUserID` and `transcriptBotUserID`, so renaming an agent doesn't change the selection. The older `defaultBotName` and `transcriptBackend` username fields are read only when the ID field is empty. On startup and on every save, the plugin replaces a username with the matching bot user ID. A username no agent holds stays in place and is logged as a warning. Automation should write the ID fields and set the legacy fields to `""`.
+- **Default and transcript agents** are chosen by bot user ID in `defaultBotUserID` and `transcriptBotUserID`, so renaming an agent doesn't change the selection. `defaultBotUserID` is the agent used by features that don't name one, such as meeting summaries. `transcriptBotUserID` selects the agent whose OpenAI, OpenAI Compatible, or Azure service transcribes call recordings through the `/post/{postid}/transcribe/file/{fileid}` route. The **Create meeting summary** button doesn't use it. The older `defaultBotName` and `transcriptBackend` username fields are read only when the ID field is empty. On startup and on every save, the plugin replaces a username with the matching bot user ID. A username no agent holds stays in place and is logged as a warning. Automation should write the ID fields and set the legacy fields to `""`.
 - **Legacy `bots`.** Configurations that stored agents in `bots` are migrated into the database on startup, then `bots` is cleared. See [Upgrade from Agents 1.x](upgrading_to_2.0.md).
 
 ## Agent API

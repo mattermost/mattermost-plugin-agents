@@ -1,8 +1,8 @@
 # Configure LLM services
 
-An LLM service is the connection between Agents and a model provider: provider type, credentials, default model, limits, and an optional fallback. Several agents can share one service. This page covers the settings every service has, token limits, fallback chains, and structured output. Provider-specific fields and capabilities are in [Provider configuration](providers.md).
+An LLM service connects Agents to a model provider: credentials, default model, token limits, fallback, and structured output. Several agents can share one service.
 
-To add a service, go to **System Console > Plugins > Agents** and select **Add a Service**. Free and Professional licenses allow one service. Enterprise and above allow several. See [License requirements](admin_guide.md#license-requirements).
+To add a service, go to **System Console > Plugins > Agents** and select **Add an AI Service**. Free and Professional licenses allow one service. Enterprise and above allow several. Provider-specific fields are in [Provider configuration](providers.md).
 
 ## Service settings
 
@@ -74,7 +74,3 @@ The key is `structuredOutputPolicy` on each service. An empty value means `auto`
 Mattermost decides once per request, across the whole fallback chain, because it converts the schema before it picks which service answers. A schema goes out natively only if every service in the chain is known to support it or is set to **Native supported**. If any one needs the prompt fallback, the whole request uses prompt instructions. Marking one service **Native supported** doesn't force native output for a chain that includes a service that can't do it.
 
 This setting is per service and applies to agents and to LLM Bridge calls. The old per-agent structured output setting (`structuredOutputEnabled`) is deprecated and ignored.
-
-## Service IDs
-
-Services have 26-character Mattermost-style IDs. Configurations from before that format used UUIDs, and they're rewritten once on upgrade. If you automate configuration and hard-coded a UUID service ID, read `GET /plugins/mattermost-ai/admin/config` again to get the new IDs. See [Back up and automate](backup_and_automation.md).

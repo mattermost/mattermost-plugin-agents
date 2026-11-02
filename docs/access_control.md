@@ -1,6 +1,8 @@
 # Control who can use agents
 
-You can restrict who can use an agent, where it can be used, and which users can reach an LLM service or an MCP server. This page covers allow and block lists on each agent, and attribute-based access policies for agents, services, and MCP servers. Access rules decide who can use a resource. Which tool calls need approval is a separate control. See [Tool approval and credentials](tool_approval.md).
+Restrict who can use an agent and where, with allow and block lists or attribute-based (ABAC) policies on agents, LLM services, and MCP servers.
+
+Access rules decide who can use a resource. Which tool calls need approval is a separate control. See [Tool approval and credentials](tool_approval.md).
 
 ## Rules at a glance
 
@@ -38,9 +40,9 @@ Requirements:
 |---|---|---|
 | Agent | Agent editor, **Access** tab. Set **User access** to **Attribute-based (access policy)**, save, then define the policy. | The policy is the only user gate. The agent's allow and block lists are ignored. |
 | LLM service | **System Console > Plugins > Agents**, on the service panel | Restricts every agent that uses the service, on top of each agent's own rules. Also affects who sees the service and its agents. |
-| MCP server | **System Console > Plugins > Agents > Model Context Protocol (MCP)**, **Configuration** tab. Built-in and plugin servers are under **Built-in & plugin servers**. | Applies to remote servers, the built-in Mattermost Server, and plugin-registered servers. Users who are denied lose that server's tools without notice. |
+| MCP server | **System Console > Plugins > Agents > Model Context Protocol (MCP)**, **Configuration** tab. Built-in and plugin servers are under **Built-in & plugin servers**. | Applies to remote servers, the built-in Mattermost MCP server, and plugin-registered servers. Users who are denied lose that server's tools without notice. |
 
-Denying the built-in Mattermost Server removes nearly all Mattermost tools for the users it matches.
+Denying the built-in Mattermost MCP server removes nearly all Mattermost tools for the users it matches.
 
 Each editor has **Simple** and **Advanced** modes. Advanced takes a CEL expression, and is for System Admins. If a policy uses an expression the simple editor can't show, only a System Admin can edit it, and anyone who can manage the agent can remove it. The editor warns you if the policy would exclude you.
 
@@ -57,7 +59,7 @@ Who can author:
 - **No policy on a service or MCP server:** unrestricted. Installing or upgrading the plugin changes nothing until you write a policy.
 - **No policy on an agent in attribute-based mode:** everyone is denied. Define the policy right after you switch the mode. This also applies after a version restore. See [Create and manage agents](managing_agents.md#version-history).
 - **A policy exists:** it decides. Matching users are allowed, others are denied.
-- **The access engine is unavailable** (for example the license lapsed, or an evaluation fails): the request is denied. Agents in a legacy mode with no policy keep using their allow and block lists.
+- **An evaluation fails:** the request is denied for every agent, service, and MCP server. If the server reports that no policy exists, agents in a legacy mode use their allow and block lists.
 - **Server without ABAC:** legacy agents keep their lists, and services and MCP servers are unrestricted. Agents in attribute-based mode are unusable for everyone until you upgrade or change the mode.
 
 The access tab's hint says "Until a policy is defined, all users can use this agent." That doesn't match the server, which denies. Define a policy first.

@@ -1,6 +1,6 @@
 # Troubleshooting
 
-This page lists common Agents problems by symptom, with the usual cause and fix. Start with the Mattermost Server log, filtered by plugin ID `mattermost-ai`. For request-level detail, turn on trace output in **Server Logs** mode. See [Monitor Agents](observability.md).
+Common Mattermost Agents problems by symptom, with cause and fix: setup, agents, channels, MCP tools, search, meetings, and HTML artifacts. Start with the Mattermost Server log, filtered by plugin ID `mattermost-ai`. For request-level detail, turn on trace output in **Server Logs** mode. See [Monitor Agents](observability.md).
 
 ## Setup and activation
 
@@ -31,10 +31,10 @@ This page lists common Agents problems by symptom, with the usual cause and fix.
 
 | Symptom | Cause and fix |
 |---|---|
-| Mentioning an agent in a channel gets a notice that channel use isn't available | Agents in channels need a Professional license or higher. |
-| The agent replies but won't use tools in a channel | **Enable Channel Mention Tool Calling** is off. It's off by default. See [Tool approval and credentials](tool_approval.md#tools-in-channels). |
+| A feature or button is missing, does nothing, or returns a licensing message | Check [License requirements](admin_guide.md#license-requirements). Channels, summaries, write tools, remote MCP servers, AI search, and meeting summaries each need a license level. |
+| The agent replies but won't use tools in a channel | **Enable Channel Mention Tool Calling** is off. It's off by default. See [Control agents in channels](channel_settings.md). |
 | The **Agents** channel settings tab is missing | It needs an Enterprise Advanced license, the channel-properties permission, a public or private channel, and at least one agent available in the channel. |
-| Ambient auto-reply stays silent | **Enable ambient auto-replies** is off, the classification said no, or a rate limit applied. See [Use agents in channels](agents_in_channels.md#ambient-modes). |
+| Ambient auto-reply stays silent | **Enable ambient auto-replies** is off, the classification said no, or a rate limit applied. See [Control agents in channels](channel_settings.md#ambient-limits-and-cost). |
 | Users can't click links in replies | **Render AI-generated links** is off, or the domain isn't on the allowlist. See [Secure AI-generated links and HTML](ai_output_security.md). |
 
 ## Tools and MCP
@@ -43,8 +43,6 @@ This page lists common Agents problems by symptom, with the usual cause and fix.
 |---|---|
 | A tool call fails repeatedly | After three failures in a row the agent stops using tools and describes the error. Check API keys and endpoints, MCP connectivity and third-party authorization, and that the user can access the target. Trace output shows tool errors. |
 | An agent has no tools | **Enable Tools** is off, or the MCP grants on its **MCPs** tab don't include the tool, or an access policy or the user's **Tools** menu choices removed the server. |
-| Write tools are missing | Tools that change state need an Enterprise license. |
-| Remote MCP tools never run | Remote MCP servers need an Enterprise license. |
 | A remote server's tool list is empty | For per-user OAuth servers, the user must connect first. For a service account agent, **No service account credentials** means the server has no service account headers. **Couldn't connect** means the headers were rejected. Check that the header value doesn't repeat the header name. |
 | An OAuth authorization fails with a redirect error | Register the **MCP OAuth Callback URL** from the **Configuration** tab in the remote server's OAuth app. |
 | Atlassian shows an authorization error | An Atlassian organization admin must allow your domain. See [Atlassian MCP server](mcp_integrations.md#atlassian-mcp-server). |
@@ -56,14 +54,12 @@ This page lists common Agents problems by symptom, with the usual cause and fix.
 
 | Symptom | Cause and fix |
 |---|---|
-| Summary buttons are missing | Thread, channel, and unread summaries need a Professional license. |
 | Channel questions fail with an error about embedded MCP tools | The built-in `read_channel` and `get_channel_info` tools are unavailable to the user. An access policy on the built-in server is the usual cause. |
 | The agent can't read the text of an attached PDF or Office document | The server must extract document text. Turn on **Enable document search by content** (`FileSettings.ExtractContent`) under **System Console > Environment > File Storage**. |
 | AI search or `/ask-channel` is unavailable | They need an Enterprise license, and the agent needs the built-in Mattermost tools. |
 | Search results are keyword-only | Semantic search isn't set up, or the index is missing. See [Set up semantic search](embedding_search.md). |
 | Semantic search returns HTTP 503 | A deferred reindex or a vector index rebuild is running. Search returns when it finishes. |
 | The panel shows **Embedding Model Changed** | The provider, model, dimensions, or precision changed. Run a **Full Reindex**. |
-| Selecting **Create meeting summary** does nothing | Meeting summaries need an Enterprise license. |
 | A meeting summary fails | Check the server log. The default agent might be inactive or its service unreachable. See [Meeting summaries](meeting_summaries.md). |
 
 ## HTML artifacts

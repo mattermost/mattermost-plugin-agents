@@ -1,6 +1,6 @@
 # Sovereign AI deployments
 
-Sovereign AI means you control where models run, where data goes, and who can use them. This page shows how to run Mattermost Agents with self-hosted models or private cloud endpoints, including air-gapped networks, and which settings keep data inside your boundary. It applies when you must keep message content, user data, and tool results from reaching an outside vendor.
+Run Mattermost Agents on self-hosted or private-cloud models, including air-gapped networks, so message content and tool results never reach an outside vendor.
 
 ## What you control
 
@@ -26,26 +26,9 @@ Check that your model supports the features you'll use. Tool calling, vision, an
 
 Run models in your own cloud account, with private networking and your identity and access management. Supported options are AWS Bedrock, Azure OpenAI, and Google Vertex AI. See [AWS Bedrock](aws_bedrock_setup.md) and [Provider configuration](providers.md). Bedrock supports VPC endpoints through **Custom Endpoint URL**. An Enterprise Advanced license lets you chain services so a request tries your private endpoint first and falls back to another, such as a local model, only when the first fails.
 
-### Public LLM APIs with controls
+### Public LLM APIs
 
-If you use a vendor API, the vendor receives each request's content. You can limit the exposure:
-
-- Restrict who can use each agent, and where. See [Control who can use agents](access_control.md).
-- Keep tools off in channels, which is the default, and set sensitive tools to **Ask Every Time**.
-- Review your provider's terms for data retention and training. Mattermost can't enforce them.
-- Use the [token usage log](observability.md#token-usage-log) and [audit records](observability.md#audit-logging) to see who uses what.
-
-## Security and compliance controls
-
-| Control | Where |
-|---|---|
-| Per-agent allow and block lists for users, teams, and channels | [Control who can use agents](access_control.md) |
-| Attribute-based policies for agents, services, and MCP servers | [Control who can use agents](access_control.md#attribute-based-access-control) |
-| Per-tool approval policies and initiator-only approval | [Tool approval and credentials](tool_approval.md) |
-| Permissions: every tool runs with the requesting user's access | [Tool approval and credentials](tool_approval.md#whose-credentials-run-a-tool) |
-| Audit records for configuration, agents, approvals, and MCP sessions | [Monitor Agents](observability.md#audit-logging) |
-| Links and HTML in AI output | [Secure AI-generated links and HTML](ai_output_security.md) |
-| Multiple agents, each with its own model, instructions, and access | [Create and manage agents](managing_agents.md) |
+If you use a vendor API, the vendor receives each request's content. See [Data handling](data_handling.md#reduce-what-leaves-your-environment) for what you can do to limit that, and review your provider's terms for retention and training. Mattermost can't enforce them.
 
 ## Checklist
 

@@ -1,6 +1,8 @@
 # Provider configuration
 
-Agents can use OpenAI, Anthropic, Google Gemini, Google Vertex AI, AWS Bedrock, Azure, Cohere, Cohere North, Mistral, and any OpenAI-compatible endpoint such as Ollama or vLLM. This page lists, for each provider, how to authenticate and which capabilities work. For settings every service has, such as token limits and fallbacks, see [Configure LLM services](llm_services.md).
+Authentication fields and capabilities (native tools, reasoning, vision) for each Agents provider: OpenAI, Anthropic, Google Gemini, Vertex AI, AWS Bedrock, Azure, Cohere, Mistral, and OpenAI-compatible servers such as Ollama and vLLM.
+
+For settings every service has, such as token limits and fallbacks, see [Configure LLM services](llm_services.md).
 
 Pick the **Service type** when you add a service in **System Console > Plugins > Agents**. Credentials are stored in the plugin configuration.
 
@@ -28,9 +30,9 @@ Use this type for any server that speaks the OpenAI API.
 | **API Key** | Optional. Leave it blank for Ollama. |
 | **Organization ID** | Optional. |
 | **Default model** | The model name your server exposes. |
-| **Use Responses API** | On by default. Turn it off for servers that only implement Chat Completions. |
+| **Use Responses API** | On by default. See [Responses API](llm_services.md#responses-api). |
 
-Check that your server has enough capacity and that it supports the features you plan to use, such as tool calling. Advanced features vary by server, so set the token limits to match what your deployment can handle.
+Tool calling, vision, and structured output depend on the server and model. If Mattermost can't detect what your endpoint supports, set **Structured output** on the service. See [Configure LLM services](llm_services.md#structured-output).
 
 ## OpenAI
 
@@ -146,6 +148,6 @@ In Azure, deploy a model, then collect three values from the deployment:
 | **API Key** | The deployment's **Key**. |
 | **Default model** | The deployment's **Model name**. |
 
-**Use Responses API** is on by default. Turn it off if your deployment doesn't support the Responses API.
+**Use Responses API** is on by default. See [Responses API](llm_services.md#responses-api).
 
 See Microsoft's [Azure OpenAI documentation](https://learn.microsoft.com/en-us/azure/ai-services/openai/overview) for provisioning.

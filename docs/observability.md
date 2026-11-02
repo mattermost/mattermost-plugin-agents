@@ -1,6 +1,6 @@
 # Monitor Agents
 
-Agents reports what it does in four ways: a token usage log, Prometheus metrics, OpenTelemetry traces, and server audit records. This page covers how to turn each on, what's in each, and how to follow one agent turn end to end. None of them record message content, prompts, or tool results.
+Monitor Agents with a token usage log, Prometheus metrics, OpenTelemetry traces, and audit records. None of them record prompts, messages, or tool results.
 
 ## Token usage log
 
@@ -9,7 +9,7 @@ Use it for cost tracking, chargeback, and capacity planning. It needs a Professi
 1. Go to **System Console > Plugins > Agents > Debug**.
 2. Set **Enable Token Usage Logging** to **True**.
 
-Mattermost writes one JSON object per LLM request to `logs/agents/token_usage.log` in the server's log directory. The file rotates at 100 MB and rotated files are compressed. Providers that don't report cached tokens, reasoning tokens, or cost leave those fields at `0`.
+Mattermost writes one JSON object per LLM request to `logs/agents/token_usage.log`, relative to the Mattermost Server's working directory (for example `/opt/mattermost/logs/agents/`). A custom log file location doesn't move it. The file rotates at 100 MB and rotated files are compressed. Providers that don't report cached tokens, reasoning tokens, or cost leave those fields at `0`.
 
 | Field | Meaning |
 |---|---|
@@ -135,7 +135,7 @@ Agents sends a server audit record for every state-changing operation:
 
 Each record has the actor (user ID, session, IP), the event, the request path, the outcome (including failures and permission denials as HTTP status codes), the `trace_id` for jumping to traces, and the IDs of the affected objects. Records never contain prompts, conversation or channel content, tool arguments or results, configuration values, or free-form error text. A configuration save records only which top-level sections changed. Failure detail stays in the server log, so correlate by time, actor, or `trace_id`.
 
-The plugin has no audit toggle. Whether records are stored is controlled by the server's [audit logging configuration](https://docs.mattermost.com/administration-guide/manage/logging.html).
+The plugin has no audit toggle. Whether records are stored is controlled by the server's [audit logging configuration](/administration-guide/manage/logging).
 
 ## Server logs
 

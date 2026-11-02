@@ -1,8 +1,8 @@
 # Data handling
 
-This page explains what Mattermost Agents sends to the LLM and to other services, and what it stores. It's for people who need to decide whether Agents fits their privacy requirements. The LLM service you configure receives the content of each request. With a self-hosted model, that content stays in your environment. With a cloud provider, the provider receives it and its own terms apply.
+What Mattermost Agents sends to the LLM and other services for each feature, and what it stores. With a self-hosted model, content stays in your environment. With a cloud provider, the provider receives it and its own terms apply.
 
-For strict privacy requirements, run the LLM yourself so that PII and message content never reach an outside vendor. See [Sovereign AI deployments](sovereign_ai.md).
+For strict privacy requirements, run the LLM yourself so PII and message content never reach an outside vendor. See [Sovereign AI deployments](sovereign_ai.md).
 
 ## What every request includes
 
@@ -14,9 +14,8 @@ Each request to the LLM starts with a system prompt that contains:
 - The requesting user's username, first and last name, position, and locale, and whether they're a System Admin. Not their email address or user ID.
 - In a channel, the channel name and display name, and the team name and display name.
 - The agent's custom instructions.
-- The names and descriptions of the tools the agent can use in this conversation.
 
-Then it adds the conversation itself. What the conversation includes depends on how the agent was started.
+Each request also carries the definitions (name, description, and parameters) of the tools the agent can use. For Gemini and Vertex AI, the system prompt lists them too. Then it adds the conversation itself. What the conversation includes depends on how the agent was started.
 
 ## What each entry point sends
 
