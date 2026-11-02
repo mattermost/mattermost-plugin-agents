@@ -550,7 +550,7 @@ func (c *Client) staticOAuthTokenMissing() (bool, error) {
 	if c.serviceAccount || c.oauthManager == nil || staticOAuthCreds(c.config) == nil {
 		return false, nil
 	}
-	hasToken, err := c.oauthManager.HasStoredToken(c.userID, c.config.Name)
+	hasToken, err := c.oauthManager.HasStoredToken(c.userID, c.config)
 	if err != nil {
 		return false, fmt.Errorf("failed to check stored OAuth token for MCP server %s: %w", c.config.Name, err)
 	}
