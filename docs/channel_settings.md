@@ -1,13 +1,13 @@
 # Control agents in channels
 
-Three settings under **System Console > Plugins > Agents > AI Functions** decide how agents behave in channels: tool calling, ambient auto-replies, and native web search. Agents in channels need a Professional license, and auto-reply needs Enterprise Advanced.
+Three settings under **System Console > Plugins > Agents > AI Functions** decide how agents behave in channels and group messages: tool calling, ambient auto-replies, and native web search. They need a Professional license, and auto-reply needs Enterprise Advanced. Group messages count as channels, so mentions there need Professional too.
 
 ## Settings
 
 | Setting | Config key | Default | Effect |
 |---|---|---|---|
-| **Enable Channel Mention Tool Calling** (experimental) | `enableChannelMentionToolCalling` | Off | Lets agents use tools in any channel that isn't a direct message with the agent. When it's off, mentions work but the agent has no tools, and it tells users to use a direct message or the Agents pane. Approval rules are in [Tool approval and credentials](tool_approval.md#tools-in-channels). |
-| **Enable ambient auto-replies** (experimental) | `enableAmbientAutoReply` | Off | Lets channel managers choose the two ambient auto-reply modes. Needs Enterprise Advanced to turn on. |
+| **Enable Channel Mention Tool Calling** (experimental) | `enableChannelMentionToolCalling` | Off | Lets agents use tools in any channel that isn't a direct message with the agent. When it's off, mentions work but the agent has no tools, and it tells users to use a direct message or the Agents pane. Approval rules are in [Tool approval and credentials](tool_approval.md#approval-policies). |
+| **Enable ambient auto-replies** (experimental) | `enableAmbientAutoReply` | Off | Lets channel managers choose the two ambient auto-reply modes. The System Console allows turning it on only at Enterprise Advanced. Ambient modes can't be used below that level either way. |
 | **Allow native web search in channels** | `allowNativeWebSearchInChannels` | Off | Lets agents with native provider web search use it in channels, not only direct messages. Needs Professional. It works even when channel tool calling is off. See [Web search](web_search.md#native-web-search). |
 
 ## Auto-reply permissions

@@ -1,8 +1,6 @@
 # Summaries and AI search
 
-Summarize a thread, channel, or unread messages with an agent, and search Mattermost with AI. Summaries need Professional and AI search needs Enterprise. Results stay private to you.
-
-The agent works only with content you can already read, and results open in the Agents pane in a private conversation.
+Summarize a thread, channel, or unread messages with an agent, and search Mattermost with AI. Summaries need Professional and AI search needs Enterprise. The agent works only with content you can already read, and results open in the Agents pane in a private conversation.
 
 ## Summarize a thread
 
@@ -14,22 +12,11 @@ The agent works only with content you can already read, and results open in the 
 
 ## Summarize a channel
 
-**Ask Agents about this channel** is a button in the channel header. Select it, choose an agent under **GENERATE WITH:**, and then pick one of:
-
-| Option | What it does |
-|---|---|
-| **Summarize unreads** | Summarizes messages since you last viewed the channel. |
-| **Summarize last 7 days** | Summarizes the last week. |
-| **Summarize last 14 days** | Summarizes the last two weeks. |
-| **Select date range to summarize** | Summarizes between a start and an end date you pick. |
-| Text box | Asks your own question about the channel, for example "What decisions were made here?" or "List open action items with owners". |
+**Ask Agents about this channel** is a button in the channel header. Select it, choose an agent under **GENERATE WITH:**, and then choose **Summarize unreads**, the last 7 or 14 days, or **Select date range to summarize**. You can also type your own question about the channel, for example "What decisions were made here?" or "List open action items with owners".
 
 To summarize only what's new, scroll to the **New Messages** line in a channel with unread messages, select **Ask AI**, and choose **Summarize new messages**, **Find action items**, or **Find open questions**.
 
-How channel summaries read the channel:
-
-- **Ask Agents about this channel** reads the channel with the built-in `read_channel` and `get_channel_info` tools, limited to the channel you're in. This works even if the selected agent has a narrower tool list. If it fails with an error about MCP tools, ask your admin.
-- **Ask AI** at the **New Messages** line and `/summarize-channel` read the channel's posts directly and don't use tools.
+If **Ask Agents about this channel** fails with an error about MCP tools, ask your admin.
 
 ### Summarize from the message box
 
@@ -55,6 +42,6 @@ To ask about the channel you're viewing, type `/ask-channel` followed by your qu
 ### Search behavior
 
 - Searches run as you. The agent can't find content you can't access.
-- By default the agent uses keyword search. If your admin set up [semantic search](embedding_search.md), it also finds related content that doesn't contain your exact words.
+- By default the agent uses keyword search. If your admin set up semantic search, it also finds related content that doesn't contain your exact words.
 - The agent needs access to the built-in Mattermost tools. If it says it can't search, ask your admin.
 - If no relevant posts turn up, the agent says so instead of answering from general knowledge.

@@ -8,7 +8,7 @@ Approve or reject an agent's tool calls, share or hide results in channels, and 
 - **Channels:** tools are off unless your admin turned on **Enable Channel Mention Tool Calling**. When it's off and you ask for something that needs a tool, the agent tells you to use a direct message or the Agents pane.
 - **Which tools:** Mattermost tools, tools from remote MCP servers your admin connected, and tools from Mattermost plugins that register with Agents. Availability also depends on your permissions and on whether your account is connected to each provider.
 
-Tools run as you. See [Tool approval and credentials](tool_approval.md) for the full model.
+Tools run as you, so an agent reaches only what you can reach.
 
 ## Approve or reject a tool call
 
@@ -46,13 +46,13 @@ Use web or desktop to connect. The mobile apps can't start MCP OAuth.
 
 ## Agents that use a service account
 
-For an agent your admin set to use a shared service account, you're never asked to connect and the **Tools** menu isn't shown. External tools act as the shared account, not as you. See [Service account authentication](mcp_integrations.md#service-account-authentication).
+For an agent your admin set to use a shared service account, you're never asked to connect and the **Tools** menu isn't shown. External tools act as the shared account, not as you, so ask your admin what the agent can reach.
 
 ## When a tool fails
 
 The agent can recover from a failed call, for example by trying another approach or explaining the failure. After three failed tool calls in a row, it stops calling tools, describes the latest error, and asks you for what's missing. A successful call resets the count. If failures repeat, check that you've connected the provider and that you can access the thing the tool targets.
 
-An agent also stops calling tools after its **Max tool turns** limit (30 by default) and answers with what it has.
+After a set number of tool rounds (30 unless your admin changed it), the agent stops calling tools and answers with what it has.
 
 ## Ask the agent a question back
 

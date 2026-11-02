@@ -1,6 +1,6 @@
 # Create and manage agents
 
-Create, edit, version, export, and delete agents on the Agents page: every editor setting, who can manage agents, and why an agent shows Inactive.
+Agents are created and edited on the Agents page, not in the System Console. By default any user can create one, up to the license's agent cap.
 
 Agents are stored in the Mattermost database and managed on the **Agents** page, not in the System Console. Services and the default agent are configured in the System Console. See [Configure LLM services](llm_services.md).
 
@@ -27,7 +27,7 @@ The page lists the agents you can use, on two tabs: **All agents** and **Your ag
 | `manage_others_agent` | Edit and delete any agent. |
 | `manage_system` (System Admin) | Does everything above. Also manages agents with no creator, which are migrated v1 bots. |
 
-By default the System User role includes `manage_own_agent`, so every user can create agents, up to the license's agent cap. Each agent uses an LLM service you configured, so its usage is your cost. To restrict creation, remove the permission from the System User role under **System Console > User Management > Permissions**, and grant it to specific roles. `manage_others_agent` is held only by System Admins by default.
+By default the System User role includes `manage_own_agent`, so every user can create agents, up to the license's agent cap. Agents run on services the System Admin configured, so their usage is billed to the organization. To restrict creation, remove the permission from the System User role under **System Console > User Management > Permissions**, and grant it to specific roles. `manage_others_agent` is held only by System Admins by default.
 
 A user can edit or delete an agent when they're its creator, listed in its **Agent admins**, hold `manage_others_agent`, or are a System Admin and the agent has no creator. The server applies the same rules to the API.
 
@@ -65,7 +65,7 @@ Saving creates the Mattermost bot account, stores the agent, and updates every n
 | **Model** | Optional. Overrides the service's default model. For OpenAI, Anthropic, Azure, OpenAI Compatible, Gemini, Vertex AI, and Cohere North the field offers a live list from the provider. |
 | **Custom instructions** | Added to every request as part of the system prompt. Up to 100,000 characters. Use it for role, tone, vocabulary, and workflow. |
 
-Switching to a service of a different type clears **Model** and resets native tools and reasoning to their defaults. Switching between two services of the same type keeps them.
+Switching services always clears **Model**. Switching to a service of a different type also resets native tools and reasoning to their defaults. A same-type switch keeps them.
 
 Under **Advanced configuration**:
 
@@ -103,15 +103,13 @@ Granting a tool to an agent doesn't override approval policies. See [Tool approv
 
 ## Edit an agent
 
-Select a row, or open its menu and choose **Edit**. The editor saves every field on every tab each time. Changes apply to the next turn. A response already streaming isn't interrupted. New access rules apply to the next mention.
+Select a row, or open its menu and choose **Edit**. The editor saves every field on every tab each time. Changes apply from the next turn or mention. A reply that is already streaming finishes with the old settings.
 
 If you leave the editor with unsaved changes, a **Discard changes?** prompt appears with **Discard** and **Keep editing**. A queued avatar change counts as a change.
 
 ### What's editable vs locked
 
-While **Use service accounts for authentication** is off, anyone who can manage the agent can edit everything. While it's on:
-
-Only System Admins can edit channel access, user access, agent admins, MCP tool grants, **Automatically enable all MCP tools**, and the service account setting. Everything else stays editable by anyone who can manage the agent, who can also turn the setting off or delete the agent.
+While **Use service accounts for authentication** is on, only System Admins can edit channel access, user access, agent admins, MCP tool grants, **Automatically enable all MCP tools**, and the service account setting. Everything else stays editable by anyone who can manage the agent, who can also turn the setting off or delete the agent. While it's off, anyone who can manage the agent can edit everything.
 
 ### Rename an agent
 

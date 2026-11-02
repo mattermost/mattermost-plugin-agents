@@ -19,7 +19,7 @@ Save prompt templates with variables like `{{.ChannelName}}`, run them from the 
 
 ![The Custom Prompts window with the All Prompts and Your Prompts tabs.](img/custom-prompts-modal.png)
 
-Use the **Context Variables** button above the **System Prompt** field to insert variables. Public prompts need an Enterprise license. Switching a public prompt back to private is always allowed.
+Use the **Context Variables** button above the **System Prompt** field to insert variables. Switching a public prompt back to private is always allowed.
 
 ## Template variables
 
@@ -34,7 +34,7 @@ Templates use Go `text/template` syntax. These are the only variables available:
 | `{{.ChannelName}}` | The current channel's name |
 | `{{.Team}}` | The current team's display name |
 | `{{.TeamName}}` | The current team's name |
-| `{{.Time}}` | The current UTC time |
+| `{{.Time}}` | The current date and time in your time zone, in RFC 1123 format |
 | `{{.BotName}}` | The selected agent's display name |
 
 A variable with no value in the current context, such as `{{.Team}}` in a direct message, renders as empty text. `{{.BotName}}` is filled in when you run a prompt from the composer, and is empty when you run it from a pinned button.

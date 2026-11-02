@@ -1,6 +1,6 @@
 # Back up and automate Agents
 
-Agents keeps its configuration and data in the Mattermost database, not `config.json`. What to back up, and how to read and write configuration with the admin API.
+Agents stores its configuration, agents, and conversations in the Mattermost database, not `config.json`, so a database backup covers it. Automate configuration through `/plugins/mattermost-ai/admin/config`.
 
 ## What's stored where
 

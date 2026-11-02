@@ -47,7 +47,7 @@ Agents exposes Prometheus metrics under `/plugins/mattermost-ai/metrics` on the 
 | `agents_system_plugin_info` | version, installation ID | Plugin version. |
 | `agents_api_time_seconds` | handler, method, status code | API handler duration histogram. |
 | `agents_http_requests_total`, `agents_http_errors_total` | | HTTP API requests and errors. |
-| `agents_llm_input_tokens_total`, `agents_llm_output_tokens_total` | `bot_name`, `team_id` | Tokens used by LLM requests. |
+| `agents_llm_input_tokens_total`, `agents_llm_output_tokens_total` | `bot_name`, `team_id` | Tokens used by LLM requests. Recorded only at Professional and above, and independent of **Enable Token Usage Logging**. |
 | `agents_mcp_dynamic_tool_events_total` | `bot_name`, `event`, `result` | Dynamic tool loading search and load events. |
 
 ## OpenTelemetry tracing
@@ -129,7 +129,7 @@ Agents sends a server audit record for every state-changing operation:
 - Channel auto-reply changes.
 - MCP OAuth start, callback, and disconnect, and per-user tool preferences.
 - Access policy changes for agents, services, and MCP servers.
-- Inter-plugin MCP server registration and unregistration.
+- Inter-plugin MCP server registration and unregistration, and admin changes to plugin-registered MCP servers (`updateMCPPluginServer`).
 - In-channel tool call and tool result approvals.
 - MCP session grants, when an external client gets a session as a user (`mcpSessionGrant`).
 

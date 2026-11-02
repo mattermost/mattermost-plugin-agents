@@ -1,6 +1,6 @@
 # Provider configuration
 
-Authentication fields and capabilities (native tools, reasoning, vision) for each Agents provider: OpenAI, Anthropic, Google Gemini, Vertex AI, AWS Bedrock, Azure, Cohere, Mistral, and OpenAI-compatible servers such as Ollama and vLLM.
+Which fields each provider needs, and which native tools and reasoning controls it supports. Covers OpenAI, Anthropic, Gemini, Vertex AI, Bedrock, Azure, Cohere, Mistral, and OpenAI-compatible servers such as Ollama and vLLM.
 
 For settings every service has, such as token limits and fallbacks, see [Configure LLM services](llm_services.md).
 
@@ -22,17 +22,24 @@ Native tools are the provider's own tools, such as its web search. You turn them
 
 ## OpenAI Compatible (Ollama, vLLM, and others)
 
-Use this type for any server that speaks the OpenAI API.
+Use this type for any server that speaks the OpenAI API, including a model you host yourself. For the wider self-hosting picture, see [Sovereign AI deployments](sovereign_ai.md).
 
 | Setting | Notes |
 |---|---|
-| **API URL** | Required. Include the port. For Ollama, append `/v1`, for example `http://localhost:11434/v1`. |
+| **API URL** | Required. Include the port. For Ollama, append `/v1`, for example `http://localhost:11434/v1`. Use the address as the Mattermost Server process sees it. `localhost` points at the server's own container or host, not yours, so it's wrong when Mattermost runs in a container and the model doesn't. |
 | **API Key** | Optional. Leave it blank for Ollama. |
 | **Organization ID** | Optional. |
 | **Default model** | The model name your server exposes. |
-| **Use Responses API** | On by default. See [Responses API](llm_services.md#responses-api). |
+| **Input token limit** | Not auto-detected for a custom model. Set it to your model's context window so Mattermost trims long conversations instead of the server rejecting them. `0` turns trimming off. See [Token limits](llm_services.md#token-limits). |
+| **Use Responses API** | On by default. Turn it off for an endpoint that only supports Chat Completions, such as many local servers. With it off, provider-native tools and reasoning controls aren't available. With it on, requests fail if the endpoint doesn't support the Responses API. See [Responses API](llm_services.md#responses-api). |
 
 Tool calling, vision, and structured output depend on the server and model. If Mattermost can't detect what your endpoint supports, set **Structured output** on the service. See [Configure LLM services](llm_services.md#structured-output).
+
+### Verify a self-hosted model
+
+1. Add the service, create an agent that uses it, and keep **Enable Tools** on.
+2. Send the agent a direct message: "How many unread messages do I have?"
+3. A model with working tool calling shows a tool call in the reply, such as `get_unread_counts`, and then answers with a number. If it answers without calling a tool, or keeps calling tools, the model probably doesn't support tool calling well. Turn **Enable Tools** off for it, or lower **Max tool turns**. See [Troubleshoot Agents](troubleshooting.md).
 
 ## OpenAI
 
@@ -115,7 +122,7 @@ On the agent, enable **Reasoning** under **Advanced configuration**. Set either 
 
 Models older than Gemini 2.5 that aren't thinking models get no thinking settings.
 
-Native Google tools are off by default for agents. Under **Native Google Tools**, enable **Web Search** to ground answers in Google Search with citations. If grounding fails on Vertex, check that the Vertex AI API is enabled, that the model supports grounding, and that your project meets Google's grounding prerequisites.
+New agents have **Web Search** on under **Native Google Tools** when the license allows provider web search (Professional). Migrated agents keep their stored setting. **Web Search** under **Native Google Tools** grounds answers in Google Search with citations. If grounding fails on Vertex, check that the Vertex AI API is enabled, that the model supports grounding, and that your project meets Google's grounding prerequisites.
 
 ## Cohere
 

@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Common Mattermost Agents problems by symptom, with cause and fix: setup, agents, channels, MCP tools, search, meetings, and HTML artifacts. Start with the Mattermost Server log, filtered by plugin ID `mattermost-ai`. For request-level detail, turn on trace output in **Server Logs** mode. See [Monitor Agents](observability.md).
+Fix common Agents problems by symptom. Start with the Mattermost Server log, filtered by plugin ID `mattermost-ai`. For request-level detail, turn on trace output in **Server Logs** mode. See [Monitor Agents](observability.md).
 
 ## Setup and activation
 
@@ -8,6 +8,9 @@ Common Mattermost Agents problems by symptom, with cause and fix: setup, agents,
 |---|---|
 | The plugin won't enable and the log says "site URL not configured" | Set **Site URL** under **System Console > Environment > Web Server**. |
 | The Agents pane asks users to configure an LLM | No service is configured. Add one under **System Console > Plugins > Agents**. See [Configure LLM services](llm_services.md). |
+| A self-hosted model returns errors, or the agent never answers | The endpoint might not support the Responses API. For an OpenAI Compatible service, turn **Use Responses API** off. Also check that the **API URL** is reachable from the Mattermost Server process and that **Default model** matches a model the server exposes. See [Provider configuration](providers.md#openai-compatible-ollama-vllm-and-others). |
+| A self-hosted model ignores tools | The model might not support tool calling. Send a direct message that needs a tool and look for a tool call in the reply. If there is none, turn **Enable Tools** off for that agent. See [Verify a self-hosted model](providers.md#verify-a-self-hosted-model). |
+| A self-hosted model keeps calling tools without answering | Lower **Max tool turns** on the agent so it answers sooner, or turn **Enable Tools** off. |
 | The agent doesn't reply in a direct message | Check the log for the provider error. Common causes are a wrong API key or model name, a service missing required settings, or an unreachable endpoint. Also check the agent isn't **Inactive**. |
 | `AccessDeniedException`, `ValidationException`, or throttling from Bedrock | See [Configure Agents with AWS Bedrock](aws_bedrock_setup.md#troubleshooting). |
 | Saving a service or setting fails with a license message | The capability needs a higher license level. The message names it. See [License requirements](admin_guide.md#license-requirements). |
@@ -42,6 +45,7 @@ Common Mattermost Agents problems by symptom, with cause and fix: setup, agents,
 | Symptom | Cause and fix |
 |---|---|
 | A tool call fails repeatedly | After three failures in a row the agent stops using tools and describes the error. Check API keys and endpoints, MCP connectivity and third-party authorization, and that the user can access the target. Trace output shows tool errors. |
+| Agents have no Mattermost tools after an upgrade from v1, or channel questions fail with "read_channel tool not available" | The embedded Mattermost MCP server stays off for a configuration migrated from v1 until it's saved. Open **System Console > Plugins > Agents** and select **Save** once. See [Upgrade steps](upgrading_to_2.0.md#upgrade-steps). |
 | An agent has no tools | **Enable Tools** is off, or the MCP grants on its **MCPs** tab don't include the tool, or an access policy or the user's **Tools** menu choices removed the server. |
 | A remote server's tool list is empty | For per-user OAuth servers, the user must connect first. For a service account agent, **No service account credentials** means the server has no service account headers. **Couldn't connect** means the headers were rejected. Check that the header value doesn't repeat the header name. |
 | An OAuth authorization fails with a redirect error | Register the **MCP OAuth Callback URL** from the **Configuration** tab in the remote server's OAuth app. |

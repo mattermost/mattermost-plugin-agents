@@ -1,12 +1,12 @@
 # Connect agents to MCP servers
 
-Connect remote MCP servers so agents can use tools in Jira, GitHub, and other systems, with per-user OAuth or shared service accounts. Remote MCP servers need an Enterprise license. The built-in Mattermost tools are always on and need no setup.
+Connect remote MCP servers so agents can use tools in Jira, GitHub, and other systems, with per-user OAuth or shared service accounts. The built-in Mattermost tools need no setup.
 
 ## Tool sources
 
 | Source | Setup | License |
 |---|---|---|
-| **Built-in Mattermost MCP server** | None. It's embedded, always on, and runs every tool as the requesting user. See [Tool reference](mcp_tools.md). | Read-only tools at every level. Tools that change something at Enterprise and above. |
+| **Built-in Mattermost MCP server** | None. It's embedded and runs every tool as the requesting user. See [Tool reference](mcp_tools.md). | Read-only tools at every level. Tools that change something at Enterprise and above. |
 | **Remote MCP servers** | You add them in the System Console. | Enterprise |
 | **Plugin-registered MCP servers** | Another Mattermost plugin registers a server with Agents. You enable it. | Enterprise |
 
@@ -25,8 +25,8 @@ Everything is under **System Console > Plugins > Agents > Model Context Protocol
    | **Server URL** | The server's final address. Redirects to a different origin, including an `http` to `https` upgrade, are refused so credentials can't reach another host. |
    | **Enable Server** | Turns the server on or off. |
    | **Description** | Up to 500 characters. Tells agents what the integration is for, so they can offer it to people who haven't connected yet. After you save, **Auto-fill from server** copies the server's own description or instructions. You may need to connect your account first. Review the text and save, because nothing is stored until you do. |
-   | **Headers** | Extra HTTP headers the server needs, sent in both authentication modes. |
-   | **Service Account Authentication** | Static headers for agents that use service accounts. See [Service account authentication](#service-account-authentication). |
+   | **Headers** | Extra HTTP headers the server needs. They're sent for every user in both authentication modes, so don't put a personal or admin credential here. |
+   | **Service Account Authentication** | Static headers, such as an API key, for agents that use service accounts. See [Service account authentication](#service-account-authentication). |
    | **OAuth Credentials (Optional)** | **Client ID** and **Client Secret** for servers that need a pre-registered OAuth app, such as GitHub. Leave empty if the server supports automatic registration. |
 
 3. Select **Save**.
@@ -35,9 +35,11 @@ Agents connect over Streamable HTTP, and fall back to the older HTTP+SSE transpo
 
 Write a **Description** for any server whose name doesn't say what it does. The agent is told only your server name, your description, and the tools you've configured, not anything the server reports to other users' connections.
 
+To check a server that doesn't use OAuth, such as an internal server with an API key, select **Save**, then open the **Tools** tab. The server's tools are listed there. If the list is empty or an error shows, check the **Server URL** and headers. For an internal server with an API key, put the key in **Service Account Authentication**, and turn on **Use service accounts for authentication** on the agent. A key in **Headers** is sent for every user.
+
 ### Sign in with OAuth
 
-Servers that use OAuth authorize each Mattermost user separately. The first person to connect, usually you in the **Tools** tab, authorizes your own account only. Each user connects separately, even after an admin has.
+Servers that use OAuth authorize each Mattermost user separately. Connecting in the **Tools** tab authorizes only your own account. Every user connects separately.
 
 - **Callback URL.** The **MCP OAuth Callback URL** on the **Configuration** tab is `https://<your-site-url>/plugins/mattermost-ai/oauth/callback`. Register it as the redirect URI in the remote server's OAuth app.
 - **Where users connect.** Users connect from a **Connect** card in the conversation, or from the **Tools** menu in the Agents pane. See [Use tools and approve actions](using_tools.md). The mobile apps can't start OAuth, so users need web or desktop.
@@ -52,7 +54,7 @@ To keep Jira links clickable in replies without allowing every domain, add your 
 
 ## Example: connect GitHub
 
-This walks through one remote server that needs a pre-registered OAuth app. The GitHub steps are generic, so follow GitHub's own documentation for them.
+GitHub's MCP server needs a pre-registered OAuth app. GitHub's interface changes often, so use GitHub's documentation for step 1.
 
 1. In GitHub, create an OAuth app for the MCP server. For its redirect URI, use the **MCP OAuth Callback URL** shown on the **Configuration** tab. It looks like `https://<your-site-url>/plugins/mattermost-ai/oauth/callback`. Copy the app's client ID and secret.
 2. On the **Configuration** tab, select **Add Remote MCP Server** and set:
@@ -62,16 +64,14 @@ This walks through one remote server that needs a pre-registered OAuth app. The 
    - **Client ID** and **Client Secret** under **OAuth Credentials (Optional)** to the values from step 1.
 3. Select **Save**.
 4. Open the **Tools** tab, expand **GitHub**, and select **Connect Account** to authorize your own account. This lets you see the tool list. Each user still connects their own account.
-5. Review the tools. Because the host is `api.githubcopilot.com`, read-only tools are pre-filled as **Auto Run (DM)**, except code scanning, Dependabot, secret scanning, and security advisory reads, which are **Ask Every Time**. Tools that change something, such as creating an issue, have no saved setting, so they're enabled and ask every time.
+5. Review the tools. Read-only tools are pre-filled, and tools that change something, such as creating an issue, ask every time. See [Enable and approve tools](#enable-and-approve-tools).
 6. Check the agent's **MCPs** tab. With **Automatically enable all MCP tools** on, which is the default, the agent can use the GitHub tools. Otherwise, grant them there.
 
 A user who asks "Open an issue for the bug in this thread" now sees a **Connect** card the first time. After they connect, the agent finds the issue tool with dynamic tool loading, and the user accepts the call.
 
 ## Enable and approve tools
 
-On the **Tools** tab, each server lists its tools. For each tool you set whether it's enabled and how it's approved:
-
-The options are **Ask Every Time**, **Auto Run (DM)**, and **Auto Run (Everywhere)**. What they do in direct messages and channels is in [Approval policies](tool_approval.md#approval-policies).
+On the **Tools** tab, each server lists its tools. For each tool you set whether it's enabled and how it's approved. The options are **Ask Every Time**, **Auto Run (DM)**, and **Auto Run (Everywhere)**. What they do in direct messages and channels is in [Approval policies](tool_approval.md#approval-policies).
 
 A tool with no saved setting is enabled and set to **Ask Every Time**. That includes tools a server adds later.
 
@@ -102,7 +102,7 @@ Set it up:
 1. Open the remote server on the **Configuration** tab. In **Service Account Authentication**, add the headers the server should receive. Put the header name and value in separate fields, for example `Authorization` and `Bearer <token>`, or `X-API-KEY` and the key. Don't repeat the name in the value. Rows with a blank name or value are ignored, and two names that differ only by case are both dropped. Save.
 2. In the agent's **MCPs** tab, turn on **Use service accounts for authentication**. Only System Admins can.
 
-How it behaves:
+### Behavior
 
 - External servers get the service account headers instead of per-user OAuth. The server's regular **Headers** are still sent, and on a clash the service account value wins.
 - A server without service account headers is left out of the agent entirely. There's no fallback to anyone's personal connection. To offer both modes, use two agents or two server entries.
@@ -148,9 +148,8 @@ License and limits:
 - Turning the endpoint on needs an Enterprise license. State-changing tools need Enterprise too, and without it they're hidden from the tool list and return a licensing message. Read-only tools are available whenever the endpoint is on. Access policies on the built-in and plugin servers need Enterprise Advanced.
 - If the license drops below Enterprise, an endpoint that's already on stays on with read-only tools. Turn it off to stop external access.
 - Plugin-registered tools appear on the endpoint only when the plugin marks its server for external exposure and you enable that server. A tool whose name collides with a built-in or another plugin's tool is skipped and logged.
-- Each user can have 32 MCP requests in flight, and requests last at most 30 minutes.
 
-Admin-side symptoms: a 404 means the setting is off or the plugin isn't running. A client that can't register means OAuth or dynamic client registration is off, or the redirect URI allowlist excludes it. Missing write tools mean a license below Enterprise. A user missing tools others have is usually an access policy or a tool you disabled on the **Tools** tab.
+Request limits and client-side symptoms are in [Mattermost MCP server](mcp_server.md#troubleshooting).
 
 ## Connections and timeouts
 

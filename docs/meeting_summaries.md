@@ -29,9 +29,9 @@ A System Admin must [enable and configure the Zoom plugin](/integrations-guide/z
 - **Which agent:** the workspace's default agent writes the summary, not the agent you selected in a picker. Your admin sets the default agent.
 - **Which transcripts:** only posts from the `calls`, `zoom`, and `google-meet` bot accounts can be summarized. Zoom chat exports and WebVTT transcripts are supported.
 - **No tools:** the agent summarizes the transcript text and doesn't call tools.
-- **Privacy:** the transcript text is sent to the LLM service the default agent uses. With a self-hosted model, it stays in your environment. See [Data handling](data_handling.md).
+- **Privacy:** the transcript text is sent to the LLM service the default agent uses. With a self-hosted model, it stays in your environment. See [What agents can see and keep](what_agents_see.md).
 - **Who sees it:** the summary stays private to you until you select **Post summary**.
 
 ## If the button is missing or the summary fails
 
-A feature or button that's missing or does nothing usually means a license below Enterprise. The Calls or Zoom plugin adds the button, so also check that the plugin is enabled, that the transcript was posted, and that the post comes from the `calls`, `zoom`, or `google-meet` bot. If you get "Sorry! Something went wrong", check the Mattermost Server log. The default agent might be inactive or its LLM service unreachable. If the summary comes from an agent you didn't expect, ask your admin to change the default agent.
+A feature or button that's missing or does nothing usually means a license below Enterprise. The Calls or Zoom plugin adds the button, so also check that the plugin is enabled, that the transcript was posted, and that the post comes from the `calls`, `zoom`, or `google-meet` bot. If you get "Sorry! Something went wrong", ask your admin to check the Mattermost Server log. The default agent might be inactive or its LLM service unreachable. If the summary comes from an agent you didn't expect, ask your admin to change the default agent.

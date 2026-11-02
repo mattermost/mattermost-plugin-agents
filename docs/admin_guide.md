@@ -11,7 +11,7 @@ An agent is a Mattermost bot backed by an LLM that you choose, including a model
 3. **Tools** give an agent abilities. Admins decide which tools exist, which need approval, and which users can reach each MCP server.
 4. **Users** talk to agents in direct messages, the Agents pane, and channels. Every tool call runs with the permissions of the person who asked, unless an agent uses a shared service account for external MCP servers.
 
-The Mattermost Server enforces authorization, such as agent access and tool policies. Prompt text never does.
+Custom instructions can't grant or restrict access. Use the agent's **Access** tab, MCP access policies, and tool approval policies.
 
 ## Requirements
 
@@ -28,7 +28,7 @@ Mattermost Server can ship with Agents pre-installed. Check **System Console > P
 
 ## Quick start
 
-1. Go to **System Console > Plugins > Agents** and select **Add an AI Service**. Choose a **Service type**, enter the credentials and a **Default model**, and save. See [Configure LLM services](llm_services.md) and [Provider configuration](providers.md).
+1. Go to **System Console > Plugins > Agents** and select **Add an AI Service**. Choose a **Service type**, enter the credentials and a **Default model**, and save. See [Configure LLM services](llm_services.md) and [Provider configuration](providers.md). For a self-hosted model, see [Sovereign AI deployments](sovereign_ai.md).
 2. Open the **Agents** page from the product switcher (grid icon). Select **Create agent**, choose a username, the service, and optional instructions. See [Create and manage agents](managing_agents.md).
 3. Back in **System Console > Plugins > Agents**, pick the **Default bot**. Users who haven't chosen an agent get this one, and so do features that don't let users choose, such as meeting summaries. If the default agent becomes unavailable, those features fail until you pick another. Mattermost never substitutes a different agent.
 4. Send the agent a direct message to test it.
@@ -44,7 +44,7 @@ Mattermost Server can ship with Agents pre-installed. Check **System Console > P
 | Connect remote MCP servers and let agents use tools | [Connect agents to MCP servers](mcp_integrations.md) |
 | Decide which tool calls need approval | [Tool approval and credentials](tool_approval.md) |
 | Control tools, auto-reply, and web search in channels | [Control agents in channels](channel_settings.md) |
-| Let external AI clients use Mattermost | [Mattermost MCP server](mcp_server.md), [Tool reference](mcp_tools.md) |
+| Let external AI clients use Mattermost | [External client endpoint](mcp_integrations.md#external-client-endpoint) |
 | Give agents web search | [Web search](web_search.md) |
 | Turn on semantic search | [Set up semantic search](embedding_search.md) |
 | Control links and HTML in AI output | [Secure AI-generated links and HTML](ai_output_security.md) |
@@ -54,7 +54,8 @@ Mattermost Server can ship with Agents pre-installed. Check **System Console > P
 | Run fully self-hosted or air-gapped | [Sovereign AI deployments](sovereign_ai.md) |
 | Fix a problem | [Troubleshooting](troubleshooting.md) |
 | Upgrade from Agents 1.x | [Upgrade from Agents 1.x](upgrading_to_2.0.md) |
-| Let another plugin call the LLM | [LLM Bridge](llm_bridge.md) |
+
+For developers and integrators, see the [Mattermost MCP server](mcp_server.md) for connecting Claude Code or Cursor, the [tool reference](mcp_tools.md), and the [LLM Bridge](llm_bridge.md) for plugins.
 
 ## Plugin settings
 
@@ -104,18 +105,17 @@ The plugin distinguishes four license levels: Free (no license), Professional, E
 | Channel auto-reply | No | No | No | Yes |
 | Attribute-based access control | No | No | No | Yes |
 
-How each limit works:
+### Limits by level
 
 - **Agent cap.** Configuration-file bots and user-created agents share one pool. Over the cap, the plugin activates configuration-file bots first, then user-created agents oldest first. The rest stay stored but inactive, marked **Inactive** on the Agents page and named in the server log. Creating an agent over the cap fails with a message naming the level that raises it.
 - **One service below Enterprise.** Free and Professional use only the first service in the list. Agents that use another service are inactive and don't count toward the agent cap. LLM Bridge calls reach only the first service.
 - **Fallback chains.** Followed at Enterprise Advanced only. Below that, a stored fallback stays in the configuration but requests use the primary service.
 - **Write tools.** Tools that change something in Mattermost (post, react, edit, create channels, and similar) are absent from the tool list below Enterprise, and calls return a licensing message.
 - **Approval policies.** Below Enterprise, built-in Mattermost tools use the product defaults and every other tool asks first. A stricter policy you set earlier still applies. A disabled tool stays disabled.
-- **Shared prompts.** Publishing a prompt, and seeing or using prompts published by others, needs Enterprise.
 
-Rules that hold at every level:
+### At every level
 
 - Reading configuration is never blocked.
 - Turning something off is never blocked. You can disable, clear, or delete a gated setting after a license downgrade.
 - License changes apply without restarting the plugin.
-- A request denied for licensing returns HTTP 403 with an `error` message and a `license_required` field set to `professional`, `enterprise`, or `enterprise_advanced`.
+- A System Console or REST API request denied for licensing returns HTTP 403 with an `error` message and a `license_required` field set to `professional`, `enterprise`, or `enterprise_advanced`. LLM Bridge completions, MCP tools, and channel mentions report licensing differently. See [LLM Bridge](llm_bridge.md#permissions-and-licensing).

@@ -12,7 +12,6 @@ Give agents web search through the provider's native tool (Professional) or Matt
 
 When an agent has native web search enabled, the built-in tool isn't offered to it.
 
-
 ## Native web search
 
 On the agent, open **Advanced configuration** and enable **Web Search** under **Native Claude Tools**, **Native Google Tools**, or **Native OpenAI Tools**. New agents have it on where the provider supports it and the license allows it. Providers that have no native tools ignore the setting.
@@ -30,7 +29,7 @@ Anthropic agents have two more native tools:
 
 OpenAI agents have **Code Interpreter**, which runs code in OpenAI's sandbox.
 
-Limits of native tools:
+### Native tool limits
 
 - Anthropic pauses very long provider-side tool loops. Mattermost doesn't resume them, so the response ends with what was produced.
 - On Claude models older than 4.6, turning on web search or web fetch together with code execution leaves the sandbox unavailable.
@@ -39,7 +38,7 @@ Limits of native tools:
 
 ## Built-in web search
 
-Mattermost's own search tool lets an agent retrieve current information when the model has no native search. It needs an Enterprise license.
+Mattermost's own search tool lets an agent retrieve current information when the model has no native search.
 
 1. Go to **System Console > Plugins > Agents > Web Search**.
 2. Set **Enable Web Search** to **True**.

@@ -1,6 +1,6 @@
 # Use agents in channels
 
-@mention an agent in a channel or thread, or have a channel manager set it to auto-reply. The agent reads the thread, replies in a thread everyone can see, and only the person who asked can approve its tool calls. Channels need a Professional license or higher, and auto-reply needs Enterprise Advanced.
+@mention an agent in a channel or thread, or have a channel manager set it to auto-reply. The agent reads the thread and replies in a thread everyone can see. Channels need a Professional license or higher, and auto-reply needs Enterprise Advanced. Only the person who asked can approve tool calls.
 
 ## @mention an agent
 
@@ -8,9 +8,9 @@ Mention an agent by its username, for example `@assistant`, in a channel or thre
 
 - **Context.** On a mention in a thread, the agent reads the thread up to your mention, with each author's username. Replies posted after your mention, and temporary placeholder posts, aren't included. On a mention outside a thread, it reads only the mentioning message. In both cases it also gets the channel and team names.
 - **Follow-ups need a mention.** If you reply to an agent's post without an @mention, Mattermost shows you a private reminder with a link to loop the agent in. Select it to send your reply to the agent without editing the post.
-- **Restrictions.** An agent can be limited to certain users, teams, or channels. If you can't mention an agent, an admin may have restricted it. See [Control who can use agents](access_control.md).
+- **Restrictions.** An agent can be limited to certain users, teams, or channels. If you can't mention an agent, an admin may have restricted it, so ask your admin.
 - **Direct messages are different.** In a direct message with an agent you don't need to mention it. If you mention a different agent there, that agent answers.
-- **What triggers an agent.** Posts from webhooks and system messages never trigger agents. A bot account or a plugin can trigger one by setting the `activate_ai` post property.
+- **Group messages** behave like channels: mentions need Professional, and tools follow the channel setting.
 
 ## Tools in channels
 
@@ -45,4 +45,4 @@ An automatic reply behaves as if the post's author had mentioned the agent. It u
 ## Related
 
 - [Control agents in channels](channel_settings.md) for admins.
-- [Data handling](data_handling.md): what a mention sends to the LLM.
+- [What agents can see and keep](what_agents_see.md): what a mention sends to the LLM.

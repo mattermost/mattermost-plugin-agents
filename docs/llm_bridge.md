@@ -28,6 +28,10 @@ In Go, create a client with `bridgeclient.NewClient(p.API)` in a plugin, or `bri
 - **Structured output.** A `json_output_format` schema follows the service's **Structured output** setting. See [Configure LLM services](llm_services.md#structured-output).
 - **Tracking.** Set `Operation` and `OperationSubType` to label calls in the [token usage log](observability.md#token-usage-log). Calls straight to a service have no agent, so the agent fields in that log are empty.
 
+## Trigger an agent with a post
+
+A bot account or a plugin can start an agent turn by creating a post with the `activate_ai` property. Webhook posts and system messages never trigger agents, and there's no human to approve tool calls in an automated turn. See [Automated triggers](tool_approval.md#automated-triggers).
+
 ## Register an MCP server
 
 A plugin can expose its own tools to Agents by calling `POST /bridge/v1/mcp/register` with `name`, `path`, `enabled`, `expose_external`, and optional `tool_configs`. The plugin ID comes from the trusted header, not the body. Registering needs an Enterprise license.

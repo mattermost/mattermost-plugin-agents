@@ -26,13 +26,9 @@ Check that your model supports the features you'll use. Tool calling, vision, an
 
 Run models in your own cloud account, with private networking and your identity and access management. Supported options are AWS Bedrock, Azure OpenAI, and Google Vertex AI. See [AWS Bedrock](aws_bedrock_setup.md) and [Provider configuration](providers.md). Bedrock supports VPC endpoints through **Custom Endpoint URL**. An Enterprise Advanced license lets you chain services so a request tries your private endpoint first and falls back to another, such as a local model, only when the first fails.
 
-### Public LLM APIs
-
-If you use a vendor API, the vendor receives each request's content. See [Data handling](data_handling.md#reduce-what-leaves-your-environment) for what you can do to limit that, and review your provider's terms for retention and training. Mattermost can't enforce them.
-
 ## Checklist
 
-1. Add a service that points at your model, and confirm tool calling works.
+1. Add a service that points at your model, and confirm tool calling works. See [Verify a self-hosted model](providers.md#verify-a-self-hosted-model).
 2. Create an agent and test it in a direct message.
 3. If you use semantic search, run an embedding model you host and run a **Full Reindex**.
 4. Set web search to SearXNG or off.

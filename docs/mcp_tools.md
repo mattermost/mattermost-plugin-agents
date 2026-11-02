@@ -1,11 +1,11 @@
 # Mattermost MCP tool reference
 
-All 121 tools of the built-in Mattermost MCP server, each marked read-only or state-changing. The same tools serve agents inside Mattermost and, when an admin enables the HTTP endpoint, external MCP clients. See [Mattermost MCP server](mcp_server.md) for connecting a client.
+The 121 tools of the built-in Mattermost MCP server, each marked read-only or state-changing. 74 are read-only and 47 change state. The count includes `upload_file`, which works only on the standalone stdio server, so 120 are usable by agents in Mattermost and over HTTP. The same tools serve agents inside Mattermost and, when an admin enables the HTTP endpoint, external MCP clients. See [Mattermost MCP server](mcp_server.md) for connecting a client.
 
 ## How the tools behave
 
 - **Every call runs as the signed-in user.** A tool returns only what that user can see, and acts only where that user may. Channel membership, team membership, and roles apply.
-- **Read-only tools work at every license level.** The 47 tools that change state need an Enterprise license. Below that, they're missing from the tool list, and a call returns a licensing message.
+- **Read-only tools work at every license level.** The tools that change state need an Enterprise license. Below that, they're missing from the tool list, and a call returns a licensing message.
 - **Approval.** For agents inside Mattermost, most read-only tools default to **Auto Run (DM)** and the rest ask. See [Connect agents to MCP servers](mcp_integrations.md#enable-and-approve-tools). External clients aren't covered by Mattermost approval policies. The client decides how to confirm calls.
 - **Discovery.** With dynamic tool loading on, agents find tools with `search_tools` and load them with `load_tool`, instead of receiving every schema at once.
 - **Posts the server creates are marked as AI-generated.**
@@ -170,7 +170,7 @@ All 121 tools of the built-in Mattermost MCP server, each marked read-only or st
 | `get_post_files` | Read-only | Get the file attachments on a post (metadata per file) |
 | `get_file_link` | Read-only | Get a public link to a file. The link bypasses normal file access checks |
 | `search_files` | Read-only | Search file attachments by filename/content within a team |
-| `upload_file` | Changes state | Upload a file from a local path or URL. Available only on the local development server, so it can't upload files over HTTP or in the embedded server. Use `files` on `create_post` instead |
+| `upload_file` | Changes state | Upload a file from a local path or URL. Listed on every server, but works only on the standalone stdio server (local access mode). Elsewhere it returns an error. Use `files` on `create_post` instead |
 
 ## Search
 

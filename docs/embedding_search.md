@@ -1,8 +1,8 @@
 # Set up semantic search
 
-Semantic search indexes posts as vectors in PostgreSQL with pgvector, so agents and AI search find posts by meaning. Setup, settings, and reindexing.
+Semantic search indexes posts as vectors in PostgreSQL with pgvector, so agents and AI search find posts by meaning. It's experimental and needs an Enterprise license. Without it, agents still search with keywords.
 
-When it's on, agents add semantic results to the keyword results they already get from `search_posts`. It's experimental and needs an Enterprise license. Without it, agents still search with keywords.
+When it's on, agents add semantic results to the keyword results they already get from `search_posts`.
 
 ## How it works
 
@@ -58,7 +58,7 @@ Use the controls in the **Embedding Search** panel:
 | **Cancel Reindexing** | Stop a running job. |
 | **Index Health** and **Refresh** | Check status, post counts, missing posts, and the vector index state. |
 
-Rules that aren't obvious:
+### Settings and jobs
 
 - Saving a setting never starts a job. After you change **HNSW M** or the window, run the matching action.
 - **Vector precision** changes drop the embeddings table. Run **Full Reindex**.

@@ -2,24 +2,18 @@
 
 A Mattermost agent searches, reads, and posts in Mattermost, and works in systems like Jira and GitHub through MCP servers. It acts as you, with your permissions, and asks before it changes anything it isn't set to do automatically.
 
-An agent is a bot backed by a large language model (LLM) that your System Admin chose, which can be a self-hosted model. This page is for people who work with agents. To set up Agents, see the [Admin guide](admin_guide.md).
+An agent is a bot backed by a large language model (LLM) that your System Admin chose, which can be a self-hosted model. Mattermost Agents was formerly called Mattermost Copilot. This page is for people who work with agents. To set up Agents, see the [Admin guide](admin_guide.md).
 
 ## What an agent can do
 
-You message an agent in a direct message or the Agents pane. When a request needs more than the model knows, the agent calls tools:
-
-- **Mattermost tools** to search, read, and post, schedule posts and reminders, and manage channels.
-- **Remote MCP servers** for other systems, each connected with your own account.
-- **Plugin tools** from Mattermost plugins that register with Agents.
-
-Example prompts:
+You message an agent in a direct message or the Agents pane. When a request needs more than the model knows, the agent calls tools in Mattermost and in connected systems such as Jira or GitHub. Example prompts:
 
 - "Search for what we decided about the March launch and link the posts."
 - "What's assigned to me in Jira and due this week? Post the list in my team channel."
 - "Open a GitHub issue for the bug in this thread and reply with the link."
 - "Summarize what I missed in ~incident-room since yesterday, then post a two-line status in ~leadership."
 
-Every tool call runs as you, and calls that change something wait for you to accept them. See [Use Agents as your personal AI assistant](personal_agent.md) for what agents can do and how to prompt them, and [Use tools and approve actions](using_tools.md) for approvals.
+Every tool call runs as you, and the agent asks before it changes anything your admin hasn't set to run automatically. See [Use Agents as your personal AI assistant](personal_agent.md) for what agents can do and how to prompt them, and [Use tools and approve actions](using_tools.md) for approvals.
 
 ## What you can do
 
@@ -32,7 +26,7 @@ Every tool call runs as you, and calls that change something wait for you to acc
 | Summarize a Calls recording or Zoom meeting | [Meeting summaries](meeting_summaries.md) |
 | Save a prompt I reuse | [Custom prompts](custom_prompts.md) |
 | Use Mattermost from Claude, Cursor, or VS Code | [Mattermost MCP server](mcp_server.md) |
-| Know what an agent sends to the LLM | [Data handling](data_handling.md) |
+| Know what an agent can see and keep | [What agents can see and keep](what_agents_see.md) |
 
 Some features depend on your Mattermost license level. If a feature described here is missing, ask your System Admin.
 
@@ -53,7 +47,15 @@ An agent doesn't remember other conversations. It knows only the current convers
 
 ## Create your own agent
 
-By default every user can create agents, and you can edit the agents you create. On the **Agents** page, select **Create agent** and set a name, instructions, and which tools it can use. Your admin may have restricted this. See [Create and manage agents](managing_agents.md).
+If your admin allows it, you can create agents of your own, such as a release-notes writer or a support triager. If you don't see **Create agent** on the **Agents** page, ask your admin.
+
+1. Select the product switcher (grid icon), choose **Agents**, then select **Create agent**.
+2. On **Configuration**, set a **Display name**, an **Agent username** (the `@mention` handle), and **Custom instructions** that describe its role and tone. Pick the **AI Service** your admin set up.
+3. On **Access**, choose which channels and users can use the agent, and add **Agent admins** who can edit it with you.
+4. On **MCPs**, choose which tools it can use. By default it can use every tool you can.
+5. Select **Save**. Mention the agent or message it to try it.
+
+Every save creates a version. Open the version history and select **Restore this version** to roll back. You can edit or delete the agents you created, and the **Agents** page marks agents you can't edit as **Read only**.
 
 ## Attach files and images
 
@@ -75,15 +77,8 @@ Ask the agent to put long output in a file, for example "the meeting notes as a 
 
 ## What an agent sees and keeps
 
-- A direct message or Agents pane conversation sends its messages and attachments to the LLM. A mention sends the thread up to the mention.
-- Conversations with an agent are stored in Mattermost's database, and deleted when their root post is deleted.
-- Results you keep private in a channel aren't used in the agent's channel reply.
-- With a self-hosted model, content stays in your organization. With a cloud model, the provider receives it.
-
-See [Data handling](data_handling.md) for what each feature sends.
+An agent reads the conversation it's in and whatever its tools return, all with your permissions. Conversations are stored in Mattermost's database. With a cloud model the provider receives the content, and with a self-hosted model it stays in your organization. See [What agents can see and keep](what_agents_see.md).
 
 ## Links in AI responses
 
 By default, an agent's Markdown links to other sites appear as plain text with the address shown, so you can read the destination but can't click it. Citations from web search stay clickable. Your admin can allow clickable links, optionally limited to specific domains. A model can be tricked into pointing a link at a harmful site, so check where a link goes before you open it.
-
-Mattermost Agents was formerly called Mattermost Copilot.

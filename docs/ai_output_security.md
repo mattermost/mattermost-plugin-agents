@@ -1,6 +1,6 @@
 # Secure AI-generated links and HTML
 
-A model can be steered by a prompt injection or a poisoned document into writing a link or HTML page that harms the reader. Two settings, both off by default and under **System Console > Plugins > Agents > AI Functions**, control this: **Render AI-generated links**, with an optional domain allowlist, and **Enable HTML artifacts**.
+Two settings under **System Console > Plugins > Agents > AI Functions**, both off by default, decide whether agent replies can contain clickable links (with an optional domain allowlist) and run sandboxed HTML artifacts. A model can be steered by a prompt injection or a poisoned document into writing a link or HTML page that harms the reader.
 
 ## Render AI-generated links
 
@@ -60,5 +60,5 @@ If you need full isolation, enable artifacts only where everyone uses a supporte
 - In browsers other than Chromium 152 or later, an artifact can open WebRTC connections and send data out. That data can include any profile data the viewer allowed, and anything the viewer types into it. Mattermost removes WebRTC constructors from the page as best effort, but child frames and `blob:` or `data:` documents get fresh ones.
 - A known Chromium issue, seen in Chrome 155, crashes the tab when an artifact creates a WebRTC connection in a nested frame while `Connection-Allowlist` is on. No data leaves, but the viewer must reload Mattermost.
 - An artifact can write to the clipboard on a click. What it copies can differ from what it shows. Treat anything copied out of an artifact, especially commands, as untrusted.
-- An artifact can imitate a sign in dialog inside its frame. The always-visible header is the countermeasure.
+- An artifact can imitate a sign-in dialog inside its frame. The always-visible header is the countermeasure.
 - Artifact content can include conversation or channel content the model saw, and a prompt injection could make the model write an artifact that tries to leak it. This is why artifacts run only after a click and the feature is off by default.

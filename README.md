@@ -39,7 +39,7 @@ Documentation is in the [`docs`](docs/) directory. The same pages are published 
 - [Summaries and AI search](docs/summaries_and_search.md): Summarize threads and channels, and search with AI
 - [Meeting summaries](docs/meeting_summaries.md): Summarize Calls and Zoom meetings
 - [Custom prompts](docs/custom_prompts.md): Save, share, and pin reusable prompts
-- [Data handling](docs/data_handling.md): What Agents sends to the LLM and what it stores
+- [What agents can see and keep](docs/what_agents_see.md): What an agent reads, what it can reach, and what is stored
 
 **For admins**
 
@@ -51,7 +51,7 @@ Documentation is in the [`docs`](docs/) directory. The same pages are published 
 - [Web search](docs/web_search.md) and [Set up semantic search](docs/embedding_search.md)
 - [Secure AI-generated links and HTML](docs/ai_output_security.md)
 - [Monitor Agents](docs/observability.md), [Back up and automate](docs/backup_and_automation.md), and [Troubleshooting](docs/troubleshooting.md)
-- [Sovereign AI deployments](docs/sovereign_ai.md)
+- [Data handling](docs/data_handling.md) and [Sovereign AI deployments](docs/sovereign_ai.md)
 - [Upgrade from Agents 1.x](docs/upgrading_to_2.0.md)
 
 **For developers**
