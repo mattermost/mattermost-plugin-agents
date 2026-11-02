@@ -139,12 +139,17 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	// post's turn means a stream (and possibly its tool loop) is still running
 	// on some node, so refuse rather than start a second run. An abandoned one
 	// is settled first so the scrub below covers its saved tool rounds.
-	live, err := c.convService.SettleAbandonedStreamingTurn(post.Id, streaming.StaleStreamThreshold)
+	live, abandoned, err := c.convService.SettleAbandonedStreamingTurn(post.Id, streaming.StaleStreamThreshold)
 	if err != nil {
 		return fmt.Errorf("failed to check for a live stream before regeneration: %w", err)
 	}
 	if live {
 		return fmt.Errorf("unable to regenerate post: %w", streaming.ErrAlreadyStreamingToPost)
+	}
+	if abandoned != nil {
+		if err = c.markAbandonedPostInterrupted(post, *abandoned); err != nil {
+			return err
+		}
 	}
 
 	if err = c.checkRegenerateLicense(conv.Operation); err != nil {
@@ -216,6 +221,24 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 // extends its reservation; tool rounds can outlast the TTL before the new
 // stream's turn starts heartbeating.
 var regenerateReservationRenewInterval = streaming.StaleStreamThreshold / 3
+
+// markAbandonedPostInterrupted repairs the post of a turn claimed from a dead
+// run, as the recovery sweep would, so it shows the interrupted notice if this
+// regenerate fails later. The sweep only revisits streaming turns, so the claim
+// is released when the post can't be updated.
+func (c *Conversations) markAbandonedPostInterrupted(post *model.Post, turn store.Turn) error {
+	if partial := streaming.PartialTextFromTurn(turn); len(partial) > len(post.Message) {
+		post.Message = partial
+	}
+	streaming.MarkInterrupted(post, streaming.InterruptedReasonLost, model.GetMillis())
+	if err := c.mmClient.UpdatePost(post); err != nil {
+		if relErr := c.convService.ReleaseStreamingTurnClaim(turn.ID); relErr != nil {
+			c.mmClient.LogWarn("Failed to release abandoned streaming turn claim", "error", relErr, "turn_id", turn.ID)
+		}
+		return fmt.Errorf("failed to mark abandoned post interrupted: %w", err)
+	}
+	return nil
+}
 
 // reserveRegenerate atomically claims postID for one regenerate across all
 // nodes, so two concurrent requests can't both pass the live-stream check

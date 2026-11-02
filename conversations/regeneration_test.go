@@ -148,6 +148,8 @@ func TestHandleRegenerate(t *testing.T) {
 		stolenMidRun       bool
 		// savedToolRounds leaves tool rounds the dead run saved after its anchor.
 		savedToolRounds bool
+		// wantPostInterrupted expects the post repaired as the recovery sweep would.
+		wantPostInterrupted bool
 	}{
 		{
 			name:       "thread analysis post regenerates from its stored turn",
@@ -316,6 +318,14 @@ func TestHandleRegenerate(t *testing.T) {
 			wantPath:           pathConversation,
 		},
 		{
+			name:                "a regenerate that fails after settling a dead run leaves the post interrupted",
+			operation:           "something_new",
+			postProps:           followUpProps,
+			anchorStreamingAge:  2 * streaming.StaleStreamThreshold.Milliseconds(),
+			wantErr:             "not supported",
+			wantPostInterrupted: true,
+		},
+		{
 			name:              "concurrent regenerate holding the reservation is refused",
 			operation:         llm.OperationConversation,
 			postProps:         followUpProps,
@@ -449,6 +459,11 @@ func TestHandleRegenerate(t *testing.T) {
 					return true, nil
 				}).Maybe()
 			mm.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+			var updatedPosts []*model.Post
+			mm.On("UpdatePost", mock.Anything).Run(func(args mock.Arguments) {
+				updated := args.Get(0).(*model.Post).Clone()
+				updatedPosts = append(updatedPosts, updated)
+			}).Return(nil).Maybe()
 			if tt.setupMM != nil {
 				tt.setupMM(mm)
 			}
@@ -539,6 +554,10 @@ func TestHandleRegenerate(t *testing.T) {
 
 			turns, turnsErr := convStore.GetTurnsForConversation(conv.ID)
 			require.NoError(t, turnsErr)
+			if tt.wantPostInterrupted {
+				require.Len(t, updatedPosts, 1)
+				require.Equal(t, streaming.InterruptedReasonLost, updatedPosts[0].GetProp(streaming.InterruptedProp))
+			}
 			if tt.wantPath == "" {
 				require.Error(t, err)
 				switch {

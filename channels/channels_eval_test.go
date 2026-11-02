@@ -289,3 +289,7 @@ func (s *evalInMemoryStore) HasLiveStreamingTurn(string, int64) (bool, error) {
 func (*evalInMemoryStore) ClaimStaleStreamingTurn(string, int64) (bool, error) {
 	return false, nil
 }
+
+func (*evalInMemoryStore) ReleaseStreamingTurnClaim(string) error {
+	return nil
+}

@@ -580,3 +580,7 @@ func TestAnalysisFixedTitlesAreSentToTheRequester(t *testing.T) {
 func (*mockConvServiceStore) ClaimStaleStreamingTurn(string, int64) (bool, error) {
 	return false, nil
 }
+
+func (*mockConvServiceStore) ReleaseStreamingTurnClaim(string) error {
+	return nil
+}

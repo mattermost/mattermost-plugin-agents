@@ -915,3 +915,7 @@ func (s *inMemoryStore) HasLiveStreamingTurn(string, int64) (bool, error) {
 func (*inMemoryStore) ClaimStaleStreamingTurn(string, int64) (bool, error) {
 	return false, nil
 }
+
+func (*inMemoryStore) ReleaseStreamingTurnClaim(string) error {
+	return nil
+}

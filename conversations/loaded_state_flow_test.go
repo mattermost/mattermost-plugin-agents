@@ -321,6 +321,20 @@ func (s *loadedStateFlowStore) ClaimStaleStreamingTurn(id string, staleAfterMill
 	return false, nil
 }
 
+func (s *loadedStateFlowStore) ReleaseStreamingTurnClaim(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for convID, turns := range s.turns {
+		for i := range turns {
+			if turns[i].ID == id && turns[i].Status == store.TurnStatusInterrupted {
+				s.turns[convID][i].Status = store.TurnStatusStreaming
+				s.allTurns[id].Status = store.TurnStatusStreaming
+			}
+		}
+	}
+	return nil
+}
+
 type loadedStateLLM struct {
 	mu       sync.Mutex
 	requests []llm.CompletionRequest

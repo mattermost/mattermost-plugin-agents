@@ -61,6 +61,9 @@ type Store interface {
 	// ClaimStaleStreamingTurn moves a stale streaming turn to interrupted at
 	// the end of its run, and reports whether this caller did.
 	ClaimStaleStreamingTurn(id string, staleAfterMillis int64) (bool, error)
+	// ReleaseStreamingTurnClaim returns a claimed turn to streaming so a later
+	// recovery sweep retries it.
+	ReleaseStreamingTurnClaim(id string) error
 }
 
 // BotLookup answers bot-membership and per-bot config queries.
@@ -190,18 +193,29 @@ func (s *Service) GetTurns(conversationID string) ([]store.Turn, error) {
 // staleAfter (DB clock). A stale streaming turn belongs to a run whose node
 // died before settling it: it is claimed now, as the recovery sweep would, so
 // it sits after the tool rounds that run already saved and scrubbing its
-// response removes them too.
-func (s *Service) SettleAbandonedStreamingTurn(postID string, staleAfter time.Duration) (live bool, err error) {
+// response removes them too. The claimed turn is returned so the caller can
+// repair its post like the sweep does, or release the claim.
+func (s *Service) SettleAbandonedStreamingTurn(postID string, staleAfter time.Duration) (live bool, claimed *store.Turn, err error) {
 	turn, err := s.store.GetTurnByPostID(postID)
 	if err != nil {
-		return false, fmt.Errorf("failed to get turn for post: %w", err)
+		return false, nil, fmt.Errorf("failed to get turn for post: %w", err)
 	}
 	if turn != nil && turn.Status == store.TurnStatusStreaming {
-		if _, err = s.store.ClaimStaleStreamingTurn(turn.ID, staleAfter.Milliseconds()); err != nil {
-			return false, fmt.Errorf("failed to settle abandoned streaming turn: %w", err)
+		ok, claimErr := s.store.ClaimStaleStreamingTurn(turn.ID, staleAfter.Milliseconds())
+		if claimErr != nil {
+			return false, nil, fmt.Errorf("failed to settle abandoned streaming turn: %w", claimErr)
+		}
+		if ok {
+			claimed = turn
 		}
 	}
-	return s.store.HasLiveStreamingTurn(postID, staleAfter.Milliseconds())
+	live, err = s.store.HasLiveStreamingTurn(postID, staleAfter.Milliseconds())
+	return live, claimed, err
+}
+
+// ReleaseStreamingTurnClaim undoes SettleAbandonedStreamingTurn's claim.
+func (s *Service) ReleaseStreamingTurnClaim(turnID string) error {
+	return s.store.ReleaseStreamingTurnClaim(turnID)
 }
 
 // GetInitiatingUserTurn returns the user turn that started the agent run
