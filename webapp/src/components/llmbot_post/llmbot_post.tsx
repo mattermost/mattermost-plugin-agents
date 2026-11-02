@@ -176,7 +176,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     // A settled turn means the end was missed (e.g. a dropped socket); the
     // persisted turn is then authoritative.
-    const postTurnSettled = Boolean(conversation?.turns.some((turn) => turn.post_id === props.post.id && turn.status !== 'streaming'));
+    const postTurns = conversation?.turns.filter((turn) => turn.post_id === props.post.id) ?? [];
+    const postTurnSettled = postTurns.length > 0 && postTurns.every((turn) => turn.status !== 'streaming');
     const liveStreamOpen = generating || (awaitingEnd && !postTurnSettled);
 
     // Lets the WebSocket handler snapshot the live round without re-subscribing.
@@ -987,5 +988,5 @@ const PostSummaryHelpMessage = styled(SectionNotice)`
 `;
 
 const InterruptedNotice = styled(SectionNotice)`
-    margin-top: 8px;
+    margin-top: var(--spacing-xs);
 `;

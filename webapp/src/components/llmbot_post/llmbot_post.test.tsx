@@ -1855,6 +1855,29 @@ describe('LLMBotPost interrupted and stale generation notices', () => {
         expect(screen.queryByText('Stale snapshot')).toBeNull();
     });
 
+    test('keeps live text after stop while any turn on the post is still streaming', () => {
+        mockUseConversation.mockReturnValue({
+            conversation: makeConversation([
+                makeTurn({id: 'turn_0', post_id: 'post_1', sequence: 1, status: 'complete', content: [{type: 'text', text: 'Undemoted anchor'}]}),
+                makeTurn({id: 'turn_1', post_id: 'post_1', sequence: 2, status: 'streaming', content: [{type: 'text', text: 'Stale snapshot'}]}),
+            ]),
+            loading: false,
+            error: null,
+        });
+        let listener: PostUpdateHandler | undefined;
+        renderPost(makePost(''), (postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Newer live text'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'cancel'}));
+        });
+        expect(screen.getByText('Newer live text')).toBeTruthy();
+        expect(screen.queryByText('Stale snapshot')).toBeNull();
+    });
+
     test('renders a stopped response once when its end event is missed', () => {
         const conv = (status: 'streaming' | 'complete', text: string) => ({
             conversation: makeConversation([
