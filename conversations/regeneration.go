@@ -135,6 +135,14 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	}
 	defer release()
 
+	// Taken before settling: the node still running this post's stream
+	// refuses here, before it could claim that live run's turn.
+	ctx, err = c.streamingService.GetStreamingContext(ctx, post.Id)
+	if err != nil {
+		return fmt.Errorf("unable to get post streaming context: %w", err)
+	}
+	defer c.streamingService.FinishStreaming(post.Id)
+
 	// The local stream map only covers this node. A fresh heartbeat on the
 	// post's turn means a stream (and possibly its tool loop) is still running
 	// on some node, so refuse rather than start a second run. An abandoned one
@@ -170,12 +178,6 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	if err != nil {
 		return err
 	}
-
-	ctx, err = c.streamingService.GetStreamingContext(ctx, post.Id)
-	if err != nil {
-		return fmt.Errorf("unable to get post streaming context: %w", err)
-	}
-	defer c.streamingService.FinishStreaming(post.Id)
 
 	var result *llm.TextStreamResult
 	switch path {

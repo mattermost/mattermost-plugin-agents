@@ -36,6 +36,8 @@ import (
 type regenRecordingStreaming struct {
 	loadedStateStreamingService
 	streamed []*model.Post
+	// busy reports the post as streaming on this node.
+	busy bool
 }
 
 func (s *regenRecordingStreaming) StreamToPost(_ context.Context, result *llm.TextStreamResult, post *model.Post, _ string, _ string) {
@@ -44,6 +46,9 @@ func (s *regenRecordingStreaming) StreamToPost(_ context.Context, result *llm.Te
 }
 
 func (s *regenRecordingStreaming) GetStreamingContext(ctx context.Context, _ string) (context.Context, error) {
+	if s.busy {
+		return nil, streaming.ErrAlreadyStreamingToPost
+	}
 	return ctx, nil
 }
 
@@ -150,6 +155,7 @@ func TestHandleRegenerate(t *testing.T) {
 		savedToolRounds bool
 		// wantPostInterrupted expects the post repaired as the recovery sweep would.
 		wantPostInterrupted bool
+		streamingHere       bool
 	}{
 		{
 			name:       "thread analysis post regenerates from its stored turn",
@@ -324,6 +330,14 @@ func TestHandleRegenerate(t *testing.T) {
 			anchorStreamingAge:  2 * streaming.StaleStreamThreshold.Milliseconds(),
 			wantErr:             "not supported",
 			wantPostInterrupted: true,
+		},
+		{
+			name:               "the node still running a stale-looking stream refuses without claiming it",
+			operation:          llm.OperationConversation,
+			postProps:          followUpProps,
+			anchorStreamingAge: 2 * streaming.StaleStreamThreshold.Milliseconds(),
+			streamingHere:      true,
+			wantErrIs:          streaming.ErrAlreadyStreamingToPost,
 		},
 		{
 			name:              "concurrent regenerate holding the reservation is refused",
@@ -527,7 +541,7 @@ func TestHandleRegenerate(t *testing.T) {
 					}
 				}
 			}
-			streamSvc := &regenRecordingStreaming{}
+			streamSvc := &regenRecordingStreaming{busy: tt.streamingHere}
 			c := &Conversations{
 				mmClient:         mm,
 				bots:             botsService,
@@ -573,6 +587,9 @@ func TestHandleRegenerate(t *testing.T) {
 				require.Empty(t, lm.requests, "no LLM request may be sent")
 				require.Empty(t, streamSvc.streamed)
 				require.Len(t, turns, 2, "a rejected regenerate must leave the conversation untouched")
+				if tt.streamingHere {
+					require.Equal(t, store.TurnStatusStreaming, turns[1].Status, "a live run's turn must not be claimed")
+				}
 				return
 			}
 			require.NoError(t, err)
