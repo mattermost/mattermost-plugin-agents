@@ -6,6 +6,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
@@ -455,7 +457,8 @@ func newAnnotatedMCPServer(t *testing.T) *httptest.Server {
 // The per-server tools route lists one saved remote server's tools for the
 // System Console's add-and-review flow, failing closed on unknown servers and
 // without the remote MCP license, and keeping connection error text out of
-// the response.
+// the response. It reads the server from the store: this node's in-memory
+// config may not have reloaded a change saved through another node.
 func TestHandleGetMCPServerTools(t *testing.T) {
 	annotated := newAnnotatedMCPServer(t)
 	unreachable := httptest.NewServer(http.NotFoundHandler())
@@ -467,10 +470,18 @@ func TestHandleGetMCPServerTools(t *testing.T) {
 		{ID: "down", Name: "Down", BaseURL: unreachable.URL, Enabled: true},
 	}
 
+	// This node has not reloaded the latest save yet: it holds the
+	// annotated server at the unreachable URL it had before a move, and none
+	// of the servers added since.
+	lagging := mcp.Config{Enabled: true, Servers: []mcp.ServerConfig{
+		{ID: "annotated", Name: "Annotated", BaseURL: unreachable.URL, Enabled: true},
+	}}
+
 	tests := []struct {
 		name       string
 		serverID   string
 		level      enterprise.Level
+		storeErr   error
 		wantStatus int
 		wantError  string
 		wantTools  map[string]string
@@ -483,6 +494,7 @@ func TestHandleGetMCPServerTools(t *testing.T) {
 			wantTools:  map[string]string{"read_tool": mcp.ToolPolicyAutoRunInDM, "write_tool": mcp.ToolPolicyAsk},
 		},
 		{name: "unknown server is not found", serverID: "missing", level: enterprise.LevelEnterprise, wantStatus: http.StatusNotFound},
+		{name: "a store failure is not reported as a missing server", serverID: "annotated", level: enterprise.LevelEnterprise, storeErr: errors.New("db down"), wantStatus: http.StatusInternalServerError},
 		{name: "requires the remote MCP license", serverID: "annotated", level: enterprise.LevelProfessional, wantStatus: http.StatusForbidden},
 		{
 			name:       "disabled server reports an error",
@@ -506,7 +518,8 @@ func TestHandleGetMCPServerTools(t *testing.T) {
 			api.licenseChecker = enterprisetest.CheckerAt(tt.level)
 			mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
 			allowAnyPluginAPILogging(mockAPI)
-			api.config.(*testConfigImpl).mcpConfig = mcp.Config{Enabled: true, Servers: servers}
+			api.config.(*testConfigImpl).mcpConfig = lagging
+			api.configStore = &testConfigStore{cfg: &config.Config{MCP: mcp.Config{Enabled: true, Servers: servers}}, getErr: tt.storeErr}
 			api.mcpClientManager.(*mockMCPClientManager).httpClient = &http.Client{}
 
 			req := httptest.NewRequest(http.MethodGet, "/admin/mcp/"+tt.serverID+"/tools", nil)

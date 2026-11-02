@@ -544,14 +544,30 @@ func (a *API) handleGetMCPSuggestedDescription(c *gin.Context) {
 // handleGetMCPServerTools lists one saved remote MCP server's tools as the
 // requesting admin, for the System Console flow that connects a new server
 // and has the admin review its tools. A server that needs the admin to sign
-// in reports needsOAuth with the URL that starts the flow. It is read-only,
-// so it is not audited.
+// in reports needsOAuth with the URL that starts the flow. The server is read
+// from the store, not this node's in-memory config. It is read-only, so it is
+// not audited.
 func (a *API) handleGetMCPServerTools(c *gin.Context) {
 	if !a.requireCapability(c, enterprise.CapRemoteMCP) {
 		return
 	}
 
-	mcpConfig := a.config.MCP()
+	// The System Console lists a server's tools right after saving it, and
+	// on a cluster that request can reach a node that has not yet reloaded
+	// the change; its in-memory config could then miss a new server or still
+	// hold a moved server's old URL. The store reads the primary database
+	// (mmapi.NewClient opens it with GetMasterDB), so it always has the
+	// saved server.
+	storedConfig, err := a.configStore.GetConfig()
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to read the MCP configuration: %w", err))
+		return
+	}
+	if storedConfig == nil {
+		c.AbortWithError(http.StatusNotFound, errors.New("MCP server not found"))
+		return
+	}
+	mcpConfig := storedConfig.MCP
 	index := slices.IndexFunc(mcpConfig.Servers, func(server mcp.ServerConfig) bool {
 		return server.ID == c.Param("serverid")
 	})
