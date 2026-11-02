@@ -2,10 +2,12 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
+import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {MenuItem} from '@mattermost/compass-ui/components/menu-item';
+import {PopoverMenuGroup, PopoverMenuScroll} from '@mattermost/compass-ui/components/popover-menu';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
@@ -83,3 +85,52 @@ export const LoadingRow = ({label}: {label: string}) => (
         {label}
     </StatusRow>
 );
+
+interface AgentPickerListProps {
+
+    // Null while the agents load.
+    bots: LLMBot[] | null;
+
+    // The agent already in use, marked as current.
+    activeId?: string;
+    onPick: (bot: LLMBot) => void;
+    maxHeight: number;
+}
+
+// The agents of an agent-picking submenu, scrolling past maxHeight.
+export const AgentPickerList = ({bots, activeId, onPick, maxHeight}: AgentPickerListProps) => {
+    const intl = useIntl();
+    let items: React.ReactNode;
+    if (!bots) {
+        items = <LoadingRow label={intl.formatMessage({defaultMessage: 'Loading agents…'})}/>;
+    } else if (bots.length === 0) {
+        items = (
+            <MenuItem
+                role='menuitem'
+                label={intl.formatMessage({defaultMessage: 'No agents available'})}
+                disabled={true}
+            />
+        );
+    } else {
+        items = bots.map((bot) => {
+            const active = bot.id === activeId;
+            return (
+                <AgentMenuItem
+                    key={bot.id}
+                    bot={bot}
+                    active={active}
+                    trailingElement={active}
+                    {...(active && {'aria-current': true})}
+                    onClick={() => onPick(bot)}
+                />
+            );
+        });
+    }
+    return (
+        <PopoverMenuScroll maxHeight={maxHeight}>
+            <PopoverMenuGroup>
+                {items}
+            </PopoverMenuGroup>
+        </PopoverMenuScroll>
+    );
+};

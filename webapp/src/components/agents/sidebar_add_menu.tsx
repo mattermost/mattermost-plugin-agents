@@ -8,13 +8,12 @@ import MessagePlusOutlineIcon from '@mattermost/compass-icons/components/message
 import PlusIcon from '@mattermost/compass-icons/components/plus';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
-import {MenuItem} from '@mattermost/compass-ui/components/menu-item';
-import {PopoverMenu, PopoverMenuGroup, PopoverMenuScroll} from '@mattermost/compass-ui/components/popover-menu';
+import {PopoverMenu, PopoverMenuGroup} from '@mattermost/compass-ui/components/popover-menu';
 
 import {useBotlist} from '@/bots';
 import Dropdown from '@/components/dropdown';
 import {handleMenuNavigation} from '@/components/menu/menu_keyboard';
-import {AgentMenuItem, IconMenuItem, LoadingRow} from '@/components/menu/menu_parts';
+import {AgentPickerList, IconMenuItem} from '@/components/menu/menu_parts';
 import Submenu from '@/components/menu/submenu';
 import {useFocusMenuOnOpen} from '@/components/menu/use_focus_menu_on_open';
 import {useMenuTransition} from '@/hooks/use_menu_transition';
@@ -75,30 +74,6 @@ const SidebarAddMenu = () => {
         }
     };
 
-    let agentItems: React.ReactNode;
-    if (!bots) {
-        agentItems = <LoadingRow label={intl.formatMessage({defaultMessage: 'Loading agents…'})}/>;
-    } else if (bots.length === 0) {
-        agentItems = (
-            <MenuItem
-                role='menuitem'
-                label={intl.formatMessage({defaultMessage: 'No agents available'})}
-                disabled={true}
-            />
-        );
-    } else {
-        agentItems = bots.map((bot) => (
-            <AgentMenuItem
-                key={bot.id}
-                bot={bot}
-                onClick={() => {
-                    setMenuOpen(false);
-                    toChat(bot.id);
-                }}
-            />
-        ));
-    }
-
     return (
         <Dropdown
             isOpen={menu.rendered}
@@ -147,11 +122,14 @@ const SidebarAddMenu = () => {
                         onClose={() => setSubmenu(null)}
                         data-testid='sidebar-add-menu-new-chat'
                     >
-                        <PopoverMenuScroll maxHeight={AGENTS_SUBMENU_MAX_HEIGHT}>
-                            <PopoverMenuGroup>
-                                {agentItems}
-                            </PopoverMenuGroup>
-                        </PopoverMenuScroll>
+                        <AgentPickerList
+                            bots={bots}
+                            maxHeight={AGENTS_SUBMENU_MAX_HEIGHT}
+                            onPick={(bot) => {
+                                setMenuOpen(false);
+                                toChat(bot.id);
+                            }}
+                        />
                     </Submenu>
                     {mayCreate && (
                         <IconMenuItem
