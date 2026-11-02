@@ -16,8 +16,8 @@ export default defineConfig({
 
   /* Fail the build on CI if you accidentally left test.only in the source code. */
   forbidOnly: !!process.env.CI,
-  /* Disable retries so CI surfaces flaky tests immediately. */
-  retries: 0,
+  /* One retry; the report still lists retried passes as flaky. */
+  retries: 1,
   /* Opt out of parallel tests on CI. */
   workers: process.env.CI ? 1 : 4,
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */

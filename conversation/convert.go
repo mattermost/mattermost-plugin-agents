@@ -60,10 +60,7 @@ type PostConversionOptions struct {
 // conversation's own (e.g. a meeting's captions file), so access is re-checked
 // on every replay.
 func canReadFileChannel(opts PostConversionOptions, fileInfo *model.FileInfo) bool {
-	if opts.UserID == "" || fileInfo.ChannelId == "" {
-		return false
-	}
-	return opts.MMClient.HasPermissionToChannel(opts.UserID, fileInfo.ChannelId, model.PermissionReadChannel)
+	return mmapi.CheckFileChannelRead(opts.MMClient, opts.UserID, fileInfo) == nil
 }
 
 // BlocksToPost converts a slice of content blocks and a role string into an llm.Post.
@@ -174,18 +171,18 @@ func BlocksToPost(
 				notices = append(notices, format.UnavailableAttachment("", format.AttachmentLoadFailed))
 				continue
 			}
-			// Fetched even with vision off: it re-checks the requester's access
-			// before the placeholder names the file.
+			// Fetched even with vision off: access is re-checked before the
+			// placeholder names the file.
 			fileInfo, err := opts.MMClient.GetFileInfo(block.FileID)
 			if err != nil || fileInfo == nil {
 				notices = append(notices, attachmentLoadNotice(opts.MMClient, block, err, "failed to get file info for image attachment"))
 				continue
 			}
-			if !opts.EnableVision {
-				notices = append(notices, format.UnavailableAttachment(fileInfo.Name, format.AttachmentImageInputDisabled))
+			if !canReadFileChannel(opts, fileInfo) {
 				continue
 			}
-			if !canReadFileChannel(opts, fileInfo) {
+			if !opts.EnableVision {
+				notices = append(notices, format.UnavailableAttachment(fileInfo.Name, format.AttachmentImageInputDisabled))
 				continue
 			}
 			if !llm.IsSupportedImageMimeType(fileInfo.MimeType) {

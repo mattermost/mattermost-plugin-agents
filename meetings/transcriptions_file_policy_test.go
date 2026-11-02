@@ -17,6 +17,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -25,9 +26,9 @@ import (
 // transcription read is session-gated. HandleSummarizeTranscription returns
 // after posting "Sure…" — a return-error assertion would not catch a missing
 // WithFilePolicy. The worker consults HasPermissionToFileAction, then
-// UpdatePost on the denied-path error; waiting for that callback means the
-// goroutine has finished, so an unexpected admin GetFile/GetFileInfo fails
-// the mock instead of racing the test.
+// UpdatePost and LogError on the denied-path error; waiting for the LogError
+// callback means the goroutine has finished, so an unexpected admin
+// GetFile/GetFileInfo fails the mock instead of racing the test.
 func TestHandleSummarizeTranscriptionDeniedByFilePolicy(t *testing.T) {
 	const (
 		userID    = "user-id-1234567890123456789012"
@@ -48,13 +49,15 @@ func TestHandleSummarizeTranscriptionDeniedByFilePolicy(t *testing.T) {
 	mockAPI.On("GetUser", userID).Return(&model.User{Id: userID, Locale: "en"}, nil)
 	mockAPI.On("GetUser", callsID).Return(&model.User{Id: callsID, Username: "calls", IsBot: true}, nil)
 	mockAPI.On("GetDirectChannel", botID, userID).Return(&model.Channel{Id: dmID}, nil)
-	mockAPI.On("CreatePost", mock.Anything).Return(&model.Post{Id: model.NewId(), ChannelId: dmID}, nil)
-	mockAPI.On("UpdatePost", mock.Anything).Return(&model.Post{}, nil).Run(func(mock.Arguments) {
-		select {
-		case <-workerDone:
-		default:
-			close(workerDone)
-		}
+	createdPostID := model.NewId()
+	mockAPI.On("CreatePost", mock.Anything).Return(&model.Post{Id: createdPostID, ChannelId: dmID}, nil)
+	mockAPI.On("UpdatePost", mock.Anything).Return(&model.Post{}, nil).Once()
+	// The worker logs this as the last step of its denied path, after UpdatePost
+	// has returned and pluginapi has copied the response into the worker's post.
+	// Signaling from the UpdatePost mock instead would let AssertExpectations
+	// read the recorded post while the worker is still writing to it.
+	mockAPI.On("LogError", "Error in call recording post", mock.Anything, mock.Anything).Run(func(mock.Arguments) {
+		close(workerDone)
 	}).Once()
 	mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
 	mockAPI.On("LogError", mock.Anything).Maybe()
@@ -92,7 +95,8 @@ func TestHandleSummarizeTranscriptionDeniedByFilePolicy(t *testing.T) {
 
 	result, err := s.HandleSummarizeTranscription(userID, bot, post, &model.Channel{Id: "channel-id"}, sessionID)
 	require.NoError(t, err)
-	require.NotEmpty(t, result["postid"])
+	assert.Equal(t, createdPostID, result["postid"], "the caller's result must not be affected by the worker rewriting its own post")
+	assert.Equal(t, dmID, result["channelid"])
 
 	select {
 	case <-workerDone:

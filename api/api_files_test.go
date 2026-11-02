@@ -84,12 +84,11 @@ func TestHandleRawFileContent(t *testing.T) {
 		},
 		{
 			// The requesting user comes from the authenticated header, never the
-			// body. With no header the permission check runs against an empty user
-			// and must fail closed rather than leak the file.
+			// body. With no header the request must fail closed rather than leak
+			// the file.
 			name: "missing user header is forbidden",
 			setup: func(m *mocks.MockClient) {
 				m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, ChannelId: channelID}, nil)
-				m.EXPECT().HasPermissionToChannel("", channelID, model.PermissionReadChannel).Return(false)
 			},
 			request:        RawFileContentRequest{FileID: fileID},
 			omitUserHeader: true,

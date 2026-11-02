@@ -87,6 +87,13 @@ func TestMeetingSummaryFollowUpRechecksCaptionsChannelAccess(t *testing.T) {
 // leaves behind: a user turn referencing the captions file and the summary.
 func seedMeetingSummaryConversation(t *testing.T, env *dmTestEnv, rootID, fileID, summary string) {
 	t.Helper()
+	seedSummaryConversationWithAttachment(t, env, rootID, conversation.ContentBlock{
+		Type: conversation.BlockTypeFile, FileID: fileID, Filename: "captions.vtt", MimeType: "text/vtt",
+	}, summary)
+}
+
+func seedSummaryConversationWithAttachment(t *testing.T, env *dmTestEnv, rootID string, attachment conversation.ContentBlock, summary string) {
+	t.Helper()
 	channelID := env.channelID
 	convID := model.NewId()
 	if env.mmClient.posts == nil {
@@ -105,7 +112,7 @@ func seedMeetingSummaryConversation(t *testing.T, env *dmTestEnv, rootID, fileID
 
 	userBlocks, err := json.Marshal([]conversation.ContentBlock{
 		{Type: conversation.BlockTypeText, Text: "Summarize the meeting transcript."},
-		{Type: conversation.BlockTypeFile, FileID: fileID, Filename: "captions.vtt", MimeType: "text/vtt"},
+		attachment,
 	})
 	require.NoError(t, err)
 	require.NoError(t, env.convStore.CreateTurnAutoSequence(&store.Turn{
@@ -117,4 +124,65 @@ func seedMeetingSummaryConversation(t *testing.T, env *dmTestEnv, rootID, fileID
 	require.NoError(t, env.convStore.CreateTurnAutoSequence(&store.Turn{
 		ID: model.NewId(), ConversationID: convID, PostID: &rootID, Role: "assistant", Content: summaryBlocks,
 	}))
+}
+
+// TestFollowUpRechecksImageChannelAccessWithVisionOff covers a DM follow-up
+// whose stored first turn holds an image from a channel the owner may no
+// longer read, for an agent with image input disabled.
+func TestFollowUpRechecksImageChannelAccessWithVisionOff(t *testing.T) {
+	const (
+		sourceChannelID = "source-channel"
+		imageFileID     = "image-file"
+		imageName       = "secret-plan.png"
+		summaryRootID   = "summary-root-post"
+	)
+
+	tests := []struct {
+		name           string
+		unreadable     bool
+		wantNameInSent bool
+	}{
+		{name: "owner can still read the image's channel", wantNameInSent: true},
+		{name: "owner lost read access to the image's channel", unreadable: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupDMTestEnv(t, dmMakeTextStream("follow-up answer"))
+			env.mmClient.fileInfos = map[string]*model.FileInfo{
+				imageFileID: {Id: imageFileID, ChannelId: sourceChannelID, Name: imageName, MimeType: "image/png", Size: 6},
+			}
+			env.mmClient.unreadableChannels = map[string]bool{sourceChannelID: tt.unreadable}
+
+			promptsManager, err := llm.NewPrompts(prompts.PromptsFolder)
+			require.NoError(t, err)
+			env.conversations.SetConversationService(conversation.NewService(env.convStore, promptsManager, env.mmClient, env.botService))
+
+			seedSummaryConversationWithAttachment(t, env, summaryRootID, conversation.ContentBlock{
+				Type: conversation.BlockTypeImage, FileID: imageFileID, Filename: imageName, MimeType: "image/png",
+			}, "Stored summary.")
+
+			env.conversations.MessageHasBeenPosted(&plugin.Context{SessionId: model.NewId()}, &model.Post{
+				Id:        model.NewId(),
+				UserId:    env.userID,
+				ChannelId: env.channelID,
+				RootId:    summaryRootID,
+				Message:   "What was in the picture?",
+			})
+
+			env.fakeLLM.mu.Lock()
+			defer env.fakeLLM.mu.Unlock()
+			require.Len(t, env.fakeLLM.requests, 1, "logged errors: %v", env.mmClient.loggedErrors())
+			var sent strings.Builder
+			for _, post := range env.fakeLLM.requests[0].Posts {
+				sent.WriteString(post.Message)
+				sent.WriteString("\n")
+			}
+			if tt.wantNameInSent {
+				require.Contains(t, sent.String(), imageName)
+				return
+			}
+			require.NotContains(t, sent.String(), imageName, "an unreadable image must not even be named")
+		})
+	}
 }

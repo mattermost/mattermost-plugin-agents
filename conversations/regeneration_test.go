@@ -51,8 +51,8 @@ type fakeMeetingRegenerator struct {
 	err     error
 }
 
-func (f *fakeMeetingRegenerator) RegenerateSummary(_ context.Context, _ *bots.Bot, _ *llm.Context, _ *store.Conversation, postID string) (*llm.TextStreamResult, error) {
-	f.postIDs = append(f.postIDs, postID)
+func (f *fakeMeetingRegenerator) RegenerateSummary(_ context.Context, _ *bots.Bot, _ *llm.Context, _ *store.Conversation, post *model.Post) (*llm.TextStreamResult, error) {
+	f.postIDs = append(f.postIDs, post.Id)
 	if f.err != nil {
 		return nil, f.err
 	}

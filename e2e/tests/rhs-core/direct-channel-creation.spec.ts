@@ -59,7 +59,7 @@ test.describe('Direct Channel Creation', () => {
     await aiPlugin.sendMessage(`Testing new channel`);
 
     // Should see a response in the newly created channel
-    await expect(page.getByText(responseTestText)).toBeVisible({ timeout: 10000 });
+    await aiPlugin.expectBotPostText(responseTestText);
 
     // Verify channel creation was requested
     expect(channelCreationRequested).toBe(true);
@@ -101,7 +101,7 @@ test.describe('Direct Channel Creation', () => {
     await aiPlugin.sendMessage('Testing existing channel');
 
     // Should see a response
-    await expect(page.getByText(responseTestText)).toBeVisible({ timeout: 10000 });
+    await aiPlugin.expectBotPostText(responseTestText);
 
     // Verify no channel creation was requested
     expect(channelCreationRequested).toBe(false);
