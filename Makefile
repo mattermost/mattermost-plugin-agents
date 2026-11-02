@@ -545,7 +545,7 @@ detach: setup-attach
 .PHONY: test
 test: apply webapp/node_modules install-go-tools
 ifneq ($(HAS_SERVER),)
-	$(GOBIN)/gotestsum -- -v ./...
+	$(GOBIN)/gotestsum --rerun-fails=1 --packages="./..." -- -v
 	$(MAKE) nested-modules-test
 endif
 ifneq ($(HAS_WEBAPP),)

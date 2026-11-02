@@ -1,4 +1,3 @@
-import { expect } from '@playwright/test';
 import { containerTest } from 'helpers/container-fixture';
 
 import RunContainer from 'helpers/plugincontainer';
@@ -112,6 +111,6 @@ test.describe('Basic Action Item Extraction', () => {
 
         // Verify the AI RHS opens with the action items response
         await aiPlugin.expectRHSOpenWithPost();
-        await expect(page.getByTestId('posttext').getByText('action items')).toBeVisible();
+        await aiPlugin.expectBotPostText(actionItemsResponseText);
     });
 });

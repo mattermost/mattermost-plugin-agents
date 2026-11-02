@@ -84,7 +84,7 @@ test.describe('Edge Cases - Input Validation', () => {
         await aiPlugin.waitForBotResponse(responseTestText);
 
         // Should handle long messages successfully
-        await expect(page.getByTestId('posttext').getByText(responseTestText)).toBeVisible();
+        await aiPlugin.expectBotPostText(responseTestText);
     });
 
     test('Handle special characters in message', async ({ page }) => {
@@ -100,8 +100,7 @@ test.describe('Edge Cases - Input Validation', () => {
         await aiPlugin.waitForBotResponse(responseTestText);
 
         // Verify the response is visible in the RHS container
-        const rhsContainer = page.getByTestId('mattermost-ai-rhs');
-        await expect(rhsContainer.getByText(responseTestText)).toBeVisible({ timeout: 5000 });
+        await aiPlugin.expectBotPostText(responseTestText);
     });
 
     test('Handle rapid message submission', async ({ page }) => {
@@ -139,7 +138,7 @@ test.describe('Edge Cases - XSS and Injection Prevention', () => {
         await aiPlugin.waitForBotResponse(responseTestText);
 
         // HTML should be escaped/sanitized, not executed
-        await expect(page.getByTestId('posttext').getByText(responseTestText)).toBeVisible();
+        await aiPlugin.expectBotPostText(responseTestText);
     });
 
     test('Handle SQL-like syntax in message', async ({ page }) => {
@@ -153,7 +152,7 @@ test.describe('Edge Cases - XSS and Injection Prevention', () => {
         await aiPlugin.waitForBotResponse(responseTestText);
 
         // Should treat as regular text, not execute as SQL
-        await expect(page.getByTestId('posttext').getByText(responseTestText)).toBeVisible();
+        await aiPlugin.expectBotPostText(responseTestText);
     });
 });
 
@@ -168,7 +167,7 @@ test.describe('Edge Cases - Special Content', () => {
         await aiPlugin.sendMessage('**Bold** *italic* `code` [link](http://example.com)');
         await aiPlugin.waitForBotResponse(responseTestText);
 
-        await expect(page.getByTestId('posttext').getByText(responseTestText)).toBeVisible();
+        await aiPlugin.expectBotPostText(responseTestText);
     });
 
     test('Handle Unicode and emoji', async ({ page }) => {
@@ -181,6 +180,6 @@ test.describe('Edge Cases - Special Content', () => {
         await aiPlugin.sendMessage('Hello 世界 🌍 ñ ü é');
         await aiPlugin.waitForBotResponse(responseTestText);
 
-        await expect(page.getByTestId('posttext').getByText(responseTestText)).toBeVisible();
+        await aiPlugin.expectBotPostText(responseTestText);
     });
 });

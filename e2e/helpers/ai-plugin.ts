@@ -72,7 +72,7 @@ export class AIPlugin {
 
       // Wait for the icon to be in a stable, clickable state
       // This helps with timing issues where the element is visible but not yet interactive
-      await this.appBarIcon.waitFor({ state: 'visible', timeout: 5000 });
+      await this.appBarIcon.waitFor({ state: 'visible', timeout: 30000 });
 
       // Retry click with error handling for obscured/not clickable elements
       let clicked = false;
@@ -193,6 +193,46 @@ export class AIPlugin {
     if (expectedText) {
       await expect(this.page.getByText(expectedText)).toBeVisible();
     }
+  }
+
+  /**
+   * Send a message and wait for the bot post that answers *this* message. `waitForBotResponse` cannot
+   * tell turns apart when every mocked reply has the same text (its `.last()` match is satisfied by
+   * the previous turn's reply), so it returns before the new turn has started and the composer still
+   * holds the unsent text. Counting bot posts ties the wait to the new turn.
+   */
+  async sendMessageAndWaitForReply(message: string, expectedReply: string | RegExp, timeout = 30000) {
+    const botPosts = this.getRhsContainer().locator('[data-testid="llm-bot-post"]');
+    const before = await botPosts.count();
+
+    await this.sendMessage(message);
+
+    await expect(botPosts).toHaveCount(before + 1, { timeout });
+    await expect(botPosts.nth(before)).toContainText(expectedReply, { timeout });
+    await this.waitForGeneratingToStop();
+  }
+
+  /**
+   * Wait for the user's own message to render as a post in the plugin RHS. The composer (textarea and
+   * its mirror elements) holds the same text until the send completes, so a panel-wide text match is
+   * ambiguous.
+   */
+  async expectUserPostText(text: string, timeout = 30000) {
+    await expect(
+      this.getRhsContainer().getByTestId('post-message-text').getByText(text, { exact: true }),
+    ).toBeVisible({ timeout });
+  }
+
+  /**
+   * Wait for a bot post in the plugin RHS whose body contains `text`. Match on the post, not the
+   * panel: the panel also renders the conversation title (e.g. "Action Items") and the user's own
+   * messages, so a panel-wide text match is ambiguous or passes before the bot has answered.
+   */
+  async expectBotPostText(text: string | RegExp, timeout = 30000) {
+    const botPost = this.getRhsContainer()
+      .locator('[data-testid="llm-bot-post"]')
+      .filter({ hasText: text });
+    await expect(botPost.last()).toBeVisible({ timeout });
   }
 
   async closeRHS() {
