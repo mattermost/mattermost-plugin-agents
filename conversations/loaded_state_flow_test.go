@@ -82,8 +82,8 @@ func (s *loadedStateFlowStore) GetConversationByThreadBotUser(rootPostID, botID,
 	return nil, store.ErrConversationNotFound
 }
 
-func (s *loadedStateFlowStore) UpdateConversationTitle(id, title string) error {
-	return nil
+func (s *loadedStateFlowStore) RenameConversation(id, title string) (bool, error) {
+	return false, nil
 }
 
 func (s *loadedStateFlowStore) SetConversationTitleIfUnset(id, title string) (bool, error) {

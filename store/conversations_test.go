@@ -335,44 +335,6 @@ func TestGetConversationByThreadBotUser(t *testing.T) {
 	}
 }
 
-func TestUpdateConversationTitle(t *testing.T) {
-	tests := []struct {
-		name     string
-		setup    func(t *testing.T, s *Store)
-		validate func(t *testing.T, s *Store)
-	}{
-		{
-			name:  "updates title without touching UpdatedAt",
-			setup: func(t *testing.T, s *Store) {},
-			validate: func(t *testing.T, s *Store) {
-				conv := makeConversation()
-				err := s.CreateConversation(conv)
-				require.NoError(t, err)
-
-				err = s.UpdateConversationTitle(conv.ID, "New Title")
-				require.NoError(t, err)
-
-				got, err := s.GetConversation(conv.ID)
-				require.NoError(t, err)
-				assert.Equal(t, "New Title", got.Title)
-				assert.Equal(t, conv.UpdatedAt, got.UpdatedAt, "a title is not activity")
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := setupTestStore(t)
-
-			err := s.RunMigrations()
-			require.NoError(t, err)
-
-			tt.setup(t, s)
-			tt.validate(t, s)
-		})
-	}
-}
-
 func TestSoftDeleteConversation(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -900,9 +862,12 @@ func TestRenameConversation(t *testing.T) {
 				return
 			}
 			var title string
-			var deleteAt int64
-			require.NoError(t, s.db.QueryRow("SELECT Title, DeleteAt FROM LLM_Conversations WHERE ID = $1", id).Scan(&title, &deleteAt))
+			var deleteAt, updatedAt int64
+			require.NoError(t, s.db.QueryRow("SELECT Title, DeleteAt, UpdatedAt FROM LLM_Conversations WHERE ID = $1", id).Scan(&title, &deleteAt, &updatedAt))
 			assert.Equal(t, tt.wantTitle, title)
+			if tt.wantRenamed {
+				assert.Equal(t, conv.UpdatedAt, updatedAt, "a title is not activity")
+			}
 			if tt.softDelete {
 				assert.Equal(t, int64(1000), deleteAt, "a rename must never restore a deleted conversation")
 			}

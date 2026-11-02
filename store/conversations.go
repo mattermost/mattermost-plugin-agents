@@ -104,21 +104,9 @@ func (s *Store) GetConversationByThreadBotUser(rootPostID, botID, userID string)
 	return &conv, nil
 }
 
-// UpdateConversationTitle sets the title of a non-deleted conversation, as
-// RenameConversation does, for callers that need no report of whether it
-// existed. A title is not activity, so UpdatedAt (which orders the
-// conversation list) is left alone.
-func (s *Store) UpdateConversationTitle(id, title string) error {
-	_, err := s.RenameConversation(id, title)
-	return err
-}
-
-// SetConversationTitleIfUnset sets the title of a non-deleted conversation
-// only while it still has no title, for automatically generated titles. It
-// reports false, without error, when the conversation already has a title
-// (for example one its owner set while the title was being generated), or is
-// missing or deleted. User-set titles are never empty, so this never
-// overwrites one. UpdatedAt is left alone, as in RenameConversation.
+// SetConversationTitleIfUnset sets a generated title on a non-deleted
+// conversation that has none, so it never overwrites a title its owner set.
+// It reports whether the title was set.
 func (s *Store) SetConversationTitleIfUnset(id, title string) (bool, error) {
 	return s.execBuilderRows(s.builder.
 		Update("LLM_Conversations").
@@ -129,10 +117,9 @@ func (s *Store) SetConversationTitleIfUnset(id, title string) (bool, error) {
 		"set conversation title if unset")
 }
 
-// RenameConversation sets the title of a non-deleted conversation. It reports
-// false, without error, when no non-deleted conversation with the ID exists, so
-// a rename that races a delete never edits it. UpdatedAt is left alone so a
-// rename does not reorder the conversation list.
+// RenameConversation sets the title of a non-deleted conversation, reporting
+// whether one was changed. A title is not activity, so UpdatedAt (which
+// orders the conversation list) is left alone.
 func (s *Store) RenameConversation(id, title string) (bool, error) {
 	return s.execBuilderRows(s.builder.
 		Update("LLM_Conversations").
@@ -165,11 +152,7 @@ func (s *Store) SoftDeleteConversation(id string, deleteAt int64) error {
 }
 
 // ConversationSummary is a lightweight view of a conversation with its turn count,
-// used for listing conversations in the RHS threads panel.
-//
-// UpdatedAt is the conversation's last activity: creating a turn advances
-// LLM_Conversations.UpdatedAt to the turn's CreatedAt, while title changes
-// leave it alone.
+// used for listing conversations. UpdatedAt is its last turn's activity.
 type ConversationSummary struct {
 	ID         string  `json:"id"           db:"id"`
 	UserID     string  `json:"user_id"      db:"userid"`
@@ -181,12 +164,9 @@ type ConversationSummary struct {
 	UpdatedAt  int64   `json:"updated_at"   db:"updatedat"`
 }
 
-// GetConversationSummariesForUser returns a user's conversations ordered by last
-// activity (see ConversationSummary.UpdatedAt) descending, with ID as a
-// deterministic tie-breaker, including a turn count per conversation. Only
-// non-deleted conversations are returned. The ordering reads the
-// (UserID, UpdatedAt DESC) WHERE DeleteAt = 0 index, and turns are counted
-// only for the returned page.
+// GetConversationSummariesForUser returns a user's non-deleted conversations,
+// most recent activity first (ID breaks ties), with their turn counts. The
+// ordering uses the (UserID, UpdatedAt DESC) WHERE DeleteAt = 0 index.
 func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int) ([]ConversationSummary, error) {
 	if limit < 0 {
 		limit = 0
