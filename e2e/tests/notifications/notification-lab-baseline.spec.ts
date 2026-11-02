@@ -1,5 +1,6 @@
-import {expect, test} from '@playwright/test';
+import {expect} from '@playwright/test';
 
+import {containerTest} from 'helpers/container-fixture';
 import {NotificationLab, slowReply, slowReplyDurationMs} from 'helpers/notification-lab';
 
 /**
@@ -15,21 +16,22 @@ const AGENT_REPLY =
     'Notification lab baseline reply. This answer streams slowly so the requester can leave the conversation before it is finished.';
 const AGENT_STREAM = {chunkSize: 12, chunkDelayMs: 400};
 
+const test = containerTest((own) => NotificationLab.start(own, {
+    fixtures: slowReply({prompt: AGENT_PROMPT, content: AGENT_REPLY, ...AGENT_STREAM}),
+}));
+
 test.describe('Notification lab baseline', () => {
     test.describe.configure({mode: 'serial'});
 
     let lab: NotificationLab;
 
-    test.beforeAll(async ({browser}) => {
-        test.setTimeout(300000);
-        lab = await NotificationLab.start({
-            fixtures: slowReply({prompt: AGENT_PROMPT, content: AGENT_REPLY, ...AGENT_STREAM}),
-        });
+    test.beforeAll(async ({containers, browser}) => {
+        lab = containers;
         await lab.openBrowsers(browser, ['requester', 'member']);
     });
 
     test.afterAll(async () => {
-        await lab?.stop();
+        await lab?.closeBrowsers();
     });
 
     test('regular DM reaches an away user on desktop, push and email and leaves unread state', async ({}, testInfo) => {

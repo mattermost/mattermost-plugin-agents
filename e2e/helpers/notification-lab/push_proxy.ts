@@ -1,4 +1,3 @@
-import {test} from '@playwright/test';
 import {GenericContainer, StartedNetwork, StartedTestContainer, Wait} from 'testcontainers';
 
 import {SMOCKER_IMAGE} from '../openai-mock';
@@ -30,7 +29,6 @@ export class PushProxy {
     readonly networkUrl = `http://${PUSH_PROXY_ALIAS}:${MOCK_PORT}`;
 
     async start(network: StartedNetwork): Promise<void> {
-        test.slow(); // triples a beforeAll's 60 s timeout, which container startup can exceed
         this.container = await new GenericContainer(SMOCKER_IMAGE)
             .withExposedPorts(ADMIN_PORT)
             .withNetwork(network)

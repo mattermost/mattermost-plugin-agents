@@ -1,4 +1,4 @@
-import {expect, test} from '@playwright/test';
+import {expect} from '@playwright/test';
 
 import type {NotificationLab} from 'helpers/notification-lab';
 import {
@@ -9,11 +9,12 @@ import {
     settlePost,
     slowAnswer,
     slowAnswerAfterTool,
-    startMatrixLab,
     toolCallFor,
     waitForAgentPost,
     waitForPostState,
     withTitle,
+    matrixTest,
+    prepareMatrixLab,
 } from 'helpers/notification-lab/matrix';
 import type {MmChannel} from 'helpers/notification-lab/rest';
 
@@ -31,22 +32,22 @@ function answer(scenario: string): string {
     return `Answer ${scenario}: the deployment checklist has four steps, and the second one needs a database backup before you continue.`;
 }
 
+const test = matrixTest({
+    users: ['requester', 'member', 'bystander'],
+});
+
 test.describe('Agent notifications in a DM', () => {
     let lab: NotificationLab;
     let dm: MmChannel;
 
-    test.beforeAll(async ({browser}) => {
-        test.setTimeout(300000);
-        lab = await startMatrixLab(browser, {
-            users: ['requester', 'member', 'bystander'],
-            browsers: ['requester'],
-            requires: 'deferred',
-        });
+    test.beforeAll(async ({containers, browser}) => {
+        lab = containers;
+        await prepareMatrixLab(lab, browser, ['requester'], 'deferred');
         dm = await lab.botDm('requester');
     });
 
     test.afterAll(async () => {
-        await lab?.stop();
+        await lab?.closeBrowsers();
     });
 
     test.beforeEach(async () => {

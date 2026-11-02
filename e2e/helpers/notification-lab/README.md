@@ -43,8 +43,9 @@ user and an `observer` who only watches the stream. Shared setup and assertions 
 | `agent-tools.spec.ts` | S6 tool approval then share, S11 auto-run tool round | deferred notifications |
 | `agent-legacy-server.spec.ts` | S12 fallback push to the requester | without deferred notifications |
 
-`startMatrixLab(browser, {users, browsers, requires})` skips the whole file when the server does not
-match `requires` (`deferred`: the plugin reports `deferredNotifications` from `GET /ai_bots`, i.e. the
+Each spec gets its lab from `matrixTest({users, ...})`, a `containerTest` factory whose worker
+fixture starts the containers off the test clock. `prepareMatrixLab(lab, browser, browsers, requires)`
+in `beforeAll` opens the browsers and skips the whole file when the server does not match `requires` (`deferred`: the plugin reports `deferredNotifications` from `GET /ai_bots`, i.e. the
 server has `DeliverPostNotifications`; `legacy`: it does not). The deferred specs therefore skip on
 the default image; run them with `MM_IMAGE` set to a server build that has the API:
 
@@ -66,14 +67,17 @@ publish its table before asserting a state the product may not reach).
 ## API
 
 ```ts
+import {containerTest} from 'helpers/container-fixture';
 import {NotificationLab, slowReply} from 'helpers/notification-lab';
 
-const lab = await NotificationLab.start({
+const test = containerTest((own) => NotificationLab.start(own, {
     fixtures: slowReply({prompt: 'hello agent', content: 'A long answer ...'}),
     // users: [{key: 'requester'}, {key: 'member', notifyProps: {push: 'all'}}],  // default: requester, member, follower, bystander
     // collapsedThreads: 'always_on', pushContents: 'full', emailContents: 'full',
     // mcp: {...}, enableChannelMentionToolCalling: true, bot: {mcpDynamicToolLoading: false},  // tool scenarios
-});
+}));
+
+// in beforeAll(async ({containers: lab, browser}) => ...):
 await lab.openBrowsers(browser, ['requester', 'member']);      // logged-in windows with desktop recording
 
 const dm = await lab.botDm('requester');                       // or createChannel / directChannel
@@ -104,7 +108,8 @@ report.users.requester.viewing;        // ViewingRecord[]: the webapp's "respons
 
 | Method | Purpose |
 | --- | --- |
-| `NotificationLab.start(options)` | Starts Mattermost + plugin, aimock, push proxy, SMTP capture; configures email/push/CRT; provisions users |
+| `NotificationLab.start(own, options)` | From a `containerTest` factory: starts Mattermost + plugin, aimock, push proxy, SMTP capture; configures email/push/CRT; provisions users |
+| `lab.closeBrowsers()` | Closes the users' windows in `afterAll`; the fixture stops the containers |
 | `lab.user(key)` | `LabUser`: `api` (REST, `api.plugin(method, path)` for plugin routes), `deviceId`, `page`, `setStatus`, `focus/blur`, `navigate/openChannel/openDirectMessage/openThread`, `openThreadInRhs`, `openAgentRhs/askAgentInRhs`, `typeAndSend` |
 | `lab.openBrowsers(browser, keys)` | One browser context per user, real login, desktop recorder installed |
 | `lab.createChannel / directChannel / botDm` | Channels; `postAs`, `followThread`, `markChannelRead`, `markThreadRead` act as a user |

@@ -1,4 +1,4 @@
-import {expect, test} from '@playwright/test';
+import {expect} from '@playwright/test';
 
 import {EMBEDDED_GET_CHANNEL_INFO_TOOL, EMBEDDED_READ_CHANNEL_TOOL} from 'helpers/aimock-fixtures';
 import type {NotificationLab} from 'helpers/notification-lab';
@@ -12,11 +12,12 @@ import {
     settlePost,
     slowAnswerAfterTool,
     startDiscussion,
-    startMatrixLab,
     toolCallFor,
     waitForAgentPost,
     waitForPostState,
     withTitle,
+    matrixTest,
+    prepareMatrixLab,
 } from 'helpers/notification-lab/matrix';
 import type {MatrixUserKey} from 'helpers/notification-lab/matrix';
 import type {MmPost} from 'helpers/notification-lab/rest';
@@ -37,35 +38,35 @@ function answer(scenario: string): string {
     return `Answer ${scenario}: the channel has four members, and the pinned checklist lists the migration as the next step.`;
 }
 
+const test = matrixTest({
+    users: EVERYONE,
+    enableChannelMentionToolCalling: true,
+    bot: {mcpDynamicToolLoading: false},
+    mcp: {
+        enabled: true,
+        enablePluginServer: true,
+        embeddedServer: {
+            enabled: true,
+            tool_configs: [
+                {name: 'get_channel_info', policy: 'ask', enabled: true},
+                {name: 'read_channel', policy: 'auto_run_everywhere', enabled: true},
+            ],
+        },
+        idleTimeoutMinutes: 30,
+        servers: [],
+    },
+});
+
 test.describe('Agent notifications with tool calls in a channel thread', () => {
     let lab: NotificationLab;
 
-    test.beforeAll(async ({browser}) => {
-        test.setTimeout(300000);
-        lab = await startMatrixLab(browser, {
-            users: EVERYONE,
-            browsers: EVERYONE,
-            requires: 'deferred',
-            enableChannelMentionToolCalling: true,
-            bot: {mcpDynamicToolLoading: false},
-            mcp: {
-                enabled: true,
-                enablePluginServer: true,
-                embeddedServer: {
-                    enabled: true,
-                    tool_configs: [
-                        {name: 'get_channel_info', policy: 'ask', enabled: true},
-                        {name: 'read_channel', policy: 'auto_run_everywhere', enabled: true},
-                    ],
-                },
-                idleTimeoutMinutes: 30,
-                servers: [],
-            },
-        });
+    test.beforeAll(async ({containers, browser}) => {
+        lab = containers;
+        await prepareMatrixLab(lab, browser, EVERYONE, 'deferred');
     });
 
     test.afterAll(async () => {
-        await lab?.stop();
+        await lab?.closeBrowsers();
     });
 
     test.beforeEach(async () => {

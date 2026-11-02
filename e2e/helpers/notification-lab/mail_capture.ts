@@ -1,4 +1,3 @@
-import {test} from '@playwright/test';
 import {GenericContainer, StartedNetwork, StartedTestContainer, Wait} from 'testcontainers';
 
 import type {CapturedEmail} from './types';
@@ -27,7 +26,6 @@ export class MailCapture {
     readonly smtpPort = String(SMTP_PORT);
 
     async start(network: StartedNetwork): Promise<void> {
-        test.slow(); // triples a beforeAll's 60 s timeout, which container startup can exceed
         this.container = await new GenericContainer(MAIL_CAPTURE_IMAGE)
             .withExposedPorts(HTTP_PORT)
             .withNetwork(network)

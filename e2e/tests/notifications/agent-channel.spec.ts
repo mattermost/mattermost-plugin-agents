@@ -1,4 +1,4 @@
-import {expect, test} from '@playwright/test';
+import {expect} from '@playwright/test';
 
 import type {NotificationLab} from 'helpers/notification-lab';
 import {failingReply} from 'helpers/notification-lab';
@@ -12,10 +12,11 @@ import {
     settlePost,
     slowAnswer,
     startDiscussion,
-    startMatrixLab,
     waitForAgentPost,
     waitForPostState,
     withTitle,
+    matrixTest,
+    prepareMatrixLab,
 } from 'helpers/notification-lab/matrix';
 import type {MatrixUserKey} from 'helpers/notification-lab/matrix';
 import type {MmChannel, MmPost} from 'helpers/notification-lab/rest';
@@ -40,20 +41,20 @@ function answer(scenario: string): string {
 
 type Discussion = {channel: MmChannel; root: MmPost};
 
+const test = matrixTest({
+    users: EVERYONE,
+});
+
 test.describe('Agent notifications in a channel thread', () => {
     let lab: NotificationLab;
 
-    test.beforeAll(async ({browser}) => {
-        test.setTimeout(300000);
-        lab = await startMatrixLab(browser, {
-            users: EVERYONE,
-            browsers: EVERYONE,
-            requires: 'deferred',
-        });
+    test.beforeAll(async ({containers, browser}) => {
+        lab = containers;
+        await prepareMatrixLab(lab, browser, EVERYONE, 'deferred');
     });
 
     test.afterAll(async () => {
-        await lab?.stop();
+        await lab?.closeBrowsers();
     });
 
     test.beforeEach(async () => {

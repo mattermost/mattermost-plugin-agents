@@ -5,6 +5,8 @@ import type {Browser, TestInfo} from '@playwright/test';
 import type {AIMockContainer} from '../aimock-container';
 import {RunAIMockSidecar} from '../aimock-container';
 import type {AIMockFixtureFile} from '../aimock-fixtures';
+import type {Own} from '../container-fixture';
+import {withDeadline} from '../deadline';
 import {AIMOCK_BOT_NAME, RunAIMockContainer} from '../plugincontainer';
 import {mattermostImage} from '../mmcontainer';
 import type MattermostContainer from '../mmcontainer';
@@ -26,6 +28,9 @@ import type {
     UserKey,
     UserReport,
 } from './types';
+
+const CONTAINER_START_DEADLINE_MS = 180000;
+const SETUP_STEP_DEADLINE_MS = 60000;
 
 export const DEFAULT_LAB_USERS: LabUserSpec[] = [
     {key: 'requester'},
@@ -106,7 +111,8 @@ function sleep(ms: number): Promise<void> {
  *
  * Typical use inside a spec (see `tests/notifications/notification-lab-baseline.spec.ts`):
  *
- *     const lab = await NotificationLab.start({fixtures: slowReply({prompt: 'hi', content: '...'})});
+ *     const test = containerTest((own) => NotificationLab.start(own, {fixtures: slowReply({prompt: 'hi', content: '...'})}));
+ *     // in beforeAll(async ({containers: lab, browser}) => ...):
  *     await lab.openBrowsers(browser, ['requester']);
  *     const dm = await lab.botDm('requester');
  *     const mark = await lab.mark();
@@ -129,57 +135,41 @@ export class NotificationLab {
         readonly bot: {id: string; username: string},
     ) {}
 
-    static async start(options: NotificationLabOptions = {}): Promise<NotificationLab> {
-        const mattermost = await RunAIMockContainer({
+    /**
+     * Starts the lab inside a `containerTest` factory: every container is passed to `own` as soon
+     * as it is up, so the fixture stops it even when a later step fails.
+     */
+    static async start(own: Own, options: NotificationLabOptions = {}): Promise<NotificationLab> {
+        const mattermost = own(await withDeadline('Starting Mattermost', CONTAINER_START_DEADLINE_MS, () => RunAIMockContainer({
             bot: options.bot,
             service: options.service,
             mcp: options.mcp,
             enableChannelMentionToolCalling: options.enableChannelMentionToolCalling,
-        });
-        const push = new PushProxy();
-        const mail = new MailCapture();
-        let aimock: Awaited<ReturnType<typeof RunAIMockSidecar>> | undefined;
-        try {
-            aimock = await RunAIMockSidecar(mattermost.network, {fixtures: options.fixtures ?? {fixtures: []}});
-            await push.start(mattermost.network);
-            await mail.start(mattermost.network);
+        })));
+        const aimock = own(await withDeadline('Starting the AI mock', CONTAINER_START_DEADLINE_MS, () =>
+            RunAIMockSidecar(mattermost.network, {fixtures: options.fixtures ?? {fixtures: []}})));
+        const push = own(new PushProxy());
+        await withDeadline('Starting the push proxy', CONTAINER_START_DEADLINE_MS, () => push.start(mattermost.network));
+        const mail = own(new MailCapture());
+        await withDeadline('Starting the mail capture', CONTAINER_START_DEADLINE_MS, () => mail.start(mattermost.network));
 
-            const admin = new MmRest(mattermost.url());
-            await admin.login(mattermost.username, mattermost.password);
-            const team = await admin.get<{id: string; name: string}>(`/teams/name/${mattermost.teamName}`);
-            const botUser = await admin.get<{id: string; username: string}>(`/users/username/${AIMOCK_BOT_NAME}`);
+        const admin = new MmRest(mattermost.url());
+        await withDeadline('Logging in as the admin', SETUP_STEP_DEADLINE_MS, () => admin.login(mattermost.username, mattermost.password));
+        const team = await admin.get<{id: string; name: string}>(`/teams/name/${mattermost.teamName}`);
+        const botUser = await admin.get<{id: string; username: string}>(`/users/username/${AIMOCK_BOT_NAME}`);
 
-            const lab = new NotificationLab(mattermost, aimock, push, mail, admin, team, botUser);
-            await lab.configureServer(options);
-            for (const spec of options.users ?? DEFAULT_LAB_USERS) {
-                await lab.provisionUser(spec);
-            }
-            return lab;
-        } catch (error) {
-            const started = aimock;
-            const stops: Array<() => Promise<unknown>> = [
-                () => push.stop(),
-                () => mail.stop(),
-                () => started?.stop() ?? Promise.resolve(),
-                () => mattermost.stop(),
-            ];
-            for (const stop of stops) {
-                await stop().catch(() => undefined);
-            }
-            throw error;
+        const lab = new NotificationLab(mattermost, aimock, push, mail, admin, team, botUser);
+        await withDeadline('Configuring the server', SETUP_STEP_DEADLINE_MS, () => lab.configureServer(options));
+        for (const spec of options.users ?? DEFAULT_LAB_USERS) {
+            await withDeadline(`Provisioning user ${spec.key}`, SETUP_STEP_DEADLINE_MS, () => lab.provisionUser(spec));
         }
+        return lab;
     }
 
-    async stop(): Promise<void> {
-        const stops: Array<() => Promise<unknown>> = [
-            ...[...this.users.values()].map((user) => () => user.closeBrowser()),
-            () => this.push.stop(),
-            () => this.mail.stop(),
-            () => this.aimock.stop(),
-            () => this.mattermost.stop(),
-        ];
-        for (const stop of stops) {
-            await stop().catch(() => undefined);
+    /** Closes every user's browser window; the containers belong to the fixture. */
+    async closeBrowsers(): Promise<void> {
+        for (const user of this.users.values()) {
+            await user.closeBrowser().catch(() => undefined);
         }
     }
 

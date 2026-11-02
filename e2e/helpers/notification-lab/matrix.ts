@@ -3,6 +3,7 @@ import type {Browser, TestInfo} from '@playwright/test';
 
 import type {AIMockFixture, AIMockFixtureFile} from '../aimock-fixtures';
 import {buildTitleFixture} from '../aimock-fixtures';
+import {containerTest} from '../container-fixture';
 
 import type {LabUserSpec} from './lab_user';
 import {NotificationLab} from './notification_lab';
@@ -30,14 +31,6 @@ export type Requirement = 'deferred' | 'legacy';
 
 export type MatrixLabOptions = Omit<NotificationLabOptions, 'users'> & {
     users: MatrixUserKey[];
-    /** Users who get a logged-in browser window (desktop notifications are only captured there). */
-    browsers: MatrixUserKey[];
-    /**
-     * `deferred`: the scenarios need a server with deferred post notifications
-     * (`DeliverPostNotifications`); `legacy`: they describe the plugin's fallback on servers without it.
-     * The whole file is skipped when the server does not match.
-     */
-    requires: Requirement;
 };
 
 const SKIP_REASON: Record<Requirement, string> = {
@@ -50,28 +43,27 @@ const SKIP_REASON: Record<Requirement, string> = {
 };
 
 /**
- * Starts the lab for a matrix spec file and skips every test in it when the server does not
- * match `requires`. Call from `beforeAll`.
+ * Returns the `test` for a matrix spec file; its worker-scoped `containers` fixture is the started
+ * lab. Call once per spec file.
  */
-export async function startMatrixLab(browser: Browser, options: MatrixLabOptions): Promise<NotificationLab> {
-    const {users, browsers, requires, ...labOptions} = options;
+export function matrixTest(options: MatrixLabOptions) {
+    const {users, ...labOptions} = options;
     const specs: LabUserSpec[] = users.map((key) => ({key}));
-    const lab = await NotificationLab.start({...labOptions, users: specs});
-    const supported = await lab.deferredNotificationsSupported().catch(async (error) => {
-        await lab.stop();
-        throw error;
-    });
-    if (supported !== (requires === 'deferred')) {
-        await lab.stop();
-        test.skip(true, SKIP_REASON[requires]);
-    }
-    try {
-        await lab.openBrowsers(browser, browsers);
-    } catch (error) {
-        await lab.stop();
-        throw error;
-    }
-    return lab;
+    return containerTest((own) => NotificationLab.start(own, {...labOptions, users: specs}));
+}
+
+/**
+ * Skips every test in the file when the server does not match `requires`, then opens a logged-in
+ * browser window for each of `browsers` (desktop notifications are only captured there). Call from
+ * `beforeAll`.
+ *
+ * `deferred`: the scenarios need a server with deferred post notifications
+ * (`DeliverPostNotifications`); `legacy`: they describe the plugin's fallback on servers without it.
+ */
+export async function prepareMatrixLab(lab: NotificationLab, browser: Browser, browsers: MatrixUserKey[], requires: Requirement): Promise<void> {
+    const supported = await lab.deferredNotificationsSupported();
+    test.skip(supported !== (requires === 'deferred'), SKIP_REASON[requires]);
+    await lab.openBrowsers(browser, browsers);
 }
 
 // ---- mock LLM scripts ------------------------------------------------------------------------
