@@ -147,7 +147,7 @@ func (f *toolRunFixture) waitRunning(t *testing.T) {
 	select {
 	case <-f.running:
 	case <-time.After(5 * time.Second):
-		t.Fatal("approved tool never started")
+		require.FailNow(t, "approved tool never started")
 	}
 }
 
@@ -157,7 +157,7 @@ func (f *toolRunFixture) waitResult(t *testing.T, errCh <-chan error) error {
 	case err := <-errCh:
 		return err
 	case <-time.After(5 * time.Second):
-		t.Fatal("HandleToolCall did not return")
+		require.FailNow(t, "HandleToolCall did not return")
 		return nil
 	}
 }

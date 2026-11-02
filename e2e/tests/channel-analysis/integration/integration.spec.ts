@@ -1,7 +1,8 @@
 // spec: tests/channel-analysis/integration.plan.md
 // seed: tests/seed.spec.ts
 
-import { test, expect, Page } from '@playwright/test';
+import { expect, Page } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import RunContainer from 'helpers/plugincontainer';
 import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule, titleGenerationMockRule, turnMocksWithTitleSiphon } from 'helpers/openai-mock';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -132,14 +133,18 @@ async function setupTestPage(page: Page) {
     return { mmPage, aiPlugin, llmBotHelper, integrationHelper, botUsername };
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 test.describe('Channel Analysis Integration (Mocked)', () => {
     let mattermost: MattermostContainer;
     let openAIMock: OpenAIMockContainer;
 
-    test.beforeAll(async () => {
-        test.setTimeout(120000);
-        mattermost = await RunContainer();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test.beforeEach(async () => {
@@ -147,15 +152,6 @@ test.describe('Channel Analysis Integration (Mocked)', () => {
         // in-flight GenerateTitle calls hanging and can block the next test's
         // follow-up ChatCompletion (empty bot placeholder).
         await openAIMock.addMocks([titleGenerationMockRule()]);
-    });
-
-    test.afterAll(async () => {
-        if (openAIMock) {
-            await openAIMock.stop();
-        }
-        if (mattermost) {
-            await mattermost.stop();
-        }
     });
 
     test('Channel analysis after regular RHS chat', async ({ page }) => {

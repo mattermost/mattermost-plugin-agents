@@ -85,7 +85,7 @@ func PluginServerHTTPClient(base http.RoundTripper, userID string) *http.Client 
 			headers: map[string]string{MMUserIDHeader: userID},
 		}
 	}
-	return &http.Client{Transport: transport}
+	return &http.Client{Transport: transport} //nolint:httpclienttimeout // MCP sessions hold long-lived streams; PluginHTTPRoundTripper bounds each request by its context
 }
 
 // ConnectPluginServer connects a hardened MCP client (see NewSDKClient) named

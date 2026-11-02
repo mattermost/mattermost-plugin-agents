@@ -1,4 +1,5 @@
-import {test, expect} from '@playwright/test';
+import {expect} from '@playwright/test';
+import {containerTest} from 'helpers/container-fixture';
 
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {
@@ -17,6 +18,7 @@ import {
     expectToolActivitySummary,
     mainAreaText,
     TOOL_STATUS_SELECTOR,
+    toolCard,
 } from 'helpers/llmbot-post';
 import MattermostContainer, {getTownSquareChannel} from 'helpers/mmcontainer';
 import {RunToolConfigAIMockContainer, setupRegularTestUser} from 'helpers/tool-config-container';
@@ -61,21 +63,28 @@ const stopAnswerStart = 'STOP_ANSWER: beginning a long explanation';
 const stopAnswerTail = 'that keeps going for a while so the stream is still open when Stop is pressed. ';
 const stopAnswer = `${stopAnswerStart} ${stopAnswerTail.repeat(16)}`;
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigAIMockContainer({
+        toolConfigs: [
+            {name: 'get_channel_info', policy: 'auto_run_in_dm', enabled: true},
+            {name: 'read_channel', policy: 'auto_run_in_dm', enabled: true},
+        ],
+        reasoningEnabled: true,
+    }));
+    const aimock = own(await RunAIMockSidecar(mattermost.network));
+    return {mattermost, aimock};
+});
+
 test.describe('Collapsed Tool Activity (Aimock)', () => {
     test.describe.configure({mode: 'serial'});
 
     let mattermost: MattermostContainer;
     let aimock: AIMockContainer;
 
-    test.beforeAll(async () => {
-        test.setTimeout(300000);
-        mattermost = await RunToolConfigAIMockContainer({
-            toolConfigs: [
-                {name: 'get_channel_info', policy: 'auto_run_in_dm', enabled: true},
-                {name: 'read_channel', policy: 'auto_run_in_dm', enabled: true},
-            ],
-            reasoningEnabled: true,
-        });
+    test.beforeAll(async ({containers}) => {
+        // setFixtures can fall back to restarting aimock, which outlasts the default hook timeout.
+        test.setTimeout(180000);
+        ({mattermost, aimock} = containers);
         await setupRegularTestUser(mattermost);
         const townSquare = await getTownSquareChannel(mattermost, username, password);
 
@@ -202,12 +211,7 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
             },
         );
 
-        aimock = await RunAIMockSidecar(mattermost.network, {fixtures});
-    });
-
-    test.afterAll(async () => {
-        await aimock?.stop();
-        await mattermost?.stop();
+        await aimock.setFixtures(fixtures);
     });
 
     test('collapses multiple auto-run tools into a summary that expands and collapses again', async ({page}) => {
@@ -224,8 +228,8 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
         await expect(botPost.getByText(readChannelLabel, {exact: true})).toHaveCount(0);
 
         const activityRounds = await expandToolActivity(botPost);
-        await expect(activityRounds.getByText(getChannelInfoLabel, {exact: true})).toBeVisible({timeout: 30000});
-        await expect(activityRounds.getByText(readChannelLabel, {exact: true})).toBeVisible();
+        await expect(toolCard(activityRounds, getChannelInfoLabel)).toBeVisible({timeout: 30000});
+        await expect(toolCard(activityRounds, readChannelLabel)).toBeVisible();
 
         await collapseToolActivity(botPost);
         await expect(botPost.getByText(getChannelInfoLabel, {exact: true})).toHaveCount(0);
@@ -260,7 +264,7 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
         await expectToolActivitySummary(botPost, 1, 'error');
 
         const activityRounds = await expandToolActivity(botPost);
-        await expect(activityRounds.getByText(readChannelLabel, {exact: true})).toBeVisible({timeout: 30000});
+        await expect(toolCard(activityRounds, readChannelLabel)).toBeVisible({timeout: 30000});
     });
 
     test('folds the closing reasoning block into the activity area while its answer stays in the post', async ({page}) => {
@@ -276,7 +280,7 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
 
         // The Thinking row sits in the expanded stack after the tool that preceded it.
         const activityRounds = await expandToolActivity(botPost);
-        await expect(activityRounds.getByText(getChannelInfoLabel, {exact: true})).toBeVisible({timeout: 30000});
+        await expect(toolCard(activityRounds, getChannelInfoLabel)).toBeVisible({timeout: 30000});
         await llmBotHelper.expectReasoningLabelVisible(true);
         await llmBotHelper.clickReasoningToggle();
         await llmBotHelper.expectReasoningText(reasoningText);
@@ -297,7 +301,7 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
         await expect(stopButton).toBeVisible();
 
         const activityRounds = await expandToolActivity(botPost);
-        await expect(activityRounds.getByText(getChannelInfoLabel, {exact: true})).toBeVisible();
+        await expect(toolCard(activityRounds, getChannelInfoLabel)).toBeVisible();
         expect(await mainAreaText(botPost)).toContain(midStreamMarker);
         await expect(stopButton).toBeVisible();
 

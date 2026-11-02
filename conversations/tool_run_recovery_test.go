@@ -58,13 +58,11 @@ func TestApprovalRunOnDeadNodeIsRecovered(t *testing.T) {
 	server := httptest.NewServer(anthropic)
 	defer server.Close()
 	lm, err := bifrost.New(bifrost.Config{
-		ProviderSettings: bifrost.ProviderSettings{
-			Provider:         schemas.Anthropic,
-			APIKey:           "test-key",
-			APIURL:           server.URL,
-			DefaultModel:     "claude-sonnet-4-6",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.Anthropic,
+		APIKey:           "test-key",
+		APIURL:           server.URL,
+		DefaultModel:     "claude-sonnet-4-6",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer lm.Shutdown()
@@ -214,7 +212,7 @@ func TestApprovalRunOnDeadNodeIsRecovered(t *testing.T) {
 	select {
 	case <-running:
 	case <-time.After(10 * time.Second):
-		t.Fatal("approved tool never started")
+		require.FailNow(t, "approved tool never started")
 	}
 
 	require.Equal(t, store.TurnStatusStreaming, anchor().Status, "the claim marks the turn streaming")
@@ -239,7 +237,7 @@ func TestApprovalRunOnDeadNodeIsRecovered(t *testing.T) {
 	select {
 	case err = <-errCh:
 	case <-time.After(10 * time.Second):
-		t.Fatal("HandleToolCall did not return")
+		require.FailNow(t, "HandleToolCall did not return")
 	}
 	require.ErrorIs(t, err, ErrToolRunInterrupted)
 

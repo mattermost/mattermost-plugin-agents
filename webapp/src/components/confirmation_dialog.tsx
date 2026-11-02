@@ -153,6 +153,7 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
             $zIndex={zIndex}
             {...backdropProps}
         >
+            {/* eslint-disable-next-line agents/click-events-have-key-events, agents/no-static-element-interactions -- only stops clicks inside the sheet from reaching the backdrop */}
             <DialogSheet
                 ref={dialogRef}
                 className={MODAL_SHEET_CLASS}

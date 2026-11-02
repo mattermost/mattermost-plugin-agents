@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
@@ -47,7 +48,7 @@ func (s *mutableAuthServer) handler(t *testing.T) http.HandlerFunc {
 		switch r.URL.Path {
 		case "/.well-known/oauth-authorization-server":
 			w.Header().Set("Content-Type", "application/json")
-			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 				"issuer":                           s.baseURL,
 				"authorization_endpoint":           s.baseURL + "/authorize",
 				"token_endpoint":                   s.baseURL + advertised,
@@ -58,7 +59,7 @@ func (s *mutableAuthServer) handler(t *testing.T) http.HandlerFunc {
 			s.exchangesByPath[r.URL.Path]++
 			s.mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
-			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 				"access_token": "access-from-" + r.URL.Path,
 				"token_type":   "Bearer",
 				"expires_in":   3600,
@@ -301,7 +302,7 @@ func TestInitiateOAuthFlowStaticIssuerPinMismatch(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 			"issuer":                           serverURL,
 			"authorization_endpoint":           serverURL + "/authorize",
 			"token_endpoint":                   serverURL + "/token",
@@ -339,7 +340,7 @@ func TestDCRPublicClientCredentials(t *testing.T) {
 		switch r.URL.Path {
 		case "/.well-known/oauth-authorization-server":
 			w.Header().Set("Content-Type", "application/json")
-			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 				"issuer":                           serverURL,
 				"authorization_endpoint":           serverURL + "/authorize",
 				"token_endpoint":                   serverURL + "/token",
@@ -350,7 +351,7 @@ func TestDCRPublicClientCredentials(t *testing.T) {
 			registerCalls++
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
-			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 				"client_id":                  "public-client-1",
 				"token_endpoint_auth_method": "none",
 				"redirect_uris":              []string{"http://localhost:3333/plugins/mattermost-ai/oauth/callback"},

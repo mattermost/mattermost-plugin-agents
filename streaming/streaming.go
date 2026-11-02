@@ -320,9 +320,12 @@ func (p *MMPostStreamService) sendPostStreamingEvent(post *model.Post, broadcast
 	p.mmClient.PublishWebSocketEvent("postupdate", payload, broadcast)
 }
 
-// StopStreaming cancels any in-flight stream to the given post on this node
-// on behalf of the requester (the post is marked as stopped) and waits
-// (bounded) for it to finish so a new stream can take the post.
+// StopStreaming cancels any in-flight stream to the given post on behalf of
+// the requester; the post is marked as stopped. It waits (bounded) for the
+// stream to finish so a new stream can take the post. The run stays
+// registered until its owner calls FinishStreaming, so a new run on the post
+// cannot start while the stopped one is still finishing and be canceled by
+// its cleanup.
 func (p *MMPostStreamService) StopStreaming(postID string) {
 	p.contextsMutex.Lock()
 	sc, ok := p.contexts[postID]
@@ -334,9 +337,6 @@ func (p *MMPostStreamService) StopStreaming(postID string) {
 	select {
 	case <-sc.done:
 	case <-time.After(stopWaitTimeout):
-		// Keep the registration: the old goroutine's deferred FinishStreaming
-		// would otherwise cancel whichever stream registers next for this
-		// post. A new stream gets ErrAlreadyStreamingToPost until it exits.
 		p.mmClient.LogWarn("Stopped stream did not finish in time; post stays reserved", "post_id", postID)
 	}
 }
@@ -628,10 +628,6 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 			}
 			acc = newTurnAccumulator(convID, post.Id, existingAnchorID, isContinuation, isDM)
 			p.beginTurn(acc)
-		} else {
-			// Every flow that streams into a bot post is expected to own a
-			// conversation; without one no assistant turn is persisted.
-			p.mmClient.LogWarn("Streaming to post without a conversation_id; no assistant turn will be persisted", "post_id", post.Id)
 		}
 	}
 
@@ -672,10 +668,11 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 	// the user should be told about.
 	stopStream := func() {
 		outcome = telemetry.StreamOutcomeCancelled
-		if shuttingDown() {
+		switch {
+		case shuttingDown():
 			finalStatus = store.TurnStatusInterrupted
 			MarkInterrupted(post, InterruptedReasonShutdown, model.GetMillis())
-		} else if errors.Is(context.Cause(ctx), errStoppedByUser) {
+		case errors.Is(context.Cause(ctx), errStoppedByUser):
 			post.AddProp(GenerationStoppedProp, true)
 		}
 		if err := p.mmClient.UpdatePost(post); err != nil {
@@ -698,12 +695,11 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 			}
 			p.sendPostStreamingEvent(post, broadcast, map[string]any{"control": PostStreamingControlHeartbeat})
 		case event, ok := <-stream.Stream:
-			// Shutdown, a user stop, or any other cancel also cancels the LLM
-			// request when the upstream shares this context, which can close
-			// the stream or emit end/error before ctx.Done is selected. Treat
-			// any of those as the cancellation so the reply is not saved as
-			// finished.
-			if (!ok || event.Type == llm.EventTypeEnd || event.Type == llm.EventTypeError) && (shuttingDown() || ctx.Err() != nil) {
+			// When the upstream shares this context it ends, errors or closes
+			// on cancel too, and select may pick that over ctx.Done(). Treat
+			// any of those as the cancellation so a shutdown interruption is
+			// not saved as a finished reply.
+			if (!ok || event.Type == llm.EventTypeEnd || event.Type == llm.EventTypeError) && (ctx.Err() != nil || shuttingDown()) {
 				stopStream()
 				return
 			}

@@ -1,4 +1,5 @@
-import { test, expect, Page } from '@playwright/test';
+import { expect, Page } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import { AIMockHarness, RunAIMockHarness, setupAimockTestPage } from 'helpers/aimock-harness';
 
@@ -54,23 +55,23 @@ async function expectRhsContainsMarkers(page: Page, markers: string[]): Promise<
     }
 }
 
+const test = containerTest(async (own) => {
+    const harness = own(await RunAIMockHarness({
+        fixtureFile: 'llmbot-edge-cases.json',
+        bot: {
+            enabledNativeTools: [],
+        },
+    }));
+    return { harness };
+});
+
 test.describe('Edge Cases - aimock', () => {
     test.describe.configure({ mode: 'serial', retries: 1 });
 
     let harness: AIMockHarness;
 
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        harness = await RunAIMockHarness({
-            fixtureFile: 'llmbot-edge-cases.json',
-            bot: {
-                enabledNativeTools: [],
-            },
-        });
-    });
-
-    test.afterAll(async () => {
-        await harness?.stop();
+    test.beforeAll(async ({ containers }) => {
+        ({ harness } = containers);
     });
 
     test('Empty Reasoning Response', async ({ page }) => {

@@ -374,7 +374,7 @@ func TestToolRunner_MixedVisibleAndUnloadedDoesNotExecuteVisible(t *testing.T) {
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "run tools"}},
 		Context: &llm.Context{Tools: store},
 	}, func(llm.ToolCall) bool {
-		t.Fatal("shouldExecute must not be called for batches with unavailable tools")
+		require.FailNow(t, "shouldExecute must not be called for batches with unavailable tools")
 		return true
 	}, nil)
 	require.NoError(t, err)
@@ -414,7 +414,7 @@ func TestToolRunner_ApprovalToolCallsPersistSchemaMetadata(t *testing.T) {
 		ServerOrigin: "https://jira.example.com",
 		Schema:       schema,
 		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
-			t.Fatal("approval-required tool must not execute")
+			require.FailNow(t, "approval-required tool must not execute")
 			return "", nil
 		},
 	}})
@@ -470,7 +470,7 @@ func TestToolRunner_InvalidArgumentsFailBatchAndModelRetries(t *testing.T) {
 		{
 			Name: "safe_tool",
 			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
-				t.Fatal("a call batched with invalid arguments must not execute")
+				require.FailNow(t, "a call batched with invalid arguments must not execute")
 				return "", nil
 			},
 		},
@@ -605,7 +605,7 @@ func TestToolRunner_MixedBatchSkippedDoesNotDisableToolsAfterRetryLimit(t *testi
 	store.AddTools([]llm.Tool{{
 		Name: "safe_tool",
 		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
-			t.Fatal("available tools must not execute in mixed unavailable batches")
+			require.FailNow(t, "available tools must not execute in mixed unavailable batches")
 			return "", nil
 		},
 	}})

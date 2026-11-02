@@ -69,9 +69,8 @@ func (c *lockedStreamingClient) controlCount(control string) int {
 
 func newRecoveryTestService(t *testing.T) (*MMPostStreamService, *lockedStreamingClient, *fakeTurnStore) {
 	t.Helper()
-	client := &lockedStreamingClient{fakeStreamingClient: fakeStreamingClient{
-		channels: map[string]*model.Channel{"channel-id": {Id: "channel-id", Type: model.ChannelTypeOpen}},
-	}}
+	client := &lockedStreamingClient{}
+	client.channels = map[string]*model.Channel{"channel-id": {Id: "channel-id", Type: model.ChannelTypeOpen}}
 	ts := &fakeTurnStore{}
 	service := NewMMPostStreamService(client, i18n.Init())
 	service.SetTurnStore(ts)

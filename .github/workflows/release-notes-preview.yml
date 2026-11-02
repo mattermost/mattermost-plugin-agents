@@ -1,0 +1,54 @@
+name: release-notes-preview
+
+# Generates the release notes for an existing tag as the tag build of ci.yml
+# would, using the build/releasenotes code of the branch it runs from, and shows
+# them in the job summary. Nothing is released or changed.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to write release notes for, for example v2.11.0
+        required: true
+        type: string
+      base:
+        description: Previous release tag. Leave empty to use the previous release before the tag.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: build/releasenotes/go.mod
+
+      - name: Generate release notes
+        env:
+          TAG: ${{ inputs.tag }}
+          BASE: ${{ inputs.base }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_NOTES_MODEL: ${{ vars.RELEASE_NOTES_MODEL || vars.CLAUDE_MODEL || 'claude-sonnet-5-5' }}
+        run: |
+          set -euo pipefail
+          make release-notes HEAD="refs/tags/$TAG" TAG="$TAG" BASE="$BASE" OUTPUT="$RUNNER_TEMP/release-notes.md"
+          {
+            echo "## Release notes preview for $TAG"
+            echo
+            cat "$RUNNER_TEMP/release-notes.md"
+            echo
+            echo '<details><summary>Markdown source</summary>'
+            echo
+            echo '~~~markdown'
+            cat "$RUNNER_TEMP/release-notes.md"
+            echo '~~~'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"

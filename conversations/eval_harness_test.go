@@ -5,6 +5,7 @@ package conversations_test
 
 import (
 	"context"
+	"maps"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -118,9 +119,7 @@ func respondAsAgent(t *evals.EvalT, scenario evalScenario, post *model.Post) str
 	)})
 
 	users := map[string]*model.User{scenario.botUser.Id: scenario.botUser}
-	for id, user := range scenario.users {
-		users[id] = user
-	}
+	maps.Copy(users, scenario.users)
 	postThreads := map[string]*model.PostList{}
 	if scenario.thread != nil {
 		for id := range scenario.thread.Posts {

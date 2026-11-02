@@ -220,7 +220,7 @@ func TestHandleToolResultRetriesAfterPartialWriteFailure(t *testing.T) {
 	require.NoError(t, c.HandleToolResult(context.Background(), testRequesterID, post, channel, []string{"tool-use-1"}))
 	streamingService.waitForStreaming()
 
-	assert.Equal(t, 1, len(lm.requests), "the retry must stream the follow-up")
+	assert.Len(t, lm.requests, 1, "the retry must stream the follow-up")
 	turns, err := convStore.GetTurnsForConversation(conv.ID)
 	require.NoError(t, err)
 	for _, turn := range turns {
@@ -274,5 +274,5 @@ func TestHandleToolResultStreamsFollowUpOnceUnderConcurrentClicks(t *testing.T) 
 	require.Len(t, errs, 2)
 	assert.NoError(t, errs[0], "the inner click reads first and wins")
 	assert.ErrorIs(t, errs[1], ErrStaleToolClick)
-	assert.Equal(t, 1, len(lm.requests), "the follow-up must stream once")
+	assert.Len(t, lm.requests, 1, "the follow-up must stream once")
 }

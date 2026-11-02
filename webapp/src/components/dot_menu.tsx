@@ -11,6 +11,8 @@ import {IconButton, type IconButtonPadding, type IconButtonSize} from '@mattermo
 import {MenuItem} from '@mattermost/compass-ui/components/menu-item';
 import {PopoverMenu} from '@mattermost/compass-ui/components/popover-menu';
 
+import {useMenuTransition} from '@/hooks/use_menu_transition';
+
 import Dropdown from './dropdown';
 
 // Base for custom text-and-icon triggers passed as `dotMenuButton`.
@@ -72,6 +74,7 @@ const DotMenu = ({
     ...props
 }: DotMenuProps & DropdownProps) => {
     const [isOpen, setOpen] = useState(false);
+    const {rendered, onExited} = useMenuTransition(isOpen);
     const toggleOpen = () => {
         setOpen(!isOpen);
     };
@@ -139,6 +142,8 @@ const DotMenu = ({
 
         // @ts-ignore
         <Menu
+            open={isOpen}
+            onExited={onExited}
             data-testid='dropdownmenu'
             onClick={(e: React.MouseEvent) => {
                 e.stopPropagation();
@@ -154,7 +159,7 @@ const DotMenu = ({
     return (
         <Dropdown
             {...props}
-            isOpen={isOpen}
+            isOpen={rendered}
             onOpenChange={setOpen}
             target={button}
             tooltip={title}

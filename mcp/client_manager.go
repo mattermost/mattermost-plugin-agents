@@ -4,12 +4,13 @@
 package mcp
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -720,8 +721,8 @@ func (m *ClientManager) snapshotEnabledPluginServers() []PluginServerConfig {
 			enabled = append(enabled, cfg)
 		}
 	}
-	sort.Slice(enabled, func(i, j int) bool {
-		return enabled[i].PluginID < enabled[j].PluginID
+	slices.SortFunc(enabled, func(a, b PluginServerConfig) int {
+		return cmp.Compare(a.PluginID, b.PluginID)
 	})
 	return enabled
 }
@@ -1027,8 +1028,8 @@ func (m *ClientManager) ListPluginServers() []PluginServerConfig {
 		}
 		out = append(out, cfg)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].PluginID < out[j].PluginID
+	slices.SortFunc(out, func(a, b PluginServerConfig) int {
+		return cmp.Compare(a.PluginID, b.PluginID)
 	})
 	return out
 }
@@ -1241,8 +1242,8 @@ func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *Embedd
 		}
 
 		// Sort for deterministic output.
-		sort.Slice(filtered, func(i, j int) bool {
-			return filtered[i].Name < filtered[j].Name
+		slices.SortFunc(filtered, func(a, b llm.Tool) int {
+			return cmp.Compare(a.Name, b.Name)
 		})
 
 		result = append(result, filtered...)

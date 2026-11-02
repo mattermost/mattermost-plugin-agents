@@ -162,6 +162,31 @@ func (m *mockConvServiceStore) TransitionTurnStatus(_, _, _ string) (bool, error
 	return true, nil
 }
 
+func (m *mockConvServiceStore) HeartbeatStreamingTurn(id string, content json.RawMessage) error {
+	for _, turns := range m.turns {
+		for i := range turns {
+			if turns[i].ID == id && turns[i].Status == store.TurnStatusStreaming {
+				turns[i].Content = content
+			}
+		}
+	}
+	return nil
+}
+
+func (m *mockConvServiceStore) FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) error {
+	for _, turns := range m.turns {
+		for i := range turns {
+			if turns[i].ID == id {
+				turns[i].Content = content
+				turns[i].TokensIn = tokensIn
+				turns[i].TokensOut = tokensOut
+				turns[i].Status = status
+			}
+		}
+	}
+	return nil
+}
+
 func (m *mockConvServiceStore) UpdateTurnTokens(_ string, _, _ int64) error {
 	return nil
 }

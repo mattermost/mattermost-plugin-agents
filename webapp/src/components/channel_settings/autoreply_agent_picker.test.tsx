@@ -104,7 +104,7 @@ function makeStore(bots: LLMBot[] | null) {
 function seedDraft(botId: string, saveError: ChannelAutoReplySaveErrorKind | null = null) {
     setChannelAutoReplyDraft({
         channelId: CHANNEL_ID,
-        saved: {bot_id: botId, mode: 'root_posts'},
+        saved: {bot_id: botId, mode: 'root_posts', instructions: ''},
         saveError,
     });
 }
@@ -188,6 +188,8 @@ describe('AutoReplyAgentPicker', () => {
     test.each([
         {kind: 'forbidden' as const, message: 'You don’t have permission to change auto-reply settings for this channel.'},
         {kind: 'no_agent' as const, message: 'Select an agent to enable automatic replies.'},
+        {kind: 'ambient_disabled' as const, message: 'Ambient auto-replies are turned off by your system admin. Choose another mode.'},
+        {kind: 'invalid' as const, message: 'The server rejected these auto-reply settings. Check the agent and instructions, then try again.'},
         {kind: 'generic' as const, message: 'Failed to save auto-reply settings. Please try again.'},
     ])('renders the $kind save error message', ({kind, message}) => {
         seedDraft('alpha', kind);
@@ -226,7 +228,7 @@ describe('AutoReplyAgentPicker', () => {
         act(() => {
             setChannelAutoReplyDraft({
                 channelId: CHANNEL_ID,
-                saved: {bot_id: 'beta', mode: 'threads'},
+                saved: {bot_id: 'beta', mode: 'threads', instructions: ''},
                 saveError: null,
             });
         });
@@ -243,7 +245,7 @@ describe('AutoReplyAgentPicker', () => {
         act(() => {
             setChannelAutoReplyDraft({
                 channelId: CHANNEL_ID,
-                saved: {bot_id: 'alpha', mode: 'root_posts'},
+                saved: {bot_id: 'alpha', mode: 'root_posts', instructions: ''},
                 saveError: null,
             });
         });

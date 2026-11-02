@@ -184,6 +184,26 @@ describe('Config save flow', () => {
         expect(screen.getByText('service:My Service:unsaved')).toBeTruthy();
         expect(screen.getByText('mcp:Jira:unsaved')).toBeTruthy();
     });
+
+    it('shows an inline error when the save is rejected for invalid allowed link domains, until the field is edited', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, allowUnsafeLinks: true, allowedLinkDomains: 'not a host'});
+        const {registerSaveAction} = renderConfig();
+        await screen.findByText('service:My Service:unsaved');
+
+        (savePluginConfig as jest.Mock).mockRejectedValue(Object.assign(new Error(''), {server_error_id: 'invalid_allowed_link_domains'}));
+
+        const save = registerSaveAction.mock.calls.at(-1)?.[0] as SaveAction;
+        let result: {error?: {message?: string}} = {};
+        await act(async () => {
+            result = await save();
+        });
+
+        expect(result.error?.message).toBe('Failed to save configuration.');
+        expect(await screen.findByText('One or more entries are not valid domains.')).toBeTruthy();
+
+        fireEvent.change(screen.getByLabelText('Allowed Link Domains (csv)'), {target: {value: 'example.com'}});
+        expect(screen.queryByText('One or more entries are not valid domains.')).toBeNull();
+    });
 });
 
 describe('Config MCP updates', () => {
@@ -354,5 +374,57 @@ describe('Config default agent selector', () => {
 
         const saved = await saveLastRegistered(registerSaveAction);
         expect(saved).toMatchObject({defaultBotUserID: '', defaultBotName: '', transcriptBotUserID: '', transcriptBackend: ''});
+    });
+});
+
+describe('Config agent version retention', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        (getAIBots as jest.Mock).mockResolvedValue({bots: []});
+        (savePluginConfig as jest.Mock).mockImplementation(async (cfg) => cfg);
+    });
+
+    async function saveAndGetConfig(registerSaveAction: jest.Mock): Promise<PluginConfig> {
+        const save = registerSaveAction.mock.calls.at(-1)?.[0] as SaveAction;
+        await act(async () => {
+            await save();
+        });
+        return (savePluginConfig as jest.Mock).mock.calls.at(-1)[0];
+    }
+
+    function limitRadio(name: 'True' | 'False') {
+        const group = screen.getByRole('radiogroup', {name: 'Limit agent version history'});
+        return Array.from(group.querySelectorAll('label')).find((l) => l.textContent === name)!.querySelector('input')!;
+    }
+
+    it('keeps every version until a limit is turned on, then saves the number to keep', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue(loadedConfig);
+        const {registerSaveAction} = renderConfig();
+        await screen.findByText('service:My Service:unsaved');
+
+        expect(limitRadio('False').checked).toBe(true);
+        expect(screen.queryByLabelText('Versions to keep per agent')).toBeNull();
+
+        fireEvent.click(limitRadio('True'));
+        const count = screen.getByLabelText('Versions to keep per agent') as HTMLInputElement;
+        expect(count.value).toBe('50');
+        fireEvent.change(count, {target: {value: '10'}});
+        expect((await saveAndGetConfig(registerSaveAction)).agentVersionsToKeep).toBe(10);
+
+        fireEvent.change(count, {target: {value: '0'}});
+        expect((await saveAndGetConfig(registerSaveAction)).agentVersionsToKeep).toBe(1);
+
+        fireEvent.click(limitRadio('False'));
+        expect(screen.queryByLabelText('Versions to keep per agent')).toBeNull();
+        expect((await saveAndGetConfig(registerSaveAction)).agentVersionsToKeep).toBe(0);
+    });
+
+    it('shows a saved limit', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, agentVersionsToKeep: 25});
+        renderConfig();
+        await screen.findByText('service:My Service:unsaved');
+
+        expect(limitRadio('True').checked).toBe(true);
+        expect((screen.getByLabelText('Versions to keep per agent') as HTMLInputElement).value).toBe('25');
     });
 });

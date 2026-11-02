@@ -480,7 +480,7 @@ func TestToolRunner_UnknownToolReturnsErrorInsteadOfApproval(t *testing.T) {
 	shouldExecuteCalls := 0
 	result, err := runner.Run(context.Background(), request, func(llm.ToolCall) bool {
 		shouldExecuteCalls++
-		t.Fatal("shouldExecute must not be called for unknown tools")
+		require.FailNow(t, "shouldExecute must not be called for unknown tools")
 		return true
 	}, nil)
 	require.NoError(t, err)
@@ -526,7 +526,7 @@ func TestToolRunner_UnknownToolWithNilContextReturnsError(t *testing.T) {
 	}
 
 	result, err := runner.Run(context.Background(), request, func(llm.ToolCall) bool {
-		t.Fatal("shouldExecute must not be called for unknown tools")
+		require.FailNow(t, "shouldExecute must not be called for unknown tools")
 		return true
 	}, nil)
 	require.NoError(t, err)
@@ -604,7 +604,7 @@ func TestToolRunner_UnknownToolEdgeNamesReturnErrors(t *testing.T) {
 				Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "run tool"}},
 				Context: tt.context,
 			}, func(llm.ToolCall) bool {
-				t.Fatal("shouldExecute must not be called for unknown tools")
+				require.FailNow(t, "shouldExecute must not be called for unknown tools")
 				return true
 			}, nil)
 			require.NoError(t, err)
@@ -653,7 +653,7 @@ func TestToolRunner_UnknownBatchSkipsKnownToolWithoutApproval(t *testing.T) {
 	}
 
 	result, err := runner.Run(context.Background(), request, func(llm.ToolCall) bool {
-		t.Fatal("shouldExecute must not be called for batches with unknown tools")
+		require.FailNow(t, "shouldExecute must not be called for batches with unknown tools")
 		return true
 	}, nil)
 	require.NoError(t, err)

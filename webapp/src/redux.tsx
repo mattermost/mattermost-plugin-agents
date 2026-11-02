@@ -9,6 +9,7 @@ import {getCustomPrompts as fetchCustomPromptsAPI, getCustomPromptPins} from './
 import {licenseAllows} from './license';
 import manifest from './manifest';
 import {CustomPrompt} from './types';
+import {LinkPolicy, PLAIN_TEXT_LINK_POLICY} from './utils/link_allowlist';
 
 type WebappStore = Store<GlobalState, UnknownAction>
 
@@ -17,13 +18,14 @@ export const BotsHandler = manifest.id + '_bots';
 export const CustomPromptsHandler = 'SET_CUSTOM_PROMPTS';
 export const PinnedPromptIdsHandler = 'SET_PINNED_PROMPT_IDS';
 export const ShowCustomPromptsModalHandler = 'SHOW_CUSTOM_PROMPTS_MODAL';
+export const SetLinkPolicyHandler = 'SET_LINK_POLICY';
 
 export async function setupRedux(registry: any, store: WebappStore) {
     const reducer = combineReducers({
         callsPostButtonClickedTranscription,
         bots,
         selectedPostId,
-        allowUnsafeLinks,
+        linkPolicy,
         htmlArtifactsEnabled,
         customPrompts,
         pinnedPromptIds,
@@ -76,10 +78,10 @@ function bots(state = null, action: any) {
     }
 }
 
-function allowUnsafeLinks(state = false, action: any) {
+function linkPolicy(state: LinkPolicy = PLAIN_TEXT_LINK_POLICY, action: any) {
     switch (action.type) {
-    case 'SET_ALLOW_UNSAFE_LINKS':
-        return action.allowUnsafeLinks;
+    case SetLinkPolicyHandler:
+        return action.linkPolicy ?? PLAIN_TEXT_LINK_POLICY;
     default:
         return state;
     }

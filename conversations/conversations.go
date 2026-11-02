@@ -24,6 +24,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -39,6 +40,7 @@ const AnalyzedChannelIDProp = "analyzed_channel_id"
 type ConfigProvider interface {
 	EnableChannelMentionToolCalling() bool
 	AllowNativeWebSearchInChannels() bool
+	EnableAmbientAutoReply() bool
 	MCP() mcp.Config
 }
 
@@ -53,9 +55,12 @@ type Conversations struct {
 	i18n              *i18n.Bundle
 	configProvider    ConfigProvider
 	toolPolicyChecker mcp.ToolPolicyChecker
+	wakeScheduler     WakeScheduler
+	mutexAPI          cluster.MutexPluginAPI
 	convService       *conversation.Service
 	autoReplySettings AutoReplySettings
 	meetingSummaries  MeetingSummaryRegenerator
+	ambientLimiter    *ambientLimiter
 
 	// rootCtx overrides lifecycle.Context() for approved tool runs. Tests only.
 	rootCtx                  stdcontext.Context
@@ -88,6 +93,7 @@ func New(
 		i18n:              i18nBundle,
 		configProvider:    configProvider,
 		toolPolicyChecker: toolPolicyChecker,
+		ambientLimiter:    newAmbientLimiter(),
 	}
 }
 
@@ -175,7 +181,7 @@ func (c *Conversations) createOrGetDMConversation(
 		return &DMConversationResult{ConversationID: result.ConversationID, IsNew: true, UserTurnID: result.UserTurnID}, nil
 	}
 
-	result, err := c.convService.GetOrCreateConversation(conversation.GetOrCreateParams{
+	result, err := c.getOrCreateConversation(conversation.GetOrCreateParams{
 		UserID:       postingUser.Id,
 		SessionID:    sessionID,
 		BotID:        botID,
@@ -338,6 +344,12 @@ func (c *Conversations) withProviderWebSearchLicense(opts []llm.LanguageModelOpt
 // tool calling for channel mentions.
 func (c *Conversations) channelMentionToolCallingEnabled() bool {
 	return c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling()
+}
+
+// ambientAutoReplyEnabled reports whether the admin config allows the
+// experimental ambient auto-reply modes.
+func (c *Conversations) ambientAutoReplyEnabled() bool {
+	return c.configProvider != nil && c.configProvider.EnableAmbientAutoReply()
 }
 
 // isAutoExecuteBuiltIn reports whether the tool is a built-in flagged to run

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { withDeadline } from './deadline';
 import MattermostContainer from './mmcontainer';
 
 /**
@@ -135,7 +136,7 @@ export async function RunSystemConsoleContainer(config: SystemConsolePluginConfi
         .withPlugin(filename, 'mattermost-ai', pluginConfig)
         .start();
 
-    await setupAdminUser(mattermost);
+    await withDeadline('Seeding the sysadmin user', 60000, () => setupAdminUser(mattermost));
     await mattermost.grantSelfServiceAgentPermissions();
 
     return mattermost;

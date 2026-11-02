@@ -40,7 +40,9 @@ const handleTabListKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
 
 /** Underline tab list used until compass-ui ships the matching Tabs variant. */
 export const UnderlineTabs = (props: React.ComponentProps<typeof TabList>) => (
+    // eslint-disable-next-line agents/interactive-supports-focus -- arrow keys are handled for the focusable tabs inside
     <TabList
+        role='tablist'
         {...props}
         onKeyDown={handleTabListKeyDown}
     />

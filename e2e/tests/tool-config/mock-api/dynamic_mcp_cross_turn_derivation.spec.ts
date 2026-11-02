@@ -1,7 +1,8 @@
-import { test, expect, type Page, type Locator } from '@playwright/test';
+import { expect, type Page, type Locator } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
-import { TOOL_CARD_SELECTOR, expandToolActivity, expectNoToolActivity, expectToolActivityCurrent } from 'helpers/llmbot-post';
+import { TOOL_CARD_SELECTOR, expandToolActivity, expectNoToolActivity, expectToolActivityCurrent, toolCard } from 'helpers/llmbot-post';
 import {
     OpenAIMockContainer,
     RunOpenAIMocks,
@@ -52,15 +53,15 @@ async function mentionBotAndOpenThread(page: Page, mmPage: MattermostPage, botNa
     await openThreadForPost(post, timeout);
 }
 
-test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
-    test.beforeAll(async () => {
-        mattermost = await RunToolConfigContainerWithDynamicPolicies();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
-    });
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigContainerWithDynamicPolicies());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
 
-    test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
+test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test('derives loaded tools from retained turns across interactions', async ({ page }) => {
@@ -217,8 +218,8 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         await expect(firstBotPost.getByText(searchToolsLabel, {exact: true})).toHaveCount(0);
 
         const firstRounds = await expandToolActivity(firstBotPost);
-        await expect(firstRounds.getByText(searchToolsLabel, {exact: true})).toBeVisible({timeout: 45000});
-        await expect(firstRounds.getByText(loadToolLabel, {exact: true})).toBeVisible({timeout: 45000});
+        await expect(toolCard(firstRounds, searchToolsLabel)).toBeVisible({timeout: 45000});
+        await expect(toolCard(firstRounds, loadToolLabel)).toBeVisible({timeout: 45000});
         await expect(rhs.getByText('Auto-approved').first()).toBeVisible({timeout: 30000});
 
         const acceptButton1 = rhs.getByRole('button', {name: /^accept$/i});
@@ -228,7 +229,7 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         await expect(firstBotPost.getByText(finalMarker1)).toBeVisible({timeout: 45000});
         await expect(rhs.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
         await expect(botPosts).toHaveCount(1);
-        await expect((await expandToolActivity(firstBotPost)).getByText(loadToolLabel, {exact: true})).toHaveCount(1);
+        await expect(toolCard(await expandToolActivity(firstBotPost), loadToolLabel)).toHaveCount(1);
 
         // Turn 2's ChatCompletion often omits the personality system prompt
         // (and the typed follow-up phrase). Exhausted times:1 prelude rules are
@@ -276,7 +277,7 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
 
         await expandToolActivity(firstBotPost);
         await expandToolActivity(secondBotPost);
-        await expect(rhs.getByText(loadToolLabel, {exact: true})).toHaveCount(1);
-        await expect(rhs.getByText(searchToolsLabel, {exact: true})).toHaveCount(1);
+        await expect(toolCard(rhs, loadToolLabel)).toHaveCount(1);
+        await expect(toolCard(rhs, searchToolsLabel)).toHaveCount(1);
     });
 });
