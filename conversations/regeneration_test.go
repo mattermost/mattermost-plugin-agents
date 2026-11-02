@@ -543,4 +543,3 @@ func TestHandleRegenerateRequiresConversation(t *testing.T) {
 	err := c.HandleRegenerate(t.Context(), userID, post, &model.Channel{Id: "dm-channel"})
 	require.ErrorContains(t, err, "missing conversation_id")
 }
-
