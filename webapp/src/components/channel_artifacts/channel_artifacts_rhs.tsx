@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector, useStore} from 'react-redux';
 import styled from 'styled-components';
@@ -49,8 +49,11 @@ const ChannelArtifactsRHS = () => {
     const [openId, setOpenId] = useState<string | null>(null);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editTitle, setEditTitle] = useState('');
+    const refreshSeq = useRef(0);
+    const renamePending = useRef(false);
 
     const refresh = useCallback(() => {
+        const seq = ++refreshSeq.current;
         if (!enabled || !channelId) {
             setEntries([]);
             return;
@@ -58,14 +61,24 @@ const ChannelArtifactsRHS = () => {
         setLoading(true);
         setError(false);
         listChannelArtifacts(channelId).then((resp) => {
+            if (seq !== refreshSeq.current) {
+                return;
+            }
             setEntries(resp.entries || []);
             setCanManage(Boolean(resp.can_manage));
             setDownloadEnabled(resp.download_enabled !== false);
             setRenderEnabled(resp.render_enabled !== false);
         }, () => {
+            if (seq !== refreshSeq.current) {
+                return;
+            }
             setError(true);
             setEntries([]);
-        }).finally(() => setLoading(false));
+        }).finally(() => {
+            if (seq === refreshSeq.current) {
+                setLoading(false);
+            }
+        });
     }, [enabled, channelId]);
 
     useEffect(() => {
@@ -94,6 +107,10 @@ const ChannelArtifactsRHS = () => {
             setEditingId(null);
             return;
         }
+        if (renamePending.current) {
+            return;
+        }
+        renamePending.current = true;
         try {
             const entry = await patchChannelArtifact(id, {title: next});
             if (channelId) {
@@ -102,8 +119,10 @@ const ChannelArtifactsRHS = () => {
             refresh();
         } catch {
             // best effort
+        } finally {
+            renamePending.current = false;
+            setEditingId(null);
         }
-        setEditingId(null);
     };
 
     const onDelete = async (entry: ChannelArtifactEntry, e: React.MouseEvent) => {

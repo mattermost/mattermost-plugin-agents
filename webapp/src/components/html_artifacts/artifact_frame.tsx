@@ -234,7 +234,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
             return undefined; // eslint-disable-line no-undefined
         }
         const nonce = newArtifactNonce();
-        getArtifactTokenFor({kind: artifactKind, id: fileId}, nonce).then((info) => {
+        getArtifactTokenFor({kind: artifactKind, id: fileId}, nonce, version).then((info) => {
             if (cancelled) {
                 return;
             }
@@ -781,7 +781,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
                             emphasis='tertiary'
                             size='x-small'
                             leadingIcon={<Icon glyph={<DownloadOutlineIcon/>}/>}
-                            onClick={() => downloadArtifact(fileId, artifactKind)}
+                            onClick={() => downloadArtifact(fileId, artifactKind, version)}
                         >
                             <FormattedMessage defaultMessage='Download'/>
                         </Button>

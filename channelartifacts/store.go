@@ -207,16 +207,32 @@ func (s *Store) List(channelID string) ([]*Entry, error) {
 }
 
 // ForEachChannelIndex invokes fn for every channel ID that has a cart_idx_ key.
+// IDs are collected before fn runs so a purge that deletes keys cannot skip
+// later pages of the KV listing.
 func (s *Store) ForEachChannelIndex(fn func(channelID string) error) error {
+	ids, err := s.channelIndexIDs()
+	if err != nil {
+		return err
+	}
+	for _, channelID := range ids {
+		if err := fn(channelID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) channelIndexIDs() ([]string, error) {
 	const pageSize = 100
 	prefix := keyPrefixIdx
+	var ids []string
 	for page := 0; ; page++ {
 		keys, err := s.kv.KVList(page, pageSize)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if len(keys) == 0 {
-			return nil
+			return ids, nil
 		}
 		for _, key := range keys {
 			if !strings.HasPrefix(key, prefix) {
@@ -226,12 +242,10 @@ func (s *Store) ForEachChannelIndex(fn func(channelID string) error) error {
 			if channelID == "" {
 				continue
 			}
-			if err := fn(channelID); err != nil {
-				return err
-			}
+			ids = append(ids, channelID)
 		}
 		if len(keys) < pageSize {
-			return nil
+			return ids, nil
 		}
 	}
 }
@@ -628,6 +642,26 @@ func (s *Store) ListVersions(id string) ([]VersionRecord, error) {
 	}
 	out := append([]VersionRecord(nil), hist.Versions...)
 	return out, nil
+}
+
+// VersionRecord returns the snapshot for version. version 0 means the current head.
+func (s *Store) VersionRecord(entry *Entry, version int) (VersionRecord, error) {
+	if entry == nil {
+		return VersionRecord{}, ErrInvalidInput
+	}
+	hist, err := s.ensureHistory(entry)
+	if err != nil {
+		return VersionRecord{}, err
+	}
+	target := entry.Version
+	if version > 0 {
+		target = version
+	}
+	rec, ok := findVersion(hist, target)
+	if !ok {
+		return VersionRecord{}, ErrNotFound
+	}
+	return rec, nil
 }
 
 // ReadContentAt reassembles HTML for a specific version. version 0 means head.

@@ -37,6 +37,7 @@ const LibraryArtifactDeepLink = () => {
     const [notice, setNotice] = useState<NoticeKind>(null);
     const openingRef = useRef<string | null>(null);
     const openedIdsRef = useRef<Set<string>>(new Set());
+    const openSeq = useRef(0);
 
     const stripQuery = useCallback(() => {
         const {pathname, search, hash} = window.location;
@@ -63,6 +64,7 @@ const LibraryArtifactDeepLink = () => {
         }
         openingRef.current = artifactId;
         openedIdsRef.current.add(artifactId);
+        const seq = ++openSeq.current;
 
         if (!enabled) {
             setNotice('disabled');
@@ -81,6 +83,9 @@ const LibraryArtifactDeepLink = () => {
 
         try {
             const list = await listChannelArtifacts(channelId);
+            if (seq !== openSeq.current) {
+                return;
+            }
             const match = (list.entries || []).find((e) => e.id === artifactId);
             if (!match || match.channel_id !== channelId) {
                 setNotice('unavailable');
@@ -94,6 +99,9 @@ const LibraryArtifactDeepLink = () => {
             setEntry(match);
             stripQuery();
         } catch {
+            if (seq !== openSeq.current) {
+                return;
+            }
             setNotice('unavailable');
             stripQuery();
             openingRef.current = null;
@@ -127,10 +135,11 @@ const LibraryArtifactDeepLink = () => {
         };
         window.addEventListener('popstate', onPop);
         return () => {
+            openSeq.current += 1;
             unlisten?.();
             window.removeEventListener('popstate', onPop);
         };
-    }, [tryOpen]);
+    }, [tryOpen, openSeq]);
 
     return (
         <>
@@ -161,6 +170,7 @@ const LibraryArtifactDeepLink = () => {
                     onClose={() => {
                         setEntry(null);
                         openingRef.current = null;
+
                         // Allow the same bookmark to open again after close.
                         if (entry.id) {
                             openedIdsRef.current.delete(entry.id);

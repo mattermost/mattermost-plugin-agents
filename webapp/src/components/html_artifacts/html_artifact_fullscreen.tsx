@@ -87,6 +87,7 @@ const HTMLArtifactFullscreen = ({
     const [versions, setVersions] = useState<ChannelArtifactVersionRecord[]>([]);
     const [viewVersion, setViewVersion] = useState<number>(headVersion);
     const [head, setHead] = useState<number>(headVersion);
+    const followedHeadRef = useRef(headVersion);
     const [restoring, setRestoring] = useState(false);
 
     // Read before the frame mounts: a frame the viewer's click started takes
@@ -112,9 +113,9 @@ const HTMLArtifactFullscreen = ({
             }
             const list = (resp.versions || []).slice().sort((a, b) => b.version - a.version);
             setVersions(list);
-            const latest = list[0]?.version || headVersion;
-            setHead(latest);
-            setViewVersion(latest);
+            setHead(headVersion);
+            setViewVersion((current) => (current === followedHeadRef.current ? headVersion : current));
+            followedHeadRef.current = headVersion;
         }, () => {
             if (!cancelled) {
                 setVersions([]);

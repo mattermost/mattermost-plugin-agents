@@ -74,6 +74,19 @@ const ArtifactBookmarkPicker = () => {
     }, []);
 
     useEffect(() => {
+        if (!request) {
+            return undefined; // eslint-disable-line no-undefined
+        }
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                close();
+            }
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [request, close]);
+
+    useEffect(() => {
         if (!request || !enabled) {
             return undefined; // eslint-disable-line no-undefined
         }
@@ -104,6 +117,7 @@ const ArtifactBookmarkPicker = () => {
         return () => {
             cancelled = true;
         };
+
         // intl.formatMessage is stable enough; omit intl to avoid reload loops.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [request, enabled, canPin]);
@@ -141,15 +155,17 @@ const ArtifactBookmarkPicker = () => {
     };
 
     return (
-        <Backdrop
-            data-testid='channel-artifact-bookmark-picker'
-            onClick={close}
-        >
+        <Layer>
+            <Backdrop
+                type='button'
+                aria-label={intl.formatMessage({defaultMessage: 'Close'})}
+                data-testid='channel-artifact-bookmark-picker'
+                onClick={close}
+            />
             <Card
                 role='dialog'
                 aria-modal='true'
                 aria-labelledby='channel-artifact-bookmark-picker-title'
-                onClick={(e) => e.stopPropagation()}
             >
                 <Heading id='channel-artifact-bookmark-picker-title'>
                     <FormattedMessage defaultMessage='Add channel artifact'/>
@@ -209,26 +225,34 @@ const ArtifactBookmarkPicker = () => {
                     </Button>
                 </Actions>
             </Card>
-        </Backdrop>
+        </Layer>
     );
 };
 
 export default ArtifactBookmarkPicker;
 
-const Backdrop = styled.div`
+const Layer = styled.div`
     position: fixed;
     inset: 0;
     z-index: 11000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
+`;
+
+const Backdrop = styled.button`
+    position: absolute;
+    inset: 0;
+    border: 0;
+    padding: 0;
     background: rgba(0, 0, 0, 0.48);
+    cursor: pointer;
 `;
 
 const Card = styled.div`
-    width: min(440px, 100%);
-    max-height: min(560px, 100%);
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    z-index: 1;
+    width: min(440px, calc(100% - 48px));
+    max-height: min(560px, calc(100% - 48px));
     display: flex;
     flex-direction: column;
     padding: 24px;
@@ -236,6 +260,8 @@ const Card = styled.div`
     background: var(--center-channel-bg);
     color: var(--center-channel-color);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+    transform: translate(-50%, -50%);
+    overflow: auto;
 `;
 
 const Heading = styled.h2`

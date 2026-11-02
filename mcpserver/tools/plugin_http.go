@@ -18,10 +18,11 @@ import (
 // must match the routes registered in api/api.go; api tests route requests
 // built by the real clients through the plugin router to keep them in sync.
 const (
-	SemanticSearchCallbackPath = "/search/raw"
-	FileContentCallbackPath    = "/files/content"
-	ChannelArtifactsListPath   = "/channel-artifacts/mcp/list"
-	ChannelArtifactsGetPath    = "/channel-artifacts/mcp/get"
+	SemanticSearchCallbackPath  = "/search/raw"
+	FileContentCallbackPath     = "/files/content"
+	ChannelArtifactsListPath    = "/channel-artifacts/mcp/list"
+	ChannelArtifactsGetPath     = "/channel-artifacts/mcp/get"
+	ChannelArtifactsCanSavePath = "/channel-artifacts/mcp/can-save"
 )
 
 // postPluginJSON marshals reqBody to JSON and POSTs it to a plugin callback

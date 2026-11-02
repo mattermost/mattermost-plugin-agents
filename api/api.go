@@ -395,6 +395,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	// MCP callbacks must be registered before /channel-artifacts/:id so "mcp" is not captured as an id.
 	router.POST("/channel-artifacts/mcp/list", a.handleMCPListChannelArtifacts)
 	router.POST("/channel-artifacts/mcp/get", a.handleMCPGetChannelArtifact)
+	router.POST("/channel-artifacts/mcp/can-save", a.handleMCPCanSaveChannelArtifact)
 	router.PUT("/channel-artifacts/order", a.handleReorderChannelArtifacts)
 	router.PATCH("/channel-artifacts/:id", a.handlePatchChannelArtifact)
 	router.PUT("/channel-artifacts/:id/content", a.handleReplaceChannelArtifact)

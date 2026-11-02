@@ -129,6 +129,19 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
     const onSave = async () => {
         setSaving(true);
         setError('');
+        const pinSaved = async (id: string, savedTitle: string) => {
+            setSavedId(id);
+            if (!pinBookmark) {
+                setOpen(false);
+                return;
+            }
+            try {
+                await pinLibraryArtifactBookmark(store.getState(), channelId, id, savedTitle, store.dispatch);
+                setOpen(false);
+            } catch {
+                setError(intl.formatMessage({defaultMessage: 'Saved the artifact, but could not pin it to bookmarks.'}));
+            }
+        };
         try {
             const entry = await createChannelArtifact({
                 channel_id: channelId,
@@ -137,15 +150,10 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
                 title: title.trim() || defaultTitle(),
                 ...(replaceId ? {replace_id: replaceId} : {}),
             });
-            setSavedId(entry.id);
-            if (pinBookmark) {
-                await pinLibraryArtifactBookmark(store.getState(), channelId, entry.id, entry.title, store.dispatch);
-            }
-            setOpen(false);
+            await pinSaved(entry.id, entry.title);
         } catch (err: any) {
             if (typeof err?.message === 'string' && err.message.startsWith('duplicate:')) {
-                setSavedId(err.message.slice('duplicate:'.length));
-                setOpen(false);
+                await pinSaved(err.message.slice('duplicate:'.length), title.trim() || defaultTitle());
             } else if (err?.status_code === 403 || err?.status_code === 404) {
                 setError(intl.formatMessage({defaultMessage: 'Only channel admins can save artifacts.'}));
             } else {

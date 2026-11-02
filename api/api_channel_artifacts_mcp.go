@@ -6,6 +6,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
@@ -197,6 +198,52 @@ func (a *API) handleMCPGetChannelArtifact(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, out)
+}
+
+// MCPCanSaveChannelArtifactRequest is the body for POST /channel-artifacts/mcp/can-save.
+type MCPCanSaveChannelArtifactRequest struct {
+	PostID string `json:"post_id"`
+	FileID string `json:"file_id"`
+}
+
+// handleMCPCanSaveChannelArtifact reports whether the file may be saved into the
+// channel library. The propose tool calls this before posting so the human-authored
+// restriction and the HTML check live in the plugin, next to the save route.
+func (a *API) handleMCPCanSaveChannelArtifact(c *gin.Context) {
+	c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
+	c.Writer.Header().Set("Cache-Control", "private, no-store")
+
+	userID := c.GetHeader("Mattermost-User-Id")
+	if !a.channelArtifactsEnabled() || a.channelArtifacts == nil || a.mmClient == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "channel artifacts are not available"})
+		return
+	}
+
+	var req MCPCanSaveChannelArtifactRequest
+	if err := c.ShouldBindJSON(&req); err != nil || !model.IsValidId(req.PostID) || !model.IsValidId(req.FileID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "a valid post_id and file_id are required"})
+		return
+	}
+
+	info, err := a.mmClient.GetFileInfo(req.FileID)
+	if err != nil || info == nil || !isArtifactExtension(info) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "file is not an HTML artifact"})
+		return
+	}
+	post, err := a.mmClient.GetPost(req.PostID)
+	if err != nil || post == nil || !slices.Contains(post.FileIds, req.FileID) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "file is not attached to the post"})
+		return
+	}
+	if !a.mmClient.HasPermissionToChannel(userID, post.ChannelId, model.PermissionReadChannel) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+	if a.config.DisableHumanChannelArtifacts() && (a.bots == nil || !a.bots.IsAnyBot(post.UserId)) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "channel artifacts only accept files posted by agents"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func (a *API) writeMCPChannelArtifactError(c *gin.Context, err error) {

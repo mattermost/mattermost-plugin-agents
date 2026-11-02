@@ -32,11 +32,11 @@ export async function makeChannelAdmin(mattermost: MattermostContainer, username
     return channel.id;
 }
 
-/** Matches the library artifact content route for one host load: `.../channel-artifacts/<id>?n=<nonce>`. */
-export const CHANNEL_ARTIFACT_CONTENT_URL = /\/plugins\/mattermost-ai\/channel-artifacts\/([a-z0-9]{26})\?n=([A-Za-z0-9_-]{22})$/;
+/** Matches the library artifact content route for one host load: `.../channel-artifacts/<id>?n=<nonce>` with an optional version. */
+export const CHANNEL_ARTIFACT_CONTENT_URL = /\/plugins\/mattermost-ai\/channel-artifacts\/([a-z0-9]{26})\?n=([A-Za-z0-9_-]{22})(?:&version=\d+)?$/;
 
-/** Matches the library bridge token route for one host load: `.../channel-artifacts/<id>/token?n=<nonce>`. */
-export const CHANNEL_ARTIFACT_TOKEN_URL = /\/plugins\/mattermost-ai\/channel-artifacts\/([a-z0-9]{26})\/token\?n=([A-Za-z0-9_-]{22})$/;
+/** Matches the library bridge token route for one host load: `.../channel-artifacts/<id>/token?n=<nonce>` with an optional version. */
+export const CHANNEL_ARTIFACT_TOKEN_URL = /\/plugins\/mattermost-ai\/channel-artifacts\/([a-z0-9]{26})\/token\?n=([A-Za-z0-9_-]{22})(?:&version=\d+)?$/;
 
 /** Matches the create route, whose response carries the new entry. */
 export const CHANNEL_ARTIFACTS_CREATE_URL = /\/plugins\/mattermost-ai\/channel-artifacts$/;
@@ -158,6 +158,7 @@ export async function saveArtifactToChannel(
     }
     if (options?.replaceId) {
         await modal.getByTestId('channel-artifact-replace-select').selectOption(options.replaceId);
+        await modal.getByRole('checkbox', {name: /supersedes the current library copy/i}).check();
     } else if (options?.title !== undefined) {
         // Opening for a new file may auto-suggest an existing title match — force create.
         const replace = modal.getByTestId('channel-artifact-replace-select');

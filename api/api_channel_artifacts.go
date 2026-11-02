@@ -508,8 +508,22 @@ func (a *API) handleGetChannelArtifactToken(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "failed to prepare artifact")
 		return
 	}
+	version, ok := parseArtifactVersionQuery(c)
+	if !ok {
+		return
+	}
+	size := entry.Size
+	if version > 0 {
+		rec, err := a.channelArtifacts.Store().VersionRecord(entry, version)
+		if err != nil {
+			a.logArtifactError("Failed to load channel artifact version", err, entry.ID)
+			a.writeChannelArtifactError(c, err)
+			return
+		}
+		size = rec.Size
+	}
 	token := libraryArtifactBridgeToken(secret, c.GetHeader("Mattermost-User-Id"), entry.ID, nonce)
-	c.JSON(http.StatusOK, gin.H{"token": token, "tooLarge": entry.Size > artifactRenderLimit(a.mmClient.GetConfig())})
+	c.JSON(http.StatusOK, gin.H{"token": token, "tooLarge": size > artifactRenderLimit(a.mmClient.GetConfig())})
 }
 
 func (a *API) handleGetChannelArtifact(c *gin.Context) {
@@ -605,6 +619,12 @@ func (a *API) handleDownloadChannelArtifact(c *gin.Context) {
 		return
 	}
 	name := entry.SourceFileName
+	if version > 0 {
+		rec, recErr := a.channelArtifacts.Store().VersionRecord(entry, version)
+		if recErr == nil && rec.SourceFileName != "" {
+			name = rec.SourceFileName
+		}
+	}
 	if name == "" {
 		name = entry.Title + ".html"
 	}

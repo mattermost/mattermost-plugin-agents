@@ -180,3 +180,32 @@ func (s *HTTPChannelArtifactsService) Get(ctx context.Context, userID, artifactI
 		HasMore:         out.HasMore,
 	}, nil
 }
+
+type httpCanSaveRequest struct {
+	PostID string `json:"post_id"`
+	FileID string `json:"file_id"`
+}
+
+type httpCanSaveResponse struct {
+	Error string `json:"error,omitempty"`
+}
+
+// CanSave asks the plugin whether this file may be saved into the channel library.
+// The plugin enforces HTML and the human-authored restriction; the tool does not.
+func (s *HTTPChannelArtifactsService) CanSave(ctx context.Context, userID, postID, fileID string) error {
+	status, respBody, err := postPluginJSON(ctx, s.client, s.pluginURL+ChannelArtifactsCanSavePath, httpCanSaveRequest{
+		PostID: postID,
+		FileID: fileID,
+	}, userID)
+	if err != nil {
+		return err
+	}
+	if status == http.StatusOK {
+		return nil
+	}
+	var out httpCanSaveResponse
+	if json.Unmarshal(respBody, &out) == nil && out.Error != "" {
+		return fmt.Errorf("%s", out.Error)
+	}
+	return fmt.Errorf("this file cannot be saved to the channel library (status %d)", status)
+}

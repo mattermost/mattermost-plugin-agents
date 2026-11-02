@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -35,6 +36,7 @@ type ChannelArtifactContent struct {
 type ChannelArtifactsService interface {
 	List(ctx context.Context, userID, channelID string) ([]*channelartifacts.Entry, error)
 	Get(ctx context.Context, userID, artifactID string, includeContent bool, contentLimit int) (ChannelArtifactContent, error)
+	CanSave(ctx context.Context, userID, postID, fileID string) error
 }
 
 // ListChannelArtifactsArgs represents arguments for list_channel_artifacts.
@@ -179,6 +181,12 @@ func (p *MattermostToolProvider) toolProposeChannelArtifactUpdate(mcpContext *MC
 	if err != nil || fileInfo == nil {
 		return "", fmt.Errorf("error loading file %s: could not find file or you lack access", args.FileID)
 	}
+	if !isHTMLArtifactFile(fileInfo) {
+		return "", fmt.Errorf("file %s is not an HTML artifact", args.FileID)
+	}
+	if err := p.channelArtifactsService.CanSave(mcpContext.Ctx, mcpContext.UserID, args.PostID, args.FileID); err != nil {
+		return "", fmt.Errorf("this file cannot be saved to the channel library: %w", err)
+	}
 
 	title := view.Entry.Title
 	if title == "" {
@@ -191,7 +199,7 @@ func (p *MattermostToolProvider) toolProposeChannelArtifactUpdate(mcpContext *MC
 
 	message := fmt.Sprintf(
 		"Proposed update to channel artifact **%s** (`%s`). A channel admin can open the new HTML file **%s** (`%s`) on post `%s` and choose Save → update that library entry.",
-		title, args.ArtifactID, fileLabel, args.FileID, args.PostID,
+		literalChannelLabel(title), args.ArtifactID, literalChannelLabel(fileLabel), args.FileID, args.PostID,
 	)
 
 	postOut := &model.Post{
@@ -206,4 +214,35 @@ func (p *MattermostToolProvider) toolProposeChannelArtifactUpdate(mcpContext *MC
 	}
 
 	return fmt.Sprintf("Posted proposal in channel %s (post %s) for artifact %s (%s).", args.ChannelID, created.Id, args.ArtifactID, title), nil
+}
+
+func isHTMLArtifactFile(info *model.FileInfo) bool {
+	if info == nil {
+		return false
+	}
+	ext := strings.ToLower(strings.TrimPrefix(info.Extension, "."))
+	if ext == "" {
+		ext = strings.ToLower(strings.TrimPrefix(filepath.Ext(info.Name), "."))
+	}
+	return ext == "html" || ext == "htm"
+}
+
+// literalChannelLabel keeps a title or file name from becoming a mention or
+// markdown when it is interpolated into the proposal post.
+func literalChannelLabel(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch r {
+		case '\\', '*', '_', '`', '[', ']', '~':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case '@':
+			b.WriteRune('@')
+			b.WriteRune('\u200b')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }

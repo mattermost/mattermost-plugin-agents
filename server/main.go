@@ -848,7 +848,9 @@ func (p *Plugin) RunDataRetention(nowTime, batchSize int64) (int64, error) {
 		purged, err := p.purgeOrphanedChannelArtifacts()
 		if err != nil {
 			p.pluginAPI.Log.Error("Failed to purge orphaned channel artifacts", "error", err)
-		} else if purged > 0 {
+			return count, err
+		}
+		if purged > 0 {
 			p.pluginAPI.Log.Info("Data retention cleaned up orphaned channel artifacts", "channels", purged)
 			count += purged
 		}
@@ -860,13 +862,17 @@ func (p *Plugin) RunDataRetention(nowTime, batchSize int64) (int64, error) {
 func (p *Plugin) purgeOrphanedChannelArtifacts() (int64, error) {
 	var purged int64
 	err := p.channelArtifacts.Store().ForEachChannelIndex(func(channelID string) error {
-		channel, err := p.pluginAPI.Channel.Get(channelID)
-		if err == nil && channel != nil && channel.DeleteAt == 0 {
+		channel, getErr := p.pluginAPI.Channel.Get(channelID)
+		if getErr != nil {
+			if !mmapi.IsNotFound(getErr) {
+				return getErr
+			}
+		} else if channel != nil && channel.DeleteAt == 0 {
 			return nil
 		}
 		if err := p.channelArtifacts.PurgeChannel(channelID); err != nil {
 			p.pluginAPI.Log.Error("Failed to purge channel artifacts for deleted channel", "channel_id", channelID, "error", err)
-			return nil
+			return err
 		}
 		purged++
 		return nil

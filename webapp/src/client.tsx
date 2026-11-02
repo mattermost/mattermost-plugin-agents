@@ -119,8 +119,13 @@ export async function getArtifactToken(fileId: string, nonce: string): Promise<A
     return getArtifactTokenFor({kind: 'file', id: fileId}, nonce);
 }
 
-export async function getArtifactTokenFor(ref: ArtifactRef, nonce: string): Promise<ArtifactTokenInfo> {
-    const url = `${artifactPathFor(ref)}/token?n=${encodeURIComponent(nonce)}`;
+export async function getArtifactTokenFor(ref: ArtifactRef, nonce: string, version?: number): Promise<ArtifactTokenInfo> {
+    const params = new URLSearchParams();
+    params.set('n', nonce);
+    if (version && version > 0) {
+        params.set('version', String(version));
+    }
+    const url = `${artifactPathFor(ref)}/token?${params.toString()}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));

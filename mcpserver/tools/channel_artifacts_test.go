@@ -6,6 +6,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -18,10 +19,11 @@ import (
 )
 
 type fakeChannelArtifactsService struct {
-	entries []*channelartifacts.Entry
-	view    ChannelArtifactContent
-	listErr error
-	getErr  error
+	entries    []*channelartifacts.Entry
+	view       ChannelArtifactContent
+	listErr    error
+	getErr     error
+	canSaveErr error
 }
 
 func (f *fakeChannelArtifactsService) List(_ context.Context, _, _ string) ([]*channelartifacts.Entry, error) {
@@ -36,6 +38,10 @@ func (f *fakeChannelArtifactsService) Get(_ context.Context, _, _ string, _ bool
 		return ChannelArtifactContent{}, f.getErr
 	}
 	return f.view, nil
+}
+
+func (f *fakeChannelArtifactsService) CanSave(context.Context, string, string, string) error {
+	return f.canSaveErr
 }
 
 func TestToolListChannelArtifacts(t *testing.T) {
@@ -212,6 +218,79 @@ func TestToolProposeChannelArtifactUpdate(t *testing.T) {
 					assert.Contains(t, post.Message, "Brief")
 					assert.Contains(t, post.Message, artifactID)
 					assert.Contains(t, post.Message, "brief.html")
+					post.Id = model.NewId()
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(&post)
+				})
+			},
+			args: ProposeChannelArtifactUpdateArgs{
+				ChannelID: channelID, ArtifactID: artifactID, PostID: postID, FileID: fileID,
+			},
+			wantOK: "Posted proposal",
+		},
+		{
+			name: "non-html file is rejected",
+			service: &fakeChannelArtifactsService{view: ChannelArtifactContent{
+				Entry: &channelartifacts.Entry{ID: artifactID, ChannelID: channelID, Title: "Brief"},
+			}},
+			setupMux: func(mux *http.ServeMux) {
+				mux.HandleFunc("/api/v4/posts/"+postID, func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(&model.Post{Id: postID, ChannelId: channelID, FileIds: model.StringArray{fileID}})
+				})
+				mux.HandleFunc("/api/v4/files/"+fileID+"/info", func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(&model.FileInfo{Id: fileID, Name: "notes.txt", Extension: "txt"})
+				})
+			},
+			args: ProposeChannelArtifactUpdateArgs{
+				ChannelID: channelID, ArtifactID: artifactID, PostID: postID, FileID: fileID,
+			},
+			wantErr: "is not an HTML artifact",
+		},
+		{
+			name: "human-authored file is rejected by the plugin check",
+			service: &fakeChannelArtifactsService{
+				view: ChannelArtifactContent{
+					Entry: &channelartifacts.Entry{ID: artifactID, ChannelID: channelID, Title: "Brief"},
+				},
+				canSaveErr: fmt.Errorf("channel artifacts only accept files posted by agents"),
+			},
+			setupMux: func(mux *http.ServeMux) {
+				mux.HandleFunc("/api/v4/posts/"+postID, func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(&model.Post{Id: postID, ChannelId: channelID, FileIds: model.StringArray{fileID}})
+				})
+				mux.HandleFunc("/api/v4/files/"+fileID+"/info", func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(&model.FileInfo{Id: fileID, Name: "brief.html", Extension: "html"})
+				})
+			},
+			args: ProposeChannelArtifactUpdateArgs{
+				ChannelID: channelID, ArtifactID: artifactID, PostID: postID, FileID: fileID,
+			},
+			wantErr: "only accept files posted by agents",
+		},
+		{
+			name: "mentions in the title are not posted raw",
+			service: &fakeChannelArtifactsService{view: ChannelArtifactContent{
+				Entry: &channelartifacts.Entry{ID: artifactID, ChannelID: channelID, Title: "Hello @channel"},
+			}},
+			setupMux: func(mux *http.ServeMux) {
+				mux.HandleFunc("/api/v4/posts/"+postID, func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(&model.Post{Id: postID, ChannelId: channelID, FileIds: model.StringArray{fileID}})
+				})
+				mux.HandleFunc("/api/v4/files/"+fileID+"/info", func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(&model.FileInfo{Id: fileID, Name: "brief.html", Extension: "html"})
+				})
+				mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
+					var post model.Post
+					require.NoError(t, json.NewDecoder(r.Body).Decode(&post))
+					assert.NotContains(t, post.Message, "@channel")
+					assert.Contains(t, post.Message, "@\u200bchannel")
+					assert.Contains(t, post.Message, "Hello")
 					post.Id = model.NewId()
 					w.Header().Set("Content-Type", "application/json")
 					_ = json.NewEncoder(w).Encode(&post)
