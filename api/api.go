@@ -63,6 +63,7 @@ type Config interface {
 	GetDefaultBotName() string
 	MCP() mcp.Config
 	AllowUnsafeLinks() bool
+	LinkPolicy() config.LinkPolicy
 	EnableHTMLArtifacts() bool
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
@@ -731,10 +732,13 @@ type AIBotInfo struct {
 }
 
 type AIBotsResponse struct {
-	Bots                 []AIBotInfo `json:"bots"`
-	SearchEnabled        bool        `json:"searchEnabled"`
-	AllowUnsafeLinks     bool        `json:"allowUnsafeLinks"`
-	HTMLArtifactsEnabled bool        `json:"htmlArtifactsEnabled"`
+	Bots             []AIBotInfo `json:"bots"`
+	SearchEnabled    bool        `json:"searchEnabled"`
+	AllowUnsafeLinks bool        `json:"allowUnsafeLinks"`
+	// LinkPolicy is what the webapp enforces; AllowUnsafeLinks is kept for
+	// API compatibility.
+	LinkPolicy           config.LinkPolicy `json:"linkPolicy"`
+	HTMLArtifactsEnabled bool              `json:"htmlArtifactsEnabled"`
 }
 
 // usesServiceAccountAuth reports the effective service account mode for a bot:
@@ -826,6 +830,7 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 		Bots:                 bots,
 		SearchEnabled:        searchEnabled,
 		AllowUnsafeLinks:     a.config.AllowUnsafeLinks(),
+		LinkPolicy:           a.config.LinkPolicy(),
 		HTMLArtifactsEnabled: a.config.EnableHTMLArtifacts(),
 	})
 }

@@ -285,8 +285,16 @@ export class LLMBotPostHelper {
      */
     async hoverCitation(index: number, postId?: string): Promise<void> {
         const citationWrapper = this.getCitationWrapper(index, postId);
-        await citationWrapper.hover();
-        await expect(this.getCitationTooltip(postId)).toBeVisible();
+        const tooltip = this.getCitationTooltip(postId);
+
+        // Once streaming ends the post swaps its live round for the persisted
+        // one, which re-mounts every citation. A hover that lands on the old
+        // element leaves the pointer over a node that no longer exists, so
+        // retry the hover until the tooltip shows on the surviving element.
+        await expect(async () => {
+            await citationWrapper.hover();
+            await expect(tooltip).toBeVisible({ timeout: 2000 });
+        }).toPass({ timeout: 15000 });
     }
 
     /**
@@ -555,7 +563,7 @@ export class LLMBotPostHelper {
      */
     async expectCitationsInline(postId?: string): Promise<void> {
         const postText = this.getPostText(postId);
-        const textBeforeSecondCitation = await postText.evaluate((el) => {
+        const textBeforeSecondCitation = () => postText.evaluate((el) => {
             const citations = el.querySelectorAll('[data-testid="llm-citation"]');
             if (citations.length < 2) return '';
             const secondCitation = citations[1];
@@ -578,7 +586,11 @@ export class LLMBotPostHelper {
 
         // With the bug, this would be empty (all citations clustered at position 0).
         // With the fix, there should be substantive text before the second citation.
-        expect(textBeforeSecondCitation.length).toBeGreaterThan(10);
+        // Polled because the post re-mounts when the persisted round replaces the live one.
+        await expect.poll(
+            async () => (await textBeforeSecondCitation().catch(() => '')).length,
+            { timeout: 15000 },
+        ).toBeGreaterThan(10);
     }
 
     /**

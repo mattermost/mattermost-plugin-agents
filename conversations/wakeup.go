@@ -343,7 +343,7 @@ func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) (er
 		RootId:    threadRootID(post),
 	}
 	wakePost.AddProp(streaming.ConversationIDProp, conv.ID)
-	if err := c.createResponsePlaceholder(bot.GetMMBot().UserId, user.Id, wakePost, post.Id); err != nil {
+	if err := c.createResponsePlaceholder(bot.GetMMBot().UserId, wakePost, post.Id); err != nil {
 		return fmt.Errorf("failed to create wake response post: %w", err)
 	}
 

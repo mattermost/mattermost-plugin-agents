@@ -45,8 +45,6 @@ describeAIMockCitationCase({
         await llmBotHelper.waitForStreamingComplete();
         await llmBotHelper.waitForCitation(1, undefined, 60000);
 
-        const citationWrapper = llmBotHelper.getCitationWrapper(1);
-        await citationWrapper.scrollIntoViewIfNeeded();
         await llmBotHelper.hoverCitation(1);
 
         const tooltip = llmBotHelper.getCitationTooltip();
@@ -62,9 +60,6 @@ describeAIMockCitationCase({
         await sendMessageWithWebSearchApproval(page, aiPlugin, CITATION_CLICK_PROMPT);
         await llmBotHelper.waitForStreamingComplete();
         await llmBotHelper.waitForCitation(1, undefined, 60000);
-
-        const citationWrapper = llmBotHelper.getCitationWrapper(1);
-        await citationWrapper.scrollIntoViewIfNeeded();
 
         const pagePromise = context.waitForEvent('page');
         await llmBotHelper.clickCitation(1);
@@ -85,7 +80,6 @@ describeAIMockCitationCase({
 
         await llmBotHelper.expectCitationCount(EXPECTED_MULTIPLE_CITATION_COUNT);
 
-        await llmBotHelper.getCitationWrapper(1).scrollIntoViewIfNeeded();
         await llmBotHelper.hoverCitation(1);
         await expect(llmBotHelper.getCitationTooltip()).toBeVisible({ timeout: 5000 });
         await expect(llmBotHelper.getCitationTooltip()).toContainText('typescriptlang.org');
@@ -93,7 +87,6 @@ describeAIMockCitationCase({
         await page.mouse.move(0, 0);
         await expect(llmBotHelper.getCitationTooltip()).toBeHidden();
 
-        await llmBotHelper.getCitationWrapper(2).scrollIntoViewIfNeeded();
         await llmBotHelper.hoverCitation(2);
         await expect(llmBotHelper.getCitationTooltip()).toBeVisible({ timeout: 5000 });
         await expect(llmBotHelper.getCitationTooltip()).toContainText('developer.mozilla.org');
@@ -154,14 +147,16 @@ describeAIMockCitationCase({
         await llmBotHelper.waitForStreamingComplete();
         await llmBotHelper.waitForCitation(1, undefined, 60000);
 
-        await llmBotHelper.getCitationWrapper(1).scrollIntoViewIfNeeded();
         await llmBotHelper.hoverCitation(1);
 
         const tooltip = llmBotHelper.getCitationTooltip();
         await expect(tooltip).toBeVisible({ timeout: 5000 });
         await expect(tooltip).toContainText('typescriptlang.org');
 
-        const favicon = tooltip.locator('img[src*="favicon"], svg');
-        await expect(favicon.first()).toBeVisible();
+        // The favicon is fetched from the cited site itself, so a failed load
+        // legitimately swaps the <img> for a fallback glyph. Accept either; the
+        // tooltip must never be left without an icon.
+        const favicon = tooltip.locator('img[src*="favicon"]').or(tooltip.getByText('🌐'));
+        await expect(favicon).toBeVisible();
     },
 });
