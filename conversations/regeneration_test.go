@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
@@ -489,4 +490,28 @@ func TestHandleRegenerateRequiresConversation(t *testing.T) {
 
 	err := c.HandleRegenerate(t.Context(), userID, post, &model.Channel{Id: "dm-channel"})
 	require.ErrorContains(t, err, "missing conversation_id")
+}
+
+func TestHasLiveStreamingTurn(t *testing.T) {
+	now := time.UnixMilli(1_000_000_000)
+	postID := "post-1"
+	other := "post-2"
+	fresh := now.UnixMilli() - 5_000
+	stale := now.UnixMilli() - streaming.StaleStreamThreshold.Milliseconds() - 1
+
+	tests := []struct {
+		name string
+		turn store.Turn
+		want bool
+	}{
+		{name: "fresh streaming turn on the post blocks", turn: store.Turn{PostID: &postID, Status: store.TurnStatusStreaming, UpdatedAt: fresh}, want: true},
+		{name: "stale streaming turn from a dead node does not block", turn: store.Turn{PostID: &postID, Status: store.TurnStatusStreaming, UpdatedAt: stale}, want: false},
+		{name: "finished turn does not block", turn: store.Turn{PostID: &postID, Status: store.TurnStatusComplete, UpdatedAt: fresh}, want: false},
+		{name: "streaming turn on another post does not block", turn: store.Turn{PostID: &other, Status: store.TurnStatusStreaming, UpdatedAt: fresh}, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, hasLiveStreamingTurn([]store.Turn{tc.turn}, postID, now))
+		})
+	}
 }
