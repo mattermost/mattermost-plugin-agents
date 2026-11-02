@@ -145,12 +145,17 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 		return nil, err
 	}
 
+	// The caller reads surePost after we return, while the worker below rewrites
+	// its post (pluginapi's UpdatePost copies the server's response into it), so
+	// the worker gets its own copy.
+	workerPost := surePost.Clone()
+
 	go func() (reterr error) {
 		// Update to an error if we return one.
 		defer func() {
 			if reterr != nil {
-				surePost.Message = T("agents.summairize_subscription_error", "Sorry! Something went wrong. Check the server logs for details.")
-				if err := s.pluginAPI.Post.UpdatePost(surePost); err != nil {
+				workerPost.Message = T("agents.summairize_subscription_error", "Sorry! Something went wrong. Check the server logs for details.")
+				if err := s.pluginAPI.Post.UpdatePost(workerPost); err != nil {
 					s.pluginAPI.Log.Error("Failed to update post in error handling newCallTranscriptionSummaryThread", "error", err)
 				}
 				s.pluginAPI.Log.Error("Error in call recording post", "error", reterr)
@@ -207,8 +212,8 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 		}
 
 		summaryPost := &model.Post{
-			RootId:    surePost.Id,
-			ChannelId: surePost.ChannelId,
+			RootId:    workerPost.Id,
+			ChannelId: workerPost.ChannelId,
 			Message:   "",
 		}
 		summaryPost.AddProp(ReferencedTranscriptPostID, transcriptionPost.Id)
