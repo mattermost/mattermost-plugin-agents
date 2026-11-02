@@ -24,10 +24,9 @@ jest.mock('@/mm_webapp', () => {
     };
 });
 
-let mockGenerating: string | null = null;
+let mockGenerating = false;
 jest.mock('./use_thread_generating', () => ({
-    useThreadGenerating: () => mockGenerating,
-    markGenerationStopped: jest.fn(),
+    useIsThreadGenerating: () => mockGenerating,
 }));
 
 jest.mock('react-intl', () => {
@@ -45,7 +44,6 @@ const store = createStore(() => ({entities: {users: {currentUserId: 'me'}}}));
 const renderView = (props: Partial<React.ComponentProps<typeof AgentChatThreadView>> = {}) => render(
     <Provider store={store}>
         <AgentChatThreadView
-            channelId='dm1'
             rootId='root1'
             agentName='Matty'
             layout='panel'
@@ -59,7 +57,7 @@ const renderView = (props: Partial<React.ComponentProps<typeof AgentChatThreadVi
 describe('AgentChatThreadView', () => {
     beforeEach(() => {
         jest.clearAllMocks();
-        mockGenerating = null;
+        mockGenerating = false;
     });
 
     // The host's scroll container does not exist in the mocked ThreadViewer: render one by hand.
@@ -77,9 +75,9 @@ describe('AgentChatThreadView', () => {
     const pill = () => screen.getByTestId('jump-to-latest');
 
     test.each([
-        {name: 'scrolled up while the agent answers', generating: 'post1', scrollTop: 0, visible: 'true', responding: 'true'},
-        {name: 'scrolled up with nothing generating', generating: null, scrollTop: 0, visible: 'true', responding: 'false'},
-        {name: 'at the bottom while the agent answers', generating: 'post1', scrollTop: 600, visible: 'false', responding: 'true'},
+        {name: 'scrolled up while the agent answers', generating: true, scrollTop: 0, visible: 'true', responding: 'true'},
+        {name: 'scrolled up with nothing generating', generating: false, scrollTop: 0, visible: 'true', responding: 'false'},
+        {name: 'at the bottom while the agent answers', generating: true, scrollTop: 600, visible: 'false', responding: 'true'},
     ])('jump button: $name', async ({generating, scrollTop, visible, responding}) => {
         mockGenerating = generating;
         renderView();
@@ -94,7 +92,7 @@ describe('AgentChatThreadView', () => {
     });
 
     test('the jump button turns from the wave into a plain arrow when the reply finishes, scrolls down, and hides at the bottom', async () => {
-        mockGenerating = 'post1';
+        mockGenerating = true;
         const {rerender} = renderView();
         const scroller = addScroller(0);
         await act(async () => {
@@ -104,11 +102,10 @@ describe('AgentChatThreadView', () => {
         expect(pill().querySelector('button')?.getAttribute('data-responding')).toBe('true');
 
         // The reply finishes while the user is still scrolled up.
-        mockGenerating = null;
+        mockGenerating = false;
         rerender(
             <Provider store={store}>
                 <AgentChatThreadView
-                    channelId='dm1'
                     rootId='root1'
                     agentName='Matty'
                     layout='panel'
@@ -157,7 +154,6 @@ describe('AgentChatThreadView', () => {
         render(
             <Provider store={threadStore}>
                 <AgentChatThreadView
-                    channelId='dm1'
                     rootId='root1'
                     agentName='Matty'
                     layout='panel'

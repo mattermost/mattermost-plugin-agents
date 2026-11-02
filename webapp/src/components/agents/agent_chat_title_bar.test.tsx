@@ -32,10 +32,6 @@ jest.mock('@/components/rhs/context_usage_indicator', () => ({
     default: ({conversationId}: {conversationId: string}) => <span data-testid='context-usage'>{conversationId}</span>,
 }));
 
-jest.mock('@/websocket', () => ({
-    subscribeToAllPostUpdates: () => () => null,
-}));
-
 jest.mock('@mattermost/shared/components/tooltip', () => ({
     WithTooltip: ({children}: {children: React.ReactNode}) => <>{children}</>,
 }));

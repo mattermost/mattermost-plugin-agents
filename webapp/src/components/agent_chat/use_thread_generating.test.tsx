@@ -11,9 +11,8 @@ import {
     STALE_GENERATING_MS,
     clearGeneratingPosts,
     recordPostUpdate,
-    resetGeneratingPosts,
-    setGeneratingStateSource,
     useGeneratingThreadRoots,
+    useIsThreadGenerating,
 } from './use_thread_generating';
 
 const post = (id: string, rootId: string, requester: string) => ({
@@ -24,29 +23,26 @@ const post = (id: string, rootId: string, requester: string) => ({
     props: {llm_requester_user_id: requester},
 });
 
-const store = createStore(() => ({
-    entities: {
-        users: {currentUserId: 'me'},
-        posts: {
-            posts: {
-                reply1: post('reply1', 'rootA', 'me'),
-                reply2: post('reply2', 'rootB', 'someone-else'),
-                rootPostWithReply: post('rootPostWithReply', '', 'me'),
-            },
-        },
-    },
+const makeStore = (posts: Record<string, ReturnType<typeof post>>) => createStore(() => ({
+    entities: {users: {currentUserId: 'me'}, posts: {posts}},
 }));
 
-const wrapper = ({children}: {children: React.ReactNode}) => <Provider store={store}>{children}</Provider>;
-const update = (postId: string, control: string) => recordPostUpdate({event: 'postupdate', data: {post_id: postId, control}} as never);
+const store = makeStore({
+    reply1: post('reply1', 'rootA', 'me'),
+    reply2: post('reply2', 'rootB', 'someone-else'),
+    rootPostWithReply: post('rootPostWithReply', '', 'me'),
+});
+
+const wrapperFor = (s: typeof store) => ({children}: {children: React.ReactNode}) => <Provider store={s}>{children}</Provider>;
+const wrapper = wrapperFor(store);
+const update = (postId: string, control: string, s = store) => recordPostUpdate(s.getState() as never, {event: 'postupdate', data: {post_id: postId, control}} as never);
 
 describe('useGeneratingThreadRoots', () => {
     beforeEach(() => {
-        act(() => resetGeneratingPosts());
+        act(() => clearGeneratingPosts());
     });
 
     afterEach(() => {
-        setGeneratingStateSource(null);
         jest.restoreAllMocks();
     });
 
@@ -58,6 +54,14 @@ describe('useGeneratingThreadRoots', () => {
         expect(Array.from(result.current)).toEqual(['rootA']);
 
         act(() => update('reply1', 'end'));
+        expect(Array.from(result.current)).toEqual([]);
+    });
+
+    test('a cancel (the requester pressed Stop) ends the generation', () => {
+        const {result} = renderHook(() => useGeneratingThreadRoots(), {wrapper});
+        act(() => update('reply1', 'start'));
+
+        act(() => update('reply1', 'cancel'));
         expect(Array.from(result.current)).toEqual([]);
     });
 
@@ -105,16 +109,29 @@ describe('useGeneratingThreadRoots', () => {
 
     test('other people\'s posts are not recorded, so a busy channel cannot crowd out the user\'s own generation', () => {
         const others = Object.fromEntries(Array.from({length: MAX_TRACKED_POSTS + 5}, (_, i) => [`other${i}`, post(`other${i}`, `root${i}`, 'someone-else')]));
-        const busy = createStore(() => ({
-            entities: {users: {currentUserId: 'me'}, posts: {posts: {...others, reply1: post('reply1', 'rootA', 'me')}}},
-        }));
-        setGeneratingStateSource(busy.getState as never);
-        const {result} = renderHook(() => useGeneratingThreadRoots(), {wrapper: ({children}: {children: React.ReactNode}) => <Provider store={busy}>{children}</Provider>});
+        const busy = makeStore({...others, reply1: post('reply1', 'rootA', 'me')});
+        const {result} = renderHook(() => useGeneratingThreadRoots(), {wrapper: wrapperFor(busy)});
 
         act(() => {
-            update('reply1', 'start');
-            Object.keys(others).forEach((id) => update(id, 'start'));
+            update('reply1', 'start', busy);
+            Object.keys(others).forEach((id) => update(id, 'start', busy));
         });
         expect(Array.from(result.current)).toEqual(['rootA']);
+    });
+});
+
+describe('useIsThreadGenerating', () => {
+    beforeEach(() => {
+        act(() => clearGeneratingPosts());
+    });
+
+    test.each([
+        {name: 'the generating thread', rootId: 'rootA', expected: true},
+        {name: 'another thread', rootId: 'rootB', expected: false},
+        {name: 'a new chat with no root', rootId: '', expected: false},
+    ])('$name', ({rootId, expected}) => {
+        const {result} = renderHook(() => useIsThreadGenerating(rootId), {wrapper});
+        act(() => update('reply1', 'start'));
+        expect(result.current).toBe(expected);
     });
 });

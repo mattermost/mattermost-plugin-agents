@@ -47,10 +47,6 @@ jest.mock('@/client', () => ({
 }));
 
 const mockGetAIThreads = getAIThreads as jest.Mock;
-jest.mock('@/websocket', () => ({
-    subscribeToAllPostUpdates: () => () => null,
-}));
-
 const mockThreadViewerProps = jest.fn();
 jest.mock('@/mm_webapp', () => {
     const ReactActual = jest.requireActual<typeof import('react')>('react');

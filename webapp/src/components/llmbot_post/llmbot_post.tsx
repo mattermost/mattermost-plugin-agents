@@ -30,7 +30,6 @@ import {needsViewerDecision, selectDecisionToolCalls} from '../tool_decisions';
 import {ToolApprovalStage, ToolCall, ToolCallPhase, ToolCallStatus} from '../tool_types';
 import {Annotation} from '../citations/types';
 import {AgentChatSurfaceContext} from '../agent_chat/agent_chat_surface_context';
-import {markGenerationStopped} from '../agent_chat/use_thread_generating';
 
 import {
     Round,
@@ -576,12 +575,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setStopped(true);
         setGenerating(false);
         setIsReasoningLoading(false);
-        const postId = props.post.id;
-        doStopGenerating(postId).then(() => {
-            // The chat views' "responding" indicators (sidebar, jump button) stop at once, before
-            // the stream's end arrives.
-            markGenerationStopped(postId);
-        }).catch((e: unknown) => {
+        doStopGenerating(props.post.id).catch((e: unknown) => {
             console.error('Failed to stop generating:', e); // eslint-disable-line no-console
         });
     };
