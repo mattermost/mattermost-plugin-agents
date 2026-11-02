@@ -4,8 +4,11 @@
 package tools
 
 import (
+	"context"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -189,5 +192,67 @@ func TestMCPToolClassification(t *testing.T) {
 	}
 	for name := range expectedToolReadOnly {
 		assert.True(t, seen[name], "expected tool %q was not returned by mcpTools() with dev mode on or off", name)
+	}
+}
+
+// scopedSupportedReadTools are the read-only tools that work under a scoped
+// session, as audited against the scoped route allowlist. Every read-only tool
+// is in this set or in scopedUnsupportedTools, so a new tool must be classified.
+var scopedSupportedReadTools = map[string]bool{
+	"read_channel": true, "get_channel_info": true, "search_channels": true, "list_team_channels": true,
+	"get_channel_stats": true, "search_users_in_channel": true, "read_post": true, "list_pinned_posts": true,
+	"get_post_reactions": true, "get_mentions": true, "search_posts": true, "search_users": true,
+	"search_files": true, "read_file": true, "get_file_info": true, "get_post_files": true,
+	"get_team_info": true, "search_teams": true, "search_users_in_team": true, "get_me": true,
+	"get_user": true, "get_user_custom_status": true, "get_user_by_username": true,
+	"get_users_by_ids": true, "get_users_by_usernames": true,
+}
+
+func TestMCPToolScopedSupportClassification(t *testing.T) {
+	provider := &MattermostToolProvider{
+		logger:     &testLogger{t: t},
+		accessMode: AccessModeRemote,
+		devMode:    true,
+	}
+	seen := map[string]bool{}
+	for _, tool := range provider.mcpTools() {
+		seen[tool.Name] = true
+		_, unsupported := scopedUnsupportedTools[tool.Name]
+		assert.Equal(t, unsupported, tool.ScopedUnsupported, "ScopedUnsupported mismatch for %q", tool.Name)
+		if !tool.ReadOnly {
+			assert.False(t, unsupported, "%q is state-changing, so a scoped catalog drops it already; remove it from scopedUnsupportedTools", tool.Name)
+			continue
+		}
+		assert.NotEqual(t, unsupported, scopedSupportedReadTools[tool.Name], "read-only tool %q must be in exactly one of scopedUnsupportedTools and scopedSupportedReadTools", tool.Name)
+	}
+	for name := range scopedUnsupportedTools {
+		assert.True(t, seen[name], "scopedUnsupportedTools lists %q, which no tool has", name)
+	}
+	for name := range scopedSupportedReadTools {
+		assert.True(t, seen[name], "scopedSupportedReadTools lists %q, which no tool has", name)
+	}
+}
+
+func TestScopedUnsupportedToolsAreMarkedOverMCP(t *testing.T) {
+	// The marker has to survive the trip over MCP, which is how the plugin reads it.
+	provider := &MattermostToolProvider{logger: &testLogger{t: t}, accessMode: AccessModeRemote}
+	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	provider.ProvideTools(server)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	ctx := context.Background()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = serverSession.Close() })
+	client := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+
+	listed, err := session.ListTools(ctx, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, listed.Tools)
+	for _, tool := range listed.Tools {
+		_, unsupported := scopedUnsupportedTools[tool.Name]
+		assert.Equal(t, unsupported, tool.Meta[llm.ScopedUnsupportedMetaKey] == true, "tool %q", tool.Name)
 	}
 }

@@ -45,16 +45,91 @@ type ServerSettings interface {
 	RolesGrantPermission(roleNames []string, permissionID string) bool
 }
 
-// OpenTeamGrantDisabled mirrors the server: the open-team grant is off in
+// OpenTeamGrantOff says why the open-team grant is off.
+type OpenTeamGrantOff string
+
+const (
+	OpenTeamGrantOn                 OpenTeamGrantOff = ""
+	OpenTeamGrantOffUnknown         OpenTeamGrantOff = "unknown"
+	OpenTeamGrantOffCompliance      OpenTeamGrantOff = "compliance_mode"
+	OpenTeamGrantOffUsersCannotJoin OpenTeamGrantOff = "users_cannot_join_teams"
+)
+
+// OpenTeamGrantOffReason mirrors the server: the open-team grant is off in
 // compliance mode and when the system_user role lacks join_public_teams.
-// Without settings it is off, so open-team reads fail closed.
-func OpenTeamGrantDisabled(settings ServerSettings) bool {
+// Without readable settings it is off, so open-team reads fail closed.
+func OpenTeamGrantOffReason(settings ServerSettings) OpenTeamGrantOff {
 	if settings == nil {
-		return true
+		return OpenTeamGrantOffUnknown
 	}
 	cfg := settings.GetConfig()
-	if cfg == nil || cfg.ComplianceSettings.Enable == nil || *cfg.ComplianceSettings.Enable {
-		return true
+	switch {
+	case cfg == nil || cfg.ComplianceSettings.Enable == nil:
+		return OpenTeamGrantOffUnknown
+	case *cfg.ComplianceSettings.Enable:
+		return OpenTeamGrantOffCompliance
+	case !settings.RolesGrantPermission([]string{model.SystemUserRoleId}, model.PermissionJoinPublicTeams.Id):
+		return OpenTeamGrantOffUsersCannotJoin
 	}
-	return !settings.RolesGrantPermission([]string{model.SystemUserRoleId}, model.PermissionJoinPublicTeams.Id)
+	return OpenTeamGrantOn
+}
+
+// OpenTeamGrantDisabled reports whether the open-team grant is off.
+func OpenTeamGrantDisabled(settings ServerSettings) bool {
+	return OpenTeamGrantOffReason(settings) != OpenTeamGrantOn
+}
+
+// NewRunScope is the scope of one channel-triggered run: read access to the
+// listed channels and to every public channel on an open team.
+func NewRunScope(requesterID string, channelIDs []string) *model.SessionScope {
+	return &model.SessionScope{
+		Permissions: slices.Clone(model.ScopeReadPermissions),
+		Resources: model.SessionScopeResources{
+			ChannelIDs:             slices.Clone(channelIDs),
+			OpenTeamPublicChannels: true,
+		},
+		OnBehalfOfUserID: requesterID,
+	}
+}
+
+// TeamClosedReason says why a team does not count as open to all users.
+type TeamClosedReason string
+
+const (
+	TeamClosedArchived         TeamClosedReason = "archived"
+	TeamClosedInviteOnly       TeamClosedReason = "invite_only"
+	TeamClosedGroupConstrained TeamClosedReason = "group_constrained"
+	TeamClosedDomainRestricted TeamClosedReason = "domain_restricted"
+	TeamClosedPolicyEnforced   TeamClosedReason = "policy_enforced"
+	TeamClosedOther            TeamClosedReason = "other"
+)
+
+// TeamClosedReasons explains why team is not open to all users. The server's
+// Team.IsOpenToAllUsers decides: the result is empty exactly when it is true,
+// and a team it rejects for a reason not listed here is reported as
+// TeamClosedOther.
+func TeamClosedReasons(team *model.Team) []TeamClosedReason {
+	if team.IsOpenToAllUsers() {
+		return nil
+	}
+	var reasons []TeamClosedReason
+	if team.DeleteAt != 0 {
+		reasons = append(reasons, TeamClosedArchived)
+	}
+	if !team.AllowOpenInvite {
+		reasons = append(reasons, TeamClosedInviteOnly)
+	}
+	if team.IsGroupConstrained() {
+		reasons = append(reasons, TeamClosedGroupConstrained)
+	}
+	if team.AllowedDomains != "" {
+		reasons = append(reasons, TeamClosedDomainRestricted)
+	}
+	if team.PolicyEnforced {
+		reasons = append(reasons, TeamClosedPolicyEnforced)
+	}
+	if len(reasons) == 0 {
+		reasons = append(reasons, TeamClosedOther)
+	}
+	return reasons
 }

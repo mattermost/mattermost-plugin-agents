@@ -314,3 +314,31 @@ func TestScopedCatalogAllows(t *testing.T) {
 		})
 	}
 }
+
+func TestScopedCatalogExclusion(t *testing.T) {
+	const remote = "https://jira.example.com"
+	named := func(origin, tool string) []llm.EnabledMCPTool {
+		return []llm.EnabledMCPTool{{ServerOrigin: origin, ToolName: tool}}
+	}
+	tests := []struct {
+		name      string
+		tool      llm.Tool
+		allowlist []llm.EnabledMCPTool
+		expected  ScopedToolExclusion
+	}{
+		{name: "named read-only embedded tool", tool: llm.Tool{Name: "read_channel", ServerOrigin: EmbeddedClientKey, ReadOnly: true}, allowlist: named(EmbeddedClientKey, "read_channel")},
+		{name: "named read-only tool that needs wider access", tool: llm.Tool{Name: "get_user_channels", ServerOrigin: EmbeddedClientKey, ReadOnly: true, ScopedUnsupported: true}, allowlist: named(EmbeddedClientKey, "get_user_channels"), expected: ScopedExcludedNeedsWiderAccess},
+		{name: "named write tool", tool: llm.Tool{Name: "create_post", ServerOrigin: EmbeddedClientKey}, allowlist: named(EmbeddedClientKey, "create_post"), expected: ScopedExcludedWriteTool},
+		{name: "named plugin tool", tool: llm.Tool{Name: "lookup", ServerOrigin: "plugin://com.example"}, allowlist: named("plugin://com.example", "lookup"), expected: ScopedExcludedPluginServer},
+		{name: "named remote tool", tool: llm.Tool{Name: "jira__get_issue", ServerOrigin: remote}, allowlist: named(remote, "get_issue")},
+		{name: "remote tool granted by wildcard", tool: llm.Tool{Name: "jira__get_issue", ServerOrigin: remote}, allowlist: named(remote, llm.MCPServerToolWildcard), expected: ScopedExcludedNotNamed},
+		{name: "remote tool not in the allowlist", tool: llm.Tool{Name: "jira__get_issue", ServerOrigin: remote}, expected: ScopedExcludedNotNamed},
+		{name: "built-in tool", tool: llm.Tool{Name: "WebSearch"}, expected: ScopedExcludedBuiltin},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, ScopedCatalogExclusion(tt.tool, tt.allowlist))
+			assert.Equal(t, tt.expected == ScopedIncluded, len(FilterScopedCatalog([]llm.Tool{tt.tool}, tt.allowlist)) == 1)
+		})
+	}
+}

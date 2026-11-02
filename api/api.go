@@ -476,6 +476,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.POST("/reindex/catchup", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleCatchUpIndex)
 	adminRouter.POST("/reindex/rebuild-vector-index", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleRebuildVectorIndex)
 	adminRouter.GET("/reindex/health-check", a.handleIndexHealthCheck)
+	adminRouter.GET("/agents/:agentid/scoped_access", a.handleGetAgentScopedAccess)
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
 	adminRouter.GET("/mcp/vetted-tool-seed", a.handleGetVettedToolSeed)
 	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)

@@ -32,6 +32,18 @@ jest.mock('@/components/select', () => ({
     ),
 }));
 
+jest.mock('./scoped_access_view', () => ({
+    __esModule: true,
+    default: ({agentId, hasUnsavedChanges}: {agentId: string; hasUnsavedChanges: boolean}) => (
+        <div
+            data-testid='access-view'
+            data-unsaved={String(hasUnsavedChanges)}
+        >
+            {agentId}
+        </div>
+    ),
+}));
+
 const mockedServerSupport = useServerSupportsScopedSessions as unknown as jest.Mock;
 
 const toggleName = /^Run tools in channels without asking/;
@@ -47,6 +59,8 @@ type Opts = {
     scopedExtraChannelIds?: string[];
     autoEnableNewMCPTools?: boolean;
     hasAllToolsGrants?: boolean;
+    agentId?: string;
+    hasUnsavedChanges?: boolean;
     editable?: boolean;
 };
 
@@ -59,6 +73,8 @@ function renderSection(opts: Opts = {}) {
                 scopedExtraChannelIds={opts.scopedExtraChannelIds ?? []}
                 autoEnableNewMCPTools={opts.autoEnableNewMCPTools ?? false}
                 hasAllToolsGrants={opts.hasAllToolsGrants ?? false}
+                agentId={opts.agentId}
+                hasUnsavedChanges={opts.hasUnsavedChanges ?? false}
                 editable={opts.editable ?? true}
                 onChange={onChange}
             />
@@ -120,6 +136,22 @@ describe('ScopedChannelModeSection', () => {
 
         expect(toggle.disabled).toBe(false);
         expect(screen.getByText(allToolsWarning)).not.toBeNull();
+    });
+
+    test.each([
+        {name: 'a saved agent shows its access to an admin', opts: {agentId: 'agent-1'}, shown: true},
+        {name: 'a new agent has nothing saved to show', opts: {}, shown: false},
+        {name: 'agent managers do not see the admin-only view', opts: {agentId: 'agent-1', editable: false}, shown: false},
+        {name: 'a mode that is off shows nothing', opts: {agentId: 'agent-1', scopedChannelMode: false}, shown: false},
+    ])('$name', ({opts, shown}) => {
+        renderSection({scopedChannelMode: true, hasUnsavedChanges: true, ...opts});
+
+        const view = screen.queryByTestId('access-view');
+        expect(view !== null).toBe(shown);
+        if (view) {
+            expect(view.textContent).toBe('agent-1');
+            expect(view.getAttribute('data-unsaved')).toBe('true');
+        }
     });
 
     test('no extra channels means no extra-channel warning', () => {

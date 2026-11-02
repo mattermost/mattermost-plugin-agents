@@ -774,6 +774,7 @@ const AgentConfigView = (props: Props) => {
                                 useServiceAccountAuth={draft.useServiceAccountAuth}
                                 scopedChannelMode={draft.scopedChannelMode}
                                 scopedExtraChannelIds={draft.scopedExtraChannelIds}
+                                hasUnsavedChanges={isDirty}
                                 serviceAccountFieldsLocked={serviceAccountFieldsLocked}
                                 canEditServiceAccountAuth={canEditServiceAccountAuth}
                                 onChange={(updates) => updateDraft(updates)}

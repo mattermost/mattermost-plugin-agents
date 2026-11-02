@@ -38,6 +38,9 @@ type Props = {
     scopedChannelMode: boolean;
     scopedExtraChannelIds: string[];
 
+    /** The form has edits that are not saved yet. */
+    hasUnsavedChanges: boolean;
+
     /** Soft-lock auto-enable + tool grants while SA is on for non-admins; SA checkbox stays reachable. */
     serviceAccountFieldsLocked: boolean;
 
@@ -141,6 +144,7 @@ const McpsTab = (props: Props) => {
         useServiceAccountAuth,
         scopedChannelMode,
         scopedExtraChannelIds,
+        hasUnsavedChanges,
         serviceAccountFieldsLocked,
         canEditServiceAccountAuth,
         onChange,
@@ -366,6 +370,8 @@ const McpsTab = (props: Props) => {
                     scopedExtraChannelIds={scopedExtraChannelIds}
                     autoEnableNewMCPTools={autoEnableNewMCPTools}
                     hasAllToolsGrants={enabledTools.some((t) => t.tool_name === MCPServerToolWildcard)}
+                    agentId={agentId}
+                    hasUnsavedChanges={hasUnsavedChanges}
                     editable={canEditServiceAccountAuth}
                     onChange={onChange}
                 />

@@ -79,6 +79,10 @@ type MCPTool struct {
 	// ReadOnly is true when the tool only retrieves data. State-changing tools
 	// are available at Enterprise and above.
 	ReadOnly bool
+
+	// ScopedUnsupported is true for a read-only tool that cannot work under a
+	// scoped session; see scopedUnsupportedTools.
+	ScopedUnsupported bool
 }
 
 type ToolProvider interface {
@@ -169,6 +173,9 @@ func (p *MattermostToolProvider) mcpTools() []MCPTool {
 	var mcpTools []MCPTool
 	for _, group := range groups {
 		mcpTools = append(mcpTools, group()...)
+	}
+	for i := range mcpTools {
+		_, mcpTools[i].ScopedUnsupported = scopedUnsupportedTools[mcpTools[i].Name]
 	}
 	return mcpTools
 }
@@ -277,6 +284,9 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint: mcpTool.ReadOnly,
 		},
+	}
+	if mcpTool.ScopedUnsupported {
+		tool.Meta = mcp.Meta{llm.ScopedUnsupportedMetaKey: true}
 	}
 
 	// Set the InputSchema from the MCPTool schema

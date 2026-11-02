@@ -233,3 +233,51 @@ export type AgentExportDocument = {
     agentVersion: number;
     agent: AgentExportAgent;
 }
+
+export type ScopedChannelModeBlocker = 'service_account_off' | 'all_tools_enabled' | 'license' | 'channel_tool_calling_off' | 'server_unsupported';
+
+export type ScopedTeamClosedReason = 'archived' | 'invite_only' | 'group_constrained' | 'domain_restricted' | 'policy_enforced' | 'other';
+
+export type ScopedOpenTeamGrantOff = 'compliance_mode' | 'users_cannot_join_teams' | 'unknown';
+
+export type ScopedAccessTeam = {
+    id: string;
+    displayName: string;
+}
+
+export type ScopedExtraChannelStatus = 'readable' | 'missing' | 'archived' | 'restricted' | 'unsupported_type';
+
+export type ScopedToolRemoval = 'not_named' | 'plugin_server' | 'write_tool' | 'needs_wider_access' | 'no_service_account' | 'unavailable' | 'not_opted_in' | 'builtin';
+
+// What an agent's scoped channel runs can access, as the server computes it.
+export type ScopedAccessReport = {
+    configured: boolean;
+    active: boolean;
+    blockers: ScopedChannelModeBlocker[];
+    channels: {
+        triggeringTeamPublicChannels: boolean;
+        openTeams: {
+            enabled: boolean;
+            disabledReason?: ScopedOpenTeamGrantOff;
+            openCount: number;
+            closedCount: number;
+            open: ScopedAccessTeam[];
+            closed: Array<ScopedAccessTeam & {reasons: ScopedTeamClosedReason[]}>;
+        };
+        extraChannels: Array<{
+            id: string;
+            displayName?: string;
+            teamName?: string;
+            type?: string;
+            status: ScopedExtraChannelStatus;
+        }>;
+    };
+    tools: Array<{
+        serverOrigin: string;
+        serverName?: string;
+        serverKind: 'remote' | 'embedded' | 'plugin' | 'builtin';
+        name: string;
+        offered: boolean;
+        reason?: ScopedToolRemoval;
+    }>;
+}

@@ -335,15 +335,45 @@ func (b *Builder) ScopedChannelModeActive(bot *bots.Bot, channel *model.Channel)
 // ScopedChannelModeAvailable is ScopedChannelModeActive without the channel:
 // whether bot's channel turns can run scoped right now.
 func (b *Builder) ScopedChannelModeAvailable(bot *bots.Bot) bool {
-	if !ScopedChannelModeConfigured(bot) {
-		return false
+	return ScopedChannelModeConfigured(bot) && len(b.ScopedChannelModeBlockers(bot)) == 0
+}
+
+// ScopedChannelModeBlocker names a prerequisite of scoped channel mode that
+// does not currently hold.
+type ScopedChannelModeBlocker string
+
+const (
+	ScopedBlockedServiceAccountOff     ScopedChannelModeBlocker = "service_account_off"
+	ScopedBlockedAllToolsEnabled       ScopedChannelModeBlocker = "all_tools_enabled"
+	ScopedBlockedLicense               ScopedChannelModeBlocker = "license"
+	ScopedBlockedChannelToolCallingOff ScopedChannelModeBlocker = "channel_tool_calling_off"
+	ScopedBlockedServerUnsupported     ScopedChannelModeBlocker = "server_unsupported"
+)
+
+// ScopedChannelModeBlockers lists the prerequisites of scoped channel mode
+// that bot does not currently meet, whether or not the mode is turned on.
+func (b *Builder) ScopedChannelModeBlockers(bot *bots.Bot) []ScopedChannelModeBlocker {
+	if bot == nil {
+		return []ScopedChannelModeBlocker{ScopedBlockedServiceAccountOff}
 	}
 	cfg := bot.GetConfig()
-	return cfg.UseServiceAccountAuth &&
-		!cfg.AutoEnableNewMCPTools &&
-		b.licenseChecker.Allows(enterprise.CapMCPServiceAccount) &&
-		b.channelToolCallingEnabled() &&
-		b.ServerSupportsScopedSessions()
+	var blockers []ScopedChannelModeBlocker
+	if !cfg.UseServiceAccountAuth {
+		blockers = append(blockers, ScopedBlockedServiceAccountOff)
+	}
+	if cfg.AutoEnableNewMCPTools {
+		blockers = append(blockers, ScopedBlockedAllToolsEnabled)
+	}
+	if !b.licenseChecker.Allows(enterprise.CapMCPServiceAccount) {
+		blockers = append(blockers, ScopedBlockedLicense)
+	}
+	if !b.channelToolCallingEnabled() {
+		blockers = append(blockers, ScopedBlockedChannelToolCallingOff)
+	}
+	if !b.ServerSupportsScopedSessions() {
+		blockers = append(blockers, ScopedBlockedServerUnsupported)
+	}
+	return blockers
 }
 
 // ScopedRunLapsed reports whether a live scoped run of bot must end: the agent
@@ -600,10 +630,7 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		mcpTools = filterMCPToolsByDisabledOrigins(mcpTools, c.ToolCatalog.DisabledMCPServerOrigins)
 		mcpTools = filterMCPToolsByPredicate(mcpTools, c.ToolCatalog.KeepMCPTool)
 		if scopedRun != nil {
-			// Scoped turns run their tools without asking, so each one must be
-			// a tool the admin picked by name; a wildcard entry admits none.
-			mcpTools = llm.FilterMCPToolsByExplicitAllowlist(mcpTools, botCfg.EnabledMCPTools)
-			mcpTools = filterMCPToolsByPredicate(mcpTools, mcp.ScopedCatalogAllows)
+			mcpTools = mcp.FilterScopedCatalog(mcpTools, botCfg.EnabledMCPTools)
 			mcpTools = b.auditScopedToolCalls(mcpTools, bot, userID)
 			store.AddTools(b.auditScopedToolCalls(builtInTools, bot, userID))
 			c.ToolsScoped = true

@@ -11,6 +11,8 @@ import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 import {SelectChannel} from '@/components/select';
 import {useServerSupportsScopedSessions} from '@/hooks/use_server_supports_scoped_sessions';
 
+import ScopedAccessView from './scoped_access_view';
+
 type Props = {
     scopedChannelMode: boolean;
     scopedExtraChannelIds: string[];
@@ -19,12 +21,18 @@ type Props = {
     /** The allowlist grants every tool on some server instead of naming them. */
     hasAllToolsGrants: boolean;
 
+    /** The saved agent; its access view is shown once the agent exists. */
+    agentId?: string;
+
+    /** The form has edits that are not saved yet. */
+    hasUnsavedChanges: boolean;
+
     /** Only system admins may change these settings. */
     editable: boolean;
     onChange: (updates: {scopedChannelMode?: boolean; scopedExtraChannelIds?: string[]}) => void;
 };
 
-const ScopedChannelModeSection = ({scopedChannelMode, scopedExtraChannelIds, autoEnableNewMCPTools, hasAllToolsGrants, editable, onChange}: Props) => {
+const ScopedChannelModeSection = ({scopedChannelMode, scopedExtraChannelIds, autoEnableNewMCPTools, hasAllToolsGrants, agentId, hasUnsavedChanges, editable, onChange}: Props) => {
     const serverSupport = useServerSupportsScopedSessions();
     const serverSupported = serverSupport === true;
     const canTurnOn = editable && serverSupported && !autoEnableNewMCPTools && !hasAllToolsGrants;
@@ -93,6 +101,12 @@ const ScopedChannelModeSection = ({scopedChannelMode, scopedExtraChannelIds, aut
                                 title={<FormattedMessage defaultMessage='Content from these channels may appear in any channel where this agent is used, including to people who are not members of them.'/>}
                             />
                         </div>
+                    )}
+                    {editable && agentId && (
+                        <ScopedAccessView
+                            agentId={agentId}
+                            hasUnsavedChanges={hasUnsavedChanges}
+                        />
                     )}
                 </>
             )}

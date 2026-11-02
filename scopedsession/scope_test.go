@@ -179,3 +179,62 @@ func TestOpenTeamGrantDisabled(t *testing.T) {
 		})
 	}
 }
+
+func TestTeamClosedReasons(t *testing.T) {
+	tests := []struct {
+		name     string
+		team     *model.Team
+		expected []TeamClosedReason
+	}{
+		{name: "open team", team: &model.Team{AllowOpenInvite: true}},
+		{name: "invite only", team: &model.Team{}, expected: []TeamClosedReason{TeamClosedInviteOnly}},
+		{name: "domain restricted", team: &model.Team{AllowOpenInvite: true, AllowedDomains: "example.com"}, expected: []TeamClosedReason{TeamClosedDomainRestricted}},
+		{name: "group constrained", team: &model.Team{AllowOpenInvite: true, GroupConstrained: model.NewPointer(true)}, expected: []TeamClosedReason{TeamClosedGroupConstrained}},
+		{name: "policy enforced", team: &model.Team{AllowOpenInvite: true, PolicyEnforced: true}, expected: []TeamClosedReason{TeamClosedPolicyEnforced}},
+		{name: "archived", team: &model.Team{AllowOpenInvite: true, DeleteAt: 1}, expected: []TeamClosedReason{TeamClosedArchived}},
+		{
+			name:     "several reasons",
+			team:     &model.Team{AllowedDomains: "example.com", PolicyEnforced: true},
+			expected: []TeamClosedReason{TeamClosedInviteOnly, TeamClosedDomainRestricted, TeamClosedPolicyEnforced},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reasons := TeamClosedReasons(tt.team)
+			assert.Equal(t, tt.expected, reasons)
+			assert.Equal(t, tt.team.IsOpenToAllUsers(), len(reasons) == 0, "reasons must agree with the server's open-team rule")
+		})
+	}
+}
+
+type fakeServerSettings struct {
+	cfg        *model.Config
+	canJoinPub bool
+}
+
+func (f fakeServerSettings) GetConfig() *model.Config { return f.cfg }
+
+func (f fakeServerSettings) RolesGrantPermission([]string, string) bool { return f.canJoinPub }
+
+func TestOpenTeamGrantOffReason(t *testing.T) {
+	compliance := func(on bool) *model.Config {
+		return &model.Config{ComplianceSettings: model.ComplianceSettings{Enable: model.NewPointer(on)}}
+	}
+	tests := []struct {
+		name     string
+		settings ServerSettings
+		expected OpenTeamGrantOff
+	}{
+		{name: "no settings", expected: OpenTeamGrantOffUnknown},
+		{name: "unreadable compliance setting", settings: fakeServerSettings{cfg: &model.Config{}}, expected: OpenTeamGrantOffUnknown},
+		{name: "compliance mode", settings: fakeServerSettings{cfg: compliance(true), canJoinPub: true}, expected: OpenTeamGrantOffCompliance},
+		{name: "users cannot join teams", settings: fakeServerSettings{cfg: compliance(false)}, expected: OpenTeamGrantOffUsersCannotJoin},
+		{name: "grant on", settings: fakeServerSettings{cfg: compliance(false), canJoinPub: true}, expected: OpenTeamGrantOn},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, OpenTeamGrantOffReason(tt.settings))
+			assert.Equal(t, tt.expected != OpenTeamGrantOn, OpenTeamGrantDisabled(tt.settings))
+		})
+	}
+}
