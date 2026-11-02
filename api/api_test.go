@@ -68,22 +68,22 @@ type TestEnvironment struct {
 
 // testConfigImpl is a minimal implementation of Config for testing
 type testConfigImpl struct {
-	allowUnsafeLinks                   bool
-	allowedLinkDomains                 string
-	enableHTMLArtifacts                bool
-	enableChannelArtifacts             bool
-	channelArtifactsMaxPerChannel      int
-	channelArtifactsMaxSitewide        int
-	channelArtifactVersionsToKeep      int
-	disableChannelArtifactDownload     bool
-	disableChannelArtifactRendering    bool
-	disableHumanChannelArtifacts       bool
-	enableChannelMentionToolCalling    bool
-	enableAmbientAutoReply             bool
-	mcpConfig                          mcp.Config
-	services                           []llm.ServiceConfig
-	defaultBotUserID                   string
-	defaultBotName                     string
+	allowUnsafeLinks                bool
+	allowedLinkDomains              string
+	enableHTMLArtifacts             bool
+	enableChannelArtifacts          bool
+	channelArtifactsMaxPerChannel   int
+	channelArtifactsMaxSitewide     int
+	channelArtifactVersionsToKeep   int
+	disableChannelArtifactDownload  bool
+	disableChannelArtifactRendering bool
+	disableHumanChannelArtifacts    bool
+	enableChannelMentionToolCalling bool
+	enableAmbientAutoReply          bool
+	mcpConfig                       mcp.Config
+	services                        []llm.ServiceConfig
+	defaultBotUserID                string
+	defaultBotName                  string
 }
 
 func (tc *testConfigImpl) GetDefaultBotUserID() string {

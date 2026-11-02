@@ -467,10 +467,10 @@ func DuplicateID(err error) string {
 	if err == nil || !errors.Is(err, ErrDuplicate) {
 		return ""
 	}
-	msg := err.Error()
 	const prefix = "identical artifact already saved: "
-	if i := strings.Index(msg, prefix); i >= 0 {
-		return strings.TrimSpace(msg[i+len(prefix):])
+	_, rest, ok := strings.Cut(err.Error(), prefix)
+	if ok {
+		return strings.TrimSpace(rest)
 	}
 	return ""
 }

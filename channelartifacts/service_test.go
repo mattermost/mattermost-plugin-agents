@@ -65,7 +65,7 @@ func TestRootPostID(t *testing.T) {
 	require.Equal(t, root, RootPostID(child))
 	top := &model.Post{Id: root}
 	require.Equal(t, root, RootPostID(top))
-	require.Equal(t, "", RootPostID(nil))
+	require.Empty(t, RootPostID(nil))
 }
 
 func TestServiceListByTeam(t *testing.T) {

@@ -120,10 +120,7 @@ func (kv *memoryKV) KVList(page, perPage int) ([]string, error) {
 	if start >= len(keys) {
 		return nil, nil
 	}
-	end := start + perPage
-	if end > len(keys) {
-		end = len(keys)
-	}
+	end := min(start+perPage, len(keys))
 	return keys[start:end], nil
 }
 
@@ -142,7 +139,7 @@ func (kv *memoryKV) UpdatePost(*model.Post) error { return nil }
 func (kv *memoryKV) DM(string, string, *model.Post) error {
 	return nil
 }
-func (kv *memoryKV) GetTeam(string) (*model.Team, error)       { return nil, nil }
+func (kv *memoryKV) GetTeam(string) (*model.Team, error) { return nil, nil }
 func (kv *memoryKV) GetChannel(channelID string) (*model.Channel, error) {
 	if ch, ok := kv.channels[channelID]; ok {
 		return ch, nil

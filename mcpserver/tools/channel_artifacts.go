@@ -184,8 +184,8 @@ func (p *MattermostToolProvider) toolProposeChannelArtifactUpdate(mcpContext *MC
 	if !isHTMLArtifactFile(fileInfo) {
 		return "", fmt.Errorf("file %s is not an HTML artifact", args.FileID)
 	}
-	if err := p.channelArtifactsService.CanSave(mcpContext.Ctx, mcpContext.UserID, args.PostID, args.FileID); err != nil {
-		return "", fmt.Errorf("this file cannot be saved to the channel library: %w", err)
+	if saveErr := p.channelArtifactsService.CanSave(mcpContext.Ctx, mcpContext.UserID, args.PostID, args.FileID); saveErr != nil {
+		return "", fmt.Errorf("this file cannot be saved to the channel library: %w", saveErr)
 	}
 
 	title := view.Entry.Title

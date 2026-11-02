@@ -95,9 +95,9 @@ func TestHTTPChannelArtifactsService_Get(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, ChannelArtifactsGetPath, r.URL.Path)
 		var req httpChannelArtifactsGetRequest
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
 		assert.Equal(t, artifactID, req.ArtifactID)
-		require.NotNil(t, req.IncludeContent)
+		assert.NotNil(t, req.IncludeContent)
 		assert.True(t, *req.IncludeContent)
 		assert.Equal(t, 100, req.ContentLimit)
 		_ = json.NewEncoder(w).Encode(httpChannelArtifactsGetResponse{

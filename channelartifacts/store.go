@@ -143,15 +143,12 @@ func (s *Store) adjustSiteCount(delta int) error {
 	if delta == 0 {
 		return nil
 	}
-	for attempt := 0; attempt < 8; attempt++ {
+	for range 8 {
 		count, oldRaw, err := s.getSiteCount()
 		if err != nil {
 			return err
 		}
-		next := count + delta
-		if next < 0 {
-			next = 0
-		}
+		next := max(count+delta, 0)
 		if err := s.setSiteCountCAS(oldRaw, next); err != nil {
 			if errors.Is(err, ErrConflict) {
 				continue
@@ -377,13 +374,13 @@ func findVersion(hist *VersionHistory, version int) (VersionRecord, bool) {
 }
 
 func maxVersion(hist *VersionHistory) int {
-	max := 0
+	highest := 0
 	for _, rec := range hist.Versions {
-		if rec.Version > max {
-			max = rec.Version
+		if rec.Version > highest {
+			highest = rec.Version
 		}
 	}
-	return max
+	return highest
 }
 
 func (s *Store) writeVersionBlobs(id string, version int, chunks [][]byte) error {
@@ -502,7 +499,7 @@ func (s *Store) Save(entry *Entry, content []byte, maxSize int64, maxPerChannel,
 	}
 
 	if maxSitewide > 0 {
-		for attempt := 0; attempt < 8; attempt++ {
+		for range 8 {
 			count, oldRaw, err := s.getSiteCount()
 			if err != nil {
 				cleanup()
@@ -528,7 +525,7 @@ func (s *Store) Save(entry *Entry, content []byte, maxSize int64, maxPerChannel,
 		}
 	}
 
-	for attempt := 0; attempt < 8; attempt++ {
+	for range 8 {
 		idx, oldRaw, err := s.getIndex(entry.ChannelID)
 		if err != nil {
 			cleanup()
@@ -804,7 +801,7 @@ func (s *Store) Purge(entry *Entry) error {
 	if histErr != nil && !errors.Is(histErr, ErrNotFound) {
 		return histErr
 	}
-	for attempt := 0; attempt < 8; attempt++ {
+	for range 8 {
 		idx, oldRaw, err := s.getIndex(entry.ChannelID)
 		if err != nil {
 			return err
@@ -843,7 +840,7 @@ func (s *Store) Delete(entry *Entry) error {
 }
 
 func (s *Store) Reorder(channelID string, ids []string) error {
-	for attempt := 0; attempt < 8; attempt++ {
+	for range 8 {
 		idx, oldRaw, err := s.getIndex(channelID)
 		if err != nil {
 			return err
@@ -897,10 +894,7 @@ func gzipChunks(content []byte) ([][]byte, error) {
 	compressed := buf.Bytes()
 	chunks := make([][]byte, 0, (len(compressed)/MaxChunkBytes)+1)
 	for len(compressed) > 0 {
-		n := MaxChunkBytes
-		if n > len(compressed) {
-			n = len(compressed)
-		}
+		n := min(MaxChunkBytes, len(compressed))
 		chunk := make([]byte, n)
 		copy(chunk, compressed[:n])
 		chunks = append(chunks, chunk)

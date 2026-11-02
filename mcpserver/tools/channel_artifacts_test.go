@@ -213,7 +213,7 @@ func TestToolProposeChannelArtifactUpdate(t *testing.T) {
 				})
 				mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
 					var post model.Post
-					require.NoError(t, json.NewDecoder(r.Body).Decode(&post))
+					assert.NoError(t, json.NewDecoder(r.Body).Decode(&post))
 					assert.Equal(t, channelID, post.ChannelId)
 					assert.Contains(t, post.Message, "Brief")
 					assert.Contains(t, post.Message, artifactID)
@@ -287,7 +287,7 @@ func TestToolProposeChannelArtifactUpdate(t *testing.T) {
 				})
 				mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
 					var post model.Post
-					require.NoError(t, json.NewDecoder(r.Body).Decode(&post))
+					assert.NoError(t, json.NewDecoder(r.Body).Decode(&post))
 					assert.NotContains(t, post.Message, "@channel")
 					assert.Contains(t, post.Message, "@\u200bchannel")
 					assert.Contains(t, post.Message, "Hello")

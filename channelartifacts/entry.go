@@ -141,9 +141,9 @@ type OrderRequest struct {
 
 // ExportEntry is one artifact in a system-admin channel export.
 type ExportEntry struct {
-	Meta                   *Entry                    `json:"meta"`
-	Versions               []VersionRecord           `json:"versions"`
-	ContentBase64ByVersion map[string]string         `json:"content_base64_by_version"`
+	Meta                   *Entry            `json:"meta"`
+	Versions               []VersionRecord   `json:"versions"`
+	ContentBase64ByVersion map[string]string `json:"content_base64_by_version"`
 }
 
 // ExportResponse is returned by the channel-artifacts export API.
