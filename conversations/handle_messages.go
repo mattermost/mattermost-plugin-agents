@@ -365,16 +365,24 @@ func (c *Conversations) handleMentionViaConversation(
 	}
 
 	progress.Advance(responseProgressConnectingProvider)
-	result, runErr := policy.runToolLoop(ctx, llmContext, convResult.Conversation.ID, *completionRequest, "Failed to write tool turns")
+	// The tool loop ends with the stream, however the stream ends (Stop, a
+	// lost turn lease, shutdown), so no tool keeps running after it.
+	loopCtx, cancelLoop := context.WithCancel(ctx)
+	result, runErr := policy.runToolLoop(loopCtx, llmContext, convResult.Conversation.ID, *completionRequest, "Failed to write tool turns")
 
 	if runErr != nil {
+		cancelLoop()
 		return fmt.Errorf("tool runner failed: %w", runErr)
 	}
 
 	stream := decorateStreamWithWebSearchAnnotations(result.Stream, llmContext)
 	stream = c.decorateStreamWithCreatedFiles(ctx, bot, stream, responsePost, nil, llmContext, llmContext)
 
-	if streamErr := c.streamToExistingPost(ctx, stream, responsePost, postingUser, channel, false, func() { runSpan.End() }); streamErr != nil {
+	if streamErr := c.streamToExistingPost(ctx, stream, responsePost, postingUser, channel, false, func() {
+		cancelLoop()
+		runSpan.End()
+	}); streamErr != nil {
+		cancelLoop()
 		return fmt.Errorf("unable to stream response: %w", streamErr)
 	}
 	runHandedOff = true

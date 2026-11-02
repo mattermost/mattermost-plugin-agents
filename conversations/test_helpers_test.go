@@ -339,6 +339,12 @@ type fakeStreamingService struct {
 	streamedPosts []*model.Post
 	// finished, when set, receives the ID of each post whose stream ends.
 	finished chan string
+	// stopAtExecuting ends a stream once a tool batch starts executing, as a
+	// Stop or a lost turn lease does, without reading the rest.
+	stopAtExecuting bool
+
+	mu      sync.Mutex
+	cancels map[string]context.CancelFunc
 }
 
 func (s *fakeStreamingService) StreamToNewPost(_ context.Context, _ string, _ string, _ *llm.TextStreamResult, post *model.Post, _ string) error {
@@ -350,25 +356,51 @@ func (s *fakeStreamingService) StreamToNewDM(context.Context, string, *llm.TextS
 	return nil
 }
 
-func (s *fakeStreamingService) StreamToPost(_ context.Context, stream *llm.TextStreamResult, _ *model.Post, _ string, _ string) {
-	if stream != nil {
+func (s *fakeStreamingService) consume(stream *llm.TextStreamResult) {
+	if stream == nil {
+		return
+	}
+	if !s.stopAtExecuting {
 		_, _ = stream.ReadAll()
+		return
+	}
+	for event := range stream.Stream {
+		if batch, ok := event.Value.(llm.ToolCallBatch); ok && batch.Phase == llm.ToolCallPhaseExecuting {
+			return
+		}
 	}
 }
 
+func (s *fakeStreamingService) StreamToPost(_ context.Context, stream *llm.TextStreamResult, _ *model.Post, _ string, _ string) {
+	s.consume(stream)
+}
+
 func (s *fakeStreamingService) StreamContinuationToPost(_ context.Context, stream *llm.TextStreamResult, _ *model.Post, _ string, _ string) {
-	if stream != nil {
-		_, _ = stream.ReadAll()
-	}
+	s.consume(stream)
 }
 
 func (s *fakeStreamingService) StopStreaming(string) {}
 
-func (s *fakeStreamingService) GetStreamingContext(inCtx context.Context, _ string) (context.Context, error) {
-	return inCtx, nil
+// GetStreamingContext and FinishStreaming mirror the real service: finishing
+// a post's stream cancels its context.
+func (s *fakeStreamingService) GetStreamingContext(inCtx context.Context, postID string) (context.Context, error) {
+	ctx, cancel := context.WithCancel(inCtx)
+	s.mu.Lock()
+	if s.cancels == nil {
+		s.cancels = map[string]context.CancelFunc{}
+	}
+	s.cancels[postID] = cancel
+	s.mu.Unlock()
+	return ctx, nil
 }
 
 func (s *fakeStreamingService) FinishStreaming(postID string) {
+	s.mu.Lock()
+	if cancel, ok := s.cancels[postID]; ok {
+		cancel()
+		delete(s.cancels, postID)
+	}
+	s.mu.Unlock()
 	if s.finished != nil {
 		s.finished <- postID
 	}

@@ -980,3 +980,44 @@ func TestTurnEntryPointPolicyInvariants(t *testing.T) {
 		})
 	}
 }
+
+// TestTurnEntryPointStreamEndStopsTools pins that every entry point ties its
+// tool loop to the response stream: when the stream ends early (Stop, a lost
+// turn lease, shutdown), a tool already running is canceled rather than left
+// to finish its side effects after another run may own the post.
+func TestTurnEntryPointStreamEndStopsTools(t *testing.T) {
+	for _, entry := range turnEntryPoints {
+		t.Run(entry.name, func(t *testing.T) {
+			env := setupInvariantEnv(t, policyBotConfig(),
+				dmMakeToolCallStream([]llm.ToolCall{policyWeatherCall}),
+				dmMakeTextStream("It's sunny"),
+			)
+			env.checker.setPolicy(policyToolOrigin, policyToolName, mcp.ToolPolicyAutoRunEverywhere)
+			env.streaming.stopAtExecuting = true
+			started := make(chan struct{}, 1)
+			canceled := make(chan struct{}, 1)
+			env.mcpMgr.tools[0].Resolver = func(ctx context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+				started <- struct{}{}
+				select {
+				case <-ctx.Done():
+					canceled <- struct{}{}
+				case <-time.After(5 * time.Second):
+				}
+				return "72F and sunny", nil
+			}
+
+			_ = entry.seed(t, env)()
+
+			select {
+			case <-started:
+			case <-time.After(2 * time.Second):
+				t.Skip("this entry point does not auto-run the tool")
+			}
+			select {
+			case <-canceled:
+			case <-time.After(3 * time.Second):
+				assert.Fail(t, "the running tool must be canceled when its stream ends")
+			}
+		})
+	}
+}

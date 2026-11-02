@@ -736,9 +736,13 @@ func (c *Conversations) streamToolFollowUp(
 	completionReq.Operation = llm.OperationConversationToolFollowup
 	completionReq.OperationSubType = llm.SubTypeToolCall
 
-	runResult, err := policy.runToolLoop(ctx, llmContext, conv.ID, *completionReq, "Failed to write tool turns on follow-up")
+	// The tool loop ends with the stream, however the stream ends (Stop, a
+	// lost turn lease, shutdown), so no tool keeps running after it.
+	loopCtx, cancelLoop := context.WithCancel(ctx)
+	runResult, err := policy.runToolLoop(loopCtx, llmContext, conv.ID, *completionReq, "Failed to write tool turns on follow-up")
 
 	if err != nil {
+		cancelLoop()
 		return fmt.Errorf("tool runner failed on tool follow-up: %w", err)
 	}
 
@@ -754,7 +758,8 @@ func (c *Conversations) streamToolFollowUp(
 
 	// Stream onto the same post; finalize demotes the prior anchor so
 	// resolved tool cards remain visible alongside the new round.
-	if err := c.streamToExistingPost(ctx, stream, post, policy.user, policy.channel, true, nil); err != nil {
+	if err := c.streamToExistingPost(ctx, stream, post, policy.user, policy.channel, true, cancelLoop); err != nil {
+		cancelLoop()
 		return fmt.Errorf("failed to stream tool follow-up: %w", err)
 	}
 
