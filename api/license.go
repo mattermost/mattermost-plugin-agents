@@ -25,8 +25,7 @@ type licenseErrorResponse struct {
 func abortNotLicensed(c *gin.Context, err error) {
 	_ = c.Error(err)
 	resp := licenseErrorResponse{Error: err.Error()}
-	var licErr *enterprise.LicenseError
-	if errors.As(err, &licErr) {
+	if licErr, ok := errors.AsType[*enterprise.LicenseError](err); ok {
 		resp.LicenseRequired = licErr.RequiredLevel.Key()
 	}
 	c.AbortWithStatusJSON(http.StatusForbidden, resp)

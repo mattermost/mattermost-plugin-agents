@@ -106,7 +106,7 @@ The Configuration tab covers identity, model selection, custom instructions, and
 | **Agent avatar** | Optional. Upload a custom image. Avatar upload is a second step after the agent record is created or updated; if the avatar upload fails the rest of the save still succeeds. |
 | **AI Service** | Required. Pick a configured service from the dropdown. Services are managed in **System Console > Plugins > Agents** and shared across agents. If the agent references a service that has been deleted, an "Unknown service (deleted)" entry appears in the dropdown until you pick a new one. |
 | **Model** | Optional. Override the service's default model for this agent. For OpenAI, Anthropic, Azure, OpenAI Compatible, Gemini, and Vertex AI services the field becomes a combobox populated by a live model fetch from the provider; for other services it is a free-text field. Leave empty to use the service default. |
-| **Max tool turns** | Maximum number of consecutive tool-call/execute rounds the agent performs in a single response before stopping. Defaults to **30** (allowed range **1–250**). Lower this for smaller models that tend to loop on tool calls; raise it for agents that chain many tools per turn (for example dynamic MCP discovery: search → load → execute). Clearing the field saves the default. |
+| **Max tool turns** | Maximum number of consecutive tool-call/execute rounds the agent performs in a single response. After the last round the agent writes its final answer without calling more tools. Defaults to **30** (allowed range **1–250**). Lower this for smaller models that tend to loop on tool calls; raise it for agents that chain many tools per turn (for example dynamic MCP discovery: search → load → execute). Clearing the field saves the default. |
 | **Custom instructions** | Free-text. Prepended to every request as the agent's system prompt. Use it for tone, role, vocabulary, or workflow guidance. |
 | **Enable Vision** | Available for service types that support image input. Lets the agent process attached images. Requires a vision-capable model. |
 | **Enable Tools** | Available for service types that support tool calling. When off, the agent runs without tools and the **MCPs** tab is disabled. Some Mattermost Agents features will not work without tools. |
@@ -142,7 +142,7 @@ These rules are enforced both for `@mentions` in channels and for direct convers
 The MCPs tab is available only when **Enable Tools** is on (Configuration tab). It controls which MCP tools the agent may call and how MCP tool schemas are exposed to the model.
 
 - **Dynamic tool loading**: enabled by default for new agents and for existing agents that do not yet have this setting. The agent starts with MCP discovery and loading helpers, then loads full MCP tool schemas only when needed. Disable this to use the full MCP tool list for this agent up front. Once a tool is loaded in a conversation, it can be used in later turns in that same conversation without repeating the search/load prelude.
-- **Automatically enable all MCP tools**: the agent has access to every MCP tool available in the server right now and to any MCP tools added later. This is the default for new agents and the setting used by all migrated legacy bots.
+- **Automatically enable all MCP tools**: the agent isn't limited to a list of tools. It can use any MCP tool the requesting user can use, including MCP tools added later. MCP server access policies, the servers the user has turned off, and license limits still apply. This is the default for new agents and the setting used by all migrated legacy bots.
 - When the auto-grant is off, pick the specific MCP tools to enable. Tools that are no longer present on the server are dropped from the agent's allowlist when you save.
 - For OAuth-backed MCP servers, you can also start the per-user **Connect** flow directly from this tab. Enabling a server that is currently disconnected stores a wildcard grant — once you finish the OAuth flow, the agent gets every tool that server exposes. The tab refreshes automatically when you connect or disconnect (`mcp_connection_updated` websocket event). **Connect** is not shown while **Use service accounts for authentication** is on; the tab lists that agent's service-account catalog instead of your personal connections.
 - **Use service accounts for authentication** switches the agent from per-user credentials to admin-configured service account credentials for **external** MCP servers. External MCP servers without service account headers configured in the System Console are excluded from the agent (fail closed). Mattermost (embedded) and plugin tools run with each requesting user's own permissions, and users are never asked to connect accounts. The MCPs tab then shows **Connected** for servers whose service account credentials work, and **No service account credentials** for servers that have none. Turning it on shows a warning because it flattens permissions on those external servers — anyone who can use the agent acts with the agent's shared access there — so restrict usage on the **Access** tab. Only system administrators can turn this setting on. While it is enabled, some fields are system-admin-only; see [What's editable vs locked](#whats-editable-vs-locked). Anyone who can manage the agent can still turn the setting off or delete the agent. Requires the same license as remote MCP servers. See [Service account authentication](../admin_guide.md#service-account-authentication) in the Admin Guide.
@@ -195,6 +195,67 @@ The dirty-state check considers both form fields and a queued avatar upload, so 
 - Updating the agent's display name flows through to the linked Mattermost bot's display name immediately.
 - Updating the AI service, model, or instructions takes effect on the next agent turn — in-flight responses already streaming to a user are not interrupted.
 - Updating channel/user access rules takes effect immediately for new mentions; the next time a user `@mentions` the agent in a channel that is now blocked, the agent will refuse the request.
+
+## Version history
+
+Every successful save of an agent creates a new numbered version: 1, 2, 3, and so on. The agent always runs its latest version; there are no drafts or pinned versions. Creating, editing, and restoring an agent each add a version, and so do a few internal writes (for example, the legacy bot migration), which are labeled **System**. Agents that existed before version history was introduced get a version 1, labeled **Initial version**, when the plugin activates. If an agent's stored configuration changes outside the editor (for example, an internal migration), a **System** version records that change before the next save, so the next editor is never credited with it.
+
+To view the history, open an existing agent in the editor and select the version line under the agent's name (for example, `v7 · by Dana Lee, 2d ago`) or the **Version history** button (the update icon) to the left of **Import** and **Export**. The line shows `Unsaved changes` while the editor has edits that aren't saved yet. The version history opens in a window with the versions listed on the left, each with its version number, who saved it, and when. Select a version to see, on the right, how it was produced, who created it, when it was saved, and a read-only view of its full configuration, with a **Changed** marker on each setting that differs from the previous version. Settings the view has no row for, such as the username, are listed under it as **Also changed**. The newest 50 versions are shown first; choose **Load older versions** below the list to see earlier ones.
+
+To roll back, select a version and choose **Restore this version**, or open the **...** menu on a version in the list and choose **Restore this version**. The confirmation lists the settings the restore changes compared with the current version. Restoring saves that version's configuration as a new latest version; history is never rewritten, so you can always restore back. If the editor has unsaved changes, they are discarded. A restore goes through the same checks as a normal save:
+
+- The version's AI service must still exist. If it has since been deleted, the restore is rejected; restore a different version or edit the agent instead.
+- License gates, access validation, and the service account rules in [What's editable vs locked](#whats-editable-vs-locked) apply as if you had made the same edit by hand.
+- The username never changes. If the agent was renamed after the version was saved, it keeps its current username; use [Renaming an agent](#renaming-an-agent) to change it.
+- Versions do not store attribute-based access policies. Switching an agent away from attribute-based access deletes its policy, so restoring an earlier attribute-based version leaves the agent with no policy and nobody can use it. The confirmation warns about this, and after the restore the editor opens the **Access** tab so you can create a new policy.
+
+Only users who can manage the agent can see its history, because versions include the agent's custom instructions. Restores are recorded in the server audit log as `restoreAgentVersion` (agent, version number, and changed setting names only).
+
+### Deleting versions
+
+Versions keep everything an agent was ever saved with, including instructions that were later removed. If something sensitive was saved (for example, an access token pasted into the instructions), first edit the agent to remove it, then delete the versions that still hold it. In the version history window you can:
+
+- Open the **...** menu on a previous version in the list (it appears when you hover over or focus the version) and choose **Delete this version**.
+- Open the **...** menu at the top of the version list and choose **Select multiple versions**, check the versions to remove, and choose **Delete selected**.
+- Open the same menu and choose **Delete all previous versions** to delete every version except the current one.
+
+Both ask for confirmation first.
+
+Deleted versions are permanently removed and can't be restored. The current version is the agent's live configuration and can't be deleted. Version numbers are never reused: the next save continues from the current number. Deleting versions is recorded in the server audit log as `deleteAgentVersions` (agent, the deleted version numbers or whether all previous versions were deleted, and how many were deleted).
+
+### Keeping a limited history
+
+By default every version is kept. To keep only the most recent versions of each agent, go to **System Console > Plugins > Agents**, set **Limit agent version history** to **True**, and set **Versions to keep per agent** (including the current version). When you save the setting, older versions of every agent are deleted, and from then on each save deletes the versions that fall outside the limit. Set **Limit agent version history** back to **False** to keep every version again; versions already deleted aren't restored.
+
+Deleting an agent also deletes all of its versions.
+
+## Exporting and importing agents
+
+You can copy an agent's purpose and tool setup to another Mattermost server by exporting it to a file and importing that file on the other server.
+
+### Export
+
+Users who can manage an agent can export it with **Export** in the editor header or in the row's `⋯` menu on the **Agents** page. This downloads a `<username>-v<version>.agent.json` file containing the agent's current version.
+
+The file contains only settings that mean the same thing on any server:
+
+- Suggested username and display name
+- Custom instructions
+- **Enable Tools**, **Max tool turns**, and dynamic tool loading
+- **Automatically enable all MCP tools**, and the list of granted MCP tools, each identified by its MCP server's URL
+
+The file does **not** contain the AI service, model, reasoning settings, native provider tools, vision, access rules (channels, users, teams, attribute-based policies), agent admins, the service account setting, the avatar, or any IDs. It never contains MCP server credentials or AI service keys. Custom instructions are included, so treat the file as you would the instructions themselves.
+
+### Import
+
+Importing loads a file's settings into the agent editor. Nothing is saved until you choose **Save**, and the save goes through the same checks as any other edit. Review the imported custom instructions before saving: they become the agent's instructions.
+
+- **New agent:** select **Import** on the **Agents** page and choose a file. This opens a new agent with the file's settings, including its suggested username and display name. Pick the AI service and any other settings, then save. This requires permission to create agents and counts toward the agent limit.
+- **Existing agent:** open the agent in the editor, select **Import**, and choose a file. Only the settings the file carries are replaced. The agent's username, display name, AI service, model, access rules, admins, and service account setting stay as they are.
+
+MCP tools in the file are matched to the MCP servers your **MCPs** tab lists, by server URL (ignoring surrounding whitespace and a trailing `/`). Matched tools are stored under the server's URL exactly as it is configured here. Tools of servers that aren't listed are left out, and the editor names those servers so you can grant replacement tools on the **MCPs** tab before saving. When the file turns on **Automatically enable all MCP tools**, no matching is needed.
+
+Files larger than 2 MiB, files that aren't agent exports, and files with an unsupported format version are rejected. An imported agent's first save is recorded like any other create or edit.
 
 ## Deleting an agent
 
@@ -259,7 +320,7 @@ If migration was not performed (because no `config.bots` entries existed) the fl
 
 ### Backups
 
-`Agents_UserAgents` is a plugin-owned table and is included in standard Mattermost database backups. Plain `mattermost-config.json` snapshots are no longer sufficient to restore agents — they contain only services and the default-bot setting, not agent definitions. See [Backup and restore](../admin_guide.md#backup-and-restore) for details.
+`Agents_UserAgents` and its version history in `Agents_AgentVersions` are plugin-owned tables and are included in standard Mattermost database backups. Plain `mattermost-config.json` snapshots are no longer sufficient to restore agents — they contain only services and the default-bot setting, not agent definitions. See [Backup and restore](../admin_guide.md#backup-and-restore) for details.
 
 ## HA cluster behavior
 

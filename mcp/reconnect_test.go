@@ -40,7 +40,7 @@ func TestToolCallErrorHandlesLapsedAuthorization(t *testing.T) {
 			streamable := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
 			httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				body, err := io.ReadAll(r.Body)
-				require.NoError(t, err)
+				assert.NoError(t, err)
 				if bytes.Contains(body, []byte(`"method":"tools/call"`)) {
 					if tt.callStatus == http.StatusUnauthorized {
 						w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)

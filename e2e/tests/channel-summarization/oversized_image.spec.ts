@@ -3,7 +3,8 @@
 
 import {deflateSync} from 'node:zlib';
 
-import {expect, test} from '@playwright/test';
+import {expect} from '@playwright/test';
+import {containerTest} from 'helpers/container-fixture';
 
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
@@ -64,21 +65,21 @@ function grayscalePNG(width: number, height: number): Buffer {
     ]);
 }
 
-let mattermost: MattermostContainer;
-let openAIMock: OpenAIMockContainer;
-
-test.beforeAll(async () => {
-    mattermost = await RunAIMockContainer({
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunAIMockContainer({
         bot: {
             enableVision: true,
         },
-    });
-    openAIMock = await RunOpenAIMocks(mattermost.network);
+    }));
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
 });
 
-test.afterAll(async () => {
-    await openAIMock.stop();
-    await mattermost.stop();
+let mattermost: MattermostContainer;
+let openAIMock: OpenAIMockContainer;
+
+test.beforeAll(async ({ containers }) => {
+    ({ mattermost, openAIMock } = containers);
 });
 
 test('summarizes a channel thread after omitting an oversized image', async ({page}) => {

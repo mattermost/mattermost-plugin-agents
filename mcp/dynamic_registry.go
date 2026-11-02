@@ -4,7 +4,8 @@
 package mcp
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -76,7 +77,7 @@ func NewToolRegistry(tools []llm.Tool, opts ...ToolRegistryOption) *ToolRegistry
 		}
 	}
 
-	sort.Strings(registry.order)
+	slices.Sort(registry.order)
 	registry.rebuildIndex()
 
 	return registry
@@ -176,11 +177,8 @@ func (r *ToolRegistry) closestMatchesByName(query string, limit int) []ToolSearc
 		})
 	}
 
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].Score == results[j].Score {
-			return results[i].Name < results[j].Name
-		}
-		return results[i].Score > results[j].Score
+	slices.SortFunc(results, func(a, b ToolSearchResult) int {
+		return cmp.Or(cmp.Compare(b.Score, a.Score), cmp.Compare(a.Name, b.Name))
 	})
 
 	if len(results) == 0 {

@@ -1,7 +1,8 @@
 // spec: Service Management - Add First Service Through UI
 // seed: e2e/tests/seed.spec.ts
 
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { SystemConsoleHelper } from 'helpers/system-console';
@@ -15,27 +16,26 @@ import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers
  * Tests UI-based service management operations in the system console.
  */
 
+const test = containerTest(async (own) => {
+    // Start container with NO pre-configured services
+    const mattermost = own(await RunSystemConsoleContainer({
+        services: [],
+        bots: [],
+    }));
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
 test.describe('Service Management', () => {
-    test.beforeAll(async () => {
-        // Start container with NO pre-configured services
-        mattermost = await RunSystemConsoleContainer({
-            services: [],
-            bots: [],
-        });
-
-        openAIMock = await RunOpenAIMocks(mattermost.network);
-    });
-
-    test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test('should add and configure service through card-based UI', async ({ page }) => {
-        // Login + container startup after a long shard can exceed 60s on CI.
+        // Login after a long shard can exceed 60s on CI.
         test.setTimeout(120000);
 
         const mmPage = new MattermostPage(page);

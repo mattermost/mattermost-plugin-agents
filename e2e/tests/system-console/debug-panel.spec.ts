@@ -1,11 +1,11 @@
 // spec: system-console-additional-scenarios.plan.md - Debug Panel
 // seed: e2e/tests/seed.spec.ts
 
-import { test, expect, Page } from '@playwright/test';
-import MattermostContainer from 'helpers/mmcontainer';
+import { expect, Page } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import { MattermostPage } from 'helpers/mm';
 import { SystemConsoleHelper } from 'helpers/system-console';
-import { OpenAIMockContainer, RunOpenAIMocks } from 'helpers/openai-mock';
+import { RunOpenAIMocks } from 'helpers/openai-mock';
 import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers/system-console-container';
 
 /**
@@ -45,44 +45,43 @@ function getSettingRadios(page: Page, setting: keyof typeof RADIO_INDICES) {
     };
 }
 
-let mattermost: MattermostContainer;
-let openAIMock: OpenAIMockContainer;
+const test = containerTest(async (own) => {
+    // Start container with enableTokenUsageLogging set to false
+    const mattermost = own(await RunSystemConsoleContainer({
+        enableTokenUsageLogging: false,
+        services: [
+            {
+                id: 'test-service',
+                name: 'Test Service',
+                type: 'openai',
+                apiKey: 'test-key',
+                orgId: '',
+                defaultModel: 'gpt-4',
+                tokenLimit: 16384,
+                streamingTimeoutSeconds: 30,
+                outputTokenLimit: 4096,
+                useResponsesAPI: false,
+            }
+        ],
+        bots: [
+            {
+                id: 'bot-1',
+                name: 'testbot',
+                displayName: 'Test Bot',
+                serviceID: 'test-service',
+                customInstructions: 'You are a helpful assistant',
+                enableVision: false,
+                enableTools: false,
+            }
+        ],
+    }));
+    own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost };
+});
 
 test.describe.serial('Debug Panel', () => {
-    test('should toggle Enable Token Usage Logging', async ({ page }) => {
+    test('should toggle Enable Token Usage Logging', async ({ page, containers: { mattermost } }) => {
         test.setTimeout(60000);
-
-        // Start container with enableTokenUsageLogging set to false
-        mattermost = await RunSystemConsoleContainer({
-            enableTokenUsageLogging: false,
-            services: [
-                {
-                    id: 'test-service',
-                    name: 'Test Service',
-                    type: 'openai',
-                    apiKey: 'test-key',
-                    orgId: '',
-                    defaultModel: 'gpt-4',
-                    tokenLimit: 16384,
-                    streamingTimeoutSeconds: 30,
-                    outputTokenLimit: 4096,
-                    useResponsesAPI: false,
-                }
-            ],
-            bots: [
-                {
-                    id: 'bot-1',
-                    name: 'testbot',
-                    displayName: 'Test Bot',
-                    serviceID: 'test-service',
-                    customInstructions: 'You are a helpful assistant',
-                    enableVision: false,
-                    enableTools: false,
-                }
-            ],
-        });
-
-        openAIMock = await RunOpenAIMocks(mattermost.network);
 
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
@@ -137,8 +136,5 @@ test.describe.serial('Debug Panel', () => {
 
         const finalTokenLogging = getSettingRadios(page, 'enableTokenUsageLogging');
         await expect(finalTokenLogging.false).toBeChecked();
-
-        await openAIMock.stop();
-        await mattermost.stop();
     });
 });

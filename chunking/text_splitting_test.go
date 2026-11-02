@@ -49,8 +49,8 @@ func TestSplitPlaintextOnSentences(t *testing.T) {
 	// Additional test cases testing the intended behavior
 	t.Run("Empty string", func(t *testing.T) {
 		chunks := SplitPlaintextOnSentences("", 100)
-		assert.Equal(t, 1, len(chunks), "Should return a single chunk for empty string")
-		assert.Equal(t, "", chunks[0], "Empty string should return empty chunk")
+		assert.Len(t, chunks, 1, "Should return a single chunk for empty string")
+		assert.Empty(t, chunks[0], "Empty string should return empty chunk")
 	})
 
 	t.Run("Text with various sentence boundaries", func(t *testing.T) {
@@ -96,7 +96,7 @@ func TestSplitPlaintextOnSentences(t *testing.T) {
 
 		// Verify we get back the full text (ignoring whitespace differences)
 		combined := strings.Join(chunks, " ")
-		assert.Equal(t, len(strings.ReplaceAll(input, " ", "")), len(strings.ReplaceAll(combined, " ", "")),
+		assert.Len(t, strings.ReplaceAll(combined, " ", ""), len(strings.ReplaceAll(input, " ", "")),
 			"Combined chunks should contain all input text")
 	})
 

@@ -115,12 +115,10 @@ func TestClaimStaleStreamingTurnConcurrent(t *testing.T) {
 	errs := make([]error, workers)
 	start := make(chan struct{})
 	for i := range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			results[i], errs[i] = s.ClaimStaleStreamingTurn(turn.ID, testStaleMillis)
-		}()
+		})
 	}
 	close(start)
 	wg.Wait()

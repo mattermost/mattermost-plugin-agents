@@ -6,7 +6,6 @@ package meetings
 import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
-	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -32,17 +31,10 @@ type Service struct {
 	i18n             *i18n.Bundle
 	metricsService   metrics.Metrics
 	contextBuilder   *llmcontext.Builder
-	conversations    *conversations.Conversations
-	licenseChecker   *enterprise.LicenseChecker
 	convService      *conversation.Service
+	licenseChecker   *enterprise.LicenseChecker
 
 	ffmpegPath string
-}
-
-// SetConversationService sets the conversation entity service used to persist
-// meeting summary conversations.
-func (s *Service) SetConversationService(svc *conversation.Service) {
-	s.convService = svc
 }
 
 // NewService creates a new meetings service
@@ -55,7 +47,7 @@ func NewService(
 	i18n *i18n.Bundle,
 	metricsService metrics.Metrics,
 	contextBuilder *llmcontext.Builder,
-	conversations *conversations.Conversations,
+	convService *conversation.Service,
 	licenseChecker *enterprise.LicenseChecker,
 ) *Service {
 	service := &Service{
@@ -67,7 +59,7 @@ func NewService(
 		i18n:             i18n,
 		metricsService:   metricsService,
 		contextBuilder:   contextBuilder,
-		conversations:    conversations,
+		convService:      convService,
 		licenseChecker:   licenseChecker,
 	}
 

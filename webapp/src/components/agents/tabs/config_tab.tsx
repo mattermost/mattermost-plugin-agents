@@ -44,6 +44,9 @@ type Props = {
     draft: AgentDraft;
     onChange: (updates: Partial<AgentDraft>) => void;
     onAvatarChange: (file: File | null) => void;
+
+    /** The avatar upload that the next save will apply, if any. */
+    avatarFile?: File | null;
     botUserId?: string;
     services: ServiceInfo[];
     errors?: Record<string, string>;
@@ -293,6 +296,7 @@ const ConfigTab = (props: Props) => {
                 <AvatarItem
                     botusername={draft.username}
                     avatarOwnerKey={props.botUserId}
+                    pendingFile={props.avatarFile ?? null}
                     changedAvatar={(image: File) => onAvatarChange(image)}
                 />
                 <SelectionItem
@@ -414,7 +418,7 @@ const ConfigTab = (props: Props) => {
                                 placeholder={String(DefaultMaxToolTurns)}
                                 onChange={(value: number) => onChange({maxToolTurns: value})}
                                 error={errors.maxToolTurns}
-                                helptext={intl.formatMessage({defaultMessage: 'Maximum number of consecutive tool-call/execute rounds the agent will run before stopping. Lower this for smaller models that tend to loop on tool calls; raise it for agents that chain many tools per turn.'})}
+                                helptext={intl.formatMessage({defaultMessage: 'Maximum number of consecutive tool-call/execute rounds the agent will run before it must answer without tools. Lower this for smaller models that tend to loop on tool calls; raise it for agents that chain many tools per turn.'})}
                             />
 
                             {supportsVisionAndTools && (

@@ -6,17 +6,15 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {
     DotsHorizontalIcon,
+    ExportVariantIcon,
     PencilOutlineIcon,
     TrashCanOutlineIcon,
 } from '@mattermost/compass-icons/components';
-//eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
-import {OverlayTrigger, Tooltip} from 'react-bootstrap';
-
 import {Tag} from '@mattermost/compass-ui/components/tag';
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {getProfilePictureUrl} from '@/client';
-import {getPortalTarget} from '@/utils/dom';
 import DotMenu, {DropdownMenuItem} from '@/components/dot_menu';
 
 import {AgentInactiveReason, UserAgent, ServiceInfo} from '@/types/agents';
@@ -28,10 +26,11 @@ type Props = {
     canManage: boolean;
     onEdit: (agent: UserAgent) => void;
     onDelete: (agent: UserAgent) => void;
+    onExport: (agent: UserAgent) => void;
 }
 
 const AgentRow = (props: Props) => {
-    const {agent, services, servicesLoaded, canManage, onEdit, onDelete} = props;
+    const {agent, services, servicesLoaded, canManage, onEdit, onDelete, onExport} = props;
     const [menuOpen, setMenuOpen] = useState(false);
     const intl = useIntl();
 
@@ -71,6 +70,10 @@ const AgentRow = (props: Props) => {
     const handleMenuItemDelete = useCallback(() => {
         onDelete(agent);
     }, [agent, onDelete]);
+
+    const handleMenuItemExport = useCallback(() => {
+        onExport(agent);
+    }, [agent, onExport]);
 
     const handleRowActivate = useCallback(() => {
         if (!canManage || menuOpen) {
@@ -120,40 +123,28 @@ const AgentRow = (props: Props) => {
                 </NameColumn>
                 <BadgesColumn>
                     {inactiveReason && (
-                        <OverlayTrigger
-                            placement='top'
-                            container={getPortalTarget}
-                            overlay={
-                                <Tooltip id={`inactive-agent-tooltip-${agent.id}`}>
-                                    <InactiveReasonMessage reason={inactiveReason}/>
-                                </Tooltip>
-                            }
-                        >
-                            <BadgeTrigger tabIndex={0}>
-                                <Tag
-                                    type='danger'
-                                    label={<FormattedMessage defaultMessage='Inactive'/>}
-                                />
-                            </BadgeTrigger>
-                        </OverlayTrigger>
+                        <WithTooltip title={<InactiveReasonMessage reason={inactiveReason}/>}>
+                            <Tag
+                                type='danger'
+                                tabIndex={0}
+                                label={<FormattedMessage defaultMessage='Inactive'/>}
+                            />
+                        </WithTooltip>
                     )}
                     {!canManage && (
-                        <OverlayTrigger
-                            placement='top'
-                            container={getPortalTarget}
-                            overlay={
-                                <Tooltip id={`read-only-agent-tooltip-${agent.id}`}>
-                                    <FormattedMessage
-                                        defaultMessage='Mention @{username} in a channel or direct message to chat with this agent.'
-                                        values={{username: agent.name}}
-                                    />
-                                </Tooltip>
+                        <WithTooltip
+                            title={
+                                <FormattedMessage
+                                    defaultMessage='Mention @{username} in a channel or direct message to chat with this agent.'
+                                    values={{username: agent.name}}
+                                />
                             }
                         >
-                            <BadgeTrigger tabIndex={0}>
-                                <Tag label={<FormattedMessage defaultMessage='Read only'/>}/>
-                            </BadgeTrigger>
-                        </OverlayTrigger>
+                            <Tag
+                                tabIndex={0}
+                                label={<FormattedMessage defaultMessage='Read only'/>}
+                            />
+                        </WithTooltip>
                     )}
                     {mcpBadge}
                 </BadgesColumn>
@@ -173,6 +164,11 @@ const AgentRow = (props: Props) => {
                             icon={<PencilOutlineIcon/>}
                             label={<FormattedMessage defaultMessage='Edit'/>}
                             onClick={handleMenuItemEdit}
+                        />
+                        <DropdownMenuItem
+                            icon={<ExportVariantIcon/>}
+                            label={<FormattedMessage defaultMessage='Export'/>}
+                            onClick={handleMenuItemExport}
                         />
                         <DropdownMenuItem
                             icon={<TrashCanOutlineIcon/>}
@@ -277,12 +273,6 @@ const BadgesColumn = styled.div`
     gap: var(--spacing-xs);
     align-items: center;
     flex-shrink: 0;
-`;
-
-const BadgeTrigger = styled.span`
-    display: inline-flex;
-    flex-shrink: 0;
-    cursor: default;
 `;
 
 const ActionsColumn = styled.div`

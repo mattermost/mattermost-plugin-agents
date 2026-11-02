@@ -10,6 +10,7 @@ import {
     mergeFixtureFiles,
     normalizeFixtureInput,
 } from './aimock-fixtures';
+import { withDeadline } from './deadline';
 
 export const AIMOCK_IMAGE =
     'ghcr.io/copilotkit/aimock:1.31.0@sha256:288f6698ff2f3c97eb422dd84a865cd5e610041ee096a36bee7aa4768c33a8ca';
@@ -274,7 +275,7 @@ export class AIMockContainer {
 
         const fixturesDir = this.ensureFixturesDir();
 
-        this.container = await new GenericContainer(AIMOCK_IMAGE)
+        this.container = await withDeadline('Starting the aimock container', 5 * 60000, () => new GenericContainer(AIMOCK_IMAGE)
             .withExposedPorts(AIMOCK_PORT)
             .withNetwork(this.network)
             .withNetworkAliases(AIMOCK_NETWORK_ALIAS)
@@ -296,7 +297,8 @@ export class AIMockContainer {
             })
             .withCommand(this.buildCommand())
             .withWaitStrategy(Wait.forHttp('/ready', AIMOCK_PORT))
-            .start();
+            .withStartupTimeout(120000)
+            .start());
     }
 }
 

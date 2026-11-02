@@ -1,4 +1,5 @@
-import { test, expect, type BrowserContext, type Page, type Locator } from '@playwright/test';
+import { expect, type BrowserContext, type Page, type Locator } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { expandToolActivity } from 'helpers/llmbot-post';
 import { MattermostPage } from 'helpers/mm';
@@ -101,58 +102,57 @@ async function clickConnect(context: BrowserContext, card: Locator): Promise<{ s
     return { signInWindow: await signInWindow, authorizeURL: new URL((await authorizeRequest).url()) };
 }
 
-test.describe('MCP connection requests (Mocked LLM)', () => {
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        mattermost = await RunSystemConsoleContainer({
-            // mentionBot @-mentions the agent, which routes through the mention path.
-            enableChannelMentionToolCalling: true,
-            services: [
-                {
-                    id: 'mock-service',
-                    name: 'Mock Service',
-                    type: 'openaicompatible',
-                    apiKey: 'mock',
-                    apiURL: 'http://openai:8080',
-                    defaultModel: 'gpt-mock',
-                    useResponsesAPI: false,
-                },
-            ],
-            bots: [
-                {
-                    id: 'tool-test-bot',
-                    name: 'toolbot',
-                    displayName: 'Tool Test Bot',
-                    serviceID: 'mock-service',
-                    customInstructions: '',
-                    disableTools: false,
-                    mcpDynamicToolLoading: false,
-                    enabledNativeTools: [],
-                },
-            ],
-            mcp: {
-                enabled: true,
-                enablePluginServer: true,
-                embeddedServer: { enabled: true },
-                idleTimeoutMinutes: 30,
-                servers: [
-                    {
-                        name: MOCK_OAUTH_SERVER_NAME,
-                        enabled: true,
-                        baseURL: MOCK_OAUTH_SERVER_URL,
-                        description: adminDescription,
-                        clientID: 'test-client-id',
-                        clientSecret: 'test-client-secret',
-                    },
-                ],
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunSystemConsoleContainer({
+        // mentionBot @-mentions the agent, which routes through the mention path.
+        enableChannelMentionToolCalling: true,
+        services: [
+            {
+                id: 'mock-service',
+                name: 'Mock Service',
+                type: 'openaicompatible',
+                apiKey: 'mock',
+                apiURL: 'http://openai:8080',
+                defaultModel: 'gpt-mock',
+                useResponsesAPI: false,
             },
-        });
-        openAIMock = await RunOpenAIMocks(mattermost.network);
-    });
+        ],
+        bots: [
+            {
+                id: 'tool-test-bot',
+                name: 'toolbot',
+                displayName: 'Tool Test Bot',
+                serviceID: 'mock-service',
+                customInstructions: '',
+                disableTools: false,
+                mcpDynamicToolLoading: false,
+                enabledNativeTools: [],
+            },
+        ],
+        mcp: {
+            enabled: true,
+            enablePluginServer: true,
+            embeddedServer: { enabled: true },
+            idleTimeoutMinutes: 30,
+            servers: [
+                {
+                    name: MOCK_OAUTH_SERVER_NAME,
+                    enabled: true,
+                    baseURL: MOCK_OAUTH_SERVER_URL,
+                    description: adminDescription,
+                    clientID: 'test-client-id',
+                    clientSecret: 'test-client-secret',
+                },
+            ],
+        },
+    }));
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
 
-    test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
+test.describe('MCP connection requests (Mocked LLM)', () => {
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test('the card offers Connect and Skip, and skipping lets the agent continue without the server', async ({ page }) => {

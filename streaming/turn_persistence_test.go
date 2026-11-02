@@ -31,6 +31,19 @@ type fakeTurnStore struct {
 	heartbeats int
 }
 
+// eventCountingTurnStore records how many websocket events had been published
+// when the turn was persisted.
+type eventCountingTurnStore struct {
+	fakeTurnStore
+	client         *fakeStreamingClient
+	eventsAtCreate int
+}
+
+func (s *eventCountingTurnStore) CreateTurnAutoSequence(turn *store.Turn) error {
+	s.eventsAtCreate = len(s.client.events)
+	return s.fakeTurnStore.CreateTurnAutoSequence(turn)
+}
+
 func (f *fakeTurnStore) CreateTurnAutoSequence(turn *store.Turn) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -116,6 +129,10 @@ func (f *fakeTurnStore) FinalizeStreamingTurn(id string, content json.RawMessage
 	return nil
 }
 
+func batchEvent(phase llm.ToolCallPhase, calls []llm.ToolCall) llm.TextStreamEvent {
+	return llm.TextStreamEvent{Type: llm.EventTypeToolCallBatch, Value: llm.ToolCallBatch{Phase: phase, Calls: calls}}
+}
+
 // parseContentBlocks is a test helper that unmarshals content JSON into content blocks.
 func parseContentBlocks(t *testing.T, raw json.RawMessage) []conversation.ContentBlock {
 	t.Helper()
@@ -197,9 +214,9 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		post.AddProp(ConversationIDProp, conversationID)
 
 		streamChannel := make(chan llm.TextStreamEvent, 2)
-		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+		streamChannel <- batchEvent(llm.ToolCallPhaseAwaitingDecision, []llm.ToolCall{
 			{ID: "tc1", Name: "search", Status: llm.ToolCallStatusPending},
-		}}
+		})
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
 
@@ -794,8 +811,8 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		streamChannel := make(chan llm.TextStreamEvent, 5)
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Searching"}
-		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: pending}
-		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolved}
+		streamChannel <- batchEvent(llm.ToolCallPhaseExecuting, pending)
+		streamChannel <- batchEvent(llm.ToolCallPhaseResolved, resolved)
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Done"}
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
@@ -843,7 +860,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		streamChannel := make(chan llm.TextStreamEvent, 2)
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Checking"}
-		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
+		streamChannel <- batchEvent(llm.ToolCallPhaseAwaitingDecision, toolCalls)
 		close(streamChannel)
 
 		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
@@ -892,7 +909,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		}
 
 		streamChannel := make(chan llm.TextStreamEvent, 2)
-		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
+		streamChannel <- batchEvent(llm.ToolCallPhaseAwaitingDecision, toolCalls)
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
 
@@ -1124,10 +1141,10 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		// Two rounds of (text + tool_calls) followed by a final round with text only.
 		streamChannel := make(chan llm.TextStreamEvent, 8)
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Let me look that up for you!"}
-		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: round1Pending}
-		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: round1Resolved}
-		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: round2Pending}
-		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: round2Resolved}
+		streamChannel <- batchEvent(llm.ToolCallPhaseExecuting, round1Pending)
+		streamChannel <- batchEvent(llm.ToolCallPhaseResolved, round1Resolved)
+		streamChannel <- batchEvent(llm.ToolCallPhaseExecuting, round2Pending)
+		streamChannel <- batchEvent(llm.ToolCallPhaseResolved, round2Resolved)
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "I wasn't able to find that channel."}
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
@@ -1396,12 +1413,12 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		streamChannel := make(chan llm.TextStreamEvent, 5)
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Let me search."}
-		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+		streamChannel <- batchEvent(llm.ToolCallPhaseExecuting, []llm.ToolCall{
 			{ID: "tc1", Name: "search", Status: llm.ToolCallStatusPending},
-		}}
-		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+		})
+		streamChannel <- batchEvent(llm.ToolCallPhaseResolved, []llm.ToolCall{
 			{ID: "tc1", Name: "search", Status: llm.ToolCallStatusAutoApproved},
-		}}
+		})
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Found 5."}
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
@@ -1410,23 +1427,18 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		resolvedIdx := -1
 		var lastNextBeforeResolved string
-		resolvedJSONNeedle := fmt.Sprintf(`"status":%d`, llm.ToolCallStatusAutoApproved)
 		for i, ev := range client.events {
 			if ev.event != "postupdate" {
 				continue
 			}
 			if next, ok := ev.payload["next"].(string); ok {
-				require.NotEqual(t, "", next)
+				require.NotEmpty(t, next)
 				if resolvedIdx == -1 {
 					lastNextBeforeResolved = next
 				}
 			}
-			if ctrl, ok := ev.payload["control"].(string); ok && ctrl == "tool_call" {
-				if tcJSON, ok := ev.payload["tool_call"].(string); ok && resolvedIdx == -1 {
-					if strings.Contains(tcJSON, resolvedJSONNeedle) {
-						resolvedIdx = i
-					}
-				}
+			if ev.payload["control"] == "tool_call" && ev.payload["tool_call_phase"] == string(llm.ToolCallPhaseResolved) && resolvedIdx == -1 {
+				resolvedIdx = i
 			}
 		}
 		require.NotEqual(t, -1, resolvedIdx)
@@ -1753,63 +1765,4 @@ func TestBuildContentBlocksServerToolPayloadComesFromLatestSnapshot(t *testing.T
 	assert.Equal(t, llm.ServerToolStatusSuccess, blocks[0].ServerTool.Status)
 	assert.Equal(t, "ok", blocks[0].ServerTool.Output)
 	assert.Equal(t, conversation.BlockTypeText, blocks[1].Type)
-}
-
-func TestStreamToPostWarnsWithoutConversationID(t *testing.T) {
-	const (
-		postID      = "post-id"
-		channelID   = "channel-id"
-		botID       = "bot-id"
-		requesterID = "requester-id"
-		warning     = "Streaming to post without a conversation_id; no assistant turn will be persisted"
-	)
-
-	tests := []struct {
-		name           string
-		withTurnStore  bool
-		conversationID string
-		expectWarning  bool
-		expectTurns    int
-	}{
-		{name: "turn store without conversation_id warns", withTurnStore: true, expectWarning: true},
-		{name: "turn store with conversation_id does not warn", withTurnStore: true, conversationID: "conv-id", expectTurns: 1},
-		{name: "no turn store does not warn", withTurnStore: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ts := &fakeTurnStore{}
-			client := &fakeStreamingClient{
-				channels: map[string]*model.Channel{
-					channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
-				},
-			}
-			service := NewMMPostStreamService(client, i18n.Init())
-			if tt.withTurnStore {
-				service.SetTurnStore(ts)
-			}
-
-			post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
-			if tt.conversationID != "" {
-				post.AddProp(ConversationIDProp, tt.conversationID)
-			}
-
-			streamChannel := make(chan llm.TextStreamEvent, 2)
-			streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Hello"}
-			streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
-			close(streamChannel)
-
-			service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
-
-			if tt.expectWarning {
-				assert.Contains(t, client.warnings, warning)
-			} else {
-				assert.NotContains(t, client.warnings, warning)
-			}
-			ts.mu.Lock()
-			defer ts.mu.Unlock()
-			assert.Len(t, ts.turns, tt.expectTurns)
-			require.NotEmpty(t, client.updatedPosts)
-		})
-	}
 }

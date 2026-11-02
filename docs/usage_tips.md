@@ -1,6 +1,6 @@
 # Agents Usage Tips and Best Practices
 
-This guide provides practical tips and best practices for getting the most out of your interactions with Mattermost Agents.
+Practical tips for working with Mattermost Agents: voice dictation, prompting techniques, best practices for AI interaction, and ways to fit agents into your team's workflow.
 
 ## Voice dictation integration
 

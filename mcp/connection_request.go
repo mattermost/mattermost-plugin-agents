@@ -85,10 +85,8 @@ func NewRequestConnectionTool(servers []llm.UnconnectedMCPServer) llm.Tool {
 // request. llmContext must be built after the user's decision so its tool
 // catalog reflects whether the connection succeeded. The result names no
 // tools: the follow-up request carries the user's rebuilt tool catalog, and
-// in channels other members can read the result. usableInConversation, when
-// set, is the filter the conversation's next request applies to tools, so the
-// result never promises tools that request will not carry.
-func ResolveConnectionRequest(input json.RawMessage, llmContext *llm.Context, usableInConversation func(llm.Tool) bool) (string, error) {
+// in channels other members can read the result.
+func ResolveConnectionRequest(input json.RawMessage, llmContext *llm.Context) (string, error) {
 	args, err := parseRequestConnectionArgs(input)
 	if err != nil {
 		return "", err
@@ -96,11 +94,8 @@ func ResolveConnectionRequest(input json.RawMessage, llmContext *llm.Context, us
 
 	result := RequestConnectionResult{Server: args.Server}
 	switch {
-	case !serverConnected(args.Server, llmContext, nil):
+	case !serverConnected(args.Server, llmContext):
 		result.Message = fmt.Sprintf("%s is still not connected for the user, so its tools are unavailable. Continue without it and do not request the connection again unless the user asks.", args.Server)
-	case !serverConnected(args.Server, llmContext, usableInConversation):
-		result.Connected = true
-		result.Message = fmt.Sprintf("The user connected %[1]s, but none of its tools can be used in this conversation. This replaces any earlier note that %[1]s is not connected; tell the user, and do not request the connection again.", args.Server)
 	default:
 		result.Connected = true
 		// Earlier tool definitions and results in the conversation still
@@ -111,6 +106,24 @@ func ResolveConnectionRequest(input json.RawMessage, llmContext *llm.Context, us
 		}
 	}
 
+	return marshalConnectionResult(result)
+}
+
+// ConnectionRequestUnusableResult builds the tool result for an accepted
+// connection request in a conversation that cannot use the server's tools,
+// such as a run nobody is present for, whether or not the user connected it.
+func ConnectionRequestUnusableResult(input json.RawMessage) (string, error) {
+	args, err := parseRequestConnectionArgs(input)
+	if err != nil {
+		return "", err
+	}
+	return marshalConnectionResult(RequestConnectionResult{
+		Server:  args.Server,
+		Message: fmt.Sprintf("None of %s's tools can be used in this conversation, whether or not the user connected it. Tell the user, and do not request the connection again.", args.Server),
+	})
+}
+
+func marshalConnectionResult(result RequestConnectionResult) (string, error) {
 	data, err := json.Marshal(result)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal connection request result: %w", err)
@@ -129,16 +142,15 @@ func ConnectionRequestDeclinedResult(input json.RawMessage) string {
 }
 
 // serverConnected reports whether server no longer needs the user's OAuth
-// and has at least one tool in the catalog that keep accepts (any tool when
-// keep is nil).
-func serverConnected(server string, llmContext *llm.Context, keep func(llm.Tool) bool) bool {
+// and has at least one tool in the catalog.
+func serverConnected(server string, llmContext *llm.Context) bool {
 	if llmContext == nil || llmContext.Tools == nil {
 		return false
 	}
 	stillNeedsAuth := slices.ContainsFunc(llmContext.Tools.GetAuthErrors(), func(authErr llm.ToolAuthError) bool {
 		return authErr.ServerName == server
 	})
-	return !stillNeedsAuth && llmContext.Tools.HasMCPToolFromOrigin(llmContext.ToolCatalog.MCPServerOrigins[server], keep)
+	return !stillNeedsAuth && llmContext.Tools.HasMCPToolFromOrigin(llmContext.ToolCatalog.MCPServerOrigins[server], nil)
 }
 
 // serverParameterDescription lists each server with its admin-written

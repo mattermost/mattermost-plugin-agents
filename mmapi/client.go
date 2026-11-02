@@ -226,3 +226,13 @@ func (m *client) UploadFile(content io.Reader, fileName, channelID string) (*mod
 func (m *client) SendEphemeralPost(userID string, post *model.Post) {
 	m.PostService.SendEphemeralPost(userID, post)
 }
+
+// IsNotFound reports whether err says the requested Mattermost object does
+// not exist, as opposed to failing to look it up.
+func IsNotFound(err error) bool {
+	if errors.Is(err, pluginapi.ErrNotFound) {
+		return true
+	}
+	appErr, ok := errors.AsType[*model.AppError](err)
+	return ok && appErr.StatusCode == http.StatusNotFound
+}

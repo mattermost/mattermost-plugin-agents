@@ -36,8 +36,10 @@ type Config struct {
 	EnableTokenUsageLogToFile       *bool                            `json:"enableTokenUsageLogToFile,omitempty"`
 	AllowedUpstreamHostnames        string                           `json:"allowedUpstreamHostnames"`
 	AllowUnsafeLinks                bool                             `json:"allowUnsafeLinks"`
+	AllowedLinkDomains              string                           `json:"allowedLinkDomains"`
 	EnableHTMLArtifacts             bool                             `json:"enableHTMLArtifacts"`
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
+	EnableAmbientAutoReply          bool                             `json:"enableAmbientAutoReply"`
 	AllowNativeWebSearchInChannels  bool                             `json:"allowNativeWebSearchInChannels"`
 	EmbeddingSearchConfig           embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
 	MCP                             MCPConfig                        `json:"mcp"`
@@ -51,6 +53,9 @@ type Config struct {
 	// key=value pairs (e.g. "Authorization=Basic ..."). It is a credential:
 	// never log it or put it in spans or audit records.
 	OpenTelemetryHeaders string `json:"openTelemetryHeaders"`
+	// AgentVersionsToKeep is how many versions of each agent's history are
+	// kept; older versions are deleted. 0 keeps every version.
+	AgentVersionsToKeep int `json:"agentVersionsToKeep"`
 }
 
 type WebSearchConfig struct {
@@ -188,6 +193,11 @@ func (c *Container) AllowUnsafeLinks() bool {
 	return c.Config().AllowUnsafeLinks
 }
 
+func (c *Container) LinkPolicy() LinkPolicy {
+	cfg := c.Config()
+	return NewLinkPolicy(cfg.AllowUnsafeLinks, cfg.AllowedLinkDomains)
+}
+
 // EnableHTMLArtifacts reports whether agent-created HTML files are rendered
 // as sandboxed interactive artifacts.
 func (c *Container) EnableHTMLArtifacts() bool {
@@ -196,6 +206,12 @@ func (c *Container) EnableHTMLArtifacts() bool {
 
 func (c *Container) EnableChannelMentionToolCalling() bool {
 	return c.Config().EnableChannelMentionToolCalling
+}
+
+// EnableAmbientAutoReply reports whether the experimental ambient channel
+// auto-reply modes may be configured and may fire.
+func (c *Container) EnableAmbientAutoReply() bool {
+	return c.Config().EnableAmbientAutoReply
 }
 
 func (c *Container) AllowNativeWebSearchInChannels() bool {

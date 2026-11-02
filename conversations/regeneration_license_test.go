@@ -34,16 +34,16 @@ func TestCheckRegenerateLicense(t *testing.T) {
 			minLevel:  enterprise.LevelProfessional,
 		},
 		{
-			name:      "meeting summary",
-			operation: llm.OperationMeetingSummary,
-			cap:       enterprise.CapMeetings,
-			minLevel:  enterprise.LevelEnterprise,
-		},
-		{
 			name:      "channel interval summary",
 			operation: llm.OperationChannelInterval,
 			cap:       enterprise.CapChannelSummarization,
 			minLevel:  enterprise.LevelProfessional,
+		},
+		{
+			name:      "meeting summary",
+			operation: llm.OperationMeetingSummary,
+			cap:       enterprise.CapMeetings,
+			minLevel:  enterprise.LevelEnterprise,
 		},
 		{
 			name:      "plain conversation post is not gated",

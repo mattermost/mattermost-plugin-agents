@@ -222,18 +222,9 @@ func (c *Channels) RegenerateAnalysis(
 		return nil, err
 	}
 
-	// Build before scrubbing: ExcludeAfterPostID needs the anchor.
-	completionRequest, err := c.convSvc.BuildCompletionRequest(conv, context, conversation.BuildOptions{
-		ExcludeAfterPostID: postID,
-		SessionID:          sessionID,
-	})
+	completionRequest, err := c.convSvc.BuildRegenerateRequest(conv, context, postID, conversation.BuildOptions{SessionID: sessionID})
 	if err != nil {
-		return nil, fmt.Errorf("failed to build completion request: %w", err)
-	}
-	completionRequest.OperationSubType = llm.SubTypeRegenerate
-
-	if err := c.convSvc.DeleteResponseTurns(conv.ID, postID); err != nil {
-		c.client.LogError("Failed to scrub prior response turns on channel analysis regen", "error", err, "conversation_id", conv.ID, "post_id", postID)
+		return nil, err
 	}
 
 	return c.runAnalysis(ctx, *completionRequest, conv.ID)

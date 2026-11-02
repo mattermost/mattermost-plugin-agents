@@ -11,6 +11,7 @@ import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {PopoverMenuTitle} from '@mattermost/compass-ui/components/popover-menu';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {disconnectMCPOAuth, getUserMCPTools, refreshUserMCPTools, updateUserToolPreferences, type UserMCPServerInfo} from '@/client';
 import {EnabledMCPTool} from '@/bots';
@@ -137,22 +138,23 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
                 <PopoverHeaderTitle>
                     <FormattedMessage defaultMessage='Tool Providers'/>
                 </PopoverHeaderTitle>
-                <IconButton
-                    size='x-small'
-                    icon={<Icon glyph={<RefreshIcon/>}/>}
-                    aria-label={refreshLabel}
-                    title={refreshLabel}
-                    loading={loading}
-                    onMouseDown={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                    }}
-                    onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        fetchServers({showLoading: true, forceRefresh: true});
-                    }}
-                />
+                <WithTooltip title={refreshLabel}>
+                    <IconButton
+                        size='x-small'
+                        icon={<Icon glyph={<RefreshIcon/>}/>}
+                        aria-label={refreshLabel}
+                        loading={loading}
+                        onMouseDown={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                        }}
+                        onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            fetchServers({showLoading: true, forceRefresh: true});
+                        }}
+                    />
+                </WithTooltip>
             </PopoverHeader>
             {loading && servers.length === 0 && (
                 <LoadingRow>

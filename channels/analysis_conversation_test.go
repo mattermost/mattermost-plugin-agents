@@ -4,6 +4,7 @@
 package channels
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -103,6 +104,15 @@ func (s *inMemoryStore) UpdateTurnContent(id string, content json.RawMessage) er
 	}
 	turn.Content = content
 	return nil
+}
+
+func (s *inMemoryStore) CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error) {
+	turn, ok := s.turns[id]
+	if !ok || !bytes.Equal(turn.Content, expected) {
+		return false, nil
+	}
+	turn.Content = content
+	return true, nil
 }
 
 func (s *inMemoryStore) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {

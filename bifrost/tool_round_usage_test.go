@@ -36,6 +36,71 @@ func responsesToolCallSSE(w http.ResponseWriter) {
 	fmt.Fprint(w, "event: response.completed\ndata: "+`{"type":"response.completed","sequence_number":3,"response":{"id":"resp_1","object":"response","status":"completed","output":[{"id":"fc_1","type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}","status":"completed"}],"usage":{"input_tokens":120,"output_tokens":30,"total_tokens":150}}}`+"\n\n")
 }
 
+// chatIDlessToolCallsSSE streams two tool calls without IDs, as some
+// OpenAI-compatible servers do, ending with finishReason or, when it is empty,
+// without a finish reason.
+func chatIDlessToolCallsSSE(finishReason string) func(http.ResponseWriter) {
+	return func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, `data: {"id":"x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"type":"function","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":null}]}`+"\n\n")
+		fmt.Fprint(w, `data: {"id":"x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"type":"function","function":{"name":"search","arguments":"{\"q\":\"x\"}"}}]},"finish_reason":null}]}`+"\n\n")
+		if finishReason != "" {
+			fmt.Fprint(w, `data: {"id":"x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"`+finishReason+`"}]}`+"\n\n")
+		}
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}
+}
+
+func TestStreamedToolCallsWithoutIDsGetUniqueIDs(t *testing.T) {
+	tests := []struct {
+		name  string
+		write func(http.ResponseWriter)
+	}{
+		{name: "tool_calls finish reason", write: chatIDlessToolCallsSSE("tool_calls")},
+		{name: "stream ends without a finish reason", write: chatIDlessToolCallsSSE("")},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				tc.write(w)
+			}))
+			defer server.Close()
+
+			service := llm.ServiceConfig{
+				ID:           "svc",
+				Type:         llm.ServiceTypeOpenAICompatible,
+				APIKey:       "key",
+				APIURL:       server.URL,
+				DefaultModel: "model",
+			}
+			lm, err := NewFromServiceConfig(service, llm.BotConfig{ID: "bot", ServiceID: service.ID}, nil)
+			require.NoError(t, err)
+			defer lm.Shutdown()
+
+			stream, err := lm.ChatCompletion(context.Background(), llm.CompletionRequest{
+				Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}},
+			})
+			require.NoError(t, err)
+
+			var toolCalls []llm.ToolCall
+			for event := range stream.Stream {
+				switch event.Type {
+				case llm.EventTypeToolCalls:
+					toolCalls = event.Value.([]llm.ToolCall)
+				case llm.EventTypeError:
+					t.Fatalf("stream error: %v", event.Value)
+				}
+			}
+
+			require.Len(t, toolCalls, 2)
+			require.Equal(t, []string{"lookup", "search"}, []string{toolCalls[0].Name, toolCalls[1].Name})
+			require.NotEmpty(t, toolCalls[0].ID)
+			require.NotEmpty(t, toolCalls[1].ID)
+			require.NotEqual(t, toolCalls[0].ID, toolCalls[1].ID)
+		})
+	}
+}
+
 func TestToolCallRoundReportsUsage(t *testing.T) {
 	tests := []struct {
 		name         string

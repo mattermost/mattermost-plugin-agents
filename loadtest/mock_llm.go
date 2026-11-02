@@ -103,7 +103,7 @@ func splitIntoChunks(text string, chunkCount int) []string {
 	if chunkCount <= 0 {
 		chunkCount = 1
 	}
-	if len(text) == 0 {
+	if text == "" {
 		return []string{""}
 	}
 	if chunkCount == 1 {
@@ -424,7 +424,7 @@ func (m *MockLLM) CountTokens(_ context.Context, request llm.CompletionRequest, 
 
 // countTextTokens approximates tokens as ~4 characters with a minimum of 1 when non-empty.
 func countTextTokens(text string) int {
-	if len(text) == 0 {
+	if text == "" {
 		return 0
 	}
 	n := max((len(text)+3)/4, 1)

@@ -1,7 +1,8 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {test, expect} from '@playwright/test';
+import {expect} from '@playwright/test';
+import {containerTest} from 'helpers/container-fixture';
 import type {Page} from '@playwright/test';
 
 import RunContainer from 'helpers/plugincontainer';
@@ -13,17 +14,17 @@ import {OpenAIMockContainer, RunOpenAIMocks} from 'helpers/openai-mock';
 const username = 'regularuser';
 const password = 'regularuser';
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
-test.beforeAll(async () => {
-    mattermost = await RunContainer();
-    openAIMock = await RunOpenAIMocks(mattermost.network);
-});
-
-test.afterAll(async () => {
-    await openAIMock.stop();
-    await mattermost.stop();
+test.beforeAll(async ({ containers }) => {
+    ({ mattermost, openAIMock } = containers);
 });
 
 async function setupTestPage(page: Page) {
@@ -60,6 +61,10 @@ test.describe('Agents RHS drag-and-drop file upload', () => {
 
         const rhs = aiPlugin.getRhsContainer();
         await expect(rhs).toBeVisible();
+
+        // The drop zone forwards files to the editor's file input and drops them if the
+        // editor is still waiting on the bot DM channel.
+        await expect(page.locator('[data-testid="rhs-file-drop-zone"] input[type="file"]')).toBeAttached({timeout: 30000});
 
         await dispatchFileDrop(
             page,

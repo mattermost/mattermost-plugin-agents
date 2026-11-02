@@ -63,8 +63,19 @@ const DefaultTitle = 'Conversation with Agents';
 
 export default function ThreadItem(props: Props) {
     const turnText = props.turnCount === 1 ? '1 message' : `${props.turnCount} messages`;
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            props.onClick();
+        }
+    };
     return (
-        <ThreadItemContainer onClick={props.onClick}>
+        <ThreadItemContainer
+            role='button'
+            tabIndex={0}
+            onClick={props.onClick}
+            onKeyDown={handleKeyDown}
+        >
             <Title>
                 <TitleText>{props.postTitle || DefaultTitle}</TitleText>
                 <LastActivityDate>

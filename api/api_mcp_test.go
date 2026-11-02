@@ -1577,3 +1577,61 @@ func TestAuditMCPOAuthDisconnect(t *testing.T) {
 		})
 	}
 }
+
+// When access policy could not be evaluated the catalog denies nothing, so
+// both tools routes must fail instead of listing servers the user may not use.
+func TestUserMCPToolsRoutesFailWhenAccessUnavailable(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name           string
+		errs           *mcp.Errors
+		denied         map[string]bool
+		expectedStatus int
+		expectedNames  []string
+	}{
+		{name: "policy evaluated", denied: map[string]bool{"https://denied.example.com": true}, expectedStatus: http.StatusOK, expectedNames: []string{"Allowed"}},
+		{name: "connection errors still list servers", errs: &mcp.Errors{Errors: []error{errors.New("dial failed")}}, denied: map[string]bool{"https://denied.example.com": true}, expectedStatus: http.StatusOK, expectedNames: []string{"Allowed"}},
+		{name: "closed manager", errs: &mcp.Errors{Errors: []error{mcp.ErrClientManagerClosed}}, expectedStatus: http.StatusServiceUnavailable},
+		{name: "invalid request", errs: &mcp.Errors{Errors: []error{mcp.ErrCatalogInvokerRequired}}, expectedStatus: http.StatusServiceUnavailable},
+	}
+	for _, tt := range tests {
+		for _, route := range []struct{ method, path string }{
+			{method: http.MethodGet, path: "/mcp/tools"},
+			{method: http.MethodPost, path: "/mcp/tools/refresh"},
+		} {
+			t.Run(tt.name+" "+route.method+" "+route.path, func(t *testing.T) {
+				e := SetupTestEnvironment(t)
+				defer e.Cleanup(t)
+				e.config.mcpConfig = mcp.Config{
+					Enabled: true,
+					Servers: []mcp.ServerConfig{
+						{Name: "Allowed", Enabled: true, BaseURL: "https://allowed.example.com"},
+						{Name: "Denied", Enabled: true, BaseURL: "https://denied.example.com"},
+					},
+				}
+				e.api.mcpClientManager = &mockMCPClientManager{mcpErrors: tt.errs, deniedOrigins: tt.denied}
+
+				request := httptest.NewRequest(route.method, route.path, nil)
+				request.Header.Add("Mattermost-User-Id", testUserID)
+				recorder := httptest.NewRecorder()
+				e.api.ServeHTTP(nil, recorder, request)
+
+				require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode, recorder.Body.String())
+				if tt.expectedStatus != http.StatusOK {
+					assert.NotContains(t, recorder.Body.String(), "allowed.example.com")
+					assert.NotContains(t, recorder.Body.String(), "denied.example.com")
+					return
+				}
+				var response UserMCPToolsResponse
+				require.NoError(t, json.NewDecoder(recorder.Body).Decode(&response))
+				names := []string{}
+				for _, s := range response.Servers {
+					names = append(names, s.Name)
+				}
+				assert.Equal(t, tt.expectedNames, names)
+			})
+		}
+	}
+}
