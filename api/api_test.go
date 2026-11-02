@@ -961,7 +961,6 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		nil,
 		nil,
 		nil,
-		nil,
 		cfg,
 		askForEveryTool,
 	)
