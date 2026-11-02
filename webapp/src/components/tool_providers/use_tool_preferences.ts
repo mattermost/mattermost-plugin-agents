@@ -118,7 +118,9 @@ const load = (): Promise<void> => {
     const promise = (async () => {
         try {
             const prefs = await getUserToolPreferences();
-            if (id === generation) {
+
+            // A save still in flight may postdate what the server answered; its result decides.
+            if (id === generation && !saving) {
                 saved = prefs.disabled_servers || [];
                 set({status: 'ready', disabledServers: saved});
             }

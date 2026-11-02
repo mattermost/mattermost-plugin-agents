@@ -358,6 +358,32 @@ describe('useToolProviders', () => {
         expect(result.current.prefs.disabledServers).toEqual(serverList);
     });
 
+    test('a reload while a toggle saves does not bring back the list from before the toggle', async () => {
+        let finishSave: () => void = () => null;
+        mockUpdateUserToolPreferences.mockImplementationOnce((prefs) => new Promise((resolve) => {
+            finishSave = () => resolve(prefs);
+        }));
+        const {result} = renderHook(() => useToolProviders(bot));
+        await waitFor(() => expect(result.current.prefs.status).toBe('ready'));
+
+        let saved: Promise<boolean> = Promise.resolve(false);
+        act(() => {
+            saved = result.current.toggle(initialServer.serverOrigin, false);
+        });
+
+        // Another chat's tools control mounts and reloads; the server has not applied the save yet.
+        renderHook(() => useToolProviders({...bot, id: 'bot2'} as LLMBot));
+        await waitFor(() => expect(mockGetUserToolPreferences).toHaveBeenCalledTimes(2));
+        await act(async () => null);
+        expect(result.current.prefs.disabledServers).toEqual([initialServer.serverOrigin]);
+
+        await act(async () => {
+            finishSave();
+            await saved;
+        });
+        expect(result.current.prefs.disabledServers).toEqual([initialServer.serverOrigin]);
+    });
+
     test('a toggle made while another saves is saved next, with both changes', async () => {
         mockUpdateUserToolPreferences.mockImplementation(async (prefs) => prefs);
         const {result} = renderHook(() => useToolProviders(bot));
