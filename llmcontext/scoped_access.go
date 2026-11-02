@@ -305,20 +305,24 @@ func (b *Builder) scopedAccessTools(ctx stdcontext.Context, bot *bots.Bot, viewe
 	return tools, nil
 }
 
-// scopedBuiltInTools reports the built-in tools that reach outside Mattermost,
-// which a scoped run gets only when the allowlist names them.
+// scopedBuiltInTools reports the built-in tools a scoped run gets. Those that
+// reach outside Mattermost are opt-in: the run gets them only when the
+// allowlist names them. The rest (replying with files, asking the user a
+// question, waiting for async work) are always offered. The provider is asked
+// for a typical channel turn, since some tools depend on the turn.
 func (b *Builder) scopedBuiltInTools(bot *bots.Bot, allowlist []llm.EnabledMCPTool, seen map[string]bool) []ScopedAccessTool {
-	var rows []ScopedAccessTool
-	var optIn []llm.Tool
+	var provided []llm.Tool
 	if b.toolProvider != nil {
-		for _, tool := range b.toolProvider.GetTools(bot, llm.NewContext()) {
-			if tool.ScopedOptIn {
-				optIn = append(optIn, tool)
-			}
-		}
+		turn := llm.NewContext()
+		turn.ToolCatalog.ResponseFilesSupported = true
+		turn.ToolCatalog.InteractiveUserPresent = true
+		turn.RequestingUser = &model.User{}
+		provided = b.toolProvider.GetTools(bot, turn)
 	}
-	offered := llm.FilterScopedOptInTools(optIn, allowlist)
-	for _, tool := range optIn {
+	offered := llm.FilterScopedOptInTools(provided, allowlist)
+
+	var rows []ScopedAccessTool
+	for _, tool := range provided {
 		row := ScopedAccessTool{ServerOrigin: llm.BuiltinToolsOrigin, ServerKind: mcp.ServerKindBuiltin, Name: tool.Name}
 		row.Offered = slices.ContainsFunc(offered, func(t llm.Tool) bool { return t.Name == tool.Name })
 		if !row.Offered {
@@ -331,7 +335,7 @@ func (b *Builder) scopedBuiltInTools(bot *bots.Bot, allowlist []llm.EnabledMCPTo
 		if llm.NormalizeMCPServerOrigin(entry.ServerOrigin) != llm.BuiltinToolsOrigin {
 			continue
 		}
-		if slices.ContainsFunc(optIn, func(t llm.Tool) bool { return t.Name == entry.ToolName }) {
+		if slices.ContainsFunc(provided, func(t llm.Tool) bool { return t.Name == entry.ToolName }) {
 			continue
 		}
 		key := llm.BuiltinToolsOrigin + "\x00" + entry.ToolName

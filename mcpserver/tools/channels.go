@@ -440,7 +440,8 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 // lookupChannelRole resolves the requesting user's role in a channel for display.
 // Returns "admin", "guest", "member", "not_member", or "" if the role cannot be determined.
 func (p *MattermostToolProvider) lookupChannelRole(ctx context.Context, client *model.Client4, channelID, userID string) string {
-	if userID == "" {
+	// A scoped session never has a membership to look up.
+	if userID == "" || runsScoped(ctx) {
 		return ""
 	}
 	member, resp, err := client.GetChannelMember(ctx, channelID, userID, "")
@@ -646,8 +647,10 @@ func (p *MattermostToolProvider) tryFindChannelByName(ctx context.Context, clien
 		// Search within specific team - should only return one result
 		channel, resp, err := client.GetChannelByName(ctx, name, teamID, "")
 		if err != nil {
-			// Check if it's a 404 (not found) - this is not a technical error
-			if resp != nil && resp.StatusCode == 404 {
+			// A missing channel is not a technical error. A scoped session
+			// gets the same refusal for a missing channel as for one out of
+			// scope, so either way the caller moves on to the next lookup.
+			if (resp != nil && resp.StatusCode == 404) || isOutOfScopeError(err) {
 				return []*model.Channel{}, nil
 			}
 			// Real error (network, auth, etc.)
@@ -996,10 +999,15 @@ func (p *MattermostToolProvider) toolListTeamChannels(mcpContext *MCPToolContext
 	if err != nil {
 		return "", fmt.Errorf("error fetching public channels: %w", err)
 	}
-	private, _, err := client.GetPrivateChannelsForTeam(ctx, args.TeamID, page, perPage, "")
-	if err != nil {
-		// Private channels require additional permission; degrade gracefully.
-		p.logger.Warn("failed to fetch private channels", "error", err)
+	var private []*model.Channel
+	// The private channel listing is a membership route, which a scoped
+	// session cannot use.
+	if !runsScoped(ctx) {
+		private, _, err = client.GetPrivateChannelsForTeam(ctx, args.TeamID, page, perPage, "")
+		if err != nil {
+			// Private channels require additional permission; degrade gracefully.
+			p.logger.Warn("failed to fetch private channels", "error", err)
+		}
 	}
 
 	channels := make([]*model.Channel, 0, len(public)+len(private))

@@ -113,9 +113,12 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 
 	// Get member count
 	var memberCount int64 = -1
-	teamStats, _, err := client.GetTeamStats(ctx, team.Id, "")
-	if err == nil {
-		memberCount = teamStats.TotalMemberCount
+	// Team stats are not available to a scoped session.
+	if !runsScoped(ctx) {
+		teamStats, _, statsErr := client.GetTeamStats(ctx, team.Id, "")
+		if statsErr == nil {
+			memberCount = teamStats.TotalMemberCount
+		}
 	}
 
 	// Format the response

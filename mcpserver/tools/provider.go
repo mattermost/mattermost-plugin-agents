@@ -377,11 +377,18 @@ const scopedOutOfScopeErrorID = "api.context.scoped_session_out_of_scope"
 const scopedOutOfScopeMessage = "Error: not found, or not accessible in this agent's scope"
 
 func toolErrorText(err error) string {
-	var appErr *model.AppError
-	if (errors.As(err, &appErr) && strings.HasPrefix(appErr.Id, scopedOutOfScopeErrorID)) || strings.Contains(err.Error(), scopedOutOfScopeErrorID) {
+	if isOutOfScopeError(err) {
 		return scopedOutOfScopeMessage
 	}
 	return "Error: " + err.Error()
+}
+
+// isOutOfScopeError reports whether err is the server's answer to a request a
+// scoped session may not make, which is also its answer to one for something
+// that does not exist.
+func isOutOfScopeError(err error) bool {
+	var appErr *model.AppError
+	return (errors.As(err, &appErr) && strings.HasPrefix(appErr.Id, scopedOutOfScopeErrorID)) || strings.Contains(err.Error(), scopedOutOfScopeErrorID)
 }
 
 // authenticatedClientAndUserID returns the authenticated client and, when the

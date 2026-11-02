@@ -74,7 +74,8 @@ func scopedAccessEnvironment(t *testing.T, cfg llm.BotConfig) *TestEnvironment {
 	catalog := &scopedBridgeCatalog{ClientManager: manager, tools: scopedAccessCatalog()}
 	webSearch := llm.Tool{Name: "WebSearch", ScopedOptIn: true}
 	fetchSource := llm.Tool{Name: "WebSearchFetchSource", ScopedOptIn: true}
-	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(e.client, &testLLMContextToolProvider{tools: []llm.Tool{webSearch, fetchSource}}, catalog, scopedBridgeConfig{channelToolCalling: true})
+	nativeTools := []llm.Tool{{Name: "CreateFile"}, {Name: "AskUserQuestion"}, {Name: "wait_for_async_work"}}
+	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(e.client, &testLLMContextToolProvider{tools: append([]llm.Tool{webSearch, fetchSource}, nativeTools...)}, catalog, scopedBridgeConfig{channelToolCalling: true})
 
 	botUserID := model.NewId()
 	cfg.BotUserID = botUserID
@@ -237,6 +238,9 @@ func TestScopedAccessReport(t *testing.T) {
 				{scopedAccessWiki, llm.MCPServerToolWildcard}:    "not_named",
 				{llm.BuiltinToolsOrigin, "WebSearch"}:            "",
 				{llm.BuiltinToolsOrigin, "WebSearchFetchSource"}: "not_opted_in",
+				{llm.BuiltinToolsOrigin, "CreateFile"}:           "",
+				{llm.BuiltinToolsOrigin, "AskUserQuestion"}:      "",
+				{llm.BuiltinToolsOrigin, "wait_for_async_work"}:  "",
 			}, tools)
 			assert.Equal(t, map[toolKey]bool{
 				{mcp.EmbeddedClientKey, "read_channel"}:          true,
@@ -248,6 +252,9 @@ func TestScopedAccessReport(t *testing.T) {
 				{scopedAccessWiki, llm.MCPServerToolWildcard}:    false,
 				{llm.BuiltinToolsOrigin, "WebSearch"}:            true,
 				{llm.BuiltinToolsOrigin, "WebSearchFetchSource"}: false,
+				{llm.BuiltinToolsOrigin, "CreateFile"}:           true,
+				{llm.BuiltinToolsOrigin, "AskUserQuestion"}:      true,
+				{llm.BuiltinToolsOrigin, "wait_for_async_work"}:  true,
 			}, offered)
 		})
 	}
@@ -292,6 +299,6 @@ func TestScopedAccessReportBlockers(t *testing.T) {
 	assert.False(t, report.Active)
 	assert.Equal(t, []string{"service_account_off"}, report.Blockers)
 	for _, tool := range report.Tools {
-		assert.Equal(t, tool.ServerOrigin == llm.BuiltinToolsOrigin && tool.Name == "WebSearch", tool.Offered, "an agent without service accounts has no MCP catalog: %s", tool.Name)
+		assert.Equal(t, tool.ServerOrigin == llm.BuiltinToolsOrigin && tool.Name != "WebSearchFetchSource", tool.Offered, "an agent without service accounts has no MCP catalog: %s", tool.Name)
 	}
 }

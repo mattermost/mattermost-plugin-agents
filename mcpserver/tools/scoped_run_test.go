@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
@@ -22,8 +23,14 @@ import (
 // scopedServer answers like a Mattermost server does a scoped session: the
 // lookups a scoped run may make succeed, and anything else, such as the
 // bot's own team and channel memberships, is refused.
-func scopedServer(t *testing.T, team *model.Team, channel *model.Channel) *httptest.Server {
+//
+// The returned func lists the requests that were refused. A scoped run should
+// make none: a refusal is either a route that always fails or a lookup that
+// should have been skipped.
+func scopedServer(t *testing.T, team *model.Team, channel *model.Channel) (*httptest.Server, func() []string) {
 	t.Helper()
+	var mu sync.Mutex
+	var refused []string
 	write := func(w http.ResponseWriter, v any) {
 		w.Header().Set("Content-Type", "application/json")
 		assert.NoError(t, json.NewEncoder(w).Encode(v))
@@ -40,17 +47,30 @@ func scopedServer(t *testing.T, team *model.Team, channel *model.Channel) *httpt
 	})
 	mux.HandleFunc("GET /api/v4/teams/{team}/channels/name/{name}", func(w http.ResponseWriter, r *http.Request) {
 		if r.PathValue("name") != channel.Name {
-			http.Error(w, "not found", http.StatusNotFound)
+			http.Error(w, scopedRefusal, http.StatusForbidden)
 			return
 		}
 		write(w, channel)
 	})
-	mux.HandleFunc("GET /api/v4/teams/name/{name}", func(w http.ResponseWriter, r *http.Request) {
-		if !strings.EqualFold(r.PathValue("name"), team.Name) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
+	mux.HandleFunc("GET /api/v4/channels/{id}/stats", func(w http.ResponseWriter, r *http.Request) {
+		write(w, &model.ChannelStats{ChannelId: channel.Id, MemberCount: 3})
+	})
+	mux.HandleFunc("GET /api/v4/teams/{first}/{second}", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.PathValue("first") == "name":
+			if !strings.EqualFold(r.PathValue("second"), team.Name) {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			write(w, team)
+		case r.PathValue("second") == "channels":
+			write(w, []*model.Channel{channel})
+		default:
+			mu.Lock()
+			refused = append(refused, r.Method+" "+r.URL.Path)
+			mu.Unlock()
+			http.Error(w, scopedRefusal, http.StatusForbidden)
 		}
-		write(w, team)
 	})
 	mux.HandleFunc("POST /api/v4/teams/search", func(w http.ResponseWriter, r *http.Request) {
 		write(w, []*model.Team{team})
@@ -68,12 +88,21 @@ func scopedServer(t *testing.T, team *model.Team, channel *model.Channel) *httpt
 		write(w, model.NewPostList())
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, `{"id":"api.context.scoped_session_out_of_scope.app_error"}`, http.StatusForbidden)
+		mu.Lock()
+		refused = append(refused, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		http.Error(w, scopedRefusal, http.StatusForbidden)
 	})
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
-	return server
+	return server, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), refused...)
+	}
 }
+
+const scopedRefusal = `{"id":"api.context.scoped_session_out_of_scope.app_error","message":"route not allowed for scoped sessions","status_code":403}`
 
 func scopedContext(t *testing.T) context.Context {
 	t.Helper()
@@ -112,6 +141,20 @@ func TestScopedRunLooksThingsUpByName(t *testing.T) {
 			want: []string{"search_channels", "list_team_channels"},
 		},
 		{
+			name: "get_channel_info by ID skips the membership lookup",
+			run: func(p *MattermostToolProvider, mcpCtx *MCPToolContext) (string, error) {
+				return p.toolGetChannelInfo(mcpCtx, GetChannelInfoArgs{ChannelID: channel.Id})
+			},
+			want: []string{channel.Id},
+		},
+		{
+			name: "list_team_channels skips the private channel listing",
+			run: func(p *MattermostToolProvider, mcpCtx *MCPToolContext) (string, error) {
+				return p.toolListTeamChannels(mcpCtx, ListTeamChannelsArgs{TeamID: team.Id})
+			},
+			want: []string{channel.Id},
+		},
+		{
 			name: "get_team_info by URL name",
 			run: func(p *MattermostToolProvider, mcpCtx *MCPToolContext) (string, error) {
 				return p.toolGetTeamInfo(mcpCtx, GetTeamInfoArgs{TeamName: "eng"})
@@ -135,7 +178,7 @@ func TestScopedRunLooksThingsUpByName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := scopedServer(t, team, channel)
+			server, refused := scopedServer(t, team, channel)
 			provider := newTestProvider(t, server.URL)
 			mcpCtx := &MCPToolContext{Client: newTestClient(server.URL), Ctx: scopedContext(t), UserID: model.NewId()}
 
@@ -145,6 +188,7 @@ func TestScopedRunLooksThingsUpByName(t *testing.T) {
 				assert.Contains(t, out, want)
 			}
 			assert.NotContains(t, out, "get_user_channels", "a scoped run cannot call get_user_channels")
+			assert.Empty(t, refused(), "a scoped run skips lookups that are always refused")
 		})
 	}
 }
