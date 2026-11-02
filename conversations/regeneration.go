@@ -219,7 +219,7 @@ var regenerateReservationRenewInterval = streaming.StaleStreamThreshold / 3
 // reserveRegenerate atomically claims postID for one regenerate across all
 // nodes, so two concurrent requests can't both pass the live-stream check
 // before either stream has started. The claim is renewed until released, and
-// its TTL frees it if this node dies. The returned context is cancelled if the
+// its TTL frees it if this node dies. The returned context is canceled if the
 // claim is lost, so the run stops before another node's can overlap it.
 func (c *Conversations) reserveRegenerate(ctx stdcontext.Context, postID string) (stdcontext.Context, func(), error) {
 	key := regenerateReservationKeyPrefix + postID

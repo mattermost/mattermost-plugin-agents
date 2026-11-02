@@ -483,7 +483,7 @@ func TestHandleRegenerate(t *testing.T) {
 					select {
 					case <-ctx.Done():
 					case <-time.After(5 * time.Second):
-						assert.Fail(t, "a run that lost its reservation must be cancelled")
+						assert.Fail(t, "a run that lost its reservation must be canceled")
 					}
 				}
 			}
