@@ -131,5 +131,6 @@ Read these only when the trigger applies:
 - Working inside `mcp/` (MCP client, OAuth, tool caches): `mcp/AGENTS.md`.
 - Working inside `webapp/`: `webapp/AGENTS.md`.
 - Writing or editing Playwright specs in `e2e/`: `e2e/AGENTS.md`.
+- Writing or editing the user, admin and developer docs in `docs/`: `docs/AGENTS.md`.
 - Configuring providers, agents, or the admin UI: `docs/admin_guide.md` (settings map and links to the task pages).
 - When working on prompt evals or modifying the eval harness: `cmd/evalviewer/README.md`.
