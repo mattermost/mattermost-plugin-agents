@@ -22,6 +22,11 @@ declare global {
             browserHistory?: {
                 push: (path: string) => void;
             };
+
+            // Absent on servers that predate it.
+            isolatedFrames?: {
+                register: (frame: HTMLIFrameElement, handler: (event: MessageEvent) => void) => () => void;
+            };
         };
     }
 }
