@@ -7,7 +7,6 @@ import {useStore} from 'react-redux';
 import {GlobalState} from '@mattermost/types/store';
 
 import {renameAIThread} from '@/hooks/use_agent_threads';
-import {invalidateConversation} from '@/hooks/use_conversation';
 
 import AgentChatRenameDialog from './agent_chat_rename_dialog';
 
@@ -34,15 +33,12 @@ export function useChatActions(): ChatActions {
     const startRename = useCallback((target: ChatActionTarget) => setRenameTarget(target), []);
     const closeRename = useCallback(() => setRenameTarget(null), []);
 
-    // The stored thread list shows the new title at once (and restores the old one if the rename
-    // fails); the conversation itself is reloaded for views that read it. A failure rejects, so the
-    // dialog stays open with its error.
+    // A failure rejects, so the dialog stays open with its error.
     const submitRename = useCallback(async (title: string) => {
         if (!renameTarget) {
             return;
         }
         await renameAIThread(store, renameTarget.conversationId, title);
-        invalidateConversation(renameTarget.conversationId);
         setRenameTarget(null);
     }, [renameTarget, store]);
 

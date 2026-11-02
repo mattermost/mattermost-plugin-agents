@@ -95,23 +95,19 @@ export function refreshAIThreadsIfInUse(store: ThreadsStore): Promise<void> {
     return fetchAIThreads(store.dispatch);
 }
 
-const storedTitle = (state: unknown, conversationId: string) => selectAIThreads(state)?.find((t) => t.id === conversationId)?.title;
+// Shows a title the server already has. A fetch still in flight may predate it, so a fresh one
+// supersedes it.
+function applyTitle(store: ThreadsStore, conversationId: string, title: string) {
+    store.dispatch({type: AIThreadTitleSet, conversationId, title});
+    if (selectAIThreadsState(store.getState()).loading) {
+        fetchAIThreads(store.dispatch);
+    }
+}
 
-// Renames a chat, showing the new title right away. A failed rename restores the old one (unless a
-// newer title arrived meanwhile) and rejects.
+// Renames a chat; the list shows the new title once the server has it. A failed rename rejects.
 export async function renameAIThread(store: ThreadsStore, conversationId: string, title: string): Promise<void> {
-    const previous = storedTitle(store.getState(), conversationId);
-    if (typeof previous === 'string') {
-        store.dispatch({type: AIThreadTitleSet, conversationId, title});
-    }
-    try {
-        await renameConversation(conversationId, title);
-    } catch (e) {
-        if (typeof previous === 'string' && storedTitle(store.getState(), conversationId) === title) {
-            store.dispatch({type: AIThreadTitleSet, conversationId, title: previous});
-        }
-        throw e;
-    }
+    await renameConversation(conversationId, title);
+    applyTitle(store, conversationId, title);
 }
 
 // Refetches after a burst of events settles, so a busy stream of replies costs one request.
@@ -157,7 +153,7 @@ export function createAgentThreadsSync(store: {dispatch: Dispatch<UnknownAction>
             if (!conversationId || typeof data.title !== 'string') {
                 return;
             }
-            store.dispatch({type: AIThreadTitleSet, conversationId, title: data.title});
+            applyTitle(store, conversationId, data.title);
 
             // A chat the list does not have yet: fetch it.
             const threads = selectAIThreads(store.getState());
