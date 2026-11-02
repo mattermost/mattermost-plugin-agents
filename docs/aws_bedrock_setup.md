@@ -166,7 +166,7 @@ Alternatively, install via `mmctl` on the server:
 
 ## Step 3: Configure the Bedrock service
 
-1. Go to **Agents > Settings > AI services**.
+1. Go to **Agents > Settings > AI services**. In versions without the Agents **Settings** page, go to **System Console > Plugins > Agents** instead.
 2. Under **Services**, select **Add a Service**.
 3. Configure the following fields:
 

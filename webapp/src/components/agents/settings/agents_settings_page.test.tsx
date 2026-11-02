@@ -168,6 +168,37 @@ describe('AgentsSettingsPage access', () => {
         expect(screen.queryByRole('button', {name: 'Save'})).toBeNull();
     });
 
+    it('tells a user whose access lookup failed that it failed, not that they lack access', async () => {
+        (getMySettingsAccess as jest.Mock).mockRejectedValue(new Error('500'));
+        renderPage();
+
+        await screen.findByText('Failed to check your access to the Agents settings.');
+        expect(screen.queryByText("You don't have access to the Agents settings")).toBeNull();
+        expect(getPluginConfig).not.toHaveBeenCalled();
+    });
+
+    it('never asks a read-only user to confirm leaving, even when an editor adjusts the configuration on its own', async () => {
+        const block = jest.fn();
+        window.WebappUtils = {browserHistory: {push: jest.fn(), block}} as any;
+        const addEventListener = jest.spyOn(window, 'addEventListener');
+        try {
+            (getMySettingsAccess as jest.Mock).mockResolvedValue('read');
+            renderPage('services');
+            await screen.findByText('service:My Service:unsaved');
+
+            // What an editor's own effect does, such as seeding vetted tool policies.
+            act(() => {
+                mockServices.onChange?.([{id: '', name: 'Normalized'}]);
+            });
+
+            expect(block).not.toHaveBeenCalled();
+            expect(addEventListener.mock.calls.some(([type]) => type === 'beforeunload')).toBe(false);
+        } finally {
+            addEventListener.mockRestore();
+            delete window.WebappUtils;
+        }
+    });
+
     it('disables the general settings for read-only users', async () => {
         (getMySettingsAccess as jest.Mock).mockResolvedValue('read');
         renderPage('general');

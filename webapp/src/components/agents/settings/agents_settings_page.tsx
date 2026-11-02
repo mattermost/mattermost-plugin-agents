@@ -104,13 +104,18 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
         };
     }, [canView, loading, loadError, intl]);
 
+    // Editors also adjust the configuration on their own (seeding vetted tool
+    // policies, normalizing services); for a read-only viewer those changes can
+    // be neither saved nor discarded, so nothing counts as unsaved.
+    const unsaved = dirty && !readOnly;
+
     // Leaving the settings within the webapp drops unsaved changes; switching
     // sections keeps them.
-    useNavigationGuard(dirty, isSettingsPath, intl.formatMessage({defaultMessage: 'You have unsaved changes to the Agents settings. Leave without saving?'}));
+    useNavigationGuard(unsaved, isSettingsPath, intl.formatMessage({defaultMessage: 'You have unsaved changes to the Agents settings. Leave without saving?'}));
 
     // Leaving the page for another site or a reload drops unsaved changes.
     useEffect(() => {
-        if (!dirty) {
+        if (!unsaved) {
             return () => {/* nothing to remove */};
         }
         const warn = (e: BeforeUnloadEvent) => {
@@ -118,7 +123,7 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
         };
         window.addEventListener('beforeunload', warn);
         return () => window.removeEventListener('beforeunload', warn);
-    }, [dirty]);
+    }, [unsaved]);
 
     const updateConfig = useCallback((updates: Partial<PluginConfig>) => {
         if ('allowedLinkDomains' in updates) {
@@ -188,6 +193,13 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
                     aria-label={intl.formatMessage({defaultMessage: 'Loading configuration...'})}
                 />
             </LoadingContainer>
+        );
+    } else if (access.error) {
+        body = (
+            <SectionNotice
+                type='danger'
+                title={intl.formatMessage({defaultMessage: 'Failed to check your access to the Agents settings.'})}
+            />
         );
     } else if (!canView) {
         body = (

@@ -400,7 +400,7 @@ Attribute-based access control lets you restrict who can use agents, LLM service
 
 - **Agents** — set the agent's user access to **Attribute-based (access policy)** in the agent's Access tab, then author the policy there. In this mode, the agent's allow/block user and team lists are ignored; the policy is the only user-access gate. Anyone who can manage the agent — its creator, its agent admins, and users with the manage-others'-agents permission — can author the policy with the simplified (table) editor; system admins additionally get the advanced (CEL) editor.
 - **LLM services** — authored by system admins (and users with read/write [settings access](#delegate-settings-access)) in **Agents > Settings > AI services** on the service panel. They get the simplified (table) editor and the advanced (CEL) editor, the same as on the agent Access tab; Advanced is used for expressions the table can't display. A service policy restricts every agent backed by that service, on top of any per-agent restrictions. It also drives list/picker visibility for non–system-admins (see [Visibility (services and agents)](#visibility-services-and-agents)).
-- **MCP servers** — authored by system admins on the MCP **Configuration** tab (same Simple and Advanced editors as agents; Advanced is used for expressions the table can't display). Policies apply to remote servers, the built-in (embedded) Mattermost MCP server, and plugin-registered MCP servers. Users denied by an MCP server policy silently lose that server's tools; there is no notification in chat, the tools simply don't appear. Denying the built-in Mattermost server removes nearly all in-product Mattermost tools for matching users.
+- **MCP servers** — authored by system admins (and users with read/write [settings access](#delegate-settings-access)) on the MCP **Configuration** tab in **Agents > Settings > MCP servers** (same Simple and Advanced editors as agents; Advanced is used for expressions the table can't display). Policies apply to remote servers, the built-in (embedded) Mattermost MCP server, and plugin-registered MCP servers. Users denied by an MCP server policy silently lose that server's tools; there is no notification in chat, the tools simply don't appear. Denying the built-in Mattermost server removes nearly all in-product Mattermost tools for matching users.
 
 **Allow and deny semantics.** For each request the plugin evaluates the applicable policies and applies these rules:
 
@@ -424,9 +424,12 @@ Tradeoff: if a non–system-admin agent admin loses access to the agent's servic
 | Route | Who |
 |-------|-----|
 | Agent policy (read/write/delete) | Agent creator, agent admins, and users with the manage-others'-agents permission |
-| Service policy (read/write/delete) | System admins only |
-| MCP server policy (read/write/delete) | System admins only |
-| CEL helper endpoints (validation, autocomplete, test) | Anyone who can manage some agent (their own or as agent admin); system admins |
+| Service policy (read) | System admins and users with read-only or read/write [settings access](#delegate-settings-access) |
+| Service policy (write/delete) | System admins and users with read/write settings access |
+| MCP server policy (read) | System admins and users with read-only or read/write settings access |
+| MCP server policy (write/delete) | System admins and users with read/write settings access |
+| CEL helper endpoints (validation, autocomplete) | Anyone who can manage some agent (their own or as agent admin); users with read-only or read/write settings access; system admins |
+| CEL test endpoint | For agent policies, anyone who can manage the agent; for service and MCP server policies, users with read/write settings access and system admins |
 
 ## Management tasks
 
@@ -1093,7 +1096,7 @@ How each row is enforced:
 
 At every level:
 
-- Reading configuration is never gated: administrators and users always see how things are configured.
+- Reading configuration is not gated by license level. System admins and users with read-only or read/write [settings access](#delegate-settings-access) can view it; read-only views have credentials blanked.
 - Turning things off is never gated: disabling, clearing or deleting configuration for any capability is always permitted, so a workspace can tidy up state after its license level changes.
 - License changes take effect without restarting the plugin on Mattermost Server v12.0 or later. On earlier servers, request-time checks follow the new license immediately, while the set of active agents and services, semantic search, and MCP connections are re-evaluated on the next plugin configuration change or restart.
 - Requests denied for licensing reasons return HTTP 403 with a JSON body containing an actionable `error` message and a `license_required` field (`professional`, `enterprise` or `enterprise_advanced`).

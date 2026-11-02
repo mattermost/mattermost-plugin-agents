@@ -98,6 +98,7 @@ const ConsolePolicySection = (props: Props) => {
                             allowSimplified={true}
                             allowAdvanced={true}
                             allowEdit={abacLicensed && !readOnly}
+                            allowRemove={!readOnly}
                         />
                     ) : (
                         <LegacyIDNote>{legacyIDNote(resourceType)}</LegacyIDNote>
