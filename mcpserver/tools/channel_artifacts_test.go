@@ -19,11 +19,13 @@ import (
 )
 
 type fakeChannelArtifactsService struct {
-	entries    []*channelartifacts.Entry
-	view       ChannelArtifactContent
-	listErr    error
-	getErr     error
-	canSaveErr error
+	entries       []*channelartifacts.Entry
+	view          ChannelArtifactContent
+	listErr       error
+	getErr        error
+	canSaveErr    error
+	canSavePostID string
+	canSaveFileID string
 }
 
 func (f *fakeChannelArtifactsService) List(_ context.Context, _, _ string) ([]*channelartifacts.Entry, error) {
@@ -40,7 +42,9 @@ func (f *fakeChannelArtifactsService) Get(_ context.Context, _, _ string, _ bool
 	return f.view, nil
 }
 
-func (f *fakeChannelArtifactsService) CanSave(context.Context, string, string, string) error {
+func (f *fakeChannelArtifactsService) CanSave(_ context.Context, _, postID, fileID string) error {
+	f.canSavePostID = postID
+	f.canSaveFileID = fileID
 	return f.canSaveErr
 }
 
@@ -343,6 +347,11 @@ func TestToolProposeChannelArtifactUpdate(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Contains(t, result, tt.wantOK)
+			fake, ok := tt.service.(*fakeChannelArtifactsService)
+			if ok {
+				assert.Equal(t, tt.args.PostID, fake.canSavePostID)
+				assert.Equal(t, tt.args.FileID, fake.canSaveFileID)
+			}
 		})
 	}
 }

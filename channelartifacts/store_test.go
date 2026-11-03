@@ -282,6 +282,36 @@ func TestStoreMaxPerChannelAndSitewide(t *testing.T) {
 	require.NoError(t, store.Save(third, []byte("<html>c</html>"), 1024, 10, 1))
 }
 
+func TestSaveCountsArtifactsWhileTheSiteLimitIsOff(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	first := testEntry(model.NewId())
+	require.NoError(t, store.Save(first, []byte("<html>a</html>"), 1024, 10, 0))
+
+	second := testEntry(model.NewId())
+	err := store.Save(second, []byte("<html>b</html>"), 1024, 10, 1)
+	require.ErrorIs(t, err, ErrLimitReached)
+}
+
+func TestSecondPurgeDoesNotDropTheSiteCount(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	channelID := model.NewId()
+	first := testEntry(channelID)
+	second := testEntry(channelID)
+	require.NoError(t, store.Save(first, []byte("<html>a</html>"), 1024, 10, 2))
+	require.NoError(t, store.Save(second, []byte("<html>b</html>"), 1024, 10, 2))
+
+	require.NoError(t, store.Purge(first))
+	require.NoError(t, store.Purge(first))
+
+	third := testEntry(model.NewId())
+	require.NoError(t, store.Save(third, []byte("<html>c</html>"), 1024, 10, 2))
+	fourth := testEntry(model.NewId())
+	err := store.Save(fourth, []byte("<html>d</html>"), 1024, 10, 2)
+	require.ErrorIs(t, err, ErrLimitReached)
+}
+
 func TestStoreVersionsToKeepPrunesOldest(t *testing.T) {
 	kv := newMemoryKV()
 	store := NewStore(kv)

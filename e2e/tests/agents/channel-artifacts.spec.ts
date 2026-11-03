@@ -275,8 +275,8 @@ test.describe('Channel artifacts', () => {
             await expect(channelArtifactCard(channelArtifactsRHS(page), entry.id)).toBeVisible({timeout: 15000});
         }
 
-        if (bookmarksLicensed) {
-            await pinArtifactFromBookmarksMenu(page, entry);
+        const pinned = bookmarksLicensed && await pinArtifactFromBookmarksMenu(page, entry);
+        if (pinned) {
             const bookmark = page.getByTestId('channel-bookmarks-container').getByText('Bookmarked notes');
             await expect(bookmark).toBeVisible({timeout: 15000});
             await bookmark.click();

@@ -221,5 +221,9 @@ func TestPurgeChannelRemovesEveryArtifact(t *testing.T) {
 	left, err := store.List(channelID)
 	require.NoError(t, err)
 	require.Empty(t, left)
+}
+
+func TestPurgeChannelRejectsInvalidID(t *testing.T) {
+	svc := NewService(NewStore(newMemoryKV()), newMemoryKV(), allowAllMembers{})
 	require.ErrorIs(t, svc.PurgeChannel("not-an-id"), ErrInvalidInput)
 }

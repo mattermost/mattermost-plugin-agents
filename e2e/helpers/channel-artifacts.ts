@@ -181,9 +181,13 @@ export async function saveArtifactToChannel(
     return (await response.json()) as ChannelArtifactEntry;
 }
 
-/** Pins a library artifact from Bookmarks → Add channel artifact (header or bar + menu). */
-export async function pinArtifactFromBookmarksMenu(page: Page, entry: {id: string; title: string}): Promise<void> {
-    // Prefer the bar + control when the bookmarks bar is already visible.
+/**
+ * Pins a library artifact from Bookmarks → Add channel artifact.
+ * Returns false when this server has no plugin bookmark menu item, so the caller
+ * can open the artifact another way. Clicking the core Bookmarks Bar row waits
+ * until the test times out on a server that has not shipped that hook.
+ */
+export async function pinArtifactFromBookmarksMenu(page: Page, entry: {id: string; title: string}): Promise<boolean> {
     const barPlus = page.locator('#channelBookmarksPlusMenuButton, .channelBookmarksBarMenuButton').first();
     if (await barPlus.isVisible().catch(() => false)) {
         await barPlus.click();
@@ -191,15 +195,19 @@ export async function pinArtifactFromBookmarksMenu(page: Page, entry: {id: strin
         const menuButton = page.locator('button#channelHeaderDropdownButton');
         await expect(menuButton).toBeVisible({timeout: 15000});
         await menuButton.click();
-        const bookmarksSub = page.getByRole('menuitem', {name: 'Bookmarks Bar'});
-        await expect(bookmarksSub).toBeVisible({timeout: 10000});
-        await bookmarksSub.hover();
-        if (!(await page.getByRole('menuitem', {name: 'Add channel artifact'}).isVisible().catch(() => false))) {
-            await bookmarksSub.click();
+        const bookmarksSub = page.getByRole('menuitem', {name: 'Bookmarks Bar', exact: true});
+        if (!(await bookmarksSub.isVisible().catch(() => false))) {
+            await page.keyboard.press('Escape');
+            return false;
         }
+        await bookmarksSub.hover();
     }
-    const addArtifact = page.getByRole('menuitem', {name: 'Add channel artifact'});
-    await expect(addArtifact).toBeVisible({timeout: 10000});
+    const addArtifact = page.getByRole('menuitem', {name: 'Add channel artifact', exact: true});
+    const appeared = await addArtifact.waitFor({state: 'visible', timeout: 2000}).then(() => true).catch(() => false);
+    if (!appeared) {
+        await page.keyboard.press('Escape');
+        return false;
+    }
     await addArtifact.click();
 
     const picker = page.getByTestId('channel-artifact-bookmark-picker');
@@ -211,6 +219,7 @@ export async function pinArtifactFromBookmarksMenu(page: Page, entry: {id: strin
     await picker.getByTestId(`channel-artifact-bookmark-pick-${entry.id}`).click();
     expect((await bookmarkCreated).status(), 'POST /bookmarks').toBe(201);
     await expect(picker).toHaveCount(0);
+    return true;
 }
 
 /** Accepts the next native confirm() dialog (used by the RHS delete action). Register before the click. */

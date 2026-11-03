@@ -499,31 +499,29 @@ func (s *Store) Save(entry *Entry, content []byte, maxSize int64, maxPerChannel,
 		_ = s.kv.KVDelete(histKey(entry.ID))
 	}
 
-	if maxSitewide > 0 {
-		for range 8 {
-			count, oldRaw, err := s.getSiteCount()
-			if err != nil {
-				cleanup()
-				return err
-			}
-			if count >= maxSitewide {
-				cleanup()
-				return ErrLimitReached
-			}
-			if err := s.setSiteCountCAS(oldRaw, count+1); err != nil {
-				if errors.Is(err, ErrConflict) {
-					continue
-				}
-				cleanup()
-				return err
-			}
-			siteCounted = true
-			break
-		}
-		if !siteCounted {
+	for range 8 {
+		count, oldRaw, err := s.getSiteCount()
+		if err != nil {
 			cleanup()
-			return ErrConflict
+			return err
 		}
+		if maxSitewide > 0 && count >= maxSitewide {
+			cleanup()
+			return ErrLimitReached
+		}
+		if err := s.setSiteCountCAS(oldRaw, count+1); err != nil {
+			if errors.Is(err, ErrConflict) {
+				continue
+			}
+			cleanup()
+			return err
+		}
+		siteCounted = true
+		break
+	}
+	if !siteCounted {
+		cleanup()
+		return ErrConflict
 	}
 
 	for range 8 {
@@ -808,10 +806,13 @@ func (s *Store) Purge(entry *Entry) error {
 			return err
 		}
 		next := make([]string, 0, len(idx.IDs))
+		removed := false
 		for _, id := range idx.IDs {
-			if id != entry.ID {
-				next = append(next, id)
+			if id == entry.ID {
+				removed = true
+				continue
 			}
+			next = append(next, id)
 		}
 		idx.IDs = next
 		if err := s.setIndexCAS(entry.ChannelID, oldRaw, idx); err != nil {
@@ -829,7 +830,9 @@ func (s *Store) Purge(entry *Entry) error {
 			s.deleteVersionBlobs(versionRecordFromEntry(entry, true), entry.ID)
 			s.deleteVersionBlobs(versionRecordFromEntry(entry, false), entry.ID)
 		}
-		_ = s.adjustSiteCount(-1)
+		if removed {
+			_ = s.adjustSiteCount(-1)
+		}
 		return nil
 	}
 	return ErrConflict
