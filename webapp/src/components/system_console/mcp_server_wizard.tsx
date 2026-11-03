@@ -13,7 +13,7 @@ import {Spinner} from '@mattermost/compass-ui/components/spinner';
 import {getMCPServerTools, getPluginConfig} from '../../client';
 import {useIsLicensedFor} from '@/license';
 import ConsolePolicySection from '../access_control/console_policy_section';
-import {AnimatedModalShell, MODAL_SHEET_CLASS} from '../animated_modal_shell';
+import {AnimatedModalShell} from '../animated_modal_shell';
 import {useMCPConnectionEvents} from '../../hooks/use_mcp_connection_events';
 
 import {LicenseChip} from './enterprise_chip';
@@ -414,6 +414,12 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                     helpText={intl.formatMessage({defaultMessage: 'Disabled servers keep their settings, but no agent can use their tools.'})}
                 />
             )}
+            <BooleanItem
+                label={intl.formatMessage({defaultMessage: 'Direct Messages Only'})}
+                value={details.dmOnly ?? false}
+                onChange={(dmOnly) => setDetails({...details, dmOnly})}
+                helpText={intl.formatMessage({defaultMessage: 'Only allow agents to use this server in a direct message with the requesting user. In channels and group messages, agents never connect to it and tell users to message them directly instead. Use this for servers that return data some channel members may not be allowed to see.'})}
+            />
             <MCPServerDescription
                 serverID={savedServer?.id}
                 description={details.description ?? ''}
@@ -730,8 +736,10 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
             onBackdropClick={requestClose}
             zIndex={2000}
         >
-            <Sheet className={MODAL_SHEET_CLASS}>
+            <Sheet>
                 <Modal
+                    open={true}
+                    closeOnEscape={false}
                     size='large'
                     title={title}
                     onClose={requestClose}

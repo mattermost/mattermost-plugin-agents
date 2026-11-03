@@ -195,6 +195,6 @@ test.describe('Long Conversation Handling - UI Responsiveness', () => {
 
         // Should load smoothly
         const rhsContainer = page.getByTestId('mattermost-ai-rhs');
-        await expect(rhsContainer.getByText('First conv 1', { exact: true })).toBeVisible({ timeout: 10000 });
+        await expect(rhsContainer.getByTestId('post-message-text').getByText('First conv 1', { exact: true })).toBeVisible({ timeout: 10000 });
     });
 });

@@ -572,3 +572,61 @@ describe('MCPServerWizard add mode fields', () => {
         expect((screen.getByRole('button', {name: 'Auto-fill from server'}) as HTMLButtonElement).disabled).toBe(false);
     });
 });
+
+describe('MCPServerWizard direct messages only', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+    });
+
+    function dmOnlyRadio(value: 'True' | 'False') {
+        const group = screen.getByRole('radiogroup', {name: 'Direct Messages Only'});
+        const radio = Array.from(group.querySelectorAll('label')).find((label) => label.textContent === value)?.querySelector('input');
+        expect(radio).toBeTruthy();
+        return radio as HTMLInputElement;
+    }
+
+    test('a new server is available everywhere unless the admin limits it', async () => {
+        mockGetMCPServerTools.mockResolvedValue(discoveredServer({tools: [], error: 'could not connect'}));
+        const {onPersist} = renderWizard({kind: 'add'});
+        expect(dmOnlyRadio('False').checked).toBe(true);
+
+        fillDetails('Tracker', 'https://mcp.example.com/mcp');
+        fireEvent.click(screen.getByRole('button', {name: 'Save and connect'}));
+        await waitFor(() => expect(onPersist).toHaveBeenCalledTimes(1));
+        expect((onPersist.mock.calls[0] as unknown as [MCPServerConfig])[0].dmOnly).toBeFalsy();
+    });
+
+    test('turning it on saves dmOnly with the server', async () => {
+        mockGetMCPServerTools.mockResolvedValue(discoveredServer({tools: [], error: 'could not connect'}));
+        const {onPersist} = renderWizard({kind: 'add'});
+
+        fillDetails('Tracker', 'https://mcp.example.com/mcp');
+        fireEvent.click(dmOnlyRadio('True'));
+        fireEvent.click(screen.getByRole('button', {name: 'Save and connect'}));
+
+        await waitFor(() => expect(onPersist).toHaveBeenCalledTimes(1));
+        expect((onPersist.mock.calls[0] as unknown as [MCPServerConfig])[0].dmOnly).toBe(true);
+    });
+
+    test('an edit to another field keeps a server limited to direct messages', async () => {
+        const saved: MCPServerConfig = {
+            id: SERVER_ID,
+            name: 'Tracker',
+            enabled: true,
+            baseURL: 'https://mcp.example.com/mcp',
+            headers: {},
+            description: 'Issues',
+            dmOnly: true,
+            clientID: '',
+            clientSecret: '',
+        };
+        const {onPersist, onClose} = renderWizard({kind: 'edit', server: saved}, ['Tracker'], [saved]);
+
+        fireEvent.change(await screen.findByDisplayValue('Issues'), {target: {value: 'Tickets'}});
+        expect(dmOnlyRadio('True').checked).toBe(true);
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(onClose).toHaveBeenCalled());
+        expect(onPersist.mock.calls[0][0]).toEqual(expect.objectContaining({id: SERVER_ID, description: 'Tickets', dmOnly: true}));
+    });
+});
