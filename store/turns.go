@@ -430,10 +430,11 @@ func (s *Store) ClaimStaleStreamingTurn(id string, staleAfterMillis int64) (bool
 	return claimed, nil
 }
 
-// ReleaseStreamingTurnClaim returns a claimed turn to the streaming state
-// without refreshing its heartbeat, so a later sweep can retry the repair.
+// ReleaseStreamingTurnClaim returns a claimed turn to the streaming state with
+// a stale heartbeat (the claim refreshed UpdatedAt), so a later sweep or
+// regenerate can retry the repair at once instead of seeing a live stream.
 func (s *Store) ReleaseStreamingTurnClaim(id string) error {
-	query := `UPDATE LLM_Turns SET Status = $2 WHERE ID = $1 AND Status = $3`
+	query := `UPDATE LLM_Turns SET Status = $2, UpdatedAt = 0 WHERE ID = $1 AND Status = $3`
 	if _, err := s.db.Exec(query, id, TurnStatusStreaming, TurnStatusInterrupted); err != nil {
 		return fmt.Errorf("failed to release streaming turn claim: %w", err)
 	}

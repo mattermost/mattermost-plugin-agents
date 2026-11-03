@@ -252,8 +252,10 @@ func TestReleaseStreamingTurnClaim(t *testing.T) {
 	require.NoError(t, s.ReleaseStreamingTurnClaim(turn.ID))
 	assert.Equal(t, TurnStatusStreaming, getTurn(t, s, turn.ID).Status)
 
-	// Released turns are claimable again once stale.
-	ageTurn(t, s, turn.ID, 2*testStaleMillis)
+	// A released turn is not live and can be claimed again at once.
+	live, err := s.HasLiveStreamingTurn(*turn.PostID, testStaleMillis)
+	require.NoError(t, err)
+	assert.False(t, live)
 	claimed, err = s.ClaimStaleStreamingTurn(turn.ID, testStaleMillis)
 	require.NoError(t, err)
 	assert.True(t, claimed)
