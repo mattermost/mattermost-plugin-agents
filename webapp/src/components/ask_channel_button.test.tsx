@@ -5,6 +5,8 @@ import React from 'react';
 import {fireEvent, render, screen} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
+import manifest from '@/manifest';
+
 import AskChannelButton from './ask_channel_button';
 
 jest.mock('react-intl', () => {
@@ -18,17 +20,27 @@ jest.mock('react-intl', () => {
     };
 });
 
-jest.mock('react-redux', () => ({
-    useSelector: (selector: (state: unknown) => unknown) => selector({
-        entities: {
+const stateIn = (currentChannelId: string, agentDMRawView: Record<string, true> = {}) => ({
+    [`plugins-${manifest.id}`]: {bots: [{id: 'agent1'}], agentDMRawView},
+    entities: {
+        users: {currentUserId: 'me'},
+        channels: {
+            currentChannelId,
             channels: {
-                currentChannelId: 'chan1',
-                channels: {chan1: {display_name: 'Town Square'}},
-                myMembers: {chan1: {last_viewed_at: 1}},
+                chan1: {id: 'chan1', type: 'O', name: 'town-square', display_name: 'Town Square'},
+                dmAgent: {id: 'dmAgent', type: 'D', name: 'agent1__me', display_name: 'agent1'},
+                dmHuman: {id: 'dmHuman', type: 'D', name: 'human__me', display_name: 'human'},
             },
-            teams: {currentTeamId: 'team1'},
+            myMembers: {[currentChannelId]: {last_viewed_at: 1}},
         },
-    }),
+        teams: {currentTeamId: 'team1'},
+    },
+});
+
+let mockState: unknown = stateIn('chan1');
+
+jest.mock('react-redux', () => ({
+    useSelector: (selector: (state: unknown) => unknown) => selector(mockState),
     useDispatch: () => jest.fn(),
 }));
 
@@ -128,5 +140,30 @@ describe('AskChannelButton toggle', () => {
         fireEvent.click(screen.getByRole('button', {name: 'Ask Agents about this channel'}));
         expect(screen.getByRole('button', {name: 'Ask Agents about this channel'}).getAttribute('aria-pressed')).toBe('false');
         expect(screen.getByTestId('ask-channel-tooltip').getAttribute('data-title')).toBe('Ask Agents about this channel');
+    });
+});
+
+describe('AskChannelButton in DMs', () => {
+    beforeEach(() => {
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockImplementation(() => true);
+    });
+    afterEach(() => {
+        mockState = stateIn('chan1');
+    });
+
+    test.each([
+        {name: 'a channel', state: stateIn('chan1'), rendered: true},
+        {name: 'a DM with a person', state: stateIn('dmHuman'), rendered: true},
+        {name: 'an agent DM shown as the agent chat', state: stateIn('dmAgent'), rendered: false},
+        {name: 'an agent DM shown as plain messages', state: stateIn('dmAgent', {dmAgent: true}), rendered: false},
+    ])('in $name renders=$rendered', ({state, rendered}) => {
+        mockState = state;
+        render(
+            <IntlProvider locale='en'>
+                <AskChannelButton/>
+            </IntlProvider>,
+        );
+        expect(screen.queryByTestId('ask-channel-button') !== null).toBe(rendered);
     });
 });

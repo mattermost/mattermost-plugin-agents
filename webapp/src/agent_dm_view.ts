@@ -92,6 +92,13 @@ export const isAgentDMChannel = (state: MatcherState, channel: Channel | undefin
     return Boolean(channel) && !isRawView(state, channel!.id) && agentIdForDMChannel(state, channel) !== '';
 };
 
+// Whether the current channel is a DM with one of the current user's agents, in either view.
+export const isCurrentChannelAgentDM = (state: MatcherState): boolean => {
+    const channelId = state.entities.channels?.currentChannelId ?? '';
+    const channel = (channelId && state.entities.channels?.channels?.[channelId]) || null;
+    return agentIdForDMChannel(state, channel) !== '';
+};
+
 // Channel header menu: whether the current channel is an agent DM shown as `raw` (plain messages)
 // or not, i.e. whether the switch to the other view applies.
 export const isCurrentAgentDMShownAs = (state: MatcherState, raw: boolean): boolean => {
