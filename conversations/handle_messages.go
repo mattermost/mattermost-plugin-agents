@@ -382,10 +382,12 @@ func (c *Conversations) handleMentionViaConversation(
 
 	if streamErr := c.streamToExistingPost(ctx, stream, responsePost, postingUser, channel, false, func() {
 		cancelLoop()
+		c.awaitToolRunner(result.Done, responsePost.Id)
 		runSpan.End()
 		releaseRun()
 	}); streamErr != nil {
 		cancelLoop()
+		c.awaitToolRunner(result.Done, responsePost.Id)
 		return fmt.Errorf("unable to stream response: %w", streamErr)
 	}
 	runHandedOff = true
@@ -510,10 +512,12 @@ func (c *Conversations) streamDMConversation(
 
 	if streamErr := c.streamToExistingPost(ctx, stream, responsePost, postingUser, channel, false, func() {
 		dmStream.release()
+		c.awaitToolRunner(dmStream.runnerDone, responsePost.Id)
 		runSpan.End()
 		releaseRun()
 	}); streamErr != nil {
 		dmStream.release()
+		c.awaitToolRunner(dmStream.runnerDone, responsePost.Id)
 		return fmt.Errorf("unable to stream response: %w", streamErr)
 	}
 	runHandedOff = true

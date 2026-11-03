@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1502,4 +1504,50 @@ func TestToolRunner_OptsPassedThrough(t *testing.T) {
 	require.Len(t, capturedOpts, 2)
 	assert.Len(t, capturedOpts[0], 1) // WithReasoningDisabled
 	assert.Len(t, capturedOpts[1], 1)
+}
+
+// TestToolRunner_StoppedRunStartsNoFurtherTools pins that once the run is
+// canceled mid-batch, the remaining calls are not executed, and Done closes
+// when the runner exits.
+func TestToolRunner_StoppedRunStartsNoFurtherTools(t *testing.T) {
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "stop_run", Arguments: json.RawMessage(`{}`)},
+					{ID: "tc2", Name: "side_effect", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var sideEffects atomic.Int32
+	store := llm.NewToolStore()
+	store.AddTools([]llm.Tool{
+		{Name: "stop_run", Description: "test tool", Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+			cancel()
+			return "stopped", nil
+		}},
+		{Name: "side_effect", Description: "test tool", Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+			sideEffects.Add(1)
+			return "done", nil
+		}},
+	})
+
+	result, err := New(inner).Run(ctx, llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
+		Context: &llm.Context{Tools: store},
+	}, alwaysExecute, nil)
+	require.NoError(t, err)
+	for range result.Stream.Stream {
+	}
+
+	select {
+	case <-result.Done:
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "Done must close when the runner exits")
+	}
+	assert.Zero(t, sideEffects.Load(), "a stopped run must not start the rest of its batch")
 }

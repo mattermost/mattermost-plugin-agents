@@ -161,7 +161,13 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	if err != nil {
 		return fmt.Errorf("unable to get post streaming context: %w", err)
 	}
-	defer c.streamingService.FinishStreaming(post.Id)
+	// Finishing cancels the run; its tool runner must exit before the
+	// deferred release hands the post to another run.
+	var runDone <-chan struct{}
+	defer func() {
+		c.streamingService.FinishStreaming(post.Id)
+		c.awaitToolRunner(runDone, post.Id)
+	}()
 
 	// The local stream map only covers this node. A fresh heartbeat on the
 	// post's turn means a stream (and possibly its tool loop) is still running
@@ -199,7 +205,7 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		if _, ok := post.GetProp(streaming.RespondingToProp).(string); !ok {
 			return errors.New("post missing responding to prop")
 		}
-		result, err = c.regenerateViaConversation(ctx, policy, post)
+		result, runDone, err = c.regenerateViaConversation(ctx, policy, post)
 	}
 	if err != nil {
 		return fmt.Errorf("could not regenerate %s post: %w", conv.Operation, err)
@@ -240,6 +246,24 @@ func (c *Conversations) markAbandonedPostInterrupted(post *model.Post, turn stor
 		return fmt.Errorf("failed to mark abandoned post interrupted: %w", err)
 	}
 	return nil
+}
+
+// toolRunnerExitWait bounds how long an ended run keeps its post reserved
+// while a canceled tool that ignores cancellation is still running.
+var toolRunnerExitWait = 2 * time.Minute
+
+// awaitToolRunner waits, after a run was canceled, for its tool runner to
+// exit, so no tool the run started is still running when the post goes to
+// another run. A nil done means the run had no tool runner.
+func (c *Conversations) awaitToolRunner(done <-chan struct{}, postID string) {
+	if done == nil {
+		return
+	}
+	select {
+	case <-done:
+	case <-time.After(toolRunnerExitWait):
+		c.mmClient.LogWarn("Tool runner still running after its run ended; releasing the post", "post_id", postID)
+	}
 }
 
 // reservePostRun atomically claims postID, across all nodes, for the one run
@@ -381,10 +405,10 @@ func (c *Conversations) regenerateChannelAnalysis(
 
 // regenerateViaConversation rebuilds the completion request from the conversation entity
 // and runs the ToolRunner to produce a new response stream.
-func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy *turnPolicy, post *model.Post) (*llm.TextStreamResult, error) {
+func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy *turnPolicy, post *model.Post) (*llm.TextStreamResult, <-chan struct{}, error) {
 	conv := policy.conv
 	if conv == nil {
-		return nil, errors.New("post missing conversation_id for regeneration")
+		return nil, nil, errors.New("post missing conversation_id for regeneration")
 	}
 
 	// Regen truncates the request at the originating user message, so a
@@ -401,7 +425,7 @@ func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy
 		SessionID:                auth.SessionIDFromContext(ctx),
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Clear prior attachments so the regenerated response starts clean.
@@ -414,8 +438,8 @@ func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy
 
 	runResult, runErr := policy.runToolLoop(ctx, llmContext, conv.ID, *completionReq, "Failed to write tool turns on regen")
 	if runErr != nil {
-		return nil, fmt.Errorf("tool runner failed on regen: %w", runErr)
+		return nil, nil, fmt.Errorf("tool runner failed on regen: %w", runErr)
 	}
 
-	return c.decorateStreamWithCreatedFiles(ctx, policy.bot, runResult.Stream, post, nil, llmContext, llmContext), nil
+	return c.decorateStreamWithCreatedFiles(ctx, policy.bot, runResult.Stream, post, nil, llmContext, llmContext), runResult.Done, nil
 }

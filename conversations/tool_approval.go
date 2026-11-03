@@ -793,11 +793,13 @@ func (c *Conversations) streamToolFollowUp(
 	// resolved tool cards remain visible alongside the new round.
 	if err := c.streamToExistingPost(ctx, stream, post, policy.user, policy.channel, true, func() {
 		cancelLoop()
+		c.awaitToolRunner(runResult.Done, post.Id)
 		if opts.OnRunEnd != nil {
 			opts.OnRunEnd()
 		}
 	}); err != nil {
 		cancelLoop()
+		c.awaitToolRunner(runResult.Done, post.Id)
 		return fmt.Errorf("failed to stream tool follow-up: %w", err)
 	}
 

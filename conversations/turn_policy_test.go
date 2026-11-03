@@ -1110,3 +1110,62 @@ func TestTurnEntryPointHoldsThePostRunReservation(t *testing.T) {
 		})
 	}
 }
+
+// TestTurnEntryPointKeepsThePostUntilItsToolsExit pins that an ended run keeps
+// its post reserved until its tool runner has exited: a tool that ignores
+// cancellation may still take effect, and no other run may start on the post
+// before it has.
+func TestTurnEntryPointKeepsThePostUntilItsToolsExit(t *testing.T) {
+	for _, entry := range turnEntryPoints {
+		t.Run(entry.name, func(t *testing.T) {
+			env := setupInvariantEnv(t, policyBotConfig(),
+				dmMakeToolCallStream([]llm.ToolCall{policyWeatherCall}),
+				dmMakeTextStream("It's sunny"),
+			)
+			env.checker.setPolicy(policyToolOrigin, policyToolName, mcp.ToolPolicyAutoRunEverywhere)
+			env.streaming.stopAtExecuting = true
+			started := make(chan struct{}, 1)
+			finishTool := make(chan struct{})
+			env.mcpMgr.tools[0].Resolver = func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+				started <- struct{}{}
+				<-finishTool
+				return "72F and sunny", nil
+			}
+			reserved := func() bool {
+				env.mmClient.kvMu.Lock()
+				defer env.mmClient.kvMu.Unlock()
+				for key := range env.mmClient.kv {
+					if strings.HasPrefix(key, "post_run_reservation_") {
+						return true
+					}
+				}
+				return false
+			}
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_ = entry.seed(t, env)()
+			}()
+
+			select {
+			case <-started:
+			case <-time.After(2 * time.Second):
+				close(finishTool)
+				<-done
+				t.Skip("this entry point does not auto-run the tool")
+			}
+			// Most entry points end their stream with the tool still running;
+			// an auto-resume runs the tool before its stream starts.
+			select {
+			case <-env.streaming.finished:
+			case <-time.After(500 * time.Millisecond):
+			}
+			assert.True(t, reserved(), "the post stays reserved while the run's tool is still running")
+
+			close(finishTool)
+			<-done
+			assert.Eventually(t, func() bool { return !reserved() }, 3*time.Second, 5*time.Millisecond)
+		})
+	}
+}

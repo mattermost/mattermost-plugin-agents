@@ -199,6 +199,8 @@ type DMStreamResult struct {
 	// the tool loop. Call it once the consumer stops reading, including when
 	// it never starts.
 	release func()
+	// runnerDone is closed once the tool runner has exited.
+	runnerDone <-chan struct{}
 }
 
 // processDMRequest builds a completion request from the DM conversation and
@@ -267,7 +269,7 @@ func (c *Conversations) processDMRequest(
 		releaseSpan()
 		cancelLoop()
 	}
-	return &DMStreamResult{Stream: wrapped, release: release}, nil
+	return &DMStreamResult{Stream: wrapped, release: release, runnerDone: runResult.Done}, nil
 }
 
 // endSpanOnStreamClose forwards every event of stream and ends span when the
