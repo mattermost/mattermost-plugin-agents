@@ -696,6 +696,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     // The server authorizes postback by DM membership, not conversation ownership.
     const showPostbackButton = meetingsLicensed && !isGenerationInProgress && isDM && isTranscriptionResult;
+
     // A persisted turn still marked streaming; see the staleness check below.
     const turnStillStreaming = Boolean(conversation?.turns.some((turn) => turn.post_id === props.post.id && turn.status === 'streaming'));
 
