@@ -639,6 +639,9 @@ type turnEntryPoint struct {
 	// autoReply is set for channel auto-reply, which needs Enterprise
 	// Advanced and so never runs without the remote MCP license.
 	autoReply bool
+	// preStreamTool is set when the entry point itself runs the weather tool
+	// before its response stream starts (an auto-resumed marked call).
+	preStreamTool bool
 	// seed prepares what the entry point acts on and returns the call that
 	// starts the turn.
 	seed func(t *testing.T, env *policyEnv) func() error
@@ -805,9 +808,10 @@ var turnEntryPoints = []turnEntryPoint{
 		},
 	},
 	{
-		name:         "WouldAutoExecute auto-resume",
-		returnsErr:   true,
-		toolDecision: true,
+		name:          "WouldAutoExecute auto-resume",
+		returnsErr:    true,
+		toolDecision:  true,
+		preStreamTool: true,
 		seed: func(t *testing.T, env *policyEnv) func() error {
 			marked := pendingWeatherBlock()
 			marked[0].WouldAutoExecute = true
@@ -997,7 +1001,11 @@ func TestTurnEntryPointStreamEndStopsTools(t *testing.T) {
 			env.streaming.stopAtExecuting = true
 			started := make(chan struct{}, 1)
 			canceled := make(chan struct{}, 1)
+			var calls atomic.Int32
 			env.mcpMgr.tools[0].Resolver = func(ctx context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+				if calls.Add(1) == 1 && entry.preStreamTool {
+					return "72F and sunny", nil
+				}
 				started <- struct{}{}
 				select {
 				case <-ctx.Done():
