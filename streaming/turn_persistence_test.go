@@ -1403,6 +1403,37 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 			}
 		}
 		require.True(t, sawStart)
+		assert.Empty(t, ts.turns, "a continuation that can't see the post's anchor must not add one")
+	})
+
+	t.Run("demote failure leaves the prior anchor as the post's only anchor", func(t *testing.T) {
+		prior := &store.Turn{ID: "prior-anchor", ConversationID: conversationID, PostID: new(postID), Role: "assistant", Status: store.TurnStatusComplete, Sequence: 1}
+		ts := &fakeTurnStore{turns: []*store.Turn{prior}, demoteErr: fmt.Errorf("transient db error")}
+		client := &fakeStreamingClient{
+			channels: map[string]*model.Channel{
+				channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+			},
+		}
+		service := NewMMPostStreamService(client, i18n.Init())
+		service.SetTurnStore(ts)
+
+		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
+		post.AddProp(ConversationIDProp, conversationID)
+
+		streamChannel := make(chan llm.TextStreamEvent, 2)
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Hi"}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(streamChannel)
+
+		service.StreamContinuationToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
+
+		anchors := 0
+		for _, turn := range ts.turns {
+			if turn.PostID != nil && *turn.PostID == postID {
+				anchors++
+			}
+		}
+		assert.Equal(t, 1, anchors)
 	})
 
 	// The webapp snapshots the round's text when the resolved tool_call
