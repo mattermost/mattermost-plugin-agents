@@ -1,4 +1,4 @@
-# Schema Migration Review: 000013 — Add Skills to Agents_UserAgents
+# Schema Migration Review: 000014 — Add Skills to Agents_UserAgents
 
 > **Context:** Persists the per-agent skill settings (whether skills are on, whether requesters' personal skills are listed, which shared skills are enabled, and per-agent description overrides) as one JSON document. `Agents_UserAgents` is admin-configured and bounded (typically tens of rows).
 
