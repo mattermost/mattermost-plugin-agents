@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -3739,9 +3740,7 @@ func TestEnvProxyRouting(t *testing.T) {
 
 	// Loopback targets are never proxied, so the backend is addressed by a
 	// name that only the test proxy resolves.
-	_, backendPort, err := net.SplitHostPort(backend.Listener.Addr().String())
-	require.NoError(t, err)
-	backendHost := net.JoinHostPort("llm-backend.test", backendPort)
+	backendHost := net.JoinHostPort("llm-backend.test", strconv.Itoa(backend.Listener.Addr().(*net.TCPAddr).Port))
 
 	// Proxy: minimal HTTP CONNECT proxy that tunnels TCP to the backend.
 	var proxyHit atomic.Bool
