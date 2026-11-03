@@ -16,6 +16,7 @@ interface PluginState {
     htmlArtifactsEnabled?: boolean;
     channelArtifactsEnabled?: boolean;
     channelArtifactsLoaded?: boolean;
+    channelArtifactsLoadFailed?: boolean;
     channelArtifactDownloadEnabled?: boolean;
     channelArtifactRenderingEnabled?: boolean;
 }
@@ -48,6 +49,9 @@ export const getChannelArtifactsEnabled = (state: AppState): boolean =>
 
 export const getChannelArtifactsLoaded = (state: AppState): boolean =>
     Boolean(state[`plugins-${manifest.id}`]?.channelArtifactsLoaded);
+
+export const getChannelArtifactsLoadFailed = (state: AppState): boolean =>
+    Boolean(state[`plugins-${manifest.id}`]?.channelArtifactsLoadFailed);
 
 export const getChannelArtifactDownloadEnabled = (state: AppState): boolean =>
     state[`plugins-${manifest.id}`]?.channelArtifactDownloadEnabled !== false;

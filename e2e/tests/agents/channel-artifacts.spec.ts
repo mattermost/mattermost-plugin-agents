@@ -28,6 +28,7 @@ import {
     channelArtifactCard,
     channelArtifactsEmptyState,
     channelArtifactsRHS,
+    channelBookmarksMenuHookPresent,
     makeChannelAdmin,
     openChannelArtifactsRHS,
     pinArtifactFromBookmarksMenu,
@@ -275,7 +276,11 @@ test.describe('Channel artifacts', () => {
             await expect(channelArtifactCard(channelArtifactsRHS(page), entry.id)).toBeVisible({timeout: 15000});
         }
 
+        const bookmarksHook = await channelBookmarksMenuHookPresent(page);
         const pinned = bookmarksLicensed && await pinArtifactFromBookmarksMenu(page, entry);
+        if (bookmarksHook) {
+            expect(pinned, 'the Bookmarks menu hook is present, so Add channel artifact must pin').toBe(true);
+        }
         if (pinned) {
             const bookmark = page.getByTestId('channel-bookmarks-container').getByText('Bookmarked notes');
             await expect(bookmark).toBeVisible({timeout: 15000});

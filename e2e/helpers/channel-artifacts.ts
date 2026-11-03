@@ -182,6 +182,18 @@ export async function saveArtifactToChannel(
 }
 
 /**
+ * True when this webapp has the channel bookmarks menu hook. The array exists
+ * on a server that can render the plugin item, including when no plugin has
+ * registered one. Older servers omit the key.
+ */
+export async function channelBookmarksMenuHookPresent(page: Page): Promise<boolean> {
+    return page.evaluate(() => {
+        const menu = (window as any).store?.getState?.()?.plugins?.components?.ChannelBookmarksMenu;
+        return Array.isArray(menu);
+    });
+}
+
+/**
  * Pins a library artifact from Bookmarks → Add channel artifact.
  * Returns false when this server has no plugin bookmark menu item, so the caller
  * can open the artifact another way. Clicking the core Bookmarks Bar row waits

@@ -185,6 +185,17 @@ func (s *Store) FindBySHA(channelID, sha string) (string, error) {
 	return id, nil
 }
 
+// deleteSHAIfOwner removes the lookup only while it still names ownerID.
+// A nil new value is an atomic delete in the plugin KV store. A lookup another
+// artifact has taken over is left in place.
+func (s *Store) deleteSHAIfOwner(channelID, sha, ownerID string) error {
+	if sha == "" || ownerID == "" {
+		return nil
+	}
+	_, err := s.kv.KVCompareAndSet(shaKey(channelID, sha), ownerID, nil)
+	return err
+}
+
 func (s *Store) List(channelID string) ([]*Entry, error) {
 	idx, _, err := s.getIndex(channelID)
 	if err != nil {
@@ -500,7 +511,7 @@ func (s *Store) Save(entry *Entry, content []byte, maxSize int64, maxPerChannel,
 		if siteCounted {
 			_ = s.adjustSiteCount(-1)
 		}
-		_ = s.kv.KVDelete(shaKey(entry.ChannelID, sha))
+		_ = s.deleteSHAIfOwner(entry.ChannelID, sha, entry.ID)
 		_ = s.kv.KVDelete(metaKey(entry.ID))
 		s.deleteAllVersionBlobs(hist, entry.ID)
 		_ = s.kv.KVDelete(histKey(entry.ID))
@@ -625,7 +636,7 @@ func (s *Store) ReplaceContent(entry *Entry, content []byte, maxSize int64, maxK
 		return err
 	}
 	if oldSHA != "" && oldSHA != sha {
-		_ = s.kv.KVDelete(shaKey(entry.ChannelID, oldSHA))
+		_ = s.deleteSHAIfOwner(entry.ChannelID, oldSHA, entry.ID)
 	}
 	if err := s.kv.KVSet(shaKey(entry.ChannelID, sha), entry.ID); err != nil {
 		return err
@@ -744,7 +755,7 @@ func (s *Store) Rollback(entry *Entry, toVersion int) error {
 		return err
 	}
 	if oldSHA != "" && oldSHA != entry.SHA256 {
-		_ = s.kv.KVDelete(shaKey(entry.ChannelID, oldSHA))
+		_ = s.deleteSHAIfOwner(entry.ChannelID, oldSHA, entry.ID)
 	}
 	return s.kv.KVSet(shaKey(entry.ChannelID, entry.SHA256), entry.ID)
 }
@@ -793,7 +804,7 @@ func (s *Store) DeleteHead(entry *Entry) error {
 	}
 	s.deleteVersionBlobs(head, entry.ID)
 	if oldSHA != "" && oldSHA != entry.SHA256 {
-		_ = s.kv.KVDelete(shaKey(entry.ChannelID, oldSHA))
+		_ = s.deleteSHAIfOwner(entry.ChannelID, oldSHA, entry.ID)
 	}
 	return s.kv.KVSet(shaKey(entry.ChannelID, entry.SHA256), entry.ID)
 }
@@ -828,7 +839,7 @@ func (s *Store) Purge(entry *Entry) error {
 			}
 			return err
 		}
-		_ = s.kv.KVDelete(shaKey(entry.ChannelID, entry.SHA256))
+		_ = s.deleteSHAIfOwner(entry.ChannelID, entry.SHA256, entry.ID)
 		_ = s.kv.KVDelete(metaKey(entry.ID))
 		_ = s.kv.KVDelete(histKey(entry.ID))
 		if hist != nil {

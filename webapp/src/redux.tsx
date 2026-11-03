@@ -105,6 +105,17 @@ function channelArtifactsLoaded(state = false, action: any) {
     }
 }
 
+function channelArtifactsLoadFailed(state = false, action: any) {
+    switch (action.type) {
+    case 'SET_CHANNEL_ARTIFACTS_ENABLED':
+        return false;
+    case 'SET_CHANNEL_ARTIFACTS_LOAD_FAILED':
+        return true;
+    default:
+        return state;
+    }
+}
+
 function channelArtifactDownloadEnabled(state = true, action: any) {
     switch (action.type) {
     case 'SET_CHANNEL_ARTIFACTS_ENABLED':
@@ -257,6 +268,7 @@ export const pluginReducer = combineReducers({
     htmlArtifactsEnabled,
     channelArtifactsEnabled,
     channelArtifactsLoaded,
+    channelArtifactsLoadFailed,
     channelArtifactDownloadEnabled,
     channelArtifactRenderingEnabled,
     customPrompts,

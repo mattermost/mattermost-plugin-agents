@@ -157,7 +157,20 @@ describe('LibraryArtifactDeepLink', () => {
             window.dispatchEvent(new PopStateEvent('popstate'));
         });
         expect((await screen.findByTestId('html-artifact-fullscreen')).textContent).toBe(artifactId);
+        expect(screen.queryByText('This channel artifact is unavailable.')).toBeNull();
         expect(listChannelArtifacts).toHaveBeenCalledTimes(2);
+    });
+
+    test('shows the unavailable notice when the feature flag request fails', async () => {
+        const store = renderLink();
+        act(() => {
+            store.dispatch({type: 'SET_CHANNEL', id: channelId});
+            store.dispatch({type: 'SET_CHANNEL_ARTIFACTS_LOAD_FAILED'});
+        });
+        expect(await screen.findByText('This channel artifact is unavailable.')).toBeTruthy();
+        expect(listChannelArtifacts).not.toHaveBeenCalled();
+        expect(window.location.search).not.toContain('mm_ai_library_artifact');
+        expect(screen.queryByText('Channel artifacts are disabled on this server.')).toBeNull();
     });
 
     test('ignores a list response after the channel changes', async () => {

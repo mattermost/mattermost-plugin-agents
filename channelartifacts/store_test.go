@@ -324,6 +324,28 @@ func TestSecondPurgeDoesNotDropTheSiteCount(t *testing.T) {
 	require.ErrorIs(t, err, ErrLimitReached)
 }
 
+func TestPurgeDeletesSHALookupOnlyWhileThisArtifactOwnsIt(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	channelID := model.NewId()
+	entry := testEntry(channelID)
+	require.NoError(t, store.Save(entry, []byte("<html>a</html>"), 1024, 0, 0))
+
+	other := model.NewId()
+	require.NoError(t, kv.KVSet(shaKey(channelID, entry.SHA256), other))
+	require.NoError(t, store.Purge(entry))
+
+	owner, err := store.FindBySHA(channelID, entry.SHA256)
+	require.NoError(t, err)
+	require.Equal(t, other, owner)
+
+	again := testEntry(channelID)
+	require.NoError(t, store.Save(again, []byte("<html>b</html>"), 1024, 0, 0))
+	require.NoError(t, store.Purge(again))
+	_, err = store.FindBySHA(channelID, again.SHA256)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
 func TestStoreVersionsToKeepPrunesOldest(t *testing.T) {
 	kv := newMemoryKV()
 	store := NewStore(kv)

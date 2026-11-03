@@ -310,8 +310,34 @@ describe('fetchAndStoreBots', () => {
     test('propagates fetch failures to the caller', async () => {
         const error = new Error('network');
         mockGetAIBots.mockRejectedValue(error);
+        const dispatch = jest.fn();
 
-        await expect(fetchAndStoreBots(jest.fn())).rejects.toBe(error);
+        await expect(fetchAndStoreBots(dispatch)).rejects.toBe(error);
+
+        expect(dispatch).toHaveBeenCalledWith({type: 'SET_CHANNEL_ARTIFACTS_LOAD_FAILED'});
+    });
+
+    test('does not record a failure after a newer bot fetch has started', async () => {
+        let rejectFirst: (error: Error) => void = () => {
+            throw new Error('the first bot fetch did not start');
+        };
+        mockGetAIBots.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+            rejectFirst = reject;
+        }));
+        mockGetAIBots.mockResolvedValueOnce({bots: [makeBot('a')], channelArtifactsEnabled: true});
+        const dispatch = jest.fn();
+
+        const first = fetchAndStoreBots(dispatch);
+        const second = fetchAndStoreBots(dispatch);
+        await expect(second).resolves.toHaveLength(1);
+        rejectFirst(new Error('stale'));
+        await expect(first).rejects.toThrow('stale');
+
+        expect(dispatch).not.toHaveBeenCalledWith({type: 'SET_CHANNEL_ARTIFACTS_LOAD_FAILED'});
+        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'SET_CHANNEL_ARTIFACTS_ENABLED',
+            channelArtifactsEnabled: true,
+        }));
     });
 });
 

@@ -10,7 +10,7 @@ import {GlobalState} from '@mattermost/types/store';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 
 import {ChannelArtifactEntry, listChannelArtifacts} from '@/client';
-import {getChannelArtifactsEnabled, getChannelArtifactsLoaded} from '@/selectors';
+import {getChannelArtifactsEnabled, getChannelArtifactsLoadFailed, getChannelArtifactsLoaded} from '@/selectors';
 
 import HTMLArtifactFullscreen from '../html_artifacts/html_artifact_fullscreen';
 
@@ -35,6 +35,7 @@ type NoticeKind = 'disabled' | 'unavailable' | null;
 const LibraryArtifactDeepLink = () => {
     const enabled = useSelector(getChannelArtifactsEnabled);
     const loaded = useSelector(getChannelArtifactsLoaded);
+    const loadFailed = useSelector(getChannelArtifactsLoadFailed);
     const channelId = useSelector((state: GlobalState) => state.entities?.channels?.currentChannelId || '');
     const channelIdRef = useRef(channelId);
     channelIdRef.current = channelId;
@@ -64,15 +65,25 @@ const LibraryArtifactDeepLink = () => {
 
     const tryOpen = useCallback(async (search = window.location.search) => {
         const artifactId = parseLibraryArtifactIdFromSearch(search);
-        if (!artifactId || !loaded || !channelId) {
+        if (!artifactId || !channelId) {
             return;
         }
         if (openingRef.current === artifactId || openedIdsRef.current.has(artifactId)) {
             return;
         }
+        if (!loaded && !loadFailed) {
+            return;
+        }
         openingRef.current = artifactId;
         openedIdsRef.current.add(artifactId);
         const seq = ++openSeq.current;
+
+        if (loadFailed) {
+            setNotice('unavailable');
+            stripQuery();
+            openingRef.current = null;
+            return;
+        }
 
         if (!enabled) {
             setNotice('disabled');
@@ -102,6 +113,7 @@ const LibraryArtifactDeepLink = () => {
             setCanManage(Boolean(list.can_manage));
             setDownloadEnabled(list.download_enabled !== false);
             setRenderEnabled(list.render_enabled !== false);
+            setNotice(null);
             setEntry(match);
             stripQuery();
         } catch {
@@ -113,7 +125,7 @@ const LibraryArtifactDeepLink = () => {
             stripQuery();
             openingRef.current = null;
         }
-    }, [channelId, enabled, loaded, stripQuery]);
+    }, [channelId, enabled, loadFailed, loaded, stripQuery]);
 
     useEffect(() => {
         tryOpen();

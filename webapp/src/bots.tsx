@@ -76,7 +76,15 @@ let botsFetchSeq = 0;
 
 export async function fetchAndStoreBots(dispatch: Dispatch): Promise<LLMBot[] | null> {
     const seq = ++botsFetchSeq;
-    const response = await getAIBots();
+    let response;
+    try {
+        response = await getAIBots();
+    } catch (error) {
+        if (seq === botsFetchSeq) {
+            dispatch({type: 'SET_CHANNEL_ARTIFACTS_LOAD_FAILED'});
+        }
+        throw error;
+    }
     if (seq !== botsFetchSeq || !response) {
         return null;
     }
