@@ -23,14 +23,15 @@ import (
 )
 
 type memoryKV struct {
-	mu            sync.Mutex
-	data          map[string][]byte
-	permissionAll bool
-	readAll       bool
-	channels      map[string]*model.Channel
-	histSetCount  int
-	failHistSet   int
-	failNextMeta  bool
+	mu             sync.Mutex
+	data           map[string][]byte
+	permissionAll  bool
+	readAll        bool
+	channels       map[string]*model.Channel
+	histSetCount   int
+	failHistSet    int
+	failNextMeta   bool
+	onFailNextMeta func(data map[string][]byte)
 }
 
 func newMemoryKV() *memoryKV {
@@ -62,11 +63,18 @@ func (kv *memoryKV) KVSet(key string, value any) error {
 	if strings.HasPrefix(key, keyPrefixMeta) {
 		kv.mu.Lock()
 		fail := kv.failNextMeta
+		hook := kv.onFailNextMeta
 		if fail {
 			kv.failNextMeta = false
+			kv.onFailNextMeta = nil
 		}
 		kv.mu.Unlock()
 		if fail {
+			if hook != nil {
+				kv.mu.Lock()
+				hook(kv.data)
+				kv.mu.Unlock()
+			}
 			return errors.New("kv set failed")
 		}
 	}
@@ -410,6 +418,38 @@ func TestDeleteHeadRestoresHistoryWhenMetaSaveFails(t *testing.T) {
 	versions, err := store.ListVersions(entry.ID)
 	require.NoError(t, err)
 	require.Equal(t, []int{1, 2}, []int{versions[0].Version, versions[1].Version})
+}
+
+func TestDeleteHeadLeavesNewerHistoryWhenMetaSaveFails(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
+	require.NoError(t, store.ReplaceContent(entry, []byte("<html>2</html>"), 1024, 0))
+
+	kv.failNextMeta = true
+	kv.onFailNextMeta = func(data map[string][]byte) {
+		raw, err := json.Marshal(VersionHistory{Versions: []VersionRecord{
+			{Version: 1, SHA256: "old"},
+			{Version: 3, SHA256: "newer"},
+		}})
+		if err != nil {
+			return
+		}
+		for key := range data {
+			if strings.HasPrefix(key, keyPrefixHist) {
+				data[key] = raw
+			}
+		}
+	}
+	require.Error(t, store.DeleteHead(entry))
+
+	versions, err := store.ListVersions(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, []int{1, 3}, []int{versions[0].Version, versions[1].Version})
+	stored, err := store.Get(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, 2, stored.Version)
 }
 
 func TestStoreVersionsToKeepPrunesOldest(t *testing.T) {

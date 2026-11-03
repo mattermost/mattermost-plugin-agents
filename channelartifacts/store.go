@@ -196,20 +196,15 @@ func (s *Store) deleteSHAIfOwner(channelID, sha, ownerID string) error {
 	return err
 }
 
-// ensureOwnSHA writes the lookup when it is missing. A lookup that already
-// names this artifact or another one is left as it is.
+// ensureOwnSHA writes the lookup only when the key is absent. A nil old value
+// is a create-if-absent compare-and-set, so a lookup this artifact or another
+// one already holds is left in place.
 func (s *Store) ensureOwnSHA(channelID, sha, ownerID string) error {
 	if sha == "" || ownerID == "" {
 		return nil
 	}
-	existing, err := s.FindBySHA(channelID, sha)
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		return err
-	}
-	if existing != "" {
-		return nil
-	}
-	return s.kv.KVSet(shaKey(channelID, sha), ownerID)
+	_, err := s.kv.KVCompareAndSet(shaKey(channelID, sha), nil, ownerID)
+	return err
 }
 
 func (s *Store) List(channelID string) ([]*Entry, error) {
@@ -358,6 +353,28 @@ func (s *Store) saveHistory(id string, hist *VersionHistory) error {
 		return cmp.Compare(a.Version, b.Version)
 	})
 	return s.kv.KVSet(histKey(id), hist)
+}
+
+// restoreHistoryIfUnchanged writes previous back only while the stored history
+// is still shortened. A version saved for this artifact in between is left as
+// stored. The failed metadata write is unchanged, so the stored head stays
+// whatever the last successful metadata write recorded.
+func (s *Store) restoreHistoryIfUnchanged(id string, shortened, previous []VersionRecord) error {
+	stored, err := s.loadHistory(id)
+	if err != nil {
+		return err
+	}
+	if !sameVersionContent(stored.Versions, shortened) {
+		return nil
+	}
+	stored.Versions = previous
+	return s.saveHistory(id, stored)
+}
+
+func sameVersionContent(a, b []VersionRecord) bool {
+	return slices.EqualFunc(a, b, func(left, right VersionRecord) bool {
+		return left.Version == right.Version && left.SHA256 == right.SHA256
+	})
 }
 
 // ensureHistory returns the version history, migrating legacy unversioned
@@ -818,8 +835,7 @@ func (s *Store) DeleteHead(entry *Entry) error {
 	applyVersionToEntry(entry, previous)
 	if err := s.kv.KVSet(metaKey(entry.ID), entry); err != nil {
 		applyVersionToEntry(entry, head)
-		hist.Versions = previousHistory
-		if restoreErr := s.saveHistory(entry.ID, hist); restoreErr != nil {
+		if restoreErr := s.restoreHistoryIfUnchanged(entry.ID, remaining, previousHistory); restoreErr != nil {
 			return errors.Join(err, restoreErr)
 		}
 		return err

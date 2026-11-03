@@ -69,6 +69,7 @@ const ArtifactBookmarkPicker = () => {
     const close = useCallback(() => {
         openRequest = null;
         setRequest(null);
+        setPinningId(null);
     }, []);
 
     useEffect(() => {
@@ -84,6 +85,7 @@ const ArtifactBookmarkPicker = () => {
         let cancelled = false;
         setLoading(true);
         setError('');
+        setEntries([]);
         listChannelArtifacts(request.channelId).then((list) => {
             if (cancelled) {
                 return;
@@ -129,6 +131,7 @@ const ArtifactBookmarkPicker = () => {
         try {
             const bookmark = await pinLibraryArtifactBookmark(store.getState(), active.channelId, entry.id, entry.title, store.dispatch);
             if (openRequest !== active) {
+                setPinningId(null);
                 return;
             }
             if (!bookmark) {
@@ -139,6 +142,7 @@ const ArtifactBookmarkPicker = () => {
             close();
         } catch {
             if (openRequest !== active) {
+                setPinningId(null);
                 return;
             }
             setError(intl.formatMessage({defaultMessage: 'Could not add bookmark.'}));
