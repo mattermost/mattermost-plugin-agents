@@ -363,11 +363,10 @@ func (s *Store) saveHistory(id string, hist *VersionHistory) error {
 // to remove.
 func (s *Store) restoreHistoryIfUnchanged(id string, shortened, previous []VersionRecord) error {
 	var raw []byte
-	err := s.kv.KVGet(histKey(id), &raw)
-	if mmapi.IsKVNotFound(err) {
-		return ErrNotFound
-	}
-	if err != nil {
+	if err := s.kv.KVGet(histKey(id), &raw); err != nil {
+		if mmapi.IsKVNotFound(err) {
+			return ErrNotFound
+		}
 		return err
 	}
 	var stored VersionHistory
@@ -384,7 +383,7 @@ func (s *Store) restoreHistoryIfUnchanged(id string, shortened, previous []Versi
 	slices.SortFunc(restored.Versions, func(a, b VersionRecord) int {
 		return cmp.Compare(a.Version, b.Version)
 	})
-	_, err = s.kv.KVCompareAndSet(histKey(id), raw, restored)
+	_, err := s.kv.KVCompareAndSet(histKey(id), raw, restored)
 	return err
 }
 
