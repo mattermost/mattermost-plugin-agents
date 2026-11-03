@@ -130,7 +130,7 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	}
 
 	// Read-only gates run before anything below claims or edits the post.
-	if err := c.checkRegenerateLicense(conv.Operation); err != nil {
+	if err = c.checkRegenerateLicense(conv.Operation); err != nil {
 		return err
 	}
 

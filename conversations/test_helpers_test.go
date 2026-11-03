@@ -38,8 +38,8 @@ type fakeWebSocketEvent struct {
 }
 
 type fakeMMClient struct {
-	users                map[string]*model.User
-	postThreads          map[string]*model.PostList
+	users       map[string]*model.User
+	postThreads map[string]*model.PostList
 	// kvMu guards kv: run reservations are released from stream goroutines.
 	kvMu                 sync.Mutex
 	kv                   map[string]any
