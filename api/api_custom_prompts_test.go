@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -31,10 +32,10 @@ import (
 
 var rootDSN = "postgres://mmuser:mostest@localhost:5432/postgres?sslmode=disable"
 
-// setupTestDBClient creates a scratch database from PG_ROOT_DSN (skipping
-// when postgres is unreachable), runs the real migrations against it, and
-// returns a DBClient connected to it. The database is dropped on cleanup.
-func setupTestDBClient(t *testing.T, namePrefix string) *mmapi.DBClient {
+// setupPostgresTestStore creates a throwaway database on the local PostgreSQL
+// (PG_ROOT_DSN overrides the root DSN), runs the plugin migrations, and drops
+// the database on cleanup. The test is skipped when PostgreSQL is unavailable.
+func setupPostgresTestStore(t *testing.T, dbPrefix string) (*sqlx.DB, *store.Store) {
 	t.Helper()
 
 	if dsn := os.Getenv("PG_ROOT_DSN"); dsn != "" {
@@ -47,12 +48,14 @@ func setupTestDBClient(t *testing.T, namePrefix string) *mmapi.DBClient {
 	}
 	defer rootDB.Close()
 
-	dbName := fmt.Sprintf("%s_%d", namePrefix, model.GetMillis())
+	dbName := fmt.Sprintf("%s_%d", dbPrefix, model.GetMillis())
 	_, err = rootDB.Exec("CREATE DATABASE " + dbName)
 	require.NoError(t, err)
 
-	testDSN := fmt.Sprintf("postgres://mmuser:mostest@localhost:5432/%s?sslmode=disable", dbName)
-	db, err := sqlx.Connect("postgres", testDSN)
+	testURL, err := url.Parse(rootDSN)
+	require.NoError(t, err)
+	testURL.Path = "/" + dbName
+	db, err := sqlx.Connect("postgres", testURL.String())
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -66,8 +69,17 @@ func setupTestDBClient(t *testing.T, namePrefix string) *mmapi.DBClient {
 	})
 
 	s := store.New(db)
-	err = s.RunMigrations()
-	require.NoError(t, err)
+	require.NoError(t, s.RunMigrations())
+
+	return db, s
+}
+
+// setupTestDBClient is setupPostgresTestStore for tests that only need a DBClient connected to the
+// scratch database.
+func setupTestDBClient(t *testing.T, namePrefix string) *mmapi.DBClient {
+	t.Helper()
+
+	db, _ := setupPostgresTestStore(t, namePrefix)
 
 	return mmapi.NewTestDBClient(db)
 }

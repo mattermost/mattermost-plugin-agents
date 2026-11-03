@@ -81,6 +81,9 @@ export type UserAgent = {
     // Only on GET /agents; absent when the agent is running.
     inactiveReason?: AgentInactiveReason;
 
+    // Only on GET /agents: whether the current user may edit, export and delete the agent.
+    canManage?: boolean;
+
     // Admin / lifecycle metadata (omitempty on backend).
     botUserID?: string;
     creatorID?: string;

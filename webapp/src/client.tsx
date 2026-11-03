@@ -410,6 +410,37 @@ export async function getAIThreads() {
     });
 }
 
+function invalidConversationIdError() {
+    return new ClientError(Client4.url, {
+        message: 'Invalid conversation id',
+        status_code: 400,
+        url: Client4.url,
+    });
+}
+
+// renameConversation sets the user-visible title of one of the caller's conversations.
+export async function renameConversation(conversationId: string, title: string): Promise<void> {
+    if (!isValidId(conversationId)) {
+        throw invalidConversationIdError();
+    }
+
+    const url = `${conversationRoute(conversationId)}/title`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify({title}),
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
 // normalizeConversationResponse coerces every turn's content to a non-null
 // array. The backend may persist a turn whose content column is the JSON
 // literal `null` (e.g. when a stream finalizes before any blocks accumulate),
@@ -507,6 +538,12 @@ export function updateRead(userId: string, teamId: string, selectedPostId: strin
 
 export function getProfilePictureUrl(userId: string, lastIconUpdate: number) {
     return Client4.getProfilePictureUrl(userId, lastIconUpdate);
+}
+
+// The root posts of chats for the history list's previews (message and reply count). The server
+// only returns the posts the user may read.
+export function getPostsByIds(postIds: string[]) {
+    return Client4.getPostsByIds(postIds);
 }
 
 export async function getBotProfilePictureUrl(username: string) {
@@ -1065,7 +1102,7 @@ export async function savePluginConfig(config: PluginConfig): Promise<PluginConf
     }
 
     throw new ClientError(Client4.url, {
-        message: await readClientErrorMessage(response),
+        ...(await readAgentError(response)),
         status_code: response.status,
         url,
     });

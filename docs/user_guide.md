@@ -1,6 +1,6 @@
 # Mattermost Agents User Guide
 
-This guide explains how to use the AI features available through the Mattermost Agents plugin. This plugin transforms Mattermost into an AI-enhanced collaboration platform to improve team productivity and communication.
+Use Mattermost Agents to chat with AI agents in direct messages, the Agents pane, and channels; summarize threads, channels, and meetings; search with AI; and let agents act on your behalf with tools and MCP servers. This guide covers each feature for end users.
 
 With Mattermost Agents, you can summarize call and meeting recordings, turn long threads and unread channel messages into concise summaries, stay on top of your messages by identifying next steps and decisions, extract learnings and transform content into charts and documentation, dig further into any topic by asking for insights, and leverage voice dictation tools for hands-free communication.
 
