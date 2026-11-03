@@ -637,7 +637,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 					}
 				}
 
-			case schemas.ResponsesStreamResponseTypeCompleted:
+			case schemas.ResponsesStreamResponseTypeCompleted, schemas.ResponsesStreamResponseTypeIncomplete:
 				// Emit any unsent reasoning
 				reasoning.emitEnd(output)
 
