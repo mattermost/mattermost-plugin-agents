@@ -265,13 +265,21 @@ func belongsToRun(turn turnSpanRow, postID *string, runUses map[string]bool) boo
 	return true
 }
 
-// runSpanEnd returns how many of the turns after a streaming anchor belong to
-// its run: it stops at the first that does not.
+// runSpanEnd returns how many of the turns after a streaming anchor the
+// anchor must move past to end its run: up to its run's last turn, within the
+// window that ends at the next user turn or another post's anchor. Turns of
+// other runs inside that window (a tool_result a channel approval appended for
+// another post) are skipped, not stopped at, so the run's own later rounds
+// still come before the anchor.
 func runSpanEnd(later []turnSpanRow, postID *string) int {
 	runUses := map[string]bool{}
+	end := 0
 	for i, turn := range later {
+		if turn.Role == "user" || (turn.PostID != nil && (postID == nil || *turn.PostID != *postID)) {
+			break
+		}
 		if !belongsToRun(turn, postID, runUses) {
-			return i
+			continue
 		}
 		if turn.Role == "assistant" {
 			uses, _ := toolBlockIDs(turn.Content)
@@ -279,8 +287,9 @@ func runSpanEnd(later []turnSpanRow, postID *string) int {
 				runUses[id] = true
 			}
 		}
+		end = i + 1
 	}
-	return len(later)
+	return end
 }
 
 // DeleteResponseTurns removes the post's anchor turn and the assistant and

@@ -361,6 +361,13 @@ func TestConcurrentSettlesInOneConversation(t *testing.T) {
 	}
 }
 
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 // TestRunSpanSkipsAnotherPostsToolResult pins that a tool_result a channel
 // approval appended for an earlier post is not treated as part of a later
 // post's run: settling that run does not move past it, and regenerating the
@@ -377,9 +384,13 @@ func TestRunSpanSkipsAnotherPostsToolResult(t *testing.T) {
 		// foreignResultInSpan places the earlier post's result between the
 		// later post's user turn and its anchor instead of after its run.
 		foreignResultInSpan bool
+		// foreignBeforeOwnRounds lands the earlier post's result after the
+		// later post's anchor but before that run's own tool rounds.
+		foreignBeforeOwnRounds bool
 	}{
 		{name: "earlier post's result appended after the run"},
 		{name: "earlier post's result inside the scrubbed span", foreignResultInSpan: true},
+		{name: "earlier post's result between the anchor and the run's own rounds", foreignBeforeOwnRounds: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -406,9 +417,12 @@ func TestRunSpanSkipsAnotherPostsToolResult(t *testing.T) {
 				foreign = add("tool_result", "", block("tool_result", "tc-1"), "")
 			}
 			anchor := add("assistant", "post-2", `[]`, TurnStatusStreaming)
+			if tt.foreignBeforeOwnRounds {
+				foreign = add("tool_result", "", block("tool_result", "tc-1"), "")
+			}
 			add("assistant", "", block("tool_use", "tc-2"), "")
 			add("tool_result", "", block("tool_result", "tc-2"), "")
-			if !tt.foreignResultInSpan {
+			if !tt.foreignResultInSpan && !tt.foreignBeforeOwnRounds {
 				foreign = add("tool_result", "", block("tool_result", "tc-1"), "")
 			}
 
@@ -421,9 +435,11 @@ func TestRunSpanSkipsAnotherPostsToolResult(t *testing.T) {
 			for i, turn := range turns {
 				index[turn.ID] = i
 			}
-			if !tt.foreignResultInSpan {
+			if !tt.foreignResultInSpan && !tt.foreignBeforeOwnRounds {
 				assert.Less(t, index[anchor], index[foreign], "the run must not move past another post's result")
 			}
+			assert.Equal(t, len(turns)-1-boolToInt(!tt.foreignResultInSpan && !tt.foreignBeforeOwnRounds), index[anchor],
+				"the anchor ends after its run's own tool rounds")
 
 			require.NoError(t, s.DeleteResponseTurns(convID, "post-2"))
 			turns, err = s.GetTurnsForConversation(convID)
