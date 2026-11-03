@@ -3,14 +3,14 @@
 
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {FormattedMessage} from 'react-intl';
-import {useSelector, useStore} from 'react-redux';
+import {useSelector} from 'react-redux';
 import styled from 'styled-components';
 
 import {GlobalState} from '@mattermost/types/store';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 
 import {ChannelArtifactEntry, listChannelArtifacts} from '@/client';
-import {getChannelArtifactsEnabled} from '@/selectors';
+import {getChannelArtifactsEnabled, getChannelArtifactsLoaded} from '@/selectors';
 
 import HTMLArtifactFullscreen from '../html_artifacts/html_artifact_fullscreen';
 
@@ -26,10 +26,16 @@ type NoticeKind = 'disabled' | 'unavailable' | null;
  *
  * history.replace (strip) must not re-trigger a load for the same id — that
  * races with window.location still showing the old search and loops forever.
+ *
+ * A full navigation mounts this before the bot fetch has stored the feature
+ * flag and before the current channel id is in redux. The flag defaults to
+ * off, so consuming the query in that window strips it and the viewer never
+ * opens. Wait until both are known.
  */
 const LibraryArtifactDeepLink = () => {
-    const store = useStore<GlobalState>();
     const enabled = useSelector(getChannelArtifactsEnabled);
+    const loaded = useSelector(getChannelArtifactsLoaded);
+    const channelId = useSelector((state: GlobalState) => state.entities?.channels?.currentChannelId || '');
     const [entry, setEntry] = useState<ChannelArtifactEntry | null>(null);
     const [canManage, setCanManage] = useState(false);
     const [downloadEnabled, setDownloadEnabled] = useState(true);
@@ -56,7 +62,7 @@ const LibraryArtifactDeepLink = () => {
 
     const tryOpen = useCallback(async (search = window.location.search) => {
         const artifactId = parseLibraryArtifactIdFromSearch(search);
-        if (!artifactId) {
+        if (!artifactId || !loaded || !channelId) {
             return;
         }
         if (openingRef.current === artifactId || openedIdsRef.current.has(artifactId)) {
@@ -69,14 +75,6 @@ const LibraryArtifactDeepLink = () => {
         if (!enabled) {
             setNotice('disabled');
             stripQuery();
-            openingRef.current = null;
-            return;
-        }
-
-        const state = store.getState();
-        const channelId = state.entities.channels.currentChannelId;
-        if (!channelId) {
-            openedIdsRef.current.delete(artifactId);
             openingRef.current = null;
             return;
         }
@@ -106,7 +104,7 @@ const LibraryArtifactDeepLink = () => {
             stripQuery();
             openingRef.current = null;
         }
-    }, [enabled, store, stripQuery]);
+    }, [channelId, enabled, loaded, stripQuery]);
 
     useEffect(() => {
         tryOpen();

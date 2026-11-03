@@ -15,6 +15,7 @@ interface PluginState {
     linkPolicy: LinkPolicy;
     htmlArtifactsEnabled?: boolean;
     channelArtifactsEnabled?: boolean;
+    channelArtifactsLoaded?: boolean;
     channelArtifactDownloadEnabled?: boolean;
     channelArtifactRenderingEnabled?: boolean;
 }
@@ -44,6 +45,9 @@ export const getHTMLArtifactsEnabled = (state: AppState): boolean =>
 
 export const getChannelArtifactsEnabled = (state: AppState): boolean =>
     Boolean(state[`plugins-${manifest.id}`]?.channelArtifactsEnabled);
+
+export const getChannelArtifactsLoaded = (state: AppState): boolean =>
+    Boolean(state[`plugins-${manifest.id}`]?.channelArtifactsLoaded);
 
 export const getChannelArtifactDownloadEnabled = (state: AppState): boolean =>
     state[`plugins-${manifest.id}`]?.channelArtifactDownloadEnabled !== false;

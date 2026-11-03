@@ -22,22 +22,7 @@ export const ShowCustomPromptsModalHandler = 'SHOW_CUSTOM_PROMPTS_MODAL';
 export const SetLinkPolicyHandler = 'SET_LINK_POLICY';
 
 export async function setupRedux(registry: any, store: WebappStore) {
-    const reducer = combineReducers({
-        callsPostButtonClickedTranscription,
-        bots,
-        selectedPostId,
-        rhsTab,
-        aiThreads,
-        linkPolicy,
-        htmlArtifactsEnabled,
-        channelArtifactsEnabled,
-        channelArtifactDownloadEnabled,
-        channelArtifactRenderingEnabled,
-        customPrompts,
-        pinnedPromptIds,
-        showCustomPromptsModal,
-    });
-    registry.registerReducer(reducer);
+    registry.registerReducer(pluginReducer);
 
     if (licenseAllows(store.getState(), 'meetings')) {
         store.dispatch({
@@ -106,6 +91,15 @@ function channelArtifactsEnabled(state = false, action: any) {
     switch (action.type) {
     case 'SET_CHANNEL_ARTIFACTS_ENABLED':
         return action.channelArtifactsEnabled;
+    default:
+        return state;
+    }
+}
+
+function channelArtifactsLoaded(state = false, action: any) {
+    switch (action.type) {
+    case 'SET_CHANNEL_ARTIFACTS_ENABLED':
+        return true;
     default:
         return state;
     }
@@ -252,3 +246,20 @@ export function fetchPinnedPromptIds() {
         }
     };
 }
+
+export const pluginReducer = combineReducers({
+    callsPostButtonClickedTranscription,
+    bots,
+    selectedPostId,
+    rhsTab,
+    aiThreads,
+    linkPolicy,
+    htmlArtifactsEnabled,
+    channelArtifactsEnabled,
+    channelArtifactsLoaded,
+    channelArtifactDownloadEnabled,
+    channelArtifactRenderingEnabled,
+    customPrompts,
+    pinnedPromptIds,
+    showCustomPromptsModal,
+});
