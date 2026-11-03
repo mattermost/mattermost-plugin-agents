@@ -245,16 +245,24 @@ func (p *MMPostStreamService) ActiveStreams() int64 {
 }
 
 // WaitForActiveStreams blocks until no stream is active on this node or the
-// timeout elapses. Returns true if all streams finished.
+// timeout elapses. Returns true if all streams finished. A post reserved with
+// GetStreamingContext counts too: its stream goroutine may not have started
+// writing yet, and must still get to mark itself interrupted.
 func (p *MMPostStreamService) WaitForActiveStreams(timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
-	for p.activeStreams.Load() > 0 {
+	for p.activeStreams.Load() > 0 || p.reservedPosts() > 0 {
 		if time.Now().After(deadline) {
 			return false
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	return true
+}
+
+func (p *MMPostStreamService) reservedPosts() int {
+	p.contextsMutex.Lock()
+	defer p.contextsMutex.Unlock()
+	return len(p.contexts)
 }
 
 // stopWaitTimeout bounds how long StopStreaming waits for the stopped stream

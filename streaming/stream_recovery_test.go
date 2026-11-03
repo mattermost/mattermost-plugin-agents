@@ -369,6 +369,19 @@ func TestStreamClaimedBeforeItEndsLeavesThePostAlone(t *testing.T) {
 	assert.Equal(t, store.TurnStatusInterrupted, findStreamTurn(ts.turns, post.Id).Status)
 }
 
+// Shutdown must also wait for a post whose stream is reserved but whose
+// goroutine has not started writing yet, so it still marks itself interrupted.
+func TestWaitForActiveStreamsCoversReservedPosts(t *testing.T) {
+	service, _, _ := newRecoveryTestService(t)
+	_, err := service.GetStreamingContext(context.Background(), "reserved-post")
+	require.NoError(t, err)
+
+	assert.False(t, service.WaitForActiveStreams(50*time.Millisecond))
+
+	service.FinishStreaming("reserved-post")
+	assert.True(t, service.WaitForActiveStreams(time.Second))
+}
+
 func TestNewStreamClearsInterruptedMarker(t *testing.T) {
 	service, client, _ := newRecoveryTestService(t)
 	post := newStreamPost()
