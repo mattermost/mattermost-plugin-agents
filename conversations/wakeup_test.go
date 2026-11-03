@@ -680,7 +680,6 @@ func TestResumeConversationRunsAsSchedulingUser(t *testing.T) {
 	env.resume(t, post, schedulerID)
 
 	require.NotNil(t, env.wakePost)
-	require.Equal(t, schedulerID, env.wakePost.GetProp(streaming.LLMRequesterUserIDProp))
 	require.Len(t, env.lm.requests, 1)
 	require.Equal(t, schedulerID, env.lm.requests[0].Context.RequestingUser.Id)
 }

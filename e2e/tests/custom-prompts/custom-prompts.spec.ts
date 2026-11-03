@@ -459,9 +459,9 @@ test.describe('Custom Prompts in AI Actions Submenu', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. Pinned Prompt Pills in RHS
+// 3. Pinned prompts are not shown as pills in the RHS empty state
 // ---------------------------------------------------------------------------
-test.describe('Pinned Prompt Pills in RHS', () => {
+test.describe('Pinned prompts in the RHS empty state', () => {
     let userClient: any;
     let createdPromptIds: string[] = [];
 
@@ -484,10 +484,10 @@ test.describe('Pinned Prompt Pills in RHS', () => {
         }
     });
 
-    test('pinned prompt appears as a pill button in the RHS', async ({ page }) => {
+    test('a pinned prompt does not appear as a pill button in the RHS new chat', async ({ page }) => {
         const prompt = await createPromptViaAPI(userClient, {
             name: 'RHS Pill Prompt',
-            description: 'Should appear as pill',
+            description: 'Pinned, but the RHS empty state shows no prompt pills',
             template: 'Pill template content',
             is_shared: true,
         });
@@ -497,64 +497,9 @@ test.describe('Pinned Prompt Pills in RHS', () => {
         const { aiPlugin } = await setupTestPage(page);
         await aiPlugin.openRHS();
 
-        // The pinned prompt should render as a pill button in the RHS new-tab view
-        const pillButton = page.getByRole('button', { name: 'RHS Pill Prompt' });
-        await expect(pillButton).toBeVisible({ timeout: 30000 });
-    });
-
-    test('clicking a pinned prompt pill creates a post and opens the thread', async ({ page }) => {
-        const prompt = await createPromptViaAPI(userClient, {
-            name: 'Clickable Pill',
-            description: 'Click to send',
-            template: 'Rendered pill message',
-            is_shared: true,
-        });
-        createdPromptIds.push(prompt.id);
-        await setPinViaAPI(userClient, prompt.id, true);
-
-        const { aiPlugin } = await setupTestPage(page);
-        await aiPlugin.openRHS();
-
-        const pillButton = page.getByRole('button', { name: 'Clickable Pill' });
-        await expect(pillButton).toBeVisible({ timeout: 30000 });
-
-        // Mock the bot response that will come after the post is created
-        await openAIMock.addCompletionMock(responseTest);
-
-        // Click the pill -- this renders the template, creates a post, and
-        // switches the RHS to the thread view
-        await pillButton.click();
-
-        // The rendered prompt text should appear as a post in the RHS thread
-        await expect(page.getByText('Rendered pill message')).toBeVisible({ timeout: 30000 });
-    });
-
-    test('unpinning a prompt removes the pill from the RHS', async ({ page }) => {
-        const prompt = await createPromptViaAPI(userClient, {
-            name: 'Removable Pill',
-            description: 'Will be unpinned',
-            template: 'removable template',
-            is_shared: true,
-        });
-        createdPromptIds.push(prompt.id);
-        await setPinViaAPI(userClient, prompt.id, true);
-
-        const { aiPlugin } = await setupTestPage(page);
-        await aiPlugin.openRHS();
-
-        // Confirm the pill is present
-        const pillButton = page.getByRole('button', { name: 'Removable Pill' });
-        await expect(pillButton).toBeVisible({ timeout: 30000 });
-
-        // Unpin via API
-        await setPinViaAPI(userClient, prompt.id, false);
-
-        // Close and reopen the RHS to trigger a re-fetch of pinned prompts
-        await aiPlugin.closeRHS();
-        await aiPlugin.openRHS();
-
-        // The pill should no longer be visible
-        await expect(page.getByRole('button', { name: 'Removable Pill' })).not.toBeVisible({ timeout: 10000 });
+        // The new chat is up (its composer is there) and no pill was rendered for the pinned prompt.
+        await expect(aiPlugin.rhsPostTextarea).toBeVisible({ timeout: 30000 });
+        await expect(page.getByRole('button', { name: 'RHS Pill Prompt' })).toHaveCount(0);
     });
 });
 
@@ -662,7 +607,7 @@ test.describe('Context Variables', () => {
         }
     });
 
-    test('pinned prompt pill with context variable renders correctly in the RHS', async ({ page }) => {
+    test('a custom prompt with a context variable is rendered when picked from the RHS composer\'s AI actions', async ({ page }) => {
         const prompt = await createPromptViaAPI(userClient, {
             name: 'Context Pill',
             description: 'Renders username',
@@ -674,17 +619,25 @@ test.describe('Context Variables', () => {
 
         const { aiPlugin } = await setupTestPage(page);
         await aiPlugin.openRHS();
+        await expect(aiPlugin.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
 
-        const pillButton = page.getByRole('button', { name: 'Context Pill' });
-        await expect(pillButton).toBeVisible({ timeout: 30000 });
+        // The prompts are the host composer's AI action (registerAIActionMenuItemComponent). The
+        // AI actions button is only present when the server includes the pluggable AI actions menu.
+        const aiButton = aiPlugin.getRhsContainer().locator('#aiActionsMenu');
+        if (!await aiButton.isVisible({ timeout: 5000 }).catch(() => false)) {
+            test.skip(true, 'AI Actions menu not available (requires custom server build)');
+            return;
+        }
+        await aiButton.click();
+        await page.getByText('Custom prompts').hover();
+        await page.getByText('Context Pill').click();
 
-        // Mock the bot response
+        // The template is rendered with the real username, not shown as a template variable.
+        await expect(aiPlugin.rhsPostTextarea).toHaveValue('Greetings regularuser!', { timeout: 30000 });
+
+        // Mock the bot response, then send it.
         await openAIMock.addCompletionMock(responseTest);
-
-        // Click the pill -- the template should be rendered with the real username
-        await pillButton.click();
-
-        // The rendered text should contain the actual username, not the template variable
-        await expect(page.getByText('Greetings regularuser!')).toBeVisible({ timeout: 30000 });
+        await aiPlugin.rhsSendButton.click();
+        await expect(aiPlugin.getRhsContainer().getByTestId('post-message-text').getByText('Greetings regularuser!')).toBeVisible({ timeout: 30000 });
     });
 });

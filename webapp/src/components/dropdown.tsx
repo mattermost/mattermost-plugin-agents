@@ -63,7 +63,8 @@ export const TooltipAboveModals = styled(WithTooltip)`
     }
 `;
 
-const TooltipTrigger = styled.span`
+// WithTooltip needs a single element that takes a ref and mouse/focus handlers.
+export const TooltipTrigger = styled.span`
     display: inline-flex;
 `;
 

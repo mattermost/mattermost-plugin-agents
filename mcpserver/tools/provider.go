@@ -144,6 +144,7 @@ func (p *MattermostToolProvider) mcpTools() []MCPTool {
 	groups := []func() []MCPTool{
 		p.getPostTools,
 		p.getScheduledPostTools,
+		p.getDraftTools,
 		p.getReactionTools,
 		p.getThreadTools,
 		p.getChannelTools,

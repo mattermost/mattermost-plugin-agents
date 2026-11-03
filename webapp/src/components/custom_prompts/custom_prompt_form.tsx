@@ -32,11 +32,11 @@ const FormLayout = styled.div<{$stickyFooter?: boolean}>`
     `}
 `;
 
-const FormBody = styled.div<{$stickyFooter?: boolean}>`
+const FormBody = styled.div<{$stickyFooter?: boolean; $flush?: boolean}>`
     display: flex;
     flex-direction: column;
-    gap: 24px;
-    padding: 20px 32px 0;
+    gap: var(--spacing-xxl);
+    padding: ${({$flush}) => ($flush ? 'var(--spacing-xl) 0 0' : 'var(--spacing-xl) var(--spacing-xxxl) 0')};
 
     ${({$stickyFooter}) =>
         $stickyFooter && `
@@ -46,29 +46,29 @@ const FormBody = styled.div<{$stickyFooter?: boolean}>`
     `}
 `;
 
-const FormFooter = styled.div`
+const FormFooter = styled.div<{$flush?: boolean}>`
     display: flex;
     justify-content: flex-end;
     align-items: center;
-    gap: 8px;
+    gap: var(--spacing-xs);
     flex-shrink: 0;
-    padding: 16px 32px 24px;
+    padding: ${({$flush}) => ($flush ? 'var(--spacing-l) 0 var(--spacing-xxl)' : 'var(--spacing-l) var(--spacing-xxxl) var(--spacing-xxl)')};
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
 /** Read-only and legacy single-block layout */
-const FormContainer = styled.div`
+const FormContainer = styled.div<{$flush?: boolean}>`
     display: flex;
     flex-direction: column;
-    gap: 24px;
-    padding: 20px 32px;
+    gap: var(--spacing-xxl);
+    padding: ${({$flush}) => ($flush ? 'var(--spacing-xl) 0' : 'var(--spacing-xl) var(--spacing-xxxl)')};
     background-color: var(--center-channel-bg);
 `;
 
 const FieldGroup = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--spacing-xxxs);
     position: relative;
 `;
 
@@ -85,17 +85,17 @@ const InlineRadio = styled(Radio)`
 `;
 
 const PrivateNote = styled.span`
-    margin-left: 6px;
+    margin-left: var(--spacing-xxs);
     color: rgba(var(--center-channel-color-rgb), 0.56);
-    font-size: 12px;
+    font-size: var(--font-size-75);
 `;
 
 const VisibilityLabel = styled.div`
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-75);
     color: rgba(var(--center-channel-color-rgb), 0.64);
-    margin-bottom: 4px;
+    margin-bottom: var(--spacing-xxxs);
 `;
 
 const SystemPromptHeader = styled.div`
@@ -105,9 +105,9 @@ const SystemPromptHeader = styled.div`
 `;
 
 const SystemPromptLabel = styled.label`
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-75);
     color: rgba(var(--center-channel-color-rgb), 0.64);
 `;
 
@@ -116,10 +116,10 @@ const DeleteButton = styled(Button)`
 `;
 
 const ReadOnlyText = styled.div`
-    font-size: 14px;
-    line-height: 20px;
+    font-size: var(--font-size-100);
+    line-height: var(--line-height-100);
     color: var(--center-channel-color);
-    padding: 4px 0;
+    padding: var(--spacing-xxxs) 0;
     white-space: pre-wrap;
 `;
 
@@ -136,9 +136,12 @@ interface CustomPromptFormProps {
 
     /** When true, actions sit in a footer bar and the body scrolls (new prompt modal). */
     stickyFooter?: boolean;
+
+    /** Drop the horizontal inset when the host column already provides it (page layout). */
+    flush?: boolean;
 }
 
-const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, stickyFooter}: CustomPromptFormProps) => {
+const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, stickyFooter, flush}: CustomPromptFormProps) => {
     const intl = useIntl();
     const [name, setName] = useState(prompt?.name ?? '');
     const [description, setDescription] = useState(prompt?.description ?? '');
@@ -198,7 +201,7 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
 
     if (readOnly) {
         return (
-            <FormContainer>
+            <FormContainer $flush={flush}>
                 <FieldGroup>
                     <VisibilityLabel>
                         <FormattedMessage defaultMessage='Visibility'/>
@@ -266,7 +269,10 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
 
     return (
         <FormLayout $stickyFooter={stickyFooter}>
-            <FormBody $stickyFooter={stickyFooter}>
+            <FormBody
+                $stickyFooter={stickyFooter}
+                $flush={flush}
+            >
                 <FieldGroup>
                     <VisibilityLabel>
                         <FormattedMessage defaultMessage='Visibility'/>
@@ -369,7 +375,7 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
                     )}
                 </FieldGroup>
             </FormBody>
-            <FormFooter>{actions}</FormFooter>
+            <FormFooter $flush={flush}>{actions}</FormFooter>
         </FormLayout>
     );
 };

@@ -834,3 +834,19 @@ func TestWriteScheduledPost(t *testing.T) {
 	assert.Contains(t, out, "Scheduled for: 2023-11-14T22:13:20Z")
 	assert.Contains(t, out, "Message: scheduled hello")
 }
+
+func TestWriteDraft(t *testing.T) {
+	draft := &model.Draft{
+		ChannelId: "chan12345678901234567890ab", RootId: "root12345678901234567890ab",
+		Message: "draft hello", UpdateAt: 1700000000000,
+	}
+
+	var buf strings.Builder
+	WriteDraft(&buf, DraftEntry{HeaderLabel: "Draft 1", Draft: draft})
+	out := buf.String()
+	assert.Contains(t, out, "**Draft 1**:")
+	assert.Contains(t, out, "Channel ID: chan12345678901234567890ab")
+	assert.Contains(t, out, "Root ID: root12345678901234567890ab")
+	assert.Contains(t, out, "Last updated: 2023-11-14T22:13:20Z")
+	assert.Contains(t, out, "Message: draft hello")
+}

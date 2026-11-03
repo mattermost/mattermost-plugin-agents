@@ -5,6 +5,7 @@ import React from 'react';
 import {render, screen, fireEvent, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
+import {AnimatedModalShell} from './animated_modal_shell';
 import ConfirmationDialog from './confirmation_dialog';
 
 jest.mock('react-intl', () => {
@@ -65,12 +66,47 @@ describe('ConfirmationDialog', () => {
         expect(screen.getByRole('dialog', {name: 'Delete agent?'})).toBeTruthy();
     });
 
-    it('Escape cancels with managed accessibility', () => {
-        const {onCancel} = renderDialog({managedAccessibility: true});
+    it.each([
+        {name: 'without managed accessibility', managed: false},
+        {name: 'with managed accessibility', managed: true},
+    ])('Escape cancels $name', ({managed}) => {
+        const {onCancel} = renderDialog({managedAccessibility: managed});
 
-        fireEvent.keyDown(document, {key: 'Escape'});
+        fireEvent.keyDown(document.body, {key: 'Escape'});
 
         expect(onCancel).toHaveBeenCalledTimes(1);
+    });
+
+    it('Escape cancels the dialog stacked over a modal, and leaves the modal open', () => {
+        const onModalEscape = jest.fn();
+        const onCancel = jest.fn();
+        render(
+            <IntlProvider locale='en'>
+                <AnimatedModalShell
+                    show={true}
+                    onEscape={onModalEscape}
+                >
+                    <div role='dialog'>{'Settings'}</div>
+                </AnimatedModalShell>
+                <ConfirmationDialog
+                    title='Discard changes?'
+                    message='Your edits will be lost.'
+                    confirmButtonText='Discard'
+                    cancelButtonText='Cancel'
+                    onConfirm={jest.fn()}
+                    onCancel={onCancel}
+                />
+            </IntlProvider>,
+        );
+
+        // jsdom has no layout: give the dialogs a box so the shells see them as open.
+        document.querySelectorAll<HTMLElement>('[role="dialog"]').forEach((el) => {
+            el.getClientRects = () => [{}] as unknown as DOMRectList;
+        });
+        fireEvent.keyDown(document.body, {key: 'Escape'});
+
+        expect(onCancel).toHaveBeenCalledTimes(1);
+        expect(onModalEscape).not.toHaveBeenCalled();
     });
 
     describe('Tab trap with managed accessibility', () => {
@@ -105,5 +141,65 @@ describe('ConfirmationDialog', () => {
         fireEvent.click(screen.getByRole('button', {name: 'Close'}));
 
         expect(onCancel).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        {name: 'backdrop press cancels', pending: false, managed: false, expectCancel: 1},
+        {name: 'backdrop press cancels with managed accessibility', pending: false, managed: true, expectCancel: 1},
+        {name: 'backdrop press is ignored while pending', pending: true, managed: true, expectCancel: 0},
+    ])('$name', ({pending, managed, expectCancel}) => {
+        const {onCancel} = renderDialog({confirmPending: pending, managedAccessibility: managed});
+        const backdrop = screen.getByRole('dialog').parentElement as HTMLElement;
+
+        fireEvent.click(backdrop);
+
+        expect(onCancel).toHaveBeenCalledTimes(expectCancel);
+    });
+
+    it('a press that starts inside the dialog does not cancel', () => {
+        const {onCancel} = renderDialog({managedAccessibility: true});
+        const dialog = screen.getByRole('dialog');
+
+        fireEvent.mouseDown(dialog);
+        fireEvent.click(dialog.parentElement as HTMLElement);
+
+        expect(onCancel).not.toHaveBeenCalled();
+    });
+
+    it('Escape does not cancel while pending', () => {
+        const {onCancel} = renderDialog({managedAccessibility: true, confirmPending: true});
+
+        fireEvent.keyDown(document.body, {key: 'Escape'});
+
+        expect(onCancel).not.toHaveBeenCalled();
+    });
+
+    it('show=false keeps the dialog through the exit, then unmounts and restores focus', async () => {
+        const trigger = document.createElement('button');
+        document.body.appendChild(trigger);
+        trigger.focus();
+        const props = {title: 'Delete agent?', message: 'x', confirmButtonText: 'Delete', cancelButtonText: 'Cancel', onConfirm: jest.fn(), onCancel: jest.fn(), managedAccessibility: true};
+        const {rerender} = render(
+            <IntlProvider locale='en'>
+                <ConfirmationDialog
+                    {...props}
+                    show={true}
+                />
+            </IntlProvider>,
+        );
+        await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', {name: 'Delete'})));
+
+        rerender(
+            <IntlProvider locale='en'>
+                <ConfirmationDialog
+                    {...props}
+                    show={false}
+                />
+            </IntlProvider>,
+        );
+
+        await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+        expect(document.activeElement).toBe(trigger);
+        trigger.remove();
     });
 });

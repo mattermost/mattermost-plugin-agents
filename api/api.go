@@ -63,6 +63,7 @@ type Config interface {
 	GetDefaultBotName() string
 	MCP() mcp.Config
 	AllowUnsafeLinks() bool
+	LinkPolicy() config.LinkPolicy
 	EnableHTMLArtifacts() bool
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
@@ -146,6 +147,7 @@ type ConversationStore interface {
 	GetTurnByPostID(postID string) (*store.Turn, error)
 	UpdateTurnContent(id string, content json.RawMessage) error
 	GetConversationSummariesForUser(userID string, limit, offset int) ([]store.ConversationSummary, error)
+	RenameConversation(id, title string) (bool, error)
 }
 
 // ChannelAutoReplyStore provides read/write access to per-channel auto-reply settings.
@@ -370,6 +372,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 
 	router.GET("/conversations/:conversationid", a.handleGetConversation)
 	router.GET("/conversations/:conversationid/context", a.handleGetConversationContext)
+	router.PUT("/conversations/:conversationid/title", a.handleRenameConversation)
 
 	router.GET("/oauth/callback", a.handleOAuthCallback)
 	router.GET("/ai_threads", a.handleGetAIThreads)
@@ -732,10 +735,13 @@ type AIBotInfo struct {
 }
 
 type AIBotsResponse struct {
-	Bots                 []AIBotInfo `json:"bots"`
-	SearchEnabled        bool        `json:"searchEnabled"`
-	AllowUnsafeLinks     bool        `json:"allowUnsafeLinks"`
-	HTMLArtifactsEnabled bool        `json:"htmlArtifactsEnabled"`
+	Bots             []AIBotInfo `json:"bots"`
+	SearchEnabled    bool        `json:"searchEnabled"`
+	AllowUnsafeLinks bool        `json:"allowUnsafeLinks"`
+	// LinkPolicy is what the webapp enforces; AllowUnsafeLinks is kept for
+	// API compatibility.
+	LinkPolicy           config.LinkPolicy `json:"linkPolicy"`
+	HTMLArtifactsEnabled bool              `json:"htmlArtifactsEnabled"`
 }
 
 // usesServiceAccountAuth reports the effective service account mode for a bot:
@@ -827,6 +833,7 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 		Bots:                 bots,
 		SearchEnabled:        searchEnabled,
 		AllowUnsafeLinks:     a.config.AllowUnsafeLinks(),
+		LinkPolicy:           a.config.LinkPolicy(),
 		HTMLArtifactsEnabled: a.config.EnableHTMLArtifacts(),
 	})
 }

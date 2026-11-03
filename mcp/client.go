@@ -420,10 +420,34 @@ func newClientWithTimeout(ctx context.Context, timeout time.Duration, userID str
 		serviceAccount: p.serviceAccount,
 	}
 
+	needsAuthorization, err := c.staticOAuthTokenMissing()
+	if err != nil {
+		return nil, err
+	}
+
 	session, err := connectWithDeadline(ctx, timeout, "MCP server "+serverConfig.Name,
 		func(connectCtx context.Context) (*mcp.ClientSession, error) {
 			return c.connectAndDiscover(connectCtx, serverConfig, p.forceRefresh)
 		})
+
+	// The user has never authorized a server that requires OAuth. Connecting
+	// first lets a server that challenges on connect pass its
+	// resource_metadata to the OAuth start link. Any other outcome still asks
+	// the user to connect: some OAuth servers (e.g. Google's Workspace MCP
+	// servers) answer initialize and tools/list anonymously and only reject
+	// tools/call, and others list no tools to anonymous callers.
+	if needsAuthorization {
+		if _, ok := errors.AsType[*OAuthNeededError](err); ok {
+			return nil, err
+		}
+		if err != nil {
+			c.log.Info("Unauthorized connection to MCP server with static OAuth credentials failed; asking the user to connect",
+				"userID", c.userID, "server", serverConfig.Name, "error", err)
+		} else {
+			_ = session.Close()
+		}
+		return nil, &OAuthNeededError{authURL: c.oauthStartURL()}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -512,6 +536,20 @@ func NewPluginClient(ctx context.Context, userID string, cfg PluginServerConfig,
 	}
 
 	return client, nil
+}
+
+// staticOAuthTokenMissing reports whether the server has admin-configured
+// OAuth client credentials that the user has never authorized. Such a server
+// requires OAuth even when it answers some requests anonymously.
+func (c *Client) staticOAuthTokenMissing() (bool, error) {
+	if c.serviceAccount || c.oauthManager == nil || staticOAuthCreds(c.config) == nil {
+		return false, nil
+	}
+	hasToken, err := c.oauthManager.HasStoredToken(c.userID, c.config.Name)
+	if err != nil {
+		return false, fmt.Errorf("failed to check stored OAuth token for MCP server %s: %w", c.config.Name, err)
+	}
+	return !hasToken, nil
 }
 
 func (c *Client) oauthNeededError(err error) error {
