@@ -264,7 +264,7 @@ test.describe('Channel artifacts', () => {
         // Channel Info row needs a Mattermost build with registerChannelInfoMenuAction.
         await page.locator('#channel-info-btn').click();
         await expect(page.getByTestId('channel_info_rhs-menu')).toBeVisible({timeout: 15000});
-        const infoItem = page.getByRole('button', {name: 'Channel artifacts'});
+        const infoItem = page.getByTestId('channel_info_rhs-menu').getByRole('button', {name: 'Channel artifacts', exact: true});
         if (await infoItem.isVisible().catch(() => false)) {
             await infoItem.click();
             const rhs = channelArtifactsRHS(page);

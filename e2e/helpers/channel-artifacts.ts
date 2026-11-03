@@ -119,7 +119,7 @@ export async function openChannelArtifactsFromInfo(page: Page): Promise<Locator>
     await expect(infoButton).toBeVisible({timeout: 15000});
     await infoButton.click();
     await expect(page.getByTestId('channel_info_rhs-menu')).toBeVisible({timeout: 15000});
-    const item = page.getByRole('button', {name: 'Channel artifacts'});
+    const item = page.getByTestId('channel_info_rhs-menu').getByRole('button', {name: 'Channel artifacts', exact: true});
     await expect(item).toBeVisible({timeout: 10000});
     await item.click();
     await expect(rhs).toBeVisible({timeout: 15000});
