@@ -285,6 +285,9 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 	if p.interactive {
 		opts = append(opts, builder.WithLLMContextInteractive())
 	}
+	if p.isDM {
+		opts = append(opts, builder.WithLLMContextDirectMessage())
+	}
 	if p.autoEverywhereOnly {
 		opts = append(opts, builder.WithLLMContextMCPToolFilter(func(tool llm.Tool) bool {
 			return botChannelAutoEverywhereKeepTool(p.c.toolPolicyChecker, tool)
