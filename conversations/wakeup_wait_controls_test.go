@@ -4,6 +4,7 @@
 package conversations
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -211,17 +212,16 @@ func TestHandleWaitCheckNowResumesForRequester(t *testing.T) {
 
 	require.NoError(t, env.c.HandleWaitCheckNow(wakeUserID, post))
 
-	// The marker is consumed and the scheduled trigger canceled so it cannot
-	// also fire.
-	require.Empty(t, env.kv.data)
-	require.Equal(t, []string{WakeJobKeyPrefix + env.conv.ID}, sched.canceled)
+	// The resume, not the request, consumes the marker and cancels the trigger.
+	require.NotEmpty(t, env.kv.data)
+	require.Empty(t, sched.canceled)
 
 	// The resume runs as the requester on the wait's response post, carrying
 	// the marker so its compare-and-delete consume matches.
 	require.Equal(t, post.Id, captured.PostID)
 	require.Equal(t, wakeUserID, captured.UserID)
 	require.Equal(t, marker, captured.wakeMarker)
-	require.True(t, captured.markerClaimed, "the resume must not claim the consumed marker again")
+	require.True(t, captured.cancelOnResume, "the resume must cancel the scheduled trigger")
 }
 
 // replacementWait is a wait another requester scheduled for the same post after
@@ -232,7 +232,7 @@ func replacementWait(convID, postID string) wakeMarker {
 	return marker
 }
 
-func TestStaleWaitControlsLeaveReplacementWaitPending(t *testing.T) {
+func TestWaitControlsRejectOtherResponsePost(t *testing.T) {
 	const rootID = "root-post-id"
 
 	tests := []struct {
@@ -255,23 +255,106 @@ func TestStaleWaitControlsLeaveReplacementWaitPending(t *testing.T) {
 			var resumed bool
 			env.c.resumeWake = func(WakeJob) { resumed = true }
 
-			post := waitPost("bot-post-id", env.conv.ID, rootID)
-			env.seedMarker(t, post, fullWaitMarker(env.conv.ID, post.Id, wakeUserID))
+			olderPost := waitPost("older-bot-post-id", env.conv.ID, rootID)
+			newerPost := waitPost("newer-bot-post-id", env.conv.ID, rootID)
+			env.seedMarker(t, newerPost, fullWaitMarker(env.conv.ID, newerPost.Id, wakeUserID))
+			pending := env.kv.data[responsePostMarkerKey(newerPost)]
 
-			replacement := replacementWait(env.conv.ID, post.Id)
-			replacementRaw, err := json.Marshal(replacement)
-			require.NoError(t, err)
-			jobKey := WakeJobKeyPrefix + env.conv.ID
-			env.kv.afterGet = func() {
-				env.kv.data[responsePostMarkerKey(post)] = replacementRaw
-				sched.scheduled[jobKey] = WakeJob{PostID: post.Id, UserID: replacement.RequesterUserID, wakeMarker: replacement}
-			}
-
-			require.ErrorIs(t, tt.call(env, post), ErrNoPendingWait)
+			require.ErrorIs(t, tt.call(env, olderPost), ErrNoPendingWait)
 			require.False(t, resumed)
-			require.Empty(t, sched.canceled, "a stale control must not cancel the replacement wake")
-			require.Contains(t, sched.scheduled, jobKey)
-			require.Equal(t, replacementRaw, env.kv.data[responsePostMarkerKey(post)])
+			require.Empty(t, sched.canceled)
+			require.Equal(t, pending, env.kv.data[responsePostMarkerKey(newerPost)])
 		})
 	}
+}
+
+func TestStaleWaitCancelLeavesReplacementWaitPending(t *testing.T) {
+	env := newWakeEnv(t, nil)
+	sched := &fakeWakeScheduler{scheduled: map[string]WakeJob{}}
+	env.c.wakeScheduler = sched
+
+	post := waitPost("bot-post-id", env.conv.ID, "root-post-id")
+	env.seedMarker(t, post, fullWaitMarker(env.conv.ID, post.Id, wakeUserID))
+
+	replacement := replacementWait(env.conv.ID, post.Id)
+	replacementRaw, err := json.Marshal(replacement)
+	require.NoError(t, err)
+	jobKey := WakeJobKeyPrefix + env.conv.ID
+	env.kv.afterGet = func() {
+		env.kv.data[responsePostMarkerKey(post)] = replacementRaw
+		sched.scheduled[jobKey] = WakeJob{PostID: post.Id, UserID: replacement.RequesterUserID, wakeMarker: replacement}
+	}
+
+	require.ErrorIs(t, env.c.HandleWaitCancel(wakeUserID, post), ErrNoPendingWait)
+	require.Empty(t, sched.canceled, "a stale cancel must not cancel the replacement wake")
+	require.Contains(t, sched.scheduled, jobKey)
+	require.Equal(t, replacementRaw, env.kv.data[responsePostMarkerKey(post)])
+}
+
+func TestStaleCheckNowResumeLeavesReplacementWaitPending(t *testing.T) {
+	tests := []struct {
+		name string
+		// after changes the stored wait between the click and the queued resume.
+		after func(env *wakeEnv, post *model.Post)
+	}{
+		{name: "replaced by a newer wait", after: func(env *wakeEnv, post *model.Post) {
+			env.seedMarker(t, post, replacementWait(env.conv.ID, post.Id))
+		}},
+		{name: "steered by a newer message", after: func(env *wakeEnv, post *model.Post) {
+			delete(env.kv.data, responsePostMarkerKey(post))
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := newWakeEnv(t, nil)
+			sched := &fakeWakeScheduler{scheduled: map[string]WakeJob{}}
+			env.c.wakeScheduler = sched
+			var queued WakeJob
+			env.c.resumeWake = func(j WakeJob) { queued = j }
+
+			post := waitPost("bot-post-id", env.conv.ID, "root-post-id")
+			post.ChannelId = "dm-channel"
+			env.seedMarker(t, post, fullWaitMarker(env.conv.ID, post.Id, wakeUserID))
+			jobKey := WakeJobKeyPrefix + env.conv.ID
+			require.NoError(t, env.c.HandleWaitCheckNow(wakeUserID, post))
+
+			tt.after(env, post)
+			sched.scheduled[jobKey] = WakeJob{PostID: post.Id, UserID: wakeUserID, wakeMarker: replacementWait(env.conv.ID, post.Id)}
+			remaining := env.kv.data[responsePostMarkerKey(post)]
+			env.mmClient.On("GetPost", post.Id).Return(post, nil).Once()
+
+			require.NoError(t, env.c.ResumeConversation(context.Background(), queued))
+			require.Empty(t, sched.canceled, "a dropped early resume must not cancel a newer wake")
+			require.Contains(t, sched.scheduled, jobKey)
+			require.Equal(t, remaining, env.kv.data[responsePostMarkerKey(post)])
+			turns, err := env.convStore.GetTurnsForConversation(env.conv.ID)
+			require.NoError(t, err)
+			require.Empty(t, turns)
+		})
+	}
+}
+
+func TestEarlyResumeCancelsScheduledTrigger(t *testing.T) {
+	env := newWakeEnv(t, nil)
+	sched := &fakeWakeScheduler{scheduled: map[string]WakeJob{}}
+	env.c.wakeScheduler = sched
+	env.seedTurn(t, "user-1", "user", "please watch the job", nil, 1, 0)
+
+	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
+	post := &model.Post{Id: "bot-post-id", UserId: "bot-id", ChannelId: channel.Id, RootId: "root-post-id"}
+	post.AddProp(streaming.ConversationIDProp, env.conv.ID)
+	env.seedMarker(t, post, fullWaitMarker(env.conv.ID, post.Id, wakeUserID))
+	sched.scheduled[WakeJobKeyPrefix+env.conv.ID] = newWakeJob(post.Id, env.conv.ID, wakeUserID, wakeScheduledAt)
+	env.expectLiveWake(post, channel, wakeUserID)
+
+	var queued WakeJob
+	env.c.resumeWake = func(j WakeJob) { queued = j }
+	require.NoError(t, env.c.HandleWaitCheckNow(wakeUserID, post))
+	require.NoError(t, env.c.ResumeConversation(context.Background(), queued))
+	env.streaming.waitForStreaming()
+
+	require.Empty(t, env.kv.data, "the early resume must consume the marker")
+	require.Equal(t, []string{WakeJobKeyPrefix + env.conv.ID}, sched.canceled)
+	require.NotNil(t, env.wakePost, "the early resume must reach the LLM")
 }

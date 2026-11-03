@@ -121,9 +121,9 @@ type WakeJob struct {
 	// wakeMarker identifies the wake: the job and the thread marker carry the
 	// same value.
 	wakeMarker
-	// markerClaimed is set when the caller already consumed the marker, so the
-	// resume must not claim it again.
-	markerClaimed bool
+	// cancelOnResume makes the resume cancel the scheduled trigger once it has
+	// consumed the marker; set by an early resume so the trigger cannot fire later.
+	cancelOnResume bool
 }
 
 // WakeScheduler is the subset of cluster.JobOnceScheduler used to schedule
@@ -299,7 +299,7 @@ func (c *Conversations) ActiveWaitForConversation(conversationID, rootPostID, bo
 }
 
 // pendingWaitForPost reads the pending wake marker for a bot response post, or
-// ErrNoPendingWait when none is pending.
+// ErrNoPendingWait when none is pending for that post.
 func (c *Conversations) pendingWaitForPost(post *model.Post) (wakeMarker, error) {
 	if c.wakeScheduler == nil {
 		return wakeMarker{}, ErrNoPendingWait
@@ -311,7 +311,7 @@ func (c *Conversations) pendingWaitForPost(post *model.Post) (wakeMarker, error)
 		}
 		return wakeMarker{}, fmt.Errorf("failed to read pending wake: %w", err)
 	}
-	if marker.ConversationID == "" {
+	if marker.ConversationID == "" || (marker.ResponsePostID != "" && marker.ResponsePostID != post.Id) {
 		return wakeMarker{}, ErrNoPendingWait
 	}
 	return marker, nil
@@ -319,8 +319,9 @@ func (c *Conversations) pendingWaitForPost(post *model.Post) (wakeMarker, error)
 
 // HandleWaitCheckNow ends the post's pending wait early and resumes the bot
 // immediately on behalf of userID, who must be the wait's requester. The
-// marker is consumed first, so exactly one of this and the scheduled trigger
-// resumes, and the trigger is canceled only once the wait is known to be ours.
+// resume consumes the marker, so exactly one of this and the scheduled trigger
+// proceeds and a newer message that steers the thread first still wins; the
+// trigger is canceled only after that consume succeeds.
 func (c *Conversations) HandleWaitCheckNow(userID string, post *model.Post) error {
 	marker, err := c.pendingWaitForPost(post)
 	if err != nil {
@@ -329,20 +330,11 @@ func (c *Conversations) HandleWaitCheckNow(userID string, post *model.Post) erro
 	if marker.RequesterUserID != userID {
 		return ErrNotWaitOwner
 	}
-	markerKey := responsePostMarkerKey(post)
-	consumed, err := c.consumeWakeMarker(markerKey, marker)
-	if err != nil {
-		return fmt.Errorf("failed to consume pending wake: %w", err)
-	}
-	if !consumed {
-		return ErrNoPendingWait
-	}
-	c.wakeScheduler.Cancel(WakeJobKeyPrefix + marker.ConversationID)
 	responsePostID := marker.ResponsePostID
 	if responsePostID == "" {
 		responsePostID = post.Id
 	}
-	job := WakeJob{PostID: responsePostID, UserID: marker.RequesterUserID, wakeMarker: marker, markerClaimed: true}
+	job := WakeJob{PostID: responsePostID, UserID: marker.RequesterUserID, wakeMarker: marker, cancelOnResume: true}
 	resume := c.resumeWake
 	if resume == nil {
 		// runWake locks the conversation's resume mutex and runs a full turn,
@@ -466,15 +458,15 @@ func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) (er
 
 	// A missing marker means a new message steered the thread (or a newer wait
 	// replaced this one) after the wake fired.
-	if !job.markerClaimed {
-		var consumed bool
-		consumed, err = c.consumeWakeMarker(responsePostMarkerKey(post), job.wakeMarker)
-		if err != nil {
-			return fmt.Errorf("failed to consume pending wake: %w", err)
-		}
-		if !consumed {
-			return c.dropWake("steered or superseded", nil, "conversation_id", job.ConversationID)
-		}
+	consumed, err := c.consumeWakeMarker(responsePostMarkerKey(post), job.wakeMarker)
+	if err != nil {
+		return fmt.Errorf("failed to consume pending wake: %w", err)
+	}
+	if !consumed {
+		return c.dropWake("steered or superseded", nil, "conversation_id", job.ConversationID)
+	}
+	if job.cancelOnResume && c.wakeScheduler != nil {
+		c.wakeScheduler.Cancel(WakeJobKeyPrefix + job.ConversationID)
 	}
 	// The wait is resolving; tell clients to drop the "waiting" footer now
 	// rather than waiting for the countdown to run out.
