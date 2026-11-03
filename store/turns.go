@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	sq "github.com/Masterminds/squirrel"
+	"github.com/lib/pq"
 )
 
 // Turn represents a single turn in a conversation stored in LLM_Turns.
@@ -210,12 +211,97 @@ func (s *Store) UpdateTurnPostID(id string, postID *string) error {
 		"update turn post id")
 }
 
-// DeleteResponseTurns removes the post's anchor turn and any assistant or
-// tool_result turns between it and the originating user turn. Callers must
-// build any completion request before calling this.
-func (s *Store) DeleteResponseTurns(conversationID, postID string) error {
-	const query = `
-DELETE FROM LLM_Turns
+// turnSpanRow is a turn read to decide which run it belongs to.
+type turnSpanRow struct {
+	ID       string  `db:"id"`
+	Sequence int     `db:"sequence"`
+	Role     string  `db:"role"`
+	PostID   *string `db:"postid"`
+	Content  string  `db:"content"`
+}
+
+// toolBlockIDs returns the tool_use IDs and the tool_result tool_use IDs in a
+// turn's content blocks.
+func toolBlockIDs(content string) (uses, results []string) {
+	var blocks []struct {
+		Type      string `json:"type"`
+		ID        string `json:"id"`
+		ToolUseID string `json:"tool_use_id"`
+	}
+	if json.Unmarshal([]byte(content), &blocks) != nil {
+		return nil, nil
+	}
+	for _, b := range blocks {
+		switch {
+		case b.Type == "tool_use" && b.ID != "":
+			uses = append(uses, b.ID)
+		case b.Type == "tool_result" && b.ToolUseID != "":
+			results = append(results, b.ToolUseID)
+		}
+	}
+	return uses, results
+}
+
+// belongsToRun reports whether turn is part of the run whose tool_use IDs are
+// runUses and whose anchor post is postID. Turns carry no run ID, so another
+// post's anchor, a user turn, or a tool_result for a call this run did not
+// make (a channel approval appends results at the end of the conversation)
+// is someone else's.
+func belongsToRun(turn turnSpanRow, postID *string, runUses map[string]bool) bool {
+	if turn.Role == "user" {
+		return false
+	}
+	if turn.PostID != nil && (postID == nil || *turn.PostID != *postID) {
+		return false
+	}
+	if turn.Role == "tool_result" {
+		_, results := toolBlockIDs(turn.Content)
+		for _, id := range results {
+			if !runUses[id] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// runSpanEnd returns how many of the turns after a streaming anchor belong to
+// its run: it stops at the first that does not.
+func runSpanEnd(later []turnSpanRow, postID *string) int {
+	runUses := map[string]bool{}
+	for i, turn := range later {
+		if !belongsToRun(turn, postID, runUses) {
+			return i
+		}
+		if turn.Role == "assistant" {
+			uses, _ := toolBlockIDs(turn.Content)
+			for _, id := range uses {
+				runUses[id] = true
+			}
+		}
+	}
+	return len(later)
+}
+
+// DeleteResponseTurns removes the post's anchor turn and the assistant and
+// tool_result turns of its run, between it and the originating user turn.
+// Turns of other runs in that span (another post's anchor, a tool_result for
+// another post's call) are kept. Callers must build any completion request
+// before calling this.
+func (s *Store) DeleteResponseTurns(conversationID, postID string) (err error) {
+	tx, err := s.db.Beginx()
+	if err != nil {
+		return fmt.Errorf("failed to begin delete response turns: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var span []turnSpanRow
+	if err = tx.Select(&span, `
+SELECT ID, Sequence, Role, PostID, Content FROM LLM_Turns
 WHERE ConversationID = $1
   AND Sequence > COALESCE((
     SELECT MAX(Sequence) FROM LLM_Turns
@@ -231,9 +317,33 @@ WHERE ConversationID = $1
     SELECT Sequence FROM LLM_Turns
     WHERE ConversationID = $1 AND Role = 'assistant' AND PostID = $2
     LIMIT 1
-  )`
-	if _, err := s.db.Exec(query, conversationID, postID); err != nil {
-		return fmt.Errorf("failed to delete response turns: %w", err)
+  )
+ORDER BY Sequence ASC`, conversationID, postID); err != nil {
+		return fmt.Errorf("failed to read response turns: %w", err)
+	}
+
+	runUses := map[string]bool{}
+	for _, turn := range span {
+		if turn.Role == "assistant" && (turn.PostID == nil || *turn.PostID == postID) {
+			uses, _ := toolBlockIDs(turn.Content)
+			for _, id := range uses {
+				runUses[id] = true
+			}
+		}
+	}
+	var ids []string
+	for _, turn := range span {
+		if belongsToRun(turn, &postID, runUses) {
+			ids = append(ids, turn.ID)
+		}
+	}
+	if len(ids) > 0 {
+		if _, err = tx.Exec(`DELETE FROM LLM_Turns WHERE ConversationID = $1 AND ID = ANY($2)`, conversationID, pq.Array(ids)); err != nil {
+			return fmt.Errorf("failed to delete response turns: %w", err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit delete response turns: %w", err)
 	}
 	return nil
 }
@@ -321,10 +431,11 @@ func (s *Store) settleStreamingTurn(id string, staleAfterMillis int64, update st
 	}
 
 	var anchor struct {
-		ConversationID string `db:"conversationid"`
-		Sequence       int    `db:"sequence"`
+		ConversationID string  `db:"conversationid"`
+		Sequence       int     `db:"sequence"`
+		PostID         *string `db:"postid"`
 	}
-	lockQuery := `SELECT ConversationID, Sequence FROM LLM_Turns WHERE ID = $1 AND Status = $2`
+	lockQuery := `SELECT ConversationID, Sequence, PostID FROM LLM_Turns WHERE ID = $1 AND Status = $2`
 	lockArgs := []any{id, TurnStatusStreaming}
 	if staleAfterMillis > 0 {
 		lockQuery += ` AND UpdatedAt < ` + dbNowMillis + ` - $3`
@@ -337,22 +448,12 @@ func (s *Store) settleStreamingTurn(id string, staleAfterMillis int64, update st
 		return false, fmt.Errorf("failed to lock streaming turn: %w", err)
 	}
 
-	var later []struct {
-		ID       string `db:"id"`
-		Sequence int    `db:"sequence"`
-		Role     string `db:"role"`
-	}
-	if err = tx.Select(&later, `SELECT ID, Sequence, Role FROM LLM_Turns WHERE ConversationID = $1 AND Sequence > $2 ORDER BY Sequence ASC`,
+	var later []turnSpanRow
+	if err = tx.Select(&later, `SELECT ID, Sequence, Role, PostID, Content FROM LLM_Turns WHERE ConversationID = $1 AND Sequence > $2 ORDER BY Sequence ASC`,
 		anchor.ConversationID, anchor.Sequence); err != nil {
 		return false, fmt.Errorf("failed to read later turns: %w", err)
 	}
-	runEnd := len(later)
-	for i, turn := range later {
-		if turn.Role == "user" {
-			runEnd = i
-			break
-		}
-	}
+	runEnd := runSpanEnd(later, anchor.PostID)
 
 	if runEnd > 0 {
 		// Rotate: park the anchor, shift each run turn into the slot freed

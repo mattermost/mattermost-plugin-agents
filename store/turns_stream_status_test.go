@@ -360,3 +360,82 @@ func TestConcurrentSettlesInOneConversation(t *testing.T) {
 		assert.Equal(t, TurnStatusComplete, getTurn(t, s, id).Status)
 	}
 }
+
+// TestRunSpanSkipsAnotherPostsToolResult pins that a tool_result a channel
+// approval appended for an earlier post is not treated as part of a later
+// post's run: settling that run does not move past it, and regenerating the
+// later post does not delete it.
+func TestRunSpanSkipsAnotherPostsToolResult(t *testing.T) {
+	block := func(kind, id string) string {
+		if kind == "tool_use" {
+			return `[{"type":"tool_use","id":"` + id + `","name":"x"}]`
+		}
+		return `[{"type":"tool_result","tool_use_id":"` + id + `","content":"ok"}]`
+	}
+	tests := []struct {
+		name string
+		// foreignResultInSpan places the earlier post's result between the
+		// later post's user turn and its anchor instead of after its run.
+		foreignResultInSpan bool
+	}{
+		{name: "earlier post's result appended after the run"},
+		{name: "earlier post's result inside the scrubbed span", foreignResultInSpan: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, convID := setupStreamStore(t)
+			add := func(role, postID, content, status string) string {
+				turn := makeTurn(convID, 0, func(tu *Turn) {
+					tu.Role = role
+					tu.Content = json.RawMessage(content)
+					if postID != "" {
+						tu.PostID = &postID
+					}
+					if status != "" {
+						tu.Status = status
+					}
+				})
+				require.NoError(t, s.CreateTurnAutoSequence(turn))
+				return turn.ID
+			}
+			add("user", "", `[]`, "")
+			earlierAnchor := add("assistant", "post-1", block("tool_use", "tc-1"), "")
+			add("user", "", `[]`, "")
+			var foreign string
+			if tt.foreignResultInSpan {
+				foreign = add("tool_result", "", block("tool_result", "tc-1"), "")
+			}
+			anchor := add("assistant", "post-2", `[]`, TurnStatusStreaming)
+			add("assistant", "", block("tool_use", "tc-2"), "")
+			add("tool_result", "", block("tool_result", "tc-2"), "")
+			if !tt.foreignResultInSpan {
+				foreign = add("tool_result", "", block("tool_result", "tc-1"), "")
+			}
+
+			settled, err := s.FinalizeStreamingTurn(anchor, json.RawMessage(`[]`), 0, 0, TurnStatusComplete)
+			require.NoError(t, err)
+			require.True(t, settled)
+			turns, err := s.GetTurnsForConversation(convID)
+			require.NoError(t, err)
+			index := map[string]int{}
+			for i, turn := range turns {
+				index[turn.ID] = i
+			}
+			if !tt.foreignResultInSpan {
+				assert.Less(t, index[anchor], index[foreign], "the run must not move past another post's result")
+			}
+
+			require.NoError(t, s.DeleteResponseTurns(convID, "post-2"))
+			turns, err = s.GetTurnsForConversation(convID)
+			require.NoError(t, err)
+			var kept []string
+			for _, turn := range turns {
+				kept = append(kept, turn.ID)
+			}
+			assert.Contains(t, kept, foreign, "regenerating a later post must keep another post's tool result")
+			assert.Contains(t, kept, earlierAnchor)
+			assert.NotContains(t, kept, anchor)
+			assert.Len(t, kept, 4, "only the later post's run is scrubbed")
+		})
+	}
+}
