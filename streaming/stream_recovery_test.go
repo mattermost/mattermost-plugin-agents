@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/lifecycle"
-	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
