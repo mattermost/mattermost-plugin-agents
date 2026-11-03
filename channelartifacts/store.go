@@ -5,6 +5,7 @@ package channelartifacts
 
 import (
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,7 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -326,8 +327,8 @@ func (s *Store) loadHistory(id string) (*VersionHistory, error) {
 }
 
 func (s *Store) saveHistory(id string, hist *VersionHistory) error {
-	sort.Slice(hist.Versions, func(i, j int) bool {
-		return hist.Versions[i].Version < hist.Versions[j].Version
+	slices.SortFunc(hist.Versions, func(a, b VersionRecord) int {
+		return cmp.Compare(a.Version, b.Version)
 	})
 	return s.kv.KVSet(histKey(id), hist)
 }
@@ -409,8 +410,8 @@ func (s *Store) pruneOldestVersions(entry *Entry, hist *VersionHistory, maxKeep 
 	if maxKeep <= 0 || len(hist.Versions) <= maxKeep {
 		return nil
 	}
-	sort.Slice(hist.Versions, func(i, j int) bool {
-		return hist.Versions[i].Version < hist.Versions[j].Version
+	slices.SortFunc(hist.Versions, func(a, b VersionRecord) int {
+		return cmp.Compare(a.Version, b.Version)
 	})
 	for len(hist.Versions) > maxKeep {
 		oldest := hist.Versions[0]

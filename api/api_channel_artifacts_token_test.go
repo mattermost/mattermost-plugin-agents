@@ -125,11 +125,13 @@ func (kv *artifactTokenKV) GetPostsSince(string, int64) (*model.PostList, error)
 func (kv *artifactTokenKV) GetPostsBefore(string, string, int, int) (*model.PostList, error) {
 	return nil, nil
 }
-func (kv *artifactTokenKV) CreatePost(*model.Post) error              { return nil }
-func (kv *artifactTokenKV) UpdatePost(*model.Post) error              { return nil }
-func (kv *artifactTokenKV) DM(string, string, *model.Post) error      { return nil }
-func (kv *artifactTokenKV) GetTeam(string) (*model.Team, error)       { return nil, nil }
-func (kv *artifactTokenKV) GetChannel(string) (*model.Channel, error) { return nil, nil }
+func (kv *artifactTokenKV) CreatePost(*model.Post) error         { return nil }
+func (kv *artifactTokenKV) UpdatePost(*model.Post) error         { return nil }
+func (kv *artifactTokenKV) DM(string, string, *model.Post) error { return nil }
+func (kv *artifactTokenKV) GetTeam(string) (*model.Team, error)  { return nil, nil }
+func (kv *artifactTokenKV) GetChannel(channelID string) (*model.Channel, error) {
+	return &model.Channel{Id: channelID, Type: model.ChannelTypeOpen}, nil
+}
 func (kv *artifactTokenKV) GetDirectChannel(string, string) (*model.Channel, error) {
 	return nil, nil
 }

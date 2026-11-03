@@ -10,7 +10,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +25,7 @@ type memoryKV struct {
 	mu            sync.Mutex
 	data          map[string][]byte
 	permissionAll bool
+	readAll       bool
 	channels      map[string]*model.Channel
 }
 
@@ -115,7 +116,7 @@ func (kv *memoryKV) KVList(page, perPage int) ([]string, error) {
 	for key := range kv.data {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	start := page * perPage
 	if start >= len(keys) {
 		return nil, nil
@@ -170,7 +171,7 @@ func (kv *memoryKV) GetChannelByName(string, string, bool) (*model.Channel, erro
 	return nil, nil
 }
 func (kv *memoryKV) HasPermissionToChannel(string, string, *model.Permission) bool {
-	return kv.permissionAll
+	return kv.permissionAll || kv.readAll
 }
 func (kv *memoryKV) HasPermissionToFileAction(string, string, string) bool { return false }
 func (kv *memoryKV) GetFileInfo(string) (*model.FileInfo, error)           { return nil, nil }

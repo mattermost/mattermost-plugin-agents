@@ -103,3 +103,123 @@ func TestServiceListByTeam(t *testing.T) {
 	require.Len(t, resp.Entries, 1)
 	require.Equal(t, "On team", resp.Entries[0].Title)
 }
+
+type fixedMember struct {
+	member *model.ChannelMember
+}
+
+func (f fixedMember) GetMember(string, string) (*model.ChannelMember, error) {
+	if f.member == nil {
+		return nil, ErrNotFound
+	}
+	return f.member, nil
+}
+
+func TestCanManage(t *testing.T) {
+	userID := model.NewId()
+	channelID := model.NewId()
+
+	tests := []struct {
+		name       string
+		userID     string
+		admin      bool
+		read       bool
+		channel    *model.Channel
+		member     *model.ChannelMember
+		wantManage bool
+	}{
+		{name: "empty user", userID: "", wantManage: false},
+		{name: "system admin", userID: userID, admin: true, wantManage: true},
+		{
+			name: "deleted channel", userID: userID, read: true,
+			channel: &model.Channel{Id: channelID, Type: model.ChannelTypeOpen, DeleteAt: 1},
+		},
+		{
+			name: "direct channel member", userID: userID, read: true,
+			channel:    &model.Channel{Id: channelID, Type: model.ChannelTypeDirect},
+			wantManage: true,
+		},
+		{
+			name: "group channel member", userID: userID, read: true,
+			channel:    &model.Channel{Id: channelID, Type: model.ChannelTypeGroup},
+			wantManage: true,
+		},
+		{
+			name: "guest", userID: userID, read: true,
+			channel: &model.Channel{Id: channelID, Type: model.ChannelTypeOpen},
+			member:  &model.ChannelMember{SchemeGuest: true, SchemeAdmin: true},
+		},
+		{
+			name: "channel admin", userID: userID, read: true,
+			channel:    &model.Channel{Id: channelID, Type: model.ChannelTypeOpen},
+			member:     &model.ChannelMember{SchemeAdmin: true},
+			wantManage: true,
+		},
+		{
+			name: "regular member", userID: userID, read: true,
+			channel: &model.Channel{Id: channelID, Type: model.ChannelTypeOpen},
+			member:  &model.ChannelMember{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kv := newMemoryKV()
+			kv.permissionAll = tt.admin
+			kv.readAll = tt.read
+			if tt.channel != nil {
+				kv.channels[channelID] = tt.channel
+			}
+			svc := NewService(NewStore(kv), kv, fixedMember{member: tt.member})
+			require.Equal(t, tt.wantManage, svc.CanManage(tt.userID, channelID))
+		})
+	}
+}
+
+func TestRollbackRestoresVersionAndActor(t *testing.T) {
+	kv := newMemoryKV()
+	kv.permissionAll = true
+	svc := NewService(NewStore(kv), kv, allowAllMembers{})
+	channelID := model.NewId()
+	userID := model.NewId()
+	actor := model.NewId()
+	kv.channels[channelID] = &model.Channel{Id: channelID, Type: model.ChannelTypeOpen}
+
+	entry, err := svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), Title: "Notes",
+	}, []byte("<html>v1</html>"), "v1.html", userID, "Author", "", model.NewId(), ContentLimits{MaxSize: 1024})
+	require.NoError(t, err)
+	_, err = svc.ReplaceContent(userID, entry.ID, ReplaceRequest{PostID: model.NewId(), FileID: model.NewId()}, []byte("<html>v2</html>"), "v2.html", userID, "Author", "", ContentLimits{MaxSize: 1024})
+	require.NoError(t, err)
+
+	restored, err := svc.Rollback(actor, entry.ID, 1)
+	require.NoError(t, err)
+	require.Equal(t, 1, restored.Version)
+	require.Equal(t, actor, restored.UpdatedBy)
+	body, err := svc.ReadContent(restored)
+	require.NoError(t, err)
+	require.Equal(t, "<html>v1</html>", string(body))
+}
+
+func TestPurgeChannelRemovesEveryArtifact(t *testing.T) {
+	kv := newMemoryKV()
+	kv.permissionAll = true
+	store := NewStore(kv)
+	svc := NewService(store, kv, allowAllMembers{})
+	channelID := model.NewId()
+	userID := model.NewId()
+	kv.channels[channelID] = &model.Channel{Id: channelID, Type: model.ChannelTypeOpen}
+
+	for _, title := range []string{"One", "Two"} {
+		_, err := svc.CreateFromHTML(userID, CreateRequest{
+			ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), Title: title,
+		}, []byte("<html>"+title+"</html>"), title+".html", userID, "Author", "", model.NewId(), ContentLimits{MaxSize: 1024})
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, svc.PurgeChannel(channelID))
+	left, err := store.List(channelID)
+	require.NoError(t, err)
+	require.Empty(t, left)
+	require.ErrorIs(t, svc.PurgeChannel("not-an-id"), ErrInvalidInput)
+}
