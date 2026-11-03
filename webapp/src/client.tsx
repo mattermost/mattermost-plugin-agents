@@ -342,6 +342,44 @@ export async function doToolResult(postid: string, toolIDs: string[]): Promise<v
     });
 }
 
+// doWaitCheckNow ends a pending wait_for_async_work pause early and resumes the
+// bot immediately. The server authorizes only the wait's requester.
+export async function doWaitCheckNow(postid: string) {
+    const url = `${postRoute(postid)}/wait/check_now`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+// doWaitCancel cancels a pending wait_for_async_work pause so the bot does not
+// resume from it. The server authorizes only the wait's requester.
+export async function doWaitCancel(postid: string) {
+    const url = `${postRoute(postid)}/wait/cancel`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function doPostbackSummary(postid: string) {
     const url = `${postRoute(postid)}/postback_summary`;
     const response = await fetch(url, Client4.getOptions({
