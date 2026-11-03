@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1059,6 +1060,53 @@ func TestToolDecisionHoldsThePostRunReservation(t *testing.T) {
 				_, held := env.mmClient.kvValue(reservationKey)
 				return !held
 			}, 2*time.Second, 5*time.Millisecond, "the reservation is released once the follow-up ends")
+		})
+	}
+}
+
+// TestTurnEntryPointHoldsThePostRunReservation pins that every entry point
+// reserves the post it writes to for its whole run, from before the first
+// model call until its stream ends, so a regenerate or tool decision on
+// another node can't start a second run on that post meanwhile.
+func TestTurnEntryPointHoldsThePostRunReservation(t *testing.T) {
+	for _, entry := range turnEntryPoints {
+		t.Run(entry.name, func(t *testing.T) {
+			events := make(chan llm.TextStreamEvent)
+			env := setupInvariantEnv(t, policyBotConfig(), &llm.TextStreamResult{Stream: events})
+			start := entry.seed(t, env)
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_ = start()
+			}()
+
+			reserved := func() bool {
+				env.mmClient.kvMu.Lock()
+				defer env.mmClient.kvMu.Unlock()
+				for key := range env.mmClient.kv {
+					if strings.HasPrefix(key, "post_run_reservation_") {
+						return true
+					}
+				}
+				return false
+			}
+			deadline := time.Now().Add(2 * time.Second)
+			for len(env.llmRequests()) == 0 && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+			}
+			if len(env.llmRequests()) == 0 {
+				close(events)
+				<-done
+				t.Skip("this entry point sends no model request")
+			}
+			assert.True(t, reserved(), "the post must be reserved while the first model call is pending")
+
+			events <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "answer"}
+			events <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+			close(events)
+			<-done
+			assert.Eventually(t, func() bool { return !reserved() }, 2*time.Second, 5*time.Millisecond, "the reservation is released when the run ends")
 		})
 	}
 }

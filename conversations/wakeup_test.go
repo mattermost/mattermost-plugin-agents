@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -95,13 +96,23 @@ func TestWakeJobFromProps(t *testing.T) {
 // kvFake is an in-memory plugin KV behind a MockClient, with the JSON encoding
 // and create-if-absent / compare-and-delete semantics of the real client.
 type kvFake struct {
+	// mu guards data: run reservations are released from stream goroutines.
+	mu      sync.Mutex
 	data    map[string][]byte
 	setFail error
+}
+
+func (kv *kvFake) len() int {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	return len(kv.data)
 }
 
 func newKVFake(mmClient *mocks.MockClient) *kvFake {
 	kv := &kvFake{data: map[string][]byte{}}
 	mmClient.EXPECT().KVGet(mock.Anything, mock.Anything).RunAndReturn(func(key string, value any) error {
+		kv.mu.Lock()
+		defer kv.mu.Unlock()
 		raw, ok := kv.data[key]
 		if !ok {
 			return mmapi.ErrKVNotFound
@@ -109,6 +120,8 @@ func newKVFake(mmClient *mocks.MockClient) *kvFake {
 		return json.Unmarshal(raw, value)
 	}).Maybe()
 	mmClient.EXPECT().KVCompareAndSetWithExpiry(mock.Anything, mock.Anything, mock.Anything, mock.Anything).RunAndReturn(func(key string, oldValue, newValue any, _ time.Duration) (bool, error) {
+		kv.mu.Lock()
+		defer kv.mu.Unlock()
 		if kv.setFail != nil {
 			return false, kv.setFail
 		}
@@ -123,6 +136,8 @@ func newKVFake(mmClient *mocks.MockClient) *kvFake {
 		return err == nil, err
 	}).Maybe()
 	mmClient.EXPECT().KVCompareAndSet(mock.Anything, mock.Anything, mock.Anything).RunAndReturn(func(key string, oldValue, newValue any) (bool, error) {
+		kv.mu.Lock()
+		defer kv.mu.Unlock()
 		oldRaw, err := json.Marshal(oldValue)
 		if err != nil || !bytes.Equal(kv.data[key], oldRaw) {
 			return false, err
@@ -213,6 +228,8 @@ func (e *wakeEnv) expectLiveWake(post *model.Post, channel *model.Channel, userI
 		e.wakePost = args.Get(0).(*model.Post)
 		e.wakePost.Id = "wake-post-id"
 	}).Return(nil).Once()
+	// Links the reserved wake post to its conversation.
+	e.mmClient.On("UpdatePost", mock.Anything).Return(nil).Maybe()
 }
 
 // resume fires the wake of post that userID scheduled, with its marker intact,
@@ -223,7 +240,8 @@ func (e *wakeEnv) resume(t *testing.T, post *model.Post, userID string) {
 	e.setMarker(t, post, job)
 	require.NoError(t, e.c.ResumeConversation(context.Background(), job))
 	e.streaming.waitForStreaming()
-	require.Empty(t, e.kv.data, "a resuming wake must consume its marker")
+	require.Eventually(t, func() bool { return e.kv.len() == 0 }, 2*time.Second, 5*time.Millisecond,
+		"a resuming wake must consume its marker and release its run reservation")
 }
 
 func TestResumeConversationWritesWakeTurnAndFollowsUp(t *testing.T) {
@@ -648,7 +666,7 @@ func TestRejectedConcurrentWaitDoesNotDropTheFirstWake(t *testing.T) {
 	env.streaming.waitForStreaming()
 
 	require.NotNil(t, env.wakePost, "the first wake must still resume the conversation")
-	require.Empty(t, env.kv.data)
+	require.Eventually(t, func() bool { return env.kv.len() == 0 }, 2*time.Second, 5*time.Millisecond)
 }
 
 func TestResumeConversationRunsAsSchedulingUser(t *testing.T) {

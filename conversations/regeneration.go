@@ -220,9 +220,8 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	return nil
 }
 
-// postRunReservationRenewInterval is how often a running regenerate or tool
-// decision extends its reservation; tool rounds can outlast the TTL before the new
-// stream's turn starts heartbeating.
+// postRunReservationRenewInterval is how often a run extends its reservation;
+// a run (model calls and tool rounds included) can outlast the TTL.
 var postRunReservationRenewInterval = streaming.StaleStreamThreshold / 3
 
 // markAbandonedPostInterrupted repairs the post of a turn claimed from a dead
@@ -243,9 +242,10 @@ func (c *Conversations) markAbandonedPostInterrupted(post *model.Post, turn stor
 	return nil
 }
 
-// reservePostRun atomically claims postID for one run that replaces or
-// continues its response (regenerate, a tool decision) across all nodes, so
-// two such runs can't overlap before either stream has started. The claim is renewed until released, and
+// reservePostRun atomically claims postID, across all nodes, for the one run
+// that writes to it: a new reply (see claimResponsePost), a regenerate, or a
+// tool decision. It is held from before the run's first model call until its
+// stream ends, so no second run can start on the post meanwhile. The claim is renewed until released, and
 // its TTL frees it if this node dies. The returned context is canceled if the
 // claim is lost, so the run stops before another node's can overlap it.
 func (c *Conversations) reservePostRun(ctx stdcontext.Context, postID string) (stdcontext.Context, func(), error) {
