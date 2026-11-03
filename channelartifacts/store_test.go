@@ -30,6 +30,7 @@ type memoryKV struct {
 	channels      map[string]*model.Channel
 	histSetCount  int
 	failHistSet   int
+	failNextMeta  bool
 }
 
 func newMemoryKV() *memoryKV {
@@ -58,6 +59,17 @@ func (kv *memoryKV) KVGet(key string, value any) error {
 }
 
 func (kv *memoryKV) KVSet(key string, value any) error {
+	if strings.HasPrefix(key, keyPrefixMeta) {
+		kv.mu.Lock()
+		fail := kv.failNextMeta
+		if fail {
+			kv.failNextMeta = false
+		}
+		kv.mu.Unlock()
+		if fail {
+			return errors.New("kv set failed")
+		}
+	}
 	if strings.HasPrefix(key, keyPrefixHist) {
 		kv.mu.Lock()
 		kv.histSetCount++
@@ -344,6 +356,60 @@ func TestPurgeDeletesSHALookupOnlyWhileThisArtifactOwnsIt(t *testing.T) {
 	require.NoError(t, store.Purge(again))
 	_, err = store.FindBySHA(channelID, again.SHA256)
 	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestReplaceContentRestoresAMissingSHALookup(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	body := []byte("<html>1</html>")
+	require.NoError(t, store.Save(entry, body, 1024, 0, 0))
+	require.NoError(t, kv.KVDelete(shaKey(entry.ChannelID, entry.SHA256)))
+
+	require.NoError(t, store.ReplaceContent(entry, body, 1024, 0))
+	owner, err := store.FindBySHA(entry.ChannelID, entry.SHA256)
+	require.NoError(t, err)
+	require.Equal(t, entry.ID, owner)
+
+	other := model.NewId()
+	require.NoError(t, kv.KVSet(shaKey(entry.ChannelID, entry.SHA256), other))
+	require.NoError(t, store.ReplaceContent(entry, body, 1024, 0))
+	owner, err = store.FindBySHA(entry.ChannelID, entry.SHA256)
+	require.NoError(t, err)
+	require.Equal(t, other, owner)
+}
+
+func TestRollbackRestoresAMissingSHALookup(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
+	require.NoError(t, store.ReplaceContent(entry, []byte("<html>2</html>"), 1024, 0))
+	require.NoError(t, store.Rollback(entry, 1))
+	require.NoError(t, kv.KVDelete(shaKey(entry.ChannelID, entry.SHA256)))
+
+	require.NoError(t, store.Rollback(entry, 1))
+	owner, err := store.FindBySHA(entry.ChannelID, entry.SHA256)
+	require.NoError(t, err)
+	require.Equal(t, entry.ID, owner)
+}
+
+func TestDeleteHeadRestoresHistoryWhenMetaSaveFails(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
+	require.NoError(t, store.ReplaceContent(entry, []byte("<html>2</html>"), 1024, 0))
+
+	kv.failNextMeta = true
+	require.Error(t, store.DeleteHead(entry))
+
+	body, err := store.ReadContentAt(entry, 2)
+	require.NoError(t, err)
+	require.Equal(t, "<html>2</html>", string(body))
+	versions, err := store.ListVersions(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, []int{1, 2}, []int{versions[0].Version, versions[1].Version})
 }
 
 func TestStoreVersionsToKeepPrunesOldest(t *testing.T) {

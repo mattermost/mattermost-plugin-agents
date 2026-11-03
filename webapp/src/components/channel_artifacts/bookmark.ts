@@ -124,7 +124,7 @@ function libraryBookmarkLink(linkUrl: string | undefined, artifactId: string): b
         return false;
     }
     if (!linkUrl.includes('://')) {
-        return true;
+        return !linkUrl.startsWith('//');
     }
     let linkOrigin = '';
     try {

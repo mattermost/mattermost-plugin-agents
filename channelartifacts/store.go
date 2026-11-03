@@ -196,6 +196,22 @@ func (s *Store) deleteSHAIfOwner(channelID, sha, ownerID string) error {
 	return err
 }
 
+// ensureOwnSHA writes the lookup when it is missing. A lookup that already
+// names this artifact or another one is left as it is.
+func (s *Store) ensureOwnSHA(channelID, sha, ownerID string) error {
+	if sha == "" || ownerID == "" {
+		return nil
+	}
+	existing, err := s.FindBySHA(channelID, sha)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	if existing != "" {
+		return nil
+	}
+	return s.kv.KVSet(shaKey(channelID, sha), ownerID)
+}
+
 func (s *Store) List(channelID string) ([]*Entry, error) {
 	idx, _, err := s.getIndex(channelID)
 	if err != nil {
@@ -595,7 +611,7 @@ func (s *Store) ReplaceContent(entry *Entry, content []byte, maxSize int64, maxK
 	sum := sha256.Sum256(content)
 	sha := hex.EncodeToString(sum[:])
 	if sha == entry.SHA256 {
-		return nil
+		return s.ensureOwnSHA(entry.ChannelID, sha, entry.ID)
 	}
 	if existing, err := s.FindBySHA(entry.ChannelID, sha); err == nil && existing != "" && existing != entry.ID {
 		return fmt.Errorf("%w: %s", ErrDuplicate, existing)
@@ -747,7 +763,7 @@ func (s *Store) Rollback(entry *Entry, toVersion int) error {
 		return ErrNotFound
 	}
 	if entry.Version == toVersion {
-		return nil
+		return s.ensureOwnSHA(entry.ChannelID, entry.SHA256, entry.ID)
 	}
 	oldSHA := entry.SHA256
 	applyVersionToEntry(entry, rec)
@@ -793,6 +809,7 @@ func (s *Store) DeleteHead(entry *Entry) error {
 	if !foundPrev {
 		previous = remaining[len(remaining)-1]
 	}
+	previousHistory := append([]VersionRecord(nil), hist.Versions...)
 	hist.Versions = remaining
 	if err := s.saveHistory(entry.ID, hist); err != nil {
 		return err
@@ -800,6 +817,11 @@ func (s *Store) DeleteHead(entry *Entry) error {
 	oldSHA := entry.SHA256
 	applyVersionToEntry(entry, previous)
 	if err := s.kv.KVSet(metaKey(entry.ID), entry); err != nil {
+		applyVersionToEntry(entry, head)
+		hist.Versions = previousHistory
+		if restoreErr := s.saveHistory(entry.ID, hist); restoreErr != nil {
+			return errors.Join(err, restoreErr)
+		}
 		return err
 	}
 	s.deleteVersionBlobs(head, entry.ID)

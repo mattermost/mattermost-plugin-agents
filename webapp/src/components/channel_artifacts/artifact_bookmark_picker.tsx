@@ -18,8 +18,8 @@ import {getChannelArtifactsEnabled} from '@/selectors';
 import {AnimatedModalShell} from '../animated_modal_shell';
 
 import {
-    artifactIdFromBookmarkUrl,
     canAddChannelBookmarks,
+    findLibraryArtifactBookmark,
     pinLibraryArtifactBookmark,
 } from './bookmark';
 
@@ -69,11 +69,6 @@ const ArtifactBookmarkPicker = () => {
     const close = useCallback(() => {
         openRequest = null;
         setRequest(null);
-        setEntries([]);
-        setPinnedIds(new Set());
-        setError('');
-        setPinningId(null);
-        setLoading(false);
     }, []);
 
     useEffect(() => {
@@ -114,29 +109,28 @@ const ArtifactBookmarkPicker = () => {
 
     useEffect(() => {
         const pinned = new Set<string>();
-        if (bookmarksById) {
-            for (const b of Object.values(bookmarksById)) {
-                const id = artifactIdFromBookmarkUrl(b.link_url);
-                if (id) {
-                    pinned.add(id);
-                }
+        for (const entry of entries) {
+            if (findLibraryArtifactBookmark(bookmarksById, entry.id)) {
+                pinned.add(entry.id);
             }
         }
         setPinnedIds(pinned);
-    }, [bookmarksById]);
+    }, [bookmarksById, entries]);
 
-    if (!request || !enabled) {
-        return null;
-    }
+    const open = Boolean(request && enabled);
 
     const onPick = async (entry: ChannelArtifactEntry) => {
-        if (pinnedIds.has(entry.id) || pinningId) {
+        const active = request;
+        if (!active || pinnedIds.has(entry.id) || pinningId) {
             return;
         }
         setPinningId(entry.id);
         setError('');
         try {
-            const bookmark = await pinLibraryArtifactBookmark(store.getState(), request.channelId, entry.id, entry.title, store.dispatch);
+            const bookmark = await pinLibraryArtifactBookmark(store.getState(), active.channelId, entry.id, entry.title, store.dispatch);
+            if (openRequest !== active) {
+                return;
+            }
             if (!bookmark) {
                 setError(intl.formatMessage({defaultMessage: 'Could not add bookmark.'}));
                 setPinningId(null);
@@ -144,6 +138,9 @@ const ArtifactBookmarkPicker = () => {
             }
             close();
         } catch {
+            if (openRequest !== active) {
+                return;
+            }
             setError(intl.formatMessage({defaultMessage: 'Could not add bookmark.'}));
             setPinningId(null);
         }
@@ -151,12 +148,12 @@ const ArtifactBookmarkPicker = () => {
 
     return (
         <AnimatedModalShell
-            show={true}
+            show={open}
             onBackdropClick={close}
             zIndex={11000}
         >
             <Modal
-                open={true}
+                open={open}
                 size='small'
                 title={(
                     <span id='channel-artifact-bookmark-picker-title'>

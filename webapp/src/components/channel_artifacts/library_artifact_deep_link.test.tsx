@@ -173,6 +173,75 @@ describe('LibraryArtifactDeepLink', () => {
         expect(screen.queryByText('Channel artifacts are disabled on this server.')).toBeNull();
     });
 
+    test('opens a library link when a refresh fails after the feature is known', async () => {
+        const list: ChannelArtifactList = {
+            entries: [entry],
+            can_manage: true,
+            download_enabled: true,
+            render_enabled: true,
+        };
+        jest.mocked(listChannelArtifacts).mockResolvedValue(list);
+        const store = renderLink();
+        act(() => {
+            store.dispatch({
+                type: 'SET_CHANNEL_ARTIFACTS_ENABLED',
+                channelArtifactsEnabled: true,
+            });
+            store.dispatch({type: 'SET_CHANNEL_ARTIFACTS_LOAD_FAILED'});
+            store.dispatch({type: 'SET_CHANNEL', id: channelId});
+        });
+        expect((await screen.findByTestId('html-artifact-fullscreen')).textContent).toBe(artifactId);
+        expect(screen.queryByText('This channel artifact is unavailable.')).toBeNull();
+        expect(listChannelArtifacts).toHaveBeenCalledWith(channelId);
+    });
+
+    test('opens the same library link again after the feature flag request recovers', async () => {
+        const list: ChannelArtifactList = {
+            entries: [entry],
+            can_manage: true,
+            download_enabled: true,
+            render_enabled: true,
+        };
+        const listeners: Array<(location: {search?: string}) => void> = [];
+        const previous = window.WebappUtils;
+        window.WebappUtils = {
+            browserHistory: {
+                listen: (cb: (location: {search?: string}) => void) => {
+                    listeners.push(cb);
+                    return () => {
+                        const index = listeners.indexOf(cb);
+                        if (index >= 0) {
+                            listeners.splice(index, 1);
+                        }
+                    };
+                },
+                replace: (next: string) => window.history.replaceState({}, '', next),
+            },
+        };
+        jest.mocked(listChannelArtifacts).mockResolvedValue(list);
+        try {
+            const store = renderLink();
+            act(() => {
+                store.dispatch({type: 'SET_CHANNEL', id: channelId});
+                store.dispatch({type: 'SET_CHANNEL_ARTIFACTS_LOAD_FAILED'});
+            });
+            expect(await screen.findByText('This channel artifact is unavailable.')).toBeTruthy();
+
+            act(() => {
+                store.dispatch({
+                    type: 'SET_CHANNEL_ARTIFACTS_ENABLED',
+                    channelArtifactsEnabled: true,
+                });
+            });
+            act(() => {
+                listeners[listeners.length - 1]?.({search: `?mm_ai_library_artifact=${artifactId}`});
+            });
+            expect((await screen.findByTestId('html-artifact-fullscreen')).textContent).toBe(artifactId);
+        } finally {
+            window.WebappUtils = previous;
+        }
+    });
+
     test('ignores a list response after the channel changes', async () => {
         const otherChannelId = 'otherchannel012345678901234';
         let resolveFirst: ((value: ChannelArtifactList) => void) | null = null;

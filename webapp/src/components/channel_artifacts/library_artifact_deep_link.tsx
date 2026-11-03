@@ -78,7 +78,8 @@ const LibraryArtifactDeepLink = () => {
         openedIdsRef.current.add(artifactId);
         const seq = ++openSeq.current;
 
-        if (loadFailed) {
+        if (loadFailed && !enabled) {
+            openedIdsRef.current.delete(artifactId);
             setNotice('unavailable');
             stripQuery();
             openingRef.current = null;

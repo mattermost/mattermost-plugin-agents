@@ -278,7 +278,7 @@ test.describe('Channel artifacts', () => {
 
         const bookmarksHook = await channelBookmarksMenuHookPresent(page);
         const pinned = bookmarksLicensed && await pinArtifactFromBookmarksMenu(page, entry);
-        if (bookmarksHook) {
+        if (bookmarksLicensed && bookmarksHook) {
             expect(pinned, 'the Bookmarks menu hook is present, so Add channel artifact must pin').toBe(true);
         }
         if (pinned) {

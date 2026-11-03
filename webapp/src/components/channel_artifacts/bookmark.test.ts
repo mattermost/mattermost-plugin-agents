@@ -58,6 +58,9 @@ describe('channel artifact bookmark helpers', () => {
         expect(findLibraryArtifactBookmark([
             {id: '2', type: 'link', link_url: '/test/channels/off-topic?mm_ai_library_artifact=other'} as any,
         ], 'other')?.id).toBe('2');
+        expect(findLibraryArtifactBookmark([
+            {id: '4', type: 'link', link_url: '//foreign.example/a?mm_ai_library_artifact=want'} as any,
+        ], 'want')).toBeNull();
     });
 
     test('parse and strip query helpers', () => {
