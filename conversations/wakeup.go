@@ -121,6 +121,9 @@ type WakeJob struct {
 	// wakeMarker identifies the wake: the job and the thread marker carry the
 	// same value.
 	wakeMarker
+	// markerClaimed is set when the caller already consumed the marker, so the
+	// resume must not claim it again.
+	markerClaimed bool
 }
 
 // WakeScheduler is the subset of cluster.JobOnceScheduler used to schedule
@@ -201,6 +204,12 @@ func (c *Conversations) cancelThreadWake(markerKey, channelID string) bool {
 		}
 		return false
 	}
+	return c.cancelWakeMarker(markerKey, marker, channelID)
+}
+
+// cancelWakeMarker cancels the wake only while marker is still the one stored
+// under markerKey, so a replacement wait is never ended by a stale caller.
+func (c *Conversations) cancelWakeMarker(markerKey string, marker wakeMarker, channelID string) bool {
 	consumed, err := c.consumeWakeMarker(markerKey, marker)
 	if err != nil {
 		c.mmClient.LogWarn("wait_for_async_work: failed to clear pending wake", "error", err, "key", markerKey)
@@ -310,8 +319,8 @@ func (c *Conversations) pendingWaitForPost(post *model.Post) (wakeMarker, error)
 
 // HandleWaitCheckNow ends the post's pending wait early and resumes the bot
 // immediately on behalf of userID, who must be the wait's requester. The
-// scheduled trigger is canceled first so it cannot also fire; the marker's
-// compare-and-delete then lets exactly one of the two resumes proceed.
+// marker is consumed first, so exactly one of this and the scheduled trigger
+// resumes, and the trigger is canceled only once the wait is known to be ours.
 func (c *Conversations) HandleWaitCheckNow(userID string, post *model.Post) error {
 	marker, err := c.pendingWaitForPost(post)
 	if err != nil {
@@ -320,12 +329,20 @@ func (c *Conversations) HandleWaitCheckNow(userID string, post *model.Post) erro
 	if marker.RequesterUserID != userID {
 		return ErrNotWaitOwner
 	}
+	markerKey := responsePostMarkerKey(post)
+	consumed, err := c.consumeWakeMarker(markerKey, marker)
+	if err != nil {
+		return fmt.Errorf("failed to consume pending wake: %w", err)
+	}
+	if !consumed {
+		return ErrNoPendingWait
+	}
 	c.wakeScheduler.Cancel(WakeJobKeyPrefix + marker.ConversationID)
 	responsePostID := marker.ResponsePostID
 	if responsePostID == "" {
 		responsePostID = post.Id
 	}
-	job := WakeJob{PostID: responsePostID, UserID: marker.RequesterUserID, wakeMarker: marker}
+	job := WakeJob{PostID: responsePostID, UserID: marker.RequesterUserID, wakeMarker: marker, markerClaimed: true}
 	resume := c.resumeWake
 	if resume == nil {
 		// runWake locks the conversation's resume mutex and runs a full turn,
@@ -346,7 +363,7 @@ func (c *Conversations) HandleWaitCancel(userID string, post *model.Post) error 
 	if marker.RequesterUserID != userID {
 		return ErrNotWaitOwner
 	}
-	if !c.cancelThreadWake(responsePostMarkerKey(post), post.ChannelId) {
+	if !c.cancelWakeMarker(responsePostMarkerKey(post), marker, post.ChannelId) {
 		return ErrNoPendingWait
 	}
 	return nil
@@ -449,12 +466,15 @@ func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) (er
 
 	// A missing marker means a new message steered the thread (or a newer wait
 	// replaced this one) after the wake fired.
-	consumed, err := c.consumeWakeMarker(responsePostMarkerKey(post), job.wakeMarker)
-	if err != nil {
-		return fmt.Errorf("failed to consume pending wake: %w", err)
-	}
-	if !consumed {
-		return c.dropWake("steered or superseded", nil, "conversation_id", job.ConversationID)
+	if !job.markerClaimed {
+		var consumed bool
+		consumed, err = c.consumeWakeMarker(responsePostMarkerKey(post), job.wakeMarker)
+		if err != nil {
+			return fmt.Errorf("failed to consume pending wake: %w", err)
+		}
+		if !consumed {
+			return c.dropWake("steered or superseded", nil, "conversation_id", job.ConversationID)
+		}
 	}
 	// The wait is resolving; tell clients to drop the "waiting" footer now
 	// rather than waiting for the countdown to run out.

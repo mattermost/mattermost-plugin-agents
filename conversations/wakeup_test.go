@@ -97,6 +97,9 @@ func TestWakeJobFromProps(t *testing.T) {
 type kvFake struct {
 	data    map[string][]byte
 	setFail error
+	// afterGet runs once after the next successful read, to interleave a
+	// competing writer between a caller's read and its follow-up write.
+	afterGet func()
 }
 
 func newKVFake(mmClient *mocks.MockClient) *kvFake {
@@ -106,7 +109,12 @@ func newKVFake(mmClient *mocks.MockClient) *kvFake {
 		if !ok {
 			return mmapi.ErrKVNotFound
 		}
-		return json.Unmarshal(raw, value)
+		err := json.Unmarshal(raw, value)
+		if hook := kv.afterGet; hook != nil {
+			kv.afterGet = nil
+			hook()
+		}
+		return err
 	}).Maybe()
 	mmClient.EXPECT().KVCompareAndSetWithExpiry(mock.Anything, mock.Anything, mock.Anything, mock.Anything).RunAndReturn(func(key string, oldValue, newValue any, _ time.Duration) (bool, error) {
 		if kv.setFail != nil {

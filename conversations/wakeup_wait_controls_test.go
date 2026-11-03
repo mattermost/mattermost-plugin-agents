@@ -211,7 +211,9 @@ func TestHandleWaitCheckNowResumesForRequester(t *testing.T) {
 
 	require.NoError(t, env.c.HandleWaitCheckNow(wakeUserID, post))
 
-	// The scheduled trigger is canceled so it cannot also fire.
+	// The marker is consumed and the scheduled trigger canceled so it cannot
+	// also fire.
+	require.Empty(t, env.kv.data)
 	require.Equal(t, []string{WakeJobKeyPrefix + env.conv.ID}, sched.canceled)
 
 	// The resume runs as the requester on the wait's response post, carrying
@@ -219,4 +221,57 @@ func TestHandleWaitCheckNowResumesForRequester(t *testing.T) {
 	require.Equal(t, post.Id, captured.PostID)
 	require.Equal(t, wakeUserID, captured.UserID)
 	require.Equal(t, marker, captured.wakeMarker)
+	require.True(t, captured.markerClaimed, "the resume must not claim the consumed marker again")
+}
+
+// replacementWait is a wait another requester scheduled for the same post after
+// the original one resolved; it shares the original's marker key and job key.
+func replacementWait(convID, postID string) wakeMarker {
+	marker := fullWaitMarker(convID, postID, model.NewId())
+	marker.ScheduledAt++
+	return marker
+}
+
+func TestStaleWaitControlsLeaveReplacementWaitPending(t *testing.T) {
+	const rootID = "root-post-id"
+
+	tests := []struct {
+		name string
+		call func(env *wakeEnv, post *model.Post) error
+	}{
+		{name: "check now", call: func(env *wakeEnv, post *model.Post) error {
+			return env.c.HandleWaitCheckNow(wakeUserID, post)
+		}},
+		{name: "cancel", call: func(env *wakeEnv, post *model.Post) error {
+			return env.c.HandleWaitCancel(wakeUserID, post)
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := newWakeEnv(t, nil)
+			sched := &fakeWakeScheduler{scheduled: map[string]WakeJob{}}
+			env.c.wakeScheduler = sched
+			var resumed bool
+			env.c.resumeWake = func(WakeJob) { resumed = true }
+
+			post := waitPost("bot-post-id", env.conv.ID, rootID)
+			env.seedMarker(t, post, fullWaitMarker(env.conv.ID, post.Id, wakeUserID))
+
+			replacement := replacementWait(env.conv.ID, post.Id)
+			replacementRaw, err := json.Marshal(replacement)
+			require.NoError(t, err)
+			jobKey := WakeJobKeyPrefix + env.conv.ID
+			env.kv.afterGet = func() {
+				env.kv.data[responsePostMarkerKey(post)] = replacementRaw
+				sched.scheduled[jobKey] = WakeJob{PostID: post.Id, UserID: replacement.RequesterUserID, wakeMarker: replacement}
+			}
+
+			require.ErrorIs(t, tt.call(env, post), ErrNoPendingWait)
+			require.False(t, resumed)
+			require.Empty(t, sched.canceled, "a stale control must not cancel the replacement wake")
+			require.Contains(t, sched.scheduled, jobKey)
+			require.Equal(t, replacementRaw, env.kv.data[responsePostMarkerKey(post)])
+		})
+	}
 }
