@@ -31,6 +31,8 @@ type fakeTurnStore struct {
 	heartbeats   int
 	heartbeatErr error
 	finalizes    int
+	// finalizeFailures makes that many finalize calls fail first.
+	finalizeFailures int
 }
 
 // eventCountingTurnStore records how many websocket events had been published
@@ -115,6 +117,10 @@ func (f *fakeTurnStore) FinalizeStreamingTurn(id string, content json.RawMessage
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.finalizes++
+	if f.finalizeFailures > 0 {
+		f.finalizeFailures--
+		return false, fmt.Errorf("db unavailable")
+	}
 	settled := false
 	for _, t := range f.turns {
 		if t.ID != id || t.Status != store.TurnStatusStreaming {

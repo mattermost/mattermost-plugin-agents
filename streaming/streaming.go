@@ -523,10 +523,17 @@ func (p *MMPostStreamService) heartbeatTurn(acc *turnAccumulator) {
 	acc.persistedAt = time.Now()
 }
 
+// finalizeAttempts and finalizeRetryDelay bound the retries of a failed turn
+// finalize before the stream gives the post up.
+const finalizeAttempts = 3
+
+var finalizeRetryDelay = 200 * time.Millisecond
+
 // finalizeTurn writes the accumulated content and final status onto the turn
 // created at stream start, or creates the turn if that insert failed. It
-// reports false only when another node already claimed the turn: that node
-// owns the post, so the caller must not write to it.
+// reports false when another node already claimed the turn (that node owns
+// the post) or when the finalize kept failing (ownership is unknown); either
+// way the caller must not write to the post.
 func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator, status string) bool {
 	blocks := acc.buildContentBlocks()
 
@@ -537,10 +544,22 @@ func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator, status string) 
 	}
 
 	if acc.turnID != "" {
-		settled, err := p.turnStore.FinalizeStreamingTurn(acc.turnID, contentJSON, acc.tokensIn, acc.tokensOut, status)
+		var settled bool
+		for attempt := range finalizeAttempts {
+			if attempt > 0 {
+				time.Sleep(finalizeRetryDelay * time.Duration(attempt))
+			}
+			settled, err = p.turnStore.FinalizeStreamingTurn(acc.turnID, contentJSON, acc.tokensIn, acc.tokensOut, status)
+			if err == nil {
+				break
+			}
+		}
 		if err != nil {
-			p.mmClient.LogError("Failed to finalize streaming assistant turn", "error", err, "post_id", acc.postID)
-			return true
+			// Ownership is unknown, so the post is left alone: the turn stays
+			// streaming, the client's stale notice offers Regenerate, and
+			// recovery repairs it as an abandoned stream.
+			p.mmClient.LogError("Failed to finalize streaming assistant turn; leaving the post", "error", err, "post_id", acc.postID)
+			return false
 		}
 		if !settled {
 			p.mmClient.LogWarn("Streaming turn was claimed by recovery before it finished", "post_id", acc.postID)

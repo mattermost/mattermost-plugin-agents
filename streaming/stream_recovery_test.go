@@ -421,6 +421,44 @@ func TestStopDuringAutoRunBatchRecordsCallsAsErrored(t *testing.T) {
 	assert.Equal(t, []string{conversation.StatusError}, statuses)
 }
 
+// A finalize that fails leaves the turn's ownership unknown: a transient
+// failure is retried, and one that keeps failing must not write the post.
+func TestStreamEndWhenFinalizeFails(t *testing.T) {
+	tests := []struct {
+		name         string
+		failures     int
+		wantPostEdit bool
+	}{
+		{name: "transient failure is retried", failures: 1, wantPostEdit: true},
+		{name: "persistent failure leaves the post alone", failures: finalizeAttempts},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			finalizeRetryDelay = time.Millisecond
+			t.Cleanup(func() { finalizeRetryDelay = 200 * time.Millisecond })
+			service, client, ts := newRecoveryTestService(t)
+			ts.finalizeFailures = tt.failures
+
+			post := newStreamPost()
+			stream := make(chan llm.TextStreamEvent, 2)
+			stream <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "final answer"}
+			stream <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+			close(stream)
+			service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: stream}, post, "en", "requester-id")
+
+			last := client.lastUpdate()
+			if tt.wantPostEdit {
+				require.NotNil(t, last)
+				assert.Equal(t, "final answer", last.Message)
+				assert.Equal(t, 1, client.controlCount(PostStreamingControlEnd))
+				return
+			}
+			assert.Nil(t, last, "a run that can't confirm it owns the post must not write it")
+			assert.Zero(t, client.controlCount(PostStreamingControlEnd))
+		})
+	}
+}
+
 func TestNewStreamClearsInterruptedMarker(t *testing.T) {
 	service, client, _ := newRecoveryTestService(t)
 	post := newStreamPost()
