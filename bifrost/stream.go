@@ -5,6 +5,7 @@ package bifrost
 
 import (
 	"cmp"
+	"crypto/rand"
 	"encoding/json"
 	"maps"
 	"slices"
@@ -165,8 +166,15 @@ func flushToolCallBuffers[K cmp.Ordered](buffers map[K]*toolCallBuffer, requireN
 		if requireName && buf.name == "" {
 			continue
 		}
+		// Some OpenAI-compatible servers stream tool calls without an ID.
+		// Approvals and results are keyed by ID, and replay drops ID-less
+		// calls, so a named call needs one to be paired with its result.
+		id := buf.id
+		if id == "" && buf.name != "" {
+			id = "call_" + rand.Text()
+		}
 		toolCalls = append(toolCalls, llm.ToolCall{
-			ID:        buf.id,
+			ID:        id,
 			Name:      buf.name,
 			Arguments: toolArgsToJSON(buf.arguments.String()),
 		})

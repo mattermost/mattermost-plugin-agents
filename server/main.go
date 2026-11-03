@@ -536,7 +536,6 @@ func (p *Plugin) OnActivate() error {
 		dbClient,
 		licenseChecker,
 		i18nBundle,
-		nil, // meetingsService will be set after it's created
 		&p.configuration,
 		policyChecker,
 	)
@@ -554,13 +553,10 @@ func (p *Plugin) OnActivate() error {
 		i18nBundle,
 		metricsService,
 		contextBuilder,
-		conversationsService,
+		convService,
 		licenseChecker,
 	)
-
-	// Set the meetings service on conversations to break circular dependency
-	// TODO: Refactor to avoid circular dependency
-	conversationsService.SetMeetingsService(meetingsService)
+	conversationsService.SetMeetingSummaryRegenerator(meetingsService)
 
 	streamingService.SetTurnStore(p.store)
 

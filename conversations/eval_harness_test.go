@@ -161,7 +161,6 @@ func respondAsAgent(t *evals.EvalT, scenario evalScenario, post *model.Post) str
 		nil, // db
 		licenseChecker,
 		i18n.Init(),
-		nil, // meetings
 		&testToolCallingConfig{},
 		policyChecker,
 	)

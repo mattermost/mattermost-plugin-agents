@@ -21,13 +21,14 @@ import aiIcon from '../../assets/bot_icon.png';
 import manifest from '@/manifest';
 import {PluginWebSocketMessage} from '@/types';
 
-import {LLMBotPost} from './components/llmbot_post/llmbot_post';
+import {LLMBotPost, PostUpdateWebsocketMessage} from './components/llmbot_post/llmbot_post';
 import PostMenu from './components/post_menu';
 import IconThreadSummarization from './components/assets/icon_thread_summarization';
 import IconReactForMe from './components/assets/icon_react_for_me';
 import RHS from './components/rhs/rhs';
+import RHSTitle from './components/rhs/rhs_title';
 import CustomPromptsDropdown from './components/custom_prompts/custom_prompts_dropdown';
-import CustomPromptsManagement from './components/custom_prompts/custom_prompts_management';
+import CustomPromptsManagement, {PopoutCustomPromptsManagement} from './components/custom_prompts/custom_prompts_management';
 import Config from './components/system_console/config';
 import {setSiteURL, doReaction, doRunSearch, doThreadAnalysis} from './client';
 
@@ -42,6 +43,8 @@ import SearchButton from './components/search_button';
 import AskChannelButton from './components/ask_channel_button';
 import {doSelectPost} from './hooks';
 import {invalidateConversation} from './hooks/use_conversation';
+import {createAgentThreadsSync} from './hooks/use_agent_threads';
+import {clearGeneratingPosts, recordPostUpdate} from './components/agent_chat/use_thread_generating';
 
 // Side-effect import: registers a listener so invalidateConversation also
 // clears the matching composition cache.
@@ -54,6 +57,7 @@ import {botsFromState, makeChannelAutoReplySchema} from './components/channel_se
 import {handleChannelAutoReplyUpdated, ChannelAutoReplyUpdatedEvent} from './components/channel_settings/autoreply_state';
 import {shouldSuppressBotNotification} from './notifications';
 import AgentsTour from './components/tutorial/agents_tour';
+import AgentsHeaderSettings from './components/agents/agents_header_settings';
 import AgentsPage, {AGENTS_ROUTE} from './components/agents/agents_page';
 import IconAI from './components/assets/icon_ai';
 import {licenseAllows} from './license';
@@ -119,25 +123,6 @@ const ProductSwitcherIconAI = (props: {className?: string}) => (
     </ProductSwitcherIconWrapper>
 );
 
-const RHSTitleContainer = styled.span`
-    display: flex;
-	gap: 8px;
-    align-items: center;
-	margin-left: 8px;
-`;
-
-const RHSTitle = () => {
-    return (
-        <RHSTitleContainer>
-            <IconAIContainer
-                src={aiIcon}
-                alt=''
-            />
-            <FormattedMessage defaultMessage='Agents'/>
-        </RHSTitleContainer>
-    );
-};
-
 const ChannelHeaderIcon = () => {
     const {bots} = useBotlist();
 
@@ -181,17 +166,36 @@ export default class Plugin {
             setOpenRHSAction(rhs.showRHSPlugin);
         }
 
+        // The stored AI thread list follows the user's own agent chats: a finished turn, a rename
+        // or a generated title.
+        const agentThreadsSync = createAgentThreadsSync(store);
+
         // Handle all post-related websocket events with one handler
-        registry.registerWebSocketEventHandler('custom_mattermost-ai_postupdate', this.postEventListener.handlePostUpdateWebsockets);
-        registry.registerWebSocketEventHandler('custom_mattermost-ai_tool_call_status_updated', this.postEventListener.handlePostUpdateWebsockets);
+        const handlePostUpdate = (msg: PluginWebSocketMessage<PostUpdateWebsocketMessage>) => {
+            this.postEventListener.handlePostUpdateWebsockets(msg);
+            recordPostUpdate(store.getState(), msg);
+            agentThreadsSync.handlePostUpdate(msg);
+        };
+        registry.registerWebSocketEventHandler('custom_mattermost-ai_postupdate', handlePostUpdate);
+        registry.registerWebSocketEventHandler('custom_mattermost-ai_tool_call_status_updated', handlePostUpdate);
 
         // Invalidate conversation cache when backend publishes conversation updates
         registry.registerWebSocketEventHandler(
             'custom_mattermost-ai_conversation_updated',
-            (msg: PluginWebSocketMessage<{conversation_id: string}>) => {
+            (msg: PluginWebSocketMessage<{conversation_id: string; title?: string}>) => {
                 invalidateConversation(msg.data.conversation_id);
+                agentThreadsSync.handleConversationUpdated(msg.data);
             },
         );
+
+        // Events missed while disconnected: an `end` would leave a reply generating for good, and
+        // the thread list may be stale.
+        if (registry.registerReconnectHandler) {
+            registry.registerReconnectHandler(() => {
+                clearGeneratingPosts();
+                agentThreadsSync.handleReconnect();
+            });
+        }
 
         // MCP OAuth connect/disconnect: refresh cached tool lists in open UI.
         registry.registerWebSocketEventHandler(
@@ -316,8 +320,9 @@ export default class Plugin {
 
         if (registry.registerRootComponent) {
             registry.registerRootComponent(AgentsTour);
-            registry.registerRootComponent(CustomPromptsManagement);
+            registry.registerRootComponent(PopoutCustomPromptsManagement);
         }
+        registry.registerGlobalComponent(CustomPromptsManagement);
 
         // Register Agents as a product so it appears in the product switcher (grid icon).
         // registerProduct is an internal Mattermost API available on the plugin registry.
@@ -328,6 +333,8 @@ export default class Plugin {
                 agentsProductLabel,
                 AGENTS_ROUTE,
                 AgentsPage,
+                () => null,
+                AgentsHeaderSettings,
             );
         }
 

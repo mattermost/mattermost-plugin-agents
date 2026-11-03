@@ -96,19 +96,29 @@ func (b *Bot) HasNativeWebSearchEnabled() bool {
 }
 
 // HasNativeCodeExecutionEnabled is independent of file retrieval. OpenAI can
-// run the sandbox but cannot serve its files; use SandboxFileAttachmentAvailable
-// for attach/prompt gating.
+// run the sandbox but cannot serve its files; use CanAttachSandboxFiles and
+// ShouldPromiseSandboxFiles for attach and prompt gating.
 func (b *Bot) HasNativeCodeExecutionEnabled() bool {
 	return b.hasNativeToolEnabled(llm.NativeToolCodeInterpreter)
 }
 
-// SandboxFileAttachmentAvailable requires both the sandbox and a retrievable
-// file API. Prompt text and the attach path must use this so they cannot disagree.
-func (b *Bot) SandboxFileAttachmentAvailable() bool {
+// CanAttachSandboxFiles gates the attach path: the sandbox is enabled and some
+// service in the fallback chain can serve its files. The attach path takes
+// whatever files the hop that served the turn produced.
+func (b *Bot) CanAttachSandboxFiles() bool {
 	if b == nil {
 		return false
 	}
 	return b.HasNativeCodeExecutionEnabled() && b.ProviderServices().CanDownloadFiles()
+}
+
+// ShouldPromiseSandboxFiles gates the prompt text telling the model that
+// sandbox output files are attached automatically. The prompt may only promise
+// what the primary can deliver: the primary serves most turns, so a fallback
+// that can serve files must not make every turn promise files that never
+// arrive.
+func (b *Bot) ShouldPromiseSandboxFiles() bool {
+	return b.CanAttachSandboxFiles() && bifrost.SupportsProviderFileDownload(b.service.Type)
 }
 
 func (b *Bot) SetLLMForTest(llm llm.LanguageModel) {

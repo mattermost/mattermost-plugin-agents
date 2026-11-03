@@ -72,20 +72,16 @@ func (s *Service) GetContent(ctx context.Context, userID, fileID string, offset,
 		return Content{}, fmt.Errorf("invalid file id")
 	}
 
-	mm := mmapi.WithFilePolicy(s.mm, auth.SessionIDFromContext(ctx))
-	fileInfo, err := mm.GetFileInfo(fileID)
+	sessionID := auth.SessionIDFromContext(ctx)
+	fileInfo, err := mmapi.GetReadableFileInfo(s.mm, sessionID, userID, fileID)
 	if err != nil {
-		if errors.Is(err, mmapi.ErrFileActionForbidden) {
+		if errors.Is(err, mmapi.ErrFileActionForbidden) || errors.Is(err, mmapi.ErrFileChannelForbidden) {
 			return Content{}, ErrForbidden
 		}
 		return Content{}, fmt.Errorf("failed to get file info: %w", err)
 	}
 
-	// The plugin API is admin-level, so permission must be checked explicitly.
-	if fileInfo.ChannelId == "" || !s.mm.HasPermissionToChannel(userID, fileInfo.ChannelId, model.PermissionReadChannel) {
-		return Content{}, ErrForbidden
-	}
-
+	mm := mmapi.WithFilePolicy(s.mm, sessionID)
 	text, err := s.extractText(mm, fileInfo)
 	if err != nil {
 		if errors.Is(err, mmapi.ErrFileActionForbidden) {

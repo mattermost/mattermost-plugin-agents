@@ -1,4 +1,5 @@
-import { test, expect, Page } from '@playwright/test';
+import { expect, Page } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import { AIMockHarness, RunAIMockHarness, setupAimockTestPage } from 'helpers/aimock-harness';
 
@@ -54,23 +55,23 @@ async function expectRhsContainsMarkers(page: Page, markers: string[]): Promise<
     }
 }
 
+const test = containerTest(async (own) => {
+    const harness = own(await RunAIMockHarness({
+        fixtureFile: 'llmbot-edge-cases.json',
+        bot: {
+            enabledNativeTools: [],
+        },
+    }));
+    return { harness };
+});
+
 test.describe('Edge Cases - aimock', () => {
     test.describe.configure({ mode: 'serial', retries: 1 });
 
     let harness: AIMockHarness;
 
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        harness = await RunAIMockHarness({
-            fixtureFile: 'llmbot-edge-cases.json',
-            bot: {
-                enabledNativeTools: [],
-            },
-        });
-    });
-
-    test.afterAll(async () => {
-        await harness?.stop();
+    test.beforeAll(async ({ containers }) => {
+        ({ harness } = containers);
     });
 
     test('Empty Reasoning Response', async ({ page }) => {
@@ -147,11 +148,10 @@ test.describe('Edge Cases - aimock', () => {
 
         const { aiPlugin } = await setupAimockTestPage(page, harness.mattermost.url());
 
-        const rhs = aiPlugin.getRhsContainer();
         await aiPlugin.sendMessage(PHASE3_CONCURRENT_ONE_PROMPT);
-        await expect(rhs.getByText(PHASE3_CONCURRENT_ONE_PROMPT)).toBeVisible();
+        await aiPlugin.expectUserPostText(PHASE3_CONCURRENT_ONE_PROMPT);
         await aiPlugin.sendMessage(PHASE3_CONCURRENT_TWO_PROMPT);
-        await expect(rhs.getByText(PHASE3_CONCURRENT_TWO_PROMPT)).toBeVisible();
+        await aiPlugin.expectUserPostText(PHASE3_CONCURRENT_TWO_PROMPT);
         await aiPlugin.sendMessage(PHASE3_CONCURRENT_THREE_PROMPT);
 
         await waitForPostTextCount(page, 3);
@@ -204,11 +204,10 @@ test.describe('Edge Cases - aimock', () => {
 
         const { aiPlugin } = await setupAimockTestPage(page, harness.mattermost.url());
 
-        const rhs = aiPlugin.getRhsContainer();
         await aiPlugin.sendMessage(PHASE3_RAPID_MSG_ONE_PROMPT);
-        await expect(rhs.getByText(PHASE3_RAPID_MSG_ONE_PROMPT)).toBeVisible();
+        await aiPlugin.expectUserPostText(PHASE3_RAPID_MSG_ONE_PROMPT);
         await aiPlugin.sendMessage(PHASE3_RAPID_MSG_TWO_PROMPT);
-        await expect(rhs.getByText(PHASE3_RAPID_MSG_TWO_PROMPT)).toBeVisible();
+        await aiPlugin.expectUserPostText(PHASE3_RAPID_MSG_TWO_PROMPT);
         await aiPlugin.sendMessage(PHASE3_RAPID_MSG_THREE_PROMPT);
 
         await waitForPostTextCount(page, 3);

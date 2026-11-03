@@ -90,7 +90,7 @@ func TestAnthropicThinkingDefaults(t *testing.T) {
 	}
 }
 
-func TestBuildChatReasoning(t *testing.T) {
+func TestChatReasoningFor(t *testing.T) {
 	tests := []struct {
 		name             string
 		provider         schemas.ModelProvider
@@ -374,7 +374,7 @@ func TestBuildChatReasoning(t *testing.T) {
 				thinkingBudget:   tt.thinkingBudget,
 				reasoningEffort:  tt.reasoningEffort,
 			}
-			result := b.buildChatReasoning(tt.cfg)
+			result := b.chatReasoningFor(tt.provider, tt.cfg)
 			if tt.expectNil {
 				assert.Nil(t, result)
 				return
@@ -412,24 +412,42 @@ func TestConvertMessagesReasoningDetails(t *testing.T) {
 		ReasoningSignature: "sig123",
 	}}
 
+	unsignedPosts := []llm.Post{{
+		Role:      llm.PostRoleBot,
+		Message:   "partial response",
+		Reasoning: "partial thinking captured before stream error",
+	}}
+
 	tests := []struct {
 		name              string
 		provider          schemas.ModelProvider
+		fallbacks         []schemas.Fallback
 		posts             []llm.Post
 		expectedLen       int
 		expectedReasoning string
 		expectedSignature string
 	}{
 		{
-			name:     "skips unsigned reasoning for Anthropic",
-			provider: schemas.Anthropic,
-			posts: []llm.Post{{
-				Role:               llm.PostRoleBot,
-				Message:            "partial response",
-				Reasoning:          "partial thinking captured before stream error",
-				ReasoningSignature: "",
-			}},
+			name:        "skips unsigned reasoning for Anthropic",
+			provider:    schemas.Anthropic,
+			posts:       unsignedPosts,
 			expectedLen: 1,
+		},
+		{
+			name:              "primary keeps unsigned reasoning with an Anthropic fallback",
+			provider:          schemas.OpenAI,
+			fallbacks:         []schemas.Fallback{{Provider: schemas.Anthropic, Model: "claude-sonnet-4-6"}},
+			posts:             unsignedPosts,
+			expectedLen:       1,
+			expectedReasoning: unsignedPosts[0].Reasoning,
+		},
+		{
+			name:              "primary keeps unsigned reasoning with a Bedrock fallback",
+			provider:          schemas.Gemini,
+			fallbacks:         []schemas.Fallback{{Provider: schemas.Bedrock, Model: "anthropic.claude-sonnet-4-6"}},
+			posts:             unsignedPosts,
+			expectedLen:       1,
+			expectedReasoning: unsignedPosts[0].Reasoning,
 		},
 		{
 			name:     "preserves unsigned reasoning for non-Anthropic",
@@ -455,9 +473,9 @@ func TestConvertMessagesReasoningDetails(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b := &LLM{provider: tt.provider}
+			b := &LLM{provider: tt.provider, fallbacks: testHops(tt.fallbacks, nil)}
 
-			messages := b.convertMessages(tt.posts)
+			messages := b.convertToBifrostRequest(llm.CompletionRequest{Posts: tt.posts}, llm.LanguageModelConfig{Model: "test-model"}).Input
 
 			require.Len(t, messages, tt.expectedLen)
 			if tt.expectedReasoning == "" {
@@ -472,7 +490,6 @@ func TestConvertMessagesReasoningDetails(t *testing.T) {
 }
 
 func TestCreateMultimodalContentUsesReusableFileData(t *testing.T) {
-	b := &LLM{}
 	imageData := encodeTestImage(t, "image/png", 2, 2)
 	post := llm.Post{
 		Role:    llm.PostRoleUser,
@@ -485,8 +502,8 @@ func TestCreateMultimodalContentUsesReusableFileData(t *testing.T) {
 		}},
 	}
 
-	first := b.createMultimodalContent(post, 0)
-	second := b.createMultimodalContent(post, 0)
+	first := createMultimodalContent(post, 0)
+	second := createMultimodalContent(post, 0)
 
 	require.Len(t, first, 2)
 	require.Len(t, second, 2)
@@ -528,7 +545,7 @@ func TestMultimodalContentUsesSniffedImageType(t *testing.T) {
 				Files: []llm.File{{MimeType: tt.declared, Data: tt.data}},
 			}
 
-			chatParts := (&LLM{}).createMultimodalContent(post, 0)
+			chatParts := createMultimodalContent(post, 0)
 			require.Len(t, chatParts, 1)
 			responsesParts := multimodalContent(post, 0,
 				func(text string) string { return "text:" + text },
@@ -631,8 +648,7 @@ func TestCreateMultimodalContentOmitsOversizedImages(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			data := encodeTestImage(t, tt.mimeType, tt.width, tt.height)
 
-			b := &LLM{}
-			parts := b.createMultimodalContent(llm.Post{
+			parts := createMultimodalContent(llm.Post{
 				Role:    llm.PostRoleUser,
 				Message: "summarize this image",
 				Files: []llm.File{{
@@ -664,7 +680,7 @@ func TestCreateMultimodalContentOmitsOversizedImages(t *testing.T) {
 		validPNG := encodeTestImage(t, "image/png", 10, 10)
 		oversizedPNG := encodeTestImage(t, "image/png", anthropicMaxImageDimension+1, 1)
 		validJPEG := encodeTestImage(t, "image/jpeg", 10, 10)
-		parts := (&LLM{}).createMultimodalContent(llm.Post{
+		parts := createMultimodalContent(llm.Post{
 			Role:    llm.PostRoleUser,
 			Message: "summarize these images",
 			Files: []llm.File{
@@ -733,7 +749,8 @@ func TestConvertMessagesAppliesProviderImageLimit(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			messages := (&LLM{provider: tt.provider}).convertMessages(tt.posts)
+			b := &LLM{provider: tt.provider}
+			messages := b.convertToBifrostRequest(llm.CompletionRequest{Posts: tt.posts}, llm.LanguageModelConfig{Model: "test-model"}).Input
 			require.Len(t, messages, 1)
 			require.NotNil(t, messages[0].Content)
 			blocks := messages[0].Content.ContentBlocks
@@ -925,7 +942,7 @@ func TestAnthropicSchemaKeepsThinkingWireRequest(t *testing.T) {
 			}
 
 			replayed := false
-			for _, msg := range b.convertMessages(request.Posts) {
+			for _, msg := range b.convertToBifrostRequest(request, cfg).Input {
 				replayed = replayed || (msg.ChatAssistantMessage != nil && len(msg.ReasoningDetails) > 0)
 			}
 			assert.True(t, replayed, "signed thinking from earlier turns must be replayed on schema requests")
@@ -935,8 +952,9 @@ func TestAnthropicSchemaKeepsThinkingWireRequest(t *testing.T) {
 
 // TestPromptCaching verifies that automatic prompt caching (top-level
 // cache_control) is requested for Anthropic and reaches the Anthropic wire
-// request, but is never attached for other providers or for Anthropic with
-// non-Anthropic fallbacks (where the marker would 400 the fallback request).
+// request, but is never attached for other providers. A non-Anthropic
+// fallback's request is rebuilt without it; TestMessageShapingIsBuiltPerFallbackHop covers
+// that on the wire.
 func TestPromptCaching(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -959,7 +977,7 @@ func TestPromptCaching(t *testing.T) {
 			name:      "anthropic with openai fallback",
 			provider:  schemas.Anthropic,
 			fallbacks: []schemas.Fallback{{Provider: schemas.OpenAI}},
-			want:      false,
+			want:      true,
 		},
 		{
 			name:     "openai",
@@ -982,7 +1000,11 @@ func TestPromptCaching(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b := &LLM{provider: tt.provider, fallbacks: testHops(tt.fallbacks, nil)}
+			b := &LLM{
+				provider:  tt.provider,
+				fallbacks: testHops(tt.fallbacks, nil),
+				account:   testAccount(customAccount(schemas.Anthropic, "svc2")),
+			}
 			cfg := llm.LanguageModelConfig{Model: "test-model", MaxGeneratedTokens: 100}
 
 			chatReq := b.convertToBifrostRequest(request, cfg)
@@ -1286,7 +1308,7 @@ func TestAnthropicOnlyWebFetchDroppedForOpenAI(t *testing.T) {
 		"web_search is part of OpenAI's tool union and must survive the fallback serialization")
 }
 
-func TestBuildResponsesReasoning(t *testing.T) {
+func TestResponsesReasoningFor(t *testing.T) {
 	tests := []struct {
 		name             string
 		provider         schemas.ModelProvider
@@ -1453,7 +1475,7 @@ func TestBuildResponsesReasoning(t *testing.T) {
 				thinkingBudget:   tt.thinkingBudget,
 				reasoningEffort:  tt.reasoningEffort,
 			}
-			result := b.buildResponsesReasoning(tt.cfg)
+			result := b.responsesReasoningFor(tt.provider, tt.cfg)
 			if tt.expectNil {
 				assert.Nil(t, result)
 				return
@@ -1689,7 +1711,7 @@ func TestConvertMessagesReasoning(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &LLM{provider: tt.provider}
-			messages := b.convertMessages(tt.posts)
+			messages := b.convertToBifrostRequest(llm.CompletionRequest{Posts: tt.posts}, llm.LanguageModelConfig{Model: "test-model"}).Input
 			require.True(t, len(messages) > tt.checkMessageIndex)
 
 			msg := messages[tt.checkMessageIndex]
@@ -1733,7 +1755,7 @@ func TestConvertMessagesEmptyToolResult(t *testing.T) {
 			Result:    "",
 		}},
 	}}
-	messages := b.convertMessages(posts)
+	messages := b.convertToBifrostRequest(llm.CompletionRequest{Posts: posts}, llm.LanguageModelConfig{Model: "test-model"}).Input
 	var toolMsg *schemas.ChatMessage
 	for i := range messages {
 		if messages[i].Role == schemas.ChatMessageRoleTool {
@@ -1869,8 +1891,7 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b := &LLM{provider: schemas.Anthropic}
-			merged := b.mergeConsecutiveSameRoleMessages(tt.messages)
+			merged := mergeConsecutiveSameRoleMessages(tt.messages)
 			assert.Len(t, merged, tt.expected)
 			if tt.validate != nil {
 				tt.validate(t, merged)
@@ -2423,6 +2444,23 @@ func testHops(fallbacks []schemas.Fallback, ids []string) []fallbackHop {
 		hops = append(hops, hop)
 	}
 	return hops
+}
+
+// testAccount registers entries the way New does.
+func testAccount(entries ...*providerAccount) *multiProviderAccount {
+	account := newMultiProviderAccount()
+	for _, entry := range entries {
+		account.addProvider(entry)
+	}
+	return account
+}
+
+// customAccount is a fallback registered as a custom provider slot.
+func customAccount(base schemas.ModelProvider, serviceID string) *providerAccount {
+	return &providerAccount{
+		Provider: base,
+		name:     customProviderName(base, serviceID),
+	}
 }
 
 func TestConvertToBifrostRequest_RestrictedFallbacks(t *testing.T) {

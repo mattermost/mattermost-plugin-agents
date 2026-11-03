@@ -27,6 +27,7 @@ type nativeWebSearchChannelConfig struct{}
 
 func (nativeWebSearchChannelConfig) EnableChannelMentionToolCalling() bool { return true }
 func (nativeWebSearchChannelConfig) AllowNativeWebSearchInChannels() bool  { return true }
+func (nativeWebSearchChannelConfig) EnableAmbientAutoReply() bool          { return false }
 func (nativeWebSearchChannelConfig) MCP() mcp.Config                       { return mcp.Config{} }
 
 func TestWithProviderWebSearchLicense(t *testing.T) {

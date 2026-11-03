@@ -607,7 +607,7 @@ func (b *Builder) AddSkillTools(c *llm.Context, cfg llm.BotConfig) error {
 }
 
 func markSandboxFileAttachment(c *llm.Context, bot *bots.Bot) {
-	c.ToolCatalog.SandboxFilesAttached = c.ToolCatalog.ResponseFilesSupported && bot.SandboxFileAttachmentAvailable()
+	c.ToolCatalog.SandboxFilesAttached = c.ToolCatalog.ResponseFilesSupported && bot.ShouldPromiseSandboxFiles()
 }
 
 // WithLLMContextConcreteTools adds the requester's tools but forces concrete MCP

@@ -8,8 +8,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -50,7 +52,10 @@ type fakeMMClient struct {
 	fileInfos            map[string]*model.FileInfo
 	files                map[string][]byte
 	onUpdatePost         func(*model.Post)
-	websocketEvents      []fakeWebSocketEvent
+	// wsMu guards websocketEvents: title generation publishes from a
+	// background goroutine.
+	wsMu            sync.Mutex
+	websocketEvents []fakeWebSocketEvent
 	// dmChannelID, when set, is the channel DM posts are created in.
 	dmChannelID string
 	dmPosts     []*model.Post
@@ -62,10 +67,11 @@ type fakeMMClient struct {
 	// unreadableChannels are channels HasPermissionToChannel denies.
 	unreadableChannels map[string]bool
 
-	// logMu guards logErrors: background goroutines (e.g. title generation)
+	// logMu guards logErrors and logWarns: background goroutines (e.g. title generation)
 	// may log while the test goroutine reads.
 	logMu     sync.Mutex
 	logErrors []string
+	logWarns  []string
 }
 
 func (c *fakeMMClient) GetUser(userID string) (*model.User, error) {
@@ -223,11 +229,20 @@ func (c *fakeMMClient) GetDirectChannel(string, string) (*model.Channel, error) 
 }
 
 func (c *fakeMMClient) PublishWebSocketEvent(event string, payload map[string]any, broadcast *model.WebsocketBroadcast) {
+	c.wsMu.Lock()
+	defer c.wsMu.Unlock()
 	c.websocketEvents = append(c.websocketEvents, fakeWebSocketEvent{
 		event:     event,
 		payload:   payload,
 		broadcast: broadcast,
 	})
+}
+
+// publishedWebSocketEvents returns a copy of the events published so far.
+func (c *fakeMMClient) publishedWebSocketEvents() []fakeWebSocketEvent {
+	c.wsMu.Lock()
+	defer c.wsMu.Unlock()
+	return slices.Clone(c.websocketEvents)
 }
 
 func (c *fakeMMClient) GetConfig() *model.Config {
@@ -247,7 +262,19 @@ func (c *fakeMMClient) loggedErrors() []string {
 	return append([]string(nil), c.logErrors...)
 }
 
-func (c *fakeMMClient) LogWarn(string, ...any) {}
+func (c *fakeMMClient) LogWarn(msg string, keyValuePairs ...any) {
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	c.logWarns = append(c.logWarns, fmt.Sprintf("%s %v", msg, keyValuePairs))
+}
+
+// loggedWarnings returns a snapshot of the warn-level log lines, each the
+// message followed by its key/value pairs.
+func (c *fakeMMClient) loggedWarnings() []string {
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	return append([]string(nil), c.logWarns...)
+}
 
 func (c *fakeMMClient) GetUserByUsername(string) (*model.User, error) {
 	return nil, errors.New("not implemented")
@@ -358,10 +385,15 @@ func (p *testToolProvider) GetTools(_ *bots.Bot, _ *llm.Context) []llm.Tool {
 // testToolCallingConfig implements conversations.ConfigProvider for testing
 type testToolCallingConfig struct {
 	enableChannelMentionToolCalling bool
+	enableAmbientAutoReply          bool
 }
 
 func (c *testToolCallingConfig) EnableChannelMentionToolCalling() bool {
 	return c.enableChannelMentionToolCalling
+}
+
+func (c *testToolCallingConfig) EnableAmbientAutoReply() bool {
+	return c.enableAmbientAutoReply
 }
 
 func (c *testToolCallingConfig) AllowNativeWebSearchInChannels() bool {
