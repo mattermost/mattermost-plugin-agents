@@ -356,19 +356,36 @@ func (s *Store) saveHistory(id string, hist *VersionHistory) error {
 }
 
 // restoreHistoryIfUnchanged writes previous back only while the stored history
-// is still shortened. A version saved for this artifact in between is left as
-// stored. The failed metadata write is unchanged, so the stored head stays
-// whatever the last successful metadata write recorded.
+// is still the shortened document. The write is a compare-and-set against the
+// bytes just read, so a version saved after that read is left in place. On
+// that conflict the metadata error stands: the stored head stays at the last
+// successful metadata write, which still names the version this call failed
+// to remove.
 func (s *Store) restoreHistoryIfUnchanged(id string, shortened, previous []VersionRecord) error {
-	stored, err := s.loadHistory(id)
+	var raw []byte
+	err := s.kv.KVGet(histKey(id), &raw)
+	if mmapi.IsKVNotFound(err) {
+		return ErrNotFound
+	}
 	if err != nil {
 		return err
+	}
+	var stored VersionHistory
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return err
+	}
+	if stored.Versions == nil {
+		stored.Versions = []VersionRecord{}
 	}
 	if !sameVersionContent(stored.Versions, shortened) {
 		return nil
 	}
-	stored.Versions = previous
-	return s.saveHistory(id, stored)
+	restored := &VersionHistory{Versions: previous}
+	slices.SortFunc(restored.Versions, func(a, b VersionRecord) int {
+		return cmp.Compare(a.Version, b.Version)
+	})
+	_, err = s.kv.KVCompareAndSet(histKey(id), raw, restored)
+	return err
 }
 
 func sameVersionContent(a, b []VersionRecord) bool {
