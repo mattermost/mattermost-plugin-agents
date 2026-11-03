@@ -25,6 +25,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/maximhq/bifrost/core/providers/anthropic"
+	"github.com/maximhq/bifrost/core/providers/bedrock"
 	"github.com/maximhq/bifrost/core/providers/openai"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/stretchr/testify/assert"
@@ -951,6 +952,38 @@ func TestAnthropicSchemaKeepsThinkingWireRequest(t *testing.T) {
 	}
 }
 
+// TestBedrockPromptCachingReachesWire checks Bedrock models with cache points
+// get a Converse cache point from the plugin's request and other Bedrock
+// models get none.
+func TestBedrockPromptCachingReachesWire(t *testing.T) {
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{model: "us.anthropic.claude-sonnet-4-6-20260101-v1:0", want: true},
+		{model: "amazon.nova-pro-v1:0", want: true},
+		{model: "meta.llama3-70b-instruct-v1:0", want: false},
+	}
+	request := llm.CompletionRequest{Posts: []llm.Post{
+		{Role: llm.PostRoleSystem, Message: "system prompt"},
+		{Role: llm.PostRoleUser, Message: "hello"},
+	}}
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			b := &LLM{provider: schemas.Bedrock, account: testAccount(&providerAccount{Provider: schemas.Bedrock})}
+			chatReq := b.convertToBifrostRequest(request, llm.LanguageModelConfig{Model: tt.model, MaxGeneratedTokens: 100})
+
+			ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+			defer cancel()
+			wire, err := bedrock.ToBedrockChatCompletionRequest(ctx, chatReq)
+			require.NoError(t, err)
+			raw, err := json.Marshal(wire)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, strings.Contains(string(raw), "cachePoint"), string(raw))
+		})
+	}
+}
+
 // TestPromptCaching verifies that automatic prompt caching (top-level
 // cache_control) is requested for Anthropic and reaches the Anthropic wire
 // request, but is never attached for other providers. A non-Anthropic
@@ -986,7 +1019,7 @@ func TestPromptCaching(t *testing.T) {
 			want:     false,
 		},
 		{
-			name:     "bedrock",
+			name:     "bedrock model without cache points",
 			provider: schemas.Bedrock,
 			want:     false,
 		},
