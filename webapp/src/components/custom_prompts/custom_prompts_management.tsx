@@ -68,7 +68,7 @@ const CustomPromptsModal = () => {
                             closeLabel={intl.formatMessage({defaultMessage: 'Close'})}
                             showBackButton={showBack}
                             onBack={onBack}
-                            backLabel={intl.formatMessage({defaultMessage: 'Back to prompts'})}
+                            backLabel={intl.formatMessage({defaultMessage: 'Back to skills'})}
                             headerDivider={false}
                             bodyPadding='none'
                             scrollable={false}
