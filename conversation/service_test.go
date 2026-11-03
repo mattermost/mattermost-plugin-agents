@@ -2159,6 +2159,13 @@ func TestBuildRequests_UnexecutedToolCallsReplayAsNotExecuted(t *testing.T) {
 			wantStatus: llm.ToolCallStatusError,
 		},
 		{
+			name:       "auto-run call stopped mid-execution keeps an unknown outcome",
+			status:     StatusError,
+			autoRun:    true,
+			wantResult: InterruptedToolResult,
+			wantStatus: llm.ToolCallStatusError,
+		},
+		{
 			name:       "pending without result",
 			status:     StatusPending,
 			wantResult: NotExecutedToolResult,

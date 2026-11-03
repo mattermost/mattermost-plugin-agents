@@ -703,10 +703,15 @@ func pairToolResults(turns []store.Turn, blocksByTurn [][]ContentBlock) {
 			if b.Status == StatusPending || b.Status == StatusAccepted {
 				continue
 			}
+			content := MissingToolResultContent
+			if b.Status == StatusError && b.WouldAutoExecute {
+				// An auto-run batch stopped mid-execution: it may have run.
+				content = InterruptedToolResult
+			}
 			blocksByTurn[i] = append(blocksByTurn[i], ContentBlock{
 				Type:      BlockTypeToolResult,
 				ToolUseID: b.ID,
-				Content:   MissingToolResultContent,
+				Content:   content,
 				Status:    StatusError,
 				Shared:    new(true),
 			})

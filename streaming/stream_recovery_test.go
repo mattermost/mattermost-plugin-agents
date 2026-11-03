@@ -14,6 +14,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/lifecycle"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -380,6 +381,44 @@ func TestStreamClaimedBeforeItEndsLeavesThePostAlone(t *testing.T) {
 			assert.Equal(t, store.TurnStatusInterrupted, findStreamTurn(ts.turns, post.Id).Status)
 		})
 	}
+}
+
+// Stop during an auto-run batch must not leave its calls pending: they may
+// already have taken effect, and a pending call would be offered to run again.
+func TestStopDuringAutoRunBatchRecordsCallsAsErrored(t *testing.T) {
+	service, _, ts := newRecoveryTestService(t)
+	post := newStreamPost()
+	ctx, err := service.GetStreamingContext(context.Background(), post.Id)
+	require.NoError(t, err)
+	stream := make(chan llm.TextStreamEvent)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer service.FinishStreaming(post.Id)
+		service.StreamToPost(ctx, &llm.TextStreamResult{Stream: stream}, post, "en", "requester-id")
+	}()
+
+	stream <- llm.TextStreamEvent{Type: llm.EventTypeToolCallBatch, Value: llm.ToolCallBatch{
+		Phase: llm.ToolCallPhaseExecuting,
+		Calls: []llm.ToolCall{{ID: "call-1", Name: "create_post", Status: llm.ToolCallStatusPending, WouldAutoExecute: true}},
+	}}
+	service.StopStreaming(post.Id)
+	<-done
+
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	turn := findStreamTurn(ts.turns, post.Id)
+	require.NotNil(t, turn)
+	blocks, err := conversation.UnmarshalBlocks(turn.Content)
+	require.NoError(t, err)
+	var statuses []string
+	for _, b := range blocks {
+		if b.Type == conversation.BlockTypeToolUse {
+			statuses = append(statuses, b.Status)
+		}
+	}
+	assert.Equal(t, []string{conversation.StatusError}, statuses)
 }
 
 func TestNewStreamClearsInterruptedMarker(t *testing.T) {

@@ -145,6 +145,8 @@ type turnAccumulator struct {
 	turnID string
 	// persistedAt is when the turn was last written successfully.
 	persistedAt time.Time
+	// executing is set while toolCalls is an auto-run batch being executed.
+	executing bool
 
 	sequence    llm.TurnSequence
 	annotations []llm.Annotation
@@ -448,6 +450,21 @@ func (p *MMPostStreamService) beginTurn(acc *turnAccumulator) {
 	acc.persistedAt = time.Now()
 }
 
+// markExecutingCallsUnknown records a batch cut off mid-execution as errored:
+// its tools may already have taken effect, so it must not stay pending, where
+// it would offer to run again.
+func (a *turnAccumulator) markExecutingCallsUnknown() {
+	if a == nil || !a.executing {
+		return
+	}
+	for i := range a.toolCalls {
+		if a.toolCalls[i].Status == llm.ToolCallStatusPending || a.toolCalls[i].Status == llm.ToolCallStatusAccepted {
+			a.toolCalls[i].Status = llm.ToolCallStatusError
+		}
+	}
+	a.executing = false
+}
+
 // cancelStream cancels postID's stream context with cause, as Stop does,
 // without waiting for it to finish (the caller may be the stream itself).
 func (p *MMPostStreamService) cancelStream(postID string, cause error) {
@@ -728,6 +745,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 			return ownsPost
 		}
 		settled = true
+		acc.markExecutingCallsUnknown()
 		ownsPost = p.finalizeTurn(acc, finalStatus)
 		return ownsPost
 	}
@@ -974,10 +992,12 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 							// tool turn; the anchor counts only its own.
 							acc.tokensIn = 0
 							acc.tokensOut = 0
+							acc.executing = false
 							messageBuilder.Reset()
 							post.Message = ""
 						} else {
 							acc.toolCalls = batch.Calls
+							acc.executing = batch.Phase == llm.ToolCallPhaseExecuting
 						}
 					}
 					if batch.Phase == llm.ToolCallPhaseAwaitingDecision {
