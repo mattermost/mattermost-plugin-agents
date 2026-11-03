@@ -690,19 +690,20 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         break;
     }
 
-    // The interrupted notice carries its own Regenerate action.
-    const showRegenerate = isDM && !isGenerationInProgress && !interrupted && requesterIsCurrentUser && !isNoShowRegen;
-    const meetingsLicensed = useIsLicensedFor('meetings');
-
-    // The server authorizes postback by DM membership, not conversation ownership.
-    const showPostbackButton = meetingsLicensed && !isGenerationInProgress && isDM && isTranscriptionResult;
-
     // A persisted turn still marked streaming; see the staleness check below.
     const turnStillStreaming = Boolean(conversation?.turns.some((turn) => turn.post_id === props.post.id && turn.status === 'streaming'));
 
     // A remounted post knows of a live stream only from its persisted turn
     // once the cached start event is gone; Stop must still be offered then.
     const liveStreamFromTurn = turnStillStreaming && !interrupted && !streamStale;
+
+    // The interrupted notice carries its own Regenerate action.
+    const showRegenerate = isDM && !isGenerationInProgress && !liveStreamFromTurn && !interrupted && requesterIsCurrentUser && !isNoShowRegen;
+    const meetingsLicensed = useIsLicensedFor('meetings');
+
+    // The server authorizes postback by DM membership, not conversation ownership.
+    const showPostbackButton = meetingsLicensed && !isGenerationInProgress && isDM && isTranscriptionResult;
+
     const showStopGeneratingButton = (isGenerationInProgress || liveStreamFromTurn) && requesterIsCurrentUser;
     const hasContent = renderedRounds.length > 0;
 

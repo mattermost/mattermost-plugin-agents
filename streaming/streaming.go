@@ -816,6 +816,9 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 			}
 			if !ok {
 				// Stream channel closed - persist final state
+				if !settle() {
+					return
+				}
 				if err := p.mmClient.UpdatePost(post); err != nil {
 					p.mmClient.LogError("Streaming failed to update post on channel close", "error", err)
 				}

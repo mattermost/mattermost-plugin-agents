@@ -2218,6 +2218,9 @@ describe('LLMBotPost interrupted and stale generation notices', () => {
         renderPost(post);
 
         expect(Boolean(screen.queryByText('Stop Generating'))).toBe(wantStop);
+        if (wantStop) {
+            expect(screen.queryByTestId('regenerate-button')).toBeNull();
+        }
     });
 
     test('a remounted post shows the partial text of its still-streaming turn', () => {
