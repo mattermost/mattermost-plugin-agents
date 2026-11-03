@@ -98,9 +98,19 @@ type PostUpdateHandler = (msg: PluginWebSocketMessage<PostUpdateWebsocketMessage
 // Mattermost IDs are 26 characters of lowercase letters and digits.
 const WELL_FORMED_ID = 'c7f2m9xq4v1b8n3k6t5w0hzjd2';
 
+// The author of posts made with makePost; plugin props are only trusted on
+// posts by a known agent bot.
+const AGENT_BOT_USER_ID = 'bot_user_1';
+
+function withAgentBots(state: Record<string, unknown>) {
+    const pluginKey = 'plugins-' + manifest.id;
+    return pluginKey in state ? state : {...state, [pluginKey]: {bots: [{id: AGENT_BOT_USER_ID}]}};
+}
+
 function makePost(message = '', props: Record<string, unknown> = {}) {
     return {
         id: 'post_1',
+        user_id: AGENT_BOT_USER_ID,
         channel_id: 'channel_1',
         root_id: 'root_1',
         message,
@@ -213,7 +223,7 @@ function expandToolActivity() {
 }
 
 beforeEach(() => {
-    mockUseSelector.mockImplementation((selector) => selector({
+    mockUseSelector.mockImplementation((selector) => selector(withAgentBots({
         entities: {
             channels: {
                 channels: {
@@ -227,7 +237,7 @@ beforeEach(() => {
                 currentUserId: 'user_1',
             },
         },
-    }));
+    })));
 
     mockUseConversation.mockReturnValue({
         conversation: null,
@@ -749,7 +759,7 @@ describe('LLMBotPost streaming re-renders', () => {
 
 describe('LLMBotPost rounds awaiting a decision', () => {
     function withRequesterProfile() {
-        mockUseSelector.mockImplementation((selector) => selector({
+        mockUseSelector.mockImplementation((selector) => selector(withAgentBots({
             entities: {
                 channels: {channels: {channel_1: {type: 'O'}}},
                 general: {config: {}, license: {}},
@@ -757,7 +767,7 @@ describe('LLMBotPost rounds awaiting a decision', () => {
                 preferences: {myPreferences: {}},
                 users: {currentUserId: 'user_1', profiles: {requester_1: {username: 'alice'}}},
             },
-        }));
+        })));
     }
 
     // A response stopped on a tool call: the anchor round holds the text asking to run it and the call.
@@ -1395,11 +1405,20 @@ describe('LLMBotPost conversation_id prop handling', () => {
 
         expect(mockUseConversation).toHaveBeenCalledWith(void 0); // eslint-disable-line no-void
     });
+
+    // Any user can set props on their own posts, so a conversation_id on a
+    // post no agent bot wrote must not load that conversation into it.
+    test('ignores a conversation_id on a post not written by an agent bot', () => {
+        renderPost({...makePost(), user_id: 'someone_else'});
+
+        expect(mockUseConversation).not.toHaveBeenCalledWith(WELL_FORMED_ID);
+        expect(mockUseConversation).toHaveBeenCalledWith(void 0); // eslint-disable-line no-void
+    });
 });
 
 describe('LLMBotPost stopped generation notice', () => {
     function inChannelWithRequester(teammateNameDisplay = 'username') {
-        mockUseSelector.mockImplementation((selector) => selector({
+        mockUseSelector.mockImplementation((selector) => selector(withAgentBots({
             entities: {
                 channels: {channels: {channel_1: {type: 'O'}}},
                 general: {config: {TeammateNameDisplay: teammateNameDisplay}, license: {}},
@@ -1410,7 +1429,7 @@ describe('LLMBotPost stopped generation notice', () => {
                     profiles: {requester_1: {username: 'alice', nickname: '', first_name: 'Alice', last_name: 'Smith'}},
                 },
             },
-        }));
+        })));
     }
 
     function stoppedNotice() {
@@ -1546,7 +1565,7 @@ describe('LLMBotPost meetings license gating', () => {
             loading: false,
             error: null,
         });
-        mockUseSelector.mockImplementation((selector) => selector({
+        mockUseSelector.mockImplementation((selector) => selector(withAgentBots({
             entities: {
                 channels: {
                     channels: {
@@ -1562,7 +1581,7 @@ describe('LLMBotPost meetings license gating', () => {
                     currentUserId: 'user_1',
                 },
             },
-        }));
+        })));
     });
 
     test('shows Post summary for a transcription result at Enterprise', () => {
@@ -1586,13 +1605,13 @@ describe('LLMBotPost meetings license gating', () => {
     });
 
     test('hides Post summary outside a DM', () => {
-        mockUseSelector.mockImplementation((selector) => selector({
+        mockUseSelector.mockImplementation((selector) => selector(withAgentBots({
             entities: {
                 channels: {channels: {channel_1: {type: 'O'}}},
                 posts: {posts: {root_1: {props: {referenced_transcript_post_id: 'transcript_1'}}}},
                 users: {currentUserId: 'user_1'},
             },
-        }));
+        })));
         renderPost(makePost('Call summary'));
 
         expect(screen.queryByText('Post summary')).toBeNull();
@@ -1960,14 +1979,14 @@ describe('LLMBotPost interrupted and stale generation notices', () => {
             loading: false,
             error: null,
         });
-        mockUseSelector.mockImplementation((selector) => selector({
+        mockUseSelector.mockImplementation((selector) => selector(withAgentBots({
             entities: {
                 channels: {channels: {channel_1: {type: 'D'}}},
                 posts: {posts: {}},
                 users: {currentUserId: 'user_1'},
             },
             ['plugins-' + manifest.id]: {bots: [{id: BOT_ID}]},
-        }));
+        })));
     });
 
     afterEach(() => {

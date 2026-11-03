@@ -99,11 +99,18 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const intl = useIntl();
     const selectPost = useSelectNotAIPost();
 
+    // Anti-impersonation: plugin props are trusted only on posts authored by a
+    // known agent bot, since any user can set props on their own posts.
+    const authorIsAgentBot = useSelector<GlobalState, boolean>((state: any) => {
+        const bots: LLMBot[] | null | undefined = state['plugins-' + manifest.id]?.bots;
+        return Boolean(bots?.some((bot) => bot.id === props.post.user_id));
+    });
+
     // Post props are free-form JSON; a conversation_id that is not a
     // well-formed id is treated as absent so no request is built from it and
     // the component falls back to its no-conversation rendering path.
     const rawConversationId: unknown = props.post.props?.conversation_id;
-    const conversationId: string | undefined = isValidId(rawConversationId) ? rawConversationId : undefined; // eslint-disable-line no-undefined
+    const conversationId: string | undefined = authorIsAgentBot && isValidId(rawConversationId) ? rawConversationId : undefined; // eslint-disable-line no-undefined
     const {conversation, loading: conversationLoading, error: conversationError} = useConversation(conversationId);
 
     // Invalidation empties the cache until the refetch lands. Who the requester
@@ -123,11 +130,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const isDM = channel?.type === 'D';
     const rootPost = useSelector<GlobalState, any>((state) => state.entities.posts.posts[props.post.root_id]);
 
-    // Anti-impersonation: only posts authored by a known agent bot may show the interrupted notice.
-    const authorIsAgentBot = useSelector<GlobalState, boolean>((state: any) => {
-        const bots: LLMBot[] | null | undefined = state['plugins-' + manifest.id]?.bots;
-        return Boolean(bots?.some((bot) => bot.id === props.post.user_id));
-    });
     const interruptReason = authorIsAgentBot ? parseInterruptReason(props.post.props?.llm_interrupted) : null;
 
     const [message, setMessage] = useState(props.post.message);
