@@ -833,6 +833,22 @@ describe('ArtifactFrame bridge token', () => {
         expect(screen.getByRole('button', {name: 'Download'})).toBeTruthy();
     });
 
+    test('hides the too-large download button when library downloads are disabled', async () => {
+        mockGetToken.mockResolvedValueOnce({token: TOKEN, tooLarge: true});
+        render(withProviders(
+            <ArtifactFrame
+                fileId={FILE_ID}
+                fileName='tok.html'
+                displayMode='inline'
+                downloadEnabled={false}
+            />,
+        ));
+        await flushLoad();
+        expect(screen.getByRole('alert').textContent).toContain('too large to preview');
+        expect(screen.getByRole('alert').textContent).not.toContain('Download it instead');
+        expect(screen.queryByRole('button', {name: 'Download'})).toBeNull();
+    });
+
     test('shows the error state on token failure and retries with a new nonce', async () => {
         mockGetToken.mockRejectedValueOnce(new Error('nope'));
         renderFrame('tok.html');

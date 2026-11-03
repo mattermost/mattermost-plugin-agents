@@ -36,6 +36,8 @@ const LibraryArtifactDeepLink = () => {
     const enabled = useSelector(getChannelArtifactsEnabled);
     const loaded = useSelector(getChannelArtifactsLoaded);
     const channelId = useSelector((state: GlobalState) => state.entities?.channels?.currentChannelId || '');
+    const channelIdRef = useRef(channelId);
+    channelIdRef.current = channelId;
     const [entry, setEntry] = useState<ChannelArtifactEntry | null>(null);
     const [canManage, setCanManage] = useState(false);
     const [downloadEnabled, setDownloadEnabled] = useState(true);
@@ -84,8 +86,14 @@ const LibraryArtifactDeepLink = () => {
             if (seq !== openSeq.current) {
                 return;
             }
+            if (channelIdRef.current !== channelId) {
+                openedIdsRef.current.delete(artifactId);
+                openingRef.current = null;
+                return;
+            }
             const match = (list.entries || []).find((e) => e.id === artifactId);
             if (!match || match.channel_id !== channelId) {
+                openedIdsRef.current.delete(artifactId);
                 setNotice('unavailable');
                 stripQuery();
                 openingRef.current = null;
@@ -100,6 +108,7 @@ const LibraryArtifactDeepLink = () => {
             if (seq !== openSeq.current) {
                 return;
             }
+            openedIdsRef.current.delete(artifactId);
             setNotice('unavailable');
             stripQuery();
             openingRef.current = null;
@@ -131,9 +140,17 @@ const LibraryArtifactDeepLink = () => {
             openingRef.current = null;
             tryOpen();
         };
+        const openedIds = openedIdsRef.current;
         window.addEventListener('popstate', onPop);
         return () => {
             openSeq.current += 1;
+            const id = parseLibraryArtifactIdFromSearch(window.location.search);
+            if (id) {
+                openedIds.delete(id);
+                if (openingRef.current === id) {
+                    openingRef.current = null;
+                }
+            }
             unlisten?.();
             window.removeEventListener('popstate', onPop);
         };

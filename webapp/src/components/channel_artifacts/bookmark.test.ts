@@ -48,12 +48,16 @@ describe('channel artifact bookmark helpers', () => {
         expect(artifactIdFromBookmarkUrl('http://localhost:8065/test/channels/off-topic')).toBeNull();
     });
 
-    test('findLibraryArtifactBookmark matches by query param', () => {
+    test('findLibraryArtifactBookmark matches a same-origin library link', () => {
         const hit = findLibraryArtifactBookmark([
             {id: '1', type: 'link', link_url: 'http://x/a?mm_ai_library_artifact=want'} as any,
-            {id: '2', type: 'file', file_id: 'f'} as any,
+            {id: '2', type: 'link', link_url: '/test/channels/off-topic?mm_ai_library_artifact=other'} as any,
+            {id: '3', type: 'link', link_url: 'http://localhost:8065/test/channels/off-topic?mm_ai_library_artifact=want'} as any,
         ], 'want');
-        expect(hit?.id).toBe('1');
+        expect(hit?.id).toBe('3');
+        expect(findLibraryArtifactBookmark([
+            {id: '2', type: 'link', link_url: '/test/channels/off-topic?mm_ai_library_artifact=other'} as any,
+        ], 'other')?.id).toBe('2');
     });
 
     test('parse and strip query helpers', () => {

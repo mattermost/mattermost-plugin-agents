@@ -413,15 +413,22 @@ func (s *Store) pruneOldestVersions(entry *Entry, hist *VersionHistory, maxKeep 
 	slices.SortFunc(hist.Versions, func(a, b VersionRecord) int {
 		return cmp.Compare(a.Version, b.Version)
 	})
+	var pruned []VersionRecord
 	for len(hist.Versions) > maxKeep {
 		oldest := hist.Versions[0]
 		if oldest.Version == entry.Version {
 			break
 		}
-		s.deleteVersionBlobs(oldest, entry.ID)
+		pruned = append(pruned, oldest)
 		hist.Versions = hist.Versions[1:]
 	}
-	return s.saveHistory(entry.ID, hist)
+	if err := s.saveHistory(entry.ID, hist); err != nil {
+		return err
+	}
+	for _, rec := range pruned {
+		s.deleteVersionBlobs(rec, entry.ID)
+	}
+	return nil
 }
 
 // Save writes a new artifact: blobs, meta, history, sha index, and channel index.
@@ -775,7 +782,6 @@ func (s *Store) DeleteHead(entry *Entry) error {
 	if !foundPrev {
 		previous = remaining[len(remaining)-1]
 	}
-	s.deleteVersionBlobs(head, entry.ID)
 	hist.Versions = remaining
 	if err := s.saveHistory(entry.ID, hist); err != nil {
 		return err
@@ -785,6 +791,7 @@ func (s *Store) DeleteHead(entry *Entry) error {
 	if err := s.kv.KVSet(metaKey(entry.ID), entry); err != nil {
 		return err
 	}
+	s.deleteVersionBlobs(head, entry.ID)
 	if oldSHA != "" && oldSHA != entry.SHA256 {
 		_ = s.kv.KVDelete(shaKey(entry.ChannelID, oldSHA))
 	}

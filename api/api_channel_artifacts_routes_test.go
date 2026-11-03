@@ -166,11 +166,22 @@ func TestMCPCanSaveChannelArtifact(t *testing.T) {
 			wantStatus: http.StatusForbidden, wantError: "channel artifacts only accept files posted by agents",
 		},
 		{
+			name: "larger than the render limit", enabled: true, client: true,
+			setup: func(m *mocks.MockClient) {
+				m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, Name: "notes.html", Extension: "html", Size: 2 << 20}, nil)
+				m.EXPECT().GetPost(postID).Return(&model.Post{Id: postID, UserId: testUserID, ChannelId: channelID, FileIds: model.StringArray{fileID}}, nil)
+				m.EXPECT().HasPermissionToChannel(testUserID, channelID, model.PermissionReadChannel).Return(true)
+				m.EXPECT().GetConfig().Return(&model.Config{})
+			},
+			wantStatus: http.StatusRequestEntityTooLarge, wantError: "artifact too large",
+		},
+		{
 			name: "html file on the post", enabled: true, client: true,
 			setup: func(m *mocks.MockClient) {
 				m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, Name: "notes.html", Extension: "html"}, nil)
 				m.EXPECT().GetPost(postID).Return(&model.Post{Id: postID, UserId: testUserID, ChannelId: channelID, FileIds: model.StringArray{fileID}}, nil)
 				m.EXPECT().HasPermissionToChannel(testUserID, channelID, model.PermissionReadChannel).Return(true)
+				m.EXPECT().GetConfig().Return(&model.Config{})
 			},
 			wantStatus: http.StatusOK,
 		},

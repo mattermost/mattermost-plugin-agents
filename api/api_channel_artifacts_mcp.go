@@ -243,6 +243,10 @@ func (a *API) handleMCPCanSaveChannelArtifact(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "channel artifacts only accept files posted by agents"})
 		return
 	}
+	if info.Size > artifactRenderLimit(a.mmClient.GetConfig()) {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "artifact too large"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 

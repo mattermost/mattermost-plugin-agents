@@ -116,7 +116,28 @@ export function findLibraryArtifactBookmark(
         return null;
     }
     const list = Array.isArray(bookmarks) ? bookmarks : Object.values(bookmarks);
-    return list.find((b) => b.type === 'link' && artifactIdFromBookmarkUrl(b.link_url) === artifactId) || null;
+    return list.find((b) => b.type === 'link' && libraryBookmarkLink(b.link_url, artifactId)) || null;
+}
+
+function libraryBookmarkLink(linkUrl: string | undefined, artifactId: string): boolean {
+    if (!linkUrl || artifactIdFromBookmarkUrl(linkUrl) !== artifactId) {
+        return false;
+    }
+    if (!linkUrl.includes('://')) {
+        return true;
+    }
+    let linkOrigin = '';
+    try {
+        linkOrigin = new URL(linkUrl).origin;
+    } catch {
+        return false;
+    }
+    const siteURL = Client4.getUrl() || window.location.origin;
+    try {
+        return linkOrigin === new URL(siteURL).origin;
+    } catch {
+        return linkOrigin === window.location.origin;
+    }
 }
 
 function connectionIdFromState(state: GlobalState): string {

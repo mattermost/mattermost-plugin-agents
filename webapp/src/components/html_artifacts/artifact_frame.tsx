@@ -104,6 +104,9 @@ interface Props {
     // Library-only: render a specific content version via ?version=N.
     version?: number;
 
+    // Library downloads can be turned off. File artifacts keep the button.
+    downloadEnabled?: boolean;
+
     // True while the frame is covered (the inline card under the fullscreen
     // viewer): it must not show a consent prompt the viewer cannot see.
     obscured?: boolean;
@@ -131,6 +134,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
     onEscape,
     artifactKind = 'file',
     version,
+    downloadEnabled = true,
     obscured = false,
     startedByClick = false,
 }, ref) => {
@@ -776,15 +780,21 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
                             size='20'
                             glyph={<AlertCircleOutlineIcon/>}
                         />
-                        <FormattedMessage defaultMessage='This artifact is too large to preview. Download it instead.'/>
-                        <Button
-                            emphasis='tertiary'
-                            size='x-small'
-                            leadingIcon={<Icon glyph={<DownloadOutlineIcon/>}/>}
-                            onClick={() => downloadArtifact(fileId, artifactKind, version)}
-                        >
-                            <FormattedMessage defaultMessage='Download'/>
-                        </Button>
+                        {downloadEnabled ? (
+                            <FormattedMessage defaultMessage='This artifact is too large to preview. Download it instead.'/>
+                        ) : (
+                            <FormattedMessage defaultMessage='This artifact is too large to preview.'/>
+                        )}
+                        {downloadEnabled && (
+                            <Button
+                                emphasis='tertiary'
+                                size='x-small'
+                                leadingIcon={<Icon glyph={<DownloadOutlineIcon/>}/>}
+                                onClick={() => downloadArtifact(fileId, artifactKind, version)}
+                            >
+                                <FormattedMessage defaultMessage='Download'/>
+                            </Button>
+                        )}
                     </ErrorBox>
                 </Overlay>
             )}

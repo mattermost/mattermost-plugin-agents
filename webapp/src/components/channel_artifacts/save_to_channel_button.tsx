@@ -11,6 +11,7 @@ import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {Button} from '@mattermost/compass-ui/components/button';
 import {Checkbox} from '@mattermost/compass-ui/components/checkbox';
+import {Modal} from '@mattermost/compass-ui/components/modal';
 import {PinIcon, PinOutlineIcon} from '@mattermost/compass-icons/components';
 
 import {
@@ -19,6 +20,8 @@ import {
     listChannelArtifacts,
 } from '@/client';
 import {getChannelArtifactsEnabled} from '@/selectors';
+
+import {AnimatedModalShell} from '../animated_modal_shell';
 
 import {canAddChannelBookmarks, pinLibraryArtifactBookmark} from './bookmark';
 
@@ -136,7 +139,11 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
                 return;
             }
             try {
-                await pinLibraryArtifactBookmark(store.getState(), channelId, id, savedTitle, store.dispatch);
+                const bookmark = await pinLibraryArtifactBookmark(store.getState(), channelId, id, savedTitle, store.dispatch);
+                if (!bookmark) {
+                    setError(intl.formatMessage({defaultMessage: 'Saved the artifact, but could not pin it to bookmarks.'}));
+                    return;
+                }
                 setOpen(false);
             } catch {
                 setError(intl.formatMessage({defaultMessage: 'Saved the artifact, but could not pin it to bookmarks.'}));
@@ -153,7 +160,9 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
             await pinSaved(entry.id, entry.title);
         } catch (err: any) {
             if (typeof err?.message === 'string' && err.message.startsWith('duplicate:')) {
-                await pinSaved(err.message.slice('duplicate:'.length), title.trim() || defaultTitle());
+                const id = err.message.slice('duplicate:'.length);
+                const stored = existing.find((entry) => entry.id === id);
+                await pinSaved(id, stored?.title || title.trim() || defaultTitle());
             } else if (err?.status_code === 403 || err?.status_code === 404) {
                 setError(intl.formatMessage({defaultMessage: 'Only channel admins can save artifacts.'}));
             } else {
@@ -180,144 +189,144 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
                 data-testid='html-artifact-save-to-channel'
             />
             {open && (
-                <ModalBackdrop
-                    data-testid='channel-artifact-save-modal'
-                    onClick={() => !saving && setOpen(false)}
-                    onKeyDown={(e) => {
-                        if (e.key === 'Escape' && !saving) {
-                            setOpen(false);
-                        }
-                    }}
-                    role='presentation'
+                <AnimatedModalShell
+                    show={open}
+                    onBackdropClick={() => !saving && setOpen(false)}
                 >
-                    {/* eslint-disable-next-line agents/click-events-have-key-events, agents/no-noninteractive-element-interactions -- only stops clicks inside the dialog from reaching the backdrop */}
-                    <ModalCard
-                        role='dialog'
-                        aria-modal='true'
-                        aria-labelledby='channel-artifact-save-title'
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <ModalHeading id='channel-artifact-save-title'>
-                            {updating ? (
-                                <FormattedMessage defaultMessage='Update channel artifact'/>
-                            ) : (
-                                <FormattedMessage defaultMessage='Save to channel artifacts'/>
-                            )}
-                        </ModalHeading>
-                        <ModalCopy>
-                            {updating ? (
-                                <FormattedMessage defaultMessage='This creates a new version of the library copy. Prior versions stay recoverable from the channel library.'/>
-                            ) : (
-                                <FormattedMessage defaultMessage='Keep this HTML app in the channel library so everyone can open it later. Optionally pin it to channel bookmarks below, or add it later from Bookmarks → Add channel artifact. Channel admins can rename or replace it anytime.'/>
-                            )}
-                        </ModalCopy>
-                        <FieldLabel htmlFor='channel-artifact-title'>
-                            <FormattedMessage defaultMessage='Title'/>
-                        </FieldLabel>
-                        <FieldInput
-                            id='channel-artifact-title'
-                            value={title}
-                            maxLength={64}
-                            onChange={(e) => setTitle(e.target.value)}
-                            data-testid='channel-artifact-title-input'
-                            autoFocus={true}
-                        />
-                        {existing.length > 0 && (
-                            <>
-                                <FieldLabel htmlFor='channel-artifact-replace'>
-                                    <FormattedMessage defaultMessage='Library entry'/>
-                                </FieldLabel>
-                                <FieldSelect
-                                    id='channel-artifact-replace'
-                                    value={replaceId}
-                                    onChange={(e) => {
-                                        const id = e.target.value;
-                                        setReplaceId(id);
-                                        setAckUpdate(false);
-                                        const match = existing.find((entry) => entry.id === id);
-                                        if (match) {
-                                            setTitle(match.title);
-                                        }
-                                    }}
-                                    data-testid='channel-artifact-replace-select'
-                                >
-                                    <option value=''>
-                                        {intl.formatMessage({defaultMessage: 'Create a new artifact'})}
-                                    </option>
-                                    {existing.map((entry) => (
-                                        <option
-                                            key={entry.id}
-                                            value={entry.id}
-                                        >
-                                            {entry.title}
-                                            {entry.version && entry.version > 1 ? ` (v${entry.version})` : ''}
-                                        </option>
-                                    ))}
-                                </FieldSelect>
-                                <FieldHint>
-                                    <FormattedMessage defaultMessage='Pick an existing entry to refresh it in place (same id, version bumps). Leave on “Create a new artifact” to add another.'/>
-                                </FieldHint>
-                            </>
-                        )}
-                        {updating && replaceEntry && (
-                            <SupersedeBox data-testid='channel-artifact-supersede-ack'>
-                                <SupersedeTitle>
-                                    <FormattedMessage defaultMessage='This will supersede'/>
-                                </SupersedeTitle>
-                                <SupersedeMeta>
-                                    <strong>{replaceEntry.title}</strong>
-                                    {' · '}
-                                    {replaceEntry.source_agent_display_name || replaceEntry.updated_by || 'Agent'}
-                                    {' · '}
-                                    {new Date(replaceEntry.update_at || replaceEntry.create_at).toLocaleString()}
-                                    {replaceEntry.sha256 ? ` · ${shaPrefix(replaceEntry.sha256)}` : ''}
-                                </SupersedeMeta>
-                                <Checkbox
-                                    checked={ackUpdate}
-                                    onChange={(e) => setAckUpdate(e.target.checked)}
-                                    data-testid='channel-artifact-update-ack'
-                                >
-                                    <FormattedMessage defaultMessage='I understand this supersedes the current library copy (prior versions stay recoverable)'/>
-                                </Checkbox>
-                            </SupersedeBox>
-                        )}
-                        {canPin && (
-                            <PinRow>
-                                <Checkbox
-                                    checked={pinBookmark}
-                                    onChange={(e) => setPinBookmark(e.target.checked)}
-                                    data-testid='channel-artifact-pin-bookmark'
-                                >
-                                    <FormattedMessage defaultMessage='Pin to channel bookmarks'/>
-                                </Checkbox>
-                            </PinRow>
-                        )}
-                        {error && <ErrorText>{error}</ErrorText>}
-                        <ModalActions>
-                            <Button
-                                emphasis='tertiary'
-                                size='small'
-                                onClick={() => setOpen(false)}
-                                disabled={saving}
-                            >
-                                <FormattedMessage defaultMessage='Cancel'/>
-                            </Button>
-                            <Button
-                                emphasis='primary'
-                                size='small'
-                                onClick={onSave}
-                                disabled={saving || !canSubmit}
-                                data-testid='channel-artifact-save-confirm'
-                            >
+                    <Modal
+                        open={open}
+                        size='small'
+                        title={(
+                            <span id='channel-artifact-save-title'>
                                 {updating ? (
-                                    <FormattedMessage defaultMessage='Update artifact'/>
+                                    <FormattedMessage defaultMessage='Update channel artifact'/>
                                 ) : (
-                                    <FormattedMessage defaultMessage='Save artifact'/>
+                                    <FormattedMessage defaultMessage='Save to channel artifacts'/>
                                 )}
-                            </Button>
-                        </ModalActions>
-                    </ModalCard>
-                </ModalBackdrop>
+                            </span>
+                        )}
+                        onClose={() => !saving && setOpen(false)}
+                        closeOnEscape={false}
+                        closeLabel={intl.formatMessage({defaultMessage: 'Close'})}
+                        headerDivider={false}
+                        footerDivider={false}
+                    >
+                        <div data-testid='channel-artifact-save-modal'>
+                            <ModalCopy>
+                                {updating ? (
+                                    <FormattedMessage defaultMessage='This creates a new version of the library copy. Prior versions stay recoverable from the channel library.'/>
+                                ) : (
+                                    <FormattedMessage defaultMessage='Keep this HTML app in the channel library so everyone can open it later. Optionally pin it to channel bookmarks below, or add it later from Bookmarks → Add channel artifact. Channel admins can rename or replace it anytime.'/>
+                                )}
+                            </ModalCopy>
+                            <FieldLabel htmlFor='channel-artifact-title'>
+                                <FormattedMessage defaultMessage='Title'/>
+                            </FieldLabel>
+                            <FieldInput
+                                id='channel-artifact-title'
+                                value={title}
+                                maxLength={64}
+                                onChange={(e) => setTitle(e.target.value)}
+                                data-testid='channel-artifact-title-input'
+                                autoFocus={true}
+                            />
+                            {existing.length > 0 && (
+                                <>
+                                    <FieldLabel htmlFor='channel-artifact-replace'>
+                                        <FormattedMessage defaultMessage='Library entry'/>
+                                    </FieldLabel>
+                                    <FieldSelect
+                                        id='channel-artifact-replace'
+                                        value={replaceId}
+                                        onChange={(e) => {
+                                            const id = e.target.value;
+                                            setReplaceId(id);
+                                            setAckUpdate(false);
+                                            const match = existing.find((entry) => entry.id === id);
+                                            if (match) {
+                                                setTitle(match.title);
+                                            }
+                                        }}
+                                        data-testid='channel-artifact-replace-select'
+                                    >
+                                        <option value=''>
+                                            {intl.formatMessage({defaultMessage: 'Create a new artifact'})}
+                                        </option>
+                                        {existing.map((entry) => (
+                                            <option
+                                                key={entry.id}
+                                                value={entry.id}
+                                            >
+                                                {entry.title}
+                                                {entry.version && entry.version > 1 ? ` (v${entry.version})` : ''}
+                                            </option>
+                                        ))}
+                                    </FieldSelect>
+                                    <FieldHint>
+                                        <FormattedMessage defaultMessage='Pick an existing entry to refresh it in place (same id, version bumps). Leave on “Create a new artifact” to add another.'/>
+                                    </FieldHint>
+                                </>
+                            )}
+                            {updating && replaceEntry && (
+                                <SupersedeBox data-testid='channel-artifact-supersede-ack'>
+                                    <SupersedeTitle>
+                                        <FormattedMessage defaultMessage='This will supersede'/>
+                                    </SupersedeTitle>
+                                    <SupersedeMeta>
+                                        <strong>{replaceEntry.title}</strong>
+                                        {' · '}
+                                        {replaceEntry.source_agent_display_name || replaceEntry.updated_by || 'Agent'}
+                                        {' · '}
+                                        {new Date(replaceEntry.update_at || replaceEntry.create_at).toLocaleString()}
+                                        {replaceEntry.sha256 ? ` · ${shaPrefix(replaceEntry.sha256)}` : ''}
+                                    </SupersedeMeta>
+                                    <Checkbox
+                                        checked={ackUpdate}
+                                        onChange={(e) => setAckUpdate(e.target.checked)}
+                                        data-testid='channel-artifact-update-ack'
+                                    >
+                                        <FormattedMessage defaultMessage='I understand this supersedes the current library copy (prior versions stay recoverable)'/>
+                                    </Checkbox>
+                                </SupersedeBox>
+                            )}
+                            {canPin && (
+                                <PinRow>
+                                    <Checkbox
+                                        checked={pinBookmark}
+                                        onChange={(e) => setPinBookmark(e.target.checked)}
+                                        data-testid='channel-artifact-pin-bookmark'
+                                    >
+                                        <FormattedMessage defaultMessage='Pin to channel bookmarks'/>
+                                    </Checkbox>
+                                </PinRow>
+                            )}
+                            {error && <ErrorText>{error}</ErrorText>}
+                            <ModalActions>
+                                <Button
+                                    emphasis='tertiary'
+                                    size='small'
+                                    onClick={() => setOpen(false)}
+                                    disabled={saving}
+                                >
+                                    <FormattedMessage defaultMessage='Cancel'/>
+                                </Button>
+                                <Button
+                                    emphasis='primary'
+                                    size='small'
+                                    onClick={onSave}
+                                    disabled={saving || !canSubmit}
+                                    data-testid='channel-artifact-save-confirm'
+                                >
+                                    {updating ? (
+                                        <FormattedMessage defaultMessage='Update artifact'/>
+                                    ) : (
+                                        <FormattedMessage defaultMessage='Save artifact'/>
+                                    )}
+                                </Button>
+                            </ModalActions>
+                        </div>
+                    </Modal>
+                </AnimatedModalShell>
             )}
         </Wrap>
     );
@@ -328,33 +337,6 @@ export default SaveToChannelButton;
 const Wrap = styled.span`
     display: inline-flex;
     align-items: center;
-`;
-
-const ModalBackdrop = styled.div`
-    position: fixed;
-    inset: 0;
-    z-index: 11000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: var(--spacing-xl, 24px);
-    background: rgba(0, 0, 0, 0.48);
-`;
-
-const ModalCard = styled.div`
-    width: min(440px, 100%);
-    padding: var(--spacing-xl, 24px);
-    border-radius: 12px;
-    background: var(--center-channel-bg);
-    color: var(--center-channel-color);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
-`;
-
-const ModalHeading = styled.h2`
-    margin: 0 0 var(--spacing-xs, 8px);
-    font-size: 18px;
-    font-weight: 600;
-    line-height: 24px;
 `;
 
 const ModalCopy = styled.p`

@@ -612,18 +612,23 @@ func (a *API) handleDownloadChannelArtifact(c *gin.Context) {
 	if !ok {
 		return
 	}
+	name := entry.SourceFileName
+	if version > 0 {
+		rec, recErr := a.channelArtifacts.Store().VersionRecord(entry, version)
+		if recErr != nil {
+			a.logArtifactError("Failed to read channel artifact version", recErr, entry.ID)
+			a.writeChannelArtifactError(c, recErr)
+			return
+		}
+		if rec.SourceFileName != "" {
+			name = rec.SourceFileName
+		}
+	}
 	body, err := a.channelArtifacts.ReadContentAt(entry, version)
 	if err != nil {
 		a.logArtifactError("Failed to read channel artifact", err, entry.ID)
 		a.writeChannelArtifactError(c, err)
 		return
-	}
-	name := entry.SourceFileName
-	if version > 0 {
-		rec, recErr := a.channelArtifacts.Store().VersionRecord(entry, version)
-		if recErr == nil && rec.SourceFileName != "" {
-			name = rec.SourceFileName
-		}
 	}
 	if name == "" {
 		name = entry.Title + ".html"

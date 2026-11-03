@@ -10,9 +10,12 @@ import {GlobalState} from '@mattermost/types/store';
 import {Button} from '@mattermost/compass-ui/components/button';
 import {FileCodeOutlineIcon} from '@mattermost/compass-icons/components';
 import {Icon} from '@mattermost/compass-ui/components/icon';
+import {Modal} from '@mattermost/compass-ui/components/modal';
 
 import {ChannelArtifactEntry, listChannelArtifacts} from '@/client';
 import {getChannelArtifactsEnabled} from '@/selectors';
+
+import {AnimatedModalShell} from '../animated_modal_shell';
 
 import {
     artifactIdFromBookmarkUrl,
@@ -74,19 +77,6 @@ const ArtifactBookmarkPicker = () => {
     }, []);
 
     useEffect(() => {
-        if (!request) {
-            return undefined; // eslint-disable-line no-undefined
-        }
-        const onKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') {
-                close();
-            }
-        };
-        window.addEventListener('keydown', onKeyDown);
-        return () => window.removeEventListener('keydown', onKeyDown);
-    }, [request, close]);
-
-    useEffect(() => {
         if (!request || !enabled) {
             return undefined; // eslint-disable-line no-undefined
         }
@@ -146,7 +136,12 @@ const ArtifactBookmarkPicker = () => {
         setPinningId(entry.id);
         setError('');
         try {
-            await pinLibraryArtifactBookmark(store.getState(), request.channelId, entry.id, entry.title, store.dispatch);
+            const bookmark = await pinLibraryArtifactBookmark(store.getState(), request.channelId, entry.id, entry.title, store.dispatch);
+            if (!bookmark) {
+                setError(intl.formatMessage({defaultMessage: 'Could not add bookmark.'}));
+                setPinningId(null);
+                return;
+            }
             close();
         } catch {
             setError(intl.formatMessage({defaultMessage: 'Could not add bookmark.'}));
@@ -155,121 +150,87 @@ const ArtifactBookmarkPicker = () => {
     };
 
     return (
-        <Layer>
-            <Backdrop
-                type='button'
-                aria-label={intl.formatMessage({defaultMessage: 'Close'})}
-                data-testid='channel-artifact-bookmark-picker'
-                onClick={close}
-            />
-            <Card
-                role='dialog'
-                aria-modal='true'
-                aria-labelledby='channel-artifact-bookmark-picker-title'
+        <AnimatedModalShell
+            show={true}
+            onBackdropClick={close}
+            zIndex={11000}
+        >
+            <Modal
+                open={true}
+                size='small'
+                title={(
+                    <span id='channel-artifact-bookmark-picker-title'>
+                        <FormattedMessage defaultMessage='Add channel artifact'/>
+                    </span>
+                )}
+                onClose={close}
+                closeOnEscape={false}
+                closeLabel={intl.formatMessage({defaultMessage: 'Close'})}
+                headerDivider={false}
+                footerDivider={false}
             >
-                <Heading id='channel-artifact-bookmark-picker-title'>
-                    <FormattedMessage defaultMessage='Add channel artifact'/>
-                </Heading>
-                <Copy>
-                    <FormattedMessage defaultMessage='Choose a saved library artifact to pin on this channel bookmark bar. Everyone can open it from there.'/>
-                </Copy>
-                {loading && (
-                    <Empty><FormattedMessage defaultMessage='Loading…'/></Empty>
-                )}
-                {!loading && error && <ErrorText>{error}</ErrorText>}
-                {!loading && !error && entries.length === 0 && (
-                    <Empty data-testid='channel-artifact-bookmark-picker-empty'>
-                        <FormattedMessage defaultMessage='No artifacts in this channel yet. A channel admin can save one from an agent HTML card first.'/>
-                    </Empty>
-                )}
-                <List>
-                    {entries.map((entry) => {
-                        const pinned = pinnedIds.has(entry.id);
-                        return (
-                            <Row
-                                key={entry.id}
-                                type='button'
-                                disabled={pinned || pinningId === entry.id}
-                                onClick={() => onPick(entry)}
-                                data-testid={`channel-artifact-bookmark-pick-${entry.id}`}
-                            >
-                                <Icon
-                                    size='16'
-                                    glyph={<FileCodeOutlineIcon/>}
-                                />
-                                <RowMeta>
-                                    <RowTitle>{entry.title}</RowTitle>
-                                    <RowSub>
-                                        {entry.source_agent_display_name || 'Agent'}
-                                        {entry.version && entry.version > 1 ? ` · v${entry.version}` : ''}
-                                    </RowSub>
-                                </RowMeta>
-                                <RowStatus>
-                                    {pinned ? (
-                                        <FormattedMessage defaultMessage='Pinned'/>
-                                    ) : (
-                                        <FormattedMessage defaultMessage='Add'/>
-                                    )}
-                                </RowStatus>
-                            </Row>
-                        );
-                    })}
-                </List>
-                <Actions>
-                    <Button
-                        emphasis='tertiary'
-                        size='small'
-                        onClick={close}
-                    >
-                        <FormattedMessage defaultMessage='Cancel'/>
-                    </Button>
-                </Actions>
-            </Card>
-        </Layer>
+                <div data-testid='channel-artifact-bookmark-picker'>
+                    <Copy>
+                        <FormattedMessage defaultMessage='Choose a saved library artifact to pin on this channel bookmark bar. Everyone can open it from there.'/>
+                    </Copy>
+                    {loading && (
+                        <Empty><FormattedMessage defaultMessage='Loading…'/></Empty>
+                    )}
+                    {!loading && error && <ErrorText>{error}</ErrorText>}
+                    {!loading && !error && entries.length === 0 && (
+                        <Empty data-testid='channel-artifact-bookmark-picker-empty'>
+                            <FormattedMessage defaultMessage='No artifacts in this channel yet. A channel admin can save one from an agent HTML card first.'/>
+                        </Empty>
+                    )}
+                    <List>
+                        {entries.map((entry) => {
+                            const pinned = pinnedIds.has(entry.id);
+                            return (
+                                <Row
+                                    key={entry.id}
+                                    type='button'
+                                    disabled={pinned || pinningId === entry.id}
+                                    onClick={() => onPick(entry)}
+                                    data-testid={`channel-artifact-bookmark-pick-${entry.id}`}
+                                >
+                                    <Icon
+                                        size='16'
+                                        glyph={<FileCodeOutlineIcon/>}
+                                    />
+                                    <RowMeta>
+                                        <RowTitle>{entry.title}</RowTitle>
+                                        <RowSub>
+                                            {entry.source_agent_display_name || 'Agent'}
+                                            {entry.version && entry.version > 1 ? ` · v${entry.version}` : ''}
+                                        </RowSub>
+                                    </RowMeta>
+                                    <RowStatus>
+                                        {pinned ? (
+                                            <FormattedMessage defaultMessage='Pinned'/>
+                                        ) : (
+                                            <FormattedMessage defaultMessage='Add'/>
+                                        )}
+                                    </RowStatus>
+                                </Row>
+                            );
+                        })}
+                    </List>
+                    <Actions>
+                        <Button
+                            emphasis='tertiary'
+                            size='small'
+                            onClick={close}
+                        >
+                            <FormattedMessage defaultMessage='Cancel'/>
+                        </Button>
+                    </Actions>
+                </div>
+            </Modal>
+        </AnimatedModalShell>
     );
 };
 
 export default ArtifactBookmarkPicker;
-
-const Layer = styled.div`
-    position: fixed;
-    inset: 0;
-    z-index: 11000;
-`;
-
-const Backdrop = styled.button`
-    position: absolute;
-    inset: 0;
-    border: 0;
-    padding: 0;
-    background: rgba(0, 0, 0, 0.48);
-    cursor: pointer;
-`;
-
-const Card = styled.div`
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    z-index: 1;
-    width: min(440px, calc(100% - 48px));
-    max-height: min(560px, calc(100% - 48px));
-    display: flex;
-    flex-direction: column;
-    padding: 24px;
-    border-radius: 12px;
-    background: var(--center-channel-bg);
-    color: var(--center-channel-color);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
-    transform: translate(-50%, -50%);
-    overflow: auto;
-`;
-
-const Heading = styled.h2`
-    margin: 0 0 8px;
-    font-size: 18px;
-    font-weight: 600;
-    line-height: 24px;
-`;
 
 const Copy = styled.p`
     margin: 0 0 16px;

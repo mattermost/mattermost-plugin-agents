@@ -63,6 +63,13 @@ function isShown(el: HTMLElement): boolean {
     return el.getClientRects().length > 0 && window.getComputedStyle(el).visibility !== 'hidden';
 }
 
+export function viewVersionAfterRefresh(current: number, previousHead: number, head: number, listed: number[]): number {
+    if (current === previousHead || !listed.includes(current)) {
+        return head;
+    }
+    return current;
+}
+
 const HTMLArtifactFullscreen = ({
     fileId,
     fileName,
@@ -112,9 +119,10 @@ const HTMLArtifactFullscreen = ({
                 return;
             }
             const list = (resp.versions || []).slice().sort((a, b) => b.version - a.version);
+            const previousHead = followedHeadRef.current;
             setVersions(list);
             setHead(headVersion);
-            setViewVersion((current) => (current === followedHeadRef.current ? headVersion : current));
+            setViewVersion((current) => viewVersionAfterRefresh(current, previousHead, headVersion, list.map((v) => v.version)));
             followedHeadRef.current = headVersion;
         }, () => {
             if (!cancelled) {
@@ -278,6 +286,7 @@ const HTMLArtifactFullscreen = ({
                         fileName={fileName}
                         artifactKind={artifactKind}
                         version={artifactKind === 'library' ? viewVersion : 0}
+                        downloadEnabled={downloadEnabled}
                         displayMode='fullscreen'
                         startedByClick={startedByClick}
                         onEscape={onClose}

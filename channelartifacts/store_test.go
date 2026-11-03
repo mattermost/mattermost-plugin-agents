@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"slices"
@@ -27,6 +28,8 @@ type memoryKV struct {
 	permissionAll bool
 	readAll       bool
 	channels      map[string]*model.Channel
+	histSetCount  int
+	failHistSet   int
 }
 
 func newMemoryKV() *memoryKV {
@@ -55,6 +58,15 @@ func (kv *memoryKV) KVGet(key string, value any) error {
 }
 
 func (kv *memoryKV) KVSet(key string, value any) error {
+	if strings.HasPrefix(key, keyPrefixHist) {
+		kv.mu.Lock()
+		kv.histSetCount++
+		fail := kv.failHistSet > 0 && kv.histSetCount == kv.failHistSet
+		kv.mu.Unlock()
+		if fail {
+			return errors.New("kv set failed")
+		}
+	}
 	raw, err := encodeKV(value)
 	if err != nil {
 		return err
@@ -328,6 +340,39 @@ func TestStoreVersionsToKeepPrunesOldest(t *testing.T) {
 	require.Equal(t, 4, versions[1].Version)
 	_, err = store.ReadContentAt(entry, 1)
 	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestPruneKeepsBlobsWhenHistorySaveFails(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
+	require.NoError(t, store.ReplaceContent(entry, []byte("<html>2</html>"), 1024, 2))
+
+	kv.histSetCount = 0
+	kv.failHistSet = 2
+	err := store.ReplaceContent(entry, []byte("<html>3</html>"), 1024, 2)
+	require.Error(t, err)
+
+	body, err := store.ReadContentAt(entry, 1)
+	require.NoError(t, err)
+	require.Equal(t, "<html>1</html>", string(body))
+}
+
+func TestDeleteHeadKeepsBlobsWhenHistorySaveFails(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
+	require.NoError(t, store.ReplaceContent(entry, []byte("<html>2</html>"), 1024, 0))
+
+	kv.histSetCount = 0
+	kv.failHistSet = 1
+	require.Error(t, store.DeleteHead(entry))
+
+	body, err := store.ReadContentAt(entry, 2)
+	require.NoError(t, err)
+	require.Equal(t, "<html>2</html>", string(body))
 }
 
 func TestStoreLegacyUnversionedBlobsReadable(t *testing.T) {

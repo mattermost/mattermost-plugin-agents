@@ -133,4 +133,66 @@ describe('LibraryArtifactDeepLink', () => {
         expect(listChannelArtifacts).not.toHaveBeenCalled();
         expect(window.location.search).not.toContain('mm_ai_library_artifact');
     });
+
+    test('retries a library link after the list request fails', async () => {
+        const list: ChannelArtifactList = {
+            entries: [entry],
+            can_manage: true,
+            download_enabled: true,
+            render_enabled: true,
+        };
+        jest.mocked(listChannelArtifacts).mockRejectedValueOnce(new Error('down')).mockResolvedValue(list);
+        const store = renderLink();
+        act(() => {
+            store.dispatch({
+                type: 'SET_CHANNEL_ARTIFACTS_ENABLED',
+                channelArtifactsEnabled: true,
+            });
+            store.dispatch({type: 'SET_CHANNEL', id: channelId});
+        });
+        expect(await screen.findByText('This channel artifact is unavailable.')).toBeTruthy();
+
+        window.history.replaceState({}, '', `/test/channels/off-topic?mm_ai_library_artifact=${artifactId}`);
+        act(() => {
+            window.dispatchEvent(new PopStateEvent('popstate'));
+        });
+        expect((await screen.findByTestId('html-artifact-fullscreen')).textContent).toBe(artifactId);
+        expect(listChannelArtifacts).toHaveBeenCalledTimes(2);
+    });
+
+    test('ignores a list response after the channel changes', async () => {
+        const otherChannelId = 'otherchannel012345678901234';
+        let resolveFirst: ((value: ChannelArtifactList) => void) | null = null;
+        jest.mocked(listChannelArtifacts).mockImplementation((id: string) => {
+            if (id === channelId) {
+                return new Promise((resolve) => {
+                    resolveFirst = resolve;
+                });
+            }
+            return Promise.resolve({entries: [], can_manage: false, download_enabled: true, render_enabled: true});
+        });
+        const store = renderLink();
+        act(() => {
+            store.dispatch({
+                type: 'SET_CHANNEL_ARTIFACTS_ENABLED',
+                channelArtifactsEnabled: true,
+            });
+            store.dispatch({type: 'SET_CHANNEL', id: channelId});
+        });
+        await waitFor(() => expect(listChannelArtifacts).toHaveBeenCalledWith(channelId));
+
+        act(() => {
+            store.dispatch({type: 'SET_CHANNEL', id: otherChannelId});
+        });
+        await act(async () => {
+            resolveFirst?.({
+                entries: [entry],
+                can_manage: true,
+                download_enabled: true,
+                render_enabled: true,
+            });
+        });
+        expect(screen.queryByTestId('html-artifact-fullscreen')).toBeNull();
+        expect(listChannelArtifacts).toHaveBeenCalledWith(otherChannelId);
+    });
 });
