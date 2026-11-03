@@ -24,21 +24,21 @@ const (
 // are legacy username references, read only when the matching bot user ID
 // field is empty.
 type Config struct {
-	Services                        []llm.ServiceConfig              `json:"services"`
-	Bots                            []llm.BotConfig                  `json:"bots"`
-	DefaultBotUserID                string                           `json:"defaultBotUserID"`
-	TranscriptBotUserID             string                           `json:"transcriptBotUserID"`
-	DefaultBotName                  string                           `json:"defaultBotName"`
-	TranscriptGenerator             string                           `json:"transcriptBackend"`
-	EnableTokenUsageLogging         bool                             `json:"enableTokenUsageLogging"`
-	EnableCallSummary               bool                             `json:"enableCallSummary"`
-	EnableTokenUsageLogToPlugin     *bool                            `json:"enableTokenUsageLogToPlugin,omitempty"`
-	EnableTokenUsageLogToFile       *bool                            `json:"enableTokenUsageLogToFile,omitempty"`
-	AllowedUpstreamHostnames        string                           `json:"allowedUpstreamHostnames"`
-	AllowUnsafeLinks                bool                             `json:"allowUnsafeLinks"`
-	AllowedLinkDomains              string                           `json:"allowedLinkDomains"`
-	EnableHTMLArtifacts             bool                             `json:"enableHTMLArtifacts"`
-	EnableChannelArtifacts          bool                             `json:"enableChannelArtifacts"`
+	Services                    []llm.ServiceConfig `json:"services"`
+	Bots                        []llm.BotConfig     `json:"bots"`
+	DefaultBotUserID            string              `json:"defaultBotUserID"`
+	TranscriptBotUserID         string              `json:"transcriptBotUserID"`
+	DefaultBotName              string              `json:"defaultBotName"`
+	TranscriptGenerator         string              `json:"transcriptBackend"`
+	EnableTokenUsageLogging     bool                `json:"enableTokenUsageLogging"`
+	EnableCallSummary           bool                `json:"enableCallSummary"`
+	EnableTokenUsageLogToPlugin *bool               `json:"enableTokenUsageLogToPlugin,omitempty"`
+	EnableTokenUsageLogToFile   *bool               `json:"enableTokenUsageLogToFile,omitempty"`
+	AllowedUpstreamHostnames    string              `json:"allowedUpstreamHostnames"`
+	AllowUnsafeLinks            bool                `json:"allowUnsafeLinks"`
+	AllowedLinkDomains          string              `json:"allowedLinkDomains"`
+	EnableHTMLArtifacts         bool                `json:"enableHTMLArtifacts"`
+	EnableChannelArtifacts      bool                `json:"enableChannelArtifacts"`
 	// ChannelArtifactsMaxPerChannel caps saved artifacts per channel. 0 → 50.
 	ChannelArtifactsMaxPerChannel int `json:"channelArtifactsMaxPerChannel"`
 	// ChannelArtifactsMaxSitewide caps saved artifacts across the site. 0 → unlimited.
@@ -51,7 +51,7 @@ type Config struct {
 	// DisableChannelArtifactRendering blocks iframe render/token routes when true.
 	DisableChannelArtifactRendering bool `json:"disableChannelArtifactRendering"`
 	// DisableHumanChannelArtifacts restricts saving to bot-authored posts when true.
-	DisableHumanChannelArtifacts bool `json:"disableHumanChannelArtifacts"`
+	DisableHumanChannelArtifacts    bool                             `json:"disableHumanChannelArtifacts"`
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
 	EnableAmbientAutoReply          bool                             `json:"enableAmbientAutoReply"`
 	AllowNativeWebSearchInChannels  bool                             `json:"allowNativeWebSearchInChannels"`

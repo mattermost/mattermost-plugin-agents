@@ -498,7 +498,7 @@ func (a *API) handleGetChannelArtifactToken(c *gin.Context) {
 	if !ok {
 		return
 	}
-	nonce, ok := artifactNonce(c)
+	nonce, ok := artifactNonceAllowing(c, "version")
 	if !ok {
 		return
 	}

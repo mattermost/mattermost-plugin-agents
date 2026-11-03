@@ -174,10 +174,7 @@ func (c *fakeMMClient) KVList(page, perPage int) ([]string, error) {
 	if start >= len(keys) {
 		return nil, nil
 	}
-	end := start + perPage
-	if end > len(keys) {
-		end = len(keys)
-	}
+	end := min(start+perPage, len(keys))
 	return keys[start:end], nil
 }
 
