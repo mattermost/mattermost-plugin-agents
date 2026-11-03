@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -63,7 +64,11 @@ func TestServeHTTPMCPServerRequestEndsWithTheServerRequest(t *testing.T) {
 	var handlerCtxErr error
 	e.api.mcpHandlers = &mcpserver.PluginMCPHandlers{
 		MCPHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			handlerCtxErr = r.Context().Err()
+			select {
+			case <-r.Context().Done():
+				handlerCtxErr = r.Context().Err()
+			case <-time.After(5 * time.Second):
+			}
 			w.WriteHeader(http.StatusOK)
 		}),
 	}
