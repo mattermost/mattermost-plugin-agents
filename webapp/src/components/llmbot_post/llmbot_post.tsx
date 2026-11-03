@@ -696,7 +696,13 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     // The server authorizes postback by DM membership, not conversation ownership.
     const showPostbackButton = meetingsLicensed && !isGenerationInProgress && isDM && isTranscriptionResult;
-    const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser;
+    // A persisted turn still marked streaming; see the staleness check below.
+    const turnStillStreaming = Boolean(conversation?.turns.some((turn) => turn.post_id === props.post.id && turn.status === 'streaming'));
+
+    // A remounted post knows of a live stream only from its persisted turn
+    // once the cached start event is gone; Stop must still be offered then.
+    const liveStreamFromTurn = turnStillStreaming && !interrupted && !streamStale;
+    const showStopGeneratingButton = (isGenerationInProgress || liveStreamFromTurn) && requesterIsCurrentUser;
     const hasContent = renderedRounds.length > 0;
 
     // Only the anchor round gets a real approval stage: the latest persisted
@@ -864,7 +870,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // even though heartbeats already flushed partial text onto the post.
     // Read the fresh conversation (not the last-known copy) so a refetch that
     // lands with the turn complete clears this.
-    const turnStillStreaming = Boolean(conversation?.turns.some((turn) => turn.post_id === props.post.id && turn.status === 'streaming'));
     const staleRefetchedRef = useRef(false);
     useEffect(() => {
         staleRefetchedRef.current = false;

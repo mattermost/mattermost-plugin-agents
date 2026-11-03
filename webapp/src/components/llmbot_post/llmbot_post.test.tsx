@@ -2203,6 +2203,23 @@ describe('LLMBotPost interrupted and stale generation notices', () => {
         expect(screen.getByText('Hello there, live text')).toBeTruthy();
     });
 
+    test.each([
+        ['still streaming', null, true],
+        ['interrupted by a restart', 'shutdown', false],
+    ] as const)('a remounted post whose turn is %s offers Stop: %s', (_label, interruptedReason, wantStop) => {
+        mockUseConversation.mockReturnValue({
+            conversation: makeConversation([
+                makeTurn({id: 'turn_1', post_id: 'post_1', sequence: 2, status: 'streaming', content: [{type: 'text', text: 'Partial'}]}),
+            ]),
+            loading: false,
+            error: null,
+        });
+        const post = interruptedReason ? interruptedPost(interruptedReason, BOT_ID, 'Partial') : {...makePost('Partial'), user_id: BOT_ID};
+        renderPost(post);
+
+        expect(Boolean(screen.queryByText('Stop Generating'))).toBe(wantStop);
+    });
+
     test('a remounted post shows the partial text of its still-streaming turn', () => {
         mockUseConversation.mockReturnValue({
             conversation: makeConversation([
