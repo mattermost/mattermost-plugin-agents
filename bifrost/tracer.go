@@ -110,6 +110,17 @@ func (t *otelTracer) StartSpan(ctx context.Context, name string, kind bschemas.S
 	return ctx, &otelSpanHandle{span: span}
 }
 
+// StartSpanID opens the same span as StartSpan; Bifrost starts its provider
+// call, retry and plugin hook spans this way. Its internal overhead spans
+// (queue waits, attribute population) are skipped.
+func (t *otelTracer) StartSpanID(ctx context.Context, name string, kind bschemas.SpanKind) (string, bschemas.SpanHandle) {
+	if kind == bschemas.SpanKindInternal {
+		return "", nil
+	}
+	_, handle := t.StartSpan(ctx, name, kind)
+	return spanOf(handle).SpanContext().SpanID().String(), handle
+}
+
 // EndSpan closes the span with the given status.
 func (t *otelTracer) EndSpan(handle bschemas.SpanHandle, status bschemas.SpanStatus, statusMsg string) {
 	span := spanOf(handle)
@@ -239,6 +250,19 @@ func (t *otelTracer) CreateStreamAccumulator(traceID string, startTime time.Time
 	s := t.lockedStreamState(traceID)
 	s.start = startTime
 	s.chunks = 0
+	t.mu.Unlock()
+}
+
+// ResetStreamAccumulator restarts the chunk count and time-to-first-token for
+// a retried or fallback stream attempt.
+func (t *otelTracer) ResetStreamAccumulator(traceID string) {
+	if traceID == "" {
+		return
+	}
+	t.mu.Lock()
+	if s := t.streams[traceID]; s != nil {
+		s.chunks, s.firstAt, s.response = 0, time.Time{}, nil
+	}
 	t.mu.Unlock()
 }
 
