@@ -101,8 +101,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     // Anti-impersonation: plugin props are trusted only on posts authored by a
     // known agent bot, since any user can set props on their own posts.
-    const authorIsAgentBot = useSelector<GlobalState, boolean>((state: any) => {
-        const bots: LLMBot[] | null | undefined = state['plugins-' + manifest.id]?.bots;
+    const authorIsAgentBot = useSelector<GlobalState & Record<string, unknown>, boolean>((state) => {
+        const pluginState = state['plugins-' + manifest.id] as {bots?: LLMBot[] | null} | undefined;
+        const bots = pluginState?.bots;
         return Boolean(bots?.some((bot) => bot.id === props.post.user_id));
     });
 
@@ -691,7 +692,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     }
 
     // A persisted turn still marked streaming; see the staleness check below.
-    const turnStillStreaming = Boolean(conversation?.turns.some((turn) => turn.post_id === props.post.id && turn.status === 'streaming'));
+    // While a refetch is in flight (or failed) the last loaded copy answers,
+    // so Stop and the stale timer keep tracking that turn.
+    const turnStillStreaming = Boolean(knownConversation?.turns.some((turn) => turn.post_id === props.post.id && turn.status === 'streaming'));
 
     // A remounted post knows of a live stream only from its persisted turn
     // once the cached start event is gone; Stop must still be offered then.
@@ -869,9 +872,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // An empty message with persisted rounds is a tool-only post (finished, or
     // waiting on the requester's approval), not a stalled generation.
     // A persisted turn still marked streaming means generation is unfinished
-    // even though heartbeats already flushed partial text onto the post.
-    // Read the fresh conversation (not the last-known copy) so a refetch that
-    // lands with the turn complete clears this.
+    // even though the post may already show partial text. A refetch that
+    // lands with the turn complete clears this; the timer restarts whenever
+    // the conversation is refetched, so a failed refetch still ends in the
+    // stale notice.
     const staleRefetchedRef = useRef(false);
     useEffect(() => {
         staleRefetchedRef.current = false;
@@ -894,7 +898,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             setStreamStale(true);
         }, STALE_STREAM_TIMEOUT_MS);
         return () => clearTimeout(timer);
-    }, [believesGenerating, awaitingUserDecision, streamEventCount, turnStillStreaming, isGenerationInProgress, conversationId]);
+    }, [believesGenerating, awaitingUserDecision, streamEventCount, turnStillStreaming, isGenerationInProgress, conversationId, conversation]);
 
     const canRegenerateFromNotice = requesterIsCurrentUser && !isNoShowRegen;
     let interruptedNotice: React.ReactNode = null;

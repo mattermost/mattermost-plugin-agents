@@ -2223,6 +2223,40 @@ describe('LLMBotPost interrupted and stale generation notices', () => {
         }
     });
 
+    test('a failed refetch keeps a remounted streaming turn stoppable and still ends in the stale notice', () => {
+        jest.useFakeTimers();
+        const streamingConversation = {
+            conversation: makeConversation([makeTurn({post_id: 'post_1', status: 'streaming', content: [{type: 'text', text: 'Partial'}]})]),
+            loading: false,
+            error: null,
+        };
+        const ui = () => (
+            <IntlProvider locale='en'>
+                <LLMBotPost
+                    post={{...makePost('Partial'), user_id: BOT_ID}}
+                    websocketUnregister={jest.fn()}
+                />
+            </IntlProvider>
+        );
+        mockUseConversation.mockReturnValue(streamingConversation);
+        const {rerender} = render(ui());
+        expect(screen.getByText('Stop Generating')).toBeTruthy();
+
+        act(() => {
+            jest.advanceTimersByTime(60000);
+        });
+
+        // The refetch fails: no conversation comes back.
+        mockUseConversation.mockReturnValue({conversation: null, loading: false, error: new Error('network')});
+        rerender(ui());
+        expect(screen.getByText('Stop Generating')).toBeTruthy();
+
+        act(() => {
+            jest.advanceTimersByTime(60000);
+        });
+        expect(screen.getByText(STALE_TEXT)).toBeTruthy();
+    });
+
     test('a remounted post shows the partial text of its still-streaming turn', () => {
         mockUseConversation.mockReturnValue({
             conversation: makeConversation([
