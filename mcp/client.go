@@ -31,6 +31,10 @@ const (
 
 	listToolsMethod = "tools/list"
 
+	// legacySSEProtocolVersion is the newest MCP revision with an HTTP+SSE
+	// transport binding.
+	legacySSEProtocolVersion = "2025-11-25"
+
 	// RemoteConnectTimeout bounds one remote MCP server's whole connection
 	// sequence: streamable-transport negotiation, the legacy HTTP+SSE
 	// fallback, and the initial tools/list. Without it a server that stalls
@@ -622,10 +626,13 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 	// Fall back to the HTTP+SSE transport for legacy servers that only implement
 	// the 2024-11-05 HTTP+SSE transport. SSEClientTransport has no OAuthHandler
 	// field, so OAuth is applied through a RoundTripper adapter instead.
+	// MCP 2026-07-28 has no HTTP+SSE binding, so the session starts with the
+	// legacy initialize handshake: a server/discover probe that an older server
+	// rejects with a non-2xx status would leave the SSE connection unusable.
 	session, errSSE := client.Connect(ctx, &mcp.SSEClientTransport{
 		Endpoint:   serverConfig.BaseURL,
 		HTTPClient: c.httpClientForLegacySSE(serverConfig.BaseURL, oauthHandler, headers),
-	}, nil)
+	}, &mcp.ClientSessionOptions{ProtocolVersion: legacySSEProtocolVersion})
 	if errSSE == nil {
 		// Successfully connected using SSE transport
 		return session, nil
