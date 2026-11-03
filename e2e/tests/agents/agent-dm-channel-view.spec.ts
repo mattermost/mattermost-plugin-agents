@@ -2,8 +2,9 @@
 // See LICENSE.txt for license information.
 
 // An agent's DM in the Channels app shows the Agents product's chat (registerChannelViewComponent):
-// the agent's chats in a column beside the open chat, under the host's channel header. "View as
-// messages" switches one DM to its plain messages, and a channel header button switches it back.
+// the agent's chats in a column beside the open chat, with the chat's title bar in place of the host's
+// channel header. "View as messages" switches one DM to its plain messages, and a channel header button
+// switches it back.
 // DMs with people keep the post list. Hosts
 // without registerChannelViewComponent keep every DM as plain messages, so the agent view tests
 // skip there.
@@ -94,15 +95,18 @@ test.describe('Agent DM channel view', () => {
         await seedChat(LIST_CHAT);
     });
 
-    test('an agent DM shows the agent chat with its chats beside it, under the host header', async ({page}) => {
+    test('an agent DM shows the agent chat with its chats beside it, in place of the host header', async ({page}) => {
         await openAgentDM(page);
 
         await expect(chatList(page).getByRole('button', {name: LIST_CHAT.title, exact: true})).toBeVisible({timeout: 30000});
         await expect(new AgentChatPage(page).newChatTextbox()).toBeEnabled({timeout: 30000});
 
-        // The host keeps its channel header (with the agent's name); the chat header does not repeat the agent.
-        await expect(page.locator('#channelHeaderTitle')).toContainText(AIMOCK_BOT_NAME);
-        await expect(agentView(page).getByTestId('agent-chat-agent-name')).toHaveCount(0);
+        // One header: the chat's own title bar names the agent, the host's channel header is hidden.
+        await expect(page.locator('#channel-header')).toBeHidden();
+        await expect(agentView(page).getByTestId('agent-chat-menu-button')).toContainText(botDisplayName);
+
+        // The chats are this agent's, so the list has no row for the agent itself.
+        await expect(chatList(page).getByRole('button', {name: botDisplayName, exact: true})).toHaveCount(0);
 
         // No post list or channel composer (the new chat's composer is the host editor, in the agent view).
         await expect(page.getByTestId('post-create')).toHaveCount(0);
@@ -160,6 +164,8 @@ test.describe('Agent DM channel view', () => {
 
         await agentView(page).getByRole('button', {name: 'View as messages'}).click();
         await expect(agentView(page)).toHaveCount(0);
+        await expect(page.locator('#channel-header')).toBeVisible();
+        await expect(page.getByTestId('ask-channel-button')).toHaveCount(0);
         await expect(page.getByTestId('post-create').getByTestId('post_textbox')).toBeEnabled({timeout: 30000});
         await expect(page.locator('#postListContent').getByText(RAW_CHAT.prompt, {exact: true})).toBeVisible({timeout: 30000});
 

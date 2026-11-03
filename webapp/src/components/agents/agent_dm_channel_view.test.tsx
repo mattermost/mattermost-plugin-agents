@@ -27,7 +27,6 @@ interface ChatPageProps {
     rootId?: string;
     toChat: (botId: string, rootId?: string) => void;
     toAll: () => void;
-    compactHeader?: boolean;
 }
 const mockChatPageProps = jest.fn();
 jest.mock('./agent_chat_page', () => ({
@@ -44,6 +43,7 @@ interface SectionProps {
     activeRootId?: string;
     onSelectThread: (botId: string, rootId: string) => void;
     onNewChat: (botId: string) => void;
+    hideAgentRows?: boolean;
 }
 const mockSectionProps = jest.fn();
 jest.mock('./product_sidebar', () => ({
@@ -131,8 +131,8 @@ describe('AgentDMChannelView', () => {
         renderView();
 
         expect(screen.getByTestId('chat-page').textContent).toBe('new chat');
-        expect(lastChatPage()).toMatchObject({botId: 'agent1', compactHeader: true});
-        expect(lastSection()).toMatchObject({bots: [expect.objectContaining({id: 'agent1'})], activeBotId: 'agent1', activeRootId: ''});
+        expect(lastChatPage()).toMatchObject({botId: 'agent1'});
+        expect(lastSection()).toMatchObject({bots: [expect.objectContaining({id: 'agent1'})], activeBotId: 'agent1', activeRootId: '', hideAgentRows: true});
     });
 
     test.each([

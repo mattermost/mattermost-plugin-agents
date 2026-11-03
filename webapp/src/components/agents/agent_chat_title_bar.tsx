@@ -51,10 +51,6 @@ interface AgentChatTitleBarProps {
 
     // Before the avatar (the RHS's Back button).
     leading?: React.ReactNode;
-
-    // Under a host header that already shows the agent (its DM in the Channels app): no avatar and
-    // no agent name next to the chat title.
-    compact?: boolean;
 }
 
 const TEST_IDS: Record<ChatTitleSurface, {menu: string; newChat: string}> = {
@@ -65,7 +61,7 @@ const TEST_IDS: Record<ChatTitleSurface, {menu: string; newChat: string}> = {
 // The title of an agent chat, the same on both surfaces: the agent's avatar, the chat menu opened
 // from the chat's title (the agent's name in a new chat), the agent's name once a chat is open, and at
 // the end the tools button in a new chat or the context usage ring and New chat in an open one.
-const AgentChatTitleBar = ({surface, bot, rootId, inThread = Boolean(rootId), bots, onSwitchAgent, onSelectChat, onNewChat, onViewAll, onOpenSettings, leading, compact = false}: AgentChatTitleBarProps) => {
+const AgentChatTitleBar = ({surface, bot, rootId, inThread = Boolean(rootId), bots, onSwitchAgent, onSelectChat, onNewChat, onViewAll, onOpenSettings, leading}: AgentChatTitleBarProps) => {
     const conversationId = useConversationIdForThread(rootId);
     const testIds = TEST_IDS[surface];
 
@@ -75,15 +71,13 @@ const AgentChatTitleBar = ({surface, bot, rootId, inThread = Boolean(rootId), bo
 
     const title = (
         <>
-            {!compact && (
-                <UserAvatar
-                    src={getProfilePictureUrl(bot.id, bot.lastIconUpdate)}
-                    alt=''
-                    aria-hidden='true'
-                    name={bot.displayName}
-                    size='24'
-                />
-            )}
+            <UserAvatar
+                src={getProfilePictureUrl(bot.id, bot.lastIconUpdate)}
+                alt=''
+                aria-hidden='true'
+                name={bot.displayName}
+                size='24'
+            />
             <AgentChatNameMenu
                 bot={bot}
                 rootId={rootId}
@@ -105,7 +99,7 @@ const AgentChatTitleBar = ({surface, bot, rootId, inThread = Boolean(rootId), bo
                     />
                 )}
             />
-            {rootId && !compact && (
+            {rootId && (
                 <AgentName data-testid='agent-chat-agent-name'>
                     {bot.displayName}
                 </AgentName>

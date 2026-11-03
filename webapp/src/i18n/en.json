@@ -504,6 +504,7 @@
   "YRiTWHX3": "Chat with {name}",
   "YbKpD7kD": "Interactive",
   "Yc2OKRa+": "Keep current username",
+  "YfXudLEm": "No chats yet",
   "Z2YuYbbS": "When enabled, bots with native web search (Anthropic Claude, OpenAI with Responses API) can use their built-in web search capability in public and private channels, not just direct messages. This only affects native provider web search, not custom tools or MCP integrations.",
   "Z5c5mxa6": "provider changed: stored={stored}, current={current}",
   "Z7idTkps": "Access policies aren't available for this MCP server because it has a legacy ID.",

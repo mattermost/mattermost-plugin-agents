@@ -4,7 +4,7 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {useIntl} from 'react-intl';
 import {useDispatch, useSelector, useStore} from 'react-redux';
-import styled from 'styled-components';
+import styled, {createGlobalStyle} from 'styled-components';
 
 import type {Channel} from '@mattermost/types/channels';
 import {GlobalState} from '@mattermost/types/store';
@@ -56,8 +56,8 @@ const otherAgentDMPath = (dmPath: string, username: string): string => {
 type Selection = {resolving: true} | {resolving: false; rootId?: string};
 
 // An agent's DM in the Channels app, shown as the Agents product's chat: the agent's chats in a
-// column, the open chat (or a new one) beside it. The host keeps its channel header, LHS and RHS
-// around it, and marks the DM read when this mounts. "View as messages" under the chats switches this
+// column, the open chat (or a new one) beside it, under the chat's own title bar in place of the host's
+// channel header. The host keeps its LHS and RHS around it, and marks the DM read when this mounts. "View as messages" under the chats switches this
 // DM back to the host's post list for the session (the channel header then offers the way back).
 //
 // The open chat is this component's state. A permalink (focusedPostId) opens that post's chat; a
@@ -130,8 +130,9 @@ const AgentDMChannelView = ({channel, focusedPostId}: AgentDMChannelViewProps) =
 
     return (
         <Layout data-testid='agent-dm-channel-view'>
+            <HideHostChannelHeader/>
             <ListColumn aria-label={intl.formatMessage({defaultMessage: 'Your chats with {name}'}, {name: bot?.displayName ?? ''})}>
-                <ListScroll color='--sidebar-text-rgb'>
+                <ListScroll>
                     <AgentThreadsSection
                         bots={listBots}
                         activeBotId={botId}
@@ -139,12 +140,12 @@ const AgentDMChannelView = ({channel, focusedPostId}: AgentDMChannelViewProps) =
                         onSelectThread={toChat}
                         onNewChat={toChat}
                         title={listLabel}
+                        hideAgentRows={true}
                     />
                 </ListScroll>
                 <ListFooter>
                     <Button
                         emphasis='tertiary'
-                        appearance='inverted'
                         size='x-small'
                         leadingIcon={<Icon glyph={<MessageTextOutlineIcon/>}/>}
                         data-testid='agent-dm-view-as-messages'
@@ -168,7 +169,6 @@ const AgentDMChannelView = ({channel, focusedPostId}: AgentDMChannelViewProps) =
                         rootId={rootId}
                         toChat={toChat}
                         toAll={toAll}
-                        compactHeader={true}
                     />
                 )}
             </ChatColumn>
@@ -185,8 +185,23 @@ const Layout = styled.div`
     overflow: hidden;
 `;
 
-// The product sidebar's width (264px: 48px * 5.5) and colors, which the chat list is drawn for.
+// The host's channel header would sit above the chat's own title bar; the chat view replaces it
+// while it is mounted (the host renders it for every channel view).
+const HideHostChannelHeader = createGlobalStyle`
+    #app-content > #channel-header {
+        display: none;
+    }
+`;
+
+// The product sidebar's width (264px: 48px * 5.5). The chat list is drawn in the sidebar's colors, so
+// they are remapped to the center channel's here: this column is part of the channel, not the host LHS.
 const ListColumn = styled.nav`
+    --sidebar-bg: var(--center-channel-bg);
+    --sidebar-header-bg: var(--center-channel-bg);
+    --sidebar-text: var(--center-channel-color);
+    --sidebar-text-rgb: var(--center-channel-color-rgb);
+    --sidebar-text-active-border: var(--button-bg);
+
     display: flex;
     flex: 0 0 calc(var(--spacing-xxxxxl) * 5.5);
     flex-direction: column;
@@ -194,8 +209,8 @@ const ListColumn = styled.nav`
     min-height: 0;
     padding-top: var(--spacing-s);
     border-right: var(--border-light);
-    background: var(--sidebar-bg);
-    color: var(--sidebar-text);
+    background: var(--center-channel-bg);
+    color: var(--center-channel-color);
 `;
 
 const ListScroll = styled(Scrollbar)`
