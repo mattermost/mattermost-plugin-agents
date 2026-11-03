@@ -1021,3 +1021,44 @@ func TestTurnEntryPointStreamEndStopsTools(t *testing.T) {
 		})
 	}
 }
+
+// TestToolDecisionHoldsThePostRunReservation pins that a tool decision and a
+// regenerate on the same post exclude each other across nodes: the decision
+// runs the approved tools and its follow-up under the post's run reservation,
+// and is refused as stale while another run holds it.
+func TestToolDecisionHoldsThePostRunReservation(t *testing.T) {
+	tests := []struct {
+		name       string
+		heldByPeer bool
+	}{
+		{name: "runs and releases the reservation when its follow-up ends"},
+		{name: "is refused while another run holds the post", heldByPeer: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupInvariantEnv(t, policyBotConfig(), dmMakeTextStream("It is noon"))
+			botPost := env.seedRun(t, env.dm, nil, humanPost("what time is it"), pendingTimeBlock(), nil)
+			reservationKey := "post_run_reservation_" + botPost.Id
+			if tt.heldByPeer {
+				require.NoError(t, env.mmClient.KVSet(reservationKey, "peer-node-token"))
+			}
+			before := env.state()
+
+			err := env.conversations.HandleToolCall(context.Background(), autoReplyUserID, botPost, env.dm, []string{"tc-time"}, nil)
+
+			if tt.heldByPeer {
+				require.ErrorIs(t, err, conversations.ErrStaleToolClick)
+				requireNothingRan(t, env, before)
+				held, _ := env.mmClient.kvValue(reservationKey)
+				assert.Equal(t, "peer-node-token", held)
+				return
+			}
+			require.NoError(t, err)
+			env.waitForStream(t)
+			require.Eventually(t, func() bool {
+				_, held := env.mmClient.kvValue(reservationKey)
+				return !held
+			}, 2*time.Second, 5*time.Millisecond, "the reservation is released once the follow-up ends")
+		})
+	}
+}

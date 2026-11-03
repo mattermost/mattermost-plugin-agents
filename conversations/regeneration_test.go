@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -50,6 +51,35 @@ func (s *regenRecordingStreaming) GetStreamingContext(ctx context.Context, _ str
 		return nil, streaming.ErrAlreadyStreamingToPost
 	}
 	return ctx, nil
+}
+
+// allowPostRunReservation backs the post run reservation with an in-memory
+// compare-and-set, for tests that drive regenerate or tool decisions through
+// a MockClient.
+func allowPostRunReservation(mm *mocks.MockClient) {
+	var mu sync.Mutex
+	held := map[string]any{}
+	isReservation := mock.MatchedBy(func(key string) bool { return strings.HasPrefix(key, postRunReservationKeyPrefix) })
+	mm.On("KVCompareAndSetWithExpiry", isReservation, mock.Anything, mock.Anything, mock.Anything).
+		Return(func(key string, oldValue, newValue any, _ time.Duration) (bool, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if current, ok := held[key]; (oldValue == nil && ok) || (oldValue != nil && current != oldValue) {
+				return false, nil
+			}
+			held[key] = newValue
+			return true, nil
+		}).Maybe()
+	mm.On("KVCompareAndSet", isReservation, mock.Anything, nil).
+		Return(func(key string, oldValue, _ any) (bool, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if held[key] != oldValue {
+				return false, nil
+			}
+			delete(held, key)
+			return true, nil
+		}).Maybe()
 }
 
 // fakeMeetingRegenerator records meeting summary regenerations.
@@ -446,7 +476,7 @@ func TestHandleRegenerate(t *testing.T) {
 			var kvMu sync.Mutex
 			kv := map[string]any{}
 			renewals := make(chan struct{}, 1)
-			reservationKey := regenerateReservationKeyPrefix + regenPostID
+			reservationKey := postRunReservationKeyPrefix + regenPostID
 			if tt.reservedElsewhere {
 				kv[reservationKey] = "other-node-token"
 			}
@@ -527,8 +557,8 @@ func TestHandleRegenerate(t *testing.T) {
 			}
 			meetingRegen := &fakeMeetingRegenerator{err: tt.meetingErr}
 			if tt.stolenMidRun {
-				regenerateReservationRenewInterval = time.Millisecond
-				t.Cleanup(func() { regenerateReservationRenewInterval = streaming.StaleStreamThreshold / 3 })
+				postRunReservationRenewInterval = time.Millisecond
+				t.Cleanup(func() { postRunReservationRenewInterval = streaming.StaleStreamThreshold / 3 })
 				meetingRegen.during = func(ctx context.Context) {
 					kvMu.Lock()
 					kv[reservationKey] = "other-node-token"
@@ -541,8 +571,8 @@ func TestHandleRegenerate(t *testing.T) {
 				}
 			}
 			if tt.waitForRenewal {
-				regenerateReservationRenewInterval = time.Millisecond
-				t.Cleanup(func() { regenerateReservationRenewInterval = streaming.StaleStreamThreshold / 3 })
+				postRunReservationRenewInterval = time.Millisecond
+				t.Cleanup(func() { postRunReservationRenewInterval = streaming.StaleStreamThreshold / 3 })
 				meetingRegen.during = func(context.Context) {
 					select {
 					case <-renewals:

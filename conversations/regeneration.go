@@ -24,7 +24,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-const regenerateReservationKeyPrefix = "regen_reservation_"
+const postRunReservationKeyPrefix = "post_run_reservation_"
 
 // MeetingSummaryRegenerator re-runs a meeting summary from the transcript
 // file its conversation references.
@@ -149,7 +149,7 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		return err
 	}
 
-	ctx, release, err := c.reserveRegenerate(ctx, post.Id)
+	ctx, release, err := c.reservePostRun(ctx, post.Id)
 	if err != nil {
 		return err
 	}
@@ -220,10 +220,10 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	return nil
 }
 
-// regenerateReservationRenewInterval is how often a running regenerate
-// extends its reservation; tool rounds can outlast the TTL before the new
+// postRunReservationRenewInterval is how often a running regenerate or tool
+// decision extends its reservation; tool rounds can outlast the TTL before the new
 // stream's turn starts heartbeating.
-var regenerateReservationRenewInterval = streaming.StaleStreamThreshold / 3
+var postRunReservationRenewInterval = streaming.StaleStreamThreshold / 3
 
 // markAbandonedPostInterrupted repairs the post of a turn claimed from a dead
 // run, as the recovery sweep would, so it shows the interrupted notice if this
@@ -243,20 +243,20 @@ func (c *Conversations) markAbandonedPostInterrupted(post *model.Post, turn stor
 	return nil
 }
 
-// reserveRegenerate atomically claims postID for one regenerate across all
-// nodes, so two concurrent requests can't both pass the live-stream check
-// before either stream has started. The claim is renewed until released, and
+// reservePostRun atomically claims postID for one run that replaces or
+// continues its response (regenerate, a tool decision) across all nodes, so
+// two such runs can't overlap before either stream has started. The claim is renewed until released, and
 // its TTL frees it if this node dies. The returned context is canceled if the
 // claim is lost, so the run stops before another node's can overlap it.
-func (c *Conversations) reserveRegenerate(ctx stdcontext.Context, postID string) (stdcontext.Context, func(), error) {
-	key := regenerateReservationKeyPrefix + postID
+func (c *Conversations) reservePostRun(ctx stdcontext.Context, postID string) (stdcontext.Context, func(), error) {
+	key := postRunReservationKeyPrefix + postID
 	token := model.NewId()
 	claimed, err := c.mmClient.KVCompareAndSetWithExpiry(key, nil, token, streaming.StaleStreamThreshold)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to reserve post for regeneration: %w", err)
+		return nil, nil, fmt.Errorf("failed to reserve post for a run: %w", err)
 	}
 	if !claimed {
-		return nil, nil, fmt.Errorf("unable to regenerate post: %w", streaming.ErrAlreadyStreamingToPost)
+		return nil, nil, fmt.Errorf("post already has a run in progress: %w", streaming.ErrAlreadyStreamingToPost)
 	}
 
 	ctx, cancel := stdcontext.WithCancel(ctx)
@@ -264,7 +264,7 @@ func (c *Conversations) reserveRegenerate(ctx stdcontext.Context, postID string)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		ticker := time.NewTicker(regenerateReservationRenewInterval)
+		ticker := time.NewTicker(postRunReservationRenewInterval)
 		defer ticker.Stop()
 		lastRenewed := time.Now()
 		for {

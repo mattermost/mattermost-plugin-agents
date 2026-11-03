@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
@@ -99,6 +100,8 @@ type toolDecision struct {
 	conv     *store.Conversation
 	turns    []store.Turn
 	policy   *turnPolicy
+	// release frees the post's run reservation; idempotent.
+	release func()
 }
 
 // beginToolDecision performs the preamble shared by HandleToolCall and
@@ -168,7 +171,19 @@ func (c *Conversations) beginToolDecision(ctx context.Context, spanName, logMsg,
 		return fail(ErrToolCallingDisabled)
 	}
 
+	// Held through the approved tools and the follow-up stream, so a
+	// regenerate on another node can't scrub and rerun the response meanwhile.
+	ctx, release, err := c.reservePostRun(ctx, post.Id)
+	if errors.Is(err, streaming.ErrAlreadyStreamingToPost) {
+		// A duplicate click, or a regenerate replacing this response.
+		return fail(fmt.Errorf("post already has a run in progress: %w", ErrStaleToolClick))
+	}
+	if err != nil {
+		return fail(err)
+	}
+
 	return &toolDecision{
+		release:  sync.OnceFunc(release),
 		ctx:      ctx,
 		span:     span,
 		auditRec: audit.RecordFromContext(ctx),
@@ -192,6 +207,12 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return err
 	}
 	defer d.span.End()
+	followUpStarted := false
+	defer func() {
+		if !followUpStarted {
+			d.release()
+		}
+	}()
 	ctx = d.ctx
 	auditRec, convID, conv, turns, policy := d.auditRec, d.convID, d.conv, d.turns, d.policy
 
@@ -448,7 +469,9 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return nil
 	}
 
-	return c.streamToolFollowUp(ctx, policy, post, conv, followUpOptions{UserRejected: userRejected, ApprovalContext: llmContext})
+	err = c.streamToolFollowUp(ctx, policy, post, conv, followUpOptions{UserRejected: userRejected, ApprovalContext: llmContext, OnRunEnd: d.release})
+	followUpStarted = err == nil
+	return err
 }
 
 // resolveInteractionAnswers validates the user's answers for every accepted
@@ -505,6 +528,12 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 		return err
 	}
 	defer d.span.End()
+	followUpStarted := false
+	defer func() {
+		if !followUpStarted {
+			d.release()
+		}
+	}()
 	ctx = d.ctx
 	auditRec, conv, turns, policy := d.auditRec, d.conv, d.turns, d.policy
 
@@ -681,7 +710,9 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 
 	// Channel second-stage follow-up rebuilds a fresh llmContext without in-request
 	// WebSearch data; citation decoration is DM-only via HandleToolCall's llmContext.
-	return c.streamToolFollowUp(ctx, policy, post, conv, followUpOptions{UserRejected: clickedPostUserRejected})
+	err = c.streamToolFollowUp(ctx, policy, post, conv, followUpOptions{UserRejected: clickedPostUserRejected, OnRunEnd: d.release})
+	followUpStarted = err == nil
+	return err
 }
 
 // followUpOptions are the per-caller knobs of streamToolFollowUp.
@@ -693,6 +724,8 @@ type followUpOptions struct {
 	// ApprovalContext is the in-request context whose created files and web
 	// search data decorate the stream; nil on the channel second-stage path.
 	ApprovalContext *llm.Context
+	// OnRunEnd, when set, runs once the follow-up stream ends.
+	OnRunEnd func()
 }
 
 // streamToolFollowUp rebuilds the completion request from the conversation and
@@ -758,7 +791,12 @@ func (c *Conversations) streamToolFollowUp(
 
 	// Stream onto the same post; finalize demotes the prior anchor so
 	// resolved tool cards remain visible alongside the new round.
-	if err := c.streamToExistingPost(ctx, stream, post, policy.user, policy.channel, true, cancelLoop); err != nil {
+	if err := c.streamToExistingPost(ctx, stream, post, policy.user, policy.channel, true, func() {
+		cancelLoop()
+		if opts.OnRunEnd != nil {
+			opts.OnRunEnd()
+		}
+	}); err != nil {
 		cancelLoop()
 		return fmt.Errorf("failed to stream tool follow-up: %w", err)
 	}

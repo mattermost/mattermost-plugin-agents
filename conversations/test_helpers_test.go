@@ -40,6 +40,8 @@ type fakeWebSocketEvent struct {
 type fakeMMClient struct {
 	users                map[string]*model.User
 	postThreads          map[string]*model.PostList
+	// kvMu guards kv: run reservations are released from stream goroutines.
+	kvMu                 sync.Mutex
 	kv                   map[string]any
 	createdPosts         []*model.Post
 	allowCreatePost      bool
@@ -107,7 +109,9 @@ func (c *fakeMMClient) UpdatePost(post *model.Post) error {
 }
 
 func (c *fakeMMClient) KVGet(key string, value any) error {
+	c.kvMu.Lock()
 	stored, ok := c.kv[key]
+	c.kvMu.Unlock()
 	if !ok {
 		return errors.New("not found")
 	}
@@ -119,6 +123,8 @@ func (c *fakeMMClient) KVGet(key string, value any) error {
 }
 
 func (c *fakeMMClient) KVSet(key string, value any) error {
+	c.kvMu.Lock()
+	defer c.kvMu.Unlock()
 	if c.kv == nil {
 		c.kv = make(map[string]any)
 	}
@@ -130,7 +136,18 @@ func (c *fakeMMClient) KVSetWithExpiry(key string, value any, _ time.Duration) e
 	return c.KVSet(key, value)
 }
 
+// kvValue reads a KV entry under the lock.
+func (c *fakeMMClient) kvValue(key string) (any, bool) {
+	c.kvMu.Lock()
+	defer c.kvMu.Unlock()
+	v, ok := c.kv[key]
+	return v, ok
+}
+
+// KVCompareAndSet mirrors the plugin KV: a nil newValue deletes the key.
 func (c *fakeMMClient) KVCompareAndSet(key string, oldValue, newValue any) (bool, error) {
+	c.kvMu.Lock()
+	defer c.kvMu.Unlock()
 	if c.kv == nil {
 		c.kv = make(map[string]any)
 	}
@@ -156,6 +173,10 @@ func (c *fakeMMClient) KVCompareAndSet(key string, oldValue, newValue any) (bool
 	if string(currentJSON) != string(oldJSON) {
 		return false, nil
 	}
+	if newValue == nil {
+		delete(c.kv, key)
+		return true, nil
+	}
 	c.kv[key] = newValue
 	return true, nil
 }
@@ -165,6 +186,8 @@ func (c *fakeMMClient) KVCompareAndSetWithExpiry(key string, oldValue, newValue 
 }
 
 func (c *fakeMMClient) KVDelete(key string) error {
+	c.kvMu.Lock()
+	defer c.kvMu.Unlock()
 	delete(c.kv, key)
 	c.kvDeletes = append(c.kvDeletes, key)
 	return nil
