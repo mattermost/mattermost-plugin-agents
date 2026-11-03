@@ -325,10 +325,11 @@ func TestHandleRegenerate(t *testing.T) {
 		},
 		{
 			name:                "a regenerate that fails after settling a dead run leaves the post interrupted",
-			operation:           "something_new",
-			postProps:           followUpProps,
+			operation:           llm.OperationMeetingSummary,
+			postProps:           map[string]any{meetings.ReferencedRecordingFileID: "recording-file"},
 			anchorStreamingAge:  2 * streaming.StaleStreamThreshold.Milliseconds(),
-			wantErr:             "not supported",
+			meetingErr:          mmapi.ErrFileActionForbidden,
+			wantErrIs:           mmapi.ErrFileActionForbidden,
 			wantPostInterrupted: true,
 		},
 		{
@@ -338,6 +339,15 @@ func TestHandleRegenerate(t *testing.T) {
 			anchorStreamingAge: 2 * streaming.StaleStreamThreshold.Milliseconds(),
 			streamingHere:      true,
 			wantErrIs:          streaming.ErrAlreadyStreamingToPost,
+		},
+		{
+			name:               "a regenerate refused by the license leaves a dead run's turn to the sweep",
+			operation:          llm.OperationThreadAnalysis,
+			rootIsPost:         true,
+			postProps:          threadProps,
+			licenseLevel:       enterprise.LevelUnlicensed,
+			wantLicense:        enterprise.CapThreadSummarization,
+			anchorStreamingAge: 2 * streaming.StaleStreamThreshold.Milliseconds(),
 		},
 		{
 			name:              "concurrent regenerate holding the reservation is refused",
@@ -568,6 +578,11 @@ func TestHandleRegenerate(t *testing.T) {
 
 			turns, turnsErr := convStore.GetTurnsForConversation(conv.ID)
 			require.NoError(t, turnsErr)
+			settlesDeadRun := tt.anchorStreamingAge >= streaming.StaleStreamThreshold.Milliseconds() &&
+				!tt.streamingHere && !tt.reservedElsewhere && tt.wantLicense == ""
+			if !settlesDeadRun {
+				require.Empty(t, updatedPosts, "a regenerate must not edit the post unless it settled a dead run")
+			}
 			if tt.wantPostInterrupted {
 				require.Len(t, updatedPosts, 1)
 				require.Equal(t, streaming.InterruptedReasonLost, updatedPosts[0].GetProp(streaming.InterruptedProp))

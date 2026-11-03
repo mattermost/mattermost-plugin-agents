@@ -129,6 +129,26 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		return ErrNotRegenerable
 	}
 
+	// Read-only gates run before anything below claims or edits the post.
+	if err := c.checkRegenerateLicense(conv.Operation); err != nil {
+		return err
+	}
+
+	path, err := selectRegeneratePath(conv, post)
+	if err != nil {
+		return err
+	}
+
+	user, err := c.mmClient.GetUser(userID)
+	if err != nil {
+		return fmt.Errorf("unable to get user to regen post: %w", err)
+	}
+
+	policy, err := c.resolveTurnPolicy(ctx, turnRequest{bot: bot, user: user, channel: channel, conv: conv, post: post})
+	if err != nil {
+		return err
+	}
+
 	ctx, release, err := c.reserveRegenerate(ctx, post.Id)
 	if err != nil {
 		return err
@@ -158,25 +178,6 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		if err = c.markAbandonedPostInterrupted(post, *abandoned); err != nil {
 			return err
 		}
-	}
-
-	if err = c.checkRegenerateLicense(conv.Operation); err != nil {
-		return err
-	}
-
-	path, err := selectRegeneratePath(conv, post)
-	if err != nil {
-		return err
-	}
-
-	user, err := c.mmClient.GetUser(userID)
-	if err != nil {
-		return fmt.Errorf("unable to get user to regen post: %w", err)
-	}
-
-	policy, err := c.resolveTurnPolicy(ctx, turnRequest{bot: bot, user: user, channel: channel, conv: conv, post: post})
-	if err != nil {
-		return err
 	}
 
 	var result *llm.TextStreamResult
