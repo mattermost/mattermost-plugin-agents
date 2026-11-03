@@ -175,18 +175,19 @@ func (m *mockConvServiceStore) HeartbeatStreamingTurn(id string, content json.Ra
 	return false, nil
 }
 
-func (m *mockConvServiceStore) FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) error {
+func (m *mockConvServiceStore) FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) (bool, error) {
 	for _, turns := range m.turns {
 		for i := range turns {
-			if turns[i].ID == id {
+			if turns[i].ID == id && turns[i].Status == store.TurnStatusStreaming {
 				turns[i].Content = content
 				turns[i].TokensIn = tokensIn
 				turns[i].TokensOut = tokensOut
 				turns[i].Status = status
+				return true, nil
 			}
 		}
 	}
-	return nil
+	return false, nil
 }
 
 func (m *mockConvServiceStore) UpdateTurnTokens(_ string, _, _ int64) error {

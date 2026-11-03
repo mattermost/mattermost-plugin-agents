@@ -111,14 +111,16 @@ func (f *fakeTurnStore) HeartbeatStreamingTurn(id string, content json.RawMessag
 
 // FinalizeStreamingTurn mirrors the store: writes final state and moves the
 // turn after any turns appended since it was created.
-func (f *fakeTurnStore) FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) error {
+func (f *fakeTurnStore) FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.finalizes++
+	settled := false
 	for _, t := range f.turns {
-		if t.ID != id {
+		if t.ID != id || t.Status != store.TurnStatusStreaming {
 			continue
 		}
+		settled = true
 		maxSeq := 0
 		for _, o := range f.turns {
 			if o.ConversationID == t.ConversationID && o.Sequence > maxSeq {
@@ -133,7 +135,7 @@ func (f *fakeTurnStore) FinalizeStreamingTurn(id string, content json.RawMessage
 		t.TokensOut = tokensOut
 		t.Status = status
 	}
-	return nil
+	return settled, nil
 }
 
 func batchEvent(phase llm.ToolCallPhase, calls []llm.ToolCall) llm.TextStreamEvent {

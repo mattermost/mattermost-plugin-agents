@@ -198,7 +198,9 @@ func TestHeartbeatStreamingTurn(t *testing.T) {
 
 	// Nor does a late finalize: the turn must not become complete (and its
 	// tool calls approvable) after the sweep reported it lost.
-	require.NoError(t, s.FinalizeStreamingTurn(turn.ID, json.RawMessage(`[{"type":"text","text":"late"}]`), 1, 1, TurnStatusComplete))
+	settled, err := s.FinalizeStreamingTurn(turn.ID, json.RawMessage(`[{"type":"text","text":"late"}]`), 1, 1, TurnStatusComplete)
+	require.NoError(t, err)
+	assert.False(t, settled, "a late finalize reports the turn lost")
 	final = getTurn(t, s, turn.ID)
 	assert.Equal(t, TurnStatusInterrupted, final.Status)
 	assert.JSONEq(t, string(content), string(final.Content))
@@ -225,7 +227,9 @@ func TestFinalizeStreamingTurn(t *testing.T) {
 			}
 
 			content := json.RawMessage(`[{"type":"text","text":"done"}]`)
-			require.NoError(t, s.FinalizeStreamingTurn(turn.ID, content, 3, 4, tc.status))
+			settled, err := s.FinalizeStreamingTurn(turn.ID, content, 3, 4, tc.status)
+			require.NoError(t, err)
+			require.True(t, settled)
 
 			turns, err := s.GetTurnsForConversation(convID)
 			require.NoError(t, err)
@@ -297,7 +301,8 @@ func TestSettlingStreamingTurnKeepsLaterUserTurnsInPlace(t *testing.T) {
 			require.True(t, claimed)
 		}},
 		{name: "stream finalizes", settle: func(t *testing.T, s *Store, id string) {
-			require.NoError(t, s.FinalizeStreamingTurn(id, json.RawMessage(`[]`), 0, 0, TurnStatusComplete))
+			_, err := s.FinalizeStreamingTurn(id, json.RawMessage(`[]`), 0, 0, TurnStatusComplete)
+			require.NoError(t, err)
 		}},
 	}
 	for _, tc := range tests {
@@ -344,7 +349,7 @@ func TestConcurrentSettlesInOneConversation(t *testing.T) {
 	for i, id := range ids {
 		wg.Go(func() {
 			<-start
-			errs[i] = s.FinalizeStreamingTurn(id, json.RawMessage(`[]`), 0, 0, TurnStatusComplete)
+			_, errs[i] = s.FinalizeStreamingTurn(id, json.RawMessage(`[]`), 0, 0, TurnStatusComplete)
 		})
 	}
 	close(start)

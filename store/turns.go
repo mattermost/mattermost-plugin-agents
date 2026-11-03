@@ -276,16 +276,16 @@ func (s *Store) HeartbeatStreamingTurn(id string, content json.RawMessage) (bool
 // a turn created in the streaming state, moving it to the end of its run (see
 // settleStreamingTurn). It is a no-op once a recovery sweep has claimed the
 // turn, so a stalled stream that resumes cannot overwrite the sweep's
-// interrupted verdict.
-func (s *Store) FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) error {
-	_, err := s.settleStreamingTurn(id, 0, `
+// interrupted verdict, and then reports false.
+func (s *Store) FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) (bool, error) {
+	settled, err := s.settleStreamingTurn(id, 0, `
 UPDATE LLM_Turns
 SET Content = $2, TokensIn = $3, TokensOut = $4, Status = $5, UpdatedAt = `+dbNowMillis+`
 WHERE ID = $1`, id, string(content), tokensIn, tokensOut, status)
 	if err != nil {
-		return fmt.Errorf("failed to finalize streaming turn: %w", err)
+		return false, fmt.Errorf("failed to finalize streaming turn: %w", err)
 	}
-	return nil
+	return settled, nil
 }
 
 // settleStreamingTurn runs update on turn id if it is still streaming (and,

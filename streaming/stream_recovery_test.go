@@ -332,6 +332,43 @@ func TestStreamStopsWhenItsTurnIsClaimed(t *testing.T) {
 	assert.Zero(t, ts.finalizes, "a claimed turn must not be finalized by the old run")
 }
 
+// A claim can land between heartbeats; the run learns of it only when it
+// finalizes at the end, and must then leave the claiming node's post alone.
+func TestStreamClaimedBeforeItEndsLeavesThePostAlone(t *testing.T) {
+	service, client, ts := newRecoveryTestService(t)
+	service.SetHeartbeatInterval(time.Hour)
+
+	post := newStreamPost()
+	ctx, err := service.GetStreamingContext(context.Background(), post.Id)
+	require.NoError(t, err)
+	stream := make(chan llm.TextStreamEvent)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer service.FinishStreaming(post.Id)
+		service.StreamToPost(ctx, &llm.TextStreamResult{Stream: stream}, post, "en", "requester-id")
+	}()
+
+	stream <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "old run"}
+	ts.mu.Lock()
+	turn := findStreamTurn(ts.turns, post.Id)
+	require.NotNil(t, turn)
+	turn.Status = store.TurnStatusInterrupted
+	ts.mu.Unlock()
+	updatesAtClaim := client.updateCount()
+
+	stream <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+	close(stream)
+	<-done
+
+	assert.Equal(t, updatesAtClaim, client.updateCount(), "the claiming node owns the post")
+	assert.Zero(t, client.controlCount(PostStreamingControlEnd))
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	assert.Equal(t, store.TurnStatusInterrupted, findStreamTurn(ts.turns, post.Id).Status)
+}
+
 func TestNewStreamClearsInterruptedMarker(t *testing.T) {
 	service, client, _ := newRecoveryTestService(t)
 	post := newStreamPost()

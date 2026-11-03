@@ -122,7 +122,7 @@ type TurnStore interface {
 	GetTurnByPostID(postID string) (*store.Turn, error)
 	UpdateTurnPostID(id string, postID *string) error
 	HeartbeatStreamingTurn(id string, content json.RawMessage) (bool, error)
-	FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) error
+	FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) (bool, error)
 }
 
 // turnAccumulator collects stream state. The turn is not written to the
@@ -484,21 +484,28 @@ func (p *MMPostStreamService) heartbeatTurn(acc *turnAccumulator) {
 }
 
 // finalizeTurn writes the accumulated content and final status onto the turn
-// created at stream start, or creates the turn if that insert failed.
-func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator, status string) {
+// created at stream start, or creates the turn if that insert failed. It
+// reports false only when another node already claimed the turn: that node
+// owns the post, so the caller must not write to it.
+func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator, status string) bool {
 	blocks := acc.buildContentBlocks()
 
 	contentJSON, err := json.Marshal(blocks)
 	if err != nil {
 		p.mmClient.LogError("Failed to marshal turn content blocks", "error", err, "post_id", acc.postID)
-		return
+		return true
 	}
 
 	if acc.turnID != "" {
-		if err := p.turnStore.FinalizeStreamingTurn(acc.turnID, contentJSON, acc.tokensIn, acc.tokensOut, status); err != nil {
+		settled, err := p.turnStore.FinalizeStreamingTurn(acc.turnID, contentJSON, acc.tokensIn, acc.tokensOut, status)
+		if err != nil {
 			p.mmClient.LogError("Failed to finalize streaming assistant turn", "error", err, "post_id", acc.postID)
+			return true
 		}
-		return
+		if !settled {
+			p.mmClient.LogWarn("Streaming turn was claimed by recovery before it finished", "post_id", acc.postID)
+		}
+		return settled
 	}
 
 	p.demotePriorAnchor(acc)
@@ -519,6 +526,7 @@ func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator, status string) 
 	if err := p.turnStore.CreateTurnAutoSequence(turn); err != nil {
 		p.mmClient.LogError("Failed to create finalized assistant turn", "error", err, "post_id", acc.postID)
 	}
+	return true
 }
 
 // broadcastToolCalls sends tool call WebSocket events with privacy scoping.
@@ -679,15 +687,23 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 	// persists it, so an approval click can never reach the server before its
 	// turn exists.
 	var awaitingDecision *llm.ToolCallBatch
+	// settle finalizes the turn once, before the final post update, and
+	// reports whether this run still owns the post.
+	settled, ownsPost := false, true
+	settle := func() bool {
+		if acc == nil || settled {
+			return ownsPost
+		}
+		settled = true
+		ownsPost = p.finalizeTurn(acc, finalStatus)
+		return ownsPost
+	}
 	defer func() {
 		// A claimed turn belongs to the node that claimed it: write nothing
 		// more, or a finalize could undo a released claim and events could
 		// cross that node's stream.
-		if errors.Is(context.Cause(ctx), errTurnClaimed) {
+		if errors.Is(context.Cause(ctx), errTurnClaimed) || !settle() {
 			return
-		}
-		if acc != nil {
-			p.finalizeTurn(acc, finalStatus)
 		}
 		if awaitingDecision != nil && finalStatus == store.TurnStatusComplete {
 			p.broadcastToolCalls(post, *awaitingDecision, requesterUserID)
@@ -727,6 +743,9 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 			MarkInterrupted(post, InterruptedReasonLost, model.GetMillis())
 		case errors.Is(context.Cause(ctx), errStoppedByUser):
 			post.AddProp(GenerationStoppedProp, true)
+		}
+		if !settle() {
+			return
 		}
 		if err := p.mmClient.UpdatePost(post); err != nil {
 			p.mmClient.LogError("Error updating post on stop signaled", "error", err)
@@ -825,6 +844,9 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 				if outcome != telemetry.StreamOutcomeEmpty {
 					outcome = telemetry.StreamOutcomeCompleted
 				}
+				if !settle() {
+					return
+				}
 				if err := p.mmClient.UpdatePost(post); err != nil {
 					p.mmClient.LogError("Streaming failed to update post", "error", err)
 					return
@@ -862,6 +884,9 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					acc.sequence.AppendText(errorText)
 				}
 
+				if !settle() {
+					return
+				}
 				if err := p.mmClient.UpdatePost(post); err != nil {
 					p.mmClient.LogError("Error recovering from streaming error", "error", err)
 					return
