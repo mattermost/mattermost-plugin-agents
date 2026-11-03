@@ -13,7 +13,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,4 +46,36 @@ func TestServeHTTPWorkOutlivesTheServerRequest(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 	require.NoError(t, fakeLLM.LastContextErr, "the LLM call must not inherit the server request's cancellation")
+}
+
+// The plugin MCP server does its work within the request, so a client that
+// disconnects from it must still end the request.
+func TestServeHTTPMCPServerRequestEndsWithTheServerRequest(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+	e.config.mcpConfig.EnablePluginServer = true
+	e.mockAPI.On("KVGet", mock.Anything).Return(([]byte)(nil), (*model.AppError)(nil)).Maybe()
+	e.mockAPI.On("KVSetWithOptions", mock.Anything, mock.Anything, mock.Anything).Return(true, (*model.AppError)(nil)).Maybe()
+
+	var handlerCtxErr error
+	e.api.mcpHandlers = &mcpserver.PluginMCPHandlers{
+		MCPHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handlerCtxErr = r.Context().Err()
+			w.WriteHeader(http.StatusOK)
+		}),
+	}
+
+	ended, endRequest := context.WithCancel(context.Background())
+	endRequest()
+	req := httptest.NewRequestWithContext(ended, http.MethodGet, "/mcp-server/mcp", nil)
+	req.Header.Set("Mattermost-User-Id", "uzr1234567890123456789012X")
+	recorder := httptest.NewRecorder()
+
+	e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.ErrorIs(t, handlerCtxErr, context.Canceled)
 }

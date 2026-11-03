@@ -272,6 +272,7 @@ apply:
 # makes Go-version-skew fixes obvious.
 GOLANGCI_LINT_VERSION    ?= v2.15.0
 GOTESTSUM_VERSION        ?= v1.13.0
+MOCKERY_VERSION          ?= v3.9.0
 
 # `go install pkg@version` ignores our go.mod, so pin the toolchain explicitly;
 # golangci-lint refuses to lint code targeting a newer Go than it was built with.
@@ -608,7 +609,7 @@ kill: detach
 ## Generate mocks for testing
 .PHONY: mock
 mock:
-	$(GO) install github.com/vektra/mockery/v3@v3.9.0
+	$(GO) install github.com/vektra/mockery/v3@$(MOCKERY_VERSION)
 	$(GOBIN)/mockery
 
 ## Clean removes all build artifacts.
