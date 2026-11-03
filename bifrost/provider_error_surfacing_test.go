@@ -109,3 +109,40 @@ func TestProviderErrorDetailReachesCaller(t *testing.T) {
 		})
 	}
 }
+
+// TestExhaustedPrimaryKeepsItsOwnErrorAfterFallbackFails checks that when
+// every hop fails, the caller sees the primary's provider error, which Bifrost
+// returns, and not the error of the fallback that ran last.
+func TestExhaustedPrimaryKeepsItsOwnErrorAfterFallbackFails(t *testing.T) {
+	const quotaMessage = "You exceeded your current quota, please check your plan and billing details."
+
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprintf(w, `{"error":{"message":%q,"type":"insufficient_quota","param":null,"code":"insufficient_quota"}}`, quotaMessage)
+	}))
+	defer primary.Close()
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"error":{"message":"The fallback credential was revoked.","type":"invalid_request_error","param":null,"code":"invalid_api_key"}}`)
+	}))
+	defer fallback.Close()
+
+	service := llm.ServiceConfig{ID: "svc", Type: llm.ServiceTypeOpenAICompatible, APIKey: "key", APIURL: primary.URL, DefaultModel: "gpt-test", FallbackServiceID: "svc2"}
+	fallbackService := llm.ServiceConfig{ID: "svc2", Type: llm.ServiceTypeOpenAICompatible, APIKey: "key2", APIURL: fallback.URL, DefaultModel: "gpt-fallback"}
+	bot := llm.BotConfig{ID: "bot-1", ServiceID: service.ID, DisableTools: true}
+
+	llmInstance, err := NewFromServiceConfig(service, bot, []llm.ServiceConfig{fallbackService})
+	require.NoError(t, err)
+	defer llmInstance.Shutdown()
+
+	_, err = llmInstance.ChatCompletionNoStream(
+		context.Background(),
+		llm.CompletionRequest{Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}}},
+		llm.WithToolsDisabled(),
+	)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), quotaMessage)
+	require.NotContains(t, err.Error(), "fallback credential")
+}

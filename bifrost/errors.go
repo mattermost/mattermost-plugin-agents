@@ -46,6 +46,11 @@ func recordAttemptError(ctx *schemas.BifrostContext, bifrostErr *schemas.Bifrost
 	if ctx == nil || bifrostErr == nil {
 		return
 	}
+	// Bifrost returns the primary's error once every fallback has failed, so
+	// only the primary's attempts may stand in for it.
+	if index, ok := ctx.Value(schemas.BifrostContextKeyFallbackIndex).(int); ok && index != 0 {
+		return
+	}
 	if last, ok := ctx.Value(attemptErrorKey{}).(*atomic.Pointer[schemas.BifrostError]); ok {
 		last.Store(bifrostErr)
 	}
