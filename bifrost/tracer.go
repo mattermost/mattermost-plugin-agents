@@ -166,8 +166,10 @@ func (t *otelTracer) PopulateLLMRequestAttributes(handle bschemas.SpanHandle, re
 	)
 }
 
-// PopulateLLMResponseAttributes captures token usage and any error.
-func (t *otelTracer) PopulateLLMResponseAttributes(_ *bschemas.BifrostContext, handle bschemas.SpanHandle, resp *bschemas.BifrostResponse, bErr *bschemas.BifrostError) {
+// PopulateLLMResponseAttributes captures token usage and any error. Bifrost
+// calls it once per attempt.
+func (t *otelTracer) PopulateLLMResponseAttributes(ctx *bschemas.BifrostContext, handle bschemas.SpanHandle, resp *bschemas.BifrostResponse, bErr *bschemas.BifrostError) {
+	recordAttemptError(ctx, bErr)
 	span := spanOf(handle)
 	if span == nil {
 		return
@@ -282,7 +284,8 @@ func (t *otelTracer) GetAccumulatedChunks(traceID string) (*bschemas.BifrostResp
 // returns a result on the final chunk. Bifrost's exporter plugins
 // expect a non-nil result on the terminating call so they can flush;
 // we only synthesize one when isFinalChunk is true.
-func (t *otelTracer) ProcessStreamingChunk(_ *bschemas.BifrostContext, traceID string, isFinalChunk bool, result *bschemas.BifrostResponse, bErr *bschemas.BifrostError) *bschemas.StreamAccumulatorResult {
+func (t *otelTracer) ProcessStreamingChunk(ctx *bschemas.BifrostContext, traceID string, isFinalChunk bool, result *bschemas.BifrostResponse, bErr *bschemas.BifrostError) *bschemas.StreamAccumulatorResult {
+	recordAttemptError(ctx, bErr)
 	if traceID == "" {
 		return nil
 	}

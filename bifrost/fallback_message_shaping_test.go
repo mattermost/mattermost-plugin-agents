@@ -192,7 +192,7 @@ func TestMessageShapingIsBuiltPerFallbackHop(t *testing.T) {
 			wantNativeTools: [][]string{
 				{"web_search", "web_fetch"},
 				{"web_search", "code_interpreter"},
-				{"googleSearch"},
+				{"googleSearch", "codeExecution"},
 				{}, {}, {},
 			},
 		},
@@ -204,7 +204,7 @@ func TestMessageShapingIsBuiltPerFallbackHop(t *testing.T) {
 			wantNativeTools: [][]string{
 				{"web_search", "code_interpreter"},
 				{"web_search"},
-				{"googleSearch"},
+				{"googleSearch", "codeExecution"},
 				{"web_search"},
 				{},
 			},
