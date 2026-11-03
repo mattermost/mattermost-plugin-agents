@@ -338,14 +338,18 @@ func (s *Service) Purge(userID, id string) error {
 	return s.Delete(userID, id, true)
 }
 
-// ListByTeam returns every library entry whose TeamID matches. The caller must
-// authorize (system admin or team admin); this does not check per-channel read.
-func (s *Service) ListByTeam(teamID string) (*TeamListResponse, error) {
+// ListByTeam returns library entries for the team. A system admin sees every
+// channel. Anyone else only sees channels they can read.
+func (s *Service) ListByTeam(userID, teamID string) (*TeamListResponse, error) {
 	if !model.IsValidId(teamID) {
 		return nil, ErrInvalidInput
 	}
+	seeAll := userID != "" && s.mm.HasPermissionTo(userID, model.PermissionManageSystem)
 	out := make([]*Entry, 0)
 	err := s.store.ForEachChannelIndex(func(channelID string) error {
+		if !seeAll && !s.CanRead(userID, channelID) {
+			return nil
+		}
 		entries, err := s.store.List(channelID)
 		if err != nil {
 			return err

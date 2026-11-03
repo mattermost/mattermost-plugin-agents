@@ -33,6 +33,8 @@ type memoryKV struct {
 	failNextMeta   bool
 	onFailNextMeta func(data map[string][]byte)
 	beforeHistCAS  func(data map[string][]byte)
+	unreadable     map[string]bool
+	beforeSHAClaim func(data map[string][]byte, key string)
 }
 
 func newMemoryKV() *memoryKV {
@@ -111,6 +113,10 @@ func (kv *memoryKV) KVCompareAndSet(key string, oldValue, newValue any) (bool, e
 	if strings.HasPrefix(key, keyPrefixHist) && kv.beforeHistCAS != nil {
 		kv.beforeHistCAS(kv.data)
 		kv.beforeHistCAS = nil
+	}
+	if oldValue == nil && strings.HasPrefix(key, keyPrefixSHA) && kv.beforeSHAClaim != nil {
+		kv.beforeSHAClaim(kv.data, key)
+		kv.beforeSHAClaim = nil
 	}
 	current, exists := kv.data[key]
 	if oldValue == nil {
@@ -207,7 +213,10 @@ func (kv *memoryKV) PluginHTTP(*http.Request) *http.Response { return nil }
 func (kv *memoryKV) GetChannelByName(string, string, bool) (*model.Channel, error) {
 	return nil, nil
 }
-func (kv *memoryKV) HasPermissionToChannel(string, string, *model.Permission) bool {
+func (kv *memoryKV) HasPermissionToChannel(_, channelID string, _ *model.Permission) bool {
+	if kv.unreadable[channelID] {
+		return false
+	}
 	return kv.permissionAll || kv.readAll
 }
 func (kv *memoryKV) HasPermissionToFileAction(string, string, string) bool { return false }
@@ -390,6 +399,29 @@ func TestReplaceContentRestoresAMissingSHALookup(t *testing.T) {
 	owner, err = store.FindBySHA(entry.ChannelID, entry.SHA256)
 	require.NoError(t, err)
 	require.Equal(t, other, owner)
+}
+
+func TestSaveDuplicateClaimLeavesTheExistingLookup(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	owner := model.NewId()
+	kv.beforeSHAClaim = func(data map[string][]byte, key string) {
+		raw, err := json.Marshal(owner)
+		if err != nil {
+			return
+		}
+		data[key] = raw
+	}
+
+	err := store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0)
+	require.ErrorIs(t, err, ErrDuplicate)
+
+	found, findErr := store.FindBySHA(entry.ChannelID, entry.SHA256)
+	require.NoError(t, findErr)
+	require.Equal(t, owner, found)
+	_, getErr := store.Get(entry.ID)
+	require.ErrorIs(t, getErr, ErrNotFound)
 }
 
 func TestRollbackRestoresAMissingSHALookup(t *testing.T) {

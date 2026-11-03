@@ -183,7 +183,7 @@ export async function listChannelArtifacts(channelId: string): Promise<ChannelAr
     throw new ClientError(Client4.url, {message: '', status_code: response.status, url});
 }
 
-/** Team/system-admin catalog of every library entry on a team. */
+/** Team catalog of library entries. A system admin sees every channel; a team admin sees channels they can read. */
 export async function listTeamChannelArtifacts(teamId: string): Promise<{entries: ChannelArtifactEntry[]}> {
     const url = `${baseRoute()}/channel-artifacts/team?team_id=${encodeURIComponent(teamId)}`;
     const response = await fetch(url, Client4.getOptions({method: 'GET'}));

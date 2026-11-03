@@ -98,10 +98,50 @@ func TestServiceListByTeam(t *testing.T) {
 	}, []byte("<html>b</html>"), "b.html", userID, "Author", otherTeam, model.NewId(), ContentLimits{MaxSize: 1024})
 	require.NoError(t, err)
 
-	resp, err := svc.ListByTeam(teamID)
+	resp, err := svc.ListByTeam(userID, teamID)
 	require.NoError(t, err)
 	require.Len(t, resp.Entries, 1)
 	require.Equal(t, "On team", resp.Entries[0].Title)
+}
+
+func TestServiceListByTeamSkipsChannelsTheCallerCannotRead(t *testing.T) {
+	kv := newMemoryKV()
+	kv.readAll = true
+	store := NewStore(kv)
+	svc := NewService(store, kv, allowAllMembers{})
+
+	teamID := model.NewId()
+	openChannel := model.NewId()
+	privateChannel := model.NewId()
+	userID := model.NewId()
+	kv.channels[openChannel] = &model.Channel{Id: openChannel, TeamId: teamID, Type: model.ChannelTypeOpen}
+	kv.channels[privateChannel] = &model.Channel{Id: privateChannel, TeamId: teamID, Type: model.ChannelTypePrivate}
+	kv.unreadable = map[string]bool{privateChannel: true}
+
+	_, err := svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: openChannel,
+		PostID:    model.NewId(),
+		FileID:    model.NewId(),
+		Title:     "Open",
+	}, []byte("<html>a</html>"), "a.html", userID, "Author", teamID, model.NewId(), ContentLimits{MaxSize: 1024})
+	require.NoError(t, err)
+	_, err = svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: privateChannel,
+		PostID:    model.NewId(),
+		FileID:    model.NewId(),
+		Title:     "Private",
+	}, []byte("<html>b</html>"), "b.html", userID, "Author", teamID, model.NewId(), ContentLimits{MaxSize: 1024})
+	require.NoError(t, err)
+
+	resp, err := svc.ListByTeam(userID, teamID)
+	require.NoError(t, err)
+	require.Len(t, resp.Entries, 1)
+	require.Equal(t, "Open", resp.Entries[0].Title)
+
+	kv.permissionAll = true
+	resp, err = svc.ListByTeam(userID, teamID)
+	require.NoError(t, err)
+	require.Len(t, resp.Entries, 2)
 }
 
 type fixedMember struct {

@@ -187,7 +187,7 @@ export async function pinLibraryArtifactBookmark(
     }
 
     const fromState = state.entities?.channelBookmarks?.byChannelId?.[channelId];
-    const existing = fromState ? Object.values(fromState) : await Client4.getChannelBookmarks(channelId).catch(() => []);
+    const existing = fromState ? Object.values(fromState) : await Client4.getChannelBookmarks(channelId);
     const found = findLibraryArtifactBookmark(existing, artifactId);
     if (found) {
         return found;

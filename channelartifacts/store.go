@@ -548,11 +548,19 @@ func (s *Store) Save(entry *Entry, content []byte, maxSize int64, maxPerChannel,
 		_ = s.kv.KVDelete(histKey(entry.ID))
 		return err
 	}
-	if err := s.kv.KVSet(shaKey(entry.ChannelID, sha), entry.ID); err != nil {
+	claimed, claimErr := s.kv.KVCompareAndSet(shaKey(entry.ChannelID, sha), nil, entry.ID)
+	if claimErr != nil || !claimed {
 		_ = s.kv.KVDelete(metaKey(entry.ID))
 		s.deleteAllVersionBlobs(hist, entry.ID)
 		_ = s.kv.KVDelete(histKey(entry.ID))
-		return err
+		if claimErr != nil {
+			return claimErr
+		}
+		existing, findErr := s.FindBySHA(entry.ChannelID, sha)
+		if findErr != nil || existing == "" {
+			return ErrDuplicate
+		}
+		return fmt.Errorf("%w: %s", ErrDuplicate, existing)
 	}
 
 	siteCounted := false
@@ -687,7 +695,7 @@ func (s *Store) ReplaceContent(entry *Entry, content []byte, maxSize int64, maxK
 	if oldSHA != "" && oldSHA != sha {
 		_ = s.deleteSHAIfOwner(entry.ChannelID, oldSHA, entry.ID)
 	}
-	if err := s.kv.KVSet(shaKey(entry.ChannelID, sha), entry.ID); err != nil {
+	if err := s.ensureOwnSHA(entry.ChannelID, sha, entry.ID); err != nil {
 		return err
 	}
 	return s.pruneOldestVersions(entry, hist, maxKeep)
@@ -806,7 +814,7 @@ func (s *Store) Rollback(entry *Entry, toVersion int) error {
 	if oldSHA != "" && oldSHA != entry.SHA256 {
 		_ = s.deleteSHAIfOwner(entry.ChannelID, oldSHA, entry.ID)
 	}
-	return s.kv.KVSet(shaKey(entry.ChannelID, entry.SHA256), entry.ID)
+	return s.ensureOwnSHA(entry.ChannelID, entry.SHA256, entry.ID)
 }
 
 // DeleteHead removes the current head version. If it was the only version the
@@ -860,7 +868,7 @@ func (s *Store) DeleteHead(entry *Entry) error {
 	if oldSHA != "" && oldSHA != entry.SHA256 {
 		_ = s.deleteSHAIfOwner(entry.ChannelID, oldSHA, entry.ID)
 	}
-	return s.kv.KVSet(shaKey(entry.ChannelID, entry.SHA256), entry.ID)
+	return s.ensureOwnSHA(entry.ChannelID, entry.SHA256, entry.ID)
 }
 
 // Purge removes the artifact, every version blob, history, and sha index entry.

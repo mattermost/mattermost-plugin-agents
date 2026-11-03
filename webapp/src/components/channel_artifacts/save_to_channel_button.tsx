@@ -157,6 +157,7 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
                 title: title.trim() || defaultTitle(),
                 ...(replaceId ? {replace_id: replaceId} : {}),
             });
+            setExisting((prev) => [...prev.filter((item) => item.id !== entry.id), entry]);
             await pinSaved(entry.id, entry.title);
         } catch (err: any) {
             if (typeof err?.message === 'string' && err.message.startsWith('duplicate:')) {

@@ -439,7 +439,7 @@ func (a *API) handleListTeamChannelArtifacts(c *gin.Context) {
 		c.String(http.StatusForbidden, "forbidden")
 		return
 	}
-	resp, err := a.channelArtifacts.ListByTeam(teamID)
+	resp, err := a.channelArtifacts.ListByTeam(userID, teamID)
 	if err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
