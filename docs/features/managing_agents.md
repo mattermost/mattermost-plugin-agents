@@ -169,7 +169,7 @@ To edit an agent:
 
 1. Open the **Agents** page.
 2. Select the row, or open the row's `⋯` menu and choose **Edit**.
-3. Update fields across the three tabs as needed. The editor opens on the **Configuration** tab and remembers your tab selection while editing.
+3. Update fields across the four tabs as needed. The editor opens on the **Configuration** tab and remembers your tab selection while editing.
 4. Select **Save**.
 
 The editor uses a full-document `PUT /agents/:id` save, so every visible field on every tab is sent on save. There is no per-field partial update.
