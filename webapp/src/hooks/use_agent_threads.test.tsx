@@ -344,6 +344,23 @@ describe('stored AI threads', () => {
                 expect(titles(store)).toEqual(['c1:', 'new:']);
             });
 
+            test('a chat that streamed in during the first load is fetched once the load settles', async () => {
+                const store = makeStore({bots, posts});
+                const first = deferred<AIThread[]>();
+                mockGetAIThreads.mockReturnValueOnce(first.promise).mockResolvedValue([makeThread({id: 'new', root_post_id: 'mine'})]);
+                const sync = createAgentThreadsSync(store as never);
+                const loading = fetchAIThreads(store.dispatch);
+
+                sync.handlePostUpdate(chunk('mine'));
+                await act(async () => {
+                    first.resolve([makeThread({id: 'c1'})]);
+                    await loading;
+                    jest.advanceTimersByTime(THREADS_REFRESH_DEBOUNCE_MS);
+                });
+                expect(mockGetAIThreads).toHaveBeenCalledTimes(2);
+                expect(titles(store)).toEqual(['new:']);
+            });
+
             test.each([
                 {name: 'a chat the list has', post: {id: 'listed', channel_id: 'dm_a', root_id: 'root', user_id: 'a'}},
                 {name: 'someone else\'s request in a shared channel', post: posts.others},

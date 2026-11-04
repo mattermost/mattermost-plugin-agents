@@ -127,8 +127,29 @@ export interface AgentThreadsSync {
 
 // Keeps the stored thread list current from websocket events; index.tsx creates one for the
 // plugin's lifetime. A list no view has loaded is never fetched.
-export function createAgentThreadsSync(store: {dispatch: Dispatch<UnknownAction>; getState: () => GlobalState}): AgentThreadsSync {
+export function createAgentThreadsSync(store: {dispatch: Dispatch<UnknownAction>; getState: () => GlobalState; subscribe: (listener: () => void) => () => void}): AgentThreadsSync {
     let timer: ReturnType<typeof setTimeout> | null = null;
+    const unlistedDuringLoad = new Set<string>();
+    let unsubscribe: (() => void) | null = null;
+
+    // A request in flight may predate a chat that streamed in meanwhile: look again once it settles.
+    const refreshWhenLoadSettles = (rootId: string) => {
+        unlistedDuringLoad.add(rootId);
+        unsubscribe ??= store.subscribe(() => {
+            const state = store.getState();
+            if (selectAIThreadsState(state).loading) {
+                return;
+            }
+            unsubscribe?.();
+            unsubscribe = null;
+            const threads = selectAIThreads(state);
+            const missing = Array.from(unlistedDuringLoad).some((id) => !threads?.some((t) => t.root_post_id === id));
+            unlistedDuringLoad.clear();
+            if (missing) {
+                scheduleRefresh({extend: false});
+            }
+        });
+    };
 
     const scheduleRefresh = ({extend = true} = {}) => {
         if (timer !== null) {
@@ -162,8 +183,13 @@ export function createAgentThreadsSync(store: {dispatch: Dispatch<UnknownAction>
             const post = state.entities.posts.posts[msg.data.post_id];
             const rootId = post?.root_id || post?.id;
             const threads = selectAIThreads(state);
-            if (rootId && threads && !selectAIThreadsState(state).loading && !threads.some((t) => t.root_post_id === rootId)) {
+            if (!rootId || threads?.some((t) => t.root_post_id === rootId)) {
+                return;
+            }
+            if (threads && !selectAIThreadsState(state).loading) {
                 scheduleRefresh({extend: false});
+            } else {
+                refreshWhenLoadSettles(rootId);
             }
         },
         handleConversationUpdated: (data) => {
