@@ -751,6 +751,8 @@ type AIBotInfo struct {
 	// false when the server is not licensed for remote MCP.
 	UseServiceAccountAuth bool `json:"useServiceAccountAuth"`
 	IsDefault             bool `json:"isDefault,omitempty"`
+	// IsCreator reports whether the requesting user created the agent.
+	IsCreator bool `json:"isCreator,omitempty"`
 }
 
 type AIBotsResponse struct {
@@ -817,20 +819,22 @@ func (a *API) getAIBotsForUser(ctx context.Context, userID string) []AIBotInfo {
 		}
 
 		isDefault := defaultBotID != "" && bot.BotUserID() == defaultBotID
+		botConfig := bot.GetConfig()
 		bots = append(bots, AIBotInfo{
 			ID:                    bot.GetMMBot().UserId,
 			DisplayName:           bot.GetMMBot().DisplayName,
 			Username:              bot.GetMMBot().Username,
 			LastIconUpdate:        bot.GetMMBot().LastIconUpdate,
 			DMChannelID:           dmChannelID,
-			ChannelAccessLevel:    bot.GetConfig().ChannelAccessLevel,
-			ChannelIDs:            bot.GetConfig().ChannelIDs,
-			UserAccessLevel:       bot.GetConfig().UserAccessLevel,
-			UserIDs:               bot.GetConfig().UserIDs,
-			EnabledMCPTools:       bot.GetConfig().EnabledMCPTools,
-			AutoEnableNewMCPTools: bot.GetConfig().AutoEnableNewMCPTools,
+			ChannelAccessLevel:    botConfig.ChannelAccessLevel,
+			ChannelIDs:            botConfig.ChannelIDs,
+			UserAccessLevel:       botConfig.UserAccessLevel,
+			UserIDs:               botConfig.UserIDs,
+			EnabledMCPTools:       botConfig.EnabledMCPTools,
+			AutoEnableNewMCPTools: botConfig.AutoEnableNewMCPTools,
 			UseServiceAccountAuth: a.usesServiceAccountAuth(bot),
 			IsDefault:             isDefault,
+			IsCreator:             botConfig.IsCreator(userID),
 		})
 		if isDefault {
 			last := len(bots) - 1

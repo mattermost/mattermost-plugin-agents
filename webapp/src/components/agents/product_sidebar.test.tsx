@@ -27,7 +27,8 @@ jest.mock('@mattermost/shared/components/tooltip', () => ({
     WithTooltip: ({children}: {children: React.ReactNode}) => <>{children}</>,
 }));
 
-const mockBots = [{id: 'a', displayName: 'Alpha', dmChannelID: 'dm_a'}];
+const alpha = {id: 'a', displayName: 'Alpha', dmChannelID: 'dm_a'};
+let mockBots: Array<typeof alpha & {isCreator?: boolean}> = [alpha];
 
 const mockGetAIThreads = getAIThreads as jest.Mock;
 const mockRenameConversation = renameConversation as jest.Mock;
@@ -140,6 +141,26 @@ describe('ProductSidebar "Your agents" section', () => {
         delete window.WebappUtils;
         mockGetAIThreads.mockReset();
         mockRenameConversation.mockReset();
+        mockBots = [alpha];
+    });
+
+    test.each([
+        {name: 'lists agents the user created or chats with', path: AGENTS_ROUTE, listed: ['Alpha', 'Beta']},
+        {name: 'also lists the agent whose chat is open', path: buildChatPath('d'), listed: ['Alpha', 'Beta', 'Delta']},
+    ])('$name', async ({path, listed}) => {
+        mockBots = [
+            alpha,
+            {id: 'b', displayName: 'Beta', dmChannelID: 'dm_b', isCreator: true},
+            {id: 'c', displayName: 'Gamma', dmChannelID: 'dm_c'},
+            {id: 'd', displayName: 'Delta', dmChannelID: 'dm_d'},
+        ];
+        mockGetAIThreads.mockResolvedValue([thread('1', 'Older')]);
+        renderWithStore(path);
+        await screen.findByRole('button', {name: 'Older'});
+
+        const section = screen.getByRole('region', {name: 'Your agents'});
+        const newChatButtons = within(section).getAllByRole('button', {name: /^New chat with /});
+        expect(newChatButtons.map((b) => b.getAttribute('aria-label'))).toEqual(listed.map((agent) => `New chat with ${agent}`));
     });
 
     test('lists fetched threads and navigates on click', async () => {

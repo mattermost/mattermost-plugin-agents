@@ -1862,6 +1862,45 @@ func TestHandleGetAIBotsIsDefaultFlag(t *testing.T) {
 	require.False(t, byUsername["other"].IsDefault, "non-default bot should have isDefault=false")
 }
 
+func TestHandleGetAIBotsIsCreatorFlag(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	newBot := func(username, creatorID, botUserID string) *bots.Bot {
+		return bots.NewBot(
+			llm.BotConfig{Name: username, DisplayName: username, CreatorID: creatorID},
+			llm.ServiceConfig{},
+			&model.Bot{UserId: botUserID, Username: username, DisplayName: username},
+			nil,
+		)
+	}
+	e.setBots(
+		newBot("mine", testUserID, "minebotuserid1234567890123"),
+		newBot("theirs", "otheruserid123456789012345", "theirsbotuserid12345678901"),
+		newBot("config", "", "configbotuserid12345678901"),
+	)
+
+	e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
+	e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+	request := httptest.NewRequest(http.MethodGet, "/ai_bots", nil)
+	request.Header.Add("Mattermost-User-ID", testUserID)
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var response AIBotsResponse
+	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&response))
+	isCreator := make(map[string]bool, len(response.Bots))
+	for _, b := range response.Bots {
+		isCreator[b.Username] = b.IsCreator
+	}
+	require.Equal(t, map[string]bool{"mine": true, "theirs": false, "config": false}, isCreator)
+}
+
 func TestToolCallDMAllowedWhenChannelToolCallingDisabled(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
