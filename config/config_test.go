@@ -379,6 +379,32 @@ func TestContainerGetServices(t *testing.T) {
 	}
 }
 
+func TestChannelArtifactConfigDefaults(t *testing.T) {
+	container := &Container{}
+	container.Update(&Config{})
+	require.Equal(t, 50, container.ChannelArtifactsMaxPerChannel())
+	require.Equal(t, 0, container.ChannelArtifactsMaxSitewide())
+	require.Equal(t, 0, container.ChannelArtifactVersionsToKeep())
+	require.False(t, container.DisableChannelArtifactDownload())
+	require.False(t, container.DisableChannelArtifactRendering())
+	require.False(t, container.DisableHumanChannelArtifacts())
+
+	container.Update(&Config{
+		ChannelArtifactsMaxPerChannel:   10,
+		ChannelArtifactsMaxSitewide:     100,
+		ChannelArtifactVersionsToKeep:   5,
+		DisableChannelArtifactDownload:  true,
+		DisableChannelArtifactRendering: true,
+		DisableHumanChannelArtifacts:    true,
+	})
+	require.Equal(t, 10, container.ChannelArtifactsMaxPerChannel())
+	require.Equal(t, 100, container.ChannelArtifactsMaxSitewide())
+	require.Equal(t, 5, container.ChannelArtifactVersionsToKeep())
+	require.True(t, container.DisableChannelArtifactDownload())
+	require.True(t, container.DisableChannelArtifactRendering())
+	require.True(t, container.DisableHumanChannelArtifacts())
+}
+
 func TestContainerGetServicesReturnsIndependentSlice(t *testing.T) {
 	container := &Container{}
 	container.Update(&Config{Services: []llm.ServiceConfig{

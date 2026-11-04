@@ -20,7 +20,7 @@ func TestInMemoryServerCreation(t *testing.T) {
 	mcpLogger, err := logger.CreateLoggerWithOptions(false, "")
 	require.NoError(t, err)
 
-	server, err := mcpserver.NewInMemoryServer(config, mcpLogger, nil, nil, func() bool { return true })
+	server, err := mcpserver.NewInMemoryServer(config, mcpLogger, nil, nil, nil, func() bool { return true })
 	require.NoError(t, err)
 
 	// Test creating a client transport (without validation by passing nil resolver)

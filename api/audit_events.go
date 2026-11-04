@@ -52,6 +52,15 @@ const (
 	AuditEventRenameConversation  = "renameConversation"
 	AuditEventArchiveConversation = "archiveConversation"
 
+	// Channel artifact library.
+	AuditEventCreateChannelArtifact   = "createChannelArtifact"
+	AuditEventUpdateChannelArtifact   = "updateChannelArtifact"
+	AuditEventReplaceChannelArtifact  = "replaceChannelArtifact"
+	AuditEventRollbackChannelArtifact = "rollbackChannelArtifact"
+	AuditEventDeleteChannelArtifact   = "deleteChannelArtifact"
+	AuditEventReorderChannelArtifacts = "reorderChannelArtifacts"
+	AuditEventExportChannelArtifacts  = "exportChannelArtifacts"
+
 	// Credentials: third-party MCP OAuth grant/revocation and per-user tool
 	// provider preferences.
 	AuditEventMCPOAuthStart            = "mcpOAuthStart"
@@ -136,6 +145,15 @@ func buildAuditEventRegistry(a *API) map[string]string {
 		// Conversation management.
 		handlerFuncName(a.handleRenameConversation):  AuditEventRenameConversation,
 		handlerFuncName(a.handleArchiveConversation): AuditEventArchiveConversation,
+
+		// Channel artifact library.
+		handlerFuncName(a.handleCreateChannelArtifact):   AuditEventCreateChannelArtifact,
+		handlerFuncName(a.handlePatchChannelArtifact):    AuditEventUpdateChannelArtifact,
+		handlerFuncName(a.handleReplaceChannelArtifact):  AuditEventReplaceChannelArtifact,
+		handlerFuncName(a.handleRollbackChannelArtifact): AuditEventRollbackChannelArtifact,
+		handlerFuncName(a.handleDeleteChannelArtifact):   AuditEventDeleteChannelArtifact,
+		handlerFuncName(a.handleReorderChannelArtifacts): AuditEventReorderChannelArtifacts,
+		handlerFuncName(a.handleExportChannelArtifacts):  AuditEventExportChannelArtifacts,
 
 		// Credentials.
 		handlerFuncName(a.handleOAuthStart):         AuditEventMCPOAuthStart,

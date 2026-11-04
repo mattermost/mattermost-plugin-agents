@@ -88,13 +88,13 @@ func NewHTTPServer(config HTTPConfig, logger loggerlib.Logger) (*MattermostHTTPM
 		nil, // ServerOptions - keeping nil for now
 	)
 
-	// Create HTTP search and file content services for callback to plugin API
-	searchService, fileContentService := newPluginCallbackServices(config.GetMMServerURL())
+	// Create HTTP callback services for the plugin API
+	searchService, fileContentService, channelArtifactsService := newPluginCallbackServices(config.GetMMServerURL())
 
 	// Register tools with remote access mode. Standalone HTTP servers run
 	// outside the plugin and have no license information, so state-changing
 	// tools stay available.
-	mattermostServer.registerTools(tools.AccessModeRemote, searchService, fileContentService, func() bool { return true })
+	mattermostServer.registerTools(tools.AccessModeRemote, searchService, fileContentService, channelArtifactsService, func() bool { return true })
 
 	// Create HTTP server with OAuth endpoints and MCP routing
 	addr := fmt.Sprintf("%s:%d", config.HTTPBindAddr, config.HTTPPort)

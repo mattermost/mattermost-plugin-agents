@@ -107,7 +107,7 @@ func TestRebuildExternalServerDiscoversPluginsConcurrently(t *testing.T) {
 	registry := &stubRegistry{}
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI, nil, nil, allowAllStateChangingTools)
+	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI, nil, nil, nil, allowAllStateChangingTools)
 	require.NoError(t, err)
 	t.Cleanup(handlers.Close)
 
@@ -157,7 +157,7 @@ func TestRebuildExternalServerBoundsDiscoveryConcurrency(t *testing.T) {
 	registry := &stubRegistry{}
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI, nil, nil, allowAllStateChangingTools)
+	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI, nil, nil, nil, allowAllStateChangingTools)
 	require.NoError(t, err)
 	t.Cleanup(handlers.Close)
 
@@ -199,7 +199,7 @@ func TestRebuildExternalServerCollisionWinnerIgnoresCompletionOrder(t *testing.T
 
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI, nil, nil, allowAllStateChangingTools)
+	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI, nil, nil, nil, allowAllStateChangingTools)
 	require.NoError(t, err)
 	t.Cleanup(handlers.Close)
 
@@ -222,7 +222,7 @@ func TestRebuildExternalServerNativeToolWinsOverSlowProxy(t *testing.T) {
 
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI, nil, nil, allowAllStateChangingTools)
+	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI, nil, nil, nil, allowAllStateChangingTools)
 	require.NoError(t, err)
 	t.Cleanup(handlers.Close)
 

@@ -135,7 +135,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 			PersonalAccessToken: token,
 		}
 
-		mcpServer, err = mcpserver.NewStdioServer(stdioConfig, logger, nil, nil)
+		mcpServer, err = mcpserver.NewStdioServer(stdioConfig, logger, nil, nil, nil)
 	case "http":
 		// Create HTTP transport configuration
 		stateless, _ := cmd.Flags().GetBool("stateless")

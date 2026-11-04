@@ -202,7 +202,7 @@ func TestNewPluginMCPHandlers_IteratesRegistry(t *testing.T) {
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
 
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, allowAllStateChangingTools, nil, nil)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(h.Close)
 	require.NotNil(t, h.MCPHandler)
@@ -232,7 +232,7 @@ func TestNewPluginMCPHandlers_SkipsPluginToolConflictingWithNativeTool(t *testin
 
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, allowAllStateChangingTools, nil, nil)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(h.Close)
 
@@ -279,7 +279,7 @@ func TestNewPluginMCPHandlers_FiltersToolsByPolicy(t *testing.T) {
 
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, allowAllStateChangingTools, nil, nil)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(h.Close)
 
@@ -326,7 +326,7 @@ func TestNewPluginMCPHandlers_PolicyIsPerPluginServer(t *testing.T) {
 
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, allowAllStateChangingTools, nil, nil)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(h.Close)
 
@@ -349,7 +349,7 @@ func TestRebuildExternalServer_PicksUpNewRegistrations(t *testing.T) {
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
 
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, allowAllStateChangingTools, nil, nil)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(h.Close)
 
@@ -379,7 +379,7 @@ func TestRebuildExternalServer_RemovesUnregistered(t *testing.T) {
 	}}
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, allowAllStateChangingTools, nil, nil)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(h.Close)
 
@@ -400,7 +400,7 @@ func TestRebuildExternalServer_SkipsTimedOutPluginAndKeepsHealthyPlugins(t *test
 	mockAPI := newHangingAndHealthyPluginForwarder(t, "com.example.hung", healthy, nil)
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, allowAllStateChangingTools, nil, nil)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(h.Close)
 	h.proxyDiscoveryTimeout = 25 * time.Millisecond
@@ -425,7 +425,7 @@ func TestRebuildExternalServer_DoesNotBlockExternalRequestsWhileDiscovering(t *t
 	mockAPI := newHangingAndHealthyPluginForwarder(t, "com.example.hung", nil, startedHungRequest)
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, allowAllStateChangingTools, nil, nil)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(h.Close)
 	h.proxyDiscoveryTimeout = 100 * time.Millisecond
@@ -580,7 +580,7 @@ func TestPluginMCPHandlers_RefusesToolCallsDisabledBeforeRebuild(t *testing.T) {
 func TestNewPluginMCPHandlers_NilRegistryIsNoOp(t *testing.T) {
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, nil, nil, nil, nil, allowAllStateChangingTools, nil, nil)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, nil, nil, nil, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(h.Close)
 	require.NotNil(t, h.MCPHandler)
@@ -689,7 +689,7 @@ func TestPluginMCPHandlers_AccessFilter(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, allowAllStateChangingTools, tc.checker, func() string {
+			h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, nil, allowAllStateChangingTools, tc.checker, func() string {
 				return tc.embeddedID
 			})
 			require.NoError(t, err)

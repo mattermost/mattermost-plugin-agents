@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/debug"
+	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	loggerlib "github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
@@ -23,11 +24,11 @@ type MattermostInMemoryMCPServer struct {
 
 // NewInMemoryServer creates a new in-memory transport MCP server
 // This server is designed to run embedded within the plugin process
-// searchService and fileContentService are optional and can be nil when the
-// corresponding capability is unavailable.
+// searchService, fileContentService, and channelArtifactsService are optional
+// and can be nil when the corresponding capability is unavailable.
 // allowStateChangingTools is a runtime predicate evaluated per request; a nil
 // predicate means state-changing tools are not available.
-func NewInMemoryServer(config InMemoryConfig, logger loggerlib.Logger, searchService tools.SemanticSearchService, fileContentService tools.FileContentService, allowStateChangingTools func() bool) (*MattermostInMemoryMCPServer, error) {
+func NewInMemoryServer(config InMemoryConfig, logger loggerlib.Logger, searchService tools.SemanticSearchService, fileContentService tools.FileContentService, channelArtifactsService tools.ChannelArtifactsService, allowStateChangingTools func() bool) (*MattermostInMemoryMCPServer, error) {
 	if config.MMServerURL == "" {
 		return nil, fmt.Errorf("mattermost server URL cannot be empty for in-memory transport")
 	}
@@ -63,8 +64,19 @@ func NewInMemoryServer(config InMemoryConfig, logger loggerlib.Logger, searchSer
 		nil, // ServerOptions - keeping nil for now
 	)
 
+	// Channel artifacts always go through the plugin HTTP callback so embedded
+	// and external MCP share one permission path. Default when the caller
+	// did not inject a service.
+	if channelArtifactsService == nil {
+		base := config.GetMMInternalServerURL()
+		if base == "" {
+			base = config.GetMMServerURL()
+		}
+		channelArtifactsService = tools.NewHTTPChannelArtifactsService(strings.TrimRight(base, "/") + "/plugins/mattermost-ai")
+	}
+
 	// Register tools with remote access mode (embedded clients are treated as remote)
-	mattermostServer.registerTools(tools.AccessModeRemote, searchService, fileContentService, allowStateChangingTools)
+	mattermostServer.registerTools(tools.AccessModeRemote, searchService, fileContentService, channelArtifactsService, allowStateChangingTools)
 
 	logger.Info("Created in-memory MCP server")
 
