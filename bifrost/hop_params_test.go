@@ -484,7 +484,11 @@ func TestApplyHopRequestLeavesSharedRequestIntact(t *testing.T) {
 		reasoningEnabled: true,
 		account: testAccount(
 			&providerAccount{Provider: schemas.Anthropic},
-			customAccount(schemas.Anthropic, "svc2"),
+			&providerAccount{
+				Provider:         schemas.Anthropic,
+				name:             customProviderName(schemas.Anthropic, "svc2"),
+				outputTokenLimit: 64000,
+			},
 		),
 	}
 	cfg := llm.LanguageModelConfig{Model: "claude-opus-4-7", MaxGeneratedTokens: 200000}
@@ -505,10 +509,10 @@ func TestApplyHopRequestLeavesSharedRequestIntact(t *testing.T) {
 	require.NotNil(t, rebuilt.Params.Reasoning)
 	assert.Equal(t, "high", *rebuilt.Params.Reasoning.Effort, "the Opus 4.6 hop must get an effort it accepts")
 	require.NotNil(t, rebuilt.Params.MaxCompletionTokens)
-	assert.Equal(t, 128000, *rebuilt.Params.MaxCompletionTokens, "the Opus 4.6 hop must get its own output limit")
+	assert.Equal(t, 64000, *rebuilt.Params.MaxCompletionTokens, "the fallback hop must get its service's output limit")
 	assert.Same(t, sharedParams, primary.ChatRequest.Params)
 	assert.NotSame(t, sharedParams, rebuilt.Params)
 	assert.Equal(t, "xhigh", *sharedParams.Reasoning.Effort, "the primary's shared params must be untouched")
-	assert.Equal(t, 200000, *sharedParams.MaxCompletionTokens, "the primary's shared params must be untouched")
+	assert.Equal(t, 128000, *sharedParams.MaxCompletionTokens, "the primary's shared params must be untouched")
 	assert.Equal(t, sharedInput, primary.ChatRequest.Input, "the primary's shared input must be untouched")
 }

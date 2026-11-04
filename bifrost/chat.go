@@ -23,6 +23,7 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 	defer cancel()
 	request = bufferFiles(request)
 	b.withHopRequest(bifrostCtx, request, cfg)
+	trackAttemptErrors(bifrostCtx)
 
 	// Convert to Bifrost request
 	bifrostReq := b.convertToBifrostRequest(request, cfg)
@@ -37,7 +38,7 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 	if bifrostErr != nil {
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeError,
-			Value: providerError(span, "bifrost error", bifrostErr, b.redactionKeys()...),
+			Value: providerError(bifrostCtx, span, "bifrost error", bifrostErr, b.redactionKeys()...),
 		}
 		return
 	}
@@ -55,7 +56,7 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 		if chunk.BifrostError != nil {
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: providerError(span, "bifrost stream error", chunk.BifrostError, b.redactionKeys()...),
+				Value: providerError(bifrostCtx, span, "bifrost stream error", chunk.BifrostError, b.redactionKeys()...),
 			}
 			return
 		}
