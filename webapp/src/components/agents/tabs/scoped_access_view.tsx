@@ -32,8 +32,13 @@ const ScopedAccessView = ({agentId, hasUnsavedChanges}: Props) => {
     const [failed, setFailed] = useState(false);
 
     useEffect(() => {
-        let superseded = false;
         setReport(null);
+    }, [agentId]);
+
+    // The report is computed from the saved agent, so it is fetched again
+    // whenever unsaved edits are cleared by a save.
+    useEffect(() => {
+        let superseded = false;
         setFailed(false);
         getAgentScopedAccess(agentId).then((result) => {
             if (!superseded) {
@@ -47,7 +52,7 @@ const ScopedAccessView = ({agentId, hasUnsavedChanges}: Props) => {
         return () => {
             superseded = true;
         };
-    }, [agentId]);
+    }, [agentId, hasUnsavedChanges]);
 
     return (
         <View

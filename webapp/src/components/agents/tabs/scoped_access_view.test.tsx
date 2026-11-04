@@ -115,6 +115,26 @@ describe('ScopedAccessView', () => {
         expect(removed.textContent).toContain('pick it under Built-in tools to allow it');
     });
 
+    test('loads the report again once unsaved edits are saved', async () => {
+        mockedGetAccess.mockResolvedValueOnce(report({configured: false}));
+        const view = renderView(true);
+        await screen.findByText('Save the agent to see what it can access in channels.');
+
+        mockedGetAccess.mockResolvedValueOnce(report());
+        view.rerender(
+            <IntlProvider locale='en'>
+                <ScopedAccessView
+                    agentId='agent-1'
+                    hasUnsavedChanges={false}
+                />
+            </IntlProvider>,
+        );
+
+        await screen.findByTestId('scoped-access-summary');
+        expect(mockedGetAccess).toHaveBeenCalledTimes(2);
+        expect(screen.queryByText('Save the agent to see what it can access in channels.')).toBeNull();
+    });
+
     test.each([
         {name: 'compliance mode', reason: 'compliance_mode' as const, text: /Compliance mode is on/},
         {name: 'users who cannot join teams', reason: 'users_cannot_join_teams' as const, text: /People can't join teams on their own/},
