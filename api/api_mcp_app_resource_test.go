@@ -34,6 +34,12 @@ type readAppResourceCall struct {
 	userID       string
 	serverOrigin string
 	uri          string
+	bounded      bool
+}
+
+func hasDeadline(ctx context.Context) bool {
+	_, ok := ctx.Deadline()
+	return ok
 }
 
 func TestHandleGetMCPAppResource(t *testing.T) {
@@ -104,8 +110,8 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 		e.mockAPI.On("HasPermissionToChannel", mock.Anything, testChannelID, model.PermissionReadChannel).Return(true).Maybe()
 
 		calls := &[]readAppResourceCall{}
-		e.mcp.readUserAppResource = func(_ context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
-			*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri})
+		e.mcp.readUserAppResource = func(ctx context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
+			*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri, bounded: hasDeadline(ctx)})
 			return successResource, nil
 		}
 		return calls
@@ -258,8 +264,8 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 			query:  "post_id=" + testAppResourcePostID + "&tool_call_id=tc1",
 			setup: func(e *TestEnvironment) *[]readAppResourceCall {
 				calls := seedDefaults(e, new(true), true, true)
-				e.mcp.readUserAppResource = func(_ context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
-					*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri})
+				e.mcp.readUserAppResource = func(ctx context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
+					*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri, bounded: hasDeadline(ctx)})
 					return nil, mcp.ErrServerNotConfigured
 				}
 				return calls
@@ -274,8 +280,8 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 			query:  "post_id=" + testAppResourcePostID + "&tool_call_id=tc1",
 			setup: func(e *TestEnvironment) *[]readAppResourceCall {
 				calls := seedDefaults(e, new(true), true, true)
-				e.mcp.readUserAppResource = func(_ context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
-					*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri})
+				e.mcp.readUserAppResource = func(ctx context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
+					*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri, bounded: hasDeadline(ctx)})
 					return nil, mcp.ErrServerAccessDenied
 				}
 				return calls
@@ -290,8 +296,8 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 			query:  "post_id=" + testAppResourcePostID + "&tool_call_id=tc1",
 			setup: func(e *TestEnvironment) *[]readAppResourceCall {
 				calls := seedDefaults(e, new(true), true, true)
-				e.mcp.readUserAppResource = func(_ context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
-					*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri})
+				e.mcp.readUserAppResource = func(ctx context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
+					*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri, bounded: hasDeadline(ctx)})
 					return nil, mcp.NewOAuthNeededError("https://auth.example/start")
 				}
 				return calls
@@ -307,8 +313,8 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 			query:  "post_id=" + testAppResourcePostID + "&tool_call_id=tc1",
 			setup: func(e *TestEnvironment) *[]readAppResourceCall {
 				calls := seedDefaults(e, new(true), true, true)
-				e.mcp.readUserAppResource = func(_ context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
-					*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri})
+				e.mcp.readUserAppResource = func(ctx context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
+					*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri, bounded: hasDeadline(ctx)})
 					return nil, &mcp.InvalidAppResourceError{URI: testAppResourceURI, MIMEType: "text/html"}
 				}
 				return calls
@@ -323,8 +329,8 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 			query:  "post_id=" + testAppResourcePostID + "&tool_call_id=tc1",
 			setup: func(e *TestEnvironment) *[]readAppResourceCall {
 				calls := seedDefaults(e, new(true), true, true)
-				e.mcp.readUserAppResource = func(_ context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
-					*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri})
+				e.mcp.readUserAppResource = func(ctx context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
+					*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri, bounded: hasDeadline(ctx)})
 					return nil, mcp.ErrServerNotConnected
 				}
 				return calls
@@ -339,8 +345,8 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 			query:  "post_id=" + testAppResourcePostID + "&tool_call_id=tc1",
 			setup: func(e *TestEnvironment) *[]readAppResourceCall {
 				calls := seedDefaults(e, new(true), true, true)
-				e.mcp.readUserAppResource = func(_ context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
-					*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri})
+				e.mcp.readUserAppResource = func(ctx context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
+					*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri, bounded: hasDeadline(ctx)})
 					return nil, errors.New("dial tcp 10.0.0.1:443: secret internals")
 				}
 				return calls
@@ -427,8 +433,8 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 				e.mockAPI.On("GetPost", postA).Return(&model.Post{Id: postA, ChannelId: testChannelID}, nil)
 				e.mockAPI.On("HasPermissionToChannel", testOtherUserID, testChannelID, model.PermissionReadChannel).Return(true)
 				calls := &[]readAppResourceCall{}
-				e.mcp.readUserAppResource = func(_ context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
-					*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri})
+				e.mcp.readUserAppResource = func(ctx context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
+					*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri, bounded: hasDeadline(ctx)})
 					return successResource, nil
 				}
 				return calls
@@ -484,6 +490,7 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 					require.Equal(t, tt.caller, (*calls)[0].userID)
 					require.Equal(t, testAppResourceOrigin, (*calls)[0].serverOrigin)
 					require.Equal(t, testAppResourceURI, (*calls)[0].uri)
+					require.True(t, (*calls)[0].bounded, "upstream read must carry a deadline")
 				} else {
 					require.Empty(t, *calls)
 				}

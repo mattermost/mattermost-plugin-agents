@@ -4,15 +4,21 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 )
+
+// appResourceReadTimeout bounds the upstream connect and resources/read for
+// one request.
+const appResourceReadTimeout = time.Minute
 
 const (
 	appResourceErrInvalidRequest      = "invalid_request"
@@ -137,10 +143,11 @@ func (a *API) handleGetMCPAppResource(c *gin.Context) {
 		}
 	}
 
-	res, err := a.mcpClientManager.ReadUserAppResource(c.Request.Context(), userID, toolUse.ServerOrigin, toolUse.UIMeta.ResourceURI)
+	readCtx, cancel := context.WithTimeout(c.Request.Context(), appResourceReadTimeout)
+	defer cancel()
+	res, err := a.mcpClientManager.ReadUserAppResource(readCtx, userID, toolUse.ServerOrigin, toolUse.UIMeta.ResourceURI)
 	if err != nil {
-		var oauthErr *mcp.OAuthNeededError
-		if errors.As(err, &oauthErr) {
+		if oauthErr, ok := errors.AsType[*mcp.OAuthNeededError](err); ok {
 			writeAppResourceError(c, http.StatusUnauthorized, appResourceErrAuthRequired, "MCP authentication required", oauthErr.AuthURL())
 			return
 		}
@@ -152,8 +159,7 @@ func (a *API) handleGetMCPAppResource(c *gin.Context) {
 			writeAppResourceError(c, http.StatusNotFound, appResourceErrNotFound, "server no longer configured", "")
 			return
 		}
-		var invalidErr *mcp.InvalidAppResourceError
-		if errors.As(err, &invalidErr) {
+		if invalidErr, ok := errors.AsType[*mcp.InvalidAppResourceError](err); ok {
 			a.pluginAPI.Log.Error("Invalid MCP app resource",
 				"userID", userID, "serverOrigin", toolUse.ServerOrigin, "uri", toolUse.UIMeta.ResourceURI, "error", invalidErr)
 			writeAppResourceError(c, http.StatusBadGateway, appResourceErrInvalidResourceMime, "invalid app resource", "")

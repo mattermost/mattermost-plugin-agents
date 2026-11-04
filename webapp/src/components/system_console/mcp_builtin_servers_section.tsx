@@ -5,6 +5,8 @@ import React from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {Tag} from '@mattermost/compass-ui/components/tag';
+
 import {pluginIDFromServerOrigin} from '../../utils/tool_names';
 import {useABACSupport} from '../../utils/access_control';
 
@@ -74,11 +76,7 @@ export const BuiltInPluginServersSection = ({
             <ServersList>
                 <BuiltInServerCard
                     title={intl.formatMessage({defaultMessage: 'Mattermost'})}
-                    badge={(
-                        <TypeBadge>
-                            <FormattedMessage defaultMessage='Built-in'/>
-                        </TypeBadge>
-                    )}
+                    badge={<Tag label={<FormattedMessage defaultMessage='Built-in'/>}/>}
                     helpText={abacSupported && (
                         <FormattedMessage defaultMessage='Denying access to the built-in Mattermost server removes nearly all in-product Mattermost tools for matching users. This has broader impact than denying a single remote MCP server.'/>
                     )}
@@ -90,11 +88,7 @@ export const BuiltInPluginServersSection = ({
                         <BuiltInServerCard
                             key={server.url}
                             title={server.name || pluginID || intl.formatMessage({defaultMessage: 'Plugin server'})}
-                            badge={(
-                                <TypeBadge>
-                                    <FormattedMessage defaultMessage='Plugin'/>
-                                </TypeBadge>
-                            )}
+                            badge={<Tag label={<FormattedMessage defaultMessage='Plugin'/>}/>}
                             subtitle={pluginID ? intl.formatMessage(
                                 {defaultMessage: 'Plugin ID: {pluginID}'},
                                 {pluginID},
@@ -108,44 +102,41 @@ export const BuiltInPluginServersSection = ({
     );
 };
 
-const BuiltInSection = styled.div`
-    margin-top: 8px;
-    margin-bottom: 8px;
-`;
+const BuiltInSection = styled.div``;
 
 const BuiltInSectionHeader = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    margin-top: 16px;
+    gap: var(--spacing-xxxs);
 `;
 
 const BuiltInSectionTitle = styled.div`
-    font-weight: 600;
-    font-size: 16px;
+    font-family: var(--font-family-heading);
+    font-size: var(--font-size-200);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-200);
     color: var(--center-channel-color);
 `;
 
 const BuiltInSectionDescription = styled.div`
-    font-size: 12px;
+    font-size: var(--font-size-75);
     color: rgba(var(--center-channel-color-rgb), 0.64);
 `;
 
 const ServersList = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    margin-top: 16px;
-    margin-bottom: 16px;
+    gap: var(--spacing-l);
+    margin-top: var(--spacing-l);
 `;
 
 const ServerContainer = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: var(--spacing-xs);
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-    border-radius: 4px;
-    padding: 16px;
+    border-radius: var(--radius-s);
+    padding: var(--spacing-m);
     background-color: var(--center-channel-bg);
 `;
 
@@ -162,34 +153,24 @@ const ServerHeader = styled.div`
 const ReadOnlyTitleRow = styled.div`
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--spacing-xs);
     flex-wrap: wrap;
 `;
 
 const ReadOnlyServerTitle = styled.div`
-    font-weight: 600;
-    font-size: 16px;
+    font-weight: var(--font-weight-semibold);
+    font-size: var(--font-size-100);
+    line-height: var(--line-height-100);
     color: var(--center-channel-color);
 `;
 
 const ReadOnlySubtitle = styled.div`
-    font-size: 12px;
+    font-size: var(--font-size-75);
     color: rgba(var(--center-channel-color-rgb), 0.64);
 `;
 
 const ReadOnlyHelpText = styled.div`
-    font-size: 12px;
+    font-size: var(--font-size-75);
     color: rgba(var(--center-channel-color-rgb), 0.64);
     line-height: 1.5;
-`;
-
-const TypeBadge = styled.span`
-    display: inline-flex;
-    align-items: center;
-    padding: 2px 8px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--center-channel-bg);
-    background-color: rgba(var(--center-channel-color-rgb), 0.56);
-    border-radius: 10px;
 `;

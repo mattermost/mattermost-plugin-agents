@@ -8,6 +8,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,7 +31,8 @@ func TestDBBackedAgentInBotRegistry(t *testing.T) {
 	}
 
 	bot := NewBot(cfg, llm.ServiceConfig{ID: "svc-1", Type: "openai"}, mmBot, nil)
-	bots := &MMBots{}
+	bots := newTestMMBots(t, &mockConfig{})
+	bots.ensureBotsClusterMutex.(*plugintest.API).On("GetUser", mmBot.UserId).Return(&model.User{Id: mmBot.UserId, Username: mmBot.Username, IsBot: true}, nil)
 	bots.SetBotsForTesting([]*Bot{bot})
 
 	found := bots.GetBotByUsername("db-agent")

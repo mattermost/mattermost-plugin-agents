@@ -152,8 +152,6 @@ func TestToolUIMetaVisibleToModel(t *testing.T) {
 	}
 }
 
-func ptrBool(b bool) *bool { return &b }
-
 func TestParseResourceUIMeta(t *testing.T) {
 	tests := []struct {
 		name string
@@ -194,7 +192,7 @@ func TestParseResourceUIMeta(t *testing.T) {
 				},
 				Permissions:   map[string]map[string]any{"camera": {}},
 				Domain:        "example.com",
-				PrefersBorder: ptrBool(true),
+				PrefersBorder: new(true),
 			},
 		},
 		{
@@ -215,7 +213,7 @@ func TestParseResourceUIMeta(t *testing.T) {
 			meta: map[string]any{
 				"ui": map[string]any{"prefersBorder": false},
 			},
-			want: &AppResourceUIMeta{PrefersBorder: ptrBool(false)},
+			want: &AppResourceUIMeta{PrefersBorder: new(false)},
 		},
 		{
 			name: "malformed csp ignored, prefersBorder kept",
@@ -225,7 +223,7 @@ func TestParseResourceUIMeta(t *testing.T) {
 					"prefersBorder": true,
 				},
 			},
-			want: &AppResourceUIMeta{PrefersBorder: ptrBool(true)},
+			want: &AppResourceUIMeta{PrefersBorder: new(true)},
 		},
 	}
 

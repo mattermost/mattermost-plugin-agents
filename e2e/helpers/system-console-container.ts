@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { withDeadline } from './deadline';
 import MattermostContainer from './mmcontainer';
 
 /**
@@ -37,6 +38,8 @@ export interface MCPServerConfig {
     enabled?: boolean;
     baseURL?: string;
     headers?: Record<string, string>;
+    description?: string;
+    dmOnly?: boolean;
     clientID?: string;
     clientSecret?: string;
     tool_configs?: Array<{ name?: string; policy?: string; enabled?: boolean }>;
@@ -134,7 +137,7 @@ export async function RunSystemConsoleContainer(config: SystemConsolePluginConfi
         .withPlugin(filename, 'mattermost-ai', pluginConfig)
         .start();
 
-    await setupAdminUser(mattermost);
+    await withDeadline('Seeding the sysadmin user', 60000, () => setupAdminUser(mattermost));
     await mattermost.grantSelfServiceAgentPermissions();
 
     return mattermost;

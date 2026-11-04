@@ -5,7 +5,10 @@ package telemetry
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -16,6 +19,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
+	"google.golang.org/grpc/credentials"
 )
 
 const TracerName = "github.com/mattermost/mattermost-plugin-ai"
@@ -37,13 +41,60 @@ const (
 // ShutdownFunc is returned by Init and must be called to flush pending spans.
 type ShutdownFunc func(context.Context) error
 
+// OTLPOptions configures the OTLP gRPC exporter.
+type OTLPOptions struct {
+	// Endpoint is the collector's host:port.
+	Endpoint string
+	// TLS dials the endpoint over TLS (system root CAs) instead of plaintext.
+	TLS bool
+	// Headers are sent as gRPC metadata on every export, typically an
+	// Authorization header for a hosted collector. They are credentials:
+	// never log them.
+	Headers map[string]string
+}
+
+// Options selects and configures the trace output.
+type Options struct {
+	ServiceName    string
+	ServiceVersion string
+	Mode           OutputMode
+	// OTLP is required for OutputModeOTLP.
+	OTLP OTLPOptions
+	// Log is required for OutputModeLogs.
+	Log LogService
+}
+
+// ParseHeaders parses OTLP headers in the OTEL_EXPORTER_OTLP_HEADERS format:
+// comma-separated key=value pairs with percent-encoded values. The error never echoes a value, since
+// values are credentials.
+func ParseHeaders(raw string) (map[string]string, error) {
+	headers := map[string]string{}
+	for i, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(pair, "=")
+		key = strings.TrimSpace(key)
+		if !ok || key == "" {
+			return nil, fmt.Errorf("invalid OTLP header at position %d: expected key=value", i+1)
+		}
+		// Values are percent-encoded in this format (e.g. %2C for a comma).
+		decoded, err := url.PathUnescape(strings.TrimSpace(value))
+		if err != nil {
+			return nil, fmt.Errorf("invalid OTLP header at position %d: bad percent-encoding", i+1)
+		}
+		headers[key] = decoded
+	}
+	return headers, nil
+}
+
 // Init sets up the global TracerProvider for the selected output mode.
 //   - OutputModeOff registers a no-op provider.
-//   - OutputModeLogs writes finished spans through log.
+//   - OutputModeLogs writes finished spans through opts.Log.
 //   - OutputModeOTLP exports spans to the OTLP gRPC endpoint.
-//
-// log is required for OutputModeLogs; endpoint is required for OutputModeOTLP.
-func Init(ctx context.Context, serviceName, serviceVersion string, mode OutputMode, endpoint string, log LogService) (ShutdownFunc, error) {
+func Init(ctx context.Context, opts Options) (ShutdownFunc, error) {
+	mode, serviceName, serviceVersion, log := opts.Mode, opts.ServiceName, opts.ServiceVersion, opts.Log
 	if mode == "" || mode == OutputModeOff {
 		otel.SetTracerProvider(noop.NewTracerProvider())
 		return func(context.Context) error { return nil }, nil
@@ -61,7 +112,7 @@ func Init(ctx context.Context, serviceName, serviceVersion string, mode OutputMo
 		return nil, fmt.Errorf("create resource: %w", err)
 	}
 
-	opts := []sdktrace.TracerProviderOption{
+	tpOpts := []sdktrace.TracerProviderOption{
 		sdktrace.WithResource(res),
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 		sdktrace.WithIDGenerator(NewTurnIDGenerator()),
@@ -72,28 +123,38 @@ func Init(ctx context.Context, serviceName, serviceVersion string, mode OutputMo
 		if log == nil {
 			return nil, fmt.Errorf("log mode requires a LogService")
 		}
-		opts = append(opts, sdktrace.WithSpanProcessor(NewLogSpanProcessor(log)))
+		tpOpts = append(tpOpts, sdktrace.WithSpanProcessor(NewLogSpanProcessor(log)))
 	case OutputModeOTLP:
-		if endpoint == "" {
+		if opts.OTLP.Endpoint == "" {
 			return nil, fmt.Errorf("otlp mode requires an endpoint")
 		}
-		exporter, err := otlptracegrpc.New(ctx,
-			otlptracegrpc.WithEndpoint(endpoint),
-			otlptracegrpc.WithInsecure(),
-		)
+		exporter, err := otlptracegrpc.New(ctx, otlpExporterOptions(opts.OTLP)...)
 		if err != nil {
 			return nil, fmt.Errorf("create OTLP trace exporter: %w", err)
 		}
-		opts = append(opts, sdktrace.WithBatcher(exporter, sdktrace.WithBatchTimeout(5*time.Second)))
+		tpOpts = append(tpOpts, sdktrace.WithBatcher(newFilteringExporter(exporter), sdktrace.WithBatchTimeout(5*time.Second)))
 	default:
 		return nil, fmt.Errorf("unknown telemetry output mode: %q", mode)
 	}
 
-	tp := sdktrace.NewTracerProvider(opts...)
+	tp := sdktrace.NewTracerProvider(tpOpts...)
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 
 	return tp.Shutdown, nil
+}
+
+func otlpExporterOptions(o OTLPOptions) []otlptracegrpc.Option {
+	out := []otlptracegrpc.Option{otlptracegrpc.WithEndpoint(o.Endpoint)}
+	if o.TLS {
+		out = append(out, otlptracegrpc.WithTLSCredentials(credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12})))
+	} else {
+		out = append(out, otlptracegrpc.WithInsecure())
+	}
+	if len(o.Headers) > 0 {
+		out = append(out, otlptracegrpc.WithHeaders(o.Headers))
+	}
+	return out
 }
 
 // Tracer returns a named tracer from the global provider.

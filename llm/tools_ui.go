@@ -3,6 +3,8 @@
 
 package llm
 
+import "slices"
+
 // ToolUIVisibilityModel / ToolUIVisibilityApp are the values of the MCP Apps
 // tool visibility array (_meta.ui.visibility).
 const (
@@ -29,10 +31,5 @@ func (m *ToolUIMeta) VisibleToModel() bool {
 	if m == nil || len(m.Visibility) == 0 {
 		return true
 	}
-	for _, v := range m.Visibility {
-		if v == ToolUIVisibilityModel {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(m.Visibility, ToolUIVisibilityModel)
 }

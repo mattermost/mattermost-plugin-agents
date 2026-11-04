@@ -409,19 +409,16 @@ func TestSummarizeIncludesThreadPermalink(t *testing.T) {
 	}
 
 	tests := []struct {
-		name            string
-		team            *model.Team
-		expectedSegment string
+		name string
+		team *model.Team
 	}{
 		{
-			name:            "with team uses team name in permalink",
-			team:            &model.Team{Name: "engineering"},
-			expectedSegment: "engineering",
+			name: "with team uses redirect path",
+			team: &model.Team{Name: "engineering"},
 		},
 		{
-			name:            "without team falls back to _redirect path",
-			team:            nil,
-			expectedSegment: "_redirect",
+			name: "without team uses redirect path",
+			team: nil,
 		},
 	}
 
@@ -449,7 +446,7 @@ func TestSummarizeIncludesThreadPermalink(t *testing.T) {
 			conv, err := ts.store.GetConversation(result.ConversationID)
 			require.NoError(t, err)
 
-			expectedPermalink := "https://mm.example.com/" + tc.expectedSegment + "/pl/" + rootPostID + "?view=citation"
+			expectedPermalink := "https://mm.example.com/_redirect/pl/" + rootPostID + "?view=citation"
 			expectedTrailer := "Original thread: [permalink](" + expectedPermalink + ")"
 			assert.Contains(t, conv.SystemPrompt, expectedTrailer,
 				"summarize_thread system prompt must include the Original thread permalink trailer with the root post id interpolated")

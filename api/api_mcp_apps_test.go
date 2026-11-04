@@ -119,7 +119,7 @@ func TestResolveMCPAppsInfo(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mockAPI := &plugintest.API{}
 			for i := 1; i <= 10; i++ {
-				args := make([]interface{}, i)
+				args := make([]any, i)
 				for j := range args {
 					args[j] = mock.Anything
 				}

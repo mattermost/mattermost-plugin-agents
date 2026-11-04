@@ -52,6 +52,12 @@ func (p *SessionAuthenticationProvider) GetAuthenticatedUser(ctx context.Context
 	return user, nil
 }
 
+// GetAuthenticatedClientAndUser returns the client and user from one session
+// validation.
+func (p *SessionAuthenticationProvider) GetAuthenticatedClientAndUser(ctx context.Context) (*model.Client4, *model.User, error) {
+	return p.authenticatedClientAndUser(ctx)
+}
+
 // authenticatedClientAndUser resolves the session token from context, builds a
 // client with it, and validates the session by fetching the current user.
 func (p *SessionAuthenticationProvider) authenticatedClientAndUser(ctx context.Context) (*model.Client4, *model.User, error) {

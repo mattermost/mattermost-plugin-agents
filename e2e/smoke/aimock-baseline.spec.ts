@@ -3,12 +3,15 @@ import { Network } from 'testcontainers';
 
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
 import {
+    AIMockFixtureFile,
     buildCitationResponse,
     buildReasoningResponse,
     buildTextResponse,
     buildToolCallAndTextResponse,
     TITLE_GENERATION_PROMPT_PREFIX,
 } from 'helpers/aimock-fixtures';
+import { containerTest } from 'helpers/container-fixture';
+import { withDeadline } from 'helpers/deadline';
 import { RunAIMockContainer } from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
@@ -73,27 +76,26 @@ test.describe('aimock fixture builders', () => {
     });
 });
 
-test.describe('aimock sidecar HTTP', () => {
-    let network: Awaited<ReturnType<Network['start']>>;
+const sidecarTest = containerTest(async (own) => {
+    const network = own(await withDeadline('Creating the Docker network', 60000, () => new Network().start()));
+    const aimock = own(await RunAIMockSidecar(network, {
+        fixtures: buildTextResponse({
+            userMessage: TEXT_USER_MESSAGE,
+            content: TEXT_RESPONSE,
+            title: 'Aimock HTTP smoke',
+        }),
+    }));
+    return { aimock };
+});
+
+sidecarTest.describe('aimock sidecar HTTP', () => {
     let aimock: AIMockContainer;
 
-    test.beforeAll(async () => {
-        network = await new Network().start();
-        aimock = await RunAIMockSidecar(network, {
-            fixtures: buildTextResponse({
-                userMessage: TEXT_USER_MESSAGE,
-                content: TEXT_RESPONSE,
-                title: 'Aimock HTTP smoke',
-            }),
-        });
+    sidecarTest.beforeAll(async ({ containers }) => {
+        ({ aimock } = containers);
     });
 
-    test.afterAll(async () => {
-        await aimock?.stop();
-        await network?.stop();
-    });
-
-    test('matched chat completion streams expected text', async () => {
+    sidecarTest('matched chat completion streams expected text', async () => {
         const response = await aimock.postChatCompletion({
             model: 'gpt-mock',
             messages: [{ role: 'user', content: TEXT_USER_MESSAGE }],
@@ -106,7 +108,7 @@ test.describe('aimock sidecar HTTP', () => {
         expect(extractStreamedContent(body)).toBe(TEXT_RESPONSE);
     });
 
-    test('unmatched request returns 503 in strict mode', async () => {
+    sidecarTest('unmatched request returns 503 in strict mode', async () => {
         const response = await aimock.postChatCompletion({
             model: 'gpt-mock',
             messages: [{ role: 'user', content: 'unmatched-aimock-baseline-request' }],
@@ -117,28 +119,26 @@ test.describe('aimock sidecar HTTP', () => {
     });
 });
 
-test.describe('aimock Mattermost stack', () => {
+const stackTest = (fixtures: AIMockFixtureFile) => containerTest(async (own) => {
+    const mattermost = own(await RunAIMockContainer());
+    const aimock = own(await RunAIMockSidecar(mattermost.network, { fixtures }));
+    return { mattermost, aimock };
+});
+
+const textStackTest = stackTest(buildTextResponse({
+    userMessage: TEXT_USER_MESSAGE,
+    content: TEXT_RESPONSE,
+    title: 'Aimock stack smoke',
+}));
+
+textStackTest.describe('aimock Mattermost stack', () => {
     let mattermost: MattermostContainer;
-    let aimock: AIMockContainer;
 
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        mattermost = await RunAIMockContainer();
-        aimock = await RunAIMockSidecar(mattermost.network, {
-            fixtures: buildTextResponse({
-                userMessage: TEXT_USER_MESSAGE,
-                content: TEXT_RESPONSE,
-                title: 'Aimock stack smoke',
-            }),
-        });
+    textStackTest.beforeAll(async ({ containers }) => {
+        ({ mattermost } = containers);
     });
 
-    test.afterAll(async () => {
-        await aimock?.stop();
-        await mattermost?.stop();
-    });
-
-    test('RHS receives deterministic aimock response', async ({ page }) => {
+    textStackTest('RHS receives deterministic aimock response', async ({ page }) => {
         const mmPage = new MattermostPage(page);
         const aiPlugin = new AIPlugin(page);
 
@@ -150,30 +150,29 @@ test.describe('aimock Mattermost stack', () => {
     });
 });
 
+const reasoningStackTest = stackTest(buildReasoningResponse({
+    userMessage: REASONING_USER_MESSAGE,
+    reasoning: REASONING_CONTENT,
+    content: REASONING_TEXT,
+    title: 'Reasoning probe',
+}));
+
+const citationStackTest = stackTest(buildCitationResponse({
+    userMessage: CITATION_USER_MESSAGE,
+    content: CITATION_TEXT,
+    citations: [{ url: CITATION_URL, title: 'Aimock Baseline Docs' }],
+    title: 'Citation probe',
+}));
+
 test.describe('aimock schema probes', () => {
-    test.describe('reasoning via Bifrost chat completions', () => {
+    reasoningStackTest.describe('reasoning via Bifrost chat completions', () => {
         let mattermost: MattermostContainer;
-        let aimock: AIMockContainer;
 
-        test.beforeAll(async () => {
-            test.setTimeout(180000);
-            mattermost = await RunAIMockContainer();
-            aimock = await RunAIMockSidecar(mattermost.network, {
-                fixtures: buildReasoningResponse({
-                    userMessage: REASONING_USER_MESSAGE,
-                    reasoning: REASONING_CONTENT,
-                    content: REASONING_TEXT,
-                    title: 'Reasoning probe',
-                }),
-            });
+        reasoningStackTest.beforeAll(async ({ containers }) => {
+            ({ mattermost } = containers);
         });
 
-        test.afterAll(async () => {
-            await aimock?.stop();
-            await mattermost?.stop();
-        });
-
-        test('waitForReasoning succeeds with aimock reasoning fixture', async ({ page }) => {
+        reasoningStackTest('waitForReasoning succeeds with aimock reasoning fixture', async ({ page }) => {
             const mmPage = new MattermostPage(page);
             const aiPlugin = new AIPlugin(page);
             const llmBotHelper = new LLMBotPostHelper(page);
@@ -187,29 +186,14 @@ test.describe('aimock schema probes', () => {
         });
     });
 
-    test.describe('citation via webSearches metadata', () => {
+    citationStackTest.describe('citation via webSearches metadata', () => {
         let mattermost: MattermostContainer;
-        let aimock: AIMockContainer;
 
-        test.beforeAll(async () => {
-            test.setTimeout(180000);
-            mattermost = await RunAIMockContainer();
-            aimock = await RunAIMockSidecar(mattermost.network, {
-                fixtures: buildCitationResponse({
-                    userMessage: CITATION_USER_MESSAGE,
-                    content: CITATION_TEXT,
-                    citations: [{ url: CITATION_URL, title: 'Aimock Baseline Docs' }],
-                    title: 'Citation probe',
-                }),
-            });
+        citationStackTest.beforeAll(async ({ containers }) => {
+            ({ mattermost } = containers);
         });
 
-        test.afterAll(async () => {
-            await aimock?.stop();
-            await mattermost?.stop();
-        });
-
-        test('records whether native webSearches produce citation UI', async ({ page }) => {
+        citationStackTest('records whether native webSearches produce citation UI', async ({ page }) => {
             const mmPage = new MattermostPage(page);
             const aiPlugin = new AIPlugin(page);
             const llmBotHelper = new LLMBotPostHelper(page);

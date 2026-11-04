@@ -47,9 +47,7 @@ import (
 //	                  proxy); some ignore response_format, some reject it.
 //	anthropic         not positively known to be capable. Native structured
 //	                  output (output_config.format) exists only on recent
-//	                  Claude models; older ones reject it. Sending a schema
-//	                  also disables extended thinking (thinkingBlockedBySchema),
-//	                  so guessing here is costly.
+//	                  Claude models; older ones reject it.
 //	gemini            capable for gemini-* models of the 1.5+ generations
 //	                  (response_schema is part of the Gemini API from 1.5 on).
 //	                  The retired 1.0 generation, its legacy gemini-pro /

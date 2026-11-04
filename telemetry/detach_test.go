@@ -29,7 +29,7 @@ func TestDetachContext_NoCancelPropagation(t *testing.T) {
 
 	select {
 	case <-detached.Done():
-		t.Fatal("detached context must not be canceled when its source is canceled")
+		require.FailNow(t, "detached context must not be canceled when its source is canceled")
 	default:
 	}
 	require.NoError(t, detached.Err(), "detached context must not carry the parent's cancellation error")

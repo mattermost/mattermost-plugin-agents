@@ -7,6 +7,8 @@ const path = require('path');
 
 const webpack = require('webpack');
 
+const webAppExternals = require('@mattermost/shared/build/webpack-web-app-externals');
+
 const PLUGIN_ID = require('../plugin.json').id;
 
 const NPM_TARGET = process.env.npm_lifecycle_event; //eslint-disable-line no-process-env
@@ -75,32 +77,48 @@ const config = {
                 type: 'json',
             },
             {
+
+                // Plugins ship a single main.js, so CSS is injected at runtime.
+                // @mattermost/compass-ui class names are pre-hashed; re-hashing
+                // them via CSS modules would break the component styles.
+                test: /\.css$/,
+                use: [
+                    'style-loader',
+                    {
+                        loader: 'css-loader',
+                        options: {modules: false},
+                    },
+                ],
+            },
+            {
                 test: /\.(png|eot|tiff|svg|woff2|woff|ttf|gif|mp3|jpg|jpeg)$/,
                 type: 'asset/inline',
             },
         ],
     },
 
-    // The host Mattermost webapp supplies these as globals at runtime, so they
-    // are never bundled. Their versions in package.json exist only for types and
-    // tests and must stay in sync with what the host ships for the plugin's
-    // min_server_version — see webapp/channels/package.json and the lockfile in
-    // mattermost/mattermost. Upgrading one here without the host moving first
-    // means type-checking and tests run against a different version than
-    // production does.
-    externals: {
-        react: 'React',
-        'react-dom': 'ReactDOM',
-        'react-dom/client': 'ReactDOM',
-        'react/jsx-runtime': 'ReactJSXRuntime',
-        'react/jsx-dev-runtime': 'ReactJSXDevRuntime',
-        redux: 'Redux',
-        'react-redux': 'ReactRedux',
-        'prop-types': 'PropTypes',
-        'react-intl': 'ReactIntl',
-        'react-bootstrap': 'ReactBootstrap',
-        'react-router-dom': 'ReactRouterDom',
-    },
+    // The host Mattermost webapp supplies these as globals / shared modules at
+    // runtime, so they are never bundled. package.json versions exist only for
+    // types and tests and must stay in sync with what the host ships for the
+    // plugin's min_server_version — see webapp/channels/package.json and the
+    // lockfile in mattermost/mattermost. Upgrading one here without the host
+    // moving first means type-checking and tests run against a different
+    // version than production does.
+    //
+    // @mattermost/shared/* resolves via loadSharedDependency at runtime (same
+    // pattern as playbooks); third-party deps use window globals.
+    externals: (() => {
+        const [windowExternals, sharedCallback] = webAppExternals();
+        return [
+            {
+                ...windowExternals,
+                'react-dom/client': 'ReactDOM',
+                'react/jsx-runtime': 'ReactJSXRuntime',
+                'react/jsx-dev-runtime': 'ReactJSXDevRuntime',
+            },
+            sharedCallback,
+        ];
+    })(),
     output: {
         devtoolNamespace: PLUGIN_ID,
         path: path.join(__dirname, '/dist'),

@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -10,19 +11,17 @@ import { OpenAIMockContainer, RunOpenAIMocks, responseTest, responseTestText } f
 const username = 'regularuser';
 const password = 'regularuser';
 
+const test = containerTest(async (own) => {
+  const mattermost = own(await RunContainer());
+  const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+  return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
-// Setup for all tests in the file
-test.beforeAll(async () => {
-  mattermost = await RunContainer();
-  openAIMock = await RunOpenAIMocks(mattermost.network);
-});
-
-// Cleanup after all tests
-test.afterAll(async () => {
-  await openAIMock.stop();
-  await mattermost.stop();
+test.beforeAll(async ({ containers }) => {
+  ({ mattermost, openAIMock } = containers);
 });
 
 // Common test setup
@@ -60,7 +59,7 @@ test.describe('Direct Channel Creation', () => {
     await aiPlugin.sendMessage(`Testing new channel`);
 
     // Should see a response in the newly created channel
-    await expect(page.getByText(responseTestText)).toBeVisible({ timeout: 10000 });
+    await aiPlugin.expectBotPostText(responseTestText);
 
     // Verify channel creation was requested
     expect(channelCreationRequested).toBe(true);
@@ -87,12 +86,13 @@ test.describe('Direct Channel Creation', () => {
     const botSelector = page.getByTestId('bot-selector-rhs');
     await botSelector.click();
 
-    // Select first bot
-    const firstBot = page.getByRole('button', { name: /.*Bot.*/ }).first();
+    // Select first bot (from the Switch agent submenu)
+    await page.getByRole('menuitem', { name: 'Switch agent' }).click();
+    const firstBot = page.getByRole('menu', { name: 'Switch agent' }).getByRole('menuitem', { name: /.*Bot.*/ }).first();
     await firstBot.click();
 
     // Channel should be immediately available (no loading state)
-    await expect(page.getByText('Setting up chat channel...')).not.toBeVisible({ timeout: 1000 });
+    await expect(page.getByText('Setting up chat…')).not.toBeVisible({ timeout: 1000 });
 
     // Verify the text area is enabled
     await expect(aiPlugin.rhsPostTextarea).toBeEnabled();
@@ -102,7 +102,7 @@ test.describe('Direct Channel Creation', () => {
     await aiPlugin.sendMessage('Testing existing channel');
 
     // Should see a response
-    await expect(page.getByText(responseTestText)).toBeVisible({ timeout: 10000 });
+    await aiPlugin.expectBotPostText(responseTestText);
 
     // Verify no channel creation was requested
     expect(channelCreationRequested).toBe(false);

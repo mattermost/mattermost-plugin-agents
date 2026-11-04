@@ -6,7 +6,18 @@ import styled from 'styled-components';
 
 import {ChevronRightIcon} from '@mattermost/compass-icons/components';
 
+import {Spinner} from '@mattermost/compass-ui/components/spinner';
+
 import {CollapseChevron, CollapseHeaderRow} from './collapse_header';
+
+const ReasoningSpinner = () => (
+    <LoadingSpinner>
+        <Spinner
+            size='16'
+            aria-hidden={true}
+        />
+    </LoadingSpinner>
+);
 
 interface ReasoningDisplayProps {
     reasoningSummary: string;
@@ -45,7 +56,7 @@ export const ReasoningDisplay: React.FC<ReasoningDisplayProps> = ({
                 <CollapseChevron $expanded={false}>
                     <ChevronRightIcon/>
                 </CollapseChevron>
-                {isReasoningLoading && <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>}
+                {isReasoningLoading && <ReasoningSpinner/>}
                 <span>{'Thinking'}</span>
             </MinimalReasoningContainer>
         );
@@ -60,7 +71,7 @@ export const ReasoningDisplay: React.FC<ReasoningDisplayProps> = ({
                 <CollapseChevron $expanded={true}>
                     <ChevronRightIcon/>
                 </CollapseChevron>
-                {isReasoningLoading && <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>}
+                {isReasoningLoading && <ReasoningSpinner/>}
                 <span>{'Thinking'}</span>
             </ExpandedReasoningHeader>
             {reasoningSummary && (
@@ -90,28 +101,13 @@ const ExpandedReasoningHeader = styled(CollapseHeaderRow)`
 	margin-bottom: 12px;
 `;
 
-const SpinnerWrapper = styled.div`
+// e2e locates the reasoning spinner by this component's class name.
+const LoadingSpinner = styled.div`
 	display: flex;
 	align-items: center;
 	justify-content: center;
 	width: 16px;
 	height: 16px;
-`;
-
-export const LoadingSpinner = styled.div`
-	display: inline-block;
-	width: 14px;
-	height: 14px;
-	border: 2px solid rgba(var(--center-channel-color-rgb), 0.16);
-	border-radius: 50%;
-	border-top-color: rgba(var(--center-channel-color-rgb), 0.75);
-	animation: spin 1s linear infinite;
-
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
 `;
 
 export const MinimalReasoningContainer = styled(CollapseHeaderRow)`

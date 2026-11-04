@@ -57,7 +57,7 @@ func newMockEmbeddedMCPServer(toolNames []string) *mockEmbeddedMCPServer {
 	return &mockEmbeddedMCPServer{mcpServer: server}
 }
 
-func (m *mockEmbeddedMCPServer) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*gosdkmcp.InMemoryTransport, error) {
+func (m *mockEmbeddedMCPServer) CreateClientTransport(userID, sessionID, _ string, pluginAPI *pluginapi.Client) (*gosdkmcp.InMemoryTransport, error) {
 	serverTransport, clientTransport := gosdkmcp.NewInMemoryTransports()
 	go func() {
 		_ = m.mcpServer.Run(context.Background(), serverTransport)
@@ -859,7 +859,7 @@ func TestBridgeGetBots(t *testing.T) {
 				}, mmBot, nil)
 				allBots = append(allBots, bot)
 			}
-			e.bots.SetBotsForTesting(allBots)
+			e.setBots(allBots...)
 
 			// Create bridge client and make request
 			client := e.CreateBridgeClient()
@@ -1285,6 +1285,58 @@ func TestBridgeClientAgentCompletionAllowedToolsEnablesAutoRun(t *testing.T) {
 	require.Len(t, fakeLLM.LastConversation.Context.Tools.GetTools(), 1)
 }
 
+// Bridge clients are other plugins that decode tool call events as a bare
+// list of calls; the runner's internal batch phases must not leak onto the
+// wire.
+func TestBridgeClientAgentCompletionStreamKeepsToolCallWireFormat(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := e.setupMCPWithEligibleTools(t, []string{"eligible_tool"})
+	defer server.Close()
+
+	e.setupTestBot(llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	})
+
+	fakeLLM := NewFakeLLM("auto run enabled")
+	fakeLLM.StreamEventSequence = fakeLLMAutoRunSequence("tc1", "eligible_tool", "auto run enabled")
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetLLMForTest(fakeLLM)
+	}
+
+	client := e.CreateBridgeClient()
+	result, err := client.AgentCompletionStream(testBotUserID, bridgeclient.CompletionRequest{
+		Posts:        []bridgeclient.Post{{Role: "user", Message: "Use the tool"}},
+		AllowedTools: []string{"eligible_tool"},
+		UserID:       testUserID,
+	})
+	require.NoError(t, err)
+
+	var toolCallEvents [][]any
+	for event := range result.Stream {
+		require.NotEqual(t, llm.EventTypeToolCallBatch, event.Type)
+		if event.Type == llm.EventTypeToolCalls {
+			calls, ok := event.Value.([]any)
+			require.True(t, ok, "tool call event value must be a list of calls, got %T", event.Value)
+			toolCallEvents = append(toolCallEvents, calls)
+		}
+	}
+
+	require.Len(t, toolCallEvents, 2, "the executing and resolved batches both reach the client")
+	for _, calls := range toolCallEvents {
+		require.Len(t, calls, 1)
+		call, ok := calls[0].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "tc1", call["id"])
+	}
+}
+
 // fakeBridgeMCPToolProvider is a minimal llmcontext.MCPToolProvider with
 // separate user-mode and service-account catalogs. Unlike
 // testLLMContextToolProvider (which feeds the built-in tool path), this exercises
@@ -1293,19 +1345,34 @@ type fakeBridgeMCPToolProvider struct {
 	tools   []llm.Tool // user-mode catalog
 	saTools []llm.Tool // service-account catalog (fail-closed subset)
 
+	// dmOnlyOrigins mirrors ServerConfig.DMOnly: selections that exclude
+	// DM-only servers get none of these origins' tools.
+	dmOnlyOrigins map[string]bool
+
 	userCalls      []string
 	saCalls        []string
 	saInvokerCalls []string
 }
 
-func (p *fakeBridgeMCPToolProvider) GetToolsWithSelection(_ context.Context, req mcp.CatalogRequest, _ mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
+func (p *fakeBridgeMCPToolProvider) GetToolsWithSelection(_ context.Context, req mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
+	tools := p.tools
 	if req.ServiceAccount {
 		p.saCalls = append(p.saCalls, req.RemoteOwnerID)
 		p.saInvokerCalls = append(p.saInvokerCalls, req.InvokingUserID)
-		return p.saTools, nil
+		tools = p.saTools
+	} else {
+		p.userCalls = append(p.userCalls, req.InvokingUserID)
 	}
-	p.userCalls = append(p.userCalls, req.InvokingUserID)
-	return p.tools, nil
+	if !selection.ExcludeDMOnlyServers {
+		return tools, nil
+	}
+	var selected []llm.Tool
+	for _, tool := range tools {
+		if !p.dmOnlyOrigins[tool.ServerOrigin] {
+			selected = append(selected, tool)
+		}
+	}
+	return selected, nil
 }
 
 // setupBridgeMCPProvider wires the context builder with a real MCP tool provider
@@ -1917,4 +1984,70 @@ func TestBridgeClientAgentCompletionAllowedToolsFailsWhenNoEligibleToolsAvailabl
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no eligible tools available for this agent")
+}
+
+// The bridge cannot tell where a calling plugin will put the results, so a
+// DM-only server is never available to it, even when the caller names the
+// requester's DM with the agent.
+func TestBridgeExcludesDMOnlyServers(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+	const salesforceOrigin = "https://salesforce.example.com"
+
+	tests := []struct {
+		name      string
+		channelID string
+	}{
+		{name: "no channel"},
+		{name: "the requester's DM with the agent", channelID: testChannelID},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			provider := e.setupBridgeMCPProvider([]llm.Tool{
+				bridgeMCPTool("salesforce", "query_accounts", salesforceOrigin),
+				bridgeMCPTool("mattermost", "search_posts", embeddedOrigin),
+			})
+			provider.dmOnlyOrigins = map[string]bool{salesforceOrigin: true}
+			e.setupTestBot(llm.BotConfig{
+				Name:                  "testbot",
+				DisplayName:           "Test Bot",
+				UserAccessLevel:       llm.UserAccessLevelAll,
+				ChannelAccessLevel:    llm.ChannelAccessLevelAll,
+				AutoEnableNewMCPTools: true,
+			})
+			e.mockAPI.On("GetChannel", testChannelID).Return(&model.Channel{
+				Id:   testChannelID,
+				Type: model.ChannelTypeDirect,
+				Name: model.GetDMNameFromIds(testUserID, testBotUserID),
+			}, nil).Maybe()
+
+			fakeLLM := NewFakeLLM("done")
+			for _, bot := range e.bots.GetAllBots() {
+				bot.SetLLMForTest(fakeLLM)
+			}
+			client := e.CreateBridgeClient()
+
+			tools, err := client.GetAgentTools(testBotUserID, testUserID)
+			require.NoError(t, err)
+			names := make([]string, 0, len(tools))
+			for _, tool := range tools {
+				names = append(names, tool.Name)
+			}
+			require.Equal(t, []string{"mattermost__search_posts"}, names)
+
+			_, err = client.AgentCompletion(testBotUserID, bridgeclient.CompletionRequest{
+				Posts:        []bridgeclient.Post{{Role: "user", Message: "biggest accounts?"}},
+				AllowedTools: []string{"salesforce__query_accounts"},
+				UserID:       testUserID,
+				ChannelID:    tt.channelID,
+			})
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "is not eligible or not available for this agent")
+			require.Empty(t, fakeLLM.AllRequests, "a DM-only tool must not reach the model through the bridge")
+		})
+	}
 }

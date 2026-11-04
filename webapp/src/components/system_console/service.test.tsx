@@ -5,6 +5,8 @@ import React from 'react';
 import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
+import {chooseOption, getSelect, optionLabels, selectedLabel} from '../../../tests/compass_select';
+
 import Service, {ServiceFields, type LLMService} from './service';
 
 jest.mock('react-intl', () => {
@@ -361,25 +363,25 @@ describe('ServiceFields fallback selector', () => {
             </IntlProvider>,
         );
         await waitFor(() => expect(fetchModels).toHaveBeenCalled());
-        const fallbackSelect = screen.getByText('No fallback').closest('select') as HTMLSelectElement;
+        const fallbackSelect = getSelect('Fallback Service');
         return {...result, onChange, fallbackSelect};
     }
 
     it('defaults to "No fallback" when no fallback is configured', async () => {
         const {fallbackSelect} = await renderFallback(current, [current, other]);
-        expect(fallbackSelect.value).toBe('');
+        expect(selectedLabel(fallbackSelect)).toBe('No fallback');
     });
 
     it('excludes the current service from the options but lists the others', async () => {
         const {fallbackSelect} = await renderFallback(current, [current, other]);
-        const optionValues = Array.from(fallbackSelect.options).map((o) => o.value);
-        expect(optionValues).not.toContain(current.id);
-        expect(optionValues).toContain(other.id);
+        const labels = optionLabels(fallbackSelect);
+        expect(labels).not.toContain(current.name);
+        expect(labels).toContain(other.name);
     });
 
     it('writes fallbackServiceID when a service is selected', async () => {
         const {fallbackSelect, onChange} = await renderFallback(current, [current, other]);
-        fireEvent.change(fallbackSelect, {target: {value: other.id}});
+        chooseOption(fallbackSelect, other.name);
         expect(onChange).toHaveBeenCalledWith(expect.objectContaining({fallbackServiceID: other.id}));
     });
 
@@ -388,7 +390,7 @@ describe('ServiceFields fallback selector', () => {
         useIsLicensedFor.mockReturnValue(false);
 
         const empty = await renderFallback(current, [current, other]);
-        expect(empty.fallbackSelect.disabled).toBe(true);
+        expect((empty.fallbackSelect as HTMLButtonElement).disabled).toBe(true);
         expect(screen.getByText('Enterprise Advanced')).toBeTruthy();
         empty.unmount();
 
@@ -397,10 +399,10 @@ describe('ServiceFields fallback selector', () => {
             {...current, fallbackServiceID: other.id},
             [current, other, third],
         );
-        expect(configured.fallbackSelect.disabled).toBe(false);
-        fireEvent.change(configured.fallbackSelect, {target: {value: third.id}});
+        expect((configured.fallbackSelect as HTMLButtonElement).disabled).toBe(false);
+        chooseOption(configured.fallbackSelect, third.name);
         expect(configured.onChange).not.toHaveBeenCalled();
-        fireEvent.change(configured.fallbackSelect, {target: {value: ''}});
+        chooseOption(configured.fallbackSelect, 'No fallback');
         expect(configured.onChange).toHaveBeenCalledWith(expect.objectContaining({fallbackServiceID: ''}));
 
         useIsLicensedFor.mockReturnValue(true);
@@ -416,15 +418,14 @@ describe('ServiceFields structured output policy selector', () => {
     async function renderPolicy(service: LLMService) {
         const {onChange, ...result} = renderFields(service);
         await waitFor(() => expect(fetchModels).toHaveBeenCalled());
-        const policySelect = screen.getByText('Auto (recommended)').closest('select') as HTMLSelectElement;
+        const policySelect = getSelect('Structured output');
         return {...result, onChange, policySelect};
     }
 
     it('offers auto, native and prompt fallback with help text explaining the fallback chain', async () => {
         const {policySelect} = await renderPolicy(baseService);
 
-        expect(Array.from(policySelect.options).map((o) => o.value)).toEqual(['', 'native', 'prompt_fallback']);
-        expect(Array.from(policySelect.options).map((o) => o.textContent)).toEqual([
+        expect(optionLabels(policySelect)).toEqual([
             'Auto (recommended)',
             'Native supported',
             'Prompt fallback',
@@ -433,35 +434,31 @@ describe('ServiceFields structured output policy selector', () => {
     });
 
     const storedValueCases: {description: string; service: LLMService; selected: string}[] = [
-        {description: 'a service saved before the policy field existed', service: baseService, selected: ''},
-        {description: 'an empty stored value', service: {...baseService, structuredOutputPolicy: ''}, selected: ''},
-        {description: 'an explicit auto value', service: {...baseService, structuredOutputPolicy: 'auto'}, selected: ''},
-        {description: 'a native value', service: {...baseService, structuredOutputPolicy: 'native'}, selected: 'native'},
-        {description: 'a prompt fallback value', service: {...baseService, structuredOutputPolicy: 'prompt_fallback'}, selected: 'prompt_fallback'},
-        {description: 'a value only a newer server knows about', service: {...baseService, structuredOutputPolicy: 'something_new'}, selected: ''},
+        {description: 'a service saved before the policy field existed', service: baseService, selected: 'Auto (recommended)'},
+        {description: 'an empty stored value', service: {...baseService, structuredOutputPolicy: ''}, selected: 'Auto (recommended)'},
+        {description: 'an explicit auto value', service: {...baseService, structuredOutputPolicy: 'auto'}, selected: 'Auto (recommended)'},
+        {description: 'a native value', service: {...baseService, structuredOutputPolicy: 'native'}, selected: 'Native supported'},
+        {description: 'a prompt fallback value', service: {...baseService, structuredOutputPolicy: 'prompt_fallback'}, selected: 'Prompt fallback'},
+        {description: 'a value only a newer server knows about', service: {...baseService, structuredOutputPolicy: 'something_new'}, selected: 'Auto (recommended)'},
     ];
 
-    it.each(storedValueCases)('selects "$selected" for $description', async ({service, selected}) => {
+    it.each(storedValueCases)('shows "$selected" for $description', async ({service, selected}) => {
         const {policySelect} = await renderPolicy(service);
-
-        // Assert on the selected option: select.value reads as the empty string
-        // both when Auto is selected and when nothing is selected at all.
-        expect(policySelect.selectedIndex).not.toBe(-1);
-        expect(policySelect.options[policySelect.selectedIndex].value).toBe(selected);
+        expect(selectedLabel(policySelect)).toBe(selected);
     });
 
     const writeCases = [
-        {selected: 'native'},
-        {selected: 'prompt_fallback'},
+        {label: 'Native supported', stored: 'native'},
+        {label: 'Prompt fallback', stored: 'prompt_fallback'},
 
         // Auto is stored as the empty string so untouched services need no migration.
-        {selected: ''},
+        {label: 'Auto (recommended)', stored: ''},
     ];
 
-    it.each(writeCases)('writes "$selected" to the service when selected', async ({selected}) => {
+    it.each(writeCases)('writes "$stored" when "$label" is selected', async ({label, stored}) => {
         const {policySelect, onChange} = await renderPolicy({...baseService, structuredOutputPolicy: 'native'});
-        fireEvent.change(policySelect, {target: {value: selected}});
-        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({structuredOutputPolicy: selected}));
+        chooseOption(policySelect, label);
+        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({structuredOutputPolicy: stored}));
     });
 });
 
@@ -527,8 +524,7 @@ describe('ServiceFields Cohere North', () => {
 
     it('forces useResponsesAPI on when switching to north', () => {
         const {onChange} = renderFields(baseService);
-        const typeSelect = screen.getByText('Anthropic').closest('select') as HTMLSelectElement;
-        fireEvent.change(typeSelect, {target: {value: 'north'}});
+        chooseOption(getSelect('Service type'), 'Cohere North');
         expect(onChange).toHaveBeenCalledWith(expect.objectContaining({type: 'north', useResponsesAPI: true}));
     });
 

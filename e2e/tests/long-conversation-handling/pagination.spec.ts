@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -12,12 +13,17 @@ import { OpenAIMockContainer, RunOpenAIMocks, responseTest, responseTestText } f
 const username = 'regularuser';
 const password = 'regularuser';
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
-test.beforeAll(async () => {
-    mattermost = await RunContainer();
-    openAIMock = await RunOpenAIMocks(mattermost.network);
+test.beforeAll(async ({ containers }) => {
+    ({ mattermost, openAIMock } = containers);
 });
 
 test.beforeEach(async ({ page }) => {
@@ -33,11 +39,6 @@ test.beforeEach(async ({ page }) => {
     
     // Note: Since setupTestPage does login, we can't easily do it in beforeEach without logging in every time.
     // Instead, we'll modify the tests to call resetState() after setup.
-});
-
-test.afterAll(async () => {
-    await openAIMock.stop();
-    await mattermost.stop();
 });
 
 async function setupTestPage(page) {
@@ -56,9 +57,6 @@ async function setupTestPage(page) {
     await aiPlugin.appBarIcon.waitFor({ state: 'visible', timeout: 30000 });
     await expect(aiPlugin.appBarIcon).toBeVisible({ timeout: 5000 });
 
-    // Small delay to ensure plugin is fully interactive
-    await page.waitForTimeout(500);
-
     return { mmPage, aiPlugin };
 }
 
@@ -72,14 +70,12 @@ test.describe('Long Conversation Handling - Creating Long Conversations', () => 
         // Send multiple message pairs (reduced to 10 for performance)
         for (let i = 1; i <= 10; i++) {
             await openAIMock.addCompletionMock(responseTest);
-            await aiPlugin.sendMessage(`Message ${i}`);
-            await aiPlugin.waitForBotResponse(responseTestText);
+            await aiPlugin.sendMessageAndWaitForReply(`Message ${i}`, responseTestText);
         }
 
         // Verify all messages are present in the conversation
-        const rhsContainer = page.getByTestId('mattermost-ai-rhs');
-        await expect(rhsContainer.getByText('Message 1', { exact: true })).toBeVisible();
-        await expect(rhsContainer.getByText('Message 10')).toBeVisible();
+        await aiPlugin.expectUserPostText('Message 1');
+        await aiPlugin.expectUserPostText('Message 10');
 
         // RHS should still be functional
         await expect(aiPlugin.rhsPostTextarea).toBeVisible();
@@ -92,19 +88,16 @@ test.describe('Long Conversation Handling - Creating Long Conversations', () => 
 
         // Short message
         await openAIMock.addCompletionMock(responseTest);
-        await aiPlugin.sendMessage('Hi');
-        await aiPlugin.waitForBotResponse(responseTestText);
+        await aiPlugin.sendMessageAndWaitForReply('Hi', responseTestText);
 
         // Medium message
         await openAIMock.addCompletionMock(responseTest);
-        await aiPlugin.sendMessage('Can you help me understand how to use the API endpoints for our new feature?');
-        await aiPlugin.waitForBotResponse(responseTestText);
+        await aiPlugin.sendMessageAndWaitForReply('Can you help me understand how to use the API endpoints for our new feature?', responseTestText);
 
         // Long message
         const longMessage = 'A'.repeat(500);
         await openAIMock.addCompletionMock(responseTest);
-        await aiPlugin.sendMessage(longMessage);
-        await aiPlugin.waitForBotResponse(responseTestText);
+        await aiPlugin.sendMessageAndWaitForReply(longMessage, responseTestText);
 
         // All messages should be handled successfully
         const rhsContainer = page.getByTestId('mattermost-ai-rhs');
@@ -121,17 +114,14 @@ test.describe('Long Conversation Handling - Scrolling', () => {
         // Send several messages to create scrollable content (reduced to 5 for performance)
         for (let i = 1; i <= 5; i++) {
             await openAIMock.addCompletionMock(responseTest);
-            await aiPlugin.sendMessage(`Message ${i}`);
-            await aiPlugin.waitForBotResponse(responseTestText);
+            await aiPlugin.sendMessageAndWaitForReply(`Message ${i}`, responseTestText);
         }
 
         // Send one more message and verify it's visible (auto-scrolled)
         await openAIMock.addCompletionMock(responseTest);
-        await aiPlugin.sendMessage('Latest message');
-        await aiPlugin.waitForBotResponse(responseTestText);
+        await aiPlugin.sendMessageAndWaitForReply('Latest message', responseTestText);
 
-        const rhsContainer = page.getByTestId('mattermost-ai-rhs');
-        await expect(rhsContainer.getByText('Latest message')).toBeVisible();
+        await aiPlugin.expectUserPostText('Latest message');
     });
 
     test('Manual scrolling works in long conversation', async ({ page }) => {
@@ -142,8 +132,7 @@ test.describe('Long Conversation Handling - Scrolling', () => {
         // Create enough messages to require scrolling (reduced to 8 for performance)
         for (let i = 1; i <= 8; i++) {
             await openAIMock.addCompletionMock(responseTest);
-            await aiPlugin.sendMessage(`Test message ${i}`);
-            await aiPlugin.waitForBotResponse(responseTestText);
+            await aiPlugin.sendMessageAndWaitForReply(`Test message ${i}`, responseTestText);
         }
 
         // Try to scroll up in the conversation
@@ -166,8 +155,7 @@ test.describe('Long Conversation Handling - UI Responsiveness', () => {
         // Create 5 message exchanges (reduced for performance)
         for (let i = 1; i <= 5; i++) {
             await openAIMock.addCompletionMock(responseTest);
-            await aiPlugin.sendMessage(`Performance test ${i}`);
-            await aiPlugin.waitForBotResponse(responseTestText);
+            await aiPlugin.sendMessageAndWaitForReply(`Performance test ${i}`, responseTestText);
         }
 
         // Verify textarea is still responsive
@@ -188,8 +176,7 @@ test.describe('Long Conversation Handling - UI Responsiveness', () => {
         // Create first conversation (reduced to 5 for performance)
         for (let i = 1; i <= 5; i++) {
             await openAIMock.addCompletionMock(responseTest);
-            await aiPlugin.sendMessage(`First conv ${i}`);
-            await aiPlugin.waitForBotResponse(responseTestText);
+            await aiPlugin.sendMessageAndWaitForReply(`First conv ${i}`, responseTestText);
         }
 
         // Start new conversation
@@ -198,8 +185,7 @@ test.describe('Long Conversation Handling - UI Responsiveness', () => {
         // Create second conversation
         for (let i = 1; i <= 5; i++) {
             await openAIMock.addCompletionMock(responseTest);
-            await aiPlugin.sendMessage(`Second conv ${i}`);
-            await aiPlugin.waitForBotResponse(responseTestText);
+            await aiPlugin.sendMessageAndWaitForReply(`Second conv ${i}`, responseTestText);
         }
 
         // Switch back to first conversation via history
@@ -209,6 +195,6 @@ test.describe('Long Conversation Handling - UI Responsiveness', () => {
 
         // Should load smoothly
         const rhsContainer = page.getByTestId('mattermost-ai-rhs');
-        await expect(rhsContainer.getByText('First conv 1', { exact: true })).toBeVisible({ timeout: 10000 });
+        await expect(rhsContainer.getByTestId('post-message-text').getByText('First conv 1', { exact: true })).toBeVisible({ timeout: 10000 });
     });
 });

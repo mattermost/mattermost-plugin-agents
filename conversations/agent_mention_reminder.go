@@ -29,9 +29,10 @@ const (
 // post in the thread was authored by an AI agent. The ephemeral uses a custom
 // post type so the webapp can render an inline "click here to loop in" link.
 //
-// This is a no-op for top-level posts, DM channels, and threads whose previous
-// post was authored by a human.
-func (c *Conversations) maybeNotifyAgentMentionNeeded(ctx context.Context, post *model.Post, channel *model.Channel) {
+// This is a no-op for top-level posts, DM channels, threads whose previous
+// post was authored by a human, and threads whose previous post was authored
+// by the agent with user ID skipBotID (when non-empty).
+func (c *Conversations) maybeNotifyAgentMentionNeeded(ctx context.Context, post *model.Post, channel *model.Channel, skipBotID string) {
 	if post == nil || channel == nil {
 		return
 	}
@@ -52,7 +53,7 @@ func (c *Conversations) maybeNotifyAgentMentionNeeded(ctx context.Context, post 
 		c.mmClient.LogDebug("agent mention reminder: failed to load thread", "error", err.Error(), "post_id", post.Id)
 		return
 	}
-	if prev == nil {
+	if prev == nil || (skipBotID != "" && prev.UserId == skipBotID) {
 		return
 	}
 

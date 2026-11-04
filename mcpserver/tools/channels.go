@@ -4,10 +4,11 @@
 package tools
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -156,17 +157,7 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	}
 
 	// Determine team display name; DMs/Groups have no team
-	channelDisplayName := channel.DisplayName
-	if channelDisplayName == "" {
-		switch channel.Type {
-		case model.ChannelTypeDirect:
-			channelDisplayName = "Direct Message"
-		case model.ChannelTypeGroup:
-			channelDisplayName = "Group Message"
-		default:
-			channelDisplayName = channel.Name
-		}
-	}
+	channelDisplayName := channelDisplayNameOrFallback(channel)
 
 	teamDisplayName := ""
 	if channel.TeamId == "" {
@@ -214,8 +205,8 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	}
 
 	// Sort chronologically (oldest first) for natural reading order
-	sort.Slice(filteredPosts, func(i, j int) bool {
-		return filteredPosts[i].CreateAt < filteredPosts[j].CreateAt
+	slices.SortFunc(filteredPosts, func(a, b *model.Post) int {
+		return cmp.Compare(a.CreateAt, b.CreateAt)
 	})
 
 	// Collect unique user IDs and fetch all at once
@@ -414,10 +405,13 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 	channel := channels[0]
 
 	// Get team info
+	// DM and group message channels have no team.
 	var teamName string
-	team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
-	if teamErr == nil {
-		teamName = team.DisplayName
+	if channel.TeamId != "" {
+		team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
+		if teamErr == nil {
+			teamName = team.DisplayName
+		}
 	}
 
 	// Get member count
@@ -433,6 +427,7 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 	format.WriteChannel(&result, format.ChannelEntry{
 		HeaderLabel: "Channel Information:",
 		Channel:     channel,
+		DisplayName: channelDisplayNameOrFallback(channel),
 		TeamName:    teamName,
 		TeamID:      channel.TeamId,
 		MemberCount: memberCount,
@@ -480,7 +475,7 @@ func (p *MattermostToolProvider) formatMultipleChannels(ctx context.Context, cli
 		// Get team info from cache or fetch
 		var teamName string
 		team, exists := teamCache[channel.TeamId]
-		if !exists {
+		if !exists && channel.TeamId != "" {
 			fetchedTeam, _, err := client.GetTeam(ctx, channel.TeamId, "")
 			if err == nil {
 				team = fetchedTeam
@@ -499,8 +494,9 @@ func (p *MattermostToolProvider) formatMultipleChannels(ctx context.Context, cli
 		}
 
 		format.WriteChannel(&result, format.ChannelEntry{
-			HeaderLabel: fmt.Sprintf("%d. %s", i+1, channel.DisplayName),
+			HeaderLabel: fmt.Sprintf("%d. %s", i+1, channelDisplayNameOrFallback(channel)),
 			Channel:     channel,
+			DisplayName: channelDisplayNameOrFallback(channel),
 			TeamName:    teamName,
 			TeamID:      channel.TeamId,
 			MemberCount: memberCount,
@@ -823,17 +819,7 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 	fmt.Fprintf(&result, "User Channels (page %d, showing %d of %d channels):\n\n", args.Page, len(channels), totalCount)
 
 	for i, channel := range channels {
-		displayName := channel.DisplayName
-		if displayName == "" {
-			switch channel.Type {
-			case model.ChannelTypeDirect:
-				displayName = "Direct Message"
-			case model.ChannelTypeGroup:
-				displayName = "Group Message"
-			default:
-				displayName = channel.Name
-			}
-		}
+		displayName := channelDisplayNameOrFallback(channel)
 
 		var teamName string
 		var teamID string
@@ -847,6 +833,7 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 		format.WriteChannel(&result, format.ChannelEntry{
 			HeaderLabel: fmt.Sprintf("%d. **%s**", i+1+start, displayName),
 			Channel:     channel,
+			DisplayName: channelDisplayNameOrFallback(channel),
 			TeamName:    teamName,
 			TeamID:      teamID,
 			MemberCount: -1,
@@ -1134,8 +1121,9 @@ func (p *MattermostToolProvider) formatChannelList(ctx context.Context, client *
 			}
 		}
 		format.WriteChannel(&result, format.ChannelEntry{
-			HeaderLabel: fmt.Sprintf("%d. %s", i+1, channel.DisplayName),
+			HeaderLabel: fmt.Sprintf("%d. %s", i+1, channelDisplayNameOrFallback(channel)),
 			Channel:     channel,
+			DisplayName: channelDisplayNameOrFallback(channel),
 			TeamName:    teamName,
 			TeamID:      channel.TeamId,
 			MemberCount: -1,

@@ -53,7 +53,7 @@ func TestServerLifecycle(t *testing.T) {
 	case runErr := <-errCh:
 		require.ErrorIs(t, runErr, http.ErrServerClosed)
 	case <-time.After(2 * time.Second):
-		t.Fatal("Run did not return after Shutdown")
+		require.FailNow(t, "Run did not return after Shutdown")
 	}
 
 	_, err = http.Get("http://" + server.Addr() + "/sandbox.html")

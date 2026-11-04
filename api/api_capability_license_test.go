@@ -141,15 +141,6 @@ func capabilityRouteTests() []capabilityRouteTest {
 			setup:    setupChannelRoute,
 		},
 		{
-			name:     "search query",
-			method:   http.MethodPost,
-			path:     "/search?botUsername=permtest",
-			body:     `{"query":"hello"}`,
-			cap:      enterprise.CapSemanticSearch,
-			minLevel: enterprise.LevelEnterprise,
-			setup:    setupSearchRoute,
-		},
-		{
 			name:     "search run",
 			method:   http.MethodPost,
 			path:     "/search/run?botUsername=permtest",

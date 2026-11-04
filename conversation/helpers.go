@@ -23,8 +23,9 @@ func textBlocks(message string) []ContentBlock {
 }
 
 // userBlocksWithAttachments emits a text block followed by image/file blocks
-// for each fileID. A failed GetFileInfo is logged and the bad ID is skipped
-// so one deleted or unreadable attachment does not poison the whole turn.
+// for each fileID. A failed GetFileInfo is logged and still yields a bare file
+// block, so one unreadable attachment neither poisons the turn nor vanishes:
+// BlocksToPost re-checks it and renders a placeholder if it still fails.
 func userBlocksWithAttachments(message string, fileIDs []string, mmClient mmapi.Client) []ContentBlock {
 	blocks := textBlocks(message)
 	if mmClient == nil {
@@ -32,10 +33,11 @@ func userBlocksWithAttachments(message string, fileIDs []string, mmClient mmapi.
 	}
 	for _, fileID := range fileIDs {
 		fileInfo, err := mmClient.GetFileInfo(fileID)
-		if err != nil {
-			if !errors.Is(err, mmapi.ErrFileActionForbidden) {
+		if err != nil || fileInfo == nil {
+			if err != nil && !errors.Is(err, mmapi.ErrFileActionForbidden) {
 				mmClient.LogError("failed to get file info for user attachment", "error", err, "file_id", fileID)
 			}
+			blocks = append(blocks, ContentBlock{Type: BlockTypeFile, FileID: fileID})
 			continue
 		}
 		if strings.HasPrefix(fileInfo.MimeType, "image/") {

@@ -22,6 +22,7 @@ import (
 	plugintest "github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -78,7 +79,7 @@ type fakeEmbeddedMCPServer struct {
 	server *mcp.Server
 }
 
-func (f *fakeEmbeddedMCPServer) CreateClientTransport(_ string, _ string, _ *pluginapi.Client) (*mcp.InMemoryTransport, error) {
+func (f *fakeEmbeddedMCPServer) CreateClientTransport(_ string, _ string, _ string, _ *pluginapi.Client) (*mcp.InMemoryTransport, error) {
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	go func() {
 		_ = f.server.Run(f.ctx, serverTransport)
@@ -185,7 +186,7 @@ func connectToolListRewritingSession(t *testing.T, rawResult string) *mcp.Client
 
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reqBody, err := io.ReadAll(r.Body)
-		require.NoError(t, err)
+		assert.NoError(t, err)
 		r.Body = io.NopCloser(bytes.NewReader(reqBody))
 
 		var jsonReq struct {
@@ -317,7 +318,7 @@ func TestCacheHitBehavior(t *testing.T) {
 	// Retrieve from cache
 	cachedTools := cache.GetTools(serverID)
 	require.NotNil(t, cachedTools)
-	require.Equal(t, len(tools), len(cachedTools))
+	require.Len(t, cachedTools, len(tools))
 
 	// Verify tool details are preserved
 	require.Equal(t, "calculator", cachedTools["calculator"].Name)
@@ -368,7 +369,7 @@ func TestCacheUpdateOnNewTools(t *testing.T) {
 	// Now tools should be in cache
 	cachedTools = cache.GetTools(serverID)
 	require.NotNil(t, cachedTools)
-	require.Equal(t, 2, len(cachedTools))
+	require.Len(t, cachedTools, 2)
 	require.Contains(t, cachedTools, "file_read")
 	require.Contains(t, cachedTools, "file_write")
 }

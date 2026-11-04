@@ -171,7 +171,7 @@ func ValidateLicenseTransition(prev *Config, next Config, checker levelProvider,
 		{next.AllowNativeWebSearchInChannels && !from.AllowNativeWebSearchInChannels, enterprise.CapProviderWebSearch},
 		{next.WebSearch.Enabled && !from.WebSearch.Enabled, enterprise.CapSovereignWebSearch},
 		{next.EmbeddingSearchConfig.Type != "" && from.EmbeddingSearchConfig.Type == "", enterprise.CapSemanticSearch},
-		{(next.EnableCallSummary && !from.EnableCallSummary) || (next.TranscriptGenerator != "" && from.TranscriptGenerator == ""), enterprise.CapMeetings},
+		{(next.EnableCallSummary && !from.EnableCallSummary) || (next.transcriptAgentConfigured() && !from.transcriptAgentConfigured()), enterprise.CapMeetings},
 		{next.MCP.EnablePluginServer && !from.MCP.EnablePluginServer, enterprise.CapRemoteMCP},
 		{toolPoliciesNewlyAuto(from.MCP.EmbeddedServer.ToolConfigs, next.MCP.EmbeddedServer.ToolConfigs, defaultFor(MCPEmbeddedServerOrigin)), enterprise.CapToolApprovalPolicies},
 	}
