@@ -4,6 +4,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -159,8 +160,20 @@ func (m *mockConvServiceStore) UpdateTurnContent(id string, content json.RawMess
 	return nil
 }
 
-func (m *mockConvServiceStore) CompareAndSwapTurnContent(_ string, _, _ json.RawMessage) (bool, error) {
-	return true, nil
+func (m *mockConvServiceStore) CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error) {
+	for convID, turns := range m.turns {
+		for i := range turns {
+			if turns[i].ID != id {
+				continue
+			}
+			if !bytes.Equal(turns[i].Content, expected) {
+				return false, nil
+			}
+			m.turns[convID][i].Content = content
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (m *mockConvServiceStore) HeartbeatStreamingTurn(id string, content json.RawMessage) (bool, error) {

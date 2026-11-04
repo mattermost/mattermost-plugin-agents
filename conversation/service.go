@@ -220,9 +220,10 @@ func (s *Service) ReleaseStreamingTurnClaim(turnID string) error {
 
 // GetInitiatingUserTurn returns the user turn that started the agent run
 // whose assistant turn produced postID. Used to derive the run's deterministic
-// TraceID at resume time so spans started on a different node still land in
-// the original trace. Returns nil if no matching assistant turn or no
-// preceding user turn is found.
+// TraceID and its requester-derived tool policy at resume time. Synthetic
+// user turns (wake, canceled wake) are skipped: a run they resume belongs to
+// the requester's preceding real turn. Returns nil if no matching assistant
+// turn or no preceding real user turn is found.
 func (s *Service) GetInitiatingUserTurn(conversationID, postID string) (*store.Turn, error) {
 	turns, err := s.store.GetTurnsForConversation(conversationID)
 	if err != nil {
@@ -239,11 +240,29 @@ func (s *Service) GetInitiatingUserTurn(conversationID, postID string) (*store.T
 		return nil, nil
 	}
 	for i := len(turns) - 1; i >= 0; i-- {
-		if turns[i].Role == "user" && turns[i].Sequence < assistantSeq {
+		if turns[i].Role == "user" && turns[i].Sequence < assistantSeq && !isSyntheticUserTurn(turns[i]) {
 			return &turns[i], nil
 		}
 	}
 	return nil, nil
+}
+
+// isSyntheticUserTurn reports whether turn is a post-less user turn the
+// plugin injected (see AppendSyntheticUserTurn).
+func isSyntheticUserTurn(turn store.Turn) bool {
+	if turn.Role != "user" || turn.PostID != nil {
+		return false
+	}
+	blocks, err := UnmarshalBlocks(turn.Content)
+	if err != nil || len(blocks) == 0 {
+		return false
+	}
+	for _, b := range blocks {
+		if b.SyntheticKind == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // GetPreviousUserTurn returns the user turn that came immediately before

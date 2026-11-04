@@ -1,8 +1,10 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-module.exports = {
+const webapp = {
+    displayName: 'webapp',
     testEnvironment: 'jsdom',
+    testPathIgnorePatterns: ['/node_modules/', '<rootDir>/eslint-plugin-agents/'],
     transform: {
         '^.+\\.tsx?$': 'ts-jest',
 
@@ -30,4 +32,15 @@ module.exports = {
         '^src/(.*)$': '<rootDir>/src/$1',
     },
     setupFilesAfterEnv: ['<rootDir>/tests/setup.tsx'],
+};
+
+// ESLint's RuleTester needs Node globals that jsdom lacks.
+const eslintPlugin = {
+    displayName: 'eslint-plugin-agents',
+    testEnvironment: 'node',
+    testMatch: ['<rootDir>/eslint-plugin-agents/**/*.test.js'],
+};
+
+module.exports = {
+    projects: [webapp, eslintPlugin],
 };

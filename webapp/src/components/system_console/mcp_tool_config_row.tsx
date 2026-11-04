@@ -8,6 +8,7 @@ import {useIntl} from 'react-intl';
 
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {Tag} from '@mattermost/compass-ui/components/tag';
 import {TextInput} from '@mattermost/compass-ui/components/text-input';
 
 import {useIsLicensedFor} from '@/license';
@@ -20,17 +21,34 @@ import {MCPToolConfig, MCPToolInfo} from './mcp_types';
 
 type ToolPolicy = MCPToolConfig['policy'];
 
+// useToolPolicyOptions returns the approval policy choices, in display order.
+export const useToolPolicyOptions = () => {
+    const intl = useIntl();
+    return [
+        {value: 'auto_run_in_dm', label: intl.formatMessage({defaultMessage: 'Auto Run (DM)'})},
+        {value: 'auto_run_everywhere', label: intl.formatMessage({defaultMessage: 'Auto Run (Everywhere)'})},
+        {value: 'ask', label: intl.formatMessage({defaultMessage: 'Ask Every Time'})},
+    ];
+};
+
 type MCPToolConfigRowProps = {
     tool: MCPToolInfo;
     toolConfig: MCPToolConfig;
-    onToolConfigChange: (config: MCPToolConfig) => void;
+
+    // policyChosen is true when the admin picked the policy, so it is stored
+    // even if it equals the tool's default.
+    onToolConfigChange: (config: MCPToolConfig, policyChosen?: boolean) => void;
     serverDisabled?: boolean;
     displayName?: string;
+
+    // notReviewed marks a tool no admin has chosen a policy for.
+    notReviewed?: boolean;
 };
 
-const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled, displayName}: MCPToolConfigRowProps) => {
+const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled, displayName, notReviewed}: MCPToolConfigRowProps) => {
     const intl = useIntl();
     const approvalPoliciesLicensed = useIsLicensedFor('tool_approval_policies');
+    const policyOptions = useToolPolicyOptions();
     const [schemaExpanded, setSchemaExpanded] = useState(false);
     const overrideInputId = useId();
 
@@ -38,7 +56,7 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
         onToolConfigChange({
             ...toolConfig,
             policy: policy as ToolPolicy,
-        });
+        }, true);
     };
 
     const handleEnabledChange = (checked: boolean) => {
@@ -74,7 +92,15 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
         <ToolRowContainer $disabled={serverDisabled}>
             <ToolRowMain>
                 <ToolRowLeft>
-                    <ToolName>{displayName ?? tool.name}</ToolName>
+                    <ToolNameLine>
+                        <ToolName>{displayName ?? tool.name}</ToolName>
+                        {notReviewed && (
+                            <Tag
+                                label={intl.formatMessage({defaultMessage: 'Not reviewed'})}
+                                type='warning'
+                            />
+                        )}
+                    </ToolNameLine>
                     {tool.description && (
                         <ToolDescription>{tool.description}</ToolDescription>
                     )}
@@ -90,11 +116,7 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
                                     {defaultMessage: 'Approval policy for {toolName}'},
                                     {toolName: displayName ?? tool.name},
                                 )}
-                                options={[
-                                    {value: 'auto_run_in_dm', label: intl.formatMessage({defaultMessage: 'Auto Run (DM)'})},
-                                    {value: 'auto_run_everywhere', label: intl.formatMessage({defaultMessage: 'Auto Run (Everywhere)'})},
-                                    {value: 'ask', label: intl.formatMessage({defaultMessage: 'Ask Every Time'})},
-                                ]}
+                                options={policyOptions}
                             />
                         </PolicySelectContainer>
                         {!approvalPoliciesLicensed && (
@@ -174,6 +196,12 @@ const ToolRowRight = styled.div`
     align-items: center;
     gap: var(--spacing-l);
     flex-shrink: 0;
+`;
+
+const ToolNameLine = styled.div`
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
 `;
 
 const ToolName = styled.div`

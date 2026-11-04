@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
@@ -321,6 +322,42 @@ func (s *loadedStateFlowStore) ClaimStaleStreamingTurn(id string, staleAfterMill
 	return false, nil
 }
 
+func (s *loadedStateFlowStore) HeartbeatStreamingTurn(id string, content json.RawMessage) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for convID, turns := range s.turns {
+		for i := range turns {
+			if turns[i].ID == id && turns[i].Status == store.TurnStatusStreaming {
+				s.turns[convID][i].Content = content
+				s.turns[convID][i].UpdatedAt = model.GetMillis()
+				s.allTurns[id] = &s.turns[convID][i]
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func (s *loadedStateFlowStore) FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for convID, turns := range s.turns {
+		for i := range turns {
+			if turns[i].ID == id && turns[i].Status == store.TurnStatusStreaming {
+				turn := &s.turns[convID][i]
+				turn.Content = content
+				turn.TokensIn = tokensIn
+				turn.TokensOut = tokensOut
+				turn.Status = status
+				turn.UpdatedAt = model.GetMillis()
+				s.allTurns[id] = turn
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 func (s *loadedStateFlowStore) ReleaseStreamingTurnClaim(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -358,7 +395,8 @@ func (l *loadedStateLLM) InputTokenLimit() int  { return 100000 }
 func (l *loadedStateLLM) OutputTokenLimit() int { return 8192 }
 
 type loadedStateStreamingService struct {
-	wg sync.WaitGroup
+	mu     sync.Mutex
+	active int
 }
 
 func (s *loadedStateStreamingService) StreamToNewPost(context.Context, string, string, *llm.TextStreamResult, *model.Post, string) error {
@@ -373,20 +411,35 @@ func (s *loadedStateStreamingService) StreamToPost(context.Context, *llm.TextStr
 }
 
 func (s *loadedStateStreamingService) StreamContinuationToPost(context.Context, *llm.TextStreamResult, *model.Post, string, string) {
-	s.wg.Done()
 }
 
 func (s *loadedStateStreamingService) StopStreaming(string) {}
 
 func (s *loadedStateStreamingService) GetStreamingContext(ctx context.Context, postID string) (context.Context, error) {
-	s.wg.Add(1)
+	s.mu.Lock()
+	s.active++
+	s.mu.Unlock()
 	return ctx, nil
 }
 
-func (s *loadedStateStreamingService) FinishStreaming(string) {}
+func (s *loadedStateStreamingService) FinishStreaming(string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.active > 0 {
+		s.active--
+	}
+}
 
 func (s *loadedStateStreamingService) waitForStreaming() {
-	s.wg.Wait()
+	for {
+		s.mu.Lock()
+		done := s.active == 0
+		s.mu.Unlock()
+		if done {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func loadedStateBot(lm llm.LanguageModel) *bots.Bot {
@@ -560,12 +613,13 @@ func TestHandleToolCallExecutesApprovedToolRestoredFromLoadTurns(t *testing.T) {
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 
 	c := &Conversations{
-		configProvider: &channelFollowUpTestConfig{enableChannelMentionToolCalling: true},
-		mmClient:       mmClient,
-		contextBuilder: loadedStateBuilder(t),
-		bots:           botsService,
-		convService:    conversation.NewService(convStore, nil, nil, nil),
-		licenseChecker: enterprisetest.CheckerAt(enterprise.LevelProfessional),
+		configProvider:   &channelFollowUpTestConfig{enableChannelMentionToolCalling: true},
+		mmClient:         mmClient,
+		streamingService: &noopStreamingService{},
+		contextBuilder:   loadedStateBuilder(t),
+		bots:             botsService,
+		convService:      conversation.NewService(convStore, nil, nil, nil),
+		licenseChecker:   enterprisetest.CheckerAt(enterprise.LevelProfessional),
 	}
 
 	approvalPost := &model.Post{Id: approvalPostID, UserId: "bot-id"}
@@ -625,12 +679,13 @@ func TestHandleToolCallFailsSafelyWhenNoMatchingLoadTurn(t *testing.T) {
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 
 	c := &Conversations{
-		configProvider: &channelFollowUpTestConfig{enableChannelMentionToolCalling: true},
-		mmClient:       mmClient,
-		contextBuilder: loadedStateBuilder(t),
-		bots:           botsService,
-		licenseChecker: licenseChecker,
-		convService:    conversation.NewService(convStore, nil, nil, nil),
+		configProvider:   &channelFollowUpTestConfig{enableChannelMentionToolCalling: true},
+		mmClient:         mmClient,
+		streamingService: &noopStreamingService{},
+		contextBuilder:   loadedStateBuilder(t),
+		bots:             botsService,
+		licenseChecker:   licenseChecker,
+		convService:      conversation.NewService(convStore, nil, nil, nil),
 	}
 
 	approvalPost := &model.Post{Id: approvalPostID, UserId: "bot-id"}
@@ -693,12 +748,13 @@ func TestHandleToolCallRejectsServerOriginMismatchEvenAfterLoad(t *testing.T) {
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 
 	c := &Conversations{
-		configProvider: &channelFollowUpTestConfig{enableChannelMentionToolCalling: true},
-		mmClient:       mmClient,
-		contextBuilder: loadedStateBuilder(t),
-		bots:           botsService,
-		licenseChecker: licenseChecker,
-		convService:    conversation.NewService(convStore, nil, nil, nil),
+		streamingService: &noopStreamingService{},
+		configProvider:   &channelFollowUpTestConfig{enableChannelMentionToolCalling: true},
+		mmClient:         mmClient,
+		contextBuilder:   loadedStateBuilder(t),
+		bots:             botsService,
+		licenseChecker:   licenseChecker,
+		convService:      conversation.NewService(convStore, nil, nil, nil),
 	}
 
 	approvalPost := &model.Post{Id: approvalPostID, UserId: "bot-id"}
@@ -763,12 +819,13 @@ func TestHandleToolCallRestoresMultipleLoadsBeforeExecutingApprovedTool(t *testi
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 
 	c := &Conversations{
-		configProvider: &channelFollowUpTestConfig{enableChannelMentionToolCalling: true},
-		mmClient:       mmClient,
-		contextBuilder: loadedStateBuilder(t, transitionTool),
-		bots:           botsService,
-		convService:    conversation.NewService(convStore, nil, nil, nil),
-		licenseChecker: enterprisetest.CheckerAt(enterprise.LevelProfessional),
+		streamingService: &noopStreamingService{},
+		configProvider:   &channelFollowUpTestConfig{enableChannelMentionToolCalling: true},
+		mmClient:         mmClient,
+		contextBuilder:   loadedStateBuilder(t, transitionTool),
+		bots:             botsService,
+		convService:      conversation.NewService(convStore, nil, nil, nil),
+		licenseChecker:   enterprisetest.CheckerAt(enterprise.LevelProfessional),
 	}
 
 	approvalPost := &model.Post{Id: approvalPostID, UserId: "bot-id"}
@@ -901,10 +958,11 @@ func TestRegenerateRestoresLoadsBeforeAnchorButDropsLoadsInScrubbedGeneration(t 
 	lm := &loadedStateLLM{}
 	bot := loadedStateBot(lm)
 	c := &Conversations{
-		contextBuilder: loadedStateBuilder(t, loadedStateTransitionTool(nil)),
-		bots:           passthroughBotsService(bot),
-		convService:    conversation.NewService(convStore, nil, nil, nil),
-		configProvider: &channelFollowUpTestConfig{},
+		streamingService: &noopStreamingService{},
+		contextBuilder:   loadedStateBuilder(t, loadedStateTransitionTool(nil)),
+		bots:             passthroughBotsService(bot),
+		convService:      conversation.NewService(convStore, nil, nil, nil),
+		configProvider:   &channelFollowUpTestConfig{},
 	}
 	post := &model.Post{Id: regenPostID}
 	post.AddProp(streaming.ConversationIDProp, conv.ID)
@@ -978,9 +1036,10 @@ func TestHandleToolResultScopesSharedToClickedPost(t *testing.T) {
 	mmClient.On("GetUser", testRequesterID).Return(&model.User{Id: testRequesterID, Username: "user"}, nil).Once()
 
 	c := &Conversations{
-		mmClient:    mmClient,
-		bots:        botsService,
-		convService: conversation.NewService(convStore, nil, nil, nil),
+		streamingService: &noopStreamingService{},
+		mmClient:         mmClient,
+		bots:             botsService,
+		convService:      conversation.NewService(convStore, nil, nil, nil),
 	}
 
 	clickedPost := &model.Post{Id: postAID, UserId: "bot-id"}
@@ -1012,3 +1071,29 @@ func TestHandleToolResultScopesSharedToClickedPost(t *testing.T) {
 	require.True(t, *updatedResultA[0].Shared)
 	require.Nil(t, updatedResultB[0].Shared)
 }
+
+// noopStreamingService serves tests that resume a run without waiting on its
+// stream.
+type noopStreamingService struct{}
+
+func (noopStreamingService) StreamToNewPost(context.Context, string, string, *llm.TextStreamResult, *model.Post, string) error {
+	return nil
+}
+
+func (noopStreamingService) StreamToNewDM(context.Context, string, *llm.TextStreamResult, string, *model.Post, string) error {
+	return nil
+}
+
+func (noopStreamingService) StreamToPost(context.Context, *llm.TextStreamResult, *model.Post, string, string) {
+}
+
+func (noopStreamingService) StreamContinuationToPost(context.Context, *llm.TextStreamResult, *model.Post, string, string) {
+}
+
+func (noopStreamingService) StopStreaming(string) {}
+
+func (noopStreamingService) GetStreamingContext(ctx context.Context, _ string) (context.Context, error) {
+	return ctx, nil
+}
+
+func (noopStreamingService) FinishStreaming(string) {}
