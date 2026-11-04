@@ -109,17 +109,19 @@ type MattermostToolProvider struct {
 	mmServerURL             string // Mattermost server URL for API communication (internal URL if set, otherwise external)
 	devMode                 bool
 	accessMode              AccessMode
-	trackAIGenerated        bool                  // Whether to add ai_generated_by props to posts
-	searchService           SemanticSearchService // Optional semantic search service, can be nil
-	fileContentService      FileContentService    // Optional file content service for read_file, can be nil
-	allowStateChangingTools func() bool           // Evaluated per request; nil fails closed
+	trackAIGenerated        bool                    // Whether to add ai_generated_by props to posts
+	searchService           SemanticSearchService   // Optional semantic search service, can be nil
+	fileContentService      FileContentService      // Optional file content service for read_file, can be nil
+	channelArtifactsService ChannelArtifactsService // Optional channel library artifacts; nil means unavailable
+	allowStateChangingTools func() bool             // Evaluated per request; nil fails closed
 }
 
 // NewMattermostToolProvider creates a new tool provider.
 // searchService is optional and can be nil if semantic search is not available.
+// channelArtifactsService is optional and can be nil if channel artifacts are not available.
 // allowStateChangingTools is a runtime predicate evaluated on each tools/list
 // and tools/call; a nil predicate means state-changing tools are not available.
-func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config ServerConfig, accessMode AccessMode, searchService SemanticSearchService, fileContentService FileContentService, allowStateChangingTools func() bool) *MattermostToolProvider {
+func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config ServerConfig, accessMode AccessMode, searchService SemanticSearchService, fileContentService FileContentService, channelArtifactsService ChannelArtifactsService, allowStateChangingTools func() bool) *MattermostToolProvider {
 	// Use internal URL for API communication if provided, otherwise fallback to external URL
 	serverURL := config.GetMMInternalServerURL()
 	if serverURL == "" {
@@ -135,6 +137,7 @@ func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger 
 		trackAIGenerated:        config.GetTrackAIGenerated(),
 		searchService:           searchService,
 		fileContentService:      fileContentService,
+		channelArtifactsService: channelArtifactsService,
 		allowStateChangingTools: allowStateChangingTools,
 	}
 }
@@ -150,6 +153,7 @@ func (p *MattermostToolProvider) mcpTools() []MCPTool {
 		p.getChannelTools,
 		p.getChannelMemberTools,
 		p.getBookmarkTools,
+		p.getChannelArtifactTools,
 		p.getUserTools,
 		p.getStatusTools,
 		p.getTeamTools,

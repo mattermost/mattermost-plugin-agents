@@ -96,6 +96,11 @@ var expectedToolReadOnly = map[string]bool{
 	"update_channel_bookmark": false,
 	"delete_channel_bookmark": false,
 
+	// channel artifacts
+	"list_channel_artifacts":          true,
+	"get_channel_artifact":            true,
+	"propose_channel_artifact_update": false,
+
 	// users
 	"get_me":                 true,
 	"get_user":               true,

@@ -41,7 +41,7 @@ func TestMCPServerConfiguration(t *testing.T) {
 			DevMode:             false,
 			PersonalAccessToken: suite.adminToken,
 		}
-		mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
+		mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil, nil)
 
 		require.NoError(t, err, "Valid configuration should not return error")
 		assert.NotNil(t, mcpServer, "MCP server should be created with valid config")
@@ -53,7 +53,7 @@ func TestMCPServerConfiguration(t *testing.T) {
 			DevMode:             false,
 			PersonalAccessToken: suite.adminToken,
 		}
-		_, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
+		_, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil, nil)
 
 		assert.Error(t, err, "Invalid server URL should return error")
 		assert.Contains(t, err.Error(), "startup token validation failed", "Error should mention token validation failure")
@@ -65,7 +65,7 @@ func TestMCPServerConfiguration(t *testing.T) {
 			DevMode:             false,
 			PersonalAccessToken: "invalid-token-12345",
 		}
-		_, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
+		_, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil, nil)
 
 		assert.Error(t, err, "Invalid token should return error")
 		assert.Contains(t, err.Error(), "startup token validation failed", "Error should mention token validation failure")
@@ -77,7 +77,7 @@ func TestMCPServerConfiguration(t *testing.T) {
 			DevMode:             false,
 			PersonalAccessToken: "",
 		}
-		_, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
+		_, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil, nil)
 
 		// Empty token should fail option validation
 		assert.Error(t, err, "Empty token should fail validation")
@@ -90,7 +90,7 @@ func TestMCPServerConfiguration(t *testing.T) {
 			DevMode:             true,
 			PersonalAccessToken: suite.adminToken,
 		}
-		mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
+		mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil, nil)
 
 		require.NoError(t, err, "Dev mode configuration should not return error")
 		assert.NotNil(t, mcpServer, "MCP server should be created with dev mode")
@@ -103,7 +103,7 @@ func TestMCPServerConfiguration(t *testing.T) {
 			DevMode:             false,
 			PersonalAccessToken: suite.adminToken,
 		}
-		mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
+		mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil, nil)
 
 		require.NoError(t, err, "STDIO server should be created successfully")
 		assert.NotNil(t, mcpServer, "MCP server should be created")
@@ -132,7 +132,7 @@ func TestAuthentication(t *testing.T) {
 			DevMode:             false,
 			PersonalAccessToken: suite.adminToken,
 		}
-		mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
+		mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil, nil)
 
 		require.NoError(t, err, "Startup token validation should succeed with valid token")
 		assert.NotNil(t, mcpServer, "MCP server should be created after successful token validation")
@@ -159,7 +159,7 @@ func TestMCPServerStartupValidation(t *testing.T) {
 			DevMode:             false,
 			PersonalAccessToken: suite.adminToken,
 		}
-		mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
+		mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil, nil)
 
 		require.NoError(t, err, "Startup validation should succeed")
 		assert.NotNil(t, mcpServer, "MCP server should be created after successful validation")
@@ -171,7 +171,7 @@ func TestMCPServerStartupValidation(t *testing.T) {
 			DevMode:             false,
 			PersonalAccessToken: suite.adminToken,
 		}
-		_, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
+		_, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil, nil)
 
 		assert.Error(t, err, "Startup validation should fail with invalid server")
 		assert.Contains(t, err.Error(), "startup token validation failed", "Error should mention startup validation failure")
@@ -183,7 +183,7 @@ func TestMCPServerStartupValidation(t *testing.T) {
 			DevMode:             false,
 			PersonalAccessToken: "unauthorized-token-123",
 		}
-		_, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
+		_, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil, nil)
 
 		assert.Error(t, err, "Startup validation should fail with unauthorized token")
 		assert.Contains(t, err.Error(), "startup token validation failed", "Error should mention startup validation failure")
@@ -196,7 +196,7 @@ func TestMCPServerStartupValidation(t *testing.T) {
 			DevMode:             false,
 			PersonalAccessToken: suite.adminToken,
 		}
-		mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
+		mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil, nil)
 
 		require.NoError(t, err, "Server creation should succeed with valid token")
 		assert.NotNil(t, mcpServer, "MCP server should be created")
