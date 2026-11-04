@@ -96,6 +96,7 @@ const HTMLArtifactFullscreen = ({
     const [head, setHead] = useState<number>(headVersion);
     const followedHeadRef = useRef(headVersion);
     const [restoring, setRestoring] = useState(false);
+    const [restoreError, setRestoreError] = useState(false);
 
     // Read before the frame mounts: a frame the viewer's click started takes
     // focus as it mounts.
@@ -171,17 +172,22 @@ const HTMLArtifactFullscreen = ({
             return;
         }
         setRestoring(true);
+        setRestoreError(false);
         try {
             const entry = await rollbackChannelArtifact(fileId, viewVersion);
             const nextHead = entry.version || viewVersion;
             setHead(nextHead);
             setViewVersion(nextHead);
-            const resp = await listChannelArtifactVersions(fileId);
-            const list = (resp.versions || []).slice().sort((a, b) => b.version - a.version);
-            setVersions(list);
+            try {
+                const resp = await listChannelArtifactVersions(fileId);
+                const list = (resp.versions || []).slice().sort((a, b) => b.version - a.version);
+                setVersions(list);
+            } catch {
+                // The head already moved. A later headVersion change reloads the menu.
+            }
             frameRef.current?.reload(true);
         } catch {
-            // best effort
+            setRestoreError(true);
         } finally {
             setRestoring(false);
         }
@@ -216,7 +222,10 @@ const HTMLArtifactFullscreen = ({
                     <VersionSelect
                         aria-label={intl.formatMessage({defaultMessage: 'Version'})}
                         value={viewVersion}
-                        onChange={(e) => setViewVersion(Number(e.target.value))}
+                        onChange={(e) => {
+                            setViewVersion(Number(e.target.value));
+                            setRestoreError(false);
+                        }}
                         data-testid='html-artifact-version-select'
                     >
                         {versions.map((v) => (
@@ -239,6 +248,14 @@ const HTMLArtifactFullscreen = ({
                     >
                         <FormattedMessage defaultMessage='Restore this version'/>
                     </Button>
+                )}
+                {viewingOlder && canManage && restoreError && (
+                    <RestoreError
+                        role='alert'
+                        data-testid='html-artifact-restore-error'
+                    >
+                        <FormattedMessage defaultMessage='Could not restore this version.'/>
+                    </RestoreError>
                 )}
                 <Spacer/>
                 <ArtifactNotice/>
@@ -370,6 +387,13 @@ const Title = styled.h2`
     line-height: 24px;
     text-overflow: ellipsis;
     white-space: nowrap;
+`;
+
+const RestoreError = styled.p`
+    margin: 0;
+    color: var(--error-text);
+    font-size: 12px;
+    line-height: 16px;
 `;
 
 const VersionSelect = styled.select`
