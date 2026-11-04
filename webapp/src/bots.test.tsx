@@ -297,6 +297,24 @@ describe('fetchAndStoreBots', () => {
         expect(dispatch).not.toHaveBeenCalled();
     });
 
+    test('keeps an older response when the newer request failed', async () => {
+        let resolveOlder: (value: unknown) => void = jest.fn();
+        mockGetAIBots.mockReturnValueOnce(new Promise((resolve) => {
+            resolveOlder = resolve;
+        }));
+        mockGetAIBots.mockRejectedValueOnce(new Error('network'));
+        const dispatch = jest.fn();
+
+        const older = fetchAndStoreBots(dispatch);
+        await expect(fetchAndStoreBots(dispatch)).rejects.toThrow('network');
+
+        const bots = [makeBot('old')];
+        resolveOlder({bots, searchEnabled: true});
+        await older;
+
+        expect(dispatch).toHaveBeenCalledWith({type: BotsHandler, bots});
+    });
+
     test('falls back to the plain text link policy when the server omits linkPolicy', async () => {
         mockGetAIBots.mockResolvedValue({bots: [makeBot('a')], searchEnabled: true});
 
