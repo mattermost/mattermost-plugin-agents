@@ -408,3 +408,31 @@ test('maps each server on a shared URL to its own configuration by name', () => 
         {name: 'Wiki', enabled: true, baseURL: shared, headers: {}},
     ]);
 });
+
+test('maps servers to their configuration by ID when names were swapped by renames', () => {
+    const servers = [
+        {id: 'id-a', name: 'A', url: 'https://a.example.com', serverType: 'remote', enabled: true, tools: [], needsOAuth: false, error: null},
+        {id: 'id-x', name: 'X', url: 'https://x.example.com', serverType: 'remote', enabled: true, tools: [], needsOAuth: false, error: null},
+    ];
+
+    // The tools payload still carries the names from before A->B and X->A.
+    const mcpConfig = makeMCPConfig({
+        servers: [
+            {id: 'id-a', name: 'B', enabled: false, baseURL: 'https://a.example.com', headers: {}},
+            {id: 'id-x', name: 'A', enabled: true, baseURL: 'https://x.example.com', headers: {}},
+        ],
+    });
+    const {onConfigChange} = renderViewer({servers}, mcpConfig);
+
+    const toggles = screen.getAllByRole('switch');
+    expect(toggles[0].getAttribute('aria-checked')).toBe('false');
+    expect(toggles[1].getAttribute('aria-checked')).toBe('true');
+
+    fireEvent.click(toggles[0]);
+
+    const [updated] = onConfigChange.mock.calls[0];
+    expect(updated.servers).toEqual([
+        {id: 'id-a', name: 'B', enabled: true, baseURL: 'https://a.example.com', headers: {}},
+        {id: 'id-x', name: 'A', enabled: true, baseURL: 'https://x.example.com', headers: {}},
+    ]);
+});
