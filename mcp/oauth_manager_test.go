@@ -728,7 +728,9 @@ func TestProcessCallback_RederivesStaticCredsFromConfig(t *testing.T) {
 	require.Contains(t, err.Error(), "failed to exchange code for token")
 }
 
-func TestProcessCallback_LogsWarningWhenLookupMissesServer(t *testing.T) {
+// A server removed while its sign-in was in flight fails the callback before
+// any code exchange or client registration.
+func TestProcessCallback_FailsWhenLookupMissesServer(t *testing.T) {
 	lookup := func(_ string) (ServerConfig, bool) {
 		return ServerConfig{}, false
 	}
@@ -758,19 +760,13 @@ func TestProcessCallback_LogsWarningWhenLookupMissesServer(t *testing.T) {
 		sess := args.Get(1).(*OAuthSession)
 		*sess = *session
 	}).Return(nil)
-	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.ClientCredentials")).Return(nil)
 	mockClient.On("KVDelete", mock.AnythingOfType("string")).Return(nil)
-	mockClient.On("LogWarn", mock.AnythingOfType("string"), mock.Anything).Return()
 
 	ctx := context.Background()
 	result, err := manager.ProcessCallback(ctx, userID, state, "auth-code", "")
 
 	require.Error(t, err)
 	require.Nil(t, result)
-
-	require.Contains(t, err.Error(), "restart authorization",
-		"credentials must be load-only at callback time; no registration fallback")
-
-	expectedMsg := "Static OAuth credentials were expected but server config not found"
-	mockClient.AssertCalled(t, "LogWarn", expectedMsg, []any{"serverID", serverID})
+	require.Contains(t, err.Error(), "configuration changed during sign-in")
+	mockClient.AssertNotCalled(t, "KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.ClientCredentials"))
 }

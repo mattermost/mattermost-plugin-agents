@@ -46,6 +46,14 @@ const (
 	KeyScopeExtraChannelCount      = "agents.scope.extra_channel_count"
 	KeyScopeOpenTeamPublicChannels = "agents.scope.open_team_public_channels"
 
+	// KeyMCPSignInsClearedServerIDs lists the remote MCP servers whose users'
+	// saved sign-ins a configuration change removed.
+	KeyMCPSignInsClearedServerIDs = "agents.mcp_server.signins_cleared.ids"
+
+	// KeyMCPSignInsClearFailed marks a configuration change whose removal of
+	// saved MCP sign-ins did not complete.
+	KeyMCPSignInsClearFailed = "agents.mcp_server.signins_clear_failed"
+
 	// MetaTraceID is the meta key carrying the OpenTelemetry trace ID of the
 	// request, letting an auditor pivot from an audit record to the full
 	// trace of what happened.
