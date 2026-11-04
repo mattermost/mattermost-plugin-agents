@@ -64,7 +64,7 @@ func TestBridgeCompletionProviderWebSearchByLevel(t *testing.T) {
 				Username:    "websearchbot",
 				DisplayName: "Web Search Bot",
 			}, fakeLLM)
-			e.bots.SetBotsForTesting([]*bots.Bot{bot})
+			e.setBots(bot)
 			require.True(t, bot.HasNativeWebSearchEnabled())
 			e.mockAPI.On("LogError", mock.Anything).Maybe()
 

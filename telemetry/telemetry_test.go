@@ -5,7 +5,14 @@ package telemetry
 
 import (
 	"context"
+	"net"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -15,7 +22,7 @@ import (
 )
 
 func TestInit_Off(t *testing.T) {
-	shutdown, err := Init(context.Background(), "test-svc", "1.0.0", OutputModeOff, "", nil)
+	shutdown, err := Init(context.Background(), Options{ServiceName: "test-svc", ServiceVersion: "1.0.0", Mode: OutputModeOff})
 	if err != nil {
 		t.Fatalf("Init off should not error, got: %v", err)
 	}
@@ -30,7 +37,7 @@ func TestInit_Off(t *testing.T) {
 func TestInit_EmptyMode(t *testing.T) {
 	// Empty string should behave like OutputModeOff for backward compat with
 	// existing config installations.
-	shutdown, err := Init(context.Background(), "test-svc", "1.0.0", "", "", nil)
+	shutdown, err := Init(context.Background(), Options{ServiceName: "test-svc", ServiceVersion: "1.0.0"})
 	if err != nil {
 		t.Fatalf("Init empty mode should not error, got: %v", err)
 	}
@@ -43,7 +50,7 @@ func TestInit_EmptyMode(t *testing.T) {
 
 func TestInit_Logs(t *testing.T) {
 	fake := &fakeLog{}
-	shutdown, err := Init(context.Background(), "test-svc", "1.0.0", OutputModeLogs, "", fake)
+	shutdown, err := Init(context.Background(), Options{ServiceName: "test-svc", ServiceVersion: "1.0.0", Mode: OutputModeLogs, Log: fake})
 	if err != nil {
 		t.Fatalf("Init logs should not error, got: %v", err)
 	}
@@ -68,14 +75,14 @@ func TestInit_Logs(t *testing.T) {
 }
 
 func TestInit_LogsRequiresLogger(t *testing.T) {
-	if _, err := Init(context.Background(), "test-svc", "1.0.0", OutputModeLogs, "", nil); err == nil {
+	if _, err := Init(context.Background(), Options{ServiceName: "test-svc", ServiceVersion: "1.0.0", Mode: OutputModeLogs}); err == nil {
 		t.Error("expected error when logs mode is given a nil LogService")
 	}
 }
 
 func TestInit_OTLP(t *testing.T) {
 	// Use a non-routable address so we don't actually connect
-	shutdown, err := Init(context.Background(), "test-svc", "1.0.0", OutputModeOTLP, "192.0.2.1:4317", nil)
+	shutdown, err := Init(context.Background(), Options{ServiceName: "test-svc", ServiceVersion: "1.0.0", Mode: OutputModeOTLP, OTLP: OTLPOptions{Endpoint: "192.0.2.1:4317"}})
 	if err != nil {
 		t.Fatalf("Init OTLP should not error, got: %v", err)
 	}
@@ -90,29 +97,25 @@ func TestInit_OTLP(t *testing.T) {
 }
 
 func TestInit_OTLPRequiresEndpoint(t *testing.T) {
-	if _, err := Init(context.Background(), "test-svc", "1.0.0", OutputModeOTLP, "", nil); err == nil {
+	if _, err := Init(context.Background(), Options{ServiceName: "test-svc", ServiceVersion: "1.0.0", Mode: OutputModeOTLP}); err == nil {
 		t.Error("expected error when otlp mode is given an empty endpoint")
 	}
 }
 
 func TestInit_UnknownMode(t *testing.T) {
-	if _, err := Init(context.Background(), "test-svc", "1.0.0", OutputMode("bogus"), "", nil); err == nil {
+	if _, err := Init(context.Background(), Options{ServiceName: "test-svc", ServiceVersion: "1.0.0", Mode: OutputMode("bogus")}); err == nil {
 		t.Error("expected error for unknown mode")
 	}
 }
 
 func TestTracer(t *testing.T) {
 	tracer := Tracer()
-	if tracer == nil {
-		t.Fatal("Tracer() returned nil")
-	}
+	require.NotNil(t, tracer, "Tracer() returned nil")
 }
 
 func TestSpanFromContext(t *testing.T) {
 	span := SpanFromContext(context.Background())
-	if span == nil {
-		t.Fatal("SpanFromContext returned nil for background context")
-	}
+	require.NotNil(t, span, "SpanFromContext returned nil for background context")
 	if span.SpanContext().IsValid() {
 		t.Error("expected invalid span context from background context")
 	}
@@ -193,12 +196,8 @@ func TestSpanHierarchy(t *testing.T) {
 		}
 	}
 
-	if !parentSpan.SpanContext.TraceID().IsValid() {
-		t.Fatal("parent span has invalid trace ID")
-	}
-	if !childSpan.SpanContext.TraceID().IsValid() {
-		t.Fatal("child span has invalid trace ID")
-	}
+	require.True(t, parentSpan.SpanContext.TraceID().IsValid(), "parent span has invalid trace ID")
+	require.True(t, childSpan.SpanContext.TraceID().IsValid(), "child span has invalid trace ID")
 
 	if parentSpan.SpanContext.TraceID() != childSpan.SpanContext.TraceID() {
 		t.Error("parent and child spans should share the same trace ID")
@@ -223,4 +222,90 @@ func TestContextPropagation(t *testing.T) {
 	}
 
 	span.End()
+}
+
+func TestParseHeaders(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		want    map[string]string
+		wantErr bool
+	}{
+		{name: "empty", raw: "", want: map[string]string{}},
+		{name: "single", raw: "Authorization=Basic abc==", want: map[string]string{"Authorization": "Basic abc=="}},
+		{name: "multiple with spaces", raw: " X-Scope-OrgID = tenant , Authorization=Bearer t ", want: map[string]string{"X-Scope-OrgID": "tenant", "Authorization": "Bearer t"}},
+		{name: "percent-encoded value", raw: "X-Token=a%2Cb%3Dc", want: map[string]string{"X-Token": "a,b=c"}},
+		{name: "bad percent-encoding", raw: "X-Token=a%zz", wantErr: true},
+		{name: "missing separator", raw: "Authorization", wantErr: true},
+		{name: "missing key", raw: "=value", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseHeaders(tc.raw)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestParseHeadersErrorDoesNotEchoSecret(t *testing.T) {
+	const secret = "sentinel-secret-value"
+	_, err := ParseHeaders("Authorization=ok," + secret)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), secret)
+}
+
+type headerCapturingCollector struct {
+	coltracepb.UnimplementedTraceServiceServer
+	got chan metadata.MD
+}
+
+func (c *headerCapturingCollector) Export(ctx context.Context, _ *coltracepb.ExportTraceServiceRequest) (*coltracepb.ExportTraceServiceResponse, error) {
+	md, _ := metadata.FromIncomingContext(ctx)
+	select {
+	case c.got <- md:
+	default:
+	}
+	return &coltracepb.ExportTraceServiceResponse{}, nil
+}
+
+func TestInitOTLPSendsHeaders(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	collector := &headerCapturingCollector{got: make(chan metadata.MD, 1)}
+	server := grpc.NewServer()
+	coltracepb.RegisterTraceServiceServer(server, collector)
+	go func() { _ = server.Serve(lis) }()
+	t.Cleanup(server.Stop)
+
+	previous := otel.GetTracerProvider()
+	t.Cleanup(func() { otel.SetTracerProvider(previous) })
+
+	shutdown, err := Init(context.Background(), Options{
+		ServiceName:    "test-svc",
+		ServiceVersion: "1.0.0",
+		Mode:           OutputModeOTLP,
+		OTLP: OTLPOptions{
+			Endpoint: lis.Addr().String(),
+			Headers:  map[string]string{"x-scope-orgid": "tenant-1"},
+		},
+	})
+	require.NoError(t, err)
+
+	_, span := Tracer().Start(context.Background(), "agent run")
+	span.End()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, shutdown(ctx))
+
+	select {
+	case md := <-collector.got:
+		require.Equal(t, []string{"tenant-1"}, md.Get("x-scope-orgid"))
+	case <-ctx.Done():
+		require.FailNow(t, "collector received no export")
+	}
 }

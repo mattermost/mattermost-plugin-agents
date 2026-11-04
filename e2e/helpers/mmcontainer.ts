@@ -3,6 +3,7 @@ import type {StartedTestContainer, StartedNetwork} from 'testcontainers';
 import type {StartedPostgreSqlContainer} from '@testcontainers/postgresql';
 import {Client4} from "@mattermost/client";
 import { Client } from 'pg'
+import { withDeadline } from './deadline';
 import { pluginAdminConfigApiFromClient } from './plugin-http';
 
 if (typeof globalThis.File === 'undefined') {
@@ -17,9 +18,16 @@ const defaultUsername        = "admin";
 const defaultPassword        = "admin";
 const defaultTeamName        = "test";
 const defaultTeamDisplayName = "Test";
-// release-11.10 does not implement plugin EvaluateAccessControl (mattermost#37509 landed on master / 11.11).
-const defaultMattermostImage = "mattermostdevelopment/mattermost-enterprise-edition:master";
+// Needs 11.11+ for plugin EvaluateAccessControl (mattermost#37509).
+const defaultMattermostImage = "mattermost/mattermost-enterprise-edition:latest";
 export const POSTGRES_IMAGE = "pgvector/pgvector:pg15";
+
+// Bounds for the steps of start(); container fixtures have no overall timeout.
+const NETWORK_DEADLINE_MS = 60000;
+const CONTAINER_DEADLINE_MS = 5 * 60000; // covers an image pull on top of the wait strategy
+const WAIT_STRATEGY_TIMEOUT_MS = 120000;
+const MMCTL_DEADLINE_MS = 60000;
+const ADMIN_API_DEADLINE_MS = 60000;
 
 export function mattermostImage(): string {
     return process.env.MM_IMAGE || defaultMattermostImage;
@@ -126,7 +134,11 @@ export default class MattermostContainer {
     // container.exec resolves even when the command exits non-zero, so check the exit code
     // explicitly; otherwise a failed setup step only surfaces later as an unrelated error.
     mmctl = async (...args: string[]): Promise<string> => {
-        const {output, exitCode} = await this.container.exec(["mmctl", "--local", ...args])
+        const {output, exitCode} = await withDeadline(
+            `mmctl ${args.slice(0, 2).join(" ")}`,
+            MMCTL_DEADLINE_MS,
+            () => this.container.exec(["mmctl", "--local", ...args]),
+        )
         if (exitCode !== 0) {
             throw new Error(`mmctl ${args.join(" ")} exited with code ${exitCode}: ${output.trim()}`)
         }
@@ -138,7 +150,11 @@ export default class MattermostContainer {
         const deadline = Date.now() + timeoutMs
         let lastOutput = ""
         while (Date.now() < deadline) {
-            const {output, exitCode} = await this.container.exec(["mmctl", "--local", "system", "version"])
+            const {output, exitCode} = await withDeadline(
+                "mmctl local mode probe",
+                Math.max(deadline - Date.now(), 1000),
+                () => this.container.exec(["mmctl", "--local", "system", "version"]),
+            )
             if (exitCode === 0) {
                 return
             }
@@ -180,17 +196,13 @@ export default class MattermostContainer {
         await this.mmctl('permissions', 'remove', 'system_user', 'manage_own_agent');
     }
 
-    getLogs = async (lines: number): Promise<string> => {
-        const {output} = await this.container.exec(["mmctl", "--local", "logs", "--number", lines.toString()])
-        return output
-    }
-
     setSiteURL = async () => {
         await this.mmctl("config", "set", "ServiceSettings.SiteURL", this.url())
     }
 
     installPlugin = async (pluginPath: string, pluginID: string, pluginConfig?: PluginConfigInput) => {
-        await this.container.copyFilesToContainer([{source: pluginPath, target: `/tmp/plugin.tar.gz`}])
+        await withDeadline("Copying the plugin bundle into Mattermost", MMCTL_DEADLINE_MS, () =>
+            this.container.copyFilesToContainer([{source: pluginPath, target: `/tmp/plugin.tar.gz`}]))
 
         await this.mmctl("plugin", "add", "/tmp/plugin.tar.gz")
         await this.mmctl("plugin", "enable", pluginID)
@@ -201,7 +213,8 @@ export default class MattermostContainer {
             // since the admin API expects config.Config directly
             const wrappedConfig = pluginConfig as {config?: PluginConfig};
             const configData: PluginConfig = wrappedConfig.config ?? pluginConfig;
-            await this.setPluginConfig(pluginID, configData);
+            await withDeadline(`Applying ${pluginID} config through the admin API`, ADMIN_API_DEADLINE_MS, () =>
+                this.setPluginConfig(pluginID, configData))
         }
     }
 
@@ -277,38 +290,42 @@ export default class MattermostContainer {
         console.log(`\n🚀 Starting Mattermost container`);
         console.log(`   Image: ${image}${isCustomImage ? ' (custom via MM_IMAGE)' : ' (default)'}`);
 
-        this.network = await new Network().start()
+        this.network = await withDeadline("Creating the Docker network", NETWORK_DEADLINE_MS, () => new Network().start())
         // Use pgvector image to enable semantic search functionality
-        this.pgContainer = await new PostgreSqlContainer(POSTGRES_IMAGE)
-            .withExposedPorts(5432)
-            .withDatabase("mattermost_test")
-            .withUsername("user")
-            .withPassword("pass")
-            .withNetworkMode(this.network.getName())
-            .withWaitStrategy(Wait.forLogMessage("database system is ready to accept connections"))
-            .withNetworkAliases("db")
-            .start()
+        this.pgContainer = await withDeadline("Starting the postgres container", CONTAINER_DEADLINE_MS, () =>
+            new PostgreSqlContainer(POSTGRES_IMAGE)
+                .withExposedPorts(5432)
+                .withDatabase("mattermost_test")
+                .withUsername("user")
+                .withPassword("pass")
+                .withNetworkMode(this.network.getName())
+                // The image's init scripts run against a temporary server that logs this line first.
+                .withWaitStrategy(Wait.forLogMessage("database system is ready to accept connections", 2))
+                .withStartupTimeout(WAIT_STRATEGY_TIMEOUT_MS)
+                .withNetworkAliases("db")
+                .start())
 
         // Enable pgvector extension in the database
         try {
-            // Wait a bit for database to be fully ready
-            await new Promise(resolve => setTimeout(resolve, 2000))
-            const dbClient = await this.db()
-            await dbClient.query('CREATE EXTENSION IF NOT EXISTS vector;')
-            await dbClient.end()
+            await withDeadline("Enabling the pgvector extension", MMCTL_DEADLINE_MS, async () => {
+                const dbClient = await this.db()
+                await dbClient.query('CREATE EXTENSION IF NOT EXISTS vector;')
+                await dbClient.end()
+            })
             console.log("✓ pgvector extension enabled successfully")
         } catch (error) {
             console.log("Note: Could not enable pgvector extension:", error.message)
             console.log("Semantic search features may not be available")
         }
 
-        this.container = await new GenericContainer(image)
+        this.container = await withDeadline("Starting the Mattermost container", CONTAINER_DEADLINE_MS, () => new GenericContainer(image)
             .withEnvironment(this.envs)
             .withExposedPorts(8065)
             .withNetwork(this.network)
             .withNetworkAliases("mattermost")
             .withCommand(this.command)
             .withWaitStrategy(Wait.forLogMessage("Server is listening on"))
+            .withStartupTimeout(WAIT_STRATEGY_TIMEOUT_MS)
             .withCopyFilesToContainer(this.configFile)
 			.withLogConsumer((stream) => {
                 // Create log file with timestamp
@@ -343,15 +360,7 @@ export default class MattermostContainer {
                     }
                 });
             })
-            .start()
-
-
-        // Install ffmpeg for transcription features
-        try {
-            await this.container.exec(["sh", "-c", "apt-get update && apt-get install -y ffmpeg"])
-        } catch (error) {
-            console.log("Note: Could not install ffmpeg (container may not support apt-get)")
-        }
+            .start())
 
         await this.waitForLocalMode()
         await this.setSiteURL()

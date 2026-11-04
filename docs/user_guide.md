@@ -1,6 +1,6 @@
 # Mattermost Agents User Guide
 
-This guide explains how to use the AI features available through the Mattermost Agents plugin. This plugin transforms Mattermost into an AI-enhanced collaboration platform to improve team productivity and communication.
+Use Mattermost Agents to chat with AI agents in direct messages, the Agents pane, and channels; summarize threads, channels, and meetings; search with AI; and let agents act on your behalf with tools and MCP servers. This guide covers each feature for end users.
 
 With Mattermost Agents, you can summarize call and meeting recordings, turn long threads and unread channel messages into concise summaries, stay on top of your messages by identifying next steps and decisions, extract learnings and transform content into charts and documentation, dig further into any topic by asking for insights, and leverage voice dictation tools for hands-free communication.
 
@@ -14,12 +14,12 @@ Access AI features in one of the following ways:
 
 - Select the **Agents** icon in the apps sidebar.
 - @mention an AI bot in any channel where you have access (such as `@copilot`).
-- Open the **AI Actions** menu in the message composer to insert saved **Custom prompts** templates or open **Manage prompts**.
+- Open the **AI Actions** menu in the message composer to insert saved **Skills** or open **Manage skills**.
 - Use the **AI Actions** menu by hovering over the first message in any conversation thread (see [license requirements](admin_guide.md#license-requirements))
 - Use the **Ask AI** option in channels with unread messages (see [license requirements](admin_guide.md#license-requirements))
 - Use **Ask Agents about this channel** in a channel header to summarize recent activity, focus on a date range, or ask a question about the current channel. See [Channel Summaries](features/channel_summaries.md).
 
-![AI Actions menu in the message composer, including the Custom prompts entry.](img/ai-actions-menu-composer.png)
+![AI Actions menu in the message composer, including the Skills entry.](img/ai-actions-menu-composer.png)
 
 ### Mobile
 
@@ -31,7 +31,7 @@ Start or open a direct message with an agent. If your system admin has configure
 
 You can have conversations with Agents in several ways:
 
-**Agents pane**: Use the Agents right-hand pane for a streamlined experience. Begin with suggested prompts or pinned custom prompt buttons, or engage in a private thread with an Agent for a tailored experience. If you have follow-up questions or need further insights, simply ask. You can also attach files for AI analysis or reference.
+**Agents pane**: Use the Agents right-hand pane for a streamlined experience. Begin with suggested prompts or pinned skill buttons, or engage in a private thread with an Agent for a tailored experience. If you have follow-up questions or need further insights, simply ask. You can also attach files for AI analysis or reference.
 
 **Direct messages**: Start a direct message with an Agent bot to have a private conversation. Chat privately with an Agent in direct message threads like you would any other Mattermost user.
 
@@ -43,42 +43,46 @@ When you attach files in the Agents pane, direct messages, or channel @mentions,
 
 ### Select an agent
 
-If multiple agents are configured for your Mattermost workspace, select your preferred agent from any agent picker — such as the Agents pane, **Custom prompts**, or semantic search. Your choice is saved to your account and syncs across web, desktop, and mobile. Until you choose an agent, Mattermost uses the workspace default configured by your system administrator.
+If multiple agents are configured for your Mattermost workspace, select your preferred agent from any agent picker — such as the Agents pane, **Skills**, or semantic search. Your choice is saved to your account and syncs across web, desktop, and mobile. Until you choose an agent, Mattermost uses the workspace default configured by your system administrator.
 
 You can also @mention a specific agent by name in channels.
 
 ### Channel auto-reply
 
-Channel members with permission to manage channel settings can configure one agent to reply automatically in a channel, without being @mentioned. Auto-reply supports three modes, matching the options in the channel settings UI:
+Channel members with permission to manage channel settings can configure one agent to reply automatically in a channel, without being @mentioned. Auto-reply supports five modes, matching the options in the channel settings UI:
 
 - **Off** (default): The agent replies only when @mentioned or in direct messages.
 - **Top-level posts only**: The agent automatically replies to each new top-level post, starting a thread. Further replies in that thread still require an @mention (or the "loop in" link).
 - **Threads too**: Everything above, plus the agent automatically replies to every non-bot reply in the channel's threads.
+- **Ambient (Experimental)**: The agent watches the channel and replies only after a separate classification step decides a response is useful; that step uses the selected agent's model. Optional **Ambient instructions** describe when to reply. If classification fails or returns no, the agent stays silent. When Ambient does reply, that reply uses the selected agent's model, tools, and permissions.
+- **Ambient in mentioned threads (Experimental)**: Like Ambient, with the same instructions, but only in threads the agent has already replied in. @mention the agent in a thread to bring it in; after that, later messages in the thread go through the same classification step.
 
-To configure auto-reply, select the channel name to open the channel dropdown, select **Channel Settings**, and open the **Agents** tab. Choose the auto-reply mode and the auto-replying agent, then select **Save**. The tab appears only in public and private channels (not direct or group messages), only for users with the channel-management permission, and only when at least one agent is available in the channel.
+Ambient modes are available only when a system admin turns on **Enable ambient auto-replies** in the plugin settings. When it's off, ambient modes can't be saved and channels already using them stop replying automatically.
+
+To configure auto-reply, select the channel name to open the channel dropdown, select **Channel Settings**, and open the **Agents** tab. Choose the auto-reply mode and the auto-replying agent, then select **Save**. For either ambient mode, you can also set instructions. The tab appears only in public and private channels (not direct or group messages), only for users with the channel-management permission, and only when at least one agent is available in the channel.
 
 An automatic reply behaves exactly as if you had @mentioned the agent: the same tool permissions, usage restrictions, and conversation model apply, using the posting user's permissions. Posts from webhooks and system messages never trigger auto-replies, and posts from other bots don't either unless the integration explicitly opts in with the `activate_ai` post property. The "you must @mention an agent" reminder still works alongside auto-reply: when the agent does not reply automatically — for example a thread reply in a channel using the **Top-level posts only** mode — replying to an agent's thread without a mention shows the usual reminder.
 
 > **Note:** The channel settings tab requires Mattermost Server v11.10 or later; on older servers, users with permission to manage channel settings can still configure auto-reply through the plugin REST API. Channel auto-reply is available at Enterprise Advanced; on other plans the **Agents** channel settings tab is not shown. See [license requirements](admin_guide.md#license-requirements) for details.
 
-### Use custom prompt templates
+### Use skills
 
-Custom prompts are saved prompt templates that you can reuse from the message composer or from pinned buttons in the Agents pane.
+Skills are saved instructions that you can run yourself from the message composer or from pinned buttons in the Agents pane. Agents can also load a skill on their own when your request matches its description, if the agent's admin allows it. See [Skills](features/skills.md).
 
-To manage custom prompts:
+To manage skills:
 
 1. Open the message composer in any channel or direct message.
 2. Select **AI Actions**.
-3. Open **Custom prompts**, then select **Manage prompts**.
-4. Select **Create new** to open the prompt editor and add a prompt with an **Action Title**, optional description, and template.
-5. Choose **Public** to share the prompt with other users, or **Private** to keep it visible only to you.
-6. Pin or unpin prompts directly from the prompt list. Pinned prompts appear as shortcuts in the Agents pane.
+3. Open **Skills**, then select **Manage skills**.
+4. Select **Create new** to open the editor and add a skill with an **Action Title**, a description, and instructions.
+5. Choose **Public** to share the skill with other users, or **Private** to keep it visible only to you.
+6. Pin or unpin skills directly from the list. Pinned skills appear as shortcuts in the Agents pane.
 
-The **All Prompts** tab shows prompts you created plus shared prompts from other users. The **Your Prompts** tab shows only prompts you created. Selecting a prompt from either list opens a dedicated prompt view inside the modal, with a back arrow to return to the list and the prompt name as the title. Shared prompts from other users open read-only. Only the prompt creator can edit or delete a prompt. Prompt titles can be up to 64 characters, and every prompt requires a template.
+The **All Skills** tab shows skills you created plus shared skills from other users. The **Your Skills** tab shows only skills you created. Selecting a skill from either list opens a dedicated skill view inside the modal, with a back arrow to return to the list and the skill name as the title. Shared skills from other users open read-only. Only the skill creator can edit or delete a skill. Skill titles can be up to 64 characters, descriptions up to 1024 characters, and every skill requires instructions.
 
-When you select a saved prompt from **Custom prompts**, Mattermost renders the template with the current context and inserts the result into your draft. If you use this menu outside a bot direct message, Mattermost adds the currently selected bot mention before the rendered text. Pinned prompts in the Agents pane render the current saved template and send it immediately as a message.
+When you select a saved skill from **Skills**, Mattermost renders the instructions with the current context and inserts the result into your draft. If you use this menu outside a bot direct message, Mattermost adds the currently selected bot mention before the rendered text. Pinned skills in the Agents pane render the current saved instructions and send them immediately as a message.
 
-Custom prompt templates support the following variables:
+Skill instructions support the following variables:
 
 | Variable | Inserts |
 |----------|---------|
@@ -119,6 +123,8 @@ Depending on your workspace configuration, available tools in direct messages, a
 Tool availability depends on your user permissions, provider connection status, workspace configuration, and context.
 
 Some MCP providers require each user to connect their own account before those tools become available. When that applies, open the **Tools** menu in the Agents pane or RHS, select **Connect** for the provider, and wait for the list to refresh with the newly available tools.
+
+You don't have to connect providers ahead of time. When you ask for something that needs a provider you haven't connected, the agent can show a **Connect** card in the conversation explaining why it needs that provider. Select **Connect** to sign in with your own account in a new window. As soon as you're connected, the agent picks up where it left off with the provider's tools. If you close the window before finishing, select **Connect** again to retry. Select **Skip** if you'd rather not connect; the agent continues without it. If your sign-in to a provider expires during a conversation, the agent shows the card again so you can reconnect. Only the person who started the conversation can respond to the card.
 
 Some agents are configured by an admin to use **service account authentication** instead of per-user connections. When you chat with one of those agents, you're never asked to connect an account and the **Tools** menu isn't shown for that agent. External MCP tools run under admin-configured credentials; Mattermost and plugin tools still run with your own permissions. Tool approval works the same as with any other agent: if a tool call requires review, you still see the **Accept** and **Reject** options.
 

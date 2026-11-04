@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
@@ -231,7 +231,7 @@ func (p *MattermostToolProvider) toolGetUserCPAValues(mcpContext *MCPToolContext
 	for fieldID := range values {
 		fieldIDs = append(fieldIDs, fieldID)
 	}
-	sort.Strings(fieldIDs)
+	slices.Sort(fieldIDs)
 
 	var result strings.Builder
 	fmt.Fprintf(&result, "Custom Profile Attribute (CPA) values for user %s:\n", args.UserID)

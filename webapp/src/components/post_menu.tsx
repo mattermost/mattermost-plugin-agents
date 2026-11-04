@@ -38,7 +38,7 @@ const PostMenu = (props: Props) => {
     const threadSummarizationLicensed = useIsLicensedFor('thread_summarization');
 
     const analyzeThread = async (postId: string, analysisType: string) => {
-        const result = await doThreadAnalysis(postId, analysisType, activeBot?.username || '');
+        const result = await doThreadAnalysis(postId, analysisType, activeBot?.id || '');
         selectPost(result.postid, result.channelid);
     };
 

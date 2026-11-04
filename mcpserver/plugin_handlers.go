@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	mcppkg "github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	loggerlib "github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
@@ -380,7 +381,7 @@ func (h *PluginMCPHandlers) toolAccessDenied(ctx context.Context, userID, toolNa
 	if denied, cached := cache[serverID]; cached {
 		return denied
 	}
-	denied := h.accessChecker.CanUseMCPServer(ctx, userID, serverID) != nil
+	denied := h.accessChecker.CanUseMCPServer(accesscontrol.WithResourceName(ctx, owner.ownerKey), userID, serverID) != nil
 	cache[serverID] = denied
 	if denied {
 		h.logger.Debug("Omitting MCP server for user by access policy", "userID", userID, "serverID", serverID)

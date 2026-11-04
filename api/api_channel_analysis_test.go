@@ -128,6 +128,7 @@ func setupChannelAnalysisAPI(t *testing.T, dynamicLoading bool) (*TestEnvironmen
 	e.api.streamingService = streamingService
 	convStore := newMockConvServiceStore()
 	e.api.SetConversationService(conversation.NewService(convStore, promptsObj, mmClient, e.bots))
+	expectConversationTitleEvents(mmClient)
 
 	fakeLLM := &channelAnalysisSequenceLLM{
 		calls: [][]llm.TextStreamEvent{
@@ -147,7 +148,7 @@ func setupChannelAnalysisAPI(t *testing.T, dynamicLoading bool) (*TestEnvironmen
 		&model.Bot{UserId: testBotUserID, Username: "matty", DisplayName: "Matty"},
 		fakeLLM,
 	)
-	e.bots.SetBotsForTesting([]*bots.Bot{bot})
+	e.setBots(bot)
 
 	channel := &model.Channel{Id: testChannelID, Type: model.ChannelTypeOpen, TeamId: "teamid", DisplayName: "Test Channel"}
 	e.mockAPI.On("GetChannel", testChannelID).Return(channel, nil)

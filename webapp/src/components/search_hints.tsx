@@ -85,6 +85,10 @@ const SearchHints = () => {
                     activeBot={activeBot}
                     setActiveBot={setActiveBot}
                     container={SelectorContainer}
+
+                    // The host search box closes on clicks outside its DOM subtree but exempts clicks
+                    // inside a .MuiModal-root. Rendering the menu inline instead gets it clipped by the box.
+                    floatingClassName='MuiModal-root'
                 >
                     {currentBotName}
                     <ChevronDownIcon/>

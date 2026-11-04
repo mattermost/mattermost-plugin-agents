@@ -96,6 +96,7 @@ const ServerToolCard: React.FC<{tool: ServerToolUse}> = ({tool}) => {
     // and toggle the details; cards without details stay a plain div.
     return (
         <Card data-testid={`server-tool-${tool.tool}`}>
+            {/* eslint-disable-next-line agents/click-events-have-key-events, agents/no-static-element-interactions -- renders as a <button> whenever it is clickable */}
             <Header
                 as={canExpand ? 'button' : 'div'}
                 type={canExpand ? 'button' : undefined} // eslint-disable-line no-undefined

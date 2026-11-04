@@ -55,6 +55,15 @@ type ToolDecision = {
     [toolId: string]: boolean; // true = approved, false = rejected
 };
 
+// Only onlookers get redacted calls; ownership can still be loading for the
+// requester, so canApprove alone does not identify one. Judged per call: a
+// shared result elsewhere in the batch says nothing about this one. Live
+// calls carry an empty result even when redacted, so only a non-empty
+// result counts as a visible payload.
+function isRedactedCall(call: ToolCall): boolean {
+    return call.arguments == null && !call.result;
+}
+
 const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
     const {formatMessage} = useIntl();
 
@@ -88,6 +97,18 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         () => selectDecisionToolCalls(props.toolCalls, props.approvalStage, effectiveCanApprove),
         [props.toolCalls, props.approvalStage, effectiveCanApprove],
     );
+
+    // Calls the requester still owes a decision on, flagged for onlookers
+    // so a pending card reads as waiting rather than running.
+    const awaitingRequesterIDSet = useMemo(() => {
+        if (props.canApprove) {
+            return new Set<string>();
+        }
+        const awaiting = isInterruptedAutoRound ?
+            props.toolCalls.filter((call) => call.status === ToolCallStatus.Pending) :
+            selectDecisionToolCalls(props.toolCalls, props.approvalStage, true);
+        return new Set(awaiting.filter(isRedactedCall).map((call) => call.id));
+    }, [props.toolCalls, props.approvalStage, props.canApprove, isInterruptedAutoRound]);
 
     const decisionToolIDSet = useMemo(() => {
         return new Set(decisionToolCalls.map((call) => call.id));
@@ -246,10 +267,11 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         // they are being asked to approve. Executed tools in the result
         // stage also expand so the output is visible during the share
         // decision. Otherwise collapse.
-        const defaultExpanded = isCallStage ?
+        // Redacted calls have nothing to expand into.
+        const defaultExpanded = !isRedactedCall(tool) && (isCallStage ?
             tool.status === ToolCallStatus.Pending :
             isResultStage && (tool.status === ToolCallStatus.Success ||
-                tool.status === ToolCallStatus.Error);
+                tool.status === ToolCallStatus.Error));
 
         // Check if user has toggled this tool
         const isCollapsed = collapsedTools.includes(tool.id);
@@ -291,6 +313,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                             showResults,
                             approvalStage: props.approvalStage,
                             isAutoApproved: tool.status === ToolCallStatus.AutoApproved,
+                            awaitingRequester: awaitingRequesterIDSet.has(tool.id),
                             canAnswer: isDecisionCall && isCallStage,
                             onAnswer: isDecisionCall ? (selections, custom) => handleQuestionAnswer(tool.id, selections, custom) : undefined, // eslint-disable-line no-undefined
                             onSkip: isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined, // eslint-disable-line no-undefined

@@ -1,15 +1,15 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useCallback} from 'react';
+import React, {useCallback, useEffect, useMemo} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 import {useSelector, useDispatch} from 'react-redux';
 
 import {CogOutlineIcon} from '@mattermost/compass-icons/components';
 
-import {getCustomPrompts} from '@/selectors';
-import {fetchCustomPrompts, ShowCustomPromptsModalHandler} from '@/redux';
+import {getCustomPrompts, getPinnedPromptIds} from '@/selectors';
+import {fetchCustomPrompts, fetchPinnedPromptIds, ShowCustomPromptsModalHandler} from '@/redux';
 import {renderCustomPrompt} from '@/client';
 import {CustomPrompt} from '@/types';
 import {LLMBot, useBotlist} from '@/bots';
@@ -30,23 +30,26 @@ const AgentSelectorWrapper = styled.div`
     margin-bottom: 4px;
 `;
 
-const StyledMenuItem = styled.li`
+const StyledMenuItem = styled.button`
     display: flex;
     align-items: center;
     gap: 8px;
+    width: 100%;
     padding: 6px 20px;
+    border: none;
+    background: none;
+    text-align: left;
     cursor: pointer;
     font-family: 'Open Sans', sans-serif;
     font-size: 14px;
     line-height: 20px;
     color: var(--center-channel-color);
-    list-style: none;
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.08);
     }
 
-    &[aria-disabled='true'] {
+    &:disabled {
         cursor: default;
         color: rgba(var(--center-channel-color-rgb), 0.40);
 
@@ -73,7 +76,14 @@ interface Props {
 
 const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
     const dispatch = useDispatch();
-    const prompts = useSelector(getCustomPrompts);
+    const allPrompts = useSelector(getCustomPrompts);
+    const pinnedIds = useSelector(getPinnedPromptIds);
+
+    // Pinned prompts (set in Manage prompts) come first.
+    const prompts = useMemo(() => {
+        const pinned = new Set(pinnedIds);
+        return [...allPrompts.filter((p) => pinned.has(p.id)), ...allPrompts.filter((p) => !pinned.has(p.id))];
+    }, [allPrompts, pinnedIds]);
 
     // Selection is backed by the shared selected-agent preference so the
     // "GENERATE WITH:" menu stays in sync with the RHS and all other surfaces.
@@ -84,13 +94,14 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
 
     useEffect(() => {
         dispatch(fetchCustomPrompts() as any);
+        dispatch(fetchPinnedPromptIds() as any);
     }, [dispatch]);
 
     const handlePromptClick = useCallback(async (prompt: CustomPrompt) => {
         dismissMenu();
         try {
             const botUsername = selectedBot?.username;
-            const result = await renderCustomPrompt(prompt.id, channelId, botUsername);
+            const result = await renderCustomPrompt(prompt.id, channelId, selectedBot?.id);
             if (!isBotDMChannel && botUsername) {
                 updateText(`@${botUsername} ${result.rendered}`);
             } else {
@@ -119,10 +130,11 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
                     />
                 </AgentSelectorWrapper>
             )}
-            {prompts && prompts.length > 0 ? (
+            {prompts.length > 0 ? (
                 prompts.map((prompt) => (
                     <StyledMenuItem
                         key={prompt.id}
+                        type='button'
                         role='menuitem'
                         onClick={() => handlePromptClick(prompt)}
                     >
@@ -131,19 +143,21 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
                 ))
             ) : (
                 <StyledMenuItem
+                    type='button'
                     role='menuitem'
-                    aria-disabled='true'
+                    disabled={true}
                 >
-                    <span><FormattedMessage defaultMessage='No custom prompts yet'/></span>
+                    <span><FormattedMessage defaultMessage='No skills yet'/></span>
                 </StyledMenuItem>
             )}
             <StyledMenuSeparator role='separator'/>
             <StyledMenuItem
+                type='button'
                 role='menuitem'
                 onClick={handleCreateClick}
             >
                 <CogOutlineIcon size={16}/>
-                <span><FormattedMessage defaultMessage='Manage prompts'/></span>
+                <span><FormattedMessage defaultMessage='Manage skills'/></span>
             </StyledMenuItem>
         </MenuContent>
     );

@@ -73,17 +73,17 @@ const UnreadsSumarize = (props: Props) => {
     const {bots, activeBot, setActiveBot} = useBotlistForChannel(props.channelId);
 
     const summarizeNew = async () => {
-        const result = await getChannelInterval(props.channelId, props.lastViewedAt, 0, 'summarize_unreads', '', activeBot?.username || '');
+        const result = await getChannelInterval(props.channelId, props.lastViewedAt, 0, 'summarize_unreads', '', activeBot?.id || '');
         selectPost(result.postid, result.channelid);
     };
 
     const actionItems = async () => {
-        const result = await getChannelInterval(props.channelId, props.lastViewedAt, 0, 'action_items', '', activeBot?.username || '');
+        const result = await getChannelInterval(props.channelId, props.lastViewedAt, 0, 'action_items', '', activeBot?.id || '');
         selectPost(result.postid, result.channelid);
     };
 
     const openQuestions = async () => {
-        const result = await getChannelInterval(props.channelId, props.lastViewedAt, 0, 'open_questions', '', activeBot?.username || '');
+        const result = await getChannelInterval(props.channelId, props.lastViewedAt, 0, 'open_questions', '', activeBot?.id || '');
         selectPost(result.postid, result.channelid);
     };
 

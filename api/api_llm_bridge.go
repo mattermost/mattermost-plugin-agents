@@ -642,6 +642,11 @@ func (a *API) streamLLMResponse(c *gin.Context, model llm.LanguageModel, maxTool
 	defer drainStream(streamResult)
 
 	for event := range streamResult.Stream {
+		// Bridge clients predate tool call phases and expect the raw calls.
+		if batch, ok := event.Value.(llm.ToolCallBatch); ok && event.Type == llm.EventTypeToolCallBatch {
+			event = llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: batch.Calls}
+		}
+
 		// Convert the event to JSON
 		eventJSON, err := json.Marshal(event)
 		if err != nil {
@@ -715,7 +720,7 @@ func (a *API) handleGetAgents(c *gin.Context) {
 
 	allBots := a.bots.GetAllBots()
 	agents := make([]bridgeclient.BridgeAgentInfo, 0, len(allBots))
-	defaultBotName := a.config.GetDefaultBotName()
+	defaultBotID := a.defaultBotUserID()
 
 	for _, bot := range allBots {
 		// If user_id is provided, filter by permissions
@@ -732,7 +737,7 @@ func (a *API) handleGetAgents(c *gin.Context) {
 			Username:    bot.GetMMBot().Username,
 			ServiceID:   service.ID,
 			ServiceType: service.Type,
-			IsDefault:   bot.GetMMBot().Username == defaultBotName,
+			IsDefault:   defaultBotID != "" && bot.BotUserID() == defaultBotID,
 		})
 	}
 

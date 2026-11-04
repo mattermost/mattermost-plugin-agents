@@ -28,7 +28,10 @@ import {EMBEDDED_MATTERMOST_BASE_URL} from './vetted_tool_configs';
 
 type MCPToolsViewerProps = {
     mcpConfig: MCPConfig;
-    onConfigChange: (config: MCPConfig) => void;
+
+    // Like a React state setter: pass a function to apply the change to the
+    // configuration as it is when the change is applied.
+    onConfigChange: (update: MCPConfig | ((current: MCPConfig) => MCPConfig)) => void;
     initialToolsData?: MCPToolsResponse | null;
 };
 
@@ -109,58 +112,48 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
         seededRef.current = true;
 
         (async () => {
-            let updatedConfig = mcpConfig;
-            let changed = false;
+            const baseURLs = new Set([...(mcpConfig.servers ?? []).map((sc) => sc.baseURL), EMBEDDED_MATTERMOST_BASE_URL]);
+            const seeds = new Map(await Promise.all([...baseURLs].map(async (baseURL): Promise<[string, MCPToolConfig[]]> => {
+                try {
+                    return [baseURL, await getVettedToolSeed(baseURL)];
+                } catch {
+                    return [baseURL, []];
+                }
+            })));
 
-            const updatedServers = await Promise.all(
-                (updatedConfig.servers ?? []).map(async (sc) => {
-                    let seeded: MCPToolConfig[] = [];
-                    try {
-                        seeded = await getVettedToolSeed(sc.baseURL);
-                    } catch {
-                        return sc;
-                    }
-                    if (seeded.length === 0) {
-                        return sc;
-                    }
-                    const existing = sc.tool_configs || [];
-                    const existingNames = new Set(existing.map((tc) => tc.name));
-                    const missing = seeded.filter((tc) => !existingNames.has(tc.name));
-                    if (missing.length === 0) {
+            // Returns toolConfigs itself when nothing is missing.
+            const withSeeded = (toolConfigs: MCPToolConfig[] | undefined, baseURL: string) => {
+                const existing = toolConfigs || [];
+                const existingNames = new Set(existing.map((tc) => tc.name));
+                const missing = (seeds.get(baseURL) ?? []).filter((tc) => !existingNames.has(tc.name));
+                return missing.length > 0 ? [...existing, ...missing] : toolConfigs;
+            };
+
+            // Returns config itself when nothing is missing.
+            const seedConfig = (config: MCPConfig): MCPConfig => {
+                let changed = false;
+                const servers = config.servers?.map((sc) => {
+                    const toolConfigs = withSeeded(sc.tool_configs, sc.baseURL);
+                    if (toolConfigs === sc.tool_configs) {
                         return sc;
                     }
                     changed = true;
-                    return {...sc, tool_configs: [...existing, ...missing]};
-                }),
-            );
-            if (changed) {
-                updatedConfig = {...updatedConfig, servers: updatedServers};
-            }
-
-            const embeddedCfg = updatedConfig.embeddedServer;
-            {
-                let seeded: MCPToolConfig[] = [];
-                try {
-                    seeded = await getVettedToolSeed(EMBEDDED_MATTERMOST_BASE_URL);
-                } catch {
-                    seeded = [];
+                    return {...sc, tool_configs: toolConfigs};
+                }) ?? config.servers;
+                const embeddedToolConfigs = withSeeded(config.embeddedServer.tool_configs, EMBEDDED_MATTERMOST_BASE_URL);
+                if (embeddedToolConfigs !== config.embeddedServer.tool_configs) {
+                    changed = true;
                 }
-                if (seeded.length > 0) {
-                    const existing = embeddedCfg.tool_configs || [];
-                    const existingNames = new Set(existing.map((tc) => tc.name));
-                    const missing = seeded.filter((tc) => !existingNames.has(tc.name));
-                    if (missing.length > 0) {
-                        changed = true;
-                        updatedConfig = {
-                            ...updatedConfig,
-                            embeddedServer: {...embeddedCfg, tool_configs: [...existing, ...missing]},
-                        };
-                    }
+                if (!changed) {
+                    return config;
                 }
-            }
+                return {...config, servers, embeddedServer: {...config.embeddedServer, tool_configs: embeddedToolConfigs}};
+            };
 
-            if (changed) {
-                onConfigChange(updatedConfig);
+            // The admin may have edited the configuration while the seeds
+            // loaded, so they are merged into the configuration as it is now.
+            if (seedConfig(mcpConfig) !== mcpConfig) {
+                onConfigChange(seedConfig);
             }
         })().catch(() => null);
     }, [toolsData]); // eslint-disable-line react-hooks/exhaustive-deps

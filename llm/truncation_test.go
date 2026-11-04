@@ -35,6 +35,16 @@ func TestTruncationWrapper(t *testing.T) {
 	nearBudget := nearBudgetMessage()
 	midBudget := midBudgetMessage()
 	systemPrompt := "you are a helpful assistant"
+	longSystemPrompt := strings.Repeat("s ", 600)
+	// oversizedSystemPrompt alone estimates above the 720-token budget.
+	oversizedSystemPrompt := strings.Repeat("s ", 1000)
+	note := Post{Role: PostRoleUser, Message: TruncatedHistoryNote}
+	// cut matches any message cut by Truncate; its exact length is covered by
+	// TestCompletionRequestTruncate.
+	cut := func(role PostRole) Post { return Post{Role: role, Message: TruncatedMessagePrefix} }
+	toolRound := Post{Role: PostRoleBot, ToolUse: []ToolCall{{
+		ID: "tc1", Name: "search", Arguments: []byte(`{}`), Result: strings.Repeat("y ", 1000),
+	}}}
 
 	tests := []struct {
 		name string
@@ -45,14 +55,9 @@ func TestTruncationWrapper(t *testing.T) {
 		// countTokensReturns is the scripted sequence of CountTokens returns.
 		// Empty means the wrapper must not call CountTokens at all.
 		countTokensReturns []countResult
-		// expectedPostCount is the post count expected in the final downstream
-		// call to the wrapped model.
-		expectedPostCount int
-		// expectedFirstPost optionally asserts a property of Posts[0] (used to
-		// check system-prompt preservation).
-		expectedFirstPost *Post
-		// expectedSecondPost optionally asserts a property of Posts[1].
-		expectedSecondPost *Post
+		// expectedPosts is the role and message of each post in the final
+		// downstream call to the wrapped model.
+		expectedPosts []Post
 		// useNoStream exercises ChatCompletionNoStream instead of ChatCompletion.
 		useNoStream bool
 	}{
@@ -61,14 +66,14 @@ func TestTruncationWrapper(t *testing.T) {
 			posts:              []Post{{Role: PostRoleUser, Message: longMessage}},
 			inputTokenLimit:    0,
 			countTokensReturns: nil, // CountTokens must not be consulted
-			expectedPostCount:  1,
+			expectedPosts:      []Post{{Role: PostRoleUser, Message: longMessage}},
 		},
 		{
 			name:               "skips safety check when heuristic is far from budget",
 			posts:              []Post{{Role: PostRoleUser, Message: "hi"}},
 			inputTokenLimit:    1000,
 			countTokensReturns: nil,
-			expectedPostCount:  1,
+			expectedPosts:      []Post{{Role: PostRoleUser, Message: "hi"}},
 		},
 		{
 			name: "runs safety check near budget and sends when count is under limit",
@@ -78,18 +83,20 @@ func TestTruncationWrapper(t *testing.T) {
 			},
 			inputTokenLimit:    1000,
 			countTokensReturns: []countResult{{count: 900}},
-			expectedPostCount:  2,
+			expectedPosts: []Post{
+				{Role: PostRoleUser, Message: nearBudget},
+				{Role: PostRoleUser, Message: nearBudget},
+			},
 		},
 		{
-			name: "drops oldest when provider count exceeds limit and retries once (NoStream)",
+			name: "drops oldest when provider count exceeds limit and notes it (NoStream)",
 			posts: []Post{
 				{Role: PostRoleUser, Message: "older-" + nearBudget},
 				{Role: PostRoleUser, Message: "newer-" + nearBudget},
 			},
 			inputTokenLimit:    1000,
 			countTokensReturns: []countResult{{count: 1100}, {count: 800}},
-			expectedPostCount:  1,
-			expectedFirstPost:  &Post{Role: PostRoleUser, Message: "newer-" + nearBudget},
+			expectedPosts:      []Post{note, {Role: PostRoleUser, Message: "newer-" + nearBudget}},
 			useNoStream:        true,
 		},
 		{
@@ -101,9 +108,11 @@ func TestTruncationWrapper(t *testing.T) {
 			},
 			inputTokenLimit:    1000,
 			countTokensReturns: []countResult{{count: 1100}, {count: 800}},
-			expectedPostCount:  2,
-			expectedFirstPost:  &Post{Role: PostRoleSystem, Message: systemPrompt},
-			expectedSecondPost: &Post{Role: PostRoleUser, Message: "newer-" + nearBudget},
+			expectedPosts: []Post{
+				{Role: PostRoleSystem, Message: systemPrompt},
+				note,
+				{Role: PostRoleUser, Message: "newer-" + nearBudget},
+			},
 		},
 		{
 			name: "keeps dropping oldest until provider count is under limit",
@@ -114,8 +123,22 @@ func TestTruncationWrapper(t *testing.T) {
 			},
 			inputTokenLimit:    1000,
 			countTokensReturns: []countResult{{count: 1100}, {count: 1050}, {count: 800}},
-			expectedPostCount:  1,
-			expectedFirstPost:  &Post{Role: PostRoleUser, Message: "newest-" + midBudget},
+			expectedPosts:      []Post{note, {Role: PostRoleUser, Message: "newest-" + midBudget}},
+		},
+		{
+			name: "never drops the newest post while the provider count stays over the limit",
+			posts: []Post{
+				{Role: PostRoleSystem, Message: systemPrompt},
+				{Role: PostRoleUser, Message: "older-" + nearBudget},
+				{Role: PostRoleUser, Message: "newer-" + nearBudget},
+			},
+			inputTokenLimit:    1000,
+			countTokensReturns: []countResult{{count: 1100}, {count: 1050}},
+			expectedPosts: []Post{
+				{Role: PostRoleSystem, Message: systemPrompt},
+				note,
+				{Role: PostRoleUser, Message: "newer-" + nearBudget},
+			},
 		},
 		{
 			name: "skips safety check when provider returns unsupported error",
@@ -125,7 +148,55 @@ func TestTruncationWrapper(t *testing.T) {
 			},
 			inputTokenLimit:    1000,
 			countTokensReturns: []countResult{{err: ErrUnsupportedTokenCount}},
-			expectedPostCount:  2,
+			expectedPosts: []Post{
+				{Role: PostRoleUser, Message: nearBudget},
+				{Role: PostRoleUser, Message: nearBudget},
+			},
+		},
+		{
+			name: "heuristic truncation keeps a large system prompt whole",
+			posts: []Post{
+				{Role: PostRoleSystem, Message: longSystemPrompt},
+				{Role: PostRoleUser, Message: longMessage},
+				{Role: PostRoleUser, Message: "question?"},
+			},
+			inputTokenLimit:    1000,
+			countTokensReturns: []countResult{{count: 900}},
+			expectedPosts: []Post{
+				{Role: PostRoleSystem, Message: longSystemPrompt},
+				cut(PostRoleUser),
+				{Role: PostRoleUser, Message: "question?"},
+			},
+		},
+		{
+			name: "system prompt over budget keeps the newest message whole",
+			posts: []Post{
+				{Role: PostRoleSystem, Message: oversizedSystemPrompt},
+				{Role: PostRoleUser, Message: "older"},
+				{Role: PostRoleUser, Message: "question?"},
+			},
+			inputTokenLimit:    1000,
+			countTokensReturns: []countResult{{count: 990}},
+			expectedPosts: []Post{
+				{Role: PostRoleSystem, Message: oversizedSystemPrompt},
+				note,
+				{Role: PostRoleUser, Message: "question?"},
+			},
+		},
+		{
+			name: "heuristic counts tool results and drops the tool round whole",
+			posts: []Post{
+				{Role: PostRoleSystem, Message: systemPrompt},
+				{Role: PostRoleUser, Message: "find it"},
+				toolRound,
+				{Role: PostRoleUser, Message: "what now?"},
+			},
+			inputTokenLimit: 1000,
+			expectedPosts: []Post{
+				{Role: PostRoleSystem, Message: systemPrompt},
+				note,
+				{Role: PostRoleUser, Message: "what now?"},
+			},
 		},
 	}
 
@@ -139,43 +210,37 @@ func TestTruncationWrapper(t *testing.T) {
 				).Return(r.count, r.err).Once()
 			}
 
-			matcher := mock.MatchedBy(func(r CompletionRequest) bool {
-				if len(r.Posts) != tt.expectedPostCount {
-					return false
-				}
-				if tt.expectedFirstPost != nil {
-					if r.Posts[0].Role != tt.expectedFirstPost.Role ||
-						r.Posts[0].Message != tt.expectedFirstPost.Message {
-						return false
-					}
-				}
-				if tt.expectedSecondPost != nil {
-					if len(r.Posts) < 2 ||
-						r.Posts[1].Role != tt.expectedSecondPost.Role ||
-						r.Posts[1].Message != tt.expectedSecondPost.Message {
-						return false
-					}
-				}
-				return true
-			})
+			var sent CompletionRequest
+			capture := func(args mock.Arguments) { sent = args.Get(1).(CompletionRequest) }
 
 			wrapper := NewLLMTruncationWrapper(inner)
 			req := CompletionRequest{Posts: tt.posts}
 			if tt.useNoStream {
-				inner.On("ChatCompletionNoStream", mock.Anything, matcher, mock.Anything).
-					Return("ok", nil).Once()
+				inner.On("ChatCompletionNoStream", mock.Anything, mock.Anything, mock.Anything).
+					Run(capture).Return("ok", nil).Once()
 				result, err := wrapper.ChatCompletionNoStream(context.Background(), req)
 				require.NoError(t, err)
 				assert.Equal(t, "ok", result)
 			} else {
-				inner.On("ChatCompletion", mock.Anything, matcher, mock.Anything).
-					Return(&TextStreamResult{}, nil).Once()
+				inner.On("ChatCompletion", mock.Anything, mock.Anything, mock.Anything).
+					Run(capture).Return(&TextStreamResult{}, nil).Once()
 				_, err := wrapper.ChatCompletion(context.Background(), req)
 				require.NoError(t, err)
 			}
 			inner.AssertExpectations(t)
 			if tt.countTokensReturns == nil {
 				inner.AssertNotCalled(t, "CountTokens", mock.Anything, mock.Anything, mock.Anything)
+			}
+
+			require.Len(t, sent.Posts, len(tt.expectedPosts))
+			for i, want := range tt.expectedPosts {
+				got := sent.Posts[i]
+				assert.Equal(t, want.Role, got.Role, "post %d role", i)
+				if want.Message == TruncatedMessagePrefix {
+					assert.True(t, strings.HasPrefix(got.Message, TruncatedMessagePrefix), "post %d must be marked as cut", i)
+					continue
+				}
+				assert.Equal(t, want.Message, got.Message, "post %d message", i)
 			}
 		})
 	}

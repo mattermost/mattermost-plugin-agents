@@ -1,21 +1,20 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState} from 'react';
+import React, {useContext, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
-import {ChevronDownIcon, ChevronRightIcon, CheckIcon, AlertCircleOutlineIcon, CloseCircleOutlineIcon, GlobeIcon, HelpCircleOutlineIcon, LockIcon} from '@mattermost/compass-icons/components';
-
-// eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
-import {OverlayTrigger, Tooltip} from 'react-bootstrap';
+import {ChevronDownIcon, ChevronRightIcon, CheckIcon, AlertCircleOutlineIcon, ClockOutlineIcon, CloseCircleOutlineIcon, GlobeIcon, HelpCircleOutlineIcon, LockIcon} from '@mattermost/compass-icons/components';
 
 import {Button} from '@mattermost/compass-ui/components/button';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
 import {Tag} from '@mattermost/compass-ui/components/tag';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
-import {toolDisplayName} from '@/utils/tool_identity';
+import {originKind, toolDisplayName} from '@/utils/tool_identity';
+import {WAIT_TOOL_NAME, WaitStepClock, WaitStepLabel, WaitToolContext, parseWaitMinutes} from '@/components/llmbot_post/wait_status';
 
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
 import {ToolArgumentsRaw, ToolResultBody, hasInspectableArguments} from '../tool_arguments';
@@ -88,6 +87,13 @@ const SmallRejectedIcon = styled(CloseCircleOutlineIcon)`
     height: 12px;
 `;
 
+const WaitingIcon = styled(ClockOutlineIcon)`
+    color: rgba(var(--center-channel-color-rgb), 0.64);
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+`;
+
 const ResponseSuccessIcon = styled(IconCheckCircle)`
     color: var(--online-indicator);
     width: 12px;
@@ -139,44 +145,6 @@ const ResultReviewHelpButton = styled.button`
     }
 `;
 
-const TooltipTitle = styled.div`
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 16px;
-    margin-bottom: 4px;
-`;
-
-const TooltipBody = styled.div`
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
-    max-width: 320px;
-    opacity: 0.88;
-`;
-
-const ShareVisibilityTooltip = styled(Tooltip)`
-    .tooltip-arrow {
-        display: none;
-    }
-
-    .tooltip-inner {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        padding: 2px 8px;
-        border-radius: 10px;
-        max-width: none;
-
-        font-size: 11px;
-        font-weight: 600;
-        line-height: 16px;
-
-        color: var(--error-text);
-        background-color: var(--center-channel-bg);
-        border: 1px solid rgba(var(--error-text-color-rgb), 0.24);
-    }
-`;
-
 const ResponseLabel = styled.div`
     display: flex;
     align-items: center;
@@ -211,12 +179,44 @@ export interface ToolCardShellProps {
     approvalStage?: ToolApprovalStage;
     isAutoApproved?: boolean;
 
+    // The call waits on a decision from the requester, who is not this viewer.
+    awaitingRequester?: boolean;
+
     // The arguments body: the generic field list or a rich card's rendering.
     children?: React.ReactNode;
 }
 
 // Props for a card component: everything the shell takes except the body.
 export type RichCardProps = Omit<ToolCardShellProps, 'children'>;
+
+// renderHeaderStatusIcon picks the glyph shown left of a tool name: an amber
+// clock while a wait_for_async_work pause is active, the waiting glyph while a
+// call awaits the requester, else the standard status icon.
+function renderHeaderStatusIcon(opts: {
+    waitActive: boolean;
+    awaitingRequester: boolean;
+    isPending: boolean;
+    status: ToolCallStatus;
+    isProcessing: boolean;
+}): React.ReactNode {
+    if (opts.waitActive) {
+        return <WaitStepClock data-testid='llm-bot-wait-step-clock'/>;
+    }
+    if (opts.awaitingRequester && opts.isPending) {
+        return (
+            <WaitingIcon
+                size={12}
+                data-testid='llm-bot-tool-status-waiting'
+            />
+        );
+    }
+    return (
+        <ToolStatusIcon
+            status={opts.status}
+            isProcessing={opts.isProcessing}
+        />
+    );
+}
 
 /**
  * ToolCardShell renders the shared approval chrome for a tool call: expandable
@@ -237,10 +237,19 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
     showResults,
     approvalStage = 'call',
     isAutoApproved = false,
+    awaitingRequester = false,
     children,
 }) => {
     const {formatMessage} = useIntl();
     const [showRaw, setShowRaw] = useState(false);
+
+    // wait_for_async_work rows swap the green check for an amber "waiting"
+    // indicator while the pause is still pending; the context carries whether
+    // this post's wait is active.
+    const waitState = useContext(WaitToolContext);
+    const isWaitTool = tool.name === WAIT_TOOL_NAME && originKind(tool.server_origin) === 'builtin';
+    const waitActive = isWaitTool && Boolean(waitState?.active);
+    const waitMinutes = isWaitTool ? parseWaitMinutes(tool.arguments) : null;
 
     const isPending = tool.status === ToolCallStatus.Pending;
     const isSuccess = tool.status === ToolCallStatus.Success || tool.status === ToolCallStatus.AutoApproved;
@@ -297,16 +306,12 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
             <ButtonContainer>
                 {isResultApprovalStage ? (
                     <>
-                        <OverlayTrigger
-                            placement='top'
-                            overlay={
-                                <ShareVisibilityTooltip>
-                                    <GlobeIcon size={14}/>
-                                    <FormattedMessage
-                                        id='ai.tool_call.visible_to_channel'
-                                        defaultMessage='Visible to channel'
-                                    />
-                                </ShareVisibilityTooltip>
+                        <WithTooltip
+                            title={
+                                <FormattedMessage
+                                    id='ai.tool_call.visible_to_channel'
+                                    defaultMessage='Visible to channel'
+                                />
                             }
                         >
                             <span>
@@ -323,7 +328,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                                     />
                                 </Button>
                             </span>
-                        </OverlayTrigger>
+                        </WithTooltip>
                         <Button
                             emphasis='tertiary'
                             size='x-small'
@@ -389,11 +394,32 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                         {isCollapsed ? <ChevronRightIcon size={16}/> : <ChevronDownIcon size={16}/>}
                     </StyledChevronIcon>
                 )}
-                <ToolStatusIcon
-                    status={tool.status}
-                    isProcessing={isProcessing}
-                />
+                {renderHeaderStatusIcon({waitActive, awaitingRequester, isPending, status: tool.status, isProcessing})}
                 <ToolName title={displayName}>{displayName}</ToolName>
+                {isWaitTool && (
+                    <WaitStepLabel
+                        active={waitActive}
+                        minutes={waitMinutes}
+                    />
+                )}
+                {awaitingRequester && (
+                    <Tag
+                        type='warning'
+                        size='x-small'
+                        data-testid='llm-bot-tool-awaiting-approval'
+                        label={tool.user_interaction ? (
+                            <FormattedMessage
+                                id='ai.tool_call.awaiting_answer'
+                                defaultMessage='Awaiting answer'
+                            />
+                        ) : (
+                            <FormattedMessage
+                                id='ai.tool_call.awaiting_approval'
+                                defaultMessage='Awaiting approval'
+                            />
+                        )}
+                    />
+                )}
                 {(tool.status === ToolCallStatus.AutoApproved || isAutoApproved) && (
                     <Tag
                         type='success'
@@ -459,23 +485,18 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                                         id='ai.tool_call.review_tool_response'
                                         defaultMessage='Review tool response'
                                     />
-                                    <OverlayTrigger
-                                        placement='top'
-                                        overlay={
-                                            <Tooltip>
-                                                <TooltipTitle>
-                                                    <FormattedMessage
-                                                        id='ai.tool_call.tooltip.why_second_step'
-                                                        defaultMessage='Why is there a second approval step?'
-                                                    />
-                                                </TooltipTitle>
-                                                <TooltipBody>
-                                                    <FormattedMessage
-                                                        id='ai.tool_call.tooltip.approval_body'
-                                                        defaultMessage='This step controls whether Agents can use the tool response when generating the next message in the channel. If you reject, the response stays private and won’t be used in the channel reply.'
-                                                    />
-                                                </TooltipBody>
-                                            </Tooltip>
+                                    <WithTooltip
+                                        title={
+                                            <FormattedMessage
+                                                id='ai.tool_call.tooltip.why_second_step'
+                                                defaultMessage='Why is there a second approval step?'
+                                            />
+                                        }
+                                        hint={
+                                            <FormattedMessage
+                                                id='ai.tool_call.tooltip.approval_body'
+                                                defaultMessage='This step controls whether Agents can use the tool response when generating the next message in the channel. If you reject, the response stays private and won’t be used in the channel reply.'
+                                            />
                                         }
                                     >
                                         <ResultReviewHelpButton
@@ -484,7 +505,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                                         >
                                             <HelpCircleOutlineIcon size={16}/>
                                         </ResultReviewHelpButton>
-                                    </OverlayTrigger>
+                                    </WithTooltip>
                                 </ResultReviewTitle>
                             }
                             description={

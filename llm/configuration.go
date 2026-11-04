@@ -242,11 +242,16 @@ type BotConfig struct {
 	StructuredOutputEnabled bool `json:"structuredOutputEnabled"`
 
 	// MaxToolTurns is the maximum number of LLM-call → tool-execute iterations
-	// the tool runner will perform for this agent before stopping. A non-positive
+	// the tool runner will perform for this agent; one more LLM call with tools
+	// disabled then produces the final answer. A non-positive
 	// value falls back to DefaultMaxToolTurns. Lower this when using a smaller
 	// model that tends to call tools in loops; raise it for agents that rely on
 	// long dynamic-tool-discovery chains (e.g. search → load → execute).
 	MaxToolTurns int `json:"maxToolTurns"`
+
+	// Skills is omitted when zero so agent versions recorded before skills
+	// existed compare equal to agents that never configured them.
+	Skills SkillsConfig `json:"skills,omitzero"`
 
 	// Admin / lifecycle metadata.
 	BotUserID    string   `json:"botUserID,omitempty"`
@@ -257,6 +262,11 @@ type BotConfig struct {
 	DeleteAt     int64    `json:"deleteAt,omitempty"`
 }
 
+// UnmarshalJSON defaults fields whose zero value is not their behavior from
+// before the field existed. Stored agent versions and configs written before
+// a field was added omit its key and are never rewritten, so a new field whose
+// zero value changes behavior must get its default here (as
+// MCPDynamicToolLoading does).
 func (c *BotConfig) UnmarshalJSON(data []byte) error {
 	type botConfigAlias BotConfig
 	defaults := botConfigAlias{
@@ -296,7 +306,7 @@ func (c *BotConfig) Validate() error {
 	if c.MaxToolTurns > MaxAllowedMaxToolTurns {
 		return fmt.Errorf("maxToolTurns must be less than or equal to %d", MaxAllowedMaxToolTurns)
 	}
-	return nil
+	return c.Skills.Validate()
 }
 
 // EffectiveMaxToolTurns returns the configured MaxToolTurns or DefaultMaxToolTurns

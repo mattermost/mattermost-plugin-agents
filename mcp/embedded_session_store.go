@@ -47,40 +47,51 @@ func (m *ClientManager) deleteEmbeddedSessionID(userID string) error {
 // mint, or a lapsed session whose expiry was extended. Only silent reuse of a
 // still-valid session returns false — audit logging keys off this.
 func (m *ClientManager) ensureEmbeddedSessionID(userID string) (string, bool, error) {
-	user, err := m.pluginAPI.User.Get(userID)
-	if err != nil {
-		return "", false, fmt.Errorf("failed to fetch user for embedded session: %w", err)
-	}
-	if user.DeleteAt != 0 {
-		return "", false, fmt.Errorf("cannot create embedded session for deleted user")
-	}
-	reusedID, renewed, reuseErr := m.tryReuseEmbeddedSession(user.Id)
-	if reuseErr != nil {
-		return "", false, reuseErr
-	}
-	if reusedID != "" {
-		return reusedID, renewed, nil
-	}
-
-	sessionID, err := m.createEmbeddedSession(user)
+	session, granted, err := m.ensureEmbeddedSession(userID)
 	if err != nil {
 		return "", false, err
 	}
-	return sessionID, true, nil
+	return session.Id, granted, nil
+}
+
+// ensureEmbeddedSession is ensureEmbeddedSessionID returning the session
+// itself, so callers can connect without reading it back (see
+// EmbeddedServerClient.CreateClientForSession).
+func (m *ClientManager) ensureEmbeddedSession(userID string) (*model.Session, bool, error) {
+	user, err := m.pluginAPI.User.Get(userID)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to fetch user for embedded session: %w", err)
+	}
+	if user.DeleteAt != 0 {
+		return nil, false, fmt.Errorf("cannot create embedded session for deleted user")
+	}
+	reused, renewed, reuseErr := m.tryReuseEmbeddedSession(user.Id)
+	if reuseErr != nil {
+		return nil, false, reuseErr
+	}
+	if reused != nil {
+		return reused, renewed, nil
+	}
+
+	session, err := m.createEmbeddedSession(user)
+	if err != nil {
+		return nil, false, err
+	}
+	return session, true, nil
 }
 
 // tryReuseEmbeddedSession returns the stored session when still usable. The
 // second return reports whether a lapsed session's expiry had to be extended
 // — re-enabling an expired credential is a new grant, not silent reuse.
-func (m *ClientManager) tryReuseEmbeddedSession(userID string) (string, bool, error) {
+func (m *ClientManager) tryReuseEmbeddedSession(userID string) (*model.Session, bool, error) {
 	stored, err := m.loadEmbeddedSessionID(userID)
 	if err != nil {
 		m.log.Debug("Failed to load embedded session ID", "userID", userID, "error", err)
-		return "", false, nil
+		return nil, false, nil
 	}
 
 	if stored == "" {
-		return "", false, nil
+		return nil, false, nil
 	}
 
 	sess, getErr := m.pluginAPI.Session.Get(stored)
@@ -89,24 +100,24 @@ func (m *ClientManager) tryReuseEmbeddedSession(userID string) (string, bool, er
 		if deleteErr := m.deleteEmbeddedSessionID(userID); deleteErr != nil {
 			m.log.Debug("Failed to delete stale embedded session key", "userID", userID, "error", deleteErr)
 		}
-		return "", false, nil
+		return nil, false, nil
 	}
 
 	if !sess.IsExpired() {
-		return stored, false, nil
+		return sess, false, nil
 	}
 
 	newExpiry := time.Now().Add(m.sessionLengthDuration()).UnixMilli()
 	if err := m.pluginAPI.Session.ExtendExpiry(stored, newExpiry); err == nil {
 		m.log.Debug("Extended embedded session expiry", "userID", userID)
-		return stored, true, nil
+		return sess, true, nil
 	}
 
 	m.log.Debug("Failed to extend embedded session", "userID", userID)
-	return "", false, nil
+	return nil, false, nil
 }
 
-func (m *ClientManager) createEmbeddedSession(user *model.User) (string, error) {
+func (m *ClientManager) createEmbeddedSession(user *model.User) (*model.Session, error) {
 	sessionDuration := m.sessionLengthDuration()
 	expiresAt := time.Now().Add(sessionDuration).UnixMilli()
 
@@ -129,18 +140,18 @@ func (m *ClientManager) createEmbeddedSession(user *model.User) (string, error) 
 
 	created, err := m.pluginAPI.Session.Create(newSession)
 	if err != nil {
-		return "", fmt.Errorf("failed to create embedded session: %w", err)
+		return nil, fmt.Errorf("failed to create embedded session: %w", err)
 	}
 
 	if created == nil || created.Id == "" {
-		return "", fmt.Errorf("embedded session creation returned empty result")
+		return nil, fmt.Errorf("embedded session creation returned empty result")
 	}
 
 	if err := m.storeEmbeddedSessionID(user.Id, created.Id); err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return created.Id, nil
+	return created, nil
 }
 
 func (m *ClientManager) sessionLengthDuration() time.Duration {

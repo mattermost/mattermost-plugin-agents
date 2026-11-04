@@ -44,12 +44,15 @@ type Props = {
     draft: AgentDraft;
     onChange: (updates: Partial<AgentDraft>) => void;
     onAvatarChange: (file: File | null) => void;
+
+    /** The avatar upload that the next save will apply, if any. */
+    avatarFile?: File | null;
     botUserId?: string;
     services: ServiceInfo[];
     errors?: Record<string, string>;
 
-    /** When true (e.g. edit mode), username cannot be changed; matches API behavior. */
-    usernameLocked?: boolean;
+    /** The saved username when editing an existing agent (empty when creating); used to flag a pending rename. */
+    savedUsername?: string;
 }
 
 // Keep in sync with legacy System Console bot form (webapp/src/components/system_console/bot.tsx).
@@ -63,7 +66,7 @@ const ConfigTab = (props: Props) => {
         onAvatarChange,
         services,
         errors = {},
-        usernameLocked = false,
+        savedUsername,
     } = props;
     const intl = useIntl();
     const serviceLimit = useServiceLimit();
@@ -99,14 +102,12 @@ const ConfigTab = (props: Props) => {
             const sameServiceType = Boolean(prevSvc && nextSvc && prevSvc.type === nextSvc.type);
             onChange({
                 model: '',
-                ...(sameServiceType ?
-                    {} :
-                    {
-                        enabledNativeTools: providerWebSearchLicensed ? ['web_search'] : [],
-                        reasoningEnabled: true,
-                        reasoningEffort: defaultReasoningEffort(nextSvc?.type),
-                        thinkingBudget: 0,
-                    }),
+                ...(sameServiceType ? {} : {
+                    enabledNativeTools: providerWebSearchLicensed ? ['web_search'] : [],
+                    reasoningEnabled: true,
+                    reasoningEffort: defaultReasoningEffort(nextSvc?.type),
+                    thinkingBudget: 0,
+                }),
             });
         }
         prevServiceIdRef.current = draft.serviceId;
@@ -225,9 +226,7 @@ const ConfigTab = (props: Props) => {
     const maxTokens = selectedService?.outputTokenLimit || 4096;
     const serviceDefaultModel = selectedService?.defaultModel?.trim() || '';
 
-    const modelPlaceholder = serviceDefaultModel ?
-        intl.formatMessage({defaultMessage: 'Default: {model}'}, {model: serviceDefaultModel}) :
-        intl.formatMessage({defaultMessage: 'Leave empty to use service default'});
+    const modelPlaceholder = serviceDefaultModel ? intl.formatMessage({defaultMessage: 'Default: {model}'}, {model: serviceDefaultModel}) : intl.formatMessage({defaultMessage: 'Leave empty to use service default'});
 
     const modelHelptext = (() => {
         if (supportsModelFetching && loadingModels) {
@@ -245,16 +244,20 @@ const ConfigTab = (props: Props) => {
         return intl.formatMessage({defaultMessage: 'Optional: Override the service\'s default model for this agent. Leave empty to use the service default.'});
     })();
 
-    const comboboxModelHelptext = serviceDefaultModel ?
-        intl.formatMessage(
-            {defaultMessage: 'Optional: Override the service\'s default model ({defaultModel}) for this agent. Select from the list or type a custom model name.'},
-            {defaultModel: serviceDefaultModel},
-        ) :
-        intl.formatMessage({defaultMessage: 'Optional: Override the service\'s default model for this agent. Select from the list or type a custom model name.'});
+    const comboboxModelHelptext = serviceDefaultModel ? intl.formatMessage(
+        {defaultMessage: 'Optional: Override the service\'s default model ({defaultModel}) for this agent. Select from the list or type a custom model name.'},
+        {defaultModel: serviceDefaultModel},
+    ) : intl.formatMessage({defaultMessage: 'Optional: Override the service\'s default model for this agent. Select from the list or type a custom model name.'});
 
-    const comboboxModelPlaceholder = serviceDefaultModel ?
-        intl.formatMessage({defaultMessage: 'Default: {model}'}, {model: serviceDefaultModel}) :
-        intl.formatMessage({defaultMessage: 'Use service default'});
+    const comboboxModelPlaceholder = serviceDefaultModel ? intl.formatMessage({defaultMessage: 'Default: {model}'}, {model: serviceDefaultModel}) : intl.formatMessage({defaultMessage: 'Use service default'});
+
+    const usernameRulesHelptext = intl.formatMessage({
+        defaultMessage: 'Users will mention this name to interact with the agent. Must start with a letter and contain only lowercase letters, numbers, dots, hyphens, or underscores.',
+    });
+    const usernameHelptext = savedUsername && draft.username !== savedUsername ? intl.formatMessage(
+        {defaultMessage: '{rules} Renaming keeps the agent\'s conversations, but people and integrations using @{savedUsername} will need to switch to the new name.'},
+        {rules: usernameRulesHelptext, savedUsername},
+    ) : usernameRulesHelptext;
 
     const handleReasoningBotChange = (bot: LLMBotConfig) => {
         onChange({
@@ -278,17 +281,14 @@ const ConfigTab = (props: Props) => {
                     label={intl.formatMessage({defaultMessage: 'Agent username'})}
                     value={draft.username}
                     maxLength={22}
-                    disabled={usernameLocked}
                     onChange={(e) => onChange({username: e.target.value})}
                     error={errors.username}
-                    helptext={intl.formatMessage({
-                        defaultMessage:
-                            'Users will mention this name to interact with the agent. Must start with a letter and contain only lowercase letters, numbers, dots, hyphens, or underscores. The username cannot be changed after the agent is created.',
-                    })}
+                    helptext={usernameHelptext}
                 />
                 <AvatarItem
                     botusername={draft.username}
                     avatarOwnerKey={props.botUserId}
+                    pendingFile={props.avatarFile ?? null}
                     changedAvatar={(image: File) => onAvatarChange(image)}
                 />
                 <SelectionItem
@@ -297,15 +297,13 @@ const ConfigTab = (props: Props) => {
                     onChange={(serviceId) => onChange({serviceId})}
                     error={errors.serviceId}
                     helptext={
-                        serviceLimit !== null && services.length > 1 ?
-                            intl.formatMessage(
-                                {defaultMessage: 'Only the first configured service is active on your current plan. Additional services are available on {plan} plans and above.'},
-                                {plan: levelName(LicenseLevel.Enterprise)},
-                            ) :
-                            intl.formatMessage({
-                                defaultMessage:
+                        serviceLimit !== null && services.length > 1 ? intl.formatMessage(
+                            {defaultMessage: 'Only the first configured service is active on your current plan. Additional services are available on {plan} plans and above.'},
+                            {plan: levelName(LicenseLevel.Enterprise)},
+                        ) : intl.formatMessage({
+                            defaultMessage:
                                     'Select an AI service to load model suggestions and configure vision, tools, native provider tools, and reasoning.',
-                            })
+                        })
                     }
                     options={[
                         {value: '', label: intl.formatMessage({defaultMessage: 'Select a service'})},
@@ -410,7 +408,7 @@ const ConfigTab = (props: Props) => {
                                 placeholder={String(DefaultMaxToolTurns)}
                                 onChange={(value: number) => onChange({maxToolTurns: value})}
                                 error={errors.maxToolTurns}
-                                helptext={intl.formatMessage({defaultMessage: 'Maximum number of consecutive tool-call/execute rounds the agent will run before stopping. Lower this for smaller models that tend to loop on tool calls; raise it for agents that chain many tools per turn.'})}
+                                helptext={intl.formatMessage({defaultMessage: 'Maximum number of consecutive tool-call/execute rounds the agent will run before it must answer without tools. Lower this for smaller models that tend to loop on tool calls; raise it for agents that chain many tools per turn.'})}
                             />
 
                             {supportsVisionAndTools && (

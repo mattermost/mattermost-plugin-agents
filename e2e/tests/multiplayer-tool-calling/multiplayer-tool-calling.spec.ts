@@ -1,7 +1,8 @@
 // spec: tests/multiplayer-tool-calling/multiplayer-tool-calling.plan.md
 // seed: tests/seed.spec.ts
 
-import {test, expect, Page} from '@playwright/test';
+import {expect, Page} from '@playwright/test';
+import {containerTest} from 'helpers/container-fixture';
 
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {
@@ -17,6 +18,7 @@ import {
     expectNoToolActivity,
     expectToolActivityCurrent,
     TOOL_CARD_SELECTOR,
+    toolCard,
 } from 'helpers/llmbot-post';
 import MattermostContainer, {getTownSquareChannel, TownSquareChannel} from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
@@ -225,6 +227,21 @@ async function navigateToChannel(page: Page, baseUrl: string, channelName: strin
     await waitForPageReady(page);
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigAIMockContainer({
+        toolConfigs: MULTIPLAYER_ASK_TOOL_CONFIGS,
+        customInstructions: multiplayerCustomInstructions,
+        enableVectorIndex: true,
+        defaultBotName: 'toolbot',
+        botId: 'tool-test-bot',
+        botDisplayName: 'Tool Test Bot',
+    }));
+    const aimock = own(await RunAIMockSidecar(mattermost.network, {
+        fixtures: {fixtures: [buildTitleFixture('Multiplayer bootstrap')]},
+    }));
+    return { mattermost, aimock };
+});
+
 test.describe('Multiplayer Tool Calling (Aimock)', () => {
     // Serial: one shared Mattermost + aimock sidecar; each test reloads fixtures via setFixtures/restart.
     // Keep-private runs first so a prior happy-path create_post does not leave Town Square posts that
@@ -233,28 +250,10 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
 
     let townSquare: TownSquareChannel;
 
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        mattermost = await RunToolConfigAIMockContainer({
-            toolConfigs: MULTIPLAYER_ASK_TOOL_CONFIGS,
-            customInstructions: multiplayerCustomInstructions,
-            enableVectorIndex: true,
-            defaultBotName: 'toolbot',
-            botId: 'tool-test-bot',
-            botDisplayName: 'Tool Test Bot',
-        });
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, aimock } = containers);
         await setupMultiplayerUsers(mattermost);
         townSquare = await getTownSquareChannel(mattermost, invokerUsername, invokerPassword);
-        aimock = await RunAIMockSidecar(mattermost.network, {
-            fixtures: {fixtures: [buildTitleFixture('Multiplayer bootstrap')]},
-        });
-    });
-
-    test.afterAll(async () => {
-        await aimock?.stop();
-        if (mattermost) {
-            await mattermost.stop();
-        }
     });
 
     test('Accept tool calls then Keep Private', async ({browser}) => {
@@ -379,8 +378,9 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
             await expect(onlookerBot).toBeVisible({timeout: 30000});
 
             // Onlookers owe no decision, so the pending call folds into the
-            // activity area instead of rendering as an approval card.
-            await expectToolActivityCurrent(onlookerBot, getChannelInfoToolLabel);
+            // activity area instead of rendering as an approval card, and the
+            // status line says who the response is waiting on.
+            await expectToolActivityCurrent(onlookerBot, `Waiting for @${invokerUsername} to approve tool use`);
             await expect(onlookerBot.getByText('Working...', {exact: true})).toHaveCount(0);
             await expect(onlookerRhs.getByRole('button', {name: 'Accept'})).not.toBeVisible();
             await expect(onlookerRhs.getByRole('button', {name: 'Reject'})).not.toBeVisible();
@@ -458,7 +458,7 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
             // collapsed activity area and only reappears when expanded.
             await expect(rhs.getByText(createPostToolLabel, {exact: true})).toHaveCount(0);
             const activityRounds = await expandToolActivity(rhs.locator('[data-testid="llm-bot-post"]').last());
-            await expect(activityRounds.getByText(createPostToolLabel, {exact: true})).toBeVisible({timeout: 30000});
+            await expect(toolCard(activityRounds, createPostToolLabel)).toBeVisible({timeout: 30000});
 
             await navigateToChannel(page, baseUrl, 'town-square');
             await expect(page.getByText(rejectPostText)).not.toBeVisible();
@@ -521,11 +521,12 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
             // Onlooker: the same round folds into the activity area, which
             // they can open, but its redacted card offers no expansion.
             const onlookerPost = onlookerPage.locator('#rhsContainer').locator('[data-testid="llm-bot-post"]').last();
-            await expectToolActivityCurrent(onlookerPost, getChannelInfoToolLabel);
+            await expectToolActivityCurrent(onlookerPost, `Waiting for @${invokerUsername} to approve tool use`);
             const onlookerRounds = await expandToolActivity(onlookerPost);
             const onlookerCard = onlookerRounds.locator(TOOL_CARD_SELECTOR).first();
             await expect(onlookerCard.getByText(getChannelInfoToolLabel, {exact: true})).toBeVisible({timeout: 30000});
             await expect(onlookerCard.locator(TOOL_CARD_CHEVRON_SELECTOR)).toHaveCount(0);
+            await expect(onlookerCard.getByText('Awaiting approval', {exact: true})).toBeVisible();
 
             await onlookerCard.getByText(getChannelInfoToolLabel, {exact: true}).click();
             await expect(onlookerCard.locator(TOOL_CARD_ARGUMENTS_SELECTOR)).toHaveCount(0);

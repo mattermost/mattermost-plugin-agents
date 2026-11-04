@@ -13,7 +13,7 @@ import {PreferenceType} from '@mattermost/types/preferences';
 import {getAIBots, savePreferences} from '@/client';
 
 import manifest from './manifest';
-import {BotsHandler, SearchEnabledHandler} from './redux';
+import {BotsHandler, SearchEnabledHandler, SetLinkPolicyHandler} from './redux';
 import {ChannelAccessLevel, UserAccessLevel} from './components/system_console/bot';
 import {EnabledTool} from './types/agents';
 
@@ -53,20 +53,20 @@ const selectedAgentPreferenceKey = `${PREFERENCE_CATEGORY_AGENTS}--${PREFERENCE_
 export const getSelectedAgentId = (state: any): string =>
     state.entities?.preferences?.myPreferences?.[selectedAgentPreferenceKey]?.value ?? '';
 
-// Selection precedence: saved preference (when still available) -> system
-// default bot -> first available bot.
-export const resolveActiveBot = (bots: LLMBot[] | null, preferredId: string): LLMBot | null => {
-    if (!bots || bots.length === 0) {
+// The agent the user chose: the saved preference (when still available), else the system default
+// bot. Null when there is neither; never the first bot.
+export const resolvePreferredBot = (bots: LLMBot[] | null, preferredId: string): LLMBot | null => {
+    if (!bots) {
         return null;
     }
-    if (preferredId) {
-        const preferred = bots.find((bot) => bot.id === preferredId);
-        if (preferred) {
-            return preferred;
-        }
-    }
-    return bots.find((bot) => bot.isDefault) ?? bots[0];
+    return (preferredId && bots.find((bot) => bot.id === preferredId)) || bots.find((bot) => bot.isDefault) || null;
 };
+
+// Selection precedence for surfaces that always need an agent (the RHS, channel tools): the
+// preferred bot (resolvePreferredBot), then the first available bot.
+export const resolveActiveBot = (bots: LLMBot[] | null, preferredId: string): LLMBot | null => (
+    resolvePreferredBot(bots, preferredId) ?? bots?.[0] ?? null
+);
 
 // Fetches the bot list and stores it (plus the related feature flags) in the
 // plugin's redux slice. Shared by useBotlist, the channel-settings loadValues,
@@ -84,8 +84,13 @@ export async function fetchAndStoreBots(dispatch: Dispatch): Promise<LLMBot[] | 
     });
 
     dispatch({
-        type: 'SET_ALLOW_UNSAFE_LINKS',
-        allowUnsafeLinks: Boolean(response.allowUnsafeLinks),
+        type: SetLinkPolicyHandler,
+        linkPolicy: response.linkPolicy,
+    });
+
+    dispatch({
+        type: 'SET_HTML_ARTIFACTS_ENABLED',
+        htmlArtifactsEnabled: Boolean(response.htmlArtifactsEnabled),
     });
 
     dispatch({

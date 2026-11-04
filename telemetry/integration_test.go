@@ -18,6 +18,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
+	"github.com/stretchr/testify/require"
 )
 
 // setupTestTracing installs an in-memory exporter as the global TracerProvider
@@ -298,9 +299,7 @@ func TestToolResolveUnknownSpan(t *testing.T) {
 	_, err := store.ResolveTool(context.Background(), "nonexistent", func(args any) error {
 		return nil
 	}, &llm.Context{})
-	if err == nil {
-		t.Fatal("expected error for unknown tool")
-	}
+	require.Error(t, err, "expected error for unknown tool")
 
 	spans := exporter.GetSpans()
 	if len(spans) != 1 {
@@ -344,9 +343,9 @@ func TestParentChildSpanHierarchy(t *testing.T) {
 	// non-nil where they are dereferenced.
 	switch {
 	case httpStub == nil:
-		t.Fatal("HTTP span not found")
+		require.FailNow(t, "HTTP span not found")
 	case llmStub == nil:
-		t.Fatal("LLM span not found")
+		require.FailNow(t, "LLM span not found")
 	default:
 		// Verify same trace
 		if httpStub.SpanContext.TraceID() != llmStub.SpanContext.TraceID() {
@@ -436,9 +435,7 @@ func TestFullRequestTrace(t *testing.T) {
 
 	// Verify LLM span has token attributes
 	llmStub := spanByName(spans, "llm chat completion")
-	if llmStub == nil {
-		t.Fatal("LLM span not found")
-	}
+	require.NotNil(t, llmStub, "LLM span not found")
 	if v := attrInt64(llmStub, "agents.llm.input_tokens"); v != 150 {
 		t.Errorf("agents.llm.input_tokens = %d, want 150", v)
 	}
@@ -448,9 +445,7 @@ func TestFullRequestTrace(t *testing.T) {
 
 	// Verify tool span has name attribute
 	toolStub := spanByName(spans, "resolve tool")
-	if toolStub == nil {
-		t.Fatal("tool span not found")
-	}
+	require.NotNil(t, toolStub, "tool span not found")
 	if v := attrString(toolStub, "agents.tool.name"); v != "web_search" {
 		t.Errorf("agents.tool.name = %q, want 'web_search'", v)
 	}

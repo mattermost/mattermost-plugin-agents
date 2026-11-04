@@ -329,8 +329,18 @@ describe('MCPToolsViewer — plugin branch', () => {
             expect(onConfigChange).toHaveBeenCalledTimes(1);
         });
 
-        const [updated] = onConfigChange.mock.calls[0];
-        expect(updated.servers[0].tool_configs).toEqual([
+        // The seeds land on the configuration as it is by then, keeping edits
+        // made while they loaded.
+        const [update] = onConfigChange.mock.calls[0];
+        const editedMeanwhile: MCPConfig = {
+            ...cfg,
+            enablePluginServer: false,
+            servers: [...(cfg.servers ?? []), {name: 'Added', enabled: true, baseURL: 'https://added.example/mcp', headers: {}}],
+        };
+        const updated: MCPConfig = update(editedMeanwhile);
+        expect(updated.enablePluginServer).toBe(false);
+        expect(updated.servers?.[1]).toEqual(editedMeanwhile.servers?.[1]);
+        expect(updated.servers?.[0].tool_configs).toEqual([
             {name: 'existing_tool', policy: 'ask', enabled: false},
             {name: 'seeded_tool', policy: 'auto_run_in_dm', enabled: true},
         ]);

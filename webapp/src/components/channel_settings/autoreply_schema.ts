@@ -9,7 +9,7 @@ import {ClientError} from '@mattermost/client';
 import {Channel} from '@mattermost/types/channels';
 import {GlobalState} from '@mattermost/types/store';
 
-import {ChannelAutoReplyMode, ChannelAutoReplySettings, getChannelAutoReply, updateChannelAutoReply} from '@/client';
+import {ChannelAutoReplySettings, getChannelAutoReply, updateChannelAutoReply} from '@/client';
 import {LLMBot, fetchAndStoreBots, filterBotsByChannelAccess} from '@/bots';
 import {
     PERMISSION_MANAGE_PRIVATE_CHANNEL_PROPERTIES,
@@ -20,8 +20,13 @@ import manifest from '@/manifest';
 import {licenseAllows} from '@/license';
 
 import {AutoReplyAgentPicker} from './autoreply_agent_picker';
+import {AutoReplyInstructionsField} from './autoreply_ambient_fields';
 import {
+    ChannelAutoReplySaveErrorKind,
+    MAX_INSTRUCTIONS_RUNES,
+    countRunes,
     normalizeChannelAutoReply,
+    parseChannelAutoReplyMode,
     setChannelAutoReplyDraft,
     setChannelAutoReplySaveError,
 } from './autoreply_state';
@@ -106,34 +111,81 @@ export const makeLoadValues = (store: WebappStore) => async (channel: Channel): 
     // saved agent instead of clearing it like an empty agent list would.
     const saved = normalizeChannelAutoReply(raw, bots, channel.id);
     setChannelAutoReplyDraft({channelId: channel.id, saved, saveError: null});
-    return {mode: saved.mode, bot_id: saved.bot_id};
+    return {
+        mode: saved.mode,
+        bot_id: saved.bot_id,
+        instructions: saved.instructions,
+    };
 };
 
+function saveErrorKindForStatus(status: number): ChannelAutoReplySaveErrorKind {
+    switch (status) {
+    case 403:
+        return 'forbidden';
+    case 409:
+        return 'ambient_disabled';
+    case 400:
+        return 'invalid';
+    default:
+        return 'generic';
+    }
+}
+
 export const makeOnSave = () => async (values: ChannelSettingsValues, channel: Channel): Promise<void> => {
-    const mode: ChannelAutoReplyMode = values.mode === 'root_posts' || values.mode === 'threads' ? values.mode : 'off';
-    const botId = mode === 'off' ? '' : (values.bot_id ?? '');
+    const mode = parseChannelAutoReplyMode(values.mode);
+    let botId: string;
+    let instructions: string;
+    switch (mode) {
+    case 'off':
+        botId = '';
+        instructions = '';
+        break;
+    case 'root_posts':
+    case 'threads':
+    case 'ambient':
+    case 'ambient_threads':
+        botId = values.bot_id ?? '';
+        instructions = values.instructions ?? '';
+        break;
+    default: {
+        const exhaustive: never = mode;
+        throw new Error(`unhandled auto-reply mode: ${exhaustive}`);
+    }
+    }
     if (mode !== 'off' && !botId) {
         setChannelAutoReplySaveError('no_agent');
         throw new Error('no agent selected for channel auto-reply');
     }
+    if (countRunes(instructions) > MAX_INSTRUCTIONS_RUNES) {
+        throw new Error('auto-reply instructions exceed the maximum length');
+    }
+    const saved: ChannelAutoReplySettings = {
+        bot_id: botId,
+        mode,
+        instructions,
+    };
     try {
-        await updateChannelAutoReply(channel.id, {bot_id: botId, mode});
+        await updateChannelAutoReply(channel.id, saved);
     } catch (e) {
         // The endpoints answer with a bare status code (no JSON error body),
         // so error handling keys off the status only.
-        const status = e instanceof ClientError ? e.status_code : 0;
-        setChannelAutoReplySaveError(status === 403 ? 'forbidden' : 'generic');
+        setChannelAutoReplySaveError(saveErrorKindForStatus(e instanceof ClientError ? e.status_code ?? 0 : 0));
 
         // The host swallows the rejection and keeps the tab dirty; the picker
         // is the plugin-rendered element that displays the recorded error.
         throw e;
     }
-    setChannelAutoReplyDraft({channelId: channel.id, saved: {bot_id: botId, mode}, saveError: null});
+    setChannelAutoReplyDraft({channelId: channel.id, saved, saveError: null});
 };
 
 // Builds the registration passed to registry.registerChannelSettingsTab. Must
 // be called exactly once at init: the host re-runs hydration whenever the
 // schema object reference changes, which would destroy in-progress user edits.
+//
+// TODO(ambient-poc): migrate this tab to ChannelSettingsCustomTab so Reset
+// restores custom local state and Ambient extras can show/hide from live mode.
+// Schema custom settings cannot see host values or Reset. POC assumption:
+// extras stay always visible; Reset does not revert them.
 export function makeChannelAutoReplySchema(store: WebappStore, intl: IntlShape): ChannelAutoReplyTabRegistration {
     return {
         uiName: intl.formatMessage({defaultMessage: 'Agents'}),
@@ -164,6 +216,16 @@ export function makeChannelAutoReplySchema(store: WebappStore, intl: IntlShape):
                             text: intl.formatMessage({defaultMessage: 'Threads too'}),
                             helpText: intl.formatMessage({defaultMessage: 'The agent also automatically replies to replies in threads.'}),
                         },
+                        {
+                            value: 'ambient',
+                            text: intl.formatMessage({defaultMessage: 'Ambient (Experimental)'}),
+                            helpText: intl.formatMessage({defaultMessage: 'The agent watches the channel and replies only when it decides a response is useful.'}),
+                        },
+                        {
+                            value: 'ambient_threads',
+                            text: intl.formatMessage({defaultMessage: 'Ambient in mentioned threads (Experimental)'}),
+                            helpText: intl.formatMessage({defaultMessage: 'Once the agent is @-mentioned in a thread, it keeps watching that thread and replies only when it decides a response is useful.'}),
+                        },
                     ],
                 },
                 {
@@ -175,6 +237,11 @@ export function makeChannelAutoReplySchema(store: WebappStore, intl: IntlShape):
                     name: 'bot_id',
                     type: 'custom',
                     component: AutoReplyAgentPicker,
+                },
+                {
+                    name: 'instructions',
+                    type: 'custom',
+                    component: AutoReplyInstructionsField,
                 },
             ],
         }],

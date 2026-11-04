@@ -70,6 +70,7 @@ func setupChannelAnalysisAPIForChannel(t *testing.T, channel *model.Channel) (*T
 	e.api.streamingService = streamingService
 	convStore := newMockConvServiceStore()
 	e.api.SetConversationService(conversation.NewService(convStore, promptsObj, mmClient, e.bots))
+	expectConversationTitleEvents(mmClient)
 
 	fakeLLM := &channelAnalysisSequenceLLM{
 		calls: [][]llm.TextStreamEvent{
@@ -92,6 +93,7 @@ func setupChannelAnalysisAPIForChannel(t *testing.T, channel *model.Channel) (*T
 	e.mockAPI.On("GetChannel", channel.Id).Return(channel, nil)
 	e.mockAPI.On("HasPermissionToChannel", testUserID, channel.Id, model.PermissionReadChannel).Return(true)
 	e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Username: "requester", Locale: "en"}, nil).Maybe()
+	e.mockAPI.On("GetUser", testBotUserID).Return(&model.User{Id: testBotUserID, Username: "matty", IsBot: true}, nil).Maybe()
 
 	return e, streamingService, fakeLLM
 }

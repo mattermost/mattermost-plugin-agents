@@ -25,6 +25,21 @@ type ConversationResponse struct {
 	Title      string         `json:"title"`
 	Operation  string         `json:"operation"`
 	Turns      []TurnResponse `json:"turns"`
+
+	// ActiveWait is set only while a wait_for_async_work pause is pending in
+	// this conversation's thread, so the webapp can render a live countdown.
+	ActiveWait *ActiveWaitResponse `json:"active_wait,omitempty"`
+}
+
+// ActiveWaitResponse describes a pending wait_for_async_work pause. Times are
+// unix millis. RequesterUserID is the only user allowed to check-now or cancel
+// the wait; the webapp also uses it to pick the owner vs onlooker rendering.
+type ActiveWaitResponse struct {
+	PostID          string `json:"post_id"`
+	RequesterUserID string `json:"requester_user_id"`
+	ScheduledAt     int64  `json:"scheduled_at"`
+	ResumeAt        int64  `json:"resume_at"`
+	DurationMinutes int    `json:"duration_minutes"`
 }
 
 // TurnResponse is the JSON shape for a single turn within a conversation response.
@@ -87,7 +102,7 @@ func (a *API) handleGetConversation(c *gin.Context) {
 	}
 
 	// 5. Build response
-	c.JSON(http.StatusOK, ConversationResponse{
+	resp := ConversationResponse{
 		ID:         conv.ID,
 		UserID:     conv.UserID,
 		BotID:      conv.BotID,
@@ -96,7 +111,27 @@ func (a *API) handleGetConversation(c *gin.Context) {
 		Title:      conv.Title,
 		Operation:  conv.Operation,
 		Turns:      turnResponses,
-	})
+	}
+
+	// A pending wait_for_async_work pause is surfaced so the webapp can show a
+	// live countdown. It is best-effort: the conversation still renders if the
+	// lookup fails.
+	if a.conversationsService != nil && conv.RootPostID != nil {
+		wait, waitErr := a.conversationsService.ActiveWaitForConversation(conv.ID, *conv.RootPostID, conv.BotID)
+		if waitErr != nil {
+			a.pluginAPI.Log.Warn("failed to load active wait for conversation", "error", waitErr.Error())
+		} else if wait != nil {
+			resp.ActiveWait = &ActiveWaitResponse{
+				PostID:          wait.ResponsePostID,
+				RequesterUserID: wait.RequesterUserID,
+				ScheduledAt:     wait.ScheduledAt,
+				ResumeAt:        wait.ResumeAt,
+				DurationMinutes: wait.DurationMinutes,
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 // approvalStateForTurn computes the approval-stage string for a post-anchor

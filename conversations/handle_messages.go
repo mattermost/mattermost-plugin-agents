@@ -21,9 +21,9 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
-	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -69,20 +69,6 @@ func isBotActivateAI(post *model.Post, postingUser *model.User) bool {
 		return true
 	}
 	return post.GetProp(FromBotProp) != nil
-}
-
-// computeAllowToolsInChannel returns whether tools should be allowed for a channel mention,
-// given the config flag and whether the invoker is automated. Bot activate_ai requires a
-// tool policy checker: without it, strict filtering and MCP auto-approval are no-ops and tools
-// must stay disabled so automated invokers cannot strand pending approvals.
-func computeAllowToolsInChannel(configEnabled bool, post *model.Post, postingUser *model.User, hasToolPolicyChecker bool) bool {
-	if !configEnabled {
-		return false
-	}
-	if isBotActivateAI(post, postingUser) {
-		return hasToolPolicyChecker
-	}
-	return !isAutomatedInvoker(post, postingUser)
 }
 
 func (c *Conversations) userMCPPreferenceContextOptions(userID string, logMessage string) []llm.ContextOption {
@@ -149,6 +135,13 @@ func (c *Conversations) buildConversationContextWithTools(
 }
 
 func (c *Conversations) MessageHasBeenPosted(pluginContext *plugin.Context, post *model.Post) {
+	// Our own posts (response placeholders, streamed replies) never trigger a
+	// response. Return before starting a span so each turn does not leave an
+	// extra, unlinked trace behind for its placeholder post.
+	if c.bots.IsAnyBot(post.UserId) {
+		return
+	}
+
 	ctx := context.Background()
 	if pluginContext != nil {
 		ctx = auth.WithSessionID(ctx, pluginContext.SessionId)
@@ -217,54 +210,53 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) er
 		return fmt.Errorf("not responding to other bots: %w", ErrNoResponse)
 	}
 
-	// Check we are mentioned like @ai
-	if bot := c.bots.GetBotMentioned(post.Message); bot != nil {
+	// Mentioning the agent a DM is with is still a DM turn; mentioning a
+	// different agent there is a mention of that agent.
+	dmBot := c.bots.GetBotForDMChannel(channel)
+	if bot := c.bots.GetBotMentioned(post.Message); bot != nil && (dmBot == nil || bot.GetMMBot().UserId != dmBot.GetMMBot().UserId) {
 		return c.handleMentions(ctx, bot, post, postingUser, channel)
 	}
 
-	// Check if this is post in the DM channel with any bot
-	if bot := c.bots.GetBotForDMChannel(channel); bot != nil {
-		return c.handleDMs(ctx, bot, channel, postingUser, post)
+	if dmBot != nil {
+		return c.handleDMs(ctx, dmBot, channel, postingUser, post)
 	}
 
 	// Per-channel auto-reply handles the no-mention fall-through, and the two
 	// features work in tandem. When auto-reply declines for a normal reason
 	// (root_posts mode skipping a thread reply, missing license, stale bot),
 	// fall through to the reminder so the user still learns that @mentioning
-	// the agent works — it does in every one of those cases. Only a real
-	// failure returns without the reminder.
+	// the agent works — it does in every one of those cases. A real failure
+	// returns without the reminder, and when the ambient classifier
+	// deliberately stays silent there is no reminder about the configured
+	// agent.
 	if setting := c.autoReplySettingForChannel(channel); setting != nil {
 		autoReplyErr := c.handleAutoReply(ctx, setting, post, postingUser, channel)
 		if errors.Is(autoReplyErr, ErrNoResponse) {
-			c.maybeNotifyAgentMentionNeeded(ctx, post, channel)
+			skipBotID := ""
+			if errors.Is(autoReplyErr, errAmbientDeclined) {
+				skipBotID = setting.BotID
+			}
+			c.maybeNotifyAgentMentionNeeded(ctx, post, channel, skipBotID)
 		}
 		return autoReplyErr
 	}
 
 	// Reply in a thread that did not @mention an agent: when the previous post
 	// was authored by an agent, nudge the user with an ephemeral reminder.
-	c.maybeNotifyAgentMentionNeeded(ctx, post, channel)
+	c.maybeNotifyAgentMentionNeeded(ctx, post, channel, "")
 
 	return nil
 }
 
 func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post *model.Post, postingUser *model.User, channel *model.Channel) (err error) {
-	if restrictionErr := c.bots.CheckUsageRestrictions(ctx, postingUser.Id, bot, channel); restrictionErr != nil {
-		return restrictionErr
-	}
-
-	if !mmapi.IsDMWith(bot.GetMMBot().UserId, channel) {
-		if licErr := c.licenseChecker.Check(enterprise.CapMultiplayerChannels); licErr != nil {
+	policy, policyErr := c.resolveTurnPolicy(ctx, turnRequest{bot: bot, user: postingUser, channel: channel, trigger: post})
+	if policyErr != nil {
+		if _, ok := errors.AsType[*enterprise.LicenseError](policyErr); ok {
 			c.postMultiplayerChannelsUnavailable(bot, channel, post)
-			return fmt.Errorf("%w: %w", licErr, ErrNoResponse)
+			return fmt.Errorf("%w: %w", policyErr, ErrNoResponse)
 		}
+		return policyErr
 	}
-
-	// Check config to determine if tools should be allowed in channel mentions
-	configEnabled := c.channelMentionToolCallingEnabled()
-	hasToolPolicyChecker := c.toolPolicyChecker != nil
-	allowToolsInChannel := computeAllowToolsInChannel(configEnabled, post, postingUser, hasToolPolicyChecker)
-	channelToolsAutoRunEverywhereOnly := configEnabled && isBotActivateAI(post, postingUser) && hasToolPolicyChecker
 
 	responseRootID := post.Id
 	if post.RootId != "" {
@@ -275,10 +267,11 @@ func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post 
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
-	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); placeholderErr != nil {
+	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, responsePost, post.Id); placeholderErr != nil {
 		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
 	}
 	progress := newResponseProgressReporter(ctx, c.mmClient, responsePost)
+	defer progress.Flush()
 	progress.Advance(responseProgressCheckingMCP)
 	defer func() {
 		if err != nil {
@@ -286,53 +279,27 @@ func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post 
 		}
 	}()
 
-	return c.handleMentionViaConversation(ctx, bot, post, postingUser, channel, allowToolsInChannel, channelToolsAutoRunEverywhereOnly, responsePost, progress)
+	return c.handleMentionViaConversation(ctx, policy, post, responsePost, progress)
 }
 
 // handleMentionViaConversation processes a channel mention using the conversation entity model.
 // It creates/continues a conversation for (RootPostID, BotID), runs the ToolRunner for
 // auto-run tools, writes intermediate tool turns, and streams the final response.
-// When channelToolsAutoRunEverywhereOnly is true (bot activate_ai), only MCP tools with
-// auto_run_everywhere policy are kept.
 func (c *Conversations) handleMentionViaConversation(
 	ctx context.Context,
-	bot *bots.Bot,
+	policy *turnPolicy,
 	post *model.Post,
-	postingUser *model.User,
-	channel *model.Channel,
-	allowToolsInChannel bool,
-	channelToolsAutoRunEverywhereOnly bool,
 	responsePost *model.Post,
 	progress *responseProgressReporter,
 ) error {
-	var extraOpts []llm.ContextOption
-	if channelToolsAutoRunEverywhereOnly {
-		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextMCPToolFilter(func(tool llm.Tool) bool {
-			return botChannelAutoEverywhereKeepTool(c.toolPolicyChecker, tool)
-		}))
-	}
-	// User-interaction tools need someone who can answer them: a human invoker
-	// with channel tool calling enabled. Bot activate_ai flows run unattended.
-	if allowToolsInChannel && !channelToolsAutoRunEverywhereOnly {
-		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextInteractive())
-	}
-	// Unconditional: disabled-tools contexts are already gated by the
-	// toolsDisabled machinery below.
-	extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextResponseFiles())
+	bot, postingUser, channel := policy.bot, policy.user, policy.channel
 	// Build the context once WITH tools so the system prompt can reference
-	// .Tools and .DisabledToolsInfo.
-	llmContext := c.buildConversationContextWithTools(
-		ctx,
-		bot, postingUser, channel,
-		"Failed to load user tool preferences",
-		extraOpts...,
-	)
-	progress.Advance(responseProgressLoadingConversation)
-
-	toolsDisabled := applyToolAvailability(llmContext, false, allowToolsInChannel)
-	if channelToolsAutoRunEverywhereOnly {
-		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
+	// .Tools and .DisabledTools.
+	llmContext, err := policy.buildContext(ctx, "Failed to load user tool preferences")
+	if err != nil {
+		return err
 	}
+	progress.Advance(responseProgressLoadingConversation)
 
 	systemPrompt, fmtErr := c.prompts.Format(prompts.PromptDirectMessageQuestionSystem, llmContext)
 	if fmtErr != nil {
@@ -340,7 +307,7 @@ func (c *Conversations) handleMentionViaConversation(
 	}
 
 	userPostID := post.Id
-	convResult, convErr := c.convService.GetOrCreateConversation(conversation.GetOrCreateParams{
+	convResult, convErr := c.getOrCreateConversation(conversation.GetOrCreateParams{
 		UserID:       postingUser.Id,
 		SessionID:    auth.SessionIDFromContext(ctx),
 		BotID:        bot.GetMMBot().UserId,
@@ -359,12 +326,23 @@ func (c *Conversations) handleMentionViaConversation(
 	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
 		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
 	}
-	if channelToolsAutoRunEverywhereOnly {
-		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
-	}
+	llmContext.ResponsePostID = responsePost.Id
 
-	ctx, runSpan := c.startAgentRunSpan(ctx, convResult.Conversation.ID, convResult.UserTurnID)
-	defer runSpan.End()
+	ctx, runSpan := c.startAgentRunSpan(ctx, agentRunInfo{
+		convID:     convResult.Conversation.ID,
+		userTurnID: convResult.UserTurnID,
+		bot:        bot,
+		post:       post,
+		response:   responsePost,
+	}, progress)
+	// Ownership of runSpan passes to the streaming goroutine once streaming
+	// starts, so the run's duration covers the whole response.
+	runHandedOff := false
+	defer func() {
+		if !runHandedOff {
+			runSpan.End()
+		}
+	}()
 
 	threadData, threadErr := mmapi.GetThreadData(c.mmClient, responsePost.RootId)
 	if threadErr != nil {
@@ -387,21 +365,8 @@ func (c *Conversations) handleMentionViaConversation(
 		return fmt.Errorf("failed to build completion request: %w", reqErr)
 	}
 
-	opts := c.toolsDisabledLLMOptions(bot, toolsDisabled)
-
-	// Channel mention: isDM=false gates auto-exec to auto_run_everywhere only.
-	autoExec := c.shouldAutoExecuteTool(llmContext, false)
 	progress.Advance(responseProgressConnectingProvider)
-	result, runErr := c.runToolLoop(ctx, bot.LLM(), bot.GetConfig().EffectiveMaxToolTurns(), *completionRequest,
-		func(tc llm.ToolCall) bool {
-			if !allowToolsInChannel {
-				return false
-			}
-			return autoExec(tc)
-		},
-		convResult.Conversation.ID,
-		func(turns []toolrunner.ToolTurn) bool { return c.allToolsAutoRunEverywhere(turns, llmContext) },
-		opts, "Failed to write tool turns")
+	result, runErr := policy.runToolLoop(ctx, llmContext, convResult.Conversation.ID, *completionRequest, "Failed to write tool turns")
 
 	if runErr != nil {
 		return fmt.Errorf("tool runner failed: %w", runErr)
@@ -410,13 +375,16 @@ func (c *Conversations) handleMentionViaConversation(
 	stream := decorateStreamWithWebSearchAnnotations(result.Stream, llmContext)
 	stream = c.decorateStreamWithCreatedFiles(ctx, bot, stream, responsePost, nil, llmContext, llmContext)
 
-	if streamErr := c.streamToExistingPost(ctx, stream, responsePost, postingUser, channel, false); streamErr != nil {
+	if streamErr := c.streamToExistingPost(ctx, stream, responsePost, postingUser, channel, false, func() { runSpan.End() }); streamErr != nil {
 		return fmt.Errorf("unable to stream response: %w", streamErr)
 	}
+	runHandedOff = true
 
 	if convResult.IsNew {
+		titleCtx := telemetry.DetachContext(ctx)
 		go func() {
 			if genErr := c.convService.GenerateTitle(
+				titleCtx,
 				convResult.Conversation.ID,
 				bot.LLM(),
 				post.Message,
@@ -431,8 +399,9 @@ func (c *Conversations) handleMentionViaConversation(
 }
 
 func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) (err error) {
-	if restrictionErr := c.bots.CheckUsageRestrictionsForUser(ctx, bot, postingUser.Id); restrictionErr != nil {
-		return restrictionErr
+	policy, policyErr := c.resolveTurnPolicy(ctx, turnRequest{bot: bot, user: postingUser, channel: channel, trigger: post})
+	if errors.Is(policyErr, bots.ErrUsageRestriction) {
+		return policyErr
 	}
 
 	responseRootID := post.Id
@@ -443,70 +412,86 @@ func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *m
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
-	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); placeholderErr != nil {
+	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, responsePost, post.Id); placeholderErr != nil {
 		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
 	}
 	progress := newResponseProgressReporter(ctx, c.mmClient, responsePost)
+	defer progress.Flush()
 	progress.Advance(responseProgressCheckingMCP)
+	if errors.Is(policyErr, ErrAnalysisSourceUnavailable) {
+		c.setPlaceholderMessage(responsePost, postingUser.Locale, "agents.analysis_source_unavailable",
+			"I can't continue this conversation because you no longer have access to what it is about.")
+		return fmt.Errorf("%w: %w", policyErr, ErrNoResponse)
+	}
 	defer func() {
 		if err != nil {
 			c.failResponsePlaceholder(responsePost, postingUser.Locale)
 		}
 	}()
+	if policyErr != nil {
+		return policyErr
+	}
 
-	return c.handleDMViaConversation(ctx, bot, channel, postingUser, post, responsePost, progress)
+	return c.handleDMViaConversation(ctx, policy, post, responsePost, progress)
 }
 
 // handleDMViaConversation processes a DM message using the conversation entity model.
-func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post, responsePost *model.Post, progress *responseProgressReporter) error {
-	extraOpts := []llm.ContextOption{
-		c.contextBuilder.WithLLMContextInteractive(),
-		c.contextBuilder.WithLLMContextResponseFiles(),
-	}
+func (c *Conversations) handleDMViaConversation(ctx context.Context, policy *turnPolicy, post, responsePost *model.Post, progress *responseProgressReporter) error {
+	var extraOpts []llm.ContextOption
 	if webSearchParams := c.extractWebSearchContext(post); len(webSearchParams) > 0 {
 		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 	}
-	extraOpts = append(extraOpts, c.threadConversationToolOptions(bot, postingUser, post)...)
 	// Build the context once WITH tools so the system prompt can reference them.
-	llmContext := c.buildConversationContextWithTools(
-		ctx,
-		bot, postingUser, channel,
-		"Failed to load user tool preferences",
-		extraOpts...,
-	)
+	llmContext, err := policy.buildContext(ctx, "Failed to load user tool preferences", extraOpts...)
+	if err != nil {
+		return err
+	}
 	progress.Advance(responseProgressLoadingConversation)
 
-	convResult, err := c.createOrGetDMConversation(auth.SessionIDFromContext(ctx), bot.GetMMBot().UserId, postingUser, channel, post, llmContext)
+	convResult, err := c.createOrGetDMConversation(auth.SessionIDFromContext(ctx), policy.bot.GetMMBot().UserId, policy.user, policy.channel, post, llmContext)
 	if err != nil {
 		return fmt.Errorf("unable to create DM conversation: %w", err)
 	}
 
-	return c.streamDMConversation(ctx, bot, channel, postingUser, post, responsePost, progress, llmContext, convResult)
+	return c.streamDMConversation(ctx, policy, post, responsePost, progress, llmContext, convResult)
 }
 
 // streamDMConversation runs the tool loop for the conversation's latest user
 // turn and streams the answer onto responsePost.
 func (c *Conversations) streamDMConversation(
 	ctx context.Context,
-	bot *bots.Bot,
-	channel *model.Channel,
-	postingUser *model.User,
+	policy *turnPolicy,
 	post, responsePost *model.Post,
 	progress *responseProgressReporter,
 	llmContext *llm.Context,
 	convResult *DMConversationResult,
 ) error {
+	bot, channel, postingUser := policy.bot, policy.channel, policy.user
 	ensureDMWebSearchTracking(llmContext)
 	responsePost.AddProp(streaming.ConversationIDProp, convResult.ConversationID)
 	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
 		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
 	}
+	llmContext.ResponsePostID = responsePost.Id
 
-	ctx, runSpan := c.startAgentRunSpan(ctx, convResult.ConversationID, convResult.UserTurnID)
-	defer runSpan.End()
+	ctx, runSpan := c.startAgentRunSpan(ctx, agentRunInfo{
+		convID:     convResult.ConversationID,
+		userTurnID: convResult.UserTurnID,
+		bot:        bot,
+		post:       post,
+		response:   responsePost,
+	}, progress)
+	// Ownership of runSpan passes to the streaming goroutine once streaming
+	// starts, so the run's duration covers the whole response.
+	runHandedOff := false
+	defer func() {
+		if !runHandedOff {
+			runSpan.End()
+		}
+	}()
 
 	progress.Advance(responseProgressPreparingRequest)
-	dmStream, err := c.processDMRequest(ctx, convResult.ConversationID, bot.LLM(), llmContext, bot.GetConfig().EffectiveMaxToolTurns(), func() {
+	dmStream, err := c.processDMRequest(ctx, convResult.ConversationID, policy, llmContext, func() {
 		progress.Advance(responseProgressConnectingProvider)
 	})
 	if err != nil {
@@ -515,13 +500,19 @@ func (c *Conversations) streamDMConversation(
 
 	stream := c.decorateStreamWithCreatedFiles(ctx, bot, dmStream.Stream, responsePost, nil, llmContext, llmContext)
 
-	if streamErr := c.streamToExistingPost(ctx, stream, responsePost, postingUser, channel, false); streamErr != nil {
+	if streamErr := c.streamToExistingPost(ctx, stream, responsePost, postingUser, channel, false, func() {
+		dmStream.release()
+		runSpan.End()
+	}); streamErr != nil {
+		dmStream.release()
 		return fmt.Errorf("unable to stream response: %w", streamErr)
 	}
+	runHandedOff = true
 
 	if convResult.IsNew {
+		titleCtx := telemetry.DetachContext(ctx)
 		go func() {
-			if titleErr := c.convService.GenerateTitle(convResult.ConversationID, bot.LLM(), post.Message, llmContext); titleErr != nil {
+			if titleErr := c.convService.GenerateTitle(titleCtx, convResult.ConversationID, bot.LLM(), post.Message, llmContext); titleErr != nil {
 				c.mmClient.LogError("Failed to generate title", "error", titleErr.Error())
 			}
 		}()
@@ -545,19 +536,73 @@ func ensureDMWebSearchTracking(llmContext *llm.Context) {
 	}
 }
 
+// agentRunInfo identifies the turn an agent run answers.
+type agentRunInfo struct {
+	convID     string
+	userTurnID string
+	bot        *bots.Bot
+	post       *model.Post // the user's post
+	response   *model.Post // the bot's response placeholder
+}
+
 // startAgentRunSpan anchors this run's trace to the initiating user turn ID so
 // cross-node resumes can reproduce the same TraceID, and links to the previous
 // user turn (if any) so Tempo renders a clickable jump from this trace back to
-// the prior invocation. The caller must defer End on the returned span.
-func (c *Conversations) startAgentRunSpan(ctx context.Context, convID, userTurnID string) (context.Context, trace.Span) {
-	ctx = telemetry.WithTurnID(ctx, userTurnID)
-	runOpts := []trace.SpanStartOption{trace.WithNewRoot()}
-	if prev, prevErr := c.convService.GetPreviousUserTurn(convID, userTurnID); prevErr == nil && prev != nil {
-		runOpts = append(runOpts, trace.WithLinks(trace.Link{
-			SpanContext: telemetry.SpanContextForTurn(prev.ID),
-		}))
+// the prior invocation. The run is also linked to the span active in ctx (the
+// message hook), and that span records the run's trace ID, so either one leads
+// to the other. Progress events recorded so far move onto the run span. The
+// caller must End the returned span.
+func (c *Conversations) startAgentRunSpan(ctx context.Context, info agentRunInfo, progress *responseProgressReporter) (context.Context, trace.Span) {
+	hookSpan := trace.SpanFromContext(ctx)
+	links := []trace.Link{}
+	if hookSC := hookSpan.SpanContext(); hookSC.IsValid() {
+		links = append(links, trace.Link{SpanContext: hookSC})
 	}
-	return telemetry.Tracer().Start(ctx, "agent run", runOpts...)
+	if prev, prevErr := c.convService.GetPreviousUserTurn(info.convID, info.userTurnID); prevErr == nil && prev != nil {
+		links = append(links, trace.Link{SpanContext: telemetry.SpanContextForTurn(prev.ID)})
+	}
+
+	attrs := []attribute.KeyValue{
+		telemetry.ConversationID.String(info.convID),
+		telemetry.UserTurnID.String(info.userTurnID),
+	}
+	if info.post != nil {
+		attrs = append(attrs,
+			telemetry.PostID.String(info.post.Id),
+			telemetry.ChannelID.String(info.post.ChannelId),
+			telemetry.UserID.String(info.post.UserId),
+		)
+	}
+	if info.response != nil {
+		attrs = append(attrs, telemetry.ResponsePostID.String(info.response.Id))
+		rootID := info.response.RootId
+		if rootID == "" {
+			rootID = info.response.Id
+		}
+		attrs = append(attrs, telemetry.ThreadRootPostID.String(rootID))
+	}
+	if info.bot != nil {
+		attrs = append(attrs,
+			telemetry.AgentID.String(info.bot.GetMMBot().UserId),
+			telemetry.AgentName.String(info.bot.GetMMBot().Username),
+		)
+	}
+
+	ctx = telemetry.WithTurnID(ctx, info.userTurnID)
+	ctx, span := telemetry.Tracer().Start(ctx, "agent run",
+		trace.WithNewRoot(),
+		trace.WithLinks(links...),
+		trace.WithAttributes(attrs...),
+	)
+	hookSpan.SetAttributes(
+		telemetry.ConversationID.String(info.convID),
+		telemetry.UserTurnID.String(info.userTurnID),
+		telemetry.RunTraceID.String(span.SpanContext().TraceID().String()),
+	)
+	if progress != nil {
+		progress.AttachSpan(span)
+	}
+	return ctx, span
 }
 
 // cloneWithAgentMention clones post and rewrites its message to lead with the
@@ -572,15 +617,19 @@ func cloneWithAgentMention(post *model.Post, botUsername string) *model.Post {
 	return mentionPost
 }
 
-func (c *Conversations) createResponsePlaceholder(botID, requesterUserID string, post *model.Post, respondingToPostID string) error {
-	streaming.ModifyPostForBot(botID, requesterUserID, post, respondingToPostID)
+func (c *Conversations) createResponsePlaceholder(botID string, post *model.Post, respondingToPostID string) error {
+	streaming.ModifyPostForBot(botID, post, respondingToPostID)
 	return c.mmClient.CreatePost(post)
 }
 
 // streamToExistingPost streams an LLM response onto an existing post. With
 // continuation=true it streams a tool-approval follow-up instead (see
 // streamingService.StreamContinuationToPost).
-func (c *Conversations) streamToExistingPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, postingUser *model.User, channel *model.Channel, continuation bool) error {
+//
+// onFinish, when non-nil, runs after streaming ends; callers use it to end
+// a span that should cover the whole response. It is not called when an
+// error is returned.
+func (c *Conversations) streamToExistingPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, postingUser *model.User, channel *model.Channel, continuation bool, onFinish func()) error {
 	streamCtx, err := c.streamingService.GetStreamingContext(ctx, post.Id)
 	if err != nil {
 		return err
@@ -588,6 +637,9 @@ func (c *Conversations) streamToExistingPost(ctx context.Context, stream *llm.Te
 
 	locale := c.responseLocale(postingUser, channel)
 	go func() {
+		if onFinish != nil {
+			defer onFinish()
+		}
 		defer c.streamingService.FinishStreaming(post.Id)
 		if continuation {
 			c.streamingService.StreamContinuationToPost(streamCtx, stream, post, locale, postingUser.Id)

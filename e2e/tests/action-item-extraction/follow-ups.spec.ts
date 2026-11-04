@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -37,19 +37,22 @@ data: {"id":"chatcmpl-ai-6","object":"chat.completion.chunk","created":170812457
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
-test.beforeAll(async () => {
-    mattermost = await RunContainer();
-    openAIMock = await RunOpenAIMocks(mattermost.network);
+const actionItemsResponseText = 'Action items: Complete quarterly report';
+const followUpResponseText = 'The deadline is end of month';
+
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
+test.beforeAll(async ({ containers }) => {
+    ({ mattermost, openAIMock } = containers);
 });
 
 test.beforeEach(async () => {
     // Reset mocks before each test to prevent cross-contamination
     await openAIMock.resetMocks();
-});
-
-test.afterAll(async () => {
-    await openAIMock.stop();
-    await mattermost.stop();
 });
 
 async function setupTestPage(page) {
@@ -107,7 +110,7 @@ test.describe('Follow-Up Interactions After Extraction', () => {
 
         // 3. Wait for the initial response with action items
         await aiPlugin.expectRHSOpenWithPost();
-        await expect(page.getByText(/action items/i)).toBeVisible();
+        await aiPlugin.expectBotPostText(actionItemsResponseText);
 
         // 4. In the RHS textarea, type follow-up question
         await openAIMock.addCompletionMock(followUpResponse);
@@ -116,7 +119,6 @@ test.describe('Follow-Up Interactions After Extraction', () => {
         await aiPlugin.sendMessage("What's the deadline for the budget approval?");
 
         // 6. Wait for follow-up response
-        const rhsContainer = page.getByTestId('mattermost-ai-rhs');
-        await expect(rhsContainer.getByText(/deadline/i).first()).toBeVisible();
+        await aiPlugin.expectBotPostText(followUpResponseText);
     });
 });

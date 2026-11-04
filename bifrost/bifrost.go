@@ -19,12 +19,12 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
 
 	bifrostcore "github.com/maximhq/bifrost/core"
-	providerutils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -79,13 +79,10 @@ type LLM struct {
 	// alternative providers when the primary fails.
 	fallbacks []fallbackHop
 
-	// baseProviders maps each Bifrost registration name (including custom
-	// fallback slots such as "anthropic::svc2") to its base provider type.
-	baseProviders map[schemas.ModelProvider]schemas.ModelProvider
-
-	// providerFileDownloadRoutes are registered Bifrost routes that can serve
-	// captured files. Fallbacks of the same provider type have distinct routes.
-	providerFileDownloadRoutes map[schemas.ModelProvider]bool
+	// account holds every service registered with the Bifrost client, keyed by
+	// registration name (including custom fallback slots such as
+	// "anthropic::svc2"). It is read-only once New returns.
+	account *multiProviderAccount
 }
 
 // fallbackHop pairs a Bifrost fallback with the durable service ID it came
@@ -150,6 +147,9 @@ type FallbackEntry struct {
 	// ID is the source service ID, used to mint a unique custom-provider name
 	// when this fallback shares a base provider type with another service.
 	ID string
+	// OutputTokenLimit is the service's configured output token limit; zero
+	// means unset.
+	OutputTokenLimit int
 	// IsKeyLess marks a fallback that authenticates without an API key (e.g. a
 	// local Ollama server).
 	IsKeyLess bool
@@ -169,6 +169,37 @@ func readFileData(file llm.File) ([]byte, error) {
 	return io.ReadAll(file.Reader)
 }
 
+// bufferFiles returns request with the bytes of every image file read into
+// Data. Each fallback hop rebuilds its messages, and a Reader can be read only
+// once. A file that cannot be read keeps neither Data nor Reader, which
+// multimodalContent reports as unreadable. The caller's posts are not modified.
+func bufferFiles(request llm.CompletionRequest) llm.CompletionRequest {
+	request.Posts = slices.Clone(request.Posts)
+	for i := range request.Posts {
+		if len(request.Posts[i].Files) == 0 {
+			continue
+		}
+		request.Posts[i].Files = slices.Clone(request.Posts[i].Files)
+		for j := range request.Posts[i].Files {
+			file := &request.Posts[i].Files[j]
+			if len(file.Data) > 0 || file.Reader == nil || !llm.IsSupportedImageMimeType(file.MimeType) {
+				continue
+			}
+			data, err := io.ReadAll(file.Reader)
+			switch {
+			case err != nil:
+				file.Reader = nil
+			case len(data) > 0:
+				file.Data, file.Reader = data, nil
+			default:
+				// An empty file reads as empty every time.
+				file.Reader = bytes.NewReader(nil)
+			}
+		}
+	}
+	return request
+}
+
 // New creates a new LLM instance with the given configuration. It errors when
 // a fallback cannot be registered, so a misconfigured fallback chain fails at
 // setup instead of silently shrinking.
@@ -183,16 +214,10 @@ func New(cfg Config) (*LLM, error) {
 	// slot, otherwise it silently inherits the earlier service's base URL and
 	// key at fallback time.
 	usedNames := map[schemas.ModelProvider]bool{primaryEntry.registeredName(): true}
-	baseProviders := map[schemas.ModelProvider]schemas.ModelProvider{primaryEntry.registeredName(): cfg.Provider}
 
 	// Redact the primary and every fallback key from error/log surfaces, even
 	// key formats the generic redaction patterns don't recognize.
 	redactKeys := []string{cfg.APIKey}
-
-	providerFileDownloadRoutes := make(map[schemas.ModelProvider]bool)
-	if supportsProviderFileDownloadProvider(cfg.Provider) {
-		providerFileDownloadRoutes[primaryEntry.registeredName()] = true
-	}
 
 	var fallbacks []fallbackHop
 	for _, fb := range cfg.Fallbacks {
@@ -202,6 +227,7 @@ func New(cfg Config) (*LLM, error) {
 		entry := &providerAccount{
 			ProviderSettings: fb.ProviderSettings,
 			keyless:          fb.IsKeyLess,
+			outputTokenLimit: fb.OutputTokenLimit,
 		}
 
 		// A fallback needs its own custom-provider slot when it collides on an
@@ -225,10 +251,6 @@ func New(cfg Config) (*LLM, error) {
 
 		account.addProvider(entry)
 		usedNames[name] = true
-		baseProviders[name] = fb.Provider
-		if supportsProviderFileDownloadProvider(fb.Provider) {
-			providerFileDownloadRoutes[name] = true
-		}
 		fallbacks = append(fallbacks, fallbackHop{
 			fallback: schemas.Fallback{
 				Provider: name,
@@ -249,22 +271,21 @@ func New(cfg Config) (*LLM, error) {
 	}
 
 	return &LLM{
-		client:                     client,
-		provider:                   cfg.Provider,
-		apiKey:                     cfg.APIKey,
-		fallbackAPIKeys:            redactKeys[1:],
-		defaultModel:               cfg.DefaultModel,
-		inputTokenLimit:            cfg.InputTokenLimit,
-		outputTokenLimit:           cfg.OutputTokenLimit,
-		streamingTimeout:           streamingTimeout,
-		enabledNativeTools:         cfg.EnabledNativeTools,
-		reasoningEnabled:           cfg.ReasoningEnabled,
-		reasoningEffort:            cfg.ReasoningEffort,
-		thinkingBudget:             cfg.ThinkingBudget,
-		useResponsesAPI:            cfg.UseResponsesAPI,
-		fallbacks:                  fallbacks,
-		baseProviders:              baseProviders,
-		providerFileDownloadRoutes: providerFileDownloadRoutes,
+		client:             client,
+		provider:           cfg.Provider,
+		apiKey:             cfg.APIKey,
+		fallbackAPIKeys:    redactKeys[1:],
+		defaultModel:       cfg.DefaultModel,
+		inputTokenLimit:    cfg.InputTokenLimit,
+		outputTokenLimit:   cfg.OutputTokenLimit,
+		streamingTimeout:   streamingTimeout,
+		enabledNativeTools: cfg.EnabledNativeTools,
+		reasoningEnabled:   cfg.ReasoningEnabled,
+		reasoningEffort:    cfg.ReasoningEffort,
+		thinkingBudget:     cfg.ThinkingBudget,
+		useResponsesAPI:    cfg.UseResponsesAPI,
+		fallbacks:          fallbacks,
+		account:            account,
 	}, nil
 }
 
@@ -299,13 +320,14 @@ func (b *LLM) GetDefaultConfig() llm.LanguageModelConfig {
 	}
 }
 
+// createConfig applies opts to the default config. MaxGeneratedTokens stays
+// the requested value; each request builder and fallback hop clamps it to its
+// own model's limit.
 func (b *LLM) createConfig(opts []llm.LanguageModelOption) llm.LanguageModelConfig {
 	cfg := b.GetDefaultConfig()
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	modelOutputLimit := providerutils.GetMaxOutputTokensOrDefault(cfg.Model, cfg.MaxGeneratedTokens)
-	cfg.MaxGeneratedTokens = min(cfg.MaxGeneratedTokens, modelOutputLimit)
 	return cfg
 }
 
@@ -316,20 +338,47 @@ func (b *LLM) ChatCompletion(ctx context.Context, request llm.CompletionRequest,
 	ctx, span := telemetry.Tracer().Start(ctx, "llm chat completion",
 		telemetry.WithLLMAttributes(string(b.provider), cfg.Model, request.Operation, true),
 	)
+	if round, ok := telemetry.LLMRoundFromContext(ctx); ok {
+		span.SetAttributes(telemetry.LLMRound.Int(round))
+	}
 
 	eventStream := make(chan llm.TextStreamEvent)
+	providerStream := make(chan llm.TextStreamEvent)
+	start := time.Now()
+
+	go func() {
+		defer close(providerStream)
+		if b.shouldUseResponsesAPI(cfg) {
+			b.streamResponses(ctx, request, cfg, providerStream)
+		} else {
+			b.streamChat(ctx, request, cfg, providerStream)
+		}
+	}()
 
 	go func() {
 		defer close(eventStream)
 		defer span.End()
-		if b.shouldUseResponsesAPI(cfg) {
-			b.streamResponses(ctx, request, cfg, eventStream)
-		} else {
-			b.streamChat(ctx, request, cfg, eventStream)
+		firstToken := true
+		for event := range providerStream {
+			if firstToken && isModelOutputEvent(event) {
+				firstToken = false
+				span.SetAttributes(telemetry.LLMTimeToFirstTokenMs.Int64(time.Since(start).Milliseconds()))
+			}
+			eventStream <- event
 		}
 	}()
 
 	return &llm.TextStreamResult{Stream: eventStream}, nil
+}
+
+// isModelOutputEvent reports whether event carries output generated by the
+// model, as opposed to bookkeeping (usage, end, errors).
+func isModelOutputEvent(event llm.TextStreamEvent) bool {
+	switch event.Type {
+	case llm.EventTypeText, llm.EventTypeReasoning, llm.EventTypeToolCalls, llm.EventTypeServerToolUse:
+		return true
+	}
+	return false
 }
 
 // ChatCompletionNoStream performs a non-streaming chat completion request.
@@ -363,6 +412,7 @@ const bifrostUnsupportedOperationCode = "unsupported_operation"
 // count-tokens endpoint, signaling callers to fall back to llm.EstimateTokens.
 func (b *LLM) CountTokens(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (int, error) {
 	cfg := b.createConfig(opts)
+	request = bufferFiles(request)
 	bifrostReq, err := b.convertToBifrostResponsesRequest(request, cfg)
 	if err != nil {
 		return 0, fmt.Errorf("failed to build count tokens request: %w", err)
@@ -381,6 +431,7 @@ func (b *LLM) CountTokens(ctx context.Context, request llm.CompletionRequest, op
 
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, CountTokensTimeout)
 	defer cancel()
+	b.withHopRequest(bifrostCtx, request, cfg)
 	resp, bifrostErr := b.client.CountTokensRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
 		if bifrostErr.Error != nil && bifrostErr.Error.Code != nil && *bifrostErr.Error.Code == bifrostUnsupportedOperationCode {
@@ -410,7 +461,7 @@ func (b *LLM) applyCompletionBetaHeaders(bifrostCtx *schemas.BifrostContext) {
 	// Anthropic can be a fallback rather than the primary — so key the beta
 	// opt-in off the routes, mirroring DownloadProviderFile. Only providers
 	// needing the beta register a route; others ignore the extra header.
-	if len(b.providerFileDownloadRoutes) == 0 || !b.isNativeToolEnabled(llm.NativeToolCodeInterpreter) {
+	if !b.hasFileDownloadRoute() || !b.isNativeToolEnabled(llm.NativeToolCodeInterpreter) {
 		return
 	}
 
@@ -425,13 +476,29 @@ func (b *LLM) applyCompletionBetaHeaders(bifrostCtx *schemas.BifrostContext) {
 	bifrostCtx.SetValue(schemas.BifrostContextKeyExtraHeaders, headers)
 }
 
-// ProviderServices must be called on the concrete client before wrapping.
+// ProviderServices must be called on the concrete client before wrapping. A
+// fallback can serve the turn that creates a file, so any registered download
+// route exposes the downloader.
 func (b *LLM) ProviderServices() *llm.ProviderServices {
 	services := &llm.ProviderServices{}
-	if supportsProviderFileDownloadProvider(b.provider) {
+	if b.hasFileDownloadRoute() {
 		services.FileDownloader = b
 	}
 	return services
+}
+
+// hasFileDownloadRoute reports whether any registered route can serve
+// captured files.
+func (b *LLM) hasFileDownloadRoute() bool {
+	if b.account == nil {
+		return false
+	}
+	for _, entry := range b.account.entries {
+		if supportsProviderFileDownloadProvider(entry.Provider) {
+			return true
+		}
+	}
+	return false
 }
 
 // DownloadProviderFile fetches a provider-side file. The captured reference
@@ -463,7 +530,7 @@ func (b *LLM) DownloadProviderFile(ctx context.Context, ref llm.ProviderFileRefe
 	if ref.ID == "" {
 		return fail(errors.New("file id is required"))
 	}
-	if !b.providerFileDownloadRoutes[providerRoute] {
+	if entry := b.registration(providerRoute); entry == nil || !supportsProviderFileDownloadProvider(entry.Provider) {
 		return fail(errors.New("provider file route is not available"))
 	}
 
@@ -526,7 +593,7 @@ func functionToolsForCount(tools []schemas.ResponsesTool) []schemas.ResponsesToo
 func multimodalContent[T any](post llm.Post, maxDim int, textBlock func(string) T, imageBlock func(dataURL string) T) []T {
 	parts := make([]T, 0, len(post.Files)+1)
 
-	if post.Message != "" {
+	if !isBlank(post.Message) {
 		parts = append(parts, textBlock(post.Message))
 	}
 
@@ -539,6 +606,16 @@ func multimodalContent[T any](post llm.Post, maxDim int, textBlock func(string) 
 		data, err := readFileData(file)
 		if err != nil {
 			parts = append(parts, textBlock("[Error reading image data]"))
+			continue
+		}
+
+		// The declared type comes from the file extension, not the bytes. A
+		// mislabeled image (e.g. a PNG saved as .jpg) is rejected by providers
+		// such as Anthropic, which breaks every later turn of the thread, so
+		// label the image with the type sniffed from its content instead.
+		mimeType := sniffImageMimeType(data)
+		if !llm.IsSupportedImageMimeType(mimeType) {
+			parts = append(parts, textBlock(fmt.Sprintf("[Unsupported image type: %s]", mimeType)))
 			continue
 		}
 
@@ -556,10 +633,18 @@ func multimodalContent[T any](post llm.Post, maxDim int, textBlock func(string) 
 		}
 
 		encoded := base64.StdEncoding.EncodeToString(data)
-		parts = append(parts, imageBlock(fmt.Sprintf("data:%s;base64,%s", file.MimeType, encoded)))
+		parts = append(parts, imageBlock(fmt.Sprintf("data:%s;base64,%s", mimeType, encoded)))
 	}
 
 	return parts
+}
+
+// sniffImageMimeType returns the media type detected from the content, without
+// parameters. http.DetectContentType recognizes every type accepted by
+// llm.IsSupportedImageMimeType (JPEG, PNG, GIF and WebP).
+func sniffImageMimeType(data []byte) string {
+	mimeType, _, _ := strings.Cut(http.DetectContentType(data), ";")
+	return strings.TrimSpace(mimeType)
 }
 
 func hasToolUseHistory(posts []llm.Post) bool {
@@ -596,27 +681,6 @@ func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 		return true
 	}
 	return false
-}
-
-// promptCachingEnabledFor reports whether to request Anthropic automatic prompt
-// caching (top-level cache_control). Anthropic caches nothing unless asked,
-// so without this every turn re-bills the full system prompt, tool schemas,
-// and history at the base input rate. OpenAI-family and Gemini cache prompt
-// prefixes automatically and need no marker. Bifrost forwards the field
-// unstripped to non-Anthropic providers, so it is only attached when the
-// primary and every fallback are Anthropic; a mixed chain would 400 the
-// fallback request.
-func (b *LLM) promptCachingEnabledFor(fallbacks []schemas.Fallback) bool {
-	if b.provider != schemas.Anthropic {
-		return false
-	}
-	for _, fb := range fallbacks {
-		if fb.Provider != schemas.Anthropic &&
-			!strings.HasPrefix(string(fb.Provider), string(schemas.Anthropic)+"::") {
-			return false
-		}
-	}
-	return true
 }
 
 // requestFallbacks returns the fallback chain to attach to this request.

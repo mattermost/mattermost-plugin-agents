@@ -29,16 +29,30 @@ type Config = PluginConfig;
 
 /** Minimal fields from GET /ai_bots used for the default-bot dropdown. */
 type RuntimeBotOption = {
+    id: string;
     username: string;
     displayName: string;
 };
 
-// The server answers with the first bot when the configured default is empty or unknown.
-export const effectiveDefaultBotName = (configured: string, bots: RuntimeBotOption[]) => {
-    if (bots.some((bot) => bot.username === configured)) {
-        return configured;
+// Resolves an agent reference to a bot ID. The ID wins; the legacy username is
+// only consulted when the ID is empty (installs that haven't migrated yet).
+const resolveBotID = (id: string | undefined, legacyName: string | undefined, bots: RuntimeBotOption[]) => {
+    if (id) {
+        return bots.find((bot) => bot.id === id)?.id ?? '';
     }
-    return bots[0]?.username ?? '';
+    if (legacyName) {
+        return bots.find((bot) => bot.username === legacyName)?.id ?? '';
+    }
+    return '';
+};
+
+// The server answers with the first bot only when no default is configured; a
+// configured default that is unavailable fails requests, so it resolves to ''.
+export const effectiveDefaultBotID = (configuredID: string | undefined, legacyName: string | undefined, bots: RuntimeBotOption[]) => {
+    if (configuredID || legacyName) {
+        return resolveBotID(configuredID, legacyName, bots);
+    }
+    return bots[0]?.id ?? '';
 };
 
 type Props = {
@@ -83,18 +97,27 @@ const LoadingContainer = styled.div`
     padding: var(--spacing-xxxxl);
 `;
 
+const DEFAULT_AGENT_VERSIONS_TO_KEEP = 50;
+
 const defaultConfig: Config = {
     services: [],
     bots: [],
+    defaultBotUserID: '',
+    transcriptBotUserID: '',
     defaultBotName: '',
     transcriptBackend: '',
     telemetryOutput: 'off',
     openTelemetryEndpoint: '',
+    openTelemetryTLS: false,
+    openTelemetryHeaders: '',
     enableTokenUsageLogging: false,
     enableCallSummary: false,
     allowedUpstreamHostnames: '',
     allowUnsafeLinks: false,
+    allowedLinkDomains: '',
+    enableHTMLArtifacts: false,
     enableChannelMentionToolCalling: false,
+    enableAmbientAutoReply: false,
     allowNativeWebSearchInChannels: false,
     embeddingSearchConfig: {
         type: '',
@@ -175,13 +198,22 @@ const BetaMessage = () => (
 
 const Config = (props: Props) => {
     const [localConfig, setLocalConfig] = useState<Config>(defaultConfig);
+
+    // The last loaded or saved configuration, for actions that only work
+    // against what the server already has.
+    const [savedConfig, setSavedConfig] = useState<Config>(defaultConfig);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [runtimeBots, setRuntimeBots] = useState<RuntimeBotOption[]>([]);
     const [runtimeBotsError, setRuntimeBotsError] = useState<string | null>(null);
+
+    // Core's admin console only uses a save action's error to keep Save
+    // enabled, so field-level errors have to be rendered here.
+    const [linkDomainsError, setLinkDomainsError] = useState('');
     const intl = useIntl();
     const tokenAccountingLicensed = useIsLicensedFor('token_accounting');
     const providerWebSearchLicensed = useIsLicensedFor('provider_web_search');
+    const channelAutoReplyLicensed = useIsLicensedFor('channel_auto_reply');
 
     // Load config from plugin API on mount
     useEffect(() => {
@@ -189,6 +221,7 @@ const Config = (props: Props) => {
             try {
                 const cfg = await getPluginConfig();
                 setLocalConfig({...defaultConfig, ...cfg});
+                setSavedConfig({...defaultConfig, ...cfg});
                 setLoadError(null);
             } catch (e: any) {
                 setLoadError(intl.formatMessage({defaultMessage: 'Failed to load configuration.'}));
@@ -225,8 +258,13 @@ const Config = (props: Props) => {
                 // service/MCP IDs (and the UI gated on them) appear
                 // immediately instead of after a page reload.
                 setLocalConfig({...defaultConfig, ...saved});
+                setSavedConfig({...defaultConfig, ...saved});
+                setLinkDomainsError('');
                 return {};
             } catch (e: any) {
+                if (e?.server_error_id === 'invalid_allowed_link_domains') {
+                    setLinkDomainsError(intl.formatMessage({defaultMessage: 'One or more entries are not valid domains.'}));
+                }
                 return {error: {message: intl.formatMessage({defaultMessage: 'Failed to save configuration.'})}};
             }
         };
@@ -288,6 +326,7 @@ const Config = (props: Props) => {
 
     // Initialize with default empty config if not provided
     const mcpConfig = value.mcp || defaultConfig.mcp;
+    const defaultBotID = effectiveDefaultBotID(value.defaultBotUserID, value.defaultBotName, runtimeBots);
 
     return (
         <ConfigContainer>
@@ -311,7 +350,28 @@ const Config = (props: Props) => {
                 title={intl.formatMessage({defaultMessage: 'AI Bots'})}
                 subtitle={intl.formatMessage({defaultMessage: 'AI agents are managed from the Agents product page.'})}
             >
-                <BotsMovedNotice/>
+                <ItemList>
+                    <BotsMovedNotice/>
+                    <BooleanItem
+                        label={<FormattedMessage defaultMessage='Limit agent version history'/>}
+                        value={(value.agentVersionsToKeep ?? 0) > 0}
+                        onChange={(to) => updateConfig({agentVersionsToKeep: to ? DEFAULT_AGENT_VERSIONS_TO_KEEP : 0})}
+                        helpText={intl.formatMessage({defaultMessage: 'When false, every saved version of each agent is kept. When true, each agent keeps only its most recent versions and older ones are permanently deleted.'})}
+                    />
+                    {(value.agentVersionsToKeep ?? 0) > 0 && (
+                        <TextItem
+                            label={intl.formatMessage({defaultMessage: 'Versions to keep per agent'})}
+                            type='number'
+                            min='1'
+                            value={String(value.agentVersionsToKeep)}
+                            onChange={(e) => {
+                                const parsed = parseInt(e.target.value, 10);
+                                updateConfig({agentVersionsToKeep: Number.isNaN(parsed) || parsed < 1 ? 1 : parsed});
+                            }}
+                            helptext={intl.formatMessage({defaultMessage: 'Includes the current version. Older versions are deleted when this setting is saved and each time an agent is saved.'})}
+                        />
+                    )}
+                </ItemList>
             </AdminPanel>
             <AdminPanel
                 title={intl.formatMessage({defaultMessage: 'AI Functions'})}
@@ -326,11 +386,12 @@ const Config = (props: Props) => {
                     )}
                     <SelectionItem
                         label={intl.formatMessage({defaultMessage: 'Default bot'})}
-                        value={effectiveDefaultBotName(value.defaultBotName, runtimeBots)}
-                        onChange={(defaultBotName) => {
-                            updateConfig({defaultBotName});
+                        value={defaultBotID}
+                        error={runtimeBots.length > 0 && !defaultBotID ? intl.formatMessage({defaultMessage: 'The configured default agent is not available. Requests that do not choose an agent will fail until you select another one.'}) : ''}
+                        onChange={(defaultBotUserID) => {
+                            updateConfig({defaultBotUserID, defaultBotName: ''});
                         }}
-                        options={runtimeBots.map((bot) => ({value: bot.username, label: bot.displayName}))}
+                        options={runtimeBots.map((bot) => ({value: bot.id, label: bot.displayName}))}
                     />
                     <TextItem
                         label={intl.formatMessage({defaultMessage: 'Allowed Upstream Hostnames (csv)'})}
@@ -345,6 +406,35 @@ const Config = (props: Props) => {
                             updateConfig({allowUnsafeLinks: to});
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, AI responses may contain clickable links, including potentially malicious destinations. Enable only if you trust the LLM output and have mitigations for exfiltration risks.'})}
+                    />
+                    {value.allowUnsafeLinks && (
+                        <TextItem
+                            label={intl.formatMessage({defaultMessage: 'Allowed Link Domains (csv)'})}
+                            value={value.allowedLinkDomains}
+                            onChange={(e) => {
+                                setLinkDomainsError('');
+                                updateConfig({allowedLinkDomains: e.target.value});
+                            }}
+                            error={linkDomainsError}
+                            helptext={intl.formatMessage({defaultMessage: 'Comma separated list of domains that AI-generated links may point to. Links to any other domain are shown as plain text. Supports wildcards like *.mydomain.com, which matches subdomains but not mydomain.com itself. Links to this Mattermost server are always allowed. Leave empty to allow links to any domain.'})}
+                            placeholder={'example.com, *.mydomain.com'}
+                        />
+                    )}
+                    <BooleanItem
+                        label={
+                            <Horizontal>
+                                <FormattedMessage defaultMessage='Enable HTML artifacts'/>
+                                <Tag
+                                    type='info'
+                                    label={<FormattedMessage defaultMessage='EXPERIMENTAL'/>}
+                                />
+                            </Horizontal>
+                        }
+                        value={Boolean(value.enableHTMLArtifacts)}
+                        onChange={(to) => {
+                            updateConfig({enableHTMLArtifacts: to});
+                        }}
+                        helpText={intl.formatMessage({defaultMessage: 'When enabled, HTML files that agents attach to their replies are rendered as sandboxed interactive artifacts that run only when a viewer clicks Run. Artifacts have no access to the user\'s Mattermost session, and they read the viewer\'s basic profile only after the viewer explicitly allows it. Network access is blocked, fully only in Chromium 152 or later; in other browsers an artifact can still send its content, any profile data the viewer allowed, and anything the viewer types into it to external sites via WebRTC. An artifact can also place content on the clipboard that differs from what it displays, so treat anything copied from an artifact as untrusted. The Site URL must match the address users open Mattermost at, or artifacts fail to load. Enable only where these risks are acceptable.'})}
                     />
                     <BooleanItem
                         label={
@@ -361,6 +451,26 @@ const Config = (props: Props) => {
                             updateConfig({enableChannelMentionToolCalling: to});
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, @mentioning a bot in public channels allows tool calling (e.g., web search, integrations). When disabled, channel mentions still work but tools are disabled—only DMs allow tool usage. This is an experimental feature for multi-player tool calling in channels.'})}
+                    />
+                    <BooleanItem
+                        label={
+                            <Horizontal>
+                                <FormattedMessage defaultMessage='Enable ambient auto-replies'/>
+                                <Tag
+                                    type='info'
+                                    label={<FormattedMessage defaultMessage='EXPERIMENTAL'/>}
+                                />
+                            </Horizontal>
+                        }
+                        value={Boolean(value.enableAmbientAutoReply)}
+                        disableTrue={!channelAutoReplyLicensed}
+                        extra={!channelAutoReplyLicensed && (
+                            <LicenseChip capability='channel_auto_reply'/>
+                        )}
+                        onChange={(to) => {
+                            updateConfig({enableAmbientAutoReply: to});
+                        }}
+                        helpText={intl.formatMessage({defaultMessage: 'Lets channel managers choose the ambient auto-reply modes, where the agent’s model reads each new message and decides whether the agent should reply. Every analyzed message costs an LLM call. When disabled, ambient modes cannot be saved and channels using them stop replying automatically; @mentions keep working.'})}
                     />
                     <BooleanItem
                         label={<FormattedMessage defaultMessage='Allow native web search in channels'/>}
@@ -398,6 +508,23 @@ const Config = (props: Props) => {
                             placeholder={'localhost:4317'}
                         />
                     )}
+                    {value.telemetryOutput === 'otlp' && (
+                        <BooleanItem
+                            label={intl.formatMessage({defaultMessage: 'Use TLS for OTLP Export'})}
+                            value={Boolean(value.openTelemetryTLS)}
+                            onChange={(to) => updateConfig({openTelemetryTLS: to})}
+                            helpText={intl.formatMessage({defaultMessage: 'Connect to the OTLP endpoint over TLS, verified against the system root certificates. Required by hosted collectors such as Grafana Cloud Tempo.'})}
+                        />
+                    )}
+                    {value.telemetryOutput === 'otlp' && (
+                        <TextItem
+                            label={intl.formatMessage({defaultMessage: 'OTLP Export Headers'})}
+                            type='password'
+                            value={value.openTelemetryHeaders || ''}
+                            onChange={(e) => updateConfig({openTelemetryHeaders: e.target.value})}
+                            helptext={intl.formatMessage({defaultMessage: 'Headers sent with every trace export, as comma-separated key=value pairs (e.g. Authorization=Basic YOUR_CREDENTIALS). Use with TLS so credentials are not sent in plaintext.'})}
+                        />
+                    )}
                     <BooleanItem
                         label={intl.formatMessage({defaultMessage: 'Enable Token Usage Logging'})}
                         value={value.enableTokenUsageLogging}
@@ -424,13 +551,15 @@ const Config = (props: Props) => {
             />
             <MCPServers
                 mcpConfig={mcpConfig}
-                onChange={(config) => {
-                    // Ensure we're creating a valid structure for the server configuration
-                    const updatedConfig = {
-                        ...config,
-                        servers: config.servers || [],
-                    };
-                    updateConfig({mcp: updatedConfig});
+                savedServers={savedConfig.mcp?.servers ?? []}
+                onChange={(update) => {
+                    setLocalConfig((prev) => {
+                        const updated = typeof update === 'function' ? update(prev.mcp || defaultConfig.mcp) : update;
+
+                        // Ensure we're creating a valid structure for the server configuration
+                        return {...prev, mcp: {...updated, servers: updated.servers || []}};
+                    });
+                    props.setSaveNeeded();
                 }}
             />
         </ConfigContainer>

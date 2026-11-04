@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/customprompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -30,7 +32,10 @@ import (
 
 var rootDSN = "postgres://mmuser:mostest@localhost:5432/postgres?sslmode=disable"
 
-func setupCustomPromptsTestEnvironment(t *testing.T) (*TestEnvironment, *customprompts.Store) {
+// setupPostgresTestStore creates a throwaway database on the local PostgreSQL
+// (PG_ROOT_DSN overrides the root DSN), runs the plugin migrations, and drops
+// the database on cleanup. The test is skipped when PostgreSQL is unavailable.
+func setupPostgresTestStore(t *testing.T, dbPrefix string) (*sqlx.DB, *store.Store) {
 	t.Helper()
 
 	if dsn := os.Getenv("PG_ROOT_DSN"); dsn != "" {
@@ -43,12 +48,14 @@ func setupCustomPromptsTestEnvironment(t *testing.T) (*TestEnvironment, *customp
 	}
 	defer rootDB.Close()
 
-	dbName := fmt.Sprintf("customprompts_api_test_%d", model.GetMillis())
+	dbName := fmt.Sprintf("%s_%d", dbPrefix, model.GetMillis())
 	_, err = rootDB.Exec("CREATE DATABASE " + dbName)
 	require.NoError(t, err)
 
-	testDSN := fmt.Sprintf("postgres://mmuser:mostest@localhost:5432/%s?sslmode=disable", dbName)
-	db, err := sqlx.Connect("postgres", testDSN)
+	testURL, err := url.Parse(rootDSN)
+	require.NoError(t, err)
+	testURL.Path = "/" + dbName
+	db, err := sqlx.Connect("postgres", testURL.String())
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -62,11 +69,25 @@ func setupCustomPromptsTestEnvironment(t *testing.T) (*TestEnvironment, *customp
 	})
 
 	s := store.New(db)
-	err = s.RunMigrations()
-	require.NoError(t, err)
+	require.NoError(t, s.RunMigrations())
 
-	dbClient := mmapi.NewTestDBClient(db)
-	cpStore := customprompts.NewStore(dbClient)
+	return db, s
+}
+
+// setupTestDBClient is setupPostgresTestStore for tests that only need a DBClient connected to the
+// scratch database.
+func setupTestDBClient(t *testing.T, namePrefix string) *mmapi.DBClient {
+	t.Helper()
+
+	db, _ := setupPostgresTestStore(t, namePrefix)
+
+	return mmapi.NewTestDBClient(db)
+}
+
+func setupCustomPromptsTestEnvironment(t *testing.T) (*TestEnvironment, *customprompts.Store) {
+	t.Helper()
+
+	cpStore := customprompts.NewStore(setupTestDBClient(t, "customprompts_api_test"))
 
 	env := SetupTestEnvironment(t)
 	env.api.customPromptsStore = cpStore
@@ -87,6 +108,48 @@ func createTestPrompt(t *testing.T, cpStore *customprompts.Store, creatorID stri
 	return prompt
 }
 
+func TestRenderRequestBot(t *testing.T) {
+	const namedID = "namedbotuserid123456789012"
+	const otherID = "otherbotuserid123456789012"
+	named := bots.NewBot(llm.BotConfig{Name: "named"}, llm.ServiceConfig{},
+		&model.Bot{UserId: namedID, Username: "named"}, nil)
+	other := bots.NewBot(llm.BotConfig{Name: "other"}, llm.ServiceConfig{},
+		&model.Bot{UserId: otherID, Username: "other"}, nil)
+
+	tests := []struct {
+		name      string
+		req       RenderRequest
+		expected  *bots.Bot
+		expectErr bool
+	}{
+		{name: "agent selected by bot user ID", req: RenderRequest{BotID: namedID}, expected: named},
+		{name: "bot user ID wins over username", req: RenderRequest{BotID: namedID, BotUsername: "other"}, expected: named},
+		{name: "missing bot user ID selects no agent", req: RenderRequest{BotID: "missingbotuserid1234567890", BotUsername: "other"}},
+		{name: "malformed bot user ID is rejected", req: RenderRequest{BotID: "named"}, expectErr: true},
+		{name: "agent selected by deprecated username", req: RenderRequest{BotUsername: "other"}, expected: other},
+		{name: "released username selects no agent", req: RenderRequest{BotUsername: "released"}},
+		{name: "no agent requested", req: RenderRequest{}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.mockAPI.On("GetUserByUsername", "released").
+				Return(nil, model.NewAppError("GetUserByUsername", "app.user.missing_account.const", nil, "", http.StatusNotFound)).Maybe()
+			e.setBots(named, other)
+
+			bot, err := e.api.renderRequestBot(tc.req)
+			if tc.expectErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Same(t, tc.expected, bot)
+		})
+	}
+}
+
 func TestCustomPromptOwnership(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -103,6 +166,42 @@ func TestCustomPromptOwnership(t *testing.T) {
 		recorder := httptest.NewRecorder()
 		e.api.ServeHTTP(&plugin.Context{}, recorder, req)
 		require.Equal(t, http.StatusNoContent, recorder.Code)
+	})
+
+	t.Run("conditional update", func(t *testing.T) {
+		tests := []struct {
+			name       string
+			stale      bool
+			wantStatus int
+			wantName   string
+		}{
+			{name: "unchanged since read", wantStatus: http.StatusNoContent, wantName: "Shared"},
+			{name: "changed since read", stale: true, wantStatus: http.StatusConflict, wantName: "Edited elsewhere"},
+		}
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				prompt := createTestPrompt(t, cpStore, testUserID, false)
+				read, err := cpStore.Get(prompt.ID)
+				require.NoError(t, err)
+				if tc.stale {
+					edited := read
+					edited.Name = "Edited elsewhere"
+					edited.UpdatedAt = 0
+					require.NoError(t, cpStore.Update(edited))
+				}
+
+				body := fmt.Sprintf(`{"name":"Shared","description":"test","template":"hello","is_shared":false,"updated_at":%d}`, read.UpdatedAt)
+				req := httptest.NewRequest(http.MethodPut, "/custom-prompts/"+prompt.ID, strings.NewReader(body))
+				req.Header.Set("Mattermost-User-Id", testUserID)
+				recorder := httptest.NewRecorder()
+				e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+				require.Equal(t, tc.wantStatus, recorder.Code)
+
+				stored, err := cpStore.Get(prompt.ID)
+				require.NoError(t, err)
+				assert.Equal(t, tc.wantName, stored.Name)
+			})
+		}
 	})
 
 	t.Run("non-owner cannot update", func(t *testing.T) {

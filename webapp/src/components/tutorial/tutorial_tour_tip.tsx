@@ -40,9 +40,13 @@ const TourOverlay = styled.div`
     background: rgba(0, 0, 0, 0.5);
 `;
 
-const DotContainer = styled.div<{$placement: Placement; $translateX: number; $translateY: number}>`
+const DotContainer = styled.button<{$placement: Placement; $translateX: number; $translateY: number}>`
     position: absolute;
     z-index: 9999;
+    padding: 0;
+    border: none;
+    background: none;
+    cursor: pointer;
     transform: translate(${(props) => props.$translateX}px, ${(props) => props.$translateY}px);
 `;
 
@@ -93,7 +97,7 @@ const TutorialTourTip: React.FC<Props> = ({
     onFinish,
 }) => {
     // Held in state rather than a ref so Tippy re-renders once the dot mounts.
-    const [triggerElement, setTriggerElement] = useState<HTMLDivElement | null>(null);
+    const [triggerElement, setTriggerElement] = useState<HTMLButtonElement | null>(null);
     const intl = useIntl();
     const {show, handleOpen, handleDismiss} = useTourManager(
         tutorialCategory,
@@ -138,16 +142,19 @@ const TutorialTourTip: React.FC<Props> = ({
             <TippyStyles/>
             <DotContainer
                 ref={setTriggerElement}
+                type='button'
+                aria-label={intl.formatMessage({defaultMessage: 'Show tip'})}
                 data-testid='agents-tour-dot'
                 onClick={handleOpen}
                 $placement={pulsatingDotPlacement}
                 $translateX={pulsatingDotTranslate.x}
                 $translateY={pulsatingDotTranslate.y}
             >
-                <PulsatingDot onClick={handleOpen}/>
+                <PulsatingDot/>
             </DotContainer>
 
             {show && rootPortal && ReactDOM.createPortal(
+                // eslint-disable-next-line agents/click-events-have-key-events, agents/no-static-element-interactions -- backdrop; Escape and the tip's Close button dismiss the tour
                 <TourOverlay
                     data-testid='agents-tour-overlay'
                     onClick={handleDismiss}

@@ -194,6 +194,8 @@ func TestAuditMiddlewareSaveConfig(t *testing.T) {
 			defer e.Cleanup(t)
 			store.getErr = tt.getErr
 			store.saveErr = tt.saveErr
+			e.mockAPI.On("GetUserByUsername", "ai").
+				Return(nil, model.NewAppError("GetUserByUsername", "app.user.missing_account.const", nil, "", http.StatusNotFound)).Maybe()
 
 			if tt.userID != "" {
 				e.mockAPI.On("HasPermissionTo", tt.userID, model.PermissionManageSystem).Return(tt.isAdmin)
@@ -244,10 +246,13 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		{event: AuditEventUpdateAgent, method: http.MethodPut, path: "/agents/agentid"},
 		{event: AuditEventDeleteAgent, method: http.MethodDelete, path: "/agents/agentid"},
 		{event: AuditEventUpdateAgentAvatar, method: http.MethodPost, path: "/agents/agentid/avatar"},
+		{event: AuditEventRestoreAgentVersion, method: http.MethodPost, path: "/agents/agentid/versions/1/restore"},
+		{event: AuditEventDeleteAgentVersions, method: http.MethodDelete, path: "/agents/agentid/versions"},
 		{event: AuditEventCreateCustomPrompt, method: http.MethodPost, path: "/custom-prompts"},
 		{event: AuditEventUpdateCustomPrompt, method: http.MethodPut, path: "/custom-prompts/promptid"},
 		{event: AuditEventDeleteCustomPrompt, method: http.MethodDelete, path: "/custom-prompts/promptid"},
 		{event: AuditEventUpdateChannelAutoReply, method: http.MethodPut, path: "/channel/channelid/autoreply"},
+		{event: AuditEventRenameConversation, method: http.MethodPut, path: "/conversations/conversationid/title"},
 		{event: AuditEventMCPOAuthCallback, method: http.MethodGet, path: "/oauth/callback"},
 		{event: AuditEventMCPOAuthStart, method: http.MethodGet, path: "/mcp/oauth/someserver/start"},
 		{event: AuditEventMCPOAuthDisconnect, method: http.MethodDelete, path: "/mcp/oauth/someserver"},
@@ -256,6 +261,8 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		{event: AuditEventUnregisterMCPPluginServer, method: http.MethodPost, path: "/bridge/v1/mcp/unregister", bridge: true},
 		{event: AuditEventToolCallApproval, method: http.MethodPost, path: "/post/postid/tool_call"},
 		{event: AuditEventToolResultApproval, method: http.MethodPost, path: "/post/postid/tool_result"},
+		{event: AuditEventWaitCheckNow, method: http.MethodPost, path: "/post/postid/wait/check_now"},
+		{event: AuditEventWaitCancel, method: http.MethodPost, path: "/post/postid/wait/cancel"},
 		{event: AuditEventPutAgentPolicy, method: http.MethodPut, path: "/agents/agentid/access_policy"},
 		{event: AuditEventDeleteAgentPolicy, method: http.MethodDelete, path: "/agents/agentid/access_policy"},
 		{event: AuditEventPutServicePolicy, method: http.MethodPut, path: "/admin/services/serviceid/access_policy"},

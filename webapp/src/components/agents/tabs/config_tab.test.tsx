@@ -6,7 +6,7 @@ import {fireEvent, render, screen, waitFor, within} from '@testing-library/react
 import {IntlProvider} from 'react-intl';
 
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
-import {ServiceInfo} from '@/types/agents';
+import {ServiceInfo, normalizeSkillsConfig} from '@/types/agents';
 
 import {AgentDraft} from '../agent_config_view';
 
@@ -89,6 +89,7 @@ function makeDraft(overrides: Partial<AgentDraft> = {}): AgentDraft {
         reasoningEffort: 'medium',
         thinkingBudget: 0,
         maxToolTurns: 30,
+        skills: normalizeSkillsConfig(),
         ...overrides,
     };
 }
@@ -139,6 +140,30 @@ describe('ConfigTab', () => {
         expect(
             (screen.getByTestId('native-tool-web_search') as HTMLInputElement).disabled,
         ).toBe(false);
+    });
+
+    test.each([
+        {name: 'creating an agent', savedUsername: '', username: 'testagent', warns: false},
+        {name: 'editing without renaming', savedUsername: 'testagent', username: 'testagent', warns: false},
+        {name: 'editing with a new username', savedUsername: 'testagent', username: 'renamed', warns: true},
+    ])('username stays editable and warns about renames only when one is pending: $name', async ({savedUsername, username, warns}) => {
+        render(
+            <IntlProvider locale='en'>
+                <ConfigTab
+                    draft={makeDraft({username})}
+                    onChange={jest.fn()}
+                    onAvatarChange={jest.fn()}
+                    services={[openaiService]}
+                    savedUsername={savedUsername}
+                />
+            </IntlProvider>,
+        );
+
+        await waitFor(() => expect(screen.getByText('Agent username')).not.toBeNull());
+
+        const usernameInput = within(formRowForLabel('Agent username')).getByRole('textbox') as HTMLInputElement;
+        expect(usernameInput.disabled).toBe(false);
+        expect(screen.queryByText(/people and integrations using @testagent will need to switch/) !== null).toBe(warns);
     });
 
     test('shows vision and effort reasoning for north without native tools', async () => {

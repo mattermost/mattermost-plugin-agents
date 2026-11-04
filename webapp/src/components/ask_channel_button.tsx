@@ -91,7 +91,7 @@ const AskChannelButton = () => {
         // Open RHS
         dispatch(openRHS());
 
-        const result = await doChannelAnalysis(currentChannelId, 'summarize_channel', activeBot.username, {
+        const result = await doChannelAnalysis(currentChannelId, 'summarize_channel', activeBot.id, {
             ...options,
             team_id: currentTeamId,
         });

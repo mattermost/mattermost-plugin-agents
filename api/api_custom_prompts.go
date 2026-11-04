@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/customprompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -69,6 +70,8 @@ func (a *API) handleListCustomPrompts(c *gin.Context) {
 }
 
 // handleUpdateCustomPrompt updates an existing custom prompt. Only the creator can update.
+// A body updated_at makes the update conditional on the prompt being unchanged
+// since that read; a stale one is rejected with 409.
 func (a *API) handleUpdateCustomPrompt(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	promptID := c.Param("id")
@@ -105,6 +108,10 @@ func (a *API) handleUpdateCustomPrompt(c *gin.Context) {
 	}
 
 	if err := a.customPromptsStore.Update(prompt); err != nil {
+		if errors.Is(err, customprompts.ErrStaleUpdate) {
+			c.AbortWithError(http.StatusConflict, err)
+			return
+		}
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to update custom prompt: %w", err))
 		return
 	}
@@ -188,8 +195,21 @@ func (a *API) handleSetPromptPin(c *gin.Context) {
 
 // RenderRequest represents the request body for rendering a custom prompt template.
 type RenderRequest struct {
-	ChannelID   string `json:"channel_id"`
+	ChannelID string `json:"channel_id"`
+	// BotID is the agent's bot user ID; it takes precedence over BotUsername.
+	BotID string `json:"bot_id"`
+	// BotUsername is deprecated: it selects only the agent whose account
+	// currently holds the name.
 	BotUsername string `json:"bot_username"`
+}
+
+// renderRequestBot returns the agent a render request selects, or nil when it
+// selects none or the agent is not available.
+func (a *API) renderRequestBot(req RenderRequest) (*bots.Bot, error) {
+	if req.BotID != "" && !model.IsValidId(req.BotID) {
+		return nil, errors.New("invalid bot_id: must be a bot user ID")
+	}
+	return a.bots.GetBotByIDOrUsername(req.BotID, req.BotUsername), nil
 }
 
 // handleRenderCustomPrompt renders a custom prompt template with the current context.
@@ -200,6 +220,11 @@ func (a *API) handleRenderCustomPrompt(c *gin.Context) {
 	var req RenderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+	bot, err := a.renderRequestBot(req)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
 		return
 	}
 
@@ -226,9 +251,9 @@ func (a *API) handleRenderCustomPrompt(c *gin.Context) {
 	}
 
 	// Add requesting user context
-	user, appErr := a.pluginAPI.User.Get(userID)
-	if appErr != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get user: %w", appErr))
+	user, userErr := a.pluginAPI.User.Get(userID)
+	if userErr != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get user: %w", userErr))
 		return
 	}
 	if a.contextBuilder != nil {
@@ -252,11 +277,8 @@ func (a *API) handleRenderCustomPrompt(c *gin.Context) {
 	}
 
 	// Add bot context if provided
-	if req.BotUsername != "" {
-		bot := a.bots.GetBotByUsernameOrFirst(req.BotUsername)
-		if bot != nil && a.contextBuilder != nil {
-			opts = append(opts, a.contextBuilder.WithLLMContextBot(bot))
-		}
+	if bot != nil && a.contextBuilder != nil {
+		opts = append(opts, a.contextBuilder.WithLLMContextBot(bot))
 	}
 
 	ctx := llm.NewContext(opts...)
