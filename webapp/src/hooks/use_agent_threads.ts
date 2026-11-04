@@ -150,13 +150,12 @@ export interface AgentThreadsSync {
 export function createAgentThreadsSync(store: {dispatch: Dispatch<UnknownAction>; getState: () => GlobalState}): AgentThreadsSync {
     let timer: ReturnType<typeof setTimeout> | null = null;
 
-    // A burst of events costs one request; `extend: false` keeps a pending timer running, so a
-    // continuous stream of events cannot postpone it forever.
-    const scheduleRefresh = ({extend = true} = {}) => {
+    // Threads already refetched for because a reply started in them while unlisted, so a
+    // stream's chunks, or a thread the list never returns, cost one request.
+    const fetchedForRoots = new Set<string>();
+
+    const scheduleRefresh = () => {
         if (timer !== null) {
-            if (!extend) {
-                return;
-            }
             clearTimeout(timer);
         }
         timer = setTimeout(() => {
@@ -167,24 +166,33 @@ export function createAgentThreadsSync(store: {dispatch: Dispatch<UnknownAction>
 
     return {
         handlePostUpdate: (msg) => {
-            // postupdate events reach every member of the channel, so only the current user's own
-            // agent chats count.
+            // postupdate events reach every member of the channel, so only the current user's
+            // own agent chats count.
             const state = store.getState();
-            if (!msg.data?.post_id || !isInUse(state) || !isCurrentUsersAgentPost(state, msg.data.post_id)) {
+            const postId = msg.data?.post_id;
+            if (!postId || !isInUse(state) || !isCurrentUsersAgentPost(state, postId)) {
                 return;
             }
 
             // A finished turn moves its chat to the top.
-            if (msg.data.control === 'end') {
+            const control = msg.data.control;
+            if (control === 'end') {
                 scheduleRefresh();
                 return;
             }
+            if (control === 'cancel') {
+                return;
+            }
 
-            // A chat the list does not have yet shows up while its first reply streams.
-            const post = state.entities.posts.posts[msg.data.post_id];
-            const rootId = post?.root_id || post?.id;
-            if (rootId && !selectAIThreads(state)?.some((t) => t.root_post_id === rootId)) {
-                scheduleRefresh({extend: false});
+            // A reply streaming in a chat the list does not have yet: fetch it. The server creates
+            // a new chat's conversation while handling its first message, so the refetch made when
+            // the chat was sent can come back without it. A list still loading counts as not having it.
+            const post = state.entities.posts.posts[postId];
+            const rootId = post.root_id || post.id;
+            const threads = selectAIThreads(state);
+            if (!threads?.some((t) => t.root_post_id === rootId) && !fetchedForRoots.has(rootId)) {
+                fetchedForRoots.add(rootId);
+                scheduleRefresh();
             }
         },
         handleConversationUpdated: (data) => {

@@ -20,7 +20,6 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -30,6 +29,10 @@ const (
 	EmbeddedClientKey  = config.MCPEmbeddedServerOrigin
 
 	listToolsMethod = "tools/list"
+
+	// legacySSEProtocolVersion is the newest MCP revision with an HTTP+SSE
+	// transport binding.
+	legacySSEProtocolVersion = "2025-11-25"
 
 	// RemoteConnectTimeout bounds one remote MCP server's whole connection
 	// sequence: streamable-transport negotiation, the legacy HTTP+SSE
@@ -167,7 +170,7 @@ func maybeInvalidateSharedToolsBeforeOAuthListTools(userID string, serverConfig 
 	}
 
 	serverID := serverConfig.Name
-	hasStoredToken, tokenErr := oauthManager.HasStoredToken(userID, serverID)
+	hasStoredToken, tokenErr := oauthManager.HasStoredToken(userID, serverConfig)
 	if tokenErr != nil {
 		log.Warn("Failed to check stored OAuth token before MCP tool discovery",
 			"serverID", serverID,
@@ -204,12 +207,12 @@ func NewSDKClient(impl *mcp.Implementation, opts *mcp.ClientOptions) *mcp.Client
 	return client
 }
 
-// dropNilTools removes null entries from tools/list responses. go-sdk v1.7.0's
-// ListTools panics (nil dereference in filterValidTools) when a server's
-// tools/list result contains a JSON null tool entry, so a misbehaving remote
-// MCP server could crash the whole plugin process before any of our own nil
-// checks run. Stripping the entries in sending middleware runs before the
-// SDK's validation pass. Upstream report:
+// dropNilTools removes null entries from tools/list responses. go-sdk before
+// v1.8.0 panicked (nil dereference in filterValidTools) when a server's
+// tools/list result contained a JSON null tool entry, so a misbehaving remote
+// MCP server could crash the whole plugin process. v1.8.0 skips them itself;
+// stripping them here as well keeps the guard independent of the SDK
+// version. Upstream report:
 // https://github.com/modelcontextprotocol/go-sdk/issues/1119
 func dropNilTools(next mcp.MethodHandler) mcp.MethodHandler {
 	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
@@ -230,6 +233,11 @@ func dropNilTools(next mcp.MethodHandler) mcp.MethodHandler {
 		listResult.Tools = kept
 		return listResult, nil
 	}
+}
+
+// toolReadOnlyHint reports whether the server annotated tool as read-only.
+func toolReadOnlyHint(tool *mcp.Tool) bool {
+	return tool != nil && tool.Annotations != nil && tool.Annotations.ReadOnlyHint
 }
 
 // ListSessionTools lists every tool available on session in wire order,
@@ -545,7 +553,7 @@ func (c *Client) staticOAuthTokenMissing() (bool, error) {
 	if c.serviceAccount || c.oauthManager == nil || staticOAuthCreds(c.config) == nil {
 		return false, nil
 	}
-	hasToken, err := c.oauthManager.HasStoredToken(c.userID, c.config.Name)
+	hasToken, err := c.oauthManager.HasStoredToken(c.userID, c.config)
 	if err != nil {
 		return false, fmt.Errorf("failed to check stored OAuth token for MCP server %s: %w", c.config.Name, err)
 	}
@@ -622,10 +630,13 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 	// Fall back to the HTTP+SSE transport for legacy servers that only implement
 	// the 2024-11-05 HTTP+SSE transport. SSEClientTransport has no OAuthHandler
 	// field, so OAuth is applied through a RoundTripper adapter instead.
+	// MCP 2026-07-28 has no HTTP+SSE binding, so the session starts with the
+	// legacy initialize handshake: a server/discover probe that an older server
+	// rejects with a non-2xx status would leave the SSE connection unusable.
 	session, errSSE := client.Connect(ctx, &mcp.SSEClientTransport{
 		Endpoint:   serverConfig.BaseURL,
 		HTTPClient: c.httpClientForLegacySSE(serverConfig.BaseURL, oauthHandler, headers),
-	}, nil)
+	}, &mcp.ClientSessionOptions{ProtocolVersion: legacySSEProtocolVersion})
 	if errSSE == nil {
 		// Successfully connected using SSE transport
 		return session, nil
@@ -692,7 +703,9 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 	return c.CallToolWithMetadata(ctx, toolName, args, nil)
 }
 
-// CallToolWithMetadata calls a tool on this MCP server with optional metadata
+// CallToolWithMetadata calls a tool on this MCP server with optional metadata.
+// Every tool call, whether auto-run or run after approval, passes through here,
+// so a failure is recorded once on the span and in the log.
 func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args map[string]any, metadata map[string]any) (string, error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "mcp call tool",
 		trace.WithAttributes(
@@ -702,11 +715,16 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 	)
 	defer span.End()
 
+	text, err := c.callTool(ctx, toolName, args, metadata)
+	if err != nil {
+		c.recordToolCallFailure(span, toolName, err)
+	}
+	return text, err
+}
+
+func (c *Client) callTool(ctx context.Context, toolName string, args map[string]any, metadata map[string]any) (string, error) {
 	if c.session == nil {
-		err := fmt.Errorf("MCP client not connected")
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return "", err
+		return "", &classifiedError{class: toolFailureNotConnected, msg: "MCP client not connected"}
 	}
 
 	// Call the tool using new SDK
@@ -776,14 +794,14 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 	if result.IsError {
 		trimmed := strings.TrimSpace(text)
 		if trimmed == "" {
-			return "", fmt.Errorf("tool %s on server %s returned an error", toolName, c.config.Name)
+			return "", &classifiedError{class: toolFailureReturnedError, msg: fmt.Sprintf("tool %s on server %s returned an error", toolName, c.config.Name)}
 		}
-		return trimmed, errors.New(trimmed)
+		return trimmed, &classifiedError{class: toolFailureReturnedError, msg: trimmed}
 	}
 
 	if text != "" {
 		return text, nil
 	}
 
-	return "", fmt.Errorf("no text content found in response from tool %s on server %s", toolName, c.config.Name)
+	return "", &classifiedError{class: toolFailureEmptyResult, msg: fmt.Sprintf("no text content found in response from tool %s on server %s", toolName, c.config.Name)}
 }
