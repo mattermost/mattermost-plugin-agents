@@ -3206,7 +3206,7 @@ func (a *archiveAgainStore) RestoreConversation(id string, archivedAt int64) (*s
 		if _, err := a.Store.RestoreConversation(id, archivedAt); err != nil {
 			return nil, err
 		}
-		if err := a.Store.ArchiveConversation(id, archivedAt+1000); err != nil {
+		if err := a.ArchiveConversation(id, archivedAt+1000); err != nil {
 			return nil, err
 		}
 	}
