@@ -167,6 +167,8 @@ func (env *scopedTestEnv) auditRecords(event string) []*model.AuditRecord {
 // its session is minted and before streaming starts.
 type scopedEnvOpts struct {
 	streamingErr error
+	// skillErr fails skill loading, which happens after the session is minted.
+	skillErr error
 	// onToolRun runs inside the tool, while the turn is in flight.
 	onToolRun func(env *scopedTestEnv)
 	// webSearchURL turns on the plugin's built-in web search against a
@@ -275,6 +277,9 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 
 	contextBuilder := llmcontext.NewLLMContextBuilder(client, toolProvider, env.catalog, scopedBuilderConfig{})
 	env.builder = contextBuilder
+	if opts.skillErr != nil {
+		contextBuilder.SetSkillProvider(failingSkillProvider{err: opts.skillErr})
+	}
 	policies := newDMPolicyChecker()
 	policies.policies[scopedRemote+":get_issue"] = mcp.ToolPolicyAsk
 	env.conversations = conversations.New(promptsManager, mmClient, env.streaming, contextBuilder, botService, nil, licenseChecker, i18n.Init(),
@@ -286,7 +291,7 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	mmClient.posts = map[string]*model.Post{post.Id: post}
 	env.channel, env.trigger = channel, post
 	env.conversations.MessageHasBeenPosted(nil, post)
-	if opts.streamingErr != nil {
+	if opts.streamingErr != nil || opts.skillErr != nil {
 		return env
 	}
 
@@ -520,6 +525,22 @@ func TestScopedChannelTurnStopsAutoRunningWhenRevoked(t *testing.T) {
 	toolUse, _ := scopedToolBlocks(t, env)
 	require.Len(t, toolUse, 1, "the call after the revocation waits for approval")
 	assert.Equal(t, "call-1", toolUse[0].ID)
+}
+
+type failingSkillProvider struct{ err error }
+
+func (p failingSkillProvider) Tools(llm.BotConfig, *llm.Context) ([]llm.Tool, []llm.SkillInfo, error) {
+	return nil, nil, p.err
+}
+
+func TestScopedChannelTurnSkillErrorRevokesSession(t *testing.T) {
+	channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypeOpen, Name: "town-square"}
+	env := setupScopedTestEnv(t, channel, scopedEnvOpts{skillErr: errors.New("skills unavailable")})
+
+	minted, revoked := env.minter.snapshot()
+	require.Len(t, minted, 1)
+	assert.Equal(t, []string{minted[0].Id}, revoked)
+	assert.Len(t, env.auditRecords(audit.EventAgentScopedSessionGrant), 1, "the grant is still audited")
 }
 
 // A run that fails after its session was minted still revokes it.

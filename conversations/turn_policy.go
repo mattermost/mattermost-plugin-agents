@@ -315,6 +315,7 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 		skillsCfg.Skills.EnabledSharedIDs = nil
 	}
 	if err := builder.AddSkillTools(llmContext, skillsCfg); err != nil {
+		llmContext.ReleaseScopedSession()
 		return nil, fmt.Errorf("failed to load skills: %w", err)
 	}
 	switch {
