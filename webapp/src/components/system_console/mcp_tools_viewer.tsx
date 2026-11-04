@@ -37,6 +37,13 @@ type MCPToolsViewerProps = {
 };
 
 // Main component for MCP Tools viewer
+// Read-only viewers get URLs reduced to their origin, so servers on one host
+// share a URL; a name match wins and the URL only decides when no name does.
+const indexOfServer = (servers: MCPServerConfig[], name: string, url: string) => {
+    const byName = servers.findIndex((sc) => sc.name === name);
+    return byName >= 0 ? byName : servers.findIndex((sc) => sc.baseURL === url);
+};
+
 const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsViewerProps) => {
     const intl = useIntl();
     const readOnly = useSettingsReadOnly();
@@ -189,9 +196,8 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             };
         }
 
-        return (mcpConfig.servers ?? []).find((sc) =>
-            sc.name === server.name || sc.baseURL === server.url,
-        ) || null;
+        const servers = mcpConfig.servers ?? [];
+        return servers[indexOfServer(servers, server.name, server.url)] ?? null;
     };
 
     const handleServerConfigChange = (
@@ -243,12 +249,9 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             return;
         }
 
-        const updatedServers = (mcpConfig.servers ?? []).map((sc) => {
-            if (sc.name === updatedServerConfig.name || sc.baseURL === updatedServerConfig.baseURL) {
-                return updatedServerConfig;
-            }
-            return sc;
-        });
+        const servers = mcpConfig.servers ?? [];
+        const target = indexOfServer(servers, updatedServerConfig.name, updatedServerConfig.baseURL);
+        const updatedServers = servers.map((sc, i) => (i === target ? updatedServerConfig : sc));
         onConfigChange({...mcpConfig, servers: updatedServers});
     };
 

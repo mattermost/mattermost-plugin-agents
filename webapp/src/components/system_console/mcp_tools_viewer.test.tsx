@@ -376,3 +376,35 @@ test('lists servers that share a URL, as read-only viewers get them, as separate
         consoleError.mockRestore();
     }
 });
+
+test('maps each server on a shared URL to its own configuration by name', () => {
+    const shared = 'https://mcp.example.com';
+    const servers = ['Tracker', 'Wiki'].map((name) => ({
+        name,
+        url: shared,
+        serverType: 'remote',
+        enabled: true,
+        tools: [],
+        needsOAuth: false,
+        error: null,
+    }));
+    const mcpConfig = makeMCPConfig({
+        servers: [
+            {name: 'Tracker', enabled: true, baseURL: shared, headers: {}},
+            {name: 'Wiki', enabled: false, baseURL: shared, headers: {}},
+        ],
+    });
+    const {onConfigChange} = renderViewer({servers}, mcpConfig);
+
+    const toggles = screen.getAllByRole('switch');
+    expect(toggles[0].getAttribute('aria-checked')).toBe('true');
+    expect(toggles[1].getAttribute('aria-checked')).toBe('false');
+
+    fireEvent.click(toggles[1]);
+
+    const [updated] = onConfigChange.mock.calls[0];
+    expect(updated.servers).toEqual([
+        {name: 'Tracker', enabled: true, baseURL: shared, headers: {}},
+        {name: 'Wiki', enabled: true, baseURL: shared, headers: {}},
+    ]);
+});

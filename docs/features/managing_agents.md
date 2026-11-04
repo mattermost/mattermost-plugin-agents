@@ -372,7 +372,7 @@ The signed-in user is not the agent's creator, not in **Agent admins**, does not
 
 The agent is stored but not running. The badge tooltip names the reason:
 
-- **Service deleted or incomplete** — the agent's `serviceID` no longer matches a service in **System Console > Plugins > Agents**, or that service is missing required settings such as its API key. Edit the agent and pick a current service, or complete the service configuration.
+- **Service deleted or incomplete** — the agent's `serviceID` no longer matches a service in **Agents > Settings > AI services**, or that service is missing required settings such as its API key. Edit the agent and pick a current service, or complete the service configuration.
 - **Service not active on the plan** — Free and Professional use only the first service in the **Services** list. Edit the agent and choose that service; multiple services are available at Enterprise and above.
 - **Agent limit reached** — the plan's agent cap is filled by configuration-file bots and agents created earlier. Delete an earlier agent or move to a plan with more agents.
 
