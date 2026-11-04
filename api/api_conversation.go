@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -95,7 +97,7 @@ func (a *API) handleGetConversation(c *gin.Context) {
 	}
 
 	// 4. Privacy filtering and display sanitization
-	turnResponses, err := turnsToResponse(turns, userID != conv.UserID)
+	turnResponses, err := turnsToResponse(turns, userID != conv.UserID, conv.Operation == llm.OperationMeetingSummary)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to sanitize turns: %w", err))
 		return
@@ -146,12 +148,19 @@ func approvalStateForTurn(turn store.Turn, allTurns []store.Turn) string {
 // turnsToResponse converts store turns to response objects with display
 // sanitization, first applying privacy filtering when the requesting user is
 // not the conversation owner.
-func turnsToResponse(turns []store.Turn, filterForNonRequester bool) ([]TurnResponse, error) {
+// turnsToResponse sanitizes turns for the webapp. A meeting summary's user turn
+// only references the transcript file now, but older rows hold the transcript
+// text itself and the file's access is not re-checked on read, so user text
+// blocks are dropped when redactMeetingUserText is set.
+func turnsToResponse(turns []store.Turn, filterForNonRequester, redactMeetingUserText bool) ([]TurnResponse, error) {
 	result := make([]TurnResponse, len(turns))
 	for i, turn := range turns {
 		var blocks []conversation.ContentBlock
 		if err := json.Unmarshal(turn.Content, &blocks); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal turn content: %w", err)
+		}
+		if redactMeetingUserText && turn.Role == "user" {
+			blocks = slices.DeleteFunc(blocks, func(b conversation.ContentBlock) bool { return b.Type == conversation.BlockTypeText })
 		}
 		if filterForNonRequester {
 			blocks = conversation.FilterForNonRequester(blocks)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -54,6 +55,33 @@ func TestHandleGetConversation(t *testing.T) {
 		expectedStatus int
 		validate       func(t *testing.T, resp *http.Response)
 	}{
+		{
+			name:           "meeting summary user turn never returns stored transcript text",
+			userID:         testUserID,
+			conversationID: "conv-meeting",
+			setup: func(e *TestEnvironment) {
+				e.conversationStore.conversations["conv-meeting"] = &store.Conversation{
+					ID:        "conv-meeting",
+					UserID:    testUserID,
+					BotID:     testBotUserID,
+					Operation: llm.OperationMeetingSummary,
+				}
+				e.conversationStore.turns["conv-meeting"] = []store.Turn{
+					{ID: "turn-1", ConversationID: "conv-meeting", Role: "user", Sequence: 1, Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+						{Type: conversation.BlockTypeText, Text: "Summarize this transcript: SECRET-TRANSCRIPT-LINE"},
+						{Type: conversation.BlockTypeFile, FileID: "file01234567890123456789ab"},
+					})},
+					{ID: "turn-2", ConversationID: "conv-meeting", Role: "assistant", Sequence: 2, Content: textOnlyBlocks},
+				}
+			},
+			expectedStatus: http.StatusOK,
+			validate: func(t *testing.T, resp *http.Response) {
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+				assert.NotContains(t, string(body), "SECRET-TRANSCRIPT-LINE")
+				assert.Contains(t, string(body), "What is the weather in NYC?", "assistant turns are untouched")
+			},
+		},
 		{
 			name:           "owner in DM gets full unredacted content",
 			userID:         testUserID,
