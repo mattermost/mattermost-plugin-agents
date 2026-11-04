@@ -460,3 +460,73 @@ func countUserMessagesContaining(posts []llm.Post, msg string) int {
 	}
 	return n
 }
+
+// TestHandleToolResultPublishesHeldAnswerOnlyWhenEveryPendingResultIsShared
+// drives the channel share path: the held draft may draw on any result in the
+// round, so a partial share must not publish it.
+func TestHandleToolResultPublishesHeldAnswerOnlyWhenEveryPendingResultIsShared(t *testing.T) {
+	cases := []struct {
+		name          string
+		accepted      []string
+		wantPublished bool
+	}{
+		{name: "every pending result shared", accepted: []string{"tool-use-a", "tool-use-b"}, wantPublished: true},
+		{name: "only one of two pending results shared", accepted: []string{"tool-use-a"}, wantPublished: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			convStore, conv := loadedStateConversationStore()
+			postID := "approval-post-id"
+			assistant, err := json.Marshal([]conversation.ContentBlock{
+				{Type: conversation.BlockTypeToolUse, ID: "tool-use-a", Name: "jira__get_issue", Status: conversation.StatusSuccess, Shared: new(false)},
+				{Type: conversation.BlockTypeToolUse, ID: "tool-use-b", Name: "jira__get_issue", Status: conversation.StatusSuccess, Shared: new(false)},
+				{Type: conversation.BlockTypeText, Text: "held draft", RequesterOnly: true},
+			})
+			require.NoError(t, err)
+			results, err := json.Marshal([]conversation.ContentBlock{
+				{Type: conversation.BlockTypeToolResult, ToolUseID: "tool-use-a", Content: "result-a", Status: conversation.StatusSuccess, Shared: new(false)},
+				{Type: conversation.BlockTypeToolResult, ToolUseID: "tool-use-b", Content: "result-b", Status: conversation.StatusSuccess, Shared: new(false)},
+			})
+			require.NoError(t, err)
+			require.NoError(t, convStore.CreateTurn(&store.Turn{ID: "assistant-turn", ConversationID: conv.ID, PostID: &postID, Role: "assistant", Content: assistant, Sequence: 1}))
+			require.NoError(t, convStore.CreateTurn(&store.Turn{ID: "result-turn", ConversationID: conv.ID, Role: "tool_result", Content: results, Sequence: 2}))
+
+			lm := &loadedStateLLM{}
+			streamingService := &loadedStateStreamingService{}
+			c := newRejectionFollowUpConversations(t, convStore, lm, streamingService, false)
+			mmClient, ok := c.mmClient.(*mocks.MockClient)
+			require.True(t, ok)
+			updated := 0
+			mmClient.On("UpdatePost", mock.Anything).Maybe().Run(func(mock.Arguments) { updated++ }).Return(nil)
+
+			post := &model.Post{Id: postID, UserId: "bot-id"}
+			post.AddProp(streaming.ConversationIDProp, conv.ID)
+			channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
+
+			require.NoError(t, c.HandleToolResult(context.Background(), testRequesterID, post, channel, tc.accepted))
+			streamingService.waitForStreaming()
+
+			turns, err := convStore.GetTurnsForConversation(conv.ID)
+			require.NoError(t, err)
+			var blocks []conversation.ContentBlock
+			for _, turn := range turns {
+				if turn.ID == "assistant-turn" {
+					require.NoError(t, json.Unmarshal(turn.Content, &blocks))
+				}
+			}
+			require.Len(t, blocks, 3)
+			if tc.wantPublished {
+				assert.Equal(t, 1, updated)
+				assert.Equal(t, "held draft", post.Message)
+				assert.False(t, blocks[2].RequesterOnly)
+				assert.Empty(t, lm.requests)
+				return
+			}
+			assert.Zero(t, updated)
+			assert.Empty(t, post.Message)
+			assert.True(t, blocks[2].RequesterOnly, "the draft stays with the requester")
+			assert.Len(t, lm.requests, 1, "the redacted follow-up path runs instead")
+		})
+	}
+}
