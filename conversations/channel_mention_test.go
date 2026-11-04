@@ -696,6 +696,10 @@ type deletedPostFixture struct {
 func setupDeletedPostFixture(t *testing.T) *deletedPostFixture {
 	t.Helper()
 
+	if channelMentionTestConnStr == "" {
+		t.Skip("postgres testcontainer not available")
+	}
+
 	setupDB, err := sqlx.Connect("postgres", channelMentionTestConnStr)
 	require.NoError(t, err)
 
