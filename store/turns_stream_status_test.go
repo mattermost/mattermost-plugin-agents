@@ -470,3 +470,33 @@ func TestRunSpanSkipsAnotherPostsToolResult(t *testing.T) {
 		})
 	}
 }
+
+// Two replies streaming in one conversation: the first run's tool rounds land
+// after the second reply's anchor, and the first anchor must still settle
+// after them.
+func TestSettleMovesPastRoundsWrittenAfterAnotherStreamingAnchor(t *testing.T) {
+	s, convID := setupStreamStore(t)
+	add := func(mutate func(*Turn)) *Turn {
+		turn := makeTurn(convID, 0, mutate)
+		require.NoError(t, s.CreateTurnAutoSequence(turn))
+		return turn
+	}
+	add(func(tu *Turn) { tu.Role = "user" })
+	postA, postB := "post-a", "post-b"
+	anchorA := add(func(tu *Turn) { tu.Role = "assistant"; tu.Status = TurnStatusStreaming; tu.PostID = &postA })
+	anchorB := add(func(tu *Turn) { tu.Role = "assistant"; tu.Status = TurnStatusStreaming; tu.PostID = &postB })
+	roundA := add(toolRoundOf(postA))
+
+	settled, err := s.FinalizeStreamingTurn(anchorA.ID, json.RawMessage(`[]`), 0, 0, TurnStatusComplete)
+	require.NoError(t, err)
+	require.True(t, settled)
+
+	turns, err := s.GetTurnsForConversation(convID)
+	require.NoError(t, err)
+	index := map[string]int{}
+	for i, turn := range turns {
+		index[turn.ID] = i
+	}
+	assert.Less(t, index[roundA.ID], index[anchorA.ID], "the first answer comes after its own tool rounds")
+	assert.Contains(t, index, anchorB.ID)
+}
