@@ -708,6 +708,19 @@ func (c *Conversations) streamToolFollowUp(
 	ctx, span := telemetry.Tracer().Start(ctx, "tool followup completion")
 	defer span.End()
 
+	// Stop must reach the tool loop, not only the stream that follows it.
+	streamCtx, err := c.streamingService.GetStreamingContext(ctx, post.Id)
+	if err != nil {
+		return err
+	}
+	ctx = streamCtx
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			c.streamingService.FinishStreaming(post.Id)
+		}
+	}()
+
 	if opts.Unattended {
 		unattended := *policy
 		unattended.interactive = false
@@ -754,10 +767,8 @@ func (c *Conversations) streamToolFollowUp(
 
 	// Stream onto the same post; finalize demotes the prior anchor so
 	// resolved tool cards remain visible alongside the new round.
-	if err := c.streamToExistingPost(ctx, stream, post, policy.user, policy.channel, true, nil); err != nil {
-		return fmt.Errorf("failed to stream tool follow-up: %w", err)
-	}
-
+	handedOff = true
+	c.streamToExistingPostOnContext(ctx, stream, post, policy.user, policy.channel, true, nil)
 	return nil
 }
 
