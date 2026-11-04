@@ -818,6 +818,16 @@ func TestGetBotDMConversationSummariesForUser(t *testing.T) {
 			want:  []string{},
 		},
 		{
+			name: "several chats with one bot",
+			convs: []convSpec{
+				{key: "a", user: "self", root: "botDM", channelID: true, updatedAt: 1000},
+				{key: "b", user: "self", root: "botDM", channelID: true, updatedAt: 2000},
+				{key: "c", user: "self", root: "botDM", channelID: true, updatedAt: 3000},
+			},
+			limit: 1,
+			want:  []string{"c"},
+		},
+		{
 			name: "the limit applies after channel threads are filtered out",
 			convs: []convSpec{
 				{key: "mention1", user: "self", root: "channel", channelID: true, updatedAt: 3000},
@@ -884,6 +894,14 @@ func TestGetBotDMConversationSummariesForUser(t *testing.T) {
 				got[i] = keyByID[summary.ID]
 			}
 			assert.Equal(t, tt.want, got)
+
+			wantBotIDs := []string{}
+			if len(tt.want) > 0 {
+				wantBotIDs = append(wantBotIDs, botID)
+			}
+			botIDs, err := s.GetBotDMBotIDsForUser(users["self"])
+			require.NoError(t, err)
+			assert.Equal(t, wantBotIDs, botIDs, "a bot is reported once, whatever the summary limit")
 		})
 	}
 }

@@ -28,7 +28,7 @@ jest.mock('@mattermost/shared/components/tooltip', () => ({
 }));
 
 const alpha = {id: 'a', displayName: 'Alpha', dmChannelID: 'dm_a'};
-let mockBots: Array<typeof alpha & {isCreator?: boolean}> = [alpha];
+let mockBots: Array<typeof alpha & {isCreator?: boolean; hasChats?: boolean}> = [alpha];
 
 const mockGetAIThreads = getAIThreads as jest.Mock;
 const mockRenameConversation = renameConversation as jest.Mock;
@@ -145,14 +145,15 @@ describe('ProductSidebar "Your agents" section', () => {
     });
 
     test.each([
-        {name: 'lists agents the user created or chats with', path: AGENTS_ROUTE, listed: ['Alpha', 'Beta']},
-        {name: 'also lists the agent whose chat is open', path: buildChatPath('d'), listed: ['Alpha', 'Beta', 'Delta']},
+        {name: 'lists agents the user created or chats with, including chats outside the loaded page', path: AGENTS_ROUTE, listed: ['Alpha', 'Beta', 'Epsilon']},
+        {name: 'also lists the agent whose chat is open', path: buildChatPath('d'), listed: ['Alpha', 'Beta', 'Delta', 'Epsilon']},
     ])('$name', async ({path, listed}) => {
         mockBots = [
             alpha,
             {id: 'b', displayName: 'Beta', dmChannelID: 'dm_b', isCreator: true},
             {id: 'c', displayName: 'Gamma', dmChannelID: 'dm_c'},
             {id: 'd', displayName: 'Delta', dmChannelID: 'dm_d'},
+            {id: 'e', displayName: 'Epsilon', dmChannelID: 'dm_e', hasChats: true},
         ];
         mockGetAIThreads.mockResolvedValue([thread('1', 'Older')]);
         renderWithStore(path);
