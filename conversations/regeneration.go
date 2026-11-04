@@ -283,7 +283,8 @@ func (c *Conversations) reservePostRun(ctx stdcontext.Context, postID string) (s
 		return nil, nil, fmt.Errorf("post already has a run in progress: %w", streaming.ErrAlreadyStreamingToPost)
 	}
 
-	ctx, cancel := stdcontext.WithCancel(ctx)
+	ctx, cancelCause := stdcontext.WithCancelCause(ctx)
+	cancel := func() { cancelCause(nil) }
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
@@ -298,7 +299,7 @@ func (c *Conversations) reservePostRun(ctx stdcontext.Context, postID string) (s
 			case <-ticker.C:
 				renewed, renewErr := c.mmClient.KVCompareAndSetWithExpiry(key, token, token, streaming.StaleStreamThreshold)
 				if renewErr != nil {
-					c.mmClient.LogWarn("Failed to renew regenerate reservation", "error", renewErr, "post_id", postID)
+					c.mmClient.LogWarn("Failed to renew post run reservation", "error", renewErr, "post_id", postID)
 					if time.Since(lastRenewed) < streaming.StaleStreamThreshold {
 						continue
 					}
@@ -306,8 +307,8 @@ func (c *Conversations) reservePostRun(ctx stdcontext.Context, postID string) (s
 					lastRenewed = time.Now()
 					continue
 				}
-				c.mmClient.LogWarn("Regenerate reservation was lost; stopping the run", "post_id", postID)
-				cancel()
+				c.mmClient.LogWarn("Post run reservation was lost; stopping the run", "post_id", postID)
+				cancelCause(streaming.ErrRunOwnershipLost)
 				return
 			}
 		}
@@ -318,7 +319,7 @@ func (c *Conversations) reservePostRun(ctx stdcontext.Context, postID string) (s
 		<-done
 		cancel()
 		if _, err := c.mmClient.KVCompareAndSet(key, token, nil); err != nil {
-			c.mmClient.LogWarn("Failed to release regenerate reservation", "error", err, "post_id", postID)
+			c.mmClient.LogWarn("Failed to release post run reservation", "error", err, "post_id", postID)
 		}
 	}, nil
 }

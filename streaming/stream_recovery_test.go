@@ -459,6 +459,35 @@ func TestStreamEndWhenFinalizeFails(t *testing.T) {
 	}
 }
 
+// A run whose post reservation is lost may no longer own the post: its stream
+// stops without finalizing the turn or writing the post.
+func TestStreamThatLosesItsRunReservationLeavesThePostAlone(t *testing.T) {
+	service, client, ts := newRecoveryTestService(t)
+	post := newStreamPost()
+	runCtx, cancelRun := context.WithCancelCause(context.Background())
+	ctx, err := service.GetStreamingContext(runCtx, post.Id)
+	require.NoError(t, err)
+	stream := make(chan llm.TextStreamEvent)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer service.FinishStreaming(post.Id)
+		service.StreamToPost(ctx, &llm.TextStreamResult{Stream: stream}, post, "en", "requester-id")
+	}()
+	stream <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "old run"}
+	updatesBefore := client.updateCount()
+
+	cancelRun(ErrRunOwnershipLost)
+	<-done
+
+	assert.Equal(t, updatesBefore, client.updateCount(), "another run may own the post")
+	assert.Zero(t, client.controlCount(PostStreamingControlEnd))
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	assert.Zero(t, ts.finalizes, "the turn is left for whoever owns the post now")
+}
+
 func TestNewStreamClearsInterruptedMarker(t *testing.T) {
 	service, client, _ := newRecoveryTestService(t)
 	post := newStreamPost()
