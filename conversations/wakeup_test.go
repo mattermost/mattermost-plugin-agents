@@ -370,6 +370,8 @@ func TestResumeConversationDrops(t *testing.T) {
 		// archivedAt archives the conversation at that time before the wake
 		// fires; the dropped wake must leave it archived.
 		archivedAt int64
+		// rootDeleted gives the conversation a root post that was deleted.
+		rootDeleted bool
 	}{
 		{name: "post missing", postMissing: true},
 		{name: "conversation missing", jobConvID: "missing-conv"},
@@ -405,6 +407,7 @@ func TestResumeConversationDrops(t *testing.T) {
 		},
 		// An archived conversation drops the wake before any other lookup,
 		// so these cases register no user or channel expectations.
+		{name: "conversation root post deleted", rootDeleted: true},
 		{name: "conversation archived after the wait was scheduled", archivedAt: wakeScheduledAt + 1},
 		{name: "conversation archived before the wait was scheduled", archivedAt: wakeScheduledAt - 1},
 	}
@@ -427,6 +430,11 @@ func TestResumeConversationDrops(t *testing.T) {
 			}
 			if tt.archivedAt != 0 {
 				env.convStore.conversations[env.conv.ID].DeleteAt = tt.archivedAt
+			}
+
+			if tt.rootDeleted {
+				env.convStore.conversations[env.conv.ID].RootPostID = new("root-post-id")
+				env.mmClient.On("GetPost", "root-post-id").Return(&model.Post{Id: "root-post-id", DeleteAt: 1}, nil).Once()
 			}
 
 			convID := env.conv.ID
@@ -457,6 +465,7 @@ func TestResumeConversationDrops(t *testing.T) {
 			turns, err := env.convStore.GetTurnsForConversation(env.conv.ID)
 			require.NoError(t, err)
 			require.Len(t, turns, tt.priorWakes)
+			require.Empty(t, env.lm.requests, "a dropped wake must not run")
 			if tt.archivedAt != 0 {
 				require.Equal(t, tt.archivedAt, env.convStore.conversations[env.conv.ID].DeleteAt,
 					"a wake must not un-archive the conversation")

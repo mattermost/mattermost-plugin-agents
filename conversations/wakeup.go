@@ -486,6 +486,13 @@ func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) (er
 		return c.dropWake("conversation archived", nil, "conversation_id", conv.ID)
 	}
 
+	if err = conversation.CheckRootPost(c.mmClient, conv); err != nil {
+		if errors.Is(err, conversation.ErrRootPostDeleted) {
+			return c.dropWake("root post deleted", nil, "conversation_id", conv.ID)
+		}
+		return err
+	}
+
 	turns, err := c.convService.GetTurns(conv.ID)
 	if err != nil {
 		return fmt.Errorf("failed to get turns: %w", err)

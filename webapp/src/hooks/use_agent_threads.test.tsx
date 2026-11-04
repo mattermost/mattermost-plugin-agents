@@ -317,6 +317,7 @@ describe('stored AI threads', () => {
             const archiving = archiveAIThread(store, 'c2');
             stale.resolve([makeThread({id: 'c1'}), makeThread({id: 'c2'}), makeThread({id: 'c3'})]);
             await fetching;
+            expect(titles(store)).toEqual(['c1:', 'c3:']);
             pending.resolve();
             await archiving;
 

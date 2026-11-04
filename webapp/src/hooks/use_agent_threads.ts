@@ -66,13 +66,16 @@ const isInUse = (state: unknown) => {
 
 let lastRequestId = 0;
 
+// Chats being archived stay out of fetched lists until the request settles.
+const pendingArchives = new Set<string>();
+
 // The one fetch path for the thread list. A newer request supersedes an older one in flight.
 export async function fetchAIThreads(dispatch: Dispatch<UnknownAction>): Promise<void> {
     const requestId = ++lastRequestId;
     dispatch({type: AIThreadsRequested, requestId});
     try {
         const threads = await getAIThreads();
-        dispatch({type: AIThreadsReceived, requestId, threads});
+        dispatch({type: AIThreadsReceived, requestId, threads: threads.filter((t) => !pendingArchives.has(t.id))});
     } catch (e) {
         console.error('Failed to load AI threads:', e); // eslint-disable-line no-console
         dispatch({type: AIThreadsFailed, requestId});
@@ -123,13 +126,16 @@ export async function renameAIThread(store: ThreadsStore, conversationId: string
 // Archives a chat, taking it out of the list right away. A failed archive rejects after reloading
 // the list, since the server may have archived it before the request failed.
 export async function archiveAIThread(store: ThreadsStore, conversationId: string): Promise<void> {
+    pendingArchives.add(conversationId);
     store.dispatch({type: AIThreadRemoved, conversationId});
     try {
         await archiveConversation(conversationId);
     } catch (e) {
+        pendingArchives.delete(conversationId);
         fetchAIThreads(store.dispatch);
         throw e;
     }
+    pendingArchives.delete(conversationId);
     applyRemoval(store, conversationId);
 }
 
