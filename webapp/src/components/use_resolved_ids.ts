@@ -56,19 +56,27 @@ function escapeUnsafe(text: string) {
     return text.replace(unsafeChars, (ch) => `[U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}]`);
 }
 
+// A label never stands alone: it carries the unique, non-spoofable identifier
+// (username, channel/team name, post ID) so approving a card can't be steered
+// by a lookalike display name or post text.
+function withIdentifier(label: string, identifier: string) {
+    return label && label !== identifier ? `${label} (${identifier})` : identifier;
+}
+
 async function fetchName(kind: Exclude<IdKind, 'user'>, id: string): Promise<string> {
     switch (kind) {
     case 'team': {
         const [team] = await getTeamsByIds([id]);
-        return team.display_name || team.name;
+        return withIdentifier(team.display_name, team.name);
     }
     case 'channel': {
         const channel = await getChannel(id);
-        return channel.display_name || channel.name;
+        const [team] = channel.team_id ? await getTeamsByIds([channel.team_id]).catch(() => []) : [];
+        return withIdentifier(channel.display_name, team ? `~${channel.name} · ${team.name}` : `~${channel.name}`);
     }
     default: {
         const post = await getPost(id);
-        return snippet(post.message);
+        return snippet(post.message) ? `${snippet(post.message)} (${id})` : '';
     }
     }
 }
@@ -78,7 +86,7 @@ async function fetchName(kind: Exclude<IdKind, 'user'>, id: string): Promise<str
 async function fetchNames(kind: IdKind, ids: string[]): Promise<Array<[string, string]>> {
     if (kind === 'user') {
         const profiles = await getProfilesByIds(ids);
-        return profiles.map((profile) => [profile.id, escapeUnsafe(profile.username)]);
+        return profiles.map((profile) => [profile.id, escapeUnsafe(`@${profile.username}`)]);
     }
     const settled = await Promise.allSettled(ids.map((id) => fetchName(kind, id)));
     return settled.flatMap((result, i) => (
