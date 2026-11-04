@@ -157,11 +157,12 @@ export function createAgentThreadsSync(store: {dispatch: Dispatch<UnknownAction>
             }
 
             // A chat the list does not have yet shows up while its first reply streams. Chunks
-            // keep coming, so the refresh must not wait for them to settle.
+            // keep coming, so the refresh must not wait for them to settle, and a slow one is
+            // left to finish rather than superseded by the next chunk's.
             const post = state.entities.posts.posts[msg.data.post_id];
             const rootId = post?.root_id || post?.id;
             const threads = selectAIThreads(state);
-            if (rootId && threads && !threads.some((t) => t.root_post_id === rootId)) {
+            if (rootId && threads && !selectAIThreadsState(state).loading && !threads.some((t) => t.root_post_id === rootId)) {
                 scheduleRefresh({extend: false});
             }
         },

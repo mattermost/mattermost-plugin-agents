@@ -326,6 +326,24 @@ describe('stored AI threads', () => {
                 expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
             });
 
+            test('a slow fetch is left to finish instead of being superseded by later chunks', async () => {
+                const {store, sync} = await setup();
+                const slow = deferred<AIThread[]>();
+                mockGetAIThreads.mockReturnValue(slow.promise);
+                await act(async () => {
+                    for (let i = 0; i < 12; i++) {
+                        sync.handlePostUpdate(chunk('mine'));
+                        jest.advanceTimersByTime(THREADS_REFRESH_DEBOUNCE_MS / 2);
+                    }
+                });
+                expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
+
+                await act(async () => {
+                    slow.resolve([makeThread({id: 'c1'}), makeThread({id: 'new', root_post_id: 'mine'})]);
+                });
+                expect(titles(store)).toEqual(['c1:', 'new:']);
+            });
+
             test.each([
                 {name: 'a chat the list has', post: {id: 'listed', channel_id: 'dm_a', root_id: 'root', user_id: 'a'}},
                 {name: 'someone else\'s request in a shared channel', post: posts.others},
