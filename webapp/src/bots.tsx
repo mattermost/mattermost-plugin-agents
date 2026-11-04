@@ -72,9 +72,20 @@ export const resolveActiveBot = (bots: LLMBot[] | null, preferredId: string): LL
 // plugin's redux slice. Shared by useBotlist, the channel-settings loadValues,
 // and the initialize() warm-up. Returns the fetched bots, or null when the
 // response is falsy.
+let botsFetchSeq = 0;
+
 export async function fetchAndStoreBots(dispatch: Dispatch): Promise<LLMBot[] | null> {
-    const response = await getAIBots();
-    if (!response) {
+    const seq = ++botsFetchSeq;
+    let response;
+    try {
+        response = await getAIBots();
+    } catch (error) {
+        if (seq === botsFetchSeq) {
+            dispatch({type: 'SET_CHANNEL_ARTIFACTS_LOAD_FAILED'});
+        }
+        throw error;
+    }
+    if (seq !== botsFetchSeq || !response) {
         return null;
     }
 
@@ -91,6 +102,13 @@ export async function fetchAndStoreBots(dispatch: Dispatch): Promise<LLMBot[] | 
     dispatch({
         type: 'SET_HTML_ARTIFACTS_ENABLED',
         htmlArtifactsEnabled: Boolean(response.htmlArtifactsEnabled),
+    });
+
+    dispatch({
+        type: 'SET_CHANNEL_ARTIFACTS_ENABLED',
+        channelArtifactsEnabled: Boolean(response.channelArtifactsEnabled),
+        channelArtifactDownloadEnabled: response.channelArtifactDownloadEnabled !== false,
+        channelArtifactRenderingEnabled: response.channelArtifactRenderingEnabled !== false,
     });
 
     return response.bots;

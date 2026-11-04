@@ -50,6 +50,7 @@ const groups = {
         'tests/agents/create-file-attachment.spec.ts',
         'tests/agents/html-artifact.spec.ts',
         'tests/agents/agent-chat-bubbles.spec.ts',
+        'tests/agents/channel-artifacts.spec.ts',
         'tests/tool-activity/collapsed-activity.spec.ts',
         'tests/rhs-core/link-domain-allowlist.spec.ts',
     ],
