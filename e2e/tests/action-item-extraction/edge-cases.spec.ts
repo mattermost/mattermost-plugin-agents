@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -29,19 +29,19 @@ data: {"id":"chatcmpl-ai-3","object":"chat.completion.chunk","created":170812457
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
-test.beforeAll(async () => {
-    mattermost = await RunContainer();
-    openAIMock = await RunOpenAIMocks(mattermost.network);
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
+test.beforeAll(async ({ containers }) => {
+    ({ mattermost, openAIMock } = containers);
 });
 
 test.beforeEach(async () => {
     // Reset mocks before each test to prevent cross-contamination
     await openAIMock.resetMocks();
-});
-
-test.afterAll(async () => {
-    await openAIMock.stop();
-    await mattermost.stop();
 });
 
 async function setupTestPage(page) {
@@ -65,7 +65,6 @@ async function gotoTownSquare(page) {
             if (attempt === 2) {
                 throw error;
             }
-            await page.waitForTimeout(1000);
         }
     }
 }
@@ -129,7 +128,6 @@ test.describe('Edge Cases and Boundary Conditions', () => {
         await aiPlugin.expectRHSOpenWithPost();
 
         // Expected Results: AI responds with message indicating no action items
-        const rhsContainer = page.getByTestId('mattermost-ai-rhs');
-        await expect(rhsContainer.getByText(/no action items/i)).toBeVisible();
+        await aiPlugin.expectBotPostText(/no action items/i);
     });
 });

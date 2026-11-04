@@ -6,9 +6,11 @@ import styled from 'styled-components';
 import {ChevronDownIcon, ExclamationThickIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
+import {Tag} from '@mattermost/compass-ui/components/tag';
+
 import {useIsLicensedFor} from '@/license';
 
-import {PrimaryButton} from '../assets/buttons';
 import {ToggleSwitch} from '../toggle_switch';
 import {pluginIDFromServerOrigin, stripPluginPrefix} from '../../utils/tool_names';
 
@@ -82,9 +84,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                         <ServerName>{server.name}</ServerName>
                         <ServerMeta>
                             {server.serverType === 'plugin' && (
-                                <PluginBadge>
-                                    <FormattedMessage defaultMessage='Plugin'/>
-                                </PluginBadge>
+                                <Tag label={<FormattedMessage defaultMessage='Plugin'/>}/>
                             )}
                             {server.error && (
                                 <ErrorIndicator>
@@ -137,34 +137,20 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
             {expanded && (
                 <ToolsContainer>
                     {server.error && (
-                        <ErrorMessage>
-                            <ExclamationThickIcon size={20}/>
-                            <div>
-                                <ErrorTitle>
-                                    <FormattedMessage defaultMessage='Connection Error'/>
-                                </ErrorTitle>
-                                <ErrorDescription>{server.error}</ErrorDescription>
-                            </div>
-                        </ErrorMessage>
+                        <RowNotice
+                            type='danger'
+                            title={<FormattedMessage defaultMessage='Connection Error'/>}
+                            description={server.error}
+                        />
                     )}
                     {!server.error && server.needsOAuth && server.oauthURL && (
-                        <OAuthMessage>
-                            <div>
-                                <OAuthTitle>
-                                    <FormattedMessage defaultMessage='OAuth Required'/>
-                                </OAuthTitle>
-                                <OAuthDescription>
-                                    <FormattedMessage defaultMessage="You must authenticate to fetch this server's tool list and configure per-tool approval policies. This only connects your account — each user must authenticate separately."/>
-                                </OAuthDescription>
-                            </div>
-                            {remoteMcpLicensed && (
-                                <OAuthButton
-                                    onClick={() => window.open(server.oauthURL, '_blank', 'noopener,noreferrer')}
-                                >
-                                    <FormattedMessage defaultMessage='Connect Account'/>
-                                </OAuthButton>
-                            )}
-                        </OAuthMessage>
+                        <RowNotice
+                            type='info'
+                            title={<FormattedMessage defaultMessage='OAuth Required'/>}
+                            description={<FormattedMessage defaultMessage="You must authenticate to fetch this server's tool list and configure per-tool approval policies. This only connects your account — each user must authenticate separately."/>}
+                            primaryButtonLabel={remoteMcpLicensed ? <FormattedMessage defaultMessage='Connect Account'/> : null}
+                            onPrimaryAction={() => window.open(server.oauthURL, '_blank', 'noopener,noreferrer')}
+                        />
                     )}
                     {!server.error && !server.needsOAuth && server.tools.length === 0 && (
                         <EmptyTools>
@@ -200,7 +186,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
 // Styled components
 const ServerRowContainer = styled.div`
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-    border-radius: 4px;
+    border-radius: var(--radius-s);
     background-color: var(--center-channel-bg);
     overflow: hidden;
 `;
@@ -208,8 +194,8 @@ const ServerRowContainer = styled.div`
 const ServerRowHeader = styled.div`
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding-right: 16px;
+    gap: var(--spacing-xs);
+    padding-right: var(--spacing-l);
 `;
 
 const ServerRowExpandButton = styled.button`
@@ -217,9 +203,9 @@ const ServerRowExpandButton = styled.button`
     align-items: center;
     flex: 1;
     min-width: 0;
-    padding: 12px 8px 12px 16px;
+    padding: var(--spacing-m) var(--spacing-xs) var(--spacing-m) var(--spacing-l);
     cursor: pointer;
-    gap: 8px;
+    gap: var(--spacing-xs);
     border: none;
     background: none;
     text-align: left;
@@ -232,16 +218,16 @@ const ServerRowExpandButton = styled.button`
 `;
 
 const ServerAvatar = styled.div`
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
+    width: var(--spacing-xxxxl);
+    height: var(--spacing-xxxxl);
+    border-radius: var(--radius-full);
     background: rgba(var(--center-channel-color-rgb), 0.08);
     display: flex;
     align-items: center;
     justify-content: center;
     color: rgba(var(--center-channel-color-rgb), 0.56);
-    font-size: 14px;
-    font-weight: 600;
+    font-size: var(--font-size-100);
+    font-weight: var(--font-weight-semibold);
     flex-shrink: 0;
 `;
 
@@ -254,23 +240,24 @@ const ServerInfo = styled.div`
 `;
 
 const ServerName = styled.div`
-    font-family: 'Open Sans', sans-serif;
-    font-weight: 600;
-    font-size: 14px;
-    line-height: 20px;
+    font-family: var(--font-family-body, 'Open Sans', sans-serif);
+    font-weight: var(--font-weight-semibold);
+    font-size: var(--font-size-100);
+    line-height: var(--line-height-100);
     color: var(--center-channel-color);
 `;
 
 const ServerMeta = styled.div`
     display: flex;
     align-items: center;
+    gap: var(--spacing-xs);
 `;
 
 const ToolCount = styled.span`
-    font-family: 'Open Sans', sans-serif;
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
+    font-family: var(--font-family-body, 'Open Sans', sans-serif);
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-75);
     color: rgba(var(--center-channel-color-rgb), 0.75);
 `;
 
@@ -285,7 +272,7 @@ const ExpandChevron = styled.div`
     align-items: center;
     justify-content: center;
     margin-left: auto;
-    padding: 8px;
+    padding: var(--spacing-xs);
     flex-shrink: 0;
 `;
 
@@ -302,92 +289,35 @@ const ToolsContainer = styled.div`
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    padding: 12px 0;
+    gap: var(--spacing-l);
+    padding: var(--spacing-m) 0;
 `;
 
 const ErrorIndicator = styled.div`
     display: flex;
     align-items: center;
-    gap: 4px;
-    font-size: 12px;
-    font-weight: 600;
+    gap: var(--spacing-xxxs);
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-semibold);
     color: var(--error-text);
 `;
 
 const OAuthIndicator = styled.div`
     display: flex;
     align-items: center;
-    gap: 4px;
-    font-size: 12px;
-    font-weight: 600;
+    gap: var(--spacing-xxxs);
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-semibold);
     color: var(--button-bg);
 `;
 
-const PluginBadge = styled.span`
-    display: inline-flex;
-    align-items: center;
-    padding: 2px 8px;
-    margin-right: 8px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--center-channel-bg);
-    background-color: rgba(var(--center-channel-color-rgb), 0.56);
-    border-radius: 10px;
-`;
-
-const ErrorMessage = styled.div`
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    padding: 16px;
-    color: var(--error-text);
-    background-color: rgba(var(--error-text-color-rgb), 0.04);
-    border-radius: 4px;
-    margin: 0 16px;
-`;
-
-const ErrorTitle = styled.div`
-    font-weight: 600;
-    margin-bottom: 4px;
-`;
-
-const ErrorDescription = styled.div`
-    font-size: 12px;
-    opacity: 0.8;
-`;
-
-const OAuthMessage = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 16px;
-    color: var(--center-channel-color);
-    background-color: rgba(var(--button-bg-rgb), 0.04);
-    border: 1px solid rgba(var(--button-bg-rgb), 0.16);
-    border-radius: 4px;
-    margin: 0 16px;
-`;
-
-const OAuthTitle = styled.div`
-    font-weight: 600;
-    margin-bottom: 4px;
-    color: var(--button-bg);
-`;
-
-const OAuthDescription = styled.div`
-    font-size: 12px;
-    color: rgba(var(--center-channel-color-rgb), 0.72);
-`;
-
-const OAuthButton = styled(PrimaryButton)`
-    flex-shrink: 0;
+const RowNotice = styled(SectionNotice)`
+    margin: 0 var(--spacing-l);
 `;
 
 const EmptyTools = styled.div`
     text-align: center;
-    padding: 16px;
+    padding: var(--spacing-l);
     color: rgba(var(--center-channel-color-rgb), 0.64);
 `;
 

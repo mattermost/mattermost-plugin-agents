@@ -8,7 +8,8 @@
 //    `files` goes through the normal approval flow and the created post
 //    carries the attachment.
 
-import {test, expect, type Locator, type Page} from '@playwright/test';
+import {expect, type Locator, type Page} from '@playwright/test';
+import {containerTest} from 'helpers/container-fixture';
 
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {
@@ -20,7 +21,7 @@ import {
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
 import {AIPlugin} from 'helpers/ai-plugin';
-import {expandToolActivity} from 'helpers/llmbot-post';
+import {expandToolActivity, toolCard} from 'helpers/llmbot-post';
 import {
     RunToolConfigAIMockContainer,
     setupRegularTestUser,
@@ -99,6 +100,23 @@ async function approveAndShareToolRound(page: Page): Promise<void> {
     await shareButton.click();
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigAIMockContainer({
+        toolConfigs: [
+            {name: 'get_channel_info', policy: 'ask', enabled: true},
+            {name: 'create_post', policy: 'ask', enabled: true},
+        ],
+        customInstructions: 'When asked to create a file, use the CreateFile tool. When asked to post a message, call get_channel_info first, then create_post.',
+        defaultBotName: botName,
+        botId: 'tool-test-bot',
+        botDisplayName: 'Tool Test Bot',
+    }));
+    const aimock = own(await RunAIMockSidecar(mattermost.network, {
+        fixtures: {fixtures: [buildTitleFixture('Create file bootstrap')]},
+    }));
+    return { mattermost, aimock };
+});
+
 test.describe('Response File Attachments (Aimock)', () => {
     // Serial: one shared Mattermost + aimock sidecar; each test swaps fixtures via setFixtures.
     test.describe.configure({mode: 'serial'});
@@ -107,28 +125,10 @@ test.describe('Response File Attachments (Aimock)', () => {
     let aimock: AIMockContainer;
     let townSquare: TownSquareChannel;
 
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        mattermost = await RunToolConfigAIMockContainer({
-            toolConfigs: [
-                {name: 'get_channel_info', policy: 'ask', enabled: true},
-                {name: 'create_post', policy: 'ask', enabled: true},
-            ],
-            customInstructions: 'When asked to create a file, use the CreateFile tool. When asked to post a message, call get_channel_info first, then create_post.',
-            defaultBotName: botName,
-            botId: 'tool-test-bot',
-            botDisplayName: 'Tool Test Bot',
-        });
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, aimock } = containers);
         await setupRegularTestUser(mattermost);
         townSquare = await getTownSquareChannel(mattermost);
-        aimock = await RunAIMockSidecar(mattermost.network, {
-            fixtures: {fixtures: [buildTitleFixture('Create file bootstrap')]},
-        });
-    });
-
-    test.afterAll(async () => {
-        await aimock?.stop();
-        await mattermost?.stop();
     });
 
     test('CreateFile auto-executes in DM and attaches the file to the reply', async ({page}) => {
@@ -167,7 +167,7 @@ test.describe('Response File Attachments (Aimock)', () => {
         // The resolved tool card lives behind the collapsed activity row and
         // renders without any approval controls once revealed.
         const activityRounds = await expandToolActivity(latestBotPost);
-        await expect(activityRounds.getByText(createFileToolLabel, {exact: true})).toBeVisible({timeout: 120000});
+        await expect(toolCard(activityRounds, createFileToolLabel)).toBeVisible({timeout: 120000});
         await expect(rhsContainer.getByText('Auto-approved').first()).toBeVisible({timeout: 30000});
 
         // The created file is attached to the bot's reply post.

@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -357,7 +358,7 @@ func TestGetCatalogAccessDoesNotRedialFailedRemote(t *testing.T) {
 	dialsAfterFirst := requests.Load()
 	require.Positive(t, dialsAfterFirst)
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		again := m.GetCatalogAccess(ctx, req)
 		require.NotNil(t, again.Errors)
 		assert.Len(t, again.Errors.Errors, 1, "connect error must not accumulate across cache hits")
@@ -521,4 +522,34 @@ func TestRemoteAllowedSkipsRemoteAndPluginServers(t *testing.T) {
 
 	m.remoteAllowed = func() bool { return true }
 	assertEligibility(t, true)
+}
+
+// A closed manager or an invalid request cannot evaluate access policy, so the
+// catalog must report it instead of returning an empty denial set.
+func TestCatalogAccessUnavailableWhenPolicyNotEvaluated(t *testing.T) {
+	tests := []struct {
+		name   string
+		closed bool
+		req    CatalogRequest
+	}{
+		{name: "closed manager", closed: true, req: UserCatalogRequest("user-1")},
+		{name: "missing invoking user", req: CatalogRequest{RemoteOwnerID: "user-1"}},
+		{name: "missing remote owner", req: CatalogRequest{InvokingUserID: "user-1"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newAccessTestManager(t, &stubServerAccessChecker{denied: map[string]bool{accessDeniedID: true}})
+			if tt.closed {
+				m.Close()
+			}
+
+			access := m.GetCatalogAccess(context.Background(), tt.req)
+			assert.True(t, access.Unavailable())
+			assert.Empty(t, access.Tools)
+		})
+	}
+
+	assert.False(t, CatalogAccess{}.Unavailable(), "an evaluated policy is usable")
+	assert.False(t, CatalogAccess{Errors: &Errors{Errors: []error{errors.New("dial failed")}}}.Unavailable(),
+		"server connection errors leave the evaluated policy usable")
 }

@@ -23,6 +23,10 @@ type providerAccount struct {
 	name     schemas.ModelProvider
 	keyless  bool
 	chatOnly bool
+	// outputTokenLimit is a fallback service's configured output token limit;
+	// zero means unset. The primary's limit is the request default, which
+	// callers may override, so it is not set there.
+	outputTokenLimit int
 }
 
 // registeredName returns the name this account is registered under with Bifrost,

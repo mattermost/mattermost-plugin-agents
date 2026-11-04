@@ -1,5 +1,8 @@
 import { Page, Locator, expect } from '@playwright/test';
 
+// A view sliding out of the RHS (rhs-view-exiting) stays mounted for a moment; locators skip it.
+const OUTSIDE_EXITING_RHS_VIEW = ':not([data-testid="rhs-view-exiting"] *)';
+
 export class AIPlugin {
   readonly page: Page;
   readonly appBarIcon: Locator;
@@ -12,8 +15,14 @@ export class AIPlugin {
   constructor(page: Page) {
     this.page = page;
     this.appBarIcon = page.locator('#app-bar-icon-mattermost-ai');
-    this.rhsPostTextarea = page.locator('#rhsContainer').locator('textarea');
-    this.rhsSendButton = page.locator('#rhsContainer').getByTestId('SendMessageButton');
+    // The host message composer, on the New chat tab (AdvancedTextEditor) and
+    // under a thread (the ThreadViewer's reply box). Both are RHS composers,
+    // whose text box the host names reply_textbox. A view sliding out of the
+    // RHS is skipped.
+    this.rhsPostTextarea = page.getByTestId('mattermost-ai-rhs').getByTestId('reply_textbox')
+      .and(page.locator(OUTSIDE_EXITING_RHS_VIEW));
+    this.rhsSendButton = page.getByTestId('mattermost-ai-rhs').getByTestId('SendMessageButton')
+      .and(page.locator(OUTSIDE_EXITING_RHS_VIEW));
     this.regenerateButton = page.getByRole('button', { name: 'Regenerate' });
     this.chatHistoryButton = page.getByTestId('chat-history');
     this.threadsListContainer = page.getByTestId('rhs-threads-list');
@@ -24,9 +33,9 @@ export class AIPlugin {
     return this.page.getByTestId('mattermost-ai-rhs');
   }
 
-  /** Triggers the per-session MCP tool provider popover (only on the New chat tab). */
+  /** Triggers the per-session MCP tool provider popover (in the RHS header title, only on the New chat tab). */
   getRhsToolsMenuButton(): Locator {
-    return this.getRhsContainer().getByRole('button', { name: /^Tools$/i });
+    return this.page.getByTestId('rhs-title').getByRole('button', { name: /^Tools$/i });
   }
 
   /**
@@ -43,7 +52,7 @@ export class AIPlugin {
   async openRhsToolProvidersMenu(): Promise<Locator> {
     await this.ensureRhsNewChatTab();
     await this.getRhsToolsMenuButton().click();
-    const menu = this.getRhsContainer().getByTestId('dropdownmenu');
+    const menu = this.page.getByTestId('dropdownmenu');
     await expect(menu).toBeVisible({ timeout: 10000 });
     return menu;
   }
@@ -63,8 +72,7 @@ export class AIPlugin {
 
       // Wait for the icon to be in a stable, clickable state
       // This helps with timing issues where the element is visible but not yet interactive
-      await this.appBarIcon.waitFor({ state: 'visible', timeout: 5000 });
-      await this.page.waitForTimeout(500); // Small delay to ensure the icon is fully rendered
+      await this.appBarIcon.waitFor({ state: 'visible', timeout: 30000 });
 
       // Retry click with error handling for obscured/not clickable elements
       let clicked = false;
@@ -82,8 +90,6 @@ export class AIPlugin {
             } catch (e) {
                throw error;
             }
-          } else {
-            await this.page.waitForTimeout(1000);
           }
         }
       }
@@ -95,32 +101,12 @@ export class AIPlugin {
   }
 
   async sendMessage(message: string) {
-    // Both the new-chat tab (AdvancedTextEditor, location RHS_COMMENT) and
-    // ThreadViewer (after analysis / summarize) use reply_textbox inside the
-    // plugin RHS. New-chat does not submit on Enter — click Send Now.
-    // ThreadViewer's split Send Now is often disabled; Enter submits replies.
-    const rhs = this.getRhsContainer();
-    const composer = rhs.getByTestId('reply_textbox');
-    if (await composer.isVisible().catch(() => false)) {
-      await expect(composer).toBeEnabled({ timeout: 30000 });
-      await composer.click();
-      await composer.fill(message);
-      const send = rhs.getByTestId('SendMessageButton');
-      const newChat = rhs.getByTestId('rhs-new-tab-create-post');
-      if (await newChat.isVisible().catch(() => false)) {
-        await expect(send).toBeEnabled({ timeout: 10000 });
-        await send.click();
-        return;
-      }
-      if (await send.isEnabled().catch(() => false)) {
-        await send.click();
-      } else {
-        await composer.press('Enter');
-      }
-      return;
-    }
-
+    // The new-chat tab and the thread view both use the host composer. Its
+    // Send button, not Enter: the host ignores an Enter in the first half
+    // second after the composer mounts.
+    await expect(this.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
     await this.rhsPostTextarea.fill(message);
+    await expect(this.rhsSendButton).toBeEnabled({ timeout: 10000 });
     await this.rhsSendButton.click();
   }
 
@@ -132,8 +118,7 @@ export class AIPlugin {
   /** Wait until ThreadViewer is not generating and the reply box accepts input. */
   async waitForThreadComposerIdle() {
     await this.waitForGeneratingToStop();
-    const threadReply = this.getRhsContainer().getByTestId('reply_textbox');
-    await expect(threadReply).toBeEnabled({ timeout: 30000 });
+    await expect(this.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
   }
 
   async regenerateResponse() {
@@ -141,19 +126,21 @@ export class AIPlugin {
   }
 
   async switchBot(botName: string) {
-    await this.page.getByTestId(`bot-selector-rhs`).click();
-    await this.page.getByRole('button', { name: botName }).click();
+    await this.page.getByTestId('bot-selector-rhs').click();
+    await this.page.getByRole('menuitem', { name: 'Switch agent' }).click();
+    await this.page.getByRole('menu', { name: 'Switch agent' }).getByRole('menuitem', { name: botName }).click();
   }
 
   /**
-   * Select a bot in the RHS selector, retrying until the bot appears (Agents list can lag behind API creates).
+   * Select a bot in the RHS title's agent menu, retrying until the bot appears (Agents list can lag behind API creates).
    */
   async switchBotWhenListed(botDisplayName: string): Promise<void> {
     const selector = this.page.getByTestId('bot-selector-rhs');
-    const option = this.page.getByRole('button', { name: botDisplayName });
+    const option = this.page.getByRole('menu', { name: 'Switch agent' }).getByRole('menuitem', { name: botDisplayName });
     await expect(async () => {
       await this.page.keyboard.press('Escape');
       await selector.click();
+      await this.page.getByRole('menuitem', { name: 'Switch agent' }).click();
       await expect(option).toBeVisible({ timeout: 3000 });
       await option.click();
     }).toPass({ timeout: 45000, intervals: [500, 1000, 2000] });
@@ -171,13 +158,8 @@ export class AIPlugin {
     // control (one per generating post); require all of them to be gone.
     await this.waitForGeneratingToStop();
 
-    // 3. ThreadViewer uses reply_textbox; new-chat uses the plugin composer.
-    const threadReply = this.getRhsContainer().getByTestId('reply_textbox');
-    if (await threadReply.isVisible().catch(() => false)) {
-      await expect(threadReply).toBeEnabled({ timeout: 30000 });
-      return;
-    }
-    await expect(this.rhsSendButton).toBeVisible({ timeout: 30000 });
+    // 3. The composer (reply or new chat) accepts input again.
+    await expect(this.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
   }
 
   async openChatHistory() {
@@ -213,12 +195,52 @@ export class AIPlugin {
     }
   }
 
+  /**
+   * Send a message and wait for the bot post that answers *this* message. `waitForBotResponse` cannot
+   * tell turns apart when every mocked reply has the same text (its `.last()` match is satisfied by
+   * the previous turn's reply), so it returns before the new turn has started and the composer still
+   * holds the unsent text. Counting bot posts ties the wait to the new turn.
+   */
+  async sendMessageAndWaitForReply(message: string, expectedReply: string | RegExp, timeout = 30000) {
+    const botPosts = this.getRhsContainer().locator('[data-testid="llm-bot-post"]');
+    const before = await botPosts.count();
+
+    await this.sendMessage(message);
+
+    await expect(botPosts).toHaveCount(before + 1, { timeout });
+    await expect(botPosts.nth(before)).toContainText(expectedReply, { timeout });
+    await this.waitForGeneratingToStop();
+  }
+
+  /**
+   * Wait for the user's own message to render as a post in the plugin RHS. The composer (textarea and
+   * its mirror elements) holds the same text until the send completes, so a panel-wide text match is
+   * ambiguous.
+   */
+  async expectUserPostText(text: string, timeout = 30000) {
+    await expect(
+      this.getRhsContainer().getByTestId('post-message-text').getByText(text, { exact: true }),
+    ).toBeVisible({ timeout });
+  }
+
+  /**
+   * Wait for a bot post in the plugin RHS whose body contains `text`. Match on the post, not the
+   * panel: the panel also renders the conversation title (e.g. "Action Items") and the user's own
+   * messages, so a panel-wide text match is ambiguous or passes before the bot has answered.
+   */
+  async expectBotPostText(text: string | RegExp, timeout = 30000) {
+    const botPost = this.getRhsContainer()
+      .locator('[data-testid="llm-bot-post"]')
+      .filter({ hasText: text });
+    await expect(botPost.last()).toBeVisible({ timeout });
+  }
+
   async closeRHS() {
     const closeButton = this.page.locator('#rhsContainer button[aria-label="Close"]').first();
     const isVisible = await closeButton.isVisible().catch(() => false);
     if (isVisible) {
       await closeButton.click();
-      await this.page.waitForTimeout(500);
+      await expect(closeButton).toBeHidden({ timeout: 10000 });
     }
   }
 
@@ -248,10 +270,9 @@ export class AIPlugin {
   async triggerEmbeddingSearch(query: string) {
     // Open the search bar
     await this.page.getByRole('button', { name: 'Search' }).click();
-    // Wait for search options to appear
-    await this.page.waitForTimeout(500);
-    // Select the Agents search type
+    // Select the Agents search type once the search options have appeared
     const agentsRadio = this.page.getByRole('radio', { name: /Agents/i });
+    await expect(agentsRadio).toBeVisible({ timeout: 10000 });
     await agentsRadio.click();
     // Enter search query and execute
     await this.page.getByRole('searchbox', { name: 'Search' }).fill(query);
@@ -264,7 +285,6 @@ export class AIPlugin {
   async expectAgentsSearchVisible() {
     // Open the search bar
     await this.page.getByRole('button', { name: 'Search' }).click();
-    await this.page.waitForTimeout(500);
     // Verify Agents radio option is visible
     const agentsRadio = this.page.getByRole('radio', { name: /Agents/i });
     await expect(agentsRadio).toBeVisible({ timeout: 10000 });
@@ -272,6 +292,10 @@ export class AIPlugin {
 
   async openChannelAnalysisPopover() {
     const popover = this.page.locator('.channel-summarize-popover');
+
+    // A popover that was just submitted stays visible while it fades out (it drops the
+    // `in` class first); treating it as open would act on a popover about to unmount.
+    await expect(this.page.locator('.channel-summarize-popover:not(.in)')).toHaveCount(0, { timeout: 10000 });
     if (await popover.isVisible().catch(() => false)) {
       return;
     }
@@ -343,4 +367,11 @@ export class AIPlugin {
     await expect(rhsContainer).toBeVisible({ timeout: 10000 });
   }
 
+  /**
+   * Waits until the host composer inside `container` can attach files: its
+   * file input is there (the host renders it once uploads are allowed).
+   */
+  async expectComposerUploadsReady(container: Locator): Promise<void> {
+    await expect(container.locator('input[type="file"]')).toBeAttached({ timeout: 30000 });
+  }
 }

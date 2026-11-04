@@ -32,55 +32,65 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
-func TestCalculateThinkingBudget(t *testing.T) {
+func TestAnthropicThinkingBudget(t *testing.T) {
 	tests := []struct {
 		name               string
-		thinkingBudget     int
+		effort             string
 		maxGeneratedTokens int
 		expected           int
+		expectOK           bool
 	}{
-		{
-			name:               "default with maxTokens 8192",
-			thinkingBudget:     0,
-			maxGeneratedTokens: 8192,
-			expected:           2048,
-		},
-		{
-			name:               "default with maxTokens 32768 caps at 8192",
-			thinkingBudget:     0,
-			maxGeneratedTokens: 32768,
-			expected:           8192,
-		},
-		{
-			name:               "default with maxTokens 2048 enforces min 1024",
-			thinkingBudget:     0,
-			maxGeneratedTokens: 2048,
-			expected:           1024,
-		},
-		{
-			name:               "custom budget 4096",
-			thinkingBudget:     4096,
-			maxGeneratedTokens: 8192,
-			expected:           4096,
-		},
-		{
-			name:               "custom budget below min enforces 1024",
-			thinkingBudget:     500,
-			maxGeneratedTokens: 8192,
-			expected:           1024,
-		},
+		{name: "high with maxTokens 8192", effort: "high", maxGeneratedTokens: 8192, expected: 2048, expectOK: true},
+		{name: "high caps at 8192", effort: "high", maxGeneratedTokens: 64000, expected: 8192, expectOK: true},
+		{name: "medium with maxTokens 16384", effort: "medium", maxGeneratedTokens: 16384, expected: 2048, expectOK: true},
+		{name: "medium caps at 4096", effort: "medium", maxGeneratedTokens: 64000, expected: 4096, expectOK: true},
+		{name: "low caps at 2048", effort: "low", maxGeneratedTokens: 64000, expected: 2048, expectOK: true},
+		{name: "low enforces the 1024 minimum", effort: "low", maxGeneratedTokens: 8192, expected: 1024, expectOK: true},
+		{name: "xhigh caps at 16384", effort: "xhigh", maxGeneratedTokens: 64000, expected: 16384, expectOK: true},
+		{name: "max with maxTokens 8192", effort: "max", maxGeneratedTokens: 8192, expected: 4096, expectOK: true},
+		{name: "max caps at 32768", effort: "max", maxGeneratedTokens: 128000, expected: 32768, expectOK: true},
+		{name: "unknown effort uses high", effort: "bogus", maxGeneratedTokens: 8192, expected: 2048, expectOK: true},
+		{name: "minimum budget must stay below maxTokens", effort: "high", maxGeneratedTokens: 1024, expectOK: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b := &LLM{thinkingBudget: tt.thinkingBudget}
-			result := b.calculateThinkingBudget(tt.maxGeneratedTokens)
-			assert.Equal(t, tt.expected, result)
+			budget, ok := anthropicThinkingBudget(tt.effort, tt.maxGeneratedTokens)
+			require.Equal(t, tt.expectOK, ok)
+			assert.Equal(t, tt.expected, budget)
 		})
 	}
 }
 
-func TestBuildChatReasoning(t *testing.T) {
+func TestAnthropicThinkingDefaults(t *testing.T) {
+	tests := []struct {
+		model            string
+		thinksByDefault  bool
+		thinkingAlwaysOn bool
+	}{
+		{model: "claude-haiku-4-5-20251001"},
+		{model: "claude-sonnet-4-6"},
+		{model: "claude-opus-4-8"},
+		{model: "claude-3-7-sonnet-20250219"},
+		{model: "claude-opus-5", thinksByDefault: true},
+		{model: "claude-opus-5-20260301", thinksByDefault: true},
+		{model: "claude-sonnet-5@20260101", thinksByDefault: true},
+		{model: "claude-opus-5-5", thinksByDefault: true, thinkingAlwaysOn: true},
+		{model: "us.anthropic.claude-sonnet-5-5-20260801-v1:0", thinksByDefault: true, thinkingAlwaysOn: true},
+		{model: "claude-opus-6", thinksByDefault: true, thinkingAlwaysOn: true},
+		{model: "claude-fable-5", thinksByDefault: true, thinkingAlwaysOn: true},
+		{model: "claude-mythos-preview", thinksByDefault: true, thinkingAlwaysOn: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			assert.Equal(t, tt.thinksByDefault, anthropicThinksByDefault(tt.model))
+			assert.Equal(t, tt.thinkingAlwaysOn, anthropicThinkingAlwaysOn(tt.model))
+		})
+	}
+}
+
+func TestChatReasoningFor(t *testing.T) {
 	tests := []struct {
 		name             string
 		provider         schemas.ModelProvider
@@ -91,13 +101,164 @@ func TestBuildChatReasoning(t *testing.T) {
 		expectNil        bool
 		checkMaxTokens   *int
 		checkEffort      *string
+		checkDisplay     *string
+		expectNoMax      bool
+		expectNoEffort   bool
 	}{
 		{
-			name:             "Anthropic uses MaxTokens",
+			name:             "Anthropic budget model defaults to the high budget",
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
-			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			cfg:              llm.LanguageModelConfig{Model: "claude-haiku-4-5-20251001", MaxGeneratedTokens: 8192},
 			checkMaxTokens:   new(2048),
+		},
+		{
+			name:             "Anthropic budget model maps effort to a budget",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			reasoningEffort:  "medium",
+			cfg:              llm.LanguageModelConfig{Model: "claude-sonnet-4-5-20250929", MaxGeneratedTokens: 64000},
+			checkMaxTokens:   new(4096),
+		},
+		{
+			name:             "Anthropic budget model ignores the thinking budget field",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			reasoningEffort:  "low",
+			thinkingBudget:   6000,
+			cfg:              llm.LanguageModelConfig{Model: "claude-haiku-4-5-20251001", MaxGeneratedTokens: 64000},
+			checkMaxTokens:   new(2048),
+		},
+		{
+			name:             "Anthropic adaptive model sends effort without a budget",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			reasoningEffort:  "medium",
+			cfg:              llm.LanguageModelConfig{Model: "claude-opus-4-7-20260401", MaxGeneratedTokens: 8192},
+			checkEffort:      new("medium"),
+			expectNoMax:      true,
+		},
+		{
+			name:             "Anthropic 4.6 model default selects adaptive with its default effort",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{Model: "claude-sonnet-4-6", MaxGeneratedTokens: 8192},
+			checkEffort:      new("high"),
+			expectNoMax:      true,
+		},
+		{
+			name:             "Anthropic adaptive-only model default leaves effort to the model",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{Model: "claude-opus-5-5", MaxGeneratedTokens: 8192},
+			checkMaxTokens:   new(2048),
+			expectNoEffort:   true,
+		},
+		{
+			name:             "Anthropic unknown effort falls back to the model default",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			reasoningEffort:  "none",
+			cfg:              llm.LanguageModelConfig{Model: "claude-opus-4-7", MaxGeneratedTokens: 8192},
+			checkMaxTokens:   new(2048),
+			expectNoEffort:   true,
+		},
+		{
+			name:             "Anthropic adaptive model maps minimal to low",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			reasoningEffort:  "minimal",
+			cfg:              llm.LanguageModelConfig{Model: "claude-fable-5", MaxGeneratedTokens: 8192},
+			checkEffort:      new("low"),
+			expectNoMax:      true,
+		},
+		{
+			name:             "Anthropic xhigh is sent where supported",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			reasoningEffort:  "xhigh",
+			cfg:              llm.LanguageModelConfig{Model: "claude-opus-4-7", MaxGeneratedTokens: 8192},
+			checkEffort:      new("xhigh"),
+			expectNoMax:      true,
+		},
+		{
+			name:             "Anthropic xhigh falls back to high on 4.6 models",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			reasoningEffort:  "xhigh",
+			cfg:              llm.LanguageModelConfig{Model: "claude-opus-4-6", MaxGeneratedTokens: 8192},
+			checkEffort:      new("high"),
+			expectNoMax:      true,
+		},
+		{
+			name:             "Anthropic xhigh falls back to high on Mythos Preview",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			reasoningEffort:  "xhigh",
+			cfg:              llm.LanguageModelConfig{Model: "claude-mythos-preview", MaxGeneratedTokens: 8192},
+			checkEffort:      new("high"),
+			expectNoMax:      true,
+		},
+		{
+			name:             "Anthropic max is sent on 4.6 models",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			reasoningEffort:  "max",
+			cfg:              llm.LanguageModelConfig{Model: "claude-sonnet-4-6", MaxGeneratedTokens: 8192},
+			checkEffort:      new("max"),
+			expectNoMax:      true,
+		},
+		{
+			name:             "Anthropic max maps to the largest budget on budget models",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			reasoningEffort:  "max",
+			cfg:              llm.LanguageModelConfig{Model: "claude-opus-4-5-20251101", MaxGeneratedTokens: 64000},
+			checkMaxTokens:   new(32000),
+			expectNoEffort:   true,
+		},
+		{
+			name:             "Anthropic thinking off omits reasoning on models that think only when asked",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: false,
+			reasoningEffort:  "high",
+			cfg:              llm.LanguageModelConfig{Model: "claude-opus-4-8", MaxGeneratedTokens: 8192},
+			expectNil:        true,
+		},
+		{
+			name:             "Anthropic thinking off disables thinking on Sonnet 5",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: false,
+			reasoningEffort:  "max",
+			cfg:              llm.LanguageModelConfig{Model: "claude-sonnet-5", MaxGeneratedTokens: 8192},
+			checkEffort:      new("none"),
+			expectNoMax:      true,
+		},
+		{
+			name:             "Anthropic ReasoningDisabled disables thinking on Opus 5",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{Model: "claude-opus-5-20260301", MaxGeneratedTokens: 25, ReasoningDisabled: true},
+			checkEffort:      new("none"),
+			expectNoMax:      true,
+		},
+		{
+			name:             "Anthropic thinking off uses low effort with hidden thinking where it cannot be disabled",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: false,
+			cfg:              llm.LanguageModelConfig{Model: "claude-opus-5-5", MaxGeneratedTokens: 8192},
+			checkEffort:      new("low"),
+			expectNoMax:      true,
+			checkDisplay:     new("omitted"),
+		},
+		{
+			name:             "Anthropic JSON schema keeps the configured effort",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			reasoningEffort:  "xhigh",
+			cfg:              llm.LanguageModelConfig{Model: "claude-fable-5-1", MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
+			checkEffort:      new("xhigh"),
+			expectNoMax:      true,
 		},
 		{
 			name:             "OpenAI on chat path returns nil (Responses API handles reasoning)",
@@ -182,26 +343,18 @@ func TestBuildChatReasoning(t *testing.T) {
 			expectNil:        true,
 		},
 		{
-			name:             "budget >= maxTokens is clamped below max_tokens",
-			provider:         schemas.Anthropic,
-			reasoningEnabled: true,
-			thinkingBudget:   8192,
-			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   new(8191),
-		},
-		{
-			name:             "no valid budget below the minimum returns nil",
+			name:             "Anthropic budget model with no valid budget returns nil",
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 1024},
 			expectNil:        true,
 		},
 		{
-			name:             "Anthropic with JSON schema returns nil",
+			name:             "Anthropic budget model with JSON schema keeps reasoning",
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
-			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
-			expectNil:        true,
+			cfg:              llm.LanguageModelConfig{Model: "claude-haiku-4-5-20251001", MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
+			checkMaxTokens:   new(2048),
 		},
 		{
 			name:             "Gemini with JSON schema keeps reasoning",
@@ -221,7 +374,7 @@ func TestBuildChatReasoning(t *testing.T) {
 				thinkingBudget:   tt.thinkingBudget,
 				reasoningEffort:  tt.reasoningEffort,
 			}
-			result := b.buildChatReasoning(tt.cfg)
+			result := b.chatReasoningFor(tt.provider, tt.cfg)
 			if tt.expectNil {
 				assert.Nil(t, result)
 				return
@@ -235,6 +388,18 @@ func TestBuildChatReasoning(t *testing.T) {
 				require.NotNil(t, result.Effort)
 				assert.Equal(t, *tt.checkEffort, *result.Effort)
 			}
+			if tt.expectNoMax {
+				assert.Nil(t, result.MaxTokens)
+			}
+			if tt.expectNoEffort {
+				assert.Nil(t, result.Effort)
+			}
+			if tt.checkDisplay != nil {
+				require.NotNil(t, result.Display)
+				assert.Equal(t, *tt.checkDisplay, *result.Display)
+			} else {
+				assert.Nil(t, result.Display)
+			}
 		})
 	}
 }
@@ -247,25 +412,42 @@ func TestConvertMessagesReasoningDetails(t *testing.T) {
 		ReasoningSignature: "sig123",
 	}}
 
+	unsignedPosts := []llm.Post{{
+		Role:      llm.PostRoleBot,
+		Message:   "partial response",
+		Reasoning: "partial thinking captured before stream error",
+	}}
+
 	tests := []struct {
 		name              string
 		provider          schemas.ModelProvider
+		fallbacks         []schemas.Fallback
 		posts             []llm.Post
-		cfg               llm.LanguageModelConfig
 		expectedLen       int
 		expectedReasoning string
 		expectedSignature string
 	}{
 		{
-			name:     "skips unsigned reasoning for Anthropic",
-			provider: schemas.Anthropic,
-			posts: []llm.Post{{
-				Role:               llm.PostRoleBot,
-				Message:            "partial response",
-				Reasoning:          "partial thinking captured before stream error",
-				ReasoningSignature: "",
-			}},
+			name:        "skips unsigned reasoning for Anthropic",
+			provider:    schemas.Anthropic,
+			posts:       unsignedPosts,
 			expectedLen: 1,
+		},
+		{
+			name:              "primary keeps unsigned reasoning with an Anthropic fallback",
+			provider:          schemas.OpenAI,
+			fallbacks:         []schemas.Fallback{{Provider: schemas.Anthropic, Model: "claude-sonnet-4-6"}},
+			posts:             unsignedPosts,
+			expectedLen:       1,
+			expectedReasoning: unsignedPosts[0].Reasoning,
+		},
+		{
+			name:              "primary keeps unsigned reasoning with a Bedrock fallback",
+			provider:          schemas.Gemini,
+			fallbacks:         []schemas.Fallback{{Provider: schemas.Bedrock, Model: "anthropic.claude-sonnet-4-6"}},
+			posts:             unsignedPosts,
+			expectedLen:       1,
+			expectedReasoning: unsignedPosts[0].Reasoning,
 		},
 		{
 			name:     "preserves unsigned reasoning for non-Anthropic",
@@ -287,29 +469,13 @@ func TestConvertMessagesReasoningDetails(t *testing.T) {
 			expectedReasoning: "thinking",
 			expectedSignature: "sig123",
 		},
-		{
-			name:        "skips signed reasoning for Anthropic when request has JSON schema",
-			provider:    schemas.Anthropic,
-			posts:       signedAnthropicPosts,
-			cfg:         llm.LanguageModelConfig{JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
-			expectedLen: 1,
-		},
-		{
-			name:              "keeps reasoning for non-Anthropic when request has JSON schema",
-			provider:          schemas.OpenAI,
-			posts:             signedAnthropicPosts,
-			cfg:               llm.LanguageModelConfig{JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
-			expectedLen:       1,
-			expectedReasoning: "thinking",
-			expectedSignature: "sig123",
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b := &LLM{provider: tt.provider}
+			b := &LLM{provider: tt.provider, fallbacks: testHops(tt.fallbacks, nil)}
 
-			messages := b.convertMessages(tt.posts, tt.cfg)
+			messages := b.convertToBifrostRequest(llm.CompletionRequest{Posts: tt.posts}, llm.LanguageModelConfig{Model: "test-model"}).Input
 
 			require.Len(t, messages, tt.expectedLen)
 			if tt.expectedReasoning == "" {
@@ -324,8 +490,7 @@ func TestConvertMessagesReasoningDetails(t *testing.T) {
 }
 
 func TestCreateMultimodalContentUsesReusableFileData(t *testing.T) {
-	b := &LLM{}
-	imageData := []byte("PNGDATA")
+	imageData := encodeTestImage(t, "image/png", 2, 2)
 	post := llm.Post{
 		Role:    llm.PostRoleUser,
 		Message: "look at this",
@@ -337,15 +502,71 @@ func TestCreateMultimodalContentUsesReusableFileData(t *testing.T) {
 		}},
 	}
 
-	first := b.createMultimodalContent(post, 0)
-	second := b.createMultimodalContent(post, 0)
+	first := createMultimodalContent(post, 0)
+	second := createMultimodalContent(post, 0)
 
 	require.Len(t, first, 2)
 	require.Len(t, second, 2)
 	require.NotNil(t, first[1].ImageURLStruct)
 	require.NotNil(t, second[1].ImageURLStruct)
 	assert.Equal(t, first[1].ImageURLStruct.URL, second[1].ImageURLStruct.URL)
-	assert.Contains(t, second[1].ImageURLStruct.URL, "UE5HREFUQQ==")
+	assert.Equal(t, "data:image/png;base64,"+base64.StdEncoding.EncodeToString(imageData), second[1].ImageURLStruct.URL)
+}
+
+func TestMultimodalContentUsesSniffedImageType(t *testing.T) {
+	pngData := encodeTestImage(t, "image/png", 4, 4)
+	jpegData := encodeTestImage(t, "image/jpeg", 4, 4)
+	gifData := encodeTestImage(t, "image/gif", 4, 4)
+	// BMP has no stdlib encoder; the "BM" signature is what the sniffer keys on.
+	bmpData := append([]byte("BM"), make([]byte, 64)...)
+	// WebP has no stdlib encoder either; a RIFF/WEBP header is what the sniffer keys on.
+	webpData := append([]byte("RIFF\x00\x00\x00\x00WEBPVP8 "), make([]byte, 32)...)
+
+	tests := []struct {
+		name            string
+		declared        string
+		data            []byte
+		wantMimeType    string
+		wantPlaceholder string
+	}{
+		{name: "correctly labeled PNG", declared: "image/png", data: pngData, wantMimeType: "image/png"},
+		{name: "correctly labeled GIF", declared: "image/gif", data: gifData, wantMimeType: "image/gif"},
+		{name: "PNG labeled as JPEG", declared: "image/jpeg", data: pngData, wantMimeType: "image/png"},
+		{name: "WebP labeled as PNG", declared: "image/png", data: webpData, wantMimeType: "image/webp"},
+		{name: "JPEG labeled as PNG", declared: "image/png", data: jpegData, wantMimeType: "image/jpeg"},
+		{name: "non-image bytes labeled as image", declared: "image/png", data: []byte("hello, this is not an image"), wantPlaceholder: "[Unsupported image type: text/plain]"},
+		{name: "unsupported real image type", declared: "image/jpeg", data: bmpData, wantPlaceholder: "[Unsupported image type: image/bmp]"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			post := llm.Post{
+				Role:  llm.PostRoleUser,
+				Files: []llm.File{{MimeType: tt.declared, Data: tt.data}},
+			}
+
+			chatParts := createMultimodalContent(post, 0)
+			require.Len(t, chatParts, 1)
+			responsesParts := multimodalContent(post, 0,
+				func(text string) string { return "text:" + text },
+				func(dataURL string) string { return "image:" + dataURL },
+			)
+			require.Len(t, responsesParts, 1)
+
+			if tt.wantPlaceholder != "" {
+				assert.Nil(t, chatParts[0].ImageURLStruct)
+				require.NotNil(t, chatParts[0].Text)
+				assert.Equal(t, tt.wantPlaceholder, *chatParts[0].Text)
+				assert.Equal(t, "text:"+tt.wantPlaceholder, responsesParts[0])
+				return
+			}
+
+			wantURL := "data:" + tt.wantMimeType + ";base64," + base64.StdEncoding.EncodeToString(tt.data)
+			require.NotNil(t, chatParts[0].ImageURLStruct)
+			assert.Equal(t, wantURL, chatParts[0].ImageURLStruct.URL)
+			assert.Equal(t, "image:"+wantURL, responsesParts[0])
+		})
+	}
 }
 
 func TestCreateMultimodalContentOmitsOversizedImages(t *testing.T) {
@@ -427,8 +648,7 @@ func TestCreateMultimodalContentOmitsOversizedImages(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			data := encodeTestImage(t, tt.mimeType, tt.width, tt.height)
 
-			b := &LLM{}
-			parts := b.createMultimodalContent(llm.Post{
+			parts := createMultimodalContent(llm.Post{
 				Role:    llm.PostRoleUser,
 				Message: "summarize this image",
 				Files: []llm.File{{
@@ -460,7 +680,7 @@ func TestCreateMultimodalContentOmitsOversizedImages(t *testing.T) {
 		validPNG := encodeTestImage(t, "image/png", 10, 10)
 		oversizedPNG := encodeTestImage(t, "image/png", anthropicMaxImageDimension+1, 1)
 		validJPEG := encodeTestImage(t, "image/jpeg", 10, 10)
-		parts := (&LLM{}).createMultimodalContent(llm.Post{
+		parts := createMultimodalContent(llm.Post{
 			Role:    llm.PostRoleUser,
 			Message: "summarize these images",
 			Files: []llm.File{
@@ -529,7 +749,8 @@ func TestConvertMessagesAppliesProviderImageLimit(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			messages := (&LLM{provider: tt.provider}).convertMessages(tt.posts, llm.LanguageModelConfig{})
+			b := &LLM{provider: tt.provider}
+			messages := b.convertToBifrostRequest(llm.CompletionRequest{Posts: tt.posts}, llm.LanguageModelConfig{Model: "test-model"}).Input
 			require.Len(t, messages, 1)
 			require.NotNil(t, messages[0].Content)
 			blocks := messages[0].Content.ContentBlocks
@@ -571,45 +792,169 @@ func encodeTestImage(t *testing.T, mimeType string, width, height int) []byte {
 	return data.Bytes()
 }
 
-// TestConvertToBifrostRequestOpus47Reasoning verifies that when our
-// convertToBifrostRequest is fed through bifrost's Anthropic provider for
-// Claude Opus 4.7, the resulting upstream request uses thinking.type:"adaptive".
-// Opus 4.7 dropped support for thinking.type:"enabled"; sending the legacy
-// shape produces an API error: `"thinking.type.enabled" is not supported for
-// this model. Use "thinking.type.adaptive" and "output_config.effort"`.
-func TestConvertToBifrostRequestOpus47Reasoning(t *testing.T) {
-	b := &LLM{
-		provider:         schemas.Anthropic,
-		reasoningEnabled: true,
+// TestAnthropicReasoningWireRequest feeds our requests through Bifrost's
+// Anthropic converters on both the chat and Responses paths. Adaptive models
+// must get thinking.type:"adaptive" with the configured output_config.effort
+// (Opus 4.7+ rejects thinking.type:"enabled"); budget-only models must get
+// thinking.type:"enabled" with the effort-derived budget and no effort, which
+// they reject with a 400. With thinking off, a model must never receive a
+// thinking type it rejects: "disabled" goes only to models that accept it,
+// and always-on models get low effort with the reasoning text omitted.
+func TestAnthropicReasoningWireRequest(t *testing.T) {
+	tests := []struct {
+		name        string
+		model       string
+		effort      string
+		thinkingOff bool
+		wantType    string // "" means no thinking parameter
+		wantEffort  string // "" means no effort
+		wantBudget  int
+		wantDisplay string
+	}{
+		{name: "Opus 4.7 adaptive with configured effort", model: "claude-opus-4-7-20260401", effort: "low", wantType: "adaptive", wantEffort: "low", wantDisplay: "summarized"},
+		{name: "Opus 5.5 default leaves effort to the model", model: "claude-opus-5-5", wantType: "adaptive", wantDisplay: "summarized"},
+		{name: "Sonnet 4.6 uses adaptive instead of the deprecated budget", model: "claude-sonnet-4-6", effort: "medium", wantType: "adaptive", wantEffort: "medium"},
+		{name: "Sonnet 4.6 falls back from xhigh to high", model: "claude-sonnet-4-6", effort: "xhigh", wantType: "adaptive", wantEffort: "high"},
+		{name: "Sonnet 5 sends xhigh", model: "claude-sonnet-5", effort: "xhigh", wantType: "adaptive", wantEffort: "xhigh", wantDisplay: "summarized"},
+		{name: "Haiku 4.5 gets an effort-derived budget", model: "claude-haiku-4-5-20251001", effort: "medium", wantType: "enabled", wantBudget: 1024},
+		{name: "Opus 4.5 gets the capped budget", model: "claude-opus-4-5-20251101", effort: "high", wantType: "enabled", wantBudget: 2048},
+		{name: "Haiku 4.5 off sends no thinking", model: "claude-haiku-4-5-20251001", thinkingOff: true},
+		{name: "Opus 4.7 off sends no thinking", model: "claude-opus-4-7", effort: "max", thinkingOff: true},
+		{name: "Sonnet 5 off is disabled explicitly", model: "claude-sonnet-5", effort: "max", thinkingOff: true, wantType: "disabled"},
+		{name: "Opus 5 off is disabled without an effort above high", model: "claude-opus-5", effort: "max", thinkingOff: true, wantType: "disabled"},
+		{name: "Opus 5.5 off runs at low effort with thinking omitted", model: "claude-opus-5-5", thinkingOff: true, wantType: "adaptive", wantEffort: "low", wantDisplay: "omitted"},
+		{name: "Fable off runs at low effort with thinking omitted", model: "claude-fable-5", effort: "high", thinkingOff: true, wantType: "adaptive", wantEffort: "low", wantDisplay: "omitted"},
 	}
+
 	request := llm.CompletionRequest{
 		Posts: []llm.Post{
 			{Role: llm.PostRoleUser, Message: "think"},
 		},
 	}
-	cfg := llm.LanguageModelConfig{
-		Model:              "claude-opus-4-7-20260401",
-		MaxGeneratedTokens: 8192,
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{
+				provider:         schemas.Anthropic,
+				reasoningEnabled: !tt.thinkingOff,
+				reasoningEffort:  tt.effort,
+			}
+			cfg := llm.LanguageModelConfig{Model: tt.model, MaxGeneratedTokens: 8192}
+
+			ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+			defer cancel()
+
+			chatWire, err := anthropic.ToAnthropicChatRequest(ctx, b.convertToBifrostRequest(request, cfg))
+			require.NoError(t, err)
+			respReq, err := b.convertToBifrostResponsesRequest(request, cfg)
+			require.NoError(t, err)
+			responsesWire, err := anthropic.ToAnthropicResponsesRequest(ctx, respReq)
+			require.NoError(t, err)
+
+			for path, wire := range map[string]*anthropic.AnthropicMessageRequest{"chat": chatWire, "responses": responsesWire} {
+				if tt.wantType == "" {
+					assert.Nil(t, wire.Thinking, path)
+				} else {
+					require.NotNil(t, wire.Thinking, path)
+					assert.Equal(t, tt.wantType, wire.Thinking.Type, path)
+					if tt.wantBudget > 0 {
+						require.NotNil(t, wire.Thinking.BudgetTokens, path)
+						assert.Equal(t, tt.wantBudget, *wire.Thinking.BudgetTokens, path)
+					} else {
+						assert.Nil(t, wire.Thinking.BudgetTokens, path)
+					}
+					if tt.wantDisplay == "" {
+						assert.Nil(t, wire.Thinking.Display, path)
+					} else {
+						require.NotNil(t, wire.Thinking.Display, path)
+						assert.Equal(t, tt.wantDisplay, *wire.Thinking.Display, path)
+					}
+				}
+				if tt.wantEffort == "" {
+					assert.True(t, wire.OutputConfig == nil || wire.OutputConfig.Effort == nil, path)
+				} else {
+					require.NotNil(t, wire.OutputConfig, path)
+					require.NotNil(t, wire.OutputConfig.Effort, path)
+					assert.Equal(t, tt.wantEffort, *wire.OutputConfig.Effort, path)
+				}
+			}
+		})
+	}
+}
+
+// TestAnthropicSchemaKeepsThinkingWireRequest verifies that a structured
+// output request reaches Anthropic with both the schema and the configured
+// thinking: the effort and output_config.format share output_config, so
+// neither may overwrite the other.
+func TestAnthropicSchemaKeepsThinkingWireRequest(t *testing.T) {
+	tests := []struct {
+		name       string
+		model      string
+		effort     string
+		wantType   string
+		wantEffort string
+		wantBudget int
+	}{
+		{name: "adaptive model keeps effort", model: "claude-opus-4-7", effort: "low", wantType: "adaptive", wantEffort: "low"},
+		{name: "budget model keeps the thinking budget", model: "claude-haiku-4-5-20251001", effort: "high", wantType: "enabled", wantBudget: 2048},
 	}
 
-	bifrostReq := b.convertToBifrostRequest(request, cfg)
+	request := llm.CompletionRequest{
+		Posts: []llm.Post{
+			{Role: llm.PostRoleUser, Message: "think"},
+			{Role: llm.PostRoleBot, Message: "earlier answer", Reasoning: "earlier thinking", ReasoningSignature: "sig123"},
+			{Role: llm.PostRoleUser, Message: "answer as JSON"},
+		},
+	}
 
-	ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
-	defer cancel()
-	result, err := anthropic.ToAnthropicChatRequest(ctx, bifrostReq)
-	require.NoError(t, err)
-	require.NotNil(t, result.Thinking)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{provider: schemas.Anthropic, reasoningEnabled: true, reasoningEffort: tt.effort}
+			cfg := llm.LanguageModelConfig{
+				Model:              tt.model,
+				MaxGeneratedTokens: 8192,
+				JSONOutputFormat:   llm.NewJSONSchemaFromStruct[testStructuredOutput](),
+			}
 
-	assert.Equal(t, "adaptive", result.Thinking.Type,
-		"Opus 4.7 must use thinking.type:adaptive; thinking.type:enabled is rejected by the API")
-	assert.Nil(t, result.Thinking.BudgetTokens,
-		"Opus 4.7 does not accept budget_tokens alongside adaptive thinking")
+			ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+			defer cancel()
+
+			chatWire, err := anthropic.ToAnthropicChatRequest(ctx, b.convertToBifrostRequest(request, cfg))
+			require.NoError(t, err)
+			respReq, err := b.convertToBifrostResponsesRequest(request, cfg)
+			require.NoError(t, err)
+			responsesWire, err := anthropic.ToAnthropicResponsesRequest(ctx, respReq)
+			require.NoError(t, err)
+
+			for path, wire := range map[string]*anthropic.AnthropicMessageRequest{"chat": chatWire, "responses": responsesWire} {
+				require.NotNil(t, wire.OutputConfig, path)
+				assert.NotEmpty(t, wire.OutputConfig.Format, path)
+				require.NotNil(t, wire.Thinking, path)
+				assert.Equal(t, tt.wantType, wire.Thinking.Type, path)
+				if tt.wantBudget > 0 {
+					require.NotNil(t, wire.Thinking.BudgetTokens, path)
+					assert.Equal(t, tt.wantBudget, *wire.Thinking.BudgetTokens, path)
+				}
+				if tt.wantEffort != "" {
+					require.NotNil(t, wire.OutputConfig.Effort, path)
+					assert.Equal(t, tt.wantEffort, *wire.OutputConfig.Effort, path)
+				}
+			}
+
+			replayed := false
+			for _, msg := range b.convertToBifrostRequest(request, cfg).Input {
+				replayed = replayed || (msg.ChatAssistantMessage != nil && len(msg.ReasoningDetails) > 0)
+			}
+			assert.True(t, replayed, "signed thinking from earlier turns must be replayed on schema requests")
+		})
+	}
 }
 
 // TestPromptCaching verifies that automatic prompt caching (top-level
 // cache_control) is requested for Anthropic and reaches the Anthropic wire
-// request, but is never attached for other providers or for Anthropic with
-// non-Anthropic fallbacks (where the marker would 400 the fallback request).
+// request, but is never attached for other providers. A non-Anthropic
+// fallback's request is rebuilt without it; TestMessageShapingIsBuiltPerFallbackHop covers
+// that on the wire.
 func TestPromptCaching(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -632,7 +977,7 @@ func TestPromptCaching(t *testing.T) {
 			name:      "anthropic with openai fallback",
 			provider:  schemas.Anthropic,
 			fallbacks: []schemas.Fallback{{Provider: schemas.OpenAI}},
-			want:      false,
+			want:      true,
 		},
 		{
 			name:     "openai",
@@ -655,7 +1000,11 @@ func TestPromptCaching(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b := &LLM{provider: tt.provider, fallbacks: testHops(tt.fallbacks, nil)}
+			b := &LLM{
+				provider:  tt.provider,
+				fallbacks: testHops(tt.fallbacks, nil),
+				account:   testAccount(customAccount(schemas.Anthropic, "svc2")),
+			}
 			cfg := llm.LanguageModelConfig{Model: "test-model", MaxGeneratedTokens: 100}
 
 			chatReq := b.convertToBifrostRequest(request, cfg)
@@ -870,6 +1219,48 @@ func TestWebSearchAllowedCallersStrippedForOpenAI(t *testing.T) {
 		"the web_search tool itself must still reach OpenAI")
 }
 
+// TestCodeInterpreterSendsContainerForOpenAI pins the container OpenAI
+// requires on code_interpreter tools; without it every request with the tool
+// enabled fails with "Missing required parameter: 'tools[N].container'".
+func TestCodeInterpreterSendsContainerForOpenAI(t *testing.T) {
+	b := &LLM{
+		provider:           schemas.OpenAI,
+		enabledNativeTools: []string{llm.NativeToolWebSearch, llm.NativeToolCodeInterpreter},
+		useResponsesAPI:    true,
+	}
+	cfg := llm.LanguageModelConfig{Model: "gpt-5.2", MaxGeneratedTokens: 1000}
+	request := llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello"}},
+	}
+
+	respReq, err := b.convertToBifrostResponsesRequest(request, cfg)
+	require.NoError(t, err)
+
+	wireReq := &openai.OpenAIResponsesRequest{
+		Model: cfg.Model,
+		Input: openai.OpenAIResponsesRequestInput{
+			OpenAIResponsesRequestInputArray: respReq.Input,
+		},
+		ResponsesParameters: *respReq.Params,
+	}
+	body, err := json.Marshal(wireReq)
+	require.NoError(t, err)
+
+	var wire struct {
+		Tools []map[string]any `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal(body, &wire))
+
+	var codeInterpreter map[string]any
+	for _, tool := range wire.Tools {
+		if tool["type"] == "code_interpreter" {
+			codeInterpreter = tool
+		}
+	}
+	require.NotNil(t, codeInterpreter, "code_interpreter must reach OpenAI (body: %s)", body)
+	assert.Equal(t, map[string]any{"type": "auto"}, codeInterpreter["container"])
+}
+
 // TestAnthropicOnlyWebFetchDroppedForOpenAI pins the bifrost behavior that
 // makes heterogeneous fallback chains safe without per-fallback filtering in
 // the plugin: a request built for an Anthropic primary with web_fetch enabled
@@ -917,7 +1308,7 @@ func TestAnthropicOnlyWebFetchDroppedForOpenAI(t *testing.T) {
 		"web_search is part of OpenAI's tool union and must survive the fallback serialization")
 }
 
-func TestBuildResponsesReasoning(t *testing.T) {
+func TestResponsesReasoningFor(t *testing.T) {
 	tests := []struct {
 		name             string
 		provider         schemas.ModelProvider
@@ -967,19 +1358,35 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			checkSummary:     new("auto"),
 		},
 		{
-			name:             "Anthropic uses MaxTokens, no summary",
+			name:             "Anthropic budget model uses MaxTokens, no summary",
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
-			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			cfg:              llm.LanguageModelConfig{Model: "claude-haiku-4-5-20251001", MaxGeneratedTokens: 8192},
 			checkMaxTokens:   new(2048),
 		},
 		{
-			name:             "Anthropic budget >= maxTokens is clamped below max_tokens",
+			name:             "Anthropic adaptive model uses Effort, no summary",
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
+			reasoningEffort:  "low",
 			thinkingBudget:   8192,
-			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   new(8191),
+			cfg:              llm.LanguageModelConfig{Model: "claude-opus-5", MaxGeneratedTokens: 8192},
+			checkEffort:      new("low"),
+		},
+		{
+			name:             "Anthropic thinking off hides thinking where it cannot be disabled",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: false,
+			cfg:              llm.LanguageModelConfig{Model: "claude-sonnet-5-5", MaxGeneratedTokens: 8192},
+			checkEffort:      new("low"),
+			checkSummary:     new("none"),
+		},
+		{
+			name:             "Anthropic thinking off disables thinking on Sonnet 5",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: false,
+			cfg:              llm.LanguageModelConfig{Model: "claude-sonnet-5", MaxGeneratedTokens: 8192},
+			checkEffort:      new("none"),
 		},
 		{
 			name:             "Anthropic with no valid budget below the minimum returns nil",
@@ -1042,11 +1449,12 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			expectNil:        true,
 		},
 		{
-			name:             "Anthropic with JSON schema returns nil",
+			name:             "Anthropic with JSON schema keeps reasoning",
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
-			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
-			expectNil:        true,
+			reasoningEffort:  "medium",
+			cfg:              llm.LanguageModelConfig{Model: "claude-opus-5-5", MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
+			checkEffort:      new("medium"),
 		},
 		{
 			name:             "OpenAI with JSON schema keeps reasoning",
@@ -1067,7 +1475,7 @@ func TestBuildResponsesReasoning(t *testing.T) {
 				thinkingBudget:   tt.thinkingBudget,
 				reasoningEffort:  tt.reasoningEffort,
 			}
-			result := b.buildResponsesReasoning(tt.cfg)
+			result := b.responsesReasoningFor(tt.provider, tt.cfg)
 			if tt.expectNil {
 				assert.Nil(t, result)
 				return
@@ -1096,13 +1504,11 @@ func TestBuildResponsesReasoning(t *testing.T) {
 func TestGetKeysForProviderVertex(t *testing.T) {
 	saJSON := `{"type":"service_account","project_id":"x"}`
 	acc := &providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider:              schemas.Vertex,
-			Region:                "us-west1",
-			VertexProjectID:       "my-gcp-project",
-			VertexProjectNumber:   "123456789012",
-			VertexAuthCredentials: saJSON,
-		},
+		Provider:              schemas.Vertex,
+		Region:                "us-west1",
+		VertexProjectID:       "my-gcp-project",
+		VertexProjectNumber:   "123456789012",
+		VertexAuthCredentials: saJSON,
 	}
 
 	keys, err := acc.GetKeysForProvider(context.Background(), schemas.Vertex)
@@ -1116,25 +1522,21 @@ func TestGetKeysForProviderVertex(t *testing.T) {
 	assert.Equal(t, saJSON, vc.AuthCredentials.Val)
 
 	adc := &providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider:              schemas.Vertex,
-			Region:                "europe-west1",
-			VertexProjectID:       "adc-project",
-			VertexProjectNumber:   "",
-			VertexAuthCredentials: "",
-		},
+		Provider:              schemas.Vertex,
+		Region:                "europe-west1",
+		VertexProjectID:       "adc-project",
+		VertexProjectNumber:   "",
+		VertexAuthCredentials: "",
 	}
 	keysADC, err := adc.GetKeysForProvider(context.Background(), schemas.Vertex)
 	require.NoError(t, err)
 	require.Len(t, keysADC, 1)
 	require.NotNil(t, keysADC[0].VertexKeyConfig)
 	assert.Equal(t, "adc-project", keysADC[0].VertexKeyConfig.ProjectID.Val)
-	assert.Equal(t, "", keysADC[0].VertexKeyConfig.AuthCredentials.Val)
+	assert.Empty(t, keysADC[0].VertexKeyConfig.AuthCredentials.Val)
 
 	other := &providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-		},
+		Provider: schemas.OpenAI,
 	}
 	_, err = other.GetKeysForProvider(context.Background(), schemas.Vertex)
 	require.Error(t, err)
@@ -1309,7 +1711,7 @@ func TestConvertMessagesReasoning(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &LLM{provider: tt.provider}
-			messages := b.convertMessages(tt.posts, llm.LanguageModelConfig{})
+			messages := b.convertToBifrostRequest(llm.CompletionRequest{Posts: tt.posts}, llm.LanguageModelConfig{Model: "test-model"}).Input
 			require.True(t, len(messages) > tt.checkMessageIndex)
 
 			msg := messages[tt.checkMessageIndex]
@@ -1353,7 +1755,7 @@ func TestConvertMessagesEmptyToolResult(t *testing.T) {
 			Result:    "",
 		}},
 	}}
-	messages := b.convertMessages(posts, llm.LanguageModelConfig{})
+	messages := b.convertToBifrostRequest(llm.CompletionRequest{Posts: posts}, llm.LanguageModelConfig{Model: "test-model"}).Input
 	var toolMsg *schemas.ChatMessage
 	for i := range messages {
 		if messages[i].Role == schemas.ChatMessageRoleTool {
@@ -1489,8 +1891,7 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b := &LLM{provider: schemas.Anthropic}
-			merged := b.mergeConsecutiveSameRoleMessages(tt.messages)
+			merged := mergeConsecutiveSameRoleMessages(tt.messages)
 			assert.Len(t, merged, tt.expected)
 			if tt.validate != nil {
 				tt.validate(t, merged)
@@ -1866,12 +2267,10 @@ func TestConvertToBifrostResponsesRequestStructuredOutput(t *testing.T) {
 func TestMultiProviderAccount_SingleProvider(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIKey:   "openai-key",
-			APIURL:   "https://api.openai.com",
-			OrgID:    "org-123",
-		},
+		Provider: schemas.OpenAI,
+		APIKey:   "openai-key",
+		APIURL:   "https://api.openai.com",
+		OrgID:    "org-123",
 	})
 
 	providers, err := acc.GetConfiguredProviders()
@@ -1891,16 +2290,12 @@ func TestMultiProviderAccount_SingleProvider(t *testing.T) {
 func TestMultiProviderAccount_MultipleProviders(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIKey:   "openai-key",
-		},
+		Provider: schemas.OpenAI,
+		APIKey:   "openai-key",
 	})
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.Anthropic,
-			APIKey:   "anthropic-key",
-		},
+		Provider: schemas.Anthropic,
+		APIKey:   "anthropic-key",
 	})
 
 	providers, err := acc.GetConfiguredProviders()
@@ -1922,10 +2317,8 @@ func TestMultiProviderAccount_MultipleProviders(t *testing.T) {
 func TestMultiProviderAccount_UnknownProvider(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIKey:   "openai-key",
-		},
+		Provider: schemas.OpenAI,
+		APIKey:   "openai-key",
 	})
 
 	_, err := acc.GetKeysForProvider(context.Background(), schemas.Anthropic)
@@ -1938,17 +2331,13 @@ func TestMultiProviderAccount_UnknownProvider(t *testing.T) {
 func TestMultiProviderAccount_DuplicateProvider(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIKey:   "first-key",
-		},
+		Provider: schemas.OpenAI,
+		APIKey:   "first-key",
 	})
 	// Second add with same provider should be silently skipped (first wins)
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIKey:   "second-key",
-		},
+		Provider: schemas.OpenAI,
+		APIKey:   "second-key",
 	})
 
 	providers, err := acc.GetConfiguredProviders()
@@ -1964,11 +2353,9 @@ func TestMultiProviderAccount_DuplicateProvider(t *testing.T) {
 func TestMultiProviderAccount_AzureKeyConfig(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.Azure,
-			APIKey:   "azure-key",
-			APIURL:   "https://myservice.openai.azure.com",
-		},
+		Provider: schemas.Azure,
+		APIKey:   "azure-key",
+		APIURL:   "https://myservice.openai.azure.com",
 	})
 
 	keys, err := acc.GetKeysForProvider(context.Background(), schemas.Azure)
@@ -1981,13 +2368,11 @@ func TestMultiProviderAccount_AzureKeyConfig(t *testing.T) {
 func TestMultiProviderAccount_BedrockKeyConfig(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider:           schemas.Bedrock,
-			APIKey:             "bedrock-key",
-			Region:             "us-east-1",
-			AWSAccessKeyID:     "AKIA123",
-			AWSSecretAccessKey: "secret123",
-		},
+		Provider:           schemas.Bedrock,
+		APIKey:             "bedrock-key",
+		Region:             "us-east-1",
+		AWSAccessKeyID:     "AKIA123",
+		AWSSecretAccessKey: "secret123",
 	})
 
 	keys, err := acc.GetKeysForProvider(context.Background(), schemas.Bedrock)
@@ -2059,6 +2444,23 @@ func testHops(fallbacks []schemas.Fallback, ids []string) []fallbackHop {
 		hops = append(hops, hop)
 	}
 	return hops
+}
+
+// testAccount registers entries the way New does.
+func testAccount(entries ...*providerAccount) *multiProviderAccount {
+	account := newMultiProviderAccount()
+	for _, entry := range entries {
+		account.addProvider(entry)
+	}
+	return account
+}
+
+// customAccount is a fallback registered as a custom provider slot.
+func customAccount(base schemas.ModelProvider, serviceID string) *providerAccount {
+	return &providerAccount{
+		Provider: base,
+		name:     customProviderName(base, serviceID),
+	}
 }
 
 func TestConvertToBifrostRequest_RestrictedFallbacks(t *testing.T) {
@@ -3037,20 +3439,16 @@ func TestServiceConfigToFallbackEntry_VertexCredsAndKeyless(t *testing.T) {
 func TestMultiProviderAccount_CustomProviderKeepsDistinctSlot(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIKey:   "cloud",
-			APIURL:   "https://api.openai.com",
-		},
+		Provider: schemas.OpenAI,
+		APIKey:   "cloud",
+		APIURL:   "https://api.openai.com",
 	})
 	customName := customProviderName(schemas.OpenAI, "local")
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIURL:   "http://localhost:11434",
-		},
-		name:    customName,
-		keyless: true,
+		Provider: schemas.OpenAI,
+		APIURL:   "http://localhost:11434",
+		name:     customName,
+		keyless:  true,
 	})
 
 	providers, err := acc.GetConfiguredProviders()
@@ -3132,10 +3530,8 @@ func TestNewFromServiceConfig_ChatOnlyFallbackGetsCustomProviderWithoutCollision
 // Responses → chat), while a non-chat-only custom provider leaves it unset.
 func TestProviderAccount_ChatOnlyCustomConfig(t *testing.T) {
 	chatOnly := &providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIURL:   "http://localhost:11434",
-		},
+		Provider: schemas.OpenAI,
+		APIURL:   "http://localhost:11434",
 		name:     customProviderName(schemas.OpenAI, "local"),
 		chatOnly: true,
 	}
@@ -3151,11 +3547,9 @@ func TestProviderAccount_ChatOnlyCustomConfig(t *testing.T) {
 	// A custom provider that does support the Responses API leaves AllowedRequests
 	// unset so all operations remain available.
 	responsesCapable := &providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIURL:   "https://api.example.com",
-		},
-		name: customProviderName(schemas.OpenAI, "other"),
+		Provider: schemas.OpenAI,
+		APIURL:   "https://api.example.com",
+		name:     customProviderName(schemas.OpenAI, "other"),
 	}
 	cfg, err = responsesCapable.GetConfigForProvider(responsesCapable.registeredName())
 	require.NoError(t, err)
@@ -3340,13 +3734,11 @@ func TestEnvProxyRouting(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", proxy.URL)
 
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.OpenAI,
-			APIKey:           "test-key",
-			APIURL:           backend.URL,
-			DefaultModel:     "gpt-4",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.OpenAI,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "gpt-4",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -3427,13 +3819,11 @@ func TestCountTokensReturnsCount(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.Anthropic,
-			APIKey:           "test-key",
-			APIURL:           backend.URL,
-			DefaultModel:     "claude-sonnet-4-5",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.Anthropic,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "claude-sonnet-4-5",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -3462,13 +3852,11 @@ func TestCountTokensOmitsMaxOutputTokens(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.OpenAI,
-			APIKey:           "test-key",
-			APIURL:           backend.URL,
-			DefaultModel:     "gpt-5.4",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.OpenAI,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "gpt-5.4",
+		StreamingTimeout: 10 * time.Second,
 		OutputTokenLimit: 8192, // produces MaxGeneratedTokens > 0 → MaxOutputTokens in the request
 	})
 	require.NoError(t, err)
@@ -3504,13 +3892,11 @@ func TestCountTokensOmitsNativeServerTools(t *testing.T) {
 	// the production "Server tools are not supported in the count_tokens
 	// endpoint" error.
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.Anthropic,
-			APIKey:           "test-key",
-			APIURL:           backend.URL,
-			DefaultModel:     "claude-sonnet-4-6",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:           schemas.Anthropic,
+		APIKey:             "test-key",
+		APIURL:             backend.URL,
+		DefaultModel:       "claude-sonnet-4-6",
+		StreamingTimeout:   10 * time.Second,
 		EnabledNativeTools: []string{llm.NativeToolWebSearch},
 	})
 	require.NoError(t, err)
@@ -3544,13 +3930,11 @@ func TestCountTokensKeepsFunctionTools(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.Anthropic,
-			APIKey:           "test-key",
-			APIURL:           backend.URL,
-			DefaultModel:     "claude-sonnet-4-6",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.Anthropic,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "claude-sonnet-4-6",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -3584,13 +3968,11 @@ func TestCountTokensUnsupportedProvider(t *testing.T) {
 	// "unsupported_operation" error synchronously. CountTokens must classify
 	// that as ErrUnsupportedTokenCount without contacting the backend.
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.Mistral,
-			APIKey:           "test-key",
-			APIURL:           backend.URL,
-			DefaultModel:     "mistral-large-latest",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.Mistral,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "mistral-large-latest",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -3613,13 +3995,11 @@ func TestCountTokensScrubsAPIKeyFromError(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.Anthropic,
-			APIKey:           secret,
-			APIURL:           backend.URL,
-			DefaultModel:     "claude-sonnet-4-5",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.Anthropic,
+		APIKey:           secret,
+		APIURL:           backend.URL,
+		DefaultModel:     "claude-sonnet-4-5",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()

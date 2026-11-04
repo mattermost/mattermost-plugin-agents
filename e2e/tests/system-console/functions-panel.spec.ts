@@ -2,10 +2,11 @@
 // seed: e2e/tests/seed.spec.ts
 
 import { test, expect } from '@playwright/test';
-import MattermostContainer from 'helpers/mmcontainer';
+import { containerTest } from 'helpers/container-fixture';
 import { MattermostPage } from 'helpers/mm';
 import { SystemConsoleHelper } from 'helpers/system-console';
-import { OpenAIMockContainer, RunOpenAIMocks } from 'helpers/openai-mock';
+import { chooseCompassOption } from 'helpers/compass-select';
+import { RunOpenAIMocks } from 'helpers/openai-mock';
 import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers/system-console-container';
 
 /**
@@ -14,71 +15,138 @@ import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers
  * Tests configuration options in the AI Functions panel of the system console.
  */
 
-let mattermost: MattermostContainer;
-let openAIMock: OpenAIMockContainer;
+const defaultBotTest = containerTest(async (own) => {
+    // Start container with two pre-configured services and three bots
+    const mattermost = own(await RunSystemConsoleContainer({
+        defaultBotName: 'primaryassistant',
+        services: [
+            {
+                id: 'openai-service',
+                name: 'OpenAI Service',
+                type: 'openai',
+                apiKey: 'test-key-openai',
+                orgId: '',
+                defaultModel: 'gpt-4',
+                tokenLimit: 16384,
+                streamingTimeoutSeconds: 30,
+                outputTokenLimit: 4096,
+                useResponsesAPI: false,
+            },
+            {
+                id: 'anthropic-service',
+                name: 'Anthropic Service',
+                type: 'anthropic',
+                apiKey: 'test-key-anthropic',
+                defaultModel: 'claude-3-opus',
+                tokenLimit: 16384,
+                outputTokenLimit: 4096,
+            }
+        ],
+        bots: [
+            {
+                id: 'bot-1',
+                name: 'primaryassistant',
+                displayName: 'Primary Assistant',
+                serviceID: 'openai-service',
+                customInstructions: 'You are a helpful assistant',
+                enableVision: false,
+                enableTools: false,
+            },
+            {
+                id: 'bot-2',
+                name: 'secondarybot',
+                displayName: 'Secondary Bot',
+                serviceID: 'anthropic-service',
+                customInstructions: 'You are a secondary bot',
+                enableVision: false,
+                enableTools: false,
+            },
+            {
+                id: 'bot-3',
+                name: 'testagent',
+                displayName: 'Test Agent',
+                serviceID: 'openai-service',
+                customInstructions: 'You are a test agent',
+                enableVision: false,
+                enableTools: false,
+            }
+        ],
+    }));
+    own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost };
+});
 
-test.describe.serial('AI Functions Panel', () => {
-    test('should configure default bot dropdown', async ({ page }) => {
+const upstreamHostnamesTest = containerTest(async (own) => {
+    // Start container with one service and one bot
+    const mattermost = own(await RunSystemConsoleContainer({
+        allowedUpstreamHostnames: '',
+        services: [
+            {
+                id: 'test-service',
+                name: 'Test Service',
+                type: 'openai',
+                apiKey: 'test-key',
+                orgId: '',
+                defaultModel: 'gpt-4',
+                tokenLimit: 16384,
+                streamingTimeoutSeconds: 30,
+                outputTokenLimit: 4096,
+                useResponsesAPI: false,
+            }
+        ],
+        bots: [
+            {
+                id: 'bot-1',
+                name: 'testbot',
+                displayName: 'Test Bot',
+                serviceID: 'test-service',
+                customInstructions: 'You are a helpful assistant',
+                enableVision: false,
+                enableTools: false,
+            }
+        ],
+    }));
+    own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost };
+});
+
+const unsafeLinksTest = containerTest(async (own) => {
+    // Start container with allowUnsafeLinks set to false
+    const mattermost = own(await RunSystemConsoleContainer({
+        allowUnsafeLinks: false,
+        services: [
+            {
+                id: 'test-service',
+                name: 'Test Service',
+                type: 'openai',
+                apiKey: 'test-key',
+                orgId: '',
+                defaultModel: 'gpt-4',
+                tokenLimit: 16384,
+                streamingTimeoutSeconds: 30,
+                outputTokenLimit: 4096,
+                useResponsesAPI: false,
+            }
+        ],
+        bots: [
+            {
+                id: 'bot-1',
+                name: 'testbot',
+                displayName: 'Test Bot',
+                serviceID: 'test-service',
+                customInstructions: 'You are a helpful assistant',
+                enableVision: false,
+                enableTools: false,
+            }
+        ],
+    }));
+    own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost };
+});
+
+test.describe('AI Functions Panel', () => {
+    defaultBotTest('should configure default bot dropdown', async ({ page, containers: { mattermost } }) => {
         test.setTimeout(60000);
-
-        // Start container with two pre-configured services and three bots
-        mattermost = await RunSystemConsoleContainer({
-            defaultBotName: 'primaryassistant',
-            services: [
-                {
-                    id: 'openai-service',
-                    name: 'OpenAI Service',
-                    type: 'openai',
-                    apiKey: 'test-key-openai',
-                    orgId: '',
-                    defaultModel: 'gpt-4',
-                    tokenLimit: 16384,
-                    streamingTimeoutSeconds: 30,
-                    outputTokenLimit: 4096,
-                    useResponsesAPI: false,
-                },
-                {
-                    id: 'anthropic-service',
-                    name: 'Anthropic Service',
-                    type: 'anthropic',
-                    apiKey: 'test-key-anthropic',
-                    defaultModel: 'claude-3-opus',
-                    tokenLimit: 16384,
-                    outputTokenLimit: 4096,
-                }
-            ],
-            bots: [
-                {
-                    id: 'bot-1',
-                    name: 'primaryassistant',
-                    displayName: 'Primary Assistant',
-                    serviceID: 'openai-service',
-                    customInstructions: 'You are a helpful assistant',
-                    enableVision: false,
-                    enableTools: false,
-                },
-                {
-                    id: 'bot-2',
-                    name: 'secondarybot',
-                    displayName: 'Secondary Bot',
-                    serviceID: 'anthropic-service',
-                    customInstructions: 'You are a secondary bot',
-                    enableVision: false,
-                    enableTools: false,
-                },
-                {
-                    id: 'bot-3',
-                    name: 'testagent',
-                    displayName: 'Test Agent',
-                    serviceID: 'openai-service',
-                    customInstructions: 'You are a test agent',
-                    enableVision: false,
-                    enableTools: false,
-                }
-            ],
-        });
-
-        openAIMock = await RunOpenAIMocks(mattermost.network);
 
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
@@ -93,72 +161,35 @@ test.describe.serial('AI Functions Panel', () => {
         const functionsPanel = systemConsole.getFunctionsPanel();
         await functionsPanel.scrollIntoViewIfNeeded();
 
-        // Locate the 'Default agent' dropdown field by looking for combobox near "Default agent" text
-        // This is the first combobox on the page (in the AI Functions section)
-        const defaultBotDropdown = page.getByRole('combobox').first();
+        const defaultBotDropdown = page.getByRole('combobox', { name: 'Default bot', exact: true });
 
         // Verify the dropdown is visible and enabled
         await expect(defaultBotDropdown).toBeVisible();
         await expect(defaultBotDropdown).toBeEnabled();
 
         // Verify the dropdown shows 'Primary Assistant' as the current selection
-        await expect(defaultBotDropdown).toHaveValue(/primaryassistant|Primary Assistant/i);
+        await expect(defaultBotDropdown).toHaveText(/Primary Assistant/i);
 
         // Select 'Secondary Bot' from the dropdown
-        await defaultBotDropdown.selectOption({ label: 'Secondary Bot' });
+        await chooseCompassOption(defaultBotDropdown, 'Secondary Bot');
 
         // Click the Save button at the bottom of the page
         const saveButton = systemConsole.getSaveButton();
-        await saveButton.click();
-
-        // Wait for save operation to complete
-        await page.waitForTimeout(1000);
+        await Promise.all([
+            page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().includes('/admin/config')),
+            saveButton.click(),
+        ]);
 
         // Reload the page
         await page.reload();
 
         // Verify the 'Default agent' dropdown now shows 'Secondary Bot' as selected
-        const reloadedDropdown = page.getByRole('combobox').first();
-        await expect(reloadedDropdown).toHaveValue(/secondarybot|Secondary Bot/i);
-
-        await openAIMock.stop();
-        await mattermost.stop();
+        const reloadedDropdown = page.getByRole('combobox', { name: 'Default bot', exact: true });
+        await expect(reloadedDropdown).toHaveText(/Secondary Bot/i);
     });
 
-    test('should configure allowed upstream hostnames', async ({ page }) => {
+    upstreamHostnamesTest('should configure allowed upstream hostnames', async ({ page, containers: { mattermost } }) => {
         test.setTimeout(60000);
-
-        // Start container with one service and one bot
-        mattermost = await RunSystemConsoleContainer({
-            allowedUpstreamHostnames: '',
-            services: [
-                {
-                    id: 'test-service',
-                    name: 'Test Service',
-                    type: 'openai',
-                    apiKey: 'test-key',
-                    orgId: '',
-                    defaultModel: 'gpt-4',
-                    tokenLimit: 16384,
-                    streamingTimeoutSeconds: 30,
-                    outputTokenLimit: 4096,
-                    useResponsesAPI: false,
-                }
-            ],
-            bots: [
-                {
-                    id: 'bot-1',
-                    name: 'testbot',
-                    displayName: 'Test Bot',
-                    serviceID: 'test-service',
-                    customInstructions: 'You are a helpful assistant',
-                    enableVision: false,
-                    enableTools: false,
-                }
-            ],
-        });
-
-        openAIMock = await RunOpenAIMocks(mattermost.network);
 
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
@@ -195,10 +226,10 @@ test.describe.serial('AI Functions Panel', () => {
 
         // Click the Save button
         const saveButton = systemConsole.getSaveButton();
-        await saveButton.click();
-
-        // Wait for save to complete
-        await page.waitForTimeout(1000);
+        await Promise.all([
+            page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().includes('/admin/config')),
+            saveButton.click(),
+        ]);
 
         // Reload the page
         await page.reload();
@@ -224,45 +255,10 @@ test.describe.serial('AI Functions Panel', () => {
             page.locator('text=Allowed Upstream Hostnames').locator('..').getByRole('textbox')
         );
         await expect(finalField).toHaveValue('');
-
-        await openAIMock.stop();
-        await mattermost.stop();
     });
 
-    test('should toggle render AI-generated links', async ({ page }) => {
+    unsafeLinksTest('should toggle render AI-generated links', async ({ page, containers: { mattermost } }) => {
         test.setTimeout(60000);
-
-        // Start container with allowUnsafeLinks set to false
-        mattermost = await RunSystemConsoleContainer({
-            allowUnsafeLinks: false,
-            services: [
-                {
-                    id: 'test-service',
-                    name: 'Test Service',
-                    type: 'openai',
-                    apiKey: 'test-key',
-                    orgId: '',
-                    defaultModel: 'gpt-4',
-                    tokenLimit: 16384,
-                    streamingTimeoutSeconds: 30,
-                    outputTokenLimit: 4096,
-                    useResponsesAPI: false,
-                }
-            ],
-            bots: [
-                {
-                    id: 'bot-1',
-                    name: 'testbot',
-                    displayName: 'Test Bot',
-                    serviceID: 'test-service',
-                    customInstructions: 'You are a helpful assistant',
-                    enableVision: false,
-                    enableTools: false,
-                }
-            ],
-        });
-
-        openAIMock = await RunOpenAIMocks(mattermost.network);
 
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
@@ -310,10 +306,10 @@ test.describe.serial('AI Functions Panel', () => {
 
         // Click the Save button
         const saveButton = systemConsole.getSaveButton();
-        await saveButton.click();
-
-        // Wait for save to complete
-        await page.waitForTimeout(1000);
+        await Promise.all([
+            page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().includes('/admin/config')),
+            saveButton.click(),
+        ]);
 
         // Reload the page
         await page.reload();
@@ -338,10 +334,10 @@ test.describe.serial('AI Functions Panel', () => {
         await expect(reloadedTrueRadio).not.toBeChecked();
 
         // Click Save button
-        await saveButton.click();
-
-        // Wait for save to complete
-        await page.waitForTimeout(1000);
+        await Promise.all([
+            page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().includes('/admin/config')),
+            saveButton.click(),
+        ]);
 
         // Reload the page
         await page.reload();
@@ -357,8 +353,5 @@ test.describe.serial('AI Functions Panel', () => {
         // Verify the False radio is checked after final reload (OFF state)
         await expect(finalFalseRadio).toBeChecked();
         await expect(finalTrueRadio).not.toBeChecked();
-
-        await openAIMock.stop();
-        await mattermost.stop();
     });
 });

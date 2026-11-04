@@ -5,6 +5,11 @@ import React, {Suspense, useCallback, useEffect, useMemo, useState} from 'react'
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {Button} from '@mattermost/compass-ui/components/button';
+import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
+import {Spinner} from '@mattermost/compass-ui/components/spinner';
+import {Tabs} from '@mattermost/compass-ui/components/tabs';
+
 import {
     checkAccessControlExpression,
     deleteAgentAccessPolicy,
@@ -23,8 +28,6 @@ import {
 import {AccessControlPolicy, AccessControlPropertyField, PolicyResourceType} from '@/types/access_control';
 import type {ActionResult, CELEditorActions, CELEditorAttribute, TableEditorActions} from '@/types/access_control_editors';
 import {getAccessControlEditors} from '@/utils/access_control';
-import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
-import LoadingSpinner from '@/components/assets/loading_spinner';
 import EditorErrorBoundary from '@/components/access_control/editor_error_boundary';
 import ConfirmationDialog from '@/components/confirmation_dialog';
 
@@ -283,16 +286,14 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
         }
         return (
             <SpinnerContainer>
-                <LoadingSpinner/>
+                <Spinner size='24'/>
             </SpinnerContainer>
         );
     }
 
     if (loadFailed) {
         return (
-            <ErrorText>
-                <FormattedMessage defaultMessage='Failed to load the access policy. Please try again.'/>
-            </ErrorText>
+            <ErrorMessage message={<FormattedMessage defaultMessage='Failed to load the access policy. Please try again.'/>}/>
         );
     }
 
@@ -317,22 +318,14 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
                 </HelperText>
             )}
             {showToggle && (
-                <ModeToggleRow>
-                    <ModeButton
-                        type='button'
-                        $active={mode === 'simplified'}
-                        onClick={() => setMode('simplified')}
-                    >
-                        <FormattedMessage defaultMessage='Simple'/>
-                    </ModeButton>
-                    <ModeButton
-                        type='button'
-                        $active={mode === 'advanced'}
-                        onClick={() => setMode('advanced')}
-                    >
-                        <FormattedMessage defaultMessage='Advanced'/>
-                    </ModeButton>
-                </ModeToggleRow>
+                <Tabs
+                    tabs={[
+                        {key: 'simplified', label: <FormattedMessage defaultMessage='Simple'/>},
+                        {key: 'advanced', label: <FormattedMessage defaultMessage='Advanced'/>},
+                    ]}
+                    activeKey={mode}
+                    onChange={(key) => setMode(key === 'advanced' ? 'advanced' : 'simplified')}
+                />
             )}
             {view === 'advanced' && advancedLocked && allowSimplified && (
                 <HelperText>
@@ -352,7 +345,7 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
                     <Suspense
                         fallback={
                             <SpinnerContainer>
-                                <LoadingSpinner/>
+                                <Spinner size='24'/>
                             </SpinnerContainer>
                         }
                     >
@@ -379,22 +372,26 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
                 </EditorErrorBoundary>
             )}
 
-            {saveError && <ErrorText>{saveError}</ErrorText>}
+            {saveError && <ErrorMessage message={saveError}/>}
 
             <ButtonRow>
                 {policy !== null && (
-                    <RemoveButton
-                        type='button'
+                    <Button
+                        emphasis='tertiary'
+                        destructive={true}
+                        size='small'
                         onClick={() => setShowDeleteConfirm(true)}
                         disabled={saving}
                     >
                         <FormattedMessage defaultMessage='Remove policy'/>
-                    </RemoveButton>
+                    </Button>
                 )}
                 {view !== 'unsupported' && !multiRule && (
-                    <SavePolicyButton
-                        type='button'
+                    <Button
+                        emphasis='primary'
+                        size='small'
                         onClick={handleSave}
+                        loading={saving}
                         disabled={!canSave || !allowEdit}
                     >
                         {saving ? (
@@ -402,7 +399,7 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
                         ) : (
                             <FormattedMessage defaultMessage='Save policy'/>
                         )}
-                    </SavePolicyButton>
+                    </Button>
                 )}
             </ButtonRow>
 
@@ -451,11 +448,6 @@ const SpinnerContainer = styled.div`
     padding: 24px 0;
 `;
 
-const ErrorText = styled.div`
-    color: var(--dnd-indicator, #D24B4E);
-    font-size: 13px;
-`;
-
 const HelperText = styled.div`
     font-size: 12px;
     color: rgba(var(--center-channel-color-rgb), 0.72);
@@ -471,35 +463,10 @@ const ReadOnlyExpression = styled.code`
     word-break: break-word;
 `;
 
-const ModeToggleRow = styled.div`
-    display: flex;
-    gap: 4px;
-`;
-
-const ModeButton = styled.button<{$active: boolean}>`
-    padding: 6px 12px;
-    border: 1px solid ${(p) => (p.$active ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.16)')};
-    border-radius: 4px;
-    background: ${(p) => (p.$active ? 'rgba(var(--button-bg-rgb), 0.08)' : 'transparent')};
-    color: ${(p) => (p.$active ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.72)')};
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-`;
-
 const ButtonRow = styled.div`
     display: flex;
     justify-content: flex-end;
     gap: 8px;
-`;
-
-const RemoveButton = styled(TertiaryButton)`
-    height: 36px;
-    color: var(--dnd-indicator, #D24B4E);
-`;
-
-const SavePolicyButton = styled(PrimaryButton)`
-    height: 36px;
 `;
 
 // PolicyEditor keys the content by resource identity so no editor state can

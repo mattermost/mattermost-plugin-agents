@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -9,17 +10,17 @@ import { OpenAIMockContainer, RunOpenAIMocks, responseTest } from 'helpers/opena
 const username = 'regularuser';
 const password = 'regularuser';
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
-test.beforeAll(async () => {
-    mattermost = await RunContainer();
-    openAIMock = await RunOpenAIMocks(mattermost.network);
-});
-
-test.afterAll(async () => {
-    await openAIMock.stop();
-    await mattermost.stop();
+test.beforeAll(async ({ containers }) => {
+    ({ mattermost, openAIMock } = containers);
 });
 
 async function setupTestPage(page) {
@@ -130,7 +131,7 @@ async function renderPromptViaAPI(
     client: any,
     promptId: string,
     channelId = '',
-    botUsername = '',
+    botId = '',
 ) {
     const baseUrl = mattermost.url();
     const response = await fetch(`${baseUrl}/plugins/mattermost-ai/custom-prompts/${promptId}/render`, {
@@ -139,7 +140,7 @@ async function renderPromptViaAPI(
             Authorization: `Bearer ${client.getToken()}`,
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ channel_id: channelId, bot_username: botUsername }),
+        body: JSON.stringify({ channel_id: channelId, bot_id: botId }),
     });
     if (!response.ok) {
         throw new Error(`renderPromptViaAPI failed: ${response.status} ${response.statusText}`);
@@ -159,7 +160,7 @@ async function openCustomPromptsModal(page) {
         }
         store.dispatch({ type: 'SHOW_CUSTOM_PROMPTS_MODAL', show: true });
     });
-    await expect(page.getByRole('dialog', {name: 'Custom Prompts'})).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('dialog', {name: 'Skills'})).toBeVisible({ timeout: 10000 });
 }
 
 // ---------------------------------------------------------------------------
@@ -188,10 +189,10 @@ test.describe('Custom Prompts Management Modal', () => {
         await openCustomPromptsModal(page);
 
         // Verify modal structure
-        await expect(page.getByRole('dialog', {name: 'Custom Prompts'})).toBeVisible();
-        await expect(page.getByText('All Prompts')).toBeVisible();
-        await expect(page.getByText('Your Prompts')).toBeVisible();
-        await expect(page.getByPlaceholder('Search prompts')).toBeVisible();
+        await expect(page.getByRole('dialog', {name: 'Skills'})).toBeVisible();
+        await expect(page.getByText('All Skills')).toBeVisible();
+        await expect(page.getByText('Your Skills')).toBeVisible();
+        await expect(page.getByPlaceholder('Search skills')).toBeVisible();
         await expect(page.getByRole('button', { name: 'Create new' })).toBeVisible();
     });
 
@@ -201,12 +202,12 @@ test.describe('Custom Prompts Management Modal', () => {
 
         // Click "Create new" to show the form
         await page.getByRole('button', { name: 'Create new' }).click();
-        await expect(page.getByText('New Prompt')).toBeVisible();
+        await expect(page.getByText('New Skill')).toBeVisible();
 
         // Fill the form (default visibility is Private, which is fine for this test)
-        await page.getByPlaceholder('Enter a title for your prompt').fill('Modal Test Prompt');
+        await page.getByPlaceholder('Enter a title for your skill').fill('Modal Test Prompt');
         await page.getByPlaceholder('Enter a brief description').fill('Created via modal');
-        await page.getByPlaceholder('Enter the system prompt template').fill('Hello from modal test');
+        await page.getByPlaceholder('Enter the skill instructions').fill('Hello from modal test');
 
         // Save (use exact match to avoid matching "Saved messages" button in header)
         await page.getByRole('button', { name: 'Save', exact: true }).click();
@@ -239,7 +240,7 @@ test.describe('Custom Prompts Management Modal', () => {
         await page.getByText('Editable Prompt').click();
 
         // The form should show pre-filled values
-        const titleInput = page.getByPlaceholder('Enter a title for your prompt');
+        const titleInput = page.getByPlaceholder('Enter a title for your skill');
         await expect(titleInput).toHaveValue('Editable Prompt');
 
         // Edit the title
@@ -258,7 +259,7 @@ test.describe('Custom Prompts Management Modal', () => {
                 store.dispatch({type: 'SHOW_CUSTOM_PROMPTS_MODAL', show: false});
             }
         });
-        await page.waitForTimeout(500);
+        await expect(page.getByRole('dialog', {name: 'Skills'})).toBeHidden({ timeout: 10000 });
 
         // Reopen
         await openCustomPromptsModal(page);
@@ -291,12 +292,12 @@ test.describe('Custom Prompts Management Modal', () => {
         await expect(page.getByText('Beta Search Prompt')).toBeVisible();
 
         // Search for Alpha only
-        await page.getByPlaceholder('Search prompts').fill('Alpha');
+        await page.getByPlaceholder('Search skills').fill('Alpha');
         await expect(page.getByText('Alpha Search Prompt')).toBeVisible();
         await expect(page.getByText('Beta Search Prompt')).not.toBeVisible();
 
         // Clear search to restore both
-        await page.getByPlaceholder('Search prompts').fill('');
+        await page.getByPlaceholder('Search skills').fill('');
         await expect(page.getByText('Beta Search Prompt')).toBeVisible();
     });
 
@@ -327,14 +328,14 @@ test.describe('Custom Prompts Management Modal', () => {
         await expect(page.getByText('Admin Created Prompt')).toBeVisible();
 
         // Switch to Your Prompts tab
-        await page.getByText('Your Prompts').click();
+        await page.getByText('Your Skills').click();
 
         // Only the current user's prompt should appear
         await expect(page.getByText('My Own Prompt')).toBeVisible();
         await expect(page.getByText('Admin Created Prompt')).not.toBeVisible();
 
         // Switch back to All Prompts
-        await page.getByText('All Prompts').click();
+        await page.getByText('All Skills').click();
         await expect(page.getByText('Admin Created Prompt')).toBeVisible();
 
         // Clean up admin prompt
@@ -374,13 +375,13 @@ test.describe('Custom Prompts Management Modal', () => {
         expect(pinsAfter).not.toContain(prompt.id);
     });
 
-    test('empty state shows "No prompts found" message', async ({ page }) => {
+    test('empty state shows "No skills found" message', async ({ page }) => {
         await setupTestPage(page);
         await openCustomPromptsModal(page);
 
         // Search for something that doesn't exist
-        await page.getByPlaceholder('Search prompts').fill('xyznonexistent99999');
-        await expect(page.getByText('No prompts found')).toBeVisible({ timeout: 5000 });
+        await page.getByPlaceholder('Search skills').fill('xyznonexistent99999');
+        await expect(page.getByText('No skills found')).toBeVisible({ timeout: 5000 });
     });
 });
 
@@ -428,7 +429,7 @@ test.describe('Custom Prompts in AI Actions Submenu', () => {
         }
 
         await aiButton.click();
-        await page.getByText('Custom prompts').hover();
+        await page.getByText('Skills', {exact: true}).hover();
 
         await expect(page.getByText('Formatting Bar Prompt')).toBeVisible({ timeout: 10000 });
         await page.getByText('Formatting Bar Prompt').click();
@@ -449,18 +450,18 @@ test.describe('Custom Prompts in AI Actions Submenu', () => {
         }
 
         await aiButton.click();
-        await page.getByText('Custom prompts').hover();
-        await page.getByText('Manage prompts').click();
+        await page.getByText('Skills', {exact: true}).hover();
+        await page.getByText('Manage skills').click();
 
-        await expect(page.getByRole('dialog', {name: 'Custom Prompts'})).toBeVisible({ timeout: 10000 });
-        await expect(page.getByText('All Prompts')).toBeVisible();
+        await expect(page.getByRole('dialog', {name: 'Skills'})).toBeVisible({ timeout: 10000 });
+        await expect(page.getByText('All Skills')).toBeVisible();
     });
 });
 
 // ---------------------------------------------------------------------------
-// 3. Pinned Prompt Pills in RHS
+// 3. Pinned prompts are not shown as pills in the RHS empty state
 // ---------------------------------------------------------------------------
-test.describe('Pinned Prompt Pills in RHS', () => {
+test.describe('Pinned prompts in the RHS empty state', () => {
     let userClient: any;
     let createdPromptIds: string[] = [];
 
@@ -483,10 +484,10 @@ test.describe('Pinned Prompt Pills in RHS', () => {
         }
     });
 
-    test('pinned prompt appears as a pill button in the RHS', async ({ page }) => {
+    test('a pinned prompt does not appear as a pill button in the RHS new chat', async ({ page }) => {
         const prompt = await createPromptViaAPI(userClient, {
             name: 'RHS Pill Prompt',
-            description: 'Should appear as pill',
+            description: 'Pinned, but the RHS empty state shows no prompt pills',
             template: 'Pill template content',
             is_shared: true,
         });
@@ -496,64 +497,9 @@ test.describe('Pinned Prompt Pills in RHS', () => {
         const { aiPlugin } = await setupTestPage(page);
         await aiPlugin.openRHS();
 
-        // The pinned prompt should render as a pill button in the RHS new-tab view
-        const pillButton = page.getByRole('button', { name: 'RHS Pill Prompt' });
-        await expect(pillButton).toBeVisible({ timeout: 30000 });
-    });
-
-    test('clicking a pinned prompt pill creates a post and opens the thread', async ({ page }) => {
-        const prompt = await createPromptViaAPI(userClient, {
-            name: 'Clickable Pill',
-            description: 'Click to send',
-            template: 'Rendered pill message',
-            is_shared: true,
-        });
-        createdPromptIds.push(prompt.id);
-        await setPinViaAPI(userClient, prompt.id, true);
-
-        const { aiPlugin } = await setupTestPage(page);
-        await aiPlugin.openRHS();
-
-        const pillButton = page.getByRole('button', { name: 'Clickable Pill' });
-        await expect(pillButton).toBeVisible({ timeout: 30000 });
-
-        // Mock the bot response that will come after the post is created
-        await openAIMock.addCompletionMock(responseTest);
-
-        // Click the pill -- this renders the template, creates a post, and
-        // switches the RHS to the thread view
-        await pillButton.click();
-
-        // The rendered prompt text should appear as a post in the RHS thread
-        await expect(page.getByText('Rendered pill message')).toBeVisible({ timeout: 30000 });
-    });
-
-    test('unpinning a prompt removes the pill from the RHS', async ({ page }) => {
-        const prompt = await createPromptViaAPI(userClient, {
-            name: 'Removable Pill',
-            description: 'Will be unpinned',
-            template: 'removable template',
-            is_shared: true,
-        });
-        createdPromptIds.push(prompt.id);
-        await setPinViaAPI(userClient, prompt.id, true);
-
-        const { aiPlugin } = await setupTestPage(page);
-        await aiPlugin.openRHS();
-
-        // Confirm the pill is present
-        const pillButton = page.getByRole('button', { name: 'Removable Pill' });
-        await expect(pillButton).toBeVisible({ timeout: 30000 });
-
-        // Unpin via API
-        await setPinViaAPI(userClient, prompt.id, false);
-
-        // Close and reopen the RHS to trigger a re-fetch of pinned prompts
-        await aiPlugin.closeRHS();
-        await aiPlugin.openRHS();
-
-        // The pill should no longer be visible
-        await expect(page.getByRole('button', { name: 'Removable Pill' })).not.toBeVisible({ timeout: 10000 });
+        // The new chat is up (its composer is there) and no pill was rendered for the pinned prompt.
+        await expect(aiPlugin.rhsPostTextarea).toBeVisible({ timeout: 30000 });
+        await expect(page.getByRole('button', { name: 'RHS Pill Prompt' })).toHaveCount(0);
     });
 });
 
@@ -661,7 +607,7 @@ test.describe('Context Variables', () => {
         }
     });
 
-    test('pinned prompt pill with context variable renders correctly in the RHS', async ({ page }) => {
+    test('a custom prompt with a context variable is rendered when picked from the RHS composer\'s AI actions', async ({ page }) => {
         const prompt = await createPromptViaAPI(userClient, {
             name: 'Context Pill',
             description: 'Renders username',
@@ -673,17 +619,25 @@ test.describe('Context Variables', () => {
 
         const { aiPlugin } = await setupTestPage(page);
         await aiPlugin.openRHS();
+        await expect(aiPlugin.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
 
-        const pillButton = page.getByRole('button', { name: 'Context Pill' });
-        await expect(pillButton).toBeVisible({ timeout: 30000 });
+        // The prompts are the host composer's AI action (registerAIActionMenuItemComponent). The
+        // AI actions button is only present when the server includes the pluggable AI actions menu.
+        const aiButton = aiPlugin.getRhsContainer().locator('#aiActionsMenu');
+        if (!await aiButton.isVisible({ timeout: 5000 }).catch(() => false)) {
+            test.skip(true, 'AI Actions menu not available (requires custom server build)');
+            return;
+        }
+        await aiButton.click();
+        await page.getByText('Skills', {exact: true}).hover();
+        await page.getByText('Context Pill').click();
 
-        // Mock the bot response
+        // The template is rendered with the real username, not shown as a template variable.
+        await expect(aiPlugin.rhsPostTextarea).toHaveValue('Greetings regularuser!', { timeout: 30000 });
+
+        // Mock the bot response, then send it.
         await openAIMock.addCompletionMock(responseTest);
-
-        // Click the pill -- the template should be rendered with the real username
-        await pillButton.click();
-
-        // The rendered text should contain the actual username, not the template variable
-        await expect(page.getByText('Greetings regularuser!')).toBeVisible({ timeout: 30000 });
+        await aiPlugin.rhsSendButton.click();
+        await expect(aiPlugin.getRhsContainer().getByTestId('post-message-text').getByText('Greetings regularuser!')).toBeVisible({ timeout: 30000 });
     });
 });

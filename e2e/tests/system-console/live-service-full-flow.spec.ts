@@ -1,7 +1,8 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {test, expect, Locator, Page} from '@playwright/test';
+import {expect, Locator, Page} from '@playwright/test';
+import {containerTest} from 'helpers/container-fixture';
 
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {buildTextResponse, buildTitleFixture, mergeFixtureFiles, stubAimockModelFetch} from 'helpers/aimock-fixtures';
@@ -9,6 +10,7 @@ import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
 import {SystemConsoleHelper} from 'helpers/system-console';
 import {AgentPageHelper} from 'helpers/agent-page';
+import {chooseCompassOption} from 'helpers/compass-select';
 import {AgentAPIHelper} from 'helpers/agent-api';
 import RunSystemConsoleContainer, {adminUsername, adminPassword} from 'helpers/system-console-container';
 
@@ -126,22 +128,20 @@ async function getTownSquareChannelID(client: any): Promise<string> {
 async function selectModelFromDropdown(
     container: Locator,
     page: Page,
+    label: string,
     preferredModel: string,
 ): Promise<string> {
-    const dropdownInput = container.locator('input[id^="react-select-"][id$="-input"]').first();
+    const dropdownInput = container.getByRole('combobox', {name: label, exact: true});
     await expect(dropdownInput).toBeVisible({timeout: 90000});
     await dropdownInput.click();
 
-    const options = page.locator('div[id^="react-select-"][id*="-option-"]');
-    await expect(options.first()).toBeVisible({timeout: 90000});
+    // The listbox first shows the built-in model list and is replaced once the fetched
+    // models arrive, so wait for the preferred option instead of indexing a snapshot.
+    const option = page.getByRole('listbox').getByRole('option', {name: preferredModel}).first();
+    await expect(option).toBeVisible({timeout: 90000});
 
-    const optionTexts = (await options.allTextContents()).map((text) => text.trim());
-    const preferredIndex = optionTexts.findIndex((text) => text.toLowerCase().includes(preferredModel.toLowerCase()));
-    const selectedIndex = preferredIndex >= 0 ? preferredIndex : 0;
-    const model = optionTexts[selectedIndex] || preferredModel;
-
-    expect(model.length).toBeGreaterThan(0);
-    await options.nth(selectedIndex).click();
+    const model = (await option.textContent())?.trim() || preferredModel;
+    await option.click();
 
     return model;
 }
@@ -153,7 +153,7 @@ async function ensureServiceCardExpanded(serviceCard: Locator): Promise<void> {
             break;
         }
         await serviceCard.click();
-        await serviceCard.page().waitForTimeout(250);
+        await serviceNameInput.waitFor({state: 'visible', timeout: 10000}).catch(() => {});
     }
     await expect(serviceNameInput).toBeVisible({timeout: 30000});
 }
@@ -169,26 +169,22 @@ async function ensureLoggedOut(page: Page, baseURL: string): Promise<void> {
     await expect(page.getByText('Log in to your account')).toBeVisible({timeout: 30000});
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunSystemConsoleContainer({
+        services: [],
+        bots: [],
+        enableChannelMentionToolCalling: true,
+    }));
+    const aimock = own(await RunAIMockSidecar(mattermost.network, {
+        fixtures: {fixtures: [buildTitleFixture('System console bootstrap')]},
+    }));
+    return { mattermost, aimock };
+});
+
 test.describe.serial('System Console Aimock Live Service Full Flow', () => {
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-
-        mattermost = await RunSystemConsoleContainer({
-            services: [],
-            bots: [],
-            enableChannelMentionToolCalling: true,
-        });
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, aimock } = containers);
         await setupRegularUser(mattermost);
-        aimock = await RunAIMockSidecar(mattermost.network, {
-            fixtures: {fixtures: [buildTitleFixture('System console bootstrap')]},
-        });
-    });
-
-    test.afterAll(async () => {
-        await aimock?.stop();
-        if (mattermost) {
-            await mattermost.stop();
-        }
     });
 
     test('should install plugin, configure aimock service+agent, and validate DM + channel mention', async ({page}) => {
@@ -212,11 +208,11 @@ test.describe.serial('System Console Aimock Live Service Full Flow', () => {
         await ensureServiceCardExpanded(serviceCard);
 
         await serviceCard.getByPlaceholder(/service name/i).fill(serviceName);
-        await serviceCard.getByRole('combobox').first().selectOption('openaicompatible');
+        await chooseCompassOption(serviceCard.getByRole('combobox', {name: 'Service type', exact: true}), 'OpenAI Compatible');
         await serviceCard.getByPlaceholder(/api key/i).fill('mock');
         await serviceCard.getByPlaceholder(/api url/i).fill('http://openai:8080');
 
-        const selectedServiceModel = await selectModelFromDropdown(serviceCard, page, aimockModel);
+        const selectedServiceModel = await selectModelFromDropdown(serviceCard, page, 'Default model', aimockModel);
 
         const inputTokenLimitField = serviceCard.getByPlaceholder(/input token limit/i);
         if (await inputTokenLimitField.isEnabled()) {
@@ -243,7 +239,7 @@ test.describe.serial('System Console Aimock Live Service Full Flow', () => {
 
         await systemConsole.waitForBotsPanel();
 
-        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents`);
+        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/all`);
         await page.waitForLoadState('domcontentloaded');
         const agentPage = new AgentPageHelper(page);
         await agentPage.getCreateButton().waitFor({state: 'visible', timeout: 15000});
@@ -256,9 +252,9 @@ test.describe.serial('System Console Aimock Live Service Full Flow', () => {
             serviceLabel: serviceName,
             instructions: 'You are a concise and deterministic assistant for e2e verification.',
         });
-        const modelInput = page.locator('input[id^="react-select-"]').first();
+        const modelInput = page.getByRole('combobox', {name: 'Model', exact: true});
         if (await modelInput.isVisible({timeout: 15000}).catch(() => false)) {
-            await selectModelFromDropdown(page.locator('body'), page, aimockModel);
+            await selectModelFromDropdown(page.locator('body'), page, 'Model', aimockModel);
         }
         await agentPage.getModalSaveButton().click();
         await agentPage.waitForModalClosed();

@@ -21,13 +21,17 @@ import (
 // including the §3.3 requirement that the metadata's "resource" value equal
 // the resource identifier the client used.
 //
-// When no explicit metadata URL is known (i.e. it did not come from a 401
-// challenge), the MCP specification's ordered discovery sequence is used:
-// first the path-inserted well-known URL (expecting the full server URL as
-// the resource), then the root well-known URL (expecting the server's origin
-// as the resource), mirroring the go-sdk's own client discovery. The first
-// candidate to succeed wins; if all fail, the first candidate's error is
-// returned since it is the primary variant.
+// The metadata URL from a 401 challenge, when known, is tried first. The MCP
+// specification's ordered discovery sequence follows it: the path-inserted
+// well-known URL (expecting the full server URL as the resource), then the
+// root well-known URL (expecting the server's origin as the resource),
+// mirroring the go-sdk's own client discovery. The well-known candidates also
+// follow a challenge URL because some servers (e.g. Google's Workspace MCP
+// servers) challenge with a per-tool metadata document whose resource does
+// not match the server URL, while serving a compliant document at the
+// well-known location. Every candidate still passes the strict resource
+// check. The first candidate to succeed wins; if all fail, the first
+// candidate's error is returned since it is the primary variant.
 func (m *OAuthManager) fetchProtectedResourceMetadata(ctx context.Context, serverURL, metadataURL string) (*oauthex.ProtectedResourceMetadata, error) {
 	type prmCandidate struct {
 		metadataURL string
@@ -36,21 +40,23 @@ func (m *OAuthManager) fetchProtectedResourceMetadata(ctx context.Context, serve
 
 	var candidates []prmCandidate
 	if metadataURL != "" {
-		candidates = []prmCandidate{{metadataURL: metadataURL, resource: serverURL}}
-	} else {
-		pathInserted, err := constructWellKnownURL(serverURL, "oauth-protected-resource")
-		if err != nil {
-			return nil, fmt.Errorf("failed to construct metadata URL: %w", err)
-		}
-		candidates = []prmCandidate{{metadataURL: pathInserted, resource: serverURL}}
+		candidates = append(candidates, prmCandidate{metadataURL: metadataURL, resource: serverURL})
+	}
 
-		if parsed, parseErr := url.Parse(serverURL); parseErr == nil && strings.Trim(parsed.Path, "/") != "" {
-			origin := &url.URL{Scheme: parsed.Scheme, Host: parsed.Host}
-			candidates = append(candidates, prmCandidate{
-				metadataURL: origin.String() + "/.well-known/oauth-protected-resource",
-				resource:    origin.String(),
-			})
-		}
+	pathInserted, err := constructWellKnownURL(serverURL, "oauth-protected-resource")
+	if err != nil {
+		return nil, fmt.Errorf("failed to construct metadata URL: %w", err)
+	}
+	if pathInserted != metadataURL {
+		candidates = append(candidates, prmCandidate{metadataURL: pathInserted, resource: serverURL})
+	}
+
+	if parsed, parseErr := url.Parse(serverURL); parseErr == nil && strings.Trim(parsed.Path, "/") != "" {
+		origin := &url.URL{Scheme: parsed.Scheme, Host: parsed.Host}
+		candidates = append(candidates, prmCandidate{
+			metadataURL: origin.String() + "/.well-known/oauth-protected-resource",
+			resource:    origin.String(),
+		})
 	}
 
 	var firstErr error

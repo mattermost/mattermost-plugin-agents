@@ -15,6 +15,8 @@ import {
     MagnifyIcon,
 } from '@mattermost/compass-icons/components';
 
+import {Spinner} from '@mattermost/compass-ui/components/spinner';
+
 import {
     ServerToolCodeInterpreter,
     ServerToolStatusError,
@@ -23,9 +25,6 @@ import {
     ServerToolWebFetch,
     ServerToolWebSearch,
 } from '@/types/conversation';
-
-import LoadingSpinner from '../assets/loading_spinner';
-
 interface ServerToolSetProps {
     serverTools: ServerToolUse[];
 }
@@ -97,6 +96,7 @@ const ServerToolCard: React.FC<{tool: ServerToolUse}> = ({tool}) => {
     // and toggle the details; cards without details stay a plain div.
     return (
         <Card data-testid={`server-tool-${tool.tool}`}>
+            {/* eslint-disable-next-line agents/click-events-have-key-events, agents/no-static-element-interactions -- renders as a <button> whenever it is clickable */}
             <Header
                 as={canExpand ? 'button' : 'div'}
                 type={canExpand ? 'button' : undefined} // eslint-disable-line no-undefined
@@ -151,7 +151,12 @@ function buildDetails(tool: ServerToolUse, intl: ReturnType<typeof useIntl>): De
 const StatusIndicator: React.FC<{status: ServerToolUse['status']}> = ({status}) => {
     switch (status) {
     case ServerToolStatusInProgress:
-        return <SpinnerWrapper><SmallSpinner/></SpinnerWrapper>;
+        return (
+            <Spinner
+                size='12'
+                aria-hidden={true}
+            />
+        );
     case ServerToolStatusError:
         return <ErrorIcon/>;
     default:
@@ -225,19 +230,6 @@ const Title = styled.span`
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-`;
-
-const SpinnerWrapper = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 12px;
-    height: 12px;
-`;
-
-const SmallSpinner = styled(LoadingSpinner)`
-    width: 12px;
-    height: 12px;
 `;
 
 const SuccessIcon = styled(CheckIcon)`

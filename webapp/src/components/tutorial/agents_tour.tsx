@@ -79,10 +79,10 @@ const AgentsTourBody: React.FC<{onDismiss: () => void}> = ({onDismiss}) => {
                 screen='AI agents now live here. Chat one-on-one to ask questions, explore ideas, draft messages and more with AI models approved by your organization.'
                 tutorialCategory={TutorialTourCategories.AGENTS_TOUR}
                 step={AgentsTutorialSteps.AgentsIcon}
-                placement='left-start'
+                placement='left'
                 pulsatingDotPlacement='left'
                 width={352}
-                offset={[-5, 12]}
+                offset={[0, 12]}
                 onFinish={onDismiss}
             />
         </TourContainer>

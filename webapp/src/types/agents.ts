@@ -23,6 +23,30 @@ export type EnabledTool = {
     tool_name: string; // tool identifier on that server
 }
 
+// Mirrors llm.MaxSkillDescriptionRunes on the backend; also caps per-agent overrides.
+export const MaxSkillDescriptionRunes = 1024;
+
+// SkillsConfig matches llm.SkillsConfig. Shared skills are opt-in per agent;
+// descriptionOverrides is keyed by skill ID.
+export type SkillsConfig = {
+    disabled: boolean;
+    allowPersonal: boolean;
+
+    // Server sends nil Go slices and maps as JSON null.
+    enabledSharedIDs: string[] | null;
+    descriptionOverrides: Record<string, string> | null;
+}
+
+// normalizeSkillsConfig fills in what older servers and snapshots omit.
+export function normalizeSkillsConfig(skills?: Partial<SkillsConfig> | null): SkillsConfig {
+    return {
+        disabled: skills?.disabled ?? false,
+        allowPersonal: skills?.allowPersonal ?? false,
+        enabledSharedIDs: [...(skills?.enabledSharedIDs ?? [])],
+        descriptionOverrides: {...(skills?.descriptionOverrides ?? {})},
+    };
+}
+
 // Mirrors config.AgentInactiveReason on the backend.
 export type AgentInactiveReason = 'invalid_config' | 'service_unavailable' | 'service_not_licensed' | 'agent_limit';
 
@@ -71,6 +95,9 @@ export type UserAgent = {
     thinkingBudget: number;
     maxToolTurns: number;
 
+    // Absent or null from servers that predate skills.
+    skills?: SkillsConfig | null;
+
     /**
      * @deprecated Structured output is configured per service
      * (LLMService.structuredOutputPolicy), not per agent. The backend still
@@ -80,6 +107,9 @@ export type UserAgent = {
 
     // Only on GET /agents; absent when the agent is running.
     inactiveReason?: AgentInactiveReason;
+
+    // Only on GET /agents: whether the current user may edit, export and delete the agent.
+    canManage?: boolean;
 
     // Admin / lifecycle metadata (omitempty on backend).
     botUserID?: string;
@@ -127,6 +157,9 @@ export type CreateAgentRequest = {
     reasoningEffort?: string;
     thinkingBudget?: number;
     maxToolTurns?: number;
+
+    // Required so payload builders can't silently drop it on full-replace PUT.
+    skills: SkillsConfig;
 }
 
 // UpdateAgentRequest matches api.UpdateAgentRequest in Go.
@@ -157,6 +190,7 @@ export type UpdateAgentRequest = {
     reasoningEffort?: string;
     thinkingBudget?: number;
     maxToolTurns?: number;
+    skills: SkillsConfig;
 }
 
 // ServiceInfo matches api.ServiceInfo in Go (safe subset, no secrets).
@@ -167,4 +201,66 @@ export type ServiceInfo = {
     defaultModel: string;
     outputTokenLimit: number;
     useResponsesAPI: boolean;
+}
+
+// Mirrors the Source column of the agent versions table on the backend.
+export type AgentVersionSource = 'initial' | 'create' | 'update' | 'restore' | 'system';
+
+// AgentVersionSummary is one entry of GET /agents/:id/versions (newest first).
+// changedFields holds BotConfig JSON keys (e.g. "customInstructions"); names only.
+export type AgentVersionSummary = {
+    version: number;
+    createdBy: string; // user ID, '' for system writes
+    createAt: number;
+    source: AgentVersionSource;
+    restoredFromVersion: number;
+    changedFields: string[] | null;
+}
+
+// AgentVersionList is one page of GET /agents/:id/versions. currentVersion is
+// the agent's latest version on every page.
+export type AgentVersionList = {
+    currentVersion: number;
+    versions: AgentVersionSummary[];
+    hasMore: boolean;
+}
+
+// AgentVersionDetail is GET /agents/:id/versions/:version. config is the stored
+// llm.BotConfig snapshot, so any field may be missing in older snapshots.
+export type AgentVersionDetail = AgentVersionSummary & {
+    config: Partial<UserAgent>;
+}
+
+export const AgentExportKind = 'mattermost-agent';
+export const AgentExportSchemaVersion = 1;
+
+// MCP tool reference inside an export document. Imports match it to a server
+// on this instance by serverOrigin.
+export type AgentExportMCPTool = {
+    serverOrigin: string;
+    toolName: string;
+}
+
+// The `agent` section of an export document: only configuration that means
+// the same thing on every server.
+export type AgentExportAgent = {
+    name: string;
+    displayName: string;
+    customInstructions: string;
+    disableTools: boolean;
+    maxToolTurns: number;
+    mcpDynamicToolLoading: boolean;
+    autoEnableNewMCPTools: boolean;
+    mcpTools: AgentExportMCPTool[];
+
+    // Skill IDs only resolve on the exporting server; elsewhere they match no skill.
+    skills: SkillsConfig;
+}
+
+export type AgentExportDocument = {
+    kind: typeof AgentExportKind;
+    schemaVersion: typeof AgentExportSchemaVersion;
+    exportedAt: number;
+    agentVersion: number;
+    agent: AgentExportAgent;
 }

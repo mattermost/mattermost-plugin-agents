@@ -521,7 +521,7 @@ func TestSaveConfigWaitsForConfigLock(t *testing.T) {
 	case saveErr := <-saveDone:
 		require.NoError(t, saveErr)
 	case <-time.After(2 * time.Second):
-		t.Fatal("SaveConfig did not complete after advisory lock was released")
+		require.FailNow(t, "SaveConfig did not complete after advisory lock was released")
 	}
 
 	cfg, err := baseStore.GetConfig()

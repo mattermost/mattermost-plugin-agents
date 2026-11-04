@@ -5,10 +5,12 @@ package bots
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -28,6 +30,9 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
+// botOwnerID owns the Mattermost bot accounts the plugin creates.
+const botOwnerID = "mattermost-ai"
+
 type Config interface {
 	GetBots() []llm.BotConfig
 	GetServiceByID(id string) (llm.ServiceConfig, bool)
@@ -37,6 +42,7 @@ type Config interface {
 	EnableTokenUsageLogToPlugin() bool
 	EnableTokenUsageLogToFile() bool
 	GetTranscriptGenerator() string
+	GetTranscriptBotUserID() string
 }
 
 // AgentStore provides read access to user-created agents from the database.
@@ -62,8 +68,15 @@ type MMBots struct {
 	metrics                llm.MetricsObserver
 
 	tokenSinksMu sync.Mutex
-	botsLock     sync.RWMutex
-	bots         []*Bot
+	// ensureMu serializes registry rebuilds on this node, so a full rebuild
+	// that read the agents before a RefreshAgent cannot swap its stale
+	// registry in afterwards. EnsureBots takes it after the cluster mutex;
+	// it must never be acquired while holding botsLock.
+	ensureMu sync.Mutex
+	botsLock sync.RWMutex
+	// bots is replaced, never mutated in place: readers keep using a slice
+	// and its *Bot values after releasing botsLock.
+	bots []*Bot
 
 	// serviceLLMMu guards the service LLM registry below. It is never held
 	// while a model is being built.
@@ -130,17 +143,81 @@ func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, lic
 	}
 }
 
+// dbAgentBotSet identifies the Mattermost bot accounts that belong to active
+// DB-backed agents, by bot user ID and, for agents stored without one, by username.
+type dbAgentBotSet struct {
+	userIDs   map[string]struct{}
+	usernames map[string]struct{}
+}
+
+func newDBAgentBotSet() dbAgentBotSet {
+	return dbAgentBotSet{userIDs: map[string]struct{}{}, usernames: map[string]struct{}{}}
+}
+
+func (s dbAgentBotSet) add(cfg *llm.BotConfig) {
+	if cfg.BotUserID != "" {
+		s.userIDs[cfg.BotUserID] = struct{}{}
+		return
+	}
+	s.usernames[cfg.Name] = struct{}{}
+}
+
+func (s dbAgentBotSet) owns(bot *model.Bot) bool {
+	if _, ok := s.userIDs[bot.UserId]; ok {
+		return true
+	}
+	_, ok := s.usernames[bot.Username]
+	return ok
+}
+
+// matchPreviousMMBots pairs each bot with its existing Mattermost bot account.
+// Bots that know their bot user ID are matched by it first, so an agent whose
+// username changed keeps its account (and its DMs and history) instead of being
+// recreated; the rest fall back to matching by username.
+func matchPreviousMMBots(bots []*Bot, previousMMBots []*model.Bot) map[*Bot]*model.Bot {
+	byUserID := make(map[string]*model.Bot, len(previousMMBots))
+	byUsername := make(map[string]*model.Bot, len(previousMMBots))
+	for _, mmBot := range previousMMBots {
+		byUserID[mmBot.UserId] = mmBot
+		byUsername[mmBot.Username] = mmBot
+	}
+
+	matched := make(map[*Bot]*model.Bot, len(bots))
+	claimed := make(map[string]struct{}, len(bots))
+	for _, bot := range bots {
+		if mmBot, ok := byUserID[bot.cfg.BotUserID]; ok && bot.cfg.BotUserID != "" {
+			matched[bot] = mmBot
+			claimed[mmBot.UserId] = struct{}{}
+		}
+	}
+	for _, bot := range bots {
+		if _, ok := matched[bot]; ok {
+			continue
+		}
+		mmBot, ok := byUsername[bot.cfg.Name]
+		if !ok {
+			continue
+		}
+		if _, taken := claimed[mmBot.UserId]; taken {
+			continue
+		}
+		matched[bot] = mmBot
+		claimed[mmBot.UserId] = struct{}{}
+	}
+	return matched
+}
+
 // snapshotBotsAndServices returns the full bot lineup (file-config bots plus
 // DB-backed agents, license cap applied) and the services they reference.
 // EnsureBots calls this for both the optimistic equality check and the
 // rebuild, so the check can't miss a service used only by a DB agent.
-func (b *MMBots) snapshotBotsAndServices() ([]llm.BotConfig, map[string]struct{}, map[string]llm.ServiceConfig, error) {
+func (b *MMBots) snapshotBotsAndServices() ([]llm.BotConfig, dbAgentBotSet, map[string]llm.ServiceConfig, error) {
 	var dbAgents []*llm.BotConfig
 	if b.agentStore != nil {
 		var err error
 		dbAgents, err = b.agentStore.ListAgents()
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to list user agents: %w", err)
+			return nil, dbAgentBotSet{}, nil, fmt.Errorf("failed to list user agents: %w", err)
 		}
 	}
 	dbNames := make(map[string]struct{}, len(dbAgents))
@@ -151,9 +228,9 @@ func (b *MMBots) snapshotBotsAndServices() ([]llm.BotConfig, map[string]struct{}
 	}
 
 	pool := config.AgentPool(b.config.GetBots(), dbAgents)
-	botCfgs, activeDBBotUsernames := b.selectActiveBots(pool, dbNames)
+	botCfgs, activeDBBots := b.selectActiveBots(pool, dbNames)
 	serviceCfgs := b.resolveServiceCfgs(botCfgs)
-	return botCfgs, activeDBBotUsernames, serviceCfgs, nil
+	return botCfgs, activeDBBots, serviceCfgs, nil
 }
 
 func (b *MMBots) licenseLevel() enterprise.Level {
@@ -165,14 +242,14 @@ func (b *MMBots) licenseLevel() enterprise.Level {
 
 // selectActiveBots keeps the agents config.AgentInactiveReasons reports as
 // active. Inactive agents are omitted from the ensure set (so existing
-// Mattermost bot accounts are deactivated) and from activeDBBotUsernames. DB
-// rows are never deleted.
-func (b *MMBots) selectActiveBots(pool []llm.BotConfig, dbNames map[string]struct{}) ([]llm.BotConfig, map[string]struct{}) {
+// Mattermost bot accounts are deactivated) and from the returned DB agent set.
+// DB rows are never deleted.
+func (b *MMBots) selectActiveBots(pool []llm.BotConfig, dbNames map[string]struct{}) ([]llm.BotConfig, dbAgentBotSet) {
 	level := b.licenseLevel()
 	reasons := config.AgentInactiveReasons(b.config.GetServices(), pool, level)
 
 	active := make([]llm.BotConfig, 0, len(pool))
-	activeDB := make(map[string]struct{})
+	activeDB := newDBAgentBotSet()
 	inactive := make(map[config.AgentInactiveReason][]string)
 	for i, cfg := range pool {
 		if reasons[i] != config.AgentActive {
@@ -181,7 +258,7 @@ func (b *MMBots) selectActiveBots(pool []llm.BotConfig, dbNames map[string]struc
 		}
 		active = append(active, cfg)
 		if _, isDB := dbNames[cfg.Name]; isDB {
-			activeDB[cfg.Name] = struct{}{}
+			activeDB.add(&pool[i])
 		}
 	}
 
@@ -342,12 +419,12 @@ func (b *MMBots) reconcileTokenUsageSinks() {
 // because nothing changed since the last successful ensure. Called twice per
 // EnsureBots — once optimistically and once after acquiring the cluster mutex
 // (deliberate double-checked locking).
-func (b *MMBots) snapshotForEnsure() (botCfgs []llm.BotConfig, activeDBBotUsernames map[string]struct{}, serviceCfgs map[string]llm.ServiceConfig, unchanged bool, err error) {
+func (b *MMBots) snapshotForEnsure() (botCfgs []llm.BotConfig, activeDBBots dbAgentBotSet, serviceCfgs map[string]llm.ServiceConfig, unchanged bool, err error) {
 	b.reconcileTokenUsageSinks()
 
-	botCfgs, activeDBBotUsernames, serviceCfgs, err = b.snapshotBotsAndServices()
+	botCfgs, activeDBBots, serviceCfgs, err = b.snapshotBotsAndServices()
 	if err != nil {
-		return nil, nil, nil, false, err
+		return nil, dbAgentBotSet{}, nil, false, err
 	}
 	b.botsLock.RLock()
 	botsAlreadyInitialized := len(b.bots) > 0
@@ -357,7 +434,7 @@ func (b *MMBots) snapshotForEnsure() (botCfgs []llm.BotConfig, activeDBBotUserna
 	b.botsLock.RUnlock()
 
 	unchanged = botsAlreadyInitialized && !forceRefresh && botConfigsEqual(lastBotCfgs, botCfgs) && serviceConfigsEqual(lastServiceCfgs, serviceCfgs)
-	return botCfgs, activeDBBotUsernames, serviceCfgs, unchanged, nil
+	return botCfgs, activeDBBots, serviceCfgs, unchanged, nil
 }
 
 func (b *MMBots) EnsureBots() error {
@@ -383,9 +460,11 @@ func (b *MMBots) EnsureBots() error {
 	}
 	mtx.Lock()
 	defer mtx.Unlock()
+	b.ensureMu.Lock()
+	defer b.ensureMu.Unlock()
 
 	// Re-check after acquiring lock - another node may have already handled this
-	currentBotCfgs, activeDBBotUsernames, currentServiceCfgs, unchanged, err := b.snapshotForEnsure()
+	currentBotCfgs, activeDBBots, currentServiceCfgs, unchanged, err := b.snapshotForEnsure()
 	if err != nil {
 		return err
 	}
@@ -394,7 +473,7 @@ func (b *MMBots) EnsureBots() error {
 		return nil
 	}
 
-	previousMMBots, err := b.pluginAPI.Bot.List(0, 1000, pluginapi.BotOwner("mattermost-ai"), pluginapi.BotIncludeDeleted())
+	previousMMBots, err := b.pluginAPI.Bot.List(0, 1000, pluginapi.BotOwner(botOwnerID), pluginapi.BotIncludeDeleted())
 	if err != nil {
 		return fmt.Errorf("failed to list bots: %w", err)
 	}
@@ -406,21 +485,8 @@ func (b *MMBots) EnsureBots() error {
 	// its copy. Agents share the provider client built from these.
 	servicesByID := make(map[string]llm.ServiceConfig)
 	for _, botCfg := range botCfgs {
-		if !botCfg.IsValid() {
-			b.pluginAPI.Log.Error("Configured bot is not valid", "bot_name", botCfg.Name, "bot_display_name", botCfg.DisplayName)
-			continue
-		}
-
-		// Get service by ID
-		service, ok := b.config.GetServiceByID(botCfg.ServiceID)
+		bot, service, ok := b.newUnsyncedBot(botCfg)
 		if !ok {
-			b.pluginAPI.Log.Error("Bot references non-existent service", "bot_name", botCfg.Name, "service_id", botCfg.ServiceID)
-			continue
-		}
-
-		// Validate service configuration
-		if !llm.IsValidService(service) {
-			b.pluginAPI.Log.Error("Bot references invalid service", "bot_name", botCfg.Name, "service_id", botCfg.ServiceID, "service_type", service.Type)
 			continue
 		}
 
@@ -430,85 +496,57 @@ func (b *MMBots) EnsureBots() error {
 		}
 		servicesByID[service.ID] = service
 
-		// Use bot's model if specified, otherwise fall back to service's default model
-		if botCfg.Model != "" {
-			service.DefaultModel = botCfg.Model
-		}
-
-		bot := &Bot{cfg: botCfg, service: service}
 		bots = append(bots, bot)
 		aiBotsByUsername[botCfg.Name] = bot
 	}
 
-	prevousMMBotsByUsername := make(map[string]*model.Bot)
-	for _, bot := range previousMMBots {
-		prevousMMBotsByUsername[bot.Username] = bot
+	matchedMMBots := matchPreviousMMBots(bots, previousMMBots)
+	inUseMMBotUserIDs := make(map[string]struct{}, len(matchedMMBots))
+	for _, mmBot := range matchedMMBots {
+		inUseMMBotUserIDs[mmBot.UserId] = struct{}{}
 	}
 
 	// For each of the bots we found, if it's not in the configuration, delete it.
 	for _, bot := range previousMMBots {
-		if _, ok := aiBotsByUsername[bot.Username]; !ok {
-			if _, dbActive := activeDBBotUsernames[bot.Username]; dbActive {
-				b.pluginAPI.Log.Debug("EnsureBots: skipping deactivation for active DB agent not in ensure set (missing or invalid service)", "bot_name", bot.Username)
-				continue
-			}
-			if _, deactivateErr := b.pluginAPI.Bot.UpdateActive(bot.UserId, false); deactivateErr != nil {
-				b.pluginAPI.Log.Error("Failed to delete bot", "bot_name", bot.Username, "error", deactivateErr.Error())
-				continue
-			}
+		if _, ok := inUseMMBotUserIDs[bot.UserId]; ok {
+			continue
+		}
+		if activeDBBots.owns(bot) {
+			b.pluginAPI.Log.Debug("EnsureBots: skipping deactivation for active DB agent not in ensure set (missing or invalid service)", "bot_name", bot.Username)
+			continue
+		}
+		if _, deactivateErr := b.pluginAPI.Bot.UpdateActive(bot.UserId, false); deactivateErr != nil {
+			b.pluginAPI.Log.Error("Failed to delete bot", "bot_name", bot.Username, "error", deactivateErr.Error())
+			continue
 		}
 	}
 
-	// For each bot in the configuration, try to find an existing bot matching the username.
-	// If it exists, update it to match. Otherwise, create a new bot.
+	// For each bot in the configuration, update its existing Mattermost bot to match,
+	// including the username when the agent was renamed. Otherwise, create a new bot.
+	// Bots whose account could not be synced are left out of the registry, and
+	// the next EnsureBots retries them.
+	ensuredBots := make([]*Bot, 0, len(bots))
+	accountSyncFailed := false
 	for _, bot := range bots {
-		description := poweredByDescription(bot.service.Type, bot.service.DefaultModel)
-		if prevBot, ok := prevousMMBotsByUsername[bot.cfg.Name]; ok {
-			var patchErr error
-			bot.mmBot, patchErr = b.pluginAPI.Bot.Patch(prevBot.UserId, &model.BotPatch{
-				DisplayName: &bot.cfg.DisplayName,
-				Description: &description,
-			})
-			if patchErr != nil {
-				b.pluginAPI.Log.Error("Failed to patch bot", "bot_name", bot.cfg.Name, "error", patchErr.Error())
+		if err := b.syncBot(bot, matchedMMBots[bot], servicesByID[bot.service.ID]); err != nil {
+			if errors.Is(err, errBotAccountSync) {
+				accountSyncFailed = true
 				continue
 			}
-			if _, activeErr := b.pluginAPI.Bot.UpdateActive(prevBot.UserId, true); activeErr != nil {
-				b.pluginAPI.Log.Error("Failed to update bot active", "bot_name", bot.cfg.Name, "error", activeErr.Error())
-				continue
-			}
-		} else {
-			bot.mmBot = &model.Bot{
-				Username:    bot.cfg.Name,
-				DisplayName: bot.cfg.DisplayName,
-				Description: description,
-			}
-			if createErr := b.pluginAPI.Bot.Create(bot.mmBot); createErr != nil {
-				b.pluginAPI.Log.Error("Failed to ensure bot", "bot_name", bot.cfg.Name, "error", createErr.Error())
-				continue
-			}
-		}
-
-		b.ensureDefaultProfileImage(bot)
-
-		// Fallback chains are available at Enterprise Advanced.
-		var fallbackServices []llm.ServiceConfig
-		if b.licenseChecker.Allows(enterprise.CapModelFallback) {
-			var ferr error
-			fallbackServices, ferr = llm.ResolveFallbackChain(bot.service.ID, b.config.GetServiceByID)
-			if ferr != nil {
-				return fmt.Errorf("failed to resolve fallback chain for bot %s: %w", bot.cfg.Name, ferr)
-			}
-		}
-
-		bot.llm, bot.providerServices, err = b.getLLM(servicesByID[bot.service.ID], bot.cfg, fallbackServices)
-		if err != nil {
 			return err
 		}
+		ensuredBots = append(ensuredBots, bot)
 	}
 
 	b.botsLock.Lock()
-	b.bots = bots
+	b.bots = ensuredBots
+	if accountSyncFailed {
+		b.lastEnsuredBotCfgs = nil
+		b.lastEnsuredServiceCfgs = nil
+		b.forceRefresh = true
+		b.botsLock.Unlock()
+		return nil
+	}
 	// Store deep copies of the successfully ensured configs for optimistic checking.
 	// Deep copy is needed because BotConfig contains slice fields (EnabledNativeTools, etc.)
 	// that would otherwise share backing arrays with the live config. The JSON-based
@@ -527,14 +565,204 @@ func (b *MMBots) EnsureBots() error {
 	return nil
 }
 
-func (b *MMBots) ensureDefaultProfileImage(bot *Bot) {
-	user, err := b.pluginAPI.User.Get(bot.mmBot.UserId)
-	if err != nil {
-		b.pluginAPI.Log.Error("Failed to get bot user for profile image check", "bot_name", bot.cfg.Name, "error", err.Error())
-		return
+// newUnsyncedBot validates botCfg and returns its bot, with the agent's model
+// override folded into the bot's service copy, plus the service as configured.
+// ok is false, after logging why, when the bot cannot be served.
+func (b *MMBots) newUnsyncedBot(botCfg llm.BotConfig) (*Bot, llm.ServiceConfig, bool) {
+	if !botCfg.IsValid() {
+		b.pluginAPI.Log.Error("Configured bot is not valid", "bot_name", botCfg.Name, "bot_display_name", botCfg.DisplayName)
+		return nil, llm.ServiceConfig{}, false
 	}
 
-	if user.LastPictureUpdate != 0 {
+	configured, ok := b.config.GetServiceByID(botCfg.ServiceID)
+	if !ok {
+		b.pluginAPI.Log.Error("Bot references non-existent service", "bot_name", botCfg.Name, "service_id", botCfg.ServiceID)
+		return nil, llm.ServiceConfig{}, false
+	}
+
+	if !llm.IsValidService(configured) {
+		b.pluginAPI.Log.Error("Bot references invalid service", "bot_name", botCfg.Name, "service_id", botCfg.ServiceID, "service_type", configured.Type)
+		return nil, llm.ServiceConfig{}, false
+	}
+
+	service := configured
+	if botCfg.Model != "" {
+		service.DefaultModel = botCfg.Model
+	}
+	return &Bot{cfg: botCfg, service: service}, configured, true
+}
+
+// errBotAccountSync marks a syncBot failure to bring the bot's Mattermost
+// account in line with its config, as opposed to a failure to build its LLM.
+var errBotAccountSync = errors.New("bot account sync failed")
+
+// syncBot updates existing, the bot's Mattermost account, to match its config,
+// including the username when the agent was renamed, or creates an account
+// when existing is nil. It then builds the bot's LLM from configuredService,
+// the bot's service as configured. bot must not be in the registry yet.
+func (b *MMBots) syncBot(bot *Bot, existing *model.Bot, configuredService llm.ServiceConfig) error {
+	description := poweredByDescription(bot.service.Type, bot.service.DefaultModel)
+	var user *model.User
+	if existing != nil {
+		patch := &model.BotPatch{
+			DisplayName: &bot.cfg.DisplayName,
+			Description: &description,
+		}
+		if existing.Username != bot.cfg.Name {
+			patch.Username = &bot.cfg.Name
+		}
+		var patchErr error
+		bot.mmBot, patchErr = b.pluginAPI.Bot.Patch(existing.UserId, patch)
+		if patchErr != nil {
+			b.pluginAPI.Log.Error("Failed to patch bot", "bot_name", bot.cfg.Name, "error", patchErr.Error())
+			return fmt.Errorf("%w: %s: %w", errBotAccountSync, bot.cfg.Name, patchErr)
+		}
+		// The server rewrites the user and broadcasts user_updated on every
+		// call, even when the bot is already active. The user API deactivates
+		// only the user, leaving the bot's DeleteAt at zero.
+		user = b.getBotUser(bot)
+		if existing.DeleteAt != 0 || user == nil || user.DeleteAt != 0 {
+			if _, activeErr := b.pluginAPI.Bot.UpdateActive(existing.UserId, true); activeErr != nil {
+				b.pluginAPI.Log.Error("Failed to update bot active", "bot_name", bot.cfg.Name, "error", activeErr.Error())
+				return fmt.Errorf("%w: %s: %w", errBotAccountSync, bot.cfg.Name, activeErr)
+			}
+		}
+	} else {
+		bot.mmBot = &model.Bot{
+			Username:    bot.cfg.Name,
+			DisplayName: bot.cfg.DisplayName,
+			Description: description,
+		}
+		if createErr := b.pluginAPI.Bot.Create(bot.mmBot); createErr != nil {
+			b.pluginAPI.Log.Error("Failed to ensure bot", "bot_name", bot.cfg.Name, "error", createErr.Error())
+			return fmt.Errorf("%w: %s: %w", errBotAccountSync, bot.cfg.Name, createErr)
+		}
+	}
+
+	if user == nil {
+		user = b.getBotUser(bot)
+	}
+	b.ensureDefaultProfileImage(bot, user)
+
+	// Fallback chains are available at Enterprise Advanced.
+	var fallbackServices []llm.ServiceConfig
+	if b.licenseChecker.Allows(enterprise.CapModelFallback) {
+		var err error
+		fallbackServices, err = llm.ResolveFallbackChain(bot.service.ID, b.config.GetServiceByID)
+		if err != nil {
+			return fmt.Errorf("failed to resolve fallback chain for bot %s: %w", bot.cfg.Name, err)
+		}
+	}
+
+	var err error
+	bot.llm, bot.providerServices, err = b.getLLM(configuredService, bot.cfg, fallbackServices)
+	return err
+}
+
+// RefreshAgent rebuilds the registry entry of one DB-backed agent from the
+// store and swaps in just that entry, so a renamed agent is listed under its
+// new name and account without waiting for a full rebuild. When the agent
+// cannot be rebuilt, or is no longer active, its entry is removed instead.
+// Name-based lookups do not depend on it having run: they check the live
+// account. It never creates bot accounts (EnsureBots does, under the cluster
+// mutex), and it leaves the next EnsureBots to reconcile every other bot.
+func (b *MMBots) RefreshAgent(agentID string) error {
+	if agentID == "" {
+		return errors.New("refresh agent: empty agent ID")
+	}
+
+	b.ensureMu.Lock()
+	defer b.ensureMu.Unlock()
+
+	bot, err := b.rebuildAgentBot(agentID)
+	b.replaceAgentBot(agentID, bot)
+	return err
+}
+
+// rebuildAgentBot returns agentID's freshly synced bot, or nil when the agent
+// is not an active DB-backed agent.
+func (b *MMBots) rebuildAgentBot(agentID string) (*Bot, error) {
+	if b.config == nil {
+		return nil, fmt.Errorf("refresh agent %s: bots are not configured", agentID)
+	}
+
+	botCfgs, activeDBBots, _, err := b.snapshotBotsAndServices()
+	if err != nil {
+		return nil, fmt.Errorf("refresh agent %s: %w", agentID, err)
+	}
+	idx := slices.IndexFunc(botCfgs, func(cfg llm.BotConfig) bool {
+		if cfg.ID != agentID || cfg.BotUserID == "" {
+			return false
+		}
+		_, isDB := activeDBBots.userIDs[cfg.BotUserID]
+		return isDB
+	})
+	if idx < 0 {
+		return nil, nil
+	}
+	botCfg := botCfgs[idx]
+
+	bot, configuredService, ok := b.newUnsyncedBot(botCfg)
+	if !ok {
+		return nil, fmt.Errorf("refresh agent %s: agent cannot be served with its current configuration", agentID)
+	}
+	if b.findBot(func(other *Bot) bool {
+		return other.cfg.ID != agentID && other.cfg.Name == botCfg.Name
+	}) != nil {
+		return nil, fmt.Errorf("refresh agent %s: duplicate bot name: %s", agentID, botCfg.Name)
+	}
+
+	account, err := b.pluginAPI.Bot.Get(botCfg.BotUserID, true)
+	if err != nil {
+		return nil, fmt.Errorf("refresh agent %s: failed to get bot account: %w", agentID, err)
+	}
+	if account.OwnerId != botOwnerID {
+		return nil, fmt.Errorf("refresh agent %s: bot account is not owned by this plugin", agentID)
+	}
+
+	if err := b.syncBot(bot, account, configuredService); err != nil {
+		return nil, fmt.Errorf("refresh agent %s: %w", agentID, err)
+	}
+	return bot, nil
+}
+
+// replaceAgentBot swaps in a new registry where agentID's entry is bot, or is
+// absent when bot is nil.
+func (b *MMBots) replaceAgentBot(agentID string, bot *Bot) {
+	b.botsLock.Lock()
+	defer b.botsLock.Unlock()
+
+	next := make([]*Bot, 0, len(b.bots)+1)
+	for _, existing := range b.bots {
+		if existing.cfg.ID != agentID {
+			next = append(next, existing)
+			continue
+		}
+		if bot != nil {
+			next = append(next, bot)
+			bot = nil
+		}
+	}
+	if bot != nil {
+		next = append(next, bot)
+	}
+	b.bots = next
+	b.forceRefresh = true
+}
+
+// getBotUser returns bot's user account, or nil after logging when it cannot
+// be read.
+func (b *MMBots) getBotUser(bot *Bot) *model.User {
+	user, err := b.pluginAPI.User.Get(bot.mmBot.UserId)
+	if err != nil {
+		b.pluginAPI.Log.Error("Failed to get bot user", "bot_name", bot.cfg.Name, "error", err.Error())
+		return nil
+	}
+	return user
+}
+
+func (b *MMBots) ensureDefaultProfileImage(bot *Bot, user *model.User) {
+	if user == nil || user.LastPictureUpdate != 0 {
 		return
 	}
 
@@ -600,7 +828,7 @@ func (b *MMBots) wrapLLM(base llm.LanguageModel, serviceConfig llm.ServiceConfig
 	// calls only: a direct service call carries user_id for attribution, not
 	// as a principal, so its fallback chain is never trimmed per user.
 	if botConfig != nil {
-		result = newFallbackAccessLLM(result, b, serviceConfig.ID)
+		result = newFallbackAccessLLM(result, b, serviceConfig.ID, effectiveModelFor(serviceConfig, botConfig), fallbackServices)
 	}
 
 	return result
@@ -741,23 +969,99 @@ func (b *MMBots) findBot(pred func(*Bot) bool) *Bot {
 }
 
 func (b *MMBots) getTranscriberBot() *Bot {
-	return b.findBot(func(bot *Bot) bool {
-		return bot.cfg.Name == b.config.GetTranscriptGenerator()
-	})
+	return b.GetBotByIDOrUsername(b.config.GetTranscriptBotUserID(), b.config.GetTranscriptGenerator())
 }
 
-// GetBotByUsername retrieves the bot associated with the given bot username
+// GetBotByIDOrUsername resolves a stored or requested agent reference: by its
+// bot user ID when one is set, otherwise by the legacy username, which only
+// selects the agent whose account currently holds it. A missing agent returns
+// nil rather than another agent, which would run with that agent's model,
+// instructions, tools, and identity.
+func (b *MMBots) GetBotByIDOrUsername(botUserID, legacyUsername string) *Bot {
+	if botUserID != "" {
+		return b.GetBotByID(botUserID)
+	}
+	return b.GetBotByUsername(legacyUsername)
+}
+
+// UsernameResolver selects the agent whose account currently holds a username.
+type UsernameResolver interface {
+	GetBotByUsername(username string) *Bot
+}
+
+// ResolveAgentUsernames maps each legacy username reference to the bot user
+// ID of the agent whose account currently holds it, and returns the usernames
+// no agent holds. It reads bot accounts through the Mattermost API, so callers
+// must not hold a database transaction open around it.
+func ResolveAgentUsernames(resolver UsernameResolver, usernames []string) (resolved map[string]string, unresolved []string) {
+	resolved = make(map[string]string, len(usernames))
+	for _, username := range usernames {
+		if bot := resolver.GetBotByUsername(username); bot != nil {
+			resolved[username] = bot.BotUserID()
+		} else {
+			unresolved = append(unresolved, username)
+		}
+	}
+	return resolved, unresolved
+}
+
+// accountHoldsUsername reports whether bot's Mattermost account currently
+// holds username. The registry's cached names can lag a rename, which releases
+// the old username at once, so name-based lookups must not trust them alone.
+// The account is read by its user ID, which the server caches and invalidates
+// cluster-wide on every bot patch; a by-username read is uncached and can
+// return the name's previous holder during replica lag.
+func (b *MMBots) accountHoldsUsername(bot *Bot, username string) bool {
+	if b.pluginAPI == nil || bot == nil || bot.mmBot == nil || username == "" {
+		return false
+	}
+	user, err := b.pluginAPI.User.Get(bot.mmBot.UserId)
+	if err != nil {
+		b.pluginAPI.Log.Warn("Failed to get bot account to verify its username", "bot_user_id", bot.mmBot.UserId, "error", err.Error())
+		return false
+	}
+	return strings.EqualFold(user.Username, username)
+}
+
+// GetBotByUsername retrieves the bot whose Mattermost account currently holds
+// the given username. A name the registry does not know is resolved through
+// the bot account that holds it, so an agent stays reachable under its new
+// name while the registry still lists it under the old one after a rename.
 func (b *MMBots) GetBotByUsername(botUsername string) *Bot {
-	return b.findBot(func(bot *Bot) bool {
-		return bot.cfg.Name == botUsername
-	})
+	if botUsername == "" {
+		return nil
+	}
+	for _, bot := range b.GetAllBots() {
+		if bot.mmBot == nil {
+			continue
+		}
+		if !strings.EqualFold(bot.mmBot.Username, botUsername) && !strings.EqualFold(bot.cfg.Name, botUsername) {
+			continue
+		}
+		if b.accountHoldsUsername(bot, botUsername) {
+			return bot
+		}
+	}
+	if b.pluginAPI == nil {
+		return nil
+	}
+	user, err := b.pluginAPI.User.GetByUsername(botUsername)
+	if err != nil || !user.IsBot {
+		return nil
+	}
+	if bot := b.GetBotByID(user.Id); b.accountHoldsUsername(bot, botUsername) {
+		return bot
+	}
+	return nil
 }
 
-// GetBotByUsernameOrFirst retrieves the bot associated with the given bot username or the first bot if not found
+// GetBotByUsernameOrFirst retrieves the bot with the given username, or the
+// first bot when no username is given. A named bot that is not available
+// returns nil: serving another agent instead would run the request with that
+// agent's model, instructions, tools, and identity.
 func (b *MMBots) GetBotByUsernameOrFirst(botUsername string) *Bot {
-	bot := b.GetBotByUsername(botUsername)
-	if bot != nil {
-		return bot
+	if botUsername != "" {
+		return b.GetBotByUsername(botUsername)
 	}
 
 	b.botsLock.RLock()
@@ -799,11 +1103,18 @@ func (b *MMBots) IsAnyBot(userID string) bool {
 	return b.GetBotByID(userID) != nil
 }
 
-// GetBotMentioned returns the bot mentioned in the text, if any.
+// GetBotMentioned returns the bot mentioned in the text, if any. A bot is
+// mentioned only under a username its Mattermost account currently holds.
 func (b *MMBots) GetBotMentioned(text string) *Bot {
-	return b.findBot(func(bot *Bot) bool {
-		return userIsMentionedMarkdown(text, bot.mmBot.Username)
-	})
+	for _, bot := range b.GetAllBots() {
+		if bot.mmBot == nil {
+			continue
+		}
+		if userIsMentionedMarkdown(text, bot.mmBot.Username) && b.accountHoldsUsername(bot, bot.mmBot.Username) {
+			return bot
+		}
+	}
+	return nil
 }
 
 // GetAllBots returns all bots

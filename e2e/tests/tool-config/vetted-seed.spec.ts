@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { OpenAIMockContainer, RunOpenAIMocks } from 'helpers/openai-mock';
@@ -29,15 +30,15 @@ const VETTED_READ_TOOLS = [
     'get_user_channels',
 ];
 
-test.describe('Vetted Server Seed', () => {
-    test.beforeAll(async () => {
-        mattermost = await RunToolConfigContainer();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
-    });
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
 
-    test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
+test.describe('Vetted Server Seed', () => {
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test('should show vetted Mattermost tools pre-seeded as Auto Run (DM)', async ({ page }) => {
@@ -52,7 +53,7 @@ test.describe('Vetted Server Seed', () => {
         // Expand the embedded server
         const serverHeader = page.getByText(/\d+\/\d+ tools? enabled/).first();
         await serverHeader.click();
-        await page.waitForTimeout(500);
+        await expect(page.getByText('read_post', { exact: true })).toBeVisible({ timeout: 5000 });
 
         // Check that at least some known vetted READ tools are visible and have "auto_run_in_dm" policy
         for (const toolName of ['read_post', 'get_channel_info', 'search_posts']) {
@@ -60,7 +61,7 @@ test.describe('Vetted Server Seed', () => {
             // Only check tools that are visible (embedded server may not expose all)
             if (await toolText.isVisible().catch(() => false)) {
                 const dropdown = toolConfig.getToolPolicyDropdown(toolName);
-                await expect(dropdown).toHaveValue('auto_run_in_dm');
+                await expect(dropdown).toHaveText('Auto Run (DM)');
 
                 const toggle = toolConfig.getToolToggle(toolName);
                 await expect(toggle).toBeChecked();

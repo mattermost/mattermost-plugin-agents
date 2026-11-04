@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 
@@ -241,6 +242,7 @@ func (p *MattermostToolProvider) mcpTools() []MCPTool {
 	groups := []func() []MCPTool{
 		p.getPostTools,
 		p.getScheduledPostTools,
+		p.getDraftTools,
 		p.getReactionTools,
 		p.getThreadTools,
 		p.getChannelTools,
@@ -407,7 +409,7 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 		}
 
 		// Create argument getter that extracts arguments from the MCP request
-		argsGetter := func(target interface{}) error {
+		argsGetter := func(target any) error {
 			// Convert MCP arguments to the target struct
 			argumentsBytes, marshalErr := json.Marshal(req.Params.Arguments)
 			if marshalErr != nil {
@@ -454,13 +456,25 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 	server.AddTool(tool, handler)
 }
 
-// createMCPToolContext creates an MCPToolContext from the Go context, authenticated client, and request metadata
-func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metadata mcp.Meta) (*MCPToolContext, error) {
-	client, err := p.authProvider.GetAuthenticatedMattermostClient(ctx)
-	if err != nil {
-		return nil, err
+// authenticatedClientAndUserID returns the authenticated client and, when the
+// provider can tell, the user's ID. Providers that validate both at once are
+// asked once so a tool call costs a single session validation.
+func (p *MattermostToolProvider) authenticatedClientAndUserID(ctx context.Context) (*model.Client4, string, error) {
+	if both, ok := p.authProvider.(auth.ClientAndUserProvider); ok {
+		client, user, err := both.GetAuthenticatedClientAndUser(ctx)
+		if err != nil {
+			return nil, "", err
+		}
+		if user == nil {
+			return client, "", nil
+		}
+		return client, user.Id, nil
 	}
 
+	client, err := p.authProvider.GetAuthenticatedMattermostClient(ctx)
+	if err != nil {
+		return nil, "", err
+	}
 	var userID string
 	if identityProvider, ok := p.authProvider.(auth.UserIdentityProvider); ok {
 		if user, userErr := identityProvider.GetAuthenticatedUser(ctx); userErr == nil && user != nil {
@@ -468,6 +482,15 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 		} else if userErr != nil {
 			p.logger.Debug("failed to resolve authenticated user for tool-call context", "error", userErr.Error())
 		}
+	}
+	return client, userID, nil
+}
+
+// createMCPToolContext creates an MCPToolContext from the Go context, authenticated client, and request metadata
+func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metadata mcp.Meta) (*MCPToolContext, error) {
+	client, userID, err := p.authenticatedClientAndUserID(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	mcpContext := &MCPToolContext{
@@ -549,8 +572,7 @@ func excludedFieldsForAccessMode(t reflect.Type, accessMode string) map[string]b
 	}
 
 	var excluded map[string]bool
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
+	for field := range t.Fields() {
 		name := jsonFieldName(field)
 		if name == "" {
 			continue
@@ -583,23 +605,12 @@ func isAccessAllowed(restrictionTag, currentAccessMode string) bool {
 		return true // No restrictions
 	}
 
-	// Normalize and split by comma
-	allowedValues := strings.Split(strings.ReplaceAll(restrictionTag, " ", ""), ",")
-
-	// Check each allowed value
-	for _, allowed := range allowedValues {
-		// Direct access mode matching
-		if allowed == currentAccessMode {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(strings.Split(strings.ReplaceAll(restrictionTag, " ", ""), ","), currentAccessMode)
 }
 
 // validateAccessRestrictions validates that no access-restricted fields are present in the JSON data
 // for the current access mode. This prevents clients from sending fields they shouldn't have access to.
-func validateAccessRestrictions(jsonData []byte, target interface{}, currentAccessMode string) error {
+func validateAccessRestrictions(jsonData []byte, target any, currentAccessMode string) error {
 	if currentAccessMode == "" {
 		panic("access mode cannot be empty - indicates uninitialized AccessMode")
 	}
@@ -616,7 +627,7 @@ func validateAccessRestrictions(jsonData []byte, target interface{}, currentAcce
 
 	// Check if the incoming JSON is actually an object/map
 	// If it's not an object, we can't have field restrictions to validate
-	var incomingData map[string]interface{}
+	var incomingData map[string]any
 	if err := json.Unmarshal(jsonData, &incomingData); err != nil {
 		// If JSON can't be parsed as an object, it's likely a primitive value or array
 		// In this case, there are no fields to validate transport restrictions for
@@ -624,9 +635,7 @@ func validateAccessRestrictions(jsonData []byte, target interface{}, currentAcce
 	}
 
 	// Check each field in the struct
-	for i := 0; i < targetType.NumField(); i++ {
-		field := targetType.Field(i)
-
+	for field := range targetType.Fields() {
 		name := jsonFieldName(field)
 		if name == "" {
 			continue

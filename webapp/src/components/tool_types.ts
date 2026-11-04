@@ -22,6 +22,10 @@ export type JSONValue =
 // of options. Mirrors llm.UserInteractionSelect on the server.
 export const UserInteractionSelect = 'select';
 
+// UserInteractionConnect marks a tool answered by the user connecting their
+// account to an MCP server. Mirrors llm.UserInteractionConnect on the server.
+export const UserInteractionConnect = 'connect';
+
 // ToolAnswer is a user's answer to a user-interaction tool call. Mirrors
 // mmtools.UserInteractionAnswer on the server.
 export interface ToolAnswer {
@@ -65,6 +69,10 @@ export interface ToolCall {
     // decision because a source is not covered by the channel audience.
     audience_review?: boolean;
 }
+
+// ToolCallPhase mirrors llm.ToolCallPhase on live tool_call websocket events.
+// 'resolved' closes the round; 'executing' and 'awaiting_decision' are in progress.
+export type ToolCallPhase = 'executing' | 'awaiting_decision' | 'resolved';
 
 // ToolApprovalStage mirrors the server-computed approval state for a post.
 // 'done' means no user decision remains (auto-run, keep private, all

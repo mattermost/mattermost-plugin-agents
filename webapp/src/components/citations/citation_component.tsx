@@ -28,9 +28,9 @@ export const CitationComponent = (props: CitationComponentProps) => {
                 icon={isPrivate ? <LockIcon size={12}/> : <GlobeIcon size={12}/>}
                 tooltipContent={
                     <TooltipContent>
-                        <TooltipDomain>
+                        <span>
                             {channelName || intl.formatMessage({defaultMessage: 'Private channel'})}
-                        </TooltipDomain>
+                        </span>
                     </TooltipContent>
                 }
                 onClick={(e) => {
@@ -77,12 +77,12 @@ export const CitationComponent = (props: CitationComponentProps) => {
                     {domain ? (
                         <>
                             <FaviconIcon domain={domain}/>
-                            <TooltipDomain>{domain}</TooltipDomain>
+                            <span>{domain}</span>
                         </>
                     ) : (
-                        <TooltipDomain>
+                        <span>
                             {intl.formatMessage({defaultMessage: 'Unknown source'})}
-                        </TooltipDomain>
+                        </span>
                     )}
                 </TooltipContent>
             }
@@ -128,14 +128,11 @@ const CitationIcon = styled(LinkVariantIcon)`
     }
 `;
 
-const TooltipContent = styled.div`
-    background: var(--center-channel-color);
-    border-radius: 4px;
-    box-shadow: 0px 6px 14px 0px rgba(0, 0, 0, 0.12);
-    padding: 4px 8px;
-    display: flex;
+// The standard tooltip supplies the surface, type and colors; this only lays out the favicon and domain.
+const TooltipContent = styled.span`
+    display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--spacing-xxxs);
     white-space: nowrap;
 `;
 
@@ -156,10 +153,3 @@ const FallbackIcon = styled.span`
     justify-content: center;
 `;
 
-const TooltipDomain = styled.span`
-    font-family: 'Open Sans', sans-serif;
-    font-weight: 600;
-    font-size: 12px;
-    line-height: 15px;
-    color: var(--center-channel-bg);
-`;

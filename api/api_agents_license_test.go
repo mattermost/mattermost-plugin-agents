@@ -59,7 +59,7 @@ func TestAgentCreateQuotaByLicense(t *testing.T) {
 			store := e.api.configStore.(*mockConfigStore)
 			store.cfg.Services = append(store.cfg.Services, llm.ServiceConfig{ID: "svc-2", Name: "Second", Type: "openai", APIKey: "test-key"})
 			addAgents := func(n int, serviceID string) {
-				for i := 0; i < n; i++ {
+				for range n {
 					id := model.NewId()
 					e.agentStore.agents[id] = &llm.BotConfig{ID: id, Name: "existing" + id, DisplayName: "Existing", CreatorID: "other", ServiceID: serviceID}
 				}

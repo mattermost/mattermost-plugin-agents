@@ -2,12 +2,22 @@ import { Page, Locator, expect } from '@playwright/test';
 import { Client4 } from '@mattermost/client';
 import MattermostContainer from './mmcontainer';
 import {
+    MATTERMOST_AI_PLUGIN_ID,
     mattermostAIAdminConfigApiFromClient,
     mattermostAIPluginRoutes,
     normalizeMattermostAiConfigFromApi,
     type PluginAdminConfigApi,
     type PluginRoutesApi,
 } from './plugin-http';
+import { chooseCompassOption } from './compass-select';
+
+type ToolPolicyLabel = 'Auto Run (DM)' | 'Auto Run (Everywhere)' | 'Ask Every Time';
+
+const POLICY_VALUES: Record<ToolPolicyLabel, string> = {
+    'Auto Run (DM)': 'auto_run_in_dm',
+    'Auto Run (Everywhere)': 'auto_run_everywhere',
+    'Ask Every Time': 'ask',
+};
 
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -39,7 +49,7 @@ export class ToolConfigUIHelper {
         await this.page.waitForSelector('text=To report a bug or to provide feedback', { timeout: 15000 });
 
         // Click Tools tab
-        const toolsTab = this.page.getByRole('button', { name: 'Tools' });
+        const toolsTab = this.page.getByRole('tab', { name: 'Tools', exact: true });
         await toolsTab.click();
 
         // Wait for the tools content to load
@@ -62,17 +72,14 @@ export class ToolConfigUIHelper {
         await this.page.waitForSelector('text=To report a bug or to provide feedback', { timeout: 15000 });
     }
 
-    /** Get all tab buttons visible in the plugin config */
+    /** Get all tabs visible in the plugin config */
     getTabButtons(): Locator {
-        // The tab buttons are rendered by the TabButton styled component
-        // They are direct children of TabsContainer, which is a div with flex layout
-        // Use role-based selectors for stability
-        return this.page.locator('button').filter({ hasText: /^(Configuration|Tools)$/ });
+        return this.page.getByRole('tab').filter({ hasText: /^(Configuration|Tools)$/ });
     }
 
     /** Get a specific tab by name */
     getTab(name: string): Locator {
-        return this.page.getByRole('button', { name, exact: true });
+        return this.page.getByRole('tab', { name, exact: true });
     }
 
     /** Expand a server row by clicking on it to show its tools */
@@ -81,8 +88,14 @@ export class ToolConfigUIHelper {
         const serverRow = this.page.locator('div').filter({ hasText: new RegExp(escapeRegExp(serverName)) }).filter({ hasText: /tools? enabled/ });
         await serverRow.first().click();
 
-        // Wait for the tool rows to appear
-        await this.page.waitForTimeout(500);
+        // Wait for the expanded server to show its tools or a status notice
+        await expect(
+            this.getAllToolPolicyDropdowns()
+                .or(this.page.getByText('No tools available from this server'))
+                .or(this.page.getByText('Connection Error'))
+                .or(this.page.getByText('OAuth Required'))
+                .first(),
+        ).toBeVisible({ timeout: 10000 });
     }
 
     /** Get the tool count text for a server (e.g. "8/8 tools enabled") */
@@ -95,37 +108,37 @@ export class ToolConfigUIHelper {
 
     /** Get all tool name elements visible in the expanded tools list */
     getToolNames(): Locator {
-        return this.page.locator('div').filter({ has: this.page.locator('select') }).locator('div').filter({ hasText: /^[A-Za-z_][A-Za-z0-9_]*$/ });
+        return this.page.locator('div').filter({ has: this.getAllToolPolicyDropdowns() }).locator('div').filter({ hasText: /^[A-Za-z_][A-Za-z0-9_]*$/ });
     }
 
-    /** Get the policy dropdown (select element) for a specific tool */
+    /** Get every per-tool policy dropdown on the page */
+    getAllToolPolicyDropdowns(): Locator {
+        return this.page.getByRole('combobox', { name: /^Approval policy for / });
+    }
+
+    /** Get the policy dropdown for a specific tool */
     getToolPolicyDropdown(toolName: string): Locator {
-        const toolRow = this.page.locator('div')
-            .filter({ has: this.page.getByText(toolName, { exact: true }) })
-            .filter({ has: this.page.locator('select') })
-            .last();
-        return toolRow.locator('select').first();
+        return this.page.getByRole('combobox', { name: `Approval policy for ${toolName}`, exact: true }).last();
     }
 
     /** Set tool policy via dropdown */
-    async setToolPolicy(toolName: string, policy: 'Auto Run (DM)' | 'Auto Run (Everywhere)' | 'Ask Every Time'): Promise<void> {
-        const dropdown = this.getToolPolicyDropdown(toolName);
-        await dropdown.selectOption({ label: policy });
+    async setToolPolicy(toolName: string, policy: ToolPolicyLabel): Promise<void> {
+        await chooseCompassOption(this.getToolPolicyDropdown(toolName), policy);
     }
 
-    /** Get current tool policy value from dropdown */
+    /** Get current tool policy value (e.g. 'auto_run_in_dm') from the dropdown */
     async getToolPolicyValue(toolName: string): Promise<string> {
-        const dropdown = this.getToolPolicyDropdown(toolName);
-        return await dropdown.inputValue();
+        const label = (await this.getToolPolicyDropdown(toolName).textContent())?.trim() ?? '';
+        return POLICY_VALUES[label as ToolPolicyLabel] ?? '';
     }
 
-    /** Get the enable/disable toggle (checkbox input) for a tool */
+    /** Get the enable/disable toggle for a tool */
     getToolToggle(toolName: string): Locator {
         const toolRow = this.page.locator('div')
             .filter({ has: this.page.getByText(toolName, { exact: true }) })
-            .filter({ has: this.page.locator('select') })
+            .filter({ has: this.getToolPolicyDropdown(toolName) })
             .last();
-        return toolRow.locator('input[type="checkbox"]').first();
+        return toolRow.getByRole('switch').first();
     }
 
     /** Toggle a tool on or off */
@@ -160,8 +173,13 @@ export class ToolConfigUIHelper {
 
     /** Click save and wait */
     async clickSave(): Promise<void> {
-        await this.getSaveButton().click();
-        await this.page.waitForTimeout(1000);
+        await Promise.all([
+            this.page.waitForResponse((response) => (
+                response.request().method() === 'PUT' &&
+                response.url().includes(`/plugins/${MATTERMOST_AI_PLUGIN_ID}/admin/config`)
+            )),
+            this.getSaveButton().click(),
+        ]);
     }
 }
 

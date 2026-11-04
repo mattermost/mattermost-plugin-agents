@@ -165,7 +165,7 @@ func TestChannelFromMetaMapOptionalFields(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "ch-only", ch.Id)
 	assert.Equal(t, model.ChannelType(""), ch.Type)
-	assert.Equal(t, "", ch.TeamId)
+	assert.Empty(t, ch.TeamId)
 
 	ch, ok = channelFromMetaMap(map[string]any{
 		"id":      "ch-full",
@@ -175,7 +175,7 @@ func TestChannelFromMetaMapOptionalFields(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "ch-full", ch.Id)
 	assert.Equal(t, model.ChannelType(""), ch.Type)
-	assert.Equal(t, "", ch.TeamId)
+	assert.Empty(t, ch.TeamId)
 }
 
 func TestMergeSourceChannels(t *testing.T) {

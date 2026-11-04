@@ -17,6 +17,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/codes"
@@ -53,7 +54,9 @@ func IsToolPolicyAutoRunEverywhere(policy string) bool {
 
 // EmbeddedMCPServer interface for dependency injection
 type EmbeddedMCPServer interface {
-	CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error)
+	// sessionToken is the session's token when the caller already holds it
+	// (empty otherwise); the server can use it when a lookup by ID misses.
+	CreateClientTransport(userID, sessionID, sessionToken string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error)
 }
 
 // EmbeddedServerClient handles connections to the embedded MCP server
@@ -299,6 +302,7 @@ func (c *Client) adoptSession(ctx context.Context, session *mcp.ClientSession, s
 // If sessionID is empty, creates an unauthenticated client (used for tool discovery).
 func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, sessionID string) (*Client, error) {
 	// Validate session exists before creating transport (unless empty for tool discovery)
+	var sessionToken string
 	if sessionID != "" {
 		if c.pluginAPI == nil {
 			return nil, fmt.Errorf("plugin API is required when sessionID is provided")
@@ -313,10 +317,28 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 		if mmSession.UserId != userID {
 			return nil, fmt.Errorf("session user ID does not match: expected %s, got %s", userID, mmSession.UserId)
 		}
+		sessionToken = mmSession.Token
 	}
 
+	return c.connect(ctx, userID, sessionID, sessionToken)
+}
+
+// CreateClientForSession connects using a session the caller has already
+// created or validated. It skips re-reading the session: the plugin API reads
+// sessions by ID from a DB read replica, which can miss a just-created session.
+func (c *EmbeddedServerClient) CreateClientForSession(ctx context.Context, userID string, session *model.Session) (*Client, error) {
+	if session == nil || session.Id == "" {
+		return nil, fmt.Errorf("session not found")
+	}
+	if session.UserId != userID {
+		return nil, fmt.Errorf("session user ID does not match: expected %s, got %s", userID, session.UserId)
+	}
+	return c.connect(ctx, userID, session.Id, session.Token)
+}
+
+func (c *EmbeddedServerClient) connect(ctx context.Context, userID, sessionID, sessionToken string) (*Client, error) {
 	// Get the in-memory transport from the embedded server
-	transport, err := c.server.CreateClientTransport(userID, sessionID, c.pluginAPI)
+	transport, err := c.server.CreateClientTransport(userID, sessionID, sessionToken, c.pluginAPI)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create in-memory transport: %w", err)
 	}
@@ -398,10 +420,34 @@ func newClientWithTimeout(ctx context.Context, timeout time.Duration, userID str
 		serviceAccount: p.serviceAccount,
 	}
 
+	needsAuthorization, err := c.staticOAuthTokenMissing()
+	if err != nil {
+		return nil, err
+	}
+
 	session, err := connectWithDeadline(ctx, timeout, "MCP server "+serverConfig.Name,
 		func(connectCtx context.Context) (*mcp.ClientSession, error) {
 			return c.connectAndDiscover(connectCtx, serverConfig, p.forceRefresh)
 		})
+
+	// The user has never authorized a server that requires OAuth. Connecting
+	// first lets a server that challenges on connect pass its
+	// resource_metadata to the OAuth start link. Any other outcome still asks
+	// the user to connect: some OAuth servers (e.g. Google's Workspace MCP
+	// servers) answer initialize and tools/list anonymously and only reject
+	// tools/call, and others list no tools to anonymous callers.
+	if needsAuthorization {
+		if _, ok := errors.AsType[*OAuthNeededError](err); ok {
+			return nil, err
+		}
+		if err != nil {
+			c.log.Info("Unauthorized connection to MCP server with static OAuth credentials failed; asking the user to connect",
+				"userID", c.userID, "server", serverConfig.Name, "error", err)
+		} else {
+			_ = session.Close()
+		}
+		return nil, &OAuthNeededError{authURL: c.oauthStartURL()}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -490,6 +536,20 @@ func NewPluginClient(ctx context.Context, userID string, cfg PluginServerConfig,
 	}
 
 	return client, nil
+}
+
+// staticOAuthTokenMissing reports whether the server has admin-configured
+// OAuth client credentials that the user has never authorized. Such a server
+// requires OAuth even when it answers some requests anonymously.
+func (c *Client) staticOAuthTokenMissing() (bool, error) {
+	if c.serviceAccount || c.oauthManager == nil || staticOAuthCreds(c.config) == nil {
+		return false, nil
+	}
+	hasToken, err := c.oauthManager.HasStoredToken(c.userID, c.config.Name)
+	if err != nil {
+		return false, fmt.Errorf("failed to check stored OAuth token for MCP server %s: %w", c.config.Name, err)
+	}
+	return !hasToken, nil
 }
 
 func (c *Client) oauthNeededError(err error) error {
@@ -714,14 +774,7 @@ func (c *Client) callToolWithMeta(ctx context.Context, toolName string, args map
 			return "", nil, fmt.Errorf("failed to call tool %s on server %s: %w", toolName, c.config.Name, err)
 		}
 	}
-	var textBuilder strings.Builder
-	for _, content := range result.Content {
-		if textContent, ok := content.(*mcp.TextContent); ok {
-			textBuilder.WriteString(textContent.Text)
-			textBuilder.WriteByte('\n')
-		}
-	}
-	text := textBuilder.String()
+	text := toolResultText(result)
 
 	// MCP tools can return IsError=true without transport-level errors.
 	// Surface this as a resolver error so tool-call status is set correctly.

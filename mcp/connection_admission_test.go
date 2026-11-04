@@ -39,15 +39,13 @@ func TestConnectionAdmissionCloseRejectsEveryAcquire(t *testing.T) {
 				results := make([]error, 32)
 				var wg sync.WaitGroup
 				for i := range results {
-					wg.Add(1)
-					go func() {
-						defer wg.Done()
+					wg.Go(func() {
 						<-start
 						results[i] = gate.acquire(context.Background())
 						if results[i] == nil {
 							gate.release()
 						}
-					}()
+					})
 				}
 				close(start)
 				if !tc.closeFirst {
@@ -99,7 +97,7 @@ func TestEnsureConnectionsDoesNotRememberAdmissionErrors(t *testing.T) {
 		require.Len(t, mcpErrors.Errors, 1)
 		require.ErrorIs(t, mcpErrors.Errors[0], errAdmissionUnavailable)
 	case <-time.After(2 * time.Second):
-		t.Fatal("queued remote connect was not unblocked")
+		require.FailNow(t, "queued remote connect was not unblocked")
 	}
 	require.Zero(t, server.requestCount(), "admission rejection must not reach the server")
 	require.Empty(t, uc.snapshotClients())
@@ -136,7 +134,7 @@ func TestQueuedDialKeepsItsWholeConnectBudget(t *testing.T) {
 	case mcpErrors := <-done:
 		require.Nil(t, mcpErrors, "the queued dial must still get its full budget once admitted")
 	case <-time.After(2 * time.Second):
-		t.Fatal("queued connect did not finish after admission")
+		require.FailNow(t, "queued connect did not finish after admission")
 	}
 	require.Equal(t, 1, server.dialCount())
 }
@@ -176,12 +174,10 @@ func TestGetToolsForUserCapsAggregateNetworkDialsAcrossUsers(t *testing.T) {
 	results := make([][]llm.Tool, users)
 	errs := make([]*Errors, users)
 	for i, userID := range userIDs {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			results[i], errs[i] = manager.GetToolsForUser(context.Background(), userID, ToolSelection{})
-		}()
+		})
 	}
 	close(start)
 	wg.Wait()
@@ -224,7 +220,7 @@ func TestClientManagerCloseUnblocksQueuedConnectionsAndDropsLateSessions(t *test
 		case tools := <-done:
 			require.Empty(t, tools)
 		case <-time.After(2 * time.Second):
-			t.Fatal("Close must unblock a queued remote connect")
+			require.FailNow(t, "Close must unblock a queued remote connect")
 		}
 		require.Nil(t, cachedUserClient(manager, "alice", "remotea"))
 		require.Zero(t, harness.remoteSrv["remotea"].requestCount(),
@@ -263,7 +259,7 @@ func TestCanceledRequestDoesNotTurnQueuedRemoteAttemptIntoStickyFailure(t *testi
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("canceled caller did not finish after admission")
+		require.FailNow(t, "canceled caller did not finish after admission")
 	}
 
 	tools, mcpErrors := manager.GetToolsForUser(context.Background(), "alice", ToolSelection{})

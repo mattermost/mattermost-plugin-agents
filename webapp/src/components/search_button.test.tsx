@@ -6,10 +6,6 @@ import {render, screen} from '@testing-library/react';
 
 import SearchButton from './search_button';
 
-jest.mock('react-redux', () => ({
-    useSelector: () => true,
-}));
-
 jest.mock('@/license', () => ({
     useIsLicensedFor: jest.fn(() => true),
 }));

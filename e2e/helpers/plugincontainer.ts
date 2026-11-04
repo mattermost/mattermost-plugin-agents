@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
+import { withDeadline } from './deadline';
 import MattermostContainer from './mmcontainer';
 
 export const AIMOCK_SERVICE_ID = 'aimock-service';
@@ -67,7 +68,7 @@ async function setupStandardTestUsers(mattermost: MattermostContainer): Promise<
 
 async function finalizeContainerSetup(mattermost: MattermostContainer): Promise<MattermostContainer> {
   try {
-    await setupStandardTestUsers(mattermost);
+    await withDeadline('Seeding the standard test users', 60000, () => setupStandardTestUsers(mattermost));
     return mattermost;
   } catch (error) {
     await mattermost.stop().catch(() => undefined);
@@ -81,6 +82,7 @@ export async function RunAIMockContainer(overrides?: {
   mcp?: Record<string, unknown>;
   webSearch?: Record<string, unknown>;
   enableChannelMentionToolCalling?: boolean;
+  config?: Record<string, unknown>;
 }): Promise<MattermostContainer> {
   const filename = findPluginTarball();
 
@@ -125,6 +127,7 @@ export async function RunAIMockContainer(overrides?: {
         },
       ],
       ...(overrides?.webSearch ? { webSearch: overrides.webSearch } : {}),
+      ...overrides?.config,
     },
   };
 

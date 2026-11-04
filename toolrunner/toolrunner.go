@@ -7,12 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner/limits"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // MaxToolRounds is the maximum number of tool-call-execute-recall iterations
@@ -24,20 +24,33 @@ const MaxToolRounds = limits.MaxToolRounds
 // It calls the LLM, checks for tool calls in the stream, executes
 // approved ones, appends results back to the request, and calls again.
 type ToolRunner struct {
-	llm       llm.LanguageModel
-	maxRounds int
+	llm         llm.LanguageModel
+	maxRounds   int
+	errorResult func(*llm.Context, error) string
 }
 
 // Option configures a ToolRunner at construction time.
 type Option func(*ToolRunner)
 
-// WithMaxRounds overrides the default maximum number of tool-call rounds.
-// Non-positive values fall back to llm.DefaultMaxToolTurns.
+// WithMaxRounds overrides the default maximum number of tool rounds (LLM
+// calls whose tool calls are executed or rejected). One more LLM call, with
+// tools disabled, follows the last tool round so the run always ends with an
+// answer. Non-positive values fall back to llm.DefaultMaxToolTurns.
 func WithMaxRounds(n int) Option {
 	return func(r *ToolRunner) {
 		if n > 0 {
 			r.maxRounds = n
 		}
+	}
+}
+
+// WithToolErrorResult sets how a failed tool call's error becomes its result
+// text. It runs on the loop's goroutine between tool calls, so it may change
+// the request context's tool store for the rest of the run. The default is
+// the error's text.
+func WithToolErrorResult(f func(*llm.Context, error) string) Option {
+	return func(r *ToolRunner) {
+		r.errorResult = f
 	}
 }
 
@@ -51,10 +64,10 @@ func New(lm llm.LanguageModel, opts ...Option) *ToolRunner {
 	return r
 }
 
-// finalAssistantText drops preamble text from a forced synthesis round that
+// finalAssistantText drops preamble text from a tools-disabled round that
 // still emitted (and had dropped) tool calls.
-func finalAssistantText(text string, synthesisForced bool, droppedToolCalls int) string {
-	if synthesisForced && droppedToolCalls > 0 {
+func finalAssistantText(text string, toolsDisabled bool, droppedToolCalls int) string {
+	if toolsDisabled && droppedToolCalls > 0 {
 		return ""
 	}
 	return text
@@ -180,7 +193,7 @@ func (r *ToolRunner) Run(
 
 	// Make the first LLM call synchronously so initialization errors
 	// (auth failures, rate limits, etc.) are returned directly.
-	firstStream, err := r.llm.ChatCompletion(ctx, request, currentOpts...)
+	firstStream, err := r.llm.ChatCompletion(telemetry.WithLLMRound(ctx, 0), request, currentOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("llm completion failed: %w", err)
 	}
@@ -213,26 +226,63 @@ func (r *ToolRunner) runLoop(
 ) {
 	stream := firstStream
 
-	var synthesisForced bool
+	// send forwards an event unless ctx is canceled: once the consumer has
+	// stopped reading (a stopped reply), a plain send would block forever.
+	send := func(event llm.TextStreamEvent) bool {
+		select {
+		case output <- event:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+	// abandon persists the rounds completed so far and stops the loop.
+	abandon := func() { r.deliverToolTurns(result, onToolTurns) }
 
-	for round := 0; round < r.maxRounds; round++ {
+	// toolsDisabled means the next call must answer without tools: the
+	// tool-round cap or the consecutive-failure limit was reached.
+	var toolsDisabled bool
+	disableTools := func() {
+		if !toolsDisabled {
+			currentOpts = append(currentOpts, llm.WithToolsDisabled())
+			toolsDisabled = true
+		}
+	}
+	// finishToolRound runs after every tool round, executed or rejected, so a
+	// tools-off answer always follows the last one.
+	finishToolRound := func(round int) {
+		if llm.CountTrailingFailedToolCalls(request.Posts) >= llm.MaxConsecutiveToolCallFailures {
+			request.Posts = llm.EnsureToolRetryLimitSystemMessage(request.Posts)
+			disableTools()
+		}
+		if round+1 >= r.maxRounds {
+			request.Posts = llm.EnsureToolIterationLimitUserMessage(request.Posts)
+			disableTools()
+		}
+	}
+
+	for round := 0; round <= r.maxRounds; round++ {
 		// For round > 0, make a new LLM call.
 		if round > 0 {
 			var err error
-			stream, err = r.llm.ChatCompletion(ctx, request, currentOpts...)
+			stream, err = r.llm.ChatCompletion(telemetry.WithLLMRound(ctx, round), request, currentOpts...)
 			if err != nil {
 				r.deliverToolTurns(result, onToolTurns)
-				output <- llm.TextStreamEvent{
+				send(llm.TextStreamEvent{
 					Type:  llm.EventTypeError,
 					Value: fmt.Errorf("llm completion failed: %w", err),
-				}
+				})
 				return
 			}
 		}
 
 		// Consume the stream, forwarding non-tool-call events in real-time.
-		resp := drainStream(stream, output, request.Context)
+		resp := drainStream(stream, send, request.Context)
 
+		if ctx.Err() != nil {
+			abandon()
+			return
+		}
 		if resp.err != nil {
 			r.deliverToolTurns(result, onToolTurns)
 			return
@@ -240,18 +290,18 @@ func (r *ToolRunner) runLoop(
 
 		toolCalls := resp.toolCalls
 
-		// Drop any tool calls the model returned on a forced synthesis round;
+		// Providers may ignore tool_choice="none"; never execute those calls.
 		droppedToolCalls := 0
-		if synthesisForced && len(toolCalls) > 0 {
+		if toolsDisabled && len(toolCalls) > 0 {
 			droppedToolCalls = len(toolCalls)
 			toolCalls = nil
 		}
 
 		// No tool calls = final response.
 		if len(toolCalls) == 0 {
-			result.FinalText = finalAssistantText(resp.text, synthesisForced, droppedToolCalls)
+			result.FinalText = finalAssistantText(resp.text, toolsDisabled, droppedToolCalls)
 			r.deliverToolTurns(result, onToolTurns)
-			output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+			send(llm.TextStreamEvent{Type: llm.EventTypeEnd})
 			return
 		}
 
@@ -260,22 +310,23 @@ func (r *ToolRunner) runLoop(
 			resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
 			appendToolTurnAndPost(result, &request, resp.text, resp.reasoningData, resp.serverTools, resp.segments, resolvedToolCalls, toolResults, resp.usage)
 
-			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
-
-			if llm.CountTrailingFailedToolCalls(request.Posts) >= llm.MaxConsecutiveToolCallFailures {
-				request.Posts = llm.EnsureToolRetryLimitSystemMessage(request.Posts)
-				currentOpts = append(currentOpts, llm.WithToolsDisabled())
+			if !send(toolCallBatchEvent(llm.ToolCallPhaseResolved, resolvedToolCalls)) {
+				abandon()
+				return
 			}
+
+			finishToolRound(round)
 			continue
 		}
 
 		toolCalls = enrichToolCallsForApproval(toolCalls, store)
 
-		// Check shouldExecute for ALL tool calls.
+		// Check shouldExecute for ALL tool calls. A user-interaction call is
+		// answered by the user, so no policy can auto-execute it.
 		allApproved := true
 		approved := make([]bool, len(toolCalls))
 		for i, tc := range toolCalls {
-			approved[i] = shouldExecute(tc)
+			approved[i] = shouldExecute(tc) && tc.UserInteraction == ""
 			if !approved[i] {
 				allApproved = false
 			}
@@ -290,53 +341,68 @@ func (r *ToolRunner) runLoop(
 				toolCalls[i].WouldAutoExecute = approved[i]
 			}
 			r.deliverToolTurns(result, onToolTurns)
-			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
-			output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+			if send(toolCallBatchEvent(llm.ToolCallPhaseAwaitingDecision, toolCalls)) {
+				send(llm.TextStreamEvent{Type: llm.EventTypeEnd})
+			}
 			return
 		}
 
-		// All calls passed the policy: stamp them so the pending broadcast
-		// (and, if the stream is interrupted mid-execution, the persisted
-		// blocks) carry the auto-execute signal instead of implying an
-		// approval request, then forward so the UI can show spinners.
+		// All calls passed the policy. The marker keeps persisted blocks from
+		// implying an approval request if the stream is interrupted
+		// mid-execution.
 		for i := range toolCalls {
 			toolCalls[i].WouldAutoExecute = true
 		}
-		output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
+		if !send(toolCallBatchEvent(llm.ToolCallPhaseExecuting, toolCalls)) {
+			abandon()
+			return
+		}
 
 		// Execute each tool call.
 		toolResults := r.executeTools(ctx, toolCalls, request)
+		if ctx.Err() != nil {
+			// Stopped mid-round: the tools' "context canceled" errors are
+			// not real failures, so drop this round rather than persist them
+			// as tool results the next turn would read as broken tools.
+			abandon()
+			return
+		}
 		recordMCPDynamicSearchLoadCallSuccess(request.Context, toolCalls, toolResults)
 
 		resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
 		appendToolTurnAndPost(result, &request, resp.text, resp.reasoningData, resp.serverTools, resp.segments, resolvedToolCalls, toolResults, resp.usage)
 
 		// Forward resolved tool calls so the UI can show success/error states.
-		output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
+		if !send(toolCallBatchEvent(llm.ToolCallPhaseResolved, resolvedToolCalls)) {
+			abandon()
+			return
+		}
 
 		// Provenance is only known after the tools run, so the channel answer
 		// is withheld here, before the next completion is streamed.
 		if holdChannelAnswer(request, result) {
 			r.captureHeldAnswer(ctx, request, currentOpts, result)
 			r.deliverToolTurns(result, onToolTurns)
-			output <- llm.TextStreamEvent{Type: llm.EventTypeEnd, Value: llm.StreamEnd{OmitEmptyFallback: true}}
+			send(llm.TextStreamEvent{Type: llm.EventTypeEnd, Value: llm.StreamEnd{OmitEmptyFallback: true}})
 			return
 		}
 
-		// Check for consecutive tool call failures and disable tools if needed.
-		if llm.CountTrailingFailedToolCalls(request.Posts) >= llm.MaxConsecutiveToolCallFailures {
-			request.Posts = llm.EnsureToolRetryLimitSystemMessage(request.Posts)
-			currentOpts = append(currentOpts, llm.WithToolsDisabled())
-		}
-
-		// Force the last allowed round to be a tools-disabled synthesis so the
-		// caller always gets a final answer when the cap is hit.
-		if round == r.maxRounds-2 {
-			request.Posts = llm.EnsureToolIterationLimitUserMessage(request.Posts)
-			currentOpts = append(currentOpts, llm.WithToolsDisabled())
-			synthesisForced = true
-		}
+		finishToolRound(round)
 	}
+
+	// Unreachable while every tool round ends in finishToolRound; kept so a
+	// future path can't close the stream without persisting turns or ending.
+	r.deliverToolTurns(result, onToolTurns)
+	send(llm.TextStreamEvent{
+		Type:  llm.EventTypeError,
+		Value: fmt.Errorf("tool loop stopped after %d rounds without a final response", r.maxRounds+1),
+	})
+}
+
+// toolCallBatchEvent copies calls because consumers sanitize them in place
+// while the runner is still executing and replaying the originals.
+func toolCallBatchEvent(phase llm.ToolCallPhase, calls []llm.ToolCall) llm.TextStreamEvent {
+	return llm.TextStreamEvent{Type: llm.EventTypeToolCallBatch, Value: llm.ToolCallBatch{Phase: phase, Calls: slices.Clone(calls)}}
 }
 
 // assistantResponse holds the accumulated contents of one fully consumed
@@ -358,7 +424,10 @@ type assistantResponse struct {
 // events to output in real-time while buffering tool calls and accumulating
 // the round's text, reasoning, server tool activity, and usage. Sandbox files
 // reported by server tools are registered on llmCtx as they arrive.
-func drainStream(stream *llm.TextStreamResult, output chan<- llm.TextStreamEvent, llmCtx *llm.Context) assistantResponse {
+//
+// Once send fails (the consumer is gone) the rest of the stream is still
+// read so the provider's goroutine can finish, but nothing more is forwarded.
+func drainStream(stream *llm.TextStreamResult, send func(llm.TextStreamEvent) bool, llmCtx *llm.Context) assistantResponse {
 	var sequence llm.TurnSequence
 	var resp assistantResponse
 
@@ -386,50 +455,44 @@ func drainStream(stream *llm.TextStreamResult, output chan<- llm.TextStreamEvent
 					llmCtx.AddSandboxFiles(refs...)
 				}
 			}
-			forward(output, event)
+			send(event)
 		case llm.EventTypeEnd:
 			// Don't forward yet — handle after consuming the full stream.
 		case llm.EventTypeText:
 			if t, ok := event.Value.(string); ok {
 				sequence.AppendText(t)
 			}
-			forward(output, event)
+			send(event)
 		case llm.EventTypeReasoning:
 			if t, ok := event.Value.(string); ok {
 				sequence.AppendReasoning(t)
 			}
-			forward(output, event)
+			send(event)
 		case llm.EventTypeReasoningEnd:
 			if data, ok := event.Value.(llm.ReasoningData); ok {
 				resp.reasoningData = data
 				sequence.FinishReasoning(data)
 			}
-			forward(output, event)
+			send(event)
 		case llm.EventTypeUsage:
 			if u, ok := event.Value.(llm.TokenUsage); ok {
 				resp.usage.InputTokens += u.InputTokens
 				resp.usage.OutputTokens += u.OutputTokens
 			}
-			forward(output, event)
+			send(event)
 		case llm.EventTypeError:
 			if e, ok := event.Value.(error); ok {
 				resp.err = e
 			}
-			forward(output, event)
+			send(event)
 		default:
-			forward(output, event) // annotations, etc.
+			send(event) // annotations, etc.
 		}
 	}
 
 	resp.text = sequence.Text()
 	resp.segments = sequence.Segments()
 	return resp
-}
-
-func forward(output chan<- llm.TextStreamEvent, event llm.TextStreamEvent) {
-	if output != nil {
-		output <- event
-	}
 }
 
 func holdChannelAnswer(request llm.CompletionRequest, result *ToolRunResult) bool {
@@ -453,7 +516,7 @@ func (r *ToolRunner) captureHeldAnswer(ctx context.Context, request llm.Completi
 	if err != nil || stream == nil {
 		return
 	}
-	resp := drainStream(stream, nil, request.Context)
+	resp := drainStream(stream, func(llm.TextStreamEvent) bool { return true }, request.Context)
 	if resp.err != nil {
 		return
 	}
@@ -484,28 +547,22 @@ func (r *ToolRunner) executeTools(ctx context.Context, toolCalls []llm.ToolCall,
 				resolveErr = fmt.Errorf("unknown tool %s", tc.Name)
 				break
 			}
-			toolCtx, span := telemetry.Tracer().Start(ctx, "resolve tool",
-				trace.WithAttributes(
-					telemetry.ToolName.String(lookup.RuntimeName),
-					telemetry.ToolID.String(tc.ID),
-				),
-			)
-			result, resolveErr = request.Context.Tools.ResolveTool(
-				toolCtx,
+			// executeTools only runs batches shouldExecute approved
+			// without asking the user.
+			result, resolveErr = request.Context.Tools.ResolveToolCall(
+				ctx,
 				lookup.RuntimeName,
+				llm.ToolCallInfo{ID: tc.ID, Execution: telemetry.ToolExecutionAuto},
 				func(args any) error { return json.Unmarshal(tc.Arguments, args) },
 				request.Context,
 			)
-			if resolveErr != nil {
-				span.SetAttributes(telemetry.ToolStatus.String("error"))
-			} else {
-				span.SetAttributes(telemetry.ToolStatus.String("success"))
-			}
-			span.End()
 		}
 
 		if resolveErr != nil {
 			result = resolveErr.Error()
+			if r.errorResult != nil {
+				result = r.errorResult(request.Context, resolveErr)
+			}
 		}
 		toolResults[i] = ToolResult{
 			ToolCallID: tc.ID,
