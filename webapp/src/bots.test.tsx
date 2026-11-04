@@ -307,6 +307,25 @@ describe('fetchAndStoreBots', () => {
         expect(dispatch).not.toHaveBeenCalled();
     });
 
+    test('a superseded response is returned but never overwrites the newer one', async () => {
+        const stale = [makeBot('stale')];
+        const fresh = [makeBot('fresh')];
+        let resolveStale!: (v: unknown) => void;
+        mockGetAIBots.mockReturnValueOnce(new Promise((resolve) => {
+            resolveStale = resolve;
+        }));
+        mockGetAIBots.mockResolvedValueOnce({bots: fresh});
+        const dispatch = jest.fn();
+
+        const first = fetchAndStoreBots(dispatch);
+        await expect(fetchAndStoreBots(dispatch)).resolves.toBe(fresh);
+        resolveStale({bots: stale});
+
+        await expect(first).resolves.toBe(stale);
+        const stored = dispatch.mock.calls.filter(([action]) => action.type === BotsHandler).map(([action]) => action.bots);
+        expect(stored).toEqual([fresh]);
+    });
+
     test('propagates fetch failures to the caller', async () => {
         const error = new Error('network');
         mockGetAIBots.mockRejectedValue(error);
