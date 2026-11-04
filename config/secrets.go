@@ -55,15 +55,9 @@ func RedactSecrets(cfg Config) Config {
 	return out
 }
 
-// RestoreSecrets returns a copy of incoming in which every masked credential is
-// replaced by the value held in stored. Any other value passes through, so an
-// empty value clears the credential. A mask without a counterpart in stored
-// resolves to empty instead of being persisted verbatim.
-//
-// Counterparts are matched by service ID, bot ID (for the deprecated inline
-// service), by base URL for an MCP server (see matchStoredMCPServers), by header
-// key within that server (including service-account headers), and by parameter
-// key for the embedding provider.
+// RestoreSecrets returns a copy of incoming with every masked credential
+// replaced by its stored counterpart. Other values pass through, so an empty
+// value clears the credential; a mask with no counterpart resolves to empty.
 func RestoreSecrets(incoming Config, stored *Config) Config {
 	out := *incoming.Clone()
 	if stored == nil {
@@ -177,8 +171,7 @@ func findBotByID(bots []llm.BotConfig, id string) *llm.BotConfig {
 	return nil
 }
 
-// mcpServerIdentifiers are the ways an incoming MCP server entry can be
-// recognized as one that is already stored, most specific first.
+// mcpServerIdentifiers recognize an incoming MCP server as a stored one, most specific first.
 var mcpServerIdentifiers = []func(incoming, stored MCPServerConfig) bool{
 	func(incoming, stored MCPServerConfig) bool {
 		return incoming.Name == stored.Name && incoming.BaseURL == stored.BaseURL
@@ -189,14 +182,8 @@ var mcpServerIdentifiers = []func(incoming, stored MCPServerConfig) bool{
 }
 
 // matchStoredMCPServers pairs each incoming MCP server with the stored entry it
-// identifies, or nil when it identifies none. An MCP server carries no id and
-// the admin console submits the whole list on every save, so an entry is
-// recognized by its name and base URL together first, then by its base URL
-// alone as long as that picks out a single stored entry — which is how a server
-// keeps its credentials across a rename. Credentials stay with the base URL they
-// were stored against: an entry moved to another URL identifies nothing, and so
-// does a further entry repeating a URL, since each stored entry is claimed at
-// most once.
+// identifies, or nil. Credentials stay with the base URL they were stored
+// against, and each stored entry is claimed at most once.
 func matchStoredMCPServers(incoming, stored []MCPServerConfig) []*MCPServerConfig {
 	matched := make([]*MCPServerConfig, len(incoming))
 	claimed := make([]bool, len(stored))
@@ -229,11 +216,9 @@ func matchStoredMCPServers(incoming, stored []MCPServerConfig) []*MCPServerConfi
 	return matched
 }
 
-// restoreHeaderSecrets resolves masked header values against the values stored
-// for the same server. Keys are matched exactly; a masked value under a key the
-// stored server does not have takes the one stored header left unclaimed, which
-// is how a renamed header keeps its value. Anything less clear-cut resolves to
-// empty.
+// restoreHeaderSecrets resolves masked header values against the stored headers
+// of the same server. A mask under a new key takes the one stored header left
+// unclaimed (a renamed header); anything less clear-cut resolves to empty.
 func restoreHeaderSecrets(incoming, stored map[string]string) map[string]string {
 	if len(incoming) == 0 {
 		return incoming
