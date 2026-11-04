@@ -309,6 +309,37 @@ export async function syncLibraryArtifactBookmarkTitle(
     return true;
 }
 
+function decodePathSegment(segment: string): string {
+    try {
+        return decodeURIComponent(segment);
+    } catch {
+        return segment;
+    }
+}
+
+/**
+ * A bookmark click updates the address bar before redux selects that channel.
+ * True when the path names a different team or channel than the one currently
+ * selected, so the caller leaves the query in place and retries after the switch.
+ * Missing channel identity, or a path that is not a channel URL, returns false.
+ */
+export function libraryUrlAwaitingChannelSwitch(pathname: string, teamName: string, channelName: string): boolean {
+    if (!teamName || !channelName) {
+        return false;
+    }
+    const marker = '/channels/';
+    const index = pathname.indexOf(marker);
+    if (index < 0) {
+        return false;
+    }
+    const channelSegment = pathname.slice(index + marker.length).split('/')[0];
+    const teamSegment = pathname.slice(0, index).split('/').filter(Boolean).pop() || '';
+    if (!channelSegment || !teamSegment) {
+        return false;
+    }
+    return decodePathSegment(teamSegment) !== teamName || decodePathSegment(channelSegment) !== channelName;
+}
+
 export function parseLibraryArtifactIdFromSearch(search: string): string | null {
     if (!search) {
         return null;

@@ -14,7 +14,7 @@ import {getChannelArtifactsEnabled, getChannelArtifactsLoadFailed, getChannelArt
 
 import HTMLArtifactFullscreen from '../html_artifacts/html_artifact_fullscreen';
 
-import {parseLibraryArtifactIdFromSearch, stripLibraryArtifactQuery} from './bookmark';
+import {libraryUrlAwaitingChannelSwitch, parseLibraryArtifactIdFromSearch, stripLibraryArtifactQuery} from './bookmark';
 
 type NoticeKind = 'disabled' | 'unavailable' | null;
 
@@ -31,12 +31,23 @@ type NoticeKind = 'disabled' | 'unavailable' | null;
  * flag and before the current channel id is in redux. The flag defaults to
  * off, so consuming the query in that window strips it and the viewer never
  * opens. Wait until both are known.
+ *
+ * The URL also moves before redux does. Listing the previous channel and
+ * missing the artifact must not strip the query, or the retry after the
+ * switch finds nothing to open.
  */
 const LibraryArtifactDeepLink = () => {
     const enabled = useSelector(getChannelArtifactsEnabled);
     const loaded = useSelector(getChannelArtifactsLoaded);
     const loadFailed = useSelector(getChannelArtifactsLoadFailed);
     const channelId = useSelector((state: GlobalState) => state.entities?.channels?.currentChannelId || '');
+    const channelName = useSelector((state: GlobalState) => (
+        channelId ? state.entities?.channels?.channels?.[channelId]?.name || '' : ''
+    ));
+    const teamName = useSelector((state: GlobalState) => {
+        const teamId = channelId ? state.entities?.channels?.channels?.[channelId]?.team_id : '';
+        return teamId ? state.entities?.teams?.teams?.[teamId]?.name || '' : '';
+    });
     const channelIdRef = useRef(channelId);
     channelIdRef.current = channelId;
     const [entry, setEntry] = useState<ChannelArtifactEntry | null>(null);
@@ -66,6 +77,9 @@ const LibraryArtifactDeepLink = () => {
     const tryOpen = useCallback(async (search = window.location.search) => {
         const artifactId = parseLibraryArtifactIdFromSearch(search);
         if (!artifactId || !channelId) {
+            return;
+        }
+        if (libraryUrlAwaitingChannelSwitch(window.location.pathname, teamName, channelName)) {
             return;
         }
         if (openingRef.current === artifactId || openedIdsRef.current.has(artifactId)) {
@@ -106,9 +120,12 @@ const LibraryArtifactDeepLink = () => {
             const match = (list.entries || []).find((e) => e.id === artifactId);
             if (!match || match.channel_id !== channelId) {
                 openedIdsRef.current.delete(artifactId);
+                openingRef.current = null;
+                if (libraryUrlAwaitingChannelSwitch(window.location.pathname, teamName, channelName)) {
+                    return;
+                }
                 setNotice('unavailable');
                 stripQuery();
-                openingRef.current = null;
                 return;
             }
             setCanManage(Boolean(list.can_manage));
@@ -122,11 +139,14 @@ const LibraryArtifactDeepLink = () => {
                 return;
             }
             openedIdsRef.current.delete(artifactId);
+            openingRef.current = null;
+            if (channelIdRef.current !== channelId || libraryUrlAwaitingChannelSwitch(window.location.pathname, teamName, channelName)) {
+                return;
+            }
             setNotice('unavailable');
             stripQuery();
-            openingRef.current = null;
         }
-    }, [channelId, enabled, loadFailed, loaded, stripQuery]);
+    }, [channelId, channelName, enabled, loadFailed, loaded, stripQuery, teamName]);
 
     useEffect(() => {
         tryOpen();

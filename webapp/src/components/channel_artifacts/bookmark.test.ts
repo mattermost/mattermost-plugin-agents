@@ -8,6 +8,7 @@ import {
     buildLibraryArtifactBookmarkUrl,
     canAddChannelBookmarks,
     findLibraryArtifactBookmark,
+    libraryUrlAwaitingChannelSwitch,
     parseLibraryArtifactIdFromSearch,
     pinLibraryArtifactBookmark,
     stripLibraryArtifactQuery,
@@ -57,6 +58,17 @@ describe('channel artifact bookmark helpers', () => {
 
         expect(canAddChannelBookmarks(state, 'dm')).toBe(false);
         expect(canAddChannelBookmarks(state, 'gm')).toBe(false);
+    });
+
+    test('libraryUrlAwaitingChannelSwitch is true only for a different channel path', () => {
+        expect(libraryUrlAwaitingChannelSwitch('/test/channels/off-topic', 'test', 'off-topic')).toBe(false);
+        expect(libraryUrlAwaitingChannelSwitch('/mattermost/test/channels/off-topic', 'test', 'off-topic')).toBe(false);
+        expect(libraryUrlAwaitingChannelSwitch('/test/channels/town-square', 'test', 'off-topic')).toBe(true);
+        expect(libraryUrlAwaitingChannelSwitch('/other/channels/off-topic', 'test', 'off-topic')).toBe(true);
+        expect(libraryUrlAwaitingChannelSwitch('/test/channels/off%20topic', 'test', 'off topic')).toBe(false);
+        expect(libraryUrlAwaitingChannelSwitch('/test/messages/@ada', 'test', 'off-topic')).toBe(false);
+        expect(libraryUrlAwaitingChannelSwitch('/test/channels/off-topic', '', 'off-topic')).toBe(false);
+        expect(libraryUrlAwaitingChannelSwitch('/test/channels/off-topic', 'test', '')).toBe(false);
     });
 
     test('buildLibraryArtifactBookmarkUrl encodes path and query', () => {

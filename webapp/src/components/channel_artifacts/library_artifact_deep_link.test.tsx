@@ -53,13 +53,24 @@ const entry = {
 
 function renderLink(): Store {
     const entities = (state = {
-        channels: {currentChannelId: ''},
+        channels: {currentChannelId: '', channels: {} as Record<string, {name: string; team_id: string}>},
         general: {config: {}, license: {}},
         users: {currentUserId: 'user', profiles: {}},
-        teams: {currentTeamId: '', teams: {}},
-    }, action: {type: string; id?: string}) => {
+        teams: {currentTeamId: '', teams: {} as Record<string, {name: string}>},
+    }, action: {
+        type: string;
+        id?: string;
+        channel?: {name: string; team_id: string};
+        team?: {id: string; name: string};
+    }) => {
         if (action.type === 'SET_CHANNEL') {
-            return {...state, channels: {currentChannelId: action.id || ''}};
+            const channels = action.channel && action.id ? {...state.channels.channels, [action.id]: action.channel} : state.channels.channels;
+            const teams = action.team ? {...state.teams.teams, [action.team.id]: {name: action.team.name}} : state.teams.teams;
+            return {
+                ...state,
+                channels: {currentChannelId: action.id || '', channels},
+                teams: {...state.teams, teams},
+            };
         }
         return state;
     };
@@ -276,5 +287,116 @@ describe('LibraryArtifactDeepLink', () => {
         });
         expect(screen.queryByTestId('html-artifact-fullscreen')).toBeNull();
         expect(listChannelArtifacts).toHaveBeenCalledWith(otherChannelId);
+    });
+
+    test('waits to open when the url names a channel redux has not selected', async () => {
+        const townSquareId = 'townsquare012345678901234';
+        jest.mocked(listChannelArtifacts).mockResolvedValue({
+            entries: [entry],
+            can_manage: true,
+            download_enabled: true,
+            render_enabled: true,
+        });
+        const store = renderLink();
+        act(() => {
+            store.dispatch({
+                type: 'SET_CHANNEL_ARTIFACTS_ENABLED',
+                channelArtifactsEnabled: true,
+            });
+            store.dispatch({
+                type: 'SET_CHANNEL',
+                id: townSquareId,
+                channel: {name: 'town-square', team_id: 'team1'},
+                team: {id: 'team1', name: 'test'},
+            });
+        });
+        expect(listChannelArtifacts).not.toHaveBeenCalled();
+        expect(screen.queryByText('This channel artifact is unavailable.')).toBeNull();
+        expect(window.location.search).toContain(artifactId);
+
+        act(() => {
+            store.dispatch({
+                type: 'SET_CHANNEL',
+                id: channelId,
+                channel: {name: 'off-topic', team_id: 'team1'},
+                team: {id: 'team1', name: 'test'},
+            });
+        });
+        expect((await screen.findByTestId('html-artifact-fullscreen')).textContent).toBe(artifactId);
+        expect(listChannelArtifacts).toHaveBeenCalledTimes(1);
+        expect(listChannelArtifacts).toHaveBeenCalledWith(channelId);
+    });
+
+    test('keeps the query when the url changes before a miss comes back', async () => {
+        let resolveFirst: ((value: ChannelArtifactList) => void) | null = null;
+        jest.mocked(listChannelArtifacts).mockImplementation(() => new Promise((resolve) => {
+            resolveFirst = resolve;
+        }));
+        const store = renderLink();
+        act(() => {
+            store.dispatch({
+                type: 'SET_CHANNEL_ARTIFACTS_ENABLED',
+                channelArtifactsEnabled: true,
+            });
+            store.dispatch({
+                type: 'SET_CHANNEL',
+                id: channelId,
+                channel: {name: 'off-topic', team_id: 'team1'},
+                team: {id: 'team1', name: 'test'},
+            });
+        });
+        await waitFor(() => expect(listChannelArtifacts).toHaveBeenCalledWith(channelId));
+
+        window.history.replaceState({}, '', `/test/channels/town-square?mm_ai_library_artifact=${artifactId}`);
+        await act(async () => {
+            resolveFirst?.({
+                entries: [],
+                can_manage: false,
+                download_enabled: true,
+                render_enabled: true,
+            });
+        });
+        expect(screen.queryByText('This channel artifact is unavailable.')).toBeNull();
+        expect(window.location.search).toContain(artifactId);
+
+        jest.mocked(listChannelArtifacts).mockResolvedValue({
+            entries: [{...entry, channel_id: 'townsquare012345678901234'}],
+            can_manage: true,
+            download_enabled: true,
+            render_enabled: true,
+        });
+        act(() => {
+            store.dispatch({
+                type: 'SET_CHANNEL',
+                id: 'townsquare012345678901234',
+                channel: {name: 'town-square', team_id: 'team1'},
+                team: {id: 'team1', name: 'test'},
+            });
+        });
+        expect((await screen.findByTestId('html-artifact-fullscreen')).textContent).toBe(artifactId);
+    });
+
+    test('reports unavailable when the open channel matches the url and the artifact is missing', async () => {
+        jest.mocked(listChannelArtifacts).mockResolvedValue({
+            entries: [],
+            can_manage: false,
+            download_enabled: true,
+            render_enabled: true,
+        });
+        const store = renderLink();
+        act(() => {
+            store.dispatch({
+                type: 'SET_CHANNEL_ARTIFACTS_ENABLED',
+                channelArtifactsEnabled: true,
+            });
+            store.dispatch({
+                type: 'SET_CHANNEL',
+                id: channelId,
+                channel: {name: 'off-topic', team_id: 'team1'},
+                team: {id: 'team1', name: 'test'},
+            });
+        });
+        expect(await screen.findByText('This channel artifact is unavailable.')).toBeTruthy();
+        expect(window.location.search).not.toContain('mm_ai_library_artifact');
     });
 });
