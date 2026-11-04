@@ -193,22 +193,23 @@ interface FieldValueProps {
     resolveId: (id: string) => string | undefined;
 }
 
-// A resolved ID shows its name and keeps the raw ID as the hover title.
-function labelFor(raw: string, resolveId: (id: string) => string | undefined) {
-    const name = resolveId(raw);
-    return {text: name ?? raw, title: name ? raw : undefined}; // eslint-disable-line no-undefined
-}
+const IdHint = styled.span`
+    margin-left: 8px;
+    font-size: 12px;
+    line-height: 20px;
+    color: rgba(var(--center-channel-color-rgb), 0.56);
+    overflow-wrap: anywhere;
+`;
 
+// The raw ID is always the primary value; a resolved name is secondary text.
 const FieldValue: React.FC<FieldValueProps> = ({value, clamped, resolveId}) => {
     if (typeof value === 'string') {
-        const label = labelFor(value, resolveId);
+        const hint = resolveId(value);
         return (
-            <StringValue
-                $clamped={clamped}
-                title={label.title}
-            >
-                {label.text}
-            </StringValue>
+            <>
+                <StringValue $clamped={clamped}>{value}</StringValue>
+                {hint && <IdHint>{hint}</IdHint>}
+            </>
         );
     }
     if (isPrimitive(value)) {
@@ -221,14 +222,12 @@ const FieldValue: React.FC<FieldValueProps> = ({value, clamped, resolveId}) => {
         return (
             <PillRow>
                 {value.map((item, idx) => {
-                    const label = typeof item === 'string' ? labelFor(item, resolveId) : {text: scalarText(item), title: undefined}; // eslint-disable-line no-undefined
+                    const hint = typeof item === 'string' ? resolveId(item) : undefined; // eslint-disable-line no-undefined
                     return (
-                        <ValuePill
-                            key={idx}
-                            title={label.title}
-                        >
-                            {label.text}
-                        </ValuePill>
+                        <React.Fragment key={idx}>
+                            <ValuePill>{scalarText(item)}</ValuePill>
+                            {hint && <IdHint>{hint}</IdHint>}
+                        </React.Fragment>
                     );
                 })}
             </PillRow>

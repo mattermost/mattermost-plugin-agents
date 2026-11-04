@@ -4,6 +4,7 @@
 import {useEffect, useMemo, useState} from 'react';
 
 import {getChannel, getPost, getProfilesByIds, getTeamsByIds} from '@/client';
+import {isValidId} from '@/utils/ids';
 
 import {JSONValue} from './tool_types';
 
@@ -18,11 +19,12 @@ const kindPatterns: Array<[IdKind, RegExp]> = [
     ['post', /(^|_)(post|root|thread|parent)_ids?$/],
 ];
 
-// Resolved names outlive a single card so a re-rendered or reloaded post
-// doesn't refetch what it already looked up.
-const resolvedNames = new Map<string, string>();
-const failedRefs = new Set<string>();
+// Hints are secondary text shown next to the raw ID, which always stays the
+// primary value: user-authored names and post text must never stand in for the
+// identifier the server will act on. Cached per session.
+const hints = new Map<string, string>();
 const inflight = new Map<string, Promise<void>>();
+const teamLookups = new Map<string, Promise<string>>();
 
 function refKey(kind: IdKind, id: string) {
     return `${kind}:${id}`;
@@ -35,85 +37,95 @@ export function idKindForKey(key: string): IdKind | null {
 
 function idsOf(value: JSONValue): string[] {
     if (typeof value === 'string') {
-        return value === '' ? [] : [value];
+        return isValidId(value) ? [value] : [];
     }
     if (Array.isArray(value)) {
-        return value.filter((item): item is string => typeof item === 'string' && item !== '');
+        return value.filter(isValidId);
     }
     return [];
 }
 
-function snippet(message: string) {
-    const flat = message.replace(/\s+/g, ' ').trim();
-    return flat.length > POST_SNIPPET_LENGTH ? `${flat.slice(0, POST_SNIPPET_LENGTH)}…` : flat;
-}
-
-// Mirrors llm.SanitizeNonPrintableChars: names and post text are user-authored,
-// so bidi and invisible characters must not alter what an approval card says.
-const unsafeChars = /(?![ \n\t\r])[\p{C}\p{Z}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}]/gu;
+// Mirrors llm.SanitizeNonPrintableChars, and folds all whitespace (including
+// newlines) so a display name can't fake a second line.
+const unsafeChars = /[\p{C}\p{Z}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}]/gu;
 
 function escapeUnsafe(text: string) {
-    return text.replace(unsafeChars, (ch) => `[U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}]`);
+    return text.replace(unsafeChars, (ch) => {
+        if ((/\s/).test(ch)) {
+            return ' ';
+        }
+        return `[U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}]`;
+    }).replace(/ {2,}/g, ' ').trim();
 }
 
-// A label never stands alone: it carries the unique, non-spoofable identifier
-// (username, channel/team name, post ID) so approving a card can't be steered
-// by a lookalike display name or post text.
-function withIdentifier(label: string, identifier: string) {
-    return label && label !== identifier ? `${label} (${identifier})` : identifier;
+function clip(text: string) {
+    return text.length > POST_SNIPPET_LENGTH ? `${text.slice(0, POST_SNIPPET_LENGTH)}…` : text;
 }
 
-async function fetchName(kind: Exclude<IdKind, 'user'>, id: string): Promise<string> {
+// One lookup per team ID, shared by every channel in that team. Falls back to
+// the team ID when the team can't be read; a failed lookup isn't remembered.
+function teamHandle(teamId: string): Promise<string> {
+    let lookup = teamLookups.get(teamId);
+    if (!lookup) {
+        lookup = getTeamsByIds([teamId]).then(([team]) => (team?.id === teamId ? team.name : teamId)).catch(() => {
+            teamLookups.delete(teamId);
+            return teamId;
+        });
+        teamLookups.set(teamId, lookup);
+    }
+    return lookup;
+}
+
+// Responses for any other ID than the one requested are ignored.
+async function fetchHint(kind: Exclude<IdKind, 'user'>, id: string): Promise<string> {
     switch (kind) {
     case 'team': {
         const [team] = await getTeamsByIds([id]);
-        return withIdentifier(team.display_name, team.name);
+        return team?.id === id ? `${team.display_name} · ${team.name}` : '';
     }
     case 'channel': {
         const channel = await getChannel(id);
-        const [team] = channel.team_id ? await getTeamsByIds([channel.team_id]).catch(() => []) : [];
-        return withIdentifier(channel.display_name, team ? `~${channel.name} · ${team.name}` : `~${channel.name}`);
+        if (channel.id !== id) {
+            return '';
+        }
+        const team = channel.team_id && isValidId(channel.team_id) ? await teamHandle(channel.team_id) : '';
+        return [channel.display_name, `~${channel.name}`, team].filter(Boolean).join(' · ');
     }
     default: {
         const post = await getPost(id);
-        return snippet(post.message) ? `${snippet(post.message)} (${id})` : '';
+        return post.id === id ? clip(post.message.replace(/\s+/g, ' ').trim()) : '';
     }
     }
 }
 
 // Each ID settles on its own, so one missing team, channel or post never
-// discards the names that did resolve.
-async function fetchNames(kind: IdKind, ids: string[]): Promise<Array<[string, string]>> {
+// discards the hints that did resolve.
+async function fetchHints(kind: IdKind, ids: string[]): Promise<Array<[string, string]>> {
     if (kind === 'user') {
         const profiles = await getProfilesByIds(ids);
-        return profiles.map((profile) => [profile.id, escapeUnsafe(`@${profile.username}`)]);
+        return profiles.filter((profile) => ids.includes(profile.id)).map((profile) => [profile.id, `@${profile.username}`]);
     }
-    const settled = await Promise.allSettled(ids.map((id) => fetchName(kind, id)));
+    const settled = await Promise.allSettled(ids.map((id) => fetchHint(kind, id)));
     return settled.flatMap((result, i) => (
-        result.status === 'fulfilled' && result.value ? [[ids[i], escapeUnsafe(result.value)] as [string, string]] : []
+        result.status === 'fulfilled' && result.value ? [[ids[i], result.value] as [string, string]] : []
     ));
 }
 
-// Starts one batched lookup per kind for the IDs nobody has resolved, failed or
-// started yet, and calls onSettled as each lookup finishes. Each ID's result is
-// stored independently of the others and of whichever hook asked.
+// Starts one batched lookup per kind for the IDs nobody has resolved or
+// started yet, and calls onSettled as each lookup finishes. Each ID's result
+// is stored independently of the others and of whichever hook asked.
 function resolveRefs(refs: Array<{kind: IdKind; id: string}>, onSettled: () => void) {
     const idsByKind = new Map<IdKind, string[]>();
     for (const {kind, id} of refs) {
         const key = refKey(kind, id);
-        if (!resolvedNames.has(key) && !failedRefs.has(key) && !inflight.has(key)) {
+        if (!hints.has(key) && !inflight.has(key)) {
             idsByKind.set(kind, [...(idsByKind.get(kind) ?? []), id]);
         }
     }
     idsByKind.forEach((ids, kind) => {
-        const lookup = fetchNames(kind, ids).catch(() => [] as Array<[string, string]>).then((names) => {
-            names.forEach(([id, name]) => resolvedNames.set(refKey(kind, id), name));
-            ids.forEach((id) => {
-                inflight.delete(refKey(kind, id));
-                if (!resolvedNames.has(refKey(kind, id))) {
-                    failedRefs.add(refKey(kind, id));
-                }
-            });
+        const lookup = fetchHints(kind, ids).catch(() => [] as Array<[string, string]>).then((found) => {
+            found.forEach(([id, hint]) => hints.set(refKey(kind, id), escapeUnsafe(hint)));
+            ids.forEach((id) => inflight.delete(refKey(kind, id)));
         });
         ids.forEach((id) => inflight.set(refKey(kind, id), lookup));
     });
@@ -121,11 +133,10 @@ function resolveRefs(refs: Array<{kind: IdKind; id: string}>, onSettled: () => v
 }
 
 /**
- * Resolves the opaque Mattermost IDs held by a tool call's ID-named arguments
- * (user_id, channel_ids, team_id, post_id, ...) to human-readable names.
- * Returns a lookup that yields undefined until an ID is resolved, or for
- * IDs that can't be (missing permission, deleted, other kinds of ID), so the
- * caller keeps showing the raw value.
+ * Looks up secondary hints (@username, display name · ~channel · team, post
+ * snippet) for the Mattermost IDs held by a tool call's ID-named arguments.
+ * Only well-formed IDs are ever sent to the server. Returns a lookup that
+ * yields undefined until a hint is available, or for IDs that have none.
  */
 export function useResolvedIds(entries: Array<[string, JSONValue]>): (key: string, id: string) => string | undefined {
     const refs = useMemo(() => {
@@ -160,12 +171,12 @@ export function useResolvedIds(entries: Array<[string, JSONValue]>): (key: strin
 
     return (key, id) => {
         const kind = idKindForKey(key);
-        return kind ? resolvedNames.get(refKey(kind, id)) : undefined; // eslint-disable-line no-undefined
+        return kind ? hints.get(refKey(kind, id)) : undefined; // eslint-disable-line no-undefined
     };
 }
 
 export function clearResolvedIdsForTest() {
-    resolvedNames.clear();
-    failedRefs.clear();
+    hints.clear();
     inflight.clear();
+    teamLookups.clear();
 }
