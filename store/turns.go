@@ -281,16 +281,16 @@ type turnSpanRow struct {
 
 // runSpanEnd returns how many of the turns after a streaming anchor the
 // anchor must move past to end its run: up to the last turn written by its
-// run (RunPostID), within the window that ends at the next user turn or
-// another post's anchor. Other runs' turns inside that window are skipped, so
-// the run's own later rounds still come before the anchor.
+// run (RunPostID), within the window that ends at the next user turn. Other
+// runs' turns inside that window, including their anchors, are skipped, so the
+// run's own later rounds still come before the anchor.
 func runSpanEnd(later []turnSpanRow, postID *string) int {
 	if postID == nil {
 		return 0
 	}
 	end := 0
 	for i, turn := range later {
-		if turn.Role == "user" || (turn.PostID != nil && *turn.PostID != *postID) {
+		if turn.Role == "user" {
 			break
 		}
 		if turn.RunPostID != nil && *turn.RunPostID == *postID {
