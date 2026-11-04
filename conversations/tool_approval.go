@@ -260,6 +260,16 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return err
 	}
 
+	// Hold the post's streaming context before recording the decision: a
+	// click that arrives while the earlier stream is still finishing fails
+	// here, leaving the decision pending so the click can be retried.
+	followUp, err := c.acquireFollowUpStream(ctx, post.Id)
+	if err != nil {
+		return err
+	}
+	defer followUp.release()
+	ctx = followUp.ctx
+
 	claimedContent, err := c.claimToolDecision(pendingTurn, pendingBlocks)
 	if err != nil {
 		return err
@@ -489,7 +499,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return nil
 	}
 
-	err = c.streamToolFollowUp(ctx, policy, post, conv, followUpOptions{UserRejected: userRejected, ApprovalContext: llmContext, OnRunEnd: d.release})
+	err = c.streamToolFollowUp(ctx, policy, post, conv, followUpOptions{UserRejected: userRejected, ApprovalContext: llmContext, OnRunEnd: d.release, Stream: followUp})
 	followUpStarted = err == nil
 	return err
 }
@@ -697,6 +707,18 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 		}
 	}
 
+	var followUp *followUpStream
+	if !policy.isDM && clickedPostHasExecutedTool {
+		// As in HandleToolCall, take the streaming context before the
+		// decision is written so a failed acquire leaves it retryable.
+		followUp, err = c.acquireFollowUpStream(ctx, post.Id)
+		if err != nil {
+			return err
+		}
+		defer followUp.release()
+		ctx = followUp.ctx
+	}
+
 	updates := slices.Concat(decisionUpdates, otherUpdates)
 	for i, update := range updates {
 		swapped, updateErr := c.convService.CompareAndSwapTurnContent(update.turn.ID, update.turn.Content, update.content)
@@ -730,7 +752,7 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 
 	// Channel second-stage follow-up rebuilds a fresh llmContext without in-request
 	// WebSearch data; citation decoration is DM-only via HandleToolCall's llmContext.
-	err = c.streamToolFollowUp(ctx, policy, post, conv, followUpOptions{UserRejected: clickedPostUserRejected, OnRunEnd: d.release})
+	err = c.streamToolFollowUp(ctx, policy, post, conv, followUpOptions{UserRejected: clickedPostUserRejected, OnRunEnd: d.release, Stream: followUp})
 	followUpStarted = err == nil
 	return err
 }
@@ -746,6 +768,32 @@ type followUpOptions struct {
 	ApprovalContext *llm.Context
 	// OnRunEnd, when set, runs once the follow-up stream ends.
 	OnRunEnd func()
+	// Stream is the post's streaming context when the caller already holds
+	// it; streamToolFollowUp acquires it otherwise.
+	Stream *followUpStream
+}
+
+// followUpStream is a held streaming context for a post. The holder releases
+// it unless a stream took it over.
+type followUpStream struct {
+	c         *Conversations
+	postID    string
+	ctx       context.Context
+	handedOff bool
+}
+
+func (c *Conversations) acquireFollowUpStream(ctx context.Context, postID string) (*followUpStream, error) {
+	streamCtx, err := c.streamingService.GetStreamingContext(ctx, postID)
+	if err != nil {
+		return nil, err
+	}
+	return &followUpStream{c: c, postID: postID, ctx: streamCtx}, nil
+}
+
+func (f *followUpStream) release() {
+	if !f.handedOff {
+		f.c.streamingService.FinishStreaming(f.postID)
+	}
 }
 
 // streamToolFollowUp rebuilds the completion request from the conversation and
@@ -763,6 +811,17 @@ func (c *Conversations) streamToolFollowUp(
 ) error {
 	ctx, span := telemetry.Tracer().Start(ctx, "tool followup completion")
 	defer span.End()
+
+	// Stop must reach the tool loop, not only the stream that follows it.
+	followUp := opts.Stream
+	if followUp == nil {
+		var err error
+		if followUp, err = c.acquireFollowUpStream(ctx, post.Id); err != nil {
+			return err
+		}
+		defer followUp.release()
+	}
+	ctx = followUp.ctx
 
 	if opts.Unattended {
 		unattended := *policy
@@ -814,18 +873,14 @@ func (c *Conversations) streamToolFollowUp(
 
 	// Stream onto the same post; finalize demotes the prior anchor so
 	// resolved tool cards remain visible alongside the new round.
-	if err := c.streamToExistingPost(ctx, stream, post, policy.user, policy.channel, true, func() {
+	followUp.handedOff = true
+	c.streamToExistingPostOnContext(ctx, stream, post, policy.user, policy.channel, true, func() {
 		cancelLoop()
 		c.awaitToolRunner(runResult.Done, post.Id)
 		if opts.OnRunEnd != nil {
 			opts.OnRunEnd()
 		}
-	}); err != nil {
-		cancelLoop()
-		c.awaitToolRunner(runResult.Done, post.Id)
-		return fmt.Errorf("failed to stream tool follow-up: %w", err)
-	}
-
+	})
 	return nil
 }
 

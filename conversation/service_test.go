@@ -3126,6 +3126,62 @@ func TestGetInitiatingUserTurn(t *testing.T) {
 		require.NoError(t, err)
 		assert.Nil(t, got)
 	})
+
+	// Wakes resume user2's run: a wake post maps to user2, however many
+	// wakes deep, and so does a canceled-wake note recorded after a message.
+	addAssistant := func(conversationID, postID string) {
+		require.NoError(t, s.CreateTurnAutoSequence(&store.Turn{
+			ID: model.NewId(), ConversationID: conversationID, Role: "assistant",
+			PostID: &postID, Content: assistantContent, CreatedAt: model.GetMillis(),
+		}))
+	}
+	require.NoError(t, svc.AppendSyntheticUserTurn(convID, SyntheticKindWake, "wake"))
+	addAssistant(convID, "wake-post-1")
+	require.NoError(t, svc.AppendSyntheticUserTurn(convID, SyntheticKindWake, "wake"))
+	addAssistant(convID, "wake-post-2")
+
+	r3, steerErr := svc.GetOrCreateConversation(GetOrCreateParams{
+		UserID: userID, BotID: botID, ChannelID: "chan", RootPostID: rootPost,
+		Operation: "conversation", UserMessage: "msg3", UserPostID: new("post-u3"),
+	})
+	require.NoError(t, steerErr)
+	require.NoError(t, svc.AppendSyntheticUserTurn(convID, SyntheticKindWakeCanceled, "canceled"))
+	addAssistant(convID, "post-C")
+
+	// A conversation whose only user turn is synthetic has no initiator.
+	onlySynthetic, createErr := svc.CreateConversation(CreateConversationParams{
+		UserID: userID, BotID: botID, Operation: "conversation", SystemPrompt: "p",
+	})
+	require.NoError(t, createErr)
+	syntheticConv := onlySynthetic.ConversationID
+	wakeContent, marshalErr := marshalBlocks([]ContentBlock{{Type: BlockTypeText, Text: "wake", SyntheticKind: SyntheticKindWake}})
+	require.NoError(t, marshalErr)
+	require.NoError(t, s.UpdateTurnContent(onlySynthetic.UserTurnID, wakeContent))
+	addAssistant(syntheticConv, "orphan-wake-post")
+
+	tests := []struct {
+		name   string
+		convID string
+		postID string
+		wantID string
+	}{
+		{name: "first wake post maps to the waiting run's user turn", convID: convID, postID: "wake-post-1", wantID: user2ID},
+		{name: "consecutive wake post maps to the waiting run's user turn", convID: convID, postID: "wake-post-2", wantID: user2ID},
+		{name: "canceled-wake note does not hide the steering message", convID: convID, postID: "post-C", wantID: r3.UserTurnID},
+		{name: "no real user turn returns nil", convID: syntheticConv, postID: "orphan-wake-post"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := svc.GetInitiatingUserTurn(tt.convID, tt.postID)
+			require.NoError(t, err)
+			if tt.wantID == "" {
+				assert.Nil(t, got)
+				return
+			}
+			require.NotNil(t, got)
+			assert.Equal(t, tt.wantID, got.ID)
+		})
+	}
 }
 
 func TestGetPreviousUserTurn(t *testing.T) {
