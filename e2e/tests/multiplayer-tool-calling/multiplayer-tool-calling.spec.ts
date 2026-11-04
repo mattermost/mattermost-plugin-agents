@@ -1,7 +1,8 @@
 // spec: tests/multiplayer-tool-calling/multiplayer-tool-calling.plan.md
 // seed: tests/seed.spec.ts
 
-import {test, expect, Page} from '@playwright/test';
+import {expect, Page} from '@playwright/test';
+import {containerTest} from 'helpers/container-fixture';
 
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {
@@ -17,6 +18,7 @@ import {
     expectNoToolActivity,
     expectToolActivityCurrent,
     TOOL_CARD_SELECTOR,
+    toolCard,
 } from 'helpers/llmbot-post';
 import MattermostContainer, {getTownSquareChannel, TownSquareChannel} from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
@@ -89,51 +91,22 @@ async function captureReplyCount(page: Page): Promise<number> {
 
 async function waitForReplyAndOpenThread(page: Page, countBeforeSend: number, timeout: number = 120000): Promise<void> {
     const replyIndicator = page.getByText(/\d+ repl/);
-    const startTime = Date.now();
 
-    while (Date.now() - startTime < timeout) {
-        const currentCount = await replyIndicator.count().catch(() => 0);
-        if (currentCount > countBeforeSend) {
-            const lastIndicator = replyIndicator.last();
-            if (await lastIndicator.isVisible().catch(() => false)) {
-                await lastIndicator.click();
-                await page.locator('#rhsContainer').waitFor({state: 'visible', timeout: 10000});
-                await page.waitForTimeout(1000);
-                return;
-            }
-        }
-        await page.waitForTimeout(1000);
-    }
+    await expect.poll(() => replyIndicator.count().catch(() => 0), {
+        timeout,
+        message: 'Timeout waiting for bot reply in thread',
+    }).toBeGreaterThan(countBeforeSend);
 
-    throw new Error('Timeout waiting for bot reply in thread');
+    await expect(replyIndicator.last()).toBeVisible({timeout: 10000});
+    await replyIndicator.last().click();
+    await expect(page.locator('#rhsContainer')).toBeVisible({timeout: 10000});
 }
 
 async function openLatestThread(page: Page, timeout: number = 30000): Promise<void> {
     const replyIndicator = page.getByText(/\d+ repl/);
     await expect(replyIndicator.last()).toBeVisible({timeout});
     await replyIndicator.last().click();
-    await page.locator('#rhsContainer').waitFor({state: 'visible', timeout: 10000});
-    await page.waitForTimeout(1000);
-}
-
-async function waitForButtonInThread(page: Page, buttonName: string, timeout: number = 120000, throwOnTimeout: boolean = true): Promise<boolean> {
-    const startTime = Date.now();
-    const rhs = page.locator('#rhsContainer');
-
-    while (Date.now() - startTime < timeout) {
-        const button = rhs.getByRole('button', {name: buttonName, exact: true});
-        if (await button.first().isVisible().catch(() => false)) {
-            await page.waitForTimeout(500);
-            return true;
-        }
-        await page.waitForTimeout(1000);
-    }
-
-    if (throwOnTimeout) {
-        throw new Error(`Timeout waiting for '${buttonName}' button in thread`);
-    }
-
-    return false;
+    await expect(page.locator('#rhsContainer')).toBeVisible({timeout: 10000});
 }
 
 async function waitForAnyButtonInThread(
@@ -142,40 +115,46 @@ async function waitForAnyButtonInThread(
     timeout: number = 120000,
     throwOnTimeout: boolean = true,
 ): Promise<string | null> {
-    const startTime = Date.now();
     const rhs = page.locator('#rhsContainer');
+    let found: string | null = null;
 
-    while (Date.now() - startTime < timeout) {
-        for (const buttonName of buttonNames) {
-            const button = rhs.getByRole('button', {name: buttonName, exact: true});
-            if (await button.first().isVisible().catch(() => false)) {
-                await page.waitForTimeout(500);
-                return buttonName;
+    try {
+        await expect.poll(async () => {
+            found = null;
+            for (const buttonName of buttonNames) {
+                const button = rhs.getByRole('button', {name: buttonName, exact: true});
+                if (await button.first().isVisible().catch(() => false)) {
+                    found = buttonName;
+                    break;
+                }
             }
+            return found;
+        }, {timeout}).not.toBeNull();
+    } catch {
+        if (throwOnTimeout) {
+            throw new Error(`Timeout waiting for one of buttons in thread: ${buttonNames.join(', ')}`);
         }
-        await page.waitForTimeout(1000);
+        return null;
     }
 
-    if (throwOnTimeout) {
-        throw new Error(`Timeout waiting for one of buttons in thread: ${buttonNames.join(', ')}`);
-    }
-
-    return null;
+    return found;
 }
 
 async function clickAllButtonsInThread(page: Page, buttonName: string): Promise<number> {
     const rhs = page.locator('#rhsContainer');
+    const buttons = rhs.getByRole('button', {name: buttonName, exact: true});
     let clicked = 0;
 
     while (true) {
-        const button = rhs.getByRole('button', {name: buttonName, exact: true}).first();
+        const button = buttons.first();
         if (!(await button.isVisible().catch(() => false))) {
             return clicked;
         }
 
+        const countBeforeClick = await buttons.count();
         await button.click();
         clicked++;
-        await page.waitForTimeout(500);
+        await expect.poll(() => buttons.count(), {timeout: 15000}).toBeLessThan(countBeforeClick);
     }
 }
 
@@ -194,12 +173,16 @@ async function completeOneToolCallRound(page: Page, action: 'accept-share' | 'ac
     if (firstDecisionButton === 'Accept') {
         if (action === 'reject') {
             await clickAllButtonsInThread(page, 'Reject');
-            await page.waitForTimeout(2000);
             return true;
         }
 
-        await clickAllButtonsInThread(page, 'Accept');
-        await waitForButtonInThread(page, 'Share', 120000);
+        const rhs = page.locator('#rhsContainer');
+        await expect(async () => {
+            if (await rhs.getByRole('button', {name: 'Accept', exact: true}).first().isVisible().catch(() => false)) {
+                await clickAllButtonsInThread(page, 'Accept');
+            }
+            await expect(rhs.getByRole('button', {name: 'Share', exact: true}).first()).toBeVisible({timeout: 20000});
+        }).toPass({timeout: 120000});
     }
 
     if (action === 'accept-share' || action === 'reject') {
@@ -208,7 +191,6 @@ async function completeOneToolCallRound(page: Page, action: 'accept-share' | 'ac
         await clickAllButtonsInThread(page, 'Keep private');
     }
 
-    await page.waitForTimeout(2000);
     return true;
 }
 
@@ -228,34 +210,37 @@ async function completeAllToolCallRounds(page: Page, action: 'accept-share' | 'a
 }
 
 async function waitForApprovalFlowToSettle(page: Page, timeout: number = 30000): Promise<void> {
-    const startTime = Date.now();
     const rhs = page.locator('#rhsContainer');
+    const decisionButtons = rhs.getByRole('button', {name: /^(Accept|Reject|Share|Keep private)$/});
 
-    while (Date.now() - startTime < timeout) {
-        const hasAccept = await rhs.getByRole('button', {name: 'Accept'}).first().isVisible().catch(() => false);
-        const hasReject = await rhs.getByRole('button', {name: 'Reject'}).first().isVisible().catch(() => false);
-        const hasShare = await rhs.getByRole('button', {name: 'Share'}).first().isVisible().catch(() => false);
-        const hasKeepPrivate = await rhs.getByRole('button', {name: 'Keep private'}).first().isVisible().catch(() => false);
-
-        if (!hasAccept && !hasReject && !hasShare && !hasKeepPrivate) {
-            await page.waitForTimeout(2000);
-            return;
-        }
-        await page.waitForTimeout(1000);
-    }
-
-    throw new Error('Timeout waiting for tool approval flow to settle');
+    await expect(decisionButtons.filter({visible: true})).toHaveCount(0, {timeout});
+    await expect(rhs.getByTestId('stop-generating-button').filter({visible: true})).toHaveCount(0, {timeout});
 }
 
 async function waitForPageReady(page: Page): Promise<void> {
     await page.waitForSelector('[class*="channel-header"], #channelHeaderInfo', {timeout: 30000});
-    await page.waitForTimeout(2000);
+    await expect(page.locator('#post_textbox')).toBeVisible({timeout: 30000});
 }
 
 async function navigateToChannel(page: Page, baseUrl: string, channelName: string = 'off-topic'): Promise<void> {
     await page.goto(`${baseUrl}/test/channels/${channelName}`);
     await waitForPageReady(page);
 }
+
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigAIMockContainer({
+        toolConfigs: MULTIPLAYER_ASK_TOOL_CONFIGS,
+        customInstructions: multiplayerCustomInstructions,
+        enableVectorIndex: true,
+        defaultBotName: 'toolbot',
+        botId: 'tool-test-bot',
+        botDisplayName: 'Tool Test Bot',
+    }));
+    const aimock = own(await RunAIMockSidecar(mattermost.network, {
+        fixtures: {fixtures: [buildTitleFixture('Multiplayer bootstrap')]},
+    }));
+    return { mattermost, aimock };
+});
 
 test.describe('Multiplayer Tool Calling (Aimock)', () => {
     // Serial: one shared Mattermost + aimock sidecar; each test reloads fixtures via setFixtures/restart.
@@ -265,28 +250,10 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
 
     let townSquare: TownSquareChannel;
 
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        mattermost = await RunToolConfigAIMockContainer({
-            toolConfigs: MULTIPLAYER_ASK_TOOL_CONFIGS,
-            customInstructions: multiplayerCustomInstructions,
-            enableVectorIndex: true,
-            defaultBotName: 'toolbot',
-            botId: 'tool-test-bot',
-            botDisplayName: 'Tool Test Bot',
-        });
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, aimock } = containers);
         await setupMultiplayerUsers(mattermost);
         townSquare = await getTownSquareChannel(mattermost, invokerUsername, invokerPassword);
-        aimock = await RunAIMockSidecar(mattermost.network, {
-            fixtures: {fixtures: [buildTitleFixture('Multiplayer bootstrap')]},
-        });
-    });
-
-    test.afterAll(async () => {
-        await aimock?.stop();
-        if (mattermost) {
-            await mattermost.stop();
-        }
     });
 
     test('Accept tool calls then Keep Private', async ({browser}) => {
@@ -341,7 +308,7 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
             // The second round's approval card renders without expanding,
             // while the resolved first round stays folded into the row above.
             const invokerPost = rhs.locator('[data-testid="llm-bot-post"]').last();
-            await expect(invokerPost.getByText(createPostToolLabel, {exact: true})).toBeVisible({timeout: 45000});
+            await expect(invokerPost.locator(TOOL_CARD_SELECTOR).getByText(createPostToolLabel, {exact: true})).toBeVisible({timeout: 45000});
             await expectToolActivityCurrent(invokerPost, getChannelInfoToolLabel);
             expect(await completeOneToolCallRound(invokerPage, 'accept-keep-private')).toBe(true);
 
@@ -411,8 +378,9 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
             await expect(onlookerBot).toBeVisible({timeout: 30000});
 
             // Onlookers owe no decision, so the pending call folds into the
-            // activity area instead of rendering as an approval card.
-            await expectToolActivityCurrent(onlookerBot, getChannelInfoToolLabel);
+            // activity area instead of rendering as an approval card, and the
+            // status line says who the response is waiting on.
+            await expectToolActivityCurrent(onlookerBot, `Waiting for @${invokerUsername} to approve tool use`);
             await expect(onlookerBot.getByText('Working...', {exact: true})).toHaveCount(0);
             await expect(onlookerRhs.getByRole('button', {name: 'Accept'})).not.toBeVisible();
             await expect(onlookerRhs.getByRole('button', {name: 'Reject'})).not.toBeVisible();
@@ -422,7 +390,7 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
 
             await waitForApprovalFlowToSettle(invokerPage);
 
-            await onlookerPage.waitForTimeout(3000);
+            await expect(onlookerRhs.getByText(happyFinalText).first()).toBeVisible({timeout: 60000});
             await expect(onlookerRhs.getByRole('button', {name: 'Accept'})).not.toBeVisible();
             await expect(onlookerRhs.getByRole('button', {name: 'Share'})).not.toBeVisible();
 
@@ -490,7 +458,7 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
             // collapsed activity area and only reappears when expanded.
             await expect(rhs.getByText(createPostToolLabel, {exact: true})).toHaveCount(0);
             const activityRounds = await expandToolActivity(rhs.locator('[data-testid="llm-bot-post"]').last());
-            await expect(activityRounds.getByText(createPostToolLabel, {exact: true})).toBeVisible({timeout: 30000});
+            await expect(toolCard(activityRounds, createPostToolLabel)).toBeVisible({timeout: 30000});
 
             await navigateToChannel(page, baseUrl, 'town-square');
             await expect(page.getByText(rejectPostText)).not.toBeVisible();
@@ -553,11 +521,12 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
             // Onlooker: the same round folds into the activity area, which
             // they can open, but its redacted card offers no expansion.
             const onlookerPost = onlookerPage.locator('#rhsContainer').locator('[data-testid="llm-bot-post"]').last();
-            await expectToolActivityCurrent(onlookerPost, getChannelInfoToolLabel);
+            await expectToolActivityCurrent(onlookerPost, `Waiting for @${invokerUsername} to approve tool use`);
             const onlookerRounds = await expandToolActivity(onlookerPost);
             const onlookerCard = onlookerRounds.locator(TOOL_CARD_SELECTOR).first();
             await expect(onlookerCard.getByText(getChannelInfoToolLabel, {exact: true})).toBeVisible({timeout: 30000});
             await expect(onlookerCard.locator(TOOL_CARD_CHEVRON_SELECTOR)).toHaveCount(0);
+            await expect(onlookerCard.getByText('Awaiting approval', {exact: true})).toBeVisible();
 
             await onlookerCard.getByText(getChannelInfoToolLabel, {exact: true}).click();
             await expect(onlookerCard.locator(TOOL_CARD_ARGUMENTS_SELECTOR)).toHaveCount(0);

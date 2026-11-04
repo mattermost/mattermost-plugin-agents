@@ -5,12 +5,12 @@ import React from 'react';
 import {useIntl, FormattedMessage} from 'react-intl';
 import styled from 'styled-components';
 
+import {AdminPanel} from '@mattermost/compass-ui/components/admin-panel';
+
 import {useIsLicensedFor} from '@/license';
 
-import {Pill} from '../../pill';
 import {LicenseChip} from '../enterprise_chip';
-import Panel from '../panel';
-import {BooleanItem, ItemList, SelectionItem, SelectionItemOption} from '../item';
+import {BooleanItem, ItemList, SelectionItem} from '../item';
 import {FloatItem, IntItem} from '../number_items';
 
 import {EmbeddingSearchConfig, HNSW_DEFAULTS, RECENCY_DEFAULTS, REINDEX_DEFAULTS, REINDEX_INDEX_STRATEGY, ReindexIndexStrategy, VECTOR_ELEMENT_TYPE, normalizeVectorElementType} from './types';
@@ -22,22 +22,15 @@ import {useJobStatus} from './use_job_status';
 import {embeddingIdentityMismatchKind} from './local_identity_mismatch';
 import {retentionWindowTightened, retentionWindowWidened} from './retention_window';
 
-const Horizontal = styled.div`
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 8px;
-`;
-
 const IndexStorageGroup = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 24px;
+    gap: var(--spacing-xxl);
 `;
 
 const IndexStorageTitle = styled.div`
-    font-weight: 600;
-    font-size: 14px;
+    font-weight: var(--font-weight-semibold);
+    font-size: var(--font-size-100);
     color: var(--center-channel-color);
 `;
 
@@ -168,13 +161,10 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
     const hasLocalModelMismatch = localMismatchReason !== '';
 
     return (
-        <Panel
-            title={
-                <Horizontal>
-                    <FormattedMessage defaultMessage='Embedding Search'/>
-                    <Pill><FormattedMessage defaultMessage='EXPERIMENTAL'/></Pill>
-                </Horizontal>
-            }
+        <AdminPanel
+            title={<FormattedMessage defaultMessage='Embedding Search'/>}
+            showBeta={true}
+            betaLabel={intl.formatMessage({defaultMessage: 'EXPERIMENTAL'})}
             subtitle={intl.formatMessage({defaultMessage: 'Configure embedding search settings. Note: The current implementation is experimental and subject to breaking changes. This includes having to reindex all posts.'})}
         >
             <ItemList>
@@ -227,21 +217,19 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                 <SelectionItem
                     label={intl.formatMessage({defaultMessage: 'Vector Store Type'})}
                     value={value.vectorStore.type}
-                    onChange={(e) => onChange({
+                    onChange={(type) => onChange({
                         ...value,
-                        vectorStore: {...value.vectorStore, type: e.target.value},
+                        vectorStore: {...value.vectorStore, type},
                     })}
-                >
-                    <SelectionItemOption value='pgvector'>{'PostgreSQL pgvector'}</SelectionItemOption>
-                </SelectionItem>
+                    options={[{value: 'pgvector', label: 'PostgreSQL pgvector'}]}
+                />
                 }
 
                 {isEnabled &&
                 <SelectionItem
                     label={intl.formatMessage({defaultMessage: 'Embedding Provider Type'})}
                     value={value.embeddingProvider.type}
-                    onChange={(e) => {
-                        const newType = e.target.value;
+                    onChange={(newType) => {
                         let newParameters = {};
                         if (newType === 'openai-compatible') {
                             newParameters = {embeddingModel: '', apiKey: '', apiURL: ''};
@@ -256,10 +244,11 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                             },
                         });
                     }}
-                >
-                    <SelectionItemOption value='openai'>{'OpenAI'}</SelectionItemOption>
-                    <SelectionItemOption value='openai-compatible'>{'OpenAI-compatible API'}</SelectionItemOption>
-                </SelectionItem>
+                    options={[
+                        {value: 'openai', label: 'OpenAI'},
+                        {value: 'openai-compatible', label: 'OpenAI-compatible API'},
+                    ]}
+                />
                 }
 
                 {isEnabled && value.embeddingProvider.type === 'openai' && (
@@ -307,19 +296,16 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                             <SelectionItem
                                 label={intl.formatMessage({defaultMessage: 'Vector precision'})}
                                 value={normalizeVectorElementType(value.vectorElementType)}
-                                onChange={(e) => onChange({
+                                onChange={(vectorElementType) => onChange({
                                     ...value,
-                                    vectorElementType: normalizeVectorElementType(e.target.value),
+                                    vectorElementType: normalizeVectorElementType(vectorElementType),
                                 })}
                                 helptext={intl.formatMessage({defaultMessage: 'Half precision uses less RAM and disk. Changing this drops the embeddings table; run a Full Reindex. Default is standard.'})}
-                            >
-                                <SelectionItemOption value={VECTOR_ELEMENT_TYPE.vector}>
-                                    {intl.formatMessage({defaultMessage: 'Standard (vector)'})}
-                                </SelectionItemOption>
-                                <SelectionItemOption value={VECTOR_ELEMENT_TYPE.halfvec}>
-                                    {intl.formatMessage({defaultMessage: 'Half precision (halfvec)'})}
-                                </SelectionItemOption>
-                            </SelectionItem>
+                                options={[
+                                    {value: VECTOR_ELEMENT_TYPE.vector, label: intl.formatMessage({defaultMessage: 'Standard (vector)'})},
+                                    {value: VECTOR_ELEMENT_TYPE.halfvec, label: intl.formatMessage({defaultMessage: 'Half precision (halfvec)'})},
+                                ]}
+                            />
                             <IntItem
                                 label={intl.formatMessage({defaultMessage: 'Index posts from the last N days'})}
                                 placeholder='0'
@@ -388,16 +374,13 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                         <SelectionItem
                             label={intl.formatMessage({defaultMessage: 'Reindex Index Strategy'})}
                             value={normalizeReindexIndexStrategy(value.reindexIndexStrategy)}
-                            onChange={(e) => onChange({...value, reindexIndexStrategy: normalizeReindexIndexStrategy(e.target.value)})}
+                            onChange={(strategy) => onChange({...value, reindexIndexStrategy: normalizeReindexIndexStrategy(strategy)})}
                             helptext={intl.formatMessage({defaultMessage: 'Controls how the vector index is handled during a full reindex. Dropping and rebuilding the index after the bulk load is much faster for large databases, but semantic search is unavailable until the rebuild completes.'})}
-                        >
-                            <SelectionItemOption value={REINDEX_INDEX_STRATEGY.maintain}>
-                                {intl.formatMessage({defaultMessage: 'Maintain index during reindex (default)'})}
-                            </SelectionItemOption>
-                            <SelectionItemOption value={REINDEX_INDEX_STRATEGY.defer}>
-                                {intl.formatMessage({defaultMessage: 'Drop and rebuild index after reindex (faster for large databases)'})}
-                            </SelectionItemOption>
-                        </SelectionItem>
+                            options={[
+                                {value: REINDEX_INDEX_STRATEGY.maintain, label: intl.formatMessage({defaultMessage: 'Maintain index during reindex (default)'})},
+                                {value: REINDEX_INDEX_STRATEGY.defer, label: intl.formatMessage({defaultMessage: 'Drop and rebuild index after reindex (faster for large databases)'})},
+                            ]}
+                        />
                     </>
                 )}
 
@@ -435,7 +418,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                 onConfirm={handleConfirmRebuildVectorIndex}
                 onCancel={handleCancelRebuildVectorIndex}
             />
-        </Panel>
+        </AdminPanel>
     );
 };
 

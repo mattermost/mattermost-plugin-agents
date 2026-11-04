@@ -102,7 +102,7 @@ func TestManagerConcurrentPortChanges(t *testing.T) {
 	}, noopLogger{}, nil)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -134,7 +134,7 @@ func TestManagerApplyVsDeactivate(t *testing.T) {
 	}, noopLogger{}, nil)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()

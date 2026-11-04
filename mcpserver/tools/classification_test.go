@@ -36,6 +36,11 @@ var expectedToolReadOnly = map[string]bool{
 	"delete_scheduled_post": false,
 	"set_post_reminder":     false,
 
+	// drafts
+	"list_drafts":  true,
+	"create_draft": false,
+	"delete_draft": false,
+
 	// reactions
 	"get_post_reactions":  true,
 	"list_custom_emoji":   true,

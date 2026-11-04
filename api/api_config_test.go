@@ -126,7 +126,7 @@ func setupTestRouter(store ConfigStore, updater ConfigUpdater, notifier ClusterN
 func newConfigTestMockAPI() *plugintest.API {
 	mockAPI := &plugintest.API{}
 	for i := 1; i <= 20; i++ {
-		args := make([]interface{}, i)
+		args := make([]any, i)
 		for j := range args {
 			args[j] = mock.Anything
 		}
@@ -143,23 +143,26 @@ func newConfigTestMockAPI() *plugintest.API {
 }
 
 func setupTestRouterWithMockAPI(store ConfigStore, updater ConfigUpdater, notifier ClusterNotifier) (*gin.Engine, *plugintest.API) {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-
 	mockAPI := newConfigTestMockAPI()
-	a := &API{
+	router := setupConfigTestRouter(&API{
 		configStore:     store,
 		configUpdater:   updater,
 		clusterNotifier: notifier,
 		pluginAPI:       pluginapi.NewClient(mockAPI, nil),
 		licenseChecker:  enterprisetest.CheckerAt(enterprise.LevelEnterpriseAdvanced),
-	}
+	})
+	return router, mockAPI
+}
+
+func setupConfigTestRouter(a *API) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
 
 	adminRouter := router.Group("/admin")
 	adminRouter.GET("/config", a.handleGetConfig)
 	adminRouter.PUT("/config", a.handleSaveConfig)
 
-	return router, mockAPI
+	return router
 }
 
 func TestHandleGetConfig(t *testing.T) {
@@ -323,6 +326,7 @@ func TestHandleSaveConfig(t *testing.T) {
 		requestBody           any
 		clusterErr            error
 		expectedStatus        int
+		expectedErrorCode     agentErrorCode
 		validateStore         func(t *testing.T, store *testConfigStore)
 		validateUpdater       func(t *testing.T, updater *testConfigUpdater)
 		validateClusterNotify func(t *testing.T, notifier *testClusterNotifier)
@@ -405,6 +409,37 @@ func TestHandleSaveConfig(t *testing.T) {
 			},
 		},
 		{
+			name:           "saves the number of agent versions to keep",
+			requestBody:    config.Config{AgentVersionsToKeep: 25},
+			expectedStatus: http.StatusOK,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				require.NotNil(t, store.cfg)
+				assert.Equal(t, 25, store.cfg.AgentVersionsToKeep)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				require.NotNil(t, updater.lastUpdate)
+				assert.Equal(t, 25, updater.lastUpdate.AgentVersionsToKeep)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 1, notifier.callCount)
+			},
+		},
+		{
+			name:           "rejects a negative number of agent versions to keep",
+			storedCfg:      &config.Config{AgentVersionsToKeep: 10},
+			requestBody:    config.Config{AgentVersionsToKeep: -1},
+			expectedStatus: http.StatusBadRequest,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Equal(t, 10, store.cfg.AgentVersionsToKeep)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 0, updater.callCount)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 0, notifier.callCount)
+			},
+		},
+		{
 			name:           "saves empty config",
 			requestBody:    config.Config{},
 			expectedStatus: http.StatusOK,
@@ -463,6 +498,52 @@ func TestHandleSaveConfig(t *testing.T) {
 			},
 			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
 				assert.Equal(t, 0, notifier.callCount)
+			},
+		},
+		{
+			name: "saves a valid link domain allowlist as entered",
+			requestBody: config.Config{
+				AllowUnsafeLinks:   true,
+				AllowedLinkDomains: "Example.com, *.mattermost.com",
+			},
+			expectedStatus: http.StatusOK,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				require.NotNil(t, store.cfg)
+				assert.Equal(t, "Example.com, *.mattermost.com", store.cfg.AllowedLinkDomains)
+			},
+		},
+		{
+			// An invalid entry matches nothing, so persisting it would quietly
+			// block links the admin meant to allow.
+			name: "rejects a link domain allowlist with invalid entries",
+			requestBody: config.Config{
+				AllowUnsafeLinks:   true,
+				AllowedLinkDomains: "example.com, not a host",
+			},
+			expectedStatus:    http.StatusBadRequest,
+			expectedErrorCode: configErrorInvalidLinkDomains,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 0, updater.callCount)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 0, notifier.callCount)
+			},
+		},
+		{
+			// The System Console hides the field while links are disabled, so
+			// a stale invalid value there must not block saving the toggle off.
+			name: "saves with an invalid link domain allowlist while links are disabled",
+			requestBody: config.Config{
+				AllowUnsafeLinks:   false,
+				AllowedLinkDomains: "example.com, not a host",
+			},
+			expectedStatus: http.StatusOK,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				require.NotNil(t, store.cfg)
+				assert.False(t, store.cfg.AllowUnsafeLinks)
 			},
 		},
 		{
@@ -572,6 +653,11 @@ func TestHandleSaveConfig(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			assert.Equal(t, tt.expectedStatus, w.Code)
+			if tt.expectedErrorCode != "" {
+				var resp agentErrorResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.Equal(t, tt.expectedErrorCode, resp.Code)
+			}
 			if tt.validateStore != nil {
 				tt.validateStore(t, store)
 			}
@@ -874,7 +960,7 @@ func TestHandleSaveConfigInsecureSandboxAuditLogConcurrent(t *testing.T) {
 		}
 	}
 	for i := 1; i <= 20; i++ {
-		args := make([]interface{}, i)
+		args := make([]any, i)
 		for j := range args {
 			args[j] = mock.Anything
 		}
@@ -908,7 +994,7 @@ func TestHandleSaveConfigInsecureSandboxAuditLogConcurrent(t *testing.T) {
 	const n = 8
 	var wg sync.WaitGroup
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for range n {
 		go func() {
 			defer wg.Done()
 			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
@@ -916,7 +1002,7 @@ func TestHandleSaveConfigInsecureSandboxAuditLogConcurrent(t *testing.T) {
 			req.Header.Set("Mattermost-User-Id", "adminuserid")
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
-			require.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, http.StatusOK, w.Code)
 		}()
 	}
 	wg.Wait()

@@ -1,22 +1,26 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState} from 'react';
+import React, {useContext, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
-import {ChevronDownIcon, ChevronRightIcon, CheckIcon, AlertCircleOutlineIcon, CloseCircleOutlineIcon, GlobeIcon, LockIcon} from '@mattermost/compass-icons/components';
+import {ChevronDownIcon, ChevronRightIcon, CheckIcon, AlertCircleOutlineIcon, ClockOutlineIcon, CloseCircleOutlineIcon, GlobeIcon, HelpCircleOutlineIcon, LockIcon} from '@mattermost/compass-icons/components';
 
-// eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
-import {OverlayTrigger, Tooltip} from 'react-bootstrap';
+import {Button} from '@mattermost/compass-ui/components/button';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
+import {Spinner} from '@mattermost/compass-ui/components/spinner';
+import {Tag} from '@mattermost/compass-ui/components/tag';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
-import {toolDisplayName} from '@/utils/tool_identity';
+import {originKind, toolDisplayName} from '@/utils/tool_identity';
+import {WAIT_TOOL_NAME, WaitStepClock, WaitStepLabel, WaitToolContext, parseWaitMinutes} from '@/components/llmbot_post/wait_status';
 
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
 import {ToolArgumentsRaw, ToolResultBody, hasInspectableArguments} from '../tool_arguments';
 import ToolStatusIcon from '../tool_status_icon';
 import MCPAppView from '../mcp_apps/mcp_app_view';
 
-import LoadingSpinner from '../assets/loading_spinner';
 import IconCheckCircle from '../assets/icon_check_circle';
 
 // Bordered card container; border/radius/shadow match QuestionCard.
@@ -72,19 +76,6 @@ const StatusContainer = styled.div`
     margin-top: 16px;
 `;
 
-const ProcessingSpinnerContainer = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 12px;
-    height: 12px;
-`;
-
-const ProcessingSpinner = styled(LoadingSpinner)`
-    width: 12px;
-    height: 12px;
-`;
-
 const SmallSuccessIcon = styled(CheckIcon)`
     color: var(--online-indicator);
     width: 12px;
@@ -97,19 +88,11 @@ const SmallRejectedIcon = styled(CloseCircleOutlineIcon)`
     height: 12px;
 `;
 
-const AutoApprovedBadge = styled.span`
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 0 6px;
-    height: 18px;
-    border-radius: 9px;
-    background: rgba(var(--online-indicator-rgb), 0.12);
-    font-size: 10px;
-    font-weight: 600;
-    line-height: 14px;
-    color: var(--online-indicator);
-    white-space: nowrap;
+const WaitingIcon = styled(ClockOutlineIcon)`
+    color: rgba(var(--center-channel-color-rgb), 0.64);
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
 `;
 
 const ResponseSuccessIcon = styled(IconCheckCircle)`
@@ -136,75 +119,18 @@ const ButtonContainer = styled.div`
     margin-top: 12px;
 `;
 
-// Accept renders as the filled primary action, Reject as the tinted secondary
-// (matching the design's confirm-button pair).
-const AcceptRejectButton = styled.button<{$primary?: boolean}>`
-    background: ${(props) => (props.$primary ? 'var(--button-bg)' : 'rgba(var(--button-bg-rgb), 0.08)')};
-    color: ${(props) => (props.$primary ? 'var(--button-color)' : 'var(--button-bg)')};
-    border: none;
-    padding: 6px 16px;
-	height: 32px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 16px;
-    cursor: pointer;
-
-    &:hover {
-        background: ${(props) => (props.$primary ? 'rgba(var(--button-bg-rgb), 0.88)' : 'rgba(var(--button-bg-rgb), 0.12)')};
-    }
-
-    &:active {
-        background: ${(props) => (props.$primary ? 'rgba(var(--button-bg-rgb), 0.92)' : 'rgba(var(--button-bg-rgb), 0.16)')};
-    }
-`;
-
-const ResultDecisionButton = styled.button<{$variant: 'primary' | 'secondary'}>`
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
-    height: 24px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 16px;
-    cursor: pointer;
-
-    border: 1px solid ${(props) => (props.$variant === 'primary' ? 'var(--button-bg)' : 'rgba(var(--button-bg-rgb), 0.16)')};
-    background: ${(props) => (props.$variant === 'primary' ? 'var(--button-bg)' : 'rgba(var(--button-bg-rgb), 0.08)')};
-    color: ${(props) => (props.$variant === 'primary' ? 'var(--button-color)' : 'var(--button-bg)')};
-
-    &:hover {
-        background: ${(props) => (props.$variant === 'primary' ? 'rgba(var(--button-bg-rgb), 0.88)' : 'rgba(var(--button-bg-rgb), 0.12)')};
-    }
-
-    &:active {
-        background: ${(props) => (props.$variant === 'primary' ? 'rgba(var(--button-bg-rgb), 0.92)' : 'rgba(var(--button-bg-rgb), 0.16)')};
-    }
-`;
-
-const ResultReviewCallout = styled.div`
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+const ResultReviewCallout = styled(SectionNotice)`
     margin-top: 12px;
-    padding: 12px;
-    border-radius: 8px;
-    border: 1px solid rgba(var(--error-text-color-rgb), 0.16);
-    background-color: rgba(var(--error-text-color-rgb), 0.04);
 `;
 
-const ResultReviewHeader = styled.div`
+const ResultReviewTitle = styled.span`
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 16px;
-    color: rgba(var(--center-channel-color-rgb), 0.75);
+    gap: 4px;
 `;
 
+// Native button with a bare svg: the notice title is a <p>, so compass
+// IconButton (which renders a <div> icon) cannot nest here.
 const ResultReviewHelpButton = styled.button`
     display: inline-flex;
     align-items: center;
@@ -217,51 +143,6 @@ const ResultReviewHelpButton = styled.button`
 
     &:hover {
         color: rgba(var(--center-channel-color-rgb), 0.72);
-    }
-`;
-
-const ResultReviewBody = styled.div`
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
-    color: rgba(var(--center-channel-color-rgb), 0.72);
-`;
-
-const TooltipTitle = styled.div`
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 16px;
-    margin-bottom: 4px;
-`;
-
-const TooltipBody = styled.div`
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
-    max-width: 320px;
-    opacity: 0.88;
-`;
-
-const ShareVisibilityTooltip = styled(Tooltip)`
-    .tooltip-arrow {
-        display: none;
-    }
-
-    .tooltip-inner {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        padding: 2px 8px;
-        border-radius: 10px;
-        max-width: none;
-
-        font-size: 11px;
-        font-weight: 600;
-        line-height: 16px;
-
-        color: var(--error-text);
-        background-color: var(--center-channel-bg);
-        border: 1px solid rgba(var(--error-text-color-rgb), 0.24);
     }
 `;
 
@@ -285,21 +166,6 @@ const RawToggleRow = styled.div`
     margin-top: 10px;
 `;
 
-const RawToggleButton = styled.button`
-    padding: 0;
-    border: none;
-    background: none;
-    cursor: pointer;
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 16px;
-    color: var(--link-color);
-
-    &:hover {
-        text-decoration: underline;
-    }
-`;
-
 export interface ToolCardShellProps {
     tool: ToolCall;
     isCollapsed: boolean;
@@ -320,12 +186,44 @@ export interface ToolCardShellProps {
     requesterUserID?: string;
     appsEligible?: boolean;
 
+    // The call waits on a decision from the requester, who is not this viewer.
+    awaitingRequester?: boolean;
+
     // The arguments body: the generic field list or a rich card's rendering.
     children?: React.ReactNode;
 }
 
 // Props for a card component: everything the shell takes except the body.
 export type RichCardProps = Omit<ToolCardShellProps, 'children'>;
+
+// renderHeaderStatusIcon picks the glyph shown left of a tool name: an amber
+// clock while a wait_for_async_work pause is active, the waiting glyph while a
+// call awaits the requester, else the standard status icon.
+function renderHeaderStatusIcon(opts: {
+    waitActive: boolean;
+    awaitingRequester: boolean;
+    isPending: boolean;
+    status: ToolCallStatus;
+    isProcessing: boolean;
+}): React.ReactNode {
+    if (opts.waitActive) {
+        return <WaitStepClock data-testid='llm-bot-wait-step-clock'/>;
+    }
+    if (opts.awaitingRequester && opts.isPending) {
+        return (
+            <WaitingIcon
+                size={12}
+                data-testid='llm-bot-tool-status-waiting'
+            />
+        );
+    }
+    return (
+        <ToolStatusIcon
+            status={opts.status}
+            isProcessing={opts.isProcessing}
+        />
+    );
+}
 
 /**
  * ToolCardShell renders the shared approval chrome for a tool call: expandable
@@ -349,10 +247,19 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
     postID,
     requesterUserID,
     appsEligible = false,
+    awaitingRequester = false,
     children,
 }) => {
     const {formatMessage} = useIntl();
     const [showRaw, setShowRaw] = useState(false);
+
+    // wait_for_async_work rows swap the green check for an amber "waiting"
+    // indicator while the pause is still pending; the context carries whether
+    // this post's wait is active.
+    const waitState = useContext(WaitToolContext);
+    const isWaitTool = tool.name === WAIT_TOOL_NAME && originKind(tool.server_origin) === 'builtin';
+    const waitActive = isWaitTool && Boolean(waitState?.active);
+    const waitMinutes = isWaitTool ? parseWaitMinutes(tool.arguments) : null;
 
     const isPending = tool.status === ToolCallStatus.Pending;
     const isSuccess = tool.status === ToolCallStatus.Success || tool.status === ToolCallStatus.AutoApproved;
@@ -393,9 +300,10 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
         if (isProcessing) {
             return (
                 <StatusContainer>
-                    <ProcessingSpinnerContainer>
-                        <ProcessingSpinner/>
-                    </ProcessingSpinnerContainer>
+                    <Spinner
+                        size='12'
+                        aria-hidden={true}
+                    />
                     <FormattedMessage
                         id='ai.tool_call.processing'
                         defaultMessage='Processing...'
@@ -408,48 +316,47 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
             <ButtonContainer>
                 {isResultApprovalStage ? (
                     <>
-                        <OverlayTrigger
-                            placement='top'
-                            overlay={
-                                <ShareVisibilityTooltip>
-                                    <GlobeIcon size={14}/>
-                                    <FormattedMessage
-                                        id='ai.tool_call.visible_to_channel'
-                                        defaultMessage='Visible to channel'
-                                    />
-                                </ShareVisibilityTooltip>
+                        <WithTooltip
+                            title={
+                                <FormattedMessage
+                                    id='ai.tool_call.visible_to_channel'
+                                    defaultMessage='Visible to channel'
+                                />
                             }
                         >
                             <span>
-                                <ResultDecisionButton
-                                    $variant='primary'
+                                <Button
+                                    emphasis='primary'
+                                    size='x-small'
+                                    leadingIcon={<Icon glyph={<GlobeIcon/>}/>}
                                     onClick={onApprove}
                                     disabled={isProcessing}
                                 >
-                                    <GlobeIcon size={14}/>
                                     <FormattedMessage
                                         id='ai.tool_call.share'
                                         defaultMessage='Share'
                                     />
-                                </ResultDecisionButton>
+                                </Button>
                             </span>
-                        </OverlayTrigger>
-                        <ResultDecisionButton
-                            $variant='secondary'
+                        </WithTooltip>
+                        <Button
+                            emphasis='tertiary'
+                            size='x-small'
+                            leadingIcon={<Icon glyph={<LockIcon/>}/>}
                             onClick={onReject}
                             disabled={isProcessing}
                         >
-                            <LockIcon size={14}/>
                             <FormattedMessage
                                 id='ai.tool_call.keep_private'
                                 defaultMessage='Keep private'
                             />
-                        </ResultDecisionButton>
+                        </Button>
                     </>
                 ) : (
                     <>
-                        <AcceptRejectButton
-                            $primary={true}
+                        <Button
+                            emphasis='primary'
+                            size='small'
                             onClick={onApprove}
                             disabled={isProcessing}
                         >
@@ -457,8 +364,10 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                                 id='ai.tool_call.approve'
                                 defaultMessage='Accept'
                             />
-                        </AcceptRejectButton>
-                        <AcceptRejectButton
+                        </Button>
+                        <Button
+                            emphasis='tertiary'
+                            size='small'
                             onClick={onReject}
                             disabled={isProcessing}
                         >
@@ -466,7 +375,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                                 id='ai.tool_call.reject'
                                 defaultMessage='Reject'
                             />
-                        </AcceptRejectButton>
+                        </Button>
                     </>
                 )}
             </ButtonContainer>
@@ -495,18 +404,43 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                         {isCollapsed ? <ChevronRightIcon size={16}/> : <ChevronDownIcon size={16}/>}
                     </StyledChevronIcon>
                 )}
-                <ToolStatusIcon
-                    status={tool.status}
-                    isProcessing={isProcessing}
-                />
+                {renderHeaderStatusIcon({waitActive, awaitingRequester, isPending, status: tool.status, isProcessing})}
                 <ToolName title={displayName}>{displayName}</ToolName>
+                {isWaitTool && (
+                    <WaitStepLabel
+                        active={waitActive}
+                        minutes={waitMinutes}
+                    />
+                )}
+                {awaitingRequester && (
+                    <Tag
+                        type='warning'
+                        size='x-small'
+                        data-testid='llm-bot-tool-awaiting-approval'
+                        label={tool.user_interaction ? (
+                            <FormattedMessage
+                                id='ai.tool_call.awaiting_answer'
+                                defaultMessage='Awaiting answer'
+                            />
+                        ) : (
+                            <FormattedMessage
+                                id='ai.tool_call.awaiting_approval'
+                                defaultMessage='Awaiting approval'
+                            />
+                        )}
+                    />
+                )}
                 {(tool.status === ToolCallStatus.AutoApproved || isAutoApproved) && (
-                    <AutoApprovedBadge>
-                        <FormattedMessage
-                            id='ai.tool_call.auto_approved'
-                            defaultMessage='Auto-approved'
-                        />
-                    </AutoApprovedBadge>
+                    <Tag
+                        type='success'
+                        size='x-small'
+                        label={
+                            <FormattedMessage
+                                id='ai.tool_call.auto_approved'
+                                defaultMessage='Auto-approved'
+                            />
+                        }
+                    />
                 )}
             </ToolCallHeader>
 
@@ -524,8 +458,9 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
 
                     {canShowRaw && (
                         <RawToggleRow>
-                            <RawToggleButton
-                                type='button'
+                            <Button
+                                emphasis='link'
+                                size='x-small'
                                 onClick={() => setShowRaw((prev) => !prev)}
                             >
                                 {showRaw ? (
@@ -539,7 +474,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                                         defaultMessage='View raw'
                                     />
                                 )}
-                            </RawToggleButton>
+                            </Button>
                         </RawToggleRow>
                     )}
 
@@ -560,46 +495,44 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                     )}
 
                     {showResultReviewCallout && (
-                        <ResultReviewCallout>
-                            <ResultReviewHeader>
-                                <FormattedMessage
-                                    id='ai.tool_call.review_tool_response'
-                                    defaultMessage='Review tool response'
-                                />
-                                <OverlayTrigger
-                                    placement='top'
-                                    overlay={
-                                        <Tooltip>
-                                            <TooltipTitle>
-                                                <FormattedMessage
-                                                    id='ai.tool_call.tooltip.why_second_step'
-                                                    defaultMessage='Why is there a second approval step?'
-                                                />
-                                            </TooltipTitle>
-                                            <TooltipBody>
-                                                <FormattedMessage
-                                                    id='ai.tool_call.tooltip.approval_body'
-                                                    defaultMessage='This step controls whether Agents can use the tool response when generating the next message in the channel. If you reject, the response stays private and won’t be used in the channel reply.'
-                                                />
-                                            </TooltipBody>
-                                        </Tooltip>
-                                    }
-                                >
-                                    <ResultReviewHelpButton
-                                        type='button'
-                                        aria-label={formatMessage({id: 'ai.tool_call.learn_more', defaultMessage: 'Learn more'})}
+                        <ResultReviewCallout
+                            type='warning'
+                            title={
+                                <ResultReviewTitle>
+                                    <FormattedMessage
+                                        id='ai.tool_call.review_tool_response'
+                                        defaultMessage='Review tool response'
+                                    />
+                                    <WithTooltip
+                                        title={
+                                            <FormattedMessage
+                                                id='ai.tool_call.tooltip.why_second_step'
+                                                defaultMessage='Why is there a second approval step?'
+                                            />
+                                        }
+                                        hint={
+                                            <FormattedMessage
+                                                id='ai.tool_call.tooltip.approval_body'
+                                                defaultMessage='This step controls whether Agents can use the tool response when generating the next message in the channel. If you reject, the response stays private and won’t be used in the channel reply.'
+                                            />
+                                        }
                                     >
-                                        <AlertCircleOutlineIcon size={16}/>
-                                    </ResultReviewHelpButton>
-                                </OverlayTrigger>
-                            </ResultReviewHeader>
-                            <ResultReviewBody>
+                                        <ResultReviewHelpButton
+                                            type='button'
+                                            aria-label={formatMessage({id: 'ai.tool_call.learn_more', defaultMessage: 'Learn more'})}
+                                        >
+                                            <HelpCircleOutlineIcon size={16}/>
+                                        </ResultReviewHelpButton>
+                                    </WithTooltip>
+                                </ResultReviewTitle>
+                            }
+                            description={
                                 <FormattedMessage
                                     id='ai.tool_call.approval_warning'
                                     defaultMessage='Approving lets Agents use this response in its next message. That message will be visible to everyone in the channel—only approve results you’re comfortable sharing.'
                                 />
-                            </ResultReviewBody>
-                        </ResultReviewCallout>
+                            }
+                        />
                     )}
 
                     {isRejected && (

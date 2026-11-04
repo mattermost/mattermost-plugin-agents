@@ -4,16 +4,18 @@
 package mcp
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -316,6 +318,9 @@ type eligibleServers struct {
 	remote   []ServerConfig
 	plugins  []PluginServerConfig
 	embedded bool
+	// dmOnly holds remote servers left out only because the selection
+	// excludes DM-only servers.
+	dmOnly []ServerConfig
 	// origins holds every eligible origin, so discovered tools from a server
 	// that is cached but no longer eligible are never handed to the LLM.
 	origins map[string]bool
@@ -362,6 +367,9 @@ func (m *ClientManager) resolveEligibleServers(cfg Config, embeddedClient *Embed
 			continue
 		case !selection.Allows(server.BaseURL):
 			continue
+		case selection.ExcludeDMOnlyServers && server.DMOnly:
+			resolved.dmOnly = append(resolved.dmOnly, server)
+			continue
 		}
 		resolved.remote = append(resolved.remote, server)
 		resolved.origins[llm.NormalizeMCPServerOrigin(server.BaseURL)] = true
@@ -390,7 +398,7 @@ func (m *ClientManager) resolveEligibleServers(cfg Config, embeddedClient *Embed
 // buildConnectTasks assembles one flat task list covering remote, embedded, and
 // plugin servers. Keeping them in a single batch is the point: they dial
 // concurrently instead of one category waiting on the previous one.
-func (m *ClientManager) buildConnectTasks(ctx context.Context, userClients *UserClients, servers eligibleServers, embeddedClient *EmbeddedServerClient, forceRefresh bool, sessionID string, sessionErr error) []connectTask {
+func (m *ClientManager) buildConnectTasks(ctx context.Context, userClients *UserClients, servers eligibleServers, embeddedClient *EmbeddedServerClient, forceRefresh bool, session *model.Session, sessionErr error) []connectTask {
 	tasks := make([]connectTask, 0, len(servers.remote)+len(servers.plugins)+1)
 
 	// Remote dials outlive the request that starts them because they warm a
@@ -404,8 +412,8 @@ func (m *ClientManager) buildConnectTasks(ctx context.Context, userClients *User
 		case sessionErr != nil:
 			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available",
 				"userID", userClients.userID, "error", sessionErr)
-		case userClients.needsEmbeddedReconnect(sessionID):
-			tasks = append(tasks, userClients.embeddedConnectTask(ctx, sessionID, embeddedClient))
+		case userClients.needsEmbeddedReconnect(session.Id):
+			tasks = append(tasks, userClients.embeddedConnectTask(ctx, session.Id, session, embeddedClient))
 		}
 	}
 
@@ -451,18 +459,19 @@ func (m *ClientManager) GetCatalogAccessWithSelection(ctx context.Context, req C
 
 func (m *ClientManager) getCatalogAccess(ctx context.Context, req CatalogRequest, selection ToolSelection, forceRefresh bool) CatalogAccess {
 	if err := req.validate(); err != nil {
-		return CatalogAccess{Errors: &Errors{Errors: []error{err}}}
+		return unavailableAccess(err)
 	}
 
+	// getOrCreateClient returns nil only once the manager is closed.
 	remoteClients := m.getOrCreateClient(req.remoteKey())
 	if remoteClients == nil {
-		return CatalogAccess{}
+		return unavailableAccess(ErrClientManagerClosed)
 	}
 
 	m.lifecycleMu.RLock()
 	if m.closed {
 		m.lifecycleMu.RUnlock()
-		return CatalogAccess{}
+		return unavailableAccess(ErrClientManagerClosed)
 	}
 	cfg := m.config
 	embeddedClient := m.embeddedClient
@@ -477,19 +486,19 @@ func (m *ClientManager) getCatalogAccess(ctx context.Context, req CatalogRequest
 		localClients = m.getOrCreateClient(clientKey{userID: req.InvokingUserID, kind: clientKindLocal})
 	}
 
-	var sessionID string
+	var session *model.Session
 	var sessionErr error
 	if servers.embedded {
 		// Mattermost session lookup, not an MCP dial. Kept inside the
 		// lifecycle read lock so task construction stays atomic with plan.
-		sessionID, _, sessionErr = m.ensureEmbeddedSessionID(req.InvokingUserID)
+		session, _, sessionErr = m.ensureEmbeddedSession(req.InvokingUserID)
 	}
 
 	remoteOnly := servers
 	remoteOnly.plugins = nil
 	remoteOnly.embedded = false
 	remotePlans, discarded := remoteClients.planConnections(
-		m.buildConnectTasks(ctx, remoteClients, remoteOnly, embeddedClient, forceRefresh, "", nil),
+		m.buildConnectTasks(ctx, remoteClients, remoteOnly, embeddedClient, forceRefresh, nil, nil),
 	)
 
 	var localPlans []connectPlan
@@ -498,7 +507,7 @@ func (m *ClientManager) getCatalogAccess(ctx context.Context, req CatalogRequest
 		localOnly.remote = nil
 		var localDiscarded []*Client
 		localPlans, localDiscarded = localClients.planConnections(
-			m.buildConnectTasks(ctx, localClients, localOnly, embeddedClient, false, sessionID, sessionErr),
+			m.buildConnectTasks(ctx, localClients, localOnly, embeddedClient, false, session, sessionErr),
 		)
 		discarded = append(discarded, localDiscarded...)
 	}
@@ -542,32 +551,42 @@ func (m *ClientManager) deniedMCPServerOrigins(ctx context.Context, userID strin
 	}
 
 	var denied map[string]bool
-	check := func(origin, serverID string) {
-		if serverID == "" {
-			return
-		}
-		if err := m.accessChecker.CanUseMCPServer(ctx, userID, serverID); err == nil {
+	check := func(origin, serverID, name string) {
+		if m.canUseServer(ctx, userID, serverID, name) {
 			return
 		}
 		if denied == nil {
 			denied = make(map[string]bool)
 		}
 		denied[llm.NormalizeMCPServerOrigin(origin)] = true
-		m.log.Debug("Omitting MCP server for user by access policy", "userID", userID, "serverID", serverID)
 	}
 
 	for _, server := range cfg.Servers {
 		if server.Enabled && server.BaseURL != "" {
-			check(server.BaseURL, server.ID)
+			check(server.BaseURL, server.ID, server.Name)
 		}
 	}
 	if embeddedClient != nil {
-		check(EmbeddedClientKey, cfg.EmbeddedServer.ID)
+		check(EmbeddedClientKey, cfg.EmbeddedServer.ID, EmbeddedClientKey)
 	}
 	for _, server := range plugins {
-		check(pluginServerOriginKey(server.PluginID), server.ID)
+		check(pluginServerOriginKey(server.PluginID), server.ID, server.Name)
 	}
 	return denied
+}
+
+// canUseServer reports whether the access policy for serverID lets userID
+// use it. ID-less servers remain available until migration assigns their
+// durable IDs.
+func (m *ClientManager) canUseServer(ctx context.Context, userID, serverID, name string) bool {
+	if m.accessChecker == nil || serverID == "" {
+		return true
+	}
+	if err := m.accessChecker.CanUseMCPServer(accesscontrol.WithResourceName(ctx, name), userID, serverID); err != nil {
+		m.log.Debug("Omitting MCP server for user by access policy", "userID", userID, "serverID", serverID)
+		return false
+	}
+	return true
 }
 
 func joinMCPErrors(groups ...*Errors) *Errors {
@@ -718,8 +737,8 @@ func (m *ClientManager) snapshotEnabledPluginServers() []PluginServerConfig {
 			enabled = append(enabled, cfg)
 		}
 	}
-	sort.Slice(enabled, func(i, j int) bool {
-		return enabled[i].PluginID < enabled[j].PluginID
+	slices.SortFunc(enabled, func(a, b PluginServerConfig) int {
+		return cmp.Compare(a.PluginID, b.PluginID)
 	})
 	return enabled
 }
@@ -1025,8 +1044,8 @@ func (m *ClientManager) ListPluginServers() []PluginServerConfig {
 		}
 		out = append(out, cfg)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].PluginID < out[j].PluginID
+	slices.SortFunc(out, func(a, b PluginServerConfig) int {
+		return cmp.Compare(a.PluginID, b.PluginID)
 	})
 	return out
 }
@@ -1239,8 +1258,8 @@ func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *Embedd
 		}
 
 		// Sort for deterministic output.
-		sort.Slice(filtered, func(i, j int) bool {
-			return filtered[i].Name < filtered[j].Name
+		slices.SortFunc(filtered, func(a, b llm.Tool) int {
+			return cmp.Compare(a.Name, b.Name)
 		})
 
 		result = append(result, filtered...)

@@ -646,7 +646,7 @@ func TestMigrateABACIDsConcurrentIdempotent(t *testing.T) {
 	errs := make([]error, goroutines)
 
 	var wg sync.WaitGroup
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
@@ -656,7 +656,7 @@ func TestMigrateABACIDsConcurrentIdempotent(t *testing.T) {
 	wg.Wait()
 
 	migratedCount := 0
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		require.NoError(t, errs[i])
 		if reports[i].Migrated {
 			migratedCount++

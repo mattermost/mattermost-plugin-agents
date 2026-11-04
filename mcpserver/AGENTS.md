@@ -12,8 +12,8 @@ Scoped instructions for the `mcpserver/` package. Root rules in `/AGENTS.md` sti
 
 ### Server types and the search service
 
-- **`InMemoryServer`** (embedded in the plugin) takes `searchService tools.SemanticSearchService` directly. The plugin passes `*search.Search`, which implements `SemanticSearchService`.
-- **HTTP / Stdio / PluginHandlers** (external servers) build their own `HTTPSemanticSearchService` internally; that service calls back to the plugin's `/api/v1/search/raw` endpoint.
+- **`InMemoryServer`** (embedded in the plugin) and **`PluginMCPHandlers`** (the plugin-hosted `/mcp-server` endpoint) run inside the plugin process and take `searchService tools.SemanticSearchService` and `fileContentService tools.FileContentService` directly. The plugin passes `*search.Search` and `*files.Service`.
+- **HTTP / Stdio** (standalone external servers) build `HTTPSemanticSearchService` / `HTTPFileContentService` internally; they call back to the plugin's `/search/raw` and `/files/content` routes (`<siteURL>/plugins/mattermost-ai/search/raw`, no `/api/v1` prefix). The paths live in `tools/plugin_http.go`; `api/api_files_test.go` routes requests built by these clients through the real plugin router.
 
 ### Type sharing
 

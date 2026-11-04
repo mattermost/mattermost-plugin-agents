@@ -36,7 +36,7 @@ func parseCSPParam(raw string) (*mcp.AppResourceCSP, bool) {
 		return nil, false
 	}
 	trimmed := strings.TrimSpace(raw)
-	if len(trimmed) == 0 || trimmed[0] != '{' {
+	if trimmed == "" || trimmed[0] != '{' {
 		return nil, false
 	}
 	var csp mcp.AppResourceCSP

@@ -5,7 +5,7 @@ import React from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 import styled from 'styled-components';
 
-import {Pill} from '../pill';
+import {Tag} from '@mattermost/compass-ui/components/tag';
 
 import {BooleanItem, ItemList, TextItem} from './item';
 import type {MCPAppsConfig} from './mcp_types';
@@ -73,7 +73,11 @@ const MCPAppsSection = ({value, onChange}: Props) => {
                         label={
                             <Horizontal>
                                 <FormattedMessage defaultMessage='Allow insecure same-origin sandbox'/>
-                                <Pill><FormattedMessage defaultMessage='NOT RECOMMENDED'/></Pill>
+                                <Tag
+                                    type='danger'
+                                    size='small'
+                                    label={<FormattedMessage defaultMessage='NOT RECOMMENDED'/>}
+                                />
                             </Horizontal>
                         }
                         value={value.allowInsecureSameOriginSandbox}

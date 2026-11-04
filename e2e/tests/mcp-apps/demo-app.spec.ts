@@ -1,5 +1,5 @@
-import {test, expect, request, type Locator, type Page} from '@playwright/test';
-import MattermostContainer from 'helpers/mmcontainer';
+import {expect, request, type Locator, type Page} from '@playwright/test';
+import {containerTest} from 'helpers/container-fixture';
 import {MattermostPage} from 'helpers/mm';
 import {
     OpenAIMockContainer,
@@ -36,37 +36,31 @@ async function openThreadForPost(post: Locator, timeout = 30000): Promise<void> 
     await rhs.locator('[data-testid="llm-bot-post"]').first().waitFor({state: 'visible', timeout: 10000});
 }
 
-let mattermost: MattermostContainer;
-let openAIMock: OpenAIMockContainer;
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunAgentContainer({
+        mcp: {
+            enabled: true,
+            enablePluginServer: true,
+            idleTimeoutMinutes: 30,
+            servers: [],
+            embeddedServer: {
+                enabled: true,
+                enableDemoApps: true,
+                // Replaces the vetted seed for THIS container only: preview_post
+                // auto-runs in DMs so the app renders without approval clicks (D3
+                // AutoApproved path).
+                tool_configs: [{name: 'preview_post', policy: 'auto_run_in_dm', enabled: true}],
+            },
+            apps: {enabled: true, allowInsecureSameOriginSandbox: true},
+        },
+    }));
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return {mattermost, openAIMock};
+});
 
 test.describe('MCP Apps demo app', () => {
-    test.beforeAll(async () => {
-        mattermost = await RunAgentContainer({
-            mcp: {
-                enabled: true,
-                enablePluginServer: true,
-                idleTimeoutMinutes: 30,
-                servers: [],
-                embeddedServer: {
-                    enabled: true,
-                    enableDemoApps: true,
-                    // Replaces the vetted seed for THIS container only: preview_post
-                    // auto-runs in DMs so the app renders without approval clicks (D3
-                    // AutoApproved path).
-                    tool_configs: [{name: 'preview_post', policy: 'auto_run_in_dm', enabled: true}],
-                },
-                apps: {enabled: true, allowInsecureSameOriginSandbox: true},
-            },
-        });
-        openAIMock = await RunOpenAIMocks(mattermost.network);
-    }, {timeout: 180000});
-
-    test.afterAll(async () => {
-        await openAIMock?.stop();
-        await mattermost?.stop();
-    });
-
-    test('same-origin sandbox page is served', async () => {
+    test('same-origin sandbox page is served', async ({containers}) => {
+        const {mattermost} = containers;
         const api = await request.newContext();
         const res = await api.get(`${mattermost.url()}/plugins/mattermost-ai/mcp/apps/sandbox`);
         expect(res.status()).toBe(200);
@@ -75,7 +69,8 @@ test.describe('MCP Apps demo app', () => {
         await api.dispose();
     });
 
-    test('demo app renders after tool success and responds to interaction', async ({page}) => {
+    test('demo app renders after tool success and responds to interaction', async ({page, containers}) => {
+        const {mattermost, openAIMock} = containers;
         test.setTimeout(120000);
 
         const agentApi = new AgentAPIHelper(mattermost.url());

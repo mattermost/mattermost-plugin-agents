@@ -11,6 +11,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -245,4 +246,83 @@ func TestUpdateAgentPolicyDeleteFailsAndRollbackFails(t *testing.T) {
 	rec := (*records)[0]
 	assert.Equal(t, accesscontrol.ResourceTypeAgent, rec.EventData.Parameters[audit.KeyABACResourceType])
 	assert.Equal(t, agentID, rec.EventData.Parameters[audit.KeyABACResourceID])
+}
+
+func TestUpdateAgentRenameRollbackOnPolicyDeleteFailure(t *testing.T) {
+	tests := []struct {
+		name              string
+		rollbackErr       error
+		expectedName      string
+		expectedBotName   string
+		expectedPublished []string
+	}{
+		{
+			name:            "rename is reverted along with the agent",
+			expectedName:    "old-name",
+			expectedBotName: "old-name",
+		},
+		{
+			name:              "rename is kept when the agent cannot be restored",
+			rollbackErr:       errors.New("rollback database failure"),
+			expectedName:      "new-name",
+			expectedBotName:   "new-name",
+			expectedPublished: []string{"agent-abac-rename"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.OverrideLicense(enterprisetest.LicenseFor(enterprise.LevelEnterpriseAdvanced))
+			e.api.accessChecker = accesscontrol.New(accesscontrol.PassthroughClient{}, e.mockAPI, accesscontrol.NoMCPServerIDs, nil)
+			e.agentStore.updateErrs = []error{nil, tc.rollbackErr}
+
+			botName := "old-name"
+			e.mockAPI.On("GetUserByUsername", "new-name").Return(nil, model.NewAppError("GetUserByUsername", "app.user.missing", nil, "", http.StatusNotFound))
+			e.mockAPI.On("PatchBot", "bot-1", mock.AnythingOfType("*model.BotPatch")).Run(func(args mock.Arguments) {
+				if patch := args.Get(1).(*model.BotPatch); patch.Username != nil {
+					botName = *patch.Username
+				}
+			}).Return(&model.Bot{UserId: "bot-1"}, nil)
+
+			agentID := "agent-abac-rename"
+			stored := &llm.BotConfig{
+				ID:              agentID,
+				CreatorID:       testUserID,
+				BotUserID:       "bot-1",
+				DisplayName:     "Agent",
+				Name:            "old-name",
+				ServiceID:       "svc-1",
+				UserAccessLevel: llm.UserAccessLevelAttributeBased,
+			}
+			e.agentStore.agents[agentID] = stored
+			e.bots.SetBotsForTesting([]*bots.Bot{
+				bots.NewBot(*stored, llm.ServiceConfig{}, &model.Bot{UserId: "bot-1", Username: "old-name"}, nil),
+			})
+			notifier := &recordingAgentNotifier{}
+			e.api.clusterAgentNotifier = notifier
+
+			e.mockAPI.On("DeleteAccessControlPolicy", testUserID, accesscontrol.ResourceTypeAgent, agentID).
+				Return(model.NewAppError("DeleteAccessControlPolicy", "app.access_control.delete_failed", nil, "backend policy storage unreachable", http.StatusInternalServerError)).Once()
+
+			body := updateAgentBodyFromStored(stored, map[string]any{
+				"username":        "new-name",
+				"userAccessLevel": int(llm.UserAccessLevelAll),
+			})
+
+			recorder := doRequest(e.api, http.MethodPut, "/agents/"+agentID, body, testUserID)
+			require.Equal(t, http.StatusInternalServerError, recorder.Result().StatusCode, recorder.Body.String())
+
+			assert.Equal(t, tc.expectedName, e.agentStore.agents[agentID].Name)
+			assert.Equal(t, tc.expectedBotName, botName)
+			assert.Equal(t, tc.expectedPublished, notifier.published, "peers must refresh the agent unless the rename was fully reverted")
+			if botName == "old-name" {
+				assert.Nil(t, e.bots.GetBotMentioned("@new-name hi"), "the reverted username must not keep routing to the agent")
+			} else {
+				assert.Nil(t, e.bots.GetBotMentioned("@old-name hi"), "the released username must not keep routing to the agent")
+			}
+		})
+	}
 }

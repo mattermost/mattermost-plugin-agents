@@ -59,42 +59,44 @@ func TestFindToolCallBlocksPostAnchored(t *testing.T) {
 		},
 	}
 
-	t.Run("unshared round does not cross-authorize via later shared result", func(t *testing.T) {
-		toolUse, toolResult, err := FindToolCallBlocks(turns, postA, "reuse")
-		require.NoError(t, err)
-		require.NotNil(t, toolUse)
-		require.False(t, toolUse.Shared != nil && *toolUse.Shared)
-		require.NotNil(t, toolResult)
-		require.False(t, toolResult.Shared != nil && *toolResult.Shared)
-		require.Equal(t, "private", toolResult.Content)
-	})
+	dupTurns := []store.Turn{{
+		ID: "d1", PostID: &postA, Role: "assistant",
+		Content: mustBlocks([]ContentBlock{
+			{Type: BlockTypeToolUse, ID: "dup", Name: "a"},
+			{Type: BlockTypeToolUse, ID: "dup", Name: "b"},
+		}),
+	}}
 
-	t.Run("shared round resolves its own blocks", func(t *testing.T) {
-		toolUse, toolResult, err := FindToolCallBlocks(turns, postB, "reuse")
-		require.NoError(t, err)
-		require.NotNil(t, toolUse)
-		require.True(t, toolUse.Shared != nil && *toolUse.Shared)
-		require.NotNil(t, toolResult)
-		require.True(t, toolResult.Shared != nil && *toolResult.Shared)
-		require.Equal(t, "shared", toolResult.Content)
-	})
+	tests := []struct {
+		name        string
+		turns       []store.Turn
+		postID      string
+		toolCallID  string
+		wantErr     error
+		wantShared  bool
+		wantContent string
+	}{
+		{name: "unshared round does not cross-authorize via later shared result", turns: turns, postID: postA, toolCallID: "reuse", wantContent: "private"},
+		{name: "shared round resolves its own blocks", turns: turns, postID: postB, toolCallID: "reuse", wantShared: true, wantContent: "shared"},
+		{name: "duplicate id in same post span is ambiguous", turns: dupTurns, postID: postA, toolCallID: "dup", wantErr: ErrAmbiguousToolCallID},
+		{name: "missing tool call", turns: turns, postID: postA, toolCallID: "missing", wantErr: ErrToolCallNotFound},
+	}
 
-	t.Run("duplicate id in same post span is ambiguous", func(t *testing.T) {
-		dupTurns := []store.Turn{{
-			ID: "d1", PostID: &postA, Role: "assistant",
-			Content: mustBlocks([]ContentBlock{
-				{Type: BlockTypeToolUse, ID: "dup", Name: "a"},
-				{Type: BlockTypeToolUse, ID: "dup", Name: "b"},
-			}),
-		}}
-		_, _, err := FindToolCallBlocks(dupTurns, postA, "dup")
-		require.ErrorIs(t, err, ErrAmbiguousToolCallID)
-	})
-
-	t.Run("missing tool call", func(t *testing.T) {
-		_, _, err := FindToolCallBlocks(turns, postA, "missing")
-		require.ErrorIs(t, err, ErrToolCallNotFound)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			toolUse, toolResult, err := FindToolCallBlocks(tt.turns, tt.postID, tt.toolCallID)
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, toolUse)
+			require.NotNil(t, toolResult)
+			require.Equal(t, tt.wantShared, toolUse.Shared != nil && *toolUse.Shared)
+			require.Equal(t, tt.wantShared, toolResult.Shared != nil && *toolResult.Shared)
+			require.Equal(t, tt.wantContent, toolResult.Content)
+		})
+	}
 
 	t.Run("preceding WriteToolTurns rounds without PostID are in span", func(t *testing.T) {
 		botPost := "postc23456789012345678901c"

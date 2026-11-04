@@ -62,7 +62,7 @@ type demoEmbeddedServer struct {
 	server *mcp.Server
 }
 
-func (d *demoEmbeddedServer) CreateClientTransport(_ string, _ string, _ *pluginapi.Client) (*mcp.InMemoryTransport, error) {
+func (d *demoEmbeddedServer) CreateClientTransport(_, _, _ string, _ *pluginapi.Client) (*mcp.InMemoryTransport, error) {
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	go func() {
 		_ = d.server.Run(d.ctx, serverTransport)

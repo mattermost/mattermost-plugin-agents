@@ -8,7 +8,7 @@ export default defineConfig({
     retries: 0,
     workers: 1,
     reporter: [['list']],
-    timeout: 180000,
+    timeout: 60000,
     globalSetup: require.resolve('./global-setup'),
     globalTeardown: require.resolve('./global-teardown'),
     use: {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -271,13 +272,13 @@ func (m *ClientManager) ReadUserAppResource(ctx context.Context, userID, serverO
 		return nil, ErrServerNotConnected
 	}
 
-	var sessionID string
+	var session *model.Session
 	var sessionErr error
 	if target.embedded {
-		sessionID, _, sessionErr = m.ensureEmbeddedSessionID(userID)
+		session, _, sessionErr = m.ensureEmbeddedSession(userID)
 	}
 	plans, discarded := userClients.planConnections(
-		m.buildConnectTasks(ctx, userClients, target, embeddedClient, false, sessionID, sessionErr),
+		m.buildConnectTasks(ctx, userClients, target, embeddedClient, false, session, sessionErr),
 	)
 	m.lifecycleMu.RUnlock()
 	closeDetachedClients(m.log, discarded)

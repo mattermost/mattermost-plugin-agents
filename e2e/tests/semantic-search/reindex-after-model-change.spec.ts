@@ -1,17 +1,19 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
 import { mattermostAIAdminConfigApiFromClient, mattermostAIPluginRoutes } from 'helpers/plugin-http';
 
-let mattermost: MattermostContainer;
-
-test.beforeAll(async () => {
-    mattermost = await RunContainer();
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    return { mattermost };
 });
 
-test.afterAll(async () => {
-    await mattermost.stop();
+let mattermost: MattermostContainer;
+
+test.beforeAll(async ({ containers }) => {
+    ({ mattermost } = containers);
 });
 
 type JobStatus = { status: string; error?: string };
@@ -27,20 +29,19 @@ async function waitForReindexComplete(
     routes: ReturnType<typeof mattermostAIPluginRoutes>,
     token: string,
 ): Promise<JobStatus> {
-    const deadline = Date.now() + 60000;
-    for (;;) {
-        const status = await routes.getJson('admin/reindex/status', token) as JobStatus;
-        if (status.status === 'completed') {
-            return status;
-        }
+    let status: JobStatus | undefined;
+    await expect.poll(async () => {
+        status = await routes.getJson('admin/reindex/status', token) as JobStatus;
         if (status.status === 'failed' || status.status === 'canceled') {
             throw new Error(`Reindex did not complete: ${status.status} (${status.error ?? 'no error'})`);
         }
-        if (Date.now() > deadline) {
-            throw new Error(`Timed out waiting for reindex to complete, last status: ${status.status}`);
-        }
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
+        return status.status;
+    }, {
+        timeout: 60000,
+        intervals: [1000],
+        message: 'Timed out waiting for reindex to complete',
+    }).toBe('completed');
+    return status!;
 }
 
 test.describe('Reindex after embedding model change', () => {

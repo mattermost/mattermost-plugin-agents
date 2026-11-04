@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { OpenAIMockContainer, RunOpenAIMocks } from 'helpers/openai-mock';
@@ -19,15 +20,15 @@ let openAIMock: OpenAIMockContainer;
 
 const READ_POST_TOOL_NAME = 'read_post';
 
-test.describe('Per-Tool Enable/Disable', () => {
-    test.beforeAll(async () => {
-        mattermost = await RunToolConfigContainer();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
-    });
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
 
-    test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
+test.describe('Per-Tool Enable/Disable', () => {
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test('should disable a tool and persist the change', async ({ page }) => {
@@ -42,7 +43,6 @@ test.describe('Per-Tool Enable/Disable', () => {
         // Expand the embedded server
         const serverHeader = page.getByText(/\d+\/\d+ tools? enabled/).first();
         await serverHeader.click();
-        await page.waitForTimeout(500);
 
         // Find read_post tool - should be enabled
         await expect(page.getByText(READ_POST_TOOL_NAME, { exact: true })).toBeVisible({ timeout: 5000 });
@@ -62,7 +62,6 @@ test.describe('Per-Tool Enable/Disable', () => {
         // Expand server again
         const serverHeader2 = page.getByText(/\d+\/\d+ tools? enabled/).first();
         await serverHeader2.click();
-        await page.waitForTimeout(500);
 
         // Verify tool shows as disabled
         await expect(page.getByText(READ_POST_TOOL_NAME, { exact: true })).toBeVisible({ timeout: 5000 });
@@ -101,7 +100,6 @@ test.describe('Per-Tool Enable/Disable', () => {
         await toolConfig.navigateToToolsTab(mattermost.url());
         const serverHeader = page.getByText(/\d+\/\d+ tools? enabled/).first();
         await serverHeader.click();
-        await page.waitForTimeout(500);
         await expect(page.getByText(READ_POST_TOOL_NAME, { exact: true })).toBeVisible({ timeout: 5000 });
         await toolConfig.toggleTool(READ_POST_TOOL_NAME, false);
         await toolConfig.clickSave();
@@ -117,7 +115,6 @@ test.describe('Per-Tool Enable/Disable', () => {
         await toolConfig.navigateToToolsTab(mattermost.url());
         const serverHeader2 = page.getByText(/\d+\/\d+ tools? enabled/).first();
         await serverHeader2.click();
-        await page.waitForTimeout(500);
         await expect(page.getByText(READ_POST_TOOL_NAME, { exact: true })).toBeVisible({ timeout: 5000 });
         await toolConfig.toggleTool(READ_POST_TOOL_NAME, true);
         await toolConfig.clickSave();

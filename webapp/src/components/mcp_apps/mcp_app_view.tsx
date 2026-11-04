@@ -6,6 +6,7 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import type {AppRendererProps} from '@mcp-ui/client';
 import {LockIcon} from '@mattermost/compass-icons/components';
+import {Spinner} from '@mattermost/compass-ui/components/spinner';
 import {useSelector} from 'react-redux';
 
 // eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
@@ -17,8 +18,6 @@ import {useBotlist} from '@/bots';
 import {MCPAppsBootstrap} from '@/client';
 import manifest from '@/manifest';
 import {ToolCall} from '@/components/tool_types';
-
-import LoadingSpinner from '../assets/loading_spinner';
 
 import {prefersAppBorder} from './app_border';
 import {APP_DEFAULT_HEIGHT, clampAppHeight, maxAppHeight} from './app_sizing';
@@ -98,11 +97,6 @@ const ConnectButton = styled.button`
     &:active {
         background: rgba(var(--button-bg-rgb), 0.16);
     }
-`;
-
-const SmallSpinner = styled(LoadingSpinner)`
-    width: 12px;
-    height: 12px;
 `;
 
 const NoAccessIcon = styled(LockIcon)`
@@ -226,7 +220,10 @@ const MCPAppView: React.FC<MCPAppViewProps> = ({postID, tool, requesterUserID}) 
     if (phase.phase === 'loading') {
         return (
             <StatusRow data-testid='mcp-app-loading'>
-                <SmallSpinner/>
+                <Spinner
+                    size='12'
+                    aria-hidden={true}
+                />
                 <FormattedMessage defaultMessage='Loading app…'/>
             </StatusRow>
         );

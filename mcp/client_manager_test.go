@@ -932,7 +932,7 @@ func TestClientManager_PluginServerRegistry_RaceSafe(t *testing.T) {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		stop.Store(true)
-		t.Fatal("deadlock or excessive contention in Register/Unregister vs List/snapshot")
+		require.FailNow(t, "deadlock or excessive contention in Register/Unregister vs List/snapshot")
 	}
 }
 

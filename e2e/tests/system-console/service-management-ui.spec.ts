@@ -1,10 +1,12 @@
 // spec: Service Management - Add First Service Through UI
 // seed: e2e/tests/seed.spec.ts
 
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { SystemConsoleHelper } from 'helpers/system-console';
+import { chooseCompassOption } from 'helpers/compass-select';
 import { OpenAIMockContainer, RunOpenAIMocks } from 'helpers/openai-mock';
 import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers/system-console-container';
 
@@ -14,27 +16,26 @@ import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers
  * Tests UI-based service management operations in the system console.
  */
 
+const test = containerTest(async (own) => {
+    // Start container with NO pre-configured services
+    const mattermost = own(await RunSystemConsoleContainer({
+        services: [],
+        bots: [],
+    }));
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
 test.describe('Service Management', () => {
-    test.beforeAll(async () => {
-        // Start container with NO pre-configured services
-        mattermost = await RunSystemConsoleContainer({
-            services: [],
-            bots: [],
-        });
-
-        openAIMock = await RunOpenAIMocks(mattermost.network);
-    });
-
-    test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test('should add and configure service through card-based UI', async ({ page }) => {
-        // Login + container startup after a long shard can exceed 60s on CI.
+        // Login after a long shard can exceed 60s on CI.
         test.setTimeout(120000);
 
         const mmPage = new MattermostPage(page);
@@ -56,7 +57,6 @@ test.describe('Service Management', () => {
         const addServiceButton = systemConsole.getAddServiceButton();
         await expect(addServiceButton).toBeVisible();
         await addServiceButton.click();
-        await page.waitForTimeout(1000);
 
         // Verify a new service card appeared
         await expect(existingServiceCards).toHaveCount(initialCount + 1);
@@ -67,7 +67,6 @@ test.describe('Service Management', () => {
 
         // Expand the service card to access edit fields (click on the card)
         await serviceCard.click();
-        await page.waitForTimeout(500);
 
         // Fill in the form fields that are now visible
         // Service Name
@@ -75,9 +74,8 @@ test.describe('Service Management', () => {
         await serviceNameInput.fill('My Test Service');
 
         // Service Type dropdown - select Anthropic
-        const serviceTypeDropdown = serviceCard.getByRole('combobox').first();
-        await serviceTypeDropdown.selectOption('anthropic');
-        await page.waitForTimeout(500);
+        const serviceTypeDropdown = serviceCard.getByRole('combobox', { name: 'Service type', exact: true });
+        await chooseCompassOption(serviceTypeDropdown, 'Anthropic');
 
         // API Key
         const apiKeyInput = serviceCard.getByPlaceholder(/api key/i);
@@ -90,14 +88,13 @@ test.describe('Service Management', () => {
         // Click main Save button at bottom of page
         const saveButton = systemConsole.getSaveButton();
         await expect(saveButton).toBeVisible();
-        await saveButton.click();
-
-        // Wait for save to complete
-        await page.waitForTimeout(2000);
+        await Promise.all([
+            page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().includes('/admin/config')),
+            saveButton.click(),
+        ]);
 
         // Verify service was saved - reload and check
         await page.reload();
-        await page.waitForTimeout(1000);
 
         // Verify service appears with configured values
         const servicesSection = page.locator('[class*="ServicesList"]');

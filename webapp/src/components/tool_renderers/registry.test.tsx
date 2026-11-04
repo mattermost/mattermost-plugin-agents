@@ -20,6 +20,7 @@ jest.mock('react-bootstrap', () => ({
 jest.mock('@/client', () => ({
     getPost: jest.fn(),
     getProfilesByIds: jest.fn(() => Promise.resolve([])),
+    getUserMCPTools: jest.fn(() => Promise.resolve({servers: []})),
 }));
 
 const postMessagePreviewMock = jest.fn<React.ReactElement, [unknown]>(() => <div>{'post-preview-box'}</div>);
@@ -106,6 +107,28 @@ describe('renderToolCall routing', () => {
 
         expect(screen.getByText('AskUserQuestion')).not.toBeNull();
         expect(screen.queryByText('Pick one')).toBeNull();
+    });
+
+    test('routes a connect request to the connection card', () => {
+        renderTool(makeTool({
+            name: 'RequestMCPConnection',
+            user_interaction: 'connect',
+            arguments: {server: 'Jira', reason: 'Find your issues'},
+        }));
+
+        expect(screen.getByText('Connect Jira')).not.toBeNull();
+        expect(screen.getByText('Find your issues')).not.toBeNull();
+    });
+
+    test('a redacted connect request falls back to the generic card', () => {
+        renderTool(makeTool({
+            name: 'RequestMCPConnection',
+            user_interaction: 'connect',
+            arguments: undefined, // eslint-disable-line no-undefined
+        }));
+
+        expect(screen.getByText('RequestMCPConnection')).not.toBeNull();
+        expect(screen.queryByText('Connect Jira')).toBeNull();
     });
 
     test('routes an embedded read_post to the post preview card', async () => {
