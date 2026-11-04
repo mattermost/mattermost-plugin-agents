@@ -312,6 +312,36 @@ describe('stored AI threads', () => {
             expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
         });
 
+        describe('a reply streaming into a chat', () => {
+            const chunk = (postId: string) => ({data: {post_id: postId, control: 'continue', next: 'x'}} as never);
+
+            test('a chat the list does not have yet is fetched while chunks keep coming', async () => {
+                const {sync} = await setup();
+                await act(async () => {
+                    for (let i = 0; i < 5; i++) {
+                        sync.handlePostUpdate(chunk('mine'));
+                        jest.advanceTimersByTime(THREADS_REFRESH_DEBOUNCE_MS / 4);
+                    }
+                });
+                expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
+            });
+
+            test.each([
+                {name: 'a chat the list has', post: {id: 'listed', channel_id: 'dm_a', root_id: 'root', user_id: 'a'}},
+                {name: 'someone else\'s request in a shared channel', post: posts.others},
+            ])('$name is not fetched', async ({post}) => {
+                const store = makeStore({bots, posts: {...posts, [post.id]: post}});
+                mockGetAIThreads.mockResolvedValue([makeThread({id: 'c1'})]);
+                await act(async () => {
+                    await fetchAIThreads(store.dispatch);
+                });
+                mockGetAIThreads.mockClear();
+                createAgentThreadsSync(store as never).handlePostUpdate(chunk(post.id));
+                await settle();
+                expect(mockGetAIThreads).not.toHaveBeenCalled();
+            });
+        });
+
         test('nothing is fetched for a list no view has loaded', async () => {
             const store = makeStore({bots, posts});
             const sync = createAgentThreadsSync(store as never);

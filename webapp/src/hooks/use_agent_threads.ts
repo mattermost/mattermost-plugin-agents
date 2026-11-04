@@ -130,8 +130,11 @@ export interface AgentThreadsSync {
 export function createAgentThreadsSync(store: {dispatch: Dispatch<UnknownAction>; getState: () => GlobalState}): AgentThreadsSync {
     let timer: ReturnType<typeof setTimeout> | null = null;
 
-    const scheduleRefresh = () => {
+    const scheduleRefresh = ({extend = true} = {}) => {
         if (timer !== null) {
+            if (!extend) {
+                return;
+            }
             clearTimeout(timer);
         }
         timer = setTimeout(() => {
@@ -144,8 +147,22 @@ export function createAgentThreadsSync(store: {dispatch: Dispatch<UnknownAction>
         handlePostUpdate: (msg) => {
             // A finished turn moves its chat to the top. postupdate events reach every member of
             // the channel, so only the current user's own agent chats count.
-            if (msg.data?.control === 'end' && isInUse(store.getState()) && isCurrentUsersAgentPost(store.getState(), msg.data.post_id)) {
+            const state = store.getState();
+            if (!msg.data?.post_id || !isInUse(state) || !isCurrentUsersAgentPost(state, msg.data.post_id)) {
+                return;
+            }
+            if (msg.data.control === 'end') {
                 scheduleRefresh();
+                return;
+            }
+
+            // A chat the list does not have yet shows up while its first reply streams. Chunks
+            // keep coming, so the refresh must not wait for them to settle.
+            const post = state.entities.posts.posts[msg.data.post_id];
+            const rootId = post?.root_id || post?.id;
+            const threads = selectAIThreads(state);
+            if (rootId && threads && !threads.some((t) => t.root_post_id === rootId)) {
+                scheduleRefresh({extend: false});
             }
         },
         handleConversationUpdated: (data) => {
