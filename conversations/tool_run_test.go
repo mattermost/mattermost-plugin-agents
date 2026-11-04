@@ -196,27 +196,37 @@ func (f *toolRunFixture) postUpdates() []*model.Post {
 }
 
 // followUpStatusStreamingService records the anchor turn's status when the
-// follow-up stream takes the post.
+// follow-up stream starts, and how often the post's streaming context was held.
 type followUpStatusStreamingService struct {
 	loadedStateStreamingService
 	convStore *loadedStateFlowStore
 	postID    string
 
-	mu                 sync.Mutex
-	statusAtFollowUp   string
-	followUpRegistered bool
+	mu              sync.Mutex
+	statusAtStream  string
+	streamStarted   bool
+	contextAcquired int
 }
 
 func (s *followUpStatusStreamingService) GetStreamingContext(ctx context.Context, postID string) (context.Context, error) {
 	if postID == s.postID {
-		if turn, err := s.convStore.GetTurnByPostID(postID); err == nil && turn != nil {
+		s.mu.Lock()
+		s.contextAcquired++
+		s.mu.Unlock()
+	}
+	return s.loadedStateStreamingService.GetStreamingContext(ctx, postID)
+}
+
+func (s *followUpStatusStreamingService) StreamContinuationToPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, locale, userID string) {
+	if post.Id == s.postID {
+		if turn, err := s.convStore.GetTurnByPostID(post.Id); err == nil && turn != nil {
 			s.mu.Lock()
-			s.statusAtFollowUp = turn.Status
-			s.followUpRegistered = true
+			s.statusAtStream = turn.Status
+			s.streamStarted = true
 			s.mu.Unlock()
 		}
 	}
-	return s.loadedStateStreamingService.GetStreamingContext(ctx, postID)
+	s.loadedStateStreamingService.StreamContinuationToPost(ctx, stream, post, locale, userID)
 }
 
 func TestHandleToolCallKeepsClaimedTurnStreamingWhileToolsRun(t *testing.T) {
@@ -242,8 +252,8 @@ func TestHandleToolCallKeepsClaimedTurnStreamingWhileToolsRun(t *testing.T) {
 	assert.Equal(t, store.TurnStatusComplete, f.anchor(t).Status)
 	assert.Equal(t, []string{conversation.StatusSuccess}, f.anchorStatuses(t))
 	f.streaming.mu.Lock()
-	assert.True(t, f.streaming.followUpRegistered, "a DM approval streams the follow-up")
-	assert.Equal(t, store.TurnStatusComplete, f.streaming.statusAtFollowUp, "the run ends before the follow-up stream takes the post")
+	assert.True(t, f.streaming.streamStarted, "a DM approval streams the follow-up")
+	assert.Equal(t, store.TurnStatusComplete, f.streaming.statusAtStream, "the run ends before the follow-up stream takes the post")
 	f.streaming.mu.Unlock()
 	assert.Equal(t, int64(0), f.c.ActiveToolRuns())
 	assert.Empty(t, f.postUpdates(), "a finished run does not mark the post")
@@ -297,7 +307,7 @@ func TestHandleToolCallInterruptedByShutdown(t *testing.T) {
 			assert.Equal(t, []string{conversation.StatusAccepted, conversation.StatusAccepted}, f.anchorStatuses(t),
 				"interrupted calls are never offered for approval again")
 			assert.Equal(t, 0, countToolResultTurns(t, f.convStore, f.conv.ID))
-			assert.False(t, f.streaming.followUpRegistered, "no follow-up is streamed")
+			assert.False(t, f.streaming.streamStarted, "no follow-up is streamed")
 
 			turns, err := f.convStore.GetTurnsForConversation(f.conv.ID)
 			require.NoError(t, err)
@@ -354,7 +364,7 @@ func TestHandleToolCallKeepsSweepVerdict(t *testing.T) {
 			}
 			assert.Equal(t, int32(1), f.executions.Load())
 			assert.Equal(t, 0, countToolResultTurns(t, f.convStore, f.conv.ID))
-			assert.False(t, f.streaming.followUpRegistered)
+			assert.False(t, f.streaming.streamStarted)
 			assert.Empty(t, f.postUpdates(), "the sweep already marked the post")
 			assert.Equal(t, int64(0), f.c.ActiveToolRuns())
 		})
@@ -376,13 +386,16 @@ func TestHandleRegenerateDuringApprovalRun(t *testing.T) {
 	f.cancelRoot(lifecycle.ErrShutdown)
 	require.ErrorIs(t, f.waitResult(t, errCh), ErrToolRunInterrupted)
 
-	require.False(t, f.streaming.followUpRegistered)
+	require.False(t, f.streaming.streamStarted)
+	f.streaming.mu.Lock()
+	acquiredBefore := f.streaming.contextAcquired
+	f.streaming.mu.Unlock()
 
 	// The fixture post has no regenerate source, so regenerate fails after it
 	// took over the post; only getting that far matters here.
 	err = f.c.HandleRegenerate(context.Background(), testRequesterID, f.post, f.channel)
 	assert.NotErrorIs(t, err, streaming.ErrAlreadyStreamingToPost)
 	f.streaming.mu.Lock()
-	assert.True(t, f.streaming.followUpRegistered, "regenerate takes over an interrupted approval post")
+	assert.Greater(t, f.streaming.contextAcquired, acquiredBefore, "regenerate takes over an interrupted approval post")
 	f.streaming.mu.Unlock()
 }
