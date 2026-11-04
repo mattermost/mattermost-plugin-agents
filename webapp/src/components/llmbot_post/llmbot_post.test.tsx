@@ -2428,7 +2428,7 @@ describe('LLMBotPost interrupted and stale generation notices', () => {
                         id: 'anchor',
                         sequence: 2,
                         status,
-                        approval_state: status === 'streaming' ? 'call' : 'done',
+                        approval_state: 'done',
                         content: [
                             {type: 'text', text: 'Let me look that up.'},
                             {type: 'tool_use', id: 'tc_1', name: 'jira__get_issue', status: 'accepted'},

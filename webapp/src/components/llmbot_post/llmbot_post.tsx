@@ -713,7 +713,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const showPostbackButton = meetingsLicensed && !isGenerationInProgress && isDM && isTranscriptionResult;
 
     // Approved tool runs are not a stream the Stop endpoint can cancel.
-    const approvalRunActive = Boolean(knownConversation?.turns.some((turn) => turn.post_id === props.post.id && turn.status === 'streaming' && turn.approval_state === 'call'));
+    const approvalRunActive = Boolean(knownConversation?.turns.some((turn) => turn.post_id === props.post.id && turn.status === 'streaming' && turn.content.some((block) => block.type === 'tool_use' && block.status === 'accepted')));
     const showStopGeneratingButton = (isGenerationInProgress || (liveStreamFromTurn && !approvalRunActive)) && requesterIsCurrentUser;
     const hasContent = renderedRounds.length > 0;
 
