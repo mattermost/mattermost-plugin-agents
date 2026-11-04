@@ -75,7 +75,7 @@ export async function fetchAIThreads(dispatch: Dispatch<UnknownAction>): Promise
     dispatch({type: AIThreadsRequested, requestId});
     try {
         const threads = await getAIThreads();
-        dispatch({type: AIThreadsReceived, requestId, threads: threads.filter((t) => !pendingArchives.has(t.id))});
+        dispatch({type: AIThreadsReceived, requestId, threads: threads.filter((t: AIThread) => !pendingArchives.has(t.id))});
     } catch (e) {
         console.error('Failed to load AI threads:', e); // eslint-disable-line no-console
         dispatch({type: AIThreadsFailed, requestId});
