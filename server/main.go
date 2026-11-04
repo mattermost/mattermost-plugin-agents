@@ -814,11 +814,12 @@ func (p *Plugin) MessageHasBeenDeleted(c *plugin.Context, post *model.Post) {
 			p.pluginAPI.Log.Error("Failed to delete post from vector database", "error", err)
 		}
 	}
-	if p.conversationsService != nil {
-		if err := p.conversationsService.DeleteConversationsForDeletedPost(post); err != nil {
-			p.pluginAPI.Log.Error("Failed to soft-delete conversations for deleted post", "error", err, "post_id", post.Id)
-		}
-	}
+	// Conversations of a deleted root post are left as they are: DeleteAt on
+	// LLM_Conversations means "archived by its owner", and every read, restore
+	// and list path hides a conversation whose root post is deleted
+	// (conversation.CheckRootPost). Keeping the rows mirrors Mattermost's own
+	// soft delete of posts, which keeps their content for compliance export
+	// and data retention to remove.
 }
 
 func (p *Plugin) RunDataRetention(nowTime, batchSize int64) (int64, error) {

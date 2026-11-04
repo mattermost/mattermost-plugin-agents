@@ -3,6 +3,7 @@
 
 import React, {useState} from 'react';
 import {useIntl} from 'react-intl';
+import ArchiveOutlineIcon from '@mattermost/compass-icons/components/archive-outline';
 import DotsHorizontalIcon from '@mattermost/compass-icons/components/dots-horizontal';
 import PencilOutlineIcon from '@mattermost/compass-icons/components/pencil-outline';
 
@@ -32,11 +33,14 @@ interface ChatRowActionsMenuProps {
     // history's small button.
     appearance: 'sidebar' | 'panel';
     onOpenChange?: (open: boolean) => void;
+
+    // Runs after the chat is archived, e.g. to leave it when it is the open one.
+    onArchived?: () => void;
     testId?: string;
 }
 
 // The "..." actions menu of a chat row, shared by the Agents sidebar and the RHS chat history.
-const ChatRowActionsMenu = ({chat, actions, label, appearance, onOpenChange, testId}: ChatRowActionsMenuProps) => {
+const ChatRowActionsMenu = ({chat, actions, label, appearance, onOpenChange, onArchived, testId}: ChatRowActionsMenuProps) => {
     const intl = useIntl();
     const [open, setOpenState] = useState(false);
     const {rendered, onExited} = useMenuTransition(open);
@@ -90,6 +94,12 @@ const ChatRowActionsMenu = ({chat, actions, label, appearance, onOpenChange, tes
                     label={intl.formatMessage({defaultMessage: 'Rename chat'})}
                     icon={<PencilOutlineIcon/>}
                     onClick={closing(() => actions.startRename(chat))}
+                />
+                <IconMenuItem
+                    label={intl.formatMessage({defaultMessage: 'Archive chat'})}
+                    icon={<ArchiveOutlineIcon/>}
+                    destructive={true}
+                    onClick={closing(() => actions.startArchive(chat, onArchived))}
                 />
             </PopoverMenu>
         </Dropdown>

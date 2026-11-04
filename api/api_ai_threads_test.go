@@ -34,13 +34,16 @@ func TestGetAIThreads(t *testing.T) {
 		userID    string
 		updatedAt int64
 		turns     []int64
-		deleted   bool
+		archived  bool
 		// inChannel roots the conversation in a channel thread instead of
 		// the user's DM with the agent.
 		inChannel bool
 		// renameTo, when set, renames the conversation through the API
 		// after its turns are added.
 		renameTo string
+		// rootPostDeleteAt, when set, roots the conversation at a Mattermost
+		// post with that DeleteAt (0 for a live post).
+		rootPostDeleteAt *int64
 	}
 	type wantRow struct {
 		title    string
@@ -63,12 +66,12 @@ func TestGetAIThreads(t *testing.T) {
 			want: []wantRow{{"continued", 5000}, {"untouched", 3000}},
 		},
 		{
-			name: "other users' and deleted conversations are excluded",
+			name: "other users' and archived conversations are excluded",
 			convs: []convSpec{
 				{title: "continued", userID: testUserID, updatedAt: 1000, turns: []int64{7000}},
 				{title: "untouched", userID: testUserID, updatedAt: 2000},
 				{title: "theirs", userID: otherUserID, updatedAt: 1000, turns: []int64{9000}},
-				{title: "deleted", userID: testUserID, updatedAt: 1000, turns: []int64{9000}, deleted: true},
+				{title: "archived", userID: testUserID, updatedAt: 1000, turns: []int64{9000}, archived: true},
 			},
 			want: []wantRow{{"continued", 7000}, {"untouched", 2000}},
 		},
@@ -79,6 +82,14 @@ func TestGetAIThreads(t *testing.T) {
 				{title: "newer", userID: testUserID, updatedAt: 2000, turns: []int64{2000}},
 			},
 			want: []wantRow{{"newer", 2000}, {"renamed", 1000}},
+		},
+		{
+			name: "conversations whose root post was deleted are excluded",
+			convs: []convSpec{
+				{title: "live root", userID: testUserID, updatedAt: 3000, rootPostDeleteAt: new(int64(0))},
+				{title: "deleted root", userID: testUserID, updatedAt: 4000, rootPostDeleteAt: new(int64(3500))},
+			},
+			want: []wantRow{{"live root", 3000}},
 		},
 		{
 			name: "channel threads with the agent are excluded",
@@ -102,6 +113,7 @@ func TestGetAIThreads(t *testing.T) {
 			e := SetupTestEnvironment(t)
 			defer e.Cleanup(t)
 			e.mockAPI.On("LogError", mock.Anything).Maybe()
+			e.mockAPI.On("GetPost", mock.Anything).Return(&model.Post{}, nil).Maybe()
 			e.api.conversationStore = convStore
 			mmClient := mmapimocks.NewMockClient(t)
 			mmClient.On("PublishWebSocketEvent", mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
@@ -109,7 +121,6 @@ func TestGetAIThreads(t *testing.T) {
 
 			for _, ddl := range []string{
 				`CREATE TABLE Channels (Id TEXT PRIMARY KEY, Type TEXT NOT NULL, Name TEXT NOT NULL)`,
-				`CREATE TABLE Posts (Id TEXT PRIMARY KEY, ChannelId TEXT NOT NULL)`,
 			} {
 				_, err := db.Exec(ddl)
 				require.NoError(t, err)
@@ -141,6 +152,10 @@ func TestGetAIThreads(t *testing.T) {
 					CreatedAt:  spec.updatedAt,
 					UpdatedAt:  spec.updatedAt,
 				}
+				if spec.rootPostDeleteAt != nil {
+					_, err = db.Exec("UPDATE Posts SET DeleteAt = $1 WHERE Id = $2", *spec.rootPostDeleteAt, rootPostID)
+					require.NoError(t, err)
+				}
 				require.NoError(t, convStore.CreateConversation(conv))
 				for i, createdAt := range spec.turns {
 					require.NoError(t, convStore.CreateTurn(&store.Turn{
@@ -152,10 +167,8 @@ func TestGetAIThreads(t *testing.T) {
 						CreatedAt:      createdAt,
 					}))
 				}
-				if spec.deleted {
-					// Soft-delete directly so UpdatedAt is not bumped past the turns.
-					_, err := db.Exec("UPDATE LLM_Conversations SET DeleteAt = $1 WHERE ID = $2", spec.updatedAt, conv.ID)
-					require.NoError(t, err)
+				if spec.archived {
+					require.NoError(t, convStore.ArchiveConversation(conv.ID, spec.updatedAt))
 				}
 				if spec.renameTo != "" {
 					body, err := json.Marshal(renameConversationRequest{Title: spec.renameTo})
