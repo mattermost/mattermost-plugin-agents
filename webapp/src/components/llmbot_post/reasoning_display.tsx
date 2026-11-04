@@ -6,6 +6,19 @@ import styled from 'styled-components';
 
 import {ChevronRightIcon} from '@mattermost/compass-icons/components';
 
+import {Spinner} from '@mattermost/compass-ui/components/spinner';
+
+import {CollapseChevron, CollapseHeaderRow} from './collapse_header';
+
+const ReasoningSpinner = () => (
+    <LoadingSpinner>
+        <Spinner
+            size='16'
+            aria-hidden={true}
+        />
+    </LoadingSpinner>
+);
+
 interface ReasoningDisplayProps {
     reasoningSummary: string;
     isReasoningCollapsed: boolean;
@@ -40,10 +53,10 @@ export const ReasoningDisplay: React.FC<ReasoningDisplayProps> = ({
     if (isReasoningCollapsed) {
         return (
             <MinimalReasoningContainer onClick={handleExpand}>
-                <MinimalExpandIcon isExpanded={false}>
+                <CollapseChevron $expanded={false}>
                     <ChevronRightIcon/>
-                </MinimalExpandIcon>
-                {isReasoningLoading && <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>}
+                </CollapseChevron>
+                {isReasoningLoading && <ReasoningSpinner/>}
                 <span>{'Thinking'}</span>
             </MinimalReasoningContainer>
         );
@@ -55,15 +68,15 @@ export const ReasoningDisplay: React.FC<ReasoningDisplayProps> = ({
                 ref={expandedReasoningHeaderRef}
                 onClick={() => onToggleCollapse(true)}
             >
-                <ExpandedChevron>
+                <CollapseChevron $expanded={true}>
                     <ChevronRightIcon/>
-                </ExpandedChevron>
-                {isReasoningLoading && <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>}
+                </CollapseChevron>
+                {isReasoningLoading && <ReasoningSpinner/>}
                 <span>{'Thinking'}</span>
             </ExpandedReasoningHeader>
             {reasoningSummary && (
                 <ExpandedReasoningContainer>
-                    <ReasoningContent collapsed={false}>
+                    <ReasoningContent $collapsed={false}>
                         <ReasoningText>
                             {reasoningSummary}
                         </ReasoningText>
@@ -84,37 +97,12 @@ const ExpandedReasoningContainer = styled.div`
 	overflow: hidden;
 `;
 
-const ExpandedReasoningHeader = styled.div`
-	display: flex;
-	align-items: center;
-	gap: 8px;
+const ExpandedReasoningHeader = styled(CollapseHeaderRow)`
 	margin-bottom: 12px;
-	font-size: 12px;
-	color: rgba(var(--center-channel-color-rgb), 0.75);
-	cursor: pointer;
-	user-select: none;
-
-	&:hover {
-		color: rgba(var(--center-channel-color-rgb), 0.8);
-	}
 `;
 
-const ExpandedChevron = styled.div`
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 16px;
-	height: 16px;
-	transition: transform 0.2s ease;
-	transform: rotate(90deg);
-
-	svg {
-		width: 14px;
-		height: 14px;
-	}
-`;
-
-const SpinnerWrapper = styled.div`
+// e2e locates the reasoning spinner by this component's class name.
+const LoadingSpinner = styled.div`
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -122,57 +110,15 @@ const SpinnerWrapper = styled.div`
 	height: 16px;
 `;
 
-export const LoadingSpinner = styled.div`
-	display: inline-block;
-	width: 14px;
-	height: 14px;
-	border: 2px solid rgba(var(--center-channel-color-rgb), 0.16);
-	border-radius: 50%;
-	border-top-color: rgba(var(--center-channel-color-rgb), 0.75);
-	animation: spin 1s linear infinite;
-
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
-`;
-
-export const MinimalReasoningContainer = styled.div`
-	display: flex;
-	align-items: center;
-	gap: 8px;
+export const MinimalReasoningContainer = styled(CollapseHeaderRow)`
 	margin: 4px 0;
-	font-size: 12px;
-	color: rgba(var(--center-channel-color-rgb), 0.75);
-	cursor: pointer;
-	user-select: none;
-
-	&:hover {
-		color: rgba(var(--center-channel-color-rgb), 0.8);
-	}
 `;
 
-const MinimalExpandIcon = styled.div<{isExpanded: boolean}>`
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 16px;
-	height: 16px;
-	transition: transform 0.2s ease;
-	transform: ${(props) => (props.isExpanded ? 'rotate(180deg)' : 'rotate(0)')};
-
-	svg {
-		width: 14px;
-		height: 14px;
-	}
-`;
-
-const ReasoningContent = styled.div<{collapsed: boolean}>`
-	max-height: ${(props) => (props.collapsed ? '0' : '600px')};
+const ReasoningContent = styled.div<{$collapsed: boolean}>`
+	max-height: ${(props) => (props.$collapsed ? '0' : '600px')};
 	overflow-y: auto;
 	transition: max-height 0.3s ease-in-out;
-	opacity: ${(props) => (props.collapsed ? '0' : '1')};
+	opacity: ${(props) => (props.$collapsed ? '0' : '1')};
 	transition: opacity 0.2s ease-in-out, max-height 0.3s ease-in-out;
 `;
 

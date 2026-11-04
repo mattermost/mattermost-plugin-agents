@@ -30,6 +30,7 @@ function renderComponent(
         onApprove?: () => void;
         onReject?: () => void;
         approvalStage?: ToolApprovalStage;
+        awaitingRequester?: boolean;
     } = {},
 ) {
     return render(
@@ -110,12 +111,12 @@ describe('ToolCard result rendering', () => {
 
 describe('ToolCard pending state', () => {
     test('shows a spinner without buttons for a live auto-executing tool', () => {
-        const {container} = renderComponent(
+        renderComponent(
             makeTool({would_auto_execute: true}),
             {approvalStage: 'done'},
         );
 
-        expect(container.querySelector('svg')).not.toBeNull();
+        expect(screen.getByTestId('llm-bot-tool-status').getAttribute('data-status')).toBe('running');
         expect(screen.queryByRole('button', {name: 'Accept'})).toBeNull();
         expect(screen.queryByRole('button', {name: 'Reject'})).toBeNull();
     });
@@ -132,5 +133,29 @@ describe('ToolCard pending state', () => {
 
         expect(screen.queryByRole('button', {name: 'Accept'})).toBeNull();
         expect(screen.queryByRole('button', {name: 'Reject'})).toBeNull();
+    });
+});
+
+describe('ToolCard awaiting the requester', () => {
+    test('shows a pending call as waiting on approval instead of running', () => {
+        renderComponent(makeTool({}), {awaitingRequester: true});
+
+        expect(screen.getByText('Awaiting approval')).not.toBeNull();
+        expect(screen.getByTestId('llm-bot-tool-status-waiting')).not.toBeNull();
+        expect(screen.queryByTestId('llm-bot-tool-status')).toBeNull();
+    });
+
+    test('says a pending question awaits an answer', () => {
+        renderComponent(makeTool({user_interaction: 'select'}), {awaitingRequester: true});
+
+        expect(screen.getByText('Awaiting answer')).not.toBeNull();
+        expect(screen.queryByText('Awaiting approval')).toBeNull();
+    });
+
+    test('keeps the result glyph on a result awaiting the share decision', () => {
+        renderComponent(makeTool({status: ToolCallStatus.Success}), {awaitingRequester: true, approvalStage: 'result'});
+
+        expect(screen.getByText('Awaiting approval')).not.toBeNull();
+        expect(screen.getByTestId('llm-bot-tool-status').getAttribute('data-status')).toBe('success');
     });
 });

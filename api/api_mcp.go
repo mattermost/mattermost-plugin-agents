@@ -4,13 +4,16 @@
 package api
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -46,11 +49,11 @@ const mcpToolsCatalogServiceAccount = "service_account"
 
 // handleGetUserMCPTools returns MCP tools grouped by server.
 //
-// By default this is the requesting user's per-user catalog (OAuth and user
-// headers). Pass catalog=service_account to preview the service-account
-// catalog an agent actually uses at runtime (SA remotes pooled by the agent's
-// bot, embedded/plugin as the viewer). agent_id is required unless the
-// caller is a system admin creating an agent that does not exist yet.
+// The default user catalog deliberately passes the widest ToolSelection so it
+// shows every admin-enabled server, including servers no agent has allowlisted.
+// Pass catalog=service_account to preview the service-account catalog an agent
+// actually uses at runtime. agent_id is required unless the caller is a system
+// admin creating an agent that does not exist yet.
 func (a *API) handleGetUserMCPTools(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	req, ok := a.resolveMCPToolsCatalog(c, userID)
@@ -58,8 +61,23 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 		return
 	}
 
-	tools, mcpErrors := a.mcpClientManager.GetTools(c.Request.Context(), req)
-	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, tools, mcpErrors, req.ServiceAccount))
+	access := a.mcpClientManager.GetCatalogAccess(c.Request.Context(), req)
+	if !abortIfCatalogUnavailable(c, access) {
+		return
+	}
+	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, access, req.ServiceAccount))
+}
+
+// abortIfCatalogUnavailable fails the request when MCP server access policy
+// could not be evaluated: the access then denies nothing, so listing servers
+// from it would show servers the user may not use. It returns false once it
+// has aborted.
+func abortIfCatalogUnavailable(c *gin.Context, access mcp.CatalogAccess) bool {
+	if !access.Unavailable() {
+		return true
+	}
+	c.AbortWithError(http.StatusServiceUnavailable, errors.New("MCP tools are temporarily unavailable"))
+	return false
 }
 
 // resolveMCPToolsCatalog decides whose tools to list. ok is false when the
@@ -71,7 +89,7 @@ func (a *API) resolveMCPToolsCatalog(c *gin.Context, userID string) (mcp.Catalog
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("catalog must be empty or %s", mcpToolsCatalogServiceAccount))
 		return mcp.CatalogRequest{}, false
 	}
-	if catalog != mcpToolsCatalogServiceAccount || !a.licenseChecker.IsBasicsLicensed() {
+	if catalog != mcpToolsCatalogServiceAccount || !a.licenseChecker.Allows(enterprise.CapMCPServiceAccount) {
 		return mcp.UserCatalogRequest(userID), true
 	}
 
@@ -117,42 +135,49 @@ func (a *API) handleRefreshUserMCPTools(c *gin.Context) {
 	}
 
 	userID := c.GetHeader("Mattermost-User-Id")
-	tools, mcpErrors, err := a.mcpClientManager.RefreshToolsForUser(c.Request.Context(), userID)
+	req := mcp.UserCatalogRequest(userID)
+	access, err := a.mcpClientManager.RefreshCatalogAccess(c.Request.Context(), req)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to refresh MCP tools: %w", err))
 		return
 	}
+	if !abortIfCatalogUnavailable(c, access) {
+		return
+	}
 
-	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, tools, mcpErrors, false))
+	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, access, req.ServiceAccount))
 }
 
-func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErrors *mcp.Errors, serviceAccount bool) UserMCPToolsResponse {
+func (a *API) buildUserMCPToolsResponse(userID string, access mcp.CatalogAccess, serviceAccount bool) UserMCPToolsResponse {
 	mcpCfg := a.config.MCP()
 
 	// Group tools by ServerOrigin
-	toolsByOrigin := make(map[string][]llm.Tool, len(tools))
-	for _, t := range tools {
+	toolsByOrigin := make(map[string][]llm.Tool, len(access.Tools))
+	for _, t := range access.Tools {
 		toolsByOrigin[t.ServerOrigin] = append(toolsByOrigin[t.ServerOrigin], t)
 	}
 
 	authErrorsByOrigin := make(map[string]llm.ToolAuthError)
-	if mcpErrors != nil {
-		for _, authErr := range mcpErrors.ToolAuthErrors {
+	if access.Errors != nil {
+		for _, authErr := range access.Errors.ToolAuthErrors {
 			authErrorsByOrigin[authErr.ServerOrigin] = authErr
 		}
 	}
 
 	oauthManager := a.mcpClientManager.GetOAuthManager()
 	servers := make([]UserMCPServerInfo, 0, len(mcpCfg.Servers)+1)
+	denied := access.DeniedOrigins
 
 	for i := range mcpCfg.Servers {
 		serverConfig := &mcpCfg.Servers[i]
 		if !serverConfig.Enabled || serverConfig.BaseURL == "" {
 			continue
 		}
+		if denied[llm.NormalizeMCPServerOrigin(serverConfig.BaseURL)] {
+			continue
+		}
 
-		servers = append(servers, buildUserMCPServerInfo(
-			a,
+		servers = append(servers, a.buildUserMCPServerInfo(
 			userID,
 			oauthManager,
 			serverConfig,
@@ -162,7 +187,7 @@ func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErro
 		))
 	}
 
-	if a.mcpClientManager.GetEmbeddedServer() != nil {
+	if a.mcpClientManager.GetEmbeddedServer() != nil && !denied[mcp.EmbeddedClientKey] {
 		toolConfigs := mcpCfg.EmbeddedServer.ToolConfigs
 		if len(toolConfigs) == 0 {
 			toolConfigs = mcp.SeedVettedToolConfigs(mcp.EmbeddedClientKey)
@@ -175,8 +200,7 @@ func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErro
 			ToolConfigs: toolConfigs,
 		}
 
-		servers = append(servers, buildUserMCPServerInfo(
-			a,
+		servers = append(servers, a.buildUserMCPServerInfo(
 			userID,
 			oauthManager,
 			embeddedConfig,
@@ -186,13 +210,18 @@ func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErro
 		))
 	}
 
-	// Plugin rows use the same synthetic origin key as filterToolsByConfig.
-	for _, cfg := range a.mcpClientManager.ListPluginServers() {
+	// Reuse the request-scoped plugin snapshot used by policy evaluation,
+	// connection planning, and tool filtering.
+	for _, cfg := range access.PluginServers {
 		if !cfg.Enabled {
 			continue
 		}
 
-		origin := "plugin://" + cfg.PluginID
+		origin := config.PluginServerOrigin(cfg.PluginID)
+		if denied[origin] {
+			continue
+		}
+
 		pluginConfig := &mcp.ServerConfig{
 			Name:        cfg.Name,
 			Enabled:     true,
@@ -200,8 +229,7 @@ func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErro
 			ToolConfigs: cfg.ToolConfigs,
 		}
 
-		servers = append(servers, buildUserMCPServerInfo(
-			a,
+		servers = append(servers, a.buildUserMCPServerInfo(
 			userID,
 			oauthManager,
 			pluginConfig,
@@ -214,8 +242,7 @@ func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErro
 	return UserMCPToolsResponse{Servers: servers}
 }
 
-func buildUserMCPServerInfo(
-	api *API,
+func (a *API) buildUserMCPServerInfo(
 	userID string,
 	oauthManager *mcp.OAuthManager,
 	serverConfig *mcp.ServerConfig,
@@ -235,8 +262,8 @@ func buildUserMCPServerInfo(
 		})
 	}
 
-	sort.Slice(toolInfos, func(i, j int) bool {
-		return toolInfos[i].Name < toolInfos[j].Name
+	slices.SortFunc(toolInfos, func(x, y UserMCPToolInfo) int {
+		return cmp.Compare(x.Name, y.Name)
 	})
 
 	kind := mcp.ServerKind(serverConfig.BaseURL)
@@ -264,9 +291,7 @@ func buildUserMCPServerInfo(
 		hasStoredToken, err = oauthManager.HasStoredToken(userID, serverConfig.Name)
 		if err != nil {
 			hasStoredToken = false
-			if api != nil {
-				api.pluginAPI.Log.Debug("Failed to check MCP OAuth token presence", "userID", userID, "serverName", serverConfig.Name, "serverOrigin", serverConfig.BaseURL, "error", err)
-			}
+			a.pluginAPI.Log.Debug("Failed to check MCP OAuth token presence", "userID", userID, "serverName", serverConfig.Name, "serverOrigin", serverConfig.BaseURL, "error", err)
 		}
 	}
 
@@ -276,9 +301,7 @@ func buildUserMCPServerInfo(
 		authNeededState, err = oauthManager.LoadAuthNeededState(userID, serverConfig.Name)
 		if err != nil {
 			authNeededState = nil
-			if api != nil {
-				api.pluginAPI.Log.Debug("Failed to load MCP OAuth-needed state", "userID", userID, "serverName", serverConfig.Name, "serverOrigin", serverConfig.BaseURL, "error", err)
-			}
+			a.pluginAPI.Log.Debug("Failed to load MCP OAuth-needed state", "userID", userID, "serverName", serverConfig.Name, "serverOrigin", serverConfig.BaseURL, "error", err)
 		}
 	}
 	hasPersistedAuthNeeded := authNeededState != nil && authNeededState.AuthURL != ""
@@ -340,8 +363,7 @@ func (a *API) handlePutUserPreferences(c *gin.Context) {
 
 	var prefs mcp.UserToolProviderPreferences
 	if err := c.ShouldBindJSON(&prefs); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			c.AbortWithError(http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
 			return
 		}
@@ -421,7 +443,7 @@ func (a *API) publishMCPDisconnected(userID, serverName string) {
 		return
 	}
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"status":     "disconnected",
 		"serverName": serverName,
 	}

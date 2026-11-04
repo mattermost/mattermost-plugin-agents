@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { OpenAIMockContainer, RunOpenAIMocks, responseTest } from 'helpers/openai-mock';
@@ -12,19 +13,19 @@ import {
 import { AgentAPIHelper } from 'helpers/agent-api';
 import { AgentPageHelper } from 'helpers/agent-page';
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunAgentContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
 test.describe('Agent CRUD', () => {
-    test.beforeAll(async () => {
-        mattermost = await RunAgentContainer();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
         await openAIMock.addCompletionMock(responseTest);
-    }, { timeout: 180000 });
-
-    test.afterAll(async () => {
-        await openAIMock?.stop();
-        await mattermost?.stop();
     });
 
     test('should create a new agent via UI', async ({ page }) => {
@@ -89,6 +90,60 @@ test.describe('Agent CRUD', () => {
         // Verify updated name in listing
         await expect(agentPage.getAgentRowByName('Edited Agent')).toBeVisible({ timeout: 10000 });
         await expect(agentPage.getAgentRowByName('Edit Me')).not.toBeVisible();
+    });
+
+    test('should rename an agent in place after confirming, keeping its DM history', async ({ page }) => {
+        test.setTimeout(90000);
+        const mmPage = new MattermostPage(page);
+        const agentPage = new AgentPageHelper(page);
+        const agentApi = new AgentAPIHelper(mattermost.url());
+        const suffix = Date.now().toString(36);
+        const oldName = `renameme${suffix}`;
+        const newName = `renamed${suffix}`;
+        const displayName = `Rename Me ${suffix}`;
+        const historyMessage = `Message sent before the rename ${suffix}`;
+
+        const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
+        const token = adminClient.getToken();
+        const agent = await agentApi.createTestAgent(token, {
+            displayName,
+            username: oldName,
+            serviceID: mockServiceId,
+        });
+        const botUserId = agent.botUserID!;
+        const me = await adminClient.getMe();
+        const dm = await adminClient.createDirectChannel([me.id, botUserId]);
+        await adminClient.createPost({ channel_id: dm.id, message: historyMessage });
+
+        await mmPage.login(mattermost.url(), agentAdminUsername, agentAdminPassword);
+        await agentPage.navigateToAgents(mattermost.url());
+        await agentPage.openAgentActions(displayName);
+        await agentPage.clickEditAction(displayName);
+        await agentPage.waitForModal();
+
+        await expect(agentPage.getUsernameInput()).toBeEditable();
+        await agentPage.getUsernameInput().fill(newName);
+        await expect(page.getByText(`people and integrations using @${oldName} will need to switch`)).toBeVisible();
+
+        await agentPage.getModalSaveButton().click();
+        const dialog = agentPage.getRenameDialog();
+        await expect(dialog).toBeVisible();
+        await expect(dialog).toContainText(`@${oldName}`);
+        await expect(dialog).toContainText(`@${newName}`);
+        await expect(dialog).toContainText('will no longer link to the agent');
+        await expect(dialog).toContainText('another user or bot could claim it');
+
+        await agentPage.getRenameConfirmButton().click();
+        await agentPage.waitForModalClosed();
+
+        const renamedBot = await adminClient.getUser(botUserId);
+        expect(renamedBot.username).toBe(newName);
+        expect(renamedBot.delete_at).toBe(0);
+        expect((await agentApi.getAgent(token, agent.id)).name).toBe(newName);
+
+        const teams = await adminClient.getMyTeams();
+        await page.goto(`${mattermost.url()}/${teams[0].name}/messages/@${newName}`);
+        await expect(page.getByTestId('post-message-text').getByText(historyMessage)).toBeVisible({ timeout: 15000 });
     });
 
     test('should prompt before closing the agent modal with unsaved changes', async ({ page }) => {
@@ -264,6 +319,11 @@ test.describe('Agent CRUD', () => {
         await mmPage.login(mattermost.url(), agentRegularUsername, agentRegularPassword);
         await agentPage.navigateToAgents(mattermost.url());
         await expect(agentPage.getAgentRowByName(`Visible To Regular ${suffix}`)).toBeVisible({ timeout: 10000 });
+
+        // The row's primary action starts a new chat for everyone, including users who cannot edit the agent.
+        await agentPage.clickAgentRow(`Visible To Regular ${suffix}`);
+        await expect(page).toHaveURL(/\/plug\/mattermost-ai\/agents\/chat\/[a-z0-9]{26}$/, { timeout: 15000 });
+        await expect(page.getByTestId('agent-chat-new-composer').getByRole('textbox')).toBeVisible({ timeout: 15000 });
     });
 
     test('denies create in UI when user lacks manage_own_agent permission', async ({ page }) => {
@@ -319,7 +379,7 @@ test.describe('Agent CRUD', () => {
         await expect(enableToolsLabel).toBeVisible({ timeout: 10000 });
         await enableToolsLabel.locator('xpath=following-sibling::*[1]').locator('input[type="radio"]').nth(1).click();
 
-        const mcpsTab = page.getByRole('button', { name: 'MCPs' });
+        const mcpsTab = page.getByRole('tab', { name: 'MCPs' });
         await expect(mcpsTab).toBeDisabled();
     });
 

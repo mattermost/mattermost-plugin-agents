@@ -6,6 +6,8 @@ package mcp
 import (
 	"strings"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
@@ -20,6 +22,17 @@ type ToolPolicyFunc func(serverBaseURL string, toolName string) (string, bool)
 // GetToolPolicy implements ToolPolicyChecker.
 func (f ToolPolicyFunc) GetToolPolicy(serverBaseURL string, toolName string) (string, bool) {
 	return f(serverBaseURL, toolName)
+}
+
+// NewConfigToolPolicyChecker resolves effective policies against the current
+// config and license on every call. Callers pass the bare tool name (runtime
+// server namespace removed); it must not be stripped again, because MCP tool
+// names may themselves contain the separator (pluginmcp prefixes every plugin
+// tool with "{pluginID}__").
+func NewConfigToolPolicyChecker(getConfig func() Config, policiesLicensed func() bool) ToolPolicyChecker {
+	return ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
+		return LookupEffectiveToolPolicy(getConfig(), serverBaseURL, toolName, policiesLicensed())
+	})
 }
 
 // ToolPolicyLookupName returns the configured name to use for a runtime tool name.
@@ -83,4 +96,38 @@ func LookupToolPolicy(cfg Config, serverBaseURL, toolName string) (string, bool)
 	}
 
 	return ToolPolicyAsk, false
+}
+
+// LookupEffectiveToolPolicy is LookupToolPolicy limited to the product-default
+// policy when tool-approval policies are not available: the stored policy
+// applies only where it auto-runs no more widely than the default, so an
+// admin's narrower choice (such as ask) always holds. Enabled still comes from
+// the stored config, so a disabled tool stays disabled at every level. The
+// default is the vetted seed policy for EmbeddedClientKey tools (ask if the
+// tool is not in the seed) and ask for every other origin.
+func LookupEffectiveToolPolicy(cfg Config, serverBaseURL, toolName string, policiesLicensed bool) (string, bool) {
+	policy, enabled := LookupToolPolicy(cfg, serverBaseURL, toolName)
+	if policiesLicensed {
+		return policy, enabled
+	}
+
+	defaultPolicy := ToolPolicyAsk
+	if serverBaseURL == EmbeddedClientKey {
+		lookupName := ToolPolicyLookupName(&ServerConfig{
+			Name:        EmbeddedServerName,
+			Enabled:     true,
+			BaseURL:     EmbeddedClientKey,
+			ToolConfigs: SeedVettedToolConfigs(EmbeddedClientKey),
+		}, toolName)
+		for _, seed := range SeedVettedToolConfigs(EmbeddedClientKey) {
+			if seed.Name == lookupName || seed.Name == toolName {
+				defaultPolicy = seed.Policy
+				break
+			}
+		}
+	}
+	if config.ToolPolicyReach(policy) < config.ToolPolicyReach(defaultPolicy) {
+		return policy, enabled
+	}
+	return defaultPolicy, enabled
 }

@@ -37,7 +37,7 @@ func TestCallTool_PluginServerDisconnects_RecoversViaReconnect(t *testing.T) {
 		Enabled:  true,
 	}
 
-	require.NoError(t, uc.ConnectToPluginServer(context.Background(), cfg, mockAPI))
+	require.Nil(t, connectPluginServer(uc, cfg, mockAPI))
 
 	originKey := pluginServerOriginKey(cfg.PluginID)
 	c, ok := uc.clients[originKey]

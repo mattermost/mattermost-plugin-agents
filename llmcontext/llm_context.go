@@ -23,14 +23,38 @@ type ToolProvider interface {
 	GetTools(bot *bots.Bot, llmContext *llm.Context) []llm.Tool
 }
 
-// MCPToolProvider provides MCP tools for a user or for a service-account agent
+// MCPToolProvider provides MCP tools for a user or service-account agent.
+// selection identifies which servers the request may reach, so ineligible
+// servers are never connected rather than connected and then filtered out.
 type MCPToolProvider interface {
-	GetTools(ctx stdcontext.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors)
+	GetToolsWithSelection(ctx stdcontext.Context, req mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors)
 }
 
 type MCPToolRetrievalOverrideProvider interface {
 	GetToolRetrievalOverrides() map[string]mcp.ToolRetrievalOverride
 }
+
+// MCPServerDescriber describes configured MCP servers beyond the tools a
+// catalog request returned, so the model can ask the requester to connect one.
+type MCPServerDescriber interface {
+	DescribeUnconnectedMCPServers(authErrors []llm.ToolAuthError) []llm.UnconnectedMCPServer
+	MCPServerOriginsByName() map[string]string
+}
+
+var _ MCPServerDescriber = (*mcp.ClientManager)(nil)
+
+// SkillProvider provides the skill tools and catalog for a request.
+type SkillProvider interface {
+	Tools(bot llm.BotConfig, c *llm.Context) ([]llm.Tool, []llm.SkillInfo, error)
+}
+
+// DMOnlyMCPServerDescriber names the servers a catalog selection left out
+// only because they are limited to direct messages.
+type DMOnlyMCPServerDescriber interface {
+	DescribeDMOnlyMCPServers(ctx stdcontext.Context, req mcp.CatalogRequest, selection mcp.ToolSelection) []llm.DMOnlyMCPServer
+}
+
+var _ DMOnlyMCPServerDescriber = (*mcp.ClientManager)(nil)
 
 // ConfigProvider provides configuration access
 type ConfigProvider interface {
@@ -44,6 +68,7 @@ type Builder struct {
 	mcpToolProvider MCPToolProvider
 	configProvider  ConfigProvider
 	licenseChecker  *enterprise.LicenseChecker
+	skillProvider   SkillProvider
 
 	mcpDynamicToolTelemetry llm.MCPDynamicToolTelemetry
 }
@@ -66,6 +91,10 @@ func NewLLMContextBuilder(
 
 func (b *Builder) SetMCPDynamicToolTelemetry(telemetry llm.MCPDynamicToolTelemetry) {
 	b.mcpDynamicToolTelemetry = telemetry
+}
+
+func (b *Builder) SetSkillProvider(provider SkillProvider) {
+	b.skillProvider = provider
 }
 
 // BuildLLMContextUserRequest is a helper function to collect the required context for a user request.
@@ -139,18 +168,42 @@ func (b *Builder) WithLLMContextRequestingUser(user *model.User) llm.ContextOpti
 // appears in the per-agent MCP allowlist (by ServerOrigin).
 func toolAuthErrorMatchesAllowlist(authErr llm.ToolAuthError, allowlist []llm.EnabledMCPTool) bool {
 	errOrigin := llm.NormalizeMCPServerOrigin(authErr.ServerOrigin)
-	for i := range allowlist {
-		if llm.NormalizeMCPServerOrigin(allowlist[i].ServerOrigin) == errOrigin {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(allowlist, func(enabled llm.EnabledMCPTool) bool {
+		return llm.NormalizeMCPServerOrigin(enabled.ServerOrigin) == errOrigin
+	})
 }
 
 func filterToolAuthErrorsForAllowlist(errors []llm.ToolAuthError, allowlist []llm.EnabledMCPTool) []llm.ToolAuthError {
 	return slices.DeleteFunc(slices.Clone(errors), func(e llm.ToolAuthError) bool {
 		return !toolAuthErrorMatchesAllowlist(e, allowlist)
 	})
+}
+
+// mcpToolSelection maps this request's per-agent, per-user, and license rules
+// onto the set of MCP servers that may be contacted, so a disallowed server is
+// never connected rather than connected and then filtered out. The license
+// gate is enforced only here; the agent allowlist and user-disabled origins
+// are additionally narrowed per-tool by the filters that follow. DM-only
+// servers are selected only for the requester's direct message with the
+// agent, so every other request, including ones that never say where they
+// run, leaves them out.
+func mcpToolSelection(botCfg llm.BotConfig, c *llm.Context, remoteMCPLicensed, directMessage bool) mcp.ToolSelection {
+	selection := mcp.ToolSelection{
+		DeniedOrigins:        c.ToolCatalog.DisabledMCPServerOrigins,
+		ExcludeRemoteServers: !remoteMCPLicensed,
+		ExcludeDMOnlyServers: !directMessage,
+	}
+
+	if !botCfg.AutoEnableNewMCPTools {
+		// Deliberately non-nil even when the agent allowlists nothing: a nil
+		// allowlist would select every server instead of none.
+		selection.AllowedOrigins = make([]string, 0, len(botCfg.EnabledMCPTools))
+		for _, tool := range botCfg.EnabledMCPTools {
+			selection.AllowedOrigins = append(selection.AllowedOrigins, tool.ServerOrigin)
+		}
+	}
+
+	return selection
 }
 
 func (b *Builder) WithLLMContextDisabledMCPServers(origins []string) llm.ContextOption {
@@ -192,6 +245,24 @@ func (b *Builder) WithLLMContextInteractive() llm.ContextOption {
 	}
 }
 
+// isRequesterDMWithBot reports whether the context's channel is exactly the
+// requesting user's direct message with botUserID.
+func isRequesterDMWithBot(c *llm.Context, botUserID string) bool {
+	return c.Channel != nil && c.RequestingUser != nil && botUserID != "" && c.RequestingUser.Id != "" &&
+		c.Channel.Type == model.ChannelTypeDirect &&
+		c.Channel.Name == model.GetDMNameFromIds(botUserID, c.RequestingUser.Id)
+}
+
+// WithLLMContextDirectMessage marks the request as the requester's direct
+// message with the agent, so DM-only MCP servers are cataloged. It has no
+// effect unless the context's channel is exactly that DM, and must be configured
+// before default tools are built.
+func (b *Builder) WithLLMContextDirectMessage() llm.ContextOption {
+	return func(c *llm.Context) {
+		c.ToolCatalog.DirectMessage = true
+	}
+}
+
 // WithLLMContextResponseFiles marks the context as supporting response-post
 // file attachments (ToolRuntime.CreatedFiles are attached to the streamed
 // response post at end of turn). Must be configured before default tools
@@ -199,6 +270,13 @@ func (b *Builder) WithLLMContextInteractive() llm.ContextOption {
 func (b *Builder) WithLLMContextResponseFiles() llm.ContextOption {
 	return func(c *llm.Context) {
 		c.ToolCatalog.ResponseFilesSupported = true
+	}
+}
+
+// WithLLMContextSkills sets whether AddSkillTools catalogs the skill tools.
+func (b *Builder) WithLLMContextSkills(enabled bool) llm.ContextOption {
+	return func(c *llm.Context) {
+		c.ToolCatalog.SkillsEnabled = enabled
 	}
 }
 
@@ -223,15 +301,17 @@ func sanitizeUserProfileField(s string) string {
 
 // WithLLMContextSessionID removed: embedded MCP manages its own session lifecycle
 
-// isRemoteMCPLicensed reports whether the licensed remote-MCP feature is available.
+// isRemoteMCPLicensed reports whether remote and plugin MCP servers are
+// available at the current license level. A nil checker fails closed.
 func (b *Builder) isRemoteMCPLicensed() bool {
-	return b.licenseChecker == nil || b.licenseChecker.IsBasicsLicensed()
+	return b.licenseChecker.Allows(enterprise.CapRemoteMCP)
 }
 
 // UsesServiceAccountCatalog reports whether tool catalogs for this bot are built in
-// service-account mode; on an unlicensed server SA agents behave like normal agents.
+// service-account mode. Service-account catalogs are available at Enterprise and
+// above; below that, agents use per-user credentials.
 func (b *Builder) UsesServiceAccountCatalog(bot *bots.Bot) bool {
-	return bot != nil && bot.GetConfig().UseServiceAccountAuth && b.isRemoteMCPLicensed()
+	return bot != nil && bot.GetConfig().UseServiceAccountAuth && b.licenseChecker.Allows(enterprise.CapMCPServiceAccount)
 }
 
 // getToolsStoreForUser returns a tool store for a specific user, including MCP tools.
@@ -239,23 +319,24 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 	// Check for nil bot, which is unexpected
 	if bot == nil {
 		b.pluginAPI.Log.Error("Unexpected nil bot when getting tool store for user", "userID", userID)
-		return llm.NewNoTools()
+		return llm.NewToolStore()
 	}
 
 	// Check for empty userID, which is unexpected
 	if userID == "" {
 		b.pluginAPI.Log.Error("Unexpected empty userID when getting tool store for user")
-		return llm.NewNoTools()
+		return llm.NewToolStore()
 	}
 
-	// useServiceAccount implies remoteMCPLicensed, so the license filter below
-	// never strips service account catalogs.
+	// useServiceAccount is only true when CapMCPServiceAccount is available,
+	// which is at the same level as CapRemoteMCP, so the selection below never
+	// excludes remote service-account servers.
 	remoteMCPLicensed := b.isRemoteMCPLicensed()
 	useServiceAccount := b.UsesServiceAccountCatalog(bot)
 
 	// Check if tools are disabled for this bot
 	if bot.GetConfig().DisableTools {
-		return llm.NewNoTools()
+		return llm.NewToolStore()
 	}
 
 	// Create a tool store that requires user approval for tool calls
@@ -276,25 +357,23 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 			return store
 		}
 
-		// Get tools from all connected servers. GetTools validates the request
-		// fail-closed (e.g. an agent with no bot user yields an error, not tools).
+		// Build the catalog for the appropriate auth mode. GetTools validates
+		// the request fail-closed (for example, an agent with no bot user
+		// yields an error, not tools).
 		req := mcp.UserCatalogRequest(userID)
 		if useServiceAccount {
 			c.ToolAuthMode = llm.ToolAuthModeServiceAccount
 			req = mcp.ServiceAccountCatalogRequest(bot.BotUserID(), userID)
 		}
-		mcpTools, mcpErrors = b.mcpToolProvider.GetTools(ctx, req)
 
-		// Remote/external MCP servers are the licensed "MCP Support" feature.
-		// Without a license their tools are never supplied to the LLM: they
-		// are dropped before full-schema insertion and before the dynamic
-		// loading registry is built, so the model cannot see, load, or call
-		// them. Embedded Mattermost MCP tools are basic tool integrations
-		// and are not filtered.
-		if !remoteMCPLicensed {
-			mcpTools = filterMCPToolsByPredicate(mcpTools, func(tool llm.Tool) bool {
-				return !mcp.IsRemoteServerOrigin(tool.ServerOrigin)
-			})
+		// Resolve server-level eligibility before connecting. The per-tool
+		// filters below remain as defense in depth for allowlist and context
+		// rules after the provider returns its selected catalog.
+		directMessage := c.ToolCatalog.DirectMessage && isRequesterDMWithBot(c, bot.BotUserID())
+		selection := mcpToolSelection(botCfg, c, remoteMCPLicensed, directMessage)
+		mcpTools, mcpErrors = b.mcpToolProvider.GetToolsWithSelection(ctx, req, selection)
+		if describer, ok := b.mcpToolProvider.(DMOnlyMCPServerDescriber); ok && c.ToolCatalog.InteractiveUserPresent {
+			c.DMOnlyMCPServers = describer.DescribeDMOnlyMCPServers(ctx, req, selection)
 		}
 
 		// Per-agent MCP tool filtering: unless the agent is configured to pick up
@@ -314,14 +393,14 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 				authErrors = filterToolAuthErrorsForAllowlist(mcpErrors.ToolAuthErrors, botCfg.EnabledMCPTools)
 			}
 			for _, authError := range authErrors {
-				// Auth errors from remote servers are dropped with the tools
-				// so users are not prompted to authenticate to servers whose
-				// tools cannot be used without a license.
-				if !remoteMCPLicensed && mcp.IsRemoteServerOrigin(authError.ServerOrigin) {
-					continue
-				}
 				store.AddAuthError(authError)
 			}
+		}
+
+		// Someone has to click Connect, and service-account catalogs never
+		// use the requester's own OAuth grants.
+		if c.ToolCatalog.InteractiveUserPresent && !useServiceAccount {
+			b.offerMCPConnections(store, c, botCfg)
 		}
 	}
 
@@ -341,8 +420,58 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 	return store
 }
 
+// offerMCPConnections catalogs the connection request tool for the servers in
+// store's auth errors, with everything known about them for the prompt.
+func (b *Builder) offerMCPConnections(store *llm.ToolStore, c *llm.Context, botCfg llm.BotConfig) {
+	describer, ok := b.mcpToolProvider.(MCPServerDescriber)
+	if !ok {
+		return
+	}
+	// Set even when every server is connected: an answered request resolves
+	// against a context rebuilt after the user connected, and a server can
+	// still lapse mid-turn (MCPToolErrorResult).
+	c.ToolCatalog.MCPServerOrigins = describer.MCPServerOriginsByName()
+
+	authErrors := store.GetAuthErrors()
+	if len(authErrors) == 0 {
+		return
+	}
+	servers := describer.DescribeUnconnectedMCPServers(authErrors)
+	if len(servers) == 0 {
+		return
+	}
+	if !botCfg.AutoEnableNewMCPTools {
+		for i := range servers {
+			servers[i].Tools = filterToolInfosForAllowlist(servers[i].Tools, botCfg.EnabledMCPTools)
+		}
+	}
+
+	c.UnconnectedMCPServers = servers
+	store.AddTools([]llm.Tool{mcp.NewRequestConnectionTool(servers)})
+}
+
+// filterToolInfosForAllowlist keeps the bare-named tools the agent's allowlist
+// would let it use once the server is connected.
+func filterToolInfosForAllowlist(tools []llm.ToolInfo, allowlist []llm.EnabledMCPTool) []llm.ToolInfo {
+	return slices.DeleteFunc(tools, func(tool llm.ToolInfo) bool {
+		origin := llm.NormalizeMCPServerOrigin(tool.ServerOrigin)
+		return !slices.ContainsFunc(allowlist, func(enabled llm.EnabledMCPTool) bool {
+			if llm.NormalizeMCPServerOrigin(enabled.ServerOrigin) != origin {
+				return false
+			}
+			return enabled.ToolName == llm.MCPServerToolWildcard || llm.BareMCPToolName(enabled.ToolName) == tool.Name
+		})
+	})
+}
+
 func (b *Builder) buildStrictMCPToolStore(store *llm.ToolStore, mcpTools []llm.Tool, c *llm.Context, registryOpts ...mcp.ToolRegistryOption) {
 	if c == nil {
+		return
+	}
+	if len(mcpTools) == 0 {
+		// No authorized MCP catalog (policy denial or nothing configured):
+		// omit the meta-tools rather than expose them over an empty registry.
+		c.ObserveMCPDynamicToolEvent("catalog_empty", "meta_tools_omitted")
 		return
 	}
 	registry := mcp.NewToolRegistry(mcpTools, registryOpts...)
@@ -465,14 +594,9 @@ func filterMCPToolsByDisabledOrigins(tools []llm.Tool, disabled []string) []llm.
 		disabledSet[origin] = true
 	}
 
-	filtered := make([]llm.Tool, 0, len(tools))
-	for _, tool := range tools {
-		if disabledSet[llm.NormalizeMCPServerOrigin(tool.ServerOrigin)] {
-			continue
-		}
-		filtered = append(filtered, tool)
-	}
-	return filtered
+	return slices.DeleteFunc(slices.Clone(tools), func(tool llm.Tool) bool {
+		return disabledSet[llm.NormalizeMCPServerOrigin(tool.ServerOrigin)]
+	})
 }
 
 func filterMCPToolsByPredicate(tools []llm.Tool, keep func(llm.Tool) bool) []llm.Tool {
@@ -480,13 +604,9 @@ func filterMCPToolsByPredicate(tools []llm.Tool, keep func(llm.Tool) bool) []llm
 		return tools
 	}
 
-	filtered := make([]llm.Tool, 0, len(tools))
-	for _, tool := range tools {
-		if keep(tool) {
-			filtered = append(filtered, tool)
-		}
-	}
-	return filtered
+	return slices.DeleteFunc(slices.Clone(tools), func(tool llm.Tool) bool {
+		return !keep(tool)
+	})
 }
 
 // WithLLMContextTools adds tools to the LLM context the requester can access.
@@ -499,8 +619,29 @@ func (b *Builder) WithLLMContextTools(ctx stdcontext.Context, bot *bots.Bot) llm
 			return
 		}
 
+		markSandboxFileAttachment(c, bot)
 		c.Tools = b.getToolsStoreForUser(ctx, c, bot, c.RequestingUser.Id, false)
 	}
+}
+
+// AddSkillTools catalogs the skill tools for cfg when the context enables
+// skills. Call it after the tool store is built: built-in skills depend on the
+// tools beside them.
+func (b *Builder) AddSkillTools(c *llm.Context, cfg llm.BotConfig) error {
+	if !c.ToolCatalog.SkillsEnabled || b.skillProvider == nil || cfg.DisableTools || c.Tools == nil {
+		return nil
+	}
+	tools, catalog, err := b.skillProvider.Tools(cfg, c)
+	if err != nil {
+		return err
+	}
+	c.Tools.AddTools(tools)
+	c.Skills = catalog
+	return nil
+}
+
+func markSandboxFileAttachment(c *llm.Context, bot *bots.Bot) {
+	c.ToolCatalog.SandboxFilesAttached = c.ToolCatalog.ResponseFilesSupported && bot.ShouldPromiseSandboxFiles()
 }
 
 // WithLLMContextConcreteTools adds the requester's tools but forces concrete MCP
@@ -512,13 +653,9 @@ func (b *Builder) WithLLMContextConcreteTools(ctx stdcontext.Context, bot *bots.
 			b.pluginAPI.Log.Error("Cannot add tools to context: RequestingUser is nil")
 			return
 		}
+		markSandboxFileAttachment(c, bot)
 		c.Tools = b.getToolsStoreForUser(ctx, c, bot, c.RequestingUser.Id, true)
 	}
-}
-
-// WithLLMContextDefaultTools adds default tools to the LLM context for the requesting user
-func (b *Builder) WithLLMContextDefaultTools(ctx stdcontext.Context, bot *bots.Bot) llm.ContextOption {
-	return b.WithLLMContextTools(ctx, bot)
 }
 
 // WithLLMContextNoTools explicitly disables tools for this context session only,
@@ -526,11 +663,11 @@ func (b *Builder) WithLLMContextDefaultTools(ctx stdcontext.Context, bot *bots.B
 // to work with tool-enabled bots by bypassing tools for non-streaming calls.
 func (b *Builder) WithLLMContextNoTools() llm.ContextOption {
 	return func(c *llm.Context) {
-		c.Tools = llm.NewNoTools()
+		c.Tools = llm.NewToolStore()
 	}
 }
 
-func (b *Builder) WithLLMContextParameters(params map[string]interface{}) llm.ContextOption {
+func (b *Builder) WithLLMContextParameters(params map[string]any) llm.ContextOption {
 	return func(c *llm.Context) {
 		c.Parameters = params
 	}

@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
@@ -48,24 +49,28 @@ type Tool struct {
 	// the Resolver is only an error backstop. Empty for normal tools.
 	UserInteraction string
 
-	// AutoExecute marks a built-in tool that runs without user approval, like
-	// the MCP dynamic-loading meta-tools. Reserve it for tools whose only side
-	// effect is scoped to the assistant's own response (e.g. CreateFile
-	// attaching a file to the reply post). Only honored for tools with an
-	// empty ServerOrigin — MCP tools must never auto-execute through this flag.
-	AutoExecute bool
+	// ValidateArguments optionally rejects the model's raw arguments before
+	// the call is approved, executed, or shown to the user. An error fails the
+	// call with that message so the model can retry. Needed for tools whose
+	// arguments are not consumed until after a user round trip.
+	ValidateArguments func(json.RawMessage) error
 
-	// CallMetadata is forwarded to the tool implementation as MCP CallToolParams.Meta.
-	// It is invisible to the LLM, not part of the input schema, and not parsed from the
-	// model's arguments. Set it at scope-time via WithCallMetadata when callers need to
-	// plumb runtime/protocol info (e.g. before-hook keys) that the underlying server
-	// needs but the model shouldn't see or be able to manipulate.
-	CallMetadata map[string]any
+	// AutoExecute marks a built-in tool that runs without user approval, like
+	// the MCP dynamic-loading meta-tools. Reserve it for tools whose side
+	// effect is scoped to this assistant's own response or conversation
+	// control flow (e.g. CreateFile attaching a file, wait_for_async_work
+	// scheduling a later resume). Only honored for tools with an empty
+	// ServerOrigin — MCP tools must never auto-execute through this flag.
+	AutoExecute bool
 }
 
 // UserInteractionSelect identifies tools answered by the user picking from a
 // set of options presented in the Mattermost UI.
 const UserInteractionSelect = "select"
+
+// UserInteractionConnect identifies tools answered by the user connecting
+// their account to an MCP server from the Mattermost UI.
+const UserInteractionConnect = "connect"
 
 type ToolResolver func(ctx context.Context, llmCtx *Context, argsGetter ToolArgumentGetter) (string, error)
 
@@ -73,33 +78,16 @@ type ToolResolver func(ctx context.Context, llmCtx *Context, argsGetter ToolArgu
 // Bound parameters are:
 // - Removed from the schema (LLM cannot see or manipulate them)
 // - Automatically injected when the resolver is called
-func (t Tool) WithBoundParams(params map[string]interface{}) Tool {
+func (t Tool) WithBoundParams(params map[string]any) Tool {
 	cloned := t
 	cloned.Schema = removeSchemaProperties(t.Schema, params)
 	cloned.Resolver = wrapResolverWithBoundParams(t.Resolver, params)
 	return cloned
 }
 
-// WithCallMetadata returns a copy of the tool with CallMetadata set. Use this to attach
-// per-call MCP metadata (like before-hook keys) at scope-time without leaking it into
-// the LLM-visible schema or making the resolver fish it out of llm.Context. Passing an
-// empty map clears the field.
-func (t Tool) WithCallMetadata(meta map[string]any) Tool {
-	cloned := t
-	if len(meta) == 0 {
-		cloned.CallMetadata = nil
-		return cloned
-	}
-	cloned.CallMetadata = make(map[string]any, len(meta))
-	for k, v := range meta {
-		cloned.CallMetadata[k] = v
-	}
-	return cloned
-}
-
 // removeSchemaProperties removes the specified properties from a JSON schema.
 // It returns a modified copy of the schema, leaving the original unchanged.
-func removeSchemaProperties(schema any, params map[string]interface{}) any {
+func removeSchemaProperties(schema any, params map[string]any) any {
 	if schema == nil || len(params) == 0 {
 		return schema
 	}
@@ -138,7 +126,7 @@ func removeSchemaProperties(schema any, params map[string]interface{}) any {
 }
 
 // wrapResolverWithBoundParams creates a wrapped resolver that injects bound parameters
-func wrapResolverWithBoundParams(original ToolResolver, params map[string]interface{}) ToolResolver {
+func wrapResolverWithBoundParams(original ToolResolver, params map[string]any) ToolResolver {
 	if original == nil || len(params) == 0 {
 		return original
 	}
@@ -157,13 +145,13 @@ func wrapResolverWithBoundParams(original ToolResolver, params map[string]interf
 }
 
 // injectBoundParams injects bound parameter values into the args struct or map
-func injectBoundParams(args any, params map[string]interface{}) error {
+func injectBoundParams(args any, params map[string]any) error {
 	if len(params) == 0 {
 		return nil
 	}
 
 	val := reflect.ValueOf(args)
-	if val.Kind() != reflect.Ptr || val.IsNil() {
+	if val.Kind() != reflect.Pointer || val.IsNil() {
 		return fmt.Errorf("args must be a non-nil pointer, got %T", args)
 	}
 
@@ -379,13 +367,6 @@ func NewJSONSchemaFromStruct[T any]() *jsonschema.Schema {
 	return schema
 }
 
-func NewNoTools() *ToolStore {
-	return &ToolStore{
-		tools:      make(map[string]Tool),
-		authErrors: []ToolAuthError{},
-	}
-}
-
 func NewToolStore() *ToolStore {
 	return &ToolStore{
 		tools:      make(map[string]Tool),
@@ -491,9 +472,30 @@ func (s *ToolStore) lookupTool(name string) (Tool, bool) {
 }
 
 func (s *ToolStore) ResolveTool(ctx context.Context, name string, argsGetter ToolArgumentGetter, llmCtx *Context) (string, error) {
-	_, span := telemetry.Tracer().Start(ctx, "resolve tool",
-		trace.WithAttributes(telemetry.ToolName.String(name)),
-	)
+	return s.ResolveToolCall(ctx, name, ToolCallInfo{}, argsGetter, llmCtx)
+}
+
+// ToolCallInfo describes the call being resolved, for tracing.
+type ToolCallInfo struct {
+	// ID is the model-assigned tool call ID.
+	ID string
+	// Execution is telemetry.ToolExecutionAuto when the call ran without
+	// asking the user, or telemetry.ToolExecutionApproved after approval.
+	Execution string
+}
+
+// ResolveToolCall runs the named tool inside the single "resolve tool" span.
+// The span records the call's identity, outcome and result size; the
+// arguments and result themselves are never attached.
+func (s *ToolStore) ResolveToolCall(ctx context.Context, name string, info ToolCallInfo, argsGetter ToolArgumentGetter, llmCtx *Context) (string, error) {
+	attrs := []attribute.KeyValue{telemetry.ToolName.String(name)}
+	if info.ID != "" {
+		attrs = append(attrs, telemetry.ToolID.String(info.ID))
+	}
+	if info.Execution != "" {
+		attrs = append(attrs, telemetry.ToolExecution.String(info.Execution))
+	}
+	ctx, span := telemetry.Tracer().Start(ctx, "resolve tool", trace.WithAttributes(attrs...))
 	defer span.End()
 
 	tool, ok := s.lookupTool(name)
@@ -501,13 +503,21 @@ func (s *ToolStore) ResolveTool(ctx context.Context, name string, argsGetter Too
 		err := errors.New("unknown tool " + name)
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
+		span.SetAttributes(telemetry.ToolStatus.String("error"))
 		return "", err
 	}
 	result, err := tool.Resolver(ctx, llmCtx, argsGetter)
 	if err != nil {
 		span.RecordError(err)
-		span.SetStatus(otelcodes.Error, err.Error())
+		span.SetStatus(otelcodes.Error, "tool resolution failed")
+		span.SetAttributes(telemetry.ToolStatus.String("error"))
+		return result, err
 	}
+	span.SetAttributes(
+		telemetry.ToolStatus.String("success"),
+		telemetry.ToolResultBytes.Int(len(result)),
+		telemetry.ToolResultTokens.Int(EstimateTokens(result)),
+	)
 	return result, err
 }
 
@@ -619,6 +629,39 @@ func (s *ToolStore) lookupUnloadedMCPTool(name string) (Tool, bool) {
 		return Tool{}, false
 	}
 	return matched, true
+}
+
+// HasMCPToolFromOrigin reports whether the store holds an MCP tool whose
+// ServerOrigin is exactly origin, loaded or not, for which keep returns true.
+// A nil keep accepts every tool. Origins are compared verbatim: configured
+// servers may differ only by trailing slashes.
+func (s *ToolStore) HasMCPToolFromOrigin(origin string, keep func(Tool) bool) bool {
+	if s == nil || strings.TrimSpace(origin) == "" {
+		return false
+	}
+	for _, tools := range []map[string]Tool{s.tools, s.unloadedMCPTools} {
+		for _, tool := range tools {
+			if tool.ServerOrigin == origin && (keep == nil || keep(tool)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// RemoveMCPToolsFromOrigin removes every MCP tool, loaded or not, whose
+// ServerOrigin is exactly origin.
+func (s *ToolStore) RemoveMCPToolsFromOrigin(origin string) {
+	if s == nil || strings.TrimSpace(origin) == "" {
+		return
+	}
+	for _, tools := range []map[string]Tool{s.tools, s.unloadedMCPTools} {
+		for name, tool := range tools {
+			if tool.ServerOrigin == origin {
+				delete(tools, name)
+			}
+		}
+	}
 }
 
 // GetServerOrigin returns the ServerOrigin for a tool by name.

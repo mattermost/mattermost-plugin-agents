@@ -4,6 +4,9 @@
 package store
 
 import (
+	"fmt"
+	"sync/atomic"
+
 	sq "github.com/Masterminds/squirrel"
 	"github.com/jmoiron/sqlx"
 )
@@ -12,6 +15,9 @@ import (
 type Store struct {
 	db      *sqlx.DB
 	builder sq.StatementBuilderType
+
+	// agentVersionsToKeep is how many versions of each agent to keep; 0 keeps all.
+	agentVersionsToKeep atomic.Int64
 }
 
 // New creates a new Store from an existing sqlx.DB connection.
@@ -28,4 +34,53 @@ func New(db *sqlx.DB) *Store {
 // DB returns the underlying sqlx.DB for use in migration drivers.
 func (s *Store) DB() *sqlx.DB {
 	return s.db
+}
+
+// execBuilder builds and executes a statement. Errors are wrapped as
+// "failed to build <desc> query" / "failed to <desc>".
+func (s *Store) execBuilder(b sq.Sqlizer, desc string) error {
+	_, err := s.execBuilderRows(b, desc)
+	return err
+}
+
+// execBuilderRows is execBuilder that also reports whether any row changed.
+func (s *Store) execBuilderRows(b sq.Sqlizer, desc string) (bool, error) {
+	query, args, err := b.ToSql()
+	if err != nil {
+		return false, fmt.Errorf("failed to build %s query: %w", desc, err)
+	}
+	result, err := s.db.Exec(query, args...)
+	if err != nil {
+		return false, fmt.Errorf("failed to %s: %w", desc, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to check rows affected for %s: %w", desc, err)
+	}
+	return rows > 0, nil
+}
+
+// getBuilder builds a query and scans a single row into dest. All errors,
+// including sql.ErrNoRows, are wrapped; callers match sentinels with errors.Is.
+func (s *Store) getBuilder(dest any, b sq.Sqlizer, desc string) error {
+	query, args, err := b.ToSql()
+	if err != nil {
+		return fmt.Errorf("failed to build %s query: %w", desc, err)
+	}
+	if err := s.db.Get(dest, query, args...); err != nil {
+		return fmt.Errorf("failed to %s: %w", desc, err)
+	}
+	return nil
+}
+
+// selectBuilder builds a query and scans all rows into dest.
+func (s *Store) selectBuilder(dest any, b sq.Sqlizer, desc string) error {
+	query, args, err := b.ToSql()
+	if err != nil {
+		return fmt.Errorf("failed to build %s query: %w", desc, err)
+	}
+	if err := s.db.Select(dest, query, args...); err != nil {
+		return fmt.Errorf("failed to %s: %w", desc, err)
+	}
+	return nil
 }

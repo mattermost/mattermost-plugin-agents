@@ -83,7 +83,7 @@ func TestSanitizeProviderError(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				sanitizedErr := SanitizeProviderError(errors.New(tt.input), configuredKey)
-				require.NotNil(t, sanitizedErr)
+				require.Error(t, sanitizedErr)
 				assert.Contains(t, sanitizedErr.Error(), tt.wantContains)
 				for _, secret := range tt.wantNotContains {
 					assert.NotContains(t, sanitizedErr.Error(), secret)
@@ -94,7 +94,7 @@ func TestSanitizeProviderError(t *testing.T) {
 
 	t.Run("redacts short configured api keys", func(t *testing.T) {
 		sanitizedErr := SanitizeProviderError(errors.New(`provider error: short`), "short")
-		require.NotNil(t, sanitizedErr)
+		require.Error(t, sanitizedErr)
 		assert.Equal(t, "provider error: [REDACTED]", sanitizedErr.Error())
 	})
 
@@ -102,7 +102,7 @@ func TestSanitizeProviderError(t *testing.T) {
 		providerErrorMessage := `Unauthorized: Incorrect API key provided: t. You can find your API key at https://platform.openai.com/account/api-keys.`
 
 		sanitizedErr := SanitizeProviderError(errors.New(providerErrorMessage), "t")
-		require.NotNil(t, sanitizedErr)
+		require.Error(t, sanitizedErr)
 		assert.Equal(t, "Unauthorized: Incorrect API key provided. You can find your API key at https://platform.openai.com/account/api-keys.", sanitizedErr.Error())
 		assert.NotContains(t, sanitizedErr.Error(), "Unau[REDACTED]horized")
 		assert.NotContains(t, sanitizedErr.Error(), "Incorrect API key provided: t")
@@ -129,7 +129,7 @@ func TestSanitizeProviderError(t *testing.T) {
 		originalErr := errors.New("provider error: short")
 
 		sanitizedErr := SanitizeProviderError(originalErr, "short")
-		require.NotNil(t, sanitizedErr)
+		require.Error(t, sanitizedErr)
 		assert.Equal(t, "provider error: [REDACTED]", sanitizedErr.Error())
 		assert.ErrorIs(t, sanitizedErr, originalErr)
 

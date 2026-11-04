@@ -1,29 +1,28 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { resetSelectedAgentPreference } from 'helpers/agent_preferences';
-import { OpenAIMockContainer, RunOpenAIMocks, responseTest, responseTest2, responseTest2Text, responseTestText } from 'helpers/openai-mock';
+import { OpenAIMockContainer, RunOpenAIMocks, turnMocksWithTitleSiphon, responseTest, responseTest2, responseTest2Text, responseTestText } from 'helpers/openai-mock';
 
 // Test configuration
 const username = 'regularuser';
 const password = 'regularuser';
 
+const test = containerTest(async (own) => {
+  const mattermost = own(await RunContainer());
+  const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+  return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
-// Setup for all tests in the file
-test.beforeAll(async () => {
-  mattermost = await RunContainer();
-  openAIMock = await RunOpenAIMocks(mattermost.network);
-});
-
-// Cleanup after all tests
-test.afterAll(async () => {
-  await openAIMock.stop();
-  await mattermost.stop();
+test.beforeAll(async ({ containers }) => {
+  ({ mattermost, openAIMock } = containers);
 });
 
 // Agent selection persists server-side; reset so mock-bot tests stay isolated.
@@ -85,7 +84,8 @@ test.describe('RHS Bot Interactions', () => {
     await aiPlugin.switchBot('Second Bot');
 
     await aiPlugin.sendMessage('Hello!');
-    await expect(page.getByRole('button', { name: 'second', exact: true })).toBeVisible();
+    // The reply is authored by the second bot (its name is hidden in the chat's post header).
+    await expect(page.getByRole('button', { name: 'second', exact: true, includeHidden: true })).toBeAttached();
     await aiPlugin.waitForBotResponse(responseTestText);
   });
 });
@@ -163,12 +163,14 @@ test.describe('Chat History', () => {
     // Click on the first history item
     await aiPlugin.clickChatHistoryItem(0);
 
-    // Verify we can see the conversation content we created
-    await expect(page.getByText('Test conversation')).toBeVisible();
-    await expect(page.getByText(responseTestText)).toBeVisible();
+    // Verify we can see the conversation content we created (in the opened chat: the history view
+    // is still sliding away for a moment and has the same message as its preview).
+    const openedChat = page.getByTestId('rhs-thread');
+    await expect(openedChat.getByText('Test conversation')).toBeVisible();
+    await expect(openedChat.getByText(responseTestText)).toBeVisible();
   });
 
-  test('chat history button is visible and functional', async ({ page }) => {
+  test('back button in the header opens the chat history', async ({ page }) => {
     const { aiPlugin } = await setupTestPage(page);
     await aiPlugin.openRHS();
 
@@ -177,7 +179,7 @@ test.describe('Chat History', () => {
     await aiPlugin.sendMessage('Test for history button');
     await aiPlugin.waitForBotResponse(responseTestText);
 
-    // Chat history button should be visible
+    // The Back button (in the RHS header) should be visible
     await expect(aiPlugin.chatHistoryButton).toBeVisible();
 
     // Should be clickable
@@ -186,6 +188,15 @@ test.describe('Chat History', () => {
     // Should show threads list with content
     await expect(aiPlugin.threadsListContainer).toBeVisible();
     await expect(aiPlugin.threadsListContainer.locator('div').first()).toBeVisible();
+
+    // Each chat reads like an item of the Threads list: its first message and the reply count.
+    const item = aiPlugin.threadsListContainer.getByRole('button').filter({ hasText: 'Test for history button' });
+    await expect(item).toHaveCount(1);
+    await expect(item).toContainText(/1 reply/);
+
+    // The history has the generic title, and Back is not offered there.
+    await expect(page.getByTestId('rhs-title')).toContainText('Agents');
+    await expect(aiPlugin.chatHistoryButton).toHaveCount(0);
   });
 });
 
@@ -225,20 +236,18 @@ test.describe('Thread Analysis', () => {
     await page.getByTestId(`ai-actions-menu`).click();
 
     // Click on "Summarize Thread"
-    await openAIMock.addCompletionMock(responseTest);
+    const followUpUserText = 'What is the total duration for both phases?';
+    await openAIMock.addMocks(turnMocksWithTitleSiphon(responseTest));
     await page.getByRole('button', { name: 'Summarize Thread' }).click();
 
     // Wait for the AI RHS to open and show the summary
     await aiPlugin.expectRHSOpenWithPost();
-    await expect(page.getByText(responseTestText)).toBeVisible();
+    await expect(aiPlugin.getRhsContainer().getByText(responseTestText).last()).toBeVisible();
+    await aiPlugin.waitForThreadComposerIdle();
 
-    // Now test the follow-up question functionality
-    await openAIMock.addCompletionMock(responseTest2);
+    await openAIMock.addMocks(turnMocksWithTitleSiphon(responseTest2));
+    await aiPlugin.sendMessage(followUpUserText);
 
-    // Send a follow-up question
-    await aiPlugin.sendMessage('What is the total duration for both phases?');
-
-    // Verify the follow-up response is received successfully
     await aiPlugin.waitForBotResponse(responseTest2Text);
   });
 

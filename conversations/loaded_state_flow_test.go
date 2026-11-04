@@ -8,12 +8,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
+	"slices"
 	"sync"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
@@ -32,6 +35,12 @@ type loadedStateFlowStore struct {
 	conversations map[string]*store.Conversation
 	turns         map[string][]store.Turn
 	allTurns      map[string]*store.Turn
+
+	// afterTurnsRead, when set, runs after each GetTurnsForConversation with
+	// the running read count, outside the lock, so tests can interleave a
+	// second request between a read and the write that depends on it.
+	afterTurnsRead func(reads int)
+	turnsReads     int
 }
 
 func newLoadedStateFlowStore() *loadedStateFlowStore {
@@ -73,8 +82,12 @@ func (s *loadedStateFlowStore) GetConversationByThreadBotUser(rootPostID, botID,
 	return nil, store.ErrConversationNotFound
 }
 
-func (s *loadedStateFlowStore) UpdateConversationTitle(id, title string) error {
-	return nil
+func (s *loadedStateFlowStore) RenameConversation(id, title string) (bool, error) {
+	return false, nil
+}
+
+func (s *loadedStateFlowStore) SetConversationTitleIfUnset(id, title string) (bool, error) {
+	return false, nil
 }
 
 func (s *loadedStateFlowStore) UpdateConversationRootPostID(id string, rootPostID string) error {
@@ -85,9 +98,32 @@ func (s *loadedStateFlowStore) CreateTurn(turn *store.Turn) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := *turn
-	s.turns[turn.ConversationID] = append(s.turns[turn.ConversationID], cp)
+	// Like the real store, list a conversation's turns in sequence order.
+	turns := s.turns[turn.ConversationID]
+	i := len(turns)
+	for i > 0 && turns[i-1].Sequence > cp.Sequence {
+		i--
+	}
+	s.turns[turn.ConversationID] = slices.Insert(turns, i, cp)
 	s.allTurns[turn.ID] = &cp
 	return nil
+}
+
+// seedRequesterInitiator records that testRequesterID posted the message that
+// started conv's run, so resuming the run is attended by a present human.
+// The initiating turn sorts before every other turn.
+func seedRequesterInitiator(t *testing.T, convStore *loadedStateFlowStore, convID string, mmClient *mocks.MockClient) {
+	t.Helper()
+	postID := "initiator-post-id"
+	require.NoError(t, convStore.CreateTurn(&store.Turn{
+		ID:             "initiating-turn",
+		ConversationID: convID,
+		PostID:         &postID,
+		Role:           "user",
+		Sequence:       -1,
+	}))
+	mmClient.On("GetPost", postID).Maybe().Return(&model.Post{Id: postID, UserId: testRequesterID}, nil)
+	mmClient.On("GetUser", testRequesterID).Maybe().Return(&model.User{Id: testRequesterID, Username: "user"}, nil)
 }
 
 func (s *loadedStateFlowStore) CreateTurnAutoSequence(turn *store.Turn) error {
@@ -101,10 +137,15 @@ func (s *loadedStateFlowStore) CreateTurnAutoSequence(turn *store.Turn) error {
 
 func (s *loadedStateFlowStore) GetTurnsForConversation(conversationID string) ([]store.Turn, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	turns := s.turns[conversationID]
 	result := make([]store.Turn, len(turns))
 	copy(result, turns)
+	s.turnsReads++
+	reads, hook := s.turnsReads, s.afterTurnsRead
+	s.mu.Unlock()
+	if hook != nil {
+		hook(reads)
+	}
 	return result, nil
 }
 
@@ -123,6 +164,20 @@ func (s *loadedStateFlowStore) GetTurnByPostID(postID string) (*store.Turn, erro
 func (s *loadedStateFlowStore) UpdateTurnContent(id string, content json.RawMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.updateTurnContentLocked(id, content)
+}
+
+func (s *loadedStateFlowStore) CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	turn, ok := s.allTurns[id]
+	if !ok || !jsonContentEqual(turn.Content, expected) {
+		return false, nil
+	}
+	return true, s.updateTurnContentLocked(id, content)
+}
+
+func (s *loadedStateFlowStore) updateTurnContentLocked(id string, content json.RawMessage) error {
 	turn, ok := s.allTurns[id]
 	if !ok {
 		return fmt.Errorf("turn %s not found", id)
@@ -136,6 +191,15 @@ func (s *loadedStateFlowStore) UpdateTurnContent(id string, content json.RawMess
 		}
 	}
 	return nil
+}
+
+// jsonContentEqual mirrors the store's JSONB comparison.
+func jsonContentEqual(a, b json.RawMessage) bool {
+	var av, bv any
+	if json.Unmarshal(a, &av) != nil || json.Unmarshal(b, &bv) != nil {
+		return false
+	}
+	return reflect.DeepEqual(av, bv)
 }
 
 func (s *loadedStateFlowStore) UpdateTurnPostID(id string, postID *string) error {
@@ -172,16 +236,16 @@ func (s *loadedStateFlowStore) DeleteResponseTurns(conversationID, postID string
 		return nil
 	}
 	userSeq := 0
-	for i := len(turns) - 1; i >= 0; i-- {
-		if turns[i].Role == "user" && turns[i].Sequence < anchorSeq {
-			userSeq = turns[i].Sequence
+	for _, turn := range slices.Backward(turns) {
+		if turn.Role == "user" && turn.Sequence < anchorSeq {
+			userSeq = turn.Sequence
 			break
 		}
 	}
 
 	keep := turns[:0]
 	for _, t := range turns {
-		if t.Sequence > userSeq && t.Sequence < anchorSeq {
+		if t.Sequence > userSeq && t.Sequence <= anchorSeq {
 			delete(s.allTurns, t.ID)
 			continue
 		}
@@ -312,11 +376,15 @@ func loadedStateBuilder(t *testing.T, extraTools ...llm.Tool) *llmcontext.Builde
 	return newChannelFollowUpTestBuilder(t, tools, &channelFollowUpTestConfig{})
 }
 
+// testRequesterID is well-formed because the agent access gate denies a user
+// ID no policy can be evaluated against.
+const testRequesterID = "requesteruserid00000000000"
+
 func loadedStateConversationStore() (*loadedStateFlowStore, *store.Conversation) {
 	convStore := newLoadedStateFlowStore()
 	conv := &store.Conversation{
 		ID:           "conv-id",
-		UserID:       "user-id",
+		UserID:       testRequesterID,
 		BotID:        "bot-id",
 		SystemPrompt: "system",
 		Operation:    "conversation",
@@ -381,9 +449,9 @@ func TestProcessDMRequestIssuesSingleRequest(t *testing.T) {
 	convService := conversation.NewService(convStore, nil, nil, nil)
 	lm := &loadedStateLLM{}
 	c := &Conversations{convService: convService}
-	llmContext := &llm.Context{Tools: llm.NewNoTools()}
+	llmContext := &llm.Context{Tools: llm.NewToolStore()}
 
-	streamResult, err := c.ProcessDMRequest(context.Background(), "conv-id", lm, llmContext, 0)
+	streamResult, err := c.processDMRequest(context.Background(), "conv-id", testDMTurnPolicy(c, loadedStateBot(lm)), llmContext, nil)
 	require.NoError(t, err)
 	_, readErr := streamResult.Stream.ReadAll()
 	require.NoError(t, readErr)
@@ -418,36 +486,38 @@ func TestHandleToolCallExecutesApprovedToolRestoredFromLoadTurns(t *testing.T) {
 	mockAPI := &plugintest.API{}
 	pluginAPI := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
-	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	bot := loadedStateBot(&loadedStateLLM{})
 	botsService.SetBotsForTesting([]*bots.Bot{bot})
 
 	mmClient := mocks.NewMockClient(t)
+	seedRequesterInitiator(t, convStore, conv.ID, mmClient)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
-	mmClient.On("GetUser", "user-id").Return(&model.User{Id: "user-id", Username: "user"}, nil).Once()
 
 	c := &Conversations{
+		configProvider: &channelFollowUpTestConfig{enableChannelMentionToolCalling: true},
 		mmClient:       mmClient,
 		contextBuilder: loadedStateBuilder(t),
 		bots:           botsService,
 		convService:    conversation.NewService(convStore, nil, nil, nil),
+		licenseChecker: enterprisetest.CheckerAt(enterprise.LevelProfessional),
 	}
 
 	approvalPost := &model.Post{Id: approvalPostID, UserId: "bot-id"}
 	approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
 	channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
 
-	require.NoError(t, c.HandleToolCall(context.Background(), "user-id", approvalPost, channel, []string{"tool-use-1"}, nil))
+	require.NoError(t, c.HandleToolCall(context.Background(), testRequesterID, approvalPost, channel, []string{"tool-use-1"}, nil))
 
 	turns, err := convStore.GetTurnsForConversation(conv.ID)
 	require.NoError(t, err)
-	require.Len(t, turns, 4)
+	require.Len(t, turns, 5)
 	var updatedBlocks []conversation.ContentBlock
-	require.NoError(t, json.Unmarshal(turns[2].Content, &updatedBlocks))
+	require.NoError(t, json.Unmarshal(turns[3].Content, &updatedBlocks))
 	require.Equal(t, conversation.StatusSuccess, updatedBlocks[0].Status)
 
 	var resultBlocks []conversation.ContentBlock
-	require.NoError(t, json.Unmarshal(turns[3].Content, &resultBlocks))
+	require.NoError(t, json.Unmarshal(turns[4].Content, &resultBlocks))
 	require.Equal(t, conversation.BlockTypeToolResult, resultBlocks[0].Type)
 	require.Equal(t, "restored-result", resultBlocks[0].Content)
 }
@@ -480,15 +550,16 @@ func TestHandleToolCallFailsSafelyWhenNoMatchingLoadTurn(t *testing.T) {
 	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
 	pluginAPI := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
-	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	bot := loadedStateBot(&loadedStateLLM{})
 	botsService.SetBotsForTesting([]*bots.Bot{bot})
 
 	mmClient := mocks.NewMockClient(t)
+	seedRequesterInitiator(t, convStore, conv.ID, mmClient)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
-	mmClient.On("GetUser", "user-id").Return(&model.User{Id: "user-id", Username: "user"}, nil).Once()
 
 	c := &Conversations{
+		configProvider: &channelFollowUpTestConfig{enableChannelMentionToolCalling: true},
 		mmClient:       mmClient,
 		contextBuilder: loadedStateBuilder(t),
 		bots:           botsService,
@@ -500,17 +571,17 @@ func TestHandleToolCallFailsSafelyWhenNoMatchingLoadTurn(t *testing.T) {
 	approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
 	channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
 
-	require.NoError(t, c.HandleToolCall(context.Background(), "user-id", approvalPost, channel, []string{"tool-use-1"}, nil))
+	require.NoError(t, c.HandleToolCall(context.Background(), testRequesterID, approvalPost, channel, []string{"tool-use-1"}, nil))
 
 	turns, err := convStore.GetTurnsForConversation(conv.ID)
 	require.NoError(t, err)
-	require.Len(t, turns, 2)
+	require.Len(t, turns, 3)
 	var updatedBlocks []conversation.ContentBlock
-	require.NoError(t, json.Unmarshal(turns[0].Content, &updatedBlocks))
+	require.NoError(t, json.Unmarshal(turns[1].Content, &updatedBlocks))
 	require.Equal(t, conversation.StatusError, updatedBlocks[0].Status)
 
 	var resultBlocks []conversation.ContentBlock
-	require.NoError(t, json.Unmarshal(turns[1].Content, &resultBlocks))
+	require.NoError(t, json.Unmarshal(turns[2].Content, &resultBlocks))
 	require.Contains(t, resultBlocks[0].Content, "available but not loaded")
 	require.Contains(t, resultBlocks[0].Content, "load_tool")
 }
@@ -546,15 +617,16 @@ func TestHandleToolCallRejectsServerOriginMismatchEvenAfterLoad(t *testing.T) {
 	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
 	pluginAPI := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
-	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	bot := loadedStateBot(&loadedStateLLM{})
 	botsService.SetBotsForTesting([]*bots.Bot{bot})
 
 	mmClient := mocks.NewMockClient(t)
+	seedRequesterInitiator(t, convStore, conv.ID, mmClient)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
-	mmClient.On("GetUser", "user-id").Return(&model.User{Id: "user-id", Username: "user"}, nil).Once()
 
 	c := &Conversations{
+		configProvider: &channelFollowUpTestConfig{enableChannelMentionToolCalling: true},
 		mmClient:       mmClient,
 		contextBuilder: loadedStateBuilder(t),
 		bots:           botsService,
@@ -566,17 +638,17 @@ func TestHandleToolCallRejectsServerOriginMismatchEvenAfterLoad(t *testing.T) {
 	approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
 	channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
 
-	require.NoError(t, c.HandleToolCall(context.Background(), "user-id", approvalPost, channel, []string{"tool-use-1"}, nil))
+	require.NoError(t, c.HandleToolCall(context.Background(), testRequesterID, approvalPost, channel, []string{"tool-use-1"}, nil))
 
 	turns, err := convStore.GetTurnsForConversation(conv.ID)
 	require.NoError(t, err)
-	require.Len(t, turns, 4)
+	require.Len(t, turns, 5)
 	var updatedBlocks []conversation.ContentBlock
-	require.NoError(t, json.Unmarshal(turns[2].Content, &updatedBlocks))
+	require.NoError(t, json.Unmarshal(turns[3].Content, &updatedBlocks))
 	require.Equal(t, conversation.StatusError, updatedBlocks[0].Status)
 
 	var resultBlocks []conversation.ContentBlock
-	require.NoError(t, json.Unmarshal(turns[3].Content, &resultBlocks))
+	require.NoError(t, json.Unmarshal(turns[4].Content, &resultBlocks))
 	require.Contains(t, resultBlocks[0].Content, "no longer matches the approved tool metadata")
 }
 
@@ -614,33 +686,35 @@ func TestHandleToolCallRestoresMultipleLoadsBeforeExecutingApprovedTool(t *testi
 	mockAPI := &plugintest.API{}
 	pluginAPI := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
-	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	bot := loadedStateBot(&loadedStateLLM{})
 	botsService.SetBotsForTesting([]*bots.Bot{bot})
 
 	mmClient := mocks.NewMockClient(t)
+	seedRequesterInitiator(t, convStore, conv.ID, mmClient)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
-	mmClient.On("GetUser", "user-id").Return(&model.User{Id: "user-id", Username: "user"}, nil).Once()
 
 	c := &Conversations{
+		configProvider: &channelFollowUpTestConfig{enableChannelMentionToolCalling: true},
 		mmClient:       mmClient,
 		contextBuilder: loadedStateBuilder(t, transitionTool),
 		bots:           botsService,
 		convService:    conversation.NewService(convStore, nil, nil, nil),
+		licenseChecker: enterprisetest.CheckerAt(enterprise.LevelProfessional),
 	}
 
 	approvalPost := &model.Post{Id: approvalPostID, UserId: "bot-id"}
 	approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
 	channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
 
-	require.NoError(t, c.HandleToolCall(context.Background(), "user-id", approvalPost, channel, []string{"tool-use-1"}, nil))
+	require.NoError(t, c.HandleToolCall(context.Background(), testRequesterID, approvalPost, channel, []string{"tool-use-1"}, nil))
 
 	turns, err := convStore.GetTurnsForConversation(conv.ID)
 	require.NoError(t, err)
-	require.Len(t, turns, 6)
+	require.Len(t, turns, 7)
 
 	var resultBlocks []conversation.ContentBlock
-	require.NoError(t, json.Unmarshal(turns[5].Content, &resultBlocks))
+	require.NoError(t, json.Unmarshal(turns[6].Content, &resultBlocks))
 	require.Equal(t, "transitioned", resultBlocks[0].Content)
 
 	require.NotNil(t, capturedCtx)
@@ -659,20 +733,22 @@ func TestStreamToolFollowUpRestoresToolFromPriorLoadTurns(t *testing.T) {
 	streamingService := &loadedStateStreamingService{}
 	c := &Conversations{
 		contextBuilder:   loadedStateBuilder(t),
+		bots:             passthroughBotsService(bot),
 		convService:      conversation.NewService(convStore, nil, nil, nil),
 		streamingService: streamingService,
 	}
 
-	err := c.streamToolFollowUp(
-		context.Background(),
-		bot,
-		&model.User{Id: "user-id", Username: "user"},
-		&model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"},
-		&model.Post{Id: "root-post-id"},
-		conv,
-		true,
-		nil,
-	)
+	post := &model.Post{Id: "root-post-id"}
+	policy, err := c.resolveTurnPolicy(context.Background(), turnRequest{
+		bot:     bot,
+		user:    &model.User{Id: testRequesterID, Username: "user"},
+		channel: &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__" + testRequesterID},
+		conv:    conv,
+		post:    post,
+	})
+	require.NoError(t, err)
+
+	err = c.streamToolFollowUp(context.Background(), policy, post, conv, followUpOptions{})
 	require.NoError(t, err)
 	streamingService.waitForStreaming()
 	require.Len(t, lm.requests, 1)
@@ -758,20 +834,23 @@ func TestRegenerateRestoresLoadsBeforeAnchorButDropsLoadsInScrubbedGeneration(t 
 	bot := loadedStateBot(lm)
 	c := &Conversations{
 		contextBuilder: loadedStateBuilder(t, loadedStateTransitionTool(nil)),
+		bots:           passthroughBotsService(bot),
 		convService:    conversation.NewService(convStore, nil, nil, nil),
 		configProvider: &channelFollowUpTestConfig{},
 	}
 	post := &model.Post{Id: regenPostID}
 	post.AddProp(streaming.ConversationIDProp, conv.ID)
 
-	streamResult, err := c.regenerateViaConversation(
-		context.Background(),
-		bot,
-		&model.User{Id: "user-id", Username: "user"},
-		&model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"},
-		post,
-		"root-post-id",
-	)
+	policy, err := c.resolveTurnPolicy(context.Background(), turnRequest{
+		bot:     bot,
+		user:    &model.User{Id: testRequesterID, Username: "user"},
+		channel: &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__" + testRequesterID},
+		conv:    conv,
+		post:    post,
+	})
+	require.NoError(t, err)
+
+	streamResult, err := c.regenerateViaConversation(context.Background(), policy, post)
 	require.NoError(t, err)
 	_, readErr := streamResult.ReadAll()
 	require.NoError(t, readErr)
@@ -822,11 +901,12 @@ func TestHandleToolResultScopesSharedToClickedPost(t *testing.T) {
 	mockAPI := &plugintest.API{}
 	pluginAPI := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
-	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	botsService.SetBotsForTesting([]*bots.Bot{loadedStateBot(&loadedStateLLM{})})
 
 	mmClient := mocks.NewMockClient(t)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
+	mmClient.On("GetUser", testRequesterID).Return(&model.User{Id: testRequesterID, Username: "user"}, nil).Once()
 
 	c := &Conversations{
 		mmClient:    mmClient,
@@ -836,11 +916,11 @@ func TestHandleToolResultScopesSharedToClickedPost(t *testing.T) {
 
 	clickedPost := &model.Post{Id: postAID, UserId: "bot-id"}
 	clickedPost.AddProp(streaming.ConversationIDProp, conv.ID)
-	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
+	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__" + testRequesterID}
 
 	require.NoError(t, c.HandleToolResult(
 		context.Background(),
-		"user-id",
+		testRequesterID,
 		clickedPost,
 		channel,
 		[]string{"tool-use-a", "tool-use-b"},

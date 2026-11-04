@@ -4,7 +4,8 @@
 package mcp
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -76,7 +77,7 @@ func NewToolRegistry(tools []llm.Tool, opts ...ToolRegistryOption) *ToolRegistry
 		}
 	}
 
-	sort.Strings(registry.order)
+	slices.Sort(registry.order)
 	registry.rebuildIndex()
 
 	return registry
@@ -86,34 +87,6 @@ func WithToolRetrievalOverrides(overrides map[string]ToolRetrievalOverride) Tool
 	return func(options *toolRegistryOptions) {
 		options.retrievalOverrides = overrides
 	}
-}
-
-func (r *ToolRegistry) Len() int {
-	if r == nil {
-		return 0
-	}
-	return len(r.tools)
-}
-
-func (r *ToolRegistry) List() []ToolRegistryEntry {
-	if r == nil || len(r.order) == 0 {
-		return nil
-	}
-
-	entries := make([]ToolRegistryEntry, 0, len(r.order))
-	for _, name := range r.order {
-		entries = append(entries, r.tools[name])
-	}
-	return entries
-}
-
-func (r *ToolRegistry) Lookup(name string) (ToolRegistryEntry, bool) {
-	if r == nil {
-		return ToolRegistryEntry{}, false
-	}
-
-	entry, ok := r.tools[name]
-	return entry, ok
 }
 
 func (r *ToolRegistry) Search(query string, limit int) []ToolSearchResult {
@@ -204,11 +177,8 @@ func (r *ToolRegistry) closestMatchesByName(query string, limit int) []ToolSearc
 		})
 	}
 
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].Score == results[j].Score {
-			return results[i].Name < results[j].Name
-		}
-		return results[i].Score > results[j].Score
+	slices.SortFunc(results, func(a, b ToolSearchResult) int {
+		return cmp.Or(cmp.Compare(b.Score, a.Score), cmp.Compare(a.Name, b.Name))
 	})
 
 	if len(results) == 0 {

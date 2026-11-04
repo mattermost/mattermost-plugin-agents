@@ -129,17 +129,22 @@ func TestAuditMiddlewareSaveConfig(t *testing.T) {
 			},
 		},
 		{
-			name:           "prior-config read failure still saves and audits, omitting changed_keys",
+			// Atomic UpdateConfig must read the prior config to reconcile
+			// stable service/MCP server IDs. A blind save would risk rotating
+			// identities and detaching ABAC policies, so fail closed.
+			name:           "prior-config read failure records a 500 fail, omitting changed_keys",
 			userID:         "userid",
 			isAdmin:        true,
 			body:           requestBody,
 			getErr:         errors.New("kv read exploded"),
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusInternalServerError,
 			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
-				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusInternalServerError, rec.Error.Code)
 				assert.NotContains(t, rec.EventData.Parameters, "changed_keys",
-					"best-effort diff must be omitted, not fabricated, when the prior config is unreadable")
-				assert.Equal(t, true, rec.EventData.Parameters["persisted"])
+					"diff must be omitted when the prior config is unreadable")
+				assert.NotContains(t, rec.EventData.Parameters, "persisted",
+					"a save that never landed must not claim persistence")
 			},
 		},
 		{
@@ -189,6 +194,8 @@ func TestAuditMiddlewareSaveConfig(t *testing.T) {
 			defer e.Cleanup(t)
 			store.getErr = tt.getErr
 			store.saveErr = tt.saveErr
+			e.mockAPI.On("GetUserByUsername", "ai").
+				Return(nil, model.NewAppError("GetUserByUsername", "app.user.missing_account.const", nil, "", http.StatusNotFound)).Maybe()
 
 			if tt.userID != "" {
 				e.mockAPI.On("HasPermissionTo", tt.userID, model.PermissionManageSystem).Return(tt.isAdmin)
@@ -239,10 +246,13 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		{event: AuditEventUpdateAgent, method: http.MethodPut, path: "/agents/agentid"},
 		{event: AuditEventDeleteAgent, method: http.MethodDelete, path: "/agents/agentid"},
 		{event: AuditEventUpdateAgentAvatar, method: http.MethodPost, path: "/agents/agentid/avatar"},
+		{event: AuditEventRestoreAgentVersion, method: http.MethodPost, path: "/agents/agentid/versions/1/restore"},
+		{event: AuditEventDeleteAgentVersions, method: http.MethodDelete, path: "/agents/agentid/versions"},
 		{event: AuditEventCreateCustomPrompt, method: http.MethodPost, path: "/custom-prompts"},
 		{event: AuditEventUpdateCustomPrompt, method: http.MethodPut, path: "/custom-prompts/promptid"},
 		{event: AuditEventDeleteCustomPrompt, method: http.MethodDelete, path: "/custom-prompts/promptid"},
 		{event: AuditEventUpdateChannelAutoReply, method: http.MethodPut, path: "/channel/channelid/autoreply"},
+		{event: AuditEventRenameConversation, method: http.MethodPut, path: "/conversations/conversationid/title"},
 		{event: AuditEventMCPOAuthCallback, method: http.MethodGet, path: "/oauth/callback"},
 		{event: AuditEventMCPOAuthStart, method: http.MethodGet, path: "/mcp/oauth/someserver/start"},
 		{event: AuditEventMCPOAuthDisconnect, method: http.MethodDelete, path: "/mcp/oauth/someserver"},
@@ -251,6 +261,14 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		{event: AuditEventUnregisterMCPPluginServer, method: http.MethodPost, path: "/bridge/v1/mcp/unregister", bridge: true},
 		{event: AuditEventToolCallApproval, method: http.MethodPost, path: "/post/postid/tool_call"},
 		{event: AuditEventToolResultApproval, method: http.MethodPost, path: "/post/postid/tool_result"},
+		{event: AuditEventWaitCheckNow, method: http.MethodPost, path: "/post/postid/wait/check_now"},
+		{event: AuditEventWaitCancel, method: http.MethodPost, path: "/post/postid/wait/cancel"},
+		{event: AuditEventPutAgentPolicy, method: http.MethodPut, path: "/agents/agentid/access_policy"},
+		{event: AuditEventDeleteAgentPolicy, method: http.MethodDelete, path: "/agents/agentid/access_policy"},
+		{event: AuditEventPutServicePolicy, method: http.MethodPut, path: "/admin/services/serviceid/access_policy"},
+		{event: AuditEventDeleteServicePolicy, method: http.MethodDelete, path: "/admin/services/serviceid/access_policy"},
+		{event: AuditEventPutMCPPolicy, method: http.MethodPut, path: "/admin/mcp/serverid/access_policy"},
+		{event: AuditEventDeleteMCPPolicy, method: http.MethodDelete, path: "/admin/mcp/serverid/access_policy"},
 	}
 
 	// One case per registry row, no more and no fewer (the session grant is

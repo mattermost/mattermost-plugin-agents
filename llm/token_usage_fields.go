@@ -30,6 +30,7 @@ const (
 	OperationEvalGrading              = "eval_grading"
 	OperationBridgeAgent              = "bridge_agent"
 	OperationBridgeService            = "bridge_service"
+	OperationAmbientClassification    = "ambient_classification"
 )
 
 // tool_auth_mode identifies which auth mode the request's tool catalog was built with.
@@ -48,4 +49,5 @@ const (
 	SubTypeTranscriptionChunk = "transcription_chunk"
 	SubTypeChunkedTrue        = "chunked_true"
 	SubTypeChunkedFalse       = "chunked_false"
+	SubTypeRegenerate         = "regenerate"
 )

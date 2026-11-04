@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"sync/atomic"
 
@@ -19,9 +20,14 @@ const (
 	tokenUsageLogToFileEnvKey   = "MM_FEATUREFLAGS_AI_TOKEN_USAGE_LOG_TO_FILE"   // #nosec G101 -- env var key name, not a credential
 )
 
+// Config is the plugin configuration. DefaultBotName and TranscriptGenerator
+// are legacy username references, read only when the matching bot user ID
+// field is empty.
 type Config struct {
 	Services                        []llm.ServiceConfig              `json:"services"`
 	Bots                            []llm.BotConfig                  `json:"bots"`
+	DefaultBotUserID                string                           `json:"defaultBotUserID"`
+	TranscriptBotUserID             string                           `json:"transcriptBotUserID"`
 	DefaultBotName                  string                           `json:"defaultBotName"`
 	TranscriptGenerator             string                           `json:"transcriptBackend"`
 	EnableTokenUsageLogging         bool                             `json:"enableTokenUsageLogging"`
@@ -30,21 +36,35 @@ type Config struct {
 	EnableTokenUsageLogToFile       *bool                            `json:"enableTokenUsageLogToFile,omitempty"`
 	AllowedUpstreamHostnames        string                           `json:"allowedUpstreamHostnames"`
 	AllowUnsafeLinks                bool                             `json:"allowUnsafeLinks"`
+	AllowedLinkDomains              string                           `json:"allowedLinkDomains"`
+	EnableHTMLArtifacts             bool                             `json:"enableHTMLArtifacts"`
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
+	EnableAmbientAutoReply          bool                             `json:"enableAmbientAutoReply"`
 	AllowNativeWebSearchInChannels  bool                             `json:"allowNativeWebSearchInChannels"`
 	EmbeddingSearchConfig           embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
 	MCP                             MCPConfig                        `json:"mcp"`
 	WebSearch                       WebSearchConfig                  `json:"webSearch"`
 	TelemetryOutput                 string                           `json:"telemetryOutput"`
 	OpenTelemetryEndpoint           string                           `json:"openTelemetryEndpoint"`
+	// OpenTelemetryTLS dials the OTLP endpoint over TLS. Off by default so
+	// configs saved before this field existed keep plaintext export.
+	OpenTelemetryTLS bool `json:"openTelemetryTLS"`
+	// OpenTelemetryHeaders holds OTLP export headers as comma-separated
+	// key=value pairs (e.g. "Authorization=Basic ..."). It is a credential:
+	// never log it or put it in spans or audit records.
+	OpenTelemetryHeaders string `json:"openTelemetryHeaders"`
+	// AgentVersionsToKeep is how many versions of each agent's history are
+	// kept; older versions are deleted. 0 keeps every version.
+	AgentVersionsToKeep int `json:"agentVersionsToKeep"`
 }
 
 type WebSearchConfig struct {
-	Enabled        bool                  `json:"enabled"`
-	Provider       string                `json:"provider"`
-	Google         WebSearchGoogleConfig `json:"google"`
-	Brave          WebSearchBraveConfig  `json:"brave"`
-	DomainDenylist []string              `json:"domainDenylist"`
+	Enabled        bool                   `json:"enabled"`
+	Provider       string                 `json:"provider"`
+	Google         WebSearchGoogleConfig  `json:"google"`
+	Brave          WebSearchBraveConfig   `json:"brave"`
+	SearXNG        WebSearchSearXNGConfig `json:"searxng"`
+	DomainDenylist []string               `json:"domainDenylist"`
 }
 
 type WebSearchGoogleConfig struct {
@@ -52,6 +72,11 @@ type WebSearchGoogleConfig struct {
 	SearchEngineID string `json:"searchEngineId"`
 	ResultLimit    int    `json:"resultLimit"`
 	APIURL         string `json:"apiURL"`
+}
+
+type WebSearchSearXNGConfig struct {
+	BaseURL     string `json:"baseURL"`
+	ResultLimit int    `json:"resultLimit"`
 }
 
 type WebSearchBraveConfig struct {
@@ -88,31 +113,42 @@ type Container struct {
 	listeners []UpdateListener
 }
 
-// Config retruns the whole configuration readonly.
+// Config returns the whole configuration readonly. It never returns nil: before
+// the first Update it returns a zero-value configuration.
 // Avoid using this method, prefer using config though interfaces.
 func (c *Container) Config() *Config {
-	return c.cfg.Load()
+	if cfg := c.cfg.Load(); cfg != nil {
+		return cfg
+	}
+	return &Config{}
 }
 
 func (c *Container) GetTranscriptGenerator() string {
-	return c.cfg.Load().TranscriptGenerator
+	return c.Config().TranscriptGenerator
+}
+
+func (c *Container) GetTranscriptBotUserID() string {
+	return c.Config().TranscriptBotUserID
 }
 
 func (c *Container) GetBots() []llm.BotConfig {
-	return c.cfg.Load().Bots
+	return c.Config().Bots
 }
 
 func (c *Container) GetDefaultBotName() string {
-	return c.cfg.Load().DefaultBotName
+	return c.Config().DefaultBotName
+}
+
+func (c *Container) GetDefaultBotUserID() string {
+	return c.Config().DefaultBotUserID
 }
 
 func (c *Container) EnableTokenUsageLogging() bool {
-	return c.cfg.Load().EnableTokenUsageLogging
+	return c.Config().EnableTokenUsageLogging
 }
 
 func (c *Container) EnableTokenUsageLogToPlugin() bool {
-	cfg := c.cfg.Load()
-	if cfg == nil || !cfg.EnableTokenUsageLogging {
+	if !c.Config().EnableTokenUsageLogging {
 		return false
 	}
 
@@ -124,8 +160,7 @@ func (c *Container) EnableTokenUsageLogToPlugin() bool {
 }
 
 func (c *Container) EnableTokenUsageLogToFile() bool {
-	cfg := c.cfg.Load()
-	if cfg == nil || !cfg.EnableTokenUsageLogging {
+	if !c.Config().EnableTokenUsageLogging {
 		return false
 	}
 
@@ -151,34 +186,36 @@ func parseBooleanEnv(key string) (bool, bool) {
 }
 
 func (c *Container) MCP() MCPConfig {
-	return c.cfg.Load().MCP
+	return c.Config().MCP
 }
 
 func (c *Container) AllowUnsafeLinks() bool {
-	cfg := c.cfg.Load()
-	if cfg == nil {
-		return false
-	}
+	return c.Config().AllowUnsafeLinks
+}
 
-	return cfg.AllowUnsafeLinks
+func (c *Container) LinkPolicy() LinkPolicy {
+	cfg := c.Config()
+	return NewLinkPolicy(cfg.AllowUnsafeLinks, cfg.AllowedLinkDomains)
+}
+
+// EnableHTMLArtifacts reports whether agent-created HTML files are rendered
+// as sandboxed interactive artifacts.
+func (c *Container) EnableHTMLArtifacts() bool {
+	return c.Config().EnableHTMLArtifacts
 }
 
 func (c *Container) EnableChannelMentionToolCalling() bool {
-	cfg := c.cfg.Load()
-	if cfg == nil {
-		return false
-	}
+	return c.Config().EnableChannelMentionToolCalling
+}
 
-	return cfg.EnableChannelMentionToolCalling
+// EnableAmbientAutoReply reports whether the experimental ambient channel
+// auto-reply modes may be configured and may fire.
+func (c *Container) EnableAmbientAutoReply() bool {
+	return c.Config().EnableAmbientAutoReply
 }
 
 func (c *Container) AllowNativeWebSearchInChannels() bool {
-	cfg := c.cfg.Load()
-	if cfg == nil {
-		return false
-	}
-
-	return cfg.AllowNativeWebSearchInChannels
+	return c.Config().AllowNativeWebSearchInChannels
 }
 
 func (c *Container) RegisterUpdateListener(listener UpdateListener) {
@@ -186,36 +223,34 @@ func (c *Container) RegisterUpdateListener(listener UpdateListener) {
 }
 
 func (c *Container) EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig {
-	return c.cfg.Load().EmbeddingSearchConfig
+	return c.Config().EmbeddingSearchConfig
+}
+
+// GetServices returns a shallow copy of the configured services so callers can
+// hold and iterate a stable snapshot while the container is updated.
+func (c *Container) GetServices() []llm.ServiceConfig {
+	cfg := c.cfg.Load()
+	if cfg == nil {
+		return nil
+	}
+	return slices.Clone(cfg.Services)
 }
 
 // GetServiceByID returns the service configuration for the given ID
 func (c *Container) GetServiceByID(id string) (llm.ServiceConfig, bool) {
-	cfg := c.cfg.Load()
-	if cfg == nil {
-		return llm.ServiceConfig{}, false
-	}
-	return cfg.GetServiceByID(id)
+	return c.Config().GetServiceByID(id)
 }
 
-// Updates the current configuration
+// Update replaces the current configuration and notifies all listeners.
 // The new configuration is deep-copied to ensure the new and old
 // configurations are independent of each other.
 func (c *Container) Update(newConfig *Config) {
-	if newConfig == nil {
-		c.cfg.Store(nil)
-		return
-	}
-	// Create a deep copy of the new configuration
-	clone, err := DeepCopyJSON(*newConfig)
+	clone, err := cloneConfig(newConfig)
 	if err != nil {
-		panic(fmt.Sprintf("failed to deep copy configuration: %v", err))
+		panic(err)
 	}
+	c.cfg.Store(clone)
 
-	// Update the atomic pointer with the new configuration
-	c.cfg.Store(&clone)
-
-	// Notify all listeners about the configuration change
 	for _, listener := range c.listeners {
 		listener()
 	}
@@ -226,16 +261,26 @@ func (c *Container) Update(newConfig *Config) {
 // already be servicing a listener (for example after SaveConfig during legacy migration) to
 // avoid re-entrant listener invocation and deadlocks.
 func (c *Container) StorePersistedConfigWithoutNotify(newConfig *Config) error {
-	if newConfig == nil {
-		c.cfg.Store(nil)
-		return nil
-	}
-	clone, err := DeepCopyJSON(*newConfig)
+	clone, err := cloneConfig(newConfig)
 	if err != nil {
-		return fmt.Errorf("failed to deep copy configuration: %w", err)
+		return err
 	}
-	c.cfg.Store(&clone)
+	c.cfg.Store(clone)
 	return nil
+}
+
+// cloneConfig deep-copies cfg so the stored configuration is independent of
+// the caller's value. A nil cfg becomes a zero-value configuration, so the
+// container never holds a nil pointer.
+func cloneConfig(cfg *Config) (*Config, error) {
+	if cfg == nil {
+		return &Config{}, nil
+	}
+	clone, err := DeepCopyJSON(*cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deep copy configuration: %w", err)
+	}
+	return &clone, nil
 }
 
 // DeepCopyJSON creates a deep copy of JSON-serializable structs

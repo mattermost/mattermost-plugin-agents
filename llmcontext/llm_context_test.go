@@ -6,6 +6,7 @@ package llmcontext
 import (
 	stdcontext "context"
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -38,7 +39,7 @@ type countingMCPToolProvider struct {
 	saCalls int
 }
 
-func (p *countingMCPToolProvider) GetTools(_ stdcontext.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+func (p *countingMCPToolProvider) GetToolsWithSelection(_ stdcontext.Context, req mcp.CatalogRequest, _ mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	if req.ServiceAccount {
 		p.saCalls++
 		return nil, nil
@@ -69,20 +70,38 @@ type saCatalogCall struct {
 	invokingUserID string
 }
 
-func (p *staticMCPToolProvider) GetTools(_ stdcontext.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+func (p *staticMCPToolProvider) GetToolsWithSelection(_ stdcontext.Context, req mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	// Mirror mcp.ClientManager.GetTools: invalid requests fail closed.
-	if req.RemoteOwnerID == "" || req.InvokingUserID == "" {
+	if req.RemoteOwnerID == "" {
 		return nil, &mcp.Errors{Errors: []error{mcp.ErrCatalogRemoteOwnerRequired}}
 	}
+	if req.InvokingUserID == "" {
+		return nil, &mcp.Errors{Errors: []error{mcp.ErrCatalogInvokerRequired}}
+	}
+
+	tools := p.tools
 	if req.ServiceAccount {
 		p.saCalls = append(p.saCalls, saCatalogCall{
 			remoteOwnerID:  req.RemoteOwnerID,
 			invokingUserID: req.InvokingUserID,
 		})
-		return p.saTools, nil
+		tools = p.saTools
+	} else {
+		p.userCalls = append(p.userCalls, req.InvokingUserID)
 	}
-	p.userCalls = append(p.userCalls, req.InvokingUserID)
-	return p.tools, p.errors
+
+	tools = slices.DeleteFunc(slices.Clone(tools), func(tool llm.Tool) bool {
+		return !selection.Allows(tool.ServerOrigin)
+	})
+	if p.errors == nil {
+		return tools, nil
+	}
+
+	errors := &mcp.Errors{Errors: slices.Clone(p.errors.Errors)}
+	errors.ToolAuthErrors = slices.DeleteFunc(slices.Clone(p.errors.ToolAuthErrors), func(authErr llm.ToolAuthError) bool {
+		return !selection.Allows(authErr.ServerOrigin)
+	})
+	return tools, errors
 }
 
 func (p *staticMCPToolProvider) GetToolRetrievalOverrides() map[string]mcp.ToolRetrievalOverride {
@@ -233,11 +252,11 @@ func searchTools(t *testing.T, store *llm.ToolStore, query string) mcp.SearchToo
 
 func buildToolsContext(builder *Builder, bot *bots.Bot, opts ...llm.ContextOption) *llm.Context {
 	allOpts := append([]llm.ContextOption{}, opts...)
-	allOpts = append(allOpts, builder.WithLLMContextDefaultTools(stdcontext.Background(), bot))
+	allOpts = append(allOpts, builder.WithLLMContextTools(stdcontext.Background(), bot))
 	return builder.BuildLLMContextUserRequest(bot, testUser(), testChannel(), allOpts...)
 }
 
-func TestWithLLMContextDefaultToolsCallsMCPProvider(t *testing.T) {
+func TestWithLLMContextToolsCallsMCPProvider(t *testing.T) {
 	mockAPI := &plugintest.API{}
 	siteName := "Mattermost"
 	siteURL := "https://example.com"
@@ -259,7 +278,7 @@ func TestWithLLMContextDefaultToolsCallsMCPProvider(t *testing.T) {
 		newTestBot(),
 		user,
 		channel,
-		builder.WithLLMContextDefaultTools(stdcontext.Background(), newTestBot()),
+		builder.WithLLMContextTools(stdcontext.Background(), newTestBot()),
 	)
 
 	require.Equal(t, 1, mcpProvider.calls)
@@ -296,7 +315,7 @@ func TestWithLLMContextNoToolsSkipsMCPProvider(t *testing.T) {
 	require.Empty(t, context.Tools.GetTools())
 }
 
-func TestWithLLMContextDefaultToolsRetainsAuthErrorsForWildcardAllowlist(t *testing.T) {
+func TestWithLLMContextToolsRetainsAuthErrorsForWildcardAllowlist(t *testing.T) {
 	mockAPI := &plugintest.API{}
 	siteName := "Mattermost"
 	siteURL := "https://example.com"
@@ -337,7 +356,7 @@ func TestWithLLMContextDefaultToolsRetainsAuthErrorsForWildcardAllowlist(t *test
 		bot,
 		user,
 		channel,
-		builder.WithLLMContextDefaultTools(stdcontext.Background(), bot),
+		builder.WithLLMContextTools(stdcontext.Background(), bot),
 	)
 
 	require.Empty(t, context.Tools.GetTools())
@@ -562,6 +581,40 @@ func TestWithLLMContextResponseFiles(t *testing.T) {
 	assert.True(t, ctx.ToolCatalog.ResponseFilesSupported)
 
 	assert.False(t, llm.NewContext().ToolCatalog.ResponseFilesSupported)
+}
+
+type sandboxFileDownloader struct{}
+
+func (sandboxFileDownloader) DownloadProviderFile(stdcontext.Context, llm.ProviderFileReference, int64) (llm.ProviderFile, error) {
+	return llm.ProviderFile{}, nil
+}
+
+func TestWithLLMContextToolsPromisesSandboxFilesOnlyWhenThePrimaryServesThem(t *testing.T) {
+	tests := []struct {
+		name         string
+		serviceType  string
+		wantAttached bool
+	}{
+		{name: "OpenAI primary with a downloading fallback", serviceType: llm.ServiceTypeOpenAI},
+		{name: "Anthropic primary", serviceType: llm.ServiceTypeAnthropic, wantAttached: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := newTestBuilder(t, &emptyToolProvider{}, &staticMCPToolProvider{})
+			bot := bots.NewBot(
+				llm.BotConfig{ID: "bot-id", Name: "matty", DisplayName: "Matty", EnabledNativeTools: []string{llm.NativeToolCodeInterpreter}},
+				llm.ServiceConfig{DefaultModel: "test-model", Type: tt.serviceType},
+				&model.Bot{UserId: "bot-id", Username: "matty", DisplayName: "Matty"},
+				nil,
+			)
+			bot.SetProviderServicesForTest(&llm.ProviderServices{FileDownloader: sandboxFileDownloader{}})
+
+			context := buildToolsContext(builder, bot, builder.WithLLMContextResponseFiles())
+
+			assert.Equal(t, tt.wantAttached, context.ToolCatalog.SandboxFilesAttached)
+		})
+	}
 }
 
 func TestFilterToolAuthErrorsForAllowlist(t *testing.T) {

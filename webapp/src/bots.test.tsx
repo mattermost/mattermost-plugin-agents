@@ -9,6 +9,7 @@ import {PreferenceType} from '@mattermost/types/preferences';
 
 import {
     resolveActiveBot,
+    resolvePreferredBot,
     getSelectedAgentId,
     useBotlist,
     useBotlistForChannel,
@@ -17,7 +18,8 @@ import {
     LLMBot,
 } from './bots';
 import {ChannelAccessLevel, UserAccessLevel} from './components/system_console/bot';
-import {BotsHandler} from './redux';
+import {BotsHandler, SetLinkPolicyHandler, setupRedux} from './redux';
+import {getLinkPolicy} from './selectors';
 import manifest from './manifest';
 
 // mm_webapp reads window.Components/ProductApi at module load, which are absent
@@ -34,6 +36,11 @@ jest.mock('@/mm_webapp', () => ({
     MenuSeparator: null,
     useWebSocketClient: () => null,
 }));
+
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: () => null,
+    Tooltip: () => null,
+}), {virtual: true});
 
 // @/client is the real HTTP boundary; stub it so persistence is observable and
 // the bot-fetch effect never makes a network call.
@@ -84,6 +91,22 @@ describe('resolveActiveBot precedence', () => {
     test('falls back to first bot when no preference and no default', () => {
         const noDefault = [first, other];
         expect(resolveActiveBot(noDefault, '')).toBe(first);
+    });
+});
+
+describe('resolvePreferredBot', () => {
+    const first = makeBot('first');
+    const def = makeBot('def', {isDefault: true});
+    const other = makeBot('other');
+
+    test.each([
+        {name: 'the saved preference', bots: [first, def, other], preferred: 'other', expected: 'other'},
+        {name: 'the default when the preference is gone', bots: [first, def, other], preferred: 'gone', expected: 'def'},
+        {name: 'the default when unset', bots: [first, def], preferred: '', expected: 'def'},
+        {name: 'nothing without either: never the first bot', bots: [first, other], preferred: 'gone', expected: null},
+        {name: 'nothing before the list loads', bots: null, preferred: 'other', expected: null},
+    ])('$name', ({bots, preferred, expected}) => {
+        expect(resolvePreferredBot(bots, preferred)?.id ?? null).toBe(expected);
     });
 });
 
@@ -245,14 +268,34 @@ describe('filterBotsByChannelAccess', () => {
 describe('fetchAndStoreBots', () => {
     test('dispatches the bots and feature flags, and returns the bots', async () => {
         const bots = [makeBot('a')];
-        mockGetAIBots.mockResolvedValue({bots, searchEnabled: true, allowUnsafeLinks: 1});
+        const linkPolicy = {kind: 'allowlist', allowedDomains: [{host: 'example.com', wildcard: false}]};
+        mockGetAIBots.mockResolvedValue({bots, searchEnabled: true, allowUnsafeLinks: true, linkPolicy, htmlArtifactsEnabled: true});
         const dispatch = jest.fn();
 
         await expect(fetchAndStoreBots(dispatch)).resolves.toBe(bots);
 
         expect(dispatch).toHaveBeenCalledWith({type: BotsHandler, bots});
-        expect(dispatch).toHaveBeenCalledWith({type: 'SET_SEARCH_ENABLED', searchEnabled: true});
-        expect(dispatch).toHaveBeenCalledWith({type: 'SET_ALLOW_UNSAFE_LINKS', allowUnsafeLinks: true});
+        expect(dispatch).toHaveBeenCalledWith({type: SetLinkPolicyHandler, linkPolicy});
+        expect(dispatch).toHaveBeenCalledWith({type: 'SET_HTML_ARTIFACTS_ENABLED', htmlArtifactsEnabled: true});
+    });
+
+    test('falls back to the plain text link policy when the server omits linkPolicy', async () => {
+        mockGetAIBots.mockResolvedValue({bots: [makeBot('a')], searchEnabled: true});
+
+        let pluginReducer: Parameters<typeof createStore>[0] | undefined;
+        await setupRedux(
+            {registerReducer: (reducer: typeof pluginReducer) => {
+                pluginReducer = reducer;
+            }},
+            {getState: () => ({entities: {general: {license: {}, config: {}}}}), dispatch: jest.fn()} as any,
+        );
+        const store = createStore((state: any = {}, action: any) => ({
+            ['plugins-' + manifest.id]: pluginReducer!(state['plugins-' + manifest.id], action),
+        }));
+
+        await expect(fetchAndStoreBots(store.dispatch)).resolves.toHaveLength(1);
+
+        expect(getLinkPolicy(store.getState() as any)).toEqual({kind: 'plain_text'});
     });
 
     test('returns null and dispatches nothing when the response is falsy', async () => {

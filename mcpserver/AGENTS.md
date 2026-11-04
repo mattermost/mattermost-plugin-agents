@@ -12,8 +12,8 @@ Scoped instructions for the `mcpserver/` package. Root rules in `/AGENTS.md` sti
 
 ### Server types and the search service
 
-- **`InMemoryServer`** (embedded in the plugin) takes `searchService tools.SemanticSearchService` directly. The plugin passes `*search.Search`, which implements `SemanticSearchService`.
-- **HTTP / Stdio / PluginHandlers** (external servers) build their own `HTTPSemanticSearchService` internally; that service calls back to the plugin's `/api/v1/search/raw` endpoint.
+- **`InMemoryServer`** (embedded in the plugin) and **`PluginMCPHandlers`** (the plugin-hosted `/mcp-server` endpoint) run inside the plugin process and take `searchService tools.SemanticSearchService` and `fileContentService tools.FileContentService` directly. The plugin passes `*search.Search` and `*files.Service`.
+- **HTTP / Stdio** (standalone external servers) build `HTTPSemanticSearchService` / `HTTPFileContentService` internally; they call back to the plugin's `/search/raw` and `/files/content` routes (`<siteURL>/plugins/mattermost-ai/search/raw`, no `/api/v1` prefix). The paths live in `tools/plugin_http.go`; `api/api_files_test.go` routes requests built by these clients through the real plugin router.
 
 ### Type sharing
 
@@ -27,13 +27,11 @@ Tools live in `tools/<area>.go` and are registered through `getXTools()` aggrega
 
 1. **Args struct** — define `XArgs` with `json` + `jsonschema` tags. For ID fields use `minLength=26,maxLength=26` when required, `maxLength=26` (with `,omitempty`) when optional. Tag fields that only make sense for local servers with `access:"local"`.
 2. **Resolver** — write `func (p *MattermostToolProvider) toolX(mcpContext *MCPToolContext, args XArgs) (string, error)`. The framework decodes args before the resolver runs, so start at the real logic — do not re-decode and do not nil-check `mcpContext.Client` (it is always set). Conventions:
-   - Validate IDs with `requireID` / `optionalID`.
+   - Validate IDs with `requireID` / `optionalID` (`requireIDs` for required ID lists).
    - On failure return `"", fmt.Errorf(...)` — the error text is what the model sees, so put any guidance there (the first return value is only used on success). On a non-error "nothing found"/disambiguation outcome, return the guidance as `(text, nil)`.
    - For posts, set AI attribution via `p.stampAIGenerated`; for member listings reuse `p.renderMembers`.
    - Format Mattermost entities through the `format/` package, never `fmt.Sprintf` on model types.
-3. **Register** — add a literal to the relevant `getXTools()`:
-   `{Name: "x", Description: xDescription, Schema: NewJSONSchemaForAccessMode[XArgs](string(p.accessMode)), Resolver: typed("x", p.toolX)}`.
-   Put a long description in a package-level `const`. Set `Available: someFunc` to hide the tool from `tools/list` when a dependency is absent (see the automation tools).
+3. **Register** — add `mcpReadTool(p, "x", xDescription, p.toolX)` for a tool that only retrieves data, or `mcpTool(...)` for one that changes state in Mattermost (state-changing tools are available at Enterprise and above; when in doubt, use `mcpTool`), to the relevant `getXTools()`. Add the tool to `expectedToolReadOnly` in `tools/classification_test.go`. The constructor infers `XArgs` from the resolver, builds the access-mode schema, and wires the name into the resolver, so each fact is stated once. Put a long description in a package-level `const`.
 4. **Test** — table-driven, calling the resolver directly with an `XArgs` value (helpers in `helpers_test.go`).
 
 ## Adding a new optional capability

@@ -1,12 +1,12 @@
 {
   "id": "mattermost-ai",
   "name": "Agents",
-  "description": "",
+  "description": "AI agents that act on your behalf through tools and MCP servers, with a built-in Mattermost MCP server for external AI clients.",
   "homepage_url": "https://github.com/mattermost/mattermost-plugin-agents",
   "support_url": "https://github.com/mattermost/mattermost-plugin-agents/issues",
-  "release_notes_url": "https://github.com/mattermost/mattermost-plugin-agents",
+  "release_notes_url": "https://github.com/mattermost/mattermost-plugin-agents/releases",
   "icon_path": "assets/bot_icon.png",
-  "min_server_version": "11.9.0",
+  "min_server_version": "12.0.0",
   "server": {
     "executables": {
       "linux-amd64": "server/dist/plugin-linux-amd64",
@@ -25,7 +25,8 @@
     "settings": [
       {
         "key": "Config",
-        "type": "custom"
+        "type": "custom",
+        "secret": true
       }
     ]
   }

@@ -49,7 +49,7 @@ func TestAgentCompletionSendsExpectedPayload(t *testing.T) {
 			{Role: "user", Message: "hello"},
 		},
 		MaxGeneratedTokens: 128,
-		JSONOutputFormat: map[string]interface{}{
+		JSONOutputFormat: map[string]any{
 			"type": "json_schema",
 		},
 		AllowedTools: []string{"weather_lookup"},

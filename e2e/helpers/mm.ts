@@ -1,4 +1,4 @@
-import { Page, Locator, expect } from '@playwright/test';
+import { Page, Locator, Request, expect } from '@playwright/test';
 import type { Client4 } from '@mattermost/client';
 import type { Post } from '@mattermost/types/posts';
 import MattermostContainer from './mmcontainer';
@@ -15,6 +15,49 @@ async function fetchPostsForChannel(client: Client4, channelId: string): Promise
     }
     const postsResponse = await getPosts.call(client, channelId, 0, 200);
     return getPostsArray(postsResponse);
+}
+
+const CHUNK_LOAD_ERROR = /Loading (CSS )?chunk \S+ failed/;
+const MAX_WEBAPP_RELOADS = 2;
+const MAX_LOGIN_ATTEMPTS = 3;
+
+/**
+ * Tracks static-asset load failures per page. Chromium aborts in-flight requests with
+ * ERR_NETWORK_CHANGED whenever the host's network interfaces change (Docker adding or removing
+ * veth devices), and the Mattermost webapp then renders a blank page: either its main bundle never
+ * loads, or a lazily loaded chunk rejects and unmounts the React tree. Neither shows up as a
+ * missing element until a timeout, so the failure is observed directly.
+ */
+type WebappLoadWatch = { failed: boolean; waiters: Array<() => void> };
+
+const webappLoadWatches = new WeakMap<Page, WebappLoadWatch>();
+
+function watchWebappLoad(page: Page): WebappLoadWatch {
+    const existing = webappLoadWatches.get(page);
+    if (existing) {
+        return existing;
+    }
+
+    const watch: WebappLoadWatch = { failed: false, waiters: [] };
+    const markFailed = () => {
+        watch.failed = true;
+        watch.waiters.splice(0).forEach((resolve) => resolve());
+    };
+    page.on('pageerror', (error) => {
+        if (CHUNK_LOAD_ERROR.test(error.message)) {
+            markFailed();
+        }
+    });
+    page.on('requestfailed', (request) => {
+        const isStaticAsset = /\/static\/.+\.(js|css)(\?|$)/.test(request.url());
+        const errorText = request.failure()?.errorText ?? '';
+        // ERR_ABORTED is what a navigation does to requests it cancels, not a load failure.
+        if (isStaticAsset && errorText !== 'net::ERR_ABORTED') {
+            markFailed();
+        }
+    });
+    webappLoadWatches.set(page, watch);
+    return watch;
 }
 
 export class MattermostPage {
@@ -38,6 +81,7 @@ export class MattermostPage {
         options?: { channelViewTimeoutMs?: number },
     ) {
         const channelTimeout = options?.channelViewTimeoutMs ?? 60000;
+        watchWebappLoad(this.page);
         await this.page.addInitScript(() => { localStorage.setItem('__landingPageSeen__', 'true'); });
 
         // Polyfill crypto.randomUUID for insecure contexts (e.g., Docker test environments
@@ -56,7 +100,7 @@ export class MattermostPage {
             }
         });
         
-        // Retry navigation with exponential backoff for flaky network conditions
+        // A navigation can fail outright when the browser reports a network change; retry it.
         let lastError: Error | null = null;
         for (let attempt = 0; attempt < 3; attempt++) {
             try {
@@ -64,25 +108,101 @@ export class MattermostPage {
                 break;
             } catch (error) {
                 lastError = error as Error;
-                if (attempt < 2) {
-                    await this.page.waitForTimeout(1000 * (attempt + 1));
-                }
             }
         }
         if (lastError && !(await this.page.getByText('Log in to your account').isVisible().catch(() => false))) {
             throw lastError;
         }
 
-        // Increased timeout for parallel test execution and added retry logic
-        await this.page.getByText('Log in to your account').waitFor({ timeout: 60000 });
-        await this.page.getByPlaceholder('Password').fill(password);
-        await this.page.getByPlaceholder("Email or Username").fill(username);
-        await this.page.getByTestId('saveSetting').click();
+        await this.submitLoginForm(username, password, channelTimeout);
+        await this.waitVisibleOrReloadOnLoadFailure(this.page.getByTestId('channel_view'), channelTimeout);
+    }
 
-        // Wait for navigation to complete and channel view to be visible
-        // Using a more generous timeout and proper wait strategy for parallel test runs
-        await this.page.waitForURL(/.*\/test\/channels\/.*/, { timeout: channelTimeout });
-        await this.page.getByTestId('channel_view').waitFor({ state: 'visible', timeout: channelTimeout });
+    /**
+     * Submits the login form. When the browser aborts the login request itself (ERR_NETWORK_CHANGED),
+     * the form stays on "Logging in..." until the timeout, so reload and submit again instead.
+     */
+    private async submitLoginForm(username: string, password: string, timeout: number) {
+        for (let attempt = 1; ; attempt++) {
+            await this.waitVisibleOrReloadOnLoadFailure(this.page.getByText('Log in to your account'), 60000);
+            await this.page.getByPlaceholder('Password').fill(password);
+            await this.page.getByPlaceholder("Email or Username").fill(username);
+
+            let onRequestFailed: (request: Request) => void = () => {};
+            const loginRequestFailed = new Promise<'login-request-failed'>((resolve) => {
+                onRequestFailed = (request) => {
+                    if (new URL(request.url()).pathname === '/api/v4/users/login') {
+                        resolve('login-request-failed');
+                    }
+                };
+            });
+            this.page.on('requestfailed', onRequestFailed);
+            try {
+                await this.page.getByTestId('saveSetting').click();
+                const outcome = await Promise.race([
+                    this.page.waitForURL(/.*\/test\/channels\/.*/, { timeout }).then(() => 'logged-in' as const),
+                    loginRequestFailed,
+                ]);
+                if (outcome === 'logged-in') {
+                    return;
+                }
+            } finally {
+                this.page.off('requestfailed', onRequestFailed);
+            }
+
+            if (attempt >= MAX_LOGIN_ATTEMPTS) {
+                throw new Error(`The login request failed ${attempt} times`);
+            }
+            await this.page.reload({ waitUntil: 'domcontentloaded' });
+        }
+    }
+
+    /**
+     * Waits for `target` to become visible, reloading the page when a webapp static asset failed to
+     * load (see {@link watchWebappLoad}) instead of waiting out the full timeout on a blank page.
+     * A failure observed while the target is already visible is ignored.
+     */
+    async waitVisibleOrReloadOnLoadFailure(target: Locator, timeout: number) {
+        const watch = watchWebappLoad(this.page);
+        const startedAt = Date.now();
+
+        for (let reloads = 0; ; reloads++) {
+            const remaining = Math.max(timeout - (Date.now() - startedAt), 30000);
+            const loadFailed = new Promise<'load-failed'>((resolve) => {
+                if (watch.failed) {
+                    resolve('load-failed');
+                } else {
+                    watch.waiters.push(() => resolve('load-failed'));
+                }
+            });
+            const outcome = await Promise.race([
+                target.waitFor({ state: 'visible', timeout: remaining }).then(() => 'visible' as const),
+                loadFailed,
+            ]);
+
+            if (outcome === 'visible') {
+                return;
+            }
+            if (await target.isVisible()) {
+                watch.failed = false;
+                return;
+            }
+            if (reloads >= MAX_WEBAPP_RELOADS) {
+                await target.waitFor({ state: 'visible', timeout: remaining });
+                return;
+            }
+
+            watch.failed = false;
+            await this.page.reload({ waitUntil: 'domcontentloaded' });
+        }
+    }
+
+    /** Waits for the channel header, reloading if the webapp failed to load its assets. */
+    async waitForChannelHeader(timeout = 30000) {
+        await this.waitVisibleOrReloadOnLoadFailure(
+            this.page.locator('[class*="channel-header"], #channelHeaderInfo').first(),
+            timeout,
+        );
     }
 
     async sendChannelMessage(message: string) {
@@ -141,7 +261,7 @@ export class MattermostPage {
         const skewMs = 5000;
         const deadline = Date.now() + observeDuration;
 
-        while (Date.now() < deadline) {
+        await expect.poll(async () => {
             const posts = await fetchPostsForChannel(client, channelId);
             const botPosts = posts.filter(
                 (p) => p.user_id === botUserId && p.create_at >= sinceMs - skewMs,
@@ -151,12 +271,12 @@ export class MattermostPage {
                     `Expected no bot reply post, but found ${botPosts.length} bot post(s) after user message (sinceMs=${sinceMs}).`,
                 );
             }
-            const remaining = deadline - Date.now();
-            if (remaining <= 0) {
-                break;
-            }
-            await this.page.waitForTimeout(Math.min(pollInterval, remaining));
-        }
+            return Date.now() >= deadline;
+        }, {
+            message: `Observation window of ${observeDuration}ms for bot DM reply did not complete.`,
+            timeout: observeDuration + 30000,
+            intervals: [pollInterval],
+        }).toBe(true);
     }
 
     /**
@@ -257,8 +377,9 @@ export class MattermostPage {
                 await rhsContainer.waitFor({ state: 'visible', timeout: 10000 });
             }
 
-            // Wait a bit for posts to load
-            await this.page.waitForTimeout(500);
+            await expect(
+                this.page.getByTestId('chat-history').or(this.page.getByTestId('new-chat')).first(),
+            ).toBeVisible({ timeout: 10000 });
         }
     }
 
@@ -278,7 +399,7 @@ export class MattermostPage {
         const team = teams[0];
 
         await this.page.goto(`${mattermost.url()}/${team.name}/messages/@${botUsername}`);
-        await this.page.waitForTimeout(2000);
+        await expect(this.postTextbox).toBeVisible({ timeout: 30000 });
     }
 }
 

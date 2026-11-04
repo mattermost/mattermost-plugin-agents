@@ -8,16 +8,20 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 )
 
-// TestCreateOAuthConfig_DiscoveryStrictnessAndLeniency verifies the discovery
+// TestResolveOAuthConfig_DiscoveryStrictnessAndLeniency verifies the discovery
 // strictness posture: spec-compliant metadata resolves the advertised
 // (non-conventional) endpoints; a missing PKCE advertisement — the one
 // deliberate leniency — recovers with a logged warning; and spec violations
@@ -27,7 +31,7 @@ import (
 //
 // The advertised endpoints use /custom-* paths so discovered endpoints are
 // observably different from the conventional /authorize and /token fallbacks.
-func TestCreateOAuthConfig_DiscoveryStrictnessAndLeniency(t *testing.T) {
+func TestResolveOAuthConfig_DiscoveryStrictnessAndLeniency(t *testing.T) {
 	tests := []struct {
 		name string
 		// prmResourceSuffix is appended to the server URL in the advertised
@@ -90,7 +94,7 @@ func TestCreateOAuthConfig_DiscoveryStrictnessAndLeniency(t *testing.T) {
 				switch r.URL.Path {
 				case "/.well-known/oauth-protected-resource":
 					w.Header().Set("Content-Type", "application/json")
-					require.NoError(t, json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
+					assert.NoError(t, json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
 						Resource:             serverURL + tt.prmResourceSuffix,
 						AuthorizationServers: []string{serverURL},
 						ScopesSupported:      []string{"read"},
@@ -101,7 +105,7 @@ func TestCreateOAuthConfig_DiscoveryStrictnessAndLeniency(t *testing.T) {
 						issuer = serverURL
 					}
 					w.Header().Set("Content-Type", "application/json")
-					require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+					assert.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
 						Issuer:                        issuer,
 						AuthorizationEndpoint:         serverURL + "/custom-authorize",
 						TokenEndpoint:                 serverURL + "/custom-token",
@@ -119,12 +123,13 @@ func TestCreateOAuthConfig_DiscoveryStrictnessAndLeniency(t *testing.T) {
 				mockClient.On("LogWarn", mock.AnythingOfType("string"), mock.Anything).Return()
 			}
 
-			config, err := manager.createOAuthConfig(context.Background(), serverURL, "", &StaticOAuthCredentials{
+			resolved, err := manager.resolveOAuthConfig(context.Background(), serverURL, "", &StaticOAuthCredentials{
 				ClientID:     "static-client",
 				ClientSecret: "static-secret",
 			})
 
 			require.NoError(t, err)
+			config := resolved.config
 			require.Equal(t, serverURL+tt.wantAuthPath, config.Endpoint.AuthURL)
 			require.Equal(t, serverURL+tt.wantTokenPath, config.Endpoint.TokenURL)
 			require.Equal(t, tt.wantScopes, config.Scopes)
@@ -239,7 +244,7 @@ func TestFetchAuthorizationServerMetadataLenientIssuerTOCTOU(t *testing.T) {
 			respIssuer = "https://evil.example.com"
 		}
 		w.Header().Set("Content-Type", "application/json")
-		require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+		assert.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
 			Issuer:                respIssuer,
 			AuthorizationEndpoint: issuer + "/authorize",
 			TokenEndpoint:         issuer + "/token",
@@ -298,7 +303,7 @@ func TestFetchProtectedResourceMetadataRootFallback(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		require.NoError(t, json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
+		assert.NoError(t, json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
 			Resource:             origin,
 			AuthorizationServers: []string{origin},
 		}))
@@ -312,16 +317,16 @@ func TestFetchProtectedResourceMetadataRootFallback(t *testing.T) {
 	require.Equal(t, []string{origin}, prm.AuthorizationServers)
 }
 
-// TestCreateOAuthConfig_ASMetadataFailureFallsBackToIssuer verifies that when
+// TestResolveOAuthConfig_ASMetadataFailureFallsBackToIssuer verifies that when
 // protected resource metadata names an external authorization server whose
 // metadata cannot be fetched, the conventional /authorize and /token fallback
 // endpoints are derived from that issuer — not from the MCP resource server.
-func TestCreateOAuthConfig_ASMetadataFailureFallsBackToIssuer(t *testing.T) {
+func TestResolveOAuthConfig_ASMetadataFailureFallsBackToIssuer(t *testing.T) {
 	var serverURL string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/oauth-protected-resource" {
 			w.Header().Set("Content-Type", "application/json")
-			require.NoError(t, json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
+			assert.NoError(t, json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
 				Resource: serverURL,
 				// The issuer's well-known metadata path is not served, so
 				// fetchAuthorizationServerMetadata fails for it.
@@ -337,11 +342,12 @@ func TestCreateOAuthConfig_ASMetadataFailureFallsBackToIssuer(t *testing.T) {
 	manager, mockClient := setupTestOAuthManagerFull(t, nil, server.Client())
 	mockClient.On("LogWarn", mock.AnythingOfType("string"), mock.Anything).Return()
 
-	config, err := manager.createOAuthConfig(context.Background(), serverURL, "", &StaticOAuthCredentials{
+	resolved, err := manager.resolveOAuthConfig(context.Background(), serverURL, "", &StaticOAuthCredentials{
 		ClientID:     "static-client",
 		ClientSecret: "static-secret",
 	})
 	require.NoError(t, err)
+	config := resolved.config
 	require.Equal(t, serverURL+"/as/authorize", config.Endpoint.AuthURL,
 		"fallback authorize endpoint must live on the discovered issuer")
 	require.Equal(t, serverURL+"/as/token", config.Endpoint.TokenURL,
@@ -405,7 +411,7 @@ func TestLoadOrCreateClientCredentials_Registration(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/register" && tt.registrationHandler != nil {
 					registrationCalled = true
-					require.Equal(t, http.MethodPost, r.Method)
+					assert.Equal(t, http.MethodPost, r.Method)
 					tt.registrationHandler(w, r)
 					return
 				}
@@ -508,7 +514,7 @@ func TestFetchAuthorizationServerMetadataIssuerFollowIsOneHop(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+		assert.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
 			Issuer:                        "https://elsewhere.example.com",
 			AuthorizationEndpoint:         hostB.URL + "/authorize",
 			TokenEndpoint:                 hostB.URL + "/token",
@@ -522,7 +528,7 @@ func TestFetchAuthorizationServerMetadataIssuerFollowIsOneHop(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+		assert.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
 			Issuer:                        hostB.URL,
 			AuthorizationEndpoint:         hostA.URL + "/authorize",
 			TokenEndpoint:                 hostA.URL + "/token",
@@ -574,7 +580,7 @@ func TestDCRHonorsServerAuthMethods(t *testing.T) {
 			_, _ = w.Write([]byte("<!doctype html>"))
 		case "/.well-known/oauth-authorization-server":
 			w.Header().Set("Content-Type", "application/json")
-			require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+			assert.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
 				Issuer:                            serverURL,
 				AuthorizationEndpoint:             serverURL + "/oauth/authorize",
 				TokenEndpoint:                     serverURL + "/oauth/access_token",
@@ -585,7 +591,7 @@ func TestDCRHonorsServerAuthMethods(t *testing.T) {
 			}))
 		case "/register":
 			var body map[string]any
-			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 			registeredMethod, _ = body["token_endpoint_auth_method"].(string)
 			// Reject anything the server doesn't support, like Mattermost does.
 			if registeredMethod != "none" && registeredMethod != "client_secret_post" {
@@ -666,7 +672,7 @@ func TestDCRSendsApplicationType(t *testing.T) {
 			return
 		}
 		var body map[string]any
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 		gotAppType, _ = body["application_type"].(string)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -772,6 +778,86 @@ func TestConstructWellKnownURL(t *testing.T) {
 			result, err := constructWellKnownURL(tt.issuer, tt.suffix)
 			require.NoError(t, err)
 			require.Equal(t, tt.expectedURL, result)
+		})
+	}
+}
+
+// TestInitiateOAuthFlowFallsBackFromNonMatchingChallengeMetadata verifies that
+// a 401 challenge naming protected resource metadata whose resource does not
+// match the server URL (Google's Workspace MCP servers challenge with a
+// per-tool document for ".../mcp" while serving ".../mcp/v1") falls back to the
+// compliant well-known document instead of abandoning discovery, while a
+// compliant challenge document is still preferred.
+func TestInitiateOAuthFlowFallsBackFromNonMatchingChallengeMetadata(t *testing.T) {
+	tests := []struct {
+		name              string
+		challengeResource string
+		wantAuthEndpoint  string
+	}{
+		{name: "compliant challenge metadata is used", challengeResource: "/mcp/v1", wantAuthEndpoint: "/challenge-authorize"},
+		{name: "non-matching challenge metadata falls back to the well-known document", challengeResource: "/mcp", wantAuthEndpoint: "/wellknown-authorize"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			authServer := func(authorizePath string) *httptest.Server {
+				var issuer string
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path != "/.well-known/oauth-authorization-server" {
+						http.NotFound(w, r)
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					assert.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+						Issuer:                        issuer,
+						AuthorizationEndpoint:         issuer + authorizePath,
+						TokenEndpoint:                 issuer + "/token",
+						CodeChallengeMethodsSupported: []string{"S256"},
+					}))
+				}))
+				t.Cleanup(srv.Close)
+				issuer = srv.URL
+				return srv
+			}
+			challengeAS := authServer("/challenge-authorize")
+			wellKnownAS := authServer("/wellknown-authorize")
+
+			var origin string
+			resourceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var prm oauthex.ProtectedResourceMetadata
+				switch r.URL.Path {
+				case "/.well-known/oauth-protected-resource/search_files":
+					prm = oauthex.ProtectedResourceMetadata{Resource: origin + tt.challengeResource, AuthorizationServers: []string{challengeAS.URL}}
+				case "/.well-known/oauth-protected-resource/mcp/v1":
+					prm = oauthex.ProtectedResourceMetadata{Resource: origin + "/mcp/v1", AuthorizationServers: []string{wellKnownAS.URL}}
+				default:
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				assert.NoError(t, json.NewEncoder(w).Encode(prm))
+			}))
+			t.Cleanup(resourceServer.Close)
+			origin = resourceServer.URL
+			serverURL := origin + "/mcp/v1"
+
+			manager, mockClient := setupTestOAuthManagerFull(t, nil, http.DefaultClient)
+			mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
+			mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
+			mockClient.On("KVSetWithExpiry", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+			authURL, err := manager.InitiateOAuthFlowForServerWithMetadata(context.Background(), "user-id", ServerConfig{
+				Name:         "Drive",
+				BaseURL:      serverURL,
+				ClientID:     "static-client",
+				ClientSecret: "static-secret",
+			}, origin+"/.well-known/oauth-protected-resource/search_files", "")
+			require.NoError(t, err)
+
+			parsed, err := url.Parse(authURL)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantAuthEndpoint, parsed.Path)
+			assert.Equal(t, serverURL, parsed.Query().Get("resource"))
 		})
 	}
 }

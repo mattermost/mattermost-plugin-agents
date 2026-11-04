@@ -17,6 +17,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/codes"
@@ -26,9 +27,17 @@ import (
 const (
 	MMUserIDHeader     = "X-Mattermost-UserID"
 	EmbeddedServerName = "Mattermost"
-	EmbeddedClientKey  = "embedded://mattermost"
+	EmbeddedClientKey  = config.MCPEmbeddedServerOrigin
 
 	listToolsMethod = "tools/list"
+
+	// RemoteConnectTimeout bounds one remote MCP server's whole connection
+	// sequence: streamable-transport negotiation, the legacy HTTP+SSE
+	// fallback, and the initial tools/list. Without it a server that stalls
+	// every step holds a connect slot for the sum of those per-request
+	// timeouts. It matches the plugin HTTP client's own request timeout so a
+	// cold connect is never slower than a single upstream request budget.
+	RemoteConnectTimeout = 30 * time.Second
 
 	ToolPolicyAsk               = config.MCPToolPolicyAsk
 	ToolPolicyAutoRunInDM       = config.MCPToolPolicyAutoRunInDM
@@ -45,7 +54,9 @@ func IsToolPolicyAutoRunEverywhere(policy string) bool {
 
 // EmbeddedMCPServer interface for dependency injection
 type EmbeddedMCPServer interface {
-	CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error)
+	// sessionToken is the session's token when the caller already holds it
+	// (empty otherwise); the server can use it when a lookup by ID misses.
+	CreateClientTransport(userID, sessionID, sessionToken string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error)
 }
 
 // EmbeddedServerClient handles connections to the embedded MCP server
@@ -221,7 +232,9 @@ func dropNilTools(next mcp.MethodHandler) mcp.MethodHandler {
 	}
 }
 
-func listAllTools(ctx context.Context, session *mcp.ClientSession) (tools map[string]*mcp.Tool, err error) {
+// ListSessionTools lists every tool available on session in wire order,
+// following pagination and skipping nil entries.
+func ListSessionTools(ctx context.Context, session *mcp.ClientSession) (tools []*mcp.Tool, err error) {
 	// The known nil-tool panic is prevented by the dropNilTools middleware on
 	// clients built via NewSDKClient; keep the recover as defense-in-depth so
 	// no future SDK panic can crash the whole plugin process.
@@ -232,7 +245,6 @@ func listAllTools(ctx context.Context, session *mcp.ClientSession) (tools map[st
 		}
 	}()
 
-	tools = make(map[string]*mcp.Tool)
 	for tool, iterErr := range session.Tools(ctx, &mcp.ListToolsParams{}) {
 		if iterErr != nil {
 			return nil, iterErr
@@ -240,15 +252,57 @@ func listAllTools(ctx context.Context, session *mcp.ClientSession) (tools map[st
 		if tool == nil {
 			continue
 		}
+		tools = append(tools, tool)
+	}
+	return tools, nil
+}
+
+func listAllTools(ctx context.Context, session *mcp.ClientSession) (map[string]*mcp.Tool, error) {
+	toolList, err := ListSessionTools(ctx, session)
+	if err != nil {
+		return nil, err
+	}
+	tools := make(map[string]*mcp.Tool, len(toolList))
+	for _, tool := range toolList {
 		tools[tool.Name] = tool
 	}
 	return tools, nil
+}
+
+// adoptSession lists the tools available on session and, when at least one is
+// found, installs the session and tools on c. On failure the session is
+// closed and c is left unmodified.
+func (c *Client) adoptSession(ctx context.Context, session *mcp.ClientSession, serverLabel string) error {
+	discoveredTools, err := listAllTools(ctx, session)
+	if err != nil {
+		session.Close()
+		return fmt.Errorf("failed to list tools: %w", err)
+	}
+	if len(discoveredTools) == 0 {
+		session.Close()
+		return fmt.Errorf("no tools found on MCP server %s for user %s", serverLabel, c.userID)
+	}
+
+	c.toolsMu.Lock()
+	c.session = session
+	c.tools = discoveredTools
+	c.toolsMu.Unlock()
+
+	for _, tool := range discoveredTools {
+		c.log.Debug("Registered MCP tool",
+			"userID", c.userID,
+			"name", tool.Name,
+			"description", tool.Description,
+			"server", serverLabel)
+	}
+	return nil
 }
 
 // CreateClient creates an embedded MCP client using session ID for authentication.
 // If sessionID is empty, creates an unauthenticated client (used for tool discovery).
 func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, sessionID string) (*Client, error) {
 	// Validate session exists before creating transport (unless empty for tool discovery)
+	var sessionToken string
 	if sessionID != "" {
 		if c.pluginAPI == nil {
 			return nil, fmt.Errorf("plugin API is required when sessionID is provided")
@@ -263,10 +317,28 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 		if mmSession.UserId != userID {
 			return nil, fmt.Errorf("session user ID does not match: expected %s, got %s", userID, mmSession.UserId)
 		}
+		sessionToken = mmSession.Token
 	}
 
+	return c.connect(ctx, userID, sessionID, sessionToken)
+}
+
+// CreateClientForSession connects using a session the caller has already
+// created or validated. It skips re-reading the session: the plugin API reads
+// sessions by ID from a DB read replica, which can miss a just-created session.
+func (c *EmbeddedServerClient) CreateClientForSession(ctx context.Context, userID string, session *model.Session) (*Client, error) {
+	if session == nil || session.Id == "" {
+		return nil, fmt.Errorf("session not found")
+	}
+	if session.UserId != userID {
+		return nil, fmt.Errorf("session user ID does not match: expected %s, got %s", userID, session.UserId)
+	}
+	return c.connect(ctx, userID, session.Id, session.Token)
+}
+
+func (c *EmbeddedServerClient) connect(ctx context.Context, userID, sessionID, sessionToken string) (*Client, error) {
 	// Get the in-memory transport from the embedded server
-	transport, err := c.server.CreateClientTransport(userID, sessionID, c.pluginAPI)
+	transport, err := c.server.CreateClientTransport(userID, sessionID, sessionToken, c.pluginAPI)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create in-memory transport: %w", err)
 	}
@@ -288,7 +360,6 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 
 	// Create client instance
 	client := &Client{
-		session:        mcpSession,
 		config:         ServerConfig{Name: EmbeddedClientKey, BaseURL: EmbeddedClientKey, Enabled: true},
 		tools:          make(map[string]*mcp.Tool),
 		userID:         userID,
@@ -298,28 +369,8 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 		embeddedClient: c,         // Store client helper for reconnection
 		sessionID:      sessionID, // Store session ID for reconnection
 	}
-	// Initialize tools
-	discoveredTools, err := listAllTools(ctx, mcpSession)
-	if err != nil {
-		mcpSession.Close()
-		return nil, fmt.Errorf("failed to list tools: %w", err)
-	}
-
-	if len(discoveredTools) == 0 {
-		mcpSession.Close()
-		return nil, fmt.Errorf("no tools found on MCP server %s for user %s", EmbeddedClientKey, userID)
-	}
-
-	// Store the tools for this server
-	client.toolsMu.Lock()
-	client.tools = discoveredTools
-	client.toolsMu.Unlock()
-	for _, tool := range discoveredTools {
-		c.log.Debug("Registered MCP tool",
-			"userID", userID,
-			"name", tool.Name,
-			"description", tool.Description,
-			"server", EmbeddedClientKey)
+	if err := client.adoptSession(ctx, mcpSession, EmbeddedClientKey); err != nil {
+		return nil, err
 	}
 
 	c.log.Debug("Successfully connected to embedded MCP server",
@@ -346,6 +397,17 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 // newClient connects to a remote MCP server in either auth mode. In service-account
 // mode p.oauthManager must be nil so no OAuth flow can occur.
 func newClient(ctx context.Context, userID string, serverConfig ServerConfig, p clientParams) (*Client, error) {
+	return newClientWithTimeout(ctx, RemoteConnectTimeout, userID, serverConfig, p)
+}
+
+// newClientWithTimeout is newClient with an explicit bound on the whole
+// connection sequence. Callers that queue for a connection permit pass their
+// own budget so the wait is not charged against the server.
+func newClientWithTimeout(ctx context.Context, timeout time.Duration, userID string, serverConfig ServerConfig, p clientParams) (*Client, error) {
+	if timeout <= 0 {
+		timeout = RemoteConnectTimeout
+	}
+
 	c := &Client{
 		session:        nil,
 		config:         serverConfig,
@@ -358,68 +420,86 @@ func newClient(ctx context.Context, userID string, serverConfig ServerConfig, p 
 		serviceAccount: p.serviceAccount,
 	}
 
+	needsAuthorization, err := c.staticOAuthTokenMissing()
+	if err != nil {
+		return nil, err
+	}
+
+	session, err := connectWithDeadline(ctx, timeout, "MCP server "+serverConfig.Name,
+		func(connectCtx context.Context) (*mcp.ClientSession, error) {
+			return c.connectAndDiscover(connectCtx, serverConfig, p.forceRefresh)
+		})
+
+	// The user has never authorized a server that requires OAuth. Connecting
+	// first lets a server that challenges on connect pass its
+	// resource_metadata to the OAuth start link. Any other outcome still asks
+	// the user to connect: some OAuth servers (e.g. Google's Workspace MCP
+	// servers) answer initialize and tools/list anonymously and only reject
+	// tools/call, and others list no tools to anonymous callers.
+	if needsAuthorization {
+		if _, ok := errors.AsType[*OAuthNeededError](err); ok {
+			return nil, err
+		}
+		if err != nil {
+			c.log.Info("Unauthorized connection to MCP server with static OAuth credentials failed; asking the user to connect",
+				"userID", c.userID, "server", serverConfig.Name, "error", err)
+		} else {
+			_ = session.Close()
+		}
+		return nil, &OAuthNeededError{authURL: c.oauthStartURL()}
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	c.session = session
+	return c, nil
+}
+
+// connectAndDiscover negotiates a transport and populates the client's tool
+// list, returning the live session. The caller owns the returned session.
+func (c *Client) connectAndDiscover(ctx context.Context, serverConfig ServerConfig, forceRefresh bool) (*mcp.ClientSession, error) {
 	session, err := c.createSession(ctx, serverConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create MCP session for server %s: %w", serverConfig.Name, err)
 	}
 
 	sharedToolsCache := c.useSharedToolsCache()
-	maybeInvalidateSharedToolsBeforeOAuthListTools(userID, serverConfig, p.log, p.toolsCache, p.oauthManager)
+	maybeInvalidateSharedToolsBeforeOAuthListTools(c.userID, serverConfig, c.log, c.toolsCache, c.oauthManager)
 	serverID := c.toolsCacheServerID()
 
 	// Try to get tools from global cache first.
-	if p.toolsCache != nil && sharedToolsCache && !p.forceRefresh {
-		cachedTools := p.toolsCache.GetTools(serverID)
+	if c.toolsCache != nil && sharedToolsCache && !forceRefresh {
+		cachedTools := c.toolsCache.GetTools(serverID)
 		if len(cachedTools) > 0 {
 			// Cache hit - use cached tools
 			c.toolsMu.Lock()
 			c.tools = cachedTools
 			c.toolsMu.Unlock()
-			p.log.Debug("Using cached tools for MCP server",
-				"userID", userID,
+			c.log.Debug("Using cached tools for MCP server",
+				"userID", c.userID,
 				"server", serverConfig.Name,
 				"toolCount", len(cachedTools))
-			c.session = session
-			return c, nil
+			return session, nil
 		}
 	}
 
 	// Cache miss - fetch tools from server
-	discoveredTools, err := listAllTools(ctx, session)
-	if err != nil {
-		session.Close()
+	if err := c.adoptSession(ctx, session, serverConfig.Name); err != nil {
 		if oauthErr := c.oauthNeededError(err); oauthErr != nil {
 			return nil, oauthErr
 		}
-		return nil, fmt.Errorf("failed to list tools: %w", err)
-	}
-
-	if len(discoveredTools) == 0 {
-		session.Close()
-		return nil, fmt.Errorf("no tools found on MCP server %s for user %s", serverConfig.Name, userID)
-	}
-
-	// Store the tools for this server
-	c.toolsMu.Lock()
-	c.tools = discoveredTools
-	c.toolsMu.Unlock()
-	for _, tool := range discoveredTools {
-		p.log.Debug("Registered MCP tool",
-			"userID", userID,
-			"name", tool.Name,
-			"description", tool.Description,
-			"server", serverConfig.Name)
+		return nil, err
 	}
 
 	// Update the global cache with fetched tools.
-	if p.toolsCache != nil && sharedToolsCache {
-		if err := p.toolsCache.SetTools(serverID, serverConfig.Name, serverConfig.BaseURL, discoveredTools, time.Now()); err != nil {
-			p.log.Warn("Failed to update tools cache", "server", serverConfig.Name, "error", err)
+	if c.toolsCache != nil && sharedToolsCache {
+		if err := c.toolsCache.SetTools(serverID, serverConfig.Name, serverConfig.BaseURL, c.Tools(), time.Now()); err != nil {
+			c.log.Warn("Failed to update tools cache", "server", serverConfig.Name, "error", err)
 		}
 	}
 
-	c.session = session
-	return c, nil
+	return session, nil
 }
 
 // NewPluginClient creates a per-user MCP client for a plugin-registered server.
@@ -430,13 +510,7 @@ func NewPluginClient(ctx context.Context, userID string, cfg PluginServerConfig,
 	}
 
 	originKey := pluginServerOriginKey(cfg.PluginID)
-	roundTripper := NewPluginHTTPRoundTripper(cfg.PluginID, cfg.Path, sourcePluginAPI)
-	httpClient := &http.Client{
-		Transport: &headerTransport{
-			base:    roundTripper,
-			headers: map[string]string{MMUserIDHeader: userID},
-		},
-	}
+	httpClient := PluginServerHTTPClient(NewPluginHTTPRoundTripper(cfg.PluginID, cfg.Path, sourcePluginAPI), userID)
 
 	pluginCfg := ServerConfig{
 		Name:    cfg.Name,
@@ -452,46 +526,30 @@ func NewPluginClient(ctx context.Context, userID string, cfg PluginServerConfig,
 		httpClient: httpClient,
 	}
 
-	mcpClient := NewSDKClient(
-		&mcp.Implementation{
-			Name:    "mattermost-agents-plugin-bridge",
-			Version: "1.0",
-		},
-		nil,
-	)
-
-	session, err := mcpClient.Connect(ctx, &mcp.StreamableClientTransport{
-		Endpoint:   "http://plugin" + cfg.Path,
-		HTTPClient: httpClient,
-	}, nil)
+	session, err := ConnectPluginServer(ctx, "mattermost-agents-plugin-bridge", cfg.Path, httpClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to plugin MCP server %s: %w", cfg.PluginID, err)
 	}
 
-	discoveredTools, err := listAllTools(ctx, session)
-	if err != nil {
-		session.Close()
-		return nil, fmt.Errorf("failed to list tools on plugin MCP server %s: %w", cfg.PluginID, err)
-	}
-	if len(discoveredTools) == 0 {
-		session.Close()
-		return nil, fmt.Errorf("no tools found on plugin MCP server %s for user %s", cfg.PluginID, userID)
-	}
-
-	client.session = session
-	client.toolsMu.Lock()
-	client.tools = discoveredTools
-	client.toolsMu.Unlock()
-
-	for _, tool := range discoveredTools {
-		log.Debug("Registered MCP tool",
-			"userID", userID,
-			"name", tool.Name,
-			"description", tool.Description,
-			"server", originKey)
+	if err := client.adoptSession(ctx, session, originKey); err != nil {
+		return nil, fmt.Errorf("plugin MCP server %s: %w", cfg.PluginID, err)
 	}
 
 	return client, nil
+}
+
+// staticOAuthTokenMissing reports whether the server has admin-configured
+// OAuth client credentials that the user has never authorized. Such a server
+// requires OAuth even when it answers some requests anonymously.
+func (c *Client) staticOAuthTokenMissing() (bool, error) {
+	if c.serviceAccount || c.oauthManager == nil || staticOAuthCreds(c.config) == nil {
+		return false, nil
+	}
+	hasToken, err := c.oauthManager.HasStoredToken(c.userID, c.config.Name)
+	if err != nil {
+		return false, fmt.Errorf("failed to check stored OAuth token for MCP server %s: %w", c.config.Name, err)
+	}
+	return !hasToken, nil
 }
 
 func (c *Client) oauthNeededError(err error) error {
@@ -504,8 +562,7 @@ func (c *Client) oauthNeededError(err error) error {
 		return nil
 	}
 
-	var mcpAuthErr *mcpUnauthorized
-	if errors.As(err, &mcpAuthErr) {
+	if mcpAuthErr, ok := errors.AsType[*mcpUnauthorized](err); ok {
 		md := mcpAuthErr.MetadataURL()
 		return &OAuthNeededError{
 			authURL:     c.oauthNeededRedirectURL(md, mcpAuthErr.Scope()),
@@ -688,23 +745,12 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 				if reconnectErr != nil {
 					return "", fmt.Errorf("failed to reconnect to MCP server %s: %w", c.config.Name, reconnectErr)
 				}
-				discoveredTools, listErr := listAllTools(ctx, newSession)
-				if listErr != nil {
-					newSession.Close()
-					return "", fmt.Errorf("failed to list tools after reconnecting to MCP server %s: %w", c.config.Name, listErr)
+				if adoptErr := c.adoptSession(ctx, newSession, c.config.Name); adoptErr != nil {
+					return "", fmt.Errorf("failed to reconnect to MCP server %s: %w", c.config.Name, adoptErr)
 				}
-				if len(discoveredTools) == 0 {
-					newSession.Close()
-					return "", fmt.Errorf("no tools found after reconnecting to MCP server %s for user %s", c.config.Name, c.userID)
-				}
-
-				c.toolsMu.Lock()
-				c.session = newSession
-				c.tools = discoveredTools
-				c.toolsMu.Unlock()
 
 				if c.toolsCache != nil && c.useSharedToolsCache() {
-					if cacheErr := c.toolsCache.SetTools(c.toolsCacheServerID(), c.config.Name, c.config.BaseURL, discoveredTools, time.Now()); cacheErr != nil {
+					if cacheErr := c.toolsCache.SetTools(c.toolsCacheServerID(), c.config.Name, c.config.BaseURL, c.Tools(), time.Now()); cacheErr != nil {
 						c.log.Warn("Failed to update tools cache after MCP reconnect",
 							"server", c.config.Name,
 							"userID", c.userID,
@@ -723,14 +769,7 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 			return "", fmt.Errorf("failed to call tool %s on server %s: %w", toolName, c.config.Name, err)
 		}
 	}
-	var textBuilder strings.Builder
-	for _, content := range result.Content {
-		if textContent, ok := content.(*mcp.TextContent); ok {
-			textBuilder.WriteString(textContent.Text)
-			textBuilder.WriteByte('\n')
-		}
-	}
-	text := textBuilder.String()
+	text := toolResultText(result)
 
 	// MCP tools can return IsError=true without transport-level errors.
 	// Surface this as a resolver error so tool-call status is set correctly.

@@ -4,8 +4,9 @@
 package embeddings
 
 import (
+	"cmp"
 	"math"
-	"sort"
+	"slices"
 )
 
 // Recency bias defaults, chosen to match common time-decay ranking practice
@@ -29,8 +30,6 @@ const (
 	recencyMaxCandidates       = 200
 )
 
-const millisPerDay = 24 * 60 * 60 * 1000
-
 // RecencyBiasSettings holds resolved (defaulted and clamped) recency
 // reranking parameters used by CompositeSearch.
 type RecencyBiasSettings struct {
@@ -48,7 +47,7 @@ func recencyMultiplier(ageMillis int64, halfLifeDays, floor float64) float64 {
 	if ageMillis <= 0 {
 		return 1
 	}
-	ageDays := float64(ageMillis) / millisPerDay
+	ageDays := float64(ageMillis) / float64(MillisPerDay)
 	decay := math.Pow(0.5, ageDays/halfLifeDays)
 	return floor + (1-floor)*decay
 }
@@ -56,8 +55,8 @@ func recencyMultiplier(ageMillis int64, halfLifeDays, floor float64) float64 {
 // rerankByRecency reorders results by recency-adjusted score (raw similarity
 // x decay multiplier) descending, tie-breaking by CreateAt descending and
 // then by the incoming (similarity) order. The Score field is left as the raw
-// similarity: MinScore semantics and the relevance surfaced to callers stay
-// similarity-based; recency influences ordering only.
+// similarity: the relevance surfaced to callers stays similarity-based;
+// recency influences ordering only.
 func rerankByRecency(results []SearchResult, nowMillis int64, settings RecencyBiasSettings) {
 	adjusted := make(map[int]float64, len(results))
 	order := make([]int, len(results))
@@ -72,12 +71,11 @@ func rerankByRecency(results []SearchResult, nowMillis int64, settings RecencyBi
 		adjusted[i] = float64(r.Score) * recencyMultiplier(age, settings.HalfLifeDays, settings.Floor)
 	}
 
-	sort.SliceStable(order, func(a, b int) bool {
-		i, j := order[a], order[b]
-		if adjusted[i] != adjusted[j] {
-			return adjusted[i] > adjusted[j]
-		}
-		return results[i].Document.CreateAt > results[j].Document.CreateAt
+	slices.SortStableFunc(order, func(i, j int) int {
+		return cmp.Or(
+			cmp.Compare(adjusted[j], adjusted[i]),
+			cmp.Compare(results[j].Document.CreateAt, results[i].Document.CreateAt),
+		)
 	})
 
 	reordered := make([]SearchResult, len(results))

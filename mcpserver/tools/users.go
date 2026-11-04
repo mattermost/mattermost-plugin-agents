@@ -4,8 +4,10 @@
 package tools
 
 import (
+	"context"
 	"fmt"
-	"sort"
+	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
@@ -22,7 +24,7 @@ type GetUserArgs struct {
 
 // GetUserByUsernameArgs represents arguments for the get_user_by_username tool.
 type GetUserByUsernameArgs struct {
-	Username string `json:"username" jsonschema:"The username (without @),minLength=1"`
+	Username string `json:"username" jsonschema:"The username (without @). A user ID is also accepted.,minLength=1"`
 }
 
 // GetUserByEmailArgs represents arguments for the get_user_by_email tool.
@@ -63,7 +65,7 @@ type UpdateUserArgs struct {
 const (
 	getMeDescription               = "Get the authenticated agent/bot's own user profile (current user). No parameters."
 	getUserDescription             = "Get a single user's full profile by ID. Parameters: user_id (required)."
-	getUserByUsernameDescription   = "Get a user's profile by username. Parameters: username (required, without @)."
+	getUserByUsernameDescription   = "Get a user's profile by username. Parameters: username (required, without @; a user ID is also accepted)."
 	getUserByEmailDescription      = "Get a user's profile by email. Parameters: email (required)."
 	getUsersByIDsDescription       = "Batch-fetch user profiles by a list of IDs. Parameters: user_ids (required list)."
 	getUsersByUsernamesDescription = "Batch-fetch user profiles by a list of usernames. Parameters: usernames (required list, without @)."
@@ -76,16 +78,16 @@ const (
 // getUserTools returns the user profile read/update tools.
 func (p *MattermostToolProvider) getUserTools() []MCPTool {
 	return []MCPTool{
-		{Name: "get_me", Description: getMeDescription, Schema: NewJSONSchemaForAccessMode[GetMeArgs](string(p.accessMode)), Resolver: typed("get_me", p.toolGetMe)},
-		{Name: "get_user", Description: getUserDescription, Schema: NewJSONSchemaForAccessMode[GetUserArgs](string(p.accessMode)), Resolver: typed("get_user", p.toolGetUser)},
-		{Name: "get_user_by_username", Description: getUserByUsernameDescription, Schema: NewJSONSchemaForAccessMode[GetUserByUsernameArgs](string(p.accessMode)), Resolver: typed("get_user_by_username", p.toolGetUserByUsername)},
-		{Name: "get_user_by_email", Description: getUserByEmailDescription, Schema: NewJSONSchemaForAccessMode[GetUserByEmailArgs](string(p.accessMode)), Resolver: typed("get_user_by_email", p.toolGetUserByEmail)},
-		{Name: "get_users_by_ids", Description: getUsersByIDsDescription, Schema: NewJSONSchemaForAccessMode[GetUsersByIDsArgs](string(p.accessMode)), Resolver: typed("get_users_by_ids", p.toolGetUsersByIDs)},
-		{Name: "get_users_by_usernames", Description: getUsersByUsernamesDescription, Schema: NewJSONSchemaForAccessMode[GetUsersByUsernamesArgs](string(p.accessMode)), Resolver: typed("get_users_by_usernames", p.toolGetUsersByUsernames)},
-		{Name: "get_user_stats", Description: getUserStatsDescription, Schema: NewJSONSchemaForAccessMode[GetUserStatsArgs](string(p.accessMode)), Resolver: typed("get_user_stats", p.toolGetUserStats)},
-		{Name: "get_user_cpa_values", Description: getUserCPAValuesDescription, Schema: NewJSONSchemaForAccessMode[GetUserCPAValuesArgs](string(p.accessMode)), Resolver: typed("get_user_cpa_values", p.toolGetUserCPAValues)},
-		{Name: "list_cpa_fields", Description: listCPAFieldsDescription, Schema: NewJSONSchemaForAccessMode[ListCPAFieldsArgs](string(p.accessMode)), Resolver: typed("list_cpa_fields", p.toolListCPAFields)},
-		{Name: "update_user", Description: updateUserDescription, Schema: NewJSONSchemaForAccessMode[UpdateUserArgs](string(p.accessMode)), Resolver: typed("update_user", p.toolUpdateUser)},
+		mcpReadTool(p, "get_me", getMeDescription, p.toolGetMe),
+		mcpReadTool(p, "get_user", getUserDescription, p.toolGetUser),
+		mcpReadTool(p, "get_user_by_username", getUserByUsernameDescription, p.toolGetUserByUsername),
+		mcpReadTool(p, "get_user_by_email", getUserByEmailDescription, p.toolGetUserByEmail),
+		mcpReadTool(p, "get_users_by_ids", getUsersByIDsDescription, p.toolGetUsersByIDs),
+		mcpReadTool(p, "get_users_by_usernames", getUsersByUsernamesDescription, p.toolGetUsersByUsernames),
+		mcpReadTool(p, "get_user_stats", getUserStatsDescription, p.toolGetUserStats),
+		mcpReadTool(p, "get_user_cpa_values", getUserCPAValuesDescription, p.toolGetUserCPAValues),
+		mcpReadTool(p, "list_cpa_fields", listCPAFieldsDescription, p.toolListCPAFields),
+		mcpTool(p, "update_user", updateUserDescription, p.toolUpdateUser),
 	}
 }
 
@@ -110,15 +112,56 @@ func (p *MattermostToolProvider) toolGetUser(mcpContext *MCPToolContext, args Ge
 	return formatSingleUser(user), nil
 }
 
+// getUserByUsernameOrID resolves a user by username or, when the value is
+// shaped like a Mattermost ID, by user ID. Models sometimes pass a user ID
+// where a username is expected (e.g. from a scheduled prompt that embeds one).
+// A 26-character lowercase alphanumeric username is also a valid ID, so for
+// ID-shaped values both lookups run; if they resolve to different accounts the
+// call fails rather than letting a username squat on another user's ID.
+func getUserByUsernameOrID(ctx context.Context, client *model.Client4, value string) (*model.User, error) {
+	byName, nameResp, err := client.GetUserByUsername(ctx, value, "")
+	if !model.IsValidId(value) {
+		if err != nil {
+			return nil, fmt.Errorf("error getting user by username %q: %w", value, err)
+		}
+		return byName, nil
+	}
+
+	// Only a confirmed not-found counts as an absent candidate; any other
+	// failure could hide a collision, so it is returned as is.
+	byID, idResp, idErr := client.GetUser(ctx, value, "")
+	if err != nil && !isNotFound(nameResp) {
+		return nil, fmt.Errorf("error getting user by username %q: %w", value, err)
+	}
+	if idErr != nil && !isNotFound(idResp) {
+		return nil, fmt.Errorf("error getting user by ID %q: %w", value, idErr)
+	}
+
+	switch {
+	case err == nil && idErr == nil && byName.Id != byID.Id:
+		return nil, fmt.Errorf("%q is ambiguous: it is the username of one user and the ID of another; ask the user which account they mean", value)
+	case idErr == nil:
+		return byID, nil
+	case err == nil:
+		return byName, nil
+	default:
+		return nil, fmt.Errorf("error getting user by username %q: %w", value, err)
+	}
+}
+
+func isNotFound(resp *model.Response) bool {
+	return resp != nil && resp.StatusCode == http.StatusNotFound
+}
+
 // toolGetUserByUsername implements the get_user_by_username tool.
 func (p *MattermostToolProvider) toolGetUserByUsername(mcpContext *MCPToolContext, args GetUserByUsernameArgs) (string, error) {
 	username := strings.TrimPrefix(strings.TrimSpace(args.Username), "@")
 	if username == "" {
 		return "", fmt.Errorf("username cannot be empty")
 	}
-	user, _, err := mcpContext.Client.GetUserByUsername(mcpContext.Ctx, username, "")
+	user, err := getUserByUsernameOrID(mcpContext.Ctx, mcpContext.Client, username)
 	if err != nil {
-		return "", fmt.Errorf("error fetching user by username: %w", err)
+		return "", err
 	}
 	return formatSingleUser(user), nil
 }
@@ -137,13 +180,8 @@ func (p *MattermostToolProvider) toolGetUserByEmail(mcpContext *MCPToolContext, 
 
 // toolGetUsersByIDs implements the get_users_by_ids tool.
 func (p *MattermostToolProvider) toolGetUsersByIDs(mcpContext *MCPToolContext, args GetUsersByIDsArgs) (string, error) {
-	if len(args.UserIDs) == 0 {
-		return "", fmt.Errorf("user_ids cannot be empty")
-	}
-	for _, id := range args.UserIDs {
-		if err := requireID("user_ids", id); err != nil {
-			return "", err
-		}
+	if err := requireIDs("user_ids", args.UserIDs); err != nil {
+		return "", err
 	}
 	users, _, err := mcpContext.Client.GetUsersByIds(mcpContext.Ctx, args.UserIDs)
 	if err != nil {
@@ -193,12 +231,12 @@ func (p *MattermostToolProvider) toolGetUserCPAValues(mcpContext *MCPToolContext
 	for fieldID := range values {
 		fieldIDs = append(fieldIDs, fieldID)
 	}
-	sort.Strings(fieldIDs)
+	slices.Sort(fieldIDs)
 
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Custom Profile Attribute (CPA) values for user %s:\n", args.UserID))
+	fmt.Fprintf(&result, "Custom Profile Attribute (CPA) values for user %s:\n", args.UserID)
 	for _, fieldID := range fieldIDs {
-		result.WriteString(fmt.Sprintf("%s: %s\n", fieldID, string(values[fieldID])))
+		fmt.Fprintf(&result, "%s: %s\n", fieldID, string(values[fieldID]))
 	}
 	return result.String(), nil
 }
@@ -213,7 +251,7 @@ func (p *MattermostToolProvider) toolListCPAFields(mcpContext *MCPToolContext, _
 		return "no custom profile attribute (CPA) fields defined", nil
 	}
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Custom Profile Attribute (CPA) fields (%d):\n\n", len(fields)))
+	fmt.Fprintf(&result, "Custom Profile Attribute (CPA) fields (%d):\n\n", len(fields))
 	for i, field := range fields {
 		format.WriteCPAField(&result, format.CPAFieldEntry{
 			HeaderLabel: fmt.Sprintf("Field %d", i+1),
@@ -232,13 +270,9 @@ func (p *MattermostToolProvider) toolUpdateUser(mcpContext *MCPToolContext, args
 		return "", fmt.Errorf("provide at least one of nickname, first_name, last_name, position to update")
 	}
 
-	userID := args.UserID
-	if userID == "" {
-		resolved, err := p.resolveUserID(mcpContext)
-		if err != nil {
-			return "", err
-		}
-		userID = resolved
+	userID, err := p.resolveUserIDOrDefault(mcpContext, args.UserID)
+	if err != nil {
+		return "", err
 	}
 
 	patch := &model.UserPatch{
@@ -275,12 +309,7 @@ type CreateUserArgs struct {
 // getDevUserTools returns development user-related tools for MCP
 func (p *MattermostToolProvider) getDevUserTools() []MCPTool {
 	return []MCPTool{
-		{
-			Name:        "create_user",
-			Description: "Create a new user account (dev mode only)",
-			Schema:      NewJSONSchemaForAccessMode[CreateUserArgs](string(p.accessMode)),
-			Resolver:    typed("create_user", p.toolCreateUser),
-		},
+		mcpTool(p, "create_user", "Create a new user account (dev mode only)", p.toolCreateUser),
 	}
 }
 

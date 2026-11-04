@@ -1,6 +1,6 @@
 # LLM Provider Configuration Guide
 
-This guide covers configuring different Large Language Model (LLM) providers with the Mattermost Agents plugin. Each provider has specific configuration requirements and capabilities.
+Configure the LLM providers that Mattermost Agents can use, including local models through OpenAI-compatible APIs (Ollama, vLLM), OpenAI, Anthropic, AWS Bedrock, Azure OpenAI, Google Gemini and Vertex AI, Cohere, Mistral, and Scale AI. This guide lists each provider's authentication, configuration options, and capabilities.
 
 ## Supported Providers
 
@@ -11,6 +11,7 @@ The Mattermost Agents plugin currently supports these LLM providers:
 - Anthropic
 - AWS Bedrock
 - Cohere
+- Cohere North
 - Mistral
 - Scale AI
 - Azure OpenAI
@@ -76,6 +77,25 @@ Obtain an [Anthropic API key](https://console.anthropic.com/settings/keys), then
 | **API Key** | Yes | Your Anthropic API key |
 | **Default Model** | Yes | The model to use by default (see [Anthropic's model documentation](https://docs.anthropic.com/claude/docs/models-overview)) |
 
+### Extended thinking
+
+Enable **Extended Thinking** on the agent (System Console > Agents > select agent > **Config** tab) and pick a **Thinking Effort**: Model default, Low, Medium, High, Extra high, or Max. **Model default** (the default) sends no effort, so the model uses its own default: medium on Claude Opus 5.5 and high on other models. How the effort is applied depends on the model:
+
+| Model | What **Thinking Effort** does |
+|-------|-------------------------------|
+| Claude Opus 4.6+, Sonnet 4.6+, Fable / Mythos | Sent as the native effort level (`output_config.effort`) with adaptive thinking, so the model decides how much to think within that effort. Extra high isn't available on Opus 4.6, Sonnet 4.6, or Mythos Preview; those models run at High instead. |
+| Older models (for example, Haiku 4.5, Sonnet 4.5, Opus 4.5) | Mapped to a thinking token budget as a share of the output token limit: Low 1/16 (at most 2048), Medium 1/8 (at most 4096), High and Model default 1/4 (at most 8192), Extra high 1/3 (at most 16384), and Max 1/2 (at most 32768), never below 1024. Thinking is skipped when the output token limit leaves no room for the 1024-token minimum. |
+
+Some newer models think even when no thinking is requested, and some can't turn thinking off at all. When extended thinking is disabled on the agent, or a request runs without it (such as conversation title generation), the agent turns thinking off as far as the model allows:
+
+| Model | With extended thinking off |
+|-------|----------------------------|
+| Claude Opus 4.8 and earlier, Sonnet 4.6 and earlier, Haiku | No thinking. |
+| Claude Opus 5, Sonnet 5 | Thinking is explicitly disabled. |
+| Claude Opus 5.5+, Sonnet 5.5+, Fable / Mythos | These models always think. They run at low effort, and their reasoning isn't shown. |
+
+When a service has a fallback chain, these rules are applied separately to each fallback service's model, so a fallback never receives a thinking setting meant for a different model.
+
 ## AWS Bedrock
 
 AWS Bedrock provides access to foundation models from Anthropic (Claude), Amazon (Nova, Titan), and other providers via a unified API. For full setup instructions — including IAM policy configuration and Anthropic-specific Claude requirements — see the [AWS Bedrock Setup Guide](aws_bedrock_setup.md).
@@ -107,6 +127,54 @@ Obtain a [Cohere API key](https://dashboard.cohere.com/api-keys), then select **
 |---------|----------|-------------|
 | **API Key** | Yes | Your Cohere API key |
 | **Default Model** | Yes | The model to use by default (see [Cohere's model documentation](https://docs.cohere.com/docs/models)) |
+
+## Cohere North
+
+Cohere North is Cohere's enterprise agent platform. This integration uses North's OpenAI Responses-compatible endpoint so existing Mattermost agents can use a North-hosted model as their backend. It does not yet bind to North-side Agents, knowledge libraries, or citations.
+
+### Authentication
+
+1. In Mattermost, select **Cohere North** in the **Service** dropdown (type id `north`).
+2. Enter your North instance URL in the **North instance URL** field (for example, `https://north.example.com`). The plugin appends `/api` automatically. Entering a URL that already ends with `/api` or `/api/v1` also works.
+3. Enter a **Service token**. Obtain it from the North web UI by appending `/developer` to the instance URL (for example, `https://north.example.com/developer`) and using **Retrieve your token**. Tokens are user-bound and expire; use a dedicated service account and rotate the token before expiry. This version supports a single admin-configured token; per-user tokens are not supported.
+4. Enter a model identifier in the **Default Model** field. The model name must be entered explicitly (for example, `command-a-03-2025`). Use `command-a-vision-07-2025` when the agent needs image input.
+
+**Fetch models** works on North instances that expose the v2 models listing. On older instances the request fails and you type the model name yourself.
+
+### Configuration Options
+
+| Setting | Required | Description |
+|---------|----------|-------------|
+| **North instance URL** | Yes | Base URL of your North instance (for example, `https://north.example.com`). The plugin appends `/api` if needed. |
+| **Service token** | Yes | North auth token from the instance `/developer` page. Stored as a secret. Use a dedicated service account and rotate before expiry. |
+| **Default Model** | Yes | The model to use by default (for example, `command-a-03-2025`, or `command-a-vision-07-2025` for image input). |
+| **Input Token Limit** | No | Optional override for the maximum input context size, in tokens. |
+| **Output Token Limit** | No | Optional override for the maximum output the plugin will request. |
+| **Streaming Timeout Seconds** | No | Timeout in seconds for streaming responses. |
+| **Fallback Service** | No | Optional service to use when this service is unavailable. |
+
+### Capabilities
+
+Supported:
+
+- Streaming
+- Tool calling (Mattermost and MCP tools)
+- Image input (enable **Vision** on the agent; use a vision-capable model such as `command-a-vision-07-2025`)
+- Reasoning via effort level
+
+Not supported:
+
+- Provider-native tools (web search, code interpreter)
+- Transcription
+- Embeddings
+
+### Special Considerations
+
+Requests are sent with `store: false`, so agent conversations are not persisted in the token owner's North conversation history.
+
+North can only be used as a fallback for a primary service that uses the Responses API and has no provider-native tools enabled; otherwise the agent fails to start with a configuration error.
+
+North applies its own system context on top of the agent's instructions, and its usage accounting includes that overhead.
 
 ## Mistral
 

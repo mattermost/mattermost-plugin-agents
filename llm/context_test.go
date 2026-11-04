@@ -36,6 +36,66 @@ func TestContext_SetBotFields(t *testing.T) {
 	assert.Equal(t, "Be helpful and concise", c.CustomInstructions)
 }
 
+func TestContextToolCallability(t *testing.T) {
+	tests := []struct {
+		name                string
+		tools               []string
+		disabled            []string
+		wantCallable        []string
+		wantDisabled        []string
+		wantNotCallableTool string
+	}{
+		{
+			name:                "every cataloged tool is callable",
+			tools:               []string{"b_tool", "a_tool"},
+			wantCallable:        []string{"a_tool", "b_tool"},
+			wantNotCallableTool: "missing_tool",
+		},
+		{
+			name:                "disabled tools are not callable",
+			tools:               []string{"a_tool", "b_tool", "c_tool"},
+			disabled:            []string{"a_tool", "uncataloged", "c_tool"},
+			wantCallable:        []string{"b_tool"},
+			wantDisabled:        []string{"a_tool", "uncataloged", "c_tool"},
+			wantNotCallableTool: "c_tool",
+		},
+		{
+			name:                "a tool disabled twice is listed once",
+			tools:               []string{"a_tool"},
+			disabled:            []string{"a_tool", "a_tool"},
+			wantDisabled:        []string{"a_tool"},
+			wantNotCallableTool: "a_tool",
+		},
+	}
+
+	names := func(infos []ToolInfo) []string {
+		var result []string
+		for _, info := range infos {
+			result = append(result, info.Name)
+		}
+		return result
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Context{Tools: NewToolStore()}
+			for _, name := range tt.tools {
+				c.Tools.AddTools([]Tool{{Name: name}})
+			}
+			for _, name := range tt.disabled {
+				c.DisableTools(ToolInfo{Name: name})
+			}
+
+			assert.Equal(t, tt.wantCallable, names(c.CallableToolsInfo()))
+			assert.Equal(t, tt.wantDisabled, names(c.DisabledTools))
+			for _, name := range tt.wantCallable {
+				assert.True(t, c.IsToolCallable(name), name)
+			}
+			assert.False(t, c.IsToolCallable(tt.wantNotCallableTool))
+		})
+	}
+}
+
 func TestContext_CustomPromptVars(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -197,9 +257,6 @@ func TestContextResponseAttachmentBudget(t *testing.T) {
 		var c *Context
 		c.SetResponseAttachmentBudget(5)
 		assert.Equal(t, 0, c.ResponseAttachmentSlots())
-		var tr *ToolRuntimeContext
-		tr.SetResponseAttachmentBudget(5)
-		assert.Equal(t, 0, tr.ResponseAttachmentSlots())
 	})
 }
 
@@ -257,10 +314,67 @@ func TestContextCreatedFilesNilReceiver(t *testing.T) {
 	var c *Context
 	c.AddCreatedFile(CreatedFile{ID: "file1", Name: "a.txt"})
 	assert.Nil(t, c.CreatedFilesList())
+}
 
-	var rt *ToolRuntimeContext
-	rt.AddCreatedFile(CreatedFile{ID: "file1", Name: "a.txt"})
-	assert.Nil(t, rt.CreatedFilesList())
+func TestContextSandboxFiles(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(t *testing.T)
+	}{
+		{
+			name: "observation order and provider routes are preserved while repeated references are skipped",
+			run: func(t *testing.T) {
+				c := &Context{}
+				c.AddSandboxFiles(
+					ProviderFileReference{ID: "file_1", ProviderRoute: "anthropic"},
+					ProviderFileReference{},
+					ProviderFileReference{ID: "file_2", ProviderRoute: "anthropic::fallback"},
+				)
+				c.AddSandboxFiles(
+					ProviderFileReference{ID: "file_1", ProviderRoute: "different-route"},
+					ProviderFileReference{ID: "file_3", ProviderRoute: "anthropic"},
+				)
+
+				assert.Equal(t, []ProviderFileReference{
+					{ID: "file_1", ProviderRoute: "anthropic"},
+					{ID: "file_2", ProviderRoute: "anthropic::fallback"},
+					{ID: "file_1", ProviderRoute: "different-route"},
+					{ID: "file_3", ProviderRoute: "anthropic"},
+				}, c.ToolRuntime.SandboxFiles)
+			},
+		},
+		{
+			name: "consume is ordered and idempotent",
+			run: func(t *testing.T) {
+				c := &Context{}
+				refs := []ProviderFileReference{{ID: "file_1"}, {ID: "file_2"}}
+				c.AddSandboxFiles(refs...)
+				assert.Equal(t, refs, c.ConsumeSandboxFiles())
+				assert.Empty(t, c.ConsumeSandboxFiles())
+			},
+		},
+		{
+			name: "nil context absorbs writes and reads",
+			run: func(t *testing.T) {
+				var nilCtx *Context
+				nilCtx.AddSandboxFiles(ProviderFileReference{ID: "file_1"})
+				assert.Nil(t, nilCtx.ConsumeSandboxFiles())
+			},
+		},
+		{
+			name: "nil runtime absorbs writes",
+			run: func(t *testing.T) {
+				var nilRuntime *ToolRuntimeContext
+				assert.NotPanics(t, func() {
+					nilRuntime.AddSandboxFiles(ProviderFileReference{ID: "file_1"})
+				})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, tt.run)
+	}
 }
 
 func TestContextMCPDynamicSearchLoadCallSuccessState(t *testing.T) {

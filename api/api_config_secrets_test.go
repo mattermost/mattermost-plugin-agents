@@ -482,9 +482,9 @@ func TestSaveConfigCredentialRoundTrip(t *testing.T) {
 func TestFetchModelsRejectsPlaceholderAsCredential(t *testing.T) {
 	const maskedCredential = "**********"
 
-	var upstreamCalls int32
+	var upstreamCalls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt32(&upstreamCalls, 1)
+		upstreamCalls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"gpt-4o","object":"model"}]}`))
 	}))
@@ -517,7 +517,7 @@ func TestFetchModelsRejectsPlaceholderAsCredential(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode,
 		"a masked credential with no service reference must be rejected")
-	assert.Zero(t, atomic.LoadInt32(&upstreamCalls),
+	assert.Zero(t, upstreamCalls.Load(),
 		"a masked credential must never be sent to a provider")
 }
 

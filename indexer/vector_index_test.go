@@ -184,7 +184,7 @@ func (tr *vectorStateTracker) wasDeleted() bool {
 // KVCompareAndSet mocks so the key-specific expectations match first.
 func mockVectorStateOps(mockClient *mocks.MockClient, tracker *vectorStateTracker) {
 	mockClient.On("KVGet", VectorIndexStateKey, mock.AnythingOfType("*indexer.VectorIndexState")).
-		Return(func(key string, value interface{}) error {
+		Return(func(key string, value any) error {
 			tracker.mu.Lock()
 			defer tracker.mu.Unlock()
 			if tracker.current == nil {
@@ -194,7 +194,7 @@ func mockVectorStateOps(mockClient *mocks.MockClient, tracker *vectorStateTracke
 			return nil
 		}).Maybe()
 	mockClient.On("KVCompareAndSet", VectorIndexStateKey, mock.Anything, mock.Anything).
-		Return(func(key string, oldValue, newValue interface{}) (bool, error) {
+		Return(func(key string, oldValue, newValue any) (bool, error) {
 			tracker.mu.Lock()
 			defer tracker.mu.Unlock()
 			if oldValue == nil {
@@ -246,7 +246,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		mainCutoff := now - 5000
 		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
 		require.NoError(t, err)
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
 				fmt.Sprintf("main-post%d", i), now-10000+int64(i), fmt.Sprintf("Main %d", i))
 			require.NoError(t, err)
@@ -1061,9 +1061,9 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		bulk.onFinalize = func() {
 			mu.Lock()
 			defer mu.Unlock()
-			for i := len(persisted) - 1; i >= 0; i-- {
-				if persisted[i].Phase != "" {
-					phaseDuringBuild = persisted[i].Phase
+			for _, p := range slices.Backward(persisted) {
+				if p.Phase != "" {
+					phaseDuringBuild = p.Phase
 					return
 				}
 			}

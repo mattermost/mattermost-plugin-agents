@@ -2,10 +2,10 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, screen} from '@testing-library/react';
+import {fireEvent, render, screen} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
-import ReasoningConfigItem, {usesAdaptiveThinking} from './reasoning_config';
+import ReasoningConfigItem, {defaultReasoningEffort} from './reasoning_config';
 import {LLMBotConfig} from './bot';
 import {type LLMService} from './service';
 
@@ -19,6 +19,11 @@ jest.mock('react-intl', () => {
         FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
     };
 });
+
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
+    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
+}), {virtual: true});
 
 const baseService: LLMService = {
     id: 'svc-1',
@@ -58,117 +63,99 @@ const baseBot: LLMBotConfig = {
     reasoningEnabled: true,
 };
 
-function renderItem(bot: Partial<LLMBotConfig>, service: Partial<LLMService> = {}) {
+function renderItem(bot: Partial<LLMBotConfig>, service: Partial<LLMService> = {}, onChange = jest.fn()) {
     return render(
         <IntlProvider locale='en'>
             <ReasoningConfigItem
                 bot={{...baseBot, ...bot}}
                 service={{...baseService, ...service}}
                 maxTokens={4096}
-                onChange={jest.fn()}
+                onChange={onChange}
             />
         </IntlProvider>,
     );
 }
 
-const budgetTooLargeError = /Thinking budget cannot exceed max tokens/;
-const budgetTooSmallError = /Thinking budget must be at least 1024 tokens/;
-const adaptiveHelpText = /adaptive thinking/;
+async function openOptions(name: string): Promise<string[]> {
+    fireEvent.click(screen.getByRole('combobox', {name}));
+    const options = await screen.findAllByRole('option');
+    return options.map((option) => option.textContent ?? '');
+}
 
-describe('usesAdaptiveThinking model classification', () => {
-    const cases: Array<[string, boolean]> = [
+describe('ReasoningConfigItem Anthropic effort', () => {
+    it.each([
+        {name: 'unset effort uses the model default', reasoningEffort: '', expected: 'Model default'},
+        {name: 'stored effort is shown', reasoningEffort: 'medium', expected: 'Medium'},
+        {name: 'stored max is shown', reasoningEffort: 'max', expected: 'Max'},
+        {name: 'minimal is shown as low', reasoningEffort: 'minimal', expected: 'Low'},
+        {name: 'unknown effort is shown as the model default', reasoningEffort: 'none', expected: 'Model default'},
+    ])('$name', async ({reasoningEffort, expected}) => {
+        renderItem({reasoningEffort});
 
-        // Opus dropped budget-based thinking at 4.7.
-        ['claude-opus-4-6', false],
-        ['claude-opus-4-7', true],
-        ['claude-opus-4-8', true],
-        ['claude-opus-4-9', true],
-        ['claude-opus-5', true],
-        ['claude-opus-6', true],
-        ['claude-opus-4-5-20251101', false],
-        ['claude-opus-4-1-20250805', false],
+        expect(screen.getByRole('combobox', {name: 'Thinking Effort'}).textContent).toContain(expected);
+        expect(screen.queryByRole('spinbutton')).toBeNull();
+        expect(await openOptions('Thinking Effort')).toEqual(['Model default', 'Low', 'Medium', 'High', 'Extra high', 'Max']);
+    });
 
-        // Date suffix without a minor version is not a minor version.
-        ['claude-opus-4-20250514', false],
+    it('saves the selected effort', async () => {
+        const onChange = jest.fn();
+        renderItem({reasoningEffort: ''}, {}, onChange);
 
-        // Sonnet dropped budget-based thinking at 5.
-        ['claude-sonnet-4-6', false],
-        ['claude-sonnet-4-5-20250929', false],
-        ['claude-sonnet-5', true],
-        ['claude-sonnet-5-1', true],
+        await openOptions('Thinking Effort');
+        fireEvent.pointerUp(screen.getByRole('option', {name: 'Extra high'}));
 
-        // Fable/Mythos are always adaptive-only.
-        ['claude-fable-5', true],
-        ['claude-mythos-5', true],
-
-        // Unknown families and legacy names stay budget-based.
-        ['claude-haiku-4-5-20251001', false],
-        ['claude-3-7-sonnet', false],
-        ['', false],
-    ];
-
-    it.each(cases)('%s -> %s', (model, expected) => {
-        expect(usesAdaptiveThinking(model)).toBe(expected);
+        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({reasoningEffort: 'xhigh'}));
     });
 });
 
-describe('ReasoningConfigItem thinking budget validation', () => {
-    const cases = [
-        {
-            name: 'budget-based model shows out-of-range error',
-            model: 'claude-sonnet-4-5-20250929',
-            thinkingBudget: 99999,
-            expectError: budgetTooLargeError,
-            expectAdaptiveHelp: false,
-        },
-        {
-            name: 'budget-based model shows too-small error',
-            model: 'claude-haiku-4-5-20251001',
-            thinkingBudget: 500,
-            expectError: budgetTooSmallError,
-            expectAdaptiveHelp: false,
-        },
-        {
-            name: 'adaptive model ignores oversized budget',
-            model: 'claude-opus-5',
-            thinkingBudget: 99999,
-            expectError: null,
-            expectAdaptiveHelp: true,
-        },
-        {
-            name: 'adaptive model ignores undersized budget',
-            model: 'claude-fable-5',
-            thinkingBudget: 500,
-            expectError: null,
-            expectAdaptiveHelp: true,
-        },
-        {
-            name: 'adaptive detection falls back to the service default model',
-            model: '',
-            serviceDefaultModel: 'claude-sonnet-5',
-            thinkingBudget: 99999,
-            expectError: null,
-            expectAdaptiveHelp: true,
-        },
-    ];
+describe('ReasoningConfigItem Anthropic always-on thinking note', () => {
+    const alwaysOnNote = /This model always thinks/;
 
-    it.each(cases)('$name', ({model, serviceDefaultModel, thinkingBudget, expectError, expectAdaptiveHelp}) => {
+    it.each([
+        {name: 'Opus 5.5 disabled shows the note', model: 'claude-opus-5-5', reasoningEnabled: false, expected: true},
+        {name: 'Fable via service default shows the note', model: '', serviceDefaultModel: 'claude-fable-5-1', reasoningEnabled: false, expected: true},
+        {name: 'Sonnet 5 can be disabled', model: 'claude-sonnet-5', reasoningEnabled: false, expected: false},
+        {name: 'dated Opus 5 snapshot can be disabled', model: 'claude-opus-5-20260301', reasoningEnabled: false, expected: false},
+        {name: 'Haiku 4.5 can be disabled', model: 'claude-haiku-4-5-20251001', reasoningEnabled: false, expected: false},
+        {name: 'enabled thinking hides the note', model: 'claude-opus-5-5', reasoningEnabled: true, expected: false},
+    ])('$name', ({model, serviceDefaultModel, reasoningEnabled, expected}) => {
+        renderItem({model, reasoningEnabled}, serviceDefaultModel ? {defaultModel: serviceDefaultModel} : {});
+
+        expect(Boolean(screen.queryByText(alwaysOnNote))).toBe(expected);
+    });
+});
+
+describe('defaultReasoningEffort', () => {
+    it.each([
+        ['anthropic', ''],
+        ['gemini', 'medium'],
+        ['openai', 'medium'],
+        ['', 'medium'],
+    ])('%s -> %s', (serviceType, expected) => {
+        expect(defaultReasoningEffort(serviceType)).toBe(expected);
+    });
+});
+
+describe('ReasoningConfigItem Gemini', () => {
+    it('keeps the optional thinking budget alongside effort', async () => {
+        renderItem({reasoningEffort: 'low'}, {type: 'gemini', defaultModel: 'gemini-2.5-pro'});
+
+        expect(screen.getByRole('spinbutton')).toBeTruthy();
+        expect(screen.getByRole('combobox', {name: 'Reasoning Effort'}).textContent).toContain('Low');
+        expect(await openOptions('Reasoning Effort')).toEqual(['Minimal', 'Low', 'Medium', 'High']);
+    });
+});
+
+describe('ReasoningConfigItem Cohere North', () => {
+    it('shows effort-based reasoning even when useResponsesAPI is false', () => {
         renderItem(
-            {model, thinkingBudget},
-            serviceDefaultModel ? {defaultModel: serviceDefaultModel} : {},
+            {reasoningEnabled: true, reasoningEffort: 'medium'},
+            {type: 'north', useResponsesAPI: false, defaultModel: ''},
         );
 
-        if (expectError) {
-            expect(screen.getByText(expectError)).toBeTruthy();
-        } else {
-            expect(screen.queryByText(budgetTooLargeError)).toBeNull();
-            expect(screen.queryByText(budgetTooSmallError)).toBeNull();
-        }
-
-        if (expectAdaptiveHelp) {
-            expect(screen.getByText(adaptiveHelpText)).toBeTruthy();
-        } else {
-            expect(screen.queryByText(adaptiveHelpText)).toBeNull();
-        }
+        expect(screen.getByText('Reasoning')).toBeTruthy();
+        expect(screen.getByText('Reasoning Effort')).toBeTruthy();
+        expect(screen.queryByText('Thinking Budget (tokens)')).toBeNull();
+        expect(screen.queryByText('Native OpenAI Tools')).toBeNull();
     });
 });

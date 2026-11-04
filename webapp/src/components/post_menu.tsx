@@ -12,7 +12,7 @@ import {doReaction, doThreadAnalysis} from '../client';
 
 import {useSelectPost} from '@/hooks';
 
-import {useIsBasicsLicensed} from '@/license';
+import {useIsLicensedFor} from '@/license';
 
 import {useBotlistForChannel} from '@/bots';
 
@@ -35,16 +35,12 @@ const PostMenu = (props: Props) => {
     const intl = useIntl();
     const {bots, activeBot, setActiveBot} = useBotlistForChannel(props.post.channel_id);
     const post = props.post;
-    const isBasicsLicensed = useIsBasicsLicensed();
+    const threadSummarizationLicensed = useIsLicensedFor('thread_summarization');
 
     const analyzeThread = async (postId: string, analysisType: string) => {
-        const result = await doThreadAnalysis(postId, analysisType, activeBot?.username || '');
+        const result = await doThreadAnalysis(postId, analysisType, activeBot?.id || '');
         selectPost(result.postid, result.channelid);
     };
-
-    if (!isBasicsLicensed) {
-        return null;
-    }
 
     if (bots && bots.length === 0) {
         // No bots available (either unconfigured or filtered by permissions)
@@ -57,6 +53,8 @@ const PostMenu = (props: Props) => {
             title={intl.formatMessage({defaultMessage: 'AI Actions'})}
             dropdownMenu={StyledDropdownMenu}
             testId='ai-actions-menu'
+            size='small'
+            padding='compact'
             onOpenChange={props.handleDropdownOpened}
         >
             <DropdownBotSelector
@@ -65,35 +63,35 @@ const PostMenu = (props: Props) => {
                 setActiveBot={setActiveBot}
             />
             <Divider/>
-            <DropdownMenuItem onClick={() => analyzeThread(post.id, 'summarize_thread')}>
-                <span className='icon'><IconThreadSummarization/></span>
-                <FormattedMessage defaultMessage='Summarize Thread'/>
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => analyzeThread(post.id, 'action_items')}>
-                <span className='icon'><IconSparkleCheckmarkStyled/></span>
-                <FormattedMessage defaultMessage='Find action items'/>
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => analyzeThread(post.id, 'open_questions')}>
-                <span className='icon'><IconSparkleQuestionStyled/></span>
-                <FormattedMessage defaultMessage='Find open questions'/>
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => doReaction(post.id)}>
-                <span className='icon'><IconReactForMe/></span>
-                <FormattedMessage defaultMessage='React for me'/>
-            </DropdownMenuItem>
+            {threadSummarizationLicensed && (
+                <>
+                    <DropdownMenuItem
+                        icon={<IconThreadSummarization/>}
+                        label={<FormattedMessage defaultMessage='Summarize Thread'/>}
+                        onClick={() => analyzeThread(post.id, 'summarize_thread')}
+                    />
+                    <DropdownMenuItem
+                        icon={<IconSparkleCheckmark/>}
+                        label={<FormattedMessage defaultMessage='Find action items'/>}
+                        onClick={() => analyzeThread(post.id, 'action_items')}
+                    />
+                    <DropdownMenuItem
+                        icon={<IconSparkleQuestion/>}
+                        label={<FormattedMessage defaultMessage='Find open questions'/>}
+                        onClick={() => analyzeThread(post.id, 'open_questions')}
+                    />
+                </>
+            )}
+            <DropdownMenuItem
+                icon={<IconReactForMe/>}
+                label={<FormattedMessage defaultMessage='React for me'/>}
+                onClick={() => doReaction(post.id)}
+            />
             <Divider/>
             <DropdownInfoOnlyVisibleToYou/>
         </DotMenu>
     );
 };
-
-const IconSparkleCheckmarkStyled = styled(IconSparkleCheckmark)`
-	color: rgba(var(--center-channel-color-rgb), 0.56);
-`;
-
-const IconSparkleQuestionStyled = styled(IconSparkleQuestion)`
-	color: rgba(var(--center-channel-color-rgb), 0.56);
-`;
 
 const StyledDropdownMenu = styled(DropdownMenu)`
 	min-width: 240px;

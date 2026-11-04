@@ -450,6 +450,53 @@ func (_c *MockClient_GetFile_Call) RunAndReturn(run func(fileID string) (io.Read
 	return _c
 }
 
+// HasPermissionToFileAction provides a mock function for the type MockClient
+func (_mock *MockClient) HasPermissionToFileAction(sessionID string, fileID string, action string) bool {
+	ret := _mock.Called(sessionID, fileID, action)
+
+	if len(ret) == 0 {
+		panic("no return value specified for HasPermissionToFileAction")
+	}
+
+	var r0 bool
+	if returnFunc, ok := ret.Get(0).(func(string, string, string) bool); ok {
+		r0 = returnFunc(sessionID, fileID, action)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	return r0
+}
+
+// MockClient_HasPermissionToFileAction_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'HasPermissionToFileAction'
+type MockClient_HasPermissionToFileAction_Call struct {
+	*mock.Call
+}
+
+// HasPermissionToFileAction is a helper method to define mock.On call
+//   - sessionID
+//   - fileID
+//   - action
+func (_e *MockClient_Expecter) HasPermissionToFileAction(sessionID interface{}, fileID interface{}, action interface{}) *MockClient_HasPermissionToFileAction_Call {
+	return &MockClient_HasPermissionToFileAction_Call{Call: _e.mock.On("HasPermissionToFileAction", sessionID, fileID, action)}
+}
+
+func (_c *MockClient_HasPermissionToFileAction_Call) Run(run func(sessionID string, fileID string, action string)) *MockClient_HasPermissionToFileAction_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string), args[1].(string), args[2].(string))
+	})
+	return _c
+}
+
+func (_c *MockClient_HasPermissionToFileAction_Call) Return(b bool) *MockClient_HasPermissionToFileAction_Call {
+	_c.Call.Return(b)
+	return _c
+}
+
+func (_c *MockClient_HasPermissionToFileAction_Call) RunAndReturn(run func(sessionID string, fileID string, action string) bool) *MockClient_HasPermissionToFileAction_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetFileInfo provides a mock function for the type MockClient
 func (_mock *MockClient) GetFileInfo(fileID string) (*model.FileInfo, error) {
 	ret := _mock.Called(fileID)

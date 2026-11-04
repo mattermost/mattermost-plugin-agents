@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import { Page } from '@playwright/test';
+import { Locator, Page } from '@playwright/test';
 
 import { AIMockContainer, RunAIMockSidecar } from './aimock-container';
 import { AIMockFixtureFile } from './aimock-fixtures';
@@ -47,6 +47,26 @@ export async function setupAimockTestPage(
     await aiPlugin.resetState();
 
     return { mmPage, aiPlugin, llmBotHelper };
+}
+
+/**
+ * setupAimockTestPage plus the prompt: sends `prompt` to the bot in a freshly
+ * reset RHS and hands back the panel and the reply post that answers it.
+ */
+export async function askAimockBot(
+    page: Page,
+    mattermostUrl: string,
+    prompt: string,
+): Promise<{
+    llmBotHelper: LLMBotPostHelper;
+    rhs: Locator;
+    botPost: Locator;
+}> {
+    const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, mattermostUrl);
+    await aiPlugin.sendMessage(prompt);
+
+    const rhs = page.getByTestId('mattermost-ai-rhs');
+    return { llmBotHelper, rhs, botPost: rhs.locator('[data-testid="llm-bot-post"]').last() };
 }
 
 export async function RunAIMockHarness(options: {

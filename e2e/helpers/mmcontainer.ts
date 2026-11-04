@@ -3,6 +3,7 @@ import type {StartedTestContainer, StartedNetwork} from 'testcontainers';
 import type {StartedPostgreSqlContainer} from '@testcontainers/postgresql';
 import {Client4} from "@mattermost/client";
 import { Client } from 'pg'
+import { withDeadline } from './deadline';
 import { pluginAdminConfigApiFromClient } from './plugin-http';
 
 if (typeof globalThis.File === 'undefined') {
@@ -17,10 +18,58 @@ const defaultUsername        = "admin";
 const defaultPassword        = "admin";
 const defaultTeamName        = "test";
 const defaultTeamDisplayName = "Test";
-const defaultMattermostImage = "mattermostdevelopment/mattermost-enterprise-edition:release-11.9";
+// Needs 11.11+ for plugin EvaluateAccessControl (mattermost#37509).
+const defaultMattermostImage = "mattermost/mattermost-enterprise-edition:latest";
+export const POSTGRES_IMAGE = "pgvector/pgvector:pg15";
+
+// Bounds for the steps of start(); container fixtures have no overall timeout.
+const NETWORK_DEADLINE_MS = 60000;
+const CONTAINER_DEADLINE_MS = 5 * 60000; // covers an image pull on top of the wait strategy
+const WAIT_STRATEGY_TIMEOUT_MS = 120000;
+const MMCTL_DEADLINE_MS = 60000;
+const ADMIN_API_DEADLINE_MS = 60000;
+
+export function mattermostImage(): string {
+    return process.env.MM_IMAGE || defaultMattermostImage;
+}
 
 type PluginConfig = Record<string, unknown>;
 type PluginConfigInput = PluginConfig | {config: PluginConfig};
+
+export type TownSquareChannel = {
+    id: string;
+    displayName: string;
+    teamDisplayName: string;
+};
+
+/**
+ * Looks up the default channel of `username`'s first team. Specs need its real
+ * ID to build tool-call arguments that the server will accept.
+ */
+export async function getTownSquareChannel(
+    mattermost: MattermostContainer,
+    username: string,
+    password: string,
+): Promise<TownSquareChannel> {
+    const client = await mattermost.getClient(username, password);
+    const teams = await client.getMyTeams();
+    const team = teams[0];
+    if (!team) {
+        throw new Error(`User ${username} is not a member of any team`);
+    }
+    const channels = await client.getMyChannels(team.id);
+    const townSquare = channels.find((channel: {name: string}) => channel.name === 'town-square');
+
+    if (!townSquare) {
+        throw new Error('Could not find town-square channel');
+    }
+
+    return {
+        id: townSquare.id,
+        displayName: townSquare.display_name || 'Town Square',
+        teamDisplayName: team.display_name || 'Test',
+    };
+}
 
 // MattermostContainer represents the mattermost container type used in the module
 export default class MattermostContainer {
@@ -82,20 +131,53 @@ export default class MattermostContainer {
         }
     }
 
+    // container.exec resolves even when the command exits non-zero, so check the exit code
+    // explicitly; otherwise a failed setup step only surfaces later as an unrelated error.
+    mmctl = async (...args: string[]): Promise<string> => {
+        const {output, exitCode} = await withDeadline(
+            `mmctl ${args.slice(0, 2).join(" ")}`,
+            MMCTL_DEADLINE_MS,
+            () => this.container.exec(["mmctl", "--local", ...args]),
+        )
+        if (exitCode !== 0) {
+            throw new Error(`mmctl ${args.join(" ")} exited with code ${exitCode}: ${output.trim()}`)
+        }
+        return output
+    }
+
+    // "Server is listening" is logged before the local-mode socket accepts mmctl connections.
+    waitForLocalMode = async (timeoutMs = 60000) => {
+        const deadline = Date.now() + timeoutMs
+        let lastOutput = ""
+        while (Date.now() < deadline) {
+            const {output, exitCode} = await withDeadline(
+                "mmctl local mode probe",
+                Math.max(deadline - Date.now(), 1000),
+                () => this.container.exec(["mmctl", "--local", "system", "version"]),
+            )
+            if (exitCode === 0) {
+                return
+            }
+            lastOutput = output.trim()
+            await new Promise(resolve => setTimeout(resolve, 250))
+        }
+        throw new Error(`mmctl local mode not ready after ${timeoutMs}ms: ${lastOutput}`)
+    }
+
     createAdmin = async (email: string, username: string, password: string) => {
-        await this.container.exec(["mmctl", "--local", "user", "create", "--email", email, "--username", username, "--password", password, "--system-admin", "--email-verified"])
+        await this.mmctl("user", "create", "--email", email, "--username", username, "--password", password, "--system-admin", "--email-verified")
     }
 
     createUser = async (email: string, username: string, password: string) => {
-        await this.container.exec(["mmctl", "--local", "user", "create", "--email", email, "--username", username, "--password", password, "--email-verified"])
+        await this.mmctl("user", "create", "--email", email, "--username", username, "--password", password, "--email-verified")
     }
 
     createTeam = async (name: string, displayName: string) => {
-        await this.container.exec(["mmctl", "--local", "team", "create", "--name", name, "--display-name", displayName])
+        await this.mmctl("team", "create", "--name", name, "--display-name", displayName)
     }
 
     addUserToTeam = async (username: string, teamname: string) => {
-        await this.container.exec(["mmctl", "--local", "team", "users", "add", teamname, username])
+        await this.mmctl("team", "users", "add", teamname, username)
     }
 
     /**
@@ -104,41 +186,26 @@ export default class MattermostContainer {
      * updating migrated legacy bots (no creator id) via manage_others_agent.
      */
     grantSelfServiceAgentPermissions = async (): Promise<void> => {
-        await this.container.exec([
-            'mmctl', '--local', 'permissions', 'add', 'system_user', 'manage_own_agent',
-        ]);
-        await this.container.exec([
-            'mmctl', '--local', 'permissions', 'add', 'system_admin', 'manage_own_agent',
-        ]);
-        await this.container.exec([
-            'mmctl', '--local', 'permissions', 'add', 'system_admin', 'manage_others_agent',
-        ]);
+        await this.mmctl('permissions', 'add', 'system_user', 'manage_own_agent');
+        await this.mmctl('permissions', 'add', 'system_admin', 'manage_own_agent');
+        await this.mmctl('permissions', 'add', 'system_admin', 'manage_others_agent');
     }
 
     /** Undo {@link grantSelfServiceAgentPermissions} for the system_user role only (system_admin unchanged). */
     revokeManageOwnAgentFromSystemUser = async (): Promise<void> => {
-        await this.container.exec([
-            'mmctl', '--local', 'permissions', 'remove', 'system_user', 'manage_own_agent',
-        ]);
-    }
-
-    getLogs = async (lines: number): Promise<string> => {
-        const {output} = await this.container.exec(["mmctl", "--local", "logs", "--number", lines.toString()])
-        return output
+        await this.mmctl('permissions', 'remove', 'system_user', 'manage_own_agent');
     }
 
     setSiteURL = async () => {
-        const url = this.url()
-        await this.container.exec(["mmctl", "--local", "config", "set", "ServiceSettings.SiteURL", url])
-        const containerPort = this.container.getMappedPort(8065)
-        await this.container.exec(["mmctl", "--local", "config", "set", "ServiceSettings.ListenAddress", `${containerPort}`])
+        await this.mmctl("config", "set", "ServiceSettings.SiteURL", this.url())
     }
 
     installPlugin = async (pluginPath: string, pluginID: string, pluginConfig?: PluginConfigInput) => {
-        await this.container.copyFilesToContainer([{source: pluginPath, target: `/tmp/plugin.tar.gz`}])
+        await withDeadline("Copying the plugin bundle into Mattermost", MMCTL_DEADLINE_MS, () =>
+            this.container.copyFilesToContainer([{source: pluginPath, target: `/tmp/plugin.tar.gz`}]))
 
-        await this.container.exec(["mmctl", "--local", "plugin", "add", '/tmp/plugin.tar.gz'])
-        await this.container.exec(["mmctl", "--local", "plugin", "enable", pluginID])
+        await this.mmctl("plugin", "add", "/tmp/plugin.tar.gz")
+        await this.mmctl("plugin", "enable", pluginID)
 
         // Set config via plugin admin API (replaces mmctl config patch)
         if (pluginConfig) {
@@ -146,7 +213,8 @@ export default class MattermostContainer {
             // since the admin API expects config.Config directly
             const wrappedConfig = pluginConfig as {config?: PluginConfig};
             const configData: PluginConfig = wrappedConfig.config ?? pluginConfig;
-            await this.setPluginConfig(pluginID, configData);
+            await withDeadline(`Applying ${pluginID} config through the admin API`, ADMIN_API_DEADLINE_MS, () =>
+                this.setPluginConfig(pluginID, configData))
         }
     }
 
@@ -217,46 +285,47 @@ export default class MattermostContainer {
     }
 
     start = async (): Promise<MattermostContainer> => {
-        let image = defaultMattermostImage;
+        const image = mattermostImage();
         const isCustomImage = !!process.env.MM_IMAGE;
-        if (isCustomImage) {
-            image = process.env.MM_IMAGE;
-        }
         console.log(`\n🚀 Starting Mattermost container`);
         console.log(`   Image: ${image}${isCustomImage ? ' (custom via MM_IMAGE)' : ' (default)'}`);
 
-        this.network = await new Network().start()
+        this.network = await withDeadline("Creating the Docker network", NETWORK_DEADLINE_MS, () => new Network().start())
         // Use pgvector image to enable semantic search functionality
-        this.pgContainer = await new PostgreSqlContainer("pgvector/pgvector:pg15")
-            .withExposedPorts(5432)
-            .withDatabase("mattermost_test")
-            .withUsername("user")
-            .withPassword("pass")
-            .withNetworkMode(this.network.getName())
-            .withWaitStrategy(Wait.forLogMessage("database system is ready to accept connections"))
-            .withNetworkAliases("db")
-            .start()
+        this.pgContainer = await withDeadline("Starting the postgres container", CONTAINER_DEADLINE_MS, () =>
+            new PostgreSqlContainer(POSTGRES_IMAGE)
+                .withExposedPorts(5432)
+                .withDatabase("mattermost_test")
+                .withUsername("user")
+                .withPassword("pass")
+                .withNetworkMode(this.network.getName())
+                // The image's init scripts run against a temporary server that logs this line first.
+                .withWaitStrategy(Wait.forLogMessage("database system is ready to accept connections", 2))
+                .withStartupTimeout(WAIT_STRATEGY_TIMEOUT_MS)
+                .withNetworkAliases("db")
+                .start())
 
         // Enable pgvector extension in the database
         try {
-            // Wait a bit for database to be fully ready
-            await new Promise(resolve => setTimeout(resolve, 2000))
-            const dbClient = await this.db()
-            await dbClient.query('CREATE EXTENSION IF NOT EXISTS vector;')
-            await dbClient.end()
+            await withDeadline("Enabling the pgvector extension", MMCTL_DEADLINE_MS, async () => {
+                const dbClient = await this.db()
+                await dbClient.query('CREATE EXTENSION IF NOT EXISTS vector;')
+                await dbClient.end()
+            })
             console.log("✓ pgvector extension enabled successfully")
         } catch (error) {
             console.log("Note: Could not enable pgvector extension:", error.message)
             console.log("Semantic search features may not be available")
         }
 
-        this.container = await new GenericContainer(image)
+        this.container = await withDeadline("Starting the Mattermost container", CONTAINER_DEADLINE_MS, () => new GenericContainer(image)
             .withEnvironment(this.envs)
             .withExposedPorts(8065)
             .withNetwork(this.network)
             .withNetworkAliases("mattermost")
             .withCommand(this.command)
             .withWaitStrategy(Wait.forLogMessage("Server is listening on"))
+            .withStartupTimeout(WAIT_STRATEGY_TIMEOUT_MS)
             .withCopyFilesToContainer(this.configFile)
 			.withLogConsumer((stream) => {
                 // Create log file with timestamp
@@ -291,16 +360,9 @@ export default class MattermostContainer {
                     }
                 });
             })
-            .start()
+            .start())
 
-
-        // Install ffmpeg for transcription features
-        try {
-            await this.container.exec(["sh", "-c", "apt-get update && apt-get install -y ffmpeg"])
-        } catch (error) {
-            console.log("Note: Could not install ffmpeg (container may not support apt-get)")
-        }
-
+        await this.waitForLocalMode()
         await this.setSiteURL()
         await this.createAdmin(this.email, this.username, this.password)
         await this.createTeam(this.teamName, this.teamDisplayName)

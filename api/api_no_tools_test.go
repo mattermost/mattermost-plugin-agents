@@ -9,12 +9,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
@@ -22,9 +24,11 @@ import (
 	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
+	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,7 +43,7 @@ type noToolsTestMCPProvider struct {
 	tools []llm.Tool
 }
 
-func (p *noToolsTestMCPProvider) GetTools(context.Context, mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+func (p *noToolsTestMCPProvider) GetToolsWithSelection(context.Context, mcp.CatalogRequest, mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	p.calls++
 	return p.tools, nil
 }
@@ -52,6 +56,7 @@ func (p *noToolsTestContextConfigProvider) GetServiceByID(string) (llm.ServiceCo
 
 type noToolsStreamingService struct {
 	newDMCalls int
+	dmPosts    []*model.Post
 }
 
 func (s *noToolsStreamingService) StreamToNewPost(context.Context, string, string, *llm.TextStreamResult, *model.Post, string) error {
@@ -60,6 +65,7 @@ func (s *noToolsStreamingService) StreamToNewPost(context.Context, string, strin
 
 func (s *noToolsStreamingService) StreamToNewDM(_ context.Context, botID string, _ *llm.TextStreamResult, _ string, post *model.Post, _ string) error {
 	s.newDMCalls++
+	s.dmPosts = append(s.dmPosts, post)
 	post.Id = "response-post-id"
 	post.ChannelId = model.GetDMNameFromIds("user12345678901234567890ab", botID)
 	return nil
@@ -110,11 +116,22 @@ func (m *mockConvServiceStore) GetConversationByThreadBotUser(_, _, _ string) (*
 	return nil, store.ErrConversationNotFound
 }
 
-func (m *mockConvServiceStore) UpdateConversationTitle(id, title string) error {
-	if conv, ok := m.conversations[id]; ok {
-		conv.Title = title
+func (m *mockConvServiceStore) RenameConversation(id, title string) (bool, error) {
+	conv, ok := m.conversations[id]
+	if !ok || conv.DeleteAt != 0 {
+		return false, nil
 	}
-	return nil
+	conv.Title = title
+	return true, nil
+}
+
+func (m *mockConvServiceStore) SetConversationTitleIfUnset(id, title string) (bool, error) {
+	conv, ok := m.conversations[id]
+	if !ok || conv.Title != "" || conv.DeleteAt != 0 {
+		return false, nil
+	}
+	conv.Title = title
+	return true, nil
 }
 
 func (m *mockConvServiceStore) UpdateConversationRootPostID(id string, rootPostID string) error {
@@ -142,6 +159,10 @@ func (m *mockConvServiceStore) UpdateTurnContent(id string, content json.RawMess
 	return nil
 }
 
+func (m *mockConvServiceStore) CompareAndSwapTurnContent(_ string, _, _ json.RawMessage) (bool, error) {
+	return true, nil
+}
+
 func (m *mockConvServiceStore) UpdateTurnTokens(_ string, _, _ int64) error {
 	return nil
 }
@@ -160,6 +181,12 @@ func (m *mockConvServiceStore) DeleteResponseTurns(_ string, _ string) error {
 
 func (m *mockConvServiceStore) GetMaxSequenceForConversation(conversationID string) (int, error) {
 	return len(m.turns[conversationID]), nil
+}
+
+// expectConversationTitleEvents allows the conversation_updated event that
+// setting an analysis conversation's fixed title sends to its owner.
+func expectConversationTitleEvents(mmClient *mmapimocks.MockClient) {
+	mmClient.On("PublishWebSocketEvent", conversation.WebsocketEventConversationUpdated, mock.Anything, mock.Anything).Return().Maybe()
 }
 
 func setupNoToolsAPI(t *testing.T, mcpProvider *noToolsTestMCPProvider, mmClient *mmapimocks.MockClient) (*TestEnvironment, *noToolsStreamingService, *mockConvServiceStore) {
@@ -195,6 +222,7 @@ func setupNoToolsAPI(t *testing.T, mcpProvider *noToolsTestMCPProvider, mmClient
 	convStore := newMockConvServiceStore()
 	convService := conversation.NewService(convStore, promptsObj, mmClient, e.bots)
 	e.api.SetConversationService(convService)
+	expectConversationTitleEvents(mmClient)
 
 	fakeLLM := NewFakeLLM("summary response")
 	bot := bots.NewBot(
@@ -203,7 +231,7 @@ func setupNoToolsAPI(t *testing.T, mcpProvider *noToolsTestMCPProvider, mmClient
 		&model.Bot{UserId: testBotUserID, Username: "matty", DisplayName: "Matty"},
 		fakeLLM,
 	)
-	e.bots.SetBotsForTesting([]*bots.Bot{bot})
+	e.setBots(bot)
 
 	return e, streamingService, convStore
 }
@@ -368,4 +396,154 @@ func TestHandleIntervalSetsConversationRootPostID(t *testing.T) {
 		"interval summary must set RootPostID so the RHS history can navigate to it; without this, the RHS filter drops the entry")
 	assert.Equal(t, "response-post-id", *conv.RootPostID,
 		"RootPostID should match the post ID assigned by the streaming service")
+}
+
+// TestChannelAnalysisPostsRecordTheAnalyzedChannel pins that the posts
+// answering a channel analysis or interval summary record which channel they
+// analyzed, so continuing them can re-check the requester's access to it, and
+// that only interval summaries are marked non-regenerable.
+func TestChannelAnalysisPostsRecordTheAnalyzedChannel(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name     string
+		path     string
+		body     string
+		mcpTools []llm.Tool
+		setup    func(mmClient *mmapimocks.MockClient)
+		noRegen  bool
+	}{
+		{
+			name: "channel analysis",
+			path: "/channel/" + testChannelID + "/analyze",
+			body: `{"analysis_type":"custom","prompt":"summarize this channel"}`,
+			mcpTools: []llm.Tool{
+				{Name: "mattermost__read_channel", ServerOrigin: mcp.EmbeddedClientKey},
+				{Name: "mattermost__get_channel_info", ServerOrigin: mcp.EmbeddedClientKey},
+			},
+		},
+		{
+			name:    "interval summary",
+			path:    "/channel/" + testChannelID + "/interval",
+			noRegen: true,
+			body:    `{"start_time":1,"end_time":0,"preset_prompt":"summarize_range"}`,
+			setup: func(mmClient *mmapimocks.MockClient) {
+				channelPost := &model.Post{Id: "post-1", ChannelId: testChannelID, UserId: testOtherUserID, Message: "hello", CreateAt: 2}
+				mmClient.On("GetPostsSince", testChannelID, int64(1)).Return(&model.PostList{
+					Order: []string{"post-1"},
+					Posts: map[string]*model.Post{"post-1": channelPost},
+				}, nil)
+				mmClient.On("GetUser", testOtherUserID).Return(&model.User{Id: testOtherUserID, Username: "author"}, nil)
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mmClient := mmapimocks.NewMockClient(t)
+			e, streamingService, _ := setupNoToolsAPI(t, &noToolsTestMCPProvider{tools: tc.mcpTools}, mmClient)
+			defer e.Cleanup(t)
+
+			e.mockAPI.On("GetChannel", testChannelID).Return(&model.Channel{Id: testChannelID, Type: model.ChannelTypeOpen, TeamId: "teamid"}, nil)
+			e.mockAPI.On("GetTeam", "teamid").Return(&model.Team{Id: "teamid", Name: "team"}, nil)
+			e.mockAPI.On("HasPermissionToChannel", testUserID, testChannelID, model.PermissionReadChannel).Return(true)
+			e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Username: "requester", Locale: "en"}, nil)
+			if tc.setup != nil {
+				tc.setup(mmClient)
+			}
+
+			request := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
+			request.Header.Add("Mattermost-User-ID", testUserID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+
+			require.Equal(t, http.StatusOK, recorder.Result().StatusCode, recorder.Body.String())
+			require.Len(t, streamingService.dmPosts, 1)
+			post := streamingService.dmPosts[0]
+			assert.Equal(t, testChannelID, post.GetProp(conversations.AnalyzedChannelIDProp))
+			assert.Nil(t, post.GetProp(conversations.ThreadIDProp), "a channel analysis analyzed no thread")
+			assert.Equal(t, tc.noRegen, post.GetProp(streaming.NoRegen) != nil, "only interval summaries are non-regenerable")
+		})
+	}
+}
+
+func TestAnalysisFixedTitlesAreSentToTheRequester(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name      string
+		path      string
+		body      string
+		wantTitle string
+		setup     func(e *TestEnvironment, mmClient *mmapimocks.MockClient)
+	}{
+		{
+			name:      "thread summary",
+			path:      "/post/postid/analyze",
+			body:      `{"analysis_type":"summarize_thread"}`,
+			wantTitle: TitleThreadSummary,
+			setup: func(e *TestEnvironment, mmClient *mmapimocks.MockClient) {
+				threadPost := &model.Post{Id: "postid", ChannelId: testChannelID, UserId: testOtherUserID, Message: "hello"}
+				e.mockAPI.On("GetPost", "postid").Return(threadPost, nil)
+				mmClient.On("GetPostThread", "postid").Return(&model.PostList{Order: []string{"postid"}, Posts: map[string]*model.Post{"postid": threadPost}}, nil)
+			},
+		},
+		{
+			name:      "channel summary",
+			path:      "/channel/" + testChannelID + "/interval",
+			body:      `{"start_time":1,"end_time":0,"preset_prompt":"summarize_range"}`,
+			wantTitle: TitleSummarizeChannel,
+			setup: func(_ *TestEnvironment, mmClient *mmapimocks.MockClient) {
+				channelPost := &model.Post{Id: "post-1", ChannelId: testChannelID, UserId: testOtherUserID, Message: "hello", CreateAt: 2}
+				mmClient.On("GetPostsSince", testChannelID, int64(1)).Return(&model.PostList{Order: []string{"post-1"}, Posts: map[string]*model.Post{"post-1": channelPost}}, nil)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mmClient := mmapimocks.NewMockClient(t)
+			e, _, convStore := setupNoToolsAPI(t, &noToolsTestMCPProvider{}, mmClient)
+			defer e.Cleanup(t)
+
+			channel := &model.Channel{Id: testChannelID, Type: model.ChannelTypeOpen, TeamId: "teamid"}
+			e.mockAPI.On("GetChannel", testChannelID).Return(channel, nil)
+			e.mockAPI.On("GetTeam", "teamid").Return(&model.Team{Id: "teamid", Name: "team"}, nil)
+			e.mockAPI.On("HasPermissionToChannel", testUserID, testChannelID, model.PermissionReadChannel).Return(true)
+			e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Username: "requester", Locale: "en"}, nil)
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+			mmClient.On("GetUser", testOtherUserID).Return(&model.User{Id: testOtherUserID, Username: "author"}, nil)
+			tt.setup(e, mmClient)
+
+			mmClient.ExpectedCalls = slices.DeleteFunc(mmClient.ExpectedCalls, func(c *mock.Call) bool {
+				return c.Method == "PublishWebSocketEvent"
+			})
+			var payloads []map[string]any
+			var broadcasts []*model.WebsocketBroadcast
+			mmClient.On("PublishWebSocketEvent", conversation.WebsocketEventConversationUpdated, mock.Anything, mock.Anything).
+				Run(func(args mock.Arguments) {
+					payload, _ := args.Get(1).(map[string]any)
+					broadcast, _ := args.Get(2).(*model.WebsocketBroadcast)
+					payloads = append(payloads, payload)
+					broadcasts = append(broadcasts, broadcast)
+				}).Return().Maybe()
+
+			request := httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader(tt.body))
+			request.Header.Add("Mattermost-User-ID", testUserID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+			require.Equal(t, http.StatusOK, recorder.Code)
+
+			require.Len(t, convStore.conversations, 1)
+			var convID string
+			for id := range convStore.conversations {
+				convID = id
+			}
+			require.Len(t, payloads, 1)
+			assert.Equal(t, map[string]any{"conversation_id": convID, "title": tt.wantTitle}, payloads[0])
+			assert.Equal(t, &model.WebsocketBroadcast{UserId: testUserID}, broadcasts[0])
+		})
+	}
 }

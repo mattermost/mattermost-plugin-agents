@@ -74,11 +74,11 @@ func fullyPopulatedToolCall() llm.ToolCall {
 func toolCallJSONFieldNames(t *testing.T) []string {
 	t.Helper()
 	var names []string
-	typ := reflect.TypeOf(llm.ToolCall{})
-	for i := 0; i < typ.NumField(); i++ {
-		tag := typ.Field(i).Tag.Get("json")
+	typ := reflect.TypeFor[llm.ToolCall]()
+	for field := range typ.Fields() {
+		tag := field.Tag.Get("json")
 		if tag == "" || tag == "-" {
-			t.Fatalf("llm.ToolCall field %q has no usable json tag", typ.Field(i).Name)
+			t.Fatalf("llm.ToolCall field %q has no usable json tag", field.Name)
 		}
 		names = append(names, strings.Split(tag, ",")[0])
 	}

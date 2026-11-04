@@ -14,6 +14,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
@@ -28,6 +29,11 @@ import (
 var channelMentionTestConnStr string
 
 func TestMain(m *testing.M) {
+	if !channelMentionDockerAvailable() {
+		fmt.Println("docker unavailable; skipping channel-mention postgres fixture")
+		os.Exit(m.Run())
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	container, err := tcpostgres.Run(ctx,
 		"postgres:16-alpine",
@@ -47,6 +53,7 @@ func TestMain(m *testing.M) {
 		fmt.Printf("Failed to get connection string: %v\n", err)
 		os.Exit(1)
 	}
+	conversations.PostgresTestConnStr = channelMentionTestConnStr
 
 	code := m.Run()
 
@@ -55,6 +62,21 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(code)
+}
+
+func channelMentionDockerAvailable() bool {
+	if os.Getenv("DOCKER_HOST") != "" {
+		return true
+	}
+	if _, err := os.Stat("/var/run/docker.sock"); err == nil {
+		return true
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if _, err := os.Stat(home + "/.docker/run/docker.sock"); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // channelMentionBotLookup implements conversation.BotLookup for testing.
@@ -72,6 +94,10 @@ func (b *channelMentionBotLookup) GetBotConfigByID(botID string) (bool, int64, b
 
 func setupChannelMentionService(t *testing.T) (*conversation.Service, *store.Store) {
 	t.Helper()
+
+	if channelMentionTestConnStr == "" {
+		t.Skip("postgres testcontainer not available")
+	}
 
 	db, err := sqlx.Connect("postgres", channelMentionTestConnStr)
 	require.NoError(t, err)
@@ -550,7 +576,7 @@ func TestChannelMentionToolSharingFlip(t *testing.T) {
 
 	for i := range assistantBlocks {
 		if assistantBlocks[i].Type == conversation.BlockTypeToolUse {
-			assistantBlocks[i].Shared = conversation.BoolPtr(true)
+			assistantBlocks[i].Shared = new(true)
 		}
 	}
 	updatedAssistant, err := json.Marshal(assistantBlocks)
@@ -565,7 +591,7 @@ func TestChannelMentionToolSharingFlip(t *testing.T) {
 
 	for i := range resultBlocks {
 		if resultBlocks[i].Type == conversation.BlockTypeToolResult {
-			resultBlocks[i].Shared = conversation.BoolPtr(true)
+			resultBlocks[i].Shared = new(true)
 		}
 	}
 	updatedResult, err := json.Marshal(resultBlocks)
@@ -635,4 +661,30 @@ func TestChannelMentionTurnLookupByPostID(t *testing.T) {
 	conv, err := s.GetConversation(turn.ConversationID)
 	require.NoError(t, err)
 	assert.Equal(t, userID, conv.UserID)
+}
+
+// With channel tool calling off, the mention is answered without tool
+// definitions, so the stored system prompt must not tell the model to call the
+// dynamic MCP meta-tools.
+func TestChannelMentionWithToolsDisabledOmitsDynamicToolWorkflow(t *testing.T) {
+	botConfig := autoReplyBotConfig()
+	botConfig.MCPDynamicToolLoading = true
+	botConfig.AutoEnableNewMCPTools = true
+	env := setupAutoReplyTestEnv(t, []llm.BotConfig{botConfig}, dmMakeTextStream("done"))
+	env.mcpMgr.tools = []llm.Tool{{
+		Name:         "fusion__create_geojson",
+		Description:  "Build a GeoJSON document",
+		ServerOrigin: "https://fusion.example.com",
+		Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
+		Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+			return "{}", nil
+		},
+	}}
+
+	env.conversations.MessageHasBeenPosted(nil, env.rootPost(autoReplyUserID, "@"+autoReplyBotUsername+" create a GeoJSON overlay"))
+
+	convs := allConversations(env.convStore)
+	require.Len(t, convs, 1)
+	assert.NotContains(t, convs[0].SystemPrompt, "call search_tools")
+	assert.Contains(t, convs[0].SystemPrompt, "can only be used in a Direct Message (DM) or via the Agents tab")
 }

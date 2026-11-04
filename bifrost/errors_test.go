@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBifrostErrorString(t *testing.T) {
+func TestDescribeBifrostError(t *testing.T) {
 	strPtr := func(s string) *string { return &s }
 	intPtr := func(i int) *int { return &i }
 
@@ -50,6 +50,21 @@ func TestBifrostErrorString(t *testing.T) {
 			expected: "context deadline exceeded",
 		},
 		{
+			name: "message is followed by status/type/code/provider context",
+			input: &schemas.BifrostError{
+				StatusCode: intPtr(429),
+				Error: &schemas.ErrorField{
+					Message: "You exceeded your current quota",
+					Type:    strPtr("insufficient_quota"),
+					Code:    strPtr("insufficient_quota"),
+				},
+				ExtraFields: schemas.BifrostErrorExtraFields{
+					RoutingInfo: schemas.RoutingInfo{Provider: schemas.OpenAI},
+				},
+			},
+			expected: "You exceeded your current quota (status=429 type=insufficient_quota code=insufficient_quota provider=openai)",
+		},
+		{
 			name: "message and wrapped error empty falls back to status/type/code",
 			input: &schemas.BifrostError{
 				StatusCode: intPtr(502),
@@ -84,7 +99,18 @@ func TestBifrostErrorString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.expected, bifrostErrorString(tt.input))
+			require.Equal(t, tt.expected, describeBifrostError(tt.input).String())
 		})
 	}
+}
+
+func TestProviderErrorRedactsConfiguredKeys(t *testing.T) {
+	const apiKey = "sk-proj-SECRETKEY1234567890"
+
+	err := providerError(nil, "bifrost stream error", &schemas.BifrostError{
+		Error: &schemas.ErrorField{Message: "Incorrect API key provided: " + apiKey},
+	}, apiKey)
+
+	require.ErrorContains(t, err, "bifrost stream error: Incorrect API key provided")
+	require.NotContains(t, err.Error(), "SECRETKEY")
 }

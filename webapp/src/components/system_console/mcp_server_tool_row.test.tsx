@@ -27,12 +27,24 @@ jest.mock('react-intl', () => {
     };
 });
 
+jest.mock('@/license', () => ({
+    useIsLicensedFor: jest.fn(() => true),
+    useLicenseLevelName: jest.fn(() => () => 'Enterprise'),
+    requiredLevelFor: jest.fn(() => 2),
+}));
+
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
+    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
+}), {virtual: true});
+
 /* eslint-disable import/first */
 import {IntlProvider} from 'react-intl';
 
+import {chooseOption, getSelect, selectedLabel} from '../../../tests/compass_select';
+
 import MCPServerToolRow from './mcp_server_tool_row';
-import {MCPServerInfo} from './mcp_tools_viewer';
-import {MCPServerConfig} from './mcp_servers';
+import {MCPServerConfig, MCPServerInfo} from './mcp_types';
 /* eslint-enable import/first */
 
 function makePluginServer(): MCPServerInfo {
@@ -91,18 +103,17 @@ describe('MCPServerToolRow — plugin row policy dropdown re-enable', () => {
 
         fireEvent.click(screen.getByText('Demo Plugin'));
 
-        const select = screen.getByRole('combobox') as HTMLSelectElement;
+        const select = getSelect('Approval policy for echo') as HTMLButtonElement;
 
         expect(select.disabled).toBe(false);
-        expect(select.value).toBe('ask');
+        expect(selectedLabel(select)).toBe('Ask Every Time');
     });
 
     test('plugin row policy change calls onServerConfigChange with merged tool_configs', () => {
         const {onServerConfigChange} = renderRow(makePluginServer(), makePluginServerConfig());
         fireEvent.click(screen.getByText('Demo Plugin'));
 
-        const select = screen.getByRole('combobox');
-        fireEvent.change(select, {target: {value: 'auto_run_everywhere'}});
+        chooseOption(getSelect('Approval policy for echo'), 'Auto Run (Everywhere)');
 
         expect(onServerConfigChange).toHaveBeenCalledTimes(1);
         const [updated] = onServerConfigChange.mock.calls[0];
@@ -116,8 +127,8 @@ describe('MCPServerToolRow — plugin row policy dropdown re-enable', () => {
         const {onServerConfigChange} = renderRow(makePluginServer(), makePluginServerConfig());
         fireEvent.click(screen.getByText('Demo Plugin'));
 
-        // ToggleSwitch renders as a native checkbox: index 0 is server-level, index 1 is the per-tool toggle.
-        const switches = screen.getAllByRole('checkbox');
+        // ToggleSwitch renders as role="switch": index 0 is server-level, index 1 is the per-tool toggle.
+        const switches = screen.getAllByRole('switch');
         expect(switches.length).toBeGreaterThanOrEqual(2);
         fireEvent.click(switches[1]);
 
@@ -126,5 +137,53 @@ describe('MCPServerToolRow — plugin row policy dropdown re-enable', () => {
         expect(updated.tool_configs).toEqual([
             {name: 'com_example_demo__echo', policy: 'ask', enabled: false},
         ]);
+    });
+});
+
+describe('MCPServerToolRow license gating', () => {
+    const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+
+    beforeEach(() => {
+        useIsLicensedFor.mockReturnValue(true);
+    });
+
+    test('keeps a remote server enable toggle usable at Enterprise', () => {
+        const server = {...makePluginServer(), serverType: 'remote' as const, name: 'Remote'};
+        const config = {...makePluginServerConfig(), enabled: false};
+        renderRow(server, config);
+
+        const enable = screen.getByLabelText('Enable Remote') as HTMLInputElement;
+        expect(enable.disabled).toBe(false);
+    });
+
+    test('disables enabling a remote server below Enterprise and still allows turning it off', () => {
+        useIsLicensedFor.mockImplementation((capability: string) => capability !== 'remote_mcp');
+
+        const server = {...makePluginServer(), serverType: 'remote' as const, name: 'Remote'};
+        const offConfig = {...makePluginServerConfig(), enabled: false};
+        const off = renderRow(server, offConfig);
+        expect((screen.getByLabelText('Enable Remote') as HTMLInputElement).disabled).toBe(true);
+        off.unmount();
+
+        const onConfig = {...makePluginServerConfig(), enabled: true};
+        const {onServerConfigChange} = renderRow(server, onConfig);
+        const toggle = screen.getByLabelText('Enable Remote') as HTMLInputElement;
+        expect(toggle.disabled).toBe(false);
+        fireEvent.click(toggle);
+        expect(onServerConfigChange).toHaveBeenCalledWith(expect.objectContaining({enabled: false}));
+    });
+
+    test('hides Connect Account when remote MCP is not licensed', () => {
+        useIsLicensedFor.mockImplementation((capability: string) => capability !== 'remote_mcp');
+        const server = {
+            ...makePluginServer(),
+            serverType: 'remote' as const,
+            name: 'Remote',
+            needsOAuth: true,
+            oauthURL: 'https://example.com/oauth',
+        };
+        renderRow(server, makePluginServerConfig());
+        fireEvent.click(screen.getByText('Remote'));
+        expect(screen.queryByText('Connect Account')).toBeNull();
     });
 });

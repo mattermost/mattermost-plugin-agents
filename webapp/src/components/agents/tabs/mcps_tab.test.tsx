@@ -27,15 +27,25 @@ jest.mock('@/client', () => ({
     getUserMCPTools: jest.fn(),
 }));
 
+jest.mock('@/license', () => ({
+    useIsLicensedFor: jest.fn(() => true),
+    useLicenseLevelName: jest.fn(() => () => 'Enterprise'),
+    requiredLevelFor: jest.fn(() => 2),
+}));
+
 jest.mock('@/hooks/use_mcp_connection_events', () => ({
     useMCPConnectionEvents: jest.fn(),
 }));
 
-// OverlayTrigger renders the overlay alongside children so tests can assert the tooltip text.
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
+// WithTooltip renders its title alongside children so tests can assert the tooltip text.
+jest.mock('@mattermost/shared/components/tooltip', () => ({
+    WithTooltip: ({children, title}: {children: React.ReactNode; title?: React.ReactNode}) => (
+        <>
+            {children}
+            <div>{title}</div>
+        </>
+    ),
+}));
 
 const mockedGetUserMCPTools = getUserMCPTools as unknown as jest.Mock;
 
@@ -127,6 +137,8 @@ function renderWithOrphanedTool(useServiceAccountAuth: boolean) {
 describe('McpsTab', () => {
     beforeEach(() => {
         mockedGetUserMCPTools.mockReset();
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockReturnValue(true);
     });
 
     // MM-69185 regression: when the live MCP catalog drops entries that were
@@ -257,8 +269,8 @@ describe('McpsTab', () => {
         const saToggle = screen.getByRole('checkbox', {name: serviceAccountToggleName});
         expect((saToggle as HTMLInputElement).disabled).toBe(false);
 
-        const serverToggle = screen.getByRole('button', {name: serverToggleName});
-        expect((serverToggle as HTMLButtonElement).disabled).toBe(true);
+        const serverToggle = screen.getByRole('switch', {name: serverToggleName});
+        expect((serverToggle as HTMLInputElement).disabled).toBe(true);
     });
 
     // The setting must stay reachable even when the catalog renders no servers.
@@ -386,8 +398,8 @@ describe('McpsTab', () => {
         expect(screen.queryByText('Not connected')).toBeNull();
         expect(screen.queryByRole('button', {name: 'Connect'})).toBeNull();
 
-        const serverToggle = screen.getByRole('button', {name: serverToggleName});
-        expect((serverToggle as HTMLButtonElement).disabled).toBe(true);
+        const serverToggle = screen.getByRole('switch', {name: serverToggleName});
+        expect((serverToggle as HTMLInputElement).disabled).toBe(true);
         expect(serverToggle.getAttribute('aria-checked')).toBe('false');
 
         fireEvent.click(serverToggle);
@@ -395,8 +407,8 @@ describe('McpsTab', () => {
         expect(onReconcileEnabledTools).not.toHaveBeenCalled();
 
         fireEvent.click(screen.getByRole('button', {name: /Press to expand or collapse tools/}));
-        const toolToggle = await screen.findByRole('button', {name: toolToggleName});
-        expect((toolToggle as HTMLButtonElement).disabled).toBe(true);
+        const toolToggle = await screen.findByRole('switch', {name: toolToggleName});
+        expect((toolToggle as HTMLInputElement).disabled).toBe(true);
         expect(toolToggle.getAttribute('aria-checked')).toBe('false');
 
         fireEvent.click(toolToggle);
@@ -451,6 +463,30 @@ describe('McpsTab', () => {
         expect(screen.queryByText('Unavailable')).toBeNull();
     });
 
+    test('hides Connect when remote MCP is not licensed', async () => {
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockImplementation((capability: string) => capability !== 'remote_mcp');
+
+        mockedGetUserMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'OAuth Server',
+                serverOrigin: 'https://oauth.example.com/mcp',
+                kind: 'remote',
+                authenticated: false,
+                needsOAuth: true,
+                authURL: 'http://localhost/oauth/start',
+                serviceAccountConfigured: false,
+                tools: [],
+            }],
+        });
+
+        renderTab({useServiceAccountAuth: false});
+
+        await screen.findByText('OAuth Server');
+        expect(screen.queryByRole('button', {name: 'Connect'})).toBeNull();
+        useIsLicensedFor.mockReturnValue(true);
+    });
+
     test('does not mark an authenticated SA-configured server as unavailable in user mode', async () => {
         mockedGetUserMCPTools.mockResolvedValue({
             servers: [{
@@ -474,9 +510,9 @@ describe('McpsTab', () => {
         expect(screen.getByText('Connected')).not.toBeNull();
         expect(screen.queryByText('Unavailable')).toBeNull();
 
-        const serverToggle = screen.getByRole('button', {name: serverToggleName});
+        const serverToggle = screen.getByRole('switch', {name: serverToggleName});
         expect(serverToggle.getAttribute('aria-checked')).toBe('true');
-        expect((serverToggle as HTMLButtonElement).disabled).toBe(false);
+        expect((serverToggle as HTMLInputElement).disabled).toBe(false);
     });
 
     test('keeps Not connected for an unauthenticated user-mode server without SA headers', async () => {

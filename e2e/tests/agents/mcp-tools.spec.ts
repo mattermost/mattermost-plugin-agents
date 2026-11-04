@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import {
@@ -21,18 +22,18 @@ import { AIPlugin } from 'helpers/ai-plugin';
 /** Matches mcp.EmbeddedClientKey — MCP server origin for the embedded Mattermost tools server. */
 const embeddedMattermostOrigin = 'embedded://mattermost';
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunAgentContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
 test.describe('Agent MCP Tools', () => {
-    test.beforeAll(async () => {
-        mattermost = await RunAgentContainer();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
-    }, { timeout: 180000 });
-
-    test.afterAll(async () => {
-        await openAIMock?.stop();
-        await mattermost?.stop();
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test('agent with no enabledMCPTools gets no MCP tools', async ({ page }) => {
@@ -236,7 +237,7 @@ test.describe('Agent MCP Tools', () => {
         );
 
         await aiPlugin.openRHS();
-        await expect(page.getByTestId('bot-selector-rhs')).toBeVisible({ timeout: 15000 });
+        await expect(page.getByTestId('rhs-title')).toBeVisible({ timeout: 15000 });
         await aiPlugin.switchBotWhenListed(agent.displayName);
 
         const menu = await aiPlugin.openRhsToolProvidersMenu();
@@ -269,7 +270,7 @@ test.describe('Agent MCP Tools', () => {
         );
 
         await aiPlugin.openRHS();
-        await expect(page.getByTestId('bot-selector-rhs')).toBeVisible({ timeout: 15000 });
+        await expect(page.getByTestId('rhs-title')).toBeVisible({ timeout: 15000 });
         await aiPlugin.switchBotWhenListed(agent.displayName);
 
         const menu = await aiPlugin.openRhsToolProvidersMenu();
@@ -319,7 +320,7 @@ test.describe('Agent MCP Tools', () => {
         );
 
         await aiPlugin.openRHS();
-        await expect(page.getByTestId('bot-selector-rhs')).toBeVisible({ timeout: 15000 });
+        await expect(page.getByTestId('rhs-title')).toBeVisible({ timeout: 15000 });
         await aiPlugin.switchBotWhenListed('Implicit All Agent Updated');
 
         const menu = await aiPlugin.openRhsToolProvidersMenu();
@@ -340,7 +341,7 @@ test.describe('Agent MCP Tools', () => {
         await page.getByTestId('channel_view').waitFor({ state: 'visible', timeout: 60000 });
 
         await aiPlugin.openRHS();
-        await expect(page.getByTestId('bot-selector-rhs')).toBeVisible({ timeout: 15000 });
+        await expect(page.getByTestId('rhs-title')).toBeVisible({ timeout: 15000 });
         await aiPlugin.switchBotWhenListed('Mock Bot');
 
         const menu = await aiPlugin.openRhsToolProvidersMenu();

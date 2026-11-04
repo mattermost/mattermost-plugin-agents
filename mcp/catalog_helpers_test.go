@@ -9,9 +9,9 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
-// GetToolsForUser is a test-only shorthand for user-mode catalogs.
-func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *Errors) {
-	return m.GetTools(ctx, UserCatalogRequest(userID))
+// GetToolsForUser is a test-only shorthand for a selected user-mode catalog.
+func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string, selection ToolSelection) ([]llm.Tool, *Errors) {
+	return m.GetToolsWithSelection(ctx, UserCatalogRequest(userID), selection)
 }
 
 // GetTools is a test-only view of one bag's namespaced tools.

@@ -6,9 +6,10 @@ import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {useSelector} from 'react-redux';
 
 import {deleteAgent, getAgents, getServices} from '@/client';
-import {useIsMultiLLMLicensed} from '@/license';
+import {useAgentLimit, useLicenseLevel} from '@/license';
 import {userHasSystemPermission} from '@/utils/permissions';
-import {UserAgent} from '@/types/agents';
+import {downloadAgentExport, readAgentExportFile} from '@/utils/agent_export';
+import {AgentExportDocument, UserAgent} from '@/types/agents';
 
 import AgentsList from './agents_list';
 
@@ -16,8 +17,10 @@ jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
 
     // Stable intl object so effects depending on `intl` don't refire every render.
+    const real = actual.createIntl({locale: 'en', defaultLocale: 'en', onError: () => null});
     const intl = {
-        formatMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
+        formatMessage: (descriptor: {id?: string; defaultMessage: string}, values?: Record<string, string | number>) =>
+            real.formatMessage({id: descriptor.id ?? descriptor.defaultMessage, ...descriptor}, values),
     };
     return {
         ...actual,
@@ -30,14 +33,29 @@ jest.mock('react-redux', () => ({
     useSelector: jest.fn(),
 }));
 
-// OverlayTrigger renders the overlay alongside children so tests can assert the tooltip text.
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
+// WithTooltip renders its title alongside children so tests can assert the tooltip text.
+jest.mock('@mattermost/shared/components/tooltip', () => ({
+    WithTooltip: ({children, title}: {children: React.ReactNode; title?: React.ReactNode}) => (
+        <>
+            {children}
+            <div>{title}</div>
+        </>
+    ),
+}));
 
 jest.mock('@/license', () => ({
-    useIsMultiLLMLicensed: jest.fn(),
+    LicenseLevel: {
+        Unlicensed: 0,
+        Professional: 1,
+        Enterprise: 2,
+        EnterpriseAdvanced: 3,
+    },
+    useAgentLimit: jest.fn(),
+    useLicenseLevel: jest.fn(),
+    useLicenseLevelName: jest.fn(() => (level: number) => {
+        const names = ['Unlicensed', 'Professional', 'Enterprise', 'Enterprise Advanced'];
+        return names[level] ?? 'Enterprise';
+    }),
 }));
 
 jest.mock('@/client', () => ({
@@ -50,9 +68,14 @@ jest.mock('@/utils/permissions', () => ({
     userHasSystemPermission: jest.fn(),
 }));
 
+jest.mock('@/utils/agent_export', () => ({
+    downloadAgentExport: jest.fn(),
+    readAgentExportFile: jest.fn(),
+}));
+
 jest.mock('./agent_row', () => ({
     __esModule: true,
-    default: ({agent, servicesLoaded, onDelete}: {agent: UserAgent; servicesLoaded: boolean; onDelete: (agent: UserAgent) => void}) => (
+    default: ({agent, servicesLoaded, onDelete, onExport}: {agent: UserAgent; servicesLoaded: boolean; onDelete: (agent: UserAgent) => void; onExport: (agent: UserAgent) => void}) => (
         <div
             data-testid='agent-row'
             data-services-loaded={String(servicesLoaded)}
@@ -64,13 +87,26 @@ jest.mock('./agent_row', () => ({
             >
                 {`Delete ${agent.displayName}`}
             </button>
+            <button
+                type='button'
+                onClick={() => onExport(agent)}
+            >
+                {`Export ${agent.displayName}`}
+            </button>
         </div>
     ),
 }));
 
 jest.mock('./agent_config_view', () => ({
     __esModule: true,
-    default: () => null,
+    default: ({mode, importedDocument}: {mode: string; importedDocument?: AgentExportDocument}) => (
+        <div
+            data-testid='agent-config-view'
+            data-mode={mode}
+        >
+            {importedDocument?.agent.customInstructions}
+        </div>
+    ),
 }));
 
 jest.mock('./delete_agent_dialog', () => ({
@@ -94,13 +130,17 @@ jest.mock('./delete_agent_dialog', () => ({
 }));
 
 const mockUseSelector = useSelector as unknown as jest.Mock;
-const mockUseIsMultiLLMLicensed = useIsMultiLLMLicensed as unknown as jest.Mock;
+const mockUseAgentLimit = useAgentLimit as unknown as jest.Mock;
+const mockUseLicenseLevel = useLicenseLevel as unknown as jest.Mock;
 const mockGetAgents = getAgents as unknown as jest.Mock;
 const mockGetServices = getServices as unknown as jest.Mock;
 const mockDeleteAgent = deleteAgent as unknown as jest.Mock;
 const mockUserHasSystemPermission = userHasSystemPermission as unknown as jest.Mock;
+const mockDownloadAgentExport = downloadAgentExport as unknown as jest.Mock;
+const mockReadAgentExportFile = readAgentExportFile as unknown as jest.Mock;
 
-const tooltipText = 'Multiple self-service agents require a qualifying Mattermost plan';
+const unlicensedQuotaMessage = 'Your current plan allows 1 agent. Additional agents are available on Professional plans and above.';
+const professionalQuotaMessage = 'Your current plan allows 3 agents. Additional agents are available on Enterprise plans and above.';
 
 function makeAgent(id: string): UserAgent {
     return {
@@ -111,8 +151,13 @@ function makeAgent(id: string): UserAgent {
     } as UserAgent;
 }
 
-function renderList() {
-    return render(<AgentsList/>);
+function renderList(props: Partial<React.ComponentProps<typeof AgentsList>> = {}) {
+    return render(
+        <AgentsList
+            onStartChat={jest.fn()}
+            {...props}
+        />,
+    );
 }
 
 beforeEach(() => {
@@ -124,11 +169,12 @@ beforeEach(() => {
     // manage_own_agent grants create permission.
     mockUserHasSystemPermission.mockImplementation((_state, _userId, permission) => permission === 'manage_own_agent');
     mockGetServices.mockResolvedValue([]);
+    mockUseAgentLimit.mockReturnValue(1);
+    mockUseLicenseLevel.mockReturnValue(0);
 });
 
 describe('AgentsList create-button gating', () => {
-    test('Pro license with no agents enables Create button without tooltip', async () => {
-        mockUseIsMultiLLMLicensed.mockReturnValue(false);
+    test('unlicensed with no agents enables Create button without a quota message', async () => {
         mockGetAgents.mockResolvedValue({agents: [], activeAgentCount: 0});
 
         renderList();
@@ -137,11 +183,10 @@ describe('AgentsList create-button gating', () => {
 
         // The button renders disabled while agents load, so wait for the quota fetch to settle.
         await waitFor(() => expect(button.disabled).toBe(false));
-        await waitFor(() => expect(screen.queryByText(tooltipText)).toBeNull());
+        await waitFor(() => expect(screen.queryByText(unlicensedQuotaMessage)).toBeNull());
     });
 
-    test('Pro license at the free-tier limit disables Create button and shows tooltip', async () => {
-        mockUseIsMultiLLMLicensed.mockReturnValue(false);
+    test('unlicensed at the one-agent cap disables Create and names the Professional plan', async () => {
         mockGetAgents.mockResolvedValue({agents: [makeAgent('a1')], activeAgentCount: 1});
 
         renderList();
@@ -149,11 +194,26 @@ describe('AgentsList create-button gating', () => {
         await screen.findByText('Agent a1');
         const button = screen.getByRole('button', {name: 'Create agent'});
         expect((button as HTMLButtonElement).disabled).toBe(true);
-        expect(screen.getByText(tooltipText)).not.toBeNull();
+        expect(screen.getByText(unlicensedQuotaMessage)).not.toBeNull();
     });
 
-    test('Pro license disables Create when server quota is reached but list is empty', async () => {
-        mockUseIsMultiLLMLicensed.mockReturnValue(false);
+    test('Professional at the three-agent cap disables Create and names the Enterprise plan', async () => {
+        mockUseAgentLimit.mockReturnValue(3);
+        mockUseLicenseLevel.mockReturnValue(1);
+        mockGetAgents.mockResolvedValue({
+            agents: [makeAgent('a1'), makeAgent('a2'), makeAgent('a3')],
+            activeAgentCount: 3,
+        });
+
+        renderList();
+
+        await screen.findByText('Agent a1');
+        const button = screen.getByRole('button', {name: 'Create agent'});
+        expect((button as HTMLButtonElement).disabled).toBe(true);
+        expect(screen.getByText(professionalQuotaMessage)).not.toBeNull();
+    });
+
+    test('unlicensed disables Create when server quota is reached but list is empty', async () => {
         mockGetAgents.mockResolvedValue({agents: [], activeAgentCount: 1});
 
         renderList();
@@ -161,11 +221,10 @@ describe('AgentsList create-button gating', () => {
         await screen.findByText('Loading agents...').then(() => screen.findByText('No agents have been created yet.'));
         const button = screen.getByRole('button', {name: 'Create agent'});
         expect((button as HTMLButtonElement).disabled).toBe(true);
-        expect(screen.getByText(tooltipText)).not.toBeNull();
+        expect(screen.getByText(unlicensedQuotaMessage)).not.toBeNull();
     });
 
     test('Create button stays disabled while agents are loading', () => {
-        mockUseIsMultiLLMLicensed.mockReturnValue(false);
         mockGetAgents.mockImplementation(() => new Promise(() => {
             // Never resolves: keep the component in its loading state.
         }));
@@ -177,7 +236,8 @@ describe('AgentsList create-button gating', () => {
     });
 
     test('Enterprise license keeps Create button enabled regardless of agent count', async () => {
-        mockUseIsMultiLLMLicensed.mockReturnValue(true);
+        mockUseAgentLimit.mockReturnValue(null);
+        mockUseLicenseLevel.mockReturnValue(2);
         mockGetAgents.mockResolvedValue({agents: [makeAgent('a1'), makeAgent('a2')]});
 
         renderList();
@@ -185,13 +245,13 @@ describe('AgentsList create-button gating', () => {
         await screen.findByText('Agent a1');
         const button = screen.getByRole('button', {name: 'Create agent'});
         expect((button as HTMLButtonElement).disabled).toBe(false);
-        expect(screen.queryByText(tooltipText)).toBeNull();
+        expect(screen.queryByText(unlicensedQuotaMessage)).toBeNull();
+        expect(screen.queryByText(professionalQuotaMessage)).toBeNull();
     });
 });
 
 describe('AgentsList services loading', () => {
     test('does not request services for users without agent-management permission', async () => {
-        mockUseIsMultiLLMLicensed.mockReturnValue(false);
         mockUserHasSystemPermission.mockReturnValue(false);
         mockGetAgents.mockResolvedValue({agents: [makeAgent('a1')], activeAgentCount: 1});
 
@@ -202,14 +262,11 @@ describe('AgentsList services loading', () => {
         expect(screen.queryByText('Failed to load AI services. Using the last loaded list.')).toBeNull();
 
         // The row must be told the services list is unknown so it never renders
-        // a "Service unavailable" badge for these users.
+        // an inactive badge for a missing service for these users.
         expect(screen.getByTestId('agent-row').getAttribute('data-services-loaded')).toBe('false');
     });
 
     test('loads services and shows no warning for a permitted user', async () => {
-        mockUseIsMultiLLMLicensed.mockReturnValue(false);
-
-        // beforeEach grants manage_own_agent, so /services is requested.
         mockGetAgents.mockResolvedValue({agents: [makeAgent('a1')], activeAgentCount: 1});
         mockGetServices.mockResolvedValue([
             {id: 'svc-1', name: 'Svc', type: 'openai', defaultModel: 'gpt-4', outputTokenLimit: 0, useResponsesAPI: false},
@@ -223,9 +280,6 @@ describe('AgentsList services loading', () => {
     });
 
     test('warns when a permitted user cannot load services', async () => {
-        mockUseIsMultiLLMLicensed.mockReturnValue(false);
-
-        // beforeEach grants manage_own_agent, so /services is requested.
         mockGetAgents.mockResolvedValue({agents: [makeAgent('a1')], activeAgentCount: 1});
         mockGetServices.mockRejectedValue(new Error('forbidden'));
 
@@ -245,7 +299,6 @@ describe('AgentsList delete quota refresh', () => {
     }
 
     test('refetches quota after deleting last visible agent and re-enables Create when server count is 0', async () => {
-        mockUseIsMultiLLMLicensed.mockReturnValue(false);
         mockGetAgents.
             mockResolvedValueOnce({agents: [makeAgent('a1')], activeAgentCount: 1}).
             mockResolvedValueOnce({agents: [], activeAgentCount: 0});
@@ -260,11 +313,10 @@ describe('AgentsList delete quota refresh', () => {
 
         const button = screen.getByRole('button', {name: 'Create agent'});
         expect((button as HTMLButtonElement).disabled).toBe(false);
-        expect(screen.queryByText(tooltipText)).toBeNull();
+        expect(screen.queryByText(unlicensedQuotaMessage)).toBeNull();
     });
 
     test('refetches quota after delete and keeps Create disabled when invisible agents remain', async () => {
-        mockUseIsMultiLLMLicensed.mockReturnValue(false);
         mockGetAgents.
             mockResolvedValueOnce({agents: [makeAgent('a1')], activeAgentCount: 1}).
             mockResolvedValueOnce({agents: [], activeAgentCount: 1});
@@ -277,6 +329,120 @@ describe('AgentsList delete quota refresh', () => {
 
         const button = screen.getByRole('button', {name: 'Create agent'});
         expect((button as HTMLButtonElement).disabled).toBe(true);
-        expect(screen.getByText(tooltipText)).not.toBeNull();
+        expect(screen.getByText(unlicensedQuotaMessage)).not.toBeNull();
+    });
+});
+
+describe('AgentsList import and export', () => {
+    const importedDocument = {
+        kind: 'mattermost-agent',
+        schemaVersion: 1,
+        exportedAt: 1,
+        agentVersion: 2,
+        agent: {name: 'helper', displayName: 'Helper', customInstructions: 'Imported instructions', disableTools: false, maxToolTurns: 10, mcpDynamicToolLoading: true, autoEnableNewMCPTools: true, mcpTools: [], skills: {disabled: false, allowPersonal: false, enabledSharedIDs: [], descriptionOverrides: {}}},
+    } as AgentExportDocument;
+
+    function pickFile() {
+        const file = new File(['{}'], 'helper.agent.json', {type: 'application/json'});
+        fireEvent.change(screen.getByTestId('agent-import-file-input'), {target: {files: [file]}});
+        return file;
+    }
+
+    test('picking a file opens the create view with the imported settings', async () => {
+        mockGetAgents.mockResolvedValue({agents: [], activeAgentCount: 0});
+        mockReadAgentExportFile.mockResolvedValue(importedDocument);
+
+        renderList();
+
+        const button = await screen.findByRole('button', {name: 'Import'}) as HTMLButtonElement;
+        await waitFor(() => expect(button.disabled).toBe(false));
+        const file = pickFile();
+
+        const view = await screen.findByTestId('agent-config-view');
+        expect(view.getAttribute('data-mode')).toBe('create');
+        expect(view.textContent).toBe('Imported instructions');
+        expect(mockReadAgentExportFile).toHaveBeenCalledWith(file, expect.anything());
+    });
+
+    test('an unreadable file shows the error and stays on the list', async () => {
+        mockGetAgents.mockResolvedValue({agents: [], activeAgentCount: 0});
+        mockReadAgentExportFile.mockRejectedValue(new Error('This file is not a valid Mattermost agent export.'));
+
+        renderList();
+
+        await screen.findByRole('button', {name: 'Import'});
+        pickFile();
+
+        expect(await screen.findByText('This file is not a valid Mattermost agent export.')).not.toBeNull();
+        expect(screen.queryByTestId('agent-config-view')).toBeNull();
+    });
+
+    test('hides Import from users who cannot create agents', async () => {
+        mockUserHasSystemPermission.mockReturnValue(false);
+        mockGetAgents.mockResolvedValue({agents: [{...makeAgent('a1'), creatorID: 'someone_else', adminUserIDs: ['user_1']}]});
+
+        renderList();
+
+        await screen.findByText('Agent a1');
+        expect(screen.queryByRole('button', {name: 'Import'})).toBeNull();
+    });
+
+    test('disables Import when the agent limit is reached', async () => {
+        mockGetAgents.mockResolvedValue({agents: [makeAgent('a1')], activeAgentCount: 1});
+
+        renderList();
+
+        await screen.findByText('Agent a1');
+        expect((screen.getByRole('button', {name: 'Import'}) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    test('exports an agent from the list and reports failures', async () => {
+        mockGetAgents.mockResolvedValue({agents: [makeAgent('a1')], activeAgentCount: 1});
+        mockDownloadAgentExport.mockImplementationOnce(() => Promise.resolve());
+
+        renderList();
+
+        await screen.findByText('Agent a1');
+        fireEvent.click(screen.getByRole('button', {name: 'Export Agent a1'}));
+        await waitFor(() => expect(mockDownloadAgentExport).toHaveBeenCalledWith('a1'));
+
+        mockDownloadAgentExport.mockRejectedValueOnce({message: 'Export is not allowed.'});
+        fireEvent.click(screen.getByRole('button', {name: 'Export Agent a1'}));
+        expect(await screen.findByText('Export is not allowed.')).not.toBeNull();
+    });
+});
+
+describe('AgentsList route-driven create (/agents/all/new)', () => {
+    const cases = [
+        {name: 'allowed: opens the create view', perm: 'manage_own_agent', limit: 3, agents: ['a1'], opens: true},
+        {name: 'system admin: opens the create view', perm: 'manage_system', limit: null, agents: [], opens: true},
+        {name: 'no permission: refused and closed', perm: '', limit: null, agents: [], opens: false},
+        {name: 'plan limit reached: refused and closed', perm: 'manage_own_agent', limit: 1, agents: ['a1'], opens: false},
+    ];
+    test.each(cases)('$name', async ({perm, limit, agents, opens}) => {
+        mockUserHasSystemPermission.mockImplementation((_s, _u, permission) => permission === perm);
+        mockUseAgentLimit.mockReturnValue(limit);
+        mockGetAgents.mockResolvedValue({agents: agents.map(makeAgent), activeAgentCount: agents.length});
+        const onCloseCreate = jest.fn();
+
+        renderList({openCreate: true, onCloseCreate});
+
+        if (opens) {
+            expect((await screen.findByTestId('agent-config-view')).getAttribute('data-mode')).toBe('create');
+            expect(onCloseCreate).not.toHaveBeenCalled();
+        } else {
+            await waitFor(() => expect(onCloseCreate).toHaveBeenCalledTimes(1));
+            expect(screen.queryByTestId('agent-config-view')).toBeNull();
+        }
+    });
+
+    test('closes the view when the route leaves create', async () => {
+        mockUseAgentLimit.mockReturnValue(null);
+        mockGetAgents.mockResolvedValue({agents: [], activeAgentCount: 0});
+        const {rerender} = renderList({openCreate: true});
+        await screen.findByTestId('agent-config-view');
+
+        rerender(<AgentsList onStartChat={jest.fn()}/>);
+        await waitFor(() => expect(screen.queryByTestId('agent-config-view')).toBeNull());
     });
 });

@@ -21,17 +21,36 @@ import (
 // Store is the subset of store.Store that the conversation service needs.
 type Store interface {
 	CreateConversation(conv *store.Conversation) error
+	// GetConversation retrieves a conversation by ID. Returns an error if not found.
 	GetConversation(id string) (*store.Conversation, error)
 	GetConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error)
-	UpdateConversationTitle(id, title string) error
+	// RenameConversation sets the title of a non-deleted conversation,
+	// reporting whether one was changed.
+	RenameConversation(id, title string) (bool, error)
+	// SetConversationTitleIfUnset sets a generated title only while the
+	// conversation has none, reporting whether it did.
+	SetConversationTitleIfUnset(id, title string) (bool, error)
+	// UpdateConversationRootPostID sets the RootPostID on a conversation.
+	// Used when the post ID is only known after post creation (e.g., thread analysis DM posts).
 	UpdateConversationRootPostID(id string, rootPostID string) error
+	// CreateTurn persists a new turn in the store with an explicit sequence.
 	CreateTurn(turn *store.Turn) error
+	// CreateTurnAutoSequence persists a new turn, atomically assigning the next sequence number.
 	CreateTurnAutoSequence(turn *store.Turn) error
 	GetTurnsForConversation(conversationID string) ([]store.Turn, error)
+	// GetTurnByPostID returns the assistant turn anchored to postID, or nil.
 	GetTurnByPostID(postID string) (*store.Turn, error)
+	// UpdateTurnContent updates the content JSON of a turn.
 	UpdateTurnContent(id string, content json.RawMessage) error
+	// CompareAndSwapTurnContent replaces a turn's content only while it still
+	// equals expected, and reports whether it did.
+	CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error)
 	UpdateTurnTokens(id string, tokensIn, tokensOut int64) error
+	// UpdateTurnPostID sets or clears the PostID on a turn.
 	UpdateTurnPostID(id string, postID *string) error
+	// DeleteResponseTurns removes the post's anchor and any assistant/tool_result
+	// turns between it and the originating user turn. Callers must build any
+	// completion request before calling this — ExcludeAfterPostID needs the anchor.
 	DeleteResponseTurns(conversationID, postID string) error
 	GetMaxSequenceForConversation(conversationID string) (int, error)
 }
@@ -72,6 +91,7 @@ func NewService(
 // CreateConversationParams contains parameters for creating a new conversation.
 type CreateConversationParams struct {
 	UserID       string
+	SessionID    string
 	BotID        string
 	ChannelID    *string // nullable for non-channel conversations
 	RootPostID   *string // nullable for non-thread conversations
@@ -112,7 +132,7 @@ func (s *Service) CreateConversation(params CreateConversationParams) (*CreateCo
 	}
 
 	turnID := model.NewId()
-	content, err := marshalBlocks(userBlocksWithAttachments(params.UserMessage, params.FileIDs, s.mmClient))
+	content, err := marshalBlocks(userBlocksWithAttachments(params.UserMessage, params.FileIDs, mmapi.WithFilePolicy(s.mmClient, params.SessionID)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal user message: %w", err)
 	}
@@ -140,6 +160,16 @@ func (s *Service) CreateConversation(params CreateConversationParams) (*CreateCo
 // GetConversation retrieves a conversation by ID. Returns an error if not found.
 func (s *Service) GetConversation(id string) (*store.Conversation, error) {
 	return s.store.GetConversation(id)
+}
+
+// GetConversationByThread returns the conversation rooted at rootPostID for
+// the bot and user, or nil when the thread has none.
+func (s *Service) GetConversationByThread(rootPostID, botID, userID string) (*store.Conversation, error) {
+	conv, err := s.store.GetConversationByThreadBotUser(rootPostID, botID, userID)
+	if errors.Is(err, store.ErrConversationNotFound) {
+		return nil, nil
+	}
+	return conv, err
 }
 
 // GetTurns returns all turns for a conversation, ordered by sequence.
@@ -204,24 +234,15 @@ func (s *Service) UpdateTurnContent(turnID string, content json.RawMessage) erro
 	return s.store.UpdateTurnContent(turnID, content)
 }
 
-// CreateTurn persists a new turn in the store with an explicit sequence.
-func (s *Service) CreateTurn(turn *store.Turn) error {
-	return s.store.CreateTurn(turn)
+// CompareAndSwapTurnContent replaces a turn's content only while it still
+// equals expected, and reports whether it did.
+func (s *Service) CompareAndSwapTurnContent(turnID string, expected, content json.RawMessage) (bool, error) {
+	return s.store.CompareAndSwapTurnContent(turnID, expected, content)
 }
 
 // CreateTurnAutoSequence persists a new turn, atomically assigning the next sequence number.
 func (s *Service) CreateTurnAutoSequence(turn *store.Turn) error {
 	return s.store.CreateTurnAutoSequence(turn)
-}
-
-// GetTurnByPostID returns the assistant turn anchored to postID, or nil.
-func (s *Service) GetTurnByPostID(postID string) (*store.Turn, error) {
-	return s.store.GetTurnByPostID(postID)
-}
-
-// UpdateTurnPostID sets or clears the PostID on a turn.
-func (s *Service) UpdateTurnPostID(id string, postID *string) error {
-	return s.store.UpdateTurnPostID(id, postID)
 }
 
 // DeleteResponseTurns removes the post's anchor and any assistant/tool_result
@@ -231,20 +252,50 @@ func (s *Service) DeleteResponseTurns(conversationID, postID string) error {
 	return s.store.DeleteResponseTurns(conversationID, postID)
 }
 
+// BuildRegenerateRequest builds the request that regenerates postID's
+// response from the turns before it, then scrubs that prior response so the
+// new stream runs like a first one.
+func (s *Service) BuildRegenerateRequest(conv *store.Conversation, context *llm.Context, postID string, opts BuildOptions) (*llm.CompletionRequest, error) {
+	// Build before scrubbing: ExcludeAfterPostID needs the anchor.
+	opts.ExcludeAfterPostID = postID
+	req, err := s.BuildCompletionRequest(conv, context, opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build completion request for regen: %w", err)
+	}
+	req.OperationSubType = llm.SubTypeRegenerate
+
+	if err := s.DeleteResponseTurns(conv.ID, postID); err != nil {
+		return nil, fmt.Errorf("failed to scrub prior response turns on regen: %w", err)
+	}
+	return req, nil
+}
+
 // UpdateConversationRootPostID sets the RootPostID on a conversation.
 // Used when the post ID is only known after post creation (e.g., thread analysis DM posts).
 func (s *Service) UpdateConversationRootPostID(id string, rootPostID string) error {
 	return s.store.UpdateConversationRootPostID(id, rootPostID)
 }
 
-// UpdateConversationTitle updates the title of a conversation.
+// UpdateConversationTitle sets a conversation's title and tells its owner.
 func (s *Service) UpdateConversationTitle(id, title string) error {
-	return s.store.UpdateConversationTitle(id, title)
+	conv, err := s.store.GetConversation(id)
+	if err != nil {
+		return fmt.Errorf("failed to get conversation: %w", err)
+	}
+	renamed, err := s.store.RenameConversation(id, title)
+	if err != nil {
+		return fmt.Errorf("failed to set conversation title: %w", err)
+	}
+	if renamed {
+		PublishConversationTitleUpdated(s.mmClient, conv, title)
+	}
+	return nil
 }
 
 // GetOrCreateParams contains parameters for GetOrCreateConversation.
 type GetOrCreateParams struct {
 	UserID       string
+	SessionID    string
 	BotID        string
 	ChannelID    string
 	RootPostID   string // the thread root post ID
@@ -271,7 +322,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 	}
 
 	if existing != nil {
-		turnID, appendErr := s.appendUserTurn(existing.ID, params.UserMessage, params.UserPostID, params.FileIDs)
+		turnID, appendErr := s.appendUserTurn(existing.ID, params.UserMessage, params.UserPostID, params.FileIDs, params.SessionID)
 		if appendErr != nil {
 			return nil, appendErr
 		}
@@ -288,6 +339,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 	rootPostID := params.RootPostID
 	createResult, err := s.CreateConversation(CreateConversationParams{
 		UserID:       params.UserID,
+		SessionID:    params.SessionID,
 		BotID:        params.BotID,
 		ChannelID:    &channelID,
 		RootPostID:   &rootPostID,
@@ -306,7 +358,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 		if raceConv == nil {
 			return nil, fmt.Errorf("conversation vanished after conflict")
 		}
-		turnID, appendErr := s.appendUserTurn(raceConv.ID, params.UserMessage, params.UserPostID, params.FileIDs)
+		turnID, appendErr := s.appendUserTurn(raceConv.ID, params.UserMessage, params.UserPostID, params.FileIDs, params.SessionID)
 		if appendErr != nil {
 			return nil, appendErr
 		}
@@ -332,9 +384,26 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 	}, nil
 }
 
+// AppendSyntheticUserTurn appends a user turn with no backing Mattermost
+// post: included in the LLM context on the next request, invisible in the
+// thread. Used to re-wake an agent (wait_for_async_work). The kind is persisted
+// on the text block so callers can identify the turn without matching its text.
+func (s *Service) AppendSyntheticUserTurn(conversationID, kind, message string) error {
+	blocks := textBlocks(message)
+	for i := range blocks {
+		blocks[i].SyntheticKind = kind
+	}
+	_, err := s.appendUserTurnBlocks(conversationID, blocks, nil)
+	return err
+}
+
 // appendUserTurn creates a new user turn at the next available sequence number.
-func (s *Service) appendUserTurn(conversationID, message string, postID *string, fileIDs []string) (string, error) {
-	content, err := marshalBlocks(userBlocksWithAttachments(message, fileIDs, s.mmClient))
+func (s *Service) appendUserTurn(conversationID, message string, postID *string, fileIDs []string, sessionID string) (string, error) {
+	return s.appendUserTurnBlocks(conversationID, userBlocksWithAttachments(message, fileIDs, mmapi.WithFilePolicy(s.mmClient, sessionID)), postID)
+}
+
+func (s *Service) appendUserTurnBlocks(conversationID string, blocks []ContentBlock, postID *string) (string, error) {
+	content, err := marshalBlocks(blocks)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal user message: %w", err)
 	}
@@ -359,6 +428,7 @@ func (s *Service) appendUserTurn(conversationID, message string, postID *string,
 // BuildOptions controls optional behavior of BuildCompletionRequest.
 type BuildOptions struct {
 	ExcludeAfterPostID string
+	SessionID          string
 
 	// AllowUnsharedToolContent opts IN to sending tool_result content whose
 	// Shared flag is not true to the LLM. The default is to redact — any
@@ -370,6 +440,24 @@ type BuildOptions struct {
 	// requester (e.g. the DM follow-up stream), since DM tool_results are
 	// always shared=true anyway and nothing would be redacted in that case.
 	AllowUnsharedToolContent bool
+
+	// SkipThreadPostsAfterLatestUserTurn drops non-turn thread posts created
+	// or edited after the latest post-linked user turn in channel requests.
+	// Unattended runs set this so thread posts nobody vetted cannot steer
+	// auto-run tools.
+	SkipThreadPostsAfterLatestUserTurn bool
+
+	// ResponsePostID is the bot post the request is being built for. In channel
+	// requests it is omitted from the rendered thread unless it is already a
+	// turn: a fresh placeholder is empty and not yet part of the conversation.
+	ResponsePostID string
+}
+
+func firstBuildOptions(opts []BuildOptions) BuildOptions {
+	if len(opts) == 0 {
+		return BuildOptions{}
+	}
+	return opts[0]
 }
 
 // BuildCompletionRequest builds an llm.CompletionRequest from the conversation's
@@ -435,6 +523,8 @@ func AssembleRequest(
 		RestoreLoadedMCPToolsFromTurns(context.Tools, turns)
 	}
 
+	mmClient = mmapi.WithFilePolicy(mmClient, firstBuildOptions(opts).SessionID)
+
 	posts := make([]llm.Post, 0, len(turns)+1)
 
 	// System prompt is always first.
@@ -446,6 +536,7 @@ func AssembleRequest(
 	conversionOpts := PostConversionOptions{
 		RedactUnshared: redactUnshared,
 		MMClient:       mmClient,
+		UserID:         conv.UserID,
 		EnableVision:   enableVision,
 		MaxFileSize:    maxFileSize,
 	}
@@ -478,32 +569,35 @@ func (s *Service) attachmentConfigForBot(botID string) (bool, int64) {
 	return enableVision, maxFileSize
 }
 
-// turnsToLLMPosts converts a contiguous slice of turns into llm.Posts,
-// merging each tool_result turn into the preceding assistant turn so that
-// BlocksToPost can pair tool_result blocks with their tool_use entries in a
-// single llm.Post. Without this merge, tool_use entries go out with empty
-// Result fields and bifrost emits empty-content tool messages, which
-// Anthropic rejects with "text content blocks must be non-empty".
+// MissingToolResultContent is replayed as the result of a tool_use that has no
+// stored tool_result (e.g. still awaiting approval). Providers reject a
+// tool_use that is not answered by a non-empty tool_result.
+const MissingToolResultContent = "No result: this tool call was not executed."
+
+// turnsToLLMPosts converts a slice of turns into llm.Posts. tool_result turns
+// produce no post of their own: each result is folded into the assistant turn
+// holding its tool_use (see pairToolResults), so every tool_use replays with
+// its own non-empty result.
 func turnsToLLMPosts(
 	turns []store.Turn,
 	conversionOpts PostConversionOptions,
 ) ([]llm.Post, error) {
-	posts := make([]llm.Post, 0, len(turns))
-	for i := 0; i < len(turns); i++ {
-		turn := turns[i]
-		blocks, err := unmarshalBlocks(turn.Content)
+	blocksByTurn := make([][]ContentBlock, len(turns))
+	for i, turn := range turns {
+		blocks, err := UnmarshalBlocks(turn.Content)
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turn.ID, err)
 		}
-		if turn.Role == "assistant" && i+1 < len(turns) && turns[i+1].Role == "tool_result" {
-			nextBlocks, err := unmarshalBlocks(turns[i+1].Content)
-			if err != nil {
-				return nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turns[i+1].ID, err)
-			}
-			blocks = append(blocks, nextBlocks...)
-			i++
+		blocksByTurn[i] = blocks
+	}
+	pairToolResults(turns, blocksByTurn)
+
+	posts := make([]llm.Post, 0, len(turns))
+	for i, turn := range turns {
+		if turn.Role == "tool_result" {
+			continue
 		}
-		post := BlocksToPost(blocks, turn.Role, conversionOpts)
+		post := BlocksToPost(blocksByTurn[i], turn.Role, conversionOpts)
 		if turn.Role == "assistant" {
 			// Anthropic signed thinking must be replayed byte-for-byte. Our stored
 			// content blocks intentionally normalize assistant output (merge text
@@ -516,6 +610,95 @@ func turnsToLLMPosts(
 		posts = append(posts, post)
 	}
 	return posts, nil
+}
+
+// pairToolResults appends each tool_result block to the blocks of the nearest
+// preceding assistant turn holding its tool_use. A result need not follow its
+// tool_use directly: channel approvals append results at the end of the
+// conversation, after any newer bot posts. Results without a matching tool_use
+// are dropped, and executed tool_use blocks left without a result are answered
+// with MissingToolResultContent.
+func pairToolResults(turns []store.Turn, blocksByTurn [][]ContentBlock) {
+	type toolUseKey struct {
+		turn int
+		id   string
+	}
+	ownerByID := make(map[string]int)
+	answered := make(map[toolUseKey]bool)
+	for i, turn := range turns {
+		switch turn.Role {
+		case "assistant":
+			for _, b := range blocksByTurn[i] {
+				if b.Type == BlockTypeToolUse && b.ID != "" {
+					ownerByID[b.ID] = i
+				}
+				if b.Type == BlockTypeToolResult {
+					answered[toolUseKey{i, b.ToolUseID}] = true
+				}
+			}
+		case "tool_result":
+			for _, b := range blocksByTurn[i] {
+				owner, ok := ownerByID[b.ToolUseID]
+				if b.Type != BlockTypeToolResult || !ok {
+					continue
+				}
+				blocksByTurn[owner] = append(blocksByTurn[owner], b)
+				answered[toolUseKey{owner, b.ToolUseID}] = true
+			}
+			blocksByTurn[i] = nil
+		}
+	}
+
+	for i, turn := range turns {
+		if turn.Role != "assistant" {
+			continue
+		}
+		for _, b := range blocksByTurn[i] {
+			if b.Type != BlockTypeToolUse || b.ID == "" || answered[toolUseKey{i, b.ID}] {
+				continue
+			}
+			// BlocksToPost replays these as NotExecutedToolResult.
+			if b.Status == StatusPending || b.Status == StatusAccepted {
+				continue
+			}
+			blocksByTurn[i] = append(blocksByTurn[i], ContentBlock{
+				Type:      BlockTypeToolResult,
+				ToolUseID: b.ID,
+				Content:   MissingToolResultContent,
+				Status:    StatusError,
+				Shared:    new(true),
+			})
+		}
+	}
+}
+
+func toolUseIDs(content json.RawMessage) []string {
+	blocks, err := UnmarshalBlocks(content)
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	for _, b := range blocks {
+		if b.Type == BlockTypeToolUse && b.ID != "" {
+			ids = append(ids, b.ID)
+		}
+	}
+	return ids
+}
+
+// toolResultOwnerSlot returns the run of the first tool_use answered by a
+// tool_result turn's content.
+func toolResultOwnerSlot(content json.RawMessage, slotByToolUseID map[string]runSlot) (runSlot, bool) {
+	blocks, err := UnmarshalBlocks(content)
+	if err != nil {
+		return runSlot{}, false
+	}
+	for _, b := range blocks {
+		if slot, ok := slotByToolUseID[b.ToolUseID]; ok && b.Type == BlockTypeToolResult {
+			return slot, true
+		}
+	}
+	return runSlot{}, false
 }
 
 // CreatePlaceholderAssistantTurn creates an empty assistant turn linked to the response post.
@@ -588,6 +771,7 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 		tt.AssistantMessage,
 		tt.AssistantReasoning,
 		tt.AssistantServerTools,
+		tt.AssistantSegments,
 		tt.AssistantToolCalls,
 		shared,
 	)
@@ -631,16 +815,43 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 	return nil
 }
 
-// GenerateTitle generates a short title for the conversation and saves it.
+// WebsocketEventConversationUpdated is published to a conversation's owner
+// when its title changes (webapp: custom_mattermost-ai_conversation_updated).
+const WebsocketEventConversationUpdated = "conversation_updated"
+
+// PublishConversationTitleUpdated tells only the conversation's owner its new title.
+func PublishConversationTitleUpdated(client mmapi.Client, conv *store.Conversation, title string) {
+	client.PublishWebSocketEvent(
+		WebsocketEventConversationUpdated,
+		map[string]any{
+			"conversation_id": conv.ID,
+			"title":           title,
+		},
+		&model.WebsocketBroadcast{UserId: conv.UserID},
+	)
+}
+
+// GenerateTitle generates a short title for an untitled conversation, saves it
+// unless the user set one meanwhile, and tells the owner.
 // This should be called asynchronously (in a goroutine) after conversation creation.
 // The lm parameter provides the language model for title generation.
-// The context parameter provides bot/user context for the LLM call.
+// The context parameter provides bot/user context for the LLM call; ctx
+// carries the trace so the title call is recorded under the turn's agent run.
 func (s *Service) GenerateTitle(
+	ctx stdcontext.Context,
 	conversationID string,
 	lm llm.LanguageModel,
 	userMessage string,
 	context *llm.Context,
 ) error {
+	conv, err := s.store.GetConversation(conversationID)
+	if err != nil {
+		return fmt.Errorf("failed to get conversation: %w", err)
+	}
+	if conv.Title != "" {
+		return nil
+	}
+
 	request := "Write a short title for the following request. Include only the title and nothing else, no quotations. Request:\n" + userMessage
 
 	req := llm.CompletionRequest{
@@ -652,7 +863,7 @@ func (s *Service) GenerateTitle(
 		OperationSubType: llm.SubTypeNoStream,
 	}
 
-	title, err := lm.ChatCompletionNoStream(stdcontext.Background(), req,
+	title, err := lm.ChatCompletionNoStream(ctx, req,
 		llm.WithMaxGeneratedTokens(25),
 		llm.WithReasoningDisabled(),
 		llm.WithToolsDisabled(),
@@ -662,12 +873,38 @@ func (s *Service) GenerateTitle(
 	}
 
 	title = strings.Trim(title, "\n \"'")
+	if title == "" {
+		return nil
+	}
 
-	if err := s.store.UpdateConversationTitle(conversationID, title); err != nil {
+	// Conditional on the title still being unset: the user may have renamed
+	// the conversation while the title was generated.
+	updated, err := s.store.SetConversationTitleIfUnset(conversationID, title)
+	if err != nil {
 		return fmt.Errorf("failed to save title: %w", err)
+	}
+	if updated {
+		PublishConversationTitleUpdated(s.mmClient, conv, title)
 	}
 
 	return nil
+}
+
+// floatingRun is a post-less user turn and the post-less turns that follow it.
+// It has no thread position of its own, so it is rendered before the first
+// thread post created after it, and never after the post-linked turn that
+// follows it in the conversation (beforePostID).
+type floatingRun struct {
+	turns        []store.Turn
+	createdAt    int64
+	beforePostID string
+}
+
+// runSlot is where a post-less turn is rendered: a floating run, or else
+// after the post-linked turn with sequence seq (0 for before all of them).
+type runSlot struct {
+	run *floatingRun
+	seq int
 }
 
 // BuildChannelMentionRequest builds a CompletionRequest for a channel mention.
@@ -700,19 +937,42 @@ func (s *Service) BuildChannelMentionRequest(
 	}
 
 	enableVision, maxFileSize := s.attachmentConfigForBot(conv.BotID)
+	mmClient := mmapi.WithFilePolicy(s.mmClient, firstBuildOptions(opts).SessionID)
 
-	// Build a set of post IDs that belong to the bot's turns.
+	// Post-linked turns are rendered where their post sits in the thread.
 	turnPostIDs := make(map[string]bool)
-	// Map from postID to the turn for quick lookup.
 	turnByPostID := make(map[string]store.Turn)
-	// Turns without post IDs (tool rounds, etc.) keyed by index.
-	var turnsWithoutPosts []store.Turn
 	latestPostLinkedSequence := 0
 	latestPostLinkedPostID := ""
 	latestPostLinkedRole := ""
-
+	latestUserPostID := ""
+	// Post-less turns (tool rounds, synthetic user turns) are grouped by
+	// walking turns in sequence order: tool rounds ride with the preceding
+	// post-linked turn so tool_use/tool_result stay contiguous, while a
+	// post-less user turn opens a floating run positioned by time.
+	// tool_result turns instead join the run holding their tool_use:
+	// approvals append results at the end of the conversation, so an older
+	// post approved after a newer one would otherwise lend its results to
+	// the newer post.
+	turnsByPrecedingPost := make(map[int][]store.Turn)
+	var floatingRuns []*floatingRun
+	// unanchored are the runs since the last post-linked turn; that turn's
+	// post is the latest position they may be rendered at.
+	var unanchored []*floatingRun
+	var openRun *floatingRun
+	precedingSeq := 0
+	appendToSlot := func(slot runSlot, turn store.Turn) {
+		if slot.run != nil {
+			slot.run.turns = append(slot.run.turns, turn)
+			return
+		}
+		turnsByPrecedingPost[slot.seq] = append(turnsByPrecedingPost[slot.seq], turn)
+	}
+	slotByToolUseID := make(map[string]runSlot)
 	for _, turn := range turns {
-		if turn.PostID != nil {
+		var slot runSlot
+		switch {
+		case turn.PostID != nil:
 			turnPostIDs[*turn.PostID] = true
 			turnByPostID[*turn.PostID] = turn
 			if turn.Sequence > latestPostLinkedSequence {
@@ -720,8 +980,48 @@ func (s *Service) BuildChannelMentionRequest(
 				latestPostLinkedPostID = *turn.PostID
 				latestPostLinkedRole = turn.Role
 			}
-		} else {
-			turnsWithoutPosts = append(turnsWithoutPosts, turn)
+			if turn.Role == "user" {
+				latestUserPostID = *turn.PostID
+			}
+			for _, run := range unanchored {
+				run.beforePostID = *turn.PostID
+			}
+			unanchored = nil
+			openRun = nil
+			precedingSeq = turn.Sequence
+			slot = runSlot{seq: turn.Sequence}
+		case turn.Role == "user":
+			openRun = &floatingRun{turns: []store.Turn{turn}, createdAt: turn.CreatedAt}
+			floatingRuns = append(floatingRuns, openRun)
+			unanchored = append(unanchored, openRun)
+			slot = runSlot{run: openRun}
+		default:
+			slot = runSlot{run: openRun, seq: precedingSeq}
+			if turn.Role == "tool_result" {
+				if owner, ok := toolResultOwnerSlot(turn.Content, slotByToolUseID); ok {
+					slot = owner
+				}
+			}
+			appendToSlot(slot, turn)
+		}
+		if turn.Role == "assistant" {
+			for _, id := range toolUseIDs(turn.Content) {
+				slotByToolUseID[id] = slot
+			}
+		}
+	}
+
+	// Unattended runs drop non-turn thread posts nobody vetted: those created
+	// or changed after the latest user turn's post. If that post is gone from
+	// the thread there is no reference point, so every non-turn post is dropped.
+	skipUnvettedPosts := firstBuildOptions(opts).SkipThreadPostsAfterLatestUserTurn
+	var vettedCutoff int64
+	if skipUnvettedPosts {
+		for _, threadPost := range threadData.Posts {
+			if threadPost.Id == latestUserPostID {
+				vettedCutoff = threadPost.CreateAt
+				break
+			}
 		}
 	}
 
@@ -733,43 +1033,14 @@ func (s *Service) BuildChannelMentionRequest(
 		Message: conv.SystemPrompt,
 	})
 
-	// Build a unified timeline.
-	// We iterate over thread posts in order (they are sorted by CreateAt).
-	// For each post, either render it from the turn (if it belongs to the bot)
-	// or as plain text.
-	//
-	// Turns without post IDs (tool rounds) are attached right after the
-	// last turn-with-post that precedes them in sequence order.
-	//
-	// Build a map from post-linked turn sequence to following non-post turns.
-	turnsByPrecedingPost := make(map[int][]store.Turn)
-	if len(turnsWithoutPosts) > 0 {
-		// Find the preceding post-linked turn for each non-post turn.
-		postLinkedSeqs := make([]int, 0)
-		for _, turn := range turns {
-			if turn.PostID != nil {
-				postLinkedSeqs = append(postLinkedSeqs, turn.Sequence)
-			}
-		}
-		for _, turn := range turnsWithoutPosts {
-			// Find the largest post-linked sequence that is less than this turn's sequence.
-			precedingSeq := 0
-			for _, seq := range postLinkedSeqs {
-				if seq < turn.Sequence && seq > precedingSeq {
-					precedingSeq = seq
-				}
-			}
-			turnsByPrecedingPost[precedingSeq] = append(turnsByPrecedingPost[precedingSeq], turn)
-		}
-	}
-
 	// Emit any non-post turns that precede all post-linked turns
 	// (precedingSeq = 0). Route through turnsToLLMPosts so tool_use and
 	// tool_result within the same tool round merge into a single llm.Post,
 	// matching BuildCompletionRequest's behavior.
 	conversionOpts := PostConversionOptions{
 		RedactUnshared: redactUnshared,
-		MMClient:       s.mmClient,
+		MMClient:       mmClient,
+		UserID:         conv.UserID,
 		EnableVision:   enableVision,
 		MaxFileSize:    maxFileSize,
 	}
@@ -782,7 +1053,45 @@ func (s *Service) BuildChannelMentionRequest(
 	}
 	posts = append(posts, leadingPosts...)
 
+	// Thread posts in order, each rendered from the bot's turn when one exists,
+	// otherwise as plain user text. Floating runs are emitted before the first
+	// post that is later than them or that their conversation position precedes.
+	pendingRuns := floatingRuns
+	emitRun := func(run *floatingRun) error {
+		runPosts, err := turnsToLLMPosts(run.turns, conversionOpts)
+		if err != nil {
+			return err
+		}
+		posts = append(posts, runPosts...)
+		return nil
+	}
+	emitRunsBefore := func(threadPost *model.Post) error {
+		for len(pendingRuns) > 0 {
+			run := pendingRuns[0]
+			if run.beforePostID != threadPost.Id && run.createdAt >= threadPost.CreateAt {
+				return nil
+			}
+			if err := emitRun(run); err != nil {
+				return err
+			}
+			pendingRuns = pendingRuns[1:]
+		}
+		return nil
+	}
+
+	responsePostID := firstBuildOptions(opts).ResponsePostID
 	for _, threadPost := range threadData.Posts {
+		if !turnPostIDs[threadPost.Id] {
+			if threadPost.Id == responsePostID {
+				continue
+			}
+			if skipUnvettedPosts && (vettedCutoff == 0 || threadPost.CreateAt > vettedCutoff || threadPost.UpdateAt > vettedCutoff) {
+				continue
+			}
+		}
+		if err := emitRunsBefore(threadPost); err != nil {
+			return nil, err
+		}
 		if turnPostIDs[threadPost.Id] {
 			// Render the post-linked turn and any trailing tool-round turns
 			// as a single contiguous run so tool_result merges into the
@@ -801,11 +1110,16 @@ func (s *Service) BuildChannelMentionRequest(
 			if user, ok := threadData.UsersByID[threadPost.UserId]; ok {
 				username = user.Username
 			}
-			blocks := userBlocksWithAttachments(format.AuthoredPost(threadPost, username), threadPost.FileIds, s.mmClient)
-			posts = append(posts, BlocksToPost(blocks, "user", PostConversionOptions{RedactUnshared: redactUnshared, MMClient: s.mmClient, EnableVision: enableVision, MaxFileSize: maxFileSize}))
+			blocks := userBlocksWithAttachments(format.AuthoredPost(threadPost, username), threadPost.FileIds, mmClient)
+			posts = append(posts, BlocksToPost(blocks, "user", PostConversionOptions{RedactUnshared: redactUnshared, MMClient: mmClient, UserID: conv.UserID, EnableVision: enableVision, MaxFileSize: maxFileSize}))
 		}
 		if latestPostLinkedRole == "user" && threadPost.Id == latestPostLinkedPostID {
 			break
+		}
+	}
+	for _, run := range pendingRuns {
+		if err := emitRun(run); err != nil {
+			return nil, err
 		}
 	}
 

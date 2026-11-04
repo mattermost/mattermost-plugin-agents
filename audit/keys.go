@@ -18,12 +18,15 @@ var (
 	KeyChannelID        = string(telemetry.ChannelID)
 	KeyPostID           = string(telemetry.PostID)
 	KeyThreadRootPostID = string(telemetry.ThreadRootPostID)
+	KeyConversationID   = string(telemetry.ConversationID)
 	KeyAgentID          = string(telemetry.AgentID)
 	KeyAgentName        = string(telemetry.AgentName)
 	KeyToolName         = string(telemetry.ToolName)
 	KeyToolID           = string(telemetry.ToolID)
 	KeyMCPServer        = string(telemetry.MCPServer)
 	KeyMCPTool          = string(telemetry.MCPTool)
+	KeyABACResourceType = string(telemetry.ABACResourceType)
+	KeyABACResourceID   = string(telemetry.ABACResourceID)
 )
 
 const (

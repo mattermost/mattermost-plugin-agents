@@ -35,6 +35,17 @@ jest.mock('../../client', () => ({
     updatePluginServer: jest.fn().mockResolvedValue({}),
 }));
 
+jest.mock('@/license', () => ({
+    useIsLicensedFor: jest.fn(() => true),
+    useLicenseLevelName: jest.fn(() => () => 'Enterprise'),
+    requiredLevelFor: jest.fn(() => 2),
+}));
+
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
+    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
+}), {virtual: true});
+
 type ServerConfigChangeCb = (cfg: {
     name: string;
     enabled: boolean;
@@ -58,8 +69,8 @@ import {IntlProvider} from 'react-intl';
 
 import {updatePluginServer} from '../../client';
 
-import MCPToolsViewer, {MCPToolsResponse} from './mcp_tools_viewer';
-import {MCPConfig} from './mcp_servers';
+import MCPToolsViewer from './mcp_tools_viewer';
+import {MCPConfig, MCPToolsResponse} from './mcp_types';
 /* eslint-enable import/first, import/order */
 
 const mockUpdatePluginServer = updatePluginServer as jest.Mock;

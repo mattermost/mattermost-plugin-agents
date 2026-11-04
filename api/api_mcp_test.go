@@ -32,7 +32,7 @@ import (
 
 type stubEmbeddedServer struct{}
 
-func (s *stubEmbeddedServer) CreateClientTransport(string, string, *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+func (s *stubEmbeddedServer) CreateClientTransport(string, string, string, *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
 	return nil, nil
 }
 
@@ -161,6 +161,42 @@ func TestHandleRefreshUserMCPToolsUsesForcedRefresh(t *testing.T) {
 	require.Equal(t, server.Name, response.Servers[0].Name)
 	require.Len(t, response.Servers[0].Tools, 1)
 	require.Equal(t, "refreshed_tool", response.Servers[0].Tools[0].Name)
+}
+
+func TestHandleRefreshUserMCPToolsUsesAccessPluginSnapshot(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	snapshot := mcp.PluginServerConfig{
+		PluginID: "com.example.snapshot",
+		Name:     "Snapshot Plugin",
+		Path:     "/mcp",
+		Enabled:  true,
+	}
+	liveOnly := mcp.PluginServerConfig{
+		PluginID: "com.example.live-only",
+		Name:     "Live-Only Plugin",
+		Path:     "/mcp",
+		Enabled:  true,
+	}
+	mcpMock := &mockMCPClientManager{
+		pluginServers:       []mcp.PluginServerConfig{snapshot, liveOnly},
+		accessPluginServers: []mcp.PluginServerConfig{snapshot},
+		tools: []llm.Tool{{
+			Name:         "snapshot_tool",
+			ServerOrigin: "plugin://" + snapshot.PluginID,
+		}},
+	}
+	e.api.mcpClientManager = mcpMock
+
+	response := refreshUserMCPToolsResponse(t, e.api, nil)
+
+	require.Equal(t, []string{testUserID}, mcpMock.refreshCalls)
+	require.Len(t, response.Servers, 1)
+	require.Equal(t, snapshot.Name, response.Servers[0].Name)
 }
 
 func TestHandleRefreshUserMCPToolsPassesRequestContext(t *testing.T) {
@@ -488,6 +524,47 @@ func TestHandleGetUserMCPToolsIncludesEmbeddedZeroToolServer(t *testing.T) {
 	require.Empty(t, response.Servers[0].AuthURL)
 }
 
+func TestHandleGetUserMCPToolsHidesDeniedOrigins(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	const (
+		allowedOrigin = "https://allowed.example.com"
+		deniedOrigin  = "https://denied.example.com"
+		pluginID      = "com.example.denied"
+		pluginOrigin  = "plugin://" + pluginID
+	)
+
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{
+			{Name: "Allowed", Enabled: true, BaseURL: allowedOrigin},
+			{Name: "Denied", Enabled: true, BaseURL: deniedOrigin},
+		},
+		EmbeddedServer: mcp.EmbeddedServerConfig{Enabled: true},
+	}
+	e.api.mcpClientManager = &mockMCPClientManager{
+		embeddedServer: &stubEmbeddedServer{},
+		pluginServers: []mcp.PluginServerConfig{{
+			PluginID: pluginID, Name: "Denied Plugin", Path: "/mcp", Enabled: true,
+		}},
+		deniedOrigins: map[string]bool{
+			deniedOrigin:          true,
+			mcp.EmbeddedClientKey: true,
+			pluginOrigin:          true,
+		},
+		tools: []llm.Tool{{Name: "ok", ServerOrigin: allowedOrigin}},
+	}
+
+	response := getUserMCPToolsResponse(t, e.api)
+	require.Len(t, response.Servers, 1)
+	require.Equal(t, "Allowed", response.Servers[0].Name)
+	require.Equal(t, allowedOrigin, response.Servers[0].ServerOrigin)
+}
+
 func TestHandleGetUserMCPToolsIncludesPluginServers(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -542,6 +619,44 @@ func TestHandleGetUserMCPToolsIncludesPluginServers(t *testing.T) {
 		require.True(t, tool.Enabled, "tool %q should default to enabled", tool.Name)
 		require.Equal(t, "ask", tool.Policy, "tool %q should default to ask policy", tool.Name)
 	}
+}
+
+// Response rows must come from CatalogAccess.PluginServers, not a live
+// ListPluginServers re-sample that can drift mid-request.
+func TestHandleGetUserMCPToolsUsesAccessPluginSnapshot(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	snapCfg := mcp.PluginServerConfig{
+		PluginID: "com.example.snap",
+		Name:     "Snapshot Plugin",
+		Path:     "/mcp",
+		Enabled:  true,
+	}
+	liveOnlyCfg := mcp.PluginServerConfig{
+		PluginID: "com.example.live-only",
+		Name:     "Live-Only Plugin",
+		Path:     "/mcp",
+		Enabled:  true,
+	}
+
+	e.config.mcpConfig = mcp.Config{Enabled: true}
+	e.api.mcpClientManager = &mockMCPClientManager{
+		// Live registry has an extra server that arrived after the snapshot.
+		pluginServers:       []mcp.PluginServerConfig{snapCfg, liveOnlyCfg},
+		accessPluginServers: []mcp.PluginServerConfig{snapCfg},
+		tools: []llm.Tool{{
+			Name: "snap_tool", ServerOrigin: "plugin://" + snapCfg.PluginID,
+		}},
+	}
+
+	response := getUserMCPToolsResponse(t, e.api)
+	require.Len(t, response.Servers, 1)
+	require.Equal(t, snapCfg.Name, response.Servers[0].Name)
+	require.Equal(t, "plugin://"+snapCfg.PluginID, response.Servers[0].ServerOrigin)
 }
 
 func TestHandleGetUserMCPToolsAuthNeededStateOverridesDiscoveredTools(t *testing.T) {
@@ -828,12 +943,12 @@ func TestHandleDeleteUserMCPOAuth(t *testing.T) {
 
 	mmClient := mmapimocks.NewMockClient(t)
 	var gotEvent string
-	var gotPayload map[string]interface{}
+	var gotPayload map[string]any
 	var gotBroadcast *model.WebsocketBroadcast
 	mmClient.On("PublishWebSocketEvent", mock.AnythingOfType("string"), mock.AnythingOfType("map[string]interface {}"), mock.AnythingOfType("*model.WebsocketBroadcast")).
 		Run(func(args mock.Arguments) {
 			gotEvent = args.String(0)
-			gotPayload, _ = args.Get(1).(map[string]interface{})
+			gotPayload, _ = args.Get(1).(map[string]any)
 			gotBroadcast, _ = args.Get(2).(*model.WebsocketBroadcast)
 		}).Return()
 	e.api.mmClient = mmClient
@@ -1078,12 +1193,12 @@ func TestPublishMCPConnectionUpdatedEmitsUserScopedEvent(t *testing.T) {
 
 	mmClient := mmapimocks.NewMockClient(t)
 	var gotEvent string
-	var gotPayload map[string]interface{}
+	var gotPayload map[string]any
 	var gotBroadcast *model.WebsocketBroadcast
 	mmClient.On("PublishWebSocketEvent", mock.AnythingOfType("string"), mock.AnythingOfType("map[string]interface {}"), mock.AnythingOfType("*model.WebsocketBroadcast")).
 		Run(func(args mock.Arguments) {
 			gotEvent = args.String(0)
-			gotPayload, _ = args.Get(1).(map[string]interface{})
+			gotPayload, _ = args.Get(1).(map[string]any)
 			gotBroadcast, _ = args.Get(2).(*model.WebsocketBroadcast)
 		}).Return()
 	e.api.mmClient = mmClient
@@ -1460,5 +1575,63 @@ func TestAuditMCPOAuthDisconnect(t *testing.T) {
 			assert.Equal(t, "TestServer", rec.EventData.Parameters[audit.KeyMCPServer])
 			tt.validateRecord(t, rec)
 		})
+	}
+}
+
+// When access policy could not be evaluated the catalog denies nothing, so
+// both tools routes must fail instead of listing servers the user may not use.
+func TestUserMCPToolsRoutesFailWhenAccessUnavailable(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name           string
+		errs           *mcp.Errors
+		denied         map[string]bool
+		expectedStatus int
+		expectedNames  []string
+	}{
+		{name: "policy evaluated", denied: map[string]bool{"https://denied.example.com": true}, expectedStatus: http.StatusOK, expectedNames: []string{"Allowed"}},
+		{name: "connection errors still list servers", errs: &mcp.Errors{Errors: []error{errors.New("dial failed")}}, denied: map[string]bool{"https://denied.example.com": true}, expectedStatus: http.StatusOK, expectedNames: []string{"Allowed"}},
+		{name: "closed manager", errs: &mcp.Errors{Errors: []error{mcp.ErrClientManagerClosed}}, expectedStatus: http.StatusServiceUnavailable},
+		{name: "invalid request", errs: &mcp.Errors{Errors: []error{mcp.ErrCatalogInvokerRequired}}, expectedStatus: http.StatusServiceUnavailable},
+	}
+	for _, tt := range tests {
+		for _, route := range []struct{ method, path string }{
+			{method: http.MethodGet, path: "/mcp/tools"},
+			{method: http.MethodPost, path: "/mcp/tools/refresh"},
+		} {
+			t.Run(tt.name+" "+route.method+" "+route.path, func(t *testing.T) {
+				e := SetupTestEnvironment(t)
+				defer e.Cleanup(t)
+				e.config.mcpConfig = mcp.Config{
+					Enabled: true,
+					Servers: []mcp.ServerConfig{
+						{Name: "Allowed", Enabled: true, BaseURL: "https://allowed.example.com"},
+						{Name: "Denied", Enabled: true, BaseURL: "https://denied.example.com"},
+					},
+				}
+				e.api.mcpClientManager = &mockMCPClientManager{mcpErrors: tt.errs, deniedOrigins: tt.denied}
+
+				request := httptest.NewRequest(route.method, route.path, nil)
+				request.Header.Add("Mattermost-User-Id", testUserID)
+				recorder := httptest.NewRecorder()
+				e.api.ServeHTTP(nil, recorder, request)
+
+				require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode, recorder.Body.String())
+				if tt.expectedStatus != http.StatusOK {
+					assert.NotContains(t, recorder.Body.String(), "allowed.example.com")
+					assert.NotContains(t, recorder.Body.String(), "denied.example.com")
+					return
+				}
+				var response UserMCPToolsResponse
+				require.NoError(t, json.NewDecoder(recorder.Body).Decode(&response))
+				names := []string{}
+				for _, s := range response.Servers {
+					names = append(names, s.Name)
+				}
+				assert.Equal(t, tt.expectedNames, names)
+			})
+		}
 	}
 }

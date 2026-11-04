@@ -6,9 +6,11 @@ import {fireEvent, render, screen, waitFor, within} from '@testing-library/react
 import {IntlProvider} from 'react-intl';
 
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
-import {ServiceInfo} from '@/types/agents';
+import {ServiceInfo, normalizeSkillsConfig} from '@/types/agents';
 
 import {AgentDraft} from '../agent_config_view';
+
+import {chooseOption, getSelect} from '../../../../tests/compass_select';
 
 import ConfigTab from './config_tab';
 
@@ -34,9 +36,22 @@ jest.mock('react-intl', () => {
     };
 });
 
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
+    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
+}), {virtual: true});
+
 jest.mock('@/client', () => ({
     fetchModelsForAgentService: jest.fn().mockResolvedValue([]),
     getBotProfilePictureUrl: jest.fn().mockResolvedValue(''),
+}));
+
+jest.mock('@/license', () => ({
+    LicenseLevel: {Unlicensed: 0, Professional: 1, Enterprise: 2, EnterpriseAdvanced: 3},
+    useIsLicensedFor: jest.fn(() => true),
+    useServiceLimit: jest.fn(() => null),
+    useLicenseLevelName: jest.fn(() => () => 'Enterprise'),
+    requiredLevelFor: jest.fn(() => 2),
 }));
 
 jest.mock('src/../../assets/bot_icon.png', () => 'placeholder-icon.png', {virtual: true});
@@ -73,8 +88,8 @@ function makeDraft(overrides: Partial<AgentDraft> = {}): AgentDraft {
         reasoningEnabled: true,
         reasoningEffort: 'medium',
         thinkingBudget: 0,
-        structuredOutputEnabled: false,
         maxToolTurns: 30,
+        skills: normalizeSkillsConfig(),
         ...overrides,
     };
 }
@@ -123,7 +138,194 @@ describe('ConfigTab', () => {
 
         expect((screen.getByLabelText('Dynamic tool loading') as HTMLInputElement).disabled).toBe(false);
         expect(
-            (within(screen.getByTestId('native-tool-web_search')).getByRole('checkbox') as HTMLInputElement).disabled,
+            (screen.getByTestId('native-tool-web_search') as HTMLInputElement).disabled,
         ).toBe(false);
+    });
+
+    test.each([
+        {name: 'creating an agent', savedUsername: '', username: 'testagent', warns: false},
+        {name: 'editing without renaming', savedUsername: 'testagent', username: 'testagent', warns: false},
+        {name: 'editing with a new username', savedUsername: 'testagent', username: 'renamed', warns: true},
+    ])('username stays editable and warns about renames only when one is pending: $name', async ({savedUsername, username, warns}) => {
+        render(
+            <IntlProvider locale='en'>
+                <ConfigTab
+                    draft={makeDraft({username})}
+                    onChange={jest.fn()}
+                    onAvatarChange={jest.fn()}
+                    services={[openaiService]}
+                    savedUsername={savedUsername}
+                />
+            </IntlProvider>,
+        );
+
+        await waitFor(() => expect(screen.getByText('Agent username')).not.toBeNull());
+
+        const usernameInput = within(formRowForLabel('Agent username')).getByRole('textbox') as HTMLInputElement;
+        expect(usernameInput.disabled).toBe(false);
+        expect(screen.queryByText(/people and integrations using @testagent will need to switch/) !== null).toBe(warns);
+    });
+
+    test('shows vision and effort reasoning for north without native tools', async () => {
+        const northService: ServiceInfo = {
+            id: 'svc_north',
+            name: 'North',
+            type: 'north',
+            defaultModel: '',
+            outputTokenLimit: 4096,
+            useResponsesAPI: false,
+        };
+
+        render(
+            <IntlProvider locale='en'>
+                <ConfigTab
+                    draft={makeDraft({serviceId: northService.id})}
+                    onChange={jest.fn()}
+                    onAvatarChange={jest.fn()}
+                    services={[northService]}
+                />
+            </IntlProvider>,
+        );
+
+        await waitFor(() => expect(screen.getByText('AI Service')).not.toBeNull());
+        fireEvent.click(screen.getByRole('button', {name: /Advanced configuration/}));
+
+        expect(screen.getByText('Enable Vision')).toBeTruthy();
+        expect(screen.getByText('Enable Tools')).toBeTruthy();
+        expect(screen.getByText('Reasoning')).toBeTruthy();
+        expect(screen.getByText('Reasoning Effort')).toBeTruthy();
+        expect(screen.queryByTestId('native-tool-web_search')).toBeNull();
+        expect(screen.queryByText('Native OpenAI Tools')).toBeNull();
+        expect(screen.queryByText('Structured Output')).toBeNull();
+    });
+});
+
+describe('ConfigTab license gating', () => {
+    const {useIsLicensedFor, useServiceLimit} = jest.requireMock('@/license') as {
+        useIsLicensedFor: jest.Mock;
+        useServiceLimit: jest.Mock;
+    };
+
+    beforeEach(() => {
+        useIsLicensedFor.mockReturnValue(true);
+        useServiceLimit.mockReturnValue(null);
+    });
+
+    test('notes that only the first service is active when the service cap is in effect', async () => {
+        useServiceLimit.mockReturnValue(1);
+        const second: ServiceInfo = {...openaiService, id: 'svc_other', name: 'Other'};
+        const onChange = jest.fn();
+        render(
+            <IntlProvider locale='en'>
+                <ConfigTab
+                    draft={makeDraft({serviceId: ''})}
+                    onChange={onChange}
+                    onAvatarChange={jest.fn()}
+                    services={[openaiService, second]}
+                />
+            </IntlProvider>,
+        );
+
+        await screen.findByText('AI Service');
+        expect(screen.getByText(/Only the first configured service is active/)).not.toBeNull();
+
+        chooseOption(getSelect('AI Service'), 'Other');
+        expect(onChange).not.toHaveBeenCalledWith(expect.objectContaining({serviceId: second.id}));
+
+        chooseOption(getSelect('AI Service'), openaiService.name);
+        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({serviceId: openaiService.id}));
+    });
+
+    test('lets an unlicensed admin turn native web search off but not on', async () => {
+        useIsLicensedFor.mockImplementation((capability: string) => capability !== 'provider_web_search');
+
+        render(
+            <IntlProvider locale='en'>
+                <ConfigTab
+                    draft={makeDraft({enabledNativeTools: ['web_search']})}
+                    onChange={jest.fn()}
+                    onAvatarChange={jest.fn()}
+                    services={[openaiService]}
+                />
+            </IntlProvider>,
+        );
+
+        await screen.findByText('AI Service');
+        fireEvent.click(screen.getByRole('button', {name: /Advanced configuration/}));
+        expect(
+            (screen.getByTestId('native-tool-web_search') as HTMLInputElement).disabled,
+        ).toBe(false);
+    });
+
+    test('disables turning native web search on below Professional', async () => {
+        useIsLicensedFor.mockImplementation((capability: string) => capability !== 'provider_web_search');
+
+        render(
+            <IntlProvider locale='en'>
+                <ConfigTab
+                    draft={makeDraft({enabledNativeTools: []})}
+                    onChange={jest.fn()}
+                    onAvatarChange={jest.fn()}
+                    services={[openaiService]}
+                />
+            </IntlProvider>,
+        );
+
+        await screen.findByText('AI Service');
+        fireEvent.click(screen.getByRole('button', {name: /Advanced configuration/}));
+        expect(
+            (screen.getByTestId('native-tool-web_search') as HTMLInputElement).disabled,
+        ).toBe(true);
+        expect(screen.getByText('Enterprise')).not.toBeNull();
+    });
+
+    test.each([
+        {licensed: true, expected: ['web_search']},
+        {licensed: false, expected: []},
+    ])('switching to a service of another type resets native tools per license (licensed=$licensed)', async ({licensed, expected}) => {
+        useIsLicensedFor.mockImplementation((capability: string) => capability !== 'provider_web_search' || licensed);
+        const anthropicService: ServiceInfo = {...openaiService, id: 'svc_anthropic', name: 'Anthropic Mock', type: 'anthropic'};
+        const onChange = jest.fn();
+        const renderTab = (serviceId: string) => (
+            <IntlProvider locale='en'>
+                <ConfigTab
+                    draft={makeDraft({serviceId, enabledNativeTools: ['web_fetch']})}
+                    onChange={onChange}
+                    onAvatarChange={jest.fn()}
+                    services={[openaiService, anthropicService]}
+                />
+            </IntlProvider>
+        );
+
+        const {rerender} = render(renderTab(anthropicService.id));
+        await screen.findByText('AI Service');
+        rerender(renderTab(openaiService.id));
+
+        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({enabledNativeTools: expected}));
+    });
+
+    test.each([
+        {from: 'openai', to: 'anthropic', expected: ''},
+        {from: 'anthropic', to: 'openai', expected: 'medium'},
+    ])('switching from $from to $to resets reasoning effort to "$expected"', async ({from, to, expected}) => {
+        const anthropicService: ServiceInfo = {...openaiService, id: 'svc_anthropic', name: 'Anthropic Mock', type: 'anthropic'};
+        const serviceIDs: Record<string, string> = {openai: openaiService.id, anthropic: anthropicService.id};
+        const onChange = jest.fn();
+        const renderTab = (serviceId: string) => (
+            <IntlProvider locale='en'>
+                <ConfigTab
+                    draft={makeDraft({serviceId, reasoningEffort: 'low'})}
+                    onChange={onChange}
+                    onAvatarChange={jest.fn()}
+                    services={[openaiService, anthropicService]}
+                />
+            </IntlProvider>
+        );
+
+        const {rerender} = render(renderTab(serviceIDs[from]));
+        await screen.findByText('AI Service');
+        rerender(renderTab(serviceIDs[to]));
+
+        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({reasoningEffort: expected}));
     });
 });

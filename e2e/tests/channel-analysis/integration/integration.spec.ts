@@ -1,9 +1,10 @@
 // spec: tests/channel-analysis/integration.plan.md
 // seed: tests/seed.spec.ts
 
-import { test, expect, Page } from '@playwright/test';
+import { expect, Page } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import RunContainer from 'helpers/plugincontainer';
-import { RunOpenAIMocks, OpenAIMockContainer } from 'helpers/openai-mock';
+import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule, titleGenerationMockRule, turnMocksWithTitleSiphon } from 'helpers/openai-mock';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -34,9 +35,8 @@ class IntegrationHelper {
      * Wait for the page to be fully loaded after login
      */
     async waitForPageReady() {
-        await this.page.waitForSelector('[class*="channel-header"], #channelHeaderInfo', { timeout: 30000 });
-        // Wait for plugin to initialize
-        await this.page.waitForTimeout(2000);
+        await new MattermostPage(this.page).waitForChannelHeader();
+        await expect(this.page.getByTestId('ask-channel-button').first()).toBeVisible({ timeout: 30000 });
     }
 
     /**
@@ -91,6 +91,10 @@ class IntegrationHelper {
         const menuItem = this.page.getByText(actionMap[action]);
         await expect(menuItem).toBeVisible();
         await menuItem.click();
+
+        // The popover closes once the action is chosen; reopening it before it is gone
+        // would find it still visible and then lose it.
+        await expect(this.page.locator('.channel-summarize-popover')).toBeHidden({ timeout: 10000 });
     }
 
     /**
@@ -101,8 +105,8 @@ class IntegrationHelper {
         await expect(input).toBeVisible();
         await input.fill(query);
 
-        // Click the send icon or press Enter
         await input.press('Enter');
+        await expect(this.page.locator('.channel-summarize-popover')).toBeHidden({ timeout: 10000 });
     }
 
     /**
@@ -129,27 +133,25 @@ async function setupTestPage(page: Page) {
     return { mmPage, aiPlugin, llmBotHelper, integrationHelper, botUsername };
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 test.describe('Channel Analysis Integration (Mocked)', () => {
     let mattermost: MattermostContainer;
     let openAIMock: OpenAIMockContainer;
 
-    test.beforeAll(async () => {
-        test.setTimeout(120000);
-        mattermost = await RunContainer();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test.beforeEach(async () => {
-        await openAIMock.resetMocks();
-    });
-
-    test.afterAll(async () => {
-        if (openAIMock) {
-            await openAIMock.stop();
-        }
-        if (mattermost) {
-            await mattermost.stop();
-        }
+        // Keep a title-generation siphon registered. An empty reset leaves
+        // in-flight GenerateTitle calls hanging and can block the next test's
+        // follow-up ChatCompletion (empty bot placeholder).
+        await openAIMock.addMocks([titleGenerationMockRule()]);
     });
 
     test('Channel analysis after regular RHS chat', async ({ page }) => {
@@ -175,7 +177,7 @@ data: {"id":"chatcmpl-401a","object":"chat.completion.chunk","created":169426819
 data: {"id":"chatcmpl-401a","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-        await openAIMock.addCompletionMock(mockResponse1);
+        await openAIMock.addMocks(turnMocksWithTitleSiphon(mockResponse1));
 
         // 5. Have a regular conversation with the bot first
         await aiPlugin.sendMessage('Hello, how are you today?');
@@ -197,7 +199,7 @@ data: {"id":"chatcmpl-401b","object":"chat.completion.chunk","created":169426819
 data: {"id":"chatcmpl-401b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-        await openAIMock.addCompletionMock(mockResponse2);
+        await openAIMock.addMocks(turnMocksWithTitleSiphon(mockResponse2));
 
         // 8. Now use channel analysis feature via agents button
         await integrationHelper.openChannelAgentsPopover();
@@ -211,17 +213,16 @@ data: [DONE]
         // 11. Wait for streaming to complete
         await llmBotHelper.waitForStreamingComplete();
 
-        // 12. Wait for the DOM to update with the new post
-        await page.waitForTimeout(1000);
-
-        // 13. Verify channel analysis response is visible and contains channel-specific content
+        // 12. Verify channel analysis response is visible and contains channel-specific content
         const secondPostText = llmBotHelper.getPostText();
-        await expect(secondPostText).toBeVisible();
+        await expect(secondPostText).toContainText('new feature implementation');
         const secondContent = await secondPostText.textContent();
         expect(secondContent).toBeTruthy();
         expect(secondContent!.length).toBeGreaterThan(20);
         // Response should mention the feature implementation or deadline
         expect(secondContent!.toLowerCase()).toMatch(/feature|deadline|sprint/);
+
+        await aiPlugin.waitForThreadComposerIdle();
     });
 
     test('Regular chat after channel analysis', async ({ page }) => {
@@ -240,54 +241,42 @@ data: [DONE]
         // 4. Use channel analysis feature via agents button
         await integrationHelper.openChannelAgentsPopover();
 
-        // Mock channel analysis response
-        const mockResponse1 = `
-data: {"id":"chatcmpl-402a","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
-data: {"id":"chatcmpl-402a","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"The channel discussed the project kickoff meeting and budget approval."},"finish_reason":null}]}
-data: {"id":"chatcmpl-402a","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+        const analysisText = 'The channel discussed the project kickoff meeting and budget approval.';
+        const followUpText = 'The first point was about the project kickoff meeting.';
+        const followUpUserText = 'Can you tell me more about the first point?';
+        const sse = (id: string, content: string) => `
+data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"${content}"},"finish_reason":null}]}
+data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-        await openAIMock.addCompletionMock(mockResponse1);
 
-        // 5. Submit channel analysis query using quick action
-        await integrationHelper.clickQuickAction('last7days');
+        // Register both turns once. Resetting Smocker after analysis hangs the
+        // next ChatCompletion (empty bot placeholder). Do not use a no-body
+        // catch-all here: it served the analysis SSE for the new-chat turn in
+        // CI. AnalyzeChannel always sends this user prompt (channels/channels.go);
+        // new-chat does not, so the follow-up matcher can key off the user phrase.
+        const analyzeChannelUserPrompt = 'Please summarize the channel activity as requested.';
+        await openAIMock.addMocks([
+            titleGenerationMockRule(),
+            buildChatCompletionMockRule(sse('chatcmpl-402b', followUpText), { bodyContains: followUpUserText }),
+            buildChatCompletionMockRule(sse('chatcmpl-402a', analysisText), { bodyContains: analyzeChannelUserPrompt }),
+        ]);
 
-        // 6. Wait for streaming to complete
+        await integrationHelper.submitChannelQuery('What was discussed in the last 7 days?');
+
         await llmBotHelper.waitForStreamingComplete();
 
-        // 7. Verify channel analysis response contains channel-specific content
         const analysisPostText = llmBotHelper.getPostText();
         await expect(analysisPostText).toBeVisible();
-        const analysisContent = await analysisPostText.textContent();
-        expect(analysisContent).toBeTruthy();
-        // Should mention the meeting or budget
-        expect(analysisContent!.toLowerCase()).toMatch(/meeting|budget|kickoff|approval/);
+        await expect(analysisPostText).toContainText(analysisText);
 
-        // Mock follow-up response
-        const mockResponse2 = `
-data: {"id":"chatcmpl-402b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
-data: {"id":"chatcmpl-402b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"The first point was about the project kickoff meeting."},"finish_reason":null}]}
-data: {"id":"chatcmpl-402b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
-data: [DONE]
-`.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-        await openAIMock.addCompletionMock(mockResponse2);
+        await aiPlugin.waitForThreadComposerIdle();
+        await aiPlugin.ensureRhsNewChatTab();
+        await expect(aiPlugin.getRhsContainer().getByTestId('agent-chat-new-composer')).toBeVisible({ timeout: 10000 });
+        await aiPlugin.sendMessage(followUpUserText);
 
-        // 8. Now open regular RHS and send a follow-up question
-        await aiPlugin.openRHS();
-        await aiPlugin.sendMessage('Can you tell me more about the first point?');
-
-        // 9. Wait for streaming to complete
-        await llmBotHelper.waitForStreamingComplete();
-
-        // 10. Wait for the DOM to update with the new post
-        await page.waitForTimeout(1000);
-
-        // 11. Verify follow-up response is visible
-        const followUpPostText = llmBotHelper.getPostText();
-        await expect(followUpPostText).toBeVisible();
-        const followUpContent = await followUpPostText.textContent();
-        expect(followUpContent).toBeTruthy();
-        expect(followUpContent!.length).toBeGreaterThan(10);
+        await expect(aiPlugin.getRhsContainer().getByText(followUpText)).toBeVisible({ timeout: 30000 });
     });
 
     test('Chat history navigation with channel analysis', async ({ page }) => {
@@ -343,12 +332,9 @@ data: [DONE]
         // 8. Wait for second response
         await llmBotHelper.waitForStreamingComplete();
 
-        // 9. Wait for the DOM to update
-        await page.waitForTimeout(1000);
-
-        // 10. Verify second response mentions database
+        // 9. Verify second response mentions database
         const secondPostText = llmBotHelper.getPostText();
-        await expect(secondPostText).toBeVisible();
+        await expect(secondPostText).toContainText('Database optimization');
         const secondContent = await secondPostText.textContent();
         expect(secondContent!.toLowerCase()).toContain('database');
 
@@ -445,9 +431,6 @@ data: [DONE]
         expect(firstContent).toBeTruthy();
         expect(firstContent!.toLowerCase()).toMatch(/sprint|planning|testing|release/);
 
-        // 7. Wait a moment before second action
-        await page.waitForTimeout(2000);
-
         // 8. Use second quick action - custom query
         await integrationHelper.openChannelAgentsPopover();
 
@@ -465,12 +448,9 @@ data: [DONE]
         // 9. Wait for second response
         await llmBotHelper.waitForStreamingComplete();
 
-        // 10. Wait for the DOM to update
-        await page.waitForTimeout(1000);
-
-        // 11. Verify second response is visible
+        // 10. Verify second response is visible
         const secondPostText = llmBotHelper.getPostText();
-        await expect(secondPostText).toBeVisible();
+        await expect(secondPostText).toContainText('Priorities: Q2 roadmap and testing.');
         const secondContent = await secondPostText.textContent();
         expect(secondContent).toBeTruthy();
         expect(secondContent!.toLowerCase()).toMatch(/roadmap|testing|q2/);
@@ -534,12 +514,9 @@ data: [DONE]
         // 9. Wait for streaming to complete
         await llmBotHelper.waitForStreamingComplete();
 
-        // 10. Wait for the DOM to update
-        await page.waitForTimeout(1000);
-
-        // 11. Verify new response appears correctly and mentions monitoring
+        // 10. Verify new response appears correctly and mentions monitoring
         const secondPostText = llmBotHelper.getPostText();
-        await expect(secondPostText).toBeVisible();
+        await expect(secondPostText).toContainText('Monitoring: Dashboard is live.');
         const secondContent = await secondPostText.textContent();
         expect(secondContent).toBeTruthy();
         expect(secondContent!.toLowerCase()).toMatch(/monitoring|dashboard/);

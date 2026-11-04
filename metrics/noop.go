@@ -11,11 +11,6 @@ import (
 type NoopMetrics struct {
 }
 
-// NewNoopMetrics creates a new instance of NoopMetrics.
-func NewNoopMetrics() Metrics {
-	return &NoopMetrics{}
-}
-
 // GetRegistry returns a new empty registry.
 func (m *NoopMetrics) GetRegistry() *prometheus.Registry {
 	return prometheus.NewRegistry()

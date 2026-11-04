@@ -12,32 +12,31 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
-// SearchRequest represents a search query request from the API
+// SearchRequest is a search started from the search bar or /ask-channel.
 type SearchRequest struct {
-	Query      string `json:"query"`
-	TeamID     string `json:"teamId"`
-	ChannelID  string `json:"channelId"`
-	MaxResults int    `json:"maxResults"`
+	Query string `json:"query"`
+	// TeamID is the user's current team, used for citation links.
+	TeamID string `json:"teamId"`
+	// ChannelID is the channel the agent searches first.
+	ChannelID string `json:"channelId"`
 }
 
-const (
-	defaultMaxResults    = 5
-	maxMaxResults        = 100
-	maxSearchQueryLength = 4000
-)
+const maxSearchQueryLength = 4000
 
+// handleRunSearch posts the query to the user's DM with the agent and starts
+// a conversation that answers it by searching Mattermost with tools.
 func (a *API) handleRunSearch(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
-	if !a.searchService.Enabled() {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("search functionality is not configured"))
-		return
-	}
-
 	var req SearchRequest
 	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request: %w", err))
@@ -54,69 +53,72 @@ func (a *API) handleRunSearch(c *gin.Context) {
 		return
 	}
 
-	// Validate MaxResults
-	if req.MaxResults <= 0 {
-		req.MaxResults = defaultMaxResults
-	} else if req.MaxResults > maxMaxResults {
-		req.MaxResults = maxMaxResults
-	}
+	searchReq := conversations.SearchRequest{Query: req.Query}
 
-	result, err := a.searchService.RunSearch(c.Request.Context(), userID, bot, req.Query, req.TeamID, req.ChannelID, req.MaxResults)
-	if err != nil {
-		if errors.Is(err, search.ErrSearchUnavailable) {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+	if req.TeamID != "" {
+		if !model.IsValidId(req.TeamID) {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid team ID"))
 			return
 		}
-		c.AbortWithError(http.StatusInternalServerError, err)
+		if !a.pluginAPI.User.HasPermissionToTeam(userID, req.TeamID, model.PermissionViewTeam) {
+			c.AbortWithError(http.StatusForbidden, fmt.Errorf("user doesn't have permission to view the team"))
+			return
+		}
+		team, err := a.pluginAPI.Team.Get(req.TeamID)
+		if err != nil {
+			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get team: %w", err))
+			return
+		}
+		searchReq.Team = team
+	}
+
+	if req.ChannelID != "" {
+		if !model.IsValidId(req.ChannelID) {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid channel ID"))
+			return
+		}
+		if !a.pluginAPI.User.HasPermissionToChannel(userID, req.ChannelID, model.PermissionReadChannel) {
+			c.AbortWithError(http.StatusForbidden, fmt.Errorf("user doesn't have permission to read the channel"))
+			return
+		}
+		channel, err := a.pluginAPI.Channel.Get(req.ChannelID)
+		if err != nil {
+			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get channel: %w", err))
+			return
+		}
+		searchReq.Channel = channel
+	}
+
+	user, err := a.pluginAPI.User.Get(userID)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("unable to get user: %w", err))
 		return
 	}
 
-	c.JSON(http.StatusOK, result)
+	// The answer is generated after this request returns.
+	ctx := auth.WithSessionID(
+		telemetry.DetachContext(c.Request.Context()),
+		auth.SessionIDFromContext(c.Request.Context()),
+	)
+	questionPost, err := a.conversationsService.HandleSearch(ctx, bot, user, searchReq)
+	if err != nil {
+		abortWithServiceError(c, err, searchHTTPStatus)
+		return
+	}
+
+	c.JSON(http.StatusOK, map[string]string{
+		"postid":    questionPost.Id,
+		"channelid": questionPost.ChannelId,
+	})
 }
 
-func (a *API) handleSearchQuery(c *gin.Context) {
-	userID := c.GetHeader("Mattermost-User-Id")
-	bot := c.MustGet(ContextBotKey).(*bots.Bot)
-
-	if !a.searchService.Enabled() {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("search functionality is not configured"))
-		return
+// searchHTTPStatus maps errors from HandleSearch: losing access to the agent
+// is 403, anything else 500.
+func searchHTTPStatus(err error) int {
+	if errors.Is(err, bots.ErrUsageRestriction) {
+		return http.StatusForbidden
 	}
-
-	var req SearchRequest
-	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request: %w", err))
-		return
-	}
-
-	req.Query = strings.TrimSpace(req.Query)
-	if req.Query == "" {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("query cannot be empty"))
-		return
-	}
-	if len(req.Query) > maxSearchQueryLength {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("query exceeds maximum length of %d characters", maxSearchQueryLength))
-		return
-	}
-
-	// Validate MaxResults
-	if req.MaxResults <= 0 {
-		req.MaxResults = defaultMaxResults
-	} else if req.MaxResults > maxMaxResults {
-		req.MaxResults = maxMaxResults
-	}
-
-	response, err := a.searchService.SearchQuery(c.Request.Context(), userID, bot, req.Query, req.TeamID, req.ChannelID, req.MaxResults)
-	if err != nil {
-		if errors.Is(err, search.ErrSearchUnavailable) {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
-			return
-		}
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
-	}
-
-	c.JSON(http.StatusOK, response)
+	return http.StatusInternalServerError
 }
 
 // RawSearchRequest represents the request body for the raw semantic search endpoint
@@ -186,10 +188,7 @@ func (a *API) handleRawSearch(c *gin.Context) {
 		limit = maxRawSearchLimit
 	}
 
-	offset := req.Offset
-	if offset < 0 {
-		offset = 0
-	}
+	offset := max(req.Offset, 0)
 
 	results, err := a.searchService.Search(c.Request.Context(), req.Query, search.Options{
 		Limit:     limit,
@@ -199,6 +198,10 @@ func (a *API) handleRawSearch(c *gin.Context) {
 		UserID:    userID,
 	})
 	if err != nil {
+		if _, ok := errors.AsType[*enterprise.LicenseError](err); ok {
+			abortNotLicensed(c, err)
+			return
+		}
 		if errors.Is(err, search.ErrSearchUnavailable) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 			return

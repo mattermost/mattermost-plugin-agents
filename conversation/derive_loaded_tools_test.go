@@ -266,7 +266,7 @@ func TestDeriveLoadedMCPTools(t *testing.T) {
 }
 
 func TestRestoreLoadedMCPToolsFromTurns(t *testing.T) {
-	toolStore := llm.NewNoTools()
+	toolStore := llm.NewToolStore()
 	toolStore.SetUnloadedMCPTools([]llm.Tool{
 		{Name: "jira__get_issue"},
 		{Name: "github__search"},

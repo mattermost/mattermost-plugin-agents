@@ -1,6 +1,8 @@
-import { test, expect, type Page, type Locator } from '@playwright/test';
+import { expect, type Page, type Locator } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
+import { expandToolActivity, expectToolActivityCurrent, toolCard } from 'helpers/llmbot-post';
 import {
     OpenAIMockContainer,
     RunOpenAIMocks,
@@ -46,15 +48,15 @@ async function mentionBotAndOpenThread(page: Page, mmPage: MattermostPage, botNa
     await openThreadForPost(post, timeout);
 }
 
-test.describe('Dynamic MCP Tool Approval (Mocked LLM)', () => {
-    test.beforeAll(async () => {
-        mattermost = await RunToolConfigContainerWithDynamicPolicies();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
-    });
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigContainerWithDynamicPolicies());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
 
-    test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
+test.describe('Dynamic MCP Tool Approval (Mocked LLM)', () => {
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test('ask policy applies after search_tools and load_tool materialize the business tool', async ({ page }) => {
@@ -180,12 +182,21 @@ test.describe('Dynamic MCP Tool Approval (Mocked LLM)', () => {
         const botPosts = rhs.locator('[data-testid="llm-bot-post"]');
         const initialBotPost = botPosts.last();
 
-        // Meta-tools auto-run during the dynamic prelude before the ask-policy business tool.
-        await expect(initialBotPost.getByText(searchToolsLabel, {exact: true})).toBeVisible({timeout: 45000});
-        await expect(initialBotPost.getByText(loadToolLabel, {exact: true})).toBeVisible({timeout: 45000});
-        await expect(rhs.getByText('Auto-approved').first()).toBeVisible({timeout: 30000});
+        // The ask-policy business tool needs a decision, so its approval card
+        // renders in full without expanding the activity area.
+        await expect(toolCard(initialBotPost, embeddedGetChannelInfoLabel)).toBeVisible({
+            timeout: 45000,
+        });
 
-        await expect(initialBotPost.getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible({timeout: 45000});
+        // The meta-tools auto-ran during the dynamic prelude, so they are
+        // folded away; only the newest of them names the collapsed row.
+        await expectToolActivityCurrent(initialBotPost, loadToolLabel);
+        await expect(initialBotPost.getByText(searchToolsLabel, {exact: true})).toHaveCount(0);
+
+        const activityRounds = await expandToolActivity(initialBotPost);
+        await expect(toolCard(activityRounds, searchToolsLabel)).toBeVisible({timeout: 45000});
+        await expect(toolCard(activityRounds, loadToolLabel)).toBeVisible({timeout: 45000});
+        await expect(rhs.getByText('Auto-approved').first()).toBeVisible({timeout: 30000});
 
         // Pending-tool responses must not be masked by the empty-result fallback.
         await expect(initialBotPost.getByText(/did not return a result/i)).not.toBeVisible();
@@ -196,7 +207,8 @@ test.describe('Dynamic MCP Tool Approval (Mocked LLM)', () => {
         await acceptButton.click();
 
         await expect(initialBotPost.getByText(continuationMarker)).toBeVisible({timeout: 45000});
-        await expect(initialBotPost.getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible();
+        const settledRounds = await expandToolActivity(initialBotPost);
+        await expect(toolCard(settledRounds, embeddedGetChannelInfoLabel)).toBeVisible();
         await expect(initialBotPost.getByText(/did not return a result/i)).not.toBeVisible();
         await expect(botPosts).toHaveCount(1);
         await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();

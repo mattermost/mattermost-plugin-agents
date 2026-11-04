@@ -1,6 +1,6 @@
 # AGENTS.md
 
-> Canonical agent instructions for this repository. Humans should read `README.md` and `docs/`. `CLAUDE.md` and `mcpserver/CLAUDE.md` are thin imports — do not duplicate content there.
+> Canonical agent instructions for this repository. Humans should read `README.md` and `docs/`. `CLAUDE.md` and every nested `<dir>/CLAUDE.md` are thin imports — do not duplicate content there.
 
 ## Project
 
@@ -18,9 +18,9 @@ Mattermost server plugin (`mattermost-ai`) that integrates LLM providers. Go 1.2
 - Build & deploy plugin to a running Mattermost: `make deploy`
 - E2E (self-contained, no env setup needed; slow, defer to CI when possible): `make e2e`
 - Single e2e spec: `cd e2e && npx playwright test tests/path/spec.ts --reporter=list`
-- Prompt evals (non-interactive): `make evals-ci`
+- Prompt evals (non-interactive): `make evals-ci` (includes `./mcpserver`, which boots Mattermost containers and needs Docker)
   Provider: `LLM_PROVIDER=openai|anthropic|azure|openaicompatible|all make evals-ci`
-  Model: `ANTHROPIC_MODEL=claude-sonnet-4-5-20250929 make evals-ci`
+  Model: `ANTHROPIC_MODEL=claude-opus-5-5 make evals-ci`
 - Streaming benchmarks: `go test -bench=. -benchmem ./llm/... ./streaming/...`
 
 When `make check` fails, run the underlying targets individually (`make check-style`, `make test`, `make check-shards`, `make check-i18n`, `make check-locks`) to isolate which step broke. CI runs the same drift checks; if i18n or a lockfile is out of sync, those targets regenerate the file in place — review and commit.
@@ -41,20 +41,39 @@ Most Go packages live at the **repo root**, not under `server/`.
 - `evals/`, `cmd/evalviewer/` — prompt evaluation harness and TUI.
 - `i18n/` — extracted translation strings.
 - `docs/` — user/admin docs.
-- `public/bridgeclient/` — separate Go module published for other plugins.
+- `public/bridgeclient/` — Go package other plugins import (frozen public API); part of the root module, not HTTP assets.
 
 ## Conventions
 
 Linters (golangci-lint, ESLint, gofmt/goimports, header check, editorconfig) already enforce formatting, imports, error checking, license headers, and indentation. The rules below are the ones a linter cannot enforce.
+
+Repo-specific guards also run in `make check-style`: the `build/govet` vet tool (timeout-less `http.Client`, plus upstream mattermost-govet `license`, `mutexLock`, `noSelectStar`), testifylint `go-require`, `webapp/eslint-plugin-agents` (jsx-a11y rules that also see same-file styled-components), and `e2e/eslint-rules`. Suppress a legitimate case on that line with the reason: `//nolint:httpclienttimeout // <reason>` or `// eslint-disable-next-line <rule> -- <reason>`.
 
 - File names: `snake_case.go` / `snake_case.ts(x)`.
 - TypeScript/React: PascalCase components, strict typing, **always styled-components**, never inline `style={{...}}`.
 - New user-facing strings must go through i18n (`make i18n-extract` picks them up).
 - Go tests must be table-driven when there is more than one case.
 - Never introduce a new test/mocking library; prefer to test against real implementations instead.
+- Test-only LLM helpers (mock stream generators, logging wrappers) live in `llm/llmtest`; never import `testing` from a production package.
 - All formatting of Mattermost entities (posts, users, channels, teams, members) for LLM consumption or tool output must go through the `format/` package. Never `fmt.Sprintf` model types inline; add a formatter to `format/` instead.
 - E2E shard maintenance: when adding a new spec that should run in CI, assign it in `e2e/scripts/ci-test-groups.mjs` in the same change. `make check-shards` validates coverage and is part of `make check`. Use the lightest `e2e-shard-*` group and balance by expected runtime, not alphabetically.
 - Test for behavior that could break due to a real bug. Before writing a test ask: "If this test fails, does it indicate a real bug in our code?" In particular, do not assert on implementation details like validation order or which error appears first.
+- A bug fix includes a test that fails without the fix and runs through the production wiring (route, hook, registration), not only the helper that changed.
+- Never call `require`/`t.Fatal` outside the test goroutine (e.g. in `httptest` handlers); use `assert` there.
+
+## Correctness and security
+
+- Enforce authorization and request scope in code, never in prompt text: when a request is scoped to a channel, thread, or user, bind or validate that parameter on every tool the request can call.
+- Fail closed: when a lookup of an agent, bot, user, tool policy, or license misses or errors, return an error or deny; never fall back to a default or first match, or to a permissive default.
+- Propagate store and API errors; never turn them into an empty list, "none", or "not found" result.
+- Persist references to agents, bots, services, users, and channels by ID, never by name; names are display-only.
+- Errors and stream events sent to clients, and span attributes, never carry raw upstream response bodies, request content, or credentials.
+- Apply every change to turn behavior or tool policy (license gates, tool filters, round caps, permissions) to each entry point that starts or resumes a turn: DM message, channel @mention, channel auto-reply, loop-in from the mention reminder, regenerate, tool approve/reject, ask-user answers, sharing tool results, search, thread and channel analysis, meeting summarization, and LLM Bridge agent completions.
+- Make state transitions that can race (double clicks, retries, HA peers, background sweeps, regenerate during a stream) conditional on the expected prior state; never blind-write.
+- Key per-conversation state (KV keys, claims, caches) by conversation or user, never by a provider-generated ID alone; tool call IDs repeat across conversations.
+- Goroutines that relay between channels select on `ctx.Done()` for both send and receive; never hold a mutex across network or DB I/O; bound every outbound HTTP call with `http.Client.Timeout`, or a context deadline for streams.
+- Recompute derived state (active agents, caches, migrated config) on config change and license change, on every HA node, not only the node that made the change.
+- JSON returned to the webapp encodes empty slices as `[]`, not `null`, unless the TS type allows `null`; expose state as an explicit field instead of making the client infer it from an empty value.
 
 ## Audit logging
 
@@ -83,11 +102,18 @@ The plugin emits OpenTelemetry traces. Agent-relevant rules:
 
 ## Gotchas
 
-- If `make install-go-tools` fails to build `mattermost-govet`, the pinned commit is incompatible with the active Go toolchain. The Makefile prints the exact fix: bump `MATTERMOST_GOVET_VERSION` in the Makefile to a newer commit. This is a real problem to fix, not a warning to ignore.
 - `postgres/pgvector_test.go` boots its own pgvector container via `testcontainers-go` (`pgvector/pgvector:pg17`); `go test ./postgres/...` works on a fresh checkout as long as Docker is available. To run against an existing pgvector instance for fast iteration, set `PGVECTOR_TEST_DSN`.
 - Plugin config is migrated to the plugin DB on activation. For automation, read/write `GET`/`PUT /plugins/mattermost-ai/admin/config` rather than patching the Mattermost server config.
 - The embedded MCP server requires `SiteURL` to be set on the Mattermost server, and uses in-memory transport (no HTTP). On tool name collisions across MCP servers, first-registered wins; later duplicates are skipped with a warning.
-- `public/bridgeclient/` is a separately published Go module, not HTTP assets; `HAS_PUBLIC` is intentionally cleared in the Makefile.
+- `public/bridgeclient/` is consumed by other plugins — treat its exported API as frozen. It is a package of the root module (no own `go.mod`), not HTTP assets; `HAS_PUBLIC` is intentionally cleared in the Makefile. Changes there are covered by the root-module lint/test gates.
+- A fresh checkout does not compile: run `make apply` first to generate `server/manifest.go` (`undefined: manifest` errors otherwise).
+- The repo has four Go modules: the root, `loadtest/controller/`, `cmd/evalviewer/` and `build/releasenotes/`. Go version bumps, `go mod tidy`, and `go fix` must be run in each.
+- `webapp/node_modules/` contains stray Go files that `./...` matches; for sweeping Go commands use `$(go list ./... | grep -v node_modules)`.
+- Bumping the Go version: update the `go` directive in all four modules AND the `FIPS_IMAGE` tag in `build/fips.mk` — set the new tag without a digest, open a PR so the `build-fips` CI job pulls it, then pin the digest CI resolves. **Check the image exists first** (tag-listing procedure in `build/fips.mk`): do not bump the `go` directive past what `cgr.dev/mattermost.com/go-openssl-fips` offers. If `bin/golangci-lint` starts failing everywhere with "export data version N is greater than maximum supported version", the pinned linter predates the toolchain: bump `GOLANGCI_LINT_VERSION` in the Makefile and rerun `make install-go-tools`.
+
+## Cursor Cloud specific instructions
+
+- Run e2e with `TESTCONTAINERS_HOST_OVERRIDE=localhost` (e.g. `cd e2e && TESTCONTAINERS_HOST_OVERRIDE=localhost npx playwright test tests/agents/html-artifact.spec.ts --reporter=list`). On Cloud VMs testcontainers reports the Docker gateway IP (e.g. `172.18.0.1`) as the Mattermost host, and browsers send Fetch Metadata (`Sec-Fetch-*`) headers only to HTTPS or `localhost` origins, so without the override the HTML artifact specs only ever get the "can only be viewed inside Mattermost" page.
 
 ## Pull requests and commits
 
@@ -100,5 +126,10 @@ The plugin emits OpenTelemetry traces. Agent-relevant rules:
 Read these only when the trigger applies:
 
 - Working inside `mcpserver/` (config-vs-runtime, search service wiring, adding optional capabilities): `mcpserver/AGENTS.md`.
+- Changing how a turn runs, replays, stops, or regenerates (`conversations/`, `toolrunner/`, `streaming/`, or their `api/` routes): `conversations/AGENTS.md`.
+- Building or changing LLM requests (`bifrost/`, or `llm/` types that feed it): `bifrost/AGENTS.md`.
+- Working inside `mcp/` (MCP client, OAuth, tool caches): `mcp/AGENTS.md`.
+- Working inside `webapp/`: `webapp/AGENTS.md`.
+- Writing or editing Playwright specs in `e2e/`: `e2e/AGENTS.md`.
 - Configuring providers, agents, or the admin UI: `docs/admin_guide.md`.
 - When working on prompt evals or modifying the eval harness: `cmd/evalviewer/README.md`.

@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost/server/public/model"
 	mmcontainer "github.com/mattermost/testcontainers-mattermost-go"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
@@ -68,6 +70,15 @@ func formatKV(kvs []any) string {
 // Compile-time check that testLogger satisfies logger.Logger.
 var _ loggerlib.Logger = (*testLogger)(nil)
 
+// withLatestMattermostImage runs the suite against the latest stable server; the
+// library default is an old release.
+func withLatestMattermostImage(req *mmcontainer.MattermostContainerRequest) {
+	req.Image = "mattermost/mattermost-enterprise-edition:latest"
+	if image := os.Getenv("MM_IMAGE"); image != "" {
+		req.Image = image
+	}
+}
+
 // TestSuite represents the integration test suite
 type TestSuite struct {
 	t          *testing.T
@@ -87,13 +98,20 @@ func SetupTestSuite(t *testing.T) *TestSuite {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	// Start Mattermost container with PAT enabled.
+	// Enable PATs at container start. SetConfig after boot can return success
+	// before the setting is live, which flakes CreateUserAccessToken.
+	cfg := &model.Config{}
+	cfg.SetDefaults()
+	cfg.ServiceSettings.EnableUserAccessTokens = model.NewPointer(true)
+
 	// Retry once — the container init (team/user creation via mmctl) can hit transient races.
 	var container *mmcontainer.MattermostContainer
 	var err error
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		container, err = mmcontainer.RunContainer(ctx,
 			mmcontainer.WithLicense(""),
+			mmcontainer.WithConfig(cfg),
+			withLatestMattermostImage,
 		)
 		if err == nil {
 			break
@@ -102,20 +120,27 @@ func SetupTestSuite(t *testing.T) *TestSuite {
 	}
 	require.NoError(t, err, "Failed to start Mattermost container")
 
-	// Enable personal access tokens in the server config
 	err = container.SetConfig(ctx, "ServiceSettings.EnableUserAccessTokens", "true")
 	require.NoError(t, err, "Failed to enable personal access tokens")
 
-	// Get connection details
 	serverURL, err := container.URL(ctx)
 	require.NoError(t, err, "Failed to get server URL")
 
-	// Get admin client and create a PAT token
 	adminClient, err := container.GetAdminClient(ctx)
 	require.NoError(t, err, "Failed to get admin client")
 
-	// Create a personal access token for testing
-	pat, _, err := adminClient.CreateUserAccessToken(ctx, "me", "MCP Integration Test Token", 0)
+	var pat *model.UserAccessToken
+	const maxPATAttempts = 8
+	for attempt := 1; attempt <= maxPATAttempts; attempt++ {
+		pat, _, err = adminClient.CreateUserAccessToken(ctx, "me", "MCP Integration Test Token", 0)
+		if err == nil {
+			break
+		}
+		t.Logf("CreateUserAccessToken attempt %d/%d failed: %v", attempt, maxPATAttempts, err)
+		if attempt < maxPATAttempts {
+			time.Sleep(250 * time.Millisecond)
+		}
+	}
 	require.NoError(t, err, "Failed to create PAT token")
 	adminToken := pat.Token
 
@@ -143,34 +168,27 @@ func (suite *TestSuite) TearDown() {
 
 // CreateMCPServer creates and configures an MCP server for testing
 func (suite *TestSuite) CreateMCPServer(devMode bool) {
-	suite.createMCPServerWithConfig(devMode, nil, nil)
-}
-
-// CreateMCPServerWithSearch creates an MCP server with a custom semantic search service
-func (suite *TestSuite) CreateMCPServerWithSearch(devMode bool, searchService tools.SemanticSearchService) {
-	suite.createMCPServerWithConfig(devMode, searchService, nil)
+	suite.createMCPServerWithConfig(devMode, nil)
 }
 
 // CreateMCPServerWithFileService creates an MCP server with a custom file content service.
 // The eval container has no plugin installed, so the production HTTP callback would 404 —
 // tests inject a Client4-backed service instead.
 func (suite *TestSuite) CreateMCPServerWithFileService(devMode bool, fileContentService tools.FileContentService) {
-	suite.createMCPServerWithConfig(devMode, nil, fileContentService)
+	suite.createMCPServerWithConfig(devMode, fileContentService)
 }
 
-func (suite *TestSuite) createMCPServerWithConfig(devMode bool, searchService tools.SemanticSearchService, fileContentService tools.FileContentService) {
+func (suite *TestSuite) createMCPServerWithConfig(devMode bool, fileContentService tools.FileContentService) {
 	require.NotNil(suite.t, suite.logger, "Logger must be initialized")
 	require.NotEmpty(suite.t, suite.serverURL, "Server URL must be set")
 	require.NotEmpty(suite.t, suite.adminToken, "Admin token must be set")
 
 	stdioConfig := mcpserver.StdioConfig{
-		BaseConfig: mcpserver.BaseConfig{
-			MMServerURL: suite.serverURL,
-			DevMode:     devMode,
-		},
+		MMServerURL:         suite.serverURL,
+		DevMode:             devMode,
 		PersonalAccessToken: suite.adminToken,
 	}
-	mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, searchService, fileContentService)
+	mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, fileContentService)
 	require.NoError(suite.t, err, "Failed to create MCP server")
 
 	suite.mcpServer = mcpServer

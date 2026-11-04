@@ -2,69 +2,24 @@
 // See LICENSE.txt for license information.
 
 import React, {useRef, useState, useEffect} from 'react';
-import styled, {css} from 'styled-components';
 import {useSelector, useDispatch} from 'react-redux';
 import {GlobalState} from '@mattermost/types/store';
 //eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
-import {OverlayTrigger, Tooltip, Overlay} from 'react-bootstrap';
-import {FormattedMessage, useIntl} from 'react-intl';
+import {Overlay} from 'react-bootstrap';
+import {useIntl} from 'react-intl';
+
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {doChannelAnalysis} from '@/client';
 import {openRHS} from '@/redux_actions';
-import {useIsBasicsLicensed} from '@/license';
+import {useIsLicensedFor} from '@/license';
 
 import {useBotlist} from '@/bots';
 
 import IconAI from './assets/icon_ai';
 import {ChannelSummarizePopover} from './channel_summarize_popover';
-
-interface ButtonContainerProps {
-    isActive: boolean;
-}
-
-const ButtonContainer = styled.button<ButtonContainerProps>`
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border-radius: 4px;
-    border: none;
-    padding: 6px;
-    cursor: pointer;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    transition: background 0.15s ease-in-out, color 0.15s ease-in-out;
-
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
-        color: rgba(var(--center-channel-color-rgb), 0.72);
-    }
-
-    &:active {
-        background: rgba(var(--center-channel-color-rgb), 0.16);
-        color: rgba(var(--center-channel-color-rgb), 0.72);
-    }
-
-    ${({isActive}) => isActive && css`
-        background: rgba(var(--button-bg-rgb), 0.08);
-        color: var(--button-bg);
-
-        &:hover {
-            background: rgba(var(--button-bg-rgb), 0.12);
-            color: var(--button-bg);
-        }
-
-        &:active {
-            background: rgba(var(--button-bg-rgb), 0.16);
-            color: var(--button-bg);
-        }
-    `}
-
-    svg {
-        width: 16px;
-        height: 16px;
-        display: block;
-    }
-`;
 
 const PopoverWrapper = React.forwardRef((props: any, ref: any) => {
     const {
@@ -79,6 +34,10 @@ const PopoverWrapper = React.forwardRef((props: any, ref: any) => {
         arrowOffsetTop,
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         placement,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        arrowRef,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        arrowStyle,
         ...rest
     } = props;
 
@@ -108,7 +67,7 @@ const AskChannelButton = () => {
     const [showPopover, setShowPopover] = useState(false);
     const target = useRef<HTMLButtonElement>(null);
     const {bots, activeBot, setActiveBot} = useBotlist();
-    const isBasicsLicensed = useIsBasicsLicensed();
+    const channelSummarizationLicensed = useIsLicensedFor('channel_summarization');
 
     const currentChannelId = useSelector((state: GlobalState) => state.entities.channels.currentChannelId);
     const currentTeamId = useSelector((state: GlobalState) => state.entities.teams.currentTeamId);
@@ -132,7 +91,7 @@ const AskChannelButton = () => {
         // Open RHS
         dispatch(openRHS());
 
-        const result = await doChannelAnalysis(currentChannelId, 'summarize_channel', activeBot.username, {
+        const result = await doChannelAnalysis(currentChannelId, 'summarize_channel', activeBot.id, {
             ...options,
             team_id: currentTeamId,
         });
@@ -165,47 +124,25 @@ const AskChannelButton = () => {
         setShowPopover(!showPopover);
     };
 
-    if (!isBasicsLicensed) {
+    if (!channelSummarizationLicensed) {
         return null;
     }
 
     const buttonLabel = intl.formatMessage({defaultMessage: 'Ask Agents about this channel'});
-    const tooltip = (
-        <Tooltip id='ask-agents-tooltip'>
-            <FormattedMessage defaultMessage='Ask Agents about this channel'/>
-        </Tooltip>
-    );
 
     return (
         <>
-            {showPopover ? (
-                <ButtonContainer
+            <WithTooltip title={showPopover ? '' : buttonLabel}>
+                <IconButton
                     ref={target}
                     onClick={handleToggle}
-                    isActive={showPopover}
+                    size='x-small'
+                    toggled={showPopover}
+                    icon={<Icon glyph={<IconAI/>}/>}
                     aria-label={buttonLabel}
-                    title={buttonLabel}
                     data-testid='ask-channel-button'
-                >
-                    <IconAI/>
-                </ButtonContainer>
-            ) : (
-                <OverlayTrigger
-                    placement='bottom'
-                    overlay={tooltip}
-                >
-                    <ButtonContainer
-                        ref={target}
-                        onClick={handleToggle}
-                        isActive={showPopover}
-                        aria-label={buttonLabel}
-                        title={buttonLabel}
-                        data-testid='ask-channel-button'
-                    >
-                        <IconAI/>
-                    </ButtonContainer>
-                </OverlayTrigger>
-            )}
+                />
+            </WithTooltip>
             <Overlay
                 target={() => target.current}
                 show={showPopover}

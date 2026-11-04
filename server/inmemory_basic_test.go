@@ -13,19 +13,17 @@ import (
 
 func TestInMemoryServerCreation(t *testing.T) {
 	config := mcpserver.InMemoryConfig{
-		BaseConfig: mcpserver.BaseConfig{
-			MMServerURL: "http://localhost:8065",
-			DevMode:     false,
-		},
+		MMServerURL: "http://localhost:8065",
+		DevMode:     false,
 	}
 
 	mcpLogger, err := logger.CreateLoggerWithOptions(false, "")
 	require.NoError(t, err)
 
-	server, err := mcpserver.NewInMemoryServer(config, mcpLogger, nil, nil)
+	server, err := mcpserver.NewInMemoryServer(config, mcpLogger, nil, nil, func() bool { return true })
 	require.NoError(t, err)
 
 	// Test creating a client transport (without validation by passing nil resolver)
-	_, err = server.CreateConnectionForUser("test_user_123", "", nil, nil)
+	_, err = server.CreateConnectionForUser("test_user_123", "", nil)
 	require.NoError(t, err)
 }

@@ -30,17 +30,17 @@ func TestHandleGetConversation(t *testing.T) {
 	toolUseInput := json.RawMessage(`{"city":"NYC"}`)
 	unsharedToolBlocks := mustMarshalBlocks(t, []conversation.ContentBlock{
 		{Type: conversation.BlockTypeText, Text: "Let me check the weather."},
-		{Type: conversation.BlockTypeToolUse, ID: "tc_01", Name: "get_weather", Input: toolUseInput, Status: conversation.StatusPending, Shared: conversation.BoolPtr(false)},
+		{Type: conversation.BlockTypeToolUse, ID: "tc_01", Name: "get_weather", Input: toolUseInput, Status: conversation.StatusPending, Shared: new(false)},
 	})
 	unsharedToolResultBlocks := mustMarshalBlocks(t, []conversation.ContentBlock{
-		{Type: conversation.BlockTypeToolResult, ToolUseID: "tc_01", Content: "72F, sunny", Status: conversation.StatusSuccess, Shared: conversation.BoolPtr(false)},
+		{Type: conversation.BlockTypeToolResult, ToolUseID: "tc_01", Content: "72F, sunny", Status: conversation.StatusSuccess, Shared: new(false)},
 	})
 	sharedToolBlocks := mustMarshalBlocks(t, []conversation.ContentBlock{
 		{Type: conversation.BlockTypeText, Text: "Let me check the weather."},
-		{Type: conversation.BlockTypeToolUse, ID: "tc_02", Name: "get_weather", Input: toolUseInput, Status: conversation.StatusSuccess, Shared: conversation.BoolPtr(true)},
+		{Type: conversation.BlockTypeToolUse, ID: "tc_02", Name: "get_weather", Input: toolUseInput, Status: conversation.StatusSuccess, Shared: new(true)},
 	})
 	sharedToolResultBlocks := mustMarshalBlocks(t, []conversation.ContentBlock{
-		{Type: conversation.BlockTypeToolResult, ToolUseID: "tc_02", Content: "72F, sunny", Status: conversation.StatusSuccess, Shared: conversation.BoolPtr(true)},
+		{Type: conversation.BlockTypeToolResult, ToolUseID: "tc_02", Content: "72F, sunny", Status: conversation.StatusSuccess, Shared: new(true)},
 	})
 	textOnlyBlocks := mustMarshalBlocks(t, []conversation.ContentBlock{
 		{Type: conversation.BlockTypeText, Text: "What is the weather in NYC?"},
@@ -177,7 +177,7 @@ func TestHandleGetConversation(t *testing.T) {
 				err = json.Unmarshal(response.Turns[2].Content, &resultBlocks)
 				require.NoError(t, err)
 				require.Len(t, resultBlocks, 1)
-				assert.Equal(t, "", resultBlocks[0].Content, "non-owner should not see tool_result content")
+				assert.Empty(t, resultBlocks[0].Content, "non-owner should not see tool_result content")
 			},
 		},
 		{
@@ -314,7 +314,7 @@ func TestHandleGetConversation(t *testing.T) {
 				err := json.NewDecoder(resp.Body).Decode(&response)
 				require.NoError(t, err)
 				require.NotNil(t, response.Turns, "turns should not be null")
-				assert.Len(t, response.Turns, 0, "turns should be empty array")
+				assert.Empty(t, response.Turns, "turns should be empty array")
 			},
 		},
 		{

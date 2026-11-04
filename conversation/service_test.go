@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+)
+
+const (
+	attachmentTestSessionID = "attachment-test-session"
+	attachmentTestChannelID = "attachment-test-channel"
 )
 
 var testConnStr string
@@ -109,8 +115,6 @@ func (t *testLLM) CountTokens(_ context.Context, _ llm.CompletionRequest, _ ...l
 func (t *testLLM) InputTokenLimit() int  { return 100000 }
 func (t *testLLM) OutputTokenLimit() int { return 8192 }
 
-func stringPtr(s string) *string { return &s }
-
 func setupTestService(t *testing.T) (*Service, *store.Store) {
 	t.Helper()
 
@@ -149,12 +153,12 @@ func TestCreateConversation(t *testing.T) {
 			params: CreateConversationParams{
 				UserID:       model.NewId(),
 				BotID:        model.NewId(),
-				ChannelID:    stringPtr("chan1"),
-				RootPostID:   stringPtr("root1"),
+				ChannelID:    new("chan1"),
+				RootPostID:   new("root1"),
 				Operation:    "conversation",
 				SystemPrompt: "You are a helpful assistant",
 				UserMessage:  "Hello!",
-				UserPostID:   stringPtr("post1"),
+				UserPostID:   new("post1"),
 			},
 			validate: func(t *testing.T, svc *Service, s *store.Store, result *CreateConversationResult, err error) {
 				require.NoError(t, err)
@@ -281,7 +285,7 @@ func TestGetOrCreateConversation_MultipleUsersSameThread(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "prompt",
 		UserMessage:  "hi from A",
-		UserPostID:   stringPtr("post_A"),
+		UserPostID:   new("post_A"),
 	})
 	require.NoError(t, err, "userA should create a conversation without error")
 	require.True(t, resultA.IsNew)
@@ -294,7 +298,7 @@ func TestGetOrCreateConversation_MultipleUsersSameThread(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "prompt",
 		UserMessage:  "hi from B",
-		UserPostID:   stringPtr("post_B"),
+		UserPostID:   new("post_B"),
 	})
 	require.NoError(t, err, "userB in the same thread must not hit 'conversation vanished after conflict'")
 	require.True(t, resultB.IsNew)
@@ -314,7 +318,7 @@ func TestGetOrCreateConversation_New(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "You are helpful",
 		UserMessage:  "Hello",
-		UserPostID:   stringPtr("post1"),
+		UserPostID:   new("post1"),
 	})
 
 	require.NoError(t, err)
@@ -343,7 +347,7 @@ func TestGetOrCreateConversation_Existing(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "prompt",
 		UserMessage:  "first message",
-		UserPostID:   stringPtr("post1"),
+		UserPostID:   new("post1"),
 	})
 	require.NoError(t, err)
 
@@ -356,7 +360,7 @@ func TestGetOrCreateConversation_Existing(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "prompt (ignored for existing)",
 		UserMessage:  "second message",
-		UserPostID:   stringPtr("post2"),
+		UserPostID:   new("post2"),
 	})
 
 	require.NoError(t, err)
@@ -443,7 +447,7 @@ func TestBuildCompletionRequest_NewConversation(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	conv, err := svc.store.GetConversation(result.ConversationID)
+	conv, err := svc.GetConversation(result.ConversationID)
 	require.NoError(t, err)
 
 	req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
@@ -532,7 +536,7 @@ func TestBuildCompletionRequest_WithToolTurns(t *testing.T) {
 			Name:   "get_weather",
 			Input:  json.RawMessage(`{"city":"NYC"}`),
 			Status: StatusSuccess,
-			Shared: BoolPtr(true),
+			Shared: new(true),
 		},
 	}
 	assistantContent, _ := json.Marshal(assistantBlocks)
@@ -553,7 +557,7 @@ func TestBuildCompletionRequest_WithToolTurns(t *testing.T) {
 			ToolUseID: "tc1",
 			Content:   "72F, sunny",
 			Status:    StatusSuccess,
-			Shared:    BoolPtr(true),
+			Shared:    new(true),
 		},
 	}
 	resultContent, _ := json.Marshal(resultBlocks)
@@ -621,7 +625,7 @@ func TestBuildCompletionRequest_StripsPersistedAssistantReasoning(t *testing.T) 
 			Name:   "get_weather",
 			Input:  json.RawMessage(`{"city":"NYC"}`),
 			Status: StatusSuccess,
-			Shared: BoolPtr(true),
+			Shared: new(true),
 		},
 	}
 	assistantContent, err := json.Marshal(assistantBlocks)
@@ -642,7 +646,7 @@ func TestBuildCompletionRequest_StripsPersistedAssistantReasoning(t *testing.T) 
 			ToolUseID: "tc1",
 			Content:   "72F, sunny",
 			Status:    StatusSuccess,
-			Shared:    BoolPtr(true),
+			Shared:    new(true),
 		},
 	}
 	resultContent, err := json.Marshal(resultBlocks)
@@ -704,16 +708,16 @@ func TestBuildCompletionRequest_MultipleToolRoundsMerged(t *testing.T) {
 	}
 
 	addTurn("assistant", 2, []ContentBlock{
-		{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(true)},
+		{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: new(true)},
 	})
 	addTurn("tool_result", 3, []ContentBlock{
-		{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "first result", Status: StatusSuccess, Shared: BoolPtr(true)},
+		{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "first result", Status: StatusSuccess, Shared: new(true)},
 	})
 	addTurn("assistant", 4, []ContentBlock{
-		{Type: BlockTypeToolUse, ID: "tc2", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(true)},
+		{Type: BlockTypeToolUse, ID: "tc2", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: new(true)},
 	})
 	addTurn("tool_result", 5, []ContentBlock{
-		{Type: BlockTypeToolResult, ToolUseID: "tc2", Content: "second result", Status: StatusSuccess, Shared: BoolPtr(true)},
+		{Type: BlockTypeToolResult, ToolUseID: "tc2", Content: "second result", Status: StatusSuccess, Shared: new(true)},
 	})
 
 	conv, err := s.GetConversation(convID)
@@ -758,10 +762,12 @@ func TestBuildCompletionRequest_RedactsUnsharedToolContentByDefault(t *testing.T
 	require.NoError(t, err)
 	convID := result.ConversationID
 
-	// Two tool calls, one shared, one unshared.
+	// One shared call, one the user kept private, and one awaiting the
+	// share decision.
 	assistantBlocks := []ContentBlock{
-		{Type: BlockTypeToolUse, ID: "tc-shared", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(true)},
-		{Type: BlockTypeToolUse, ID: "tc-private", Name: "read_dm", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(false)},
+		{Type: BlockTypeToolUse, ID: "tc-shared", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: new(true)},
+		{Type: BlockTypeToolUse, ID: "tc-private", Name: "read_dm", Input: json.RawMessage(`{"channel":"secret-dm"}`), Status: StatusSuccess, Shared: new(false)},
+		{Type: BlockTypeToolUse, ID: "tc-pending", Name: "read_dm", Input: json.RawMessage(`{"channel":"other-dm"}`), Status: StatusSuccess, Shared: new(false)},
 	}
 	assistantContent, err := json.Marshal(assistantBlocks)
 	require.NoError(t, err)
@@ -772,8 +778,9 @@ func TestBuildCompletionRequest_RedactsUnsharedToolContentByDefault(t *testing.T
 	require.NoError(t, err)
 
 	resultBlocks := []ContentBlock{
-		{Type: BlockTypeToolResult, ToolUseID: "tc-shared", Content: "PUBLIC DATA", Status: StatusSuccess, Shared: BoolPtr(true)},
-		{Type: BlockTypeToolResult, ToolUseID: "tc-private", Content: "PRIVATE SECRET", Status: StatusSuccess, Shared: BoolPtr(false)},
+		{Type: BlockTypeToolResult, ToolUseID: "tc-shared", Content: "PUBLIC DATA", Status: StatusSuccess, Shared: new(true)},
+		{Type: BlockTypeToolResult, ToolUseID: "tc-private", Content: "PRIVATE SECRET", Status: StatusSuccess, Shared: new(false), DecidedAt: new(model.GetMillis())},
+		{Type: BlockTypeToolResult, ToolUseID: "tc-pending", Content: "PENDING SECRET", Status: StatusSuccess, Shared: new(false)},
 	}
 	resultContent, err := json.Marshal(resultBlocks)
 	require.NoError(t, err)
@@ -803,9 +810,17 @@ func TestBuildCompletionRequest_RedactsUnsharedToolContentByDefault(t *testing.T
 		require.NoError(t, err)
 		results := resultsByID(req)
 		assert.Equal(t, "PUBLIC DATA", results["tc-shared"])
-		assert.Equal(t, UnsharedToolResultRedaction, results["tc-private"],
+		assert.Equal(t, "[arguments and result not shared by user]", results["tc-private"],
 			"kept-private tool_result content must never leak into the default LLM prompt; "+
 				"a channel-visible response could paraphrase it")
+		assert.Equal(t, "[result pending the user's decision to share it]", results["tc-pending"])
+		for _, p := range req.Posts {
+			for _, tc := range p.ToolUse {
+				if tc.ID != "tc-shared" {
+					assert.JSONEq(t, `{}`, string(tc.Arguments))
+				}
+			}
+		}
 	})
 
 	t.Run("empty BuildOptions still redacts", func(t *testing.T) {
@@ -822,6 +837,7 @@ func TestBuildCompletionRequest_RedactsUnsharedToolContentByDefault(t *testing.T
 		results := resultsByID(req)
 		assert.Equal(t, "PUBLIC DATA", results["tc-shared"])
 		assert.Equal(t, "PRIVATE SECRET", results["tc-private"])
+		assert.Equal(t, "PENDING SECRET", results["tc-pending"])
 	})
 }
 
@@ -844,7 +860,7 @@ func TestBuildChannelMentionRequest_RedactsUnsharedToolContentByDefault(t *testi
 
 	// Prior mention executed a tool; user kept the result private.
 	assistantBlocks := []ContentBlock{
-		{Type: BlockTypeToolUse, ID: "tc-private", Name: "read_dm", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(false)},
+		{Type: BlockTypeToolUse, ID: "tc-private", Name: "read_dm", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: new(false)},
 	}
 	assistantContent, err := json.Marshal(assistantBlocks)
 	require.NoError(t, err)
@@ -855,7 +871,7 @@ func TestBuildChannelMentionRequest_RedactsUnsharedToolContentByDefault(t *testi
 	require.NoError(t, err)
 
 	resultBlocks := []ContentBlock{
-		{Type: BlockTypeToolResult, ToolUseID: "tc-private", Content: "PRIVATE SECRET", Status: StatusSuccess, Shared: BoolPtr(false)},
+		{Type: BlockTypeToolResult, ToolUseID: "tc-private", Content: "PRIVATE SECRET", Status: StatusSuccess, Shared: new(false)},
 	}
 	resultContent, err := json.Marshal(resultBlocks)
 	require.NoError(t, err)
@@ -895,7 +911,7 @@ func TestBuildCompletionRequest_SystemPromptIsFirst(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	conv, err := svc.store.GetConversation(result.ConversationID)
+	conv, err := svc.GetConversation(result.ConversationID)
 	require.NoError(t, err)
 
 	req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
@@ -915,7 +931,7 @@ func TestBuildCompletionRequest_ExcludeAfterPostID(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "system",
 		UserMessage:  "user1",
-		UserPostID:   stringPtr("user_post1"),
+		UserPostID:   new("user_post1"),
 	})
 	require.NoError(t, err)
 	convID := result.ConversationID
@@ -925,7 +941,7 @@ func TestBuildCompletionRequest_ExcludeAfterPostID(t *testing.T) {
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
 		ConversationID: convID,
-		PostID:         stringPtr("resp1"),
+		PostID:         new("resp1"),
 		Role:           "assistant",
 		Content:        assistantContent1,
 		Sequence:       2,
@@ -938,7 +954,7 @@ func TestBuildCompletionRequest_ExcludeAfterPostID(t *testing.T) {
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
 		ConversationID: convID,
-		PostID:         stringPtr("user_post2"),
+		PostID:         new("user_post2"),
 		Role:           "user",
 		Content:        userContent2,
 		Sequence:       3,
@@ -951,7 +967,7 @@ func TestBuildCompletionRequest_ExcludeAfterPostID(t *testing.T) {
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
 		ConversationID: convID,
-		PostID:         stringPtr("resp2"),
+		PostID:         new("resp2"),
 		Role:           "assistant",
 		Content:        assistantContent2,
 		Sequence:       4,
@@ -989,7 +1005,7 @@ func TestBuildCompletionRequest_ExcludeAfterPostID_ToolApprovalContinuationLeave
 		Operation:    "conversation",
 		SystemPrompt: "system",
 		UserMessage:  "user1",
-		UserPostID:   stringPtr("user_post1"),
+		UserPostID:   new("user_post1"),
 	})
 	require.NoError(t, err)
 	convID := result.ConversationID
@@ -997,7 +1013,7 @@ func TestBuildCompletionRequest_ExcludeAfterPostID_ToolApprovalContinuationLeave
 	// Demoted prior anchor (left behind by a continuation finalize).
 	demotedContent, _ := json.Marshal([]ContentBlock{
 		{Type: BlockTypeText, Text: "Let me search."},
-		{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Status: StatusSuccess, Shared: BoolPtr(true)},
+		{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Status: StatusSuccess, Shared: new(true)},
 	})
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
@@ -1011,7 +1027,7 @@ func TestBuildCompletionRequest_ExcludeAfterPostID_ToolApprovalContinuationLeave
 	require.NoError(t, err)
 
 	resultContent, _ := json.Marshal([]ContentBlock{
-		{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "5 channels found", Shared: BoolPtr(true)},
+		{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "5 channels found", Shared: new(true)},
 	})
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
@@ -1028,7 +1044,7 @@ func TestBuildCompletionRequest_ExcludeAfterPostID_ToolApprovalContinuationLeave
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
 		ConversationID: convID,
-		PostID:         stringPtr("resp_post"),
+		PostID:         new("resp_post"),
 		Role:           "assistant",
 		Content:        anchorContent,
 		Sequence:       4,
@@ -1062,7 +1078,7 @@ func TestCreatePlaceholderAssistantTurn(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	turnID, err := svc.CreatePlaceholderAssistantTurn(result.ConversationID, stringPtr("response_post"))
+	turnID, err := svc.CreatePlaceholderAssistantTurn(result.ConversationID, new("response_post"))
 	require.NoError(t, err)
 	require.NotEmpty(t, turnID)
 
@@ -1349,26 +1365,111 @@ func TestWriteToolTurns_ErroredTool(t *testing.T) {
 	assert.Equal(t, "something went wrong", resultBlocks[0].Content)
 }
 
+// renamingLLM renames the conversation while the title is being generated,
+// as a user can from the product view right after sending a message.
+type renamingLLM struct {
+	testLLM
+	rename func()
+	calls  int
+}
+
+func (r *renamingLLM) ChatCompletionNoStream(ctx context.Context, req llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+	r.calls++
+	if r.rename != nil {
+		r.rename()
+	}
+	return r.testLLM.ChatCompletionNoStream(ctx, req, opts...)
+}
+
 func TestGenerateTitle(t *testing.T) {
-	svc, s := setupTestService(t)
+	type wsEvent struct {
+		name      string
+		payload   map[string]any
+		broadcast *model.WebsocketBroadcast
+	}
 
-	result, err := svc.CreateConversation(CreateConversationParams{
-		UserID:       model.NewId(),
-		BotID:        model.NewId(),
-		Operation:    "conversation",
-		SystemPrompt: "prompt",
-		UserMessage:  "Tell me about Go",
-	})
-	require.NoError(t, err)
+	tests := []struct {
+		name string
+		// renameBefore and renameDuring rename the conversation through the
+		// store, before generation starts or while the LLM call runs.
+		renameBefore  bool
+		renameDuring  bool
+		wantTitle     string
+		wantLLMCalled bool
+		wantEvent     bool
+	}{
+		{
+			name:          "an untitled conversation gets the generated title and the owner is told",
+			wantTitle:     "Go Programming Language",
+			wantLLMCalled: true,
+			wantEvent:     true,
+		},
+		{
+			name:         "a rename before generation is kept and no title is generated",
+			renameBefore: true,
+			wantTitle:    "Named by me",
+		},
+		{
+			name:          "a rename while the title is generated is kept",
+			renameDuring:  true,
+			wantTitle:     "Named by me",
+			wantLLMCalled: true,
+		},
+	}
 
-	mockLLM := &testLLM{noStreamResponse: `"Go Programming Language"`}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var events []wsEvent
+			mmClient := mmapimocks.NewMockClient(t)
+			mmClient.On("PublishWebSocketEvent", mock.AnythingOfType("string"), mock.AnythingOfType("map[string]interface {}"), mock.AnythingOfType("*model.WebsocketBroadcast")).
+				Run(func(args mock.Arguments) {
+					payload, _ := args.Get(1).(map[string]any)
+					broadcast, _ := args.Get(2).(*model.WebsocketBroadcast)
+					events = append(events, wsEvent{name: args.String(0), payload: payload, broadcast: broadcast})
+				}).Return().Maybe()
+			svc, s := setupTestServiceWithClient(t, mmClient, nil)
 
-	err = svc.GenerateTitle(result.ConversationID, mockLLM, "Tell me about Go", &llm.Context{})
-	require.NoError(t, err)
+			userID := model.NewId()
+			result, err := svc.CreateConversation(CreateConversationParams{
+				UserID:       userID,
+				BotID:        model.NewId(),
+				Operation:    "conversation",
+				SystemPrompt: "prompt",
+				UserMessage:  "Tell me about Go",
+			})
+			require.NoError(t, err)
 
-	conv, err := s.GetConversation(result.ConversationID)
-	require.NoError(t, err)
-	assert.Equal(t, "Go Programming Language", conv.Title)
+			rename := func() {
+				renamed, renameErr := s.RenameConversation(result.ConversationID, "Named by me")
+				assert.NoError(t, renameErr)
+				assert.True(t, renamed)
+			}
+			mockLLM := &renamingLLM{noStreamResponse: `"Go Programming Language"`}
+			if tt.renameBefore {
+				rename()
+			}
+			if tt.renameDuring {
+				mockLLM.rename = rename
+			}
+
+			err = svc.GenerateTitle(context.Background(), result.ConversationID, mockLLM, "Tell me about Go", &llm.Context{})
+			require.NoError(t, err)
+
+			conv, err := s.GetConversation(result.ConversationID)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantTitle, conv.Title)
+			assert.Equal(t, tt.wantLLMCalled, mockLLM.calls > 0)
+
+			if !tt.wantEvent {
+				assert.Empty(t, events, "no event when the generated title was not saved")
+				return
+			}
+			require.Len(t, events, 1)
+			assert.Equal(t, WebsocketEventConversationUpdated, events[0].name)
+			assert.Equal(t, map[string]any{"conversation_id": result.ConversationID, "title": tt.wantTitle}, events[0].payload)
+			assert.Equal(t, &model.WebsocketBroadcast{UserId: userID}, events[0].broadcast)
+		})
+	}
 }
 
 func TestBuildChannelMentionRequest_BotTurnsOnly(t *testing.T) {
@@ -1384,7 +1485,7 @@ func TestBuildChannelMentionRequest_BotTurnsOnly(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "system prompt",
 		UserMessage:  "hello bot",
-		UserPostID:   stringPtr("post1"),
+		UserPostID:   new("post1"),
 	})
 	require.NoError(t, err)
 
@@ -1393,7 +1494,7 @@ func TestBuildChannelMentionRequest_BotTurnsOnly(t *testing.T) {
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
 		ConversationID: result.ConversationID,
-		PostID:         stringPtr("post2"),
+		PostID:         new("post2"),
 		Role:           "assistant",
 		Content:        assistantContent,
 		Sequence:       2,
@@ -1442,7 +1543,7 @@ func TestBuildChannelMentionRequest_MixedThread(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "system",
 		UserMessage:  "question from A",
-		UserPostID:   stringPtr("postA1"),
+		UserPostID:   new("postA1"),
 	})
 	require.NoError(t, err)
 
@@ -1451,7 +1552,7 @@ func TestBuildChannelMentionRequest_MixedThread(t *testing.T) {
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
 		ConversationID: result.ConversationID,
-		PostID:         stringPtr("postBot1"),
+		PostID:         new("postBot1"),
 		Role:           "assistant",
 		Content:        assistantContent,
 		Sequence:       2,
@@ -1508,7 +1609,7 @@ func TestBuildChannelMentionRequest_StopsAtCurrentUserTurn(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "system",
 		UserMessage:  "@aibot look at the earlier post",
-		UserPostID:   stringPtr(currentPostID),
+		UserPostID:   new(currentPostID),
 	})
 	require.NoError(t, err)
 
@@ -1542,6 +1643,295 @@ func TestBuildChannelMentionRequest_StopsAtCurrentUserTurn(t *testing.T) {
 	}
 }
 
+func TestBuildChannelMentionRequest_PostLessUserTurnsFollowThreadChronology(t *testing.T) {
+	type turnSpec struct {
+		role      string
+		text      string
+		postID    string
+		createdAt int64
+	}
+	type postSpec struct {
+		id       string
+		bot      bool
+		createAt int64
+		message  string
+	}
+
+	// Every case shares a first exchange: the requester's mention and the
+	// agent's reply.
+	baseTurns := []turnSpec{
+		{role: "user", text: "MENTION", postID: "mention", createdAt: 1000},
+		{role: "assistant", text: "REPLY", postID: "reply", createdAt: 1100},
+	}
+	basePosts := []postSpec{
+		{id: "mention", createAt: 1000, message: "MENTION"},
+		{id: "reply", bot: true, createAt: 1050, message: "REPLY"},
+	}
+
+	tests := []struct {
+		name        string
+		turns       []turnSpec
+		posts       []postSpec
+		responseID  string
+		wantOrder   []string
+		wantMissing []string
+	}{
+		{
+			name:  "wake turn follows posts made while the agent slept and skips the wake placeholder",
+			turns: []turnSpec{{role: "user", text: "WAKE", createdAt: 5000}},
+			posts: []postSpec{
+				{id: "peer1", createAt: 2000, message: "PEER_ONE"},
+				{id: "peer2", createAt: 3000, message: "PEER_TWO"},
+				{id: "wake_placeholder", bot: true, createAt: 4999, message: "PLACEHOLDER_TEXT"},
+			},
+			responseID:  "wake_placeholder",
+			wantOrder:   []string{"REPLY", "PEER_ONE", "PEER_TWO", "WAKE"},
+			wantMissing: []string{"PLACEHOLDER_TEXT"},
+		},
+		{
+			name: "earlier wake stays before the post that answered it",
+			turns: []turnSpec{
+				{role: "user", text: "WAKE_ONE", createdAt: 5000},
+				{role: "assistant", text: "WAKE_ONE_TOOL_ROUND", createdAt: 5010},
+				{role: "assistant", text: "WAKE_ONE_REPLY", postID: "wake_reply", createdAt: 5020},
+				{role: "user", text: "WAKE_TWO", createdAt: 9000},
+			},
+			posts: []postSpec{
+				{id: "peer_a", createAt: 2000, message: "PEER_A"},
+				// The answer's post predates its wake turn, as when the
+				// placeholder is created first.
+				{id: "wake_reply", bot: true, createAt: 4999, message: "WAKE_ONE_REPLY"},
+				{id: "peer_b", createAt: 6000, message: "PEER_B"},
+				{id: "wake2_placeholder", bot: true, createAt: 8999},
+			},
+			responseID: "wake2_placeholder",
+			wantOrder:  []string{"REPLY", "PEER_A", "WAKE_ONE", "WAKE_ONE_TOOL_ROUND", "WAKE_ONE_REPLY", "PEER_B", "WAKE_TWO"},
+		},
+		{
+			name: "steering note follows the new message in a live turn",
+			turns: []turnSpec{
+				{role: "user", text: "SECOND_MESSAGE", postID: "second", createdAt: 3000},
+				{role: "user", text: "STEERED_NOTE", createdAt: 3001},
+			},
+			posts: []postSpec{
+				{id: "peer1", createAt: 2000, message: "PEER_ONE"},
+				{id: "second", createAt: 2999, message: "SECOND_MESSAGE"},
+				{id: "live_placeholder", bot: true, createAt: 3000, message: "PLACEHOLDER_TEXT"},
+			},
+			wantOrder:   []string{"REPLY", "PEER_ONE", "SECOND_MESSAGE", "STEERED_NOTE"},
+			wantMissing: []string{"PLACEHOLDER_TEXT"},
+		},
+		{
+			name: "steering note stays before the reply it preceded on later turns",
+			turns: []turnSpec{
+				{role: "user", text: "SECOND_MESSAGE", postID: "second", createdAt: 3000},
+				{role: "user", text: "STEERED_NOTE", createdAt: 3001},
+				{role: "assistant", text: "SECOND_REPLY", postID: "second_reply", createdAt: 3100},
+			},
+			posts: []postSpec{
+				{id: "second", createAt: 2999, message: "SECOND_MESSAGE"},
+				{id: "second_reply", bot: true, createAt: 3000, message: "SECOND_REPLY"},
+			},
+			wantOrder: []string{"REPLY", "SECOND_MESSAGE", "STEERED_NOTE", "SECOND_REPLY"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, s := setupTestService(t)
+			botID := model.NewId()
+			userID := model.NewId()
+			peerID := model.NewId()
+			rootPostID := "mention"
+
+			conv := &store.Conversation{
+				ID: model.NewId(), UserID: userID, BotID: botID, RootPostID: &rootPostID,
+				SystemPrompt: "system", Operation: "conversation",
+			}
+			require.NoError(t, s.CreateConversation(conv))
+			for i, spec := range append(slices.Clone(baseTurns), tt.turns...) {
+				content, err := json.Marshal([]ContentBlock{{Type: BlockTypeText, Text: spec.text}})
+				require.NoError(t, err)
+				turn := &store.Turn{
+					ID: model.NewId(), ConversationID: conv.ID, Role: spec.role,
+					Content: content, Sequence: i + 1, CreatedAt: spec.createdAt,
+				}
+				if spec.postID != "" {
+					turn.PostID = new(spec.postID)
+				}
+				require.NoError(t, s.CreateTurn(turn))
+			}
+
+			var posts []*model.Post
+			for _, spec := range append(slices.Clone(basePosts), tt.posts...) {
+				author := peerID
+				switch {
+				case spec.bot:
+					author = botID
+				case strings.Contains(spec.message, "MENTION") || strings.Contains(spec.message, "SECOND_MESSAGE"):
+					author = userID
+				}
+				posts = append(posts, &model.Post{Id: spec.id, UserId: author, CreateAt: spec.createAt, Message: spec.message})
+			}
+			slices.SortStableFunc(posts, func(a, b *model.Post) int { return int(a.CreateAt - b.CreateAt) })
+			threadData := &mmapi.ThreadData{
+				Posts: posts,
+				UsersByID: map[string]*model.User{
+					userID: {Id: userID, Username: "alice"},
+					peerID: {Id: peerID, Username: "mallory"},
+					botID:  {Id: botID, Username: "aibot"},
+				},
+			}
+			svc.bots = &testBotLookup{botUserIDs: map[string]bool{botID: true}}
+
+			req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData, BuildOptions{ResponsePostID: tt.responseID})
+			require.NoError(t, err)
+
+			var rendered []string
+			for _, post := range req.Posts[1:] {
+				rendered = append(rendered, post.Message)
+			}
+			last := -1
+			for _, marker := range tt.wantOrder {
+				idx := slices.IndexFunc(rendered, func(msg string) bool { return strings.HasSuffix(msg, marker) })
+				require.GreaterOrEqual(t, idx, 0, "%q missing from %q", marker, rendered)
+				require.Greater(t, idx, last, "%q out of order in %q", marker, rendered)
+				last = idx
+			}
+			for _, marker := range tt.wantMissing {
+				require.NotContains(t, strings.Join(rendered, "\n"), marker)
+			}
+		})
+	}
+}
+
+func TestBuildChannelMentionRequest_SkipThreadPostsAfterLatestUserTurn(t *testing.T) {
+	type postSpec struct {
+		id       string
+		createAt int64
+		updateAt int64
+	}
+	const (
+		anchorID = "mention"
+		anchorAt = int64(1000)
+	)
+
+	tests := []struct {
+		name        string
+		skip        bool
+		anchorGone  bool
+		peers       []postSpec
+		wantPeers   []string
+		wantMissing []string
+	}{
+		{
+			name:        "post created after the latest user turn is dropped",
+			skip:        true,
+			peers:       []postSpec{{id: "PEER_AFTER", createAt: 3000, updateAt: 3000}},
+			wantMissing: []string{"PEER_AFTER"},
+		},
+		{
+			name:      "post created before the latest user turn is kept",
+			skip:      true,
+			peers:     []postSpec{{id: "PEER_BEFORE", createAt: 500, updateAt: 500}},
+			wantPeers: []string{"PEER_BEFORE"},
+		},
+		{
+			name:        "post created at the latest user turn's time is kept, later edits drop it",
+			skip:        true,
+			peers:       []postSpec{{id: "PEER_SAME", createAt: anchorAt, updateAt: anchorAt}, {id: "PEER_EDITED", createAt: 500, updateAt: 3000}},
+			wantPeers:   []string{"PEER_SAME"},
+			wantMissing: []string{"PEER_EDITED"},
+		},
+		{
+			name:        "every non-turn post is dropped when the latest user turn's post is gone",
+			skip:        true,
+			anchorGone:  true,
+			peers:       []postSpec{{id: "PEER_BEFORE", createAt: 500, updateAt: 500}, {id: "PEER_AFTER", createAt: 3000, updateAt: 3000}},
+			wantMissing: []string{"PEER_BEFORE", "PEER_AFTER"},
+		},
+		{
+			name:      "later posts are included when the option is off",
+			skip:      false,
+			peers:     []postSpec{{id: "PEER_BEFORE", createAt: 500, updateAt: 500}, {id: "PEER_AFTER", createAt: 3000, updateAt: 3000}, {id: "PEER_EDITED", createAt: 600, updateAt: 3500}},
+			wantPeers: []string{"PEER_BEFORE", "PEER_AFTER", "PEER_EDITED"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, s := setupTestService(t)
+			botID := model.NewId()
+			userID := model.NewId()
+			peerID := model.NewId()
+			rootPostID := anchorID
+
+			conv := &store.Conversation{
+				ID: model.NewId(), UserID: userID, BotID: botID, RootPostID: &rootPostID,
+				SystemPrompt: "system", Operation: "conversation",
+			}
+			require.NoError(t, s.CreateConversation(conv))
+			for i, spec := range []struct{ role, text, postID string }{
+				{"user", "MENTION", anchorID},
+				{"assistant", "REPLY", "reply"},
+				{"user", "WAKE", ""},
+			} {
+				content, err := json.Marshal([]ContentBlock{{Type: BlockTypeText, Text: spec.text}})
+				require.NoError(t, err)
+				turn := &store.Turn{ID: model.NewId(), ConversationID: conv.ID, Role: spec.role, Content: content, Sequence: i + 1, CreatedAt: anchorAt + int64(i)*2000}
+				if spec.postID != "" {
+					turn.PostID = new(spec.postID)
+				}
+				require.NoError(t, s.CreateTurn(turn))
+			}
+
+			posts := []*model.Post{
+				{Id: anchorID, UserId: userID, CreateAt: anchorAt, UpdateAt: anchorAt, Message: "MENTION"},
+				{Id: "reply", UserId: botID, CreateAt: 2000, UpdateAt: 2000, Message: "REPLY"},
+			}
+			if tt.anchorGone {
+				posts = posts[1:]
+			}
+			for _, peer := range tt.peers {
+				posts = append(posts, &model.Post{Id: peer.id, UserId: peerID, CreateAt: peer.createAt, UpdateAt: peer.updateAt, Message: peer.id})
+			}
+			slices.SortStableFunc(posts, func(a, b *model.Post) int { return int(a.CreateAt - b.CreateAt) })
+			threadData := &mmapi.ThreadData{
+				Posts: posts,
+				UsersByID: map[string]*model.User{
+					userID: {Id: userID, Username: "alice"},
+					peerID: {Id: peerID, Username: "mallory"},
+					botID:  {Id: botID, Username: "bot"},
+				},
+			}
+			svc.bots = &testBotLookup{botUserIDs: map[string]bool{botID: true}}
+
+			req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData,
+				BuildOptions{SkipThreadPostsAfterLatestUserTurn: tt.skip})
+			require.NoError(t, err)
+
+			var rendered strings.Builder
+			for _, post := range req.Posts {
+				rendered.WriteString(post.Message)
+				rendered.WriteString("\n")
+			}
+			// Post-linked turns and the post-less wake turn always render.
+			for _, always := range []string{"REPLY", "WAKE"} {
+				assert.Contains(t, rendered.String(), always)
+			}
+			if !tt.anchorGone {
+				assert.Contains(t, rendered.String(), "MENTION")
+			}
+			for _, peer := range tt.wantPeers {
+				assert.Contains(t, rendered.String(), peer)
+			}
+			for _, peer := range tt.wantMissing {
+				assert.NotContains(t, rendered.String(), peer)
+			}
+		})
+	}
+}
+
 func TestBuildChannelMentionRequest_MultiBotThread(t *testing.T) {
 	svc, s := setupTestService(t)
 
@@ -1558,7 +1948,7 @@ func TestBuildChannelMentionRequest_MultiBotThread(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "system",
 		UserMessage:  "hello bots",
-		UserPostID:   stringPtr("postU1"),
+		UserPostID:   new("postU1"),
 	})
 	require.NoError(t, err)
 
@@ -1567,7 +1957,7 @@ func TestBuildChannelMentionRequest_MultiBotThread(t *testing.T) {
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
 		ConversationID: result.ConversationID,
-		PostID:         stringPtr("postBotA1"),
+		PostID:         new("postBotA1"),
 		Role:           "assistant",
 		Content:        aContent,
 		Sequence:       2,
@@ -1618,7 +2008,7 @@ func TestBuildChannelMentionRequest_NoThreadPosts(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	conv, err := svc.store.GetConversation(result.ConversationID)
+	conv, err := svc.GetConversation(result.ConversationID)
 	require.NoError(t, err)
 
 	// Nil threadData should fall back to BuildCompletionRequest behavior.
@@ -1651,7 +2041,7 @@ func TestBuildChannelMentionRequest_ToolRoundsMerged(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "system",
 		UserMessage:  "what's the weather?",
-		UserPostID:   stringPtr("postU1"),
+		UserPostID:   new("postU1"),
 	})
 	require.NoError(t, err)
 	convID := result.ConversationID
@@ -1664,7 +2054,7 @@ func TestBuildChannelMentionRequest_ToolRoundsMerged(t *testing.T) {
 			Name:   "get_weather",
 			Input:  json.RawMessage(`{"city":"NYC"}`),
 			Status: StatusSuccess,
-			Shared: BoolPtr(true),
+			Shared: new(true),
 		},
 	}
 	toolUseContent, _ := json.Marshal(toolUseBlocks)
@@ -1685,7 +2075,7 @@ func TestBuildChannelMentionRequest_ToolRoundsMerged(t *testing.T) {
 			ToolUseID: "tc1",
 			Content:   "72F, sunny",
 			Status:    StatusSuccess,
-			Shared:    BoolPtr(true),
+			Shared:    new(true),
 		},
 	}
 	toolResultContent, _ := json.Marshal(toolResultBlocks)
@@ -1705,7 +2095,7 @@ func TestBuildChannelMentionRequest_ToolRoundsMerged(t *testing.T) {
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
 		ConversationID: convID,
-		PostID:         stringPtr("postBot1"),
+		PostID:         new("postBot1"),
 		Role:           "assistant",
 		Content:        finalContent,
 		Sequence:       4,
@@ -1750,6 +2140,116 @@ func TestBuildChannelMentionRequest_ToolRoundsMerged(t *testing.T) {
 	assert.Equal(t, "Weather in NYC is 72F and sunny.", final.Message)
 }
 
+// A tool call left pending or accepted (the user replied instead of approving,
+// or stopped the response while it ran) must not replay as a call that ran.
+func TestBuildRequests_UnexecutedToolCallsReplayAsNotExecuted(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     string
+		result     *string
+		wantResult string
+		wantStatus llm.ToolCallStatus
+	}{
+		{
+			name:       "pending without result",
+			status:     StatusPending,
+			wantResult: NotExecutedToolResult,
+			wantStatus: llm.ToolCallStatusRejected,
+		},
+		{
+			name:       "accepted without result",
+			status:     StatusAccepted,
+			wantResult: NotExecutedToolResult,
+			wantStatus: llm.ToolCallStatusRejected,
+		},
+		{
+			name:       "executed call keeps its empty result",
+			status:     StatusSuccess,
+			result:     new(""),
+			wantResult: "",
+			wantStatus: llm.ToolCallStatusSuccess,
+		},
+		{
+			name:       "pending call with a stored result keeps it",
+			status:     StatusPending,
+			result:     new("72F"),
+			wantResult: "72F",
+			wantStatus: llm.ToolCallStatusPending,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, s := setupTestService(t)
+			botID := model.NewId()
+			userID := model.NewId()
+			rootPostID := "root_" + model.NewId()
+
+			result, err := svc.CreateConversation(CreateConversationParams{
+				UserID:       userID,
+				BotID:        botID,
+				RootPostID:   &rootPostID,
+				Operation:    "conversation",
+				SystemPrompt: "system",
+				UserMessage:  "what's the weather?",
+				UserPostID:   new("postU1"),
+			})
+			require.NoError(t, err)
+			convID := result.ConversationID
+
+			blocks := []ContentBlock{
+				{Type: BlockTypeText, Text: "Let me check."},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "get_weather", Input: json.RawMessage(`{}`), Status: tc.status, Shared: new(true)},
+			}
+			if tc.result != nil {
+				blocks = append(blocks, ContentBlock{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: *tc.result, Status: StatusSuccess, Shared: new(true)})
+			}
+			content, _ := json.Marshal(blocks)
+			require.NoError(t, s.CreateTurn(&store.Turn{
+				ID: model.NewId(), ConversationID: convID, PostID: new("postBot1"),
+				Role: "assistant", Content: content, Sequence: 2, CreatedAt: model.GetMillis(),
+			}))
+			followUp, _ := json.Marshal([]ContentBlock{{Type: BlockTypeText, Text: "never mind"}})
+			require.NoError(t, s.CreateTurn(&store.Turn{
+				ID: model.NewId(), ConversationID: convID, PostID: new("postU2"),
+				Role: "user", Content: followUp, Sequence: 3, CreatedAt: model.GetMillis(),
+			}))
+
+			conv, err := s.GetConversation(convID)
+			require.NoError(t, err)
+			svc.bots = &testBotLookup{botUserIDs: map[string]bool{botID: true}}
+
+			dmReq, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+			require.NoError(t, err)
+			channelReq, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, &mmapi.ThreadData{
+				Posts: []*model.Post{
+					{Id: "postU1", UserId: userID, CreateAt: 1000, Message: "what's the weather?"},
+					{Id: "postBot1", UserId: botID, CreateAt: 2000, Message: "Let me check."},
+					{Id: "postU2", UserId: userID, CreateAt: 3000, Message: "never mind"},
+				},
+				UsersByID: map[string]*model.User{userID: {Id: userID, Username: "alice"}},
+			})
+			require.NoError(t, err)
+
+			for name, req := range map[string]*llm.CompletionRequest{"dm": dmReq, "channel": channelReq} {
+				var calls []llm.ToolCall
+				for _, post := range req.Posts {
+					calls = append(calls, post.ToolUse...)
+				}
+				require.Len(t, calls, 1, name)
+				assert.Equal(t, tc.wantResult, calls[0].Result, name)
+				assert.Equal(t, tc.wantStatus, calls[0].Status, name)
+			}
+
+			turns, err := s.GetTurnsForConversation(convID)
+			require.NoError(t, err)
+			stored, err := UnmarshalBlocks(turns[1].Content)
+			require.NoError(t, err)
+			assert.Equal(t, tc.status, stored[1].Status, "stored data must not change")
+		})
+	}
+}
+
 func TestSequenceNumbering_Concurrent(t *testing.T) {
 	svc, s := setupTestService(t)
 
@@ -1764,7 +2264,7 @@ func TestSequenceNumbering_Concurrent(t *testing.T) {
 	convID := result.ConversationID
 
 	// Rapidly create several turns and verify sequences remain consistent.
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		_, placeholderErr := svc.CreatePlaceholderAssistantTurn(convID, nil)
 		require.NoError(t, placeholderErr)
 	}
@@ -1826,7 +2326,7 @@ func TestGetOrCreateConversation_RaceConflict(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "prompt (ignored)",
 		UserMessage:  "second message",
-		UserPostID:   stringPtr("post2"),
+		UserPostID:   new("post2"),
 	})
 	require.NoError(t, err)
 	assert.False(t, result.IsNew)
@@ -1854,6 +2354,21 @@ func setupTestServiceWithClient(
 	bots *testBotLookup,
 ) (*Service, *store.Store) {
 	t.Helper()
+
+	if mockClient, ok := mmClient.(*mmapimocks.MockClient); ok {
+		mockClient.On(
+			"HasPermissionToFileAction",
+			attachmentTestSessionID,
+			mock.Anything,
+			model.AccessControlPolicyActionDownloadFileAttachment,
+		).Return(true).Maybe()
+		mockClient.On(
+			"HasPermissionToChannel",
+			mock.Anything,
+			attachmentTestChannelID,
+			model.PermissionReadChannel,
+		).Return(true).Maybe()
+	}
 
 	db, err := sqlx.Connect("postgres", testConnStr)
 	require.NoError(t, err)
@@ -1901,6 +2416,7 @@ func TestCreateConversation_FileIDsPersistsAsContentBlocks(t *testing.T) {
 
 	result, err := svc.CreateConversation(CreateConversationParams{
 		UserID:       model.NewId(),
+		SessionID:    attachmentTestSessionID,
 		BotID:        model.NewId(),
 		Operation:    "conversation",
 		SystemPrompt: "system",
@@ -1964,6 +2480,7 @@ func TestGetOrCreateConversation_AppendsFileIDs(t *testing.T) {
 
 	res, err := svc.GetOrCreateConversation(GetOrCreateParams{
 		UserID:       userID,
+		SessionID:    attachmentTestSessionID,
 		BotID:        botID,
 		ChannelID:    "chan1",
 		RootPostID:   rootPostID,
@@ -2018,10 +2535,11 @@ func TestCreateConversation_EmptyFileIDsAndMessage(t *testing.T) {
 	assert.Empty(t, blocks)
 }
 
-// TestCreateConversation_FileIDInfoErrorIsSkipped pins the resilience
+// TestCreateConversation_FileIDInfoErrorKeepsBareBlock pins the resilience
 // contract. If GetFileInfo errors for one fileID, the user turn must still
-// be created with the rest. Mirrors the old PostToAIPost behavior.
-func TestCreateConversation_FileIDInfoErrorIsSkipped(t *testing.T) {
+// be created with the rest, and the bad attachment must keep a bare block so
+// request building can tell the model it could not be loaded.
+func TestCreateConversation_FileIDInfoErrorKeepsBareBlock(t *testing.T) {
 	mmClient := mmapimocks.NewMockClient(t)
 	// Both GetFileInfo calls MUST happen — the bad one returns an error,
 	// but production must still attempt the fetch (otherwise an
@@ -2038,6 +2556,7 @@ func TestCreateConversation_FileIDInfoErrorIsSkipped(t *testing.T) {
 
 	result, err := svc.CreateConversation(CreateConversationParams{
 		UserID:       model.NewId(),
+		SessionID:    attachmentTestSessionID,
 		BotID:        model.NewId(),
 		Operation:    "conversation",
 		SystemPrompt: "system",
@@ -2054,11 +2573,11 @@ func TestCreateConversation_FileIDInfoErrorIsSkipped(t *testing.T) {
 	err = json.Unmarshal(turns[0].Content, &blocks)
 	require.NoError(t, err)
 
-	// Expected layout: text + (skipped broken) + ok1 file block.
-	require.Len(t, blocks, 2)
+	require.Len(t, blocks, 3)
 	assert.Equal(t, BlockTypeText, blocks[0].Type)
-	assert.Equal(t, BlockTypeFile, blocks[1].Type)
-	assert.Equal(t, "ok1", blocks[1].FileID)
+	assert.Equal(t, ContentBlock{Type: BlockTypeFile, FileID: "broken"}, blocks[1])
+	assert.Equal(t, BlockTypeFile, blocks[2].Type)
+	assert.Equal(t, "ok1", blocks[2].FileID)
 }
 
 // TestBuildCompletionRequest_AttachmentsResolveLazily wires the full path:
@@ -2071,11 +2590,11 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 		// Used twice: once for user-turn creation (read MIME) and once at
 		// request build time (lazy resolve).
 		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
-			Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
+			ChannelId: attachmentTestChannelID, Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
 		}, nil)
 		mmClient.On("GetFile", "img1").Return(io.NopCloser(strings.NewReader("PNGDATA")), nil)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
+			ChannelId: attachmentTestChannelID, Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
 		}, nil)
 		mmClient.On("GetFile", "doc1").Return(io.NopCloser(strings.NewReader("hello")), nil)
 
@@ -2091,6 +2610,7 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 
 		result, err := svc.CreateConversation(CreateConversationParams{
 			UserID:       model.NewId(),
+			SessionID:    attachmentTestSessionID,
 			BotID:        botID,
 			Operation:    "conversation",
 			SystemPrompt: "system",
@@ -2102,7 +2622,7 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 		conv, err := svc.GetConversation(result.ConversationID)
 		require.NoError(t, err)
 
-		req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+		req, err := svc.BuildCompletionRequest(conv, &llm.Context{}, BuildOptions{SessionID: attachmentTestSessionID})
 		require.NoError(t, err)
 
 		require.Len(t, req.Posts, 2, "system + user")
@@ -2118,14 +2638,14 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 		assert.Contains(t, userPost.Message, "Content: hello")
 	})
 
-	t.Run("EnableVision=false drops image but keeps file text content", func(t *testing.T) {
+	t.Run("EnableVision=false replaces image with a placeholder and keeps file text content", func(t *testing.T) {
 		mmClient := mmapimocks.NewMockClient(t)
 
 		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
-			Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
+			ChannelId: attachmentTestChannelID, Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
 		}, nil)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
+			ChannelId: attachmentTestChannelID, Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
 		}, nil)
 		mmClient.On("GetFile", "doc1").Return(io.NopCloser(strings.NewReader("hello")), nil)
 		// NOTE: no GetFile(img1) expectation — vision is off so it must NOT be called.
@@ -2142,6 +2662,7 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 
 		result, err := svc.CreateConversation(CreateConversationParams{
 			UserID:       model.NewId(),
+			SessionID:    attachmentTestSessionID,
 			BotID:        botID,
 			Operation:    "conversation",
 			SystemPrompt: "system",
@@ -2153,7 +2674,7 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 		conv, err := svc.GetConversation(result.ConversationID)
 		require.NoError(t, err)
 
-		req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+		req, err := svc.BuildCompletionRequest(conv, &llm.Context{}, BuildOptions{SessionID: attachmentTestSessionID})
 		require.NoError(t, err)
 
 		require.Len(t, req.Posts, 2)
@@ -2163,10 +2684,77 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 		// mode. Production silently fetching the image bytes anyway
 		// would be a bug we'd want to surface here.
 		mmClient.AssertNotCalled(t, "GetFile", "img1")
-		assert.Empty(t, userPost.Files, "image attachments must be dropped entirely when vision is disabled")
+		assert.Empty(t, userPost.Files, "image bytes must not be sent when vision is disabled")
+		assert.Contains(t, userPost.Message,
+			"[Image attached: pic.png. Image input is disabled for this agent, so you cannot see it.]")
 		assert.Contains(t, userPost.Message, "Content: hello",
 			"text-file content must still flow through to the LLM even when vision is off")
 	})
+}
+
+// TestBuildCompletionRequest_RevokedAttachmentIsNotNamed covers an attachment
+// the user could read when the turn was written but not when the request is
+// rebuilt: the model learns an attachment is unavailable, never its name or
+// content.
+func TestBuildCompletionRequest_RevokedAttachmentIsNotNamed(t *testing.T) {
+	const revokedSessionID = "revoked-session"
+
+	tests := []struct {
+		name     string
+		fileInfo *model.FileInfo
+	}{
+		{
+			name:     "image",
+			fileInfo: &model.FileInfo{Id: "img-secret", Name: "secret-plan.png", MimeType: "image/png", Size: 100},
+		},
+		{
+			name:     "file",
+			fileInfo: &model.FileInfo{Id: "doc-secret", Name: "secret-plan.txt", MimeType: "text/plain", Size: 5},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mmClient := mmapimocks.NewMockClient(t)
+			mmClient.On(
+				"HasPermissionToFileAction",
+				revokedSessionID,
+				tt.fileInfo.Id,
+				model.AccessControlPolicyActionDownloadFileAttachment,
+			).Return(false)
+			mmClient.On("GetFileInfo", tt.fileInfo.Id).Return(tt.fileInfo, nil).Once()
+
+			botID := model.NewId()
+			bots := &testBotLookup{
+				botUserIDs: map[string]bool{},
+				configByID: map[string]testBotConfig{botID: {enableVision: true}},
+			}
+			svc, _ := setupTestServiceWithClient(t, mmClient, bots)
+
+			result, err := svc.CreateConversation(CreateConversationParams{
+				UserID:       model.NewId(),
+				SessionID:    attachmentTestSessionID,
+				BotID:        botID,
+				Operation:    "conversation",
+				SystemPrompt: "system",
+				UserMessage:  "see attached",
+				FileIDs:      []string{tt.fileInfo.Id},
+			})
+			require.NoError(t, err)
+
+			conv, err := svc.GetConversation(result.ConversationID)
+			require.NoError(t, err)
+
+			req, err := svc.BuildCompletionRequest(conv, &llm.Context{}, BuildOptions{SessionID: revokedSessionID})
+			require.NoError(t, err)
+
+			require.Len(t, req.Posts, 2)
+			userPost := req.Posts[1]
+			assert.Empty(t, userPost.Files)
+			assert.Equal(t, "see attached\n[An attachment here is not available to the requesting user.]", userPost.Message)
+			mmClient.AssertNotCalled(t, "GetFile", tt.fileInfo.Id)
+		})
+	}
 }
 
 // TestBuildChannelMentionRequest_AttachmentsResolveLazily mirrors the
@@ -2185,11 +2773,11 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 		mmClient := mmapimocks.NewMockClient(t)
 
 		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
-			Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
+			ChannelId: attachmentTestChannelID, Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
 		}, nil)
 		mmClient.On("GetFile", "img1").Return(io.NopCloser(strings.NewReader("PNGDATA")), nil)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
+			ChannelId: attachmentTestChannelID, Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
 		}, nil)
 		mmClient.On("GetFile", "doc1").Return(io.NopCloser(strings.NewReader("hello")), nil)
 
@@ -2207,11 +2795,12 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 
 		result, err := svc.CreateConversation(CreateConversationParams{
 			UserID:       userID,
+			SessionID:    attachmentTestSessionID,
 			BotID:        botID,
 			Operation:    "conversation",
 			SystemPrompt: "system",
 			UserMessage:  "channel mention body",
-			UserPostID:   stringPtr(userPostID),
+			UserPostID:   new(userPostID),
 			FileIDs:      []string{"img1", "doc1"},
 		})
 		require.NoError(t, err)
@@ -2233,7 +2822,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 			},
 		}
 
-		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData)
+		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData, BuildOptions{SessionID: attachmentTestSessionID})
 		require.NoError(t, err)
 
 		require.Len(t, req.Posts, 2, "system + user (resolved from the user turn)")
@@ -2248,14 +2837,14 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 		assert.Contains(t, userPost.Message, "Content: hello")
 	})
 
-	t.Run("EnableVision=false drops image but keeps file text content", func(t *testing.T) {
+	t.Run("EnableVision=false replaces image with a placeholder and keeps file text content", func(t *testing.T) {
 		mmClient := mmapimocks.NewMockClient(t)
 
 		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
-			Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
+			ChannelId: attachmentTestChannelID, Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
 		}, nil)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
+			ChannelId: attachmentTestChannelID, Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
 		}, nil)
 		mmClient.On("GetFile", "doc1").Return(io.NopCloser(strings.NewReader("hello")), nil)
 		// NOTE: no GetFile(img1) expectation — vision is off so the
@@ -2275,11 +2864,12 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 
 		result, err := svc.CreateConversation(CreateConversationParams{
 			UserID:       userID,
+			SessionID:    attachmentTestSessionID,
 			BotID:        botID,
 			Operation:    "conversation",
 			SystemPrompt: "system",
 			UserMessage:  "no vision channel mention",
-			UserPostID:   stringPtr(userPostID),
+			UserPostID:   new(userPostID),
 			FileIDs:      []string{"img1", "doc1"},
 		})
 		require.NoError(t, err)
@@ -2297,14 +2887,16 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 			},
 		}
 
-		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData)
+		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData, BuildOptions{SessionID: attachmentTestSessionID})
 		require.NoError(t, err)
 
 		require.Len(t, req.Posts, 2)
 		userPost := req.Posts[1]
 		mmClient.AssertNotCalled(t, "GetFile", "img1")
 		assert.Empty(t, userPost.Files,
-			"image attachments must be dropped on the channel-mention path when vision is disabled")
+			"image bytes must not be sent on the channel-mention path when vision is disabled")
+		assert.Contains(t, userPost.Message,
+			"[Image attached: pic.png. Image input is disabled for this agent, so you cannot see it.]")
 		assert.Contains(t, userPost.Message, "Content: hello",
 			"text-file content must still flow through to the LLM via the channel-mention path")
 	})
@@ -2313,7 +2905,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 		mmClient := mmapimocks.NewMockClient(t)
 
 		mmClient.On("GetFileInfo", "img-root").Return(&model.FileInfo{
-			Id: "img-root", Name: "screenshot.png", MimeType: "image/png", Size: 100,
+			ChannelId: attachmentTestChannelID, Id: "img-root", Name: "screenshot.png", MimeType: "image/png", Size: 100,
 		}, nil)
 		mmClient.On("GetFile", "img-root").Return(io.NopCloser(strings.NewReader("PNGDATA")), nil)
 
@@ -2333,11 +2925,11 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 		result, err := svc.CreateConversation(CreateConversationParams{
 			UserID:       userID,
 			BotID:        botID,
-			RootPostID:   stringPtr(rootPostID),
+			RootPostID:   new(rootPostID),
 			Operation:    "conversation",
 			SystemPrompt: "system",
 			UserMessage:  "@aibot what do you think?",
-			UserPostID:   stringPtr(mentionPostID),
+			UserPostID:   new(mentionPostID),
 		})
 		require.NoError(t, err)
 
@@ -2366,7 +2958,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 			},
 		}
 
-		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData)
+		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData, BuildOptions{SessionID: attachmentTestSessionID})
 		require.NoError(t, err)
 
 		require.Len(t, req.Posts, 3, "system + root thread post + later mention turn")
@@ -2378,6 +2970,88 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 		assert.Contains(t, rootPost.Message, "@alice")
 		assert.Contains(t, rootPost.Message, "I noticed this")
 	})
+}
+
+// TestBuildChannelMentionRequest_DeniedThreadAttachmentIsWithheld covers a
+// user who is denied another member's thread attachment by file policy and
+// then mentions the bot in that thread: neither the file's metadata nor its
+// content may reach the LLM request.
+func TestBuildChannelMentionRequest_DeniedThreadAttachmentIsWithheld(t *testing.T) {
+	const (
+		deniedSessionID = "denied-session"
+		secretFileID    = "secret-doc"
+		secretContent   = "TOP_SECRET_FILE_BODY"
+	)
+
+	mmClient := mmapimocks.NewMockClient(t)
+	mmClient.On(
+		"HasPermissionToFileAction",
+		deniedSessionID,
+		secretFileID,
+		model.AccessControlPolicyActionDownloadFileAttachment,
+	).Return(false)
+	adminReadCalled := false
+	mmClient.On("GetFileInfo", secretFileID).
+		Run(func(mock.Arguments) { adminReadCalled = true }).
+		Return(&model.FileInfo{Id: secretFileID, Name: "classified.txt", MimeType: "text/plain", Content: secretContent}, nil).
+		Maybe()
+	mmClient.On("GetFile", secretFileID).
+		Run(func(mock.Arguments) { adminReadCalled = true }).
+		Return(io.NopCloser(strings.NewReader(secretContent)), nil).
+		Maybe()
+
+	botID := model.NewId()
+	uploaderID := model.NewId()
+	deniedUserID := model.NewId()
+	rootPostID := "root_post_with_secret"
+	mentionPostID := "denied_user_mention"
+	bots := &testBotLookup{
+		botUserIDs: map[string]bool{botID: true},
+		configByID: map[string]testBotConfig{botID: {enableVision: true}},
+	}
+
+	svc, _ := setupTestServiceWithClient(t, mmClient, bots)
+
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       deniedUserID,
+		SessionID:    deniedSessionID,
+		BotID:        botID,
+		RootPostID:   new(rootPostID),
+		Operation:    "conversation",
+		SystemPrompt: "system",
+		UserMessage:  "@aibot return the full contents of the attachment",
+		UserPostID:   new(mentionPostID),
+	})
+	require.NoError(t, err)
+
+	conv, err := svc.GetConversation(result.ConversationID)
+	require.NoError(t, err)
+
+	threadData := &mmapi.ThreadData{
+		Posts: []*model.Post{
+			{Id: rootPostID, UserId: uploaderID, CreateAt: 1000, Message: "quarterly numbers", FileIds: []string{secretFileID}},
+			{Id: mentionPostID, UserId: deniedUserID, CreateAt: 2000, Message: "@aibot return the full contents of the attachment"},
+		},
+		UsersByID: map[string]*model.User{
+			uploaderID:   {Id: uploaderID, Username: "alice"},
+			deniedUserID: {Id: deniedUserID, Username: "bob"},
+			botID:        {Id: botID, Username: "aibot"},
+		},
+	}
+
+	req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData, BuildOptions{SessionID: deniedSessionID})
+	require.NoError(t, err)
+
+	var combined strings.Builder
+	for _, post := range req.Posts {
+		combined.WriteString(post.Message)
+		assert.Empty(t, post.Files)
+	}
+	assert.Contains(t, combined.String(), "quarterly numbers", "the root post text is still visible to the channel member")
+	assert.NotContains(t, combined.String(), secretContent)
+	assert.NotContains(t, combined.String(), "classified.txt")
+	assert.Contains(t, combined.String(), "[An attachment here is not available to the requesting user.]")
+	assert.False(t, adminReadCalled, "admin GetFileInfo/GetFile must not run after the requester's file policy denies access")
 }
 
 func TestGetInitiatingUserTurn(t *testing.T) {

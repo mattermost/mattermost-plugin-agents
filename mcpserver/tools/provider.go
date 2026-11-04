@@ -8,22 +8,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
-	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/types"
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
-
-// ToolHookConfig holds an optional opaque before-hook key for a tool.
-type ToolHookConfig struct {
-	BeforeHookKey string `json:"before_hook_key,omitempty"`
-}
 
 // MCPToolContext provides MCP-specific functionality with the authenticated client.
 type MCPToolContext struct {
@@ -35,11 +31,6 @@ type MCPToolContext struct {
 	// UserID is the Mattermost user ID of the user the Client is authenticated as.
 	// Empty when the auth provider cannot resolve an authenticated user.
 	UserID string
-
-	// MMServerURL is the Mattermost server base URL (same as API Client4 origin) for resolving hook keys and firing callbacks.
-	MMServerURL        string
-	BeforeHookResolver auth.BeforeHookResolver
-	ToolHooks          map[string]ToolHookConfig
 }
 
 // MCPToolResolver defines the signature for MCP tool resolvers
@@ -47,9 +38,7 @@ type MCPToolResolver func(*MCPToolContext, llm.ToolArgumentGetter) (string, erro
 
 // typed adapts a resolver that accepts an already-decoded argument struct into
 // an MCPToolResolver. It owns argument decoding and the standard "invalid
-// arguments" error, so individual resolvers start at their real logic. The
-// returned resolver is an ordinary MCPToolResolver, so registerDynamicTool and
-// the before-hook (which still sees the raw request arguments) are unchanged.
+// arguments" error, so individual resolvers start at their real logic.
 func typed[T any](name string, fn func(*MCPToolContext, T) (string, error)) MCPToolResolver {
 	return func(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 		var args T
@@ -60,6 +49,26 @@ func typed[T any](name string, fn func(*MCPToolContext, T) (string, error)) MCPT
 	}
 }
 
+// mcpTool builds an MCPTool from a name, description, and typed resolver. The
+// input schema is derived from the resolver's argument type and the provider's
+// access mode, and the name is wired into the resolver once, so registration
+// sites state each fact a single time.
+func mcpTool[T any](p *MattermostToolProvider, name, description string, handler func(*MCPToolContext, T) (string, error)) MCPTool {
+	return MCPTool{
+		Name:        name,
+		Description: description,
+		Schema:      NewJSONSchemaForAccessMode[T](string(p.accessMode)),
+		Resolver:    typed(name, handler),
+	}
+}
+
+// mcpReadTool is mcpTool with ReadOnly set, for tools that only retrieve data.
+func mcpReadTool[T any](p *MattermostToolProvider, name, description string, handler func(*MCPToolContext, T) (string, error)) MCPTool {
+	tool := mcpTool(p, name, description, handler)
+	tool.ReadOnly = true
+	return tool
+}
+
 // MCPTool represents a tool specifically for MCP use with our custom context
 type MCPTool struct {
 	Name        string
@@ -67,14 +76,22 @@ type MCPTool struct {
 	Schema      *jsonschema.Schema
 	Resolver    MCPToolResolver
 
-	// Available, when set, gates the tool's visibility: it is evaluated on each
-	// tools/list request and the tool is hidden when it returns false. Nil means
-	// always available.
-	Available func() bool
+	// ReadOnly is true when the tool only retrieves data. State-changing tools
+	// are available at Enterprise and above.
+	ReadOnly bool
 }
 
 type ToolProvider interface {
 	ProvideTools(*mcp.Server)
+}
+
+// ServerConfig defines the common configuration methods every MCP server type
+// provides to the tool provider.
+type ServerConfig interface {
+	GetMMServerURL() string
+	GetMMInternalServerURL() string
+	GetDevMode() bool
+	GetTrackAIGenerated() bool
 }
 
 // SemanticSearchService provides semantic search capabilities for the MCP server.
@@ -87,20 +104,22 @@ type SemanticSearchService interface {
 
 // MattermostToolProvider provides Mattermost tools following the mmtools pattern
 type MattermostToolProvider struct {
-	authProvider       auth.AuthenticationProvider
-	logger             logger.Logger
-	mmServerURL        string // Mattermost server URL for API communication (internal URL if set, otherwise external)
-	devMode            bool
-	accessMode         AccessMode
-	trackAIGenerated   bool                  // Whether to add ai_generated_by props to posts
-	searchService      SemanticSearchService // Optional semantic search service, can be nil
-	fileContentService FileContentService    // Optional file content service for read_file, can be nil
+	authProvider            auth.AuthenticationProvider
+	logger                  logger.Logger
+	mmServerURL             string // Mattermost server URL for API communication (internal URL if set, otherwise external)
+	devMode                 bool
+	accessMode              AccessMode
+	trackAIGenerated        bool                  // Whether to add ai_generated_by props to posts
+	searchService           SemanticSearchService // Optional semantic search service, can be nil
+	fileContentService      FileContentService    // Optional file content service for read_file, can be nil
+	allowStateChangingTools func() bool           // Evaluated per request; nil fails closed
 }
 
-// NewMattermostToolProvider creates a new tool provider
-// Now accepts a ServerConfig interface to avoid circular dependencies
-// searchService is optional and can be nil if semantic search is not available
-func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config types.ServerConfig, accessMode AccessMode, searchService SemanticSearchService, fileContentService FileContentService) *MattermostToolProvider {
+// NewMattermostToolProvider creates a new tool provider.
+// searchService is optional and can be nil if semantic search is not available.
+// allowStateChangingTools is a runtime predicate evaluated on each tools/list
+// and tools/call; a nil predicate means state-changing tools are not available.
+func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config ServerConfig, accessMode AccessMode, searchService SemanticSearchService, fileContentService FileContentService, allowStateChangingTools func() bool) *MattermostToolProvider {
 	// Use internal URL for API communication if provided, otherwise fallback to external URL
 	serverURL := config.GetMMInternalServerURL()
 	if serverURL == "" {
@@ -108,24 +127,24 @@ func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger 
 	}
 
 	return &MattermostToolProvider{
-		authProvider:       authProvider,
-		logger:             logger,
-		mmServerURL:        serverURL,
-		devMode:            config.GetDevMode(),
-		accessMode:         accessMode,
-		trackAIGenerated:   config.GetTrackAIGenerated(),
-		searchService:      searchService,
-		fileContentService: fileContentService,
+		authProvider:            authProvider,
+		logger:                  logger,
+		mmServerURL:             serverURL,
+		devMode:                 config.GetDevMode(),
+		accessMode:              accessMode,
+		trackAIGenerated:        config.GetTrackAIGenerated(),
+		searchService:           searchService,
+		fileContentService:      fileContentService,
+		allowStateChangingTools: allowStateChangingTools,
 	}
 }
 
 func (p *MattermostToolProvider) mcpTools() []MCPTool {
-	// Tool groups in registration order. Automation tools are always included;
-	// each carries an Available predicate so it is hidden from tools/list when the
-	// automation plugin is absent.
+	// Tool groups in registration order.
 	groups := []func() []MCPTool{
 		p.getPostTools,
 		p.getScheduledPostTools,
+		p.getDraftTools,
 		p.getReactionTools,
 		p.getThreadTools,
 		p.getChannelTools,
@@ -140,7 +159,6 @@ func (p *MattermostToolProvider) mcpTools() []MCPTool {
 		p.getGroupTools,
 		p.getRoleTools,
 		p.getAgentTools,
-		p.getAutomationTools,
 	}
 
 	// Dev tools are only exposed when dev mode is enabled.
@@ -167,29 +185,69 @@ func (p *MattermostToolProvider) ToolNames() []string {
 
 // ProvideTools registers all available MCP tools with the server.
 func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
-	availability := map[string]func() bool{}
+	stateChanging := map[string]struct{}{}
 	for _, mcpTool := range p.mcpTools() {
 		p.registerDynamicTool(mcpServer, mcpTool)
-		if mcpTool.Available != nil {
-			availability[mcpTool.Name] = mcpTool.Available
+		if !mcpTool.ReadOnly {
+			stateChanging[mcpTool.Name] = struct{}{}
 		}
 	}
 
-	// Hide tools whose Available predicate currently returns false on each
-	// tools/list request (e.g. automation tools when the plugin is absent).
-	mcpServer.AddReceivingMiddleware(toolAvailabilityMiddleware(availability))
+	// State-changing tools are listed and callable when allowStateChangingTools
+	// reports they are available (Enterprise and above).
+	mcpServer.AddReceivingMiddleware(stateChangingToolsMiddleware(stateChanging, p.allowStateChangingTools))
 }
 
-// toolAvailabilityMiddleware returns MCP receiving middleware that drops any tool
-// from tools/list whose Available predicate reports it as unavailable. Each
-// distinct predicate is evaluated at most once per request, so tools that share
-// a predicate (e.g. all automation tools) trigger a single probe rather than one
-// per tool.
-func toolAvailabilityMiddleware(availability map[string]func() bool) mcp.Middleware {
+// stateChangingAllowed reports whether state-changing tools are available.
+// A nil predicate fails closed.
+func stateChangingAllowed(allow func() bool) bool {
+	return allow != nil && allow()
+}
+
+// stateChangingToolsUnavailableMessage is the tools/call error text when
+// state-changing Mattermost tools are not available at the current license level.
+func stateChangingToolsUnavailableMessage() string {
+	return enterprise.DisplayName(enterprise.CapStateChangingTools) + " are available at Enterprise and above"
+}
+
+func stateChangingToolsLicenseResult() *mcp.CallToolResult {
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: stateChangingToolsUnavailableMessage()},
+		},
+		IsError: true,
+	}
+}
+
+func mcpCallToolName(req mcp.Request) string {
+	if req == nil {
+		return ""
+	}
+	params, ok := req.GetParams().(*mcp.CallToolParamsRaw)
+	if !ok || params == nil {
+		return ""
+	}
+	return params.Name
+}
+
+// stateChangingToolsMiddleware returns MCP receiving middleware that omits
+// state-changing tools from tools/list when they are not available at the
+// current license level, and answers a tools/call of such a tool with an MCP
+// tool error result. allowStateChangingTools is evaluated per request so a
+// license change is visible without rebuilding the server.
+func stateChangingToolsMiddleware(stateChanging map[string]struct{}, allowStateChangingTools func() bool) mcp.Middleware {
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method == "tools/call" {
+				name := mcpCallToolName(req)
+				if _, gated := stateChanging[name]; gated && !stateChangingAllowed(allowStateChangingTools) {
+					return stateChangingToolsLicenseResult(), nil
+				}
+				return next(ctx, method, req)
+			}
+
 			result, err := next(ctx, method, req)
-			if err != nil || method != "tools/list" {
+			if err != nil || method != "tools/list" || stateChangingAllowed(allowStateChangingTools) {
 				return result, err
 			}
 			listResult, ok := result.(*mcp.ListToolsResult)
@@ -197,22 +255,9 @@ func toolAvailabilityMiddleware(availability map[string]func() bool) mcp.Middlew
 				return result, nil
 			}
 
-			// Memoize each distinct predicate (keyed by its code pointer) for the
-			// duration of this filtering pass.
-			cache := map[uintptr]bool{}
-			isAvailable := func(predicate func() bool) bool {
-				key := reflect.ValueOf(predicate).Pointer()
-				if v, cached := cache[key]; cached {
-					return v
-				}
-				v := predicate()
-				cache[key] = v
-				return v
-			}
-
 			filtered := make([]*mcp.Tool, 0, len(listResult.Tools))
 			for _, tool := range listResult.Tools {
-				if available, gated := availability[tool.Name]; gated && !isAvailable(available) {
+				if _, gated := stateChanging[tool.Name]; gated {
 					continue
 				}
 				filtered = append(filtered, tool)
@@ -229,6 +274,9 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 		Name:        mcpTool.Name,
 		Description: mcpTool.Description,
 		InputSchema: nil, // Initialize as nil, will be set below if schema is available
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint: mcpTool.ReadOnly,
+		},
 	}
 
 	// Set the InputSchema from the MCPTool schema
@@ -263,7 +311,7 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 		}
 
 		// Create argument getter that extracts arguments from the MCP request
-		argsGetter := func(target interface{}) error {
+		argsGetter := func(target any) error {
 			// Convert MCP arguments to the target struct
 			argumentsBytes, marshalErr := json.Marshal(req.Params.Arguments)
 			if marshalErr != nil {
@@ -276,19 +324,6 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 			}
 
 			return json.Unmarshal(argumentsBytes, target)
-		}
-
-		// Run the optional before-hook with the raw tool arguments. The hook can
-		// reject the call by returning an error which is surfaced as a tool error
-		// to the LLM.
-		if hookErr := RunBeforeHook(mcpContext, mcpTool.Name, req.Params.Arguments); hookErr != nil {
-			p.logger.Debug("MCP tool before-hook rejected or failed", "tool", mcpTool.Name, "error", hookErr.Error())
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{
-					&mcp.TextContent{Text: "Error: " + hookErr.Error()},
-				},
-				IsError: true,
-			}, nil
 		}
 
 		// Call the tool resolver
@@ -320,13 +355,25 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 	server.AddTool(tool, handler)
 }
 
-// createMCPToolContext creates an MCPToolContext from the Go context, authenticated client, and request metadata
-func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metadata mcp.Meta) (*MCPToolContext, error) {
-	client, err := p.authProvider.GetAuthenticatedMattermostClient(ctx)
-	if err != nil {
-		return nil, err
+// authenticatedClientAndUserID returns the authenticated client and, when the
+// provider can tell, the user's ID. Providers that validate both at once are
+// asked once so a tool call costs a single session validation.
+func (p *MattermostToolProvider) authenticatedClientAndUserID(ctx context.Context) (*model.Client4, string, error) {
+	if both, ok := p.authProvider.(auth.ClientAndUserProvider); ok {
+		client, user, err := both.GetAuthenticatedClientAndUser(ctx)
+		if err != nil {
+			return nil, "", err
+		}
+		if user == nil {
+			return client, "", nil
+		}
+		return client, user.Id, nil
 	}
 
+	client, err := p.authProvider.GetAuthenticatedMattermostClient(ctx)
+	if err != nil {
+		return nil, "", err
+	}
 	var userID string
 	if identityProvider, ok := p.authProvider.(auth.UserIdentityProvider); ok {
 		if user, userErr := identityProvider.GetAuthenticatedUser(ctx); userErr == nil && user != nil {
@@ -335,18 +382,21 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 			p.logger.Debug("failed to resolve authenticated user for tool-call context", "error", userErr.Error())
 		}
 	}
+	return client, userID, nil
+}
 
-	mcpContext := &MCPToolContext{
-		Ctx:         ctx,
-		Client:      client,
-		AccessMode:  p.accessMode,
-		MMServerURL: p.mmServerURL,
-		ToolHooks:   decodeToolHooksFromMetadata(metadata),
-		UserID:      userID,
+// createMCPToolContext creates an MCPToolContext from the Go context, authenticated client, and request metadata
+func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metadata mcp.Meta) (*MCPToolContext, error) {
+	client, userID, err := p.authenticatedClientAndUserID(ctx)
+	if err != nil {
+		return nil, err
 	}
 
-	if resolver, ok := ctx.Value(auth.BeforeHookResolverContextKey).(auth.BeforeHookResolver); ok {
-		mcpContext.BeforeHookResolver = resolver
+	mcpContext := &MCPToolContext{
+		Ctx:        ctx,
+		Client:     client,
+		AccessMode: p.accessMode,
+		UserID:     userID,
 	}
 
 	// Extract bot_user_id from metadata if present (for embedded servers)
@@ -358,32 +408,6 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 	}
 
 	return mcpContext, nil
-}
-
-func decodeToolHooksFromMetadata(metadata mcp.Meta) map[string]ToolHookConfig {
-	if metadata == nil {
-		return nil
-	}
-	raw, ok := metadata["tool_hooks"].(map[string]any)
-	if !ok || len(raw) == 0 {
-		return nil
-	}
-	out := make(map[string]ToolHookConfig, len(raw))
-	for name, v := range raw {
-		entry, ok := v.(map[string]any)
-		if !ok {
-			continue
-		}
-		var cfg ToolHookConfig
-		if s, ok := entry["before_hook_key"].(string); ok {
-			cfg.BeforeHookKey = s
-		}
-		out[name] = cfg
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 // NewJSONSchemaForAccessMode creates a JSONSchema from a Go struct, filtering fields based on access mode
@@ -439,7 +463,7 @@ func NewJSONSchemaForAccessMode[T any](accessMode string) *jsonschema.Schema {
 // t that the given access mode is not allowed to use, per each field's `access:`
 // tag. Returns nil when nothing is restricted.
 func excludedFieldsForAccessMode(t reflect.Type, accessMode string) map[string]bool {
-	for t != nil && t.Kind() == reflect.Ptr {
+	for t != nil && t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if t == nil || t.Kind() != reflect.Struct {
@@ -447,8 +471,7 @@ func excludedFieldsForAccessMode(t reflect.Type, accessMode string) map[string]b
 	}
 
 	var excluded map[string]bool
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
+	for field := range t.Fields() {
 		name := jsonFieldName(field)
 		if name == "" {
 			continue
@@ -481,29 +504,18 @@ func isAccessAllowed(restrictionTag, currentAccessMode string) bool {
 		return true // No restrictions
 	}
 
-	// Normalize and split by comma
-	allowedValues := strings.Split(strings.ReplaceAll(restrictionTag, " ", ""), ",")
-
-	// Check each allowed value
-	for _, allowed := range allowedValues {
-		// Direct access mode matching
-		if allowed == currentAccessMode {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(strings.Split(strings.ReplaceAll(restrictionTag, " ", ""), ","), currentAccessMode)
 }
 
 // validateAccessRestrictions validates that no access-restricted fields are present in the JSON data
 // for the current access mode. This prevents clients from sending fields they shouldn't have access to.
-func validateAccessRestrictions(jsonData []byte, target interface{}, currentAccessMode string) error {
+func validateAccessRestrictions(jsonData []byte, target any, currentAccessMode string) error {
 	if currentAccessMode == "" {
 		panic("access mode cannot be empty - indicates uninitialized AccessMode")
 	}
 	// Get the struct type to inspect field tags
 	targetType := reflect.TypeOf(target)
-	if targetType.Kind() == reflect.Ptr {
+	if targetType.Kind() == reflect.Pointer {
 		targetType = targetType.Elem()
 	}
 
@@ -514,7 +526,7 @@ func validateAccessRestrictions(jsonData []byte, target interface{}, currentAcce
 
 	// Check if the incoming JSON is actually an object/map
 	// If it's not an object, we can't have field restrictions to validate
-	var incomingData map[string]interface{}
+	var incomingData map[string]any
 	if err := json.Unmarshal(jsonData, &incomingData); err != nil {
 		// If JSON can't be parsed as an object, it's likely a primitive value or array
 		// In this case, there are no fields to validate transport restrictions for
@@ -522,9 +534,7 @@ func validateAccessRestrictions(jsonData []byte, target interface{}, currentAcce
 	}
 
 	// Check each field in the struct
-	for i := 0; i < targetType.NumField(); i++ {
-		field := targetType.Field(i)
-
+	for field := range targetType.Fields() {
 		name := jsonFieldName(field)
 		if name == "" {
 			continue

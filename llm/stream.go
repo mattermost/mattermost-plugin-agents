@@ -3,7 +3,11 @@
 
 package llm
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+	"strings"
+)
 
 // MaxPostAttachments is the Mattermost per-post attachment limit. It bounds
 // how many files tools may create for or attach to a single post.
@@ -38,7 +42,31 @@ const (
 	// OpenAI web_search / code_interpreter. The value is the cumulative
 	// []ServerToolUse for the current round; receivers replace prior state.
 	EventTypeServerToolUse
+	// EventTypeToolCallBatch carries a ToolCallBatch emitted by the tool
+	// runner. Provider streams use EventTypeToolCalls for the raw calls the
+	// model requested; only the tool runner knows a batch's phase.
+	EventTypeToolCallBatch
 )
+
+// ToolCallPhase is where a tool call batch is in its lifecycle.
+type ToolCallPhase string
+
+const (
+	// ToolCallPhaseExecuting: every call passed the auto-run policy and is
+	// running now. A ToolCallPhaseResolved batch for the same calls follows.
+	ToolCallPhaseExecuting ToolCallPhase = "executing"
+	// ToolCallPhaseAwaitingDecision: the run stops here until the user
+	// decides. Always the last batch of a run.
+	ToolCallPhaseAwaitingDecision ToolCallPhase = "awaiting_decision"
+	// ToolCallPhaseResolved: every call has a final result. Closes the round.
+	ToolCallPhaseResolved ToolCallPhase = "resolved"
+)
+
+// ToolCallBatch is one round's tool calls together with their phase.
+type ToolCallBatch struct {
+	Phase ToolCallPhase
+	Calls []ToolCall
+}
 
 // Server tool activity status values. They intentionally match the
 // conversation content-block status strings so the streaming layer can persist
@@ -75,6 +103,29 @@ type ServerToolUse struct {
 	Output string `json:"output,omitempty"`
 	// ErrorCode is the provider error code when the invocation failed.
 	ErrorCode string `json:"error_code,omitempty"`
+	// FileIDs are provider-side ids of files left in the sandbox output directory.
+	FileIDs []string `json:"file_ids,omitempty"`
+
+	// ProviderRoute is the Bifrost route that produced FileIDs. Runtime-only:
+	// needed for fallback downloads, never broadcast or persisted for display.
+	ProviderRoute string `json:"-"`
+}
+
+// Clone returns a copy whose FileIDs slice is independent of the original, so
+// presentation-side mutation cannot corrupt the canonical replay snapshot.
+func (s ServerToolUse) Clone() ServerToolUse {
+	s.FileIDs = slices.Clone(s.FileIDs)
+	return s
+}
+
+// CloneServerToolUses copies FileIDs so presentation sanitation cannot mutate
+// the canonical provider replay snapshot.
+func CloneServerToolUses(uses []ServerToolUse) []ServerToolUse {
+	cloned := slices.Clone(uses)
+	for i := range cloned {
+		cloned[i] = cloned[i].Clone()
+	}
+	return cloned
 }
 
 // Sanitize escapes Unicode bidi/spoofing characters in every LLM- or
@@ -87,6 +138,9 @@ func (s *ServerToolUse) Sanitize() {
 	s.Command = SanitizeNonPrintableChars(s.Command)
 	s.Output = SanitizeNonPrintableChars(s.Output)
 	s.ErrorCode = SanitizeNonPrintableChars(s.ErrorCode)
+	for i := range s.FileIDs {
+		s.FileIDs[i] = SanitizeNonPrintableChars(s.FileIDs[i])
+	}
 }
 
 // TokenUsage represents token usage statistics for an LLM request. Cached,
@@ -142,12 +196,12 @@ func NewStreamFromString(text string) *TextStreamResult {
 }
 
 func (t *TextStreamResult) ReadAll() (string, error) {
-	result := ""
+	var result strings.Builder
 	for event := range t.Stream {
 		switch event.Type {
 		case EventTypeText:
 			if textChunk, ok := event.Value.(string); ok {
-				result += textChunk
+				result.WriteString(textChunk)
 			}
 		case EventTypeError:
 			if err, ok := event.Value.(error); ok {
@@ -158,8 +212,8 @@ func (t *TextStreamResult) ReadAll() (string, error) {
 			}
 			return "", fmt.Errorf("unknown stream error")
 		case EventTypeEnd:
-			return result, nil
-		case EventTypeToolCalls:
+			return result.String(), nil
+		case EventTypeToolCalls, EventTypeToolCallBatch:
 			// Tool calls may appear as progress events from auto-run tools; skip them.
 			continue
 		case EventTypeAnnotations, EventTypeReasoning, EventTypeReasoningEnd, EventTypeUsage, EventTypeFiles, EventTypeServerToolUse:
@@ -168,5 +222,5 @@ func (t *TextStreamResult) ReadAll() (string, error) {
 		}
 	}
 
-	return result, nil
+	return result.String(), nil
 }

@@ -203,7 +203,7 @@ func (s *EmbeddedTestSuite) SetupEmbeddedServer() {
 	}
 
 	// Create embedded server
-	server, err := mcpserver.NewInMemoryServer(config, s.logger, nil)
+	server, err := mcpserver.NewInMemoryServer(config, s.logger, nil, nil, func() bool { return true })
 	require.NoError(s.t, err, "Failed to create embedded MCP server")
 
 	s.embeddedServer = server
@@ -486,7 +486,7 @@ type embeddedServerWrapper struct {
 // CreateClientTransport implements EmbeddedMCPServer interface
 // Note: The signature must match the interface (takes *pluginapi.Client), but in tests
 // we ignore the passed pluginAPI parameter and use our mock instead
-func (w *embeddedServerWrapper) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error) {
+func (w *embeddedServerWrapper) CreateClientTransport(userID, sessionID, _ string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error) {
 	// Create token resolver using our mock (ignore the passed pluginAPI in tests)
 	tokenResolver := func(sid string) (string, error) {
 		session, err := w.api.GetSession(sid)
@@ -499,7 +499,7 @@ func (w *embeddedServerWrapper) CreateClientTransport(userID, sessionID string, 
 		return session.Token, nil
 	}
 
-	return w.server.CreateConnectionForUser(userID, sessionID, tokenResolver, nil)
+	return w.server.CreateConnectionForUser(userID, sessionID, tokenResolver)
 }
 
 // CreateClientManager creates a ClientManager for testing
@@ -541,7 +541,7 @@ func (s *EmbeddedTestSuite) CreateClientManager(t *testing.T, session *model.Ses
 	}
 
 	// Create ClientManager with nil httpClient for tests (no remote requests in these tests)
-	manager := NewClientManager(config, pluginAPIClient.Log, pluginAPIClient, nil, wrapper, nil, nil)
+	manager := NewClientManager(config, pluginAPIClient.Log, pluginAPIClient, nil, wrapper, nil, nil, RemoteMCPAlwaysAllowed, nil)
 	require.NotNil(t, manager, "ClientManager should not be nil")
 
 	return manager

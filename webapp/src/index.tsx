@@ -9,21 +9,28 @@ import {FormattedMessage, IntlShape, createIntl} from 'react-intl';
 import {GlobalState} from '@mattermost/types/store';
 import {CodeTagsIcon} from '@mattermost/compass-icons/components';
 
+// Compass design tokens. Hosts older than the compass-ui rollout don't load
+// them, so the plugin brings its own. Never import the standalone variant: it
+// overrides the user's theme colors.
+import '@mattermost/compass-ui/styles';
+import '@/styles/compass_label_overrides.css';
+
 //@ts-ignore it exists
 import aiIcon from '../../assets/bot_icon.png';
 
 import manifest from '@/manifest';
 import {PluginWebSocketMessage} from '@/types';
 
-import {LLMBotPost} from './components/llmbot_post/llmbot_post';
+import {LLMBotPost, PostUpdateWebsocketMessage} from './components/llmbot_post/llmbot_post';
 import PostMenu from './components/post_menu';
 import IconThreadSummarization from './components/assets/icon_thread_summarization';
 import IconReactForMe from './components/assets/icon_react_for_me';
 import RHS from './components/rhs/rhs';
+import RHSTitle from './components/rhs/rhs_title';
 import CustomPromptsDropdown from './components/custom_prompts/custom_prompts_dropdown';
-import CustomPromptsManagement from './components/custom_prompts/custom_prompts_management';
+import CustomPromptsManagement, {PopoutCustomPromptsManagement} from './components/custom_prompts/custom_prompts_management';
 import Config from './components/system_console/config';
-import {setSiteURL, doReaction, doRunSearch, doThreadAnalysis, getAIDirectChannel} from './client';
+import {setSiteURL, doReaction, doRunSearch, doThreadAnalysis} from './client';
 
 import {setOpenRHSAction} from './redux_actions';
 import PostEventListener from './websocket';
@@ -36,6 +43,8 @@ import SearchButton from './components/search_button';
 import AskChannelButton from './components/ask_channel_button';
 import {doSelectPost} from './hooks';
 import {invalidateConversation} from './hooks/use_conversation';
+import {createAgentThreadsSync} from './hooks/use_agent_threads';
+import {clearGeneratingPosts, recordPostUpdate} from './components/agent_chat/use_thread_generating';
 
 // Side-effect import: registers a listener so invalidateConversation also
 // clears the matching composition cache.
@@ -48,9 +57,10 @@ import {botsFromState, makeChannelAutoReplySchema} from './components/channel_se
 import {handleChannelAutoReplyUpdated, ChannelAutoReplyUpdatedEvent} from './components/channel_settings/autoreply_state';
 import {shouldSuppressBotNotification} from './notifications';
 import AgentsTour from './components/tutorial/agents_tour';
+import AgentsHeaderSettings from './components/agents/agents_header_settings';
 import AgentsPage, {AGENTS_ROUTE} from './components/agents/agents_page';
 import IconAI from './components/assets/icon_ai';
-import {isEnterpriseLicensedOrDevelopment} from './license';
+import {licenseAllows} from './license';
 
 type WebappStore = Store<GlobalState, UnknownAction>
 
@@ -113,22 +123,6 @@ const ProductSwitcherIconAI = (props: {className?: string}) => (
     </ProductSwitcherIconWrapper>
 );
 
-const RHSTitleContainer = styled.span`
-    display: flex;
-	gap: 8px;
-    align-items: center;
-	margin-left: 8px;
-`;
-
-const RHSTitle = () => {
-    return (
-        <RHSTitleContainer>
-            <IconAIContainer src={aiIcon}/>
-            <FormattedMessage defaultMessage='Agents'/>
-        </RHSTitleContainer>
-    );
-};
-
 const ChannelHeaderIcon = () => {
     const {bots} = useBotlist();
 
@@ -137,7 +131,12 @@ const ChannelHeaderIcon = () => {
         return null;
     }
 
-    return <IconAIContainer src={aiIcon}/>;
+    return (
+        <IconAIContainer
+            src={aiIcon}
+            alt=''
+        />
+    );
 };
 
 export default class Plugin {
@@ -148,13 +147,7 @@ export default class Plugin {
         setupRedux(registry, store);
         this.store = store;
 
-        let siteURL = store.getState().entities.general.config.SiteURL;
-
-        // Site URL should always be set by this point if the workspace is to be properly functional, but fall back to the window.location.origin just in case
-        if (!siteURL) {
-            siteURL = window.location.origin;
-        }
-        setSiteURL(siteURL);
+        setSiteURL(window.location.origin + (window.basename || ''));
 
         registry.registerDesktopNotificationHook(this.blockFastBotNotifications.bind(this));
 
@@ -173,38 +166,36 @@ export default class Plugin {
             setOpenRHSAction(rhs.showRHSPlugin);
         }
 
-        let currentUserId = store.getState().entities.users.currentUserId;
-        if (currentUserId) {
-            getAIDirectChannel(currentUserId).then((botChannelId) => {
-                store.dispatch({type: 'SET_AI_BOT_CHANNEL', botChannelId} as any);
-            });
-        }
-
-        store.subscribe(() => {
-            const state = store.getState();
-            if (state && state.entities.users.currentUserId !== currentUserId) {
-                currentUserId = state.entities.users.currentUserId;
-                if (currentUserId) {
-                    getAIDirectChannel(currentUserId).then((botChannelId) => {
-                        store.dispatch({type: 'SET_AI_BOT_CHANNEL', botChannelId} as any);
-                    });
-                } else {
-                    store.dispatch({type: 'SET_AI_BOT_CHANNEL', botChannelId: ''} as any);
-                }
-            }
-        });
+        // The stored AI thread list follows the user's own agent chats: a finished turn, a rename
+        // or a generated title.
+        const agentThreadsSync = createAgentThreadsSync(store);
 
         // Handle all post-related websocket events with one handler
-        registry.registerWebSocketEventHandler('custom_mattermost-ai_postupdate', this.postEventListener.handlePostUpdateWebsockets);
-        registry.registerWebSocketEventHandler('custom_mattermost-ai_tool_call_status_updated', this.postEventListener.handlePostUpdateWebsockets);
+        const handlePostUpdate = (msg: PluginWebSocketMessage<PostUpdateWebsocketMessage>) => {
+            this.postEventListener.handlePostUpdateWebsockets(msg);
+            recordPostUpdate(store.getState(), msg);
+            agentThreadsSync.handlePostUpdate(msg);
+        };
+        registry.registerWebSocketEventHandler('custom_mattermost-ai_postupdate', handlePostUpdate);
+        registry.registerWebSocketEventHandler('custom_mattermost-ai_tool_call_status_updated', handlePostUpdate);
 
         // Invalidate conversation cache when backend publishes conversation updates
         registry.registerWebSocketEventHandler(
             'custom_mattermost-ai_conversation_updated',
-            (msg: PluginWebSocketMessage<{conversation_id: string}>) => {
+            (msg: PluginWebSocketMessage<{conversation_id: string; title?: string}>) => {
                 invalidateConversation(msg.data.conversation_id);
+                agentThreadsSync.handleConversationUpdated(msg.data);
             },
         );
+
+        // Events missed while disconnected: an `end` would leave a reply generating for good, and
+        // the thread list may be stale.
+        if (registry.registerReconnectHandler) {
+            registry.registerReconnectHandler(() => {
+                clearGeneratingPosts();
+                agentThreadsSync.handleReconnect();
+            });
+        }
 
         // MCP OAuth connect/disconnect: refresh cached tool lists in open UI.
         registry.registerWebSocketEventHandler(
@@ -252,7 +243,7 @@ export default class Plugin {
                 if (rhs) {
                     store.dispatch(rhs.showRHSPlugin);
                 }
-            });
+            }, () => licenseAllows(store.getState(), 'thread_summarization'));
             registry.registerPostDropdownMenuAction(<><span className='icon'><IconReactForMe/></span><FormattedMessage defaultMessage='React for me'/></>, doReaction);
         }
 
@@ -301,11 +292,17 @@ export default class Plugin {
         // Register slash commands
         if (rhs) {
             registry.registerSlashCommandWillBePostedHook((message: string, args: any) => {
-                if ((message.startsWith('/ask-channel') || message.startsWith('/summarize-channel')) &&
-                    !isEnterpriseLicensedOrDevelopment(store.getState())) {
+                if (message.startsWith('/ask-channel') && !licenseAllows(store.getState(), 'semantic_search')) {
                     return {
                         error: {
-                            message: 'The /ask-channel and /summarize-channel commands are available on Enterprise plans.',
+                            message: 'The /ask-channel command is available on Enterprise plans and above.',
+                        },
+                    };
+                }
+                if (message.startsWith('/summarize-channel') && !licenseAllows(store.getState(), 'channel_summarization')) {
+                    return {
+                        error: {
+                            message: 'The /summarize-channel command is available on Professional plans and above.',
                         },
                     };
                 }
@@ -323,8 +320,9 @@ export default class Plugin {
 
         if (registry.registerRootComponent) {
             registry.registerRootComponent(AgentsTour);
-            registry.registerRootComponent(CustomPromptsManagement);
+            registry.registerRootComponent(PopoutCustomPromptsManagement);
         }
+        registry.registerGlobalComponent(CustomPromptsManagement);
 
         // Register Agents as a product so it appears in the product switcher (grid icon).
         // registerProduct is an internal Mattermost API available on the plugin registry.
@@ -335,6 +333,8 @@ export default class Plugin {
                 agentsProductLabel,
                 AGENTS_ROUTE,
                 AgentsPage,
+                () => null,
+                AgentsHeaderSettings,
             );
         }
 
@@ -344,6 +344,10 @@ export default class Plugin {
                 suggestionsComponent: () => null,
                 hintsComponent: SearchHints,
                 action: async (searchTerms: string) => {
+                    if (!licenseAllows(store.getState(), 'semantic_search')) {
+                        return;
+                    }
+
                     // Resolve the active bot from the shared selected-agent preference.
                     const state = store.getState() as any;
                     const bots = state['plugins-' + manifest.id]?.bots || [];
@@ -351,9 +355,9 @@ export default class Plugin {
 
                     const result = await doRunSearch(
                         searchTerms,
+                        state.entities.teams.currentTeamId,
                         '',
-                        '',
-                        activeBot?.username,
+                        activeBot?.id,
                     );
                     doSelectPost(result.postid, result.channelid, store.dispatch);
                     if (rhs) {
@@ -367,7 +371,7 @@ export default class Plugin {
         if (registry.registerAIActionMenuItemComponent) {
             registry.registerAIActionMenuItemComponent({
                 icon: <CodeTagsIcon size={18}/>,
-                text: <FormattedMessage defaultMessage='Custom prompts'/>,
+                text: <FormattedMessage defaultMessage='Skills'/>,
                 sortOrder: 10,
                 component: CustomPromptsDropdown,
             });
@@ -394,6 +398,7 @@ export default class Plugin {
 
 declare global {
     interface Window {
+        basename?: string
         registerPlugin(pluginId: string, plugin: Plugin): void
         WebappUtils?: any
     }

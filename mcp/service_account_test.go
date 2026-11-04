@@ -215,7 +215,7 @@ func TestClientManagerModeIsolationPooling(t *testing.T) {
 			Enabled:               true,
 			ServiceAccountHeaders: testServiceAccountHeaders(),
 		}},
-	}, pluginAPI.Log, pluginAPI, newTestOAuthManager(), nil, httpServer.Client(), nil)
+	}, pluginAPI.Log, pluginAPI, newTestOAuthManager(), nil, httpServer.Client(), nil, RemoteMCPAlwaysAllowed)
 	t.Cleanup(m.Close)
 
 	userTools, userErrors := m.GetTools(context.Background(), UserCatalogRequest("bot-1"))
@@ -254,7 +254,7 @@ func TestClientManagerServiceAccountEmbeddedSessionAsInvoker(t *testing.T) {
 		invokingUserID: "user-a-session",
 	})
 	embeddedServer := &recordingEmbeddedMCPServer{
-		fakeEmbeddedMCPServer: fakeEmbeddedMCPServer{ctx: runCtx, server: newTestMCPServer(0, "search_users")},
+		ctx: runCtx, server: newTestMCPServer(0, "search_users"),
 	}
 	m := NewClientManager(Config{
 		IdleTimeoutMinutes: 30,
@@ -262,7 +262,7 @@ func TestClientManagerServiceAccountEmbeddedSessionAsInvoker(t *testing.T) {
 			Enabled:     true,
 			ToolConfigs: []ToolConfig{{Name: "search_users", Policy: ToolPolicyAsk, Enabled: true}},
 		},
-	}, pluginAPI.Log, pluginAPI, nil, embeddedServer, http.DefaultClient, nil)
+	}, pluginAPI.Log, pluginAPI, nil, embeddedServer, http.DefaultClient, nil, RemoteMCPAlwaysAllowed)
 	t.Cleanup(m.Close)
 
 	tools, mcpErrors := m.GetTools(context.Background(), ServiceAccountCatalogRequest(botUserID, invokingUserID))
@@ -294,7 +294,7 @@ func TestClientManagerServiceAccountPluginServerGetsInvokerUserIDHeader(t *testi
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, RemoteMCPAlwaysAllowed)
 	t.Cleanup(m.Close)
 	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.mcp", Name: "Example", Path: "/mcp", Enabled: true})
 
@@ -334,7 +334,7 @@ func TestClientManagerServiceAccountRemoteBagExcludesLocalServers(t *testing.T) 
 			Enabled:     true,
 			ToolConfigs: []ToolConfig{{Name: "search_users", Policy: ToolPolicyAsk, Enabled: true}},
 		},
-	}, pluginAPI.Log, pluginAPI, nil, embeddedServer, saHTTP.Client(), mockAPI)
+	}, pluginAPI.Log, pluginAPI, nil, embeddedServer, saHTTP.Client(), mockAPI, RemoteMCPAlwaysAllowed)
 	t.Cleanup(m.Close)
 	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.mcp", Name: "Example", Path: "/mcp", Enabled: true})
 
@@ -352,7 +352,7 @@ func TestClientManagerServiceAccountInvokersDoNotShareEmbeddedSession(t *testing
 		"user-b": "session-b",
 	})
 	embeddedServer := &recordingEmbeddedMCPServer{
-		fakeEmbeddedMCPServer: fakeEmbeddedMCPServer{ctx: runCtx, server: newTestMCPServer(0, "search_users")},
+		ctx: runCtx, server: newTestMCPServer(0, "search_users"),
 	}
 	m := NewClientManager(Config{
 		IdleTimeoutMinutes: 30,
@@ -360,7 +360,7 @@ func TestClientManagerServiceAccountInvokersDoNotShareEmbeddedSession(t *testing
 			Enabled:     true,
 			ToolConfigs: []ToolConfig{{Name: "search_users", Policy: ToolPolicyAsk, Enabled: true}},
 		},
-	}, pluginAPI.Log, pluginAPI, nil, embeddedServer, http.DefaultClient, nil)
+	}, pluginAPI.Log, pluginAPI, nil, embeddedServer, http.DefaultClient, nil, RemoteMCPAlwaysAllowed)
 	t.Cleanup(m.Close)
 
 	_, errA := m.GetTools(context.Background(), ServiceAccountCatalogRequest("bot-1", "user-a"))
@@ -386,7 +386,7 @@ func TestClientManagerServiceAccountCatalogExcludesNonSARemotes(t *testing.T) {
 			},
 			{Name: "no-sa-server", BaseURL: deadServerURL(t), Enabled: true},
 		},
-	}, pluginAPI.Log, pluginAPI, newTestOAuthManager(), nil, saHTTP.Client(), nil)
+	}, pluginAPI.Log, pluginAPI, newTestOAuthManager(), nil, saHTTP.Client(), nil, RemoteMCPAlwaysAllowed)
 	t.Cleanup(m.Close)
 
 	tools, mcpErrors := m.GetTools(context.Background(), ServiceAccountCatalogRequest("bot-1", "user-a"))
@@ -420,7 +420,7 @@ func TestCollectCatalogCrossBagToolNameCollision(t *testing.T) {
 			Enabled:     true,
 			ToolConfigs: []ToolConfig{{Name: "search_users", Policy: ToolPolicyAsk, Enabled: true}},
 		},
-	}, pluginAPI.Log, pluginAPI, newTestOAuthManager(), embeddedServer, remoteHTTP.Client(), mockAPI)
+	}, pluginAPI.Log, pluginAPI, newTestOAuthManager(), embeddedServer, remoteHTTP.Client(), mockAPI, RemoteMCPAlwaysAllowed)
 	t.Cleanup(m.Close)
 	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.mcp", Name: "Mattermost", Path: "/mcp", Enabled: true})
 
@@ -455,12 +455,12 @@ type recordingEmbeddedMCPServer struct {
 	sessionIDs []string
 }
 
-func (f *recordingEmbeddedMCPServer) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+func (f *recordingEmbeddedMCPServer) CreateClientTransport(userID, sessionID, sessionToken string, pluginAPI *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
 	f.mu.Lock()
 	f.userIDs = append(f.userIDs, userID)
 	f.sessionIDs = append(f.sessionIDs, sessionID)
 	f.mu.Unlock()
-	return f.fakeEmbeddedMCPServer.CreateClientTransport(userID, sessionID, pluginAPI)
+	return f.fakeEmbeddedMCPServer.CreateClientTransport(userID, sessionID, sessionToken, pluginAPI)
 }
 
 func (f *recordingEmbeddedMCPServer) recordedUserIDs() []string {

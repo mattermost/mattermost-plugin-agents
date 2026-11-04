@@ -1,4 +1,17 @@
-import { test, expect } from '@playwright/test';
+// Deferred ABAC e2e coverage (blocked on a testcontainers enterprise image with
+// the attribute-based access control plugin APIs + an Enterprise Advanced
+// license). Follow-up specs, to be sharded in ci-test-groups.mjs when added:
+//   - abac-agent-access.spec.ts: attribute-based agent + table policy; matching
+//     user can DM, non-matching user loses the bot and gets 403; switching back
+//     to "Allow for all" with policy deletion restores access.
+//   - abac-service-mcp.spec.ts: service policy denial fails completions with a
+//     usage restriction; MCP server policy denial silently shrinks /mcp/tools
+//     and the tool catalog (meta-tools omitted when it was the only server).
+//   - abac-authoring-authz.spec.ts: per-agent admin can author the agent policy
+//     (CEL autocomplete via ?agent_id=) but not service/MCP policies.
+
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { OpenAIMockContainer, RunOpenAIMocks, responseTest } from 'helpers/openai-mock';
@@ -11,21 +24,19 @@ import {
 import { AgentAPIHelper } from 'helpers/agent-api';
 import { AgentPageHelper } from 'helpers/agent-page';
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunAgentContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
 test.describe('Agent Access Control', () => {
-    test.beforeAll(async () => {
-        mattermost = await RunAgentContainer();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
         await openAIMock.addCompletionMock(responseTest);
-    }, { timeout: 180000 });
-
-    test.afterAll(async () => {
-        await Promise.allSettled([
-            openAIMock ? openAIMock.stop() : Promise.resolve(),
-            mattermost ? mattermost.stop() : Promise.resolve(),
-        ]);
     });
 
     test('should block user when UserAccessLevel=Block', async ({ page }) => {

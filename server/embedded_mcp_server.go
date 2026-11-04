@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strings"
 
-	localmcp "github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/tools"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -26,8 +25,10 @@ type EmbeddedMCPServer struct {
 
 // NewEmbeddedMCPServer creates a new embedded MCP server instance
 // searchService and fileContentService are optional and can be nil when the
-// corresponding capability is unavailable
-func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogService, searchService tools.SemanticSearchService, fileContentService tools.FileContentService) (*EmbeddedMCPServer, error) {
+// corresponding capability is unavailable.
+// allowStateChangingTools is a runtime predicate evaluated per request; a nil
+// predicate means state-changing tools are not available.
+func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogService, searchService tools.SemanticSearchService, fileContentService tools.FileContentService, allowStateChangingTools func() bool) (*EmbeddedMCPServer, error) {
 	// Get site URL from plugin configuration
 	siteURL := ""
 	if config := pluginAPI.Configuration.GetConfig(); config != nil && config.ServiceSettings.SiteURL != nil {
@@ -47,12 +48,10 @@ func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogServi
 
 	// Create configuration for in-memory transport
 	config := mcpserver.InMemoryConfig{
-		BaseConfig: mcpserver.BaseConfig{
-			MMServerURL: siteURL,
-			// Use the internal server URL for API communication within the container
-			MMInternalServerURL: internalServerURL,
-			DevMode:             false,
-		},
+		MMServerURL: siteURL,
+		// Use the internal server URL for API communication within the container
+		MMInternalServerURL: internalServerURL,
+		DevMode:             false,
 	}
 
 	// Create a logger adapter that routes MCP server logs through the plugin's logging system
@@ -60,7 +59,7 @@ func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogServi
 	mcpLogger := NewPluginAPILoggerAdapter(logger)
 
 	// Create the in-memory MCP server
-	server, err := mcpserver.NewInMemoryServer(config, mcpLogger, searchService, fileContentService)
+	server, err := mcpserver.NewInMemoryServer(config, mcpLogger, searchService, fileContentService, allowStateChangingTools)
 	if err != nil {
 		return nil, err
 	}
@@ -74,34 +73,15 @@ func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogServi
 }
 
 // CreateClientTransport creates a new in-memory transport for a client connection.
-func (e *EmbeddedMCPServer) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error) {
-	// Create token resolver that has closure over pluginAPI
-	// This allows the mcpserver to get fresh tokens without storing raw tokens in context
-	tokenResolver := func(sid string) (string, error) {
-		session, err := pluginAPI.Session.Get(sid)
-		if err != nil {
-			e.logger.Debug("Failed to get session for token resolution",
-				"user_id", userID,
-				"session_id", sid,
-				"error", err)
-			return "", fmt.Errorf("failed to get session: %w", err)
-		}
-		if session == nil {
-			return "", fmt.Errorf("session not found")
-		}
-		return session.Token, nil
-	}
-	hookStore := localmcp.NewBeforeHookStore(&pluginAPI.KV)
-	beforeHookResolver := func(userID, toolName, hookKey string) (string, error) {
-		entry, err := hookStore.Resolve(userID, toolName, hookKey)
-		if err != nil {
-			return "", err
-		}
-		return entry.CallbackURL, nil
-	}
+// sessionToken is the session's token when the caller already holds it; it
+// covers lookups that miss a just-created session on a lagging DB read replica.
+func (e *EmbeddedMCPServer) CreateClientTransport(userID, sessionID, sessionToken string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error) {
+	// The resolver closes over pluginAPI so the mcpserver can get fresh
+	// tokens without storing raw tokens in context.
+	tokenResolver := newSessionTokenResolver(pluginAPI.Session.Get, e.logger, userID, sessionID, sessionToken)
 
 	// Create the connection through the server with resolver
-	clientTransport, err := e.server.CreateConnectionForUser(userID, sessionID, tokenResolver, beforeHookResolver)
+	clientTransport, err := e.server.CreateConnectionForUser(userID, sessionID, tokenResolver)
 	if err != nil {
 		return nil, err
 	}
@@ -111,6 +91,30 @@ func (e *EmbeddedMCPServer) CreateClientTransport(userID, sessionID string, plug
 		"session_id", sessionID)
 
 	return clientTransport, nil
+}
+
+// newSessionTokenResolver resolves a session ID to its token, preferring a
+// fresh lookup. Session lookups by ID read from a DB read replica, so when the
+// lookup for knownSessionID fails, the token the caller already held is used;
+// the Mattermost server still validates it on every API call.
+func newSessionTokenResolver(getSession func(string) (*model.Session, error), logger pluginapi.LogService, userID, knownSessionID, knownToken string) func(string) (string, error) {
+	return func(sid string) (string, error) {
+		session, err := getSession(sid)
+		if err == nil && session != nil {
+			return session.Token, nil
+		}
+		if sid == knownSessionID && knownToken != "" {
+			return knownToken, nil
+		}
+		if err != nil {
+			logger.Debug("Failed to get session for token resolution",
+				"user_id", userID,
+				"session_id", sid,
+				"error", err)
+			return "", fmt.Errorf("failed to get session: %w", err)
+		}
+		return "", fmt.Errorf("session not found")
+	}
 }
 
 // deriveInternalServerURL determines the internal server URL for API

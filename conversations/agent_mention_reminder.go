@@ -4,6 +4,10 @@
 package conversations
 
 import (
+	"context"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -25,9 +29,10 @@ const (
 // post in the thread was authored by an AI agent. The ephemeral uses a custom
 // post type so the webapp can render an inline "click here to loop in" link.
 //
-// This is a no-op for top-level posts, DM channels, and threads whose previous
-// post was authored by a human.
-func (c *Conversations) maybeNotifyAgentMentionNeeded(post *model.Post, channel *model.Channel) {
+// This is a no-op for top-level posts, DM channels, threads whose previous
+// post was authored by a human, and threads whose previous post was authored
+// by the agent with user ID skipBotID (when non-empty).
+func (c *Conversations) maybeNotifyAgentMentionNeeded(ctx context.Context, post *model.Post, channel *model.Channel, skipBotID string) {
 	if post == nil || channel == nil {
 		return
 	}
@@ -37,13 +42,18 @@ func (c *Conversations) maybeNotifyAgentMentionNeeded(post *model.Post, channel 
 	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
 		return
 	}
+	// The reminder points at channel mentions and loop-in, which are
+	// available at Professional and above.
+	if !c.licenseChecker.Allows(enterprise.CapMultiplayerChannels) {
+		return
+	}
 
 	prev, err := c.findPreviousThreadPost(post)
 	if err != nil {
 		c.mmClient.LogDebug("agent mention reminder: failed to load thread", "error", err.Error(), "post_id", post.Id)
 		return
 	}
-	if prev == nil {
+	if prev == nil || (skipBotID != "" && prev.UserId == skipBotID) {
 		return
 	}
 
@@ -56,7 +66,7 @@ func (c *Conversations) maybeNotifyAgentMentionNeeded(post *model.Post, channel 
 	if mmBot == nil {
 		return
 	}
-	if err := c.bots.CheckUsageRestrictions(post.UserId, bot, channel); err != nil {
+	if err := c.bots.CheckUsageRestrictions(ctx, post.UserId, bot, channel); err != nil {
 		c.mmClient.LogDebug(
 			"agent mention reminder: bot unavailable for user/channel",
 			"error", err.Error(),

@@ -6,7 +6,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -439,7 +439,7 @@ func TestToolCallServerOriginJSON(t *testing.T) {
 				var deserialized ToolCall
 				err := json.Unmarshal([]byte(oldJSON), &deserialized)
 				require.NoError(t, err)
-				assert.Equal(t, "", deserialized.ServerOrigin)
+				assert.Empty(t, deserialized.ServerOrigin)
 				return
 			}
 
@@ -466,33 +466,10 @@ func TestWithBoundParamsPreservesServerOrigin(t *testing.T) {
 		},
 	}
 
-	bound := original.WithBoundParams(map[string]interface{}{"key": "value"})
+	bound := original.WithBoundParams(map[string]any{"key": "value"})
 
 	assert.Equal(t, original.ServerOrigin, bound.ServerOrigin)
 	assert.Equal(t, original.Name, bound.Name)
-}
-
-func TestWithCallMetadata(t *testing.T) {
-	original := Tool{
-		Name:         "test_tool",
-		ServerOrigin: "https://mcp.example.com",
-	}
-
-	bound := original.WithCallMetadata(map[string]any{"hook": "value"})
-	assert.Nil(t, original.CallMetadata, "WithCallMetadata must not mutate the receiver")
-	assert.Equal(t, map[string]any{"hook": "value"}, bound.CallMetadata)
-	assert.Equal(t, original.Name, bound.Name)
-	assert.Equal(t, original.ServerOrigin, bound.ServerOrigin)
-
-	// Mutating the source map after binding must not affect the bound copy.
-	src := map[string]any{"hook": "value"}
-	bound = original.WithCallMetadata(src)
-	src["hook"] = "tampered"
-	assert.Equal(t, "value", bound.CallMetadata["hook"])
-
-	// Empty/nil meta clears the field.
-	cleared := bound.WithCallMetadata(nil)
-	assert.Nil(t, cleared.CallMetadata)
 }
 
 func TestRemoveToolsByServerOrigin(t *testing.T) {
@@ -604,7 +581,7 @@ func TestRemoveToolsByServerOrigin(t *testing.T) {
 func TestMCPToolNameHelpers(t *testing.T) {
 	assert.Equal(t, "jira__get_issue", NamespaceMCPToolName("jira", "get_issue"))
 	assert.Equal(t, "get_issue", NamespaceMCPToolName("", "get_issue"))
-	assert.Equal(t, "", NamespaceMCPToolName("jira", ""))
+	assert.Empty(t, NamespaceMCPToolName("jira", ""))
 
 	assert.Equal(t, "get_issue", BareMCPToolName("jira__get_issue"))
 	assert.Equal(t, "search", BareMCPToolName("search"))
@@ -797,8 +774,8 @@ func TestRetainOnlyMCPTools(t *testing.T) {
 				gotNames = append(gotNames, tool.Name)
 			}
 			// Sort for deterministic comparison (map iteration order)
-			sort.Strings(gotNames)
-			sort.Strings(tt.wantToolNames)
+			slices.Sort(gotNames)
+			slices.Sort(tt.wantToolNames)
 			assert.Equal(t, tt.wantToolNames, gotNames)
 		})
 	}
@@ -922,7 +899,7 @@ func TestToolStoreUnloadedMCPTools(t *testing.T) {
 	_, ok := nilStore.GetUnloadedMCPToolInfo("jira__get_issue")
 	assert.False(t, ok)
 
-	store := NewNoTools()
+	store := NewToolStore()
 	store.SetUnloadedMCPTools([]Tool{
 		{Name: "jira__get_issue", Description: "Get a Jira issue", ServerOrigin: "https://jira.example.com", Schema: map[string]any{"type": "object"}},
 		{Name: "", Description: "ignored"},
@@ -985,7 +962,7 @@ func TestToolStoreLoadMCPTools(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			store := NewNoTools()
+			store := NewToolStore()
 			store.SetUnloadedMCPTools(tt.unloaded)
 
 			loaded := store.LoadMCPTools(tt.loadNames)
@@ -1005,7 +982,7 @@ func TestToolStoreLoadMCPTools(t *testing.T) {
 }
 
 func TestToolStoreLoadMCPToolsNilsEmptiedMap(t *testing.T) {
-	store := NewNoTools()
+	store := NewToolStore()
 	store.SetUnloadedMCPTools([]Tool{{Name: "jira__get_issue", Description: "Get a Jira issue"}})
 
 	loaded := store.LoadMCPTools([]string{"jira__get_issue"})
@@ -1017,7 +994,7 @@ func TestToolStoreLoadMCPToolsNilsEmptiedMap(t *testing.T) {
 }
 
 func TestRemoveToolsByServerOriginPrunesUnloadedMCPTools(t *testing.T) {
-	store := NewNoTools()
+	store := NewToolStore()
 	store.AddTools([]Tool{{Name: "builtin"}})
 	store.SetUnloadedMCPTools([]Tool{
 		{Name: "jira__get_issue", Description: "Get a Jira issue", ServerOrigin: "https://jira.example.com"},
@@ -1033,7 +1010,7 @@ func TestRemoveToolsByServerOriginPrunesUnloadedMCPTools(t *testing.T) {
 
 func TestEnrichToolCall(t *testing.T) {
 	newStore := func() *ToolStore {
-		store := NewNoTools()
+		store := NewToolStore()
 		store.AddTools([]Tool{
 			{Name: "jira__create_issue", Description: "Create a Jira issue", Title: "Create Issue", ServerOrigin: "https://jira.example.com", Schema: map[string]any{"type": "object"}},
 			{Name: "builtin_tool", Description: "A builtin tool", Schema: map[string]any{"type": "string"}},
@@ -1138,7 +1115,7 @@ func TestEnrichToolCall(t *testing.T) {
 }
 
 func TestEnrichToolCallNilSafe(t *testing.T) {
-	store := NewNoTools()
+	store := NewToolStore()
 	store.AddTools([]Tool{{Name: "builtin_tool", Description: "A builtin tool"}})
 
 	// nil tool call is a no-op.

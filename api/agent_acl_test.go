@@ -16,6 +16,7 @@ import (
 // change while service account auth stays on. Must stay in sync with
 // clearManagerEditableFields. Every other BotConfig field is sensitive by default.
 var managerEditableBotConfigFields = map[string]bool{
+	"Name":                    true,
 	"DisplayName":             true,
 	"CustomInstructions":      true,
 	"Model":                   true,
@@ -30,6 +31,7 @@ var managerEditableBotConfigFields = map[string]bool{
 	"StructuredOutputEnabled": true,
 	"MaxToolTurns":            true,
 	"UseServiceAccountAuth":   true,
+	"Skills":                  true,
 }
 
 func TestServiceAccountChangeNeedsAdmin(t *testing.T) {
@@ -102,17 +104,34 @@ func TestServiceAccountChangeNeedsAdmin(t *testing.T) {
 	}
 }
 
+func TestServiceAccountPolicyWriteNeedsAdmin(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *llm.BotConfig
+		want bool
+	}{
+		{name: "nil config does not need admin", cfg: nil},
+		{name: "SA off does not need admin", cfg: &llm.BotConfig{UseServiceAccountAuth: false}},
+		{name: "SA on needs admin", cfg: &llm.BotConfig{UseServiceAccountAuth: true}, want: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, serviceAccountPolicyWriteNeedsAdmin(tc.cfg))
+		})
+	}
+}
+
 // TestServiceAccountSensitiveFieldsAreExhaustive fails when a BotConfig field is
 // added without deciding whether an agent manager may change it while service
 // account auth is on. Manager-editable fields are listed in
 // managerEditableBotConfigFields (and cleared in clearManagerEditableFields);
 // every other field is sensitive by default.
 func TestServiceAccountSensitiveFieldsAreExhaustive(t *testing.T) {
-	typ := reflect.TypeOf(llm.BotConfig{})
+	typ := reflect.TypeFor[llm.BotConfig]()
 	require.Greater(t, typ.NumField(), 0)
 
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
+	for field := range typ.Fields() {
 		t.Run(field.Name, func(t *testing.T) {
 			stored := baseSAOnBotConfig()
 			proposed := stored
@@ -157,7 +176,7 @@ func baseSAOnBotConfig() llm.BotConfig {
 		ReasoningEnabled:        false,
 		ReasoningEffort:         "medium",
 		ThinkingBudget:          1024,
-		StructuredOutputEnabled: false,
+		StructuredOutputEnabled: false, //nolint:staticcheck // deprecated but still persisted verbatim
 		MaxToolTurns:            10,
 		BotUserID:               "bot-1",
 		CreatorID:               "creator-1",
@@ -186,6 +205,9 @@ func mutateBotConfigField(t *testing.T, cfg *llm.BotConfig, fieldName string) {
 		return
 	case "ChannelIDs", "UserIDs", "TeamIDs", "AdminUserIDs", "EnabledNativeTools":
 		v.Set(reflect.ValueOf([]string{"mutated-id"}))
+		return
+	case "Skills":
+		v.Set(reflect.ValueOf(llm.SkillsConfig{AllowPersonal: true, EnabledSharedIDs: []string{"mutated-id"}}))
 		return
 	}
 

@@ -5,7 +5,17 @@ import React, {useState, useRef, useCallback} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {Button} from '@mattermost/compass-ui/components/button';
+import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
+import {Radio} from '@mattermost/compass-ui/components/radio';
+import {TextArea} from '@mattermost/compass-ui/components/text-area';
+import {TextInput} from '@mattermost/compass-ui/components/text-input';
+
+import {useMenuTransition} from '@/hooks/use_menu_transition';
+import {useIsLicensedFor} from '@/license';
+
 import {CustomPrompt} from '@/types';
+import {MaxSkillDescriptionRunes} from '@/types/agents';
 import Dropdown from '../dropdown';
 
 import ContextVariablesDropdown from './context_variables_dropdown';
@@ -23,11 +33,11 @@ const FormLayout = styled.div<{$stickyFooter?: boolean}>`
     `}
 `;
 
-const FormBody = styled.div<{$stickyFooter?: boolean}>`
+const FormBody = styled.div<{$stickyFooter?: boolean; $flush?: boolean}>`
     display: flex;
     flex-direction: column;
-    gap: 24px;
-    padding: 20px 32px 0;
+    gap: var(--spacing-xxl);
+    padding: ${({$flush}) => ($flush ? 'var(--spacing-xl) 0 0' : 'var(--spacing-xl) var(--spacing-xxxl) 0')};
 
     ${({$stickyFooter}) =>
         $stickyFooter && `
@@ -37,116 +47,56 @@ const FormBody = styled.div<{$stickyFooter?: boolean}>`
     `}
 `;
 
-const FormFooter = styled.div`
+const FormFooter = styled.div<{$flush?: boolean}>`
     display: flex;
     justify-content: flex-end;
     align-items: center;
-    gap: 8px;
+    gap: var(--spacing-xs);
     flex-shrink: 0;
-    padding: 16px 32px 24px;
+    padding: ${({$flush}) => ($flush ? 'var(--spacing-l) 0 var(--spacing-xxl)' : 'var(--spacing-l) var(--spacing-xxxl) var(--spacing-xxl)')};
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
 /** Read-only and legacy single-block layout */
-const FormContainer = styled.div`
+const FormContainer = styled.div<{$flush?: boolean}>`
     display: flex;
     flex-direction: column;
-    gap: 24px;
-    padding: 20px 32px;
+    gap: var(--spacing-xxl);
+    padding: ${({$flush}) => ($flush ? 'var(--spacing-xl) 0' : 'var(--spacing-xl) var(--spacing-xxxl)')};
     background-color: var(--center-channel-bg);
 `;
 
 const FieldGroup = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--spacing-xxxs);
     position: relative;
-`;
-
-const FieldLabel = styled.label`
-    position: absolute;
-    top: -8px;
-    left: 12px;
-    background-color: var(--center-channel-bg);
-    padding: 0 4px;
-    font-size: 10px;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    z-index: 1;
-`;
-
-const TextInput = styled.input`
-    width: 100%;
-    padding: 10px 16px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    border-radius: 4px;
-    background-color: var(--center-channel-bg);
-    color: var(--center-channel-color);
-    font-family: 'Open Sans', sans-serif;
-    font-size: 14px;
-    line-height: 20px;
-    outline: none;
-
-    &:focus {
-        border-color: var(--button-bg);
-        box-shadow: 0 0 0 1px var(--button-bg);
-    }
-`;
-
-const TextArea = styled.textarea`
-    width: 100%;
-    padding: 10px 16px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    border-radius: 4px;
-    background-color: var(--center-channel-bg);
-    color: var(--center-channel-color);
-    font-family: 'Open Sans', sans-serif;
-    font-size: 14px;
-    line-height: 20px;
-    outline: none;
-    resize: vertical;
-    min-height: 60px;
-
-    &:focus {
-        border-color: var(--button-bg);
-        box-shadow: 0 0 0 1px var(--button-bg);
-    }
-`;
-
-const SystemPromptTextArea = styled(TextArea)`
-    min-height: 120px;
 `;
 
 const RadioGroup = styled.div`
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: var(--spacing-xl);
 `;
 
-const RadioLabel = styled.label`
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 14px;
-    line-height: 20px;
-    color: var(--center-channel-color);
-    cursor: pointer;
-`;
-
-const RadioInput = styled.input`
-    cursor: pointer;
+const InlineRadio = styled(Radio)`
+    && {
+        width: auto;
+    }
 `;
 
 const PrivateNote = styled.span`
+    margin-left: var(--spacing-xxs);
     color: rgba(var(--center-channel-color-rgb), 0.56);
-    font-size: 12px;
+    font-size: var(--font-size-75);
 `;
 
 const VisibilityLabel = styled.div`
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-75);
     color: rgba(var(--center-channel-color-rgb), 0.64);
-    margin-bottom: 4px;
+    margin-bottom: var(--spacing-xxxs);
 `;
 
 const SystemPromptHeader = styled.div`
@@ -156,103 +106,21 @@ const SystemPromptHeader = styled.div`
 `;
 
 const SystemPromptLabel = styled.label`
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-75);
     color: rgba(var(--center-channel-color-rgb), 0.64);
 `;
 
-const ContextVariablesButton = styled.button`
-    background: rgba(var(--center-channel-color-rgb), 0.08);
-    color: var(--center-channel-color);
-    border: none;
-    border-radius: 4px;
-    padding: 4px 10px;
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.16);
-    }
-`;
-
-const SaveButton = styled.button`
-    background: var(--button-bg);
-    color: var(--button-color);
-    border: none;
-    border-radius: 4px;
-    padding: 10px 20px;
-    font-weight: 600;
-    font-size: 14px;
-    cursor: pointer;
-    font-family: 'Open Sans', sans-serif;
-
-    &:hover {
-        background: rgba(var(--button-bg-rgb), 0.88);
-    }
-
-    &:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-`;
-
-const DiscardButton = styled.button`
-    background: none;
-    color: var(--button-bg);
-    border: none;
-    border-radius: 4px;
-    padding: 10px 20px;
-    font-weight: 600;
-    font-size: 14px;
-    cursor: pointer;
-    font-family: 'Open Sans', sans-serif;
-
-    &:hover {
-        background: rgba(var(--button-bg-rgb), 0.08);
-    }
-
-    &:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-`;
-
-const DeleteButton = styled.button`
-    background: none;
-    color: var(--error-text);
-    border: none;
-    border-radius: 4px;
-    padding: 10px 20px;
-    font-weight: 600;
-    font-size: 14px;
-    cursor: pointer;
-    font-family: 'Open Sans', sans-serif;
+const DeleteButton = styled(Button)`
     margin-right: auto;
-
-    &:hover {
-        background: rgba(var(--error-text-color-rgb), 0.08);
-    }
-
-    &:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-`;
-
-const ValidationError = styled.div`
-    color: var(--error-text);
-    font-size: 12px;
-    line-height: 16px;
-    margin-top: 2px;
 `;
 
 const ReadOnlyText = styled.div`
-    font-size: 14px;
-    line-height: 20px;
+    font-size: var(--font-size-100);
+    line-height: var(--line-height-100);
     color: var(--center-channel-color);
-    padding: 4px 0;
+    padding: var(--spacing-xxxs) 0;
     white-space: pre-wrap;
 `;
 
@@ -269,15 +137,21 @@ interface CustomPromptFormProps {
 
     /** When true, actions sit in a footer bar and the body scrolls (new prompt modal). */
     stickyFooter?: boolean;
+
+    /** Drop the horizontal inset when the host column already provides it (page layout). */
+    flush?: boolean;
 }
 
-const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, stickyFooter}: CustomPromptFormProps) => {
+const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, stickyFooter, flush}: CustomPromptFormProps) => {
     const intl = useIntl();
     const [name, setName] = useState(prompt?.name ?? '');
     const [description, setDescription] = useState(prompt?.description ?? '');
     const [template, setTemplate] = useState(prompt?.template ?? '');
     const [isShared, setIsShared] = useState(prompt?.is_shared ?? false);
+    const sharedPromptsLicensed = useIsLicensedFor('shared_prompts');
+    const canShare = sharedPromptsLicensed || isShared;
     const [showContextVars, setShowContextVars] = useState(false);
+    const contextVarsMenu = useMenuTransition(showContextVars);
     const [errors, setErrors] = useState<{name?: boolean; template?: boolean}>({});
     const [isSaving, setIsSaving] = useState(false);
     const templateRef = useRef<HTMLTextAreaElement>(null);
@@ -328,7 +202,7 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
 
     if (readOnly) {
         return (
-            <FormContainer>
+            <FormContainer $flush={flush}>
                 <FieldGroup>
                     <VisibilityLabel>
                         <FormattedMessage defaultMessage='Visibility'/>
@@ -357,7 +231,7 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
                 )}
                 <FieldGroup>
                     <VisibilityLabel>
-                        <FormattedMessage defaultMessage='System Prompt'/>
+                        <FormattedMessage defaultMessage='Instructions'/>
                     </VisibilityLabel>
                     <ReadOnlyText>{prompt?.template}</ReadOnlyText>
                 </FieldGroup>
@@ -369,89 +243,89 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
         <>
             {onDelete && (
                 <DeleteButton
-                    type='button'
+                    emphasis='tertiary'
+                    destructive={true}
                     onClick={onDelete}
                     disabled={isSaving}
                 >
                     <FormattedMessage defaultMessage='Delete'/>
                 </DeleteButton>
             )}
-            <DiscardButton
-                type='button'
+            <Button
+                emphasis='tertiary'
                 onClick={onDiscard}
                 disabled={isSaving}
             >
                 <FormattedMessage defaultMessage='Discard'/>
-            </DiscardButton>
-            <SaveButton
-                type='button'
+            </Button>
+            <Button
+                emphasis='primary'
                 onClick={handleSave}
-                disabled={isSaving}
+                loading={isSaving}
             >
                 <FormattedMessage defaultMessage='Save'/>
-            </SaveButton>
+            </Button>
         </>
     );
 
     return (
         <FormLayout $stickyFooter={stickyFooter}>
-            <FormBody $stickyFooter={stickyFooter}>
+            <FormBody
+                $stickyFooter={stickyFooter}
+                $flush={flush}
+            >
                 <FieldGroup>
                     <VisibilityLabel>
                         <FormattedMessage defaultMessage='Visibility'/>
                     </VisibilityLabel>
                     <RadioGroup>
-                        <RadioLabel>
-                            <RadioInput
-                                type='radio'
+                        {canShare && (
+                            <InlineRadio
                                 name={`visibility-${prompt?.id ?? 'new'}`}
                                 checked={isShared}
+                                disabled={!sharedPromptsLicensed}
                                 onChange={() => setIsShared(true)}
-                            />
-                            <FormattedMessage defaultMessage='Public'/>
-                        </RadioLabel>
-                        <RadioLabel>
-                            <RadioInput
-                                type='radio'
-                                name={`visibility-${prompt?.id ?? 'new'}`}
-                                checked={!isShared}
-                                onChange={() => setIsShared(false)}
-                            />
+                            >
+                                <FormattedMessage defaultMessage='Public'/>
+                            </InlineRadio>
+                        )}
+                        <InlineRadio
+                            name={`visibility-${prompt?.id ?? 'new'}`}
+                            checked={!isShared}
+                            onChange={() => setIsShared(false)}
+                        >
                             <FormattedMessage defaultMessage='Private'/>
                             <PrivateNote>
                                 <FormattedMessage defaultMessage='(only you)'/>
                             </PrivateNote>
-                        </RadioLabel>
+                        </InlineRadio>
                     </RadioGroup>
                 </FieldGroup>
                 <FieldGroup>
-                    <FieldLabel htmlFor={`prompt-name-${prompt?.id ?? 'new'}`}>
-                        <FormattedMessage defaultMessage='Action Title'/>
-                    </FieldLabel>
                     <TextInput
                         id={`prompt-name-${prompt?.id ?? 'new'}`}
+                        label={<FormattedMessage defaultMessage='Action Title'/>}
                         value={name}
                         maxLength={64}
+                        invalid={errors.name}
                         onChange={(e) => {
                             setName(e.target.value);
                             if (errors.name) {
                                 setErrors((prev) => ({...prev, name: false}));
                             }
                         }}
-                        placeholder={intl.formatMessage({defaultMessage: 'Enter a title for your prompt'})}
+                        placeholder={intl.formatMessage({defaultMessage: 'Enter a title for your skill'})}
                     />
                     {errors.name && (
-                        <ValidationError>
-                            <FormattedMessage defaultMessage='Action title is required'/>
-                        </ValidationError>
+                        <ErrorMessage message={<FormattedMessage defaultMessage='Action title is required'/>}/>
                     )}
                 </FieldGroup>
                 <FieldGroup>
-                    <FieldLabel htmlFor={`prompt-description-${prompt?.id ?? 'new'}`}>
-                        <FormattedMessage defaultMessage='Brief Description'/>
-                    </FieldLabel>
                     <TextArea
                         id={`prompt-description-${prompt?.id ?? 'new'}`}
+                        label={<FormattedMessage defaultMessage='Brief Description'/>}
+                        rows={2}
+                        maxLength={MaxSkillDescriptionRunes}
                         value={description}
                         onChange={(e) => setDescription(e.target.value)}
                         placeholder={intl.formatMessage({defaultMessage: 'Enter a brief description'})}
@@ -460,47 +334,50 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
                 <FieldGroup>
                     <SystemPromptHeader>
                         <SystemPromptLabel htmlFor={`prompt-template-${prompt?.id ?? 'new'}`}>
-                            <FormattedMessage defaultMessage='System Prompt'/>
+                            <FormattedMessage defaultMessage='Instructions'/>
                         </SystemPromptLabel>
                         <Dropdown
                             target={
-                                <ContextVariablesButton
-                                    type='button'
+                                <Button
+                                    emphasis='quaternary'
+                                    size='x-small'
                                     onClick={() => setShowContextVars(!showContextVars)}
                                     aria-label={intl.formatMessage({defaultMessage: 'Insert context variable'})}
                                 >
                                     <FormattedMessage defaultMessage='Context Variables'/>
-                                </ContextVariablesButton>
+                                </Button>
                             }
-                            isOpen={showContextVars}
+                            isOpen={contextVarsMenu.rendered}
                             onOpenChange={setShowContextVars}
                             placement='bottom-end'
                         >
                             <ContextVariablesDropdown
                                 onSelect={handleInsertVariable}
+                                open={showContextVars}
+                                onExited={contextVarsMenu.onExited}
                             />
                         </Dropdown>
                     </SystemPromptHeader>
-                    <SystemPromptTextArea
+                    <TextArea
                         id={`prompt-template-${prompt?.id ?? 'new'}`}
                         ref={templateRef}
+                        rows={6}
                         value={template}
+                        invalid={errors.template}
                         onChange={(e) => {
                             setTemplate(e.target.value);
                             if (errors.template) {
                                 setErrors((prev) => ({...prev, template: false}));
                             }
                         }}
-                        placeholder={intl.formatMessage({defaultMessage: 'Enter the system prompt template'})}
+                        placeholder={intl.formatMessage({defaultMessage: 'Enter the skill instructions'})}
                     />
                     {errors.template && (
-                        <ValidationError>
-                            <FormattedMessage defaultMessage='System prompt is required'/>
-                        </ValidationError>
+                        <ErrorMessage message={<FormattedMessage defaultMessage='Instructions are required'/>}/>
                     )}
                 </FieldGroup>
             </FormBody>
-            <FormFooter>{actions}</FormFooter>
+            <FormFooter $flush={flush}>{actions}</FormFooter>
         </FormLayout>
     );
 };

@@ -8,9 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
-	"unicode/utf8"
 
 	otelcodes "go.opentelemetry.io/otel/codes"
 
@@ -37,6 +35,13 @@ const (
 		"Do NOT repeat the file's content in your response text — briefly mention the file instead. " +
 		"Only state that a file is attached after this tool has returned its file_id."
 
+	// htmlArtifactDescription is appended to the CreateFile description when
+	// HTML artifacts are enabled, so the model knows how .html files render.
+	htmlArtifactDescription = " HTML files (.html) are rendered as interactive, sandboxed artifacts inline in the conversation. " +
+		"They must be fully self-contained: inline all CSS and JavaScript, and do not reference external URLs: external scripts, stylesheets, fonts and images will not load, and network requests (fetch, XHR, WebSocket) will not work. " +
+		"To match the viewer's theme, use CSS variables such as --mm-center-channel-bg, --mm-center-channel-color, --mm-button-bg, --mm-button-color and --mm-link-color. " +
+		"Scripts may call `await window.mattermost.getCurrentUser()` to get the viewer's name (firstName, lastName, nickname, displayName) and username; the viewer is asked for consent, so handle a rejected promise. Call it in response to a user action (for example a button click), not on page load: calls made while the viewer is not interacting with the artifact are rejected."
+
 	// createFileResultNote reminds the model not to duplicate attached content.
 	createFileResultNote = "Attached to your reply automatically — do not repeat the file's content in your response text."
 )
@@ -59,11 +64,16 @@ type CreateFileResult struct {
 // NewCreateFileTool returns the built-in CreateFile tool. It uploads text
 // content to the conversation channel so the response flow can attach it to
 // the bot's reply post. AutoExecute is set because the tool's only side
-// effect is scoped to the assistant's own response.
-func NewCreateFileTool(client mmapi.Client) llm.Tool {
+// effect is scoped to the assistant's own response. When htmlArtifacts is
+// true the description tells the model how HTML files are rendered.
+func NewCreateFileTool(client mmapi.Client, htmlArtifacts bool) llm.Tool {
+	description := createFileDescription
+	if htmlArtifacts {
+		description += htmlArtifactDescription
+	}
 	return llm.Tool{
 		Name:        CreateFileToolName,
-		Description: createFileDescription,
+		Description: description,
 		Schema:      llm.NewJSONSchemaFromStruct[CreateFileArgs](),
 		AutoExecute: true,
 		Resolver: func(ctx context.Context, llmCtx *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
@@ -81,36 +91,23 @@ func resolveCreateFile(ctx context.Context, client mmapi.Client, llmCtx *llm.Con
 	if client == nil {
 		return "file creation is not available", errors.New("mattermost client unavailable for CreateFile")
 	}
-	if llmCtx == nil || llmCtx.Channel == nil || llmCtx.Channel.Id == "" {
-		return "file creation is not available in this context because there is no conversation channel to hold the file", errors.New("CreateFile requires a channel-scoped context")
-	}
-	// Every flow that catalogs CreateFile sets RequestingUser; a nil value is
-	// a bug, so fail closed rather than skip the permission check below.
-	if llmCtx.RequestingUser == nil || llmCtx.RequestingUser.Id == "" {
-		return "file creation is not available in this context", errors.New("CreateFile requires a requesting user")
+	if policyErr := uploadPolicyAllowed(client, llmCtx); policyErr != nil {
+		return createFilePolicyUserMessage(policyErr), fmt.Errorf("CreateFile rejected: %w", policyErr)
 	}
 
-	name := filepath.Base(strings.TrimSpace(args.FileName))
-	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
-		return "file_name must be a plain file name with an optional extension, e.g. report.md or data.csv", errors.New("invalid CreateFile file name")
+	name, nameErr := validateUploadFileName(args.FileName)
+	if errors.Is(nameErr, errUploadFileNameTooLong) {
+		return fmt.Sprintf("file_name must be at most %d characters", maxCreateFileNameLength), fmt.Errorf("CreateFile: %w", nameErr)
 	}
-	if utf8.RuneCountInString(name) > maxCreateFileNameLength {
-		return fmt.Sprintf("file_name must be at most %d characters", maxCreateFileNameLength), errors.New("CreateFile file name too long")
+	if nameErr != nil {
+		return "file_name must be a plain file name with an optional extension, e.g. report.md or data.csv", fmt.Errorf("CreateFile: %w", nameErr)
 	}
 
 	if args.Content == "" {
 		return "content must not be empty", errors.New("CreateFile content empty")
 	}
 
-	// UploadFile goes through the admin-level plugin API, which skips the
-	// per-user checks of the api4 upload endpoint, so enforce the server
-	// attachment policy, size limit, and the requesting user's upload
-	// permission here. A nil EnableFileAttachments means enabled (server default).
-	cfg := client.GetConfig()
-	if cfg != nil && cfg.FileSettings.EnableFileAttachments != nil && !*cfg.FileSettings.EnableFileAttachments {
-		return "file attachments are disabled on this server", errors.New("CreateFile rejected: file attachments are disabled by server config")
-	}
-	if limit := createFileContentLimit(cfg); int64(len(args.Content)) > limit {
+	if limit := CreateFileContentLimit(client.GetConfig()); int64(len(args.Content)) > limit {
 		return fmt.Sprintf("content exceeds the %d-byte file size limit; split the content into multiple smaller files", limit), errors.New("CreateFile content too large")
 	}
 
@@ -118,10 +115,6 @@ func resolveCreateFile(ctx context.Context, client mmapi.Client, llmCtx *llm.Con
 	// the conversation flow) so excess calls are rejected before uploading.
 	if slots := min(llmCtx.ResponseAttachmentSlots(), maxCreatedFilesPerTurn); len(llmCtx.CreatedFilesList()) >= slots {
 		return fmt.Sprintf("no more files can be attached to this reply (limit %d per post); do not create more files in this reply", maxCreatedFilesPerTurn), errors.New("CreateFile per-reply cap reached")
-	}
-
-	if !client.HasPermissionToChannel(llmCtx.RequestingUser.Id, llmCtx.Channel.Id, model.PermissionUploadFile) {
-		return "you do not have permission to attach files in this channel", errors.New("CreateFile rejected: requesting user lacks upload permission in the channel")
 	}
 
 	_, span := telemetry.Tracer().Start(ctx, "create file upload")
@@ -147,9 +140,24 @@ func resolveCreateFile(ctx context.Context, client mmapi.Client, llmCtx *llm.Con
 	return string(result), nil
 }
 
-// createFileContentLimit returns the server's max file size, falling back to
+// createFilePolicyUserMessage maps a shared upload-policy failure to the
+// tool-result message returned to the model.
+func createFilePolicyUserMessage(err error) string {
+	switch {
+	case errors.Is(err, errUploadNoChannel):
+		return "file creation is not available in this context because there is no conversation channel to hold the file"
+	case errors.Is(err, errUploadDisabled):
+		return "file attachments are disabled on this server"
+	case errors.Is(err, errUploadNoPermission):
+		return "you do not have permission to attach files in this channel"
+	default: // errUploadNoUser
+		return "file creation is not available in this context"
+	}
+}
+
+// CreateFileContentLimit returns the server's max file size, falling back to
 // the package constant when the config does not provide one.
-func createFileContentLimit(cfg *model.Config) int64 {
+func CreateFileContentLimit(cfg *model.Config) int64 {
 	if cfg != nil && cfg.FileSettings.MaxFileSize != nil && *cfg.FileSettings.MaxFileSize > 0 {
 		return *cfg.FileSettings.MaxFileSize
 	}

@@ -6,8 +6,11 @@ import {GlobalState} from '@mattermost/types/store';
 
 import {makeCallsPostButtonClickedHandler} from './calls_button';
 import {getCustomPrompts as fetchCustomPromptsAPI, getCustomPromptPins} from './client';
+import {licenseAllows} from './license';
 import manifest from './manifest';
 import {CustomPrompt} from './types';
+import type {AIThread} from './types/ai_thread';
+import {LinkPolicy, PLAIN_TEXT_LINK_POLICY} from './utils/link_allowlist';
 
 type WebappStore = Store<GlobalState, UnknownAction>
 
@@ -16,25 +19,29 @@ export const BotsHandler = manifest.id + '_bots';
 export const CustomPromptsHandler = 'SET_CUSTOM_PROMPTS';
 export const PinnedPromptIdsHandler = 'SET_PINNED_PROMPT_IDS';
 export const ShowCustomPromptsModalHandler = 'SHOW_CUSTOM_PROMPTS_MODAL';
+export const SetLinkPolicyHandler = 'SET_LINK_POLICY';
 
 export async function setupRedux(registry: any, store: WebappStore) {
     const reducer = combineReducers({
         callsPostButtonClickedTranscription,
         bots,
-        botChannelId,
         selectedPostId,
-        searchEnabled,
-        allowUnsafeLinks,
+        rhsTab,
+        aiThreads,
+        linkPolicy,
+        htmlArtifactsEnabled,
         customPrompts,
         pinnedPromptIds,
         showCustomPromptsModal,
     });
     registry.registerReducer(reducer);
 
-    store.dispatch({
-        type: CallsClickHandler as any,
-        handler: makeCallsPostButtonClickedHandler(store.dispatch),
-    });
+    if (licenseAllows(store.getState(), 'meetings')) {
+        store.dispatch({
+            type: CallsClickHandler as any,
+            handler: makeCallsPostButtonClickedHandler(store.dispatch, store.getState),
+        });
+    }
 
     // This is a workaround for a bug where the RHS was inaccessible to
     // users that where not system admins. This is unable to be fixed properly
@@ -74,37 +81,94 @@ function bots(state = null, action: any) {
     }
 }
 
-function searchEnabled(state = false, action: any) {
+function linkPolicy(state: LinkPolicy = PLAIN_TEXT_LINK_POLICY, action: any) {
     switch (action.type) {
-    case 'SET_SEARCH_ENABLED':
-        return action.searchEnabled;
+    case SetLinkPolicyHandler:
+        return action.linkPolicy ?? PLAIN_TEXT_LINK_POLICY;
     default:
         return state;
     }
 }
 
-function allowUnsafeLinks(state = false, action: any) {
+function htmlArtifactsEnabled(state = false, action: any) {
     switch (action.type) {
-    case 'SET_ALLOW_UNSAFE_LINKS':
-        return action.allowUnsafeLinks;
+    case 'SET_HTML_ARTIFACTS_ENABLED':
+        return action.htmlArtifactsEnabled;
     default:
         return state;
     }
 }
 
-function botChannelId(state = '', action: any) {
+// The RHS's list view when no thread is open: the new-chat tab or the chat history. It lives here,
+// not in the RHS body, because the header title (rendered by the host) shows the Back button and
+// the tools button according to it. Showing a list view (showRHSList) also closes the open thread.
+export type RHSTab = 'new' | 'threads';
+
+export function rhsTab(state: RHSTab = 'new', action: any): RHSTab {
     switch (action.type) {
-    case 'SET_AI_BOT_CHANNEL':
-        return action.botChannelId;
+    case 'AI_RHS_SET_TAB':
+        return action.tab === 'threads' ? 'threads' : 'new';
     default:
         return state;
     }
 }
 
-function selectedPostId(state = '', action: any) {
+// The current user's AI threads (GET /ai_threads), shared by every view that lists them: the
+// Agents sidebar, the chat name menus, Find agents and the RHS history. Only hooks/use_agent_threads
+// fetches it; views read it through its selectors.
+export const AIThreadsRequested = 'AI_THREADS_REQUESTED';
+export const AIThreadsReceived = 'AI_THREADS_RECEIVED';
+export const AIThreadsFailed = 'AI_THREADS_FAILED';
+export const AIThreadTitleSet = 'AI_THREAD_TITLE_SET';
+
+export interface AIThreadsState {
+
+    // null until the first successful load.
+    threads: AIThread[] | null;
+    loading: boolean;
+    error: boolean;
+
+    // The latest request: the response of a superseded one is dropped.
+    requestId: number;
+}
+
+export const initialAIThreadsState: AIThreadsState = {
+    threads: null,
+    loading: false,
+    error: false,
+    requestId: 0,
+};
+
+export function aiThreads(state: AIThreadsState = initialAIThreadsState, action: any): AIThreadsState {
+    switch (action.type) {
+    case AIThreadsRequested:
+        return {...state, loading: true, requestId: action.requestId};
+    case AIThreadsReceived:
+        if (action.requestId !== state.requestId) {
+            return state;
+        }
+        return {...state, threads: Array.isArray(action.threads) ? action.threads : [], loading: false, error: false};
+    case AIThreadsFailed:
+        if (action.requestId !== state.requestId) {
+            return state;
+        }
+        return {...state, loading: false, error: true};
+    case AIThreadTitleSet:
+        return {
+            ...state,
+            threads: state.threads?.map((t) => (t.id === action.conversationId ? {...t, title: action.title} : t)) ?? null,
+        };
+    default:
+        return state;
+    }
+}
+
+export function selectedPostId(state = '', action: any) {
     switch (action.type) {
     case 'SELECT_AI_POST':
         return action.postId;
+    case 'AI_RHS_SET_TAB':
+        return '';
     default:
         return state;
     }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -27,11 +28,11 @@ func AgentList(agents []AgentInfo, currentBotUserID string) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Found %d agent(s):\n\n", len(agents)))
+	fmt.Fprintf(&b, "Found %d agent(s):\n\n", len(agents))
 	for i, a := range agents {
-		b.WriteString(fmt.Sprintf("%d. %s\n", i+1, a.DisplayName))
-		b.WriteString(fmt.Sprintf("   ID: %s\n", a.ID))
-		b.WriteString(fmt.Sprintf("   Username: @%s\n", a.Username))
+		fmt.Fprintf(&b, "%d. %s\n", i+1, a.DisplayName)
+		fmt.Fprintf(&b, "   ID: %s\n", a.ID)
+		fmt.Fprintf(&b, "   Username: @%s\n", a.Username)
 		if currentBotUserID != "" && a.ID == currentBotUserID {
 			b.WriteString("   ** This is YOU (the current agent) **\n")
 		}
@@ -41,21 +42,20 @@ func AgentList(agents []AgentInfo, currentBotUserID string) string {
 }
 
 func ThreadData(data *mmapi.ThreadData) string {
-	result := ""
+	var result strings.Builder
 	for _, post := range data.Posts {
 		username := "unknown"
 		if user := data.UsersByID[post.UserId]; user != nil {
 			username = user.Username
 		}
 		if post.CreateAt > 0 {
-			t := time.Unix(post.CreateAt/1000, (post.CreateAt%1000)*int64(time.Millisecond))
-			result += fmt.Sprintf("%s (%s): %s\n\n", username, t.UTC().Format(time.RFC3339), PostBody(post))
+			fmt.Fprintf(&result, "%s (%s): %s\n\n", username, TimeFromMillis(post.CreateAt), PostBody(post))
 		} else {
-			result += fmt.Sprintf("%s: %s\n\n", username, PostBody(post))
+			fmt.Fprintf(&result, "%s: %s\n\n", username, PostBody(post))
 		}
 	}
 
-	return result
+	return result.String()
 }
 
 func PostBody(post *model.Post) string {
@@ -112,6 +112,13 @@ func TimeFromMillis(millis int64) string {
 		return ""
 	}
 	return time.UnixMilli(millis).UTC().Format(time.RFC3339)
+}
+
+// writeHeader writes a bold "**label**:" header line, or nothing when label is empty.
+func writeHeader(w *strings.Builder, label string) {
+	if label != "" {
+		fmt.Fprintf(w, "**%s**:\n", label)
+	}
 }
 
 // PostEntry holds pre-resolved data for formatting a single post.
@@ -217,9 +224,7 @@ type ScheduledPostEntry struct {
 
 // WriteScheduledPost writes a formatted scheduled post entry to the builder.
 func WriteScheduledPost(w *strings.Builder, entry ScheduledPostEntry) {
-	if entry.HeaderLabel != "" {
-		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
-	}
+	writeHeader(w, entry.HeaderLabel)
 	sp := entry.ScheduledPost
 	fmt.Fprintf(w, "ID: %s\n", sp.Id)
 	fmt.Fprintf(w, "Channel ID: %s\n", sp.ChannelId)
@@ -230,13 +235,32 @@ func WriteScheduledPost(w *strings.Builder, entry ScheduledPostEntry) {
 		fmt.Fprintf(w, "Root ID: %s\n", sp.RootId)
 	}
 	if sp.ScheduledAt > 0 {
-		t := time.Unix(sp.ScheduledAt/1000, (sp.ScheduledAt%1000)*int64(time.Millisecond))
-		fmt.Fprintf(w, "Scheduled for: %s\n", t.UTC().Format(time.RFC3339))
+		fmt.Fprintf(w, "Scheduled for: %s\n", TimeFromMillis(sp.ScheduledAt))
 	}
 	if sp.ErrorCode != "" {
 		fmt.Fprintf(w, "Error: %s\n", sp.ErrorCode)
 	}
 	fmt.Fprintf(w, "Message: %s\n\n", sp.Message)
+}
+
+// DraftEntry holds data for formatting a single message draft.
+type DraftEntry struct {
+	HeaderLabel string // e.g. "Draft 1"; empty to omit
+	Draft       *model.Draft
+}
+
+// WriteDraft writes a formatted draft entry to the builder.
+func WriteDraft(w *strings.Builder, entry DraftEntry) {
+	writeHeader(w, entry.HeaderLabel)
+	d := entry.Draft
+	fmt.Fprintf(w, "Channel ID: %s\n", d.ChannelId)
+	if d.RootId != "" {
+		fmt.Fprintf(w, "Root ID: %s\n", d.RootId)
+	}
+	if d.UpdateAt > 0 {
+		fmt.Fprintf(w, "Last updated: %s\n", TimeFromMillis(d.UpdateAt))
+	}
+	fmt.Fprintf(w, "Message: %s\n\n", d.Message)
 }
 
 // WriteReactions writes a post's emoji reactions grouped by emoji, with the
@@ -277,9 +301,7 @@ type EmojiEntry struct {
 
 // WriteEmoji writes a formatted custom emoji entry to the builder.
 func WriteEmoji(w *strings.Builder, entry EmojiEntry) {
-	if entry.HeaderLabel != "" {
-		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
-	}
+	writeHeader(w, entry.HeaderLabel)
 	fmt.Fprintf(w, "Name: :%s:\n", entry.Emoji.Name)
 	fmt.Fprintf(w, "ID: %s\n", entry.Emoji.Id)
 	if entry.CreatorName != "" {
@@ -314,15 +336,12 @@ type ThreadSummaryEntry struct {
 
 // WriteThreadSummary writes a collated-thread summary to the builder.
 func WriteThreadSummary(w *strings.Builder, entry ThreadSummaryEntry) {
-	if entry.HeaderLabel != "" {
-		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
-	}
+	writeHeader(w, entry.HeaderLabel)
 	tr := entry.Thread
 	fmt.Fprintf(w, "Root Post ID: %s\n", tr.PostId)
 	fmt.Fprintf(w, "Replies: %d (unread: %d, unread mentions: %d)\n", tr.ReplyCount, tr.UnreadReplies, tr.UnreadMentions)
 	if tr.LastReplyAt > 0 {
-		t := time.Unix(tr.LastReplyAt/1000, (tr.LastReplyAt%1000)*int64(time.Millisecond))
-		fmt.Fprintf(w, "Last reply: %s\n", t.UTC().Format(time.RFC3339))
+		fmt.Fprintf(w, "Last reply: %s\n", TimeFromMillis(tr.LastReplyAt))
 	}
 	if tr.Post != nil {
 		username := entry.Username
@@ -353,9 +372,7 @@ type ChannelMemberEntry struct {
 
 // WriteChannelMember writes a channel membership record (roles, mute, last-viewed).
 func WriteChannelMember(w *strings.Builder, entry ChannelMemberEntry) {
-	if entry.HeaderLabel != "" {
-		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
-	}
+	writeHeader(w, entry.HeaderLabel)
 	m := entry.Member
 	fmt.Fprintf(w, "Channel ID: %s\n", m.ChannelId)
 	fmt.Fprintf(w, "User ID: %s\n", m.UserId)
@@ -368,8 +385,7 @@ func WriteChannelMember(w *strings.Builder, entry ChannelMemberEntry) {
 	muted := m.NotifyProps != nil && m.NotifyProps[model.MarkUnreadNotifyProp] == model.ChannelMarkUnreadMention
 	fmt.Fprintf(w, "Muted: %t\n", muted)
 	if m.LastViewedAt > 0 {
-		t := time.Unix(m.LastViewedAt/1000, (m.LastViewedAt%1000)*int64(time.Millisecond))
-		fmt.Fprintf(w, "Last viewed: %s\n", t.UTC().Format(time.RFC3339))
+		fmt.Fprintf(w, "Last viewed: %s\n", TimeFromMillis(m.LastViewedAt))
 	}
 	w.WriteString("\n")
 }
@@ -382,9 +398,7 @@ type BookmarkEntry struct {
 
 // WriteBookmark writes a formatted channel bookmark entry to the builder.
 func WriteBookmark(w *strings.Builder, entry BookmarkEntry) {
-	if entry.HeaderLabel != "" {
-		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
-	}
+	writeHeader(w, entry.HeaderLabel)
 	b := entry.Bookmark
 	fmt.Fprintf(w, "ID: %s\n", b.Id)
 	fmt.Fprintf(w, "Name: %s\n", b.DisplayName)
@@ -409,9 +423,7 @@ type SidebarCategoryEntry struct {
 
 // WriteSidebarCategory writes a sidebar category and its channel IDs to the builder.
 func WriteSidebarCategory(w *strings.Builder, entry SidebarCategoryEntry) {
-	if entry.HeaderLabel != "" {
-		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
-	}
+	writeHeader(w, entry.HeaderLabel)
 	c := entry.Category
 	fmt.Fprintf(w, "ID: %s\n", c.Id)
 	fmt.Fprintf(w, "Name: %s\n", c.DisplayName)
@@ -429,9 +441,7 @@ type StatusEntry struct {
 
 // WriteStatus writes a user's presence status to the builder.
 func WriteStatus(w *strings.Builder, entry StatusEntry) {
-	if entry.HeaderLabel != "" {
-		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
-	}
+	writeHeader(w, entry.HeaderLabel)
 	s := entry.Status
 	fmt.Fprintf(w, "User ID: %s\n", s.UserId)
 	if entry.Username != "" {
@@ -471,9 +481,7 @@ type CPAFieldEntry struct {
 
 // WriteCPAField writes a Custom Profile Attribute field definition to the builder.
 func WriteCPAField(w *strings.Builder, entry CPAFieldEntry) {
-	if entry.HeaderLabel != "" {
-		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
-	}
+	writeHeader(w, entry.HeaderLabel)
 	fmt.Fprintf(w, "ID: %s\n", entry.Field.ID)
 	fmt.Fprintf(w, "Name: %s\n", entry.Field.Name)
 	fmt.Fprintf(w, "Type: %s\n", entry.Field.Type)
@@ -489,9 +497,7 @@ type TeamMemberEntry struct {
 
 // WriteTeamMember writes a team membership record (roles) to the builder.
 func WriteTeamMember(w *strings.Builder, entry TeamMemberEntry) {
-	if entry.HeaderLabel != "" {
-		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
-	}
+	writeHeader(w, entry.HeaderLabel)
 	m := entry.Member
 	fmt.Fprintf(w, "Team ID: %s\n", m.TeamId)
 	fmt.Fprintf(w, "User ID: %s\n", m.UserId)
@@ -520,9 +526,7 @@ type BotEntry struct {
 
 // WriteBot writes a bot account's details to the builder.
 func WriteBot(w *strings.Builder, entry BotEntry) {
-	if entry.HeaderLabel != "" {
-		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
-	}
+	writeHeader(w, entry.HeaderLabel)
 	b := entry.Bot
 	fmt.Fprintf(w, "User ID: %s\n", b.UserId)
 	fmt.Fprintf(w, "Username: %s\n", b.Username)
@@ -547,9 +551,7 @@ type GroupEntry struct {
 
 // WriteGroup writes a group's metadata to the builder.
 func WriteGroup(w *strings.Builder, entry GroupEntry) {
-	if entry.HeaderLabel != "" {
-		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
-	}
+	writeHeader(w, entry.HeaderLabel)
 	g := entry.Group
 	fmt.Fprintf(w, "ID: %s\n", g.Id)
 	if g.Name != nil && *g.Name != "" {
@@ -590,9 +592,7 @@ type IncomingWebhookEntry struct {
 
 // WriteIncomingWebhook writes an incoming webhook's details to the builder.
 func WriteIncomingWebhook(w *strings.Builder, entry IncomingWebhookEntry) {
-	if entry.HeaderLabel != "" {
-		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
-	}
+	writeHeader(w, entry.HeaderLabel)
 	h := entry.Webhook
 	fmt.Fprintf(w, "ID: %s\n", h.Id)
 	fmt.Fprintf(w, "Display Name: %s\n", h.DisplayName)
@@ -612,9 +612,7 @@ type OutgoingWebhookEntry struct {
 
 // WriteOutgoingWebhook writes an outgoing webhook's details to the builder.
 func WriteOutgoingWebhook(w *strings.Builder, entry OutgoingWebhookEntry) {
-	if entry.HeaderLabel != "" {
-		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
-	}
+	writeHeader(w, entry.HeaderLabel)
 	h := entry.Webhook
 	fmt.Fprintf(w, "ID: %s\n", h.Id)
 	fmt.Fprintf(w, "Display Name: %s\n", h.DisplayName)
@@ -684,9 +682,7 @@ type UserEntry struct {
 
 // WriteUser writes a formatted user entry to the builder.
 func WriteUser(w *strings.Builder, entry UserEntry) {
-	if entry.HeaderLabel != "" {
-		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
-	}
+	writeHeader(w, entry.HeaderLabel)
 
 	fmt.Fprintf(w, "Username: %s\n", entry.User.Username)
 	fmt.Fprintf(w, "ID: %s\n", entry.User.Id)
@@ -727,6 +723,7 @@ func WriteUser(w *strings.Builder, entry UserEntry) {
 type ChannelEntry struct {
 	HeaderLabel string         // e.g. "Channel Information:", "1. **General**"; empty to omit
 	Channel     *model.Channel // the source channel
+	DisplayName string         // shown instead of Channel.DisplayName when set (e.g. a DM placeholder)
 	TeamName    string         // resolved team display name
 	TeamID      string         // team ID (shown when TeamName is empty but TeamID is set)
 	MemberCount int64          // -1 means don't show
@@ -741,7 +738,11 @@ func WriteChannel(w *strings.Builder, entry ChannelEntry) {
 
 	fmt.Fprintf(w, "ID: %s\n", entry.Channel.Id)
 	fmt.Fprintf(w, "Name: %s\n", entry.Channel.Name)
-	fmt.Fprintf(w, "Display Name: %s\n", entry.Channel.DisplayName)
+	displayName := entry.Channel.DisplayName
+	if entry.DisplayName != "" {
+		displayName = entry.DisplayName
+	}
+	fmt.Fprintf(w, "Display Name: %s\n", displayName)
 	fmt.Fprintf(w, "Type: %s\n", entry.Channel.Type)
 
 	if entry.TeamName != "" {
@@ -758,8 +759,7 @@ func WriteChannel(w *strings.Builder, entry ChannelEntry) {
 	}
 
 	if entry.Channel.CreateAt > 0 {
-		t := time.Unix(entry.Channel.CreateAt/1000, (entry.Channel.CreateAt%1000)*int64(time.Millisecond))
-		fmt.Fprintf(w, "Created: %s\n", t.UTC().Format(time.RFC3339))
+		fmt.Fprintf(w, "Created: %s\n", TimeFromMillis(entry.Channel.CreateAt))
 	}
 
 	if entry.MemberCount >= 0 {
@@ -792,8 +792,7 @@ func WriteTeam(w *strings.Builder, entry TeamEntry) {
 	}
 
 	if entry.Team.CreateAt > 0 {
-		t := time.Unix(entry.Team.CreateAt/1000, (entry.Team.CreateAt%1000)*int64(time.Millisecond))
-		fmt.Fprintf(w, "Created: %s\n", t.UTC().Format(time.RFC3339))
+		fmt.Fprintf(w, "Created: %s\n", TimeFromMillis(entry.Team.CreateAt))
 	}
 
 	if entry.MemberCount >= 0 {
@@ -827,4 +826,63 @@ func WriteFileDescriptor(w *strings.Builder, entry FileDescriptorEntry) {
 	fmt.Fprintf(w, "Size: %d bytes\n", entry.FileInfo.Size)
 
 	w.WriteString("\n")
+}
+
+// UnavailableAttachmentReason says why an attachment's content is not in the
+// conversation.
+type UnavailableAttachmentReason int
+
+const (
+	// AttachmentImageInputDisabled means the agent does not accept images.
+	AttachmentImageInputDisabled UnavailableAttachmentReason = iota + 1
+	// AttachmentLoadFailed means the file's metadata or bytes could not be read.
+	AttachmentLoadFailed
+	// AttachmentForbidden means the requesting user may not access the file.
+	AttachmentForbidden
+)
+
+// maxAttachmentNameRunes bounds a user-controlled filename in a placeholder.
+const maxAttachmentNameRunes = 100
+
+// UnavailableAttachment renders a placeholder for an attachment the model
+// cannot see. A forbidden attachment is never named, so the model cannot
+// reveal files the requesting user has no access to.
+func UnavailableAttachment(name string, reason UnavailableAttachmentReason) string {
+	name = sanitizeAttachmentName(name)
+	switch reason {
+	case AttachmentForbidden:
+		return "[An attachment here is not available to the requesting user.]"
+	case AttachmentImageInputDisabled:
+		if name == "" {
+			return "[An image is attached. Image input is disabled for this agent, so you cannot see it.]"
+		}
+		return fmt.Sprintf("[Image attached: %s. Image input is disabled for this agent, so you cannot see it.]", name)
+	default:
+		if name == "" {
+			return "[An attachment could not be loaded.]"
+		}
+		return fmt.Sprintf("[Attachment %s could not be loaded.]", name)
+	}
+}
+
+// sanitizeAttachmentName keeps a filename on one line and inside its
+// placeholder: control and format characters and brackets are dropped,
+// whitespace is collapsed, and long names are cut.
+func sanitizeAttachmentName(name string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		switch {
+		case r == '[' || r == ']':
+			return -1
+		case unicode.IsSpace(r):
+			return ' '
+		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
+			return -1
+		}
+		return r
+	}, name)
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	if runes := []rune(cleaned); len(runes) > maxAttachmentNameRunes {
+		cleaned = string(runes[:maxAttachmentNameRunes]) + "…"
+	}
+	return cleaned
 }

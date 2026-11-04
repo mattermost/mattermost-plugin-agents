@@ -1,9 +1,11 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
 import { buildTextResponse } from 'helpers/aimock-fixtures';
+import { expectNoToolActivity } from 'helpers/llmbot-post';
 import { RunToolConfigAIMockContainer, setupRegularTestUser } from 'helpers/tool-config-container';
 import { createToolConfigAPIHelper } from 'helpers/tool-config';
 
@@ -36,25 +38,24 @@ function buildEmbeddedToolConfigs(disabledToolNames: string[] = []) {
     }));
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigAIMockContainer(buildEmbeddedToolConfigs([TARGET_TOOL_NAME])));
+    const aimock = own(await RunAIMockSidecar(mattermost.network, {
+        fixtures: buildTextResponse({
+            userMessage: 'aimock-disabled-tool-placeholder',
+            content: 'placeholder',
+        }),
+    }));
+    return { mattermost, aimock };
+});
+
 test.describe('Disabled Tool Excluded (Aimock)', () => {
     let mattermost: MattermostContainer;
     let aimock: AIMockContainer;
 
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        mattermost = await RunToolConfigAIMockContainer(buildEmbeddedToolConfigs([TARGET_TOOL_NAME]));
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, aimock } = containers);
         await setupRegularTestUser(mattermost);
-        aimock = await RunAIMockSidecar(mattermost.network, {
-            fixtures: buildTextResponse({
-                userMessage: 'aimock-disabled-tool-placeholder',
-                content: 'placeholder',
-            }),
-        });
-    });
-
-    test.afterAll(async () => {
-        await aimock?.stop();
-        await mattermost?.stop();
     });
 
     test('disabled embedded tool is filtered out and does not surface in RHS turn', async ({ page }) => {
@@ -120,5 +121,8 @@ test.describe('Disabled Tool Excluded (Aimock)', () => {
         await expect(rhsContainer.getByRole('button', { name: /^accept$/i })).not.toBeVisible();
         await expect(rhsContainer.getByRole('button', { name: /^reject$/i })).not.toBeVisible();
         await expect(rhsContainer.getByText('Auto-approved')).not.toBeVisible();
+
+        // No tool ran, so the post renders without a tool-activity area at all.
+        await expectNoToolActivity(disabledBotPost);
     });
 });

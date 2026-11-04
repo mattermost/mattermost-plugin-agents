@@ -10,7 +10,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/customprompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -32,6 +34,10 @@ func (a *API) handleCreateCustomPrompt(c *gin.Context) {
 		return
 	}
 
+	if prompt.IsShared && !a.requireCapability(c, enterprise.CapSharedPrompts) {
+		return
+	}
+
 	created, err := a.customPromptsStore.Create(prompt)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to create custom prompt: %w", err))
@@ -47,11 +53,14 @@ func (a *API) handleCreateCustomPrompt(c *gin.Context) {
 	c.JSON(http.StatusCreated, created)
 }
 
-// handleListCustomPrompts returns all prompts visible to the authenticated user.
+// handleListCustomPrompts returns prompts visible to the authenticated user.
+// Shared prompt libraries are available at Enterprise and above; below that
+// level only the caller's own prompts are returned.
 func (a *API) handleListCustomPrompts(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 
-	prompts, err := a.customPromptsStore.ListForUser(userID)
+	includeShared := a.licenseChecker.Allows(enterprise.CapSharedPrompts)
+	prompts, err := a.customPromptsStore.ListForUser(userID, includeShared)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to list custom prompts: %w", err))
 		return
@@ -61,6 +70,8 @@ func (a *API) handleListCustomPrompts(c *gin.Context) {
 }
 
 // handleUpdateCustomPrompt updates an existing custom prompt. Only the creator can update.
+// A body updated_at makes the update conditional on the prompt being unchanged
+// since that read; a stale one is rejected with 409.
 func (a *API) handleUpdateCustomPrompt(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	promptID := c.Param("id")
@@ -69,7 +80,8 @@ func (a *API) handleUpdateCustomPrompt(c *gin.Context) {
 	// failures still identify which prompt was targeted.
 	audit.AddParam(auditRec(c), "prompt_id", audit.TruncateID(promptID))
 
-	if _, ok := a.requirePromptOwnership(c, promptID, userID); !ok {
+	existing, ok := a.requirePromptOwnership(c, promptID, userID)
+	if !ok {
 		return
 	}
 
@@ -91,7 +103,15 @@ func (a *API) handleUpdateCustomPrompt(c *gin.Context) {
 		return
 	}
 
+	if !existing.IsShared && prompt.IsShared && !a.requireCapability(c, enterprise.CapSharedPrompts) {
+		return
+	}
+
 	if err := a.customPromptsStore.Update(prompt); err != nil {
+		if errors.Is(err, customprompts.ErrStaleUpdate) {
+			c.AbortWithError(http.StatusConflict, err)
+			return
+		}
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to update custom prompt: %w", err))
 		return
 	}
@@ -154,6 +174,17 @@ func (a *API) handleSetPromptPin(c *gin.Context) {
 		return
 	}
 
+	if req.Pinned {
+		prompt, err := a.customPromptsStore.Get(req.PromptID)
+		if err != nil {
+			c.AbortWithError(http.StatusNotFound, fmt.Errorf("prompt not found: %w", err))
+			return
+		}
+		if prompt.CreatorID != userID && !a.requireCapability(c, enterprise.CapSharedPrompts) {
+			return
+		}
+	}
+
 	if err := a.customPromptsStore.SetPinned(userID, req.PromptID, req.Pinned); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to set prompt pin: %w", err))
 		return
@@ -164,8 +195,21 @@ func (a *API) handleSetPromptPin(c *gin.Context) {
 
 // RenderRequest represents the request body for rendering a custom prompt template.
 type RenderRequest struct {
-	ChannelID   string `json:"channel_id"`
+	ChannelID string `json:"channel_id"`
+	// BotID is the agent's bot user ID; it takes precedence over BotUsername.
+	BotID string `json:"bot_id"`
+	// BotUsername is deprecated: it selects only the agent whose account
+	// currently holds the name.
 	BotUsername string `json:"bot_username"`
+}
+
+// renderRequestBot returns the agent a render request selects, or nil when it
+// selects none or the agent is not available.
+func (a *API) renderRequestBot(req RenderRequest) (*bots.Bot, error) {
+	if req.BotID != "" && !model.IsValidId(req.BotID) {
+		return nil, errors.New("invalid bot_id: must be a bot user ID")
+	}
+	return a.bots.GetBotByIDOrUsername(req.BotID, req.BotUsername), nil
 }
 
 // handleRenderCustomPrompt renders a custom prompt template with the current context.
@@ -176,6 +220,11 @@ func (a *API) handleRenderCustomPrompt(c *gin.Context) {
 	var req RenderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+	bot, err := a.renderRequestBot(req)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
 		return
 	}
 
@@ -190,6 +239,9 @@ func (a *API) handleRenderCustomPrompt(c *gin.Context) {
 		c.AbortWithError(http.StatusNotFound, errors.New("prompt not found or not accessible"))
 		return
 	}
+	if prompt.CreatorID != userID && !a.requireCapability(c, enterprise.CapSharedPrompts) {
+		return
+	}
 
 	// Build context options
 	var opts []llm.ContextOption
@@ -199,9 +251,9 @@ func (a *API) handleRenderCustomPrompt(c *gin.Context) {
 	}
 
 	// Add requesting user context
-	user, appErr := a.pluginAPI.User.Get(userID)
-	if appErr != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get user: %w", appErr))
+	user, userErr := a.pluginAPI.User.Get(userID)
+	if userErr != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get user: %w", userErr))
 		return
 	}
 	if a.contextBuilder != nil {
@@ -225,11 +277,8 @@ func (a *API) handleRenderCustomPrompt(c *gin.Context) {
 	}
 
 	// Add bot context if provided
-	if req.BotUsername != "" {
-		bot := a.bots.GetBotByUsernameOrFirst(req.BotUsername)
-		if bot != nil && a.contextBuilder != nil {
-			opts = append(opts, a.contextBuilder.WithLLMContextBot(bot))
-		}
+	if bot != nil && a.contextBuilder != nil {
+		opts = append(opts, a.contextBuilder.WithLLMContextBot(bot))
 	}
 
 	ctx := llm.NewContext(opts...)

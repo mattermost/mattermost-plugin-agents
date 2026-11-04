@@ -40,18 +40,14 @@ const expectedFormatTextOnly = `But just with a variety of reasons, what I have 
 
 func TestFormatForLLM(t *testing.T) {
 	subtitles, err := NewSubtitlesFromVTT(strings.NewReader(testSubtitles))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	require.Equal(t, expectedFormatForLLM, subtitles.FormatForLLM())
 }
 
 func TestFormatTextOnly(t *testing.T) {
 	subtitles, err := NewSubtitlesFromVTT(strings.NewReader(testSubtitles))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	require.Equal(t, expectedFormatTextOnly, subtitles.FormatTextOnly())
 }

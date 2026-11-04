@@ -7,13 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
+	"slices"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner/limits"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // MaxToolRounds is the maximum number of tool-call-execute-recall iterations
@@ -25,20 +24,33 @@ const MaxToolRounds = limits.MaxToolRounds
 // It calls the LLM, checks for tool calls in the stream, executes
 // approved ones, appends results back to the request, and calls again.
 type ToolRunner struct {
-	llm       llm.LanguageModel
-	maxRounds int
+	llm         llm.LanguageModel
+	maxRounds   int
+	errorResult func(*llm.Context, error) string
 }
 
 // Option configures a ToolRunner at construction time.
 type Option func(*ToolRunner)
 
-// WithMaxRounds overrides the default maximum number of tool-call rounds.
-// Non-positive values fall back to llm.DefaultMaxToolTurns.
+// WithMaxRounds overrides the default maximum number of tool rounds (LLM
+// calls whose tool calls are executed or rejected). One more LLM call, with
+// tools disabled, follows the last tool round so the run always ends with an
+// answer. Non-positive values fall back to llm.DefaultMaxToolTurns.
 func WithMaxRounds(n int) Option {
 	return func(r *ToolRunner) {
 		if n > 0 {
 			r.maxRounds = n
 		}
+	}
+}
+
+// WithToolErrorResult sets how a failed tool call's error becomes its result
+// text. It runs on the loop's goroutine between tool calls, so it may change
+// the request context's tool store for the rest of the run. The default is
+// the error's text.
+func WithToolErrorResult(f func(*llm.Context, error) string) Option {
+	return func(r *ToolRunner) {
+		r.errorResult = f
 	}
 }
 
@@ -52,10 +64,10 @@ func New(lm llm.LanguageModel, opts ...Option) *ToolRunner {
 	return r
 }
 
-// finalAssistantText drops preamble text from a forced synthesis round that
+// finalAssistantText drops preamble text from a tools-disabled round that
 // still emitted (and had dropped) tool calls.
-func finalAssistantText(text string, synthesisForced bool, droppedToolCalls int) string {
-	if synthesisForced && droppedToolCalls > 0 {
+func finalAssistantText(text string, toolsDisabled bool, droppedToolCalls int) string {
+	if toolsDisabled && droppedToolCalls > 0 {
 		return ""
 	}
 	return text
@@ -100,11 +112,13 @@ type ToolTurn struct {
 	// AssistantReasoning holds the reasoning data from the assistant response.
 	AssistantReasoning llm.ReasoningData
 
-	// AssistantServerTools holds the provider-executed (server) tool activity
-	// observed during the assistant response — the final cumulative snapshot
-	// from EventTypeServerToolUse. Without it, a round that mixed server tools
-	// with client tool calls would lose the activity when persisted.
+	// AssistantServerTools is the final cumulative snapshot. Without it, a
+	// round that mixed server tools with client tool calls would lose activity.
 	AssistantServerTools []llm.ServerToolUse
+
+	// AssistantSegments is arrival order. Without it, narration between two
+	// sandbox runs collapses above both of them.
+	AssistantSegments []llm.TurnSegment
 
 	// ToolResults holds the executed tool results, one per tool call.
 	// Includes both successful and errored results.
@@ -156,7 +170,7 @@ func (r *ToolRunner) Run(
 
 	// Make the first LLM call synchronously so initialization errors
 	// (auth failures, rate limits, etc.) are returned directly.
-	firstStream, err := r.llm.ChatCompletion(ctx, request, currentOpts...)
+	firstStream, err := r.llm.ChatCompletion(telemetry.WithLLMRound(ctx, 0), request, currentOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("llm completion failed: %w", err)
 	}
@@ -189,120 +203,107 @@ func (r *ToolRunner) runLoop(
 ) {
 	stream := firstStream
 
-	var synthesisForced bool
+	// send forwards an event unless ctx is canceled: once the consumer has
+	// stopped reading (a stopped reply), a plain send would block forever.
+	send := func(event llm.TextStreamEvent) bool {
+		select {
+		case output <- event:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+	// abandon persists the rounds completed so far and stops the loop.
+	abandon := func() { r.deliverToolTurns(result, onToolTurns) }
 
-	for round := 0; round < r.maxRounds; round++ {
+	// toolsDisabled means the next call must answer without tools: the
+	// tool-round cap or the consecutive-failure limit was reached.
+	var toolsDisabled bool
+	disableTools := func() {
+		if !toolsDisabled {
+			currentOpts = append(currentOpts, llm.WithToolsDisabled())
+			toolsDisabled = true
+		}
+	}
+	// finishToolRound runs after every tool round, executed or rejected, so a
+	// tools-off answer always follows the last one.
+	finishToolRound := func(round int) {
+		if llm.CountTrailingFailedToolCalls(request.Posts) >= llm.MaxConsecutiveToolCallFailures {
+			request.Posts = llm.EnsureToolRetryLimitSystemMessage(request.Posts)
+			disableTools()
+		}
+		if round+1 >= r.maxRounds {
+			request.Posts = llm.EnsureToolIterationLimitUserMessage(request.Posts)
+			disableTools()
+		}
+	}
+
+	for round := 0; round <= r.maxRounds; round++ {
 		// For round > 0, make a new LLM call.
 		if round > 0 {
 			var err error
-			stream, err = r.llm.ChatCompletion(ctx, request, currentOpts...)
+			stream, err = r.llm.ChatCompletion(telemetry.WithLLMRound(ctx, round), request, currentOpts...)
 			if err != nil {
 				r.deliverToolTurns(result, onToolTurns)
-				output <- llm.TextStreamEvent{
+				send(llm.TextStreamEvent{
 					Type:  llm.EventTypeError,
 					Value: fmt.Errorf("llm completion failed: %w", err),
-				}
+				})
 				return
 			}
 		}
 
 		// Consume the stream, forwarding non-tool-call events in real-time.
-		var text strings.Builder
-		var reasoning strings.Builder
-		var reasoningData llm.ReasoningData
-		var toolCalls []llm.ToolCall
-		var serverTools []llm.ServerToolUse
-		var usage llm.TokenUsage
-		var streamErr error
+		resp := drainStream(stream, send, request.Context)
 
-		for event := range stream.Stream {
-			switch event.Type {
-			case llm.EventTypeToolCalls:
-				if tcs, ok := event.Value.([]llm.ToolCall); ok {
-					toolCalls = append(toolCalls, tcs...)
-				}
-			case llm.EventTypeServerToolUse:
-				// Cumulative snapshot of provider-executed tool activity;
-				// keep the latest so a tool round persists it (see ToolTurn).
-				if uses, ok := event.Value.([]llm.ServerToolUse); ok {
-					serverTools = uses
-				}
-				output <- event
-			case llm.EventTypeEnd:
-				// Don't forward yet — handle after consuming the full stream.
-			case llm.EventTypeText:
-				if t, ok := event.Value.(string); ok {
-					text.WriteString(t)
-				}
-				output <- event
-			case llm.EventTypeReasoning:
-				if t, ok := event.Value.(string); ok {
-					reasoning.WriteString(t)
-				}
-				output <- event
-			case llm.EventTypeReasoningEnd:
-				if data, ok := event.Value.(llm.ReasoningData); ok {
-					reasoningData = data
-				}
-				output <- event
-			case llm.EventTypeUsage:
-				if u, ok := event.Value.(llm.TokenUsage); ok {
-					usage.InputTokens += u.InputTokens
-					usage.OutputTokens += u.OutputTokens
-				}
-				output <- event
-			case llm.EventTypeError:
-				if e, ok := event.Value.(error); ok {
-					streamErr = e
-				}
-				output <- event
-			default:
-				output <- event // annotations, etc.
-			}
+		if ctx.Err() != nil {
+			abandon()
+			return
 		}
-
-		if streamErr != nil {
+		if resp.err != nil {
 			r.deliverToolTurns(result, onToolTurns)
 			return
 		}
 
-		// Drop any tool calls the model returned on a forced synthesis round;
+		toolCalls := resp.toolCalls
+
+		// Providers may ignore tool_choice="none"; never execute those calls.
 		droppedToolCalls := 0
-		if synthesisForced && len(toolCalls) > 0 {
+		if toolsDisabled && len(toolCalls) > 0 {
 			droppedToolCalls = len(toolCalls)
 			toolCalls = nil
 		}
 
 		// No tool calls = final response.
 		if len(toolCalls) == 0 {
-			result.FinalText = finalAssistantText(text.String(), synthesisForced, droppedToolCalls)
+			result.FinalText = finalAssistantText(resp.text, toolsDisabled, droppedToolCalls)
 			r.deliverToolTurns(result, onToolTurns)
-			output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+			send(llm.TextStreamEvent{Type: llm.EventTypeEnd})
 			return
 		}
 
 		store := toolStoreFromRequest(request)
-		if containsUnavailableTools(toolCalls, store) {
-			toolResults := unavailableToolBatchResults(toolCalls, store, request.Context)
+		if toolResults := rejectedToolBatchResults(toolCalls, store, request.Context); toolResults != nil {
 			resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
-			appendToolTurnAndPost(result, &request, text.String(), reasoningData, serverTools, resolvedToolCalls, toolResults, usage)
+			appendToolTurnAndPost(result, &request, resp.text, resp.reasoningData, resp.serverTools, resp.segments, resolvedToolCalls, toolResults, resp.usage)
 
-			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
-
-			if llm.CountTrailingFailedToolCalls(request.Posts) >= llm.MaxConsecutiveToolCallFailures {
-				request.Posts = llm.EnsureToolRetryLimitSystemMessage(request.Posts)
-				currentOpts = append(currentOpts, llm.WithToolsDisabled())
+			if !send(toolCallBatchEvent(llm.ToolCallPhaseResolved, resolvedToolCalls)) {
+				abandon()
+				return
 			}
+
+			finishToolRound(round)
 			continue
 		}
 
 		toolCalls = enrichToolCallsForApproval(toolCalls, store)
 
-		// Check shouldExecute for ALL tool calls.
+		// Check shouldExecute for ALL tool calls. A user-interaction call is
+		// answered by the user, so no policy can auto-execute it.
 		allApproved := true
 		approved := make([]bool, len(toolCalls))
 		for i, tc := range toolCalls {
-			approved[i] = shouldExecute(tc)
+			approved[i] = shouldExecute(tc) && tc.UserInteraction == ""
 			if !approved[i] {
 				allApproved = false
 			}
@@ -317,44 +318,149 @@ func (r *ToolRunner) runLoop(
 				toolCalls[i].WouldAutoExecute = approved[i]
 			}
 			r.deliverToolTurns(result, onToolTurns)
-			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
-			output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+			if send(toolCallBatchEvent(llm.ToolCallPhaseAwaitingDecision, toolCalls)) {
+				send(llm.TextStreamEvent{Type: llm.EventTypeEnd})
+			}
 			return
 		}
 
-		// All calls passed the policy: stamp them so the pending broadcast
-		// (and, if the stream is interrupted mid-execution, the persisted
-		// blocks) carry the auto-execute signal instead of implying an
-		// approval request, then forward so the UI can show spinners.
+		// All calls passed the policy. The marker keeps persisted blocks from
+		// implying an approval request if the stream is interrupted
+		// mid-execution.
 		for i := range toolCalls {
 			toolCalls[i].WouldAutoExecute = true
 		}
-		output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
+		if !send(toolCallBatchEvent(llm.ToolCallPhaseExecuting, toolCalls)) {
+			abandon()
+			return
+		}
 
 		// Execute each tool call.
 		toolResults := r.executeTools(ctx, toolCalls, request)
+		if ctx.Err() != nil {
+			// Stopped mid-round: the tools' "context canceled" errors are
+			// not real failures, so drop this round rather than persist them
+			// as tool results the next turn would read as broken tools.
+			abandon()
+			return
+		}
 		recordMCPDynamicSearchLoadCallSuccess(request.Context, toolCalls, toolResults)
 
 		resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
-		appendToolTurnAndPost(result, &request, text.String(), reasoningData, serverTools, resolvedToolCalls, toolResults, usage)
+		appendToolTurnAndPost(result, &request, resp.text, resp.reasoningData, resp.serverTools, resp.segments, resolvedToolCalls, toolResults, resp.usage)
 
 		// Forward resolved tool calls so the UI can show success/error states.
-		output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
-
-		// Check for consecutive tool call failures and disable tools if needed.
-		if llm.CountTrailingFailedToolCalls(request.Posts) >= llm.MaxConsecutiveToolCallFailures {
-			request.Posts = llm.EnsureToolRetryLimitSystemMessage(request.Posts)
-			currentOpts = append(currentOpts, llm.WithToolsDisabled())
+		if !send(toolCallBatchEvent(llm.ToolCallPhaseResolved, resolvedToolCalls)) {
+			abandon()
+			return
 		}
 
-		// Force the last allowed round to be a tools-disabled synthesis so the
-		// caller always gets a final answer when the cap is hit.
-		if round == r.maxRounds-2 {
-			request.Posts = llm.EnsureToolIterationLimitUserMessage(request.Posts)
-			currentOpts = append(currentOpts, llm.WithToolsDisabled())
-			synthesisForced = true
+		finishToolRound(round)
+	}
+
+	// Unreachable while every tool round ends in finishToolRound; kept so a
+	// future path can't close the stream without persisting turns or ending.
+	r.deliverToolTurns(result, onToolTurns)
+	send(llm.TextStreamEvent{
+		Type:  llm.EventTypeError,
+		Value: fmt.Errorf("tool loop stopped after %d rounds without a final response", r.maxRounds+1),
+	})
+}
+
+// toolCallBatchEvent copies calls because consumers sanitize them in place
+// while the runner is still executing and replaying the originals.
+func toolCallBatchEvent(phase llm.ToolCallPhase, calls []llm.ToolCall) llm.TextStreamEvent {
+	return llm.TextStreamEvent{Type: llm.EventTypeToolCallBatch, Value: llm.ToolCallBatch{Phase: phase, Calls: slices.Clone(calls)}}
+}
+
+// assistantResponse holds the accumulated contents of one fully consumed
+// LLM response stream.
+type assistantResponse struct {
+	text          string
+	reasoningData llm.ReasoningData
+	toolCalls     []llm.ToolCall
+	serverTools   []llm.ServerToolUse
+	// segments is the arrival order of text, reasoning, and server tool
+	// activity. Without it, narration between two sandbox runs collapses
+	// above both of them.
+	segments []llm.TurnSegment
+	usage    llm.TokenUsage
+	err      error
+}
+
+// drainStream consumes one LLM response stream, forwarding non-tool-call
+// events to output in real-time while buffering tool calls and accumulating
+// the round's text, reasoning, server tool activity, and usage. Sandbox files
+// reported by server tools are registered on llmCtx as they arrive.
+//
+// Once send fails (the consumer is gone) the rest of the stream is still
+// read so the provider's goroutine can finish, but nothing more is forwarded.
+func drainStream(stream *llm.TextStreamResult, send func(llm.TextStreamEvent) bool, llmCtx *llm.Context) assistantResponse {
+	var sequence llm.TurnSequence
+	var resp assistantResponse
+
+	for event := range stream.Stream {
+		switch event.Type {
+		case llm.EventTypeToolCalls:
+			if tcs, ok := event.Value.([]llm.ToolCall); ok {
+				resp.toolCalls = append(resp.toolCalls, tcs...)
+			}
+		case llm.EventTypeServerToolUse:
+			// Cumulative snapshot of provider-executed tool activity;
+			// keep the latest so a tool round persists it (see ToolTurn).
+			if uses, ok := event.Value.([]llm.ServerToolUse); ok {
+				resp.serverTools = uses
+				sequence.RecordServerTools(uses)
+				// Register files before presentation sanitation; downloads need exact ids and fallback routes.
+				for _, use := range uses {
+					refs := make([]llm.ProviderFileReference, 0, len(use.FileIDs))
+					for _, id := range use.FileIDs {
+						refs = append(refs, llm.ProviderFileReference{
+							ID:            id,
+							ProviderRoute: use.ProviderRoute,
+						})
+					}
+					llmCtx.AddSandboxFiles(refs...)
+				}
+			}
+			send(event)
+		case llm.EventTypeEnd:
+			// Don't forward yet — handle after consuming the full stream.
+		case llm.EventTypeText:
+			if t, ok := event.Value.(string); ok {
+				sequence.AppendText(t)
+			}
+			send(event)
+		case llm.EventTypeReasoning:
+			if t, ok := event.Value.(string); ok {
+				sequence.AppendReasoning(t)
+			}
+			send(event)
+		case llm.EventTypeReasoningEnd:
+			if data, ok := event.Value.(llm.ReasoningData); ok {
+				resp.reasoningData = data
+				sequence.FinishReasoning(data)
+			}
+			send(event)
+		case llm.EventTypeUsage:
+			if u, ok := event.Value.(llm.TokenUsage); ok {
+				resp.usage.InputTokens += u.InputTokens
+				resp.usage.OutputTokens += u.OutputTokens
+			}
+			send(event)
+		case llm.EventTypeError:
+			if e, ok := event.Value.(error); ok {
+				resp.err = e
+			}
+			send(event)
+		default:
+			send(event) // annotations, etc.
 		}
 	}
+
+	resp.text = sequence.Text()
+	resp.segments = sequence.Segments()
+	return resp
 }
 
 // deliverToolTurns calls the onToolTurns callback if there are accumulated turns.
@@ -381,106 +487,83 @@ func (r *ToolRunner) executeTools(ctx context.Context, toolCalls []llm.ToolCall,
 				resolveErr = fmt.Errorf("unknown tool %s", tc.Name)
 				break
 			}
-			toolCtx, span := telemetry.Tracer().Start(ctx, "resolve tool",
-				trace.WithAttributes(
-					telemetry.ToolName.String(lookup.RuntimeName),
-					telemetry.ToolID.String(tc.ID),
-				),
-			)
-			result, resolveErr = request.Context.Tools.ResolveTool(
-				toolCtx,
+			// executeTools only runs batches shouldExecute approved
+			// without asking the user.
+			result, resolveErr = request.Context.Tools.ResolveToolCall(
+				ctx,
 				lookup.RuntimeName,
+				llm.ToolCallInfo{ID: tc.ID, Execution: telemetry.ToolExecutionAuto},
 				func(args any) error { return json.Unmarshal(tc.Arguments, args) },
 				request.Context,
 			)
-			if resolveErr != nil {
-				span.SetAttributes(telemetry.ToolStatus.String("error"))
-			} else {
-				span.SetAttributes(telemetry.ToolStatus.String("success"))
-			}
-			span.End()
 		}
 
 		if resolveErr != nil {
-			toolResults[i] = ToolResult{
-				ToolCallID: tc.ID,
-				Name:       tc.Name,
-				Result:     resolveErr.Error(),
-				IsError:    true,
+			result = resolveErr.Error()
+			if r.errorResult != nil {
+				result = r.errorResult(request.Context, resolveErr)
 			}
-		} else {
-			toolResults[i] = ToolResult{
-				ToolCallID: tc.ID,
-				Name:       tc.Name,
-				Result:     result,
-				IsError:    false,
-			}
+		}
+		toolResults[i] = ToolResult{
+			ToolCallID: tc.ID,
+			Name:       tc.Name,
+			Result:     result,
+			IsError:    resolveErr != nil,
 		}
 	}
 	return toolResults
 }
 
-func toolCallAvailable(store *llm.ToolStore, tc llm.ToolCall) bool {
+// rejectToolCall reports why a call cannot proceed: its tool is unavailable,
+// or the tool's ValidateArguments hook rejects the arguments.
+func rejectToolCall(tc llm.ToolCall, store *llm.ToolStore, llmContext *llm.Context) (string, bool) {
 	if store == nil {
-		return false
+		return "unknown tool " + tc.Name, true
 	}
-	_, ok := store.LookupTool(tc.Name, tc.ServerOrigin)
-	return ok
-}
-
-func unavailableToolNames(toolCalls []llm.ToolCall, store *llm.ToolStore) []string {
-	unavailable := make([]string, 0)
-	for _, tc := range toolCalls {
-		if !toolCallAvailable(store, tc) {
-			unavailable = append(unavailable, tc.Name)
+	lookup, ok := store.LookupTool(tc.Name, tc.ServerOrigin)
+	if !ok {
+		if store.IsUnloadedMCPTool(tc.Name) {
+			llmContext.ObserveMCPDynamicToolEvent("unloaded_tool_error", "error")
+			return mcp.UnloadedMCPToolUserHint(tc.Name), true
+		}
+		return "unknown tool " + tc.Name, true
+	}
+	if lookup.Tool.ValidateArguments != nil {
+		if err := lookup.Tool.ValidateArguments(tc.Arguments); err != nil {
+			return fmt.Sprintf("invalid arguments for tool %s: %s. Call the tool again with arguments matching its schema.", tc.Name, err), true
 		}
 	}
-	return unavailable
+	return "", false
 }
 
-func containsUnavailableTools(toolCalls []llm.ToolCall, store *llm.ToolStore) bool {
-	for _, tc := range toolCalls {
-		if !toolCallAvailable(store, tc) {
-			return true
-		}
-	}
-	return false
-}
-
-func unavailableToolBatchResults(toolCalls []llm.ToolCall, store *llm.ToolStore, llmContext *llm.Context) []ToolResult {
-	unavailableNames := unavailableToolNames(toolCalls, store)
-	unavailableSet := make(map[string]struct{}, len(unavailableNames))
-	for _, name := range unavailableNames {
-		unavailableSet[name] = struct{}{}
-	}
-
+// rejectedToolBatchResults returns results for the whole batch when any call is
+// rejected: rejected calls fail with the reason and the rest are skipped, so
+// the model retries the batch. Returns nil when every call can proceed.
+func rejectedToolBatchResults(toolCalls []llm.ToolCall, store *llm.ToolStore, llmContext *llm.Context) []ToolResult {
 	toolResults := make([]ToolResult, len(toolCalls))
+	rejected := make([]bool, len(toolCalls))
+	var rejectedNames []string
 	for i, tc := range toolCalls {
-		if _, ok := unavailableSet[tc.Name]; ok {
-			if store != nil && store.IsUnloadedMCPTool(tc.Name) {
-				llmContext.ObserveMCPDynamicToolEvent("unloaded_tool_error", "error")
-				toolResults[i] = ToolResult{
-					ToolCallID: tc.ID,
-					Name:       tc.Name,
-					Result:     mcp.UnloadedMCPToolUserHint(tc.Name),
-					IsError:    true,
-				}
-				continue
-			}
-
-			toolResults[i] = ToolResult{
-				ToolCallID: tc.ID,
-				Name:       tc.Name,
-				Result:     "unknown tool " + tc.Name,
-				IsError:    true,
-			}
+		reason, isRejected := rejectToolCall(tc, store, llmContext)
+		if !isRejected {
 			continue
 		}
+		rejected[i] = true
+		rejectedNames = append(rejectedNames, tc.Name)
+		toolResults[i] = ToolResult{ToolCallID: tc.ID, Name: tc.Name, Result: reason, IsError: true}
+	}
+	if len(rejectedNames) == 0 {
+		return nil
+	}
 
+	for i, tc := range toolCalls {
+		if rejected[i] {
+			continue
+		}
 		toolResults[i] = ToolResult{
 			ToolCallID: tc.ID,
 			Name:       tc.Name,
-			Result:     llm.BatchSkippedToolResult(tc.Name, unavailableNames),
+			Result:     llm.BatchSkippedToolResult(tc.Name, rejectedNames),
 			IsError:    true,
 		}
 	}
@@ -527,6 +610,7 @@ func appendToolTurnAndPost(
 	text string,
 	reasoningData llm.ReasoningData,
 	serverTools []llm.ServerToolUse,
+	segments []llm.TurnSegment,
 	resolvedToolCalls []llm.ToolCall,
 	toolResults []ToolResult,
 	usage llm.TokenUsage,
@@ -536,6 +620,7 @@ func appendToolTurnAndPost(
 		AssistantToolCalls:   resolvedToolCalls,
 		AssistantReasoning:   reasoningData,
 		AssistantServerTools: serverTools,
+		AssistantSegments:    segments,
 		ToolResults:          toolResults,
 		TokensIn:             usage.InputTokens,
 		TokensOut:            usage.OutputTokens,
@@ -548,6 +633,8 @@ func appendToolTurnAndPost(
 		ToolUse:            resolvedToolCalls,
 		Reasoning:          reasoningData.Text,
 		ReasoningSignature: reasoningData.Signature,
+		ServerTools:        serverTools,
+		AssistantSegments:  segments,
 	})
 }
 
@@ -555,6 +642,10 @@ func appendToolTurnAndPost(
 func buildResolvedToolCalls(toolCalls []llm.ToolCall, toolResults []ToolResult) []llm.ToolCall {
 	resolved := make([]llm.ToolCall, len(toolCalls))
 	for i, tc := range toolCalls {
+		status := llm.ToolCallStatusAutoApproved
+		if toolResults[i].IsError {
+			status = llm.ToolCallStatusError
+		}
 		resolved[i] = llm.ToolCall{
 			ID:           tc.ID,
 			Name:         tc.Name,
@@ -563,13 +654,8 @@ func buildResolvedToolCalls(toolCalls []llm.ToolCall, toolResults []ToolResult) 
 			Arguments:    tc.Arguments,
 			ServerOrigin: tc.ServerOrigin,
 			MCPBareName:  tc.MCPBareName,
-		}
-		if toolResults[i].IsError {
-			resolved[i].Status = llm.ToolCallStatusError
-			resolved[i].Result = toolResults[i].Result
-		} else {
-			resolved[i].Status = llm.ToolCallStatusAutoApproved
-			resolved[i].Result = toolResults[i].Result
+			Status:       status,
+			Result:       toolResults[i].Result,
 		}
 	}
 	return resolved

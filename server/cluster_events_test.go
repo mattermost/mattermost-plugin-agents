@@ -7,8 +7,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
+	"github.com/mattermost/mattermost-plugin-agents/v2/api"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -497,7 +503,149 @@ func TestOnPluginClusterEventChannelAutoReplyWithoutService(t *testing.T) {
 	})
 }
 
-func mustMarshal(t *testing.T, v interface{}) []byte {
+type agentListStub []llm.BotConfig
+
+func (s agentListStub) ListAgents() ([]*llm.BotConfig, error) {
+	out := make([]*llm.BotConfig, len(s))
+	for i := range s {
+		cfg := s[i]
+		out[i] = &cfg
+	}
+	return out, nil
+}
+
+// publishedAgentUpdate returns the cluster event PublishAgentUpdate(agentID)
+// broadcasts.
+func publishedAgentUpdate(t *testing.T, agentID string) model.PluginClusterEvent {
+	t.Helper()
+	publisherAPI := &plugintest.API{}
+	defer publisherAPI.AssertExpectations(t)
+	var published model.PluginClusterEvent
+	publisherAPI.On("PublishPluginClusterEvent",
+		mock.AnythingOfType("model.PluginClusterEvent"),
+		mock.MatchedBy(func(opts model.PluginClusterEventSendOptions) bool {
+			return opts.SendType == model.PluginClusterEventSendTypeReliable
+		}),
+	).Return(nil).Run(func(args mock.Arguments) {
+		published = args.Get(0).(model.PluginClusterEvent)
+	}).Once()
+
+	publisher := &Plugin{pluginAPI: pluginapi.NewClient(publisherAPI, nil)}
+	publisher.SetAPI(publisherAPI)
+	require.NoError(t, publisher.PublishAgentUpdate(agentID))
+	require.Equal(t, clusterEventAgentUpdate, published.Id)
+	return published
+}
+
+func TestPublishAgentUpdatePayload(t *testing.T) {
+	tests := []struct {
+		name          string
+		agentID       string
+		expectPayload bool
+	}{
+		{name: "no agent publishes no data"},
+		{name: "renamed agent publishes its ID", agentID: "agent1234567890123456789ab", expectPayload: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ev := publishedAgentUpdate(t, test.agentID)
+			if !test.expectPayload {
+				require.Empty(t, ev.Data, "nodes that predate the payload must keep receiving a plain agent update")
+				return
+			}
+			var payload agentUpdateClusterPayload
+			require.NoError(t, json.Unmarshal(ev.Data, &payload))
+			require.Equal(t, agentUpdateClusterPayload{AgentID: test.agentID}, payload)
+		})
+	}
+}
+
+// TestOnPluginClusterEventAgentUpdateRefreshesRenamedAgent delivers an agent
+// update to a peer whose registry still lists a renamed agent under its old
+// name and whose full bot reload fails. Only the agent ID in the payload lets
+// the peer list the agent under its new name; the old name, which the bot
+// account released, is refused either way.
+func TestOnPluginClusterEventAgentUpdateRefreshesRenamedAgent(t *testing.T) {
+	tests := []struct {
+		name            string
+		event           model.PluginClusterEvent
+		expectRefreshed bool
+	}{
+		{
+			name:            "event naming the renamed agent",
+			event:           publishedAgentUpdate(t, "a1"),
+			expectRefreshed: true,
+		},
+		{
+			name:  "event without an agent",
+			event: publishedAgentUpdate(t, ""),
+		},
+		{
+			name:  "malformed payload",
+			event: model.PluginClusterEvent{Id: clusterEventAgentUpdate, Data: []byte("not json")},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mockAPI := &plugintest.API{}
+			client := pluginapi.NewClient(mockAPI, nil)
+			mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+			mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise, Features: &model.Features{}}).Maybe()
+			mockAPI.On("GetBot", "bot-1", true).Return(&model.Bot{UserId: "bot-1", Username: "new-name", OwnerId: "mattermost-ai"}, nil).Maybe()
+			mockAPI.On("PatchBot", "bot-1", mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{UserId: "bot-1", Username: "new-name"}, nil).Maybe()
+			mockAPI.On("UpdateBotActive", "bot-1", true).Return(&model.Bot{}, nil).Maybe()
+			mockAPI.On("GetUser", "bot-1").Return(&model.User{Id: "bot-1", Username: "new-name", IsBot: true, LastPictureUpdate: 1}, nil).Maybe()
+			mockAPI.On("GetUserByUsername", "old-name").
+				Return(nil, model.NewAppError("GetUserByUsername", "app.user.missing_account.const", nil, "", http.StatusNotFound))
+			mockAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+			mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+			mockAPI.On("GetBots", mock.AnythingOfType("*model.BotGetOptions")).
+				Return(nil, model.NewAppError("GetBots", "app.bot.get_bots.app_error", nil, "", http.StatusInternalServerError)).Once()
+			mockAPI.On("PublishWebSocketEvent", api.WebsocketEventBotsInvalidate, mock.Anything, mock.Anything).Once()
+			for arity := 1; arity <= 9; arity++ {
+				args := make([]any, arity)
+				for i := range args {
+					args[i] = mock.Anything
+				}
+				mockAPI.On("LogError", args...).Maybe()
+				mockAPI.On("LogDebug", args...).Maybe()
+			}
+			defer mockAPI.AssertExpectations(t)
+
+			var cfg config.Container
+			cfg.Update(&config.Config{Services: []llm.ServiceConfig{{ID: "svc1", Type: llm.ServiceTypeOpenAI, APIKey: "k", DefaultModel: "gpt-4o"}}})
+			store := agentListStub{{ID: "a1", BotUserID: "bot-1", Name: "new-name", DisplayName: "Agent", ServiceID: "svc1"}}
+			accessChecker := accesscontrol.New(accesscontrol.PassthroughClient{}, nil, accesscontrol.NoMCPServerIDs, nil)
+			mmBots := bots.New(mockAPI, client, enterprise.NewLicenseChecker(client), &cfg, store, accessChecker, &http.Client{}, nil)
+			t.Cleanup(mmBots.ShutdownServiceLLMs)
+			mmBots.SetBotsForTesting([]*bots.Bot{
+				bots.NewBot(llm.BotConfig{ID: "a1", BotUserID: "bot-1", Name: "old-name", ServiceID: "svc1"}, llm.ServiceConfig{}, &model.Bot{UserId: "bot-1", Username: "old-name"}, nil),
+			})
+
+			p := &Plugin{pluginAPI: client, bots: mmBots}
+			p.SetAPI(mockAPI)
+			p.OnPluginClusterEvent(&plugin.Context{}, test.event)
+
+			require.Nil(t, mmBots.GetBotMentioned("@old-name hi"), "the peer must not answer to the name the agent's account released")
+			require.Nil(t, mmBots.GetBotByUsername("old-name"), "the peer must not select the agent by the name its account released")
+			registered := mmBots.GetBotByID("bot-1")
+			require.NotNil(t, registered)
+			newMention := mmBots.GetBotMentioned("@new-name hi")
+			if test.expectRefreshed {
+				require.Equal(t, "new-name", registered.GetMMBot().Username)
+				require.NotNil(t, newMention)
+				require.Equal(t, "a1", newMention.GetConfig().ID)
+				return
+			}
+			require.Equal(t, "old-name", registered.GetMMBot().Username, "without an agent ID the peer keeps its previous registry when the full reload fails")
+			require.Nil(t, newMention)
+		})
+	}
+}
+
+func mustMarshal(t *testing.T, v any) []byte {
 	t.Helper()
 	b, err := json.Marshal(v)
 	require.NoError(t, err)

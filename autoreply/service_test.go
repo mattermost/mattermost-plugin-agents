@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -53,7 +55,7 @@ func newTestService(t *testing.T, dbClient *mmapi.DBClient, notifier ClusterNoti
 
 	mockAPI := &plugintest.API{}
 	client := pluginapi.NewClient(mockAPI, nil)
-	botsService := bots.New(mockAPI, client, enterprise.NewLicenseChecker(client), nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, client, enterprise.NewLicenseChecker(client), nil, nil, accesscontrol.New(accesscontrol.PassthroughClient{}, nil, accesscontrol.NoMCPServerIDs, nil), &http.Client{}, nil)
 	botsService.SetBotsForTesting(botList)
 
 	return NewService(NewStore(dbClient), botsService, mmClient, notifier)
@@ -220,7 +222,7 @@ func TestServiceSetValidation(t *testing.T) {
 			notifier := &recordingNotifier{}
 			svc := newTestService(t, dbClient, notifier, mmClient, botList)
 
-			setting, err := svc.Set(channelID, botID, tc.mode, model.NewId())
+			setting, err := svc.Set(Setting{ChannelID: channelID, BotID: botID, Mode: tc.mode, UpdatedBy: model.NewId()})
 			require.Error(t, err)
 			require.Nil(t, setting)
 			if tc.wantValidation {
@@ -268,6 +270,22 @@ func TestServiceSetSuccess(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:        "open channel with ambient mode",
+			mode:        ModeAmbient,
+			channelType: model.ChannelTypeOpen,
+			botCfg: func(string) llm.BotConfig {
+				return llm.BotConfig{ChannelAccessLevel: llm.ChannelAccessLevelAll}
+			},
+		},
+		{
+			name:        "open channel with ambient threads mode",
+			mode:        ModeAmbientThreads,
+			channelType: model.ChannelTypeOpen,
+			botCfg: func(string) llm.BotConfig {
+				return llm.BotConfig{ChannelAccessLevel: llm.ChannelAccessLevelAll}
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -282,7 +300,7 @@ func TestServiceSetSuccess(t *testing.T) {
 			notifier := &recordingNotifier{}
 			svc := newTestService(t, dbClient, notifier, mmClient, []*bots.Bot{newTestBot(botID, tc.botCfg(channelID))})
 
-			setting, err := svc.Set(channelID, botID, tc.mode, updatedBy)
+			setting, err := svc.Set(Setting{ChannelID: channelID, BotID: botID, Mode: tc.mode, UpdatedBy: updatedBy})
 			require.NoError(t, err)
 			require.NotNil(t, setting)
 			require.Equal(t, channelID, setting.ChannelID)
@@ -322,10 +340,10 @@ func TestServiceSetOverwrite(t *testing.T) {
 		newTestBot(botB, allowAll),
 	})
 
-	_, err := svc.Set(channelID, botA, ModeRootPosts, model.NewId())
+	_, err := svc.Set(Setting{ChannelID: channelID, BotID: botA, Mode: ModeRootPosts, UpdatedBy: model.NewId()})
 	require.NoError(t, err)
 
-	second, err := svc.Set(channelID, botB, ModeThreads, model.NewId())
+	second, err := svc.Set(Setting{ChannelID: channelID, BotID: botB, Mode: ModeThreads, UpdatedBy: model.NewId()})
 	require.NoError(t, err)
 
 	stored, err := svc.Get(channelID)
@@ -340,6 +358,71 @@ func TestServiceSetOverwrite(t *testing.T) {
 	require.Equal(t, *second, cached)
 
 	require.Equal(t, []string{channelID, channelID}, notifier.publishedIDs())
+}
+
+func TestServiceSetAmbientFields(t *testing.T) {
+	dbClient := testDB(t)
+
+	allowAll := llm.BotConfig{ChannelAccessLevel: llm.ChannelAccessLevelAll}
+
+	tests := []struct {
+		name         string
+		instructions string
+		wantErr      bool
+	}{
+		{
+			name:         "persists instructions",
+			instructions: "reply only to questions about billing",
+		},
+		{
+			name:         "accepts instructions at the rune cap",
+			instructions: strings.Repeat("界", MaxInstructionsRunes),
+		},
+		{
+			name:         "rejects instructions over the rune cap",
+			instructions: strings.Repeat("界", MaxInstructionsRunes+1),
+			wantErr:      true,
+		},
+		{
+			name:         "rejects instructions containing a NUL character",
+			instructions: "billing\x00questions",
+			wantErr:      true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			channelID := model.NewId()
+			botID := model.NewId()
+			updatedBy := model.NewId()
+
+			mmClient := mocks.NewMockClient(t)
+			mmClient.EXPECT().GetChannel(channelID).Return(&model.Channel{Id: channelID, Type: model.ChannelTypeOpen}, nil).Maybe()
+
+			svc := newTestService(t, dbClient, &recordingNotifier{}, mmClient, []*bots.Bot{newTestBot(botID, allowAll)})
+
+			setting, err := svc.Set(Setting{ChannelID: channelID, BotID: botID, Mode: ModeAmbient, UpdatedBy: updatedBy, Instructions: tc.instructions})
+			if tc.wantErr {
+				require.ErrorIs(t, err, ErrValidation)
+				require.Nil(t, setting)
+				stored, getErr := NewStore(dbClient).Get(channelID)
+				require.NoError(t, getErr)
+				require.Nil(t, stored)
+				_, ok := svc.GetCached(channelID)
+				require.False(t, ok)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.instructions, setting.Instructions)
+
+			stored, getErr := NewStore(dbClient).Get(channelID)
+			require.NoError(t, getErr)
+			require.Equal(t, *setting, *stored)
+			cached, ok := svc.GetCached(channelID)
+			require.True(t, ok)
+			require.Equal(t, *setting, cached)
+		})
+	}
 }
 
 func TestServiceDelete(t *testing.T) {
@@ -384,7 +467,7 @@ func TestServiceDelete(t *testing.T) {
 
 			expectedNotifications := []string(nil)
 			if tc.setFirst {
-				_, err := svc.Set(channelID, botID, ModeRootPosts, model.NewId())
+				_, err := svc.Set(Setting{ChannelID: channelID, BotID: botID, Mode: ModeRootPosts, UpdatedBy: model.NewId()})
 				require.NoError(t, err)
 				expectedNotifications = append(expectedNotifications, channelID)
 			}
@@ -423,7 +506,7 @@ func TestServiceGet(t *testing.T) {
 	bot := newTestBot(botID, llm.BotConfig{ChannelAccessLevel: llm.ChannelAccessLevelAll})
 	svc := newTestService(t, dbClient, &recordingNotifier{}, mmClient, []*bots.Bot{bot})
 
-	setting, err := svc.Set(channelID, botID, ModeThreads, model.NewId())
+	setting, err := svc.Set(Setting{ChannelID: channelID, BotID: botID, Mode: ModeThreads, UpdatedBy: model.NewId()})
 	require.NoError(t, err)
 
 	got, err := svc.Get(channelID)
@@ -458,6 +541,54 @@ func TestServiceLoadCache(t *testing.T) {
 
 	_, ok = svc.GetCached(model.NewId())
 	require.False(t, ok)
+}
+
+// TestServiceUnknownModeIsNotServed covers rows written by a newer plugin
+// version: a mode this version cannot store must never reach the cache.
+func TestServiceUnknownModeIsNotServed(t *testing.T) {
+	dbClient := testDB(t)
+
+	tests := []struct {
+		name string
+		load func(t *testing.T, svc *Service, channelID string)
+	}{
+		{
+			name: "LoadCache skips the row",
+			load: func(t *testing.T, svc *Service, _ string) {
+				require.NoError(t, svc.LoadCache())
+			},
+		},
+		{
+			name: "RefreshChannel evicts a previously cached setting",
+			load: func(t *testing.T, svc *Service, channelID string) {
+				svc.cache[channelID] = Setting{ChannelID: channelID, BotID: model.NewId(), Mode: ModeThreads}
+				require.NoError(t, svc.RefreshChannel(channelID))
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewStore(dbClient)
+			unknown := Setting{ChannelID: model.NewId(), BotID: model.NewId(), Mode: Mode("ambient_v2"), UpdatedBy: model.NewId(), UpdateAt: 100}
+			known := Setting{ChannelID: model.NewId(), BotID: model.NewId(), Mode: ModeAmbient, UpdatedBy: model.NewId(), UpdateAt: 100}
+			require.NoError(t, store.Set(unknown))
+			require.NoError(t, store.Set(known))
+
+			mmClient := mocks.NewMockClient(t)
+			mmClient.EXPECT().LogWarn(mock.Anything, []any{"channel_id", unknown.ChannelID, "mode", "ambient_v2"}).Once()
+			svc := newTestService(t, dbClient, &recordingNotifier{}, mmClient, nil)
+
+			tc.load(t, svc, unknown.ChannelID)
+
+			_, ok := svc.GetCached(unknown.ChannelID)
+			require.False(t, ok, "a row with an unknown mode must not be served")
+			require.NoError(t, svc.RefreshChannel(known.ChannelID))
+			cached, ok := svc.GetCached(known.ChannelID)
+			require.True(t, ok)
+			require.Equal(t, known, cached)
+		})
+	}
 }
 
 // TestServiceGetCachedDoesNotHitDB pins the hot-path contract as behavior:
@@ -548,7 +679,7 @@ func TestServiceNotifierFailureDoesNotFailWrite(t *testing.T) {
 		{
 			name: "set succeeds when the notifier fails",
 			op: func(t *testing.T, svc *Service, channelID, botID string) {
-				setting, err := svc.Set(channelID, botID, ModeRootPosts, model.NewId())
+				setting, err := svc.Set(Setting{ChannelID: channelID, BotID: botID, Mode: ModeRootPosts, UpdatedBy: model.NewId()})
 				require.NoError(t, err, "a failed broadcast must not fail the write")
 				require.NotNil(t, setting)
 			},
@@ -636,7 +767,7 @@ func TestServiceStalledDBWriteDoesNotBlockGetCached(t *testing.T) {
 
 	setDone := make(chan error, 1)
 	go func() {
-		_, setErr := svc.Set(stalledChannelID, botID, ModeThreads, model.NewId())
+		_, setErr := svc.Set(Setting{ChannelID: stalledChannelID, BotID: botID, Mode: ModeThreads, UpdatedBy: model.NewId()})
 		setDone <- setErr
 	}()
 
@@ -660,7 +791,7 @@ func TestServiceStalledDBWriteDoesNotBlockGetCached(t *testing.T) {
 	select {
 	case <-readDone:
 	case <-time.After(5 * time.Second):
-		t.Fatal("GetCached blocked behind a stalled DB write; readers must never wait on the database")
+		require.FailNow(t, "GetCached blocked behind a stalled DB write; readers must never wait on the database")
 	}
 
 	// Unblock the writer and confirm the write completes and converges.
@@ -698,10 +829,8 @@ func TestServiceConcurrentAccess(t *testing.T) {
 
 	stop := make(chan struct{})
 	var readers sync.WaitGroup
-	for i := 0; i < 50; i++ {
-		readers.Add(1)
-		go func() {
-			defer readers.Done()
+	for range 50 {
+		readers.Go(func() {
 			for {
 				select {
 				case <-stop:
@@ -715,22 +844,22 @@ func TestServiceConcurrentAccess(t *testing.T) {
 				// detector 50 spinning readers otherwise starve the writers.
 				runtime.Gosched()
 			}
-		}()
+		})
 	}
 
 	var writers sync.WaitGroup
-	for w := 0; w < 8; w++ {
+	for w := range 8 {
 		writers.Add(1)
 		go func(seed int) {
 			defer writers.Done()
-			for i := 0; i < 25; i++ {
+			for i := range 25 {
 				channelID := channelIDs[(seed+i)%len(channelIDs)]
 				switch i % 4 {
 				case 0:
-					_, err := svc.Set(channelID, botID, ModeRootPosts, updatedBy)
+					_, err := svc.Set(Setting{ChannelID: channelID, BotID: botID, Mode: ModeRootPosts, UpdatedBy: updatedBy})
 					assert.NoError(t, err)
 				case 1:
-					_, err := svc.Set(channelID, botID, ModeThreads, updatedBy)
+					_, err := svc.Set(Setting{ChannelID: channelID, BotID: botID, Mode: ModeThreads, UpdatedBy: updatedBy})
 					assert.NoError(t, err)
 				case 2:
 					assert.NoError(t, svc.Delete(channelID))

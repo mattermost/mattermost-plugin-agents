@@ -13,32 +13,22 @@ import (
 
 // TokenAuthenticationProvider provides PAT token authentication for STDIO transport
 type TokenAuthenticationProvider struct {
-	mmServerURL string // Mattermost server URL for API communication
-	token       string
-	logger      logger.Logger
+	providerBase
+	token string
 }
 
 // NewTokenAuthenticationProvider creates a new PAT token authentication provider for STDIO transport
 // Uses internalURL for API communication if provided, otherwise falls back to externalURL
 func NewTokenAuthenticationProvider(externalURL, internalURL, token string, logger logger.Logger) *TokenAuthenticationProvider {
-	// Use internal URL for API communication if provided, otherwise fallback to external URL
-	mmServerURL := internalURL
-	if mmServerURL == "" {
-		mmServerURL = externalURL
-	}
-
 	return &TokenAuthenticationProvider{
-		mmServerURL: mmServerURL,
-		token:       token,
-		logger:      logger,
+		providerBase: newProviderBase(externalURL, internalURL, logger),
+		token:        token,
 	}
 }
 
-// ValidateAuth validates authentication
+// ValidateAuth validates authentication (single GetMe call)
 func (p *TokenAuthenticationProvider) ValidateAuth(ctx context.Context) error {
-	// Get authenticated client and validate token (single GetMe call)
-	_, err := p.GetAuthenticatedMattermostClient(ctx)
-	return err
+	return validateAuth(ctx, p)
 }
 
 // GetAuthenticatedMattermostClient returns an authenticated Mattermost client

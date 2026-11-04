@@ -8,7 +8,7 @@ import {FormattedMessage} from 'react-intl';
 import {useSelectPost} from '@/hooks';
 
 import {getChannelInterval} from '@/client';
-import {useIsBasicsLicensed} from '@/license';
+import {useIsLicensedFor} from '@/license';
 
 import {useBotlistForChannel} from '@/bots';
 
@@ -17,11 +17,11 @@ import IconSparkleCheckmark from './assets/icon_sparkle_checkmark';
 import IconSparkleQuestion from './assets/icon_sparkle_question';
 import IconThreadSummarization from './assets/icon_thread_summarization';
 
-import DotMenu, {DropdownMenu, DropdownMenuItem} from './dot_menu';
+import DotMenu, {DotMenuButton, DropdownMenu, DropdownMenuItem} from './dot_menu';
 import {Divider, DropdownInfoOnlyVisibleToYou} from './dropdown_info';
 import {DropdownBotSelector} from './bot_selector';
 
-const AskAIButton = styled(DotMenu)`
+const AskAIButton = styled(DotMenuButton)`
 	display: flex;
 	height: 24px;
 	align-items: center;
@@ -56,20 +56,6 @@ const SmallerIconAI = styled(IconAI)`
 	height: 15px;
 `;
 
-const DropdownMenuItemStyled = styled(DropdownMenuItem)`
-	display: flex;
-	align-items: center;
-	gap: 6px;
-`;
-
-const IconSparkleCheckmarkStyled = styled(IconSparkleCheckmark)`
-	color: rgba(var(--center-channel-color-rgb), 0.56);
-`;
-
-const IconSparkleQuestionStyled = styled(IconSparkleQuestion)`
-	color: rgba(var(--center-channel-color-rgb), 0.56);
-`;
-
 const StyledDropdownMenu = styled(DropdownMenu)`
 	min-width: 240px;
 `;
@@ -83,25 +69,25 @@ interface Props {
 
 const UnreadsSumarize = (props: Props) => {
     const selectPost = useSelectPost();
-    const isBasicsLicensed = useIsBasicsLicensed();
+    const channelSummarizationLicensed = useIsLicensedFor('channel_summarization');
     const {bots, activeBot, setActiveBot} = useBotlistForChannel(props.channelId);
 
     const summarizeNew = async () => {
-        const result = await getChannelInterval(props.channelId, props.lastViewedAt, 0, 'summarize_unreads', '', activeBot?.username || '');
+        const result = await getChannelInterval(props.channelId, props.lastViewedAt, 0, 'summarize_unreads', '', activeBot?.id || '');
         selectPost(result.postid, result.channelid);
     };
 
     const actionItems = async () => {
-        const result = await getChannelInterval(props.channelId, props.lastViewedAt, 0, 'action_items', '', activeBot?.username || '');
+        const result = await getChannelInterval(props.channelId, props.lastViewedAt, 0, 'action_items', '', activeBot?.id || '');
         selectPost(result.postid, result.channelid);
     };
 
     const openQuestions = async () => {
-        const result = await getChannelInterval(props.channelId, props.lastViewedAt, 0, 'open_questions', '', activeBot?.username || '');
+        const result = await getChannelInterval(props.channelId, props.lastViewedAt, 0, 'open_questions', '', activeBot?.id || '');
         selectPost(result.postid, result.channelid);
     };
 
-    if (!isBasicsLicensed) {
+    if (!channelSummarizationLicensed) {
         return null;
     }
 
@@ -111,10 +97,11 @@ const UnreadsSumarize = (props: Props) => {
     }
 
     return (
-        <AskAIButton
+        <DotMenu
             icon={<><SmallerIconAI/>
                 <FormattedMessage defaultMessage=' Ask AI'/>
             </>}
+            dotMenuButton={AskAIButton}
             dropdownMenu={StyledDropdownMenu}
         >
             <DropdownBotSelector
@@ -123,27 +110,24 @@ const UnreadsSumarize = (props: Props) => {
                 setActiveBot={setActiveBot}
             />
             <Divider/>
-            <DropdownMenuItemStyled
+            <DropdownMenuItem
+                icon={<IconThreadSummarization/>}
+                label={<FormattedMessage defaultMessage='Summarize new messages'/>}
                 onClick={summarizeNew}
-            >
-                <IconThreadSummarization/>
-                <FormattedMessage defaultMessage='Summarize new messages'/>
-            </DropdownMenuItemStyled>
-            <DropdownMenuItemStyled
+            />
+            <DropdownMenuItem
+                icon={<IconSparkleCheckmark/>}
+                label={<FormattedMessage defaultMessage='Find action items'/>}
                 onClick={actionItems}
-            >
-                <IconSparkleCheckmarkStyled/>
-                <FormattedMessage defaultMessage='Find action items'/>
-            </DropdownMenuItemStyled>
-            <DropdownMenuItemStyled
+            />
+            <DropdownMenuItem
+                icon={<IconSparkleQuestion/>}
+                label={<FormattedMessage defaultMessage='Find open questions'/>}
                 onClick={openQuestions}
-            >
-                <IconSparkleQuestionStyled/>
-                <FormattedMessage defaultMessage='Find open questions'/>
-            </DropdownMenuItemStyled>
+            />
             <Divider/>
             <DropdownInfoOnlyVisibleToYou/>
-        </AskAIButton>
+        </DotMenu>
     );
 };
 

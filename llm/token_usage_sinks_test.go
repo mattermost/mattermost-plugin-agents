@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSetFileLogger_ShutsDownPreviousLogger(t *testing.T) {
@@ -25,4 +26,19 @@ func TestSetFileLogger_ShutsDownPreviousLogger(t *testing.T) {
 
 	// Setting nil when no logger was set should not panic.
 	sinks.SetFileLogger(nil)
+}
+
+func TestAccountingEnabledFailsClosed(t *testing.T) {
+	sinks := NewTokenUsageSinks(nil)
+	sinks.SetLoggingEnabled(true)
+	sinks.SetPluginEnabled(true)
+
+	require.False(t, sinks.AccountingEnabled(), "unset predicate must fail closed")
+	require.False(t, sinks.LoggingEnabled(), "logging must stay off when accounting is unset")
+
+	sinks.SetAccountingEnabled(func() bool { return false })
+	require.False(t, sinks.LoggingEnabled(), "logging must stay off when accounting is disabled")
+
+	sinks.SetAccountingEnabled(func() bool { return true })
+	require.True(t, sinks.LoggingEnabled(), "logging should follow the config flag when accounting is enabled")
 }

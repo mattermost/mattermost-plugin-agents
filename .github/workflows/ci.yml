@@ -48,7 +48,8 @@ jobs:
             group: e2e-shard-4
     name: e2e-${{ matrix.shard.name }}
     env:
-      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermostdevelopment/mattermost-enterprise-edition:release-11.9' }}
+      # Needs 11.11+ for plugin EvaluateAccessControl (mattermost#37509).
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:latest' }}
     defaults:
       run:
         working-directory: ./e2e
@@ -118,92 +119,124 @@ jobs:
         run: |
           make test
 
-  evals:
+  # Skips evals for pull requests that only touch files that cannot change
+  # agent behavior, so their PRs get neither eval runs nor eval comments.
+  eval-changes:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    strategy:
-      fail-fast: false
-      matrix:
-        provider:
-          - name: openai
-            display_name: OpenAI
-          - name: anthropic
-            display_name: Anthropic
-          - name: azure
-            display_name: Azure OpenAI
-          - name: mistral
-            display_name: Mistral
-          - name: bedrock
-            display_name: AWS Bedrock
-    name: evals-${{ matrix.provider.name }}
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/master'
+    outputs:
+      run: ${{ steps.filter.outputs.run }}
     steps:
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 0
+          fetch-depth: 2
+      - id: filter
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The pull_request checkout is a merge commit; its first parent is the base.
+          changed=$(git diff --name-only HEAD^1 HEAD)
+          if [ -n "$changed" ] && grep -qvE '^(webapp/|e2e/|docs/|loadtest/|assets/|img/)|\.md$' <<< "$changed"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Runs on pull requests and on master; master results are the baseline that
+  # pull request results are compared against.
+  evals:
+    needs: eval-changes
+    if: needs.eval-changes.outputs.run == 'true'
+    uses: ./.github/workflows/evals.yml
+    with:
+      runs: ${{ vars.EVAL_RUNS || '1' }}
+    secrets: inherit
+
+  evals-comment:
+    runs-on: ubuntu-latest
+    needs: [eval-changes, evals]
+    if: always() && github.event_name == 'pull_request' && needs.eval-changes.outputs.run == 'true'
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v5
       - uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
 
-      - name: Run ${{ matrix.provider.display_name }} evaluations
-        id: run-evals
-        env:
-          LLM_PROVIDER: ${{ matrix.provider.name }}
-          # OpenAI
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5.2' }}
-          # Anthropic
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-sonnet-4-6' }}
-          # Azure
-          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
-          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
-          AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_MODEL || 'gpt-5.2' }}
-          # Mistral
-          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-          MISTRAL_MODEL: ${{ vars.MISTRAL_MODEL || 'mistral-large-latest' }}
-          # AWS Bedrock
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_BEDROCK_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_BEDROCK_ACCESS_KEY_SECRET }}
-          AWS_BEDROCK_REGION: ${{ vars.AWS_BEDROCK_REGION || 'us-east-1' }}
-          AWS_BEDROCK_MODEL: ${{ vars.AWS_BEDROCK_MODEL || 'global.anthropic.claude-sonnet-4-6-v1:0' }}
-        run: |
-          # Run evals - evalviewer writes directly to comment.md
-          make evals-comment || true
-
-          # Save provider name for aggregation
-          echo "${{ matrix.provider.display_name }}" > provider_name.txt
-
-      - name: Upload evaluation results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: eval-results-${{ matrix.provider.name }}
-          path: |
-            evals.jsonl
-            comment.md
-            provider_name.txt
-          retention-days: 30
-
-  evals-comment:
-    runs-on: ubuntu-latest
-    needs: evals
-    if: always() && github.event_name == 'pull_request'
-    permissions:
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Download all evaluation results
+      - name: Download evaluation results
+        # No artifact exists when the evals job failed before uploading; the
+        # report then lists every provider as unavailable.
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
+          pattern: eval-results-*
           path: eval-results
 
-      - name: Aggregate results and post comment
+      - name: Find master baseline
+        id: baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # The newest master push run whose eval jobs all succeeded (a failed
+        # eval job has partial results) and whose eval results are unexpired.
+        # Other jobs of the run may fail.
+        run: |
+          run_id=""
+          repo="repos/${{ github.repository }}"
+          for id in $(gh api "$repo/actions/workflows/ci.yml/runs?branch=master&event=push&status=completed&per_page=20" --jq '.workflow_runs[].id'); do
+            evals_ok=$(gh api "$repo/actions/runs/$id/jobs?per_page=100" \
+              --jq '[.jobs[] | select(.name | startswith("evals / evals-"))] | length > 0 and all(.conclusion == "success")')
+            [ "$evals_ok" = true ] || continue
+            artifacts=$(gh api "$repo/actions/runs/$id/artifacts?per_page=100" \
+              --jq '[.artifacts[] | select(.expired == false and (.name | startswith("eval-results-")))] | length')
+            if [ "$artifacts" -gt 0 ]; then
+              run_id=$id
+              break
+            fi
+          done
+          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Download master baseline
+        if: steps.baseline.outputs.run-id != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: eval-results-*
+          path: eval-baseline
+          run-id: ${{ steps.baseline.outputs.run-id }}
+          github-token: ${{ github.token }}
+
+      - name: Load existing eval comment
         uses: actions/github-script@v7
         with:
           script: |
-            const script = require('./.github/scripts/aggregate-eval-results.js');
-            await script.aggregateAndPostResults(github, context);
+            const script = require('./.github/scripts/post-eval-comment.js');
+            await script.saveEvalComment(github, context, 'previous-comment.md');
+
+      - name: Build report
+        run: |
+          make evalviewer
+          ./bin/evalviewer report \
+            --results eval-results \
+            --baseline eval-baseline \
+            --providers openai,anthropic,azure,mistral,bedrock \
+            --previous previous-comment.md \
+            --comment comment.md \
+            --summary summary.md \
+            --commit "${{ github.event.pull_request.head.sha }}" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          cat summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post or resolve pull request comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const script = require('./.github/scripts/post-eval-comment.js');
+            await script.postEvalComment(github, context, 'comment.md');
 
   lint:
     runs-on: ubuntu-latest
@@ -217,7 +250,7 @@ jobs:
       - uses: mattermost/actions/plugin-ci/lint@main
 
   verify-no-drift:
-    name: Verify webapp i18n + package-lock are in sync
+    name: Verify webapp i18n, package-lock, and editor contract are in sync
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -230,12 +263,15 @@ jobs:
         run: make check-i18n
       - name: Check package-lock.json drift
         run: make check-locks
+      - name: Check editor contract against the pinned host snapshot
+        run: cd webapp && npm run check-editor-contract
 
   build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
+      pull-requests: read
     steps:
       - uses: actions/checkout@v5
         with:
@@ -244,6 +280,20 @@ jobs:
         with:
           golangci-lint-version: "v1.54.2"
       - uses: mattermost/actions/plugin-ci/build@main
+      # plugin-ci/build wrote dist/release-notes.md as a plain commit list under
+      # "Fixes". On release tags, replace it with notes written from the PR
+      # titles and descriptions (see build/releasenotes/README.md). The tool
+      # leaves the file untouched when it fails, so the commit list stays as the
+      # fallback and the build still succeeds. Mattermost's release pipeline
+      # reads the file from the all-plugin-artifacts upload below.
+      - name: build/release-notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_NOTES_MODEL: ${{ vars.RELEASE_NOTES_MODEL || vars.CLAUDE_MODEL || 'claude-sonnet-5-5' }}
+        run: make release-notes OUTPUT=dist/release-notes.md
       - uses: mattermost/actions/plugin-ci/build-fips@c7a06bc642f72fc227deb2cae3af03cff72c0f0d
         with:
           chainguard-identity: ${{ secrets.CHAINGUARD_IDENTITY }}
@@ -258,9 +308,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # The nested loadtest/controller module is invisible to the root-module lint/build
-  # jobs above, so run its lint, tests, and go.mod drift check in a dedicated job.
-  loadtest-controller:
+  # The nested Go modules (loadtest/controller, build/releasenotes) are invisible
+  # to the root-module lint/build jobs above, so run their lint, tests, and go.mod
+  # drift checks in a dedicated job.
+  nested-modules:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -270,7 +321,7 @@ jobs:
         with:
           go-version-file: 'go.mod'
       - run: make install-go-tools
-      - run: make loadtest-controller-build loadtest-controller-lint loadtest-controller-test loadtest-controller-mod-check
+      - run: make nested-modules-build nested-modules-lint nested-modules-test nested-modules-mod-check
 
   upload-s3-pr:
     needs: [lint]

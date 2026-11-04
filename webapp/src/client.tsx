@@ -10,14 +10,21 @@ import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 import {PluginConfig, SECRET_PLACEHOLDER} from '@/components/system_console/plugin_config_types';
 import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
-import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
+import {
+    UserAgent,
+    CreateAgentRequest,
+    UpdateAgentRequest,
+    ServiceInfo,
+    AgentVersionList,
+    AgentVersionDetail,
+} from '@/types/agents';
 import {isValidId} from '@/utils/ids';
 
 import manifest from './manifest';
 
 import {CustomPrompt} from './types';
 
-const Client4 = new Client4Class();
+export const Client4 = new Client4Class();
 
 type MCPToolPolicy = 'auto_run_in_dm' | 'auto_run_everywhere' | 'ask';
 type VettedToolConfig = {name: string; policy: MCPToolPolicy; enabled: boolean};
@@ -60,8 +67,54 @@ export function savePreferences(userId: string, preferences: PreferenceType[]) {
     return Client4.savePreferences(userId, preferences);
 }
 
-function baseRoute(): string {
+export function baseRoute(): string {
     return `${Client4.url}/plugins/${manifest.id}`;
+}
+
+// Path of the sandboxed HTML artifact document served by the plugin, without
+// the per-load nonce the server requires.
+export function artifactPath(fileId: string): string {
+    return `${baseRoute()}/artifacts/${encodeURIComponent(fileId)}`;
+}
+
+// URL of the artifact document for one host load of its frame.
+export function artifactURL(fileId: string, nonce: string): string {
+    return `${artifactPath(fileId)}?n=${encodeURIComponent(nonce)}`;
+}
+
+export interface ArtifactTokenInfo {
+    token: string;
+
+    // The artifact exceeds the render size limit; loading it would fail.
+    tooLarge: boolean;
+}
+
+// Fetches the viewer's token that authenticates messages from the artifact's
+// bridge script to this page. The token is only valid for the frame load
+// that uses the same nonce.
+export async function getArtifactToken(fileId: string, nonce: string): Promise<ArtifactTokenInfo> {
+    const url = `${artifactPath(fileId)}/token?n=${encodeURIComponent(nonce)}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        const data: unknown = await response.json();
+        const {token, tooLarge} = (data as {token?: unknown; tooLarge?: unknown} | null) ?? {};
+        if (typeof token === 'string' && token !== '') {
+            return {token, tooLarge: tooLarge === true};
+        }
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export function fileDownloadURL(fileId: string): string {
+    return `${Client4.url}/api/v4/files/${encodeURIComponent(fileId)}?download=1`;
 }
 
 // Interpolated ids are encoded so each one can only ever occupy one path segment.
@@ -73,7 +126,7 @@ function channelRoute(channelid: string): string {
     return `${baseRoute()}/channel/${encodeURIComponent(channelid)}`;
 }
 
-function agentRoute(agentId: string): string {
+export function agentRoute(agentId: string): string {
     return `${baseRoute()}/agents/${encodeURIComponent(agentId)}`;
 }
 
@@ -85,22 +138,38 @@ function conversationRoute(conversationId: string): string {
 // agent endpoint response body. The agent API returns `{"error": "..."}` for
 // non-2xx responses so the UI can surface actionable validation feedback
 // (oversized prompt, taken username, etc.) instead of a generic retry hint.
-async function readAgentErrorMessage(response: Response): Promise<string> {
+export async function readAgentErrorMessage(response: Response): Promise<string> {
+    return (await readAgentError(response)).message;
+}
+
+// readAgentError extracts the server-provided error message and, when the
+// server identifies the error, its code (as server_error_id) so the UI can
+// show a translated message.
+export async function readAgentError(response: Response): Promise<{message: string; server_error_id?: string}> {
     try {
         const data: unknown = await response.json();
-        if (
-            data !== null &&
-            typeof data === 'object' &&
-            'error' in data &&
-            typeof (data as {error?: unknown}).error === 'string'
-        ) {
-            return (data as {error: string}).error;
+        if (data !== null && typeof data === 'object') {
+            const {error, code} = data as {error?: unknown; code?: unknown};
+            return {
+                message: typeof error === 'string' ? error : '',
+                ...(typeof code === 'string' && code ? {server_error_id: code} : {}),
+            };
         }
     } catch {
-        // Body was empty or not JSON — fall through to empty string so the
+        // Body was empty or not JSON — fall through to an empty message so the
         // caller can apply a generic fallback.
     }
-    return '';
+    return {message: ''};
+}
+
+// readClientErrorMessage returns the server's error text for 403 responses,
+// which carry `{error, license_required}` for license denials. Other statuses
+// yield an empty message; callers inspect status_code for those.
+export async function readClientErrorMessage(response: Response): Promise<string> {
+    if (response.status !== 403) {
+        return '';
+    }
+    return readAgentErrorMessage(response);
 }
 
 export async function doReaction(postid: string) {
@@ -114,14 +183,17 @@ export async function doReaction(postid: string) {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
 }
 
-export async function doThreadAnalysis(postid: string, analysisType: string, botUsername: string) {
-    const url = `${postRoute(postid)}/analyze?botUsername=${botUsername}`;
+// Agents are selected by immutable bot user ID; omitted means the server default.
+const botIdQuery = (botId?: string) => (botId ? `?botId=${encodeURIComponent(botId)}` : '');
+
+export async function doThreadAnalysis(postid: string, analysisType: string, botId: string) {
+    const url = `${postRoute(postid)}/analyze${botIdQuery(botId)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({
@@ -134,14 +206,14 @@ export async function doThreadAnalysis(postid: string, analysisType: string, bot
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
 }
 
-export async function doChannelAnalysis(channelId: string, analysisType: string, botUsername: string, options?: any) {
-    const url = `${channelRoute(channelId)}/analyze?botUsername=${botUsername}`;
+export async function doChannelAnalysis(channelId: string, analysisType: string, botId: string, options?: any) {
+    const url = `${channelRoute(channelId)}/analyze${botIdQuery(botId)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({
@@ -155,7 +227,7 @@ export async function doChannelAnalysis(channelId: string, analysisType: string,
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -172,7 +244,7 @@ export async function doTranscribe(postid: string, fileID: string) {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -189,7 +261,7 @@ export async function doSummarizeTranscription(postid: string) {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -206,7 +278,7 @@ export async function doStopGenerating(postid: string) {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -223,7 +295,7 @@ export async function doRegenerate(postid: string) {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -244,7 +316,7 @@ export async function doToolCall(postid: string, toolIDs: string[], toolAnswers?
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -264,7 +336,45 @@ export async function doToolResult(postid: string, toolIDs: string[]): Promise<v
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+// doWaitCheckNow ends a pending wait_for_async_work pause early and resumes the
+// bot immediately. The server authorizes only the wait's requester.
+export async function doWaitCheckNow(postid: string) {
+    const url = `${postRoute(postid)}/wait/check_now`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+// doWaitCancel cancels a pending wait_for_async_work pause so the bot does not
+// resume from it. The server authorizes only the wait's requester.
+export async function doWaitCancel(postid: string) {
+    const url = `${postRoute(postid)}/wait/cancel`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -281,13 +391,13 @@ export async function doPostbackSummary(postid: string) {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
 }
 
-export async function doLoopInAgent(postid: string, botUsername: string) {
+export async function doLoopInAgent(postid: string, botId: string) {
     if (!isValidId(postid)) {
         throw new ClientError(Client4.url, {
             message: 'Invalid post id',
@@ -296,7 +406,7 @@ export async function doLoopInAgent(postid: string, botUsername: string) {
         });
     }
 
-    const url = `${postRoute(postid)}/loop_in_agent?botUsername=${encodeURIComponent(botUsername)}`;
+    const url = `${postRoute(postid)}/loop_in_agent${botIdQuery(botId)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
     }));
@@ -306,7 +416,7 @@ export async function doLoopInAgent(postid: string, botUsername: string) {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -314,12 +424,6 @@ export async function doLoopInAgent(postid: string, botUsername: string) {
 
 export async function viewMyChannel(channelID: string) {
     return Client4.viewMyChannel(channelID);
-}
-
-export async function getAIDirectChannel(currentUserId: string) {
-    const botUser = await Client4.getUserByUsername('ai');
-    const dm = await Client4.createDirectChannel([currentUserId, botUser.id]);
-    return dm.id;
 }
 
 export async function getBotDirectChannel(currentUserId: string, botUserID: string) {
@@ -338,7 +442,38 @@ export async function getAIThreads() {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+function invalidConversationIdError() {
+    return new ClientError(Client4.url, {
+        message: 'Invalid conversation id',
+        status_code: 400,
+        url: Client4.url,
+    });
+}
+
+// renameConversation sets the user-visible title of one of the caller's conversations.
+export async function renameConversation(conversationId: string, title: string): Promise<void> {
+    if (!isValidId(conversationId)) {
+        throw invalidConversationIdError();
+    }
+
+    const url = `${conversationRoute(conversationId)}/title`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify({title}),
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -381,7 +516,7 @@ export async function getConversation(conversationId: string): Promise<Conversat
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -407,7 +542,7 @@ export async function getConversationContext(conversationId: string): Promise<Co
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -424,7 +559,7 @@ export async function getAIBots() {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -443,6 +578,12 @@ export function getProfilePictureUrl(userId: string, lastIconUpdate: number) {
     return Client4.getProfilePictureUrl(userId, lastIconUpdate);
 }
 
+// The root posts of chats for the history list's previews (message and reply count). The server
+// only returns the posts the user may read.
+export function getPostsByIds(postIds: string[]) {
+    return Client4.getPostsByIds(postIds);
+}
+
 export async function getBotProfilePictureUrl(username: string) {
     const user = await Client4.getUserByUsername(username);
     if (!user || user.id === '') {
@@ -451,8 +592,11 @@ export async function getBotProfilePictureUrl(username: string) {
     return getProfilePictureUrl(user.id, user.last_picture_update);
 }
 
-export async function doRunSearch(query: string, teamId: string, channelId: string, botUsername?: string): Promise<{postid: string; channelid: string}> {
-    const url = `${baseRoute()}/search/run${botUsername ? `?botUsername=${botUsername}` : ''}`;
+// doRunSearch starts a search conversation with the agent. teamId is the
+// user's current team (used for citation links); channelId, when set, is the
+// channel the agent searches first.
+export async function doRunSearch(query: string, teamId: string, channelId: string, botId?: string): Promise<{postid: string; channelid: string}> {
+    const url = `${baseRoute()}/search/run${botIdQuery(botId)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({
@@ -467,7 +611,7 @@ export async function doRunSearch(query: string, teamId: string, channelId: stri
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -554,7 +698,7 @@ export async function doReindexPosts(clearIndex = true) {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -571,7 +715,7 @@ export async function getReindexStatus() {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -588,7 +732,7 @@ export async function cancelReindex() {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -605,7 +749,7 @@ export async function catchUpIndex() {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -622,7 +766,7 @@ export async function rebuildVectorIndex() {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -639,7 +783,7 @@ export async function checkIndexHealth() {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -656,7 +800,7 @@ export async function getMCPTools() {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -673,7 +817,7 @@ export async function clearMCPToolsCache() {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -699,7 +843,33 @@ export async function updatePluginServer(
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+// A draft of a saved remote MCP server's description, taken from how the
+// server describes itself to the requesting admin (api.MCPSuggestedDescriptionResponse).
+export type MCPSuggestedDescription = {
+    description: string;
+    source: '' | 'description' | 'instructions';
+    needsOAuth: boolean;
+    authURL?: string;
+};
+
+export async function getMCPSuggestedDescription(serverID: string): Promise<MCPSuggestedDescription> {
+    const url = `${baseRoute()}/admin/mcp/${encodeURIComponent(serverID)}/suggested-description`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -723,7 +893,7 @@ export async function getVettedToolSeed(baseURL: string): Promise<VettedToolConf
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -767,7 +937,7 @@ export async function fetchModels(serviceType: string, apiKey: string, apiURL: s
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -795,7 +965,7 @@ export async function getUserMCPTools(opts?: {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -812,7 +982,7 @@ export async function refreshUserMCPTools(): Promise<UserMCPToolsResponse> {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -829,7 +999,7 @@ export async function getUserToolPreferences(): Promise<{disabled_servers: strin
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -847,17 +1017,18 @@ export async function updateUserToolPreferences(prefs: {disabled_servers: string
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
 }
 
-export type ChannelAutoReplyMode = 'off' | 'root_posts' | 'threads';
+export type ChannelAutoReplyMode = 'off' | 'root_posts' | 'threads' | 'ambient' | 'ambient_threads';
 
 export type ChannelAutoReplySettings = {
     bot_id: string;
     mode: ChannelAutoReplyMode;
+    instructions: string;
 };
 
 export async function getChannelAutoReply(channelId: string): Promise<ChannelAutoReplySettings> {
@@ -871,7 +1042,7 @@ export async function getChannelAutoReply(channelId: string): Promise<ChannelAut
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -889,7 +1060,7 @@ export async function updateChannelAutoReply(channelId: string, settings: Channe
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -906,7 +1077,7 @@ export async function disconnectMCPOAuth(serverName: string): Promise<void> {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -918,9 +1089,13 @@ export async function getChannelInterval(
     endTime: number,
     presetPrompt: string,
     prompt?: string,
+    botId?: string,
+
+    // A username the user typed. The server checks which agent holds it now.
     botUsername?: string,
 ): Promise<{postid: string; channelid: string}> {
-    const url = `${channelRoute(channelID)}/interval${botUsername ? `?botUsername=${botUsername}` : ''}`;
+    const agentQuery = botId || !botUsername ? botIdQuery(botId) : `?botUsername=${encodeURIComponent(botUsername)}`;
+    const url = `${channelRoute(channelID)}/interval${agentQuery}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({
@@ -936,7 +1111,7 @@ export async function getChannelInterval(
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -953,13 +1128,16 @@ export async function getPluginConfig(): Promise<PluginConfig> {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
 }
 
-export async function savePluginConfig(config: PluginConfig): Promise<void> {
+// savePluginConfig persists the config and returns the normalized config the
+// server saved, including server-minted service/MCP server IDs the payload
+// did not have yet.
+export async function savePluginConfig(config: PluginConfig): Promise<PluginConfig> {
     const url = `${baseRoute()}/admin/config`;
     const response = await fetch(url, Client4.getOptions({
         method: 'PUT',
@@ -968,11 +1146,11 @@ export async function savePluginConfig(config: PluginConfig): Promise<void> {
     }));
 
     if (response.ok) {
-        return;
+        return response.json();
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        ...(await readAgentError(response)),
         status_code: response.status,
         url,
     });
@@ -1004,7 +1182,7 @@ export async function getAgents(): Promise<AgentsListResult> {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -1022,7 +1200,7 @@ export async function createAgent(agent: CreateAgentRequest): Promise<UserAgent>
     }
 
     throw new ClientError(Client4.url, {
-        message: await readAgentErrorMessage(response),
+        ...(await readAgentError(response)),
         status_code: response.status,
         url,
     });
@@ -1063,6 +1241,50 @@ export async function deleteAgent(id: string): Promise<void> {
     });
 }
 
+// fetchAgentJSON sends an authenticated request to an agent route and throws
+// a ClientError carrying the server's message for any non-2xx response.
+async function fetchAgentJSON<T>(url: string, init: {method: string; body?: string}): Promise<T> {
+    const response = await fetch(url, Client4.getOptions(init));
+    if (!response.ok) {
+        throw new ClientError(Client4.url, {
+            message: await readAgentErrorMessage(response),
+            status_code: response.status,
+            url,
+        });
+    }
+    return response.json();
+}
+
+// getAgentVersions fetches one page of versions, newest first: those older
+// than `before` (from the newest when omitted), at most `limit` long.
+export function getAgentVersions(agentId: string, page: {before?: number; limit?: number} = {}): Promise<AgentVersionList> {
+    const params = new URLSearchParams();
+    if (typeof page.before === 'number') {
+        params.set('before', String(page.before));
+    }
+    if (typeof page.limit === 'number') {
+        params.set('limit', String(page.limit));
+    }
+    const query = params.toString();
+    return fetchAgentJSON(`${agentRoute(agentId)}/versions${query ? `?${query}` : ''}`, {method: 'GET'});
+}
+
+export function getAgentVersion(agentId: string, version: number): Promise<AgentVersionDetail> {
+    return fetchAgentJSON(`${agentRoute(agentId)}/versions/${version}`, {method: 'GET'});
+}
+
+export function restoreAgentVersion(agentId: string, version: number): Promise<UserAgent> {
+    return fetchAgentJSON(`${agentRoute(agentId)}/versions/${version}/restore`, {method: 'POST'});
+}
+
+// deleteAgentVersions permanently deletes the given versions, or with 'all'
+// every version except the current one, and resolves to how many were deleted.
+export async function deleteAgentVersions(agentId: string, versions: number[] | 'all'): Promise<number> {
+    const body = versions === 'all' ? {all: true} : {versions};
+    const result: {deleted: number} = await fetchAgentJSON(`${agentRoute(agentId)}/versions`, {method: 'DELETE', body: JSON.stringify(body)});
+    return result.deleted;
+}
+
 export async function uploadAgentAvatar(agentId: string, file: File): Promise<void> {
     const url = `${agentRoute(agentId)}/avatar`;
     const formData = new FormData();
@@ -1099,7 +1321,7 @@ export async function getServices(): Promise<ServiceInfo[]> {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -1126,7 +1348,7 @@ export async function fetchModelsForAgentService(serviceId: string, signal?: Abo
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -1143,7 +1365,7 @@ export async function getCustomPrompts(): Promise<CustomPrompt[]> {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -1161,13 +1383,14 @@ export async function createCustomPrompt(prompt: {name: string; description: str
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
 }
 
-export async function updateCustomPrompt(id: string, prompt: {name: string; description: string; template: string; is_shared: boolean}): Promise<void> {
+// updated_at, when set, makes the update fail with 409 if the prompt changed since it was read.
+export async function updateCustomPrompt(id: string, prompt: {name: string; description: string; template: string; is_shared: boolean; updated_at?: number}): Promise<void> {
     const url = `${baseRoute()}/custom-prompts/${id}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'PUT',
@@ -1176,7 +1399,7 @@ export async function updateCustomPrompt(id: string, prompt: {name: string; desc
 
     if (!response.ok) {
         throw new ClientError(Client4.url, {
-            message: '',
+            message: await readClientErrorMessage(response),
             status_code: response.status,
             url,
         });
@@ -1191,7 +1414,7 @@ export async function deleteCustomPrompt(id: string): Promise<void> {
 
     if (!response.ok) {
         throw new ClientError(Client4.url, {
-            message: '',
+            message: await readClientErrorMessage(response),
             status_code: response.status,
             url,
         });
@@ -1209,7 +1432,7 @@ export async function getCustomPromptPins(): Promise<string[]> {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -1224,18 +1447,18 @@ export async function setCustomPromptPin(promptId: string, pinned: boolean): Pro
 
     if (!response.ok) {
         throw new ClientError(Client4.url, {
-            message: '',
+            message: await readClientErrorMessage(response),
             status_code: response.status,
             url,
         });
     }
 }
 
-export async function renderCustomPrompt(id: string, channelId?: string, botUsername?: string): Promise<{rendered: string}> {
+export async function renderCustomPrompt(id: string, channelId?: string, botId?: string): Promise<{rendered: string}> {
     const url = `${baseRoute()}/custom-prompts/${id}/render`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
-        body: JSON.stringify({channel_id: channelId, bot_username: botUsername}),
+        body: JSON.stringify({channel_id: channelId, bot_id: botId}),
     }));
 
     if (response.ok) {
@@ -1243,7 +1466,7 @@ export async function renderCustomPrompt(id: string, channelId?: string, botUser
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });

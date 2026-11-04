@@ -1,7 +1,8 @@
 // spec: MM-67969 - system messages with @agent mentions must not trigger replies.
 // seed: tests/seed.spec.ts
 
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -11,21 +12,21 @@ import { OpenAIMockContainer, RunOpenAIMocks, responseTest } from 'helpers/opena
 const username = 'regularuser';
 const password = 'regularuser';
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
-test.beforeAll(async () => {
-    mattermost = await RunContainer();
-    openAIMock = await RunOpenAIMocks(mattermost.network);
+test.beforeAll(async ({ containers }) => {
+    ({ mattermost, openAIMock } = containers);
 });
 
 test.beforeEach(async () => {
     await openAIMock.resetMocks();
-});
-
-test.afterAll(async () => {
-    await openAIMock?.stop();
-    await mattermost?.stop();
 });
 
 test.describe('System messages do not trigger agent', () => {
@@ -58,15 +59,16 @@ test.describe('System messages do not trigger agent', () => {
             .first();
         await expect(systemMessage).toBeVisible({ timeout: 15000 });
 
-        // Give the plugin a window to (incorrectly) generate and stream a reply.
-        await page.waitForTimeout(5000);
+        // A real mention posted after the system message acts as a barrier: once its
+        // reply exists, the plugin has had the chance to handle the earlier system post.
+        const controlPost = await client.createPost({ channel_id: townSquare.id, message: '@mock barrier mention' });
+        const fetchBotPosts = async () => {
+            const posts = await client.getPosts(townSquare.id, 0, 200);
+            return Object.values(posts.posts || {}).filter((p) => p.type === 'custom_llmbot' && !beforeIds.has(p.id));
+        };
+        await expect.poll(async () => (await fetchBotPosts()).some((p) => p.root_id === controlPost.id), { timeout: 60000 }).toBe(true);
 
-        const afterPosts = await client.getPosts(townSquare.id, 0, 200);
-        const newPosts = Object.values(afterPosts.posts || {})
-            .filter((p) => !beforeIds.has(p.id));
-
-        // Scope to bot post type to avoid false positives from unrelated posts.
-        const botResponses = newPosts.filter((p) => p.type === 'custom_llmbot');
+        const botResponses = (await fetchBotPosts()).filter((p) => p.root_id !== controlPost.id);
         expect(
             botResponses,
             `Expected no bot response to the header change system message. Got: ${JSON.stringify(botResponses, null, 2)}`,

@@ -13,7 +13,6 @@ import (
 	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
 )
 
@@ -36,11 +35,9 @@ type TranscriptionConfig struct {
 // NewTranscriber creates a new Transcriber.
 func NewTranscriber(cfg TranscriptionConfig) (*Transcriber, error) {
 	account := &providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: cfg.Provider,
-			APIKey:   cfg.APIKey,
-			APIURL:   cfg.APIURL,
-		},
+		Provider: cfg.Provider,
+		APIKey:   cfg.APIKey,
+		APIURL:   cfg.APIURL,
 	}
 
 	client, err := newBifrostClient(account, cfg.APIKey)
@@ -79,13 +76,13 @@ func (t *Transcriber) Transcribe(file io.Reader) (*subtitles.Subtitles, error) {
 			File: data,
 		},
 		Params: &schemas.TranscriptionParameters{
-			ResponseFormat: Ptr("vtt"), // Use VTT format for timed transcription
+			ResponseFormat: new("vtt"), // Use VTT format for timed transcription
 		},
 	}
 
 	resp, bifrostErr := t.client.TranscriptionRequest(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost transcription error: %s", bifrostErrorString(bifrostErr)), t.apiKey)
+		return nil, providerError(nil, "bifrost transcription error", bifrostErr, t.apiKey)
 	}
 
 	if resp == nil || resp.Text == "" {

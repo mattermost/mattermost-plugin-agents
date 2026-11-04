@@ -13,7 +13,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,6 +28,10 @@ type testConfigStore struct {
 	cfg     *config.Config
 	getErr  error
 	saveErr error
+
+	// serviceIDMigrationDone mirrors the store's migration marker driving the
+	// post-migration UUID format rejection in UpdateConfig.
+	serviceIDMigrationDone bool
 }
 
 func (s *testConfigStore) GetConfig() (*config.Config, error) {
@@ -39,6 +48,27 @@ func (s *testConfigStore) SaveConfig(cfg config.Config) error {
 	clone := cfg
 	s.cfg = &clone
 	return nil
+}
+
+func (s *testConfigStore) UpdateConfig(transform func(prev *config.Config) (config.Config, error)) (config.Config, error) {
+	if s.getErr != nil {
+		return config.Config{}, s.getErr
+	}
+	next, err := transform(s.cfg)
+	if err != nil {
+		return config.Config{}, err
+	}
+	if s.serviceIDMigrationDone {
+		for i := range next.Services {
+			if len(next.Services[i].ID) == 36 {
+				return next, store.ErrLegacyUUIDServiceID
+			}
+		}
+	}
+	if err := s.SaveConfig(next); err != nil {
+		return next, err
+	}
+	return next, nil
 }
 
 // testConfigUpdater tracks whether Update was called and with what config.
@@ -64,14 +94,17 @@ func (n *testClusterNotifier) PublishConfigUpdate() error {
 }
 
 func setupTestRouter(store ConfigStore, updater ConfigUpdater, notifier ClusterNotifier) *gin.Engine {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-
-	a := &API{
+	return setupConfigTestRouter(&API{
 		configStore:     store,
 		configUpdater:   updater,
 		clusterNotifier: notifier,
-	}
+		licenseChecker:  enterprisetest.CheckerAt(enterprise.LevelEnterpriseAdvanced),
+	})
+}
+
+func setupConfigTestRouter(a *API) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
 
 	adminRouter := router.Group("/admin")
 	adminRouter.GET("/config", a.handleGetConfig)
@@ -128,6 +161,31 @@ func TestHandleGetConfig(t *testing.T) {
 				assert.Empty(t, cfg.DefaultBotName)
 				assert.True(t, cfg.MCP.Enabled)
 				assert.True(t, cfg.MCP.EmbeddedServer.Enabled)
+				assert.Empty(t, cfg.MCP.EmbeddedServer.ID, "GET must not mint unpersisted IDs")
+			},
+		},
+		{
+			name: "does not mint IDs for ID-less stored rows",
+			storedConfig: &config.Config{
+				Services: []llm.ServiceConfig{
+					{Name: "OpenAI", Type: "openai"},
+				},
+				MCP: config.MCPConfig{
+					Servers: []config.MCPServerConfig{
+						{Name: "Jira", BaseURL: "https://jira.example.com"},
+					},
+				},
+			},
+			expectedStatus: http.StatusOK,
+			validateBody: func(t *testing.T, body []byte) {
+				var cfg config.Config
+				err := json.Unmarshal(body, &cfg)
+				require.NoError(t, err)
+				require.Len(t, cfg.Services, 1)
+				assert.Empty(t, cfg.Services[0].ID)
+				require.Len(t, cfg.MCP.Servers, 1)
+				assert.Empty(t, cfg.MCP.Servers[0].ID)
+				assert.Empty(t, cfg.MCP.EmbeddedServer.ID)
 			},
 		},
 		{
@@ -212,15 +270,22 @@ func TestHandleGetConfigDoesNotMutateStoredServices(t *testing.T) {
 func TestHandleSaveConfig(t *testing.T) {
 	tests := []struct {
 		name                  string
+		storedCfg             *config.Config
 		requestBody           any
 		clusterErr            error
 		expectedStatus        int
+		expectedErrorCode     agentErrorCode
 		validateStore         func(t *testing.T, store *testConfigStore)
 		validateUpdater       func(t *testing.T, updater *testConfigUpdater)
 		validateClusterNotify func(t *testing.T, notifier *testClusterNotifier)
 	}{
 		{
 			name: "returns error when cluster notify fails after successful save",
+			storedCfg: &config.Config{
+				Services: []llm.ServiceConfig{
+					{ID: "svc-1", Name: "OpenAI", Type: "openai"},
+				},
+			},
 			requestBody: config.Config{
 				DefaultBotName: "ai",
 				Services: []llm.ServiceConfig{
@@ -247,6 +312,11 @@ func TestHandleSaveConfig(t *testing.T) {
 		},
 		{
 			name: "saves valid config",
+			storedCfg: &config.Config{
+				Services: []llm.ServiceConfig{
+					{ID: "svc-1", Name: "OpenAI", Type: "openai"},
+				},
+			},
 			requestBody: config.Config{
 				DefaultBotName: "ai",
 				Services: []llm.ServiceConfig{
@@ -287,6 +357,37 @@ func TestHandleSaveConfig(t *testing.T) {
 			},
 		},
 		{
+			name:           "saves the number of agent versions to keep",
+			requestBody:    config.Config{AgentVersionsToKeep: 25},
+			expectedStatus: http.StatusOK,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				require.NotNil(t, store.cfg)
+				assert.Equal(t, 25, store.cfg.AgentVersionsToKeep)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				require.NotNil(t, updater.lastUpdate)
+				assert.Equal(t, 25, updater.lastUpdate.AgentVersionsToKeep)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 1, notifier.callCount)
+			},
+		},
+		{
+			name:           "rejects a negative number of agent versions to keep",
+			storedCfg:      &config.Config{AgentVersionsToKeep: 10},
+			requestBody:    config.Config{AgentVersionsToKeep: -1},
+			expectedStatus: http.StatusBadRequest,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Equal(t, 10, store.cfg.AgentVersionsToKeep)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 0, updater.callCount)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 0, notifier.callCount)
+			},
+		},
+		{
 			name:           "saves empty config",
 			requestBody:    config.Config{},
 			expectedStatus: http.StatusOK,
@@ -306,6 +407,94 @@ func TestHandleSaveConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "saves an explicit structured output policy",
+			requestBody: config.Config{
+				Services: []llm.ServiceConfig{
+					{
+						ID:                     "svc-1",
+						Name:                   "OpenAI",
+						Type:                   "openai",
+						StructuredOutputPolicy: llm.StructuredOutputPolicyNative,
+					},
+				},
+			},
+			expectedStatus: http.StatusOK,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				require.NotNil(t, store.cfg)
+				require.Len(t, store.cfg.Services, 1)
+				assert.Equal(t, llm.StructuredOutputPolicyNative, store.cfg.Services[0].StructuredOutputPolicy)
+			},
+		},
+		{
+			name: "rejects an unrecognized structured output policy",
+			requestBody: config.Config{
+				Services: []llm.ServiceConfig{
+					{
+						ID:                     "svc-1",
+						Name:                   "OpenAI",
+						Type:                   "openai",
+						StructuredOutputPolicy: llm.StructuredOutputPolicy("sometimes"),
+					},
+				},
+			},
+			expectedStatus: http.StatusBadRequest,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg, "an unusable policy must not be persisted")
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 0, updater.callCount, "the in-memory config must not be updated")
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 0, notifier.callCount)
+			},
+		},
+		{
+			name: "saves a valid link domain allowlist as entered",
+			requestBody: config.Config{
+				AllowUnsafeLinks:   true,
+				AllowedLinkDomains: "Example.com, *.mattermost.com",
+			},
+			expectedStatus: http.StatusOK,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				require.NotNil(t, store.cfg)
+				assert.Equal(t, "Example.com, *.mattermost.com", store.cfg.AllowedLinkDomains)
+			},
+		},
+		{
+			// An invalid entry matches nothing, so persisting it would quietly
+			// block links the admin meant to allow.
+			name: "rejects a link domain allowlist with invalid entries",
+			requestBody: config.Config{
+				AllowUnsafeLinks:   true,
+				AllowedLinkDomains: "example.com, not a host",
+			},
+			expectedStatus:    http.StatusBadRequest,
+			expectedErrorCode: configErrorInvalidLinkDomains,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 0, updater.callCount)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 0, notifier.callCount)
+			},
+		},
+		{
+			// The System Console hides the field while links are disabled, so
+			// a stale invalid value there must not block saving the toggle off.
+			name: "saves with an invalid link domain allowlist while links are disabled",
+			requestBody: config.Config{
+				AllowUnsafeLinks:   false,
+				AllowedLinkDomains: "example.com, not a host",
+			},
+			expectedStatus: http.StatusOK,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				require.NotNil(t, store.cfg)
+				assert.False(t, store.cfg.AllowUnsafeLinks)
+			},
+		},
+		{
 			name:           "rejects invalid JSON",
 			requestBody:    "not-json",
 			expectedStatus: http.StatusBadRequest,
@@ -319,11 +508,77 @@ func TestHandleSaveConfig(t *testing.T) {
 				assert.Equal(t, 0, notifier.callCount, "cluster notify should not be called on bad request")
 			},
 		},
+		{
+			// Server names key the per-user client map, the shared tools cache,
+			// and stored OAuth grants, so a duplicate silently shadows a server.
+			name: "rejects duplicate MCP server names",
+			requestBody: config.Config{
+				MCP: mcp.Config{
+					Servers: []mcp.ServerConfig{
+						{Name: "Jira", BaseURL: "https://a.example.com/mcp", Enabled: true},
+						{Name: "Jira", BaseURL: "https://b.example.com/mcp", Enabled: true},
+					},
+				},
+			},
+			expectedStatus: http.StatusBadRequest,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg, "duplicate MCP servers must be rejected before persistence")
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 0, updater.callCount)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 0, notifier.callCount)
+			},
+		},
+		{
+			name: "rejects canonically equivalent MCP server URLs",
+			requestBody: config.Config{
+				MCP: mcp.Config{
+					Servers: []mcp.ServerConfig{
+						{Name: "Alpha", BaseURL: "https://MCP.Example.com:443/mcp/", Enabled: true},
+						{Name: "Beta", BaseURL: "https://mcp.example.com/mcp", Enabled: true},
+					},
+				},
+			},
+			expectedStatus: http.StatusBadRequest,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 0, updater.callCount)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 0, notifier.callCount)
+			},
+		},
+		{
+			name: "accepts distinct MCP servers on the same host",
+			requestBody: config.Config{
+				MCP: mcp.Config{
+					Servers: []mcp.ServerConfig{
+						{Name: "Alpha", BaseURL: "https://mcp.example.com/alpha", Enabled: true},
+						{Name: "Beta", BaseURL: "https://mcp.example.com/beta?tenant=b", Enabled: true},
+					},
+				},
+			},
+			expectedStatus: http.StatusOK,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				require.NotNil(t, store.cfg)
+				assert.Len(t, store.cfg.MCP.Servers, 2)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 1, updater.callCount)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 1, notifier.callCount)
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			store := &testConfigStore{}
+			store := &testConfigStore{cfg: tt.storedCfg}
 			updater := &testConfigUpdater{}
 			notifier := &testClusterNotifier{err: tt.clusterErr}
 
@@ -346,6 +601,11 @@ func TestHandleSaveConfig(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			assert.Equal(t, tt.expectedStatus, w.Code)
+			if tt.expectedErrorCode != "" {
+				var resp agentErrorResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.Equal(t, tt.expectedErrorCode, resp.Code)
+			}
 			if tt.validateStore != nil {
 				tt.validateStore(t, store)
 			}
@@ -357,6 +617,42 @@ func TestHandleSaveConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestHandleSaveConfigReturnsNormalizedConfig verifies the PUT response body
+// carries the normalized saved config, so the webapp can adopt server-minted
+// service and MCP server IDs immediately instead of waiting for a reload.
+func TestHandleSaveConfigReturnsNormalizedConfig(t *testing.T) {
+	store := &testConfigStore{}
+	router := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
+
+	payload := config.Config{
+		Services: []llm.ServiceConfig{{Name: "OpenAI", Type: "openai"}},
+		MCP: config.MCPConfig{
+			Servers: []config.MCPServerConfig{{Name: "Jira", BaseURL: "https://jira.example.com"}},
+		},
+	}
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp config.Config
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	require.Len(t, resp.Services, 1)
+	assert.True(t, model.IsValidId(resp.Services[0].ID), "response must carry the server-minted service ID")
+	assert.Equal(t, store.cfg.Services[0].ID, resp.Services[0].ID, "response ID must match the persisted one")
+
+	require.Len(t, resp.MCP.Servers, 1)
+	assert.True(t, model.IsValidId(resp.MCP.Servers[0].ID), "response must carry the server-minted MCP server ID")
+	assert.Equal(t, store.cfg.MCP.Servers[0].ID, resp.MCP.Servers[0].ID, "response ID must match the persisted one")
+
+	assert.True(t, resp.Services[0].UseResponsesAPI, "response must reflect normalization")
 }
 
 func TestSaveAndGetConfigRoundTrip(t *testing.T) {
@@ -376,11 +672,12 @@ func TestSaveAndGetConfigRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, emptyCfg.Services)
 
-	// Step 2: PUT a config
+	// Step 2: PUT a config. The new service arrives ID-less (the backend
+	// mints the stable ID).
 	saveCfg := config.Config{
 		DefaultBotName: "ai",
 		Services: []llm.ServiceConfig{
-			{ID: "svc-1", Name: "OpenAI", Type: "openai", APIKey: "sk-test"},
+			{Name: "OpenAI", Type: "openai", APIKey: "sk-test"},
 		},
 		Bots: []llm.BotConfig{
 			{ID: "bot-1", Name: "ai", ServiceID: "svc-1"},

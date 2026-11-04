@@ -5,6 +5,7 @@ package config
 
 import (
 	"encoding/json"
+	"maps"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -239,9 +240,7 @@ func restoreHeaderSecrets(incoming, stored map[string]string) map[string]string 
 	}
 
 	unclaimed := make(map[string]string, len(stored))
-	for key, value := range stored {
-		unclaimed[key] = value
-	}
+	maps.Copy(unclaimed, stored)
 
 	var unmatched []string
 	for key, value := range incoming {

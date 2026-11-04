@@ -86,7 +86,7 @@ func TestCreateTurn(t *testing.T) {
 			},
 			validate: func(t *testing.T, s *Store, convID string) {
 				turn := makeTurn(convID, 1, func(tu *Turn) {
-					tu.PostID = stringPtr("post123")
+					tu.PostID = new("post123")
 				})
 				err := s.CreateTurn(turn)
 				require.NoError(t, err)
@@ -244,6 +244,72 @@ func TestUpdateTurnContent(t *testing.T) {
 	}
 }
 
+func TestCompareAndSwapTurnContent(t *testing.T) {
+	const original = `[{"type":"tool_use","id":"t1","status":"pending"}]`
+	const claimed = `[{"type":"tool_use","id":"t1","status":"accepted"}]`
+
+	tests := []struct {
+		name        string
+		turnID      string
+		expected    string
+		wantSwapped bool
+		wantContent string
+	}{
+		{
+			name:        "swaps when content still matches",
+			expected:    original,
+			wantSwapped: true,
+			wantContent: claimed,
+		},
+		{
+			name:        "compares as JSON, not bytes",
+			expected:    `[ { "status": "pending", "id": "t1", "type": "tool_use" } ]`,
+			wantSwapped: true,
+			wantContent: claimed,
+		},
+		{
+			name:        "leaves content alone when another writer got there first",
+			expected:    `[{"type":"tool_use","id":"t1","status":"success"}]`,
+			wantSwapped: false,
+			wantContent: original,
+		},
+		{
+			name:        "reports no swap for a missing turn",
+			turnID:      "missing-turn-id",
+			expected:    original,
+			wantSwapped: false,
+			wantContent: original,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestStore(t)
+			require.NoError(t, s.RunMigrations())
+
+			conv := makeConversation()
+			require.NoError(t, s.CreateConversation(conv))
+			turn := makeTurn(conv.ID, 1, func(tu *Turn) {
+				tu.Content = json.RawMessage(original)
+			})
+			require.NoError(t, s.CreateTurn(turn))
+
+			turnID := turn.ID
+			if tt.turnID != "" {
+				turnID = tt.turnID
+			}
+			swapped, err := s.CompareAndSwapTurnContent(turnID, json.RawMessage(tt.expected), json.RawMessage(claimed))
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantSwapped, swapped)
+
+			turns, err := s.GetTurnsForConversation(conv.ID)
+			require.NoError(t, err)
+			require.Len(t, turns, 1)
+			assert.JSONEq(t, tt.wantContent, string(turns[0].Content))
+		})
+	}
+}
+
 func TestUpdateTurnTokens(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -389,7 +455,7 @@ func TestGetTurnByPostID(t *testing.T) {
 				require.NoError(t, err)
 
 				turn := makeTurn(conv.ID, 1, func(tu *Turn) {
-					tu.PostID = stringPtr("target-post-id")
+					tu.PostID = new("target-post-id")
 					tu.Content = json.RawMessage(`[{"type":"text","text":"found me"}]`)
 				})
 				err = s.CreateTurn(turn)
@@ -465,7 +531,7 @@ func TestUpdateTurnPostID(t *testing.T) {
 				require.NoError(t, err)
 
 				turn := makeTurn(conv.ID, 1, func(tu *Turn) {
-					tu.PostID = stringPtr("post-anchor")
+					tu.PostID = new("post-anchor")
 				})
 				err = s.CreateTurn(turn)
 				require.NoError(t, err)
@@ -488,7 +554,7 @@ func TestUpdateTurnPostID(t *testing.T) {
 				require.NoError(t, err)
 
 				turn := makeTurn(conv.ID, 1, func(tu *Turn) {
-					tu.PostID = stringPtr("old-post")
+					tu.PostID = new("old-post")
 				})
 				err = s.CreateTurn(turn)
 				require.NoError(t, err)
@@ -517,13 +583,13 @@ func TestUpdateTurnPostID(t *testing.T) {
 				require.NoError(t, err)
 
 				targetTurn := makeTurn(conv.ID, 1, func(tu *Turn) {
-					tu.PostID = stringPtr("target-post")
+					tu.PostID = new("target-post")
 				})
 				err = s.CreateTurn(targetTurn)
 				require.NoError(t, err)
 
 				sibling := makeTurn(conv.ID, 2, func(tu *Turn) {
-					tu.PostID = stringPtr("sibling-post")
+					tu.PostID = new("sibling-post")
 				})
 				err = s.CreateTurn(sibling)
 				require.NoError(t, err)
@@ -595,7 +661,7 @@ func TestDeleteResponseTurns(t *testing.T) {
 				require.NoError(t, err)
 				anchor := makeTurn(conv.ID, 4, func(tu *Turn) {
 					tu.Role = "assistant"
-					tu.PostID = stringPtr(postID)
+					tu.PostID = new(postID)
 				})
 				err = s.CreateTurn(anchor)
 				require.NoError(t, err)
@@ -628,7 +694,7 @@ func TestDeleteResponseTurns(t *testing.T) {
 				require.NoError(t, err)
 				err = s.CreateTurn(makeTurn(conv.ID, 2, func(tu *Turn) {
 					tu.Role = "assistant"
-					tu.PostID = stringPtr("first-post")
+					tu.PostID = new("first-post")
 				}))
 				require.NoError(t, err)
 				err = s.CreateTurn(makeTurn(conv.ID, 3, func(tu *Turn) { tu.Role = "user" }))
@@ -640,7 +706,7 @@ func TestDeleteResponseTurns(t *testing.T) {
 				require.NoError(t, err)
 				err = s.CreateTurn(makeTurn(conv.ID, 5, func(tu *Turn) {
 					tu.Role = "assistant"
-					tu.PostID = stringPtr(postID)
+					tu.PostID = new(postID)
 				}))
 				require.NoError(t, err)
 				return conv.ID, postID

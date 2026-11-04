@@ -25,6 +25,21 @@ type ConversationResponse struct {
 	Title      string         `json:"title"`
 	Operation  string         `json:"operation"`
 	Turns      []TurnResponse `json:"turns"`
+
+	// ActiveWait is set only while a wait_for_async_work pause is pending in
+	// this conversation's thread, so the webapp can render a live countdown.
+	ActiveWait *ActiveWaitResponse `json:"active_wait,omitempty"`
+}
+
+// ActiveWaitResponse describes a pending wait_for_async_work pause. Times are
+// unix millis. RequesterUserID is the only user allowed to check-now or cancel
+// the wait; the webapp also uses it to pick the owner vs onlooker rendering.
+type ActiveWaitResponse struct {
+	PostID          string `json:"post_id"`
+	RequesterUserID string `json:"requester_user_id"`
+	ScheduledAt     int64  `json:"scheduled_at"`
+	ResumeAt        int64  `json:"resume_at"`
+	DurationMinutes int    `json:"duration_minutes"`
 }
 
 // TurnResponse is the JSON shape for a single turn within a conversation response.
@@ -80,23 +95,14 @@ func (a *API) handleGetConversation(c *gin.Context) {
 	}
 
 	// 4. Privacy filtering and display sanitization
-	var turnResponses []TurnResponse
-	if userID != conv.UserID {
-		turnResponses, err = filterTurnsForNonRequester(turns)
-		if err != nil {
-			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to filter turns: %w", err))
-			return
-		}
-	} else {
-		turnResponses, err = turnsToResponse(turns)
-		if err != nil {
-			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to sanitize turns: %w", err))
-			return
-		}
+	turnResponses, err := turnsToResponse(turns, userID != conv.UserID)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to sanitize turns: %w", err))
+		return
 	}
 
 	// 5. Build response
-	c.JSON(http.StatusOK, ConversationResponse{
+	resp := ConversationResponse{
 		ID:         conv.ID,
 		UserID:     conv.UserID,
 		BotID:      conv.BotID,
@@ -105,7 +111,27 @@ func (a *API) handleGetConversation(c *gin.Context) {
 		Title:      conv.Title,
 		Operation:  conv.Operation,
 		Turns:      turnResponses,
-	})
+	}
+
+	// A pending wait_for_async_work pause is surfaced so the webapp can show a
+	// live countdown. It is best-effort: the conversation still renders if the
+	// lookup fails.
+	if a.conversationsService != nil && conv.RootPostID != nil {
+		wait, waitErr := a.conversationsService.ActiveWaitForConversation(conv.ID, *conv.RootPostID, conv.BotID)
+		if waitErr != nil {
+			a.pluginAPI.Log.Warn("failed to load active wait for conversation", "error", waitErr.Error())
+		} else if wait != nil {
+			resp.ActiveWait = &ActiveWaitResponse{
+				PostID:          wait.ResponsePostID,
+				RequesterUserID: wait.RequesterUserID,
+				ScheduledAt:     wait.ScheduledAt,
+				ResumeAt:        wait.ResumeAt,
+				DurationMinutes: wait.DurationMinutes,
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 // approvalStateForTurn computes the approval-stage string for a post-anchor
@@ -117,42 +143,18 @@ func approvalStateForTurn(turn store.Turn, allTurns []store.Turn) string {
 	return conversation.ComputePostApprovalState(allTurns, *turn.PostID)
 }
 
-// filterTurnsForNonRequester applies privacy filtering and display sanitization
-// to turn content for a user who is not the conversation owner.
-func filterTurnsForNonRequester(turns []store.Turn) ([]TurnResponse, error) {
+// turnsToResponse converts store turns to response objects with display
+// sanitization, first applying privacy filtering when the requesting user is
+// not the conversation owner.
+func turnsToResponse(turns []store.Turn, filterForNonRequester bool) ([]TurnResponse, error) {
 	result := make([]TurnResponse, len(turns))
 	for i, turn := range turns {
 		var blocks []conversation.ContentBlock
 		if err := json.Unmarshal(turn.Content, &blocks); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal turn content: %w", err)
 		}
-		filtered := conversation.FilterForNonRequester(blocks)
-		sanitized := conversation.SanitizeForDisplay(filtered)
-		sanitizedJSON, err := json.Marshal(sanitized)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal filtered content: %w", err)
-		}
-		result[i] = TurnResponse{
-			ID:            turn.ID,
-			PostID:        turn.PostID,
-			Role:          turn.Role,
-			Content:       sanitizedJSON,
-			TokensIn:      turn.TokensIn,
-			TokensOut:     turn.TokensOut,
-			Sequence:      turn.Sequence,
-			ApprovalState: approvalStateForTurn(turn, turns),
-		}
-	}
-	return result, nil
-}
-
-// turnsToResponse converts store turns to response objects with display sanitization.
-func turnsToResponse(turns []store.Turn) ([]TurnResponse, error) {
-	result := make([]TurnResponse, len(turns))
-	for i, turn := range turns {
-		var blocks []conversation.ContentBlock
-		if err := json.Unmarshal(turn.Content, &blocks); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal turn content: %w", err)
+		if filterForNonRequester {
+			blocks = conversation.FilterForNonRequester(blocks)
 		}
 		sanitized := conversation.SanitizeForDisplay(blocks)
 		sanitizedJSON, err := json.Marshal(sanitized)

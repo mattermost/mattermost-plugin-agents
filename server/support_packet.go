@@ -4,10 +4,9 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
 
-	"github.com/hashicorp/go-multierror"
-	"github.com/pkg/errors"
 	"gopkg.in/yaml.v3"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
@@ -41,6 +40,7 @@ type SupportPacket struct {
 	EnableCallSummary               bool `yaml:"enable_call_summary"`
 	EnableTokenUsageLogging         bool `yaml:"enable_token_usage_logging"`
 	EnableChannelMentionToolCalling bool `yaml:"enable_channel_mention_tool_calling"`
+	EnableAmbientAutoReply          bool `yaml:"enable_ambient_auto_reply"`
 	AllowNativeWebSearchInChannels  bool `yaml:"allow_native_web_search_in_channels"`
 	WebSearchEnabled                bool `yaml:"web_search_enabled"`
 	EmbeddingSearchEnabled          bool `yaml:"embedding_search_enabled"`
@@ -56,7 +56,7 @@ func (p *Plugin) GenerateSupportData(_ *plugin.Context) ([]*model.FileData, erro
 
 	body, marshalErr := yaml.Marshal(packet)
 	if marshalErr != nil {
-		return nil, errors.Wrap(marshalErr, "failed to marshal diagnostics")
+		return nil, fmt.Errorf("failed to marshal diagnostics: %w", marshalErr)
 	}
 
 	return []*model.FileData{{
@@ -68,12 +68,10 @@ func (p *Plugin) GenerateSupportData(_ *plugin.Context) ([]*model.FileData, erro
 // buildSupportPacket assembles the diagnostics struct from config and the store.
 // It returns a partially-populated packet alongside any non-fatal errors.
 func buildSupportPacket(store agentCounter, cfg *config.Config, version string) (*SupportPacket, error) {
-	var result *multierror.Error
-
 	var totalAgents *int
 	agentCount, err := store.CountActiveAgents()
 	if err != nil {
-		result = multierror.Append(result, errors.Wrap(err, "failed to get agent count for Support Packet"))
+		err = fmt.Errorf("failed to get agent count for Support Packet: %w", err)
 	} else {
 		totalAgents = &agentCount
 	}
@@ -107,9 +105,10 @@ func buildSupportPacket(store agentCounter, cfg *config.Config, version string) 
 		EnableCallSummary:               cfg.EnableCallSummary,
 		EnableTokenUsageLogging:         cfg.EnableTokenUsageLogging,
 		EnableChannelMentionToolCalling: cfg.EnableChannelMentionToolCalling,
+		EnableAmbientAutoReply:          cfg.EnableAmbientAutoReply,
 		AllowNativeWebSearchInChannels:  cfg.AllowNativeWebSearchInChannels,
 		WebSearchEnabled:                cfg.WebSearch.Enabled,
 		EmbeddingSearchEnabled:          cfg.EmbeddingSearchConfig.Type != "",
 		TelemetryEnabled:                telemetryMode != "" && telemetryMode != telemetry.OutputModeOff,
-	}, result.ErrorOrNil()
+	}, err
 }

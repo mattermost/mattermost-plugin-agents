@@ -5,6 +5,7 @@ import {
     describeAIMockCitationCase,
     sendMessageWithWebSearchApproval,
 } from 'helpers/aimock-citation-harness';
+import {expandToolActivity} from 'helpers/llmbot-post';
 import {
     buildLLMBotCombinedFeaturesFixtures,
     COMBINED_REASONING_TEXT,
@@ -14,6 +15,9 @@ import {
 
 /**
  * Test Suite: Combined Features (deterministic aimock + WebSearch tool fallback)
+ *
+ * The reasoning follows the WebSearch call, so it lives in the post's activity
+ * area and is only reachable once that area is expanded.
  */
 
 const EXPECTED_CITATION_COUNT = 1;
@@ -26,9 +30,10 @@ describeAIMockCitationCase({
     timeoutMs: 180000,
     run: async ({ page, aiPlugin, llmBotHelper }) => {
         await sendMessageWithWebSearchApproval(page, aiPlugin, REASONING_CITATIONS_PROMPT);
-        await llmBotHelper.waitForReasoning(undefined, 35000);
         await llmBotHelper.waitForStreamingComplete();
 
+        await llmBotHelper.expectReasoningVisible(false);
+        await expandToolActivity(llmBotHelper.getLLMBotPost());
         await llmBotHelper.expectReasoningVisible(true);
         await expect(llmBotHelper.getReasoningLabel()).toBeVisible();
         await llmBotHelper.expectCitationCount(EXPECTED_CITATION_COUNT);
@@ -37,7 +42,6 @@ describeAIMockCitationCase({
         await llmBotHelper.expectReasoningExpanded(true);
         await expect(llmBotHelper.getReasoningContent()).toContainText(COMBINED_REASONING_TEXT);
 
-        await llmBotHelper.getCitationWrapper(1).scrollIntoViewIfNeeded();
         await llmBotHelper.hoverCitation(1);
         await expect(llmBotHelper.getCitationTooltip()).toBeVisible({ timeout: 5000 });
         await expect(llmBotHelper.getCitationTooltip()).toContainText('typescriptlang.org');
@@ -51,9 +55,9 @@ describeAIMockCitationCase({
     timeoutMs: 240000,
     run: async ({ page, aiPlugin, llmBotHelper }) => {
         await sendMessageWithWebSearchApproval(page, aiPlugin, REGENERATE_CITATIONS_PROMPT);
-        await llmBotHelper.waitForReasoning();
         await llmBotHelper.waitForStreamingComplete();
 
+        await expandToolActivity(llmBotHelper.getLLMBotPost());
         await llmBotHelper.expectReasoningVisible(true);
         await expect(llmBotHelper.getReasoningLabel()).toBeVisible();
         await expect(llmBotHelper.getPostText()).toBeVisible();
@@ -64,9 +68,9 @@ describeAIMockCitationCase({
         await llmBotHelper.regenerateResponse();
         await approvePendingWebSearchTool(page);
 
-        await llmBotHelper.waitForReasoning();
         await llmBotHelper.waitForStreamingComplete();
 
+        await expandToolActivity(llmBotHelper.getLLMBotPost());
         await llmBotHelper.expectReasoningVisible(true);
         await expect(llmBotHelper.getReasoningLabel()).toBeVisible();
         await expect(llmBotHelper.getPostText()).toBeVisible();

@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -14,6 +15,8 @@ import (
 const (
 	cacheKeyPrefix = "mcp_tools_cache_v1_"
 	cacheTTL       = 8 * 24 * time.Hour // 8 days
+
+	listKeysPageSize = 1000
 )
 
 // CachedTools represents a cached set of tools for a specific MCP server
@@ -34,10 +37,10 @@ type KVStore interface {
 
 // Logger interface for logging operations
 type Logger interface {
-	Debug(msg string, keyValuePairs ...interface{})
-	Info(msg string, keyValuePairs ...interface{})
-	Warn(msg string, keyValuePairs ...interface{})
-	Error(msg string, keyValuePairs ...interface{})
+	Debug(msg string, keyValuePairs ...any)
+	Info(msg string, keyValuePairs ...any)
+	Warn(msg string, keyValuePairs ...any)
+	Error(msg string, keyValuePairs ...any)
 }
 
 // ToolsCache manages the global cache of MCP tools across all users
@@ -119,23 +122,29 @@ func (tc *ToolsCache) InvalidateServer(serverID string) error {
 	return nil
 }
 
-// ClearAll removes all cached tools from KV store
+// ClearAll removes all cached tools from KV store.
 func (tc *ToolsCache) ClearAll() (int, error) {
 	tc.log.Info("Clearing all MCP tools cache entries")
 
-	// List all keys with the cache prefix
-	keys, err := tc.kvAPI.ListKeys(0, 1000, pluginapi.WithPrefix(cacheKeyPrefix))
-	if err != nil {
-		tc.log.Error("Failed to list cache keys from KV store", "error", err)
-		return 0, fmt.Errorf("failed to list cache keys: %w", err)
+	// The KV store has no server-side prefix filter, so every page is listed.
+	// Keys are collected before deleting so deletions do not shift later pages.
+	var keys []string
+	for page := 0; ; page++ {
+		pageKeys, err := tc.kvAPI.ListKeys(page, listKeysPageSize)
+		if err != nil {
+			tc.log.Error("Failed to list cache keys from KV store", "error", err)
+			return 0, fmt.Errorf("failed to list cache keys: %w", err)
+		}
+		for _, key := range pageKeys {
+			if strings.HasPrefix(key, cacheKeyPrefix) {
+				keys = append(keys, key)
+			}
+		}
+		if len(pageKeys) < listKeysPageSize {
+			break
+		}
 	}
 
-	if len(keys) == 0 {
-		tc.log.Debug("No cache entries found to clear")
-		return 0, nil
-	}
-
-	// Delete each key
 	clearedCount := 0
 	for _, key := range keys {
 		if err := tc.kvAPI.Delete(key); err != nil {
@@ -145,7 +154,7 @@ func (tc *ToolsCache) ClearAll() (int, error) {
 		clearedCount++
 	}
 
-	tc.log.Info("Cleared MCP tools cache", "clearedCount", clearedCount, "totalKeys", len(keys))
+	tc.log.Info("Cleared MCP tools cache", "clearedCount", clearedCount)
 	return clearedCount, nil
 }
 

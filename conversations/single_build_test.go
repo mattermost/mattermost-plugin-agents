@@ -5,6 +5,7 @@ package conversations
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -25,7 +26,7 @@ import (
 // so single-build refactors can assert there is no second pipeline pass per
 // message.
 type countingMCPToolProvider struct {
-	calls   int32
+	calls   atomic.Int32
 	tools   []llm.Tool
 	saTools []llm.Tool
 
@@ -34,20 +35,24 @@ type countingMCPToolProvider struct {
 	saInvokers   []string
 }
 
-func (p *countingMCPToolProvider) GetTools(_ context.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+func (p *countingMCPToolProvider) GetToolsWithSelection(_ context.Context, req mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	if req.ServiceAccount {
 		p.mu.Lock()
 		p.saIdentities = append(p.saIdentities, req.RemoteOwnerID)
 		p.saInvokers = append(p.saInvokers, req.InvokingUserID)
 		p.mu.Unlock()
-		return append([]llm.Tool(nil), p.saTools...), nil
+		return slices.DeleteFunc(slices.Clone(p.saTools), func(tool llm.Tool) bool {
+			return !selection.Allows(tool.ServerOrigin)
+		}), nil
 	}
-	atomic.AddInt32(&p.calls, 1)
-	return append([]llm.Tool(nil), p.tools...), nil
+	p.calls.Add(1)
+	return slices.DeleteFunc(slices.Clone(p.tools), func(tool llm.Tool) bool {
+		return !selection.Allows(tool.ServerOrigin)
+	}), nil
 }
 
 func (p *countingMCPToolProvider) Calls() int {
-	return int(atomic.LoadInt32(&p.calls))
+	return int(p.calls.Load())
 }
 
 func (p *countingMCPToolProvider) SAIdentities() []string {
@@ -98,7 +103,7 @@ func TestBuildConversationContextWithTools_MentionShapeBuildsOnce(t *testing.T) 
 
 	c := &Conversations{contextBuilder: builder}
 	bot := loadedStateBot(nil)
-	user := &model.User{Id: "user-id", Username: "user"}
+	user := &model.User{Id: testRequesterID, Username: "user"}
 	channel := &model.Channel{Id: "channel-id", Type: model.ChannelTypeOpen}
 
 	llmCtx := c.buildConversationContextWithTools(context.Background(), bot, user, channel, "")
@@ -142,7 +147,7 @@ func TestBuildConversationContextWithTools_DMShapeBuildsOnce(t *testing.T) {
 			// A missing expectation fails the test if the preferences are read anyway.
 			mmClient := mocks.NewMockClient(t)
 			if tc.wantPrefsLoaded {
-				mmClient.On("KVGet", "user_tool_providers_user-id", mock.AnythingOfType("*mcp.UserToolProviderPreferences")).
+				mmClient.On("KVGet", "user_tool_providers_"+testRequesterID, mock.AnythingOfType("*mcp.UserToolProviderPreferences")).
 					Run(func(args mock.Arguments) {
 						prefs := args.Get(1).(*mcp.UserToolProviderPreferences)
 						prefs.DisabledServers = []string{disabledOrigin}
@@ -155,8 +160,8 @@ func TestBuildConversationContextWithTools_DMShapeBuildsOnce(t *testing.T) {
 				mmClient:       mmClient,
 				contextBuilder: newSingleBuildLLMContextBuilder(t, provider),
 			}
-			user := &model.User{Id: "user-id", Username: "user"}
-			channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
+			user := &model.User{Id: testRequesterID, Username: "user"}
+			channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__" + testRequesterID}
 
 			llmCtx := c.buildConversationContextWithTools(context.Background(), tc.bot, user, channel, "Failed to load user tool preferences")
 			require.NotNil(t, llmCtx)
@@ -187,8 +192,8 @@ func TestBuildConversationContextWithTools_DoesNotMaterializeDynamicMCPTools(t *
 
 	c := &Conversations{contextBuilder: builder}
 	bot := loadedStateBot(nil)
-	user := &model.User{Id: "user-id", Username: "user"}
-	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
+	user := &model.User{Id: testRequesterID, Username: "user"}
+	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__" + testRequesterID}
 
 	llmCtx := c.buildConversationContextWithTools(context.Background(), bot, user, channel, "Failed to load user tool preferences")
 	require.NotNil(t, llmCtx)
@@ -221,8 +226,8 @@ func TestBuildConversationContextWithTools_DropsPreFilteredMCPServers(t *testing
 
 	c := &Conversations{contextBuilder: builder}
 	bot := loadedStateBot(nil)
-	user := &model.User{Id: "user-id", Username: "user"}
-	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
+	user := &model.User{Id: testRequesterID, Username: "user"}
+	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__" + testRequesterID}
 
 	llmCtx := c.buildConversationContextWithTools(
 		context.Background(),

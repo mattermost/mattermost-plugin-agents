@@ -7,18 +7,21 @@ import {FormattedMessage, useIntl} from 'react-intl';
 
 import {TrashCanOutlineIcon, ChevronDownIcon, AlertOutlineIcon, ChevronUpIcon} from '@mattermost/compass-icons/components';
 
-import IconAI from '../assets/icon_ai';
-import {DangerPill} from '../pill';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {Tag} from '@mattermost/compass-ui/components/tag';
 
-import {ButtonIcon} from '../assets/buttons';
+import IconAI from '../assets/icon_ai';
 
 import {fetchModels} from '../../client';
+import {useIsLicensedFor} from '@/license';
 
-import {BooleanItem, FormRow, FieldControlRow, InlineCheckbox, ItemList, SelectionItem, SelectionItemOption, TextItem, ItemLabel, HelpText, ComboboxItem} from './item';
+import {BooleanItem, FormRow, CompactFieldControlRow, CompactItemLabel, InlineCheckbox, ItemList, SelectionItem, TextItem, HelpText, ComboboxItem, TextFieldContainer} from './item';
 import AvatarItem from './avatar';
 import {ChannelAccessLevelItem, UserAccessLevelItem} from './llm_access';
 import {LLMService} from './service';
 import ReasoningConfigItem from './reasoning_config';
+import {LicenseChip} from './enterprise_chip';
 
 export enum ChannelAccessLevel {
     All = 0,
@@ -32,6 +35,10 @@ export enum UserAccessLevel {
     Allow,
     Block,
     None,
+
+    // AttributeBased makes the ABAC resource policy the sole user-access
+    // gate; user/team lists are ignored in this mode. Wire value 4.
+    AttributeBased,
 }
 
 export type LLMBotConfig = {
@@ -54,7 +61,6 @@ export type LLMBotConfig = {
     reasoningEnabled?: boolean
     reasoningEffort?: string
     thinkingBudget?: number
-    structuredOutputEnabled?: boolean
 }
 
 // Component for configuring native tools (OpenAI / Anthropic / Google).
@@ -141,6 +147,7 @@ const nativeToolOptions = (provider: 'openai' | 'anthropic' | 'google', intl: Re
 export const NativeToolsItem = (props: NativeToolsItemProps) => {
     const intl = useIntl();
     const provider = props.provider || 'openai';
+    const webSearchLicensed = useIsLicensedFor('provider_web_search');
 
     const availableNativeTools = nativeToolOptions(provider, intl);
 
@@ -159,24 +166,29 @@ export const NativeToolsItem = (props: NativeToolsItemProps) => {
 
     return (
         <FormRow>
-            <ItemLabel>
+            <CompactItemLabel>
                 {titleMessage}
-            </ItemLabel>
+            </CompactItemLabel>
             <NativeToolsColumn>
-                {availableNativeTools.map((tool) => (
-                    <NativeToolField key={tool.id}>
-                        <FieldControlRow>
-                            <InlineCheckbox
-                                testId={`native-tool-${tool.id}`}
-                                label={tool.label}
-                                checked={(props.enabledTools || []).includes(tool.id)}
-                                disabled={props.disabled}
-                                onChange={(checked) => setToolEnabled(tool.id, checked)}
-                            />
-                        </FieldControlRow>
-                        <NativeToolHelpText>{tool.helpText}</NativeToolHelpText>
-                    </NativeToolField>
-                ))}
+                {availableNativeTools.map((tool) => {
+                    const checked = (props.enabledTools || []).includes(tool.id);
+                    const webSearchGated = tool.id === 'web_search' && !webSearchLicensed;
+                    return (
+                        <TextFieldContainer key={tool.id}>
+                            <CompactFieldControlRow>
+                                <InlineCheckbox
+                                    testId={`native-tool-${tool.id}`}
+                                    label={tool.label}
+                                    checked={checked}
+                                    disabled={props.disabled || (webSearchGated && !checked)}
+                                    onChange={(nextChecked) => setToolEnabled(tool.id, nextChecked)}
+                                />
+                                {webSearchGated && <LicenseChip capability='provider_web_search'/>}
+                            </CompactFieldControlRow>
+                            <HelpText>{tool.helpText}</HelpText>
+                        </TextFieldContainer>
+                    );
+                })}
             </NativeToolsColumn>
         </FormRow>
     );
@@ -214,7 +226,8 @@ const Bot = (props: Props) => {
          selectedService.type === 'azure' ||
          selectedService.type === 'openaicompatible' ||
          selectedService.type === 'gemini' ||
-         selectedService.type === 'vertex');
+         selectedService.type === 'vertex' ||
+         selectedService.type === 'north');
 
     // Fetch models when the service changes
     useEffect(() => {
@@ -226,12 +239,16 @@ const Bot = (props: Props) => {
 
         // Providers have different credential shapes for model listing:
         // - openaicompatible: API key OR API URL
+        // - north: API key AND API URL
         // - vertex: GCP project ID + region
         // - others: API key
         let hasRequiredCredentials: string | boolean = false;
         switch (selectedService.type) {
         case 'openaicompatible':
             hasRequiredCredentials = selectedService.apiKey || selectedService.apiURL;
+            break;
+        case 'north':
+            hasRequiredCredentials = Boolean(selectedService.apiKey && selectedService.apiURL);
             break;
         case 'vertex':
             hasRequiredCredentials = Boolean(selectedService.vertexProjectID && selectedService.region);
@@ -277,8 +294,9 @@ const Bot = (props: Props) => {
 
     return (
         <BotContainer>
+            {/* eslint-disable-next-line agents/click-events-have-key-events, agents/no-static-element-interactions -- mouse shortcut; the chevron IconButton is the keyboard toggle */}
             <HeaderContainer onClick={() => setOpen((o) => !o)}>
-                <IconAI/>
+                <HeaderIconAI/>
                 <Title>
                     <NameText>
                         {props.bot.displayName}
@@ -286,29 +304,48 @@ const Bot = (props: Props) => {
                 </Title>
                 <Spacer/>
                 {missingService && (
-                    <DangerPill>
-                        <AlertOutlineIcon/>
-                        <FormattedMessage defaultMessage='No Service Selected'/>
-                    </DangerPill>
+                    <Tag
+                        type='danger'
+                        leadingIcon={<Icon glyph={<AlertOutlineIcon/>}/>}
+                        label={<FormattedMessage defaultMessage='No Service Selected'/>}
+                    />
                 )}
                 {missingUsername && (
-                    <DangerPill>
-                        <AlertOutlineIcon/>
-                        <FormattedMessage defaultMessage='No Username'/>
-                    </DangerPill>
+                    <Tag
+                        type='danger'
+                        leadingIcon={<Icon glyph={<AlertOutlineIcon/>}/>}
+                        label={<FormattedMessage defaultMessage='No Username'/>}
+                    />
                 )}
                 {invalidUsername && (
-                    <DangerPill>
-                        <AlertOutlineIcon/>
-                        <FormattedMessage defaultMessage='Invalid Username'/>
-                    </DangerPill>
+                    <Tag
+                        type='danger'
+                        leadingIcon={<Icon glyph={<AlertOutlineIcon/>}/>}
+                        label={<FormattedMessage defaultMessage='Invalid Username'/>}
+                    />
                 )}
-                <ButtonIcon
-                    onClick={props.onDelete}
-                >
-                    <TrashIcon/>
-                </ButtonIcon>
-                {open ? <ChevronUpIcon/> : <ChevronDownIcon/>}
+                <HeaderActions>
+                    <IconButton
+                        icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
+                        aria-label={intl.formatMessage({defaultMessage: 'Delete bot'})}
+                        size='small'
+                        destructive={true}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            props.onDelete();
+                        }}
+                    />
+                    <IconButton
+                        icon={<Icon glyph={open ? <ChevronUpIcon/> : <ChevronDownIcon/>}/>}
+                        aria-label={open ? intl.formatMessage({defaultMessage: 'Collapse bot'}) : intl.formatMessage({defaultMessage: 'Expand bot'})}
+                        aria-expanded={open}
+                        size='small'
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setOpen((o) => !o);
+                        }}
+                    />
+                </HeaderActions>
             </HeaderContainer>
             {open && (
                 <ItemListContainer>
@@ -333,20 +370,12 @@ const Bot = (props: Props) => {
                         <SelectionItem
                             label={intl.formatMessage({defaultMessage: 'AI Service'})}
                             value={props.bot.serviceID}
-                            onChange={(e) => props.onChange({...props.bot, serviceID: e.target.value})}
-                        >
-                            <SelectionItemOption value=''>
-                                {intl.formatMessage({defaultMessage: 'Select a service'})}
-                            </SelectionItemOption>
-                            {props.services.map((service) => (
-                                <SelectionItemOption
-                                    key={service.id}
-                                    value={service.id}
-                                >
-                                    {service.name || service.type}
-                                </SelectionItemOption>
-                            ))}
-                        </SelectionItem>
+                            onChange={(serviceID) => props.onChange({...props.bot, serviceID})}
+                            options={[
+                                {value: '', label: intl.formatMessage({defaultMessage: 'Select a service'})},
+                                ...props.services.map((service) => ({value: service.id, label: service.name || service.type})),
+                            ]}
+                        />
                         {supportsModelFetching && availableModels.length > 0 ? (
                             <ComboboxItem
                                 label={intl.formatMessage({defaultMessage: 'Model'})}
@@ -383,7 +412,7 @@ const Bot = (props: Props) => {
                         {(() => {
                             const selectedService = props.services.find((s) => s.id === props.bot.serviceID);
                             const supportsVisionAndTools = selectedService &&
-                                ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral', 'gemini', 'vertex'].includes(selectedService.type);
+                                ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral', 'gemini', 'vertex', 'north'].includes(selectedService.type);
 
                             if (!supportsVisionAndTools) {
                                 return null;
@@ -450,17 +479,6 @@ const Bot = (props: Props) => {
                                         maxTokens={selectedService?.outputTokenLimit || 4096}
                                         onChange={props.onChange}
                                     />
-                                    {(selectedService.type === 'anthropic' || ['openai', 'openaicompatible', 'azure'].includes(selectedService.type)) && (
-                                        <BooleanItem
-                                            label={intl.formatMessage({defaultMessage: 'Structured Output'})}
-                                            value={props.bot.structuredOutputEnabled ?? false}
-                                            onChange={(to: boolean) => props.onChange({...props.bot, structuredOutputEnabled: to})}
-                                            helpText={selectedService.type === 'anthropic' ?
-                                                intl.formatMessage({defaultMessage: 'Enable structured JSON output for this bot. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema. Requires a compatible Anthropic model (Claude 4.5/4.6+). Note: Requests that ask for structured JSON output will skip extended thinking; all other requests keep using it.'}) :
-                                                intl.formatMessage({defaultMessage: 'Enable structured JSON output for this bot. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema.'})
-                                            }
-                                        />
-                                    )}
                                 </>
                             );
                         })()}
@@ -488,7 +506,7 @@ const Bot = (props: Props) => {
 };
 
 const ItemListContainer = styled.div`
-	padding: 24px 20px;
+	padding: var(--spacing-xxl) var(--spacing-xl);
 	padding-right: 76px;
 `;
 
@@ -496,34 +514,33 @@ const Title = styled.div`
 	display: flex;
 	flex-direction: row;
 	align-items: center;
-	gap: 8px;
+	gap: var(--spacing-xs);
 `;
 
 const NameText = styled.div`
-	font-size: 14px;
-	font-weight: 600;
+	font-size: var(--font-size-100);
+	font-weight: var(--font-weight-semibold);
 `;
 
 const Spacer = styled.div`
 	flex-grow: 1;
 `;
 
-const TrashIcon = styled(TrashCanOutlineIcon)`
-	width: 16px;
-	height: 16px;
-	color: #D24B4E;
-`;
-
 const BotContainer = styled.div`
 	display: flex;
 	flex-direction: column;
 
-	border-radius: 4px;
+	border-radius: var(--radius-s);
 	border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
 
 	&:hover {
-		box-shadow: 0px 2px 3px 0px rgba(0, 0, 0, 0.08);
+		box-shadow: var(--elevation-1);
 	}
+`;
+
+const HeaderIconAI = styled(IconAI)`
+	color: rgba(var(--center-channel-color-rgb), 0.64);
+	flex-shrink: 0;
 `;
 
 const HeaderContainer = styled.div`
@@ -531,26 +548,23 @@ const HeaderContainer = styled.div`
 	flex-direction: row;
 	justify-content: space-between;
 	align-items: center;
-	gap: 16px;
-	padding: 12px 16px 12px 20px;
+	gap: var(--spacing-l);
+	padding: var(--spacing-m) var(--spacing-l) var(--spacing-m) var(--spacing-xl);
 	border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
 	cursor: pointer;
+`;
+
+const HeaderActions = styled.div`
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	gap: var(--spacing-xxxs);
 `;
 
 const NativeToolsColumn = styled.div`
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
-`;
-
-const NativeToolField = styled.div`
-	display: flex;
-	flex-direction: column;
-	gap: 0;
-`;
-
-const NativeToolHelpText = styled(HelpText)`
-	padding-left: 0;
+	gap: var(--spacing-xl);
 `;
 
 export default Bot;

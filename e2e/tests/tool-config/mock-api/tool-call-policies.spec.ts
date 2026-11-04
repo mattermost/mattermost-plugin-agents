@@ -1,6 +1,7 @@
 import * as http from 'http';
 
-import { test, expect, type Page, type Locator } from '@playwright/test';
+import { expect, type Page, type Locator } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -10,10 +11,12 @@ import {
     buildToolCallResponse,
     buildTextResponse,
     responseTest,
+    titleGenerationMockRule,
 } from 'helpers/openai-mock';
 import { RunToolConfigContainerWithPolicies } from 'helpers/tool-config-container';
 import { adminUsername, adminPassword } from 'helpers/system-console-container';
 import { createBotConfigHelper } from 'helpers/bot-config';
+import { expandToolActivity, toolCard } from 'helpers/llmbot-post';
 
 /**
  * Test Suite: Tool Call Policies with Mocked LLM (4.13)
@@ -157,20 +160,20 @@ async function waitForChannelReady(page: Page, channelDisplayName: string): Prom
     });
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigContainerWithPolicies());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 test.describe('Tool Call Policies (Mocked LLM)', () => {
-    test.beforeAll(async () => {
-        mattermost = await RunToolConfigContainerWithPolicies();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
         await setEmbeddedToolPolicies([
             {name: 'read_post', policy: 'auto_run_in_dm', enabled: true},
             {name: 'get_channel_info', policy: 'ask', enabled: true},
             {name: 'read_channel', policy: 'auto_run_in_dm', enabled: true},
         ]);
-    });
-
-    test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
     });
 
     // Note: does not configure a disabled tool; it only checks a text-only mock response
@@ -209,16 +212,23 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
 
         const seededMessage = 'Please read post test123';
 
+        const adminClient = await mattermost.getAdminClient();
+        const sourcePost = await adminClient.createPost({
+            channel_id: await getTownSquareChannelID(),
+            message: `auto_run read_post source ${Date.now()}`,
+        });
+
         // Build a tool-call response for an auto_run tool
         const toolCallSSE = buildToolCallResponse(
             'call_001',
             embeddedReadPostTool,
-            '{"post_id": "test123"}',
+            JSON.stringify({post_id: sourcePost.id}),
         );
         const followUpTextSSE = buildTextResponse('Here is the post content you requested.');
 
         // Register both mocks together: the tool-call mock (matches first request)
-        // and the text follow-up (for after tool execution).
+        // and the text follow-up (matched by the tool call ID, so it is only served
+        // after the tool executed).
         // Using addMocks to send both in a single request since addMock resets.
         await openAIMock.addMocks([
             {
@@ -247,7 +257,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
                     path: '/v1/chat/completions',
                     body: {
                         matcher: 'ShouldContainSubstring',
-                        value: 'You are called Tool Test Bot with the username toolbot',
+                        value: 'call_001',
                     },
                 },
                 context: {
@@ -261,6 +271,9 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
                     body: followUpTextSSE,
                 },
             },
+            // Title generation also contains the user message; the last rule has the
+            // highest priority, so it siphons that request instead of the turn mocks.
+            titleGenerationMockRule(),
         ]);
 
         const mmPage = new MattermostPage(page);
@@ -276,15 +289,18 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
             'toolbot',
         );
 
-        // Send message to trigger tool call
-        await mmPage.sendChannelMessage('Please read post test123');
+        // Send a plain DM (an @mention would route through the mention path, where
+        // auto_run_in_dm tools still need approval); the bot's turn renders in the thread (RHS)
+        await mmPage.sendChannelMessage(seededMessage);
+        const sentPost = await waitForSentPost(page, seededMessage, 30000);
+        await openThreadForPost(sentPost, 30000);
 
-        // Wait for some response to appear (tool call processing)
-        // With auto_run, Accept/Reject should NOT appear
-        await page.waitForTimeout(5000);
+        // With auto_run, the tool executes and the follow-up renders without any Accept/Reject prompt
+        const rhs = page.locator('#rhsContainer');
+        await expect(rhs.getByText('Here is the post content you requested.')).toBeVisible({timeout: 45000});
 
         // Verify no approval prompt appears for auto_run tool
-        const acceptButton = page.getByRole('button', { name: /accept/i });
+        const acceptButton = rhs.getByRole('button', { name: /accept/i });
         const isAcceptVisible = await acceptButton.isVisible().catch(() => false);
 
         // If auto_run is properly configured, no approval should be needed
@@ -317,7 +333,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
 
             // Seed after the browser has left Town Square so the assertion only measures
             // requests caused by the tool result card flow, not by the source post itself.
-            await page.waitForTimeout(500);
+            await expect(page).toHaveURL(/\/messages\/@toolbot/);
             const baselineRequestCount = imageTrap.getRequestCount();
 
             await openAIMock.addMocks([
@@ -396,15 +412,17 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
 
             const rhs = page.locator('#rhsContainer');
             const latestBotPost = rhs.locator('[data-testid="llm-bot-post"]').last();
-            await expect(latestBotPost.getByText(embeddedReadPostLabel, {exact: true})).toBeVisible({timeout: 30000});
             await expect(rhs.getByText('Finished reading the unsafe post.')).toBeVisible({timeout: 45000});
 
-            await latestBotPost.getByText(embeddedReadPostLabel, {exact: true}).click();
+            const activityRounds = await expandToolActivity(latestBotPost);
+            await expect(toolCard(activityRounds, embeddedReadPostLabel)).toBeVisible({timeout: 30000});
+
+            await toolCard(activityRounds, embeddedReadPostLabel).getByText(embeddedReadPostLabel, {exact: true}).click();
             await expect(latestBotPost.getByText(seedMessage, {exact: false})).toBeVisible({timeout: 30000});
             await expect(latestBotPost.getByText('blocked-image')).toBeVisible({timeout: 30000});
             await expect(latestBotPost.locator('img[src*="tool-result-image-"]')).toHaveCount(0);
 
-            await page.waitForTimeout(1000);
+            await page.waitForLoadState('networkidle');
             expect(imageTrap.getRequestCount() - baselineRequestCount).toBe(0);
         } finally {
             await imageTrap.close();
@@ -539,21 +557,25 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
 
         const botPosts = rhs.locator('[data-testid="llm-bot-post"]');
         const initialBotPost = botPosts.last();
-        await expect(initialBotPost.getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible({timeout: 30000});
+        await expect(toolCard(initialBotPost, embeddedGetChannelInfoLabel)).toBeVisible({timeout: 30000});
 
         const acceptButton = rhs.getByRole('button', {name: /^accept$/i});
         await expect(acceptButton).toBeVisible({timeout: 30000});
         await acceptButton.click();
 
         const latestBotPost = botPosts.last();
-        await expect(latestBotPost.getByText(embeddedReadChannelLabel, {exact: true})).toBeVisible({timeout: 30000});
 
         // Completion text proves the final mock ran; wait for it before badge (post props may update after stream).
         await expect(rhs.getByText('The follow-up read_channel tool completed successfully.')).toBeVisible({timeout: 45000});
+
+        // Tool cards and the auto-approved badge only exist once the
+        // collapsed activity area is expanded.
+        const activityRounds = await expandToolActivity(latestBotPost);
+        await expect(toolCard(activityRounds, embeddedReadChannelLabel)).toBeVisible({timeout: 30000});
         await expect(rhs.getByText('Auto-approved')).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
 
-        await latestBotPost.getByText(embeddedReadChannelLabel, {exact: true}).click();
+        await toolCard(activityRounds, embeddedReadChannelLabel).getByText(embeddedReadChannelLabel, {exact: true}).click();
         // read_channel result is rendered as markdown; the seed string is not a single text node (bold, etc.).
         await expect(latestBotPost.getByText(seededMessage, {exact: false})).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();
@@ -631,7 +653,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         const botPosts = rhs.locator('[data-testid="llm-bot-post"]');
         const postA = botPosts.nth(0);
 
-        await expect(postA.getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible({timeout: 30000});
+        await expect(toolCard(postA, embeddedGetChannelInfoLabel)).toBeVisible({timeout: 30000});
 
         // A pending-tool response has no text; it must not be overwritten with
         // the empty-result fallback that would mask the tool approval UI.
@@ -645,7 +667,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         // Both the original tool card and the follow-up text are visible in
         // postA; no second bot post is created.
         await expect(postA.getByText(continuationMarker)).toBeVisible({timeout: 30000});
-        await expect(postA.getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible();
+        await expect(toolCard(await expandToolActivity(postA), embeddedGetChannelInfoLabel)).toBeVisible();
         await expect(botPosts).toHaveCount(1);
     });
 
@@ -804,6 +826,8 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();
         await expect(rhs.getByRole('button', {name: /^share$/i})).not.toBeVisible();
         await expect(rhs.getByRole('button', {name: /keep private/i})).not.toBeVisible();
+
+        await expandToolActivity(rhs.locator('[data-testid="llm-bot-post"]').last());
         await expect(rhs.getByText('Auto-approved')).toBeVisible();
     });
 
@@ -897,7 +921,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         const shareButton = rhs.getByRole('button', {name: /^share$/i});
         await expect(shareButton).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /keep private/i})).toBeVisible();
-        await page.waitForTimeout(3000);
+        expect(await openAIMock.countRequestsContaining(toolCallID)).toBe(0);
         await expect(rhs.getByText(followUpMarker)).not.toBeVisible();
 
         await shareButton.click();

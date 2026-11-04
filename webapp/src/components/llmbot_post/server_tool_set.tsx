@@ -15,6 +15,8 @@ import {
     MagnifyIcon,
 } from '@mattermost/compass-icons/components';
 
+import {Spinner} from '@mattermost/compass-ui/components/spinner';
+
 import {
     ServerToolCodeInterpreter,
     ServerToolStatusError,
@@ -23,9 +25,6 @@ import {
     ServerToolWebFetch,
     ServerToolWebSearch,
 } from '@/types/conversation';
-
-import LoadingSpinner from '../assets/loading_spinner';
-
 interface ServerToolSetProps {
     serverTools: ServerToolUse[];
 }
@@ -62,6 +61,19 @@ const hostnameOf = (url?: string): string => {
     }
 };
 
+export function serverToolTitle(tool: ServerToolUse, intl: ReturnType<typeof useIntl>): string {
+    switch (tool.tool) {
+    case ServerToolWebSearch:
+        return tool.query ? intl.formatMessage({defaultMessage: 'Searched the web for "{query}"'}, {query: tool.query}) : intl.formatMessage({defaultMessage: 'Searched the web'});
+    case ServerToolWebFetch:
+        return tool.url ? intl.formatMessage({defaultMessage: 'Fetched {host}'}, {host: hostnameOf(tool.url)}) : intl.formatMessage({defaultMessage: 'Fetched a web page'});
+    case ServerToolCodeInterpreter:
+        return tool.sub_tool === 'text_editor' ? intl.formatMessage({defaultMessage: 'Edited files in the provider sandbox'}) : intl.formatMessage({defaultMessage: 'Ran code in the provider sandbox'});
+    default:
+        return intl.formatMessage({defaultMessage: 'Used a provider tool'});
+    }
+}
+
 const ServerToolCard: React.FC<{tool: ServerToolUse}> = ({tool}) => {
     const intl = useIntl();
     const [expanded, setExpanded] = useState(false);
@@ -69,29 +81,22 @@ const ServerToolCard: React.FC<{tool: ServerToolUse}> = ({tool}) => {
     const details = buildDetails(tool, intl);
     const canExpand = details.length > 0;
 
+    const title = serverToolTitle(tool, intl);
     let icon = <CodeTagsIcon/>;
-    let title = '';
     switch (tool.tool) {
     case ServerToolWebSearch:
         icon = <MagnifyIcon/>;
-        title = tool.query ? intl.formatMessage({defaultMessage: 'Searched the web for "{query}"'}, {query: tool.query}) : intl.formatMessage({defaultMessage: 'Searched the web'});
         break;
     case ServerToolWebFetch:
         icon = <LinkVariantIcon/>;
-        title = tool.url ? intl.formatMessage({defaultMessage: 'Fetched {host}'}, {host: hostnameOf(tool.url)}) : intl.formatMessage({defaultMessage: 'Fetched a web page'});
         break;
-    case ServerToolCodeInterpreter:
-        icon = <CodeTagsIcon/>;
-        title = tool.sub_tool === 'text_editor' ? intl.formatMessage({defaultMessage: 'Edited files in the provider sandbox'}) : intl.formatMessage({defaultMessage: 'Ran code in the provider sandbox'});
-        break;
-    default:
-        title = intl.formatMessage({defaultMessage: 'Used a provider tool'});
     }
 
     // Expandable cards render a semantic button so keyboard users can focus
     // and toggle the details; cards without details stay a plain div.
     return (
         <Card data-testid={`server-tool-${tool.tool}`}>
+            {/* eslint-disable-next-line agents/click-events-have-key-events, agents/no-static-element-interactions -- renders as a <button> whenever it is clickable */}
             <Header
                 as={canExpand ? 'button' : 'div'}
                 type={canExpand ? 'button' : undefined} // eslint-disable-line no-undefined
@@ -146,7 +151,12 @@ function buildDetails(tool: ServerToolUse, intl: ReturnType<typeof useIntl>): De
 const StatusIndicator: React.FC<{status: ServerToolUse['status']}> = ({status}) => {
     switch (status) {
     case ServerToolStatusInProgress:
-        return <SpinnerWrapper><SmallSpinner/></SpinnerWrapper>;
+        return (
+            <Spinner
+                size='12'
+                aria-hidden={true}
+            />
+        );
     case ServerToolStatusError:
         return <ErrorIcon/>;
     default:
@@ -220,19 +230,6 @@ const Title = styled.span`
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-`;
-
-const SpinnerWrapper = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 12px;
-    height: 12px;
-`;
-
-const SmallSpinner = styled(LoadingSpinner)`
-    width: 12px;
-    height: 12px;
 `;
 
 const SuccessIcon = styled(CheckIcon)`

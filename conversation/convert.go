@@ -6,12 +6,14 @@ package conversation
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 const DefaultMaxFileSize = int64(5 * 1024 * 1024)
@@ -22,10 +24,19 @@ const DefaultMaxFileSize = int64(5 * 1024 * 1024)
 // only and fetched on demand via the read_file tool. ~8 KiB ≈ 2000 tokens.
 const InlineFileMaxBytes = int64(8 * 1024)
 
-// UnsharedToolResultRedaction replaces tool_result content the requester has
-// not shared, preserving the tool_use/tool_result pairing required by LLM
-// providers.
-const UnsharedToolResultRedaction = "[result not shared by user]"
+// UnsharedToolResultRedaction replaces tool_result content the requester
+// decided not to share, preserving the tool_use/tool_result pairing required
+// by LLM providers. Unshared tool_use arguments are redacted alongside it.
+const UnsharedToolResultRedaction = "[arguments and result not shared by user]"
+
+// PendingShareToolResultRedaction replaces tool_result content whose share
+// decision the requester has not made yet.
+const PendingShareToolResultRedaction = "[result pending the user's decision to share it]"
+
+// NotExecutedToolResult is replayed as the result of a tool call that was
+// still pending or accepted when the turn ended, so the model does not read
+// it as a call that ran and returned nothing.
+const NotExecutedToolResult = "Not executed: the user stopped the response or moved on without approving this tool call."
 
 // unsharedToolUseArgumentsRedaction replaces tool_use arguments the requester
 // has not shared. Empty JSON keeps the call well-formed for providers that
@@ -36,14 +47,26 @@ var unsharedToolUseArgumentsRedaction = json.RawMessage("{}")
 type PostConversionOptions struct {
 	RedactUnshared bool
 	MMClient       mmapi.Client
-	EnableVision   bool
-	MaxFileSize    int64
-	ToolStore      *llm.ToolStore
+	// UserID is the user whose channel read access gates every file and image
+	// block. An empty UserID withholds all of them.
+	UserID       string
+	EnableVision bool
+	MaxFileSize  int64
+	ToolStore    *llm.ToolStore
+}
+
+// canReadFileChannel reports whether opts.UserID may read the channel the file
+// was posted in. Attachments can come from a channel other than the
+// conversation's own (e.g. a meeting's captions file), so access is re-checked
+// on every replay.
+func canReadFileChannel(opts PostConversionOptions, fileInfo *model.FileInfo) bool {
+	return mmapi.CheckFileChannelRead(opts.MMClient, opts.UserID, fileInfo) == nil
 }
 
 // BlocksToPost converts a slice of content blocks and a role string into an llm.Post.
 // When opts.RedactUnshared is true, tool_result content whose Shared flag is not
-// true is replaced with UnsharedToolResultRedaction, and tool_use arguments
+// true is replaced with UnsharedToolResultRedaction (or
+// PendingShareToolResultRedaction before the share decision), and tool_use arguments
 // whose Shared flag is not true are replaced with an empty JSON object so the
 // LLM cannot paraphrase private tool parameters into a channel-visible reply.
 func BlocksToPost(
@@ -63,16 +86,37 @@ func BlocksToPost(
 	var textParts []string
 	var fileContents []string
 	var descriptors []string
+	var notices []string
+	resultIDs := make(map[string]bool)
 
 	for _, block := range blocks {
 		switch block.Type {
 		case BlockTypeText:
 			textParts = append(textParts, block.Text)
+			if block.Text != "" {
+				post.AssistantSegments = append(post.AssistantSegments, llm.TurnSegment{
+					Kind: llm.TurnSegmentText,
+					Text: block.Text,
+				})
+			}
 
 		case BlockTypeThinking:
-			// Last thinking block wins
+			// Last thinking block wins. Persisted thinking is cleared by the
+			// request builder because signed provider blocks cannot be rebuilt
+			// safely from normalized storage.
 			post.Reasoning = block.Text
 			post.ReasoningSignature = block.Signature
+
+		case BlockTypeServerToolUse:
+			if block.ServerTool == nil || block.ServerTool.ID == "" {
+				continue
+			}
+			activity := block.ServerTool.Clone()
+			post.ServerTools = append(post.ServerTools, activity)
+			post.AssistantSegments = append(post.AssistantSegments, llm.TurnSegment{
+				Kind:         llm.TurnSegmentServerTool,
+				ServerToolID: activity.ID,
+			})
 
 		case BlockTypeToolUse:
 			arguments := block.Input
@@ -101,7 +145,11 @@ func BlocksToPost(
 			content := block.Content
 			if opts.RedactUnshared && (block.Shared == nil || !*block.Shared) {
 				content = UnsharedToolResultRedaction
+				if block.DecidedAt == nil {
+					content = PendingShareToolResultRedaction
+				}
 			}
+			resultIDs[block.ToolUseID] = true
 			merged := false
 			for i := range post.ToolUse {
 				if post.ToolUse[i].ID == block.ToolUseID {
@@ -119,15 +167,22 @@ func BlocksToPost(
 			}
 
 		case BlockTypeImage:
-			if !opts.EnableVision {
-				continue
-			}
 			if opts.MMClient == nil {
+				notices = append(notices, format.UnavailableAttachment("", format.AttachmentLoadFailed))
 				continue
 			}
+			// Fetched even with vision off: access is re-checked before the
+			// placeholder names the file.
 			fileInfo, err := opts.MMClient.GetFileInfo(block.FileID)
-			if err != nil {
-				opts.MMClient.LogError("failed to get file info for image attachment", "error", err)
+			if err != nil || fileInfo == nil {
+				notices = append(notices, attachmentLoadNotice(opts.MMClient, block, err, "failed to get file info for image attachment"))
+				continue
+			}
+			if !canReadFileChannel(opts, fileInfo) {
+				continue
+			}
+			if !opts.EnableVision {
+				notices = append(notices, format.UnavailableAttachment(fileInfo.Name, format.AttachmentImageInputDisabled))
 				continue
 			}
 			if !llm.IsSupportedImageMimeType(fileInfo.MimeType) {
@@ -139,7 +194,7 @@ func BlocksToPost(
 			}
 			reader, err := opts.MMClient.GetFile(block.FileID)
 			if err != nil {
-				opts.MMClient.LogError("failed to get file for image attachment", "error", err)
+				notices = append(notices, attachmentLoadNotice(opts.MMClient, block, err, "failed to get file for image attachment"))
 				continue
 			}
 			data, err := io.ReadAll(reader)
@@ -147,7 +202,7 @@ func BlocksToPost(
 				opts.MMClient.LogError("failed to close image attachment reader", "error", closeErr)
 			}
 			if err != nil {
-				opts.MMClient.LogError("failed to read image attachment", "error", err)
+				notices = append(notices, attachmentLoadNotice(opts.MMClient, block, err, "failed to read image attachment"))
 				continue
 			}
 			post.Files = append(post.Files, llm.File{
@@ -159,11 +214,15 @@ func BlocksToPost(
 
 		case BlockTypeFile:
 			if opts.MMClient == nil {
+				notices = append(notices, format.UnavailableAttachment("", format.AttachmentLoadFailed))
 				continue
 			}
 			fileInfo, err := opts.MMClient.GetFileInfo(block.FileID)
-			if err != nil {
-				opts.MMClient.LogError("failed to get file info for file attachment", "error", err)
+			if err != nil || fileInfo == nil {
+				notices = append(notices, attachmentLoadNotice(opts.MMClient, block, err, "failed to get file info for file attachment"))
+				continue
+			}
+			if !canReadFileChannel(opts, fileInfo) {
 				continue
 			}
 
@@ -195,7 +254,7 @@ func BlocksToPost(
 			if content == "" {
 				reader, err := opts.MMClient.GetFile(block.FileID)
 				if err != nil {
-					opts.MMClient.LogError("failed to get file for file attachment", "error", err)
+					notices = append(notices, attachmentLoadNotice(opts.MMClient, block, err, "failed to get file for file attachment"))
 					continue
 				}
 				body, err := io.ReadAll(io.LimitReader(reader, effectiveMax))
@@ -203,7 +262,7 @@ func BlocksToPost(
 					opts.MMClient.LogError("failed to close file attachment reader", "error", closeErr)
 				}
 				if err != nil {
-					opts.MMClient.LogError("failed to read file content", "error", err)
+					notices = append(notices, attachmentLoadNotice(opts.MMClient, block, err, "failed to read file content"))
 					continue
 				}
 				content = string(body)
@@ -216,6 +275,17 @@ func BlocksToPost(
 		}
 	}
 
+	for i := range post.ToolUse {
+		tc := &post.ToolUse[i]
+		if resultIDs[tc.ID] {
+			continue
+		}
+		if tc.Status == llm.ToolCallStatusPending || tc.Status == llm.ToolCallStatusAccepted {
+			tc.Result = NotExecutedToolResult
+			tc.Status = llm.ToolCallStatusRejected
+		}
+	}
+
 	if len(textParts) > 0 {
 		post.Message = strings.Join(textParts, "\n")
 	}
@@ -225,8 +295,30 @@ func BlocksToPost(
 	if len(descriptors) > 0 {
 		post.Message += "\nAttached files (call the read_file tool with the File ID to read their contents):\n" + strings.Join(descriptors, "\n\n")
 	}
+	if len(notices) > 0 {
+		if post.Message != "" {
+			post.Message += "\n"
+		}
+		post.Message += strings.Join(notices, "\n")
+	}
+	if len(post.ServerTools) == 0 {
+		post.AssistantSegments = nil
+	}
 
 	return post
+}
+
+// attachmentLoadNotice logs a failed attachment read and returns its
+// placeholder. A forbidden file is an expected access denial: it is neither
+// logged nor named.
+func attachmentLoadNotice(mmClient mmapi.Client, block ContentBlock, err error, logMsg string) string {
+	if errors.Is(err, mmapi.ErrFileActionForbidden) {
+		return format.UnavailableAttachment("", format.AttachmentForbidden)
+	}
+	if err != nil {
+		mmClient.LogError(logMsg, "error", err)
+	}
+	return format.UnavailableAttachment(block.Filename, format.AttachmentLoadFailed)
 }
 
 func enrichToolCallFromStore(toolCall *llm.ToolCall, toolStore *llm.ToolStore) {
@@ -234,58 +326,6 @@ func enrichToolCallFromStore(toolCall *llm.ToolCall, toolStore *llm.ToolStore) {
 		OverwriteDescription: true,
 		BareNameFallback:     true,
 	})
-}
-
-// PostToBlocks converts an llm.Post into a slice of content blocks.
-// This is used when writing turns to the database from stream events or the current llm.Post model.
-// The shared parameter controls whether tool blocks get shared=true or shared=false.
-func PostToBlocks(post llm.Post, shared bool) []ContentBlock {
-	var blocks []ContentBlock
-
-	// 1. Thinking block (if Reasoning is non-empty)
-	if post.Reasoning != "" {
-		blocks = append(blocks, ContentBlock{
-			Type:      BlockTypeThinking,
-			Text:      post.Reasoning,
-			Signature: post.ReasoningSignature,
-		})
-	}
-
-	// 2. Text block (if Message is non-empty)
-	if post.Message != "" {
-		blocks = append(blocks, ContentBlock{
-			Type: BlockTypeText,
-			Text: post.Message,
-		})
-	}
-
-	// 3. For each ToolUse: a tool_use block, optionally followed by a tool_result block
-	for _, tc := range post.ToolUse {
-		blocks = append(blocks, ContentBlock{
-			Type:         BlockTypeToolUse,
-			ID:           tc.ID,
-			Name:         tc.Name,
-			ServerOrigin: tc.ServerOrigin,
-			Input:        tc.Arguments,
-			MCPBareName:  tc.MCPBareName,
-			Status:       StatusToString(tc.Status),
-			Shared:       BoolPtr(shared),
-			Title:        tc.Title,
-			Description:  tc.Description,
-		})
-
-		if tc.Result != "" {
-			blocks = append(blocks, ContentBlock{
-				Type:      BlockTypeToolResult,
-				ToolUseID: tc.ID,
-				Content:   tc.Result,
-				Status:    StatusToString(tc.Status),
-				Shared:    BoolPtr(shared),
-			})
-		}
-	}
-
-	return blocks
 }
 
 // RoleFromString converts a turn role string to an llm.PostRole.
@@ -301,20 +341,6 @@ func RoleFromString(role string) llm.PostRole {
 		return llm.PostRoleSystem
 	default:
 		return llm.PostRoleUser
-	}
-}
-
-// RoleToString converts an llm.PostRole to a turn role string.
-func RoleToString(role llm.PostRole) string {
-	switch role {
-	case llm.PostRoleUser:
-		return "user"
-	case llm.PostRoleBot:
-		return "assistant"
-	case llm.PostRoleSystem:
-		return "system"
-	default:
-		return "user"
 	}
 }
 

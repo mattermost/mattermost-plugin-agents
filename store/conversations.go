@@ -38,8 +38,7 @@ type Conversation struct {
 }
 
 func isUniqueViolation(err error) bool {
-	var pqErr *pq.Error
-	if errors.As(err, &pqErr) {
+	if pqErr, ok := errors.AsType[*pq.Error](err); ok {
 		return pqErr.Code == "23505"
 	}
 	return false
@@ -54,43 +53,32 @@ var conversationColumns = []string{
 // CreateConversation inserts a new conversation row.
 // The caller must set ID, UserID, BotID, CreatedAt, and UpdatedAt before calling.
 func (s *Store) CreateConversation(conv *Conversation) error {
-	query, args, err := s.builder.Insert("LLM_Conversations").
+	err := s.execBuilder(s.builder.Insert("LLM_Conversations").
 		Columns(conversationColumns...).
 		Values(conv.ID, conv.UserID, conv.BotID, conv.ChannelID, conv.RootPostID,
 			conv.Title, conv.SystemPrompt, conv.Operation,
-			conv.CreatedAt, conv.UpdatedAt, conv.DeleteAt).
-		ToSql()
-	if err != nil {
-		return fmt.Errorf("failed to build create conversation query: %w", err)
+			conv.CreatedAt, conv.UpdatedAt, conv.DeleteAt),
+		"create conversation")
+	if isUniqueViolation(err) {
+		return ErrConversationConflict
 	}
-	_, err = s.db.Exec(query, args...)
-	if err != nil {
-		if isUniqueViolation(err) {
-			return ErrConversationConflict
-		}
-		return fmt.Errorf("failed to create conversation: %w", err)
-	}
-	return nil
+	return err
 }
 
 // GetConversation retrieves a non-deleted conversation by ID.
 // Returns ErrConversationNotFound if the conversation does not exist or is soft-deleted.
 func (s *Store) GetConversation(id string) (*Conversation, error) {
-	query, args, err := s.builder.
+	var conv Conversation
+	if err := s.getBuilder(&conv, s.builder.
 		Select(conversationColumns...).
 		From("LLM_Conversations").
 		Where(sq.Eq{"ID": id}).
-		Where(sq.Eq{"DeleteAt": 0}).
-		ToSql()
-	if err != nil {
-		return nil, fmt.Errorf("failed to build get conversation query: %w", err)
-	}
-	var conv Conversation
-	if err := s.db.Get(&conv, query, args...); err != nil {
+		Where(sq.Eq{"DeleteAt": 0}),
+		"get conversation"); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrConversationNotFound
 		}
-		return nil, fmt.Errorf("failed to get conversation: %w", err)
+		return nil, err
 	}
 	return &conv, nil
 }
@@ -99,85 +87,72 @@ func (s *Store) GetConversation(id string) (*Conversation, error) {
 // (RootPostID, BotID, UserID). Returns ErrConversationNotFound when no
 // conversation exists for the given tuple.
 func (s *Store) GetConversationByThreadBotUser(rootPostID, botID, userID string) (*Conversation, error) {
-	query, args, err := s.builder.
+	var conv Conversation
+	if err := s.getBuilder(&conv, s.builder.
 		Select(conversationColumns...).
 		From("LLM_Conversations").
 		Where(sq.Eq{"RootPostID": rootPostID}).
 		Where(sq.Eq{"BotID": botID}).
 		Where(sq.Eq{"UserID": userID}).
-		Where(sq.Eq{"DeleteAt": 0}).
-		ToSql()
-	if err != nil {
-		return nil, fmt.Errorf("failed to build get conversation by thread query: %w", err)
-	}
-	var conv Conversation
-	if err := s.db.Get(&conv, query, args...); err != nil {
+		Where(sq.Eq{"DeleteAt": 0}),
+		"get conversation by thread/bot/user"); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrConversationNotFound
 		}
-		return nil, fmt.Errorf("failed to get conversation by thread/bot/user: %w", err)
+		return nil, err
 	}
 	return &conv, nil
 }
 
-// UpdateConversationTitle updates the title and UpdatedAt timestamp of a conversation.
-func (s *Store) UpdateConversationTitle(id, title string) error {
-	query, args, err := s.builder.
+// SetConversationTitleIfUnset sets a generated title on a non-deleted
+// conversation that has none, so it never overwrites a title its owner set.
+// It reports whether the title was set.
+func (s *Store) SetConversationTitleIfUnset(id, title string) (bool, error) {
+	return s.execBuilderRows(s.builder.
 		Update("LLM_Conversations").
 		Set("Title", title).
-		Set("UpdatedAt", model.GetMillis()).
 		Where(sq.Eq{"ID": id}).
-		ToSql()
-	if err != nil {
-		return fmt.Errorf("failed to build update title query: %w", err)
-	}
-	_, err = s.db.Exec(query, args...)
-	if err != nil {
-		return fmt.Errorf("failed to update conversation title: %w", err)
-	}
-	return nil
+		Where(sq.Eq{"Title": ""}).
+		Where(sq.Eq{"DeleteAt": 0}),
+		"set conversation title if unset")
+}
+
+// RenameConversation sets the title of a non-deleted conversation, reporting
+// whether one was changed. A title is not activity, so UpdatedAt (which
+// orders the conversation list) is left alone.
+func (s *Store) RenameConversation(id, title string) (bool, error) {
+	return s.execBuilderRows(s.builder.
+		Update("LLM_Conversations").
+		Set("Title", title).
+		Where(sq.Eq{"ID": id}).
+		Where(sq.Eq{"DeleteAt": 0}),
+		"rename conversation")
 }
 
 // UpdateConversationRootPostID sets the RootPostID and updates the UpdatedAt timestamp.
 // This is used when the post ID is only known after creation (e.g., thread analysis DM posts).
 func (s *Store) UpdateConversationRootPostID(id string, rootPostID string) error {
-	query, args, err := s.builder.
+	return s.execBuilder(s.builder.
 		Update("LLM_Conversations").
 		Set("RootPostID", rootPostID).
 		Set("UpdatedAt", model.GetMillis()).
-		Where(sq.Eq{"ID": id}).
-		ToSql()
-	if err != nil {
-		return fmt.Errorf("failed to build update root post ID query: %w", err)
-	}
-	_, err = s.db.Exec(query, args...)
-	if err != nil {
-		return fmt.Errorf("failed to update conversation root post ID: %w", err)
-	}
-	return nil
+		Where(sq.Eq{"ID": id}),
+		"update conversation root post ID")
 }
 
 // SoftDeleteConversation sets the DeleteAt timestamp on a conversation.
 // Turns are not deleted until CleanupDeletedConversations runs.
 func (s *Store) SoftDeleteConversation(id string, deleteAt int64) error {
-	query, args, err := s.builder.
+	return s.execBuilder(s.builder.
 		Update("LLM_Conversations").
 		Set("DeleteAt", deleteAt).
 		Set("UpdatedAt", deleteAt).
-		Where(sq.Eq{"ID": id}).
-		ToSql()
-	if err != nil {
-		return fmt.Errorf("failed to build soft delete query: %w", err)
-	}
-	_, err = s.db.Exec(query, args...)
-	if err != nil {
-		return fmt.Errorf("failed to soft delete conversation: %w", err)
-	}
-	return nil
+		Where(sq.Eq{"ID": id}),
+		"soft delete conversation")
 }
 
 // ConversationSummary is a lightweight view of a conversation with its turn count,
-// used for listing conversations in the RHS threads panel.
+// used for listing conversations. UpdatedAt is its last turn's activity.
 type ConversationSummary struct {
 	ID         string  `json:"id"           db:"id"`
 	UserID     string  `json:"user_id"      db:"userid"`
@@ -189,8 +164,9 @@ type ConversationSummary struct {
 	UpdatedAt  int64   `json:"updated_at"   db:"updatedat"`
 }
 
-// GetConversationSummariesForUser returns conversations for a user ordered by UpdatedAt DESC,
-// including a turn count per conversation. Only non-deleted conversations are returned.
+// GetConversationSummariesForUser returns a user's non-deleted conversations,
+// most recent activity first (ID breaks ties), with their turn counts. The
+// ordering uses the (UserID, UpdatedAt DESC) WHERE DeleteAt = 0 index.
 func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int) ([]ConversationSummary, error) {
 	if limit < 0 {
 		limit = 0
@@ -198,7 +174,8 @@ func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int
 	if offset < 0 {
 		offset = 0
 	}
-	query, args, err := s.builder.
+	var summaries []ConversationSummary
+	if err := s.selectBuilder(&summaries, s.builder.
 		Select(
 			"c.ID",
 			"c.UserID",
@@ -206,24 +183,17 @@ func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int
 			"c.ChannelID",
 			"c.RootPostID",
 			"c.Title",
-			"COUNT(t.ID) AS TurnCount",
+			"(SELECT COUNT(*) FROM LLM_Turns t WHERE t.ConversationID = c.ID) AS TurnCount",
 			"c.UpdatedAt",
 		).
 		From("LLM_Conversations c").
-		LeftJoin("LLM_Turns t ON t.ConversationID = c.ID").
 		Where(sq.Eq{"c.UserID": userID}).
 		Where(sq.Eq{"c.DeleteAt": 0}).
-		GroupBy("c.ID", "c.UserID", "c.BotID", "c.ChannelID", "c.RootPostID", "c.Title", "c.UpdatedAt").
-		OrderBy("c.UpdatedAt DESC").
+		OrderBy("c.UpdatedAt DESC", "c.ID ASC").
 		Limit(uint64(limit)).   // #nosec G115 -- guarded above
-		Offset(uint64(offset)). // #nosec G115 -- guarded above
-		ToSql()
-	if err != nil {
-		return nil, fmt.Errorf("failed to build get conversation summaries query: %w", err)
-	}
-	var summaries []ConversationSummary
-	if err := s.db.Select(&summaries, query, args...); err != nil {
-		return nil, fmt.Errorf("failed to get conversation summaries: %w", err)
+		Offset(uint64(offset)), // #nosec G115 -- guarded above
+		"get conversation summaries"); err != nil {
+		return nil, err
 	}
 	if summaries == nil {
 		summaries = []ConversationSummary{}

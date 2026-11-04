@@ -121,16 +121,17 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// Create Mattermost MCP server based on transport type
 	var mcpServer interface{ Serve() error }
 
+	// Standalone stdio/http servers run outside the plugin and have no license
+	// information; NewStdioServer and NewHTTPServer keep state-changing tools
+	// available.
 	switch transport {
 	case "stdio":
 		// Create STDIO transport configuration
 		stdioConfig := mcpserver.StdioConfig{
-			BaseConfig: mcpserver.BaseConfig{
-				MMServerURL:         mmServerURL,
-				MMInternalServerURL: mmInternalServerURL,
-				DevMode:             devMode,
-				TrackAIGenerated:    trackAIGenerated,
-			},
+			MMServerURL:         mmServerURL,
+			MMInternalServerURL: mmInternalServerURL,
+			DevMode:             devMode,
+			TrackAIGenerated:    trackAIGenerated,
 			PersonalAccessToken: token,
 		}
 
@@ -139,23 +140,17 @@ func runServer(cmd *cobra.Command, args []string) error {
 		// Create HTTP transport configuration
 		stateless, _ := cmd.Flags().GetBool("stateless")
 		httpConfig := mcpserver.HTTPConfig{
-			BaseConfig: mcpserver.BaseConfig{
-				MMServerURL:         mmServerURL,
-				MMInternalServerURL: mmInternalServerURL,
-				DevMode:             devMode,
-				TrackAIGenerated:    trackAIGenerated,
-			},
-			HTTPPort:     httpPort,
-			HTTPBindAddr: httpBindAddr,
-			SiteURL:      siteURL,
-			Stateless:    stateless,
+			MMServerURL:         mmServerURL,
+			MMInternalServerURL: mmInternalServerURL,
+			DevMode:             devMode,
+			TrackAIGenerated:    trackAIGenerated,
+			HTTPPort:            httpPort,
+			HTTPBindAddr:        httpBindAddr,
+			SiteURL:             siteURL,
+			Stateless:           stateless,
 		}
 
 		mcpServer, err = mcpserver.NewHTTPServer(httpConfig, logger)
-	default:
-		logger.Error("unsupported transport type", "transport", transport)
-		logger.Flush()
-		return fmt.Errorf("unsupported transport type: %s", transport)
 	}
 	if err != nil {
 		logger.Error("failed to create MCP server", "error", err)

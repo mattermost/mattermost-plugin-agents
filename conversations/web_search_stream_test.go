@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -29,7 +31,7 @@ func drainTextStreamEvents(t *testing.T, stream *llm.TextStreamResult) []llm.Tex
 
 func testWebSearchApprovalContext() *llm.Context {
 	return &llm.Context{
-		Parameters: map[string]interface{}{
+		Parameters: map[string]any{
 			mmtools.WebSearchContextKey: []mmtools.WebSearchContextValue{{
 				Query: "typescript tutorial",
 				Results: []mmtools.WebSearchResult{{
@@ -51,7 +53,7 @@ func TestDecorateStreamWithWebSearchAnnotations(t *testing.T) {
 
 	t.Run("returns original stream when ctx has no web search data", func(t *testing.T) {
 		stream := llm.NewStreamFromString("plain answer")
-		ctx := &llm.Context{Parameters: map[string]interface{}{}}
+		ctx := &llm.Context{Parameters: map[string]any{}}
 		assert.Same(t, stream, decorateStreamWithWebSearchAnnotations(stream, ctx))
 	})
 
@@ -73,7 +75,7 @@ func TestDecorateStreamWithWebSearchAnnotations(t *testing.T) {
 		}
 		require.NotNil(t, annotationEvent, "expected annotation event before stream end")
 
-		payload, ok := annotationEvent.Value.(map[string]interface{})
+		payload, ok := annotationEvent.Value.(map[string]any)
 		require.True(t, ok)
 		annotations, ok := payload["annotations"].([]llm.Annotation)
 		require.True(t, ok)
@@ -135,20 +137,22 @@ func TestStreamToolFollowUpDecoratesWebSearchAnnotations(t *testing.T) {
 	streamingService := &streamCaptureStreamingService{}
 	c := &Conversations{
 		contextBuilder:   loadedStateBuilder(t),
+		bots:             passthroughBotsService(bot),
 		convService:      conversation.NewService(convStore, nil, nil, nil),
 		streamingService: streamingService,
 	}
 
-	err := c.streamToolFollowUp(
-		context.Background(),
-		bot,
-		&model.User{Id: "user-id", Username: "user"},
-		&model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"},
-		&model.Post{Id: "root-post-id"},
-		conv,
-		true,
-		testWebSearchApprovalContext(),
-	)
+	post := &model.Post{Id: "root-post-id"}
+	policy, err := c.resolveTurnPolicy(context.Background(), turnRequest{
+		bot:     bot,
+		user:    &model.User{Id: testRequesterID, Username: "user"},
+		channel: &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__" + testRequesterID},
+		conv:    conv,
+		post:    post,
+	})
+	require.NoError(t, err)
+
+	err = c.streamToolFollowUp(context.Background(), policy, post, conv, followUpOptions{ApprovalContext: testWebSearchApprovalContext()})
 	require.NoError(t, err)
 	streamingService.waitForStreaming()
 
@@ -172,20 +176,23 @@ func TestStreamToolFollowUpSkipsAnnotationDecorationWithoutApprovalContext(t *te
 	streamingService := &streamCaptureStreamingService{}
 	c := &Conversations{
 		contextBuilder:   loadedStateBuilder(t),
+		bots:             passthroughBotsService(bot),
+		licenseChecker:   enterprisetest.CheckerAt(enterprise.LevelProfessional),
 		convService:      conversation.NewService(convStore, nil, nil, nil),
 		streamingService: streamingService,
 	}
 
-	err := c.streamToolFollowUp(
-		context.Background(),
-		bot,
-		&model.User{Id: "user-id", Username: "user"},
-		&model.Channel{Id: "channel-id", Type: model.ChannelTypeOpen, TeamId: "team-id"},
-		&model.Post{Id: "root-post-id"},
-		conv,
-		false,
-		nil,
-	)
+	post := &model.Post{Id: "root-post-id"}
+	policy, err := c.resolveTurnPolicy(context.Background(), turnRequest{
+		bot:     bot,
+		user:    &model.User{Id: testRequesterID, Username: "user"},
+		channel: &model.Channel{Id: "channel-id", Type: model.ChannelTypeOpen, TeamId: "team-id"},
+		conv:    conv,
+		post:    post,
+	})
+	require.NoError(t, err)
+
+	err = c.streamToolFollowUp(context.Background(), policy, post, conv, followUpOptions{})
 	require.NoError(t, err)
 	streamingService.waitForStreaming()
 

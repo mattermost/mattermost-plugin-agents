@@ -6,9 +6,10 @@ import styled from 'styled-components';
 import {PlusIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
-import {TertiaryButton} from '../assets/buttons';
+import {Button} from '@mattermost/compass-ui/components/button';
+import {Icon} from '@mattermost/compass-ui/components/icon';
 
-import {useIsMultiLLMLicensed} from '@/license';
+import {useIsLicensedFor} from '@/license';
 
 import Bot, {ChannelAccessLevel, LLMBotConfig, UserAccessLevel} from './bot';
 import EnterpriseChip from './enterprise_chip';
@@ -32,7 +33,6 @@ const defaultNewBot: LLMBotConfig = {
     reasoningEnabled: true,
     reasoningEffort: 'medium',
     thinkingBudget: 0,
-    structuredOutputEnabled: false,
 };
 
 export const firstNewBot = {
@@ -49,7 +49,7 @@ type Props = {
 }
 
 const Bots = (props: Props) => {
-    const multiLLMLicensed = useIsMultiLLMLicensed();
+    const multiLLMLicensed = useIsLicensedFor('multiple_llm_services');
     const licenceAddDisabled = !multiLLMLicensed && props.bots.length > 0;
     const intl = useIntl();
 
@@ -92,13 +92,14 @@ const Bots = (props: Props) => {
                 ))}
             </BotsList>
             <EnterpriseChipContainer>
-                <TertiaryButton
+                <Button
+                    emphasis='tertiary'
                     onClick={addNewBot}
                     disabled={licenceAddDisabled}
+                    leadingIcon={<Icon glyph={<PlusIcon/>}/>}
                 >
-                    <PlusAIServiceIcon/>
                     <FormattedMessage defaultMessage='Add an AI Bot'/>
-                </TertiaryButton>
+                </Button>
                 {licenceAddDisabled && (
                     <EnterpriseChip
                         text={intl.formatMessage({defaultMessage: 'Use multiple AI bots on qualifying Mattermost plans'})}
@@ -114,21 +115,15 @@ const EnterpriseChipContainer = styled.div`
 	display: flex;
 	flex-direction: row;
 	align-items: center;
-	gap: 8px;
-`;
-
-const PlusAIServiceIcon = styled(PlusIcon)`
-	width: 18px;
-	height: 18px;
-	margin-right: 8px;
+	gap: var(--spacing-xs);
 `;
 
 const BotsList = styled.div`
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
+	gap: var(--spacing-m);
 
-	padding-bottom: 24px;
+	padding-bottom: var(--spacing-xxl);
 `;
 
 export default Bots;

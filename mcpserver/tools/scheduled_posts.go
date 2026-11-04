@@ -4,8 +4,9 @@
 package tools
 
 import (
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
@@ -57,36 +58,11 @@ const (
 // getScheduledPostTools returns the scheduled-post and reminder tools.
 func (p *MattermostToolProvider) getScheduledPostTools() []MCPTool {
 	return []MCPTool{
-		{
-			Name:        "list_scheduled_posts",
-			Description: listScheduledPostsDescription,
-			Schema:      NewJSONSchemaForAccessMode[ListScheduledPostsArgs](string(p.accessMode)),
-			Resolver:    typed("list_scheduled_posts", p.toolListScheduledPosts),
-		},
-		{
-			Name:        "create_scheduled_post",
-			Description: createScheduledPostDescription,
-			Schema:      NewJSONSchemaForAccessMode[CreateScheduledPostArgs](string(p.accessMode)),
-			Resolver:    typed("create_scheduled_post", p.toolCreateScheduledPost),
-		},
-		{
-			Name:        "update_scheduled_post",
-			Description: updateScheduledPostDescription,
-			Schema:      NewJSONSchemaForAccessMode[UpdateScheduledPostArgs](string(p.accessMode)),
-			Resolver:    typed("update_scheduled_post", p.toolUpdateScheduledPost),
-		},
-		{
-			Name:        "delete_scheduled_post",
-			Description: deleteScheduledPostDescription,
-			Schema:      NewJSONSchemaForAccessMode[DeleteScheduledPostArgs](string(p.accessMode)),
-			Resolver:    typed("delete_scheduled_post", p.toolDeleteScheduledPost),
-		},
-		{
-			Name:        "set_post_reminder",
-			Description: setPostReminderDescription,
-			Schema:      NewJSONSchemaForAccessMode[SetPostReminderArgs](string(p.accessMode)),
-			Resolver:    typed("set_post_reminder", p.toolSetPostReminder),
-		},
+		mcpReadTool(p, "list_scheduled_posts", listScheduledPostsDescription, p.toolListScheduledPosts),
+		mcpTool(p, "create_scheduled_post", createScheduledPostDescription, p.toolCreateScheduledPost),
+		mcpTool(p, "update_scheduled_post", updateScheduledPostDescription, p.toolUpdateScheduledPost),
+		mcpTool(p, "delete_scheduled_post", deleteScheduledPostDescription, p.toolDeleteScheduledPost),
+		mcpTool(p, "set_post_reminder", setPostReminderDescription, p.toolSetPostReminder),
 	}
 }
 
@@ -109,12 +85,12 @@ func (p *MattermostToolProvider) toolListScheduledPosts(mcpContext *MCPToolConte
 		return "no scheduled posts found", nil
 	}
 
-	sort.Slice(scheduled, func(i, j int) bool {
-		return scheduled[i].ScheduledAt < scheduled[j].ScheduledAt
+	slices.SortFunc(scheduled, func(a, b *model.ScheduledPost) int {
+		return cmp.Compare(a.ScheduledAt, b.ScheduledAt)
 	})
 
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d scheduled post(s):\n\n", len(scheduled)))
+	fmt.Fprintf(&result, "Found %d scheduled post(s):\n\n", len(scheduled))
 	for i, sp := range scheduled {
 		format.WriteScheduledPost(&result, format.ScheduledPostEntry{
 			HeaderLabel:   fmt.Sprintf("Scheduled Post %d", i+1),
@@ -141,11 +117,9 @@ func (p *MattermostToolProvider) toolCreateScheduledPost(mcpContext *MCPToolCont
 	}
 
 	scheduledPost := &model.ScheduledPost{
-		Draft: model.Draft{
-			ChannelId: args.ChannelID,
-			Message:   args.Message,
-			RootId:    args.RootID,
-		},
+		ChannelId:   args.ChannelID,
+		Message:     args.Message,
+		RootId:      args.RootID,
 		ScheduledAt: scheduledAt,
 	}
 	p.stampAIGeneratedDraft(&scheduledPost.Draft, mcpContext)

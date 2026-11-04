@@ -2,52 +2,18 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
+import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 
-//eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
-import {OverlayTrigger, Tooltip} from 'react-bootstrap';
+import {Tag} from '@mattermost/compass-ui/components/tag';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
-const Chip = styled.div`
-    position: relative;
-    display: flex;
-    align-items: center;
-    padding: 3px 8px 3px 22px;
+import {Capability, requiredLevelFor, useLicenseLevelName} from '@/license';
+
+const ChipAnchor = styled.span`
+    display: inline-flex;
     margin-left: 8px;
-    border-radius: 10px;
-    height: 20px;
-	width: fit-content;
-
-    font-size: 10px;
-    font-weight: 600;
-    line-height: 15px;
-
-    color: var(--button-bg);
-    background: rgba(var(--button-bg-rgb), 0.12);
-
-    &:before {
-        left: 7px;
-        top: 3px;
-        position: absolute;
-        content: '\f030b';
-        font-size: 12px;
-        font-family: 'compass-icons', mattermosticons;
-        -webkit-font-smoothing: antialiased;
-        -moz-osx-font-smoothing: grayscale;
-    }
-`;
-
-const MainText = styled.div`
-	font-size: 12px;
-	fong-weight: 600;
-	line-height: 15px;
-`;
-
-const SubText = styled.div`
-	font-size: 11px;
-	font-weight: 600;
-	line-height: 16px;
-	letter-spacing: 0.22px;
-	opacity: 0.56;
+    white-space: nowrap;
 `;
 
 type Props = {
@@ -61,19 +27,48 @@ type Props = {
 
 const EnterpriseChip = (props: Props) => {
     return (
-        <OverlayTrigger
-            placement='top'
-            overlay={
-                <Tooltip>
-                    <MainText>{props.title || 'Enterprise feature'}</MainText>
-                    <SubText>{props.subtext}</SubText>
-                </Tooltip>
-            }
+        <WithTooltip
+            title={props.title || 'Enterprise feature'}
+            hint={props.subtext}
         >
-            <Chip>
-                {props.text || 'Enterprise'}
-            </Chip>
-        </OverlayTrigger>
+            <ChipAnchor>
+                <Tag
+                    type='info'
+                    label={props.text || 'Enterprise'}
+                />
+            </ChipAnchor>
+        </WithTooltip>
+    );
+};
+
+// useLicenseChipProps names the required plan for a capability. Pass the
+// result to EnterpriseChip so admin surfaces stay consistent.
+export function useLicenseChipProps(capability: Capability): {title: string; text: string; subtext: string; levelName: string} {
+    const intl = useIntl();
+    const levelName = useLicenseLevelName();
+    const name = levelName(requiredLevelFor(capability));
+    const available = intl.formatMessage(
+        {defaultMessage: 'Available on {level} plans and above'},
+        {level: name},
+    );
+    return {
+        title: available,
+        text: name,
+        subtext: available,
+        levelName: name,
+    };
+}
+
+// LicenseChip marks a control as unavailable at the current license level and
+// names the plan that provides capability.
+export const LicenseChip = ({capability}: {capability: Capability}) => {
+    const chip = useLicenseChipProps(capability);
+    return (
+        <EnterpriseChip
+            title={chip.title}
+            text={chip.text}
+            subtext={chip.subtext}
+        />
     );
 };
 

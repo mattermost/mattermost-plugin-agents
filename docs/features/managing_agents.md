@@ -36,9 +36,9 @@ The **System Console > AI Bots** page no longer hosts the agent editor. Instead,
 The Agents page itself shows:
 
 - A header with the page title and a **Create agent** button (visible only to users who can create agents — see [Permissions and license](#permissions-and-license)).
-- Two tabs: **All agents** (every agent the user can see) and **Your agents** (agents the current user created).
+- Two tabs: **All agents** (every agent the user can see) and **Your agents** (agents the current user created that they can still see).
 - A search box that filters by display name or username.
-- One row per agent showing the avatar, display name, `@username`, an **All MCP tools** or **N tools** badge, and a **Service unavailable** warning badge if the agent's configured AI service is missing.
+- One row per agent showing the avatar, display name, `@username`, an **All MCP tools** or **N tools** badge, and an **Inactive** warning badge when the agent is not running. Hovering the badge explains why: the agent's AI service was deleted or is missing required settings, the service is not active on the current plan, or the plan's agent limit is reached (see [Agent shows an "Inactive" badge](#agent-shows-an-inactive-badge)).
 - A row-level overflow menu (`⋯`) with **Edit** and **Delete** actions for users who can manage that agent. Selecting the row itself also opens the editor for users who can manage the agent.
 
 ## Permissions and license
@@ -65,19 +65,31 @@ The Agents page applies these rules consistently between the UI and the API:
 
 By default, regular users do not have `manage_own_agent`. Grant it through your existing Mattermost role/permission model to delegate agent creation — typically under **System Console > User Management > Permissions** (exact path varies by Mattermost server version).
 
+### Who can see which agents
+
+Manage permission alone does not decide list visibility. Agents (and the AI services shown when binding an agent) are filtered by what the signed-in user can use:
+
+- **System administrators** can see agents even when a service ABAC policy would deny them personally, so they can rebind services or restore access.
+- **All other users** — including creators and delegated agent admins — only see agents they can use under both agent access and the agent's AI service access. Agents whose service they cannot use are hidden, not shown with a deny badge.
+
+If a non–system-admin agent admin loses access to an agent's service under ABAC, that agent disappears from their Agents page until a system admin restores service access or changes the binding. See [Attribute-based access control (ABAC)](../admin_guide.md#attribute-based-access-control-abac) in the Admin Guide.
+
 ### License
 
-The number of self-service agents you can create is gated by Mattermost's multi-LLM license check (Entry, Enterprise, or Enterprise Advanced).
+The number of agents that can be active depends on the license level. Configuration-file bots and user-created agents count together as one pool.
 
-- **Without a multi-LLM license**, you can create and fully manage a single agent (`FreeTierAgentLimit = 1`, defined in `api/api_agents.go`). The Agents page always shows the agent list; once one agent exists the **Create agent** button is disabled with an upgrade hint. The API safety rail returns HTTP 403 with the message *"creating more than 1 self-service agent(s) requires an E20 or Enterprise license"* for any over-limit creation attempt.
-- **With a multi-LLM license**, agent creation is unlimited (subject to permissions).
+- **Free** (no license): one agent. Once one agent exists, the **Create agent** button is disabled with a hint naming the plan that raises the cap, and the API returns HTTP 403 with an actionable licensing message for any over-limit creation attempt.
+- **Professional**: three agents.
+- **Enterprise, Entry and Enterprise Advanced**: unlimited agents (subject to permissions).
+
+Agent access controls (restricting an agent to named users, teams or channels, and the corresponding block lists) are available at Professional and above; attribute-based access is available at Enterprise Advanced; service-account authentication is available at Enterprise and above. Resetting any of these to their open defaults is always permitted, and an agent that already has user, team or channel lists can have those lists edited at any level.
 
 For the full feature/license matrix, see [License requirements](../admin_guide.md#license-requirements) in the Admin Guide.
 
 ## Creating an agent
 
 1. Open the **Agents** page.
-2. Select **Create agent**. A full-page editor opens with three tabs: **Configuration**, **Access**, and **MCPs**.
+2. Select **Create agent**. A full-page editor opens with four tabs: **Configuration**, **Access**, **MCPs**, and **Skills**.
 3. Fill in the tabs (see below). Required fields are validated when you save.
 4. Select **Save**. The plugin creates a Mattermost bot user, persists the agent record, propagates the change to other cluster nodes, and returns you to the Agents list.
 
@@ -90,19 +102,20 @@ The Configuration tab covers identity, model selection, custom instructions, and
 | Field | Description |
 |---|---|
 | **Display name** | Required. The user-facing name shown in posts, the agent list, and the RHS picker. Updating the display name also updates the linked Mattermost bot's display name. |
-| **Agent username** | Required. The `@mention` handle for the agent. Must start with a letter and contain only lowercase letters, numbers, periods, hyphens, and underscores. Maximum 22 characters in the UI. The server-side validator does not enforce a length limit; direct API callers are constrained only by the database schema (`VARCHAR(64)`). **The username is set when the agent is created and cannot be changed afterward.** |
+| **Agent username** | Required. The `@mention` handle for the agent. Must start with a letter and contain only lowercase letters, numbers, periods, hyphens, and underscores. Maximum 22 characters in the UI. The server-side validator does not enforce a length limit; direct API callers are constrained only by the database schema (`VARCHAR(64)`). The username can be changed later; see [Renaming an agent](#renaming-an-agent). |
 | **Agent avatar** | Optional. Upload a custom image. Avatar upload is a second step after the agent record is created or updated; if the avatar upload fails the rest of the save still succeeds. |
 | **AI Service** | Required. Pick a configured service from the dropdown. Services are managed in **System Console > Plugins > Agents** and shared across agents. If the agent references a service that has been deleted, an "Unknown service (deleted)" entry appears in the dropdown until you pick a new one. |
 | **Model** | Optional. Override the service's default model for this agent. For OpenAI, Anthropic, Azure, OpenAI Compatible, Gemini, and Vertex AI services the field becomes a combobox populated by a live model fetch from the provider; for other services it is a free-text field. Leave empty to use the service default. |
-| **Max tool turns** | Maximum number of consecutive tool-call/execute rounds the agent performs in a single response before stopping. Defaults to **30** (allowed range **1–250**). Lower this for smaller models that tend to loop on tool calls; raise it for agents that chain many tools per turn (for example dynamic MCP discovery: search → load → execute). Clearing the field saves the default. |
+| **Max tool turns** | Maximum number of consecutive tool-call/execute rounds the agent performs in a single response. After the last round the agent writes its final answer without calling more tools. Defaults to **30** (allowed range **1–250**). Lower this for smaller models that tend to loop on tool calls; raise it for agents that chain many tools per turn (for example dynamic MCP discovery: search → load → execute). Clearing the field saves the default. |
 | **Custom instructions** | Free-text. Prepended to every request as the agent's system prompt. Use it for tone, role, vocabulary, or workflow guidance. |
 | **Enable Vision** | Available for service types that support image input. Lets the agent process attached images. Requires a vision-capable model. |
 | **Enable Tools** | Available for service types that support tool calling. When off, the agent runs without tools and the **MCPs** tab is disabled. Some Mattermost Agents features will not work without tools. |
 | **Native provider tools** | Available when the selected provider exposes native tools (Anthropic, OpenAI on Responses API, Gemini, Vertex AI, and OpenAI Compatible/Azure when **Use Responses API** is on). Pick which native tools (such as web search) the agent may use. |
-| **Reasoning** | Available for Anthropic, OpenAI (Responses API), Gemini, and Vertex AI services. Lets you enable extended thinking and pick a reasoning effort or thinking budget. |
-| **Structured Output** | Available for Anthropic, OpenAI, OpenAI Compatible, and Azure services. When enabled and a JSON schema is supplied at request time, the model returns valid JSON matching the schema. For Anthropic services, **Structured Output** and extended thinking can both stay enabled; because Anthropic doesn't support both on the same request, requests that ask for structured JSON output skip extended thinking while all other requests keep using it. |
+| **Reasoning** | Available for Anthropic, OpenAI (Responses API), Gemini, and Vertex AI services. Lets you enable extended thinking and pick a reasoning effort. Gemini and Vertex AI also accept an optional thinking budget. |
 
-Switching the **AI Service** to a service of a different type clears the model field and resets the native tools, reasoning, thinking budget, and structured output fields back to defaults so you don't carry stale provider-specific values across providers. Switching between two services of the same type (for example two OpenAI Compatible entries) preserves those fields.
+Structured output is not configured on the agent. How a request-time JSON schema is fulfilled (native provider structured output versus a prompt-based fallback) is controlled by the **Structured output** policy on the service, configured in **System Console > Plugins > Agents**; see [Structured output](../admin_guide.md#structured-output) in the Admin Guide. The deprecated per-agent `structuredOutputEnabled` API property and database column are still accepted for compatibility but are ignored at runtime.
+
+Switching the **AI Service** to a service of a different type clears the model field and resets the native tools, reasoning, and thinking budget fields back to defaults so you don't carry stale provider-specific values across providers. Switching between two services of the same type (for example two OpenAI Compatible entries) preserves those fields.
 
 If the form is invalid when you select **Save**, validation errors are shown inline (display name required, username required and must match the allowed pattern, AI Service required) and the editor returns to the Configuration tab.
 
@@ -119,7 +132,8 @@ The Access tab controls who can interact with the agent and who can administer i
   - **All users** (default): anyone in the workspace.
   - **Allow only**: only listed users, or members of listed teams.
   - **Block**: everyone except listed users or members of listed teams.
-- **Agent admins** is a list of users who can edit and delete this agent in addition to the creator. The agent creator is always an admin and is not shown in the editable list.
+  - **Attribute-based (access policy)**: an ABAC policy is the only user-access gate (allow/block lists are ignored). See [Attribute-based access control (ABAC)](../admin_guide.md#attribute-based-access-control-abac).
+- **Agent admins** is a list of users who can edit and delete this agent in addition to the creator. The agent creator is always an admin and is not shown in the editable list. Agent admins still only *see* the agent when they can use its AI service (system admins are the exception — see [Who can see which agents](#who-can-see-which-agents)).
 
 These rules are enforced both for `@mentions` in channels and for direct conversations with the agent. They are enforced in the server in `bots/permissions.go`, so they apply uniformly to UI flows, slash commands, and tool-driven access.
 
@@ -128,7 +142,7 @@ These rules are enforced both for `@mentions` in channels and for direct convers
 The MCPs tab is available only when **Enable Tools** is on (Configuration tab). It controls which MCP tools the agent may call and how MCP tool schemas are exposed to the model.
 
 - **Dynamic tool loading**: enabled by default for new agents and for existing agents that do not yet have this setting. The agent starts with MCP discovery and loading helpers, then loads full MCP tool schemas only when needed. Disable this to use the full MCP tool list for this agent up front. Once a tool is loaded in a conversation, it can be used in later turns in that same conversation without repeating the search/load prelude.
-- **Automatically enable all MCP tools**: the agent has access to every MCP tool available in the server right now and to any MCP tools added later. This is the default for new agents and the setting used by all migrated legacy bots.
+- **Automatically enable all MCP tools**: the agent isn't limited to a list of tools. It can use any MCP tool the requesting user can use, including MCP tools added later. MCP server access policies, the servers the user has turned off, and license limits still apply. This is the default for new agents and the setting used by all migrated legacy bots.
 - When the auto-grant is off, pick the specific MCP tools to enable. Tools that are no longer present on the server are dropped from the agent's allowlist when you save.
 - For OAuth-backed MCP servers, you can also start the per-user **Connect** flow directly from this tab. Enabling a server that is currently disconnected stores a wildcard grant — once you finish the OAuth flow, the agent gets every tool that server exposes. The tab refreshes automatically when you connect or disconnect (`mcp_connection_updated` websocket event). **Connect** is not shown while **Use service accounts for authentication** is on; the tab lists that agent's service-account catalog instead of your personal connections.
 - **Use service accounts for authentication** switches the agent from per-user credentials to admin-configured service account credentials for **external** MCP servers. External MCP servers without service account headers configured in the System Console are excluded from the agent (fail closed). Mattermost (embedded) and plugin tools run with each requesting user's own permissions, and users are never asked to connect accounts. The MCPs tab then shows **Connected** for servers whose service account credentials work, and **No service account credentials** for servers that have none. Turning it on shows a warning because it flattens permissions on those external servers — anyone who can use the agent acts with the agent's shared access there — so restrict usage on the **Access** tab. Only system administrators can turn this setting on. While it is enabled, some fields are system-admin-only; see [What's editable vs locked](#whats-editable-vs-locked). Anyone who can manage the agent can still turn the setting off or delete the agent. Requires the same license as remote MCP servers. See [Service account authentication](../admin_guide.md#service-account-authentication) in the Admin Guide.
@@ -137,13 +151,25 @@ Dynamic tool loading and the auto-grant are separate controls: dynamic loading d
 
 Per-tool **approval policies** (`ask`, `auto_run`, `auto_run_everywhere`) are configured by an administrator in **System Console > Plugins > Agents > Model Context Protocol (MCP) > Tools**. Granting a tool to an agent on the MCPs tab does **not** override those policies — runtime approval still applies. MCP discovery and loading helpers run automatically, but MCP tools that are dynamically loaded still follow their configured approval policy. For more on MCP setup, see [Model Context Protocol (MCP)](../admin_guide.md#model-context-protocol-mcp-integration) in the Admin Guide. For more on the approval model, see [Multiplayer Tool Calling](multiplayer_tool_calling.md).
 
+### Skills tab
+
+The Skills tab is available only when **Enable Tools** is on (Configuration tab). It controls which [skills](skills.md) the agent can load on its own. The agent sees each available skill's name and description, and loads a skill's instructions when a request matches.
+
+- **Enable skills** turns every skill on or off for this agent, including the skills built into Agents.
+- **Allow personal skills** lets each user's own skills be used by this agent in that user's direct messages with it. Personal skills are never used in channels.
+- **Shared skills** lists skills shared with the workspace. Each one must be turned on for this agent; skills shared later are not added automatically. Shared skills require the same license as sharing skills.
+- **Description override** replaces a skill's description for this agent only (up to 1024 characters), for example to say when this agent should use it.
+- **Your personal skills** lists skills only you can use. Select **Share** to share one with the workspace and turn it on for this agent.
+
+Skills built into Agents are not listed; they are offered whenever the tools they need are available. A skill without a description is not offered to the agent automatically.
+
 ## Editing an agent
 
 To edit an agent:
 
 1. Open the **Agents** page.
 2. Select the row, or open the row's `⋯` menu and choose **Edit**.
-3. Update fields across the three tabs as needed. The editor opens on the **Configuration** tab and remembers your tab selection while editing.
+3. Update fields across the four tabs as needed. The editor opens on the **Configuration** tab and remembers your tab selection while editing.
 4. Select **Save**.
 
 The editor uses a full-document `PUT /agents/:id` save, so every visible field on every tab is sent on save. There is no per-field partial update.
@@ -152,15 +178,23 @@ API clients can set `mcpDynamicToolLoading` on `POST /agents` and `PUT /agents/:
 
 ### What's editable vs locked
 
-While **Use service accounts for authentication** is off, anyone who can manage the agent may edit every field except the permanent username (below).
+While **Use service accounts for authentication** is off, anyone who can manage the agent may edit every field.
 
 While **Use service accounts for authentication** is enabled:
 
-- **Editable by anyone who can manage the agent:** display name, avatar, AI service, model, max tool turns, custom instructions, vision, Enable Tools, native tools, dynamic tool loading, reasoning, and structured output.
+- **Editable by anyone who can manage the agent:** display name, username, avatar, AI service, model, max tool turns, custom instructions, vision, Enable Tools, native tools, dynamic tool loading, and reasoning.
 - **System-admin-only (sensitive):** channel access, user access, and agent admins; MCP tool grants and **Automatically enable all MCP tools**; and enabling service account authentication itself.
 - Anyone who can manage the agent may still turn service account authentication **off** or delete the agent.
 
-- **Agent username is permanent.** Once the agent is created, the username field is disabled in the editor. The Mattermost bot account is keyed off this username, and changing it would orphan existing `@mentions` and conversation history. To use a different username, create a new agent.
+### Renaming an agent
+
+Changing **Agent username** renames the agent's existing Mattermost bot account in place. The bot keeps its user ID, so its direct messages, channel memberships, threads, and avatar stay with the agent. Selecting **Save** with a new username first shows a **Change agent username?** confirmation that lists what the rename affects:
+
+- Existing messages that mention the old `@username` keep that text and no longer link to the agent.
+- People must mention the new username to reach the agent, and slash commands (such as `/summarize-channel --bot`), scripts, or integrations that use the old username must be updated.
+- The old username becomes available, so another user or bot could claim it.
+
+The default agent and transcript agent settings select an agent by its bot user ID, so they keep selecting the agent after a rename. Renaming fails with "This username is already taken" when any Mattermost user or bot, including a deactivated one, already has the new username. Agents defined only in the plugin configuration file, rather than on the **Agents** page, can't be renamed this way.
 
 ### Unsaved-changes warning
 
@@ -173,6 +207,67 @@ The dirty-state check considers both form fields and a queued avatar upload, so 
 - Updating the agent's display name flows through to the linked Mattermost bot's display name immediately.
 - Updating the AI service, model, or instructions takes effect on the next agent turn — in-flight responses already streaming to a user are not interrupted.
 - Updating channel/user access rules takes effect immediately for new mentions; the next time a user `@mentions` the agent in a channel that is now blocked, the agent will refuse the request.
+
+## Version history
+
+Every successful save of an agent creates a new numbered version: 1, 2, 3, and so on. The agent always runs its latest version; there are no drafts or pinned versions. Creating, editing, and restoring an agent each add a version, and so do a few internal writes (for example, the legacy bot migration), which are labeled **System**. Agents that existed before version history was introduced get a version 1, labeled **Initial version**, when the plugin activates. If an agent's stored configuration changes outside the editor (for example, an internal migration), a **System** version records that change before the next save, so the next editor is never credited with it.
+
+To view the history, open an existing agent in the editor and select the version line under the agent's name (for example, `v7 · by Dana Lee, 2d ago`) or the **Version history** button (the update icon) to the left of **Import** and **Export**. The line shows `Unsaved changes` while the editor has edits that aren't saved yet. The version history opens in a window with the versions listed on the left, each with its version number, who saved it, and when. Select a version to see, on the right, how it was produced, who created it, when it was saved, and a read-only view of its full configuration, with a **Changed** marker on each setting that differs from the previous version. Settings the view has no row for, such as the username, are listed under it as **Also changed**. The newest 50 versions are shown first; choose **Load older versions** below the list to see earlier ones.
+
+To roll back, select a version and choose **Restore this version**, or open the **...** menu on a version in the list and choose **Restore this version**. The confirmation lists the settings the restore changes compared with the current version. Restoring saves that version's configuration as a new latest version; history is never rewritten, so you can always restore back. If the editor has unsaved changes, they are discarded. A restore goes through the same checks as a normal save:
+
+- The version's AI service must still exist. If it has since been deleted, the restore is rejected; restore a different version or edit the agent instead.
+- License gates, access validation, and the service account rules in [What's editable vs locked](#whats-editable-vs-locked) apply as if you had made the same edit by hand.
+- The username never changes. If the agent was renamed after the version was saved, it keeps its current username; use [Renaming an agent](#renaming-an-agent) to change it.
+- Versions do not store attribute-based access policies. Switching an agent away from attribute-based access deletes its policy, so restoring an earlier attribute-based version leaves the agent with no policy and nobody can use it. The confirmation warns about this, and after the restore the editor opens the **Access** tab so you can create a new policy.
+
+Only users who can manage the agent can see its history, because versions include the agent's custom instructions. Restores are recorded in the server audit log as `restoreAgentVersion` (agent, version number, and changed setting names only).
+
+### Deleting versions
+
+Versions keep everything an agent was ever saved with, including instructions that were later removed. If something sensitive was saved (for example, an access token pasted into the instructions), first edit the agent to remove it, then delete the versions that still hold it. In the version history window you can:
+
+- Open the **...** menu on a previous version in the list (it appears when you hover over or focus the version) and choose **Delete this version**.
+- Open the **...** menu at the top of the version list and choose **Select multiple versions**, check the versions to remove, and choose **Delete selected**.
+- Open the same menu and choose **Delete all previous versions** to delete every version except the current one.
+
+Both ask for confirmation first.
+
+Deleted versions are permanently removed and can't be restored. The current version is the agent's live configuration and can't be deleted. Version numbers are never reused: the next save continues from the current number. Deleting versions is recorded in the server audit log as `deleteAgentVersions` (agent, the deleted version numbers or whether all previous versions were deleted, and how many were deleted).
+
+### Keeping a limited history
+
+By default every version is kept. To keep only the most recent versions of each agent, go to **System Console > Plugins > Agents**, set **Limit agent version history** to **True**, and set **Versions to keep per agent** (including the current version). When you save the setting, older versions of every agent are deleted, and from then on each save deletes the versions that fall outside the limit. Set **Limit agent version history** back to **False** to keep every version again; versions already deleted aren't restored.
+
+Deleting an agent also deletes all of its versions.
+
+## Exporting and importing agents
+
+You can copy an agent's purpose and tool setup to another Mattermost server by exporting it to a file and importing that file on the other server.
+
+### Export
+
+Users who can manage an agent can export it with **Export** in the editor header or in the row's `⋯` menu on the **Agents** page. This downloads a `<username>-v<version>.agent.json` file containing the agent's current version.
+
+The file contains only settings that mean the same thing on any server:
+
+- Suggested username and display name
+- Custom instructions
+- **Enable Tools**, **Max tool turns**, and dynamic tool loading
+- **Automatically enable all MCP tools**, and the list of granted MCP tools, each identified by its MCP server's URL
+
+The file does **not** contain the AI service, model, reasoning settings, native provider tools, vision, access rules (channels, users, teams, attribute-based policies), agent admins, the service account setting, the avatar, or any IDs. It never contains MCP server credentials or AI service keys. Custom instructions are included, so treat the file as you would the instructions themselves.
+
+### Import
+
+Importing loads a file's settings into the agent editor. Nothing is saved until you choose **Save**, and the save goes through the same checks as any other edit. Review the imported custom instructions before saving: they become the agent's instructions.
+
+- **New agent:** select **Import** on the **Agents** page and choose a file. This opens a new agent with the file's settings, including its suggested username and display name. Pick the AI service and any other settings, then save. This requires permission to create agents and counts toward the agent limit.
+- **Existing agent:** open the agent in the editor, select **Import**, and choose a file. Only the settings the file carries are replaced. The agent's username, display name, AI service, model, access rules, admins, and service account setting stay as they are.
+
+MCP tools in the file are matched to the MCP servers your **MCPs** tab lists, by server URL (ignoring surrounding whitespace and a trailing `/`). Matched tools are stored under the server's URL exactly as it is configured here. Tools of servers that aren't listed are left out, and the editor names those servers so you can grant replacement tools on the **MCPs** tab before saving. When the file turns on **Automatically enable all MCP tools**, no matching is needed.
+
+Files larger than 2 MiB, files that aren't agent exports, and files with an unsupported format version are rejected. An imported agent's first save is recorded like any other create or edit.
 
 ## Deleting an agent
 
@@ -188,7 +283,7 @@ Deleting an agent:
 - Deactivates the linked Mattermost bot account, so `@mentions` no longer route to it.
 - Publishes a cluster event so every Mattermost node refreshes its bot cache, and broadcasts a `bots_invalidate` websocket event so connected webapp clients drop the agent from their pickers.
 
-Existing posts that mention or were authored by the agent remain in channels with their original content; only the agent's ability to reply to new requests is removed. Custom prompts that referenced the agent by username may no longer resolve that agent after deletion.
+Existing posts that mention or were authored by the agent remain in channels with their original content; only the agent's ability to reply to new requests is removed. Skills that referenced the agent by username may no longer resolve that agent after deletion.
 
 ## Legacy bot migration
 
@@ -237,7 +332,7 @@ If migration was not performed (because no `config.bots` entries existed) the fl
 
 ### Backups
 
-`Agents_UserAgents` is a plugin-owned table and is included in standard Mattermost database backups. Plain `mattermost-config.json` snapshots are no longer sufficient to restore agents — they contain only services and the default-bot setting, not agent definitions. See [Backup and restore](../admin_guide.md#backup-and-restore) for details.
+`Agents_UserAgents` and its version history in `Agents_AgentVersions` are plugin-owned tables and are included in standard Mattermost database backups. Plain `mattermost-config.json` snapshots are no longer sufficient to restore agents — they contain only services and the default-bot setting, not agent definitions. See [Backup and restore](../admin_guide.md#backup-and-restore) for details.
 
 ## HA cluster behavior
 
@@ -263,7 +358,7 @@ Practical consequences:
 
 ### "Create agent" is disabled and an upgrade hint is shown
 
-The server is at the free-tier self-service agent limit without a multi-LLM licence. The Agents page still shows the list, but after one self-service agent exists, **Create agent** is disabled. Apply an Entry, Enterprise, or Enterprise Advanced licence in **System Console > About > Edition and License** to create additional agents, or delete the existing free-tier agent before creating a replacement.
+The server has reached the number of agents its license level allows (one on Free, three on Professional). The Agents page still shows the list, but **Create agent** is disabled. Apply a Professional, Entry, Enterprise, or Enterprise Advanced licence in **System Console > About > Edition and License** to raise the cap, or delete an existing agent before creating a replacement.
 
 ### "Create agent" button is hidden
 
@@ -273,17 +368,23 @@ The signed-in user does not have `manage_own_agent` or `manage_system`. Grant `m
 
 The signed-in user is not the agent's creator, not in **Agent admins**, and does not have `manage_others_agent`. For migrated legacy bots (no creator), only system administrators see these actions.
 
-### Agent shows "Service unavailable" badge
+### Agent shows an "Inactive" badge
 
-The agent's `serviceID` no longer matches any service in **System Console > Plugins > Agents**. Edit the agent and pick a current service from the dropdown, or restore the missing service in System Console.
+The agent is stored but not running. The badge tooltip names the reason:
+
+- **Service deleted or incomplete** — the agent's `serviceID` no longer matches a service in **System Console > Plugins > Agents**, or that service is missing required settings such as its API key. Edit the agent and pick a current service, or complete the service configuration.
+- **Service not active on the plan** — Free and Professional use only the first service in the **Services** list. Edit the agent and choose that service; multiple services are available at Enterprise and above.
+- **Agent limit reached** — the plan's agent cap is filled by configuration-file bots and agents created earlier. Delete an earlier agent or move to a plan with more agents.
+
+The badge is **not** used to mean "you are denied by service ABAC." Non–system-admins who cannot use an agent's service simply do not see that agent.
 
 ### Saving an agent returns "This username is already taken"
 
-Another agent (active or recently deleted) already uses the username. Pick a different username. Usernames cannot be changed after creation, so attempting to edit the conflicting agent is not a workaround — delete that agent if it is truly unused, or pick another name.
+Another Mattermost user or bot (active or deactivated, including a deleted agent's bot) already uses the username. Pick a different username, or rename the agent that holds it first; see [Renaming an agent](#renaming-an-agent).
 
-### Saving an agent returns "creating more than 1 self-service agent(s) requires an E20 or Enterprise license"
+### Saving an agent returns a licensing error naming a required plan
 
-You are at the free-tier limit and the server does not have a multi-LLM license. Apply a qualifying license, or delete the existing agent before creating a replacement.
+The server has reached the number of agents its license level allows, or the agent uses a capability available at a higher level (for example access controls, attribute-based access or service-account authentication). The message names the level that provides it. Apply a qualifying license, or adjust the agent so it stays within the current level.
 
 ### Avatar didn't update after save
 
@@ -293,9 +394,9 @@ Avatar upload runs as a second request after the agent record is saved. If the a
 
 This was a known issue (MM-68531, fixed in PR #690). If you observe this on a v2.0 build, confirm the plugin version includes that fix and refresh the page.
 
-### MCPs tab is grayed out
+### MCPs or Skills tab is grayed out
 
-The agent has **Enable Tools** turned off in the Configuration tab. Turn it back on to access MCP configuration. Some product features (channel summaries with tool-backed actions, tool-using custom prompts) will not work for this agent until tools are enabled.
+The agent has **Enable Tools** turned off in the Configuration tab. Turn it back on to access MCP and skill configuration. Some product features (channel summaries with tool-backed actions, skills, tool-using skills) will not work for this agent until tools are enabled.
 
 ### MCP server is shown but tools list is empty
 
@@ -315,6 +416,6 @@ Migrated legacy bots have no creator and no agent admins, so only system adminis
 
 - [Admin Guide](../admin_guide.md) — installing the plugin, configuring services, embedding search, MCP servers, per-tool policies.
 - [Upgrading to 2.0](../upgrading_to_2.0.md) — full upgrade path including the `config.bots` → DB migration covered above.
-- [Custom Prompts](custom_prompts.md) — reusable prompt templates that can target a specific agent.
+- [Skills](skills.md) — reusable instructions that you can run yourself or that agents load when a request matches.
 - [Multiplayer Tool Calling](multiplayer_tool_calling.md) — how tool approval works in channels, including the initiator-only approval rule.
 - [Providers](../providers.md) — provider-specific configuration referenced by the **AI Service** field.

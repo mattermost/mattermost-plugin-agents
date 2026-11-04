@@ -4,8 +4,12 @@
 import React from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 
-import Panel from '../panel';
-import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem} from '../item';
+import {AdminPanel} from '@mattermost/compass-ui/components/admin-panel';
+
+import {useIsLicensedFor} from '@/license';
+
+import {BooleanItem, ItemList, SelectionItem, TextItem} from '../item';
+import {LicenseChip} from '../enterprise_chip';
 
 export type WebSearchGoogleConfig = {
     apiKey: string;
@@ -20,11 +24,17 @@ export type WebSearchBraveConfig = {
     apiURL: string;
 };
 
+export type WebSearchSearXNGConfig = {
+    baseURL: string;
+    resultLimit: number;
+};
+
 export type WebSearchConfig = {
     enabled: boolean;
     provider: string;
     google: WebSearchGoogleConfig;
     brave: WebSearchBraveConfig;
+    searxng: WebSearchSearXNGConfig;
     domainDenylist: string[] | null; // server sends nil Go slice as JSON null
 };
 
@@ -35,13 +45,16 @@ type Props = {
 
 const DEFAULT_GOOGLE_CONFIG = {apiKey: '', searchEngineId: '', resultLimit: 5, apiURL: ''};
 const DEFAULT_BRAVE_CONFIG = {apiKey: '', resultLimit: 5, apiURL: ''};
+const DEFAULT_SEARXNG_CONFIG = {baseURL: '', resultLimit: 5};
 
 const WebSearchPanel = ({value, onChange}: Props) => {
     const intl = useIntl();
+    const sovereignSearchLicensed = useIsLicensedFor('sovereign_web_search');
 
     // Provide defaults for missing config objects
     const google = value.google || DEFAULT_GOOGLE_CONFIG;
     const brave = value.brave || DEFAULT_BRAVE_CONFIG;
+    const searxng = value.searxng || DEFAULT_SEARXNG_CONFIG;
     const domainDenylist = value.domainDenylist || [];
 
     const handleUpdate = (patch: Partial<WebSearchConfig>) => {
@@ -56,8 +69,12 @@ const WebSearchPanel = ({value, onChange}: Props) => {
         handleUpdate({brave: {...brave, ...patch}});
     };
 
+    const handleSearxngUpdate = (patch: Partial<WebSearchSearXNGConfig>) => {
+        handleUpdate({searxng: {...searxng, ...patch}});
+    };
+
     return (
-        <Panel
+        <AdminPanel
             title={<FormattedMessage defaultMessage='Web Search'/>}
             subtitle={intl.formatMessage({defaultMessage: 'Configure built-in web search for agents that do not have native web search capabilities. NOTE: If your agent is configured to use native tool web search, that will be used instead of this web search.'})}
         >
@@ -65,18 +82,24 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                 <BooleanItem
                     label={intl.formatMessage({defaultMessage: 'Enable Web Search'})}
                     value={value.enabled}
+                    disableTrue={!sovereignSearchLicensed}
+                    extra={!sovereignSearchLicensed && (
+                        <LicenseChip capability='sovereign_web_search'/>
+                    )}
                     onChange={(enabled) => handleUpdate({enabled})}
                     helpText={intl.formatMessage({defaultMessage: 'Allow agents to call Mattermost\'s built-in web search tool. If your LLM already provides native web search support, leave this disabled.'})}
                 />
                 <SelectionItem
                     label={intl.formatMessage({defaultMessage: 'Provider'})}
                     value={value.provider}
-                    onChange={(e) => handleUpdate({provider: e.target.value})}
+                    onChange={(provider) => handleUpdate({provider})}
                     disabled={!value.enabled}
-                >
-                    <SelectionItemOption value='google'>{'Google Custom Search'}</SelectionItemOption>
-                    <SelectionItemOption value='brave'>{'Brave Search'}</SelectionItemOption>
-                </SelectionItem>
+                    options={[
+                        {value: 'google', label: 'Google Custom Search'},
+                        {value: 'brave', label: 'Brave Search'},
+                        {value: 'searxng', label: intl.formatMessage({defaultMessage: 'SearXNG (self-hosted)'})},
+                    ]}
+                />
                 {value.provider === 'google' && (
                     <>
                         <TextItem
@@ -140,6 +163,27 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                         />
                     </>
                 )}
+                {value.provider === 'searxng' && (
+                    <>
+                        <TextItem
+                            label={intl.formatMessage({defaultMessage: 'SearXNG Base URL'})}
+                            value={searxng.baseURL}
+                            onChange={(e) => handleSearxngUpdate({baseURL: e.target.value})}
+                            helptext={intl.formatMessage({defaultMessage: 'Root URL of your SearXNG instance (e.g. https://searx.example.com). The instance must allow the json format (search.formats in its settings). If the instance is on a private/reserved address, add it to the Mattermost AllowedUntrustedInternalConnections setting.'})}
+                            disabled={!value.enabled}
+                        />
+                        <TextItem
+                            label={intl.formatMessage({defaultMessage: 'SearXNG Result Limit'})}
+                            type='number'
+                            value={searxng.resultLimit.toString()}
+                            onChange={(e) => {
+                                const parsed = parseInt(e.target.value, 10);
+                                handleSearxngUpdate({resultLimit: Number.isNaN(parsed) ? 5 : parsed});
+                            }}
+                            disabled={!value.enabled}
+                        />
+                    </>
+                )}
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'Domain Denylist (optional)'})}
                     value={domainDenylist.join(', ')}
@@ -151,7 +195,7 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                     disabled={!value.enabled}
                 />
             </ItemList>
-        </Panel>
+        </AdminPanel>
     );
 };
 
