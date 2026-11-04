@@ -212,8 +212,14 @@ export const SelectUsers = (props: SelectUsersProps) => {
     };
 
     const handleChange = (options: ComboboxOption[]) => {
+        const pickedIDs = options.map((option) => option.value);
+        const shownIDs = selected.map((option) => option.value);
+
+        // IDs without a loaded profile cannot be shown or removed here, so keep them.
+        const unloadedIDs = props.userIDs.filter((id) => !shownIDs.includes(id) && !pickedIDs.includes(id));
+
         setSelected(options);
-        props.onChangeUserIDs(options.map((option) => option.value));
+        props.onChangeUserIDs([...pickedIDs, ...unloadedIDs]);
     };
 
     return (

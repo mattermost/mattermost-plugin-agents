@@ -55,6 +55,7 @@ import {chooseOption} from '../../../tests/compass_select';
 
 import MCPToolsViewer from './mcp_tools_viewer';
 import {MCPConfig, MCPToolsResponse} from './mcp_types';
+import {SettingsReadOnlyContext} from './settings_read_only';
 /* eslint-enable import/first, import/order */
 
 const mockGetMCPTools = getMCPTools as jest.Mock;
@@ -94,16 +95,18 @@ function makePluginToolsResponse(): MCPToolsResponse {
     };
 }
 
-function renderViewer(toolsData: MCPToolsResponse | null, mcpConfig: MCPConfig = makeMCPConfig()) {
+function renderViewer(toolsData: MCPToolsResponse | null, mcpConfig: MCPConfig = makeMCPConfig(), readOnly = false) {
     const onConfigChange = jest.fn();
     return {
         ...render(
             <IntlProvider locale='en'>
-                <MCPToolsViewer
-                    mcpConfig={mcpConfig}
-                    onConfigChange={onConfigChange}
-                    initialToolsData={toolsData}
-                />
+                <SettingsReadOnlyContext.Provider value={readOnly}>
+                    <MCPToolsViewer
+                        mcpConfig={mcpConfig}
+                        onConfigChange={onConfigChange}
+                        initialToolsData={toolsData}
+                    />
+                </SettingsReadOnlyContext.Provider>
             </IntlProvider>,
         ),
         onConfigChange,
@@ -364,7 +367,7 @@ test('lists servers that share a URL, as read-only viewers get them, as separate
                 needsOAuth: false,
                 error: null,
             })),
-        });
+        }, makeMCPConfig(), true);
 
         expect(screen.getByText('Tracker')).toBeTruthy();
         expect(screen.getByText('Wiki')).toBeTruthy();
