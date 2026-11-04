@@ -295,6 +295,12 @@ func TestDeleteChannelArtifactPurgeAndRestore(t *testing.T) {
 	}, []byte("<html>v2</html>"), "v2.html", testUserID, "Author", "", channelartifacts.ContentLimits{MaxSize: 1 << 20})
 	require.NoError(t, err)
 
+	rejected := serveLibrary(e, http.MethodDelete, "/channel-artifacts/"+entry.ID+"?purge=treu", "", "")
+	require.Equal(t, http.StatusBadRequest, rejected.Code)
+	still, err := svc.GetReadable(testUserID, entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, 2, still.Version)
+
 	restored := serveLibrary(e, http.MethodDelete, "/channel-artifacts/"+entry.ID, "", "")
 	require.Equal(t, http.StatusOK, restored.Code)
 	var got channelartifacts.Entry
@@ -383,6 +389,24 @@ func TestChannelArtifactAuditRecordsNameTheObjects(t *testing.T) {
 		assert.Equal(t, AuditEventCreateChannelArtifact, (*records)[0].EventName)
 		assert.Equal(t, created.ID, (*records)[0].EventData.Parameters[audit.KeyChannelArtifactID])
 		assert.Equal(t, channelID, (*records)[0].EventData.Parameters[audit.KeyChannelID])
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+		e.config.enableHTMLArtifacts = true
+		e.config.enableChannelArtifacts = true
+		kv := newArtifactTokenKV()
+		svc := libraryService(kv)
+		e.api.SetChannelArtifacts(svc)
+		entry := saveLibraryEntry(t, svc, model.NewId(), "Notes", "<html>notes</html>")
+
+		records := e.CaptureAuditRecords()
+		rec := serveLibrary(e, http.MethodDelete, "/channel-artifacts/"+entry.ID+"?purge=true", "", "")
+		require.Equal(t, http.StatusNoContent, rec.Code)
+		require.Len(t, *records, 1)
+		assert.Equal(t, AuditEventDeleteChannelArtifact, (*records)[0].EventName)
+		assert.Equal(t, entry.ID, (*records)[0].EventData.Parameters[audit.KeyChannelArtifactID])
 	})
 
 	t.Run("reorder", func(t *testing.T) {
