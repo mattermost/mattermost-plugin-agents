@@ -314,6 +314,10 @@ test.describe('Agents product view', () => {
         await threadRow.focus();
         await page.keyboard.press('Enter');
         await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}/${rootId}$`));
+
+        // The opened chat moves focus to its reply box once it has mounted; moving focus on before
+        // that would lose it to the reply box.
+        await expect(replyComposer(page)).toBeFocused();
         await nav.getByRole('button', {name: `New chat with ${botDisplayName}`}).focus();
         await page.keyboard.press('Space');
         await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}$`));

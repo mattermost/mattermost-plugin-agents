@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"go.opentelemetry.io/otel/attribute"
@@ -17,10 +18,11 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 )
 
-// providerError converts a bifrost error into the error returned to callers,
-// with redactKeys scrubbed, and records it on span when span is non-nil.
-func providerError(span trace.Span, prefix string, bifrostErr *schemas.BifrostError, redactKeys ...string) error {
-	details := describeBifrostError(bifrostErr)
+// providerError converts the error a request on ctx returned into the error
+// returned to callers, with redactKeys scrubbed, and records it on span when
+// span is non-nil.
+func providerError(ctx *schemas.BifrostContext, span trace.Span, prefix string, bifrostErr *schemas.BifrostError, redactKeys ...string) error {
+	details := describeBifrostError(upstreamError(ctx, bifrostErr))
 	err := llm.SanitizeProviderError(fmt.Errorf("%s: %s", prefix, details), redactKeys...)
 	if span != nil {
 		span.SetAttributes(details.attributes()...)
@@ -28,6 +30,55 @@ func providerError(span trace.Span, prefix string, bifrostErr *schemas.BifrostEr
 		span.SetStatus(codes.Error, err.Error())
 	}
 	return err
+}
+
+// attemptErrorKey holds the last error any attempt of a request returned, as
+// an *atomic.Pointer[schemas.BifrostError].
+type attemptErrorKey struct{}
+
+// trackAttemptErrors makes the tracer record each failed attempt's error on
+// ctx, for providerError. Call it on every request context.
+func trackAttemptErrors(ctx *schemas.BifrostContext) {
+	ctx.SetValue(attemptErrorKey{}, new(atomic.Pointer[schemas.BifrostError]))
+}
+
+func recordAttemptError(ctx *schemas.BifrostContext, bifrostErr *schemas.BifrostError) {
+	if ctx == nil || bifrostErr == nil {
+		return
+	}
+	// Bifrost returns the primary's error once every fallback has failed, so
+	// only the primary's attempts may stand in for it.
+	if index, ok := ctx.Value(schemas.BifrostContextKeyFallbackIndex).(int); ok && index != 0 {
+		return
+	}
+	if last, ok := ctx.Value(attemptErrorKey{}).(*atomic.Pointer[schemas.BifrostError]); ok {
+		last.Store(bifrostErr)
+	}
+}
+
+// upstreamError returns the provider's own error in place of the synthetic
+// credentials-exhausted error Bifrost returns once every key of a provider has
+// failed permanently. Each service registers a single key, so that error only
+// hides the provider's message (an invalid key, exhausted quota) that the
+// admin needs to act on.
+func upstreamError(ctx *schemas.BifrostContext, bifrostErr *schemas.BifrostError) *schemas.BifrostError {
+	if bifrostErr == nil || bifrostErr.ExtraFields.ErrorType != schemas.ErrorTypeProviderCredentialsExhausted {
+		return bifrostErr
+	}
+	var last *schemas.BifrostError
+	if ctx != nil {
+		if p, ok := ctx.Value(attemptErrorKey{}).(*atomic.Pointer[schemas.BifrostError]); ok {
+			last = p.Load()
+		}
+	}
+	if last == nil {
+		return bifrostErr
+	}
+	upstream := *last
+	if upstream.ExtraFields.RoutingInfo.Provider == "" {
+		upstream.ExtraFields.RoutingInfo.Provider = bifrostErr.ExtraFields.RoutingInfo.Provider
+	}
+	return &upstream
 }
 
 type bifrostErrorDetails struct {
