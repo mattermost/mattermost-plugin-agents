@@ -303,7 +303,7 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 	if p.scoped {
 		opts = append(opts, builder.WithLLMContextScopedChannelTurn(p.scopedTurn()))
 	}
-	if p.autoEverywhereOnly && !p.scoped {
+	if p.autoEverywhereOnly {
 		opts = append(opts, builder.WithLLMContextMCPToolFilter(func(tool llm.Tool) bool {
 			return botChannelAutoEverywhereKeepTool(p.c.toolPolicyChecker, tool)
 		}))
@@ -330,7 +330,7 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 	case !p.toolsEnabled:
 		// Disabled tools stay listed so the model can point the user to a DM.
 		llmContext.DisableTools(llmContext.Tools.GetToolsInfo()...)
-	case p.autoEverywhereOnly && !llmContext.ToolsScoped:
+	case p.autoEverywhereOnly:
 		p.c.applyBotChannelAutoEverywhereToolFilter(llmContext)
 	}
 	return llmContext, nil

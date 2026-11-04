@@ -645,6 +645,9 @@ type turnEntryPoint struct {
 	// autoReply is set for channel auto-reply, which needs Enterprise
 	// Advanced and so never runs without the remote MCP license.
 	autoReply bool
+	// unattended is set for entry points no human started, whose tools may
+	// only run when the admin lets them auto-run everywhere.
+	unattended bool
 	// requester is who the turn runs for, when not autoReplyUserID.
 	requester string
 	// seed prepares what the entry point acts on and returns the call that
@@ -737,8 +740,9 @@ var turnEntryPoints = []turnEntryPoint{
 		},
 	},
 	{
-		name:      "bot activate_ai mention",
-		requester: autoReplyForeignBotID,
+		name:       "bot activate_ai mention",
+		unattended: true,
+		requester:  autoReplyForeignBotID,
 		seed: func(_ *testing.T, env *policyEnv) func() error {
 			post := env.rootPost(autoReplyForeignBotID, "@"+autoReplyBotUsername+" what is the weather")
 			post.AddProp(conversations.ActivateAIProp, true)
@@ -1089,6 +1093,9 @@ func TestTurnEntryPointPolicyInvariants(t *testing.T) {
 					dmMakeTextStream("It's sunny"),
 				)
 				scoped := env.enableScopedSessions(t)
+				if entry.unattended {
+					env.checker.setPolicy(policyToolOrigin, policyToolName, mcp.ToolPolicyAutoRunEverywhere)
+				}
 
 				require.NoError(t, entry.seed(t, env)())
 				if !entry.noAnswer {

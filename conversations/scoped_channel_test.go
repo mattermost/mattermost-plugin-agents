@@ -4,6 +4,7 @@
 package conversations_test
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -169,6 +170,10 @@ type scopedEnvOpts struct {
 	streamingErr error
 	// guestRequester makes the user who mentions the agent a guest.
 	guestRequester bool
+	// botRequester makes the mention a bot post that sets activate_ai.
+	botRequester bool
+	// toolPolicy is the admin policy of the scoped test tool (default "ask").
+	toolPolicy string
 	// noTeamRead withholds read_public_channel on the team from the requester.
 	noTeamRead bool
 	// skillErr fails skill loading, which happens after the session is minted.
@@ -273,7 +278,7 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	}
 	mmClient := &fakeMMClient{
 		users: map[string]*model.User{
-			scopedUserID: {Id: scopedUserID, Username: "alice", Locale: "en", Roles: requesterRoles},
+			scopedUserID: {Id: scopedUserID, Username: "alice", Locale: "en", Roles: requesterRoles, IsBot: opts.botRequester},
 		},
 		channels:        map[string]*model.Channel{channel.Id: channel},
 		kv:              make(map[string]any),
@@ -290,12 +295,15 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 		contextBuilder.SetSkillProvider(failingSkillProvider{err: opts.skillErr})
 	}
 	policies := newDMPolicyChecker()
-	policies.policies[scopedRemote+":get_issue"] = mcp.ToolPolicyAsk
+	policies.policies[scopedRemote+":get_issue"] = cmp.Or(opts.toolPolicy, mcp.ToolPolicyAsk)
 	env.conversations = conversations.New(promptsManager, mmClient, env.streaming, contextBuilder, botService, nil, licenseChecker, i18n.Init(),
 		&testToolCallingConfig{enableChannelMentionToolCalling: true}, policies)
 	env.conversations.SetConversationService(conversation.NewService(env.convStore, promptsManager, mmClient, botService))
 
 	post := &model.Post{Id: model.NewId(), ChannelId: channel.Id, UserId: scopedUserID, CreateAt: 100, Message: "@" + scopedBotUsername + " find the evidence"}
+	if opts.botRequester {
+		post.AddProp(conversations.ActivateAIProp, true)
+	}
 	mmClient.postThreads = map[string]*model.PostList{post.Id: {Order: []string{post.Id}, Posts: map[string]*model.Post{post.Id: post}}}
 	mmClient.posts = map[string]*model.Post{post.Id: post}
 	env.channel, env.trigger = channel, post
@@ -475,6 +483,13 @@ func TestScopedChannelTurnResumes(t *testing.T) {
 		regenPost := &model.Post{Id: model.NewId(), UserId: scopedBotUserID, ChannelId: channel.Id, RootId: env.trigger.Id}
 		regenPost.AddProp(streaming.ConversationIDProp, conv.ID)
 		regenPost.AddProp(streaming.RespondingToProp, env.trigger.Id)
+		require.NoError(t, env.convStore.CreateTurnAutoSequence(&store.Turn{
+			ID:             model.NewId(),
+			ConversationID: conv.ID,
+			PostID:         &regenPost.Id,
+			Role:           "assistant",
+			Content:        json.RawMessage(`[{"type":"text","text":"first"}]`),
+		}))
 
 		require.NoError(t, env.conversations.HandleRegenerate(context.Background(), scopedUserID, regenPost, channel))
 		<-env.streaming.finished
@@ -577,6 +592,30 @@ func TestScopedChannelTurnRefusesGuestRequester(t *testing.T) {
 		assert.Empty(t, minted)
 		assert.Len(t, allConversations(env.convStore), 1, "the turn ran")
 	})
+}
+
+// A bot-triggered mention has no human to approve a tool, so even on a scoped
+// session only tools the admin lets auto-run everywhere run.
+func TestScopedChannelBotTurnKeepsAutoEverywhereFilter(t *testing.T) {
+	channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypeOpen, Name: "town-square"}
+	toolCall := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+
+	tests := []struct {
+		name     string
+		policy   string
+		wantRuns int
+	}{
+		{name: "ask policy does not run", policy: mcp.ToolPolicyAsk, wantRuns: 0},
+		{name: "auto-run in DM only does not run", policy: mcp.ToolPolicyAutoRunInDM, wantRuns: 0},
+		{name: "auto-run everywhere runs", policy: mcp.ToolPolicyAutoRunEverywhere, wantRuns: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupScopedTestEnv(t, channel, scopedEnvOpts{botRequester: true, toolPolicy: tt.policy},
+				dmMakeToolCallStream(toolCall), dmMakeTextStream("done"))
+			assert.Equal(t, tt.wantRuns, env.runs())
+		})
+	}
 }
 
 type failingSkillProvider struct{ err error }
