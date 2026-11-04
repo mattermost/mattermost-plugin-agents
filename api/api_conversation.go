@@ -148,18 +148,20 @@ func approvalStateForTurn(turn store.Turn, allTurns []store.Turn) string {
 // turnsToResponse converts store turns to response objects with display
 // sanitization, first applying privacy filtering when the requesting user is
 // not the conversation owner.
-// turnsToResponse sanitizes turns for the webapp. A meeting summary's user turn
-// only references the transcript file now, but older rows hold the transcript
-// text itself and the file's access is not re-checked on read, so user text
-// blocks are dropped when redactMeetingUserText is set.
+// turnsToResponse sanitizes turns for the webapp. A meeting summary's first
+// user turn only references the transcript file now, but older rows hold the
+// transcript text itself and the file's access is not re-checked on read, so
+// that turn's text blocks are dropped when redactMeetingUserText is set.
+// Later user turns are follow-up questions and are kept.
 func turnsToResponse(turns []store.Turn, filterForNonRequester, redactMeetingUserText bool) ([]TurnResponse, error) {
 	result := make([]TurnResponse, len(turns))
+	firstUserTurn := slices.IndexFunc(turns, func(t store.Turn) bool { return t.Role == "user" })
 	for i, turn := range turns {
 		var blocks []conversation.ContentBlock
 		if err := json.Unmarshal(turn.Content, &blocks); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal turn content: %w", err)
 		}
-		if redactMeetingUserText && turn.Role == "user" {
+		if redactMeetingUserText && i == firstUserTurn {
 			blocks = slices.DeleteFunc(blocks, func(b conversation.ContentBlock) bool { return b.Type == conversation.BlockTypeText })
 		}
 		if filterForNonRequester {

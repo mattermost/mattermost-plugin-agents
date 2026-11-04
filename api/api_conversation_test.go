@@ -72,6 +72,9 @@ func TestHandleGetConversation(t *testing.T) {
 						{Type: conversation.BlockTypeFile, FileID: "file01234567890123456789ab"},
 					})},
 					{ID: "turn-2", ConversationID: "conv-meeting", Role: "assistant", Sequence: 2, Content: textOnlyBlocks},
+					{ID: "turn-3", ConversationID: "conv-meeting", Role: "user", Sequence: 3, Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+						{Type: conversation.BlockTypeText, Text: "FOLLOW-UP-QUESTION"},
+					})},
 				}
 			},
 			expectedStatus: http.StatusOK,
@@ -80,6 +83,7 @@ func TestHandleGetConversation(t *testing.T) {
 				require.NoError(t, err)
 				assert.NotContains(t, string(body), "SECRET-TRANSCRIPT-LINE")
 				assert.Contains(t, string(body), "What is the weather in NYC?", "assistant turns are untouched")
+				assert.Contains(t, string(body), "FOLLOW-UP-QUESTION", "follow-up user turns are kept")
 			},
 		},
 		{
