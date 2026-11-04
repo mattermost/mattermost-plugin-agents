@@ -181,6 +181,45 @@ func jsonContentEqual(a, b json.RawMessage) bool {
 	return reflect.DeepEqual(av, bv)
 }
 
+func (s *fakeConvStore) CompareAndSwapTurnContentAndStatus(id string, expectedContent json.RawMessage, expectedStatus string, content json.RawMessage, status string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.allTurns[id]
+	if !ok || t.Status != expectedStatus || !jsonContentEqual(t.Content, expectedContent) {
+		return false, nil
+	}
+	s.setTurnStatusLocked(id, status)
+	return true, s.updateTurnContentLocked(id, content)
+}
+
+func (s *fakeConvStore) TouchStreamingTurn(id string) (bool, error) {
+	return s.TransitionTurnStatus(id, store.TurnStatusStreaming, store.TurnStatusStreaming)
+}
+
+func (s *fakeConvStore) TransitionTurnStatus(id, from, to string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.allTurns[id]
+	if !ok || t.Status != from {
+		return false, nil
+	}
+	s.setTurnStatusLocked(id, to)
+	return true, nil
+}
+
+func (s *fakeConvStore) setTurnStatusLocked(id, status string) {
+	if t, ok := s.allTurns[id]; ok {
+		t.Status = status
+	}
+	for convID, turns := range s.turns {
+		for i := range turns {
+			if turns[i].ID == id {
+				s.turns[convID][i].Status = status
+			}
+		}
+	}
+}
+
 func (s *fakeConvStore) updateTurnContentLocked(id string, content json.RawMessage) error {
 	t, ok := s.allTurns[id]
 	if !ok {

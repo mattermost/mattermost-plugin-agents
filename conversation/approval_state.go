@@ -41,6 +41,11 @@ func ComputePostApprovalState(turns []store.Turn, postID string) string {
 	if anchorIdx == -1 {
 		return ApprovalStageDone
 	}
+	// An interrupted response offers Regenerate, not decisions: its calls
+	// cannot be resumed, and accepted ones may already have run.
+	if turns[anchorIdx].Status == store.TurnStatusInterrupted {
+		return ApprovalStageDone
+	}
 
 	responseTurns := []store.Turn{turns[anchorIdx]}
 	for i := anchorIdx - 1; i >= 0; i-- {

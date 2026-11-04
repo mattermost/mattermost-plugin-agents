@@ -412,6 +412,8 @@ func toolApprovalHTTPStatus(err error) int {
 		errors.Is(err, conversations.ErrAnalysisSourceUnavailable),
 		errors.Is(err, bots.ErrUsageRestriction):
 		return http.StatusForbidden
+	case errors.Is(err, conversations.ErrToolRunInterrupted):
+		return http.StatusServiceUnavailable
 	default:
 		return http.StatusInternalServerError
 	}

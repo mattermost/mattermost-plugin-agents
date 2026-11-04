@@ -134,6 +134,61 @@ func (s *Store) CompareAndSwapTurnContent(id string, expected, content json.RawM
 	return rows == 1, nil
 }
 
+// CompareAndSwapTurnContentAndStatus replaces a turn's Content and Status only
+// while both still equal the expected values (Content compared as JSONB),
+// bumps UpdatedAt to the DB clock, and reports whether it did. A missing turn
+// reports false.
+func (s *Store) CompareAndSwapTurnContentAndStatus(id string, expectedContent json.RawMessage, expectedStatus string, content json.RawMessage, status string) (bool, error) {
+	return s.execConditional(s.builder.
+		Update("LLM_Turns").
+		Set("Content", string(content)).
+		Set("Status", status).
+		Set("UpdatedAt", sq.Expr(dbNowMillis)).
+		Where(sq.Eq{"ID": id, "Status": expectedStatus}).
+		Where(sq.Expr("Content = ?::jsonb", string(expectedContent))),
+		"compare-and-swap turn content and status")
+}
+
+// TouchStreamingTurn bumps a streaming turn's UpdatedAt to the DB clock
+// without changing its content, and reports whether the turn is still
+// streaming (false once e.g. a recovery sweep marked it interrupted).
+func (s *Store) TouchStreamingTurn(id string) (bool, error) {
+	return s.execConditional(s.builder.
+		Update("LLM_Turns").
+		Set("UpdatedAt", sq.Expr(dbNowMillis)).
+		Where(sq.Eq{"ID": id, "Status": TurnStatusStreaming}),
+		"touch streaming turn")
+}
+
+// TransitionTurnStatus moves a turn from status from to status to, bumping
+// UpdatedAt to the DB clock, and reports whether it did. Content is unchanged.
+func (s *Store) TransitionTurnStatus(id, from, to string) (bool, error) {
+	return s.execConditional(s.builder.
+		Update("LLM_Turns").
+		Set("Status", to).
+		Set("UpdatedAt", sq.Expr(dbNowMillis)).
+		Where(sq.Eq{"ID": id, "Status": from}),
+		"transition turn status")
+}
+
+// execConditional runs a single-row conditional update and reports whether
+// it matched.
+func (s *Store) execConditional(builder sq.UpdateBuilder, op string) (bool, error) {
+	query, args, err := builder.ToSql()
+	if err != nil {
+		return false, fmt.Errorf("failed to build %s query: %w", op, err)
+	}
+	result, err := s.db.Exec(query, args...)
+	if err != nil {
+		return false, fmt.Errorf("failed to %s: %w", op, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to read %s result: %w", op, err)
+	}
+	return rows == 1, nil
+}
+
 // GetMaxSequenceForConversation returns the maximum sequence number for turns in the
 // given conversation, or 0 if no turns exist.
 func (s *Store) GetMaxSequenceForConversation(conversationID string) (int, error) {

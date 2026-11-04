@@ -210,6 +210,30 @@ func (s *evalInMemoryStore) CompareAndSwapTurnContent(id string, expected, conte
 	return true, nil
 }
 
+func (s *evalInMemoryStore) CompareAndSwapTurnContentAndStatus(id string, expectedContent json.RawMessage, expectedStatus string, content json.RawMessage, status string) (bool, error) {
+	t, ok := s.turns[id]
+	if !ok || t.Status != expectedStatus || !bytes.Equal(t.Content, expectedContent) {
+		return false, nil
+	}
+	t.Content = content
+	t.Status = status
+	return true, nil
+}
+
+func (s *evalInMemoryStore) TouchStreamingTurn(id string) (bool, error) {
+	t, ok := s.turns[id]
+	return ok && t.Status == store.TurnStatusStreaming, nil
+}
+
+func (s *evalInMemoryStore) TransitionTurnStatus(id, from, to string) (bool, error) {
+	t, ok := s.turns[id]
+	if !ok || t.Status != from {
+		return false, nil
+	}
+	t.Status = to
+	return true, nil
+}
+
 func (s *evalInMemoryStore) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {
 	if t, ok := s.turns[id]; ok {
 		t.TokensIn = tokensIn

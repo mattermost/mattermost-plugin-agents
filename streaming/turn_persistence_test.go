@@ -36,16 +36,25 @@ type fakeTurnStore struct {
 }
 
 // eventCountingTurnStore records how many websocket events had been published
-// when the turn was persisted.
+// when the turn was settled as complete (the state tool approval acts on).
 type eventCountingTurnStore struct {
 	fakeTurnStore
 	client         *fakeStreamingClient
-	eventsAtCreate int
+	eventsAtSettle int
 }
 
 func (s *eventCountingTurnStore) CreateTurnAutoSequence(turn *store.Turn) error {
-	s.eventsAtCreate = len(s.client.events)
+	if turn.Status == store.TurnStatusComplete {
+		s.eventsAtSettle = len(s.client.events)
+	}
 	return s.fakeTurnStore.CreateTurnAutoSequence(turn)
+}
+
+func (s *eventCountingTurnStore) FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) (bool, error) {
+	if status == store.TurnStatusComplete {
+		s.eventsAtSettle = len(s.client.events)
+	}
+	return s.fakeTurnStore.FinalizeStreamingTurn(id, content, tokensIn, tokensOut, status)
 }
 
 func (f *fakeTurnStore) CreateTurnAutoSequence(turn *store.Turn) error {

@@ -194,6 +194,53 @@ func (s *loadedStateFlowStore) updateTurnContentLocked(id string, content json.R
 	return nil
 }
 
+func (s *loadedStateFlowStore) CompareAndSwapTurnContentAndStatus(id string, expectedContent json.RawMessage, expectedStatus string, content json.RawMessage, status string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	turn, ok := s.allTurns[id]
+	if !ok || turn.Status != expectedStatus || !jsonContentEqual(turn.Content, expectedContent) {
+		return false, nil
+	}
+	s.updateTurnLocked(id, func(t *store.Turn) {
+		t.Content = content
+		t.Status = status
+	})
+	return true, nil
+}
+
+func (s *loadedStateFlowStore) TouchStreamingTurn(id string) (bool, error) {
+	return s.TransitionTurnStatus(id, store.TurnStatusStreaming, store.TurnStatusStreaming)
+}
+
+func (s *loadedStateFlowStore) TransitionTurnStatus(id, from, to string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	turn, ok := s.allTurns[id]
+	if !ok || turn.Status != from {
+		return false, nil
+	}
+	s.updateTurnLocked(id, func(t *store.Turn) { t.Status = to })
+	return true, nil
+}
+
+// updateTurnLocked applies update to both copies of turn id and stamps
+// UpdatedAt, as every store write does.
+func (s *loadedStateFlowStore) updateTurnLocked(id string, update func(*store.Turn)) {
+	now := time.Now().UnixMilli()
+	if turn, ok := s.allTurns[id]; ok {
+		update(turn)
+		turn.UpdatedAt = now
+	}
+	for convID, turns := range s.turns {
+		for i := range turns {
+			if turns[i].ID == id {
+				update(&s.turns[convID][i])
+				s.turns[convID][i].UpdatedAt = now
+			}
+		}
+	}
+}
+
 // jsonContentEqual mirrors the store's JSONB comparison.
 func jsonContentEqual(a, b json.RawMessage) bool {
 	var av, bv any

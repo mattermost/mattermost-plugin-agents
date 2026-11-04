@@ -120,7 +120,7 @@ func TestToolRunnerBatchesReachWebappInPhaseOrder(t *testing.T) {
 					channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
 				},
 			}
-			ts := &eventCountingTurnStore{client: client, eventsAtCreate: -1}
+			ts := &eventCountingTurnStore{client: client, eventsAtSettle: -1}
 			service := NewMMPostStreamService(client, i18n.Init())
 			service.SetTurnStore(ts)
 
@@ -142,7 +142,7 @@ func TestToolRunnerBatchesReachWebappInPhaseOrder(t *testing.T) {
 
 			service.StreamToPost(context.Background(), run.Stream, post, "en", requesterID)
 
-			require.GreaterOrEqual(t, ts.eventsAtCreate, 0, "turn was never persisted")
+			require.GreaterOrEqual(t, ts.eventsAtSettle, 0, "turn was never settled as complete")
 			var phases []llm.ToolCallPhase
 			endIdx := -1
 			for i, ev := range client.events {
@@ -156,7 +156,7 @@ func TestToolRunnerBatchesReachWebappInPhaseOrder(t *testing.T) {
 				phase := llm.ToolCallPhase(ev.payload["tool_call_phase"].(string))
 				phases = append(phases, phase)
 				if phase == llm.ToolCallPhaseAwaitingDecision {
-					assert.GreaterOrEqual(t, i, ts.eventsAtCreate, "batch awaiting a decision broadcast before its turn was persisted")
+					assert.GreaterOrEqual(t, i, ts.eventsAtSettle, "batch awaiting a decision broadcast before its turn was settled")
 				}
 				assert.Less(t, endIdx, 0, "tool_call event broadcast after the end event")
 			}
