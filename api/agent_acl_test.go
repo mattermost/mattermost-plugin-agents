@@ -19,6 +19,7 @@ var managerEditableBotConfigFields = map[string]bool{
 	"Name":                    true,
 	"DisplayName":             true,
 	"CustomInstructions":      true,
+	"Documents":               true,
 	"Model":                   true,
 	"ServiceID":               true,
 	"EnableVision":            true,

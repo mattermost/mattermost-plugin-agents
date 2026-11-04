@@ -10,6 +10,7 @@ require (
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
 	github.com/jmoiron/sqlx v1.4.0
+	github.com/ledongthuc/pdf v0.0.0-20260907135840-6c8c28e0e8a0
 	github.com/lib/pq v1.12.3
 	github.com/mattermost/mattermost/server/public v0.6.1-0.20261025013445-80c85f72c5f4
 	github.com/mattermost/mattermost/tools/mattermost-govet v0.0.0-20261103132713-77a94b45a35b

@@ -5,8 +5,8 @@ import React from 'react';
 import {act, fireEvent, render, screen, waitFor, waitForElementToBeRemoved, within} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
-import {createAgent, deleteAgentVersions, getAgentVersion, getAgentVersions, getProfilesByIds, getUserMCPTools, restoreAgentVersion, updateAgent} from '@/client';
-import {AgentExportDocument, AgentVersionDetail, AgentVersionList, EnabledTool, MaxCustomInstructionsRunes, ServiceInfo, SkillsConfig, UserAgent} from '@/types/agents';
+import {createAgent, deleteAgentVersions, getAgentVersion, getAgentVersions, getProfilesByIds, getUserMCPTools, restoreAgentVersion, updateAgent, uploadAgentDocument} from '@/client';
+import {AgentExportDocument, AgentExportDocumentFile, AgentVersionDetail, AgentVersionList, EnabledTool, MaxCustomInstructionsRunes, ServiceInfo, SkillsConfig, UserAgent, normalizeSkillsConfig} from '@/types/agents';
 import {downloadAgentExport} from '@/utils/agent_export';
 import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
 
@@ -48,6 +48,7 @@ jest.mock('@/client', () => ({
     createAgent: jest.fn(),
     updateAgent: jest.fn(),
     uploadAgentAvatar: jest.fn(),
+    uploadAgentDocument: jest.fn(),
     getUserMCPTools: jest.fn(),
     getAgentVersions: jest.fn(),
     getAgentVersion: jest.fn(),
@@ -302,6 +303,7 @@ const services: ServiceInfo[] = [
 
 const mockCreateAgent = createAgent as jest.MockedFunction<typeof createAgent>;
 const mockUpdateAgent = updateAgent as jest.MockedFunction<typeof updateAgent>;
+const mockUploadAgentDocument = uploadAgentDocument as jest.MockedFunction<typeof uploadAgentDocument>;
 
 const savedAgent = {
     id: 'agent_1',
@@ -1190,6 +1192,88 @@ describe('AgentConfigView', () => {
             mcpDynamicToolLoading: false,
             useServiceAccountAuth: true,
         }));
+    });
+
+    describe('imported reference documents', () => {
+        const existingDoc = {id: 'doc_old', name: 'old.md', mimeType: 'text/markdown', size: 5, sha256: 'a', textRunes: 5};
+        const guideContent = 'IyBHdWlkZQ==';
+        const storedGuide = {id: 'doc_new', name: 'guide.md', mimeType: 'text/markdown', size: 7, sha256: 'b', textRunes: 7};
+
+        function exportFile(schemaVersion: number, documents: AgentExportDocumentFile[]): AgentExportDocument {
+            return {
+                kind: 'mattermost-agent',
+                schemaVersion,
+                exportedAt: 1,
+                agentVersion: 1,
+                agent: {
+                    name: 'imported',
+                    displayName: 'Imported',
+                    customInstructions: 'Imported instructions',
+                    disableTools: false,
+                    maxToolTurns: 10,
+                    mcpDynamicToolLoading: true,
+                    autoEnableNewMCPTools: false,
+                    mcpTools: [],
+                    skills: normalizeSkillsConfig(),
+                    documents,
+                },
+            };
+        }
+
+        function renderImport(importedDocument: AgentExportDocument) {
+            render(
+                <IntlProvider locale='en'>
+                    <AgentConfigView
+                        mode='edit'
+                        agent={{...savedAgent, documents: [existingDoc]}}
+                        services={services}
+                        importedDocument={importedDocument}
+                        onBack={jest.fn()}
+                        onSaved={jest.fn()}
+                    />
+                </IntlProvider>,
+            );
+        }
+
+        const guideFile: AgentExportDocumentFile = {name: 'guide.md', mimeType: 'text/markdown', size: 7, sha256: 'b', content: guideContent};
+
+        test('saving uploads them first and replaces the agent\'s documents', async () => {
+            mockUploadAgentDocument.mockResolvedValue(storedGuide);
+            mockUpdateAgent.mockResolvedValue({...savedAgent, documents: [storedGuide]});
+            renderImport(exportFile(2, [guideFile]));
+
+            await waitFor(() => expect(screen.getByLabelText('Custom instructions')).toHaveProperty('value', 'Imported instructions'));
+            fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+            await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+            const uploaded = mockUploadAgentDocument.mock.calls[0][0];
+            expect(uploaded.name).toBe('guide.md');
+            expect(uploaded.size).toBe(7);
+            expect(mockUpdateAgent).toHaveBeenCalledWith('agent_1', expect.objectContaining({documents: [{id: 'doc_new', name: 'guide.md'}]}));
+        });
+
+        test('a version 1 file leaves the agent\'s documents alone', async () => {
+            mockUpdateAgent.mockResolvedValue(savedAgent);
+            renderImport(exportFile(1, []));
+
+            await waitFor(() => expect(screen.getByLabelText('Custom instructions')).toHaveProperty('value', 'Imported instructions'));
+            fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+            await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+            expect(mockUploadAgentDocument).not.toHaveBeenCalled();
+            expect(mockUpdateAgent).toHaveBeenCalledWith('agent_1', expect.objectContaining({documents: [{id: 'doc_old', name: 'old.md'}]}));
+        });
+
+        test('does not save the agent when an upload fails', async () => {
+            mockUploadAgentDocument.mockRejectedValue({message: 'text extraction failed'});
+            renderImport(exportFile(2, [guideFile]));
+
+            await waitFor(() => expect(screen.getByLabelText('Custom instructions')).toHaveProperty('value', 'Imported instructions'));
+            fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+            expect(await screen.findByText('text extraction failed')).not.toBeNull();
+            expect(mockUpdateAgent).not.toHaveBeenCalled();
+        });
     });
 
     // Parent-level soft-lock: Save stays enabled, banner explains the policy, and

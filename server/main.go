@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
+	"github.com/mattermost/mattermost-plugin-agents/v2/agentdocs"
 	"github.com/mattermost/mattermost-plugin-agents/v2/api"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -523,6 +524,7 @@ func (p *Plugin) OnActivate() error {
 		&p.configuration,
 	)
 	contextBuilder.SetMCPDynamicToolTelemetry(metricsService)
+	contextBuilder.SetAgentDocumentSource(agentdocs.NewTextCache(p.store, agentdocs.DefaultTextCacheRunes))
 
 	policyChecker := mcp.NewConfigToolPolicyChecker(p.configuration.MCP, func() bool {
 		return licenseChecker.Allows(enterprise.CapToolApprovalPolicies)

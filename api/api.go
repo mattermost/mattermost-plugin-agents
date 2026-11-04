@@ -128,6 +128,17 @@ type AgentStore interface {
 	DeleteAgentVersions(agentID string, versions []int) (int64, error)
 	// DeletePreviousAgentVersions deletes every version but the current one.
 	DeletePreviousAgentVersions(agentID string) (int64, error)
+
+	// SaveAgentDocument stores a reference document, reusing an identical one
+	// the same user stored before.
+	SaveAgentDocument(doc *store.AgentDocument) error
+	// GetAgentDocument returns nil, nil when the document does not exist.
+	GetAgentDocument(id string) (*store.AgentDocument, error)
+	// GetAgentDocumentInfos returns existing documents without content, keyed by ID.
+	GetAgentDocumentInfos(ids []string) (map[string]*store.AgentDocument, error)
+	// ListAgentDocumentReferences returns the agent's current document
+	// references followed by those of its versions, newest first.
+	ListAgentDocumentReferences(agentID string) ([]llm.AgentDocument, error)
 }
 
 // ConfigUpdater updates the in-memory plugin configuration.
@@ -413,6 +424,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	agentRouter.GET("", a.handleListAgents)
 	// Register /models/fetch before /:agentid routes so "models" is never captured as :agentid.
 	agentRouter.POST("/models/fetch", a.handleFetchModelsForService)
+	agentRouter.POST("/documents", a.handleUploadAgentDocument)
 	agentRouter.GET("/:agentid", a.handleGetAgent)
 	agentRouter.PUT("/:agentid", a.handleUpdateAgent)
 	agentRouter.DELETE("/:agentid", a.handleDeleteAgent)
@@ -421,6 +433,8 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	agentRouter.GET("/:agentid/versions/:version", a.handleGetAgentVersion)
 	agentRouter.POST("/:agentid/versions/:version/restore", a.handleRestoreAgentVersion)
 	agentRouter.DELETE("/:agentid/versions", a.handleDeleteAgentVersions)
+	agentRouter.GET("/:agentid/documents/:documentid", a.handleDownloadAgentDocument)
+	agentRouter.GET("/:agentid/documents/:documentid/text", a.handleGetAgentDocumentText)
 	// Access policy authoring: agent managers.
 	agentRouter.GET("/:agentid/access_policy", a.handleGetAgentPolicy)
 	agentRouter.PUT("/:agentid/access_policy", a.handlePutAgentPolicy)

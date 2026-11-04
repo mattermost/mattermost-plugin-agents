@@ -183,7 +183,7 @@ func TestGetToolsStoreServiceAccountNeverOffersMCPConnections(t *testing.T) {
 		&model.Bot{UserId: "bot-user-id", Username: "matty"},
 	)
 
-	context := builder.BuildLLMContextUserRequest(bot, testUser(), testChannel(),
+	context := builder.BuildLLMContextUserRequest(stdcontext.Background(), bot, testUser(), testChannel(),
 		builder.WithLLMContextInteractive(),
 		builder.WithLLMContextTools(stdcontext.Background(), bot),
 	)

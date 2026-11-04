@@ -203,7 +203,7 @@ func TestBuilderSelectsDMOnlyServersOnlyInDirectMessage(t *testing.T) {
 				opts = append(opts, builder.WithLLMContextInteractive())
 			}
 			opts = append(opts, builder.WithLLMContextTools(stdcontext.Background(), bot))
-			context := builder.BuildLLMContextUserRequest(bot, testUser(), tc.channel, opts...)
+			context := builder.BuildLLMContextUserRequest(stdcontext.Background(), bot, testUser(), tc.channel, opts...)
 
 			require.Equal(t, tc.wantExclude, mcpProvider.selection.ExcludeDMOnlyServers)
 			require.Equal(t, tc.interactive, mcpProvider.described)

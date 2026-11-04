@@ -123,6 +123,7 @@ func (a *API) handleReact(c *gin.Context) {
 	}
 
 	context := a.contextBuilder.BuildLLMContextUserRequest(
+		c.Request.Context(),
 		bot,
 		requestingUser,
 		channel,
@@ -188,6 +189,7 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 
 	// Thread analysis disables tools, so skip MCP/tool initialization entirely.
 	llmContext := a.contextBuilder.BuildLLMContextUserRequest(
+		c.Request.Context(),
 		bot,
 		user,
 		channel,
