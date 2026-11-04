@@ -71,6 +71,33 @@ func TestSanitizePublishedAnswerDropsPrivateChannelNames(t *testing.T) {
 			want:     []string{"development"},
 			wantGone: []string{"~dev"},
 		},
+		{
+			name:     "drops non-ASCII names",
+			text:     "営業チーム said X. Équipe and Café agreed; see ~Café.",
+			sources:  []conversation.SourceChannel{{DisplayName: "営業チーム", Private: true}, {DisplayName: "Équipe", Private: true}, {DisplayName: "Café", Private: true}},
+			want:     []string{"said X.", "agreed;"},
+			wantGone: []string{"営業チーム", "Équipe", "Café"},
+		},
+		{
+			name:     "drops names ending in emoji or punctuation",
+			text:     "Posted in Ops 🔒 and Team! yesterday.",
+			sources:  []conversation.SourceChannel{{DisplayName: "Ops 🔒", Private: true}, {DisplayName: "Team!", Private: true}},
+			want:     []string{"yesterday."},
+			wantGone: []string{"Ops", "🔒", "Team!"},
+		},
+		{
+			name:     "keeps non-ASCII words that contain the name",
+			text:     "Équipement and Cafés stay.",
+			sources:  []conversation.SourceChannel{{DisplayName: "Équipe", Private: true}, {DisplayName: "Café", Private: true}},
+			want:     []string{"Équipement", "Cafés"},
+			wantGone: nil,
+		},
+		{
+			name:    "keeps indentation of unmodified text",
+			text:    "- item\n    nested   item\n```\n\tcode  here\n```\n| a |  b |",
+			sources: []conversation.SourceChannel{{DisplayName: "Dev", Private: true}},
+			want:    []string{"    nested   item", "\tcode  here", "| a |  b |"},
+		},
 	}
 
 	for _, tc := range cases {
@@ -184,4 +211,31 @@ func TestPublishHeldChannelAnswerScopesToClickedRound(t *testing.T) {
 	assert.Equal(t, "clicked draft", published[1].Text)
 	require.True(t, held[1].RequesterOnly)
 	assert.Equal(t, "other draft", held[1].Text)
+}
+
+func TestPublishHeldChannelAnswerKeepsDraftWhenSanitizedEmpty(t *testing.T) {
+	convStore, conv := loadedStateConversationStore()
+	blocks := []conversation.ContentBlock{
+		{Type: conversation.BlockTypeToolUse, ID: "tool-a", Name: "read_channel"},
+		{
+			Type:           conversation.BlockTypeText,
+			Text:           "Procurement Restricted",
+			RequesterOnly:  true,
+			SourceChannels: []conversation.SourceChannel{{DisplayName: "Procurement Restricted", Private: true}},
+		},
+	}
+	content, err := json.Marshal(blocks)
+	require.NoError(t, err)
+	turn := store.Turn{ID: "turn-a", ConversationID: conv.ID, Role: "assistant", Content: content, Sequence: 1}
+	require.NoError(t, convStore.CreateTurn(&turn))
+
+	c := &Conversations{
+		mmClient:    mocks.NewMockClient(t),
+		convService: conversation.NewService(convStore, nil, nil, nil),
+	}
+	post := &model.Post{Id: "post-a"}
+
+	assert.False(t, c.publishHeldChannelAnswer(post, []store.Turn{turn}, [][]conversation.ContentBlock{blocks}, map[string]struct{}{"tool-a": {}}))
+	assert.Empty(t, post.Message)
+	assert.True(t, blocks[1].RequesterOnly)
 }

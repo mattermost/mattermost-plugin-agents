@@ -8,6 +8,7 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import {GlobeIcon, LockIcon} from '@mattermost/compass-icons/components';
 
 import {Button} from '@mattermost/compass-ui/components/button';
+import {Icon} from '@mattermost/compass-ui/components/icon';
 import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
 
 import {doToolCall, doToolResult} from '@/client';
@@ -344,35 +345,35 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                         ) : (
                             <FormattedMessage
                                 id='ai.tool_call.private_source_warning_unnamed'
-                                defaultMessage='To answer, the agent read a private channel. Members of this channel may not have access to it. The marked passages came from there. Review them before sharing.'
+                                defaultMessage='The agent could not confirm that members of this channel can read every source it used. Review the answer before sharing.'
                             />
                         )}
                     </WarningText>
                     <AnswerButtons>
-                        <AnswerButton
-                            type='button'
-                            $primary={true}
+                        <Button
+                            emphasis='primary'
+                            size='x-small'
+                            leadingIcon={<Icon glyph={<LockIcon/>}/>}
                             disabled={isSubmitting}
                             onClick={() => handleBatchDecision(false)}
                         >
-                            <LockIcon size={14}/>
                             <FormattedMessage
                                 id='ai.tool_call.keep_private'
                                 defaultMessage='Keep private'
                             />
-                        </AnswerButton>
-                        <AnswerButton
-                            type='button'
-                            $primary={false}
+                        </Button>
+                        <Button
+                            emphasis='tertiary'
+                            size='x-small'
+                            leadingIcon={<Icon glyph={<GlobeIcon/>}/>}
                             disabled={isSubmitting}
                             onClick={() => handleBatchDecision(true)}
                         >
-                            <GlobeIcon size={14}/>
                             <FormattedMessage
                                 id='ai.tool_call.share_with_channel'
                                 defaultMessage='Share with channel'
                             />
-                        </AnswerButton>
+                        </Button>
                     </AnswerButtons>
                 </AnswerReview>
             )}
@@ -455,9 +456,9 @@ export default ToolApprovalSet;
 const AnswerReview = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    margin-top: 4px;
-    padding: 12px;
+    gap: var(--spacing-xs);
+    margin-top: var(--spacing-xxxs);
+    padding: var(--spacing-m);
     border-radius: 4px;
     background: rgba(var(--center-channel-color-rgb), 0.04);
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
@@ -478,25 +479,6 @@ const WarningText = styled.p`
 
 const AnswerButtons = styled.div`
     display: flex;
-    gap: 8px;
+    gap: var(--spacing-xs);
 `;
 
-const AnswerButton = styled.button<{$primary: boolean}>`
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    border-radius: 4px;
-    padding: 6px 12px;
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 16px;
-    cursor: pointer;
-    background: ${(props) => (props.$primary ? 'var(--button-bg)' : 'transparent')};
-    color: ${(props) => (props.$primary ? 'var(--button-color)' : 'var(--button-bg)')};
-    border: 1px solid ${(props) => (props.$primary ? 'transparent' : 'var(--button-bg)')};
-
-    &:disabled {
-        opacity: 0.6;
-        cursor: default;
-    }
-`;

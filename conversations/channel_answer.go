@@ -5,10 +5,11 @@ package conversations
 
 import (
 	"encoding/json"
-	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -162,20 +163,25 @@ func (c *Conversations) publishHeldChannelAnswer(post *model.Post, turns []store
 	}
 	published := false
 	var message string
-	for i := range turns {
+	for i, turn := range turns {
 		if i >= len(decoded) {
 			break
 		}
-		if !turnMatchesClickedTools(decoded[i], clickedToolUseIDs) {
+		blocks := decoded[i]
+		if !turnMatchesClickedTools(blocks, clickedToolUseIDs) {
 			continue
 		}
 		changed := false
-		for j := range decoded[i] {
-			block := &decoded[i][j]
+		for j := range blocks {
+			block := &blocks[j]
 			if !block.RequesterOnly {
 				continue
 			}
-			message = sanitizePublishedAnswer(block.Text, block.SourceChannels)
+			sanitized := sanitizePublishedAnswer(block.Text, block.SourceChannels)
+			if sanitized == "" {
+				continue
+			}
+			message = sanitized
 			block.Text = message
 			block.RequesterOnly = false
 			block.Citations = nil
@@ -186,12 +192,12 @@ func (c *Conversations) publishHeldChannelAnswer(post *model.Post, turns []store
 		if !changed {
 			continue
 		}
-		updated, err := json.Marshal(decoded[i])
+		updated, err := json.Marshal(blocks)
 		if err != nil {
 			c.mmClient.LogError("Failed to marshal published answer", "error", err)
 			return false
 		}
-		if err := c.convService.UpdateTurnContent(turns[i].ID, updated); err != nil {
+		if err := c.convService.UpdateTurnContent(turn.ID, updated); err != nil {
 			c.mmClient.LogError("Failed to publish held answer", "error", err)
 			return false
 		}
@@ -235,20 +241,57 @@ func sanitizePublishedAnswer(text string, sources []conversation.SourceChannel) 
 			if token == "" {
 				continue
 			}
-			escaped := regexp.QuoteMeta(token)
-			if re, err := regexp.Compile(`~` + escaped + `\b`); err == nil {
-				text = re.ReplaceAllString(text, "")
-			}
-			if re, err := regexp.Compile(`\b` + escaped + `\b`); err == nil {
-				text = re.ReplaceAllString(text, "")
-			}
+			text = removeWholeToken(text, "~"+token, false)
+			text = removeWholeToken(text, token, true)
 		}
 	}
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		lines[i] = strings.Join(strings.Fields(line), " ")
+	return strings.Trim(strings.TrimRight(text, " \t"), "\r\n")
+}
+
+func isWordRune(r rune) bool {
+	return r == '_' || unicode.IsLetter(r) || unicode.IsNumber(r)
+}
+
+// removeWholeToken deletes occurrences of token that are not part of a longer
+// word. A word boundary is only required on a side where the token itself
+// starts or ends with a word character, so names ending in punctuation or
+// emoji still match. Only the whitespace around a removal is adjusted, so
+// indentation elsewhere is kept.
+func removeWholeToken(text, token string, checkLeft bool) string {
+	first, _ := utf8.DecodeRuneInString(token)
+	last, _ := utf8.DecodeLastRuneInString(token)
+	var out strings.Builder
+	rest := text
+	for {
+		idx := strings.Index(rest, token)
+		if idx < 0 {
+			out.WriteString(rest)
+			return out.String()
+		}
+		end := idx + len(token)
+		prefix := out.String() + rest[:idx]
+		prev, _ := utf8.DecodeLastRuneInString(prefix)
+		next, _ := utf8.DecodeRuneInString(rest[end:])
+		leftOK := !checkLeft || prefix == "" || !isWordRune(first) || !isWordRune(prev)
+		rightOK := end == len(rest) || !isWordRune(last) || !isWordRune(next)
+		if !leftOK || !rightOK {
+			out.WriteString(rest[:end])
+			rest = rest[end:]
+			continue
+		}
+		out.Reset()
+		out.WriteString(prefix)
+		rest = rest[end:]
+		atLineStart := prefix == "" || strings.HasSuffix(prefix, "\n")
+		switch {
+		case strings.HasPrefix(rest, " ") && (atLineStart || strings.HasSuffix(prefix, " ")):
+			rest = rest[1:]
+		case (rest == "" || rest[0] == '\n' || rest[0] == '\r') && strings.HasSuffix(prefix, " "):
+			trimmed := strings.TrimRight(out.String(), " ")
+			out.Reset()
+			out.WriteString(trimmed)
+		}
 	}
-	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 // allToolsAutoRunEverywhere reports whether the channel-visible answer may be

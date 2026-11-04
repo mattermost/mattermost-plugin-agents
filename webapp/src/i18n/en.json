@@ -583,7 +583,7 @@
   "ai.tool_call.pending_decisions": "{count, plural, =0 {All tools decided} one {# tool needs a decision} other {# tools need decisions}}",
   "ai.tool_call.private_source_warning": "To answer, the agent read {channels}. Members of this channel may not have access. The marked passages came from there. Review them before sharing.",
   "ai.tool_call.private_source_warning_title": "This answer uses content from private channels",
-  "ai.tool_call.private_source_warning_unnamed": "To answer, the agent read a private channel. Members of this channel may not have access to it. The marked passages came from there. Review them before sharing.",
+  "ai.tool_call.private_source_warning_unnamed": "The agent could not confirm that members of this channel can read every source it used. Review the answer before sharing.",
   "ai.tool_call.processing": "Processing...",
   "ai.tool_call.reject": "Reject",
   "ai.tool_call.reject_all": "Reject all",
