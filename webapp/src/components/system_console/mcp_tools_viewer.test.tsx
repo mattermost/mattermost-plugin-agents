@@ -436,3 +436,33 @@ test('maps servers to their configuration by ID when names were swapped by renam
         {id: 'id-x', name: 'A', enabled: true, baseURL: 'https://x.example.com', headers: {}},
     ]);
 });
+
+test('read-only viewers get the embedded server seeded but no policy applied to a remote server', async () => {
+    mockGetVettedToolSeed.mockImplementation((baseURL: string) => Promise.resolve(
+        baseURL === 'embedded://mattermost' ?
+            [{name: 'embedded_seeded_tool', policy: 'ask', enabled: true}] :
+            [{name: 'seeded_tool', policy: 'auto_run_in_dm', enabled: true}],
+    ));
+    const cfg = makeMCPConfig({
+        servers: [{name: 'Remote', enabled: true, baseURL: 'https://remote.example', headers: {}, tool_configs: []}],
+        embeddedServer: {enabled: true, tool_configs: []},
+    });
+
+    const {onConfigChange} = renderViewer({
+        servers: [{
+            name: 'Remote',
+            url: 'https://remote.example',
+            serverType: 'remote',
+            enabled: true,
+            tools: [],
+            needsOAuth: false,
+            error: null,
+        }],
+    }, cfg, true);
+
+    await waitFor(() => expect(onConfigChange).toHaveBeenCalled());
+    const updated: MCPConfig = onConfigChange.mock.calls[0][0](cfg);
+    expect(updated.servers?.[0].tool_configs).toEqual([]);
+    expect(updated.embeddedServer.tool_configs).toEqual([{name: 'embedded_seeded_tool', policy: 'ask', enabled: true}]);
+    expect(mockGetVettedToolSeed).not.toHaveBeenCalledWith('https://remote.example');
+});
