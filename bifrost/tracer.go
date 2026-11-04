@@ -110,6 +110,17 @@ func (t *otelTracer) StartSpan(ctx context.Context, name string, kind bschemas.S
 	return ctx, &otelSpanHandle{span: span}
 }
 
+// StartSpanID opens the same span as StartSpan; Bifrost starts its provider
+// call, retry and plugin hook spans this way. Its internal overhead spans
+// (queue waits, attribute population) are skipped.
+func (t *otelTracer) StartSpanID(ctx context.Context, name string, kind bschemas.SpanKind) (string, bschemas.SpanHandle) {
+	if kind == bschemas.SpanKindInternal {
+		return "", nil
+	}
+	_, handle := t.StartSpan(ctx, name, kind)
+	return spanOf(handle).SpanContext().SpanID().String(), handle
+}
+
 // EndSpan closes the span with the given status.
 func (t *otelTracer) EndSpan(handle bschemas.SpanHandle, status bschemas.SpanStatus, statusMsg string) {
 	span := spanOf(handle)
@@ -166,8 +177,10 @@ func (t *otelTracer) PopulateLLMRequestAttributes(handle bschemas.SpanHandle, re
 	)
 }
 
-// PopulateLLMResponseAttributes captures token usage and any error.
-func (t *otelTracer) PopulateLLMResponseAttributes(_ *bschemas.BifrostContext, handle bschemas.SpanHandle, resp *bschemas.BifrostResponse, bErr *bschemas.BifrostError) {
+// PopulateLLMResponseAttributes captures token usage and any error. Bifrost
+// calls it once per attempt.
+func (t *otelTracer) PopulateLLMResponseAttributes(ctx *bschemas.BifrostContext, handle bschemas.SpanHandle, resp *bschemas.BifrostResponse, bErr *bschemas.BifrostError) {
+	recordAttemptError(ctx, bErr)
 	span := spanOf(handle)
 	if span == nil {
 		return
@@ -240,6 +253,19 @@ func (t *otelTracer) CreateStreamAccumulator(traceID string, startTime time.Time
 	t.mu.Unlock()
 }
 
+// ResetStreamAccumulator restarts the chunk count and time-to-first-token for
+// a retried or fallback stream attempt.
+func (t *otelTracer) ResetStreamAccumulator(traceID string) {
+	if traceID == "" {
+		return
+	}
+	t.mu.Lock()
+	if s := t.streams[traceID]; s != nil {
+		s.chunks, s.firstAt, s.response = 0, time.Time{}, nil
+	}
+	t.mu.Unlock()
+}
+
 func (t *otelTracer) CleanupStreamAccumulator(traceID string) {
 	t.mu.Lock()
 	delete(t.streams, traceID)
@@ -282,7 +308,8 @@ func (t *otelTracer) GetAccumulatedChunks(traceID string) (*bschemas.BifrostResp
 // returns a result on the final chunk. Bifrost's exporter plugins
 // expect a non-nil result on the terminating call so they can flush;
 // we only synthesize one when isFinalChunk is true.
-func (t *otelTracer) ProcessStreamingChunk(_ *bschemas.BifrostContext, traceID string, isFinalChunk bool, result *bschemas.BifrostResponse, bErr *bschemas.BifrostError) *bschemas.StreamAccumulatorResult {
+func (t *otelTracer) ProcessStreamingChunk(ctx *bschemas.BifrostContext, traceID string, isFinalChunk bool, result *bschemas.BifrostResponse, bErr *bschemas.BifrostError) *bschemas.StreamAccumulatorResult {
+	recordAttemptError(ctx, bErr)
 	if traceID == "" {
 		return nil
 	}

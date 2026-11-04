@@ -62,6 +62,7 @@ func NewTranscriber(cfg TranscriptionConfig) (*Transcriber, error) {
 func (t *Transcriber) Transcribe(file io.Reader) (*subtitles.Subtitles, error) {
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+	trackAttemptErrors(bifrostCtx)
 
 	// Read the file into bytes for the request
 	data, err := io.ReadAll(file)
@@ -82,7 +83,7 @@ func (t *Transcriber) Transcribe(file io.Reader) (*subtitles.Subtitles, error) {
 
 	resp, bifrostErr := t.client.TranscriptionRequest(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, providerError(nil, "bifrost transcription error", bifrostErr, t.apiKey)
+		return nil, providerError(bifrostCtx, nil, "bifrost transcription error", bifrostErr, t.apiKey)
 	}
 
 	if resp == nil || resp.Text == "" {
