@@ -17,12 +17,13 @@ import {AnimatedModalShell} from '../animated_modal_shell';
 import {useMCPConnectionEvents} from '../../hooks/use_mcp_connection_events';
 
 import {LicenseChip} from './enterprise_chip';
-import {BooleanItem, TextItem, ItemLabel} from './item';
+import {BooleanItem, CredentialsClearedNote, TextItem, ItemLabel} from './item';
 import {HeaderMapEditor} from './mcp_header_map_editor';
 import MCPServerDescription from './mcp_server_description';
 import MCPServerToolRow from './mcp_server_tool_row';
 import {reviewToolConfigs} from './mcp_tool_review';
 import {MCPServerConfig, MCPServerInfo, PersistMCPServerScope} from './mcp_types';
+import {SECRET_PLACEHOLDER} from './plugin_config_types';
 
 // persistServer saves server within scope and returns it as saved.
 export type PersistMCPServer = (server: MCPServerConfig, scope?: PersistMCPServerScope) => Promise<MCPServerConfig>;
@@ -40,6 +41,29 @@ export const connectionSettings = (server: MCPServerConfig) => JSON.stringify([
     server.clientID || '',
     server.clientSecret || '',
 ]);
+
+const headerMapHasMask = (headers: {[key: string]: string} | undefined): boolean =>
+    Object.values(headers || {}).some((value) => value === SECRET_PLACEHOLDER);
+
+const withoutMaskedHeaderValues = (headers: {[key: string]: string} | undefined): {[key: string]: string} =>
+    Object.fromEntries(
+        Object.entries(headers || {}).map(([key, value]) => [key, value === SECRET_PLACEHOLDER ? '' : value]),
+    );
+
+const hasMaskedCredential = (server: MCPServerConfig): boolean =>
+    server.clientSecret === SECRET_PLACEHOLDER ||
+    headerMapHasMask(server.headers) ||
+    headerMapHasMask(server.serviceAccountHeaders);
+
+// The server keeps a stored credential with the base URL it was saved against,
+// so a mask the admin never replaced means nothing once the URL points
+// somewhere else.
+const withoutMaskedCredentials = (server: MCPServerConfig): MCPServerConfig => ({
+    ...server,
+    headers: withoutMaskedHeaderValues(server.headers),
+    serviceAccountHeaders: withoutMaskedHeaderValues(server.serviceAccountHeaders),
+    clientSecret: server.clientSecret === SECRET_PLACEHOLDER ? '' : server.clientSecret,
+});
 
 // serverOrigin returns a server URL's origin (scheme, host, and port), or ''
 // when the URL cannot be parsed.
@@ -133,6 +157,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
     const [discovered, setDiscovered] = useState<MCPServerInfo | null>(null);
     const [review, setReview] = useState<MCPServerConfig | null>(null);
     const [showErrors, setShowErrors] = useState(false);
+    const [credentialsCleared, setCredentialsCleared] = useState(false);
 
     // Set once an edit has ended sign-ins, until the admin reconnects.
     const [reconnecting, setReconnecting] = useState(false);
@@ -242,6 +267,12 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
         }
         return '';
     })();
+    const clearCredentialsIfMoved = () => {
+        if (savedServer && trimmedURL !== savedServer.baseURL.trim() && hasMaskedCredential(details)) {
+            setCredentialsCleared(true);
+            setDetails(withoutMaskedCredentials(details));
+        }
+    };
     const urlError = (/^https?:\/\/\S+$/i).test(trimmedURL) ? '' : intl.formatMessage({defaultMessage: 'Enter the server URL, starting with https:// or http://.'});
     const detailsValid = !nameError && !urlError;
 
@@ -400,7 +431,13 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                 value={details.baseURL}
                 placeholder='https://mcp.example.com/mcp'
                 onChange={(e) => setDetails({...details, baseURL: e.target.value})}
+                onBlur={clearCredentialsIfMoved}
                 error={showErrors ? urlError : undefined} // eslint-disable-line no-undefined
+                helptext={credentialsCleared ? (
+                    <CredentialsClearedNote>
+                        {intl.formatMessage({defaultMessage: 'Saved credentials do not carry over to a different URL. Re-enter them before saving.'})}
+                    </CredentialsClearedNote>
+                ) : undefined} // eslint-disable-line no-undefined
             />
             {mode.kind === 'edit' && (
                 <BooleanItem

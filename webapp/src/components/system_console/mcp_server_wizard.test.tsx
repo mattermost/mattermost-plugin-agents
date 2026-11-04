@@ -55,6 +55,7 @@ import {chooseOption, getSelect, selectedLabel} from '../../../tests/compass_sel
 
 import MCPServerWizard, {MCPServerWizardMode, reauthReasons} from './mcp_server_wizard';
 import {MCPServerConfig, MCPServerInfo} from './mcp_types';
+import {SECRET_PLACEHOLDER} from './plugin_config_types';
 /* eslint-enable import/first */
 
 const mockGetMCPServerTools = getMCPServerTools as jest.Mock;
@@ -641,5 +642,88 @@ describe('MCPServerWizard direct messages only', () => {
 
         await waitFor(() => expect(onClose).toHaveBeenCalled());
         expect(onPersist.mock.calls[0][0]).toEqual(expect.objectContaining({id: SERVER_ID, description: 'Tickets', dmOnly: true}));
+    });
+});
+
+describe('MCPServerWizard credentials when the server URL changes', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+    });
+
+    const STORED_URL = 'https://mcp.example.com/mcp';
+    const MOVED_URL = 'https://mcp.example.com/v2/mcp';
+    const CLEARED_NOTE = 'Saved credentials do not carry over to a different URL. Re-enter them before saving.';
+
+    // A server as GET /admin/config returns it: every stored credential arrives masked.
+    const saved: MCPServerConfig = {
+        id: SERVER_ID,
+        name: 'Tracker',
+        enabled: true,
+        baseURL: STORED_URL,
+        headers: {Authorization: SECRET_PLACEHOLDER},
+        serviceAccountHeaders: {Authorization: SECRET_PLACEHOLDER},
+        description: 'Issues',
+        clientID: 'client-id',
+        clientSecret: SECRET_PLACEHOLDER,
+    };
+
+    const editURL = async (value: string) => {
+        const field = await screen.findByDisplayValue(/^https:\/\/mcp\.example\.com\//);
+        fireEvent.change(field, {target: {value}});
+        fireEvent.blur(field);
+    };
+
+    const savedServerAfter = async (edit: () => Promise<void>) => {
+        const {onPersist, onClose} = renderWizard({kind: 'edit', server: saved}, ['Tracker'], [saved]);
+        await edit();
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+        await waitFor(() => expect(onClose).toHaveBeenCalled());
+        return (onPersist.mock.calls[0] as unknown as [MCPServerConfig])[0];
+    };
+
+    test('moving the server empties the untouched credential fields and says why', async () => {
+        const {onPersist, onClose} = renderWizard({kind: 'edit', server: saved}, ['Tracker'], [saved]);
+
+        await editURL(MOVED_URL);
+        expect(screen.getByText(CLEARED_NOTE)).not.toBeNull();
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+        await waitFor(() => expect(onClose).toHaveBeenCalled());
+
+        const server = (onPersist.mock.calls[0] as unknown as [MCPServerConfig])[0];
+        expect(server.clientSecret).toBe('');
+        expect(server.headers).toEqual({Authorization: ''});
+        expect(server.serviceAccountHeaders).toEqual({Authorization: ''});
+    });
+
+    test('a client secret entered before the move is kept', async () => {
+        const server = await savedServerAfter(async () => {
+            fireEvent.change(await screen.findByLabelText('OAuth client secret'), {target: {value: 'entered-secret'}});
+            await editURL(MOVED_URL);
+        });
+
+        expect(server.clientSecret).toBe('entered-secret');
+        expect(server.headers).toEqual({Authorization: ''});
+    });
+
+    test('putting the original URL back keeps the credential fields', async () => {
+        const server = await savedServerAfter(async () => {
+            const field = await screen.findByDisplayValue(STORED_URL);
+            fireEvent.change(field, {target: {value: MOVED_URL}});
+            fireEvent.change(field, {target: {value: STORED_URL}});
+            fireEvent.blur(field);
+        });
+
+        expect(server.clientSecret).toBe(SECRET_PLACEHOLDER);
+        expect(server.headers).toEqual({Authorization: SECRET_PLACEHOLDER});
+    });
+
+    test('editing another field leaves the credential fields alone', async () => {
+        const server = await savedServerAfter(async () => {
+            fireEvent.change(await screen.findByDisplayValue('Issues'), {target: {value: 'Tickets'}});
+        });
+
+        expect(server.clientSecret).toBe(SECRET_PLACEHOLDER);
+        expect(server.serviceAccountHeaders).toEqual({Authorization: SECRET_PLACEHOLDER});
+        expect(screen.queryByText(CLEARED_NOTE)).toBeNull();
     });
 });

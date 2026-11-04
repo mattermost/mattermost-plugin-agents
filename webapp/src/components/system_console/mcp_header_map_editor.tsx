@@ -66,6 +66,7 @@ export const HeaderMapEditor = ({
                             onChange={(e) => updateHeader(key, e.target.value, value)}
                         />
                         <HeaderInput
+                            type='password'
                             placeholder={headerValuePlaceholder}
                             value={value}
                             disabled={disableEdit}
