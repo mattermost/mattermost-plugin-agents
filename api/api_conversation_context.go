@@ -104,6 +104,7 @@ func (a *API) buildContextForConversation(ctx context.Context, userID string, co
 		user,
 		channel,
 		a.contextBuilder.WithLLMContextInteractive(),
+		a.contextBuilder.WithLLMContextScopedCatalogPreview(bot),
 		a.contextBuilder.WithLLMContextDirectMessage(),
 		a.contextBuilder.WithLLMContextTools(ctx, bot),
 	)

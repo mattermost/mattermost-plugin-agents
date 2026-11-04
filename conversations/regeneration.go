@@ -152,6 +152,14 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	defer c.streamingService.FinishStreaming(post.Id)
 
 	var result *llm.TextStreamResult
+	// Streaming below is synchronous, so the regenerated run ends when this
+	// returns.
+	var releaseRun func()
+	defer func() {
+		if releaseRun != nil {
+			releaseRun()
+		}
+	}()
 	switch path {
 	case regenerateThreadAnalysis:
 		result, err = c.regenerateSingleShot(ctx, bot, user, channel, conv, post)
@@ -170,7 +178,7 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		if _, ok := post.GetProp(streaming.RespondingToProp).(string); !ok {
 			return errors.New("post missing responding to prop")
 		}
-		result, err = c.regenerateViaConversation(ctx, policy, post)
+		result, releaseRun, err = c.regenerateViaConversation(ctx, policy, post)
 	}
 	if err != nil {
 		return fmt.Errorf("could not regenerate %s post: %w", conv.Operation, err)
@@ -272,11 +280,12 @@ func (c *Conversations) regenerateChannelAnalysis(
 }
 
 // regenerateViaConversation rebuilds the completion request from the conversation entity
-// and runs the ToolRunner to produce a new response stream.
-func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy *turnPolicy, post *model.Post) (*llm.TextStreamResult, error) {
+// and runs the ToolRunner to produce a new response stream. On success the
+// caller must call release once the stream has been consumed.
+func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy *turnPolicy, post *model.Post) (_ *llm.TextStreamResult, release func(), err error) {
 	conv := policy.conv
 	if conv == nil {
-		return nil, errors.New("post missing conversation_id for regeneration")
+		return nil, nil, errors.New("post missing conversation_id for regeneration")
 	}
 
 	// Regen truncates the request at the originating user message, so a
@@ -285,9 +294,14 @@ func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy
 
 	llmContext, err := policy.buildContext(ctx, "Failed to load user tool preferences on regen, proceeding without filtering")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	llmContext.ResponsePostID = post.Id
+	defer func() {
+		if err != nil {
+			llmContext.ReleaseScopedSession()
+		}
+	}()
 
 	// AllowUnsharedToolContent on DMs is a no-op (DM tool_results are shared)
 	// but documents intent.
@@ -296,7 +310,7 @@ func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy
 		SessionID:                auth.SessionIDFromContext(ctx),
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Clear prior attachments so the regenerated response starts clean.
@@ -309,8 +323,8 @@ func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy
 
 	runResult, runErr := policy.runToolLoop(ctx, llmContext, conv.ID, *completionReq, "Failed to write tool turns on regen")
 	if runErr != nil {
-		return nil, fmt.Errorf("tool runner failed on regen: %w", runErr)
+		return nil, nil, fmt.Errorf("tool runner failed on regen: %w", runErr)
 	}
 
-	return c.decorateStreamWithCreatedFiles(ctx, policy.bot, runResult.Stream, post, nil, llmContext, llmContext), nil
+	return c.decorateStreamWithCreatedFiles(ctx, policy.bot, runResult.Stream, post, nil, llmContext, llmContext), llmContext.ReleaseScopedSession, nil
 }

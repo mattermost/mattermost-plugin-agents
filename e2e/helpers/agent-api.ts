@@ -30,6 +30,8 @@ export interface CreateAgentRequest {
     autoEnableNewMCPTools: boolean;
     mcpDynamicToolLoading?: boolean;
     useServiceAccountAuth?: boolean;
+    scopedChannelMode?: boolean;
+    scopedExtraChannelIDs?: string[];
     enabledNativeTools?: string[];
     model?: string;
     enableVision?: boolean;

@@ -33,6 +33,8 @@ type ScopedSessionRequest struct {
 	RequesterID string
 	// ChannelID is the channel the run was triggered in.
 	ChannelID string
+	// TeamID is the team of ChannelID; every public channel on it is in scope.
+	TeamID string
 	// ExtraChannelIDs are admin-picked channels the agent may also read.
 	ExtraChannelIDs []string
 	// EnabledTools is the agent's tool allowlist when the run was started.
@@ -139,8 +141,8 @@ func (m *ClientManager) ScopedSessionsAvailable() bool {
 }
 
 // MintScopedSession creates a scoped session for req's bot. The session can
-// read req's channel, its extra channels, and every public channel on an open
-// team, and nothing else. The caller owns the run and must Close it when the
+// read req's channel, its extra channels, every public channel on its team and
+// on every open team, and nothing else. The caller owns the run and must Close it when the
 // run ends.
 func (m *ClientManager) MintScopedSession(ctx context.Context, req ScopedSessionRequest) (*ScopedRun, error) {
 	_, span := telemetry.Tracer().Start(ctx, "mcp mint scoped session")
@@ -154,7 +156,7 @@ func (m *ClientManager) MintScopedSession(ctx context.Context, req ScopedSession
 }
 
 func (m *ClientManager) mintScopedSession(req ScopedSessionRequest) (*ScopedRun, error) {
-	for name, id := range map[string]string{"bot user": req.BotUserID, "requester": req.RequesterID, "channel": req.ChannelID} {
+	for name, id := range map[string]string{"bot user": req.BotUserID, "requester": req.RequesterID, "channel": req.ChannelID, "team": req.TeamID} {
 		if !model.IsValidId(id) {
 			return nil, fmt.Errorf("scoped session %s ID is invalid", name)
 		}
@@ -173,14 +175,7 @@ func (m *ClientManager) mintScopedSession(req ScopedSessionRequest) (*ScopedRun,
 			channelIDs = append(channelIDs, id)
 		}
 	}
-	scope := &model.SessionScope{
-		Permissions: slices.Clone(model.ScopeReadPermissions),
-		Resources: model.SessionScopeResources{
-			ChannelIDs:             channelIDs,
-			OpenTeamPublicChannels: true,
-		},
-		OnBehalfOfUserID: req.RequesterID,
-	}
+	scope := scopedsession.NewRunScope(req.RequesterID, channelIDs, req.TeamID)
 
 	expiresAt := time.Now().Add(scopedsession.RunTTL).UnixMilli()
 	session, err := minter.CreateScopedSession(req.BotUserID, scope, expiresAt)
@@ -283,21 +278,114 @@ func (m *ClientManager) liveScopedRuns() []*ScopedRun {
 	return runs
 }
 
+// ScopedToolExclusion says why a scoped run leaves a tool out of its catalog.
+type ScopedToolExclusion string
+
+const (
+	ScopedIncluded ScopedToolExclusion = ""
+	// ScopedExcludedNotNamed: the agent's allowlist does not name the tool, as
+	// when it grants every tool on a server.
+	ScopedExcludedNotNamed ScopedToolExclusion = "not_named"
+	// ScopedExcludedPluginServer: another plugin's MCP server cannot enforce the scope.
+	ScopedExcludedPluginServer ScopedToolExclusion = "plugin_server"
+	// ScopedExcludedWriteTool: an embedded Mattermost tool that changes data.
+	ScopedExcludedWriteTool ScopedToolExclusion = "write_tool"
+	// ScopedExcludedNeedsWiderAccess: a read-only embedded tool whose routes
+	// are outside any read-only scope, such as member lists or personal data.
+	ScopedExcludedNeedsWiderAccess ScopedToolExclusion = "needs_wider_access"
+	// ScopedExcludedBuiltin: a built-in tool, which is not an MCP tool.
+	ScopedExcludedBuiltin ScopedToolExclusion = "builtin"
+)
+
+// ScopedOriginExclusion is the part of a scoped run's catalog rule that
+// depends only on where a tool is hosted.
+func ScopedOriginExclusion(origin string) ScopedToolExclusion {
+	switch {
+	case origin == "":
+		return ScopedExcludedBuiltin
+	case ServerKind(origin) == ServerKindPlugin:
+		return ScopedExcludedPluginServer
+	}
+	return ScopedIncluded
+}
+
+// ScopedCatalogExclusion is the one rule for whether an MCP tool may be in a
+// scoped run's catalog: the allowlist names it, and it is a read-only embedded
+// Mattermost tool or a remote tool reached with service-account credentials.
+// Remotes without those credentials never reach this rule, since the catalog
+// excludes them while connecting.
+func ScopedCatalogExclusion(tool llm.Tool, allowlist []llm.EnabledMCPTool) ScopedToolExclusion {
+	if exclusion := scopedToolExclusion(tool); exclusion != ScopedIncluded {
+		return exclusion
+	}
+	if len(llm.FilterMCPToolsByExplicitAllowlist([]llm.Tool{tool}, allowlist)) == 0 {
+		return ScopedExcludedNotNamed
+	}
+	return ScopedIncluded
+}
+
+// FilterScopedCatalog keeps the tools a scoped run's catalog may hold.
+func FilterScopedCatalog(tools []llm.Tool, allowlist []llm.EnabledMCPTool) []llm.Tool {
+	return slices.DeleteFunc(slices.Clone(tools), func(tool llm.Tool) bool {
+		return ScopedCatalogExclusion(tool, allowlist) != ScopedIncluded
+	})
+}
+
 // ScopedCatalogAllows reports whether an MCP tool may be in a scoped run's
-// catalog: read-only embedded Mattermost tools and remote tools reached with
-// service-account credentials. Other plugins' MCP servers are excluded, since
-// they cannot enforce the scope. Built-in tools are not MCP tools and are
-// never allowed here.
+// catalog by where it is hosted: read-only embedded Mattermost tools and
+// remote tools. Other plugins' MCP servers are excluded, since they cannot
+// enforce the scope. Built-in tools are not MCP tools and are never allowed
+// here.
 func ScopedCatalogAllows(tool llm.Tool) bool {
-	if tool.ServerOrigin == "" {
-		return false
+	return scopedToolExclusion(tool) == ScopedIncluded
+}
+
+func scopedToolExclusion(tool llm.Tool) ScopedToolExclusion {
+	if exclusion := ScopedOriginExclusion(tool.ServerOrigin); exclusion != ScopedIncluded {
+		return exclusion
 	}
-	switch ServerKind(tool.ServerOrigin) {
+	if ServerKind(tool.ServerOrigin) == ServerKindEmbedded {
+		switch {
+		case !tool.ReadOnly:
+			return ScopedExcludedWriteTool
+		case tool.ScopedUnsupported:
+			return ScopedExcludedNeedsWiderAccess
+		}
+	}
+	return ScopedIncluded
+}
+
+// ServerSummary describes a configured MCP server by its origin.
+type ServerSummary struct {
+	Name string
+	Kind string
+	// ServiceAccountConfigured is whether a remote server has service-account
+	// credentials, which scoped runs need to use it.
+	ServiceAccountConfigured bool
+}
+
+// ServerSummary returns the summary of the enabled MCP server at origin, and
+// false when no such server is enabled.
+func (m *ClientManager) ServerSummary(origin string) (ServerSummary, bool) {
+	origin = llm.NormalizeMCPServerOrigin(origin)
+	cfg, embeddedClient := m.snapshotRuntime()
+	kind := ServerKind(origin)
+	switch kind {
 	case ServerKindEmbedded:
-		return tool.ReadOnly
+		return ServerSummary{Name: EmbeddedServerName, Kind: kind}, embeddedClient != nil && cfg.EmbeddedServer.Enabled
 	case ServerKindPlugin:
-		return false
-	default:
-		return true
+		for _, server := range m.snapshotEnabledPluginServers() {
+			if pluginServerOriginKey(server.PluginID) == origin {
+				return ServerSummary{Name: server.Name, Kind: kind}, true
+			}
+		}
+		return ServerSummary{Kind: kind}, false
+	case ServerKindRemote:
+		for _, server := range cfg.Servers {
+			if server.Enabled && llm.NormalizeMCPServerOrigin(server.BaseURL) == origin {
+				return ServerSummary{Name: server.Name, Kind: kind, ServiceAccountConfigured: server.HasServiceAccountAuth()}, true
+			}
+		}
 	}
+	return ServerSummary{Kind: kind}, false
 }

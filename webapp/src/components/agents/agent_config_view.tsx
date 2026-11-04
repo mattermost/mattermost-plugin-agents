@@ -67,6 +67,8 @@ export type AgentDraft = {
     autoEnableNewMCPTools: boolean;
     mcpDynamicToolLoading: boolean;
     useServiceAccountAuth: boolean;
+    scopedChannelMode: boolean;
+    scopedExtraChannelIds: string[];
     model: string;
     enableVision: boolean;
     disableTools: boolean;
@@ -93,6 +95,8 @@ const emptyDraft: AgentDraft = {
     autoEnableNewMCPTools: true,
     mcpDynamicToolLoading: true,
     useServiceAccountAuth: false,
+    scopedChannelMode: false,
+    scopedExtraChannelIds: [],
     model: '',
     enableVision: true,
     disableTools: false,
@@ -113,6 +117,7 @@ function cloneDraft(draft: AgentDraft): AgentDraft {
         adminUserIds: [...draft.adminUserIds],
         enabledTools: [...draft.enabledTools],
         enabledNativeTools: [...draft.enabledNativeTools],
+        scopedExtraChannelIds: [...draft.scopedExtraChannelIds],
         skills: normalizeSkillsConfig(draft.skills),
     };
 }
@@ -141,6 +146,8 @@ function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
         autoEnableNewMCPTools: draft.autoEnableNewMCPTools,
         mcpDynamicToolLoading: draft.mcpDynamicToolLoading,
         useServiceAccountAuth: draft.useServiceAccountAuth,
+        scopedChannelMode: draft.scopedChannelMode,
+        scopedExtraChannelIDs: draft.scopedExtraChannelIds,
         model: draft.model,
         enableVision: draft.enableVision,
         disableTools: draft.disableTools,
@@ -173,6 +180,8 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
         autoEnableNewMCPTools: draft.autoEnableNewMCPTools,
         mcpDynamicToolLoading: draft.mcpDynamicToolLoading,
         useServiceAccountAuth: draft.useServiceAccountAuth,
+        scopedChannelMode: draft.scopedChannelMode,
+        scopedExtraChannelIDs: draft.scopedExtraChannelIds,
         model: draft.model,
         enableVision: draft.enableVision,
         disableTools: draft.disableTools,
@@ -202,6 +211,8 @@ function agentToDraft(agent: UserAgent, services: ServiceInfo[]): AgentDraft {
         autoEnableNewMCPTools: agent.autoEnableNewMCPTools ?? false,
         mcpDynamicToolLoading: agent.mcpDynamicToolLoading ?? true,
         useServiceAccountAuth: agent.useServiceAccountAuth ?? false,
+        scopedChannelMode: agent.scopedChannelMode ?? false,
+        scopedExtraChannelIds: agent.scopedExtraChannelIDs ?? [],
         model: agent.model ?? '',
         enableVision: agent.enableVision ?? true,
         disableTools: agent.disableTools ?? false,
@@ -838,6 +849,9 @@ const AgentConfigView = (props: Props) => {
                         enabledTools={draft.enabledTools}
                         autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
                         useServiceAccountAuth={draft.useServiceAccountAuth}
+                        scopedChannelMode={draft.scopedChannelMode}
+                        scopedExtraChannelIds={draft.scopedExtraChannelIds}
+                        hasUnsavedChanges={isDirty}
                         serviceAccountFieldsLocked={serviceAccountFieldsLocked}
                         canEditServiceAccountAuth={canEditServiceAccountAuth}
                         onChange={(updates) => updateDraft(updates)}

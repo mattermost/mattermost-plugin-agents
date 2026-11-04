@@ -153,6 +153,9 @@ type ToolCatalogContext struct {
 	// scoped channel mode is active in the Context's channel.
 	ScopedTurn *ScopedTurn
 
+	// ScopedPreview marks a catalog built only to show what a scoped turn
+	// would carry: no session is minted and no tool runs.
+	ScopedPreview bool
 	// SkillsEnabled catalogs the skill tools. Only conversation turns set
 	// it; analysis, search, and bridge flows run without skills.
 	SkillsEnabled bool

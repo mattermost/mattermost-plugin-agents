@@ -143,7 +143,7 @@ func TestScopedRunReadsThroughEmbeddedServer(t *testing.T) {
 	t.Cleanup(manager.Close)
 	manager.SetScopedSessions(minter)
 
-	run, err := manager.MintScopedSession(t.Context(), mcp.ScopedSessionRequest{BotUserID: botID, RequesterID: requesterID, ChannelID: trigger.Id})
+	run, err := manager.MintScopedSession(t.Context(), mcp.ScopedSessionRequest{BotUserID: botID, RequesterID: requesterID, ChannelID: trigger.Id, TeamID: trigger.TeamId})
 	require.NoError(t, err)
 	tools, mcpErrors := manager.GetTools(t.Context(), mcp.ScopedCatalogRequest(run, requesterID))
 	require.Nil(t, mcpErrors)
@@ -233,7 +233,7 @@ func TestScopedSessionSupportProbedAtActivation(t *testing.T) {
 			builder := llmcontext.NewLLMContextBuilder(pluginAPI, nil, manager, nil)
 
 			assert.Equal(t, tt.supported, builder.ServerSupportsScopedSessions())
-			run, err := manager.MintScopedSession(t.Context(), mcp.ScopedSessionRequest{BotUserID: botID, RequesterID: model.NewId(), ChannelID: model.NewId()})
+			run, err := manager.MintScopedSession(t.Context(), mcp.ScopedSessionRequest{BotUserID: botID, RequesterID: model.NewId(), ChannelID: model.NewId(), TeamID: model.NewId()})
 			if tt.supported {
 				require.NoError(t, err)
 				require.NoError(t, run.Close())
