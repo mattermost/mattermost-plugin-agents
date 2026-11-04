@@ -98,6 +98,9 @@ func classifyToolCallError(err error) *toolFailure {
 		}
 		return failure
 	}
+	if tokenErr, ok := errors.AsType[*oauthTokenError](err); ok {
+		return &toolFailure{class: toolFailureOAuthExchange, code: tokenErr.StatusCode, hasCode: true}
+	}
 	rpcErr, isRPC := errors.AsType[*jsonrpc.Error](err)
 	// A transport HTTP failure wraps the JSON-RPC error and appends the status
 	// phrase after it. When the JSON-RPC error text is the tail instead, any

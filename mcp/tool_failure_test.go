@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -24,6 +25,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"golang.org/x/oauth2"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
@@ -291,4 +293,34 @@ func TestLoggableToolNameBoundsServerControlledNames(t *testing.T) {
 			assert.Equal(t, tt.want, loggableToolName(tt.in))
 		})
 	}
+}
+
+func TestClassifyTokenRefreshFailure(t *testing.T) {
+	const userID = "alice"
+	const serverID = "refresh-server"
+
+	server := newRefreshTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	})
+	manager, kv := newStatefulKVManager(t, nil, server.Client())
+	kv.putEnvelope(t, userID, serverID, boundTestEnvelope(server.URL, &oauth2.Token{
+		AccessToken:  "old-access",
+		RefreshToken: "old-refresh",
+		TokenType:    "Bearer",
+		Expiry:       time.Now().Add(-time.Hour),
+	}))
+	handler := newUserOAuthHandler(userID, ServerConfig{
+		Name:         serverID,
+		BaseURL:      server.URL,
+		ClientID:     "static-client",
+		ClientSecret: "static-secret",
+	}, manager)
+	tokenSource, err := handler.TokenSource(context.Background())
+	require.NoError(t, err)
+
+	_, err = tokenSource.Token()
+	require.Error(t, err)
+
+	got := classifyToolCallError(fmt.Errorf("calling tool: %w", err))
+	assert.Equal(t, toolFailure{class: toolFailureOAuthExchange, code: http.StatusServiceUnavailable, hasCode: true}, *got)
 }
