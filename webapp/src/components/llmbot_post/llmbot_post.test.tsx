@@ -1993,6 +1993,13 @@ describe('LLMBotPost interrupted and stale generation notices', () => {
         jest.useRealTimers();
     });
 
+    test('shows only the interrupted notice when a regenerated post still carries the stop marker', () => {
+        renderPost({...makePost('Partial answer', {llm_interrupted: 'lost', llm_interrupted_at: 1700000000000, generation_stopped: true}), user_id: BOT_ID});
+
+        expect(screen.getByTestId('llm-bot-post-interrupted')).toBeTruthy();
+        expect(screen.queryByTestId('llm-bot-generation-stopped')).toBeNull();
+    });
+
     test.each([
         ['shutdown', SHUTDOWN_TEXT],
         ['lost', LOST_TEXT],

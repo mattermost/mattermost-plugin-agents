@@ -835,7 +835,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     // Only the requester can stop, so the requester is who stopped it.
     // A regenerate leaves the prior run's marker on the post until it finishes.
-    const generationStopped = (stopped || (props.post.props?.generation_stopped === true && !regenerating)) && !isGenerationInProgress;
+    const generationStopped = (stopped || (props.post.props?.generation_stopped === true && !regenerating)) && !isGenerationInProgress && !interrupted;
     const requesterDisplayName = useSelector<GlobalState, string | undefined>((state) => {
         const profile = requesterUserId ? state.entities.users.profiles?.[requesterUserId] : undefined; // eslint-disable-line no-undefined
         return profile ? displayNameFor(profile, selectTeammateNameDisplay(state)) : undefined; // eslint-disable-line no-undefined
