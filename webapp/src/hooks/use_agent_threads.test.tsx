@@ -175,16 +175,18 @@ describe('stored AI threads', () => {
     });
 
     test.each([
-        {name: 'a superseded response', outcome: 'resolve' as const},
-        {name: 'a superseded failure', outcome: 'reject' as const},
-    ])('$name does not overwrite newer data', async ({outcome}) => {
+        {name: 'a response', outcome: 'resolve' as const},
+        {name: 'a failure', outcome: 'reject' as const},
+    ])('a fetch requested while one is in flight runs once after $name', async ({outcome}) => {
         jest.spyOn(console, 'error').mockImplementation(() => null);
         const first = deferred<AIThread[]>();
         mockGetAIThreads.mockReturnValueOnce(first.promise).mockResolvedValueOnce([makeThread({id: 'new'})]);
         const store = makeStore();
 
         const firstFetch = fetchAIThreads(store.dispatch);
-        await fetchAIThreads(store.dispatch);
+        fetchAIThreads(store.dispatch);
+        fetchAIThreads(store.dispatch);
+        expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
         if (outcome === 'resolve') {
             first.resolve([makeThread({id: 'stale'})]);
         } else {
@@ -192,7 +194,8 @@ describe('stored AI threads', () => {
         }
         await firstFetch;
 
-        expect(titles(store)).toEqual(['new:']);
+        await waitFor(() => expect(titles(store)).toEqual(['new:']));
+        expect(mockGetAIThreads).toHaveBeenCalledTimes(2);
         expect((store.getState() as any)[`plugins-${manifest.id}`].aiThreads.error).toBe(false);
         jest.restoreAllMocks();
     });
