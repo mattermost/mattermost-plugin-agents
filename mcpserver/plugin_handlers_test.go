@@ -359,14 +359,14 @@ func TestRebuildExternalServer_PicksUpNewRegistrations(t *testing.T) {
 	}
 
 	reg.set([]mcppkg.PluginServerConfig{{PluginID: "com.example.late", Name: "Late", Path: "/mcp", Enabled: true, ExposeExternal: true}})
-	h.RebuildExternalServer()
+	h.rebuild()
 
 	after := listToolNames(t, h)
 	var sawProxy bool
 	if slices.Contains(after, "test_tool_0") {
 		sawProxy = true
 	}
-	require.True(t, sawProxy, "RebuildExternalServer should have picked up the new registration")
+	require.True(t, sawProxy, "the rebuild should have picked up the new registration")
 }
 
 func TestRebuildExternalServer_RemovesUnregistered(t *testing.T) {
@@ -384,7 +384,7 @@ func TestRebuildExternalServer_RemovesUnregistered(t *testing.T) {
 	t.Cleanup(h.Close)
 
 	reg.set(nil)
-	h.RebuildExternalServer()
+	h.rebuild()
 
 	after := listToolNames(t, h)
 	for _, n := range after {
@@ -409,7 +409,7 @@ func TestRebuildExternalServer_SkipsTimedOutPluginAndKeepsHealthyPlugins(t *test
 		{PluginID: "com.example.hung", Name: "Hung", Path: "/mcp", Enabled: true, ExposeExternal: true},
 		{PluginID: "com.example.healthy", Name: "Healthy", Path: "/mcp", Enabled: true, ExposeExternal: true},
 	})
-	h.RebuildExternalServer()
+	h.rebuild()
 
 	after := listToolNames(t, h)
 	var sawHealthy bool
@@ -436,7 +436,7 @@ func TestRebuildExternalServer_DoesNotBlockExternalRequestsWhileDiscovering(t *t
 
 	rebuildDone := make(chan struct{})
 	go func() {
-		h.RebuildExternalServer()
+		h.rebuild()
 		close(rebuildDone)
 	}()
 

@@ -75,19 +75,14 @@ type PluginMCPHandlers struct {
 	proxyDiscoveryTimeout time.Duration
 
 	// rebuildMu serializes rebuilds so two concurrent rebuilds cannot swap an
-	// older registry snapshot over a newer one. It also guards
-	// lastDiscoveryErr.
+	// older registry snapshot over a newer one.
 	rebuildMu sync.Mutex
-	// lastDiscoveryErr holds each plugin's last discovery failure so a
-	// failure repeated on every retry is logged once.
-	lastDiscoveryErr map[string]string
 
 	// The background rebuild loop starts on first use and stops on Close.
 	rebuildLoopOnce sync.Once
 	rebuildCtx      context.Context
 	rebuildCancel   context.CancelFunc
 	rebuildNow      chan struct{}
-	rebuildLater    chan struct{}
 	rebuildDone     chan struct{}
 	retryBaseDelay  time.Duration
 	retryMaxDelay   time.Duration
@@ -162,19 +157,18 @@ func NewPluginMCPHandlers(
 		embeddedServerID:        embeddedServerID,
 		allowStateChangingTools: allowStateChangingTools,
 		proxyDiscoveryTimeout:   externalProxyDiscoveryTimeout,
-		lastDiscoveryErr:        make(map[string]string),
 		rebuildNow:              make(chan struct{}, 1),
-		rebuildLater:            make(chan struct{}, 1),
 		rebuildDone:             make(chan struct{}),
 		retryBaseDelay:          rebuildRetryBaseDelay,
 		retryMaxDelay:           rebuildRetryMaxDelay,
 	}
 	h.rebuildCtx, h.rebuildCancel = context.WithCancel(context.Background())
 
-	var pending bool
-	h.currentServer, pending = h.buildServer()
-	if pending {
-		h.signalRebuild(h.rebuildLater)
+	var failures map[string]error
+	h.currentServer, failures = h.buildServer()
+	if len(failures) > 0 {
+		h.logDiscoveryFailures(failures, false)
+		h.RequestRebuild()
 	}
 
 	streamableHandler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
@@ -202,10 +196,10 @@ func NewPluginMCPHandlers(
 }
 
 // buildServer constructs a fresh *mcp.Server with native + proxy tools, and
-// reports whether any exposed plugin server still has to be discovered.
+// returns the discovery failure of each exposed plugin server it skipped.
 // Does not touch currentServer, so callers can drop h.mu during the
 // source-plugin Connect/ListTools calls.
-func (h *PluginMCPHandlers) buildServer() (*mcp.Server, bool) {
+func (h *PluginMCPHandlers) buildServer() (*mcp.Server, map[string]error) {
 	mcpServer := mcp.NewServer(
 		&mcp.Implementation{
 			Name:    "mattermost-mcp-server",
@@ -240,13 +234,13 @@ func (h *PluginMCPHandlers) buildServer() (*mcp.Server, bool) {
 	}
 
 	// Disabled plugin tools are not registered on the external server.
-	pending := false
+	var failures map[string]error
 	if h.registry != nil {
-		pending = h.addProxyTools(mcpServer, toolOwners)
+		failures = h.addProxyTools(mcpServer, toolOwners)
 	}
 
 	mcpServer.AddReceivingMiddleware(h.accessFilterMiddleware(toolOwners))
-	return mcpServer, pending
+	return mcpServer, failures
 }
 
 // toolOwner is the catalog snapshot for one registered tool.
@@ -268,8 +262,8 @@ type proxyDiscovery struct {
 // Splitting discovery from registration is what keeps collision winners
 // independent of which source plugin answers first: native Mattermost tools
 // always win, and among plugins the first entry in the snapshot wins. It
-// reports whether any plugin server failed discovery.
-func (h *PluginMCPHandlers) addProxyTools(mcpServer *mcp.Server, toolOwners map[string]toolOwner) bool {
+// returns the discovery failure of each plugin server it skipped.
+func (h *PluginMCPHandlers) addProxyTools(mcpServer *mcp.Server, toolOwners map[string]toolOwner) map[string]error {
 	var exposed []mcppkg.PluginServerConfig
 	for _, ps := range h.registry.ListPluginServers() {
 		if ps.Enabled && ps.ExposeExternal {
@@ -289,16 +283,12 @@ func (h *PluginMCPHandlers) addProxyTools(mcpServer *mcp.Server, toolOwners map[
 	}
 	wg.Wait()
 
-	pending := false
-	seen := make(map[string]bool, len(exposed))
+	failures := make(map[string]error)
 	for index, ps := range exposed {
-		seen[ps.PluginID] = true
 		if err := discovered[index].err; err != nil {
-			pending = true
-			h.logDiscoveryFailure(ps.PluginID, err)
+			failures[ps.PluginID] = err
 			continue
 		}
-		delete(h.lastDiscoveryErr, ps.PluginID)
 
 		policyConfig := &mcppkg.ServerConfig{
 			Name:        ps.Name,
@@ -329,29 +319,24 @@ func (h *PluginMCPHandlers) addProxyTools(mcpServer *mcp.Server, toolOwners map[
 			mcpServer.AddTool(proxyTool, proxyHandlers[i])
 		}
 	}
-	for pluginID := range h.lastDiscoveryErr {
-		if !seen[pluginID] {
-			delete(h.lastDiscoveryErr, pluginID)
-		}
-	}
-	return pending
+	return failures
 }
 
-// logDiscoveryFailure logs a plugin's discovery failure at Warn the first
-// time it is seen and at Debug while it repeats on retries. A source plugin
-// that is not running yet is expected during startup and only logged at Debug.
-func (h *PluginMCPHandlers) logDiscoveryFailure(pluginID string, err error) {
-	if errors.Is(err, errSourcePluginNotRunning) {
-		h.logger.Debug("plugin MCP server is not running yet; will retry discovery", "plugin_id", pluginID)
-		return
+// logDiscoveryFailures logs discovery failures at Warn after a requested
+// rebuild and at Debug on timed retries, so a plugin that keeps failing does
+// not warn every minute. A source plugin that is not running yet is expected
+// during startup and only logged at Debug.
+func (h *PluginMCPHandlers) logDiscoveryFailures(failures map[string]error, retrying bool) {
+	for pluginID, err := range failures {
+		switch {
+		case errors.Is(err, errSourcePluginNotRunning):
+			h.logger.Debug("plugin MCP server is not running yet; will retry discovery", "plugin_id", pluginID)
+		case retrying:
+			h.logger.Debug("still unable to build proxy tools for plugin server; will retry", "plugin_id", pluginID, "error", err.Error())
+		default:
+			h.logger.Warn("failed to build proxy tools for plugin server; will retry", "plugin_id", pluginID, "error", err.Error())
+		}
 	}
-	msg := err.Error()
-	if h.lastDiscoveryErr[pluginID] == msg {
-		h.logger.Debug("still unable to build proxy tools for plugin server; will retry", "plugin_id", pluginID, "error", msg)
-		return
-	}
-	h.lastDiscoveryErr[pluginID] = msg
-	h.logger.Warn("failed to build proxy tools for plugin server; will retry", "plugin_id", pluginID, "error", msg)
 }
 
 func (h *PluginMCPHandlers) currentEmbeddedServerID() string {
@@ -496,20 +481,19 @@ func (h *PluginMCPHandlers) sourcePluginRunning(pluginID string) (bool, error) {
 	return status != nil && status.State == model.PluginStateRunning, nil
 }
 
-// RebuildExternalServer reconstructs the underlying *mcp.Server from the
-// current plugin-server registry. When a plugin server could not be
-// discovered, the background loop retries with backoff.
-func (h *PluginMCPHandlers) RebuildExternalServer() {
-	if h.rebuild() {
-		h.signalRebuild(h.rebuildLater)
-	}
-}
-
 // RequestRebuild rebuilds the external server on the background loop and
-// returns immediately. Use it from request handlers and plugin hooks, where
-// discovery must not block on, or call back into, a plugin that is starting.
+// returns immediately, retrying with backoff while a plugin server cannot be
+// discovered. Discovery must not block request handlers, or call back into a
+// plugin that is still starting.
 func (h *PluginMCPHandlers) RequestRebuild() {
-	h.signalRebuild(h.rebuildNow)
+	if h.rebuildCtx.Err() != nil {
+		return
+	}
+	h.rebuildLoopOnce.Do(func() { go h.rebuildLoop() })
+	select {
+	case h.rebuildNow <- struct{}{}:
+	default:
+	}
 }
 
 // Close stops the background rebuild loop and waits for it to exit.
@@ -519,69 +503,43 @@ func (h *PluginMCPHandlers) Close() {
 	<-h.rebuildDone
 }
 
-func (h *PluginMCPHandlers) rebuild() bool {
+func (h *PluginMCPHandlers) rebuild() map[string]error {
 	h.rebuildMu.Lock()
 	defer h.rebuildMu.Unlock()
 
-	nextServer, pending := h.buildServer()
+	nextServer, failures := h.buildServer()
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.currentServer = nextServer
-	return pending
-}
-
-func (h *PluginMCPHandlers) signalRebuild(ch chan struct{}) {
-	if h.rebuildCtx.Err() != nil {
-		return
-	}
-	h.rebuildLoopOnce.Do(func() { go h.rebuildLoop() })
-	select {
-	case ch <- struct{}{}:
-	default:
-	}
+	return failures
 }
 
 // rebuildLoop runs requested rebuilds one at a time, coalescing requests that
-// arrive during a rebuild, and retries with backoff while discovery is
-// pending. A new request resets the backoff.
+// arrive during a rebuild, and retries with backoff while discovery fails. A
+// new request resets the backoff.
 func (h *PluginMCPHandlers) rebuildLoop() {
 	defer close(h.rebuildDone)
 
 	delay := h.retryBaseDelay
-	var retry *time.Timer
-	var retryC <-chan time.Time
-	stopRetry := func() {
-		if retry != nil {
-			retry.Stop()
-		}
-		retry, retryC = nil, nil
-	}
-	defer stopRetry()
-
+	var retry <-chan time.Time
 	for {
+		retrying := false
 		select {
 		case <-h.rebuildCtx.Done():
 			return
-		case <-h.rebuildLater:
-			if retryC == nil {
-				retry = time.NewTimer(delay)
-				retryC = retry.C
-				delay = min(delay*2, h.retryMaxDelay)
-			}
-			continue
 		case <-h.rebuildNow:
 			delay = h.retryBaseDelay
-		case <-retryC:
+		case <-retry:
+			retrying = true
 		}
-		stopRetry()
+		retry = nil
 
-		if !h.rebuild() {
-			delay = h.retryBaseDelay
-			continue
+		failures := h.rebuild()
+		h.logDiscoveryFailures(failures, retrying)
+		if len(failures) > 0 {
+			retry = time.After(delay)
+			delay = min(delay*2, h.retryMaxDelay)
 		}
-		retry = time.NewTimer(delay)
-		retryC = retry.C
-		delay = min(delay*2, h.retryMaxDelay)
 	}
 }

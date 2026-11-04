@@ -120,7 +120,7 @@ func TestRebuildExternalServerDiscoversPluginsConcurrently(t *testing.T) {
 	registry.set(exposed)
 
 	start := time.Now()
-	handlers.RebuildExternalServer()
+	handlers.rebuild()
 	elapsed := time.Since(start)
 
 	toolNames := listToolNames(t, handlers)
@@ -174,7 +174,7 @@ func TestRebuildExternalServerBoundsDiscoveryConcurrency(t *testing.T) {
 	}
 	registry.set(servers)
 
-	handlers.RebuildExternalServer()
+	handlers.rebuild()
 
 	require.LessOrEqual(t, peak.Load(), int64(maxConcurrentProxyDiscoveries))
 	require.Greater(t, peak.Load(), int64(1))
