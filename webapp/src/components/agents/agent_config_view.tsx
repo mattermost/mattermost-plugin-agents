@@ -4,12 +4,14 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
+import {useSelector} from 'react-redux';
 import {ArrowLeftIcon, ExportVariantIcon, ImportIcon, UpdateIcon} from '@mattermost/compass-icons/components';
 
 import {Button} from '@mattermost/compass-ui/components/button';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
+import {GlobalState} from '@mattermost/types/store';
 
 import {createAgent, getUserMCPTools, updateAgent, uploadAgentAvatar} from '@/client';
 import {TooltipAboveModals} from '@/components/dropdown';
@@ -23,7 +25,9 @@ import {
     ServiceInfo,
     DefaultMaxToolTurns,
     MaxAllowedMaxToolTurns,
+    SkillsConfig,
     codePointLength,
+    normalizeSkillsConfig,
 } from '@/types/agents';
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import {defaultReasoningEffort} from '@/components/system_console/reasoning_config';
@@ -38,11 +42,12 @@ import {useAgentFilePicker} from './use_agent_file_picker';
 import ConfigTab from './tabs/config_tab';
 import AccessTab from './tabs/access_tab';
 import McpsTab from './tabs/mcps_tab';
+import SkillsTab from './tabs/skills_tab';
 import AgentVersionHistoryModal from './agent_version_history_modal';
 import {formatRelativeTime} from './agent_version_labels';
 import {hasVersions, useAgentVersionHistory} from './use_agent_version_history';
 
-type Tab = 'config' | 'access' | 'mcps';
+type Tab = 'config' | 'access' | 'mcps' | 'skills';
 
 type Mode = 'create' | 'edit';
 
@@ -70,6 +75,7 @@ export type AgentDraft = {
     reasoningEffort: string;
     thinkingBudget: number;
     maxToolTurns: number;
+    skills: SkillsConfig;
 }
 
 const emptyDraft: AgentDraft = {
@@ -95,6 +101,7 @@ const emptyDraft: AgentDraft = {
     reasoningEffort: 'medium',
     thinkingBudget: 0,
     maxToolTurns: DefaultMaxToolTurns,
+    skills: normalizeSkillsConfig(),
 };
 
 function cloneDraft(draft: AgentDraft): AgentDraft {
@@ -106,6 +113,7 @@ function cloneDraft(draft: AgentDraft): AgentDraft {
         adminUserIds: [...draft.adminUserIds],
         enabledTools: [...draft.enabledTools],
         enabledNativeTools: [...draft.enabledNativeTools],
+        skills: normalizeSkillsConfig(draft.skills),
     };
 }
 
@@ -141,6 +149,7 @@ function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
         reasoningEffort: draft.reasoningEffort,
         thinkingBudget: draft.thinkingBudget,
         maxToolTurns: draft.maxToolTurns,
+        skills: draft.skills,
     };
 }
 
@@ -172,6 +181,7 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
         reasoningEffort: draft.reasoningEffort,
         thinkingBudget: draft.thinkingBudget,
         maxToolTurns: draft.maxToolTurns,
+        skills: draft.skills,
     };
 }
 
@@ -200,6 +210,7 @@ function agentToDraft(agent: UserAgent, services: ServiceInfo[]): AgentDraft {
         reasoningEffort: agent.reasoningEffort || defaultReasoningEffort(serviceType),
         thinkingBudget: agent.thinkingBudget ?? 0,
         maxToolTurns: agent.maxToolTurns && agent.maxToolTurns > 0 ? agent.maxToolTurns : DefaultMaxToolTurns,
+        skills: normalizeSkillsConfig(agent.skills),
     };
 }
 
@@ -212,7 +223,7 @@ export type AgentConfigFrameParts = {
     /** Version history, Import and Export. */
     headerAction: React.ReactNode;
 
-    /** The Configuration, Access and MCPs tabs. */
+    /** The Configuration, Access, MCPs and Skills tabs. */
     tabs: React.ReactNode;
 
     /** The active tab's panel; scrolls on its own. */
@@ -260,6 +271,8 @@ const AgentConfigView = (props: Props) => {
     const canEditServiceAccountAuth = useCurrentUserHasSystemPermission('manage_system');
     const {supported: abacSupported} = useABACSupport();
     const providerWebSearchLicensed = useIsLicensedFor('provider_web_search');
+    const sharedSkillsLicensed = useIsLicensedFor('shared_prompts');
+    const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
 
     const [activeTab, setActiveTab] = useState<Tab>('config');
     const initialDraft = useMemo(() => {
@@ -309,12 +322,15 @@ const AgentConfigView = (props: Props) => {
     // The MCPs tab stays reachable while fields-locked so the off switch is available.
     const mcpsTabDisabled = draft.disableTools && !serviceAccountFieldsLocked;
 
-    // Leave MCPs tab if tools are disabled
+    // Skills are loaded through tools, so they need tools enabled too.
+    const skillsTabDisabled = draft.disableTools;
+
+    // Leave the MCPs or Skills tab if tools are disabled
     useEffect(() => {
-        if (mcpsTabDisabled && activeTab === 'mcps') {
+        if ((mcpsTabDisabled && activeTab === 'mcps') || (skillsTabDisabled && activeTab === 'skills')) {
             setActiveTab('config');
         }
-    }, [mcpsTabDisabled, activeTab]);
+    }, [mcpsTabDisabled, skillsTabDisabled, activeTab]);
 
     const isDirty = useMemo(
         () => avatarFile !== null || !draftsEqual(draft, baselineDraft),
@@ -386,6 +402,16 @@ const AgentConfigView = (props: Props) => {
         });
     }, []);
 
+    const updateSkills = useCallback((updates: Partial<SkillsConfig>) => {
+        setDraft((prev) => ({...prev, skills: {...prev.skills, ...updates}}));
+        setErrors((prev) => {
+            const next = {...prev};
+            delete next.skills;
+            delete next.general;
+            return next;
+        });
+    }, []);
+
     // Server-state reconciliation: applied to both the editable draft and the
     // baseline used for dirty detection. Used when a child tab (e.g. MCPs) drops
     // entries that no longer exist server-side. This must not mark the form as
@@ -449,6 +475,7 @@ const AgentConfigView = (props: Props) => {
                 mcpDynamicToolLoading: imported.mcpDynamicToolLoading,
                 autoEnableNewMCPTools: imported.autoEnableNewMCPTools,
                 enabledTools,
+                skills: normalizeSkillsConfig(imported.skills),
             });
             setImportMissingServers(missingServerOrigins);
             setActiveTab('config');
@@ -718,6 +745,20 @@ const AgentConfigView = (props: Props) => {
             >
                 <FormattedMessage defaultMessage='MCPs'/>
             </UnderlineTab>
+            <UnderlineTab
+                type='button'
+                role='tab'
+                id='agent-skills-tab'
+                aria-controls='agent-skills-panel'
+                aria-selected={activeTab === 'skills'}
+                tabIndex={activeTab === 'skills' ? 0 : -1}
+                $active={activeTab === 'skills'}
+                disabled={skillsTabDisabled}
+                {...(skillsTabDisabled ? {title: intl.formatMessage({defaultMessage: 'Enable Tools to configure skills'})} : {})}
+                onClick={() => setActiveTab('skills')}
+            >
+                <FormattedMessage defaultMessage='Skills'/>
+            </UnderlineTab>
         </ConfigTabs>
     );
 
@@ -801,6 +842,20 @@ const AgentConfigView = (props: Props) => {
                         canEditServiceAccountAuth={canEditServiceAccountAuth}
                         onChange={(updates) => updateDraft(updates)}
                         onReconcileEnabledTools={reconcileEnabledTools}
+                    />
+                </div>
+            )}
+            {activeTab === 'skills' && (
+                <div
+                    role='tabpanel'
+                    id='agent-skills-panel'
+                    aria-labelledby='agent-skills-tab'
+                >
+                    <SkillsTab
+                        skills={draft.skills}
+                        onChange={updateSkills}
+                        currentUserId={currentUserId}
+                        sharingLicensed={sharedSkillsLicensed}
                     />
                 </div>
             )}
