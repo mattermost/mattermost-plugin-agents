@@ -29,6 +29,7 @@ const groups = {
         'tests/system-console/live-service-full-flow.spec.ts',
         'tests/multiplayer-tool-calling/multiplayer-tool-calling.spec.ts',
         'tests/tool-activity/activity-approval.spec.ts',
+        'tests/notifications/agent-dm.spec.ts',
     ],
     'e2e-shard-2': [
         'tests/system-console/bot-validation.spec.ts',
@@ -51,6 +52,7 @@ const groups = {
         'tests/agents/html-artifact.spec.ts',
         'tests/agents/agent-chat-bubbles.spec.ts',
         'tests/tool-activity/collapsed-activity.spec.ts',
+        'tests/notifications/agent-legacy-server.spec.ts',
         'tests/rhs-core/link-domain-allowlist.spec.ts',
     ],
     'e2e-shard-3': [
@@ -73,6 +75,9 @@ const groups = {
         'tests/llmbot-post-component/reasoning-display.spec.ts',
         'tests/llmbot-post-component/streaming-persistence.spec.ts',
         'tests/llmbot-post-component/edge-cases.spec.ts',
+        'tests/notifications/notification-lab-baseline.spec.ts',
+        'tests/notifications/agent-channel.spec.ts',
+        'tests/notifications/agent-tools.spec.ts',
         'tests/system-console/mcp-add-server-wizard.spec.ts',
         'tests/tool-config/mock-api/dm_only_mcp_server.spec.ts',
     ],

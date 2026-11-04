@@ -215,6 +215,7 @@ type API struct {
 	autoReplyStore        ChannelAutoReplyStore
 	accessChecker         *accesscontrol.Checker
 	mcpRequestLimiter     *mcpRequestLimiter
+	notifications         AgentPostNotifications
 
 	// artifactSecretCache caches the HTML artifact bridge secret after
 	// its first load from the KV store.
@@ -468,6 +469,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	agentPostRouter.POST("/regenerate", a.handleRegenerate)
 	agentPostRouter.POST("/tool_call", a.handleToolCall)
 	agentPostRouter.POST("/tool_result", a.handleToolResult)
+	agentPostRouter.POST("/viewing", a.handleViewing)
 	agentPostRouter.POST("/wait/check_now", a.handleWaitCheckNow)
 	agentPostRouter.POST("/wait/cancel", a.handleWaitCancel)
 
@@ -761,6 +763,10 @@ type AIBotsResponse struct {
 	// API compatibility.
 	LinkPolicy           config.LinkPolicy `json:"linkPolicy"`
 	HTMLArtifactsEnabled bool              `json:"htmlArtifactsEnabled"`
+	// DeferredNotifications reports that the server holds agent post
+	// notifications until the response ends, so the webapp no longer needs
+	// to suppress every agent desktop notification itself.
+	DeferredNotifications bool `json:"deferredNotifications"`
 }
 
 // usesServiceAccountAuth reports the effective service account mode for a bot:
@@ -849,11 +855,12 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 	searchEnabled := a.searchService.Enabled()
 
 	c.JSON(http.StatusOK, AIBotsResponse{
-		Bots:                 bots,
-		SearchEnabled:        searchEnabled,
-		AllowUnsafeLinks:     a.config.AllowUnsafeLinks(),
-		LinkPolicy:           a.config.LinkPolicy(),
-		HTMLArtifactsEnabled: a.config.EnableHTMLArtifacts(),
+		Bots:                  bots,
+		SearchEnabled:         searchEnabled,
+		AllowUnsafeLinks:      a.config.AllowUnsafeLinks(),
+		LinkPolicy:            a.config.LinkPolicy(),
+		HTMLArtifactsEnabled:  a.config.EnableHTMLArtifacts(),
+		DeferredNotifications: a.notifications != nil && a.notifications.Supported(),
 	})
 }
 

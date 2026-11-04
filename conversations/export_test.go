@@ -8,7 +8,14 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 )
+
+// SetStreamingServiceForTesting replaces the streaming service, so tests can
+// run turns through the real one.
+func (c *Conversations) SetStreamingServiceForTesting(s streaming.Service) {
+	c.streamingService = s
+}
 
 // ProcessDMRequest runs processDMRequest for convID as a DM turn of bot
 // whose requester is present.

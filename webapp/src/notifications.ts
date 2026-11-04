@@ -4,6 +4,7 @@
 export const LLM_BOT_REPLY_DEBOUNCE_TIMEOUT_MS = 1000;
 
 type NotificationPost = {
+    id?: string;
     user_id?: string;
     root_id?: string;
     type?: string;
@@ -18,6 +19,11 @@ export function shouldSuppressBotNotification(
         currentUserId?: string;
         parentPost?: {user_id?: string; create_at?: number} | null;
         now: number;
+
+        // The server notifies about an agent post only once it is final, so
+        // the notification is wanted unless the response is already on screen.
+        deferredNotifications?: boolean;
+        isPostViewed?: (postId: string) => boolean;
     },
 ): boolean {
     if (!post || !post.user_id) {
@@ -25,6 +31,9 @@ export function shouldSuppressBotNotification(
     }
 
     if (post.type === 'custom_llmbot') {
+        if (context.deferredNotifications) {
+            return Boolean(post.id && context.isPostViewed?.(post.id));
+        }
         return true;
     }
 
