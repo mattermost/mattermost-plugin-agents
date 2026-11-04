@@ -17,8 +17,8 @@ import {BooleanItem, ItemList, SelectionItem, TextItem} from '@/components/syste
 import {LicenseChip} from '@/components/system_console/enterprise_chip';
 import EmbeddingSearchPanel from '@/components/system_console/embedding_search/embedding_search_panel';
 import {HNSW_DEFAULTS, REINDEX_DEFAULTS, REINDEX_INDEX_STRATEGY, VECTOR_ELEMENT_TYPE} from '@/components/system_console/embedding_search/types';
-import MCPServers from '@/components/system_console/mcp_servers';
-import {MCPConfig} from '@/components/system_console/mcp_types';
+import MCPServers, {MCPServerConfig} from '@/components/system_console/mcp_servers';
+import {MCPConfig, PersistMCPServerScope} from '@/components/system_console/mcp_types';
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import WebSearchPanel from '@/components/system_console/web_search/web_search_panel';
 
@@ -168,10 +168,14 @@ type Props = {
     // Applies an MCP change to the configuration as it is when the change
     // lands, for work that finishes after other edits.
     updateMCP: (update: MCPConfig | ((current: MCPConfig) => MCPConfig)) => void;
+
+    // Save or delete one MCP server on its own, leaving other unsaved edits unsaved.
+    persistMCPServer: (server: MCPServerConfig, scope?: PersistMCPServerScope) => Promise<MCPServerConfig>;
+    deleteMCPServer: (serverID: string) => Promise<void>;
 };
 
 // The panels of one Settings section.
-const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runtimeBotsError, linkDomainsError, updateConfig, updateMCP}: Props) => {
+const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runtimeBotsError, linkDomainsError, updateConfig, updateMCP, persistMCPServer, deleteMCPServer}: Props) => {
     const intl = useIntl();
     const tokenAccountingLicensed = useIsLicensedFor('token_accounting');
     const providerWebSearchLicensed = useIsLicensedFor('provider_web_search');
@@ -335,6 +339,8 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
             <MCPServers
                 mcpConfig={value.mcp || defaultConfig.mcp}
                 savedServers={savedConfig.mcp?.servers ?? []}
+                onPersistServer={persistMCPServer}
+                onDeleteServer={deleteMCPServer}
                 onChange={updateMCP}
             />
         );

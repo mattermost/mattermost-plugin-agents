@@ -6,6 +6,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -442,6 +445,184 @@ func TestHandleGetMCPToolsReadOnlyViewersDoNotReachRemoteServers(t *testing.T) {
 			require.Empty(t, row.Tools, "nothing is cached, so nothing is listed")
 			require.NotContains(t, row.URL, "sentinel-mcp-url-token")
 			require.NotContains(t, row.URL, "sentinel-mcp-path-token")
+		})
+	}
+}
+
+// Admin discovery reports each tool's readOnlyHint, the policy the System
+// Console suggests for it, and the default it runs with until an admin saves
+// a policy, which stays ask whatever the server reports.
+func TestHandleGetMCPToolsReportsSuggestedPolicy(t *testing.T) {
+	tests := []struct {
+		name                  string
+		level                 enterprise.Level
+		wantReadToolSuggested string
+	}{
+		{"licensed policies suggest auto-run for read-only tools", enterprise.LevelEnterprise, mcp.ToolPolicyAutoRunInDM},
+		{"unlicensed policies suggest ask", enterprise.LevelUnlicensed, mcp.ToolPolicyAsk},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api, mockAPI, _ := setupAdminTestEnvironment(t)
+			api.licenseChecker = enterprisetest.CheckerAt(tt.level)
+			mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+			allowAnyPluginAPILogging(mockAPI)
+
+			server := gomcp.NewServer(&gomcp.Implementation{Name: "annotated", Version: "1.0"}, nil)
+			handler := func(context.Context, *gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+				return &gomcp.CallToolResult{}, nil
+			}
+			server.AddTool(&gomcp.Tool{
+				Name:        "read_tool",
+				InputSchema: map[string]any{"type": "object"},
+				Annotations: &gomcp.ToolAnnotations{ReadOnlyHint: true},
+			}, handler)
+			server.AddTool(&gomcp.Tool{Name: "write_tool", InputSchema: map[string]any{"type": "object"}}, handler)
+			httpServer := httptest.NewServer(gomcp.NewStreamableHTTPHandler(
+				func(*http.Request) *gomcp.Server { return server },
+				&gomcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true},
+			))
+			t.Cleanup(httpServer.Close)
+
+			api.config.(*testConfigImpl).mcpConfig = mcp.Config{
+				Enabled: true,
+				Servers: []mcp.ServerConfig{{Name: "Annotated", BaseURL: httpServer.URL, Enabled: true}},
+			}
+			api.mcpClientManager.(*mockMCPClientManager).httpClient = &http.Client{}
+
+			row := serverRowByName(t, getAdminMCPTools(t, api), "Annotated")
+			require.Nil(t, row.Error)
+			got := map[string]MCPToolInfo{}
+			for _, tool := range row.Tools {
+				tool.InputSchema = nil
+				got[tool.Name] = tool
+			}
+
+			require.Equal(t, map[string]MCPToolInfo{
+				"read_tool":  {Name: "read_tool", ReadOnlyHint: true, DefaultPolicy: mcp.ToolPolicyAsk, SuggestedPolicy: tt.wantReadToolSuggested},
+				"write_tool": {Name: "write_tool", DefaultPolicy: mcp.ToolPolicyAsk, SuggestedPolicy: mcp.ToolPolicyAsk},
+			}, got)
+		})
+	}
+}
+
+// newAnnotatedMCPServer serves one read-only and one write tool over the
+// go-sdk streamable HTTP transport.
+func newAnnotatedMCPServer(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	server := gomcp.NewServer(&gomcp.Implementation{Name: "annotated", Version: "1.0"}, nil)
+	handler := func(context.Context, *gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		return &gomcp.CallToolResult{}, nil
+	}
+	server.AddTool(&gomcp.Tool{
+		Name:        "read_tool",
+		InputSchema: map[string]any{"type": "object"},
+		Annotations: &gomcp.ToolAnnotations{ReadOnlyHint: true},
+	}, handler)
+	server.AddTool(&gomcp.Tool{Name: "write_tool", InputSchema: map[string]any{"type": "object"}}, handler)
+	httpServer := httptest.NewServer(gomcp.NewStreamableHTTPHandler(
+		func(*http.Request) *gomcp.Server { return server },
+		&gomcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true},
+	))
+	t.Cleanup(httpServer.Close)
+	return httpServer
+}
+
+// The per-server tools route lists one saved remote server's tools for the
+// System Console's add-and-review flow, failing closed on unknown servers and
+// without the remote MCP license, and keeping connection error text out of
+// the response. It reads the server from the store: this node's in-memory
+// config may not have reloaded a change saved through another node.
+func TestHandleGetMCPServerTools(t *testing.T) {
+	annotated := newAnnotatedMCPServer(t)
+	unreachable := httptest.NewServer(http.NotFoundHandler())
+	unreachable.Close()
+
+	servers := []mcp.ServerConfig{
+		{ID: "annotated", Name: "Annotated", BaseURL: annotated.URL, Enabled: true},
+		{ID: "off", Name: "Off", BaseURL: annotated.URL + "/off", Enabled: false},
+		{ID: "down", Name: "Down", BaseURL: unreachable.URL, Enabled: true},
+	}
+
+	// This node has not reloaded the latest save yet: it holds the
+	// annotated server at the unreachable URL it had before a move, and none
+	// of the servers added since.
+	lagging := mcp.Config{Enabled: true, Servers: []mcp.ServerConfig{
+		{ID: "annotated", Name: "Annotated", BaseURL: unreachable.URL, Enabled: true},
+	}}
+
+	tests := []struct {
+		name       string
+		serverID   string
+		level      enterprise.Level
+		storeErr   error
+		wantStatus int
+		wantError  string
+		wantTools  map[string]string
+	}{
+		{
+			name:       "lists tools with suggested policies",
+			serverID:   "annotated",
+			level:      enterprise.LevelEnterprise,
+			wantStatus: http.StatusOK,
+			wantTools:  map[string]string{"read_tool": mcp.ToolPolicyAutoRunInDM, "write_tool": mcp.ToolPolicyAsk},
+		},
+		{name: "unknown server is not found", serverID: "missing", level: enterprise.LevelEnterprise, wantStatus: http.StatusNotFound},
+		{name: "a store failure is not reported as a missing server", serverID: "annotated", level: enterprise.LevelEnterprise, storeErr: errors.New("db down"), wantStatus: http.StatusInternalServerError},
+		{name: "requires the remote MCP license", serverID: "annotated", level: enterprise.LevelProfessional, wantStatus: http.StatusForbidden},
+		{
+			name:       "disabled server reports an error",
+			serverID:   "off",
+			level:      enterprise.LevelEnterprise,
+			wantStatus: http.StatusOK,
+			wantError:  "The MCP server is disabled.",
+		},
+		{
+			name:       "connection failure reports a generic error",
+			serverID:   "down",
+			level:      enterprise.LevelEnterprise,
+			wantStatus: http.StatusOK,
+			wantError:  "could not connect to the MCP server or list its tools; the server log has details",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api, mockAPI, _ := setupAdminTestEnvironment(t)
+			api.licenseChecker = enterprisetest.CheckerAt(tt.level)
+			mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+			allowAnyPluginAPILogging(mockAPI)
+			api.config.(*testConfigImpl).mcpConfig = lagging
+			api.configStore = &testConfigStore{cfg: &config.Config{MCP: mcp.Config{Enabled: true, Servers: servers}}, getErr: tt.storeErr}
+			api.mcpClientManager.(*mockMCPClientManager).httpClient = &http.Client{}
+
+			req := httptest.NewRequest(http.MethodGet, "/admin/mcp/"+tt.serverID+"/tools", nil)
+			req.Header.Set("Mattermost-User-Id", "admin-user")
+			recorder := httptest.NewRecorder()
+			api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			require.Equal(t, tt.wantStatus, recorder.Code)
+			if tt.wantStatus != http.StatusOK {
+				return
+			}
+			var info MCPServerInfo
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &info))
+			require.Equal(t, tt.serverID, info.ID)
+			if tt.wantError != "" {
+				require.NotNil(t, info.Error)
+				require.Equal(t, tt.wantError, *info.Error)
+				require.Empty(t, info.Tools)
+				return
+			}
+			require.Nil(t, info.Error)
+			got := map[string]string{}
+			for _, tool := range info.Tools {
+				got[tool.Name] = tool.SuggestedPolicy
+				require.Equal(t, mcp.ToolPolicyAsk, tool.DefaultPolicy)
+			}
+			require.Equal(t, tt.wantTools, got)
 		})
 	}
 }

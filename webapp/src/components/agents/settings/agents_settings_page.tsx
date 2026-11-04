@@ -16,11 +16,14 @@ import {getAIBots, getPluginConfig, savePluginConfig} from '@/client';
 import {firstNewService} from '@/components/system_console/services';
 import NoServicesPage from '@/components/system_console/no_services_page';
 import {SettingsReadOnlyContext} from '@/components/system_console/settings_read_only';
+import {MCPServerConfig} from '@/components/system_console/mcp_servers';
+import {PersistMCPServerScope} from '@/components/system_console/mcp_types';
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
 
 import {SETTINGS_PATH, useNavigationGuard} from '../use_agents_route';
 
 import {DEFAULT_SETTINGS_SECTION, SETTINGS_SECTIONS, SettingsSection} from './sections';
+import {withSavedMCPServer, withoutMCPServer} from './mcp_server_persistence';
 import SettingsSectionContent, {BetaMessage, RuntimeBotOption, defaultConfig} from './settings_sections';
 import {useSettingsAccess} from './use_settings_access';
 
@@ -141,6 +144,63 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
         setDirty(true);
     }, []);
 
+    // persistMCPServer saves one MCP server on its own, merged into the
+    // configuration as the server has it, so other unsaved edits on this page
+    // are not saved with it. A server without an id is added. Scope
+    // tool_configs writes only its tool policies; settings writes everything
+    // else and keeps the saved tool policies unless server carries
+    // tool_configs. The saved server is then reflected in the page's local
+    // configuration.
+    const persistMCPServer = useCallback(async (server: MCPServerConfig, scope: PersistMCPServerScope = 'server'): Promise<MCPServerConfig> => {
+        const current = {...defaultConfig, ...(await getPluginConfig())};
+        const currentMCP = current.mcp || defaultConfig.mcp;
+        const currentServers: MCPServerConfig[] = currentMCP.servers ?? [];
+        const stored = server.id ? currentServers.find((s) => s.id === server.id) : undefined; // eslint-disable-line no-undefined
+        if (server.id && !stored) {
+            throw new Error(intl.formatMessage({defaultMessage: 'The server is no longer configured. Reload the page.'}));
+        }
+        let next = server;
+        if (stored && scope === 'tool_configs') {
+            next = {...stored, tool_configs: server.tool_configs};
+        } else if (stored && scope === 'settings') {
+            next = {...stored, ...server, tool_configs: server.tool_configs ?? stored.tool_configs};
+        }
+        const servers = stored ? currentServers.map((s) => (s.id === server.id ? next : s)) : [...currentServers, next];
+
+        let saved: PluginConfig;
+        try {
+            saved = {...defaultConfig, ...(await savePluginConfig({...current, mcp: {...currentMCP, servers}}))};
+        } catch (e) {
+            throw new Error((e as Error)?.message || intl.formatMessage({defaultMessage: 'Failed to save configuration.'}));
+        }
+        const savedServer = (saved.mcp?.servers ?? []).find((s: MCPServerConfig) => (
+            server.id ? s.id === server.id : s.name === next.name && s.baseURL === next.baseURL
+        ));
+        if (!savedServer) {
+            throw new Error(intl.formatMessage({defaultMessage: 'The saved server could not be found. Reload the page.'}));
+        }
+
+        setSavedConfig(saved);
+        setLocalConfig((prev) => withSavedMCPServer(prev, savedServer, scope, defaultConfig.mcp));
+        return savedServer;
+    }, [intl]);
+
+    // deleteMCPServer removes one saved MCP server on its own, like
+    // persistMCPServer, leaving other unsaved edits on this page unsaved.
+    const deleteMCPServer = useCallback(async (serverID: string): Promise<void> => {
+        const current = {...defaultConfig, ...(await getPluginConfig())};
+        const currentMCP = current.mcp || defaultConfig.mcp;
+        const currentServers: MCPServerConfig[] = currentMCP.servers ?? [];
+        let saved: PluginConfig;
+        try {
+            saved = {...defaultConfig, ...(await savePluginConfig({...current, mcp: {...currentMCP, servers: currentServers.filter((s) => s.id !== serverID)}}))};
+        } catch (e) {
+            throw new Error((e as Error)?.message || intl.formatMessage({defaultMessage: 'Failed to save configuration.'}));
+        }
+        setSavedConfig(saved);
+        setLocalConfig((prev) => withoutMCPServer(prev, serverID, defaultConfig.mcp));
+    }, [intl]);
+
     const save = async () => {
         setSaving(true);
         setSaveError(null);
@@ -232,6 +292,8 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
                     linkDomainsError={linkDomainsError}
                     updateConfig={updateConfig}
                     updateMCP={updateMCP}
+                    persistMCPServer={persistMCPServer}
+                    deleteMCPServer={deleteMCPServer}
                 />
             </>
         );

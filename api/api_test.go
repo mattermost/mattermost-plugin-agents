@@ -549,7 +549,7 @@ func (m *mockConversationStore) UpdateTurnContent(id string, content json.RawMes
 	return nil
 }
 
-func (m *mockConversationStore) GetConversationSummariesForUser(_ string, _, _ int) ([]store.ConversationSummary, error) {
+func (m *mockConversationStore) GetBotDMConversationSummariesForUser(_ string, _, _ int) ([]store.ConversationSummary, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -1407,6 +1407,7 @@ func TestAdminRouter(t *testing.T) {
 		"mcp_tools":                 "/admin/mcp/tools",
 		"mcp_vetted_seed":           "/admin/mcp/vetted-tool-seed",
 		"mcp_suggested_description": "/admin/mcp/server-id/suggested-description",
+		"mcp_server_tools":          "/admin/mcp/server-id/tools",
 	} {
 		for name, test := range map[string]struct {
 			request        *http.Request
