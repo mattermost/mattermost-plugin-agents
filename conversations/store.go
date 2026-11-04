@@ -40,6 +40,10 @@ func (c *Conversations) SaveTitle(threadID, title string) error {
 	return err
 }
 
+// clearTurnTextAttempts bounds how often clearing a turn's text is retried
+// after losing a swap to a concurrent writer.
+const clearTurnTextAttempts = 3
+
 // DeleteConversationsForDeletedPost drops the text of the turn anchored to the
 // given post and soft-deletes conversations associated with it. If the post is
 // a root post, conversations keyed by that RootPostID are marked as deleted.
@@ -53,11 +57,17 @@ func (c *Conversations) DeleteConversationsForDeletedPost(post *model.Post) erro
 
 // clearTurnTextForPost empties the text of the turn anchored to postID.
 func (c *Conversations) clearTurnTextForPost(postID string) error {
-	turn, err := c.turnAnchoredToPost(postID)
-	if err != nil || turn == nil {
-		return err
+	for range clearTurnTextAttempts {
+		turn, err := c.turnAnchoredToPost(postID)
+		if err != nil || turn == nil {
+			return err
+		}
+		swapped, err := c.setTurnText(turn, "")
+		if err != nil || swapped {
+			return err
+		}
 	}
-	return c.setTurnText(turn, "")
+	return fmt.Errorf("turn text for post %s kept changing while it was cleared", postID)
 }
 
 // softDeleteConversationsForRootPost marks every live conversation keyed by
@@ -97,7 +107,10 @@ func (c *Conversations) UpdateTurnForEditedPost(post, previousPost *model.Post) 
 	if turn == nil || turn.Role != "user" {
 		return nil
 	}
-	return c.setTurnText(turn, post.Message)
+	// A lost swap means a later write (such as the post's deletion) already
+	// superseded this edit, so it must not be applied over it.
+	_, err = c.setTurnText(turn, post.Message)
+	return err
 }
 
 // turnAnchoredToPost returns the turn anchored to postID, or nil when there is
@@ -115,20 +128,22 @@ func (c *Conversations) turnAnchoredToPost(postID string) (*store.Turn, error) {
 
 // setTurnText writes text as the whole text content of the turn, leaving its
 // other content blocks as stored. A title written from this turn is dropped
-// along with the text it was written from.
-func (c *Conversations) setTurnText(turn *store.Turn, text string) error {
+// along with the text it was written from. It reports false, writing nothing,
+// when the turn changed since it was read.
+func (c *Conversations) setTurnText(turn *store.Turn, text string) (bool, error) {
 	blocks, err := conversation.UnmarshalBlocks(turn.Content)
 	if err != nil {
-		return fmt.Errorf("failed to unmarshal turn content: %w", err)
+		return false, fmt.Errorf("failed to unmarshal turn content: %w", err)
 	}
 	content, err := json.Marshal(conversation.WithTextContent(blocks, text))
 	if err != nil {
-		return fmt.Errorf("failed to marshal turn content: %w", err)
+		return false, fmt.Errorf("failed to marshal turn content: %w", err)
 	}
-	if err := c.convService.UpdateTurnContent(turn.ID, content); err != nil {
-		return err
+	swapped, err := c.convService.CompareAndSwapTurnContent(turn.ID, turn.Content, content)
+	if err != nil || !swapped {
+		return false, err
 	}
-	return c.clearGeneratedTitle(turn)
+	return true, c.clearGeneratedTitle(turn)
 }
 
 // clearGeneratedTitle empties the title of the conversation the turn belongs

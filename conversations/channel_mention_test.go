@@ -682,6 +682,7 @@ const (
 type deletedPostFixture struct {
 	service        *conversations.Conversations
 	store          *store.Store
+	racing         *racingTurnStore
 	conversationID string
 	rootPostID     string
 	replyPostID    string
@@ -689,6 +690,22 @@ type deletedPostFixture struct {
 	userID         string
 	// seededPostID is the anchor of the conversation a case seeded for itself.
 	seededPostID string
+}
+
+// racingTurnStore runs beforeSwap ahead of each turn content swap, standing in
+// for a concurrent hook callback that writes the turn in between a read and
+// its swap.
+type racingTurnStore struct {
+	*store.Store
+	beforeSwap func()
+}
+
+func (r *racingTurnStore) CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error) {
+	if hook := r.beforeSwap; hook != nil {
+		r.beforeSwap = nil
+		hook()
+	}
+	return r.Store.CompareAndSwapTurnContent(id, expected, content)
 }
 
 // setupDeletedPostFixture builds a Conversations backed by a real store in a
@@ -745,7 +762,8 @@ func setupDeletedPostFixture(t *testing.T) *deletedPostFixture {
 		},
 	}
 
-	convService := conversation.NewService(s, nil, mmClient, &channelMentionBotLookup{
+	racing := &racingTurnStore{Store: s}
+	convService := conversation.NewService(racing, nil, mmClient, &channelMentionBotLookup{
 		botIDs: map[string]bool{botID: true},
 	})
 
@@ -792,6 +810,7 @@ func setupDeletedPostFixture(t *testing.T) *deletedPostFixture {
 	fixture := &deletedPostFixture{
 		service:        service,
 		store:          s,
+		racing:         racing,
 		conversationID: first.Conversation.ID,
 		rootPostID:     rootPostID,
 		replyPostID:    replyPostID,
@@ -1190,6 +1209,53 @@ func TestStoredTurnTextFollowsAnchoredPost(t *testing.T) {
 			if tt.validate != nil {
 				tt.validate(t, f, conversationID)
 			}
+		})
+	}
+}
+
+func TestAnchoredPostHooksDoNotRestoreStaleTurnText(t *testing.T) {
+	tests := []struct {
+		name string
+		// run starts the hook under test, racing it against the competing one.
+		run func(f *deletedPostFixture, edited, deleted *model.Post) error
+		// race is the competing hook that lands before the first swap.
+		race func(f *deletedPostFixture, edited, deleted *model.Post) error
+	}{
+		{
+			name: "edit racing a delete does not restore the cleared text",
+			run: func(f *deletedPostFixture, edited, _ *model.Post) error {
+				return f.service.UpdateTurnForEditedPost(edited, nil)
+			},
+			race: func(f *deletedPostFixture, _, deleted *model.Post) error {
+				return f.service.DeleteConversationsForDeletedPost(deleted)
+			},
+		},
+		{
+			name: "delete racing an edit still clears the text",
+			run: func(f *deletedPostFixture, _, deleted *model.Post) error {
+				return f.service.DeleteConversationsForDeletedPost(deleted)
+			},
+			race: func(f *deletedPostFixture, edited, _ *model.Post) error {
+				return f.service.UpdateTurnForEditedPost(edited, nil)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := setupDeletedPostFixture(t)
+			edited := &model.Post{Id: f.replyPostID, Message: editedReplyText}
+			deleted := &model.Post{Id: f.replyPostID}
+
+			var raceErr error
+			f.racing.beforeSwap = func() { raceErr = tt.race(f, edited, deleted) }
+			require.NoError(t, tt.run(f, edited, deleted))
+			require.NoError(t, raceErr)
+
+			contents := f.turnContents(t)
+			assert.NotContains(t, contents, replyTurnText)
+			assert.NotContains(t, contents, editedReplyText,
+				"the post is deleted, so no text may be stored for it")
 		})
 	}
 }
