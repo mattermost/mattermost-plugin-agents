@@ -104,14 +104,29 @@ func (s *Store) GetConversationByThreadBotUser(rootPostID, botID, userID string)
 	return &conv, nil
 }
 
-// UpdateConversationTitle updates the title and UpdatedAt timestamp of a conversation.
-func (s *Store) UpdateConversationTitle(id, title string) error {
-	return s.execBuilder(s.builder.
+// SetConversationTitleIfUnset sets a generated title on a non-deleted
+// conversation that has none, so it never overwrites a title its owner set.
+// It reports whether the title was set.
+func (s *Store) SetConversationTitleIfUnset(id, title string) (bool, error) {
+	return s.execBuilderRows(s.builder.
 		Update("LLM_Conversations").
 		Set("Title", title).
-		Set("UpdatedAt", model.GetMillis()).
-		Where(sq.Eq{"ID": id}),
-		"update conversation title")
+		Where(sq.Eq{"ID": id}).
+		Where(sq.Eq{"Title": ""}).
+		Where(sq.Eq{"DeleteAt": 0}),
+		"set conversation title if unset")
+}
+
+// RenameConversation sets the title of a non-deleted conversation, reporting
+// whether one was changed. A title is not activity, so UpdatedAt (which
+// orders the conversation list) is left alone.
+func (s *Store) RenameConversation(id, title string) (bool, error) {
+	return s.execBuilderRows(s.builder.
+		Update("LLM_Conversations").
+		Set("Title", title).
+		Where(sq.Eq{"ID": id}).
+		Where(sq.Eq{"DeleteAt": 0}),
+		"rename conversation")
 }
 
 // UpdateConversationRootPostID sets the RootPostID and updates the UpdatedAt timestamp.
@@ -137,7 +152,7 @@ func (s *Store) SoftDeleteConversation(id string, deleteAt int64) error {
 }
 
 // ConversationSummary is a lightweight view of a conversation with its turn count,
-// used for listing conversations in the RHS threads panel.
+// used for listing conversations. UpdatedAt is its last turn's activity.
 type ConversationSummary struct {
 	ID         string  `json:"id"           db:"id"`
 	UserID     string  `json:"user_id"      db:"userid"`
@@ -149,8 +164,9 @@ type ConversationSummary struct {
 	UpdatedAt  int64   `json:"updated_at"   db:"updatedat"`
 }
 
-// GetConversationSummariesForUser returns conversations for a user ordered by UpdatedAt DESC,
-// including a turn count per conversation. Only non-deleted conversations are returned.
+// GetConversationSummariesForUser returns a user's non-deleted conversations,
+// most recent activity first (ID breaks ties), with their turn counts. The
+// ordering uses the (UserID, UpdatedAt DESC) WHERE DeleteAt = 0 index.
 func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int) ([]ConversationSummary, error) {
 	if limit < 0 {
 		limit = 0
@@ -167,15 +183,13 @@ func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int
 			"c.ChannelID",
 			"c.RootPostID",
 			"c.Title",
-			"COUNT(t.ID) AS TurnCount",
+			"(SELECT COUNT(*) FROM LLM_Turns t WHERE t.ConversationID = c.ID) AS TurnCount",
 			"c.UpdatedAt",
 		).
 		From("LLM_Conversations c").
-		LeftJoin("LLM_Turns t ON t.ConversationID = c.ID").
 		Where(sq.Eq{"c.UserID": userID}).
 		Where(sq.Eq{"c.DeleteAt": 0}).
-		GroupBy("c.ID", "c.UserID", "c.BotID", "c.ChannelID", "c.RootPostID", "c.Title", "c.UpdatedAt").
-		OrderBy("c.UpdatedAt DESC").
+		OrderBy("c.UpdatedAt DESC", "c.ID ASC").
 		Limit(uint64(limit)).   // #nosec G115 -- guarded above
 		Offset(uint64(offset)), // #nosec G115 -- guarded above
 		"get conversation summaries"); err != nil {

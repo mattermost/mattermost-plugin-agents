@@ -11,11 +11,18 @@ import {
     AgentExportMCPTool,
     AgentExportSchemaVersion,
     EnabledTool,
+    MaxSkillDescriptionRunes,
+    SkillsConfig,
     UserAgent,
+    codePointLength,
+    normalizeSkillsConfig,
 } from '@/types/agents';
 
 // Far above any valid export, so larger files are rejected before they are read.
 const MAX_AGENT_FILE_BYTES = 2 * 1024 * 1024;
+
+// Matches model.IsValidId on the server, which validates skill IDs.
+const SKILL_ID_PATTERN = /^[a-z0-9]{26}$/;
 
 // normalizeMCPOrigin matches llm.NormalizeMCPServerOrigin on the server.
 function normalizeMCPOrigin(origin: string): string {
@@ -54,6 +61,7 @@ export function buildAgentExport(config: Partial<UserAgent>, agentVersion: numbe
             mcpDynamicToolLoading: config.mcpDynamicToolLoading ?? true,
             autoEnableNewMCPTools: config.autoEnableNewMCPTools ?? false,
             mcpTools: uniqueTools(tools),
+            skills: normalizeSkillsConfig(config.skills),
         },
     };
 }
@@ -114,6 +122,46 @@ function readBoolean(value: unknown, fallback: boolean): boolean | null {
     return typeof value === 'boolean' ? value : null;
 }
 
+// parseSkills returns null when the section is malformed; files written
+// before skills existed get the defaults.
+function parseSkills(value: unknown): SkillsConfig | null {
+    if (typeof value === 'undefined') {
+        return normalizeSkillsConfig();
+    }
+    if (!isRecord(value)) {
+        return null;
+    }
+    const disabled = readBoolean(value.disabled, false);
+    const allowPersonal = readBoolean(value.allowPersonal, false);
+    const rawIDs = value.enabledSharedIDs ?? [];
+    const rawOverrides = value.descriptionOverrides ?? {};
+    if (disabled === null || allowPersonal === null || !Array.isArray(rawIDs) || !isRecord(rawOverrides)) {
+        return null;
+    }
+
+    const enabledSharedIDs: string[] = [];
+    for (const id of rawIDs) {
+        if (typeof id !== 'string' || !SKILL_ID_PATTERN.test(id)) {
+            return null;
+        }
+        if (!enabledSharedIDs.includes(id)) {
+            enabledSharedIDs.push(id);
+        }
+    }
+
+    const descriptionOverrides: Record<string, string> = {};
+    for (const [id, description] of Object.entries(rawOverrides)) {
+        if (!SKILL_ID_PATTERN.test(id) || typeof description !== 'string' || codePointLength(description) > MaxSkillDescriptionRunes) {
+            return null;
+        }
+        if (description.trim()) {
+            descriptionOverrides[id] = description;
+        }
+    }
+
+    return {disabled, allowPersonal, enabledSharedIDs, descriptionOverrides};
+}
+
 function parseAgent(value: unknown): AgentExportAgent | null {
     if (!isRecord(value)) {
         return null;
@@ -128,7 +176,8 @@ function parseAgent(value: unknown): AgentExportAgent | null {
     const mcpDynamicToolLoading = readBoolean(value.mcpDynamicToolLoading, true);
     const maxToolTurns = typeof value.maxToolTurns === 'undefined' ? 0 : value.maxToolTurns;
     const rawTools = value.mcpTools ?? [];
-    if (name === null || displayName === null || customInstructions === null || disableTools === null ||
+    const skills = parseSkills(value.skills);
+    if (skills === null || name === null || displayName === null || customInstructions === null || disableTools === null ||
         autoEnableNewMCPTools === null || mcpDynamicToolLoading === null ||
         typeof maxToolTurns !== 'number' || !Number.isInteger(maxToolTurns) || !Array.isArray(rawTools)) {
         return null;
@@ -156,6 +205,7 @@ function parseAgent(value: unknown): AgentExportAgent | null {
         mcpDynamicToolLoading,
         autoEnableNewMCPTools,
         mcpTools: uniqueTools(mcpTools),
+        skills,
     };
 }
 
