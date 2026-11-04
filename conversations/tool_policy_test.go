@@ -12,6 +12,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -333,7 +334,8 @@ func TestSharedForTurns(t *testing.T) {
 		want   bool
 	}{
 		{name: "DM round with a DM-only tool", isDM: true, rounds: [][]llm.ToolCall{{dmOnly}}, want: true},
-		{name: "channel rounds of meta and auto_run_everywhere tools", rounds: [][]llm.ToolCall{{meta}, {everywhere, meta}}, want: true},
+		{name: "channel rounds of meta tools only", rounds: [][]llm.ToolCall{{meta}, {meta}}, want: true},
+		{name: "channel round with an auto_run_everywhere tool of undetermined provenance", rounds: [][]llm.ToolCall{{meta}, {everywhere, meta}}, want: false},
 		{name: "channel round with a DM-only tool", rounds: [][]llm.ToolCall{{meta}, {dmOnly}}, want: false},
 		{name: "channel turn without tool calls", want: false},
 	}
@@ -396,4 +398,523 @@ func TestAutoExecuteNeverRunsWhenToolsAreDisabled(t *testing.T) {
 	for _, call := range []llm.ToolCall{{Name: mcp.LoadToolName}, {Name: "CreateFile"}, {Name: "get_issue", ServerOrigin: "https://mcp.example.com"}} {
 		assert.False(t, p.autoExecute(llmCtx)(call), call.Name)
 	}
+}
+
+// TestAllToolsAutoRunEverywhere_RespectsDestinationAudience checks that the
+// channel answer is posted only when every executed tool reported provenance
+// the destination audience can read. Tools still auto-run when policy allows.
+// A false result withholds that answer until a share decision.
+func TestAllToolsAutoRunEverywhere_RespectsDestinationAudience(t *testing.T) {
+	const toolName = "read_channel"
+
+	destPublic := &model.Channel{Id: "dest-public", Type: model.ChannelTypeOpen, TeamId: "team-a"}
+	destPrivate := &model.Channel{Id: "dest-private", Type: model.ChannelTypePrivate, TeamId: "team-a"}
+	destDM := &model.Channel{Id: "dest-dm", Type: model.ChannelTypeDirect}
+	destGM := &model.Channel{Id: "dest-gm", Type: model.ChannelTypeGroup}
+	otherPrivate := &model.Channel{Id: "other-private", Type: model.ChannelTypePrivate, TeamId: "team-a"}
+	otherPublicSameTeam := &model.Channel{Id: "other-public", Type: model.ChannelTypeOpen, TeamId: "team-a"}
+	otherPublicOtherTeam := &model.Channel{Id: "other-team-public", Type: model.ChannelTypeOpen, TeamId: "team-b"}
+	sourceDM := &model.Channel{Id: "source-dm", Type: model.ChannelTypeDirect}
+	sourceGM := &model.Channel{Id: "source-gm", Type: model.ChannelTypeGroup}
+	idOnly := &model.Channel{Id: "unknown-channel"}
+	emptyID := &model.Channel{Id: "", Type: model.ChannelTypePrivate, TeamId: "team-a"}
+
+	cases := []struct {
+		name            string
+		dest            *model.Channel
+		sources         []*model.Channel
+		sourceParam     any
+		extraRemote     bool
+		origin          string
+		noGuests        bool
+		extraTool       string
+		wantAutoRun     bool
+		wantAutoPublish bool
+	}{
+		{
+			name:            "DM destination",
+			dest:            destDM,
+			sources:         []*model.Channel{otherPrivate},
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: true,
+		},
+		{
+			name:            "source is destination channel",
+			dest:            destPublic,
+			sources:         []*model.Channel{destPublic},
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: true,
+		},
+		{
+			name:            "source is destination private channel",
+			dest:            destPrivate,
+			sources:         []*model.Channel{destPrivate},
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: true,
+		},
+		{
+			name:            "source is public channel of destination team",
+			dest:            destPublic,
+			sources:         []*model.Channel{otherPublicSameTeam},
+			origin:          mcp.EmbeddedClientKey,
+			noGuests:        true,
+			wantAutoRun:     true,
+			wantAutoPublish: true,
+		},
+		{
+			name:            "public channel of destination team when a guest may be present",
+			dest:            destPublic,
+			sources:         []*model.Channel{otherPublicSameTeam},
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name:            "destination channel is missing",
+			dest:            nil,
+			sources:         []*model.Channel{otherPublicSameTeam},
+			origin:          mcp.EmbeddedClientKey,
+			noGuests:        true,
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name:            "executed tool did not report provenance",
+			dest:            destPublic,
+			sources:         []*model.Channel{otherPublicSameTeam},
+			origin:          mcp.EmbeddedClientKey,
+			noGuests:        true,
+			extraTool:       "get_channel_info",
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name:            "executed tool is outside the provenance allowlist",
+			dest:            destPublic,
+			sources:         []*model.Channel{otherPublicSameTeam},
+			origin:          mcp.EmbeddedClientKey,
+			noGuests:        true,
+			extraTool:       "create_post",
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name:            "source is other private channel",
+			dest:            destPublic,
+			sources:         []*model.Channel{otherPrivate},
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name:            "sources include a private channel other than destination",
+			dest:            destPublic,
+			sources:         []*model.Channel{otherPublicSameTeam, otherPrivate},
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name:            "source is public channel of another team",
+			dest:            destPublic,
+			sources:         []*model.Channel{otherPublicOtherTeam},
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name:            "source provenance is not determined",
+			dest:            destPublic,
+			sources:         nil,
+			origin:          "https://mcp.example.com/mcp",
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name:            "group message destination with other private source",
+			dest:            destGM,
+			sources:         []*model.Channel{otherPrivate},
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name:            "group message destination is the source",
+			dest:            destGM,
+			sources:         []*model.Channel{destGM},
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: true,
+		},
+		{
+			name:            "group message destination with public channel of a team",
+			dest:            destGM,
+			sources:         []*model.Channel{otherPublicSameTeam},
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name:            "source is a direct message",
+			dest:            destPublic,
+			sources:         []*model.Channel{sourceDM},
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name:            "source is a group message",
+			dest:            destPublic,
+			sources:         []*model.Channel{sourceGM},
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name:            "destination private and source is a different private channel",
+			dest:            destPrivate,
+			sources:         []*model.Channel{otherPrivate},
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name:            "source list is empty",
+			dest:            destPublic,
+			sources:         []*model.Channel{},
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: true,
+		},
+		{
+			name:            "source list key is absent for embedded tool",
+			dest:            destPublic,
+			sources:         nil,
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name:            "source has only an id",
+			dest:            destPublic,
+			sources:         []*model.Channel{idOnly},
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name:            "source has an empty id",
+			dest:            destPublic,
+			sources:         []*model.Channel{emptyID},
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name:            "source entry is missing",
+			dest:            destPublic,
+			sources:         []*model.Channel{otherPublicSameTeam, nil},
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name: "source list has an unexpected type",
+			dest: destPublic,
+			sourceParam: []any{
+				map[string]any{"id": otherPublicSameTeam.Id, "type": string(model.ChannelTypeOpen), "team_id": otherPublicSameTeam.TeamId},
+			},
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name:            "embedded and remote tools in the same turn",
+			dest:            destPublic,
+			sources:         []*model.Channel{otherPublicSameTeam},
+			extraRemote:     true,
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+	}
+
+	const remoteOrigin = "https://mcp.example.com/mcp"
+	const remoteToolName = "remote_tool"
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			policies := mapPolicyChecker{
+				tc.origin: {
+					toolName: {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true},
+				},
+			}
+			if tc.extraRemote {
+				policies[remoteOrigin] = map[string]struct {
+					policy  string
+					enabled bool
+				}{
+					remoteToolName: {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true},
+				}
+			}
+			c := &Conversations{toolPolicyChecker: policies, licenseChecker: enterprisetest.CheckerAt(enterprise.LevelEnterprise)}
+			llmCtx := &llm.Context{
+				Channel:                tc.dest,
+				Tools:                  llm.NewToolStore(),
+				DestinationHasNoGuests: tc.noGuests,
+			}
+			if tc.dest != nil && tc.dest.TeamId != "" {
+				llmCtx.Team = &model.Team{Id: tc.dest.TeamId}
+			}
+			switch {
+			case tc.sourceParam != nil:
+				llmCtx.Parameters = map[string]any{sourceChannelsParam: tc.sourceParam}
+			case tc.sources != nil:
+				llmCtx.Parameters = map[string]any{sourceChannelsParam: tc.sources}
+			}
+			if llmCtx.Parameters != nil {
+				llmCtx.Parameters[reportedSourceToolsParam] = map[string]bool{toolName: true}
+			}
+			llmCtx.Tools.AddTools([]llm.Tool{{Name: toolName, ServerOrigin: tc.origin}})
+			call := llm.ToolCall{Name: toolName, ServerOrigin: tc.origin}
+			calls := []llm.ToolCall{call}
+			if tc.extraTool != "" {
+				policies[tc.origin][tc.extraTool] = struct {
+					policy  string
+					enabled bool
+				}{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
+				llmCtx.Tools.AddTools([]llm.Tool{{Name: tc.extraTool, ServerOrigin: tc.origin}})
+				calls = append(calls, llm.ToolCall{Name: tc.extraTool, ServerOrigin: tc.origin})
+			}
+			if tc.extraRemote {
+				llmCtx.Tools.AddTools([]llm.Tool{{Name: remoteToolName, ServerOrigin: remoteOrigin}})
+				calls = append(calls, llm.ToolCall{Name: remoteToolName, ServerOrigin: remoteOrigin})
+			}
+			turns := []toolrunner.ToolTurn{{AssistantToolCalls: calls}}
+
+			isDM := tc.dest != nil && tc.dest.Type == model.ChannelTypeDirect
+			assert.Equal(t, tc.wantAutoRun, testTurnPolicy(c, isDM).autoExecute(llmCtx)(call),
+				"tools still auto-run when policy allows")
+			assert.Equal(t, tc.wantAutoPublish, c.allToolsAutoRunEverywhere(turns, llmCtx),
+				"the channel answer is posted only when provenance is covered")
+			if !isDM {
+				assert.Equal(t, tc.wantAutoPublish && tc.wantAutoRun, testTurnPolicy(c, false).sharedForTurns(turns, llmCtx),
+					"tool results are written shared only when the answer is publishable")
+				llmCtx.HoldChannelAnswer = func(calls []llm.ToolCall) bool {
+					return !c.allToolsAutoRunEverywhere([]toolrunner.ToolTurn{{AssistantToolCalls: calls}}, llmCtx)
+				}
+				assert.Equal(t, !tc.wantAutoPublish, llmCtx.HoldChannelAnswer(calls),
+					"an uncovered answer is withheld until a share decision")
+			}
+		})
+	}
+}
+
+func TestAllToolsAutoRunEverywhere_RespectsEnabledFlag(t *testing.T) {
+	const origin = "https://mcp.example.com/mcp"
+	const toolName = "example_tool"
+
+	c := &Conversations{
+		toolPolicyChecker: mapPolicyChecker{
+			origin: {
+				toolName: {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: false},
+			},
+		},
+	}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+	llmCtx.Tools.AddTools([]llm.Tool{{Name: toolName, ServerOrigin: origin}})
+
+	turns := []toolrunner.ToolTurn{{
+		AssistantToolCalls: []llm.ToolCall{{Name: toolName, ServerOrigin: origin}},
+	}}
+
+	assert.False(t, c.allToolsAutoRunEverywhere(turns, llmCtx),
+		"a disabled tool must not auto-share results even when the policy is auto_run_everywhere")
+}
+
+func TestAllToolsAutoRunEverywhere_NamespacedToolUsesBarePolicy(t *testing.T) {
+	const origin = "https://mcp.example.com/mcp"
+
+	c := &Conversations{
+		toolPolicyChecker: mapPolicyChecker{
+			origin: {
+				"example_tool": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true},
+			},
+		},
+	}
+	llmCtx := &llm.Context{Channel: &model.Channel{Id: "dm", Type: model.ChannelTypeDirect}, Tools: llm.NewToolStore()}
+	llmCtx.Tools.AddTools([]llm.Tool{{Name: "example__example_tool", ServerOrigin: origin}})
+
+	turns := []toolrunner.ToolTurn{{
+		AssistantToolCalls: []llm.ToolCall{{Name: "example__example_tool", ServerOrigin: origin}},
+	}}
+
+	assert.True(t, c.allToolsAutoRunEverywhere(turns, llmCtx))
+}
+
+func TestAllToolsAutoRunEverywhere_AllowsMetaTools(t *testing.T) {
+	const origin = "https://mcp.example.com/mcp"
+	const toolName = "example_tool"
+
+	c := &Conversations{
+		toolPolicyChecker: mapPolicyChecker{
+			origin: {
+				toolName: {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true},
+			},
+		},
+	}
+	store := llm.NewToolStore()
+	store.AddTools(mcp.NewMetaTools(nil))
+	store.AddTools([]llm.Tool{{Name: toolName, ServerOrigin: origin}})
+	llmCtx := &llm.Context{Channel: &model.Channel{Id: "dm", Type: model.ChannelTypeDirect}, Tools: store}
+
+	turns := []toolrunner.ToolTurn{
+		{AssistantToolCalls: []llm.ToolCall{{Name: mcp.SearchToolsName}}},
+		{AssistantToolCalls: []llm.ToolCall{{Name: toolName, ServerOrigin: origin}}},
+	}
+
+	assert.True(t, c.allToolsAutoRunEverywhere(turns, llmCtx))
+}
+
+func TestAllToolsAutoRunEverywhere_UnknownToolReturnsFalse(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+	turns := []toolrunner.ToolTurn{{
+		AssistantToolCalls: []llm.ToolCall{{Name: "unknown_tool", ServerOrigin: "https://mcp.example.com"}},
+	}}
+
+	assert.False(t, c.allToolsAutoRunEverywhere(turns, llmCtx))
+	assert.Zero(t, checker.calls)
+}
+
+func TestAllToolsAutoRunEverywhereMetaOnlyBypassesPolicy(t *testing.T) {
+	c := &Conversations{toolPolicyChecker: nil}
+	turns := []toolrunner.ToolTurn{{
+		AssistantToolCalls: []llm.ToolCall{
+			{Name: mcp.SearchToolsName},
+			{Name: mcp.LoadToolName},
+		},
+	}}
+
+	assert.True(t, c.allToolsAutoRunEverywhere(turns, nil))
+}
+
+func TestAllToolsAutoRunEverywhere_AutoExecuteBuiltIn(t *testing.T) {
+	const mcpOrigin = "https://mcp.example.com/mcp"
+
+	cases := []struct {
+		name   string
+		origin string
+		want   bool
+	}{
+		{name: "built-in only round is shared", origin: "", want: true},
+		{name: "MCP tool with flag still requires policy", origin: mcpOrigin, want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Conversations{toolPolicyChecker: nil}
+			llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+			llmCtx.Tools.AddTools([]llm.Tool{{Name: "CreateFile", ServerOrigin: tc.origin, AutoExecute: true}})
+			turns := []toolrunner.ToolTurn{{
+				AssistantToolCalls: []llm.ToolCall{{Name: "CreateFile", ServerOrigin: tc.origin}},
+			}}
+
+			assert.Equal(t, tc.want, c.allToolsAutoRunEverywhere(turns, llmCtx))
+		})
+	}
+}
+
+func TestAllToolsAutoRunEverywhereMixedMetaAndAutoRunBusinessTool(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	const origin = "https://mcp.atlassian.com"
+	const runtimeToolName = "jira__get_issue"
+	llmCtx := &llm.Context{Channel: &model.Channel{Id: "dm", Type: model.ChannelTypeDirect}, Tools: llm.NewToolStore()}
+	llmCtx.Tools.AddTools([]llm.Tool{{Name: runtimeToolName, ServerOrigin: origin}})
+	turns := []toolrunner.ToolTurn{{
+		AssistantToolCalls: []llm.ToolCall{
+			{Name: mcp.SearchToolsName},
+			{Name: runtimeToolName},
+			{Name: mcp.LoadToolName},
+		},
+	}}
+
+	assert.True(t, c.allToolsAutoRunEverywhere(turns, llmCtx))
+	assert.Equal(t, 1, checker.calls)
+	assert.Equal(t, "get_issue", checker.lastToolName)
+}
+
+func TestAllToolsAutoRunEverywhereMixedMetaAndNonAutoBusinessTool(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAsk, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	const origin = "https://mcp.atlassian.com"
+	const runtimeToolName = "jira__get_issue"
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+	llmCtx.Tools.AddTools([]llm.Tool{{Name: runtimeToolName, ServerOrigin: origin}})
+	turns := []toolrunner.ToolTurn{{
+		AssistantToolCalls: []llm.ToolCall{
+			{Name: mcp.SearchToolsName},
+			{Name: runtimeToolName},
+		},
+	}}
+
+	assert.False(t, c.allToolsAutoRunEverywhere(turns, llmCtx))
+	assert.Equal(t, 1, checker.calls)
+	assert.Equal(t, "get_issue", checker.lastToolName)
+}
+
+func TestAllToolsAutoRunEverywhereDenormalizesNamespacedTool(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	const origin = "https://mcp.atlassian.com"
+	const runtimeToolName = "jira__get_issue"
+	llmCtx := &llm.Context{Channel: &model.Channel{Id: "dm", Type: model.ChannelTypeDirect}, Tools: llm.NewToolStore()}
+	llmCtx.Tools.AddTools([]llm.Tool{{Name: runtimeToolName, ServerOrigin: origin}})
+	turns := []toolrunner.ToolTurn{{
+		AssistantToolCalls: []llm.ToolCall{{Name: runtimeToolName}},
+	}}
+
+	assert.True(t, c.allToolsAutoRunEverywhere(turns, llmCtx))
+	assert.Equal(t, 1, checker.calls)
+	assert.Equal(t, "get_issue", checker.lastToolName)
+}
+
+func TestAllToolsAutoRunEverywhereFailsClosedOnAmbiguousBareName(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+	llmCtx.Tools.AddTools([]llm.Tool{
+		{Name: "jira__get_issue", ServerOrigin: "https://jira.example.com"},
+		{Name: "github__get_issue", ServerOrigin: "https://github.example.com"},
+	})
+	turns := []toolrunner.ToolTurn{{
+		AssistantToolCalls: []llm.ToolCall{{Name: "get_issue"}},
+	}}
+
+	assert.False(t, c.allToolsAutoRunEverywhere(turns, llmCtx))
+	assert.Zero(t, checker.calls)
+}
+
+func TestAllToolsAutoRunEverywhereUsesServerOriginToDisambiguateBareName(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	const origin = "https://github.example.com"
+	llmCtx := &llm.Context{Channel: &model.Channel{Id: "dm", Type: model.ChannelTypeDirect}, Tools: llm.NewToolStore()}
+	llmCtx.Tools.AddTools([]llm.Tool{
+		{Name: "jira__get_issue", ServerOrigin: "https://jira.example.com"},
+		{Name: "github__get_issue", ServerOrigin: origin},
+	})
+	turns := []toolrunner.ToolTurn{{
+		AssistantToolCalls: []llm.ToolCall{{Name: "get_issue", ServerOrigin: origin}},
+	}}
+
+	assert.True(t, c.allToolsAutoRunEverywhere(turns, llmCtx))
+	assert.Equal(t, 1, checker.calls)
+	assert.Equal(t, origin, checker.lastOrigin)
+	assert.Equal(t, "get_issue", checker.lastToolName)
 }

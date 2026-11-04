@@ -380,6 +380,9 @@ func (p *turnPolicy) sharedForTurns(turns []toolrunner.ToolTurn, llmCtx *llm.Con
 	if p.isDM {
 		return true
 	}
+	if !p.c.allToolsAutoRunEverywhere(turns, llmCtx) {
+		return false
+	}
 	autoExecute := p.autoExecute(llmCtx)
 	sawToolCall := false
 	for _, turn := range turns {
@@ -399,9 +402,16 @@ func (p *turnPolicy) sharedForTurns(turns []toolrunner.ToolTurn, llmCtx *llm.Con
 // persisting a round fails.
 func (p *turnPolicy) runToolLoop(ctx context.Context, llmCtx *llm.Context, convID string, req llm.CompletionRequest, writeFailMsg string, writeFailArgs ...any) (*toolrunner.ToolRunResult, error) {
 	opts := p.c.withProviderWebSearchLicense(p.c.toolsDisabledLLMOptions(p.bot, !p.toolsEnabled))
+	if !p.isDM {
+		p.c.holdUncoveredChannelAnswer(llmCtx)
+	}
 	runner := toolrunner.New(p.bot.LLM(), toolrunner.WithMaxRounds(p.bot.GetConfig().EffectiveMaxToolTurns()), toolrunner.WithToolErrorResult(llmcontext.MCPToolErrorResult))
 	return runner.Run(ctx, req, p.autoExecute(llmCtx), func(turns []toolrunner.ToolTurn) {
-		if writeErr := p.c.convService.WriteToolTurns(convID, turns, p.sharedForTurns(turns, llmCtx)); writeErr != nil {
+		shared := p.sharedForTurns(turns, llmCtx)
+		if !shared {
+			annotateHeldAnswers(turns, req.Context)
+		}
+		if writeErr := p.c.convService.WriteToolTurns(convID, turns, shared); writeErr != nil {
 			p.c.mmClient.LogError(writeFailMsg, append([]any{"error", writeErr}, writeFailArgs...)...)
 		}
 	}, opts...)

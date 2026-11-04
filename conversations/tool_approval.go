@@ -592,6 +592,8 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 		return nil
 	}
 
+	acceptedAllPending := acceptsEveryPendingResult(decoded, clickedPostToolUseIDs, acceptedSet)
+
 	// Audit the decision only after the idempotency gate: a repeat click
 	// changes nothing, so its record must not claim a share resolution. The
 	// license gate below may still deny the share — that record then carries
@@ -698,9 +700,33 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 		return nil
 	}
 
+	// Sharing posts the held draft for the requester instead of asking the
+	// model for a new channel-visible paraphrase.
+	if acceptedAllPending && len(acceptedToolIDs) > 0 && c.publishHeldChannelAnswer(post, turns, decoded, clickedPostToolUseIDs) {
+		return nil
+	}
+
 	// Channel second-stage follow-up rebuilds a fresh llmContext without in-request
 	// WebSearch data; citation decoration is DM-only via HandleToolCall's llmContext.
 	return c.streamToolFollowUp(ctx, policy, post, conv, followUpOptions{UserRejected: clickedPostUserRejected, Stream: followUp})
+}
+
+// acceptsEveryPendingResult reports whether accepted covers every tool result
+// of the clicked post that has no decision yet. It must run before the
+// decision is recorded. A held answer may draw on any of those results, so it
+// is published only when all of them are shared.
+func acceptsEveryPendingResult(decoded [][]conversation.ContentBlock, clickedToolUseIDs map[string]struct{}, accepted map[string]bool) bool {
+	for _, blocks := range decoded {
+		for _, b := range blocks {
+			if b.Type != conversation.BlockTypeToolResult || b.DecidedAt != nil {
+				continue
+			}
+			if _, ok := clickedToolUseIDs[b.ToolUseID]; ok && !accepted[b.ToolUseID] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // followUpOptions are the per-caller knobs of streamToolFollowUp.

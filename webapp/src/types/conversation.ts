@@ -43,6 +43,18 @@ export interface Citation {
     title?: string;
     start_index: number;
     end_index: number;
+    channel_id?: string;
+    channel_name?: string;
+    private?: boolean;
+}
+
+export interface SourceChannel {
+    id?: string;
+    name?: string;
+    display_name?: string;
+    type?: string;
+    team_id?: string;
+    private?: boolean;
 }
 
 export interface WebSearchContext {
@@ -90,6 +102,8 @@ export interface ContentBlock {
     text?: string;
     signature?: string;
     citations?: Citation[];
+    requester_only?: boolean;
+    source_channels?: SourceChannel[];
 
     // ToolUse fields
     id?: string;
@@ -114,6 +128,7 @@ export interface ContentBlock {
     // Timestamp (ms) at which the share/keep-private decision was recorded.
     // nil → decision still pending; non-nil → decision made, no approval UI.
     decided_at?: number;
+    audience_review?: boolean;
 
     // File / Image fields
     filename?: string;
