@@ -36,14 +36,14 @@ const CustomPromptsPage = () => {
                                         icon={<Icon glyph={<ArrowLeftIcon/>}/>}
                                         size='medium'
                                         onClick={onBack}
-                                        aria-label={intl.formatMessage({defaultMessage: 'Back to prompts'})}
+                                        aria-label={intl.formatMessage({defaultMessage: 'Back to skills'})}
                                     />
                                 )}
                                 <TitleBlock>
                                     <PageTitle>{title}</PageTitle>
                                     {!showBack && (
                                         <Subtitle>
-                                            <FormattedMessage defaultMessage='Reusable prompts you can run from the message composer in any channel.'/>
+                                            <FormattedMessage defaultMessage='Saved instructions you can run from the message composer in any channel, and that agents can load when a request matches.'/>
                                         </Subtitle>
                                     )}
                                 </TitleBlock>

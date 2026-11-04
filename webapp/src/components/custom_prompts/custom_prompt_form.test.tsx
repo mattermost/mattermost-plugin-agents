@@ -112,9 +112,9 @@ describe('CustomPromptForm validation', () => {
 
         expect(onSave).not.toHaveBeenCalled();
         expect(screen.getByText('Action title is required')).not.toBeNull();
-        expect(screen.getByText('System prompt is required')).not.toBeNull();
+        expect(screen.getByText('Instructions are required')).not.toBeNull();
 
-        fireEvent.change(screen.getByPlaceholderText('Enter a title for your prompt'), {target: {value: 'Title'}});
+        fireEvent.change(screen.getByPlaceholderText('Enter a title for your skill'), {target: {value: 'Title'}});
         expect(screen.queryByText('Action title is required')).toBeNull();
     });
 
@@ -129,8 +129,8 @@ describe('CustomPromptForm validation', () => {
             </IntlProvider>,
         );
 
-        fireEvent.change(screen.getByPlaceholderText('Enter a title for your prompt'), {target: {value: ' Title '}});
-        fireEvent.change(screen.getByPlaceholderText('Enter the system prompt template'), {target: {value: ' Body '}});
+        fireEvent.change(screen.getByPlaceholderText('Enter a title for your skill'), {target: {value: ' Title '}});
+        fireEvent.change(screen.getByPlaceholderText('Enter the skill instructions'), {target: {value: ' Body '}});
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));
 
         expect(onSave).toHaveBeenCalledWith({name: 'Title', description: '', template: 'Body', is_shared: false});

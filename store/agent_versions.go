@@ -118,6 +118,7 @@ func agentVersionSnapshot(cfg *llm.BotConfig) llm.BotConfig {
 	snap.AdminUserIDs = emptyToNil(snap.AdminUserIDs)
 	snap.EnabledMCPTools = emptyToNil(snap.EnabledMCPTools)
 	snap.EnabledNativeTools = emptyToNil(snap.EnabledNativeTools)
+	snap.Skills = normalizeSkills(snap.Skills)
 	return snap
 }
 

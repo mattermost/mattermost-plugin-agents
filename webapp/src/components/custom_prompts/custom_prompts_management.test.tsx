@@ -69,7 +69,7 @@ jest.mock('@/client', () => ({
 }));
 
 const ME = 'me';
-const CONFIRM_TEXT = 'Are you sure you want to delete this prompt? This action cannot be undone.';
+const CONFIRM_TEXT = 'Are you sure you want to delete this skill? This action cannot be undone.';
 const key = `plugins-${manifest.id}`;
 
 function makePrompt(overrides: Partial<CustomPrompt>): CustomPrompt {
@@ -128,7 +128,7 @@ async function renderOpen() {
     return store;
 }
 
-const rowNames = () => screen.queryAllByRole('button', {name: /^Open prompt /}).map((e) => e.getAttribute('aria-label'));
+const rowNames = () => screen.queryAllByRole('button', {name: /^Open skill /}).map((e) => e.getAttribute('aria-label'));
 
 describe('CustomPromptsManagement', () => {
     let consoleError: jest.SpyInstance;
@@ -162,7 +162,7 @@ describe('CustomPromptsManagement', () => {
         if (shown) {
             expect(await screen.findByText(mine.name)).not.toBeNull();
         } else {
-            expect(screen.queryByText('All Prompts')).toBeNull();
+            expect(screen.queryByText('All Skills')).toBeNull();
         }
         delete window.WebappUtils;
     });
@@ -174,7 +174,7 @@ describe('CustomPromptsManagement', () => {
                 <CustomPromptsManagement/>
             </Provider>,
         );
-        expect(screen.queryByText('All Prompts')).toBeNull();
+        expect(screen.queryByText('All Skills')).toBeNull();
         expect(mockGetCustomPrompts).not.toHaveBeenCalled();
 
         await act(async () => {
@@ -192,31 +192,31 @@ describe('CustomPromptsManagement', () => {
         await renderOpen();
         expect(rowNames()).toHaveLength(2);
 
-        fireEvent.click(screen.getByRole('tab', {name: 'Your Prompts'}));
-        expect(rowNames()).toEqual(['Open prompt My Own Prompt']);
-        expect(screen.getByRole('tab', {name: 'Your Prompts'}).getAttribute('aria-selected')).toBe('true');
+        fireEvent.click(screen.getByRole('tab', {name: 'Your Skills'}));
+        expect(rowNames()).toEqual(['Open skill My Own Prompt']);
+        expect(screen.getByRole('tab', {name: 'Your Skills'}).getAttribute('aria-selected')).toBe('true');
 
-        fireEvent.click(screen.getByRole('tab', {name: 'All Prompts'}));
+        fireEvent.click(screen.getByRole('tab', {name: 'All Skills'}));
         expect(rowNames()).toHaveLength(2);
     });
 
     test.each([
-        {query: 'own', expected: ['Open prompt My Own Prompt'], why: 'matches name case-insensitively'},
-        {query: 'ADMIN', expected: ['Open prompt Shared Admin Prompt'], why: 'matches name or description'},
-        {query: 'made by', expected: ['Open prompt Shared Admin Prompt'], why: 'matches description'},
+        {query: 'own', expected: ['Open skill My Own Prompt'], why: 'matches name case-insensitively'},
+        {query: 'ADMIN', expected: ['Open skill Shared Admin Prompt'], why: 'matches name or description'},
+        {query: 'made by', expected: ['Open skill Shared Admin Prompt'], why: 'matches description'},
         {query: 'zzz-nothing', expected: [], why: 'no match'},
     ])('search $why ($query)', async ({query, expected}) => {
         await renderOpen();
-        fireEvent.change(screen.getByPlaceholderText('Search prompts'), {target: {value: query}});
+        fireEvent.change(screen.getByPlaceholderText('Search skills'), {target: {value: query}});
         expect(rowNames()).toEqual(expected);
         if (expected.length === 0) {
-            expect(screen.getByText('No prompts found')).not.toBeNull();
+            expect(screen.getByText('No skills found')).not.toBeNull();
         }
     });
 
     test('unpinned prompt shows Pin and pins', async () => {
         await renderOpen();
-        const pin = screen.getAllByRole('button', {name: 'Pin prompt'})[0];
+        const pin = screen.getAllByRole('button', {name: 'Pin skill'})[0];
         expect(pin.getAttribute('aria-pressed')).toBe('false');
         fireEvent.click(pin);
         await waitFor(() => expect(mockSetCustomPromptPin).toHaveBeenCalledWith('mine', true));
@@ -226,7 +226,7 @@ describe('CustomPromptsManagement', () => {
     test('pinned prompt shows Unpin and unpins', async () => {
         serverPins = ['mine'];
         await renderOpen();
-        const unpin = await screen.findByRole('button', {name: 'Unpin prompt'});
+        const unpin = await screen.findByRole('button', {name: 'Unpin skill'});
         expect(unpin.getAttribute('aria-pressed')).toBe('true');
         fireEvent.click(unpin);
         await waitFor(() => expect(mockSetCustomPromptPin).toHaveBeenCalledWith('mine', false));
@@ -235,7 +235,7 @@ describe('CustomPromptsManagement', () => {
     test('pin failure shows the error banner', async () => {
         mockSetCustomPromptPin.mockRejectedValueOnce(new Error('boom'));
         await renderOpen();
-        fireEvent.click(screen.getAllByRole('button', {name: 'Pin prompt'})[0]);
+        fireEvent.click(screen.getAllByRole('button', {name: 'Pin skill'})[0]);
         expect(await screen.findByText('Failed to update pin. Please try again.')).not.toBeNull();
     });
 
@@ -246,11 +246,11 @@ describe('CustomPromptsManagement', () => {
         await renderOpen();
 
         fireEvent.click(screen.getByRole('button', {name: 'Create new'}));
-        expect(screen.getByText('New Prompt')).not.toBeNull();
-        expect(screen.queryByRole('tab', {name: 'All Prompts'})).toBeNull();
+        expect(screen.getByText('New Skill')).not.toBeNull();
+        expect(screen.queryByRole('tab', {name: 'All Skills'})).toBeNull();
 
-        fireEvent.change(screen.getByPlaceholderText('Enter a title for your prompt'), {target: {value: 'Brand New'}});
-        fireEvent.change(screen.getByPlaceholderText('Enter the system prompt template'), {target: {value: 'Do it'}});
+        fireEvent.change(screen.getByPlaceholderText('Enter a title for your skill'), {target: {value: 'Brand New'}});
+        fireEvent.change(screen.getByPlaceholderText('Enter the skill instructions'), {target: {value: 'Do it'}});
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));
 
         await waitFor(() => expect(mockCreateCustomPrompt).toHaveBeenCalledWith({
@@ -260,19 +260,19 @@ describe('CustomPromptsManagement', () => {
             is_shared: false,
         }));
         expect(await screen.findByText('Brand New')).not.toBeNull();
-        expect(screen.getByRole('tab', {name: 'All Prompts'})).not.toBeNull();
+        expect(screen.getByRole('tab', {name: 'All Skills'})).not.toBeNull();
     });
 
     test('create failure keeps the form open and shows the banner', async () => {
         mockCreateCustomPrompt.mockRejectedValueOnce(new Error('nope'));
         await renderOpen();
         fireEvent.click(screen.getByRole('button', {name: 'Create new'}));
-        fireEvent.change(screen.getByPlaceholderText('Enter a title for your prompt'), {target: {value: 'X'}});
-        fireEvent.change(screen.getByPlaceholderText('Enter the system prompt template'), {target: {value: 'Y'}});
+        fireEvent.change(screen.getByPlaceholderText('Enter a title for your skill'), {target: {value: 'X'}});
+        fireEvent.change(screen.getByPlaceholderText('Enter the skill instructions'), {target: {value: 'Y'}});
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));
 
-        expect(await screen.findByText('Failed to create prompt. Please try again.')).not.toBeNull();
-        expect(screen.getByPlaceholderText('Enter a title for your prompt')).not.toBeNull();
+        expect(await screen.findByText('Failed to create skill. Please try again.')).not.toBeNull();
+        expect(screen.getByPlaceholderText('Enter a title for your skill')).not.toBeNull();
     });
 
     test('edit opens the owner\'s prompt, saves changes and returns to the list', async () => {
@@ -281,8 +281,8 @@ describe('CustomPromptsManagement', () => {
         });
         await renderOpen();
 
-        fireEvent.click(screen.getByRole('button', {name: 'Open prompt My Own Prompt'}));
-        const title = screen.getByPlaceholderText('Enter a title for your prompt') as HTMLInputElement;
+        fireEvent.click(screen.getByRole('button', {name: 'Open skill My Own Prompt'}));
+        const title = screen.getByPlaceholderText('Enter a title for your skill') as HTMLInputElement;
         expect(title.value).toBe('My Own Prompt');
 
         fireEvent.change(title, {target: {value: 'Renamed'}});
@@ -295,18 +295,18 @@ describe('CustomPromptsManagement', () => {
 
     test('back from the form returns to the list without saving', async () => {
         await renderOpen();
-        fireEvent.click(screen.getByRole('button', {name: 'Open prompt My Own Prompt'}));
-        fireEvent.click(screen.getByRole('button', {name: 'Back to prompts'}));
-        expect(screen.getByRole('tab', {name: 'All Prompts'})).not.toBeNull();
+        fireEvent.click(screen.getByRole('button', {name: 'Open skill My Own Prompt'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Back to skills'}));
+        expect(screen.getByRole('tab', {name: 'All Skills'})).not.toBeNull();
         expect(mockUpdateCustomPrompt).not.toHaveBeenCalled();
     });
 
     test('non-owner sees a read-only form with no save or delete', async () => {
         await renderOpen();
-        fireEvent.click(screen.getByRole('button', {name: 'Open prompt Shared Admin Prompt'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Open skill Shared Admin Prompt'}));
 
         expect(screen.getByText('Admin template')).not.toBeNull();
-        expect(screen.queryByPlaceholderText('Enter a title for your prompt')).toBeNull();
+        expect(screen.queryByPlaceholderText('Enter a title for your skill')).toBeNull();
         expect(screen.queryByRole('button', {name: 'Save'})).toBeNull();
         expect(screen.queryByRole('button', {name: 'Delete'})).toBeNull();
     });
@@ -316,7 +316,7 @@ describe('CustomPromptsManagement', () => {
             serverPrompts = serverPrompts.filter((p) => p.id !== id);
         });
         await renderOpen();
-        fireEvent.click(screen.getByRole('button', {name: 'Open prompt My Own Prompt'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Open skill My Own Prompt'}));
         fireEvent.click(screen.getByRole('button', {name: 'Delete'}));
 
         expect(mockDeleteCustomPrompt).not.toHaveBeenCalled();
@@ -339,18 +339,18 @@ describe('CustomPromptsManagement', () => {
     test('delete failure shows the banner and closes the confirmation', async () => {
         mockDeleteCustomPrompt.mockRejectedValueOnce(new Error('fail'));
         await renderOpen();
-        fireEvent.click(screen.getByRole('button', {name: 'Open prompt My Own Prompt'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Open skill My Own Prompt'}));
         fireEvent.click(screen.getByRole('button', {name: 'Delete'}));
         await screen.findByText(CONFIRM_TEXT);
         fireEvent.click(screen.getAllByRole('button', {name: 'Delete'}).pop()!);
 
-        expect(await screen.findByText('Failed to delete prompt. Please try again.')).not.toBeNull();
+        expect(await screen.findByText('Failed to delete skill. Please try again.')).not.toBeNull();
         await waitFor(() => expect(screen.queryByText(CONFIRM_TEXT)).toBeNull());
     });
 
     test('closing the modal hides it and resets to the list view', async () => {
         const store = await renderOpen();
-        fireEvent.click(screen.getByRole('button', {name: 'Open prompt My Own Prompt'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Open skill My Own Prompt'}));
         fireEvent.click(screen.getByRole('button', {name: 'Close'}));
         expect((store.getState() as any)[key].showCustomPromptsModal).toBe(false);
     });
