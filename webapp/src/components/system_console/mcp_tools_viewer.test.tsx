@@ -1,8 +1,8 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
-import {fireEvent, render, screen, waitFor} from '@testing-library/react';
+import React, {useEffect} from 'react';
+import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 
 // Minimal react-intl shim: ts-jest bypasses babel, so FormattedMessage needs an id at runtime.
 jest.mock('react-intl', () => {
@@ -41,6 +41,17 @@ jest.mock('@/license', () => ({
     requiredLevelFor: jest.fn(() => 2),
 }));
 
+// The MCP page reads SiteURL; null falls back to window.location.origin.
+jest.mock('react-redux', () => ({
+    __esModule: true,
+    useSelector: jest.fn(() => null),
+}));
+
+jest.mock('../access_control/console_policy_section', () => ({
+    __esModule: true,
+    default: () => null,
+}));
+
 jest.mock('react-bootstrap', () => ({
     OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
     Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
@@ -53,7 +64,11 @@ import {clearMCPToolsCache, getMCPTools, getVettedToolSeed, updatePluginServer} 
 
 import {chooseOption} from '../../../tests/compass_select';
 
+import {notifyMCPConnectionUpdated} from '../../hooks/use_mcp_connection_events';
+
+import MCPServers from './mcp_servers';
 import MCPToolsViewer from './mcp_tools_viewer';
+import {useMCPToolsList} from './use_mcp_tools_list';
 import {MCPConfig, MCPToolsResponse} from './mcp_types';
 /* eslint-enable import/first, import/order */
 
@@ -94,15 +109,37 @@ function makePluginToolsResponse(): MCPToolsResponse {
     };
 }
 
+// ViewerWithList renders the viewer with the tools list owned the way the
+// MCP page owns it: initial is shown until the first load, which runs on
+// mount when there is no initial list.
+function ViewerWithList({initial, mcpConfig, onConfigChange}: {initial: MCPToolsResponse | null; mcpConfig: MCPConfig; onConfigChange: jest.Mock}) {
+    const list = useMCPToolsList();
+    const {refresh} = list;
+    useEffect(() => {
+        if (!initial) {
+            refresh();
+        }
+    }, [initial, refresh]);
+    return (
+        <MCPToolsViewer
+            mcpConfig={mcpConfig}
+            onConfigChange={onConfigChange}
+            toolsData={list.toolsData ?? initial}
+            toolsError={list.error}
+            onRefreshTools={refresh}
+        />
+    );
+}
+
 function renderViewer(toolsData: MCPToolsResponse | null, mcpConfig: MCPConfig = makeMCPConfig()) {
     const onConfigChange = jest.fn();
     return {
         ...render(
             <IntlProvider locale='en'>
-                <MCPToolsViewer
+                <ViewerWithList
+                    initial={toolsData}
                     mcpConfig={mcpConfig}
                     onConfigChange={onConfigChange}
-                    initialToolsData={toolsData}
                 />
             </IntlProvider>,
         ),
@@ -267,9 +304,7 @@ describe('MCPToolsViewer — plugin branch', () => {
         });
     });
 
-    test('fetchTools rejection with non-Error reason falls back to localized message', async () => {
-        // Non-Error rejection (e.g., a thrown string) should still surface via
-        // setError using the same intl fallback the surrounding handler uses.
+    test('a reload failing with a non-Error reason still shows the load failure', async () => {
         mockUpdatePluginServer.mockResolvedValueOnce({});
         // eslint-disable-next-line prefer-promise-reject-errors
         mockGetMCPTools.mockRejectedValueOnce('boom');
@@ -280,7 +315,7 @@ describe('MCPToolsViewer — plugin branch', () => {
         fireEvent.click(toggles[0]);
 
         await waitFor(() => {
-            expect(screen.getByText('Failed to update plugin server')).toBeTruthy();
+            expect(screen.getByText('Failed to load MCP tools')).toBeTruthy();
         });
     });
 
@@ -351,3 +386,81 @@ describe('MCPToolsViewer — plugin branch', () => {
     });
 });
 
+describe('MCPToolsViewer — tools list owned by the MCP page', () => {
+    const remote = {id: 'server-id', name: 'Remote', enabled: true, baseURL: 'https://mcp.example.com', headers: {}};
+    const toolsList = (needsOAuth: boolean): MCPToolsResponse => ({
+        servers: [{
+            name: 'Remote',
+            url: 'https://mcp.example.com',
+            serverType: 'remote',
+            enabled: true,
+            id: 'server-id',
+            tools: needsOAuth ? [] : [{name: 'search', description: 'Search', inputSchema: null, defaultPolicy: 'ask'}],
+            needsOAuth,
+            oauthURL: needsOAuth ? 'https://auth.example.com' : undefined, // eslint-disable-line no-undefined
+            error: null,
+        }],
+    });
+
+    const renderPage = () => {
+        render(
+            <IntlProvider locale='en'>
+                <MCPServers
+                    mcpConfig={makeMCPConfig({servers: [remote]})}
+                    savedServers={[remote]}
+                    onChange={jest.fn()}
+                    onPersistServer={jest.fn()}
+                    onDeleteServer={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+        fireEvent.click(screen.getByRole('tab', {name: 'Tools'}));
+    };
+
+    test('a slower load the page started earlier does not replace a newer refresh', async () => {
+        let finishPageLoad: (value: MCPToolsResponse) => void = () => null;
+        mockGetMCPTools.mockReturnValueOnce(new Promise((resolve) => {
+            finishPageLoad = resolve;
+        }));
+        mockGetMCPTools.mockResolvedValueOnce(toolsList(false));
+        renderPage();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Refresh Tools'}));
+        expect(await screen.findByText('1/1 tools enabled')).not.toBeNull();
+
+        await act(async () => {
+            finishPageLoad(toolsList(true));
+        });
+        expect(screen.getByText('1/1 tools enabled')).not.toBeNull();
+        expect(screen.queryByText('Needs OAuth')).toBeNull();
+    });
+
+    test('a failed action notice clears when the admin reloads the tools', async () => {
+        mockGetMCPTools.mockResolvedValue(toolsList(false));
+        mockClearMCPToolsCache.mockRejectedValueOnce(new Error('cache unavailable'));
+        renderPage();
+        expect(await screen.findByText('1/1 tools enabled')).not.toBeNull();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Clear Cache'}));
+        expect(await screen.findByText('MCP tools action failed')).not.toBeNull();
+        expect(screen.getByText('cache unavailable')).not.toBeNull();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Refresh Tools'}));
+        await waitFor(() => expect(screen.queryByText('MCP tools action failed')).toBeNull());
+        expect(screen.getByText('1/1 tools enabled')).not.toBeNull();
+    });
+
+    test('a failed load notice clears once a later load succeeds', async () => {
+        mockGetMCPTools.mockRejectedValueOnce(new Error('backend unavailable'));
+        mockGetMCPTools.mockResolvedValueOnce(toolsList(false));
+        renderPage();
+        expect(await screen.findByText('backend unavailable')).not.toBeNull();
+
+        await act(async () => {
+            notifyMCPConnectionUpdated({status: 'connected', serverName: 'Remote'});
+        });
+
+        expect(await screen.findByText('1/1 tools enabled')).not.toBeNull();
+        expect(screen.queryByText('Failed to load MCP tools')).toBeNull();
+    });
+});

@@ -351,6 +351,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 	b.applyCompletionBetaHeaders(bifrostCtx)
 	request = bufferFiles(request)
 	b.withHopRequest(bifrostCtx, request, cfg)
+	trackAttemptErrors(bifrostCtx)
 
 	// Convert to Bifrost Responses API request
 	bifrostReq, err := b.convertToBifrostResponsesRequest(request, cfg)
@@ -372,7 +373,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 	if bifrostErr != nil {
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeError,
-			Value: providerError(span, "bifrost error", bifrostErr, b.redactionKeys()...),
+			Value: providerError(bifrostCtx, span, "bifrost error", bifrostErr, b.redactionKeys()...),
 		}
 		return
 	}
@@ -417,7 +418,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 		if chunk.BifrostError != nil {
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: providerError(span, "bifrost stream error", chunk.BifrostError, b.redactionKeys()...),
+				Value: providerError(bifrostCtx, span, "bifrost stream error", chunk.BifrostError, b.redactionKeys()...),
 			}
 			return
 		}
@@ -636,7 +637,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 					}
 				}
 
-			case schemas.ResponsesStreamResponseTypeCompleted:
+			case schemas.ResponsesStreamResponseTypeCompleted, schemas.ResponsesStreamResponseTypeIncomplete:
 				// Emit any unsent reasoning
 				reasoning.emitEnd(output)
 

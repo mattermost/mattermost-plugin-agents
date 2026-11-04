@@ -16,27 +16,43 @@ Everything is under **System Console > Plugins > Agents > Model Context Protocol
 
 ## Add a remote MCP server
 
-1. On the **Configuration** tab, select **Add Remote MCP Server**.
-2. Fill in the server:
+1. On the **Configuration** tab, select **Add Remote MCP Server**. The dialog has three steps: **Server details**, **Connect**, and **Review tools**.
+2. In **Server details**, fill in the server:
 
    | Setting | Notes |
    |---|---|
-   | **Server name** | A label. Generated if you leave it blank. |
+   | **Server name** | Required, and different from every other server's name. |
    | **Server URL** | The server's final address. Redirects to a different origin, including an `http` to `https` upgrade, are refused so credentials can't reach another host. |
-   | **Enable Server** | Turns the server on or off. |
-   | **Direct Messages Only** | Config key `dmOnly`. Off by default. Limits the server to a user's direct message with an agent. See [Limit a server to direct messages](#limit-a-server-to-direct-messages). |
-   | **Description** | Up to 500 characters. Tells agents what the integration is for, so they can offer it to people who haven't connected yet. After you save, **Auto-fill from server** copies the server's own description or instructions. You may need to connect your account first. Review the text and save, because nothing is stored until you do. |
+      | **Direct Messages Only** | Config key `dmOnly`. Off by default. Limits the server to a user's direct message with an agent. See [Limit a server to direct messages](#limit-a-server-to-direct-messages). |
+   | **Description** | Up to 500 characters. Tells agents what the integration is for, so they can offer it to people who haven't connected yet. Once the server is saved, **Auto-fill from server** copies the server's own description or instructions, connecting as you with the saved settings. You may need to connect your account first. Review the text and save. |
    | **Headers** | Extra HTTP headers the server needs. They're sent for every user in both authentication modes, so don't put a personal or admin credential here. |
    | **Service Account Authentication** | Static headers, such as an API key, for agents that use service accounts. See [Service account authentication](#service-account-authentication). |
    | **OAuth Credentials (Optional)** | **Client ID** and **Client Secret** for servers that need a pre-registered OAuth app, such as GitHub. Leave empty if the server supports automatic registration. |
 
-3. Select **Save**.
+3. Select **Save and connect**. Mattermost saves the server and connects to it as you. For an OAuth server, select **Sign in** to complete the provider's sign-in, which connects only your account.
+4. In **Review tools**, check each tool's approval policy and select **Accept and save**. Tools are grouped as **Read-only tools** and **Write tools**, and each group and **All tools** has a control that sets every tool in it. Tools the server marks read-only (the `readOnlyHint` annotation) start at **Auto Run (DM)**. All others start at **Ask Every Time**. Annotations never change how a tool runs until you save a policy.
+
+To save without connecting, select **Skip connecting**, then **Save without connecting**. The page's **Save** button doesn't add the server. Until you review them, the server's tools ask before every run, except for curated defaults for Atlassian, Figma, and the embedded Mattermost server.
+
+To change a server later, select it in the **Remote MCP servers** list, which shows each server's URL, whether it's disabled, and how many of its tools are not reviewed. **Enable Server** is in that dialog. Edits apply immediately.
+
+### Changes that end user sign-ins
+
+These changes remove every user's saved sign-in for the server, and Mattermost warns you before saving:
+
+- Renaming the server.
+- Moving it to another host, meaning a different scheme, host, or port. Its tool policies are cleared too.
+- Changing the OAuth client ID.
+
+Deleting a server also removes its sign-ins. Changing only the URL's path, the client secret, headers, service account headers, the description, or whether the server is enabled doesn't affect sign-ins. A saved sign-in is only used by the server it was issued for. After a change that ends sign-ins, sign in again and review the tools. Policies you already chose are kept unless the server moved hosts.
+
+Automation must read the configuration with `GET /plugins/mattermost-ai/admin/config` and send it back with `PUT`, keeping each server's `id`. A server sent without its `id` is treated as deleted and added again, which removes its users' saved sign-ins.
 
 Agents connect over Streamable HTTP, and fall back to the older HTTP+SSE transport for servers that only support it. Servers that only run over stdio can't be added.
 
 Write a **Description** for any server whose name doesn't say what it does. The agent is told only your server name, your description, and the tools you've configured, not anything the server reports to other users' connections.
 
-To check a server that doesn't use OAuth, such as an internal server with an API key, select **Save**, then open the **Tools** tab. The server's tools are listed there. If the list is empty or an error shows, check the **Server URL** and headers. For an internal server with an API key, put the key in **Service Account Authentication**, and turn on **Use service accounts for authentication** on the agent. A key in **Headers** is sent for every user.
+To check a server that doesn't use OAuth, such as an internal server with an API key, finish the dialog, then open the **Tools** tab. The server's tools are listed there. If the list is empty or an error shows, check the **Server URL** and headers. For an internal server with an API key, put the key in **Service Account Authentication**, and turn on **Use service accounts for authentication** on the agent. A key in **Headers** is sent for every user.
 
 ### Sign in with OAuth
 
@@ -74,9 +90,9 @@ A user who asks "Open an issue for the bug in this thread" now sees a **Connect*
 
 On the **Tools** tab, each server lists its tools. For each tool you set whether it's enabled and how it's approved. The options are **Ask Every Time**, **Auto Run (DM)**, and **Auto Run (Everywhere)**. What they do in direct messages and channels is in [Approval policies](tool_approval.md#approval-policies).
 
-A tool with no saved setting is enabled and set to **Ask Every Time**. That includes tools a server adds later.
+A tool with no saved setting is enabled and set to **Ask Every Time**, or **Auto Run (DM)** if the server marks it read-only. That includes tools a server adds later. Remote servers show how many tools are **Not reviewed**, meaning no administrator has chosen a policy. Open the server's tool list, select **Mark tools as reviewed**, and save to store the suggested policy for every unreviewed tool. Turning a tool on or off doesn't set its policy.
 
-When you add a server at a known host, Mattermost pre-fills policies for its read-only tools. Mattermost's own read-only tools default to **Auto Run (DM)**, except `get_file_link`, `list_incoming_webhooks`, `list_outgoing_webhooks`, `list_agents`, and `list_drafts`, which stay at **Ask Every Time**. The first three expose bypass links or webhook tokens. The same pre-fill covers read tools on Atlassian (`mcp.atlassian.com`), GitHub (`api.githubcopilot.com`), and Figma (`mcp.figma.com`). GitHub's code scanning, Dependabot, secret scanning, and security advisory reads stay at **Ask Every Time**. Tools that change something are never pre-filled.
+When you add a server at a known host, Mattermost pre-fills policies for its read-only tools. Mattermost's own read-only tools default to **Auto Run (DM)**, except `get_file_link`, `list_incoming_webhooks`, `list_outgoing_webhooks`, `list_agents`, and `list_drafts`, which stay at **Ask Every Time**. The first three expose bypass links or webhook tokens. The same pre-fill covers read tools on Atlassian (`mcp.atlassian.com`) and Figma (`mcp.figma.com`). GitHub (`api.githubcopilot.com`) needs no pre-fill because it marks its read tools read-only. GitHub's code scanning, Dependabot, secret scanning, and security advisory reads stay at **Ask Every Time**. Tools that change something are never pre-filled.
 
 Expand a tool row to add a **Retrieval description override**. It helps the agent find the tool through dynamic tool loading search, and doesn't change the schema sent after loading. **Refresh Tools** rediscovers tools. **Clear Cache** drops cached tool lists. The tab refreshes by itself after you connect or disconnect an OAuth server.
 

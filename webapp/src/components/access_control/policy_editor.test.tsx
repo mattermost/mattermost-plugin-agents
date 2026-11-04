@@ -59,10 +59,10 @@ const FakeTableEditor = ({value, onChange, onValidate, onParseError}: FakeEditor
     </div>
 );
 
-let lastCELUserAttributes: unknown = null;
+const celEditorUserAttributes = jest.fn();
 
 const FakeCELEditor = ({value, onChange, onValidate, userAttributes}: FakeEditorProps & {userAttributes?: unknown}) => {
-    lastCELUserAttributes = userAttributes;
+    celEditorUserAttributes(userAttributes);
     return (
         <div data-testid='cel-editor'>
             <span data-testid='cel-value'>{value}</span>
@@ -123,7 +123,7 @@ beforeEach(() => {
     client.getServiceAccessPolicy.mockResolvedValue(null);
     client.getMCPServerAccessPolicy.mockResolvedValue(null);
     client.getAccessControlFields.mockResolvedValue([]);
-    lastCELUserAttributes = null;
+    celEditorUserAttributes.mockClear();
     setHostEditors();
 });
 
@@ -222,7 +222,7 @@ describe('PolicyEditor', () => {
 
         renderEditor({allowSimplified: false});
         expect(await screen.findByTestId('cel-editor')).toBeTruthy();
-        expect(lastCELUserAttributes).toEqual([
+        expect(celEditorUserAttributes).toHaveBeenLastCalledWith([
             {attribute: 'email', values: [], isNative: true, objectType: 'user'},
             {attribute: 'department', values: [], isNative: false, objectType: 'user'},
             {attribute: 'ip_address', values: [], isNative: false, objectType: 'session'},

@@ -730,6 +730,164 @@ func TestGetConversationSummariesForUserLastActivity(t *testing.T) {
 	}
 }
 
+// createMattermostPostTables creates the columns of the Mattermost Posts and
+// Channels tables that the bot DM listing joins.
+func createMattermostPostTables(t *testing.T, s *Store) {
+	t.Helper()
+	for _, ddl := range []string{
+		`CREATE TABLE Channels (Id TEXT PRIMARY KEY, Type TEXT NOT NULL, Name TEXT NOT NULL)`,
+		`CREATE TABLE Posts (Id TEXT PRIMARY KEY, ChannelId TEXT NOT NULL)`,
+	} {
+		_, err := s.db.Exec(ddl)
+		require.NoError(t, err)
+	}
+}
+
+func TestGetBotDMConversationSummariesForUser(t *testing.T) {
+	type convSpec struct {
+		key       string
+		user      string // "self" or "other"
+		root      string // "" for no root post, else a key of the channels map
+		channelID bool   // whether the conversation records the root's channel
+		updatedAt int64
+	}
+
+	tests := []struct {
+		name  string
+		convs []convSpec
+		limit int
+		want  []string
+	}{
+		{
+			name: "chats in the DM with the conversation's bot are listed",
+			convs: []convSpec{
+				{key: "older", user: "self", root: "botDM", channelID: true, updatedAt: 1000},
+				{key: "newer", user: "self", root: "botDM", channelID: true, updatedAt: 2000},
+			},
+			limit: 60,
+			want:  []string{"newer", "older"},
+		},
+		{
+			name: "analysis delivered into the bot DM without a channel ID is listed",
+			convs: []convSpec{
+				{key: "summary", user: "self", root: "botDM", updatedAt: 1000},
+			},
+			limit: 60,
+			want:  []string{"summary"},
+		},
+		{
+			name: "channel threads are excluded with or without a channel ID",
+			convs: []convSpec{
+				{key: "mention", user: "self", root: "channel", channelID: true, updatedAt: 3000},
+				{key: "meeting", user: "self", root: "channel", updatedAt: 2000},
+				{key: "chat", user: "self", root: "botDM", channelID: true, updatedAt: 1000},
+			},
+			limit: 60,
+			want:  []string{"chat"},
+		},
+		{
+			name: "a bot mentioned in a DM between people is excluded",
+			convs: []convSpec{
+				{key: "peopleDM", user: "self", root: "peopleDM", channelID: true, updatedAt: 1000},
+			},
+			limit: 60,
+			want:  []string{},
+		},
+		{
+			name: "a thread in another bot's DM is excluded",
+			convs: []convSpec{
+				{key: "otherBot", user: "self", root: "otherBotDM", channelID: true, updatedAt: 1000},
+			},
+			limit: 60,
+			want:  []string{},
+		},
+		{
+			name: "conversations without a root post are excluded",
+			convs: []convSpec{
+				{key: "unrooted", user: "self", updatedAt: 1000},
+			},
+			limit: 60,
+			want:  []string{},
+		},
+		{
+			name: "another user's chat with the bot is excluded",
+			convs: []convSpec{
+				{key: "theirs", user: "other", root: "otherUserBotDM", channelID: true, updatedAt: 1000},
+			},
+			limit: 60,
+			want:  []string{},
+		},
+		{
+			name: "the limit applies after channel threads are filtered out",
+			convs: []convSpec{
+				{key: "mention1", user: "self", root: "channel", channelID: true, updatedAt: 3000},
+				{key: "mention2", user: "self", root: "channel", channelID: true, updatedAt: 2000},
+				{key: "chat", user: "self", root: "botDM", channelID: true, updatedAt: 1000},
+			},
+			limit: 1,
+			want:  []string{"chat"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestStore(t)
+			require.NoError(t, s.RunMigrations())
+			createMattermostPostTables(t, s)
+
+			users := map[string]string{"self": model.NewId(), "other": model.NewId()}
+			botID := model.NewId()
+			otherBotID := model.NewId()
+			channels := map[string]struct {
+				id     string
+				chType model.ChannelType
+				name   string
+			}{
+				"botDM":          {model.NewId(), model.ChannelTypeDirect, model.GetDMNameFromIds(users["self"], botID)},
+				"otherBotDM":     {model.NewId(), model.ChannelTypeDirect, model.GetDMNameFromIds(users["self"], otherBotID)},
+				"otherUserBotDM": {model.NewId(), model.ChannelTypeDirect, model.GetDMNameFromIds(users["other"], botID)},
+				"peopleDM":       {model.NewId(), model.ChannelTypeDirect, model.GetDMNameFromIds(users["self"], model.NewId())},
+				"channel":        {model.NewId(), model.ChannelTypeOpen, "town-square"},
+			}
+			for _, ch := range channels {
+				_, err := s.db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ($1, $2, $3)", ch.id, ch.chType, ch.name)
+				require.NoError(t, err)
+			}
+
+			keyByID := map[string]string{}
+			for _, spec := range tt.convs {
+				conv := makeConversation(func(c *Conversation) {
+					c.UserID = users[spec.user]
+					c.BotID = botID
+					c.UpdatedAt = spec.updatedAt
+				})
+				if spec.root != "" {
+					rootPostID := model.NewId()
+					channelID := channels[spec.root].id
+					_, err := s.db.Exec("INSERT INTO Posts (Id, ChannelId) VALUES ($1, $2)", rootPostID, channelID)
+					require.NoError(t, err)
+					conv.RootPostID = &rootPostID
+					if spec.channelID {
+						conv.ChannelID = &channelID
+					}
+				}
+				require.NoError(t, s.CreateConversation(conv))
+				keyByID[conv.ID] = spec.key
+			}
+
+			summaries, err := s.GetBotDMConversationSummariesForUser(users["self"], tt.limit, 0)
+			require.NoError(t, err)
+			require.NotNil(t, summaries)
+
+			got := make([]string, len(summaries))
+			for i, summary := range summaries {
+				got[i] = keyByID[summary.ID]
+			}
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestCleanupDeletedConversations(t *testing.T) {
 	tests := []struct {
 		name     string
