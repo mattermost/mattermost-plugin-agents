@@ -340,10 +340,7 @@ func (s *Store) RetentionChannelIDs(limit int) ([]string, error) {
 			cursor = retentionCursor{}
 			break
 		}
-		start := cursor.Skip
-		if start > len(keys) {
-			start = len(keys)
-		}
+		start := min(cursor.Skip, len(keys))
 		consumed := start
 		for i := start; i < len(keys) && len(ids) < limit; i++ {
 			consumed = i + 1
