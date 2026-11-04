@@ -391,6 +391,19 @@ describe('MCPServerWizard edit mode', () => {
         expect(screen.getByTestId('console-policy-section').textContent).toBe(SERVER_ID);
     });
 
+    test('an unlicensed service account keeps its headers read-only, including removal', async () => {
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockReturnValue(false);
+        try {
+            renderWizard({kind: 'edit', server: saved}, ['Tracker'], [saved]);
+
+            expect(await screen.findByDisplayValue('Bearer pat')).toHaveProperty('disabled', true);
+            expect(screen.getByRole('button', {name: 'Remove header'})).toHaveProperty('disabled', true);
+        } finally {
+            useIsLicensedFor.mockReturnValue(true);
+        }
+    });
+
     test('an edit that keeps sign-ins saves its settings without a warning and keeps tool policies', async () => {
         const {onPersist, onClose} = renderWizard({kind: 'edit', server: saved}, ['Tracker'], [saved]);
 

@@ -76,6 +76,7 @@ export const HeaderMapEditor = ({
                             aria-label={intl.formatMessage({defaultMessage: 'Remove header'})}
                             size='small'
                             destructive={true}
+                            disabled={disableEdit}
                             onClick={() => removeHeader(key)}
                         />
                     </HeaderRow>

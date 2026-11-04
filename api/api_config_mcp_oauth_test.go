@@ -210,3 +210,39 @@ func TestHandleSaveConfigClearsSignInsAfterRequestCancelled(t *testing.T) {
 
 	assert.Equal(t, []string{signIn}, deleted())
 }
+
+type orderRecordingUpdater struct {
+	deleted      func() []string
+	deletedAtRun []string
+}
+
+func (u *orderRecordingUpdater) Update(*config.Config) { u.deletedAtRun = u.deleted() }
+
+// The saved configuration is applied before the sign-in sweep starts, so a
+// slow sweep never delays a deleted or moved server going out of use.
+func TestHandleSaveConfigAppliesConfigBeforeSignInSweep(t *testing.T) {
+	const alice = "aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	jira := config.MCPServerConfig{ID: "jirajirajirajirajirajira00", Name: "Jira", Enabled: true, BaseURL: "https://jira.example.com/mcp"}
+	signIn := "mcp_oauth_token_v1_" + alice + "_Jira"
+
+	pluginClient, deleted := kvKeysPluginClient([]string{signIn})
+	updater := &orderRecordingUpdater{deleted: deleted}
+	router := setupConfigTestRouter(&API{
+		configStore:     &testConfigStore{cfg: &config.Config{MCP: config.MCPConfig{Servers: []config.MCPServerConfig{jira}}}},
+		configUpdater:   updater,
+		clusterNotifier: &testClusterNotifier{},
+		licenseChecker:  enterprisetest.CheckerAt(enterprise.LevelEnterpriseAdvanced),
+		pluginAPI:       pluginClient,
+	})
+
+	body, err := json.Marshal(config.Config{MCP: config.MCPConfig{Servers: []config.MCPServerConfig{}}})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Empty(t, updater.deletedAtRun, "the configuration was applied before any sign-in was removed")
+	assert.Equal(t, []string{signIn}, deleted())
+}

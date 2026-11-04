@@ -218,19 +218,20 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		}
 	}
 
+	a.configUpdater.Update(&saved)
+
+	notifyErr := a.clusterNotifier.PublishConfigUpdate()
+
 	// Remove saved sign-ins the change orphaned or that were issued for a
 	// server's old origin. Grants are only used by the server they were
 	// issued for (its origin and configuration ID; see
 	// mcp.OAuthManager.loadGrantForServer), so this removes what the change
-	// made unusable rather than guarding against misuse.
+	// made unusable rather than guarding against misuse. It runs after the
+	// change is applied so a slow sweep never delays that.
 	a.clearMCPServerOAuthState(c, prevServers, saved.MCP.Servers)
 
-	// Update in-memory config on this node
-	a.configUpdater.Update(&saved)
-
-	// Notify other cluster nodes to reload config from DB
-	if err := a.clusterNotifier.PublishConfigUpdate(); err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to notify cluster of config update: %w", err))
+	if notifyErr != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to notify cluster of config update: %w", notifyErr))
 		return
 	}
 
