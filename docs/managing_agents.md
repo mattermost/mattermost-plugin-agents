@@ -7,7 +7,7 @@ Agents are stored in the Mattermost database and managed on the **Agents** page,
 ## Open the Agents page
 
 - Select the product switcher (grid icon) and choose **Agents**, or open `/plug/mattermost-ai/agents`.
-- From any agent picker, including the one in the composer's **AI Actions > Custom prompts** menu, select **Manage**.
+- From any agent picker, including the one in the composer's **AI Actions > Skills** menu, select **Manage**.
 
 The page lists the agents you can use, on two tabs: **All agents** and **Your agents** (agents you created). Search filters by display name or username. Each row shows the avatar, display name, `@username`, and badges:
 
@@ -36,7 +36,7 @@ A user sees an agent only if they can use it. See [Visibility](access_control.md
 ## Create an agent
 
 1. On the **Agents** page, select **Create agent**.
-2. Fill in the **Configuration**, **Access**, and **MCPs** tabs.
+2. Fill in the **Configuration**, **Access**, **MCPs**, and **Skills** tabs.
 3. Select **Save**.
 
 Saving creates the Mattermost bot account, stores the agent, and updates every node in a high availability cluster within seconds.
@@ -74,7 +74,7 @@ Under **Advanced configuration**:
 | **Dynamic tool loading** | The agent starts with search and load helpers and loads MCP tool schemas only when needed. Turn it off to expose the full tool list up front. See [Dynamic tool loading](mcp_integrations.md#dynamic-tool-loading). |
 | **Max tool turns** | Maximum consecutive tool-call rounds per response, 1 to 250. After the last round, the agent answers without tools. Lower it for small models that loop on tools. Raise it for agents that chain many tools. A blank field saves the default. |
 | **Enable Vision** | Lets the agent read attached images. Needs a vision-capable model. |
-| **Enable Tools** | When off, the agent runs without tools and the **MCPs** tab is disabled. Some features don't work without tools, such as free-form channel questions. Turn it off only for models that don't support tool calling. |
+| **Enable Tools** | When off, the agent runs without tools and the **MCPs** and **Skills** tabs are disabled. Some features don't work without tools, such as free-form channel questions. Turn it off only for models that don't support tool calling. |
 | **Native Claude Tools**, **Native Google Tools**, **Native OpenAI Tools** | Provider tools such as Web Search. See [Web search](web_search.md) and [Provider configuration](providers.md). |
 | **Extended Thinking** or **Reasoning** | Reasoning controls. See [Provider configuration](providers.md). |
 
@@ -100,6 +100,18 @@ Available only when **Enable Tools** is on.
 - **Use service accounts for authentication.** Switches the agent's external MCP servers from per-user OAuth to shared admin-configured credentials. Only System Admins can turn it on. See [Service account authentication](mcp_integrations.md#service-account-authentication).
 
 Granting a tool to an agent doesn't override approval policies. See [Tool approval and credentials](tool_approval.md).
+
+### Skills tab
+
+Available only when **Enable Tools** is on. It controls which [skills](skills.md) the agent can load on its own. The agent sees each available skill's name and description and loads the instructions when a request matches.
+
+- **Enable skills** turns every skill on or off for this agent, including built-in skills.
+- **Allow personal skills** lets each user's own skills be used by this agent in that user's direct messages with it. Personal skills are never used in channels.
+- **Shared skills** lists skills shared with the workspace. Turn on each one for this agent. Skills shared later aren't added automatically. Enabling shared skills needs Enterprise. See [License requirements](admin_guide.md#license-requirements).
+- **Description override** replaces a skill's description for this agent only, up to 1024 characters. Use it to say when this agent should use the skill.
+- **Your personal skills** lists skills only you can use. Select **Share** to share one with the workspace and turn it on for this agent.
+
+Built-in skills aren't listed. They're offered whenever the tools they need are available. A skill without a description isn't offered to the agent automatically.
 
 ## Edit an agent
 

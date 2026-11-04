@@ -125,7 +125,7 @@ Agents sends a server audit record for every state-changing operation:
 - Configuration saves.
 - Reindex, cancel, catch up, and rebuild actions, and the MCP tool cache clear.
 - Agent create, update, delete, avatar, version restore, and version deletion.
-- Custom prompt create, update, and delete.
+- Skill (custom prompt) create, update, and delete.
 - Channel auto-reply changes.
 - MCP OAuth start, callback, and disconnect, and per-user tool preferences.
 - Access policy changes for agents, services, and MCP servers.

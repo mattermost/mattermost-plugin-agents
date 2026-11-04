@@ -88,7 +88,7 @@ The plugin distinguishes four license levels: Free (no license), Professional, E
 | LLM services | 1 | 1 | Multiple | Multiple, with fallback chains |
 | Direct messages with an agent | Yes | Yes | Yes | Yes |
 | Vision and document attachments | Yes | Yes | Yes | Yes |
-| Personal custom prompts | Yes | Yes | Yes | Yes |
+| Personal skills | Yes | Yes | Yes | Yes |
 | Built-in Mattermost tools | Read-only | Read-only | Read and write | Read and write |
 | Agents in channels (@mention) | No | Yes | Yes | Yes |
 | Thread, channel, and unread summaries | No | Yes | Yes | Yes |
@@ -101,7 +101,7 @@ The plugin distinguishes four license levels: Free (no license), Professional, E
 | MCP service account authentication | No | No | Yes | Yes |
 | Semantic search and AI search | No | No | Yes | Yes |
 | Meeting summaries | No | No | Yes | Yes |
-| Shared custom prompts | No | No | Yes | Yes |
+| Shared skills | No | No | Yes | Yes |
 | Channel auto-reply | No | No | No | Yes |
 | Attribute-based access control | No | No | No | Yes |
 

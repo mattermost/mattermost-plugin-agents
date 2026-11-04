@@ -24,6 +24,7 @@ Everything is under **System Console > Plugins > Agents > Model Context Protocol
    | **Server name** | A label. Generated if you leave it blank. |
    | **Server URL** | The server's final address. Redirects to a different origin, including an `http` to `https` upgrade, are refused so credentials can't reach another host. |
    | **Enable Server** | Turns the server on or off. |
+   | **Direct Messages Only** | Config key `dmOnly`. Off by default. Limits the server to a user's direct message with an agent. See [Limit a server to direct messages](#limit-a-server-to-direct-messages). |
    | **Description** | Up to 500 characters. Tells agents what the integration is for, so they can offer it to people who haven't connected yet. After you save, **Auto-fill from server** copies the server's own description or instructions. You may need to connect your account first. Review the text and save, because nothing is stored until you do. |
    | **Headers** | Extra HTTP headers the server needs. They're sent for every user in both authentication modes, so don't put a personal or admin credential here. |
    | **Service Account Authentication** | Static headers, such as an API key, for agents that use service accounts. See [Service account authentication](#service-account-authentication). |
@@ -80,6 +81,18 @@ When you add a server at a known host, Mattermost pre-fills policies for its rea
 Expand a tool row to add a **Retrieval description override**. It helps the agent find the tool through dynamic tool loading search, and doesn't change the schema sent after loading. **Refresh Tools** rediscovers tools. **Clear Cache** drops cached tool lists. The tab refreshes by itself after you connect or disconnect an OAuth server.
 
 Approval policy details, including how they behave in channels and below Enterprise, are in [Tool approval and credentials](tool_approval.md).
+
+## Limit a server to direct messages
+
+Some servers return data that not everyone in a channel may see, such as a CRM where each user's connection reaches different records. In a channel, the only safeguard is the requester reviewing each tool call and its results before approving or sharing them. Turn on **Direct Messages Only** on such a server to remove that decision from users.
+
+A server limited to direct messages:
+
+- Is available only in a user's own direct message with an agent, including the Agents page. Approval policies on the **Tools** tab apply there as usual.
+- Is never connected for channel mentions, channel thread replies, ambient replies, group messages, channel analysis, or LLM Bridge requests from other plugins. Its tools are left out of those requests, so there is nothing to approve or share.
+- Is named, with its **Description**, to agents in channels and group messages, so they can tell a user who asks for it to send a direct message instead. The name is shown only for users the server's access policy allows and agents whose MCP allowlist includes it. Other channel members can see the agent's reply, so they can see the server's name.
+
+The setting doesn't stop a user from copying what an agent said in a direct message. In a direct message, an agent can also pass the server's results to other tools, such as posting to a channel, subject to those tools' approval policies. In a channel, an agent can read a user's earlier direct messages with it through built-in Mattermost tools, subject to approval policies and result sharing.
 
 ## What an agent can use
 

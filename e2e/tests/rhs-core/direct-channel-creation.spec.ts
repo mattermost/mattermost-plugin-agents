@@ -86,12 +86,13 @@ test.describe('Direct Channel Creation', () => {
     const botSelector = page.getByTestId('bot-selector-rhs');
     await botSelector.click();
 
-    // Select first bot
-    const firstBot = page.getByRole('button', { name: /.*Bot.*/ }).first();
+    // Select first bot (from the Switch agent submenu)
+    await page.getByRole('menuitem', { name: 'Switch agent' }).click();
+    const firstBot = page.getByRole('menu', { name: 'Switch agent' }).getByRole('menuitem', { name: /.*Bot.*/ }).first();
     await firstBot.click();
 
     // Channel should be immediately available (no loading state)
-    await expect(page.getByText('Setting up chat channel...')).not.toBeVisible({ timeout: 1000 });
+    await expect(page.getByText('Setting up chat…')).not.toBeVisible({ timeout: 1000 });
 
     // Verify the text area is enabled
     await expect(aiPlugin.rhsPostTextarea).toBeEnabled();

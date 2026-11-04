@@ -11,7 +11,7 @@ A regular Mattermost database backup covers everything below. The plugin has no 
 | Plugin configuration: services, MCP servers, web search, embedding settings, and every setting in **System Console > Plugins > Agents** | `Agents_ConfigHistory` | The row with `Active = true` is current. Every save adds a row, and older rows are kept. **API keys and other credentials are stored in this JSON, in the active row and in the history.** |
 | Agents | `Agents_UserAgents` | Identity, instructions, access rules, and tool grants. |
 | Agent version history | `Agents_AgentVersions` | Includes past custom instructions. |
-| Custom prompts and pins | `LLM_CustomPrompts`, `LLM_CustomPromptPins` | |
+| Skills (custom prompts) and pins | `LLM_CustomPrompts`, `LLM_CustomPromptPins` | |
 | Conversations | `LLM_Conversations`, `LLM_Turns` | Messages, tool calls, and tool results. A conversation is soft-deleted when its post is deleted. |
 | Channel auto-reply settings | `Agents_ChannelAutoReply` | |
 | Migration state | `Agents_System` | Flags such as which one-time migrations ran. |

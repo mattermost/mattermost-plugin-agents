@@ -31,7 +31,7 @@ Each request also carries the definitions (name, description, and parameters) of
 | Meeting summary | The transcript from Calls, Zoom, or Google Meet. Long transcripts are split into chunks. |
 | AI search and `/ask-channel` | Your query, plus the posts the agent reads while it searches. |
 | React for me | The text of the message you picked. |
-| Custom prompts | The rendered prompt, as an ordinary message. |
+| Skills | The rendered instructions, as an ordinary message. A skill an agent loads on its own is read into that conversation. |
 
 Attachments in a conversation are included when the model and agent allow them. Images need **Enable Vision** and a vision-capable model. Other files contribute text only when Mattermost can extract it.
 

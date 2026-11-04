@@ -55,4 +55,4 @@ An agent can pause and wake itself after 1 to 30 minutes to check on work starte
 - **Name the system and the target.** For an action that changes something, say where: "Create a Jira ticket in the PLAT project" works better than "make a ticket". If the target is missing, the agent asks before it acts.
 - **Say what to do with the result.** "Post it in ~team-eng", "as a file", or "message it to me" tells the agent where the output goes.
 - **Start a new chat for a new topic.** An agent knows only the current conversation, so a new topic works better in a new one.
-- **Save what works.** Turn prompts you reuse into [custom prompts](custom_prompts.md).
+- **Save what works.** Turn prompts you reuse into [skills](skills.md).

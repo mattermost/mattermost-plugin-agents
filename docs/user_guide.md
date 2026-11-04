@@ -24,7 +24,7 @@ Every tool call runs as you, and the agent asks before it changes anything your 
 | Bring an agent into a channel or thread | [Use agents in channels](agents_in_channels.md) |
 | Summarize a thread, channel, or unread messages, or search with AI | [Summaries and AI search](summaries_and_search.md) |
 | Summarize a Calls recording or Zoom meeting | [Meeting summaries](meeting_summaries.md) |
-| Save a prompt I reuse | [Custom prompts](custom_prompts.md) |
+| Save instructions I reuse | [Skills](skills.md) |
 | Use Mattermost from Claude, Cursor, or VS Code | [Mattermost MCP server](mcp_server.md) |
 | Know what an agent can see and keep | [What agents can see and keep](what_agents_see.md) |
 
@@ -35,13 +35,13 @@ Some features depend on your Mattermost license level. If a feature described he
 | Where | How | Notes |
 |---|---|---|
 | Direct message | Open a direct message with an agent's bot account. | Private. Tools can run here by default. |
-| Agents pane | Select the **Agents** icon in the apps bar to open the right-hand pane, then start a new chat. | Private. Has suggested prompts, pinned custom prompts, file attachments, and the **Tools** menu. |
+| Agents pane | Select the **Agents** icon in the apps bar to open the right-hand pane, then start a new chat. | Private. Has file attachments and the **Tools** menu. |
 | Channel or thread | @mention the agent by its username, for example `@assistant`. | Visible to everyone in the channel. See [Use agents in channels](agents_in_channels.md). |
 | Mobile | Open a direct message with the agent. | Mobile can't start MCP OAuth. Use web or desktop to connect tools that need your account. |
 
 To see which agents exist, select the product switcher (grid icon) and choose **Agents**. The page lists every agent you can use. Agents you can't edit are marked **Read only**.
 
-If your workspace has several agents, pick one from any agent picker, such as the Agents pane, the **Custom prompts** menu, or the search bar. Your choice is saved to your account and applies on web, desktop, and mobile. Until you choose, Mattermost uses the default agent your admin set. You can also @mention a specific agent.
+If your workspace has several agents, pick one from any agent picker, such as the Agents pane, the **Skills** menu, or the search bar. Your choice is saved to your account and applies on web, desktop, and mobile. Until you choose, Mattermost uses the default agent your admin set. You can also @mention a specific agent.
 
 An agent doesn't remember other conversations. It knows only the current conversation and whatever it reads with its tools.
 

@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"cmp"
+	"context"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -117,4 +118,31 @@ func configuredServerTools(server *ServerConfig) []llm.ToolInfo {
 		tools = tools[:maxKnownToolsPerServer]
 	}
 	return tools
+}
+
+// DescribeDMOnlyMCPServers names the remote servers selection leaves out only
+// because they are limited to direct messages, so the model can tell the
+// requester to move to a DM. A server the requester could not use there
+// either (access policy, agent allowlist, license, service-account headers)
+// is not named.
+func (m *ClientManager) DescribeDMOnlyMCPServers(ctx context.Context, req CatalogRequest, selection ToolSelection) []llm.DMOnlyMCPServer {
+	if !selection.ExcludeDMOnlyServers || req.validate() != nil {
+		return nil
+	}
+	cfg, embeddedClient := m.snapshotRuntime()
+	// Access policy is evaluated for the DM-only candidates alone rather than
+	// for every configured server.
+	candidates := m.resolveEligibleServers(cfg, embeddedClient, nil, selection, nil, req.ServiceAccount).dmOnly
+
+	var described []llm.DMOnlyMCPServer
+	for _, server := range candidates {
+		if !m.canUseServer(ctx, req.InvokingUserID, server.ID, server.Name) {
+			continue
+		}
+		described = append(described, llm.DMOnlyMCPServer{
+			Name:        promptSafeText(server.Name, maxToolNameRunes),
+			Description: promptSafeText(server.Description, config.MaxMCPServerDescriptionRunes),
+		})
+	}
+	return described
 }

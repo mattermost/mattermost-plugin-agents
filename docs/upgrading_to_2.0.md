@@ -43,7 +43,7 @@ The legacy bot migration waits when a bot's Mattermost account isn't registered 
 |---|---|
 | Built-in GitHub and Jira issue tools | MCP servers |
 | Built-in Mattermost search and user tools | The embedded Mattermost MCP server (`search_posts`, `search_users`) |
-| Prompt hint buttons | [Custom prompts](custom_prompts.md) |
+| Prompt hint buttons | [Skills](skills.md) |
 | Ephemeral OAuth prompt messages in threads | The **Connect** card and the **Tools** menu |
 | **Minimum Size Ratio** chunking option | Nothing |
 | `config.bots` entries | Agents in `Agents_UserAgents` |

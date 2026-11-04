@@ -167,6 +167,11 @@ func newSummaryService(t *testing.T, convStore *store.Store, mm mmapi.Client) *S
 	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything).Maybe()
 	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
 
+	// Setting the summary conversation's fixed title tells its owner.
+	if mockClient, ok := mm.(*mocks.MockClient); ok {
+		mockClient.On("PublishWebSocketEvent", conversation.WebsocketEventConversationUpdated, mock.Anything, mock.Anything).Return().Maybe()
+	}
+
 	return &Service{
 		pluginAPI:      pluginapi.NewClient(mockAPI, nil),
 		mmClient:       mm,
