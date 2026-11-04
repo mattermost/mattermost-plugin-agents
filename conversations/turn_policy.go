@@ -119,8 +119,9 @@ func (c *Conversations) resolveTurnPolicy(ctx context.Context, req turnRequest) 
 // activateTurnConversation restores the turn's conversation when it is
 // archived (ActivateConversation leaves an active one unchanged). Every entry
 // point that starts or resumes a turn on an existing conversation at the
-// user's request calls it after resolveTurnPolicy accepts the turn, so a
-// refused turn never un-archives, and the run continues on the restored row.
+// user's request calls it at its commit point, once nothing can refuse the
+// turn any more, so a refused turn never un-archives, and the run continues on
+// the restored row.
 // Wakes never call it: they drop for an archived conversation instead.
 func (c *Conversations) activateTurnConversation(p *turnPolicy) error {
 	if p.conv == nil {

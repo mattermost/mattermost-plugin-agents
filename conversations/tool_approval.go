@@ -164,10 +164,6 @@ func (c *Conversations) beginToolDecision(ctx context.Context, spanName, logMsg,
 	if !policy.toolsEnabled {
 		return fail(ErrToolCallingDisabled)
 	}
-	if err := c.activateTurnConversation(policy); err != nil {
-		return fail(err)
-	}
-	conv = policy.conv
 
 	return &toolDecision{
 		ctx:      ctx,
@@ -178,6 +174,16 @@ func (c *Conversations) beginToolDecision(ctx context.Context, spanName, logMsg,
 		turns:    turns,
 		policy:   policy,
 	}, nil
+}
+
+// activate un-archives the decision's conversation. Handlers call it once the
+// decision is recorded, so a refused or stale click never un-archives.
+func (d *toolDecision) activate(c *Conversations) error {
+	if err := c.activateTurnConversation(d.policy); err != nil {
+		return err
+	}
+	d.conv = d.policy.conv
+	return nil
 }
 
 // HandleToolCall handles user approval/rejection of pending tool calls via conversation entities.
@@ -194,7 +200,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	}
 	defer d.span.End()
 	ctx = d.ctx
-	auditRec, convID, conv, turns, policy := d.auditRec, d.convID, d.conv, d.turns, d.policy
+	auditRec, convID, turns, policy := d.auditRec, d.convID, d.turns, d.policy
 
 	pendingTurn, pendingBlocks, err := findPendingToolTurn(turns, post.Id)
 	if err != nil {
@@ -242,6 +248,10 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 
 	claimedContent, err := c.claimToolDecision(pendingTurn, pendingBlocks)
 	if err != nil {
+		return err
+	}
+	if err = d.activate(c); err != nil {
+		c.undoTurnUpdates([]turnUpdate{{turn: pendingTurn, content: claimedContent}})
 		return err
 	}
 
@@ -452,7 +462,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return nil
 	}
 
-	return c.streamToolFollowUp(ctx, policy, post, conv, followUpOptions{UserRejected: userRejected, ApprovalContext: llmContext})
+	return c.streamToolFollowUp(ctx, policy, post, d.conv, followUpOptions{UserRejected: userRejected, ApprovalContext: llmContext})
 }
 
 // resolveInteractionAnswers validates the user's answers for every accepted
@@ -510,7 +520,7 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 	}
 	defer d.span.End()
 	ctx = d.ctx
-	auditRec, conv, turns, policy := d.auditRec, d.conv, d.turns, d.policy
+	auditRec, turns, policy := d.auditRec, d.turns, d.policy
 
 	acceptedSet := make(map[string]bool, len(acceptedToolIDs))
 	for _, id := range acceptedToolIDs {
@@ -670,6 +680,11 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 		return fmt.Errorf("turn %s changed while recording the share decision", update.turn.ID)
 	}
 
+	if err = d.activate(c); err != nil {
+		c.undoTurnUpdates(updates)
+		return err
+	}
+
 	// DMs stream the follow-up from HandleToolCall.
 	if policy.isDM {
 		return nil
@@ -685,7 +700,7 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 
 	// Channel second-stage follow-up rebuilds a fresh llmContext without in-request
 	// WebSearch data; citation decoration is DM-only via HandleToolCall's llmContext.
-	return c.streamToolFollowUp(ctx, policy, post, conv, followUpOptions{UserRejected: clickedPostUserRejected})
+	return c.streamToolFollowUp(ctx, policy, post, d.conv, followUpOptions{UserRejected: clickedPostUserRejected})
 }
 
 // followUpOptions are the per-caller knobs of streamToolFollowUp.

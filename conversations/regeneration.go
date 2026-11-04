@@ -150,9 +150,6 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	if err != nil {
 		return err
 	}
-	if err = c.activateTurnConversation(policy); err != nil {
-		return err
-	}
 
 	ctx, err = c.streamingService.GetStreamingContext(ctx, post.Id)
 	if err != nil {
@@ -183,6 +180,10 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	}
 	if err != nil {
 		return fmt.Errorf("could not regenerate %s post: %w", conv.Operation, err)
+	}
+
+	if err = c.activateTurnConversation(policy); err != nil {
+		return err
 	}
 
 	post.Message = ""

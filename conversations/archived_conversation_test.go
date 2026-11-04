@@ -9,6 +9,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -195,6 +196,71 @@ func TestRegenerateAndToolDecisionRefuseDeletedRoot(t *testing.T) {
 
 			require.ErrorIs(t, start(), conversation.ErrRootPostDeleted)
 			requireNothingRan(t, env, before)
+		})
+	}
+}
+
+// TestRefusedResumeLeavesConversationArchived pins that a stale tool click, a
+// repeated share click, or a regenerate that fails after its gates passed
+// leaves an archived conversation archived, so a pending wait is never
+// resumed unattended.
+func TestRefusedResumeLeavesConversationArchived(t *testing.T) {
+	tests := []struct {
+		name    string
+		wantErr error
+		call    func(t *testing.T, env *policyEnv) func() error
+	}{
+		{
+			name:    "stale tool click",
+			wantErr: conversations.ErrStaleToolClick,
+			call: func(t *testing.T, env *policyEnv) func() error {
+				botPost := env.seedRun(t, env.dm, nil, humanPost("what time is it"), earlierAnswer(), nil)
+				return func() error {
+					return env.conversations.HandleToolCall(context.Background(), autoReplyUserID, botPost, env.dm, []string{"tc-time"}, nil)
+				}
+			},
+		},
+		{
+			name: "repeated share click",
+			call: func(t *testing.T, env *policyEnv) func() error {
+				toolUse, toolResults := executedWeatherBlocks()
+				botPost := env.seedRun(t, env.channel, nil, humanPost("what is the weather"), toolUse, toolResults)
+				share := func() error {
+					return env.conversations.HandleToolResult(context.Background(), autoReplyUserID, botPost, env.channel, []string{policyWeatherCall.ID})
+				}
+				require.NoError(t, share())
+				env.waitForStream(t)
+				return share
+			},
+		},
+		{
+			name: "failed regenerate",
+			call: func(t *testing.T, env *policyEnv) func() error {
+				botPost := env.seedRun(t, env.dm, nil, humanPost("what is the weather"), earlierAnswer(), nil)
+				delete(botPost.Props, streaming.RespondingToProp)
+				return func() error {
+					return env.conversations.HandleRegenerate(context.Background(), autoReplyUserID, botPost, env.dm)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupInvariantEnv(t, policyBotConfig(), dmMakeTextStream("answer"))
+			resume := tt.call(t, env)
+			require.NotEmpty(t, archiveAll(t, env))
+			before := env.state()
+
+			err := resume()
+
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+			}
+			for _, conv := range allConversations(env.convStore) {
+				assert.NotZero(t, conv.DeleteAt, "a refused resume must not un-archive the conversation")
+			}
+			assert.Equal(t, before, env.state())
 		})
 	}
 }
