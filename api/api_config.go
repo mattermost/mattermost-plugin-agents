@@ -220,6 +220,12 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 
 	a.configUpdater.Update(&saved)
 
+	// Agents and search availability come from config, so open clients refetch.
+	if a.mmClient != nil {
+		// PublishWebSocketEvent requires a non-nil broadcast (server dereferences it).
+		a.mmClient.PublishWebSocketEvent(WebsocketEventBotsInvalidate, map[string]any{}, &model.WebsocketBroadcast{})
+	}
+
 	notifyErr := a.clusterNotifier.PublishConfigUpdate()
 
 	// Remove saved sign-ins the change orphaned or that were issued for a

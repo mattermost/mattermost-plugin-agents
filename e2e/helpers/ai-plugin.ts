@@ -290,6 +290,15 @@ export class AIPlugin {
     await expect(agentsRadio).toBeVisible({ timeout: 10000 });
   }
 
+  /**
+   * Verify the Agents search option is absent while keyword search remains
+   */
+  async expectAgentsSearchHidden() {
+    await this.page.getByRole('button', { name: 'Search' }).click();
+    await expect(this.page.getByRole('radio', { name: /Messages/i })).toBeVisible({ timeout: 10000 });
+    await expect(this.page.getByRole('radio', { name: /Agents/i })).toHaveCount(0);
+  }
+
   async openChannelAnalysisPopover() {
     const popover = this.page.locator('.channel-summarize-popover');
 

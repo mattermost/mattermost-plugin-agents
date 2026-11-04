@@ -121,6 +121,8 @@ func (p *Plugin) OnPluginClusterEvent(_ *plugin.Context, ev model.PluginClusterE
 		}
 		if cfg != nil {
 			p.configuration.Update(cfg)
+			// The saving node broadcasts before peers apply the update; refresh clients of this node too.
+			mmapi.NewClient(p.pluginAPI).PublishWebSocketEvent(api.WebsocketEventBotsInvalidate, map[string]any{}, &model.WebsocketBroadcast{})
 		}
 
 	case clusterEventAgentUpdate:
