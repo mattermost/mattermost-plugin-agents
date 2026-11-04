@@ -4,8 +4,6 @@
 package bifrost
 
 import (
-	"strings"
-
 	"github.com/maximhq/bifrost/core/schemas"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -30,19 +28,11 @@ const (
 	openaiMaxImageDimension = 65535
 )
 
-func baseProvider(provider schemas.ModelProvider) schemas.ModelProvider {
-	name := string(provider)
-	if i := strings.Index(name, "::"); i >= 0 {
-		return schemas.ModelProvider(name[:i])
-	}
-	return provider
-}
-
 // maxImageDimension is the per-side pixel limit above which we omit an image
-// rather than send it upstream. Zero means the provider has no documented
-// pixel reject and we do not omit on dimensions.
+// rather than send it to the base provider type. Zero means the provider has no
+// documented pixel reject and we do not omit on dimensions.
 func maxImageDimension(provider schemas.ModelProvider, imageCount int) int {
-	switch baseProvider(provider) {
+	switch provider {
 	case schemas.Anthropic, schemas.Bedrock, schemas.BedrockMantle:
 		if imageCount > anthropicManyImageThreshold {
 			return anthropicManyImageDimension
@@ -55,6 +45,12 @@ func maxImageDimension(provider schemas.ModelProvider, imageCount int) int {
 	}
 }
 
+// countRequestImages counts files that may be sent as images. It filters on the
+// declared type rather than the sniffed one: only files declared as supported
+// images carry bytes, so this never undercounts, and sniffing can only turn
+// one of them into a placeholder. Overcounting at worst applies the stricter
+// many-image limit, and counting here never reads (and so never drains) a
+// file's Reader before multimodalContent does.
 func countRequestImages(posts []llm.Post) int {
 	n := 0
 	for _, post := range posts {

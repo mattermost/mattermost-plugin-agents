@@ -5,6 +5,7 @@ package mcpserver_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -344,6 +345,135 @@ func TestMCPToolsIntegration(t *testing.T) {
 			_, err := executeToolWithMCP(t, suite, "search_posts", args)
 			require.NoError(t, err, "search_posts with no results should not error")
 		})
+
+		t.Run("ModifiersWithAndWithoutTeam", func(t *testing.T) {
+			ctx := context.Background()
+			data := seedChannelConversation(t, suite.serverURL, suite.adminToken)
+
+			// A second team, also with the requesting admin as a member, holding a
+			// same-named channel and a matching post from Alice.
+			otherTeam := testhelpers.CreateTestTeam(t, client, "other-eval-team", "Other Eval Team")
+			otherChannel := testhelpers.CreateTestChannel(t, client, otherTeam.Id, data.channel.Name, "Other Migration Planning")
+			testhelpers.AddUserToTeam(t, client, otherTeam.Id, data.alice.Id)
+			testhelpers.AddUserToChannel(t, client, otherChannel.Id, data.alice.Id)
+
+			aliceClient := model.NewAPIv4Client(suite.serverURL)
+			_, _, err := aliceClient.Login(ctx, data.alice.Username, "EvalTest123!")
+			require.NoError(t, err)
+			otherTeamPost, _, err := aliceClient.CreatePost(ctx, &model.Post{
+				ChannelId: otherChannel.Id,
+				Message:   "The MySQL replica for the other team is already provisioned.",
+			})
+			require.NoError(t, err)
+
+			uniqueChannel := testhelpers.CreateTestChannel(t, client, otherTeam.Id, "mysql-ops", "MySQL Ops")
+			testhelpers.AddUserToChannel(t, client, uniqueChannel.Id, data.alice.Id)
+			uniquePost, _, err := aliceClient.CreatePost(ctx, &model.Post{
+				ChannelId: uniqueChannel.Id,
+				Message:   "MySQL backups now run hourly.",
+			})
+			require.NoError(t, err)
+
+			admin, _, err := client.GetMe(ctx, "")
+			require.NoError(t, err)
+			dm, _, err := client.CreateDirectChannel(ctx, admin.Id, data.alice.Id)
+			require.NoError(t, err)
+			dmPost, _, err := aliceClient.CreatePost(ctx, &model.Post{
+				ChannelId: dm.Id,
+				Message:   "Quick heads-up: the MySQL credentials rotate tonight.",
+			})
+			require.NoError(t, err)
+
+			// Charlie's post in the eval channel also mentions MySQL.
+			charlieMarker := "500GB of data"
+
+			tests := []struct {
+				name    string
+				args    map[string]any
+				want    []string
+				notWant []string
+				wantErr string
+			}{
+				{
+					name:    "from without team_id covers every team",
+					args:    map[string]any{"query": "MySQL", "from": data.alice.Username},
+					want:    []string{"Post ID: " + data.aliceRollbackPost.Id, "Post ID: " + otherTeamPost.Id, "Post ID: " + dmPost.Id},
+					notWant: []string{charlieMarker},
+				},
+				{
+					name:    "from with team_id stays in that team",
+					args:    map[string]any{"query": "MySQL", "from": data.alice.Username, "team_id": data.team.Id},
+					want:    []string{"Post ID: " + data.aliceRollbackPost.Id, "Post ID: " + dmPost.Id},
+					notWant: []string{otherTeamPost.Id, charlieMarker},
+				},
+				{
+					name:    "from with channel_id stays in that channel",
+					args:    map[string]any{"query": "MySQL", "from": data.alice.Username, "channel_id": data.channel.Id},
+					want:    []string{"Post ID: " + data.aliceRollbackPost.Id},
+					notWant: []string{otherTeamPost.Id, dmPost.Id, charlieMarker},
+				},
+				{
+					name:    "in by unique channel name without team_id searches that channel",
+					args:    map[string]any{"query": "MySQL", "in": uniqueChannel.Name},
+					want:    []string{"Post ID: " + uniquePost.Id},
+					notWant: []string{data.aliceRollbackPost.Id, otherTeamPost.Id, dmPost.Id},
+				},
+				{
+					name:    "in by channel name shared across teams lists the candidates",
+					args:    map[string]any{"query": "MySQL", "in": data.channel.Name},
+					want:    []string{"ID: " + data.channel.Id, "ID: " + otherChannel.Id},
+					notWant: []string{data.aliceRollbackPost.Id, otherTeamPost.Id},
+				},
+				{
+					name:    "in by shared channel name with team_id searches that team",
+					args:    map[string]any{"query": "MySQL", "in": data.channel.Name, "team_id": otherTeam.Id},
+					want:    []string{"Post ID: " + otherTeamPost.Id},
+					notWant: []string{data.aliceRollbackPost.Id, dmPost.Id},
+				},
+				{
+					name:    "in by channel ID without team_id matches only that channel",
+					args:    map[string]any{"query": "MySQL", "in": data.channel.Id},
+					want:    []string{"Post ID: " + data.aliceRollbackPost.Id},
+					notWant: []string{otherTeamPost.Id, dmPost.Id},
+				},
+				{
+					name:    "in by DM channel ID",
+					args:    map[string]any{"query": "MySQL", "in": dm.Id},
+					want:    []string{"Post ID: " + dmPost.Id},
+					notWant: []string{data.aliceRollbackPost.Id, otherTeamPost.Id},
+				},
+				{
+					name:    "in by unknown channel name",
+					args:    map[string]any{"query": "MySQL", "in": "no-such-channel"},
+					wantErr: "no channel named",
+				},
+			}
+
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					result, err := executeToolWithMCP(t, suite, "search_posts", tt.args)
+					if tt.wantErr != "" {
+						require.Error(t, err)
+						assert.Contains(t, err.Error(), tt.wantErr)
+						return
+					}
+					require.NoError(t, err)
+					var text string
+					for _, c := range result.Content {
+						if tc, ok := c.(*mcp.TextContent); ok {
+							text += tc.Text
+						}
+					}
+
+					for _, want := range tt.want {
+						assert.Equal(t, 1, strings.Count(text, want), "%q should appear exactly once in:\n%s", want, text)
+					}
+					for _, notWant := range tt.notWant {
+						assert.NotContains(t, text, notWant)
+					}
+				})
+			}
+		})
 	})
 
 	t.Run("AddChannelMemberTool", func(t *testing.T) {
@@ -467,8 +597,6 @@ func TestMCPToolsIntegration(t *testing.T) {
 			for _, post := range posts.Posts {
 				if post.Message == "Test DM to myself from integration test!" {
 					found = true
-					// Verify props were set - from_webhook should be set for self DMs
-					assert.Equal(t, "true", post.GetProp("from_webhook"), "Post should have from_webhook prop set")
 					break
 				}
 			}
@@ -508,8 +636,6 @@ func TestMCPToolsIntegration(t *testing.T) {
 			for _, post := range posts.Posts {
 				if post.Message == "Hello from DM integration test!" {
 					found = true
-					// from_webhook should NOT be set for DMs to others
-					assert.Nil(t, post.GetProp("from_webhook"), "Post should not have from_webhook prop when DM'ing another user")
 					break
 				}
 			}

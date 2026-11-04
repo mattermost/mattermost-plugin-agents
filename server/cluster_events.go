@@ -18,6 +18,12 @@ const clusterEventMCPOAuthUserInvalidate = "mcp_oauth_user_invalidate"
 const clusterEventStreamStop = "stream_stop"
 const clusterEventChannelAutoReplyInvalidate = "channel_autoreply_invalidate"
 
+// agentUpdateClusterPayload names the agent an agent update changed. Updates
+// may carry no data, and older nodes neither send nor read it.
+type agentUpdateClusterPayload struct {
+	AgentID string `json:"agentID"`
+}
+
 type mcpOAuthUserInvalidateClusterPayload struct {
 	UserID string `json:"userID"`
 }
@@ -62,9 +68,14 @@ func (p *Plugin) PublishConfigUpdate() error {
 	return p.publishClusterEvent(clusterEventConfigUpdate, nil)
 }
 
-// PublishAgentUpdate broadcasts an agent update event to all other nodes in the cluster.
-func (p *Plugin) PublishAgentUpdate() error {
-	return p.publishClusterEvent(clusterEventAgentUpdate, nil)
+// PublishAgentUpdate broadcasts an agent update event to all other nodes in
+// the cluster. A non-empty agentID names the changed agent, which peers
+// refresh individually before reloading every bot.
+func (p *Plugin) PublishAgentUpdate(agentID string) error {
+	if agentID == "" {
+		return p.publishClusterEvent(clusterEventAgentUpdate, nil)
+	}
+	return p.publishClusterEventWithPayload(clusterEventAgentUpdate, agentUpdateClusterPayload{AgentID: agentID})
 }
 
 // PublishMCPOAuthUpdate broadcasts a per-user MCP OAuth cache invalidation to all other nodes.
@@ -113,6 +124,18 @@ func (p *Plugin) OnPluginClusterEvent(_ *plugin.Context, ev model.PluginClusterE
 		}
 
 	case clusterEventAgentUpdate:
+		// The changed agent is refreshed on its own first, so a failing full
+		// reload cannot keep serving its previous configuration.
+		if len(ev.Data) > 0 {
+			var payload agentUpdateClusterPayload
+			if err := json.Unmarshal(ev.Data, &payload); err != nil {
+				p.pluginAPI.Log.Error("Failed to unmarshal agent update cluster payload", "error", err.Error())
+			} else if payload.AgentID != "" {
+				if err := p.bots.RefreshAgent(payload.AgentID); err != nil {
+					p.pluginAPI.Log.Error("Failed to refresh changed agent after agent update cluster event", "agent_id", payload.AgentID, "error", err.Error())
+				}
+			}
+		}
 		// Invalidate optimistic ensure snapshots and run EnsureBots so this node reloads DB-backed agents.
 		p.bots.ForceRefreshOnNextEnsure()
 		if err := p.bots.EnsureBots(); err != nil {

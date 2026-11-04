@@ -5,6 +5,8 @@ import React, {useMemo, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 
+import {Button} from '@mattermost/compass-ui/components/button';
+
 import {JSONValue, ToolCall} from './tool_types';
 
 // Values longer than this (characters) are clamped behind the card-level
@@ -131,21 +133,6 @@ const ToggleRow = styled.div`
     gap: 12px;
 `;
 
-const ToggleButton = styled.button`
-    padding: 0;
-    border: none;
-    background: none;
-    cursor: pointer;
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 16px;
-    color: var(--link-color);
-
-    &:hover {
-        text-decoration: underline;
-    }
-`;
-
 export function isEmptyToolArgumentsObject(argumentsValue: ToolCall['arguments']): boolean {
     return argumentsValue != null &&
         typeof argumentsValue === 'object' &&
@@ -265,8 +252,9 @@ const JsonFieldList: React.FC<{entries: Array<[string, JSONValue]>}> = ({entries
 
             {hasClampable && (
                 <ToggleRow>
-                    <ToggleButton
-                        type='button'
+                    <Button
+                        emphasis='link'
+                        size='x-small'
                         onClick={() => setExpanded((prev) => !prev)}
                     >
                         {expanded ? (
@@ -280,7 +268,7 @@ const JsonFieldList: React.FC<{entries: Array<[string, JSONValue]>}> = ({entries
                                 defaultMessage='Show more'
                             />
                         )}
-                    </ToggleButton>
+                    </Button>
                 </ToggleRow>
             )}
         </Container>
@@ -318,8 +306,9 @@ export const ToolResultBody: React.FC<{result: string}> = ({result}) => {
             <StringValue $clamped={isLong && !expanded}>{result}</StringValue>
             {isLong && (
                 <ToggleRow>
-                    <ToggleButton
-                        type='button'
+                    <Button
+                        emphasis='link'
+                        size='x-small'
                         onClick={() => setExpanded((prev) => !prev)}
                     >
                         {expanded ? (
@@ -333,7 +322,7 @@ export const ToolResultBody: React.FC<{result: string}> = ({result}) => {
                                 defaultMessage='Show more'
                             />
                         )}
-                    </ToggleButton>
+                    </Button>
                 </ToggleRow>
             )}
         </Container>

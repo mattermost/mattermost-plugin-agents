@@ -179,7 +179,7 @@ func mentionKeywords(user *model.User) []string {
 
 	add("@" + user.Username)
 	if user.NotifyProps != nil {
-		for _, kw := range strings.Split(user.NotifyProps["mention_keys"], ",") {
+		for kw := range strings.SplitSeq(user.NotifyProps["mention_keys"], ",") {
 			add(kw)
 		}
 	}

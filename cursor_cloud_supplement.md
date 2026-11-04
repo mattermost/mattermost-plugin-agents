@@ -21,7 +21,7 @@ script, not in this file. The cloud image additionally provides:
 ## Running Mattermost + plugin locally in the cloud VM
 
 A local Mattermost Enterprise instance is needed for plugin development.
-Use the development image and a companion PostgreSQL container:
+Use the Enterprise Edition image and a companion PostgreSQL container:
 
 ```bash
 docker network create mm-network 2>/dev/null || true
@@ -39,14 +39,14 @@ docker run -d --name mm-server --network mm-network -p 8065:8065 \
   -e MM_PLUGINSETTINGS_AUTOMATICPREPACKAGEDPLUGINS=false \
   -e MM_PLUGINSETTINGS_ENABLEMARKETPLACE=false \
   -e MM_SERVICESETTINGS_ENABLELOCALMODE=true \
-  mattermostdevelopment/mattermost-enterprise-edition:master
+  mattermost/mattermost-enterprise-edition:latest
 
 docker exec mm-server mmctl user create --email admin@example.com --username admin --password 'Admin1234!' --system-admin --local
 docker exec mm-server mmctl team create --name dev --display-name "Dev Team" --local
 docker exec mm-server mmctl team users add dev admin --local
 ```
 
-The development image provides an Entry license for local testing;
+The Enterprise Edition image provides an Entry license for local testing;
 `MM_LICENSE` is not required.
 
 ## Deploying the plugin into the cloud VM container

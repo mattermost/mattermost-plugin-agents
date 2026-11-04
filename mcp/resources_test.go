@@ -175,9 +175,9 @@ type countingEmbeddedMCPServer struct {
 	creates atomic.Int32
 }
 
-func (c *countingEmbeddedMCPServer) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error) {
+func (c *countingEmbeddedMCPServer) CreateClientTransport(userID, sessionID, sessionToken string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error) {
 	c.creates.Add(1)
-	return c.fakeEmbeddedMCPServer.CreateClientTransport(userID, sessionID, pluginAPI)
+	return c.fakeEmbeddedMCPServer.CreateClientTransport(userID, sessionID, sessionToken, pluginAPI)
 }
 
 func TestClientReconnectSingleFlightUnderConcurrentReads(t *testing.T) {
@@ -187,7 +187,7 @@ func TestClientReconnectSingleFlightUnderConcurrentReads(t *testing.T) {
 	t.Cleanup(cancel)
 	pluginAPI := newTestPluginAPIWithSession("session-id")
 
-	counting := &countingEmbeddedMCPServer{fakeEmbeddedMCPServer: fakeEmbeddedMCPServer{ctx: ctx, server: server}}
+	counting := &countingEmbeddedMCPServer{ctx: ctx, server: server}
 	embeddedClient := NewEmbeddedServerClient(counting, pluginAPI.Log, pluginAPI)
 	client, err := embeddedClient.CreateClient(context.Background(), "test-user", "session-id")
 	require.NoError(t, err)
@@ -199,10 +199,8 @@ func TestClientReconnectSingleFlightUnderConcurrentReads(t *testing.T) {
 	const n = 16
 	var wg sync.WaitGroup
 	errs := make(chan error, n)
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range n {
+		wg.Go(func() {
 			got, readErr := client.ReadAppResource(context.Background(), uri)
 			if readErr != nil {
 				errs <- readErr
@@ -211,7 +209,7 @@ func TestClientReconnectSingleFlightUnderConcurrentReads(t *testing.T) {
 			if got.HTML != "<html>race</html>" {
 				errs <- fmt.Errorf("unexpected html %q", got.HTML)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	close(errs)
@@ -229,7 +227,7 @@ func TestClientConcurrentReadAndToolCallAfterClose(t *testing.T) {
 	t.Cleanup(cancel)
 	pluginAPI := newTestPluginAPIWithSession("session-id")
 
-	counting := &countingEmbeddedMCPServer{fakeEmbeddedMCPServer: fakeEmbeddedMCPServer{ctx: ctx, server: server}}
+	counting := &countingEmbeddedMCPServer{ctx: ctx, server: server}
 	embeddedClient := NewEmbeddedServerClient(counting, pluginAPI.Log, pluginAPI)
 	client, err := embeddedClient.CreateClient(context.Background(), "test-user", "session-id")
 	require.NoError(t, err)

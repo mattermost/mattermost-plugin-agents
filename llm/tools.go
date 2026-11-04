@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
@@ -59,16 +60,21 @@ type Tool struct {
 	ValidateArguments func(json.RawMessage) error
 
 	// AutoExecute marks a built-in tool that runs without user approval, like
-	// the MCP dynamic-loading meta-tools. Reserve it for tools whose only side
-	// effect is scoped to the assistant's own response (e.g. CreateFile
-	// attaching a file to the reply post). Only honored for tools with an
-	// empty ServerOrigin — MCP tools must never auto-execute through this flag.
+	// the MCP dynamic-loading meta-tools. Reserve it for tools whose side
+	// effect is scoped to this assistant's own response or conversation
+	// control flow (e.g. CreateFile attaching a file, wait_for_async_work
+	// scheduling a later resume). Only honored for tools with an empty
+	// ServerOrigin — MCP tools must never auto-execute through this flag.
 	AutoExecute bool
 }
 
 // UserInteractionSelect identifies tools answered by the user picking from a
 // set of options presented in the Mattermost UI.
 const UserInteractionSelect = "select"
+
+// UserInteractionConnect identifies tools answered by the user connecting
+// their account to an MCP server from the Mattermost UI.
+const UserInteractionConnect = "connect"
 
 type ToolResolver func(ctx context.Context, llmCtx *Context, argsGetter ToolArgumentGetter) (string, error)
 
@@ -236,32 +242,6 @@ const (
 	// to skip the call-approval UI and proceed directly to result-sharing.
 	ToolCallStatusAutoApproved
 )
-
-// IsResolvedToolCallBatch reports whether a ToolCalls event represents the
-// post-execution "resolved" broadcast (every call has a terminal status
-// assigned by toolrunner after execution) rather than the pre-execution
-// "pending" broadcast. toolrunner.buildResolvedToolCalls tags successful
-// auto-run tools as AutoApproved (not Success) and errored ones as Error;
-// user-approved tools are later tagged Success by the approval flow. Anything
-// else — most commonly Pending, but also Rejected — indicates the batch has
-// not been executed. Streaming persistence and the annotation decorator both
-// reset per-round state at this boundary, so they must share this predicate.
-func IsResolvedToolCallBatch(toolCalls []ToolCall) bool {
-	if len(toolCalls) == 0 {
-		return false
-	}
-	for _, tc := range toolCalls {
-		switch tc.Status {
-		case ToolCallStatusSuccess,
-			ToolCallStatusError,
-			ToolCallStatusAutoApproved:
-			// terminal status after execution
-		default:
-			return false
-		}
-	}
-	return true
-}
 
 // ToolCall represents a tool call. An empty result indicates that the tool has not yet been resolved.
 type ToolCall struct {
@@ -505,9 +485,30 @@ func (s *ToolStore) lookupTool(name string) (Tool, bool) {
 }
 
 func (s *ToolStore) ResolveTool(ctx context.Context, name string, argsGetter ToolArgumentGetter, llmCtx *Context) (string, error) {
-	_, span := telemetry.Tracer().Start(ctx, "resolve tool",
-		trace.WithAttributes(telemetry.ToolName.String(name)),
-	)
+	return s.ResolveToolCall(ctx, name, ToolCallInfo{}, argsGetter, llmCtx)
+}
+
+// ToolCallInfo describes the call being resolved, for tracing.
+type ToolCallInfo struct {
+	// ID is the model-assigned tool call ID.
+	ID string
+	// Execution is telemetry.ToolExecutionAuto when the call ran without
+	// asking the user, or telemetry.ToolExecutionApproved after approval.
+	Execution string
+}
+
+// ResolveToolCall runs the named tool inside the single "resolve tool" span.
+// The span records the call's identity, outcome and result size; the
+// arguments and result themselves are never attached.
+func (s *ToolStore) ResolveToolCall(ctx context.Context, name string, info ToolCallInfo, argsGetter ToolArgumentGetter, llmCtx *Context) (string, error) {
+	attrs := []attribute.KeyValue{telemetry.ToolName.String(name)}
+	if info.ID != "" {
+		attrs = append(attrs, telemetry.ToolID.String(info.ID))
+	}
+	if info.Execution != "" {
+		attrs = append(attrs, telemetry.ToolExecution.String(info.Execution))
+	}
+	ctx, span := telemetry.Tracer().Start(ctx, "resolve tool", trace.WithAttributes(attrs...))
 	defer span.End()
 
 	tool, ok := s.lookupTool(name)
@@ -515,13 +516,21 @@ func (s *ToolStore) ResolveTool(ctx context.Context, name string, argsGetter Too
 		err := errors.New("unknown tool " + name)
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
+		span.SetAttributes(telemetry.ToolStatus.String("error"))
 		return "", err
 	}
 	result, err := tool.Resolver(ctx, llmCtx, argsGetter)
 	if err != nil {
 		span.RecordError(err)
-		span.SetStatus(otelcodes.Error, err.Error())
+		span.SetStatus(otelcodes.Error, "tool resolution failed")
+		span.SetAttributes(telemetry.ToolStatus.String("error"))
+		return result, err
 	}
+	span.SetAttributes(
+		telemetry.ToolStatus.String("success"),
+		telemetry.ToolResultBytes.Int(len(result)),
+		telemetry.ToolResultTokens.Int(EstimateTokens(result)),
+	)
 	return result, err
 }
 
@@ -633,6 +642,39 @@ func (s *ToolStore) lookupUnloadedMCPTool(name string) (Tool, bool) {
 		return Tool{}, false
 	}
 	return matched, true
+}
+
+// HasMCPToolFromOrigin reports whether the store holds an MCP tool whose
+// ServerOrigin is exactly origin, loaded or not, for which keep returns true.
+// A nil keep accepts every tool. Origins are compared verbatim: configured
+// servers may differ only by trailing slashes.
+func (s *ToolStore) HasMCPToolFromOrigin(origin string, keep func(Tool) bool) bool {
+	if s == nil || strings.TrimSpace(origin) == "" {
+		return false
+	}
+	for _, tools := range []map[string]Tool{s.tools, s.unloadedMCPTools} {
+		for _, tool := range tools {
+			if tool.ServerOrigin == origin && (keep == nil || keep(tool)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// RemoveMCPToolsFromOrigin removes every MCP tool, loaded or not, whose
+// ServerOrigin is exactly origin.
+func (s *ToolStore) RemoveMCPToolsFromOrigin(origin string) {
+	if s == nil || strings.TrimSpace(origin) == "" {
+		return
+	}
+	for _, tools := range []map[string]Tool{s.tools, s.unloadedMCPTools} {
+		for name, tool := range tools {
+			if tool.ServerOrigin == origin {
+				delete(tools, name)
+			}
+		}
+	}
 }
 
 // GetServerOrigin returns the ServerOrigin for a tool by name.

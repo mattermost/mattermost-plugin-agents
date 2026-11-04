@@ -3,10 +3,15 @@
 
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
-import {RefreshIcon, ExclamationThickIcon} from '@mattermost/compass-icons/components';
+import {RefreshIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
-import {TertiaryButton, SecondaryButton} from '../assets/buttons';
+import {Button} from '@mattermost/compass-ui/components/button';
+import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
+import {Spinner} from '@mattermost/compass-ui/components/spinner';
+
 import {getMCPTools, clearMCPToolsCache, getVettedToolSeed, updatePluginServer} from '../../client';
 import {useMCPConnectionEvents} from '../../hooks/use_mcp_connection_events';
 import {pluginIDFromServerOrigin} from '../../utils/tool_names';
@@ -23,7 +28,10 @@ import {EMBEDDED_MATTERMOST_BASE_URL} from './vetted_tool_configs';
 
 type MCPToolsViewerProps = {
     mcpConfig: MCPConfig;
-    onConfigChange: (config: MCPConfig) => void;
+
+    // Like a React state setter: pass a function to apply the change to the
+    // configuration as it is when the change is applied.
+    onConfigChange: (update: MCPConfig | ((current: MCPConfig) => MCPConfig)) => void;
     initialToolsData?: MCPToolsResponse | null;
 };
 
@@ -104,58 +112,48 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
         seededRef.current = true;
 
         (async () => {
-            let updatedConfig = mcpConfig;
-            let changed = false;
+            const baseURLs = new Set([...(mcpConfig.servers ?? []).map((sc) => sc.baseURL), EMBEDDED_MATTERMOST_BASE_URL]);
+            const seeds = new Map(await Promise.all([...baseURLs].map(async (baseURL): Promise<[string, MCPToolConfig[]]> => {
+                try {
+                    return [baseURL, await getVettedToolSeed(baseURL)];
+                } catch {
+                    return [baseURL, []];
+                }
+            })));
 
-            const updatedServers = await Promise.all(
-                (updatedConfig.servers ?? []).map(async (sc) => {
-                    let seeded: MCPToolConfig[] = [];
-                    try {
-                        seeded = await getVettedToolSeed(sc.baseURL);
-                    } catch {
-                        return sc;
-                    }
-                    if (seeded.length === 0) {
-                        return sc;
-                    }
-                    const existing = sc.tool_configs || [];
-                    const existingNames = new Set(existing.map((tc) => tc.name));
-                    const missing = seeded.filter((tc) => !existingNames.has(tc.name));
-                    if (missing.length === 0) {
+            // Returns toolConfigs itself when nothing is missing.
+            const withSeeded = (toolConfigs: MCPToolConfig[] | undefined, baseURL: string) => {
+                const existing = toolConfigs || [];
+                const existingNames = new Set(existing.map((tc) => tc.name));
+                const missing = (seeds.get(baseURL) ?? []).filter((tc) => !existingNames.has(tc.name));
+                return missing.length > 0 ? [...existing, ...missing] : toolConfigs;
+            };
+
+            // Returns config itself when nothing is missing.
+            const seedConfig = (config: MCPConfig): MCPConfig => {
+                let changed = false;
+                const servers = config.servers?.map((sc) => {
+                    const toolConfigs = withSeeded(sc.tool_configs, sc.baseURL);
+                    if (toolConfigs === sc.tool_configs) {
                         return sc;
                     }
                     changed = true;
-                    return {...sc, tool_configs: [...existing, ...missing]};
-                }),
-            );
-            if (changed) {
-                updatedConfig = {...updatedConfig, servers: updatedServers};
-            }
-
-            const embeddedCfg = updatedConfig.embeddedServer;
-            {
-                let seeded: MCPToolConfig[] = [];
-                try {
-                    seeded = await getVettedToolSeed(EMBEDDED_MATTERMOST_BASE_URL);
-                } catch {
-                    seeded = [];
+                    return {...sc, tool_configs: toolConfigs};
+                }) ?? config.servers;
+                const embeddedToolConfigs = withSeeded(config.embeddedServer.tool_configs, EMBEDDED_MATTERMOST_BASE_URL);
+                if (embeddedToolConfigs !== config.embeddedServer.tool_configs) {
+                    changed = true;
                 }
-                if (seeded.length > 0) {
-                    const existing = embeddedCfg.tool_configs || [];
-                    const existingNames = new Set(existing.map((tc) => tc.name));
-                    const missing = seeded.filter((tc) => !existingNames.has(tc.name));
-                    if (missing.length > 0) {
-                        changed = true;
-                        updatedConfig = {
-                            ...updatedConfig,
-                            embeddedServer: {...embeddedCfg, tool_configs: [...existing, ...missing]},
-                        };
-                    }
+                if (!changed) {
+                    return config;
                 }
-            }
+                return {...config, servers, embeddedServer: {...config.embeddedServer, tool_configs: embeddedToolConfigs}};
+            };
 
-            if (changed) {
-                onConfigChange(updatedConfig);
+            // The admin may have edited the configuration while the seeds
+            // loaded, so they are merged into the configuration as it is now.
+            if (seedConfig(mcpConfig) !== mcpConfig) {
+                onConfigChange(seedConfig);
             }
         })().catch(() => null);
     }, [toolsData]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -280,51 +278,53 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
                     )}
                 </HeaderInfo>
                 <ButtonGroup>
-                    <SecondaryButton
+                    <Button
+                        emphasis='secondary'
                         onClick={handleClearCache}
-                        disabled={clearing || loading}
+                        loading={clearing}
+                        disabled={loading}
                     >
                         <FormattedMessage defaultMessage='Clear Cache'/>
-                    </SecondaryButton>
-                    <RefreshButton
+                    </Button>
+                    <Button
+                        emphasis='tertiary'
                         onClick={() => fetchTools({showLoading: true})}
-                        disabled={loading || clearing}
+                        loading={loading}
+                        disabled={clearing}
+                        leadingIcon={<Icon glyph={<RefreshIcon/>}/>}
                     >
-                        <RefreshIcon
-                            size={16}
-                        />
                         <FormattedMessage defaultMessage='Refresh Tools'/>
-                    </RefreshButton>
+                    </Button>
                 </ButtonGroup>
             </Header>
 
             <Content>
                 {clearSuccess && (
-                    <SuccessState>
-                        <FormattedMessage defaultMessage='Cache cleared successfully'/>
-                    </SuccessState>
+                    <SectionNotice
+                        type='success'
+                        title={<FormattedMessage defaultMessage='Cache cleared successfully'/>}
+                    />
                 )}
 
                 {loading && !toolsData && (
                     <LoadingState>
-                        <FormattedMessage defaultMessage='Loading tools...'/>
+                        <Spinner
+                            size='24'
+                            aria-label={intl.formatMessage({defaultMessage: 'Loading tools...'})}
+                        />
                     </LoadingState>
                 )}
 
                 {error && (
-                    <ErrorState>
-                        <ExclamationThickIcon size={24}/>
-                        <div>
-                            <FormattedMessage defaultMessage='Failed to load MCP tools'/>
-                            <div>{error}</div>
-                        </div>
-                    </ErrorState>
+                    <SectionNotice
+                        type='danger'
+                        title={<FormattedMessage defaultMessage='Failed to load MCP tools'/>}
+                        description={error}
+                    />
                 )}
 
                 {toolsData && toolsData.servers.length === 0 && (
-                    <EmptyState>
-                        <FormattedMessage defaultMessage='No MCP servers configured'/>
-                    </EmptyState>
+                    <EmptyState title={<FormattedMessage defaultMessage='No MCP servers configured'/>}/>
                 )}
 
                 {toolsData && toolsData.servers.length > 0 && (
@@ -350,35 +350,35 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
 const Container = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: var(--spacing-l);
 `;
 
 const Header = styled.div`
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    gap: 16px;
+    gap: var(--spacing-l);
 `;
 
 const HeaderInfo = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--spacing-xxxs);
 `;
 
 const Title = styled.h3`
     margin: 0;
-    font-size: 18px;
-    font-weight: 600;
+    font-size: var(--font-size-300);
+    font-weight: var(--font-weight-semibold);
     color: var(--center-channel-color);
 `;
 
 const Summary = styled.div`
-    font-size: 14px;
+    font-size: var(--font-size-100);
     color: rgba(var(--center-channel-color-rgb), 0.64);
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--spacing-xxxs);
 `;
 
 const ErrorCount = styled.span`
@@ -387,76 +387,27 @@ const ErrorCount = styled.span`
 
 const ButtonGroup = styled.div`
     display: flex;
-    gap: 8px;
+    gap: var(--spacing-xs);
     align-items: center;
-`;
-
-const RefreshButton = styled(TertiaryButton)`
-    white-space: nowrap;
-
-    @keyframes spin {
-        from {
-            transform: rotate(0deg);
-        }
-        to {
-            transform: rotate(360deg);
-        }
-    }
 `;
 
 const Content = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 16px;
-`;
-
-const SuccessState = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 12px 16px;
-    color: var(--online-indicator);
-    background-color: rgba(var(--online-indicator-rgb), 0.08);
-    border: 1px solid rgba(var(--online-indicator-rgb), 0.16);
-    border-radius: 4px;
-    font-weight: 600;
+    gap: var(--spacing-l);
 `;
 
 const LoadingState = styled.div`
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 32px;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    background-color: rgba(var(--center-channel-color-rgb), 0.04);
-    border-radius: 4px;
-`;
-
-const ErrorState = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 16px;
-    color: var(--error-text);
-    background-color: rgba(var(--error-text-color-rgb), 0.08);
-    border: 1px solid rgba(var(--error-text-color-rgb), 0.16);
-    border-radius: 4px;
-`;
-
-const EmptyState = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 32px;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    background-color: rgba(var(--center-channel-color-rgb), 0.04);
-    border-radius: 4px;
+    padding: var(--spacing-xxxl);
 `;
 
 const ServersList = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--spacing-m);
 `;
 
 export default MCPToolsViewer;

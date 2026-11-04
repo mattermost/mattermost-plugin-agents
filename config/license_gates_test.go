@@ -200,6 +200,16 @@ func TestValidateLicenseTransition(t *testing.T) {
 			minLevel: enterprise.LevelEnterprise,
 		},
 		{
+			name:     "TranscriptBotUserID newly non-empty",
+			next:     Config{TranscriptBotUserID: "transcriptbotuserid1234567"},
+			minLevel: enterprise.LevelEnterprise,
+		},
+		{
+			name: "transcript agent migrated from name to ID is accepted",
+			prev: &Config{TranscriptGenerator: "ai"},
+			next: Config{TranscriptBotUserID: "transcriptbotuserid1234567"},
+		},
+		{
 			name: "MCP server newly present",
 			next: Config{MCP: MCPConfig{Servers: []MCPServerConfig{
 				{ID: "mcp1", Name: "ext", Enabled: true, BaseURL: "https://mcp.example.com"},

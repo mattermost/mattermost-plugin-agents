@@ -7,10 +7,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -28,28 +26,25 @@ func NewPluginAPIClient(papi plugin.API) *PluginAPIClient {
 
 // EvaluateAccessRequest proxies one PDP call. ctx is span-only; the plugin RPC
 // hop carries no context. A missing decision is an error (checkers deny).
+//
+// No span of its own: every caller is a checker whose span already carries
+// the user, resource and outcome, and a second span per decision doubled the
+// volume of the noisiest span family. Failures are recorded on the caller's
+// span.
 func (c *PluginAPIClient) EvaluateAccessRequest(ctx context.Context, userID, resourceType, resourceID, action string) (*model.AccessDecision, error) {
-	_, span := telemetry.Tracer().Start(ctx, "abac evaluate", trace.WithAttributes(
-		telemetry.UserID.String(userID),
-		telemetry.ABACResourceType.String(resourceType),
-		telemetry.ABACResourceID.String(resourceID),
-	))
-	defer span.End()
+	span := trace.SpanFromContext(ctx)
 
 	decision, appErr := c.papi.EvaluateAccessControl(userID, resourceType, resourceID, action)
 	if appErr != nil {
 		span.RecordError(appErr)
-		span.SetStatus(codes.Error, "access control evaluation failed")
 		return nil, appErr
 	}
 	if decision == nil {
 		// The generated RPC client returns (nil, nil) on transport failure.
 		span.RecordError(errRPCTransportFailure)
-		span.SetStatus(codes.Error, "access control evaluation returned no decision")
 		return nil, errRPCTransportFailure
 	}
 
-	span.SetAttributes(telemetry.ABACOutcome.String(outcomeAttribute(*decision)))
 	return decision, nil
 }
 

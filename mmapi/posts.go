@@ -4,9 +4,9 @@
 package mmapi
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
-	"sort"
 
 	sq "github.com/Masterminds/squirrel"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -36,8 +36,8 @@ func GetThreadData(client Client, postID string) (*ThreadData, error) {
 }
 
 func GetMetadataForPosts(client Client, posts *model.PostList) (*ThreadData, error) {
-	sort.Slice(posts.Order, func(i, j int) bool {
-		return posts.Posts[posts.Order[i]].CreateAt < posts.Posts[posts.Order[j]].CreateAt
+	slices.SortFunc(posts.Order, func(a, b string) int {
+		return cmp.Compare(posts.Posts[a].CreateAt, posts.Posts[b].CreateAt)
 	})
 
 	userIDsUnique := make(map[string]bool)
@@ -66,11 +66,11 @@ func GetMetadataForPosts(client Client, posts *model.PostList) (*ThreadData, err
 	}, nil
 }
 
-func (c *DBClient) GetFirstPostBeforeTimeRangeID(channelID string, startTime, endTime int64) (string, error) {
+func (db *DBClient) GetFirstPostBeforeTimeRangeID(channelID string, startTime, endTime int64) (string, error) {
 	var result struct {
 		ID string `db:"id"`
 	}
-	err := c.DoQuery(&result, c.Builder().
+	err := db.DoQuery(&result, db.Builder().
 		Select("id").
 		From("Posts").
 		Where(sq.Eq{"ChannelId": channelID}).

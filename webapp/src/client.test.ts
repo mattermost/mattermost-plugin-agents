@@ -9,12 +9,23 @@ import type {ConversationResponse, Turn} from '@/types/conversation';
 import manifest from './manifest';
 
 import {
+    artifactPath,
+    artifactURL,
+    doChannelAnalysis,
     doLoopInAgent,
+    doRunSearch,
     doThreadAnalysis,
+    deleteAgentVersions,
+    getAgentVersion,
+    getAgentVersions,
+    restoreAgentVersion,
+    getArtifactToken,
     getChannelAutoReply,
+    getChannelInterval,
     getConversation,
     getConversationContext,
     normalizeConversationResponse,
+    renderCustomPrompt,
     searchAllChannels,
     setSiteURL,
     updateChannelAutoReply,
@@ -86,6 +97,7 @@ function okResponse(): Response {
 
 // Mattermost IDs are 26 characters of lowercase letters and digits.
 const WELL_FORMED_ID = 'c7f2m9xq4v1b8n3k6t5w0hzjd2';
+const BOT_ID = 'b7m2xq9d4wn1c6zr3t8kv5jhya';
 
 // These ids reach the client straight off free-form post props, so a caller can hand them anything.
 const NOT_WELL_FORMED_IDS: Array<{name: string; id: string}> = [
@@ -220,31 +232,78 @@ describe('updateRead', () => {
 
 describe('doLoopInAgent', () => {
     test('posts to the loop-in route for a well-formed post id', async () => {
-        await expect(doLoopInAgent(WELL_FORMED_ID, 'matty')).resolves.toBeUndefined();
+        await expect(doLoopInAgent(WELL_FORMED_ID, BOT_ID)).resolves.toBeUndefined();
 
         expect(mockFetch).toHaveBeenCalledTimes(1);
         const [url, options] = mockFetch.mock.calls[0];
-        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/loop_in_agent?botUsername=matty`);
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/loop_in_agent?botId=${BOT_ID}`);
         expect(options).toEqual(expect.objectContaining({method: 'POST'}));
     });
 
-    test('percent-encodes the bot username in the query string', async () => {
+    test('percent-encodes the bot id in the query string', async () => {
         await doLoopInAgent(WELL_FORMED_ID, 'agent bot&x=1');
 
         const [url] = mockFetch.mock.calls[0];
-        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/loop_in_agent?botUsername=agent%20bot%26x%3D1`);
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/loop_in_agent?botId=agent%20bot%26x%3D1`);
     });
 
     test.each(NOT_WELL_FORMED_IDS)('does not issue a request when the post id is not well-formed: $name', async ({id}) => {
-        await expect(doLoopInAgent(id, 'matty')).rejects.toThrow();
+        await expect(doLoopInAgent(id, BOT_ID)).rejects.toThrow();
 
         expect(mockFetch).not.toHaveBeenCalled();
     });
 });
 
+describe('agent selection by bot id', () => {
+    const base = `${siteURL}/plugins/${manifest.id}`;
+    const call = async (fn: () => Promise<unknown>) => {
+        mockFetch.mockReset();
+        mockFetch.mockResolvedValue(okResponse());
+        await fn();
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        return mockFetch.mock.calls[0];
+    };
+
+    test.each([
+        {name: 'doThreadAnalysis', run: () => doThreadAnalysis(WELL_FORMED_ID, 'summarize_thread', BOT_ID), path: `/post/${WELL_FORMED_ID}/analyze`},
+        {name: 'doChannelAnalysis', run: () => doChannelAnalysis(WELL_FORMED_ID, 'summarize_channel', BOT_ID), path: `/channel/${WELL_FORMED_ID}/analyze`},
+        {name: 'doRunSearch', run: () => doRunSearch('q', 'team', 'channel', BOT_ID), path: '/search/run'},
+        {name: 'getChannelInterval', run: () => getChannelInterval(WELL_FORMED_ID, 1, 2, 'summarize_range', '', BOT_ID), path: `/channel/${WELL_FORMED_ID}/interval`},
+    ])('$name sends botId and never botUsername', async ({run, path}) => {
+        const [url] = await call(run);
+        expect(url).toBe(`${base}${path}?botId=${BOT_ID}`);
+        expect(url).not.toContain('botUsername');
+    });
+
+    test.each([
+        {name: 'doThreadAnalysis', run: () => doThreadAnalysis(WELL_FORMED_ID, 'summarize_thread', ''), path: `/post/${WELL_FORMED_ID}/analyze`},
+        {name: 'doChannelAnalysis', run: () => doChannelAnalysis(WELL_FORMED_ID, 'summarize_channel', ''), path: `/channel/${WELL_FORMED_ID}/analyze`},
+        {name: 'doRunSearch', run: () => doRunSearch('q', 'team', 'channel'), path: '/search/run'},
+        {name: 'getChannelInterval', run: () => getChannelInterval(WELL_FORMED_ID, 1, 2, 'summarize_range'), path: `/channel/${WELL_FORMED_ID}/interval`},
+    ])('$name omits the agent query when no bot id is given', async ({run, path}) => {
+        const [url] = await call(run);
+        expect(url).toBe(`${base}${path}`);
+    });
+
+    test.each([
+        {name: 'a typed username', botId: '', botUsername: 'matty', query: '?botUsername=matty'},
+        {name: 'a typed username with reserved characters', botId: '', botUsername: 'a&b', query: '?botUsername=a%26b'},
+        {name: 'a bot id over a typed username', botId: BOT_ID, botUsername: 'matty', query: `?botId=${BOT_ID}`},
+    ])('getChannelInterval sends $name', async ({botId, botUsername, query}) => {
+        const [url] = await call(() => getChannelInterval(WELL_FORMED_ID, 1, 2, 'summarize_range', '', botId, botUsername));
+        expect(url).toBe(`${base}/channel/${WELL_FORMED_ID}/interval${query}`);
+    });
+
+    test('renderCustomPrompt sends bot_id and never bot_username', async () => {
+        const [url, options] = await call(() => renderCustomPrompt('prompt1', WELL_FORMED_ID, BOT_ID));
+        expect(url).toBe(`${base}/custom-prompts/prompt1/render`);
+        expect(JSON.parse(options.body as string)).toEqual({channel_id: WELL_FORMED_ID, bot_id: BOT_ID});
+    });
+});
+
 describe('getChannelAutoReply', () => {
     test('issues a GET to the channel autoreply route and returns the parsed body', async () => {
-        const body = {bot_id: 'bot-1', mode: 'threads'};
+        const body = {bot_id: 'bot-1', mode: 'threads', instructions: ''};
         mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve(body)} as unknown as Response);
 
         await expect(getChannelAutoReply('channel-1')).resolves.toEqual(body);
@@ -256,7 +315,7 @@ describe('getChannelAutoReply', () => {
     });
 
     test('percent-encodes the channel id so it occupies a single path segment', async () => {
-        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve({bot_id: '', mode: 'off'})} as unknown as Response);
+        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve({bot_id: '', mode: 'off', instructions: ''})} as unknown as Response);
 
         await getChannelAutoReply('cha/nnel');
 
@@ -276,14 +335,19 @@ describe('updateChannelAutoReply', () => {
         const json = jest.fn();
         mockFetch.mockResolvedValue({ok: true, status: 200, json} as unknown as Response);
 
-        await expect(updateChannelAutoReply('channel-1', {bot_id: 'bot-1', mode: 'root_posts'})).resolves.toBeUndefined();
+        const settings = {
+            bot_id: 'bot-1',
+            mode: 'ambient' as const,
+            instructions: 'when asked',
+        };
+        await expect(updateChannelAutoReply('channel-1', settings)).resolves.toBeUndefined();
 
         expect(mockFetch).toHaveBeenCalledTimes(1);
         const [url, options] = mockFetch.mock.calls[0];
         expect(url).toBe(`${siteURL}/plugins/${manifest.id}/channel/channel-1/autoreply`);
         expect(options).toEqual(expect.objectContaining({
             method: 'PUT',
-            body: JSON.stringify({bot_id: 'bot-1', mode: 'root_posts'}),
+            body: JSON.stringify(settings),
         }));
         expect(json).not.toHaveBeenCalled();
     });
@@ -291,7 +355,7 @@ describe('updateChannelAutoReply', () => {
     test.each([403, 413, 500])('throws an error carrying status %d on a non-ok response', async (status) => {
         mockFetch.mockResolvedValue({ok: false, status, json: jest.fn()} as unknown as Response);
 
-        await expect(updateChannelAutoReply('channel-1', {bot_id: '', mode: 'off'})).rejects.toMatchObject({status_code: status});
+        await expect(updateChannelAutoReply('channel-1', {bot_id: '', mode: 'off', instructions: ''})).rejects.toMatchObject({status_code: status});
     });
 });
 
@@ -329,6 +393,27 @@ describe('getConversationContext', () => {
     });
 });
 
+describe('artifact URLs', () => {
+    const artifactsRoute = `${siteURL}/plugins/${manifest.id}/artifacts`;
+    const nonce = 'AbC-d_0123456789xyzABC';
+
+    test.each([
+        {name: 'well-formed id', fileId: WELL_FORMED_ID, nonce, path: `${artifactsRoute}/${WELL_FORMED_ID}`},
+        {name: 'id with a separator stays one path segment', fileId: 'ab/../cd', nonce, path: `${artifactsRoute}/ab%2F..%2Fcd`},
+        {name: 'nonce with query syntax stays one parameter value', fileId: WELL_FORMED_ID, nonce: 'a&n=b#c', path: `${artifactsRoute}/${WELL_FORMED_ID}`},
+    ])('$name', async ({fileId, nonce: n, path}) => {
+        const encodedNonce = encodeURIComponent(n);
+        expect(artifactPath(fileId)).toBe(path);
+        expect(artifactURL(fileId, n)).toBe(`${path}?n=${encodedNonce}`);
+
+        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve({token: 'tok', tooLarge: false})} as unknown as Response);
+        await expect(getArtifactToken(fileId, n)).resolves.toEqual({token: 'tok', tooLarge: false});
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${path}/token?n=${encodedNonce}`);
+        expect(options).toEqual(expect.objectContaining({method: 'GET'}));
+    });
+});
+
 describe('license denial errors', () => {
     test('403 responses surface the server error text', async () => {
         mockFetch.mockResolvedValue({
@@ -356,6 +441,58 @@ describe('license denial errors', () => {
         await expect(doThreadAnalysis('post-1', 'summarize_thread', 'bot')).rejects.toMatchObject({
             status_code: 500,
             message: '',
+        });
+    });
+});
+
+describe('agent versioning client', () => {
+    const agentBase = `${siteURL}/plugins/${manifest.id}/agents`;
+
+    function jsonResponse(body: unknown, init: {ok?: boolean; status?: number} = {}): Response {
+        return {
+            ok: init.ok ?? true,
+            status: init.status ?? 200,
+            json: () => Promise.resolve(body),
+        } as unknown as Response;
+    }
+
+    test.each([
+        {name: 'list versions', call: () => getAgentVersions('a1'), url: `${agentBase}/a1/versions`, method: 'GET'},
+        {name: 'list older versions', call: () => getAgentVersions('a1', {before: 51}), url: `${agentBase}/a1/versions?before=51`, method: 'GET'},
+        {name: 'list a page of versions', call: () => getAgentVersions('a1', {before: 51, limit: 20}), url: `${agentBase}/a1/versions?before=51&limit=20`, method: 'GET'},
+        {name: 'get one version', call: () => getAgentVersion('a1', 3), url: `${agentBase}/a1/versions/3`, method: 'GET'},
+        {name: 'restore a version', call: () => restoreAgentVersion('a1', 3), url: `${agentBase}/a1/versions/3/restore`, method: 'POST'},
+        {name: 'delete versions', call: () => deleteAgentVersions('a1', [1, 2]), url: `${agentBase}/a1/versions`, method: 'DELETE'},
+    ])('$name uses the contract route', async ({call, url, method}) => {
+        mockFetch.mockResolvedValue(jsonResponse({}));
+
+        await call();
+
+        const [calledUrl, options] = mockFetch.mock.calls[0];
+        expect(calledUrl).toBe(url);
+        expect(options).toEqual(expect.objectContaining({method}));
+    });
+
+    test.each([
+        {name: 'selected versions', versions: [1, 4] as number[] | 'all', body: {versions: [1, 4]}},
+        {name: 'every previous version', versions: 'all' as number[] | 'all', body: {all: true}},
+    ])('deleteAgentVersions sends $name and returns the count', async ({versions, body}) => {
+        mockFetch.mockResolvedValue(jsonResponse({deleted: 2}));
+
+        await expect(deleteAgentVersions('a1', versions)).resolves.toBe(2);
+        expect(JSON.parse(mockFetch.mock.calls[0][1].body as string)).toEqual(body);
+    });
+
+    test.each([
+        {name: 'restore', call: () => restoreAgentVersion('a1', 3)},
+        {name: 'delete', call: () => deleteAgentVersions('a1', [3])},
+        {name: 'list versions', call: () => getAgentVersions('a1')},
+    ])('$name surfaces the server error message and status', async ({call}) => {
+        mockFetch.mockResolvedValue(jsonResponse({error: 'the current version of an agent cannot be deleted'}, {ok: false, status: 400}));
+
+        await expect(call()).rejects.toMatchObject({
+            status_code: 400,
+            message: 'the current version of an agent cannot be deleted',
         });
     });
 });

@@ -1,7 +1,8 @@
 // spec: tests/channel-analysis/response-citations.plan.md
 // seed: tests/seed.spec.ts
 
-import { test, expect, Page } from '@playwright/test';
+import { expect, Page, Locator } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import RunContainer from 'helpers/plugincontainer';
 import { RunOpenAIMocks, OpenAIMockContainer } from 'helpers/openai-mock';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -20,6 +21,11 @@ import { LLMBotPostHelper } from 'helpers/llmbot-post';
 const username = 'regularuser';
 const password = 'regularuser';
 
+// Citations are optional in these tests, so settle on the first one rendering rather than requiring it.
+async function waitForCitationsToRender(citations: Locator) {
+    await citations.first().waitFor({ state: 'visible', timeout: 5000 }).catch(() => undefined);
+}
+
 /**
  * Helper class for Channel Analysis Response and Citations test interactions
  */
@@ -30,9 +36,8 @@ class ChannelAnalysisCitationsHelper {
      * Wait for the page to be fully loaded after login
      */
     async waitForPageReady() {
-        await this.page.waitForSelector('[class*="channel-header"], #channelHeaderInfo', { timeout: 30000 });
-        // Wait for plugin to initialize
-        await this.page.waitForTimeout(2000);
+        await new MattermostPage(this.page).waitForChannelHeader();
+        await expect(this.page.getByTestId('ask-channel-button').first()).toBeVisible({ timeout: 30000 });
     }
 
     /**
@@ -53,27 +58,22 @@ async function setupTestPage(page: Page) {
     return { mmPage, aiPlugin, llmBotHelper, channelAnalysisHelper, botUsername };
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 test.describe('Channel Analysis Citations', () => {
     let mattermost: MattermostContainer;
     let openAIMock: OpenAIMockContainer;
 
-    test.beforeAll(async () => {
-        test.setTimeout(120000);
-        mattermost = await RunContainer();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test.beforeEach(async () => {
         await openAIMock.resetMocks();
-    });
-
-    test.afterAll(async () => {
-        if (openAIMock) {
-            await openAIMock.stop();
-        }
-        if (mattermost) {
-            await mattermost.stop();
-        }
     });
 
     test('Channel analysis with custom query produces citations', async ({ page }) => {
@@ -122,8 +122,8 @@ data: [DONE]
         expect(content!.length).toBeGreaterThan(20);
 
         // 9. Verify citations are present (channel analysis should include citations to source messages)
-        await page.waitForTimeout(2000);
         const citations = llmBotHelper.getAllCitationIcons();
+        await waitForCitationsToRender(citations);
         const citationCount = await citations.count();
 
         // We explicitly mocked [1], [2], [3] so we expect citations if the frontend processed them
@@ -176,8 +176,8 @@ data: [DONE]
         expect(content!.length).toBeGreaterThan(20);
 
         // 9. Verify citations are present
-        await page.waitForTimeout(2000);
         const citations = llmBotHelper.getAllCitationIcons();
+        await waitForCitationsToRender(citations);
         const citationCount = await citations.count();
 
         if (citationCount > 0) {
@@ -244,8 +244,8 @@ data: [DONE]
         expect(hasTopicContent).toBe(true);
 
         // 10. Verify citations are present (should reference the multiple messages)
-        await page.waitForTimeout(2000);
         const citations = llmBotHelper.getAllCitationIcons();
+        await waitForCitationsToRender(citations);
         const citationCount = await citations.count();
 
         if (citationCount > 0) {
@@ -290,29 +290,26 @@ data: [DONE]
         const originalContent = await postText.textContent();
         expect(originalContent).toBeTruthy();
 
-        await page.waitForTimeout(2000);
         const originalCitations = llmBotHelper.getAllCitationIcons();
+        await waitForCitationsToRender(originalCitations);
         const originalCitationCount = await originalCitations.count();
 
         // 7. Close RHS
         await aiPlugin.closeRHS();
-        await page.waitForTimeout(1000);
 
         // 8. Reopen RHS
         await aiPlugin.openRHS();
-        await page.waitForTimeout(2000);
 
         // 9. Access chat history to find previous channel analysis response
         await aiPlugin.openChatHistory();
-        await page.waitForTimeout(1000);
 
         // 10. Click on the most recent chat history item
         await aiPlugin.clickChatHistoryItem(0);
-        await page.waitForTimeout(2000);
 
         // 11. Verify previous response is still visible with citations preserved
         const persistedPostText = llmBotHelper.getPostText();
         await expect(persistedPostText).toBeVisible({ timeout: 10000 });
+        await expect(persistedPostText).toContainText(originalContent!.trim().slice(0, 20));
         const persistedContent = await persistedPostText.textContent();
         expect(persistedContent).toBeTruthy();
         expect(persistedContent!.length).toBeGreaterThan(10);
@@ -365,9 +362,8 @@ data: [DONE]
         expect(content!.length).toBeGreaterThan(10);
 
         // 8. Check for citations to channel messages
-        await page.waitForTimeout(2000);
-
         const citations = llmBotHelper.getAllCitationIcons();
+        await waitForCitationsToRender(citations);
         const count = await citations.count();
 
         if (count > 0) {
@@ -424,20 +420,17 @@ data: [DONE]
         expect(content!.length).toBeGreaterThan(10);
 
         // 8. Wait for citations to appear
-        await page.waitForTimeout(2000);
-
         const citations = llmBotHelper.getAllCitationIcons();
+        await waitForCitationsToRender(citations);
         const count = await citations.count();
 
         if (count > 0) {
             // 9. Scroll citation into view
             const citationWrapper = llmBotHelper.getCitationWrapper(1);
             await citationWrapper.scrollIntoViewIfNeeded();
-            await page.waitForTimeout(500);
 
             // 10. Hover over citation to view tooltip (should show message preview)
             await llmBotHelper.hoverCitation(1);
-            await page.waitForTimeout(1500);
 
             // 11. Verify tooltip appears with message preview
             const tooltip = llmBotHelper.getCitationTooltip();
@@ -493,8 +486,8 @@ data: [DONE]
         expect(content!.length).toBeGreaterThan(50);
 
         // 8. Check for multiple citations (with 6 distinct points, we expect several citations)
-        await page.waitForTimeout(2000);
         const citations = llmBotHelper.getAllCitationIcons();
+        await waitForCitationsToRender(citations);
         const count = await citations.count();
 
         if (count > 0) {
@@ -566,8 +559,8 @@ data: [DONE]
         expect(content!.length).toBeGreaterThan(20);
 
         // 11. Verify citations are included alongside the markdown content
-        await page.waitForTimeout(2000);
         const citations = llmBotHelper.getAllCitationIcons();
+        await waitForCitationsToRender(citations);
         const citationCount = await citations.count();
 
         // Citations should be present even with markdown formatting

@@ -1,7 +1,8 @@
 // spec: tests/channel-analysis/custom-queries.plan.md
 // seed: tests/seed.spec.ts
 
-import { test, expect, Page } from '@playwright/test';
+import { expect, Page } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import RunContainer from 'helpers/plugincontainer';
 import { RunOpenAIMocks, OpenAIMockContainer, responseTest } from 'helpers/openai-mock';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -30,9 +31,8 @@ class CustomQueriesHelper {
      * Wait for the page to be fully loaded after login
      */
     async waitForPageReady() {
-        await this.page.waitForSelector('[class*="channel-header"], #channelHeaderInfo', { timeout: 30000 });
-        // Wait for plugin to initialize
-        await this.page.waitForTimeout(2000);
+        await new MattermostPage(this.page).waitForChannelHeader();
+        await expect(this.page.getByTestId('ask-channel-button').first()).toBeVisible({ timeout: 30000 });
     }
 
     /**
@@ -74,27 +74,22 @@ async function setupTestPage(page: Page) {
     return { mmPage, aiPlugin, llmBotHelper, customQueriesHelper, botUsername };
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 test.describe('Channel Analysis Custom Queries', () => {
     let mattermost: MattermostContainer;
     let openAIMock: OpenAIMockContainer;
 
-    test.beforeAll(async () => {
-        test.setTimeout(120000);
-        mattermost = await RunContainer();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test.beforeEach(async () => {
         await openAIMock.resetMocks();
-    });
-
-    test.afterAll(async () => {
-        if (openAIMock) {
-            await openAIMock.stop();
-        }
-        if (mattermost) {
-            await mattermost.stop();
-        }
     });
 
     test('Channel-specific custom question submission and response', async ({ page }) => {
@@ -265,7 +260,6 @@ data: [DONE]
         expect(firstContent).toContain('release timeline');
 
         // 8. Re-open the popover for second question
-        await page.waitForTimeout(2000);
         await customQueriesHelper.openChannelAnalysisPopover();
 
         // Mock response 2
@@ -291,12 +285,9 @@ data: [DONE]
         // 11. Wait for second response streaming to complete
         await llmBotHelper.waitForStreamingComplete();
 
-        // 12. Wait a moment for the DOM to update
-        await page.waitForTimeout(1000);
-
-        // 13. Verify second response visible and has content
+        // 12. Verify second response visible and has content
         const secondPostText = llmBotHelper.getPostText();
-        await expect(secondPostText).toBeVisible({ timeout: 30000 });
+        await expect(secondPostText).toContainText('questions asked', { timeout: 30000 });
         const secondContent = await secondPostText.textContent();
         expect(secondContent).toBeTruthy();
         expect(secondContent!.length).toBeGreaterThan(10);

@@ -1,7 +1,8 @@
 // spec: tests/channel-analysis/integration.plan.md
 // seed: tests/seed.spec.ts
 
-import { test, expect, Page } from '@playwright/test';
+import { expect, Page } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import RunContainer from 'helpers/plugincontainer';
 import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule, titleGenerationMockRule, turnMocksWithTitleSiphon } from 'helpers/openai-mock';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -34,9 +35,8 @@ class IntegrationHelper {
      * Wait for the page to be fully loaded after login
      */
     async waitForPageReady() {
-        await this.page.waitForSelector('[class*="channel-header"], #channelHeaderInfo', { timeout: 30000 });
-        // Wait for plugin to initialize
-        await this.page.waitForTimeout(2000);
+        await new MattermostPage(this.page).waitForChannelHeader();
+        await expect(this.page.getByTestId('ask-channel-button').first()).toBeVisible({ timeout: 30000 });
     }
 
     /**
@@ -91,6 +91,10 @@ class IntegrationHelper {
         const menuItem = this.page.getByText(actionMap[action]);
         await expect(menuItem).toBeVisible();
         await menuItem.click();
+
+        // The popover closes once the action is chosen; reopening it before it is gone
+        // would find it still visible and then lose it.
+        await expect(this.page.locator('.channel-summarize-popover')).toBeHidden({ timeout: 10000 });
     }
 
     /**
@@ -101,8 +105,8 @@ class IntegrationHelper {
         await expect(input).toBeVisible();
         await input.fill(query);
 
-        // Click the send icon or press Enter
         await input.press('Enter');
+        await expect(this.page.locator('.channel-summarize-popover')).toBeHidden({ timeout: 10000 });
     }
 
     /**
@@ -129,14 +133,18 @@ async function setupTestPage(page: Page) {
     return { mmPage, aiPlugin, llmBotHelper, integrationHelper, botUsername };
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 test.describe('Channel Analysis Integration (Mocked)', () => {
     let mattermost: MattermostContainer;
     let openAIMock: OpenAIMockContainer;
 
-    test.beforeAll(async () => {
-        test.setTimeout(120000);
-        mattermost = await RunContainer();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test.beforeEach(async () => {
@@ -144,15 +152,6 @@ test.describe('Channel Analysis Integration (Mocked)', () => {
         // in-flight GenerateTitle calls hanging and can block the next test's
         // follow-up ChatCompletion (empty bot placeholder).
         await openAIMock.addMocks([titleGenerationMockRule()]);
-    });
-
-    test.afterAll(async () => {
-        if (openAIMock) {
-            await openAIMock.stop();
-        }
-        if (mattermost) {
-            await mattermost.stop();
-        }
     });
 
     test('Channel analysis after regular RHS chat', async ({ page }) => {
@@ -214,12 +213,9 @@ data: [DONE]
         // 11. Wait for streaming to complete
         await llmBotHelper.waitForStreamingComplete();
 
-        // 12. Wait for the DOM to update with the new post
-        await page.waitForTimeout(1000);
-
-        // 13. Verify channel analysis response is visible and contains channel-specific content
+        // 12. Verify channel analysis response is visible and contains channel-specific content
         const secondPostText = llmBotHelper.getPostText();
-        await expect(secondPostText).toBeVisible();
+        await expect(secondPostText).toContainText('new feature implementation');
         const secondContent = await secondPostText.textContent();
         expect(secondContent).toBeTruthy();
         expect(secondContent!.length).toBeGreaterThan(20);
@@ -277,7 +273,7 @@ data: [DONE]
 
         await aiPlugin.waitForThreadComposerIdle();
         await aiPlugin.ensureRhsNewChatTab();
-        await expect(aiPlugin.getRhsContainer().getByTestId('rhs-new-tab-create-post')).toBeVisible({ timeout: 10000 });
+        await expect(aiPlugin.getRhsContainer().getByTestId('agent-chat-new-composer')).toBeVisible({ timeout: 10000 });
         await aiPlugin.sendMessage(followUpUserText);
 
         await expect(aiPlugin.getRhsContainer().getByText(followUpText)).toBeVisible({ timeout: 30000 });
@@ -336,12 +332,9 @@ data: [DONE]
         // 8. Wait for second response
         await llmBotHelper.waitForStreamingComplete();
 
-        // 9. Wait for the DOM to update
-        await page.waitForTimeout(1000);
-
-        // 10. Verify second response mentions database
+        // 9. Verify second response mentions database
         const secondPostText = llmBotHelper.getPostText();
-        await expect(secondPostText).toBeVisible();
+        await expect(secondPostText).toContainText('Database optimization');
         const secondContent = await secondPostText.textContent();
         expect(secondContent!.toLowerCase()).toContain('database');
 
@@ -438,9 +431,6 @@ data: [DONE]
         expect(firstContent).toBeTruthy();
         expect(firstContent!.toLowerCase()).toMatch(/sprint|planning|testing|release/);
 
-        // 7. Wait a moment before second action
-        await page.waitForTimeout(2000);
-
         // 8. Use second quick action - custom query
         await integrationHelper.openChannelAgentsPopover();
 
@@ -458,12 +448,9 @@ data: [DONE]
         // 9. Wait for second response
         await llmBotHelper.waitForStreamingComplete();
 
-        // 10. Wait for the DOM to update
-        await page.waitForTimeout(1000);
-
-        // 11. Verify second response is visible
+        // 10. Verify second response is visible
         const secondPostText = llmBotHelper.getPostText();
-        await expect(secondPostText).toBeVisible();
+        await expect(secondPostText).toContainText('Priorities: Q2 roadmap and testing.');
         const secondContent = await secondPostText.textContent();
         expect(secondContent).toBeTruthy();
         expect(secondContent!.toLowerCase()).toMatch(/roadmap|testing|q2/);
@@ -527,12 +514,9 @@ data: [DONE]
         // 9. Wait for streaming to complete
         await llmBotHelper.waitForStreamingComplete();
 
-        // 10. Wait for the DOM to update
-        await page.waitForTimeout(1000);
-
-        // 11. Verify new response appears correctly and mentions monitoring
+        // 10. Verify new response appears correctly and mentions monitoring
         const secondPostText = llmBotHelper.getPostText();
-        await expect(secondPostText).toBeVisible();
+        await expect(secondPostText).toContainText('Monitoring: Dashboard is live.');
         const secondContent = await secondPostText.textContent();
         expect(secondContent).toBeTruthy();
         expect(secondContent!.toLowerCase()).toMatch(/monitoring|dashboard/);

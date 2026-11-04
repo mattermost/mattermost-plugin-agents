@@ -94,17 +94,17 @@ func TestReactEval(t *testing.T) {
 		{
 			name:    "positive message",
 			message: "Great job on the presentation! How is it going with yours?",
-			rubric:  "The word/emoji is positive",
+			rubric:  "Names an emoji that is positive",
 		},
 		{
 			name:    "negative message",
 			message: "I'm disappointed with your performance on this project.",
-			rubric:  "The word/emoji is negative or sad",
+			rubric:  "Names an emoji that is negative or sad",
 		},
 		{
 			name:    "cat message",
 			message: "I just love cats! They are so cute and cuddly.",
-			rubric:  "The word/emoji is a cat emoji or a heart/love emoji",
+			rubric:  "Names an emoji that depicts a cat or expresses love, such as a heart",
 		},
 	}
 

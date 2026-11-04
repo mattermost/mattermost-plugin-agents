@@ -1,38 +1,37 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
-import styled, {createGlobalStyle} from 'styled-components';
+import React, {useId} from 'react';
+import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
-import {ChevronDownIcon, CloseIcon} from '@mattermost/compass-icons/components';
-import CreatableSelect from 'react-select/creatable';
-import {components, StylesConfig, SingleValue, type ClearIndicatorProps, type DropdownIndicatorProps} from 'react-select';
+
+import {Checkbox} from '@mattermost/compass-ui/components/checkbox';
+import {Combobox} from '@mattermost/compass-ui/components/combobox';
+import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
+import {Radio} from '@mattermost/compass-ui/components/radio';
+import {Select} from '@mattermost/compass-ui/components/select';
+import {Tag} from '@mattermost/compass-ui/components/tag';
+import {TextArea} from '@mattermost/compass-ui/components/text-area';
+import {TextInput} from '@mattermost/compass-ui/components/text-input';
 
 import {getPortalTarget} from '../../utils/dom';
 
-// Portaled Combobox menus need to stack above the agent config modal overlay
-// (z-index 2000). Targets react-select's classNamePrefix='SystemConsoleCombobox'
-// so the z-index lives in styled-components rather than inline style props.
-// react-select v5 emits its default menuPortalCSS (z-index: 1) via an
-// @emotion/react generated className, so whether that or our global rule wins
-// depends on CSS declaration order at runtime. Use !important to make the
-// override deterministic regardless of which stylesheet is parsed last.
-const ComboboxPortalStyles = createGlobalStyle`
-    .SystemConsoleCombobox__menu-portal {
-        z-index: 10000 !important;
-    }
-`;
+// Portaled menus must stack above the agent config modal overlay (z-index 2000).
+export const PORTALED_MENU_Z_INDEX = 10000;
+
+// Matches the compass-ui medium field height so side labels line up with controls.
+const FIELD_HEIGHT = '40px';
 
 export const ItemList = styled.div`
 	display: flex;
 	flex-direction: column;
-	gap: 24px;
+	gap: var(--spacing-xxl);
 `;
 
 export const FormRow = styled.div`
 	display: grid;
 	grid-template-columns: minmax(auto, 275px) 1fr;
-	grid-column-gap: 16px;
+	grid-column-gap: var(--spacing-l);
 	align-items: start;
 `;
 
@@ -40,14 +39,9 @@ export const FieldControlRow = styled.div`
 	display: flex;
 	flex-direction: row;
 	align-items: center;
-	min-height: 35px;
-	gap: 8px;
+	min-height: ${FIELD_HEIGHT};
+	gap: var(--spacing-xs);
 	width: 100%;
-
-	> input:not([type='radio']):not([type='checkbox']),
-	> textarea {
-		width: 100%;
-	}
 
 	> div {
 		width: 100%;
@@ -59,11 +53,6 @@ export const FieldControlRow = styled.div`
 const FieldExtra = styled.span`
 	display: inline-flex;
 	flex: 0 0 auto;
-`;
-
-export const FieldErrorText = styled.div`
-	color: var(--dnd-indicator, #D24B4E);
-	font-size: 12px;
 `;
 
 export type TextItemProps = {
@@ -86,38 +75,61 @@ export type TextItemProps = {
 };
 
 export const TextItem = (props: TextItemProps) => {
+    const id = useId();
     const label = props.readOnly ? (
         <ItemLabelWithTag
+            htmlFor={id}
             label={props.label}
             readOnly={true}
             $multiline={props.multiline}
         />
     ) : (
-        <ItemLabel $multiline={props.multiline}>{props.label}</ItemLabel>
+        <ItemLabel
+            htmlFor={id}
+            $multiline={props.multiline}
+        >
+            {props.label}
+        </ItemLabel>
     );
+
+    const sharedProps = {
+        id,
+        value: props.value,
+        placeholder: props.placeholder ? props.placeholder : props.label,
+        maxLength: props.maxLength,
+        disabled: props.disabled,
+        readOnly: props.readOnly,
+        invalid: Boolean(props.error),
+    };
 
     return (
         <FormRow>
             {label}
             <TextFieldContainer>
-                {props.error && <FieldErrorText>{props.error}</FieldErrorText>}
                 <FieldControlRow>
-                    <StyledInput
-                        as={props.multiline ? 'textarea' : 'input'}
-                        readOnly={props.readOnly}
-                        value={props.value}
-                        type={props.type ? props.type : 'text'}
-                        placeholder={props.placeholder ? props.placeholder : props.label}
-                        onChange={props.onChange}
-                        onBlur={props.onBlur}
-                        onFocus={props.onFocus}
-                        maxLength={props.maxLength}
-                        step={props.step}
-                        min={props.min}
-                        max={props.max}
-                        disabled={props.disabled}
-                    />
+                    {props.multiline ? (
+
+                        // Callers only read target.value, which textarea events share with input events.
+                        <TextArea
+                            {...sharedProps}
+                            onChange={(e) => props.onChange(e as unknown as React.ChangeEvent<HTMLInputElement>)}
+                            onBlur={(e) => props.onBlur?.(e as unknown as React.FocusEvent<HTMLInputElement>)}
+                            onFocus={(e) => props.onFocus?.(e as unknown as React.FocusEvent<HTMLInputElement>)}
+                        />
+                    ) : (
+                        <TextInput
+                            {...sharedProps}
+                            onChange={props.onChange}
+                            onBlur={props.onBlur}
+                            onFocus={props.onFocus}
+                            type={props.type ? props.type : 'text'}
+                            step={props.step}
+                            min={props.min}
+                            max={props.max}
+                        />
+                    )}
                 </FieldControlRow>
+                {props.error && <ErrorMessage message={props.error}/>}
                 {props.helptext &&
                 <HelpText>{props.helptext}</HelpText>
                 }
@@ -126,36 +138,84 @@ export const TextItem = (props: TextItemProps) => {
     );
 };
 
-export const SelectionItemOption = styled.option`
-`;
+export type SelectionOption = {
+    value: string;
+    label: string;
+    disabled?: boolean;
+};
+
+// compass-ui Select hides empty-value options from its menu and treats '' as
+// "nothing selected". Settings that offer an explicit '' option (e.g. "No
+// fallback") carry it through the menu as a sentinel; otherwise '' shows the
+// placeholder.
+const EMPTY_OPTION_VALUE = '__none__';
+const toSelectValue = (value: string) => (value === '' ? EMPTY_OPTION_VALUE : value);
+const fromSelectValue = (value: string) => (value === EMPTY_OPTION_VALUE ? '' : value);
+
+type SelectFieldProps = {
+    id?: string;
+    value: string;
+    options: SelectionOption[];
+    onChange: (value: string) => void;
+    disabled?: boolean;
+    invalid?: boolean;
+    maxWidth?: string;
+    ariaLabel?: string;
+    placeholder?: string;
+};
+
+export const SelectField = (props: SelectFieldProps) => {
+    const hasEmptyOption = props.options.some((option) => option.value === '');
+    return (
+        <SelectFieldWrapper $maxWidth={props.maxWidth}>
+            <Select
+                id={props.id}
+                value={hasEmptyOption ? toSelectValue(props.value) : props.value}
+                options={props.options.map((option) => ({...option, value: toSelectValue(option.value)}))}
+                placeholder={props.placeholder}
+                onChange={(value) => props.onChange(fromSelectValue(value))}
+                disabled={props.disabled}
+                invalid={props.invalid}
+                aria-label={props.ariaLabel}
+                listboxLabel={props.ariaLabel ?? props.placeholder}
+                portalContainer={getPortalTarget()}
+                zIndex={PORTALED_MENU_Z_INDEX}
+            />
+        </SelectFieldWrapper>
+    );
+};
 
 export type SelectionItemProps = {
     label: string
     value: string
-    onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void
-    children: React.ReactNode
+    options: SelectionOption[]
+    onChange: (value: string) => void
     helptext?: string
     disabled?: boolean
     error?: string
     extra?: React.ReactNode
+    placeholder?: string
 };
 
 export const SelectionItem = (props: SelectionItemProps) => {
+    const id = useId();
     return (
         <FormRow>
-            <ItemLabel>{props.label}</ItemLabel>
+            <ItemLabel htmlFor={id}>{props.label}</ItemLabel>
             <TextFieldContainer>
-                {props.error && <FieldErrorText>{props.error}</FieldErrorText>}
                 <FieldControlRow>
                     <SelectField
+                        id={id}
                         value={props.value}
+                        options={props.options}
                         onChange={props.onChange}
                         disabled={props.disabled}
-                    >
-                        {props.children}
-                    </SelectField>
+                        invalid={Boolean(props.error)}
+                        placeholder={props.placeholder ?? props.label}
+                    />
                     {props.extra && <FieldExtra>{props.extra}</FieldExtra>}
                 </FieldControlRow>
+                {props.error && <ErrorMessage message={props.error}/>}
                 {props.helptext &&
                 <HelpText>{props.helptext}</HelpText>
                 }
@@ -179,155 +239,32 @@ export type ComboboxItemProps = {
     onChange: (value: string) => void
 };
 
-type SelectOption = {
-    value: string
-    label: string
-}
-
-function ComboboxDropdownIndicator(props: DropdownIndicatorProps<SelectOption>) {
-    return (
-        <components.DropdownIndicator {...props}>
-            <ChevronDownIcon size={16}/>
-        </components.DropdownIndicator>
-    );
-}
-
-function ComboboxClearIndicator(props: ClearIndicatorProps<SelectOption>) {
-    return (
-        <components.ClearIndicator {...props}>
-            <CloseIcon size={16}/>
-        </components.ClearIndicator>
-    );
-}
-
-function buildComboboxStyles<Option>(): StylesConfig<Option, false> {
-    return {
-        control: (base, state) => ({
-            ...base,
-            minHeight: '35px',
-            height: '35px',
-            alignItems: 'center',
-            borderRadius: '4px',
-            backgroundColor: 'var(--center-channel-bg)',
-            borderColor: state.isFocused ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.16)',
-            boxShadow: state.isFocused ? 'none' : '0px 1px 1px rgba(0, 0, 0, 0.075) inset',
-            cursor: 'pointer',
-            '&:hover': {
-                borderColor: state.isFocused ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.16)',
-            },
-        }),
-        valueContainer: (base) => ({
-            ...base,
-            padding: '0 8px',
-        }),
-        singleValue: (base) => ({
-            ...base,
-            color: 'var(--center-channel-color)',
-        }),
-        placeholder: (base) => ({
-            ...base,
-            color: 'rgba(var(--center-channel-color-rgb), 0.48)',
-        }),
-        input: (base) => ({
-            ...base,
-            margin: '0',
-            padding: '0',
-            color: 'var(--center-channel-color)',
-        }),
-        indicatorSeparator: () => ({
-            display: 'none',
-        }),
-        clearIndicator: (base) => ({
-            ...base,
-            padding: '0 4px',
-            color: 'rgba(var(--center-channel-color-rgb), 0.56)',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            '&:hover': {
-                color: 'rgba(var(--center-channel-color-rgb), 0.72)',
-            },
-        }),
-        dropdownIndicator: (base) => ({
-            ...base,
-            padding: '0 8px',
-            color: 'rgba(var(--center-channel-color-rgb), 0.56)',
-            display: 'flex',
-            alignItems: 'center',
-            '&:hover': {
-                color: 'rgba(var(--center-channel-color-rgb), 0.72)',
-            },
-        }),
-        menu: (base) => ({
-            ...base,
-            zIndex: 9999,
-            backgroundColor: 'var(--center-channel-bg)',
-            border: '1px solid rgba(var(--center-channel-color-rgb), 0.16)',
-            borderRadius: '4px',
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
-        }),
-        menuPortal: (base) => ({
-            ...base,
-            zIndex: 10000,
-        }),
-        option: (base, state) => {
-            let backgroundColor = 'transparent';
-            if (state.isSelected) {
-                backgroundColor = 'rgba(var(--center-channel-color-rgb), 0.12)';
-            } else if (state.isFocused) {
-                backgroundColor = 'rgba(var(--center-channel-color-rgb), 0.08)';
-            }
-            return {
-                ...base,
-                backgroundColor,
-                color: 'var(--center-channel-color)',
-            };
-        },
-    };
-}
-
 export const ComboboxItem = (props: ComboboxItemProps) => {
     const intl = useIntl();
-
-    // Convert ComboboxOption[] to SelectOption[] for react-select
-    const selectOptions: SelectOption[] = props.options.map((opt) => ({
-        value: opt.id,
-        label: opt.displayName,
-    }));
-
-    // Find current selection or create custom option
-    const currentValue: SelectOption | null = props.value ? selectOptions.find((opt) => opt.value === props.value) || {value: props.value, label: props.value} : null;
-
-    const handleChange = (newValue: SingleValue<SelectOption>) => {
-        props.onChange(newValue?.value ?? '');
-    };
-
-    const selectStyles = buildComboboxStyles<SelectOption>();
+    const id = useId();
 
     return (
         <FormRow>
-            <ComboboxPortalStyles/>
-            <ItemLabel>{props.label}</ItemLabel>
+            <ItemLabel htmlFor={id}>{props.label}</ItemLabel>
             <TextFieldContainer>
                 <FieldControlRow>
-                    <CreatableSelect<SelectOption, false>
-                        classNamePrefix='SystemConsoleCombobox'
-                        value={currentValue}
-                        onChange={handleChange}
-                        options={selectOptions}
-                        placeholder={props.placeholder || props.label}
-                        styles={selectStyles}
-                        components={{
-                            DropdownIndicator: ComboboxDropdownIndicator,
-                            ClearIndicator: ComboboxClearIndicator,
-                        }}
-                        isClearable={props.isClearable ?? true}
+                    <Combobox
+                        id={id}
+                        value={props.value || null}
+                        options={props.options.map((opt) => ({value: opt.id, label: opt.displayName}))}
+                        onChange={(value) => props.onChange(typeof value === 'string' ? value : '')}
+                        creatable={true}
+                        onCreateOption={props.onChange}
                         formatCreateLabel={(inputValue: string) => intl.formatMessage(
                             {defaultMessage: 'Use custom model: {modelName}'},
                             {modelName: inputValue},
                         )}
-                        menuPortalTarget={getPortalTarget()}
-                        menuPosition='fixed'
+                        placeholder={props.placeholder || props.label}
+                        clearable={props.isClearable ?? true}
+                        clearLabel={intl.formatMessage({defaultMessage: 'Clear {label}'}, {label: props.label})}
+                        listboxLabel={props.label}
+                        portalContainer={getPortalTarget()}
+                        zIndex={PORTALED_MENU_Z_INDEX}
                     />
                 </FieldControlRow>
                 {props.helptext &&
@@ -339,57 +276,45 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
 };
 
 export const ItemLabel = styled.label<{$multiline?: boolean}>`
-	font-size: 14px;
-	font-weight: 600;
-	line-height: 20px;
+	font-size: var(--font-size-100);
+	font-weight: var(--font-weight-semibold);
+	line-height: var(--line-height-100);
 	margin: 0;
 	padding: 0;
 	box-sizing: border-box;
 	display: flex;
 	align-items: center;
-	height: 35px;
+	min-height: ${FIELD_HEIGHT};
+	height: auto;
 	flex-shrink: 0;
 
 	${({$multiline}) => $multiline && `
 		align-items: flex-start;
-		padding-top: 7px;
-		height: auto;
-		min-height: 35px;
+		padding-top: 10px;
 	`}
-`;
-
-export const ReadOnlyTag = styled.span`
-	padding: 2px 8px;
-	border-radius: 4px;
-	background: rgba(var(--center-channel-color-rgb), 0.08);
-	color: rgba(var(--center-channel-color-rgb), 0.64);
-	font-size: 11px;
-	font-weight: 600;
-	line-height: 16px;
-	white-space: nowrap;
-	flex-shrink: 0;
 `;
 
 export const ItemLabelRow = styled.div<{$multiline?: boolean}>`
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 8px;
+	gap: var(--spacing-xs);
 	min-width: 0;
-	height: 35px;
+	height: ${FIELD_HEIGHT};
 	flex-shrink: 0;
 	box-sizing: border-box;
 
 	${({$multiline}) => $multiline && `
 		align-items: flex-start;
-		padding-top: 7px;
+		padding-top: 10px;
 		height: auto;
-		min-height: 35px;
+		min-height: ${FIELD_HEIGHT};
 	`}
 `;
 
 type ItemLabelWithTagProps = {
     label: React.ReactNode;
+    htmlFor?: string;
     readOnly?: boolean;
     $multiline?: boolean;
 };
@@ -397,231 +322,37 @@ type ItemLabelWithTagProps = {
 export const ItemLabelWithTag = (props: ItemLabelWithTagProps) => {
     return (
         <ItemLabelRow $multiline={props.$multiline}>
-            <ItemLabelText>{props.label}</ItemLabelText>
+            <ItemLabelText htmlFor={props.htmlFor}>{props.label}</ItemLabelText>
             {props.readOnly &&
-            <ReadOnlyTag>
-                <FormattedMessage defaultMessage='Read only'/>
-            </ReadOnlyTag>
+            <Tag label={<FormattedMessage defaultMessage='Read only'/>}/>
             }
         </ItemLabelRow>
     );
 };
 
-const ItemLabelText = styled.span`
-	font-size: 14px;
-	font-weight: 600;
-	line-height: 20px;
+const ItemLabelText = styled.label`
+	margin: 0;
+	font-size: var(--font-size-100);
+	font-weight: var(--font-weight-semibold);
+	line-height: var(--line-height-100);
 `;
 
 export const TextFieldContainer = styled.div`
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
+	gap: var(--spacing-xs);
 `;
 
 export const HelpText = styled.div`
-	font-size: 12px;
-	font-weight: 400;
-	line-height: 16px;
+	font-size: var(--font-size-75);
+	font-weight: var(--font-weight-regular);
+	line-height: var(--line-height-75);
 	color: rgba(var(--center-channel-color-rgb), 0.72);
 `;
 
 const SelectFieldWrapper = styled.div<{$maxWidth?: string}>`
-	position: relative;
 	width: 100%;
 	max-width: ${({$maxWidth}) => $maxWidth || 'none'};
-`;
-
-const SelectChevron = styled.span`
-	position: absolute;
-	top: 50%;
-	right: 12px;
-	transform: translateY(-50%);
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	color: rgba(var(--center-channel-color-rgb), 0.56);
-	pointer-events: none;
-`;
-
-export const StyledSelect = styled.select`
-	appearance: none;
-	width: 100%;
-	padding: 7px 36px 7px 12px;
-	height: 35px;
-	border-radius: 4px;
-	border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-	box-shadow: 0px 1px 1px rgba(0, 0, 0, 0.075) inset;
-	background: var(--center-channel-bg);
-	color: var(--center-channel-color);
-	font-size: 14px;
-	font-weight: 400;
-	line-height: 20px;
-	cursor: pointer;
-
-	&:focus {
-		border-color: var(--button-bg);
-		outline: none;
-		box-shadow: none;
-	}
-
-	&:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-`;
-
-type SelectFieldProps = {
-    value: string;
-    onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
-    disabled?: boolean;
-    maxWidth?: string;
-    children: React.ReactNode;
-};
-
-export const SelectField = (props: SelectFieldProps) => {
-    return (
-        <SelectFieldWrapper $maxWidth={props.maxWidth}>
-            <StyledSelect
-                value={props.value}
-                onChange={props.onChange}
-                disabled={props.disabled}
-            >
-                {props.children}
-            </StyledSelect>
-            <SelectChevron aria-hidden='true'>
-                <ChevronDownIcon size={16}/>
-            </SelectChevron>
-        </SelectFieldWrapper>
-    );
-};
-
-export const StyledInput = styled.input<{ as?: string }>`
-	appearance: none;
-	display: flex;
-	padding: 7px 12px;
-	align-items: flex-start;
-	border-radius: 2px;
-	border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-	box-shadow: 0px 1px 1px rgba(0, 0, 0, 0.075) inset;
-	height: 35px;
-	background: var(--center-channel-bg);
-	color: var(--center-channel-color);
-	width: 100%;
-
-	font-size: 14px;
-	font-weight: 400;
-	line-height: 20px;
-
-	&::placeholder {
-		color: rgba(var(--center-channel-color-rgb), 0.48);
-	}
-
-	${(props) => props.as === 'textarea' && `
-		resize: vertical;
-		height: 120px;
-	`}
-
-	&:focus {
-		border-color: var(--button-bg);
-		outline: none;
-		box-shadow: none;
-	}
-
-	&:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-`;
-
-export const StyledRadio = styled.input`
-	appearance: none;
-	display: grid;
-	color: rgba(var(--center-channel-color-rgb), 0.24);
-	width: 1.6rem;
-	height: 1.6rem;
-	min-width: 1.6rem;
-	flex-shrink: 0;
-	border: 1px solid rgba(var(--center-channel-color-rgb),0.24);
-	border-radius: 50%;
-	margin: 0;
-	cursor: pointer;
-	place-content: center;
-
-	&:checked {
-		border-color: var(--button-bg);
-		&:before {
-			transform: scale(1);
-		}
-	}
-
-	&:before {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		background: var(--button-bg);
-		content: '';
-		transform: scale(0);
-		transform-origin: center center;
-		transition: 200ms transform ease-in-out;
-	}
-
-	&:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-`;
-
-export const StyledCheckbox = styled.input`
-	appearance: none;
-	width: 16px;
-	height: 16px;
-	min-width: 16px;
-	min-height: 16px;
-	margin: 0;
-	flex-shrink: 0;
-	cursor: pointer;
-	border: 1px solid rgba(var(--center-channel-color-rgb), 0.24);
-	border-radius: 2px;
-	background: var(--center-channel-bg);
-	display: grid;
-	place-content: center;
-
-	&:checked {
-		background: var(--button-bg);
-		border-color: var(--button-bg);
-	}
-
-	&:checked::before {
-		content: '';
-		width: 4px;
-		height: 8px;
-		border: solid var(--button-color, #fff);
-		border-width: 0 2px 2px 0;
-		transform: rotate(45deg);
-		margin-top: -2px;
-	}
-
-	&:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-`;
-
-const CheckboxControlLabel = styled.label`
-	display: inline-flex;
-	align-items: center;
-	gap: 8px;
-	cursor: pointer;
-	font-size: 14px;
-	font-weight: 400;
-	line-height: 20px;
-`;
-
-const CheckboxControlText = styled.span`
-	position: relative;
-	top: 1px;
-	color: var(--center-channel-color);
 `;
 
 export type InlineCheckboxProps = {
@@ -635,16 +366,15 @@ export type InlineCheckboxProps = {
 
 export const InlineCheckbox = (props: InlineCheckboxProps) => {
     return (
-        <CheckboxControlLabel data-testid={props.testId}>
-            <StyledCheckbox
-                type='checkbox'
-                checked={props.checked}
-                disabled={props.disabled}
-                aria-label={props.inputAriaLabel}
-                onChange={(e) => props.onChange(e.target.checked)}
-            />
-            <CheckboxControlText>{props.label}</CheckboxControlText>
-        </CheckboxControlLabel>
+        <Checkbox
+            data-testid={props.testId}
+            checked={props.checked}
+            disabled={props.disabled}
+            aria-label={props.inputAriaLabel}
+            onChange={(e) => props.onChange(e.target.checked)}
+        >
+            {props.label}
+        </Checkbox>
     );
 };
 
@@ -662,29 +392,38 @@ type BooleanItemProps = {
 };
 
 export const BooleanItem = (props: BooleanItemProps) => {
+    const name = useId();
+    const labelId = useId();
     return (
         <FormRow>
-            <ItemLabel>{props.label}</ItemLabel>
+            <CompactItemLabel id={labelId}>{props.label}</CompactItemLabel>
             <TextFieldContainer>
-                <FieldControlRow>
-                    <StyledRadio
-                        type='radio'
-                        value='true'
-                        checked={props.value}
-                        disabled={props.disabled || props.disableTrue}
-                        onChange={() => props.onChange(true)}
-                    />
-                    <FormattedMessage defaultMessage='true'/>
-                    <StyledRadio
-                        type='radio'
-                        value='false'
-                        checked={!props.value}
-                        disabled={props.disabled}
-                        onChange={() => props.onChange(false)}
-                    />
-                    <FormattedMessage defaultMessage='false'/>
+                <CompactFieldControlRow>
+                    <BooleanRadioGroup
+                        role='radiogroup'
+                        aria-labelledby={labelId}
+                    >
+                        <InlineRadio
+                            name={name}
+                            value='true'
+                            checked={props.value}
+                            disabled={props.disabled || props.disableTrue}
+                            onChange={() => props.onChange(true)}
+                        >
+                            <FormattedMessage defaultMessage='True'/>
+                        </InlineRadio>
+                        <InlineRadio
+                            name={name}
+                            value='false'
+                            checked={!props.value}
+                            disabled={props.disabled}
+                            onChange={() => props.onChange(false)}
+                        >
+                            <FormattedMessage defaultMessage='False'/>
+                        </InlineRadio>
+                    </BooleanRadioGroup>
                     {props.extra && <FieldExtra>{props.extra}</FieldExtra>}
-                </FieldControlRow>
+                </CompactFieldControlRow>
                 {props.helpText &&
                 <HelpText>{props.helpText}</HelpText>
                 }
@@ -692,3 +431,34 @@ export const BooleanItem = (props: BooleanItemProps) => {
         </FormRow>
     );
 };
+
+// Match checkbox/radio control height instead of the taller text-field label box.
+export const CompactItemLabel = styled(ItemLabel)`
+	min-height: 0;
+	align-items: flex-start;
+	line-height: var(--line-height-100, 20px);
+`;
+
+// Drop the 40px text-input min-height so help text sits under short controls.
+export const CompactFieldControlRow = styled(FieldControlRow)`
+	min-height: 0;
+	align-items: flex-start;
+`;
+
+// compass-ui Radio fills its row; True/False sit side by side.
+const BooleanRadioGroup = styled.div`
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	gap: var(--spacing-xl);
+
+	&& {
+		width: auto;
+	}
+`;
+
+const InlineRadio = styled(Radio)`
+	&& {
+		width: auto;
+	}
+`;

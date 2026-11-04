@@ -6,7 +6,7 @@ package mcp
 import (
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -95,7 +95,7 @@ func normalizePreferences(prefs *UserToolProviderPreferences) {
 		cleaned = append(cleaned, s)
 	}
 
-	sort.Strings(cleaned)
+	slices.Sort(cleaned)
 
 	if cleaned == nil {
 		cleaned = []string{}

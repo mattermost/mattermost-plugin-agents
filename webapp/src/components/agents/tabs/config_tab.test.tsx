@@ -6,9 +6,11 @@ import {fireEvent, render, screen, waitFor, within} from '@testing-library/react
 import {IntlProvider} from 'react-intl';
 
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
-import {ServiceInfo} from '@/types/agents';
+import {ServiceInfo, normalizeSkillsConfig} from '@/types/agents';
 
 import {AgentDraft} from '../agent_config_view';
+
+import {chooseOption, getSelect} from '../../../../tests/compass_select';
 
 import ConfigTab from './config_tab';
 
@@ -87,6 +89,7 @@ function makeDraft(overrides: Partial<AgentDraft> = {}): AgentDraft {
         reasoningEffort: 'medium',
         thinkingBudget: 0,
         maxToolTurns: 30,
+        skills: normalizeSkillsConfig(),
         ...overrides,
     };
 }
@@ -135,8 +138,32 @@ describe('ConfigTab', () => {
 
         expect((screen.getByLabelText('Dynamic tool loading') as HTMLInputElement).disabled).toBe(false);
         expect(
-            (within(screen.getByTestId('native-tool-web_search')).getByRole('checkbox') as HTMLInputElement).disabled,
+            (screen.getByTestId('native-tool-web_search') as HTMLInputElement).disabled,
         ).toBe(false);
+    });
+
+    test.each([
+        {name: 'creating an agent', savedUsername: '', username: 'testagent', warns: false},
+        {name: 'editing without renaming', savedUsername: 'testagent', username: 'testagent', warns: false},
+        {name: 'editing with a new username', savedUsername: 'testagent', username: 'renamed', warns: true},
+    ])('username stays editable and warns about renames only when one is pending: $name', async ({savedUsername, username, warns}) => {
+        render(
+            <IntlProvider locale='en'>
+                <ConfigTab
+                    draft={makeDraft({username})}
+                    onChange={jest.fn()}
+                    onAvatarChange={jest.fn()}
+                    services={[openaiService]}
+                    savedUsername={savedUsername}
+                />
+            </IntlProvider>,
+        );
+
+        await waitFor(() => expect(screen.getByText('Agent username')).not.toBeNull());
+
+        const usernameInput = within(formRowForLabel('Agent username')).getByRole('textbox') as HTMLInputElement;
+        expect(usernameInput.disabled).toBe(false);
+        expect(screen.queryByText(/people and integrations using @testagent will need to switch/) !== null).toBe(warns);
     });
 
     test('shows vision and effort reasoning for north without native tools', async () => {
@@ -187,11 +214,12 @@ describe('ConfigTab license gating', () => {
     test('notes that only the first service is active when the service cap is in effect', async () => {
         useServiceLimit.mockReturnValue(1);
         const second: ServiceInfo = {...openaiService, id: 'svc_other', name: 'Other'};
+        const onChange = jest.fn();
         render(
             <IntlProvider locale='en'>
                 <ConfigTab
-                    draft={makeDraft()}
-                    onChange={jest.fn()}
+                    draft={makeDraft({serviceId: ''})}
+                    onChange={onChange}
                     onAvatarChange={jest.fn()}
                     services={[openaiService, second]}
                 />
@@ -200,8 +228,12 @@ describe('ConfigTab license gating', () => {
 
         await screen.findByText('AI Service');
         expect(screen.getByText(/Only the first configured service is active/)).not.toBeNull();
-        expect((screen.getByRole('option', {name: openaiService.name}) as HTMLOptionElement).disabled).toBe(false);
-        expect((screen.getByRole('option', {name: 'Other'}) as HTMLOptionElement).disabled).toBe(true);
+
+        chooseOption(getSelect('AI Service'), 'Other');
+        expect(onChange).not.toHaveBeenCalledWith(expect.objectContaining({serviceId: second.id}));
+
+        chooseOption(getSelect('AI Service'), openaiService.name);
+        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({serviceId: openaiService.id}));
     });
 
     test('lets an unlicensed admin turn native web search off but not on', async () => {
@@ -221,7 +253,7 @@ describe('ConfigTab license gating', () => {
         await screen.findByText('AI Service');
         fireEvent.click(screen.getByRole('button', {name: /Advanced configuration/}));
         expect(
-            (within(screen.getByTestId('native-tool-web_search')).getByRole('checkbox') as HTMLInputElement).disabled,
+            (screen.getByTestId('native-tool-web_search') as HTMLInputElement).disabled,
         ).toBe(false);
     });
 
@@ -242,7 +274,7 @@ describe('ConfigTab license gating', () => {
         await screen.findByText('AI Service');
         fireEvent.click(screen.getByRole('button', {name: /Advanced configuration/}));
         expect(
-            (within(screen.getByTestId('native-tool-web_search')).getByRole('checkbox') as HTMLInputElement).disabled,
+            (screen.getByTestId('native-tool-web_search') as HTMLInputElement).disabled,
         ).toBe(true);
         expect(screen.getByText('Enterprise')).not.toBeNull();
     });
@@ -270,5 +302,30 @@ describe('ConfigTab license gating', () => {
         rerender(renderTab(openaiService.id));
 
         expect(onChange).toHaveBeenCalledWith(expect.objectContaining({enabledNativeTools: expected}));
+    });
+
+    test.each([
+        {from: 'openai', to: 'anthropic', expected: ''},
+        {from: 'anthropic', to: 'openai', expected: 'medium'},
+    ])('switching from $from to $to resets reasoning effort to "$expected"', async ({from, to, expected}) => {
+        const anthropicService: ServiceInfo = {...openaiService, id: 'svc_anthropic', name: 'Anthropic Mock', type: 'anthropic'};
+        const serviceIDs: Record<string, string> = {openai: openaiService.id, anthropic: anthropicService.id};
+        const onChange = jest.fn();
+        const renderTab = (serviceId: string) => (
+            <IntlProvider locale='en'>
+                <ConfigTab
+                    draft={makeDraft({serviceId, reasoningEffort: 'low'})}
+                    onChange={onChange}
+                    onAvatarChange={jest.fn()}
+                    services={[openaiService, anthropicService]}
+                />
+            </IntlProvider>
+        );
+
+        const {rerender} = render(renderTab(serviceIDs[from]));
+        await screen.findByText('AI Service');
+        rerender(renderTab(serviceIDs[to]));
+
+        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({reasoningEffort: expected}));
     });
 });

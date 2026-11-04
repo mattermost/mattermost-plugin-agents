@@ -28,6 +28,7 @@ export interface CreateAgentRequest {
     adminUserIDs?: string[];
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;
+    mcpDynamicToolLoading?: boolean;
     useServiceAccountAuth?: boolean;
     enabledNativeTools?: string[];
     model?: string;
@@ -64,6 +65,7 @@ export interface AgentResponse {
     enabledNativeTools: string[];
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;
+    mcpDynamicToolLoading?: boolean;
     useServiceAccountAuth: boolean;
     reasoningEnabled: boolean;
     reasoningEffort: string;
@@ -99,6 +101,7 @@ export function mergeAgentIntoUpdate(
         adminUserIDs: agent.adminUserIDs ?? [],
         enabledMCPTools: agent.enabledMCPTools ?? [],
         autoEnableNewMCPTools: agent.autoEnableNewMCPTools,
+        mcpDynamicToolLoading: agent.mcpDynamicToolLoading ?? true,
         useServiceAccountAuth: agent.useServiceAccountAuth,
         enabledNativeTools: agent.enabledNativeTools,
         model: agent.model,
@@ -111,6 +114,52 @@ export function mergeAgentIntoUpdate(
         maxToolTurns: agent.maxToolTurns,
     };
     return { ...base, ...overrides };
+}
+
+// Mirrors store.AgentVersion / store.AgentVersionDetail.
+export type AgentVersionSource = 'initial' | 'create' | 'update' | 'restore' | 'system';
+
+export interface AgentVersionSummary {
+    version: number;
+    createdBy: string;
+    createAt: number;
+    source: AgentVersionSource;
+    restoredFromVersion: number;
+    changedFields: string[];
+}
+
+// One page of versions, newest first (the server default page is 50).
+export interface AgentVersionList {
+    currentVersion: number;
+    versions: AgentVersionSummary[];
+    hasMore: boolean;
+}
+
+export interface AgentVersionDetail extends AgentVersionSummary {
+    config: Partial<AgentResponse>;
+}
+
+// Mirrors AgentExportDocument in webapp/src/types/agents.ts (schemaVersion 1).
+export interface AgentExportMCPTool {
+    serverOrigin: string;
+    toolName: string;
+}
+
+export interface AgentExportDocument {
+    kind: string;
+    schemaVersion: number;
+    exportedAt: number;
+    agentVersion: number;
+    agent: {
+        name: string;
+        displayName: string;
+        customInstructions: string;
+        disableTools: boolean;
+        maxToolTurns: number;
+        mcpDynamicToolLoading: boolean;
+        autoEnableNewMCPTools: boolean;
+        mcpTools: AgentExportMCPTool[];
+    };
 }
 
 /**
@@ -150,6 +199,20 @@ export class AgentAPIHelper {
         const current = await this.getAgent(token, agentId);
         const body = mergeAgentIntoUpdate(current, overrides);
         return this.routes.putJson(`agents/${agentId}`, token, body) as Promise<AgentResponse>;
+    }
+
+    async getAgentVersions(token: string, agentId: string): Promise<AgentVersionList> {
+        return this.routes.getJson(`agents/${agentId}/versions`, token) as Promise<AgentVersionList>;
+    }
+
+    async getAgentVersion(token: string, agentId: string, version: number): Promise<AgentVersionDetail> {
+        return this.routes.getJson(`agents/${agentId}/versions/${version}`, token) as Promise<AgentVersionDetail>;
+    }
+
+    /** Deletes the given versions, or every previous one with 'all'; returns the response as-is. */
+    async deleteAgentVersions(token: string, agentId: string, versions: number[] | 'all'): Promise<Response> {
+        const body = versions === 'all' ? { all: true } : { versions };
+        return this.routes.request('DELETE', `agents/${agentId}/versions`, token, body);
     }
 
     async deleteAgent(token: string, agentId: string): Promise<void> {

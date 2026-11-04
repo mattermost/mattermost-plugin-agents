@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -30,6 +31,10 @@ func normalizeAdminConfig(cfg config.Config) config.Config {
 
 	return cfg
 }
+
+// configErrorInvalidLinkDomains: the allowedLinkDomains setting has an entry
+// that is not a valid hostname.
+const configErrorInvalidLinkDomains agentErrorCode = "invalid_allowed_link_domains"
 
 // validateServiceStructuredOutputPolicies rejects a service whose
 // structured-output policy is not a value the runtime understands. Persisting a
@@ -129,13 +134,37 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 
+	// Invalid entries would silently match nothing at runtime, so reject them
+	// with a code the System Console can show to the admin. The allowlist is
+	// ignored (and its field hidden) while links are disabled, so it is only
+	// validated when it can take effect.
+	if cfg.AllowUnsafeLinks {
+		if _, invalid := config.ParseLinkDomains(cfg.AllowedLinkDomains); len(invalid) > 0 {
+			abortAgentRequestWithCode(c, http.StatusBadRequest, configErrorInvalidLinkDomains,
+				fmt.Errorf("allowedLinkDomains has entries that are not valid hostnames: %q", invalid))
+			return
+		}
+	}
+
+	if err := cfg.ValidateAgentReferences(); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if cfg.AgentVersionsToKeep < 0 {
+		c.AbortWithError(http.StatusBadRequest, errors.New("agentVersionsToKeep must be 0 (keep every version) or more"))
+		return
+	}
+	resolvedAgentNames := a.resolveAgentReferenceUsernames(cfg)
+
 	// Read-previous → identity checks → mint empty IDs → save runs atomically
 	// under the config advisory lock. Duplicate IDs and embedded ID mismatch
 	// abort with 409. Empty list-item IDs represent creates and receive fresh
 	// IDs; they never reclaim an existing identity by name or origin.
 	var changedKeys []string
 	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
-		next := cfg
+		next := config.ReconcileAgentReferences(prev, cfg)
+		next, _ = next.MigrateAgentReferences(resolvedAgentNames)
 		if err := config.ValidateServiceIDUniqueness(next.Services); err != nil {
 			return config.Config{}, err
 		}
@@ -178,6 +207,12 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	audit.AddParam(auditRec(c), "changed_keys", changedKeys)
 	audit.AddParam(auditRec(c), "persisted", true)
 
+	if a.bots != nil {
+		for _, username := range saved.LegacyAgentReferences() {
+			a.pluginAPI.Log.Warn("Saved agent setting selects an agent by username: no agent account holds it", "username", username)
+		}
+	}
+
 	// Update in-memory config on this node
 	a.configUpdater.Update(&saved)
 
@@ -204,4 +239,21 @@ func vettedDefaultToolPolicy(serverBaseURL, toolName string) string {
 		}
 	}
 	return ""
+}
+
+// resolveAgentReferenceUsernames resolves the legacy usernames cfg sets to bot
+// user IDs, outside the config transaction. A name set beside an ID is
+// resolved too: reconciling with the stored config can keep the name instead.
+func (a *API) resolveAgentReferenceUsernames(cfg config.Config) map[string]string {
+	if a.bots == nil {
+		return nil
+	}
+	var usernames []string
+	for _, username := range []string{cfg.DefaultBotName, cfg.TranscriptGenerator} {
+		if username != "" {
+			usernames = append(usernames, username)
+		}
+	}
+	resolved, _ := bots.ResolveAgentUsernames(a.bots, usernames)
+	return resolved
 }
