@@ -79,9 +79,13 @@ const AgentDMChannelViewForChannel = ({channel, focusedPostId}: AgentDMChannelVi
     // Bumped by every selection, so a permalink lookup that resolves after a newer one is dropped.
     const selectionSeq = useRef(0);
 
+    const invalidate = useCallback(() => {
+        selectionSeq.current++;
+    }, []);
+
     useEffect(() => {
         if (!focusedPostId) {
-            return;
+            return invalidate;
         }
         const seq = ++selectionSeq.current;
         const select = (rootId: string) => {
@@ -95,7 +99,7 @@ const AgentDMChannelViewForChannel = ({channel, focusedPostId}: AgentDMChannelVi
         const cached = store.getState().entities.posts.posts[focusedPostId];
         if (cached) {
             select(cached.root_id || cached.id);
-            return;
+            return invalidate;
         }
         setSelection({resolving: true});
         getPost(focusedPostId).then((post) => select(post.root_id || post.id)).catch((error: unknown) => {
@@ -103,10 +107,8 @@ const AgentDMChannelViewForChannel = ({channel, focusedPostId}: AgentDMChannelVi
             select(focusedPostId);
         });
 
-        return () => {
-            selectionSeq.current++;
-        };
-    }, [focusedPostId, store]);
+        return invalidate;
+    }, [focusedPostId, store, invalidate]);
 
     const toChat = useCallback((targetBotId: string, rootId?: string) => {
         const history = getHistory();
