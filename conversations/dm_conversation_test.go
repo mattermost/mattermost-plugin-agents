@@ -132,11 +132,11 @@ func (s *fakeConvStore) GetLatestConversationByThreadBotUser(rootPostID, botID, 
 	return &c, nil
 }
 
-func (s *fakeConvStore) RestoreConversation(id string) (*store.Conversation, error) {
+func (s *fakeConvStore) RestoreConversation(id string, archivedAt int64) (*store.Conversation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	conv, ok := s.conversations[id]
-	if !ok || conv.DeleteAt == 0 {
+	if !ok || conv.DeleteAt == 0 || conv.DeleteAt != archivedAt {
 		return nil, store.ErrConversationNotFound
 	}
 	for _, other := range s.conversations {

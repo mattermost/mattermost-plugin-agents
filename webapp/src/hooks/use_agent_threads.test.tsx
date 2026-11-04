@@ -294,6 +294,23 @@ describe('stored AI threads', () => {
             expect(titles(store)).toEqual(['c1:', 'c2:', 'c3:']);
         });
 
+        test('a list that arrives while the archive request is in flight does not bring the chat back', async () => {
+            const store = await loaded();
+            const stale = deferred<AIThread[]>();
+            const pending = deferred<void>();
+            mockGetAIThreads.mockReturnValueOnce(stale.promise);
+            mockArchiveConversation.mockReturnValue(pending.promise);
+
+            const fetching = fetchAIThreads(store.dispatch);
+            const archiving = archiveAIThread(store, 'c2');
+            stale.resolve([makeThread({id: 'c1'}), makeThread({id: 'c2'}), makeThread({id: 'c3'})]);
+            await fetching;
+            pending.resolve();
+            await archiving;
+
+            expect(titles(store)).toEqual(['c1:', 'c3:']);
+        });
+
         test('a list fetched before the archive does not bring the chat back', async () => {
             const store = await loaded();
             const stale = deferred<AIThread[]>();

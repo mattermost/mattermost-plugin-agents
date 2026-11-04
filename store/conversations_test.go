@@ -801,7 +801,7 @@ func TestArchiveRenameRestoreConversation(t *testing.T) {
 				err := s.ArchiveConversation(conv.ID, 1000)
 				require.NoError(t, err)
 
-				restored, err := s.RestoreConversation(conv.ID)
+				restored, err := s.RestoreConversation(conv.ID, 1000)
 				require.NoError(t, err)
 				assert.Equal(t, conv.ID, restored.ID)
 				assert.Equal(t, "Kept", restored.Title)
@@ -812,10 +812,28 @@ func TestArchiveRenameRestoreConversation(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, conv.ID, active.ID)
 
-				_, err = s.RestoreConversation(conv.ID)
+				_, err = s.RestoreConversation(conv.ID, 1000)
 				assert.ErrorIs(t, err, ErrConversationNotFound, "nothing is left to restore")
-				_, err = s.RestoreConversation(model.NewId())
+				_, err = s.RestoreConversation(model.NewId(), 1000)
 				assert.ErrorIs(t, err, ErrConversationNotFound)
+			},
+		},
+		{
+			name: "restore ignores a stale archive generation",
+			validate: func(t *testing.T, s *Store) {
+				conv := makeConversation(inThread(model.NewId(), model.NewId(), model.NewId()))
+				require.NoError(t, s.CreateConversation(conv))
+				require.NoError(t, s.ArchiveConversation(conv.ID, 1000))
+				_, err := s.RestoreConversation(conv.ID, 1000)
+				require.NoError(t, err)
+				require.NoError(t, s.ArchiveConversation(conv.ID, 2000))
+
+				_, err = s.RestoreConversation(conv.ID, 1000)
+				assert.ErrorIs(t, err, ErrConversationNotFound)
+
+				got, err := s.GetConversationIncludingArchived(conv.ID)
+				require.NoError(t, err)
+				assert.Equal(t, int64(2000), got.DeleteAt, "the newer archive stays")
 			},
 		},
 		{
@@ -829,7 +847,7 @@ func TestArchiveRenameRestoreConversation(t *testing.T) {
 				activeConv := makeConversation(inThread(rootPostID, botID, userID))
 				require.NoError(t, s.CreateConversation(activeConv))
 
-				_, err = s.RestoreConversation(archivedConv.ID)
+				_, err = s.RestoreConversation(archivedConv.ID, 1000)
 				assert.ErrorIs(t, err, ErrConversationConflict)
 
 				got, err := s.GetConversationIncludingArchived(archivedConv.ID)
@@ -982,7 +1000,7 @@ func TestConversationActivityOrdering(t *testing.T) {
 			name: "archiving and restoring does not reorder",
 			act: func(t *testing.T, s *Store, ids map[string]string) {
 				require.NoError(t, s.ArchiveConversation(ids["old"], 9000))
-				_, err := s.RestoreConversation(ids["old"])
+				_, err := s.RestoreConversation(ids["old"], 9000)
 				require.NoError(t, err)
 			},
 			wantOrder: []string{"new", "old"},

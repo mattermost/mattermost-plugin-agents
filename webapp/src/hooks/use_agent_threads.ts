@@ -136,7 +136,7 @@ export async function archiveAIThread(store: ThreadsStore, conversationId: strin
         }
         throw e;
     }
-    supersedeInFlightFetch(store);
+    applyRemoval(store, conversationId);
 }
 
 // Refetches after a burst of events settles, so a busy stream of replies costs one request.

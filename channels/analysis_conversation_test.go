@@ -60,7 +60,7 @@ func (s *inMemoryStore) GetLatestConversationByThreadBotUser(rootPostID, botID, 
 	return s.GetConversationByThreadBotUser(rootPostID, botID, userID)
 }
 
-func (*inMemoryStore) RestoreConversation(_ string) (*store.Conversation, error) {
+func (*inMemoryStore) RestoreConversation(_ string, _ int64) (*store.Conversation, error) {
 	return nil, store.ErrConversationNotFound
 }
 

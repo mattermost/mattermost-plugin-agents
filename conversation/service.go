@@ -34,7 +34,7 @@ type Store interface {
 	// store.ErrConversationNotFound when it is not archived (or missing) and
 	// store.ErrConversationConflict when another active conversation owns its
 	// thread.
-	RestoreConversation(id string) (*store.Conversation, error)
+	RestoreConversation(id string, archivedAt int64) (*store.Conversation, error)
 	// RenameConversation sets the title of an active conversation,
 	// reporting whether one was changed.
 	RenameConversation(id, title string) (bool, error)
@@ -255,7 +255,7 @@ func (s *Service) ActivateConversation(conv *store.Conversation) (*store.Convers
 	if err := CheckRootPost(s.mmClient, conv); err != nil {
 		return nil, err
 	}
-	restored, err := s.store.RestoreConversation(conv.ID)
+	restored, err := s.store.RestoreConversation(conv.ID, conv.DeleteAt)
 	switch {
 	case err == nil:
 		return restored, nil

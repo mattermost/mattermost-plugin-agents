@@ -3151,3 +3151,44 @@ func TestGetPreviousUserTurn(t *testing.T) {
 		assert.Nil(t, got)
 	})
 }
+
+type livePostClient struct {
+	mmapi.Client
+}
+
+func (livePostClient) GetPost(postID string) (*model.Post, error) {
+	return &model.Post{Id: postID}, nil
+}
+
+func TestActivateConversation_StaleArchiveGeneration(t *testing.T) {
+	svc, s := setupTestService(t)
+	svc.mmClient = livePostClient{}
+
+	rootPostID := "regen_root"
+	created, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       model.NewId(),
+		BotID:        model.NewId(),
+		RootPostID:   &rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "prompt",
+		UserMessage:  "hello",
+		UserPostID:   new("post1"),
+	})
+	require.NoError(t, err)
+	id := created.ConversationID
+
+	require.NoError(t, s.ArchiveConversation(id, 1000))
+	stale, err := svc.GetConversationIncludingArchived(id)
+	require.NoError(t, err)
+
+	_, err = svc.ActivateConversation(stale)
+	require.NoError(t, err)
+	require.NoError(t, s.ArchiveConversation(id, 2000))
+
+	_, err = svc.ActivateConversation(stale)
+	require.ErrorIs(t, err, ErrConversationArchived)
+
+	got, err := svc.GetConversationIncludingArchived(id)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2000), got.DeleteAt, "the newer archive stays")
+}

@@ -162,20 +162,21 @@ func (s *Store) GetLatestConversationByThreadBotUser(rootPostID, botID, userID s
 }
 
 // RestoreConversation un-archives the conversation with the given ID and
-// returns it. The DeleteAt > 0 condition makes concurrent restores write at
-// most once. Returns ErrConversationNotFound when no archived conversation
-// with the ID exists (missing, or already active: a concurrent restore won),
+// returns it. It only matches the archive generation the caller observed
+// (archivedAt), so concurrent restores write at most once and a stale caller
+// cannot undo a newer archive. Returns ErrConversationNotFound when no
+// conversation with the ID is archived at archivedAt (missing, already active:
+// a concurrent restore won, or archived again since),
 // and ErrConversationConflict when another active conversation already owns
 // its (RootPostID, BotID, UserID) tuple. UpdatedAt is left alone: the turn the
 // restore precedes advances it (see CreateTurn), and a restore with no turn is
 // not activity.
-func (s *Store) RestoreConversation(id string) (*Conversation, error) {
+func (s *Store) RestoreConversation(id string, archivedAt int64) (*Conversation, error) {
 	var conv Conversation
 	err := s.getBuilder(&conv, s.builder.
 		Update("LLM_Conversations").
 		Set("DeleteAt", 0).
-		Where(sq.Eq{"ID": id}).
-		Where(sq.Gt{"DeleteAt": 0}).
+		Where(sq.Eq{"ID": id, "DeleteAt": archivedAt}).
 		Suffix("RETURNING "+strings.Join(conversationColumns, ", ")),
 		"restore conversation")
 	switch {
