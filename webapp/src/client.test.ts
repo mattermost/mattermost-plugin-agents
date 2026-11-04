@@ -22,6 +22,7 @@ import {
     getArtifactToken,
     getChannelAutoReply,
     getChannelInterval,
+    getAIThreads,
     getConversation,
     getConversationContext,
     normalizeConversationResponse,
@@ -494,5 +495,15 @@ describe('agent versioning client', () => {
             status_code: 400,
             message: 'the current version of an agent cannot be deleted',
         });
+    });
+});
+
+describe('getAIThreads', () => {
+    test('gives up on a request that never settles', async () => {
+        await getAIThreads();
+
+        const signal = mockFetch.mock.calls[0][1].signal;
+        expect(signal).toBeInstanceOf(AbortSignal);
+        expect(signal?.aborted).toBe(false);
     });
 });
