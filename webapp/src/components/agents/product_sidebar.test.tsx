@@ -94,12 +94,12 @@ describe('ProductSidebar', () => {
         renderSidebar();
         expect(screen.getAllByRole('navigation', {name: 'Agents'})).toHaveLength(1);
         expect(screen.getByRole('button', {name: /All agents/})).toBeTruthy();
-        expect(screen.getByRole('button', {name: /Custom Prompts/})).toBeTruthy();
+        expect(screen.getByRole('button', {name: /Skills/})).toBeTruthy();
     });
 
     test('rows invoke their handlers', () => {
         const {onSelectAll, onSelectPrompts} = renderSidebar({activeView: 'prompts'});
-        fireEvent.click(screen.getByRole('button', {name: /Custom Prompts/}));
+        fireEvent.click(screen.getByRole('button', {name: /Skills/}));
         fireEvent.click(screen.getByRole('button', {name: /All agents/}));
         expect(onSelectPrompts).toHaveBeenCalledTimes(1);
         expect(onSelectAll).toHaveBeenCalledTimes(1);

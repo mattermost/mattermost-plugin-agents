@@ -444,6 +444,14 @@ func TestRequestFieldsFromConfigRoundTrip(t *testing.T) {
 			if elem := f.Index(0); elem.Kind() == reflect.String {
 				elem.SetString("item")
 			}
+		case reflect.Struct:
+			require.Equal(t, reflect.TypeFor[llm.SkillsConfig](), f.Type(), "field %s: extend this test", v.Type().Field(i).Name)
+			f.Set(reflect.ValueOf(llm.SkillsConfig{
+				Disabled:             true,
+				AllowPersonal:        true,
+				EnabledSharedIDs:     []string{"item"},
+				DescriptionOverrides: map[string]string{"item": "override"},
+			}))
 		default:
 			t.Fatalf("field %s has kind %s; extend this test", v.Type().Field(i).Name, f.Kind())
 		}

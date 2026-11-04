@@ -116,7 +116,7 @@ const ProductSidebar = ({activeView, onSelectAll, onSelectPrompts, onSelectSetti
                             onClick={onSelectAll}
                         />
                         <NavRow
-                            name={intl.formatMessage({defaultMessage: 'Custom Prompts'})}
+                            name={intl.formatMessage({defaultMessage: 'Skills'})}
                             glyph={<CodeBracketsIcon/>}
                             active={activeView === 'prompts'}
                             onClick={onSelectPrompts}

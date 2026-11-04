@@ -385,6 +385,38 @@ func TestAgentAutoEnableNewMCPToolsRoundTrip(t *testing.T) {
 	assert.False(t, again.AutoEnableNewMCPTools)
 }
 
+func TestAgentSkillsRoundTrip(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+
+	agent := testAgent("creator-1", "skills-agent", "Skills Agent")
+	require.NoError(t, s.CreateAgent(agent, SystemAgentVersionMeta()))
+
+	fetched, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched)
+	assert.Equal(t, llm.SkillsConfig{}, fetched.Skills, "agents created without skill settings round-trip as empty")
+
+	skillID := "abcdefghijklmnopqrstuvwxyz"
+	fetched.Skills = llm.SkillsConfig{
+		Disabled:             true,
+		AllowPersonal:        true,
+		EnabledSharedIDs:     []string{skillID},
+		DescriptionOverrides: map[string]string{skillID: "Use for release notes."},
+	}
+	require.NoError(t, s.UpdateAgent(fetched, SystemAgentVersionMeta()))
+
+	again, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	require.NotNil(t, again)
+	assert.Equal(t, fetched.Skills, again.Skills)
+
+	page, err := s.ListAgentVersions(agent.ID, 0, 1)
+	require.NoError(t, err)
+	require.Len(t, page.Versions, 1)
+	assert.Equal(t, []string{"skills"}, page.Versions[0].ChangedFields)
+}
+
 func TestAgentMCPDynamicToolLoadingRoundTrip(t *testing.T) {
 	s := setupTestStore(t)
 	err := s.RunMigrations()

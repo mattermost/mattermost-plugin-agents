@@ -70,6 +70,8 @@ func (a *API) handleListCustomPrompts(c *gin.Context) {
 }
 
 // handleUpdateCustomPrompt updates an existing custom prompt. Only the creator can update.
+// A body updated_at makes the update conditional on the prompt being unchanged
+// since that read; a stale one is rejected with 409.
 func (a *API) handleUpdateCustomPrompt(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	promptID := c.Param("id")
@@ -106,6 +108,10 @@ func (a *API) handleUpdateCustomPrompt(c *gin.Context) {
 	}
 
 	if err := a.customPromptsStore.Update(prompt); err != nil {
+		if errors.Is(err, customprompts.ErrStaleUpdate) {
+			c.AbortWithError(http.StatusConflict, err)
+			return
+		}
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to update custom prompt: %w", err))
 		return
 	}
