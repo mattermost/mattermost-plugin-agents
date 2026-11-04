@@ -31,7 +31,7 @@ By default the System User role includes `manage_own_agent`, so every user can c
 
 A user can edit or delete an agent when they're its creator, listed in its **Agent admins**, hold `manage_others_agent`, or are a System Admin and the agent has no creator. The server applies the same rules to the API.
 
-A user sees an agent only if they can use it. See [Visibility](access_control.md#visibility). Agent counts are capped by license. See [License requirements](admin_guide.md#license-requirements).
+A user sees an agent only if they can use it, with exceptions for System Admins and agent admins. See [Visibility](access_control.md#visibility). Agent counts are capped by license. See [License requirements](admin_guide.md#license-requirements).
 
 ## Create an agent
 
@@ -160,9 +160,9 @@ Restores and version deletions are recorded in the audit log. See [Monitor Agent
 
 Export copies an agent's purpose and tool setup to another server.
 
-**Export.** In the editor header or the row menu, select **Export**. It downloads `<username>-v<version>.agent.json` for the current version. The file holds the suggested username and display name, custom instructions, **Enable Tools**, **Max tool turns**, dynamic tool loading, **Automatically enable all MCP tools**, and the granted MCP tools, each identified by its server URL. It doesn't hold the service, model, reasoning, native tools, vision, access rules, admins, the service account setting, the avatar, any IDs, or credentials. Treat the file like the instructions, since they're included.
+**Export.** In the editor header or the row menu, select **Export**. It downloads `<username>-v<version>.agent.json` for the current version. The file holds the suggested username and display name, custom instructions, **Enable Tools**, **Max tool turns**, dynamic tool loading, **Automatically enable all MCP tools**, the skill settings, and the granted MCP tools, each identified by its server URL. It doesn't hold the service, model, reasoning, native tools, vision, access rules, admins, the service account setting, the avatar, any IDs, or credentials. Treat the file like the instructions, since they're included.
 
-**Import.** Select **Import** on the **Agents** page to start a new agent from a file, or in the editor to load a file into an existing agent. Nothing is saved until you select **Save**, and the save goes through the usual checks. Review the imported instructions first, because they become the agent's instructions. Importing into an existing agent replaces only the settings the file carries.
+**Import.** Select **Import** on the **Agents** page to start a new agent from a file, or in the editor to load a file into an existing agent. Nothing is saved until you select **Save**, and the save goes through the usual checks. Review the imported instructions first, because they become the agent's instructions. Importing into an existing agent replaces its instructions, tool settings, MCP tools, and skill settings. It keeps the existing username and display name, which the file only suggests for a new agent, and every setting the file doesn't carry.
 
 MCP tools in the file are matched to your servers by URL, ignoring surrounding whitespace and a trailing `/`. Tools of servers you haven't configured are left out, and the editor names those servers. Files over 2 MiB, files that aren't agent exports, and unsupported versions are rejected.
 

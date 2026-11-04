@@ -66,7 +66,7 @@ The access tab's hint says "Until a policy is defined, all users can use this ag
 
 ### Visibility
 
-Lists and pickers show only what a user can use, with one exception. System Admins can see services and the agents that use them even when a service policy denies them, so they can audit and repair bindings. Everyone else, including an agent's creator and agent admins, doesn't see agents or services they can't use. Agents denied by a policy don't show as **Inactive**. They're absent. If an agent admin loses service access, they can't see or fix the agent. A System Admin must restore access or change the service.
+Lists and pickers show only what a user can use, with two exceptions. System Admins can see services and the agents that use them even when a service policy denies them, so they can audit and repair bindings. An agent's creator and agent admins can see the agent even when its agent policy denies them. A service policy that denies them still hides the agent. Everyone else doesn't see agents or services they can't use. Agents denied by a policy don't show as **Inactive**. They're absent. If an agent admin loses service access, they can't see or fix the agent. A System Admin must restore access or change the service.
 
 ### Policy lifecycle
 

@@ -31,7 +31,7 @@ Restoring a backup that predates a credential change restores the old credential
 
 ## Configuration API
 
-Use the admin API to read or write plugin settings from scripts. It requires a System Admin session or personal access token.
+Use the admin API to read or write plugin settings from scripts. It requires a session or personal access token for a user with the `manage_system` permission.
 
 ```bash
 # Read
@@ -44,7 +44,7 @@ curl -s -X PUT -H "Authorization: Bearer $MM_TOKEN" -H "Content-Type: applicatio
   https://your-mattermost-server/plugins/mattermost-ai/admin/config
 ```
 
-`PUT` replaces the configuration, so read it first, change what you need, and send it all back. The response is the saved configuration with any server-assigned IDs. Saves go through the same license and validation checks as the System Console. Invalid MCP configuration, duplicate IDs, bad link domains, and gated changes are rejected.
+`PUT` replaces the configuration, so read it first, change what you need, and send it all back. The response is the saved configuration with any server-assigned IDs. Saves go through the same license and validation checks as the System Console. Invalid MCP configuration, duplicate IDs, bad link domains (when **Render AI-generated links** is on), and gated changes are rejected.
 
 A trimmed example of the shape:
 
