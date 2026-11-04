@@ -193,9 +193,23 @@ interface FieldValueProps {
     resolveId: (id: string) => string | undefined;
 }
 
+// A resolved ID shows its name and keeps the raw ID as the hover title.
+function labelFor(raw: string, resolveId: (id: string) => string | undefined) {
+    const name = resolveId(raw);
+    return {text: name ?? raw, title: name ? raw : undefined}; // eslint-disable-line no-undefined
+}
+
 const FieldValue: React.FC<FieldValueProps> = ({value, clamped, resolveId}) => {
     if (typeof value === 'string') {
-        return <StringValue $clamped={clamped}>{resolveId(value) ?? value}</StringValue>;
+        const label = labelFor(value, resolveId);
+        return (
+            <StringValue
+                $clamped={clamped}
+                title={label.title}
+            >
+                {label.text}
+            </StringValue>
+        );
     }
     if (isPrimitive(value)) {
         return <ValuePill>{scalarText(value)}</ValuePill>;
@@ -206,9 +220,17 @@ const FieldValue: React.FC<FieldValueProps> = ({value, clamped, resolveId}) => {
         }
         return (
             <PillRow>
-                {value.map((item, idx) => (
-                    <ValuePill key={idx}>{typeof item === 'string' ? (resolveId(item) ?? item) : scalarText(item)}</ValuePill>
-                ))}
+                {value.map((item, idx) => {
+                    const label = typeof item === 'string' ? labelFor(item, resolveId) : {text: scalarText(item), title: undefined}; // eslint-disable-line no-undefined
+                    return (
+                        <ValuePill
+                            key={idx}
+                            title={label.title}
+                        >
+                            {label.text}
+                        </ValuePill>
+                    );
+                })}
             </PillRow>
         );
     }

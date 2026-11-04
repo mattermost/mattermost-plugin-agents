@@ -3,7 +3,7 @@
 
 import {useEffect, useMemo, useState} from 'react';
 
-import {getChannelById, getPost, getProfilesByIds, getTeamsByIds} from '@/client';
+import {getChannel, getPost, getProfilesByIds, getTeamsByIds} from '@/client';
 
 import {JSONValue} from './tool_types';
 
@@ -46,25 +46,42 @@ function snippet(message: string) {
     return flat.length > POST_SNIPPET_LENGTH ? `${flat.slice(0, POST_SNIPPET_LENGTH)}…` : flat;
 }
 
-async function fetchNames(kind: IdKind, ids: string[]): Promise<Array<[string, string]>> {
+// Mirrors llm.SanitizeNonPrintableChars: names and post text are user-authored,
+// so bidi and invisible characters must not alter what an approval card says.
+const unsafeChars = /(?![ \n\t\r])[\p{C}\p{Z}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}]/gu;
+
+function escapeUnsafe(text: string) {
+    return text.replace(unsafeChars, (ch) => `[U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}]`);
+}
+
+async function fetchName(kind: Exclude<IdKind, 'user'>, id: string): Promise<string> {
     switch (kind) {
-    case 'user': {
-        const profiles = await getProfilesByIds(ids);
-        return profiles.map((profile) => [profile.id, profile.username]);
-    }
     case 'team': {
-        const teams = await getTeamsByIds(ids);
-        return teams.map((team) => [team.id, team.display_name || team.name]);
+        const [team] = await getTeamsByIds([id]);
+        return team.display_name || team.name;
     }
     case 'channel': {
-        const channels = await Promise.all(ids.map((id) => getChannelById(id).catch(() => null)));
-        return channels.flatMap((channel) => (channel ? [[channel.id, channel.display_name || channel.name] as [string, string]] : []));
+        const channel = await getChannel(id);
+        return channel.display_name || channel.name;
     }
     default: {
-        const posts = await Promise.all(ids.map((id) => getPost(id).catch(() => null)));
-        return posts.flatMap((post) => (post && snippet(post.message) ? [[post.id, snippet(post.message)] as [string, string]] : []));
+        const post = await getPost(id);
+        return snippet(post.message);
     }
     }
+}
+
+// Each ID settles on its own, so one missing team, channel or post never
+// discards the names that did resolve.
+async function fetchNames(kind: IdKind, ids: string[]): Promise<Array<[string, string]>> {
+    if (kind === 'user') {
+        const profiles = await getProfilesByIds(ids);
+        return profiles.map((profile) => [profile.id, escapeUnsafe(profile.username)]);
+    }
+    const settled = await Promise.allSettled(ids.map((id) => fetchName(kind, id)));
+    return settled.flatMap((result, i) => (
+        result.status === 'fulfilled' && result.value ? [[ids[i], escapeUnsafe(result.value)] as [string, string]] : []
+    ));
 }
 
 /**
@@ -104,10 +121,11 @@ export function useResolvedIds(entries: Array<[string, JSONValue]>): (key: strin
         }
         byKind.forEach((ids, kind) => {
             fetchNames(kind, ids).then((names) => {
-                names.forEach(([id, name]) => resolvedNames.set(refKey(kind, id), name));
-                if (!cancelled && names.length > 0) {
-                    setVersion((v) => v + 1);
+                if (cancelled || names.length === 0) {
+                    return;
                 }
+                names.forEach(([id, name]) => resolvedNames.set(refKey(kind, id), name));
+                setVersion((v) => v + 1);
             }).catch(() => {
                 // Unresolved IDs keep rendering as the raw value.
             });

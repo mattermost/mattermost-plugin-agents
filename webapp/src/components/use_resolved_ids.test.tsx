@@ -5,7 +5,7 @@ import React from 'react';
 import {render, screen} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
-import {getChannelById, getPost, getProfilesByIds, getTeamsByIds} from '@/client';
+import {getChannel, getPost, getProfilesByIds, getTeamsByIds} from '@/client';
 
 import ToolCard from './tool_card';
 import {ToolCall, ToolCallStatus} from './tool_types';
@@ -17,7 +17,7 @@ jest.mock('react-bootstrap', () => ({
 }), {virtual: true});
 
 jest.mock('@/client', () => ({
-    getChannelById: jest.fn(),
+    getChannel: jest.fn(),
     getPost: jest.fn(),
     getProfilesByIds: jest.fn(),
     getTeamsByIds: jest.fn(),
@@ -27,12 +27,12 @@ jest.mock('@/mm_webapp', () => ({
     Client4: {},
 }));
 
-const mockGetChannelById = getChannelById as jest.Mock;
+const mockGetChannel = getChannel as jest.Mock;
 const mockGetPost = getPost as jest.Mock;
 const mockGetProfilesByIds = getProfilesByIds as jest.Mock;
 const mockGetTeamsByIds = getTeamsByIds as jest.Mock;
 
-function renderCard(args: ToolCall['arguments']) {
+function cardElement(args: ToolCall['arguments']) {
     const tool: ToolCall = {
         id: 'tool_1',
         name: 'some_tool',
@@ -40,7 +40,7 @@ function renderCard(args: ToolCall['arguments']) {
         status: ToolCallStatus.Pending,
         arguments: args,
     };
-    return render(
+    return (
         <IntlProvider locale='en'>
             <ToolCard
                 tool={tool}
@@ -51,8 +51,12 @@ function renderCard(args: ToolCall['arguments']) {
                 showArguments={true}
                 showResults={false}
             />
-        </IntlProvider>,
+        </IntlProvider>
     );
+}
+
+function renderCard(args: ToolCall['arguments']) {
+    return render(cardElement(args));
 }
 
 describe('tool call ID resolution', () => {
@@ -61,7 +65,7 @@ describe('tool call ID resolution', () => {
         jest.resetAllMocks();
         mockGetProfilesByIds.mockResolvedValue([]);
         mockGetTeamsByIds.mockResolvedValue([]);
-        mockGetChannelById.mockRejectedValue(new Error('not found'));
+        mockGetChannel.mockRejectedValue(new Error('not found'));
         mockGetPost.mockRejectedValue(new Error('not found'));
     });
 
@@ -71,7 +75,7 @@ describe('tool call ID resolution', () => {
             {id: 'u2', username: 'bob'},
         ]);
         mockGetTeamsByIds.mockResolvedValue([{id: 't1', name: 'eng', display_name: 'Engineering'}]);
-        mockGetChannelById.mockResolvedValue({id: 'c1', name: 'town-square', display_name: 'Town Square'});
+        mockGetChannel.mockResolvedValue({id: 'c1', name: 'town-square', display_name: 'Town Square'});
         mockGetPost.mockResolvedValue({id: 'p1', message: 'the   quarterly\nplan'});
 
         renderCard({user_ids: ['u1', 'u2'], team_id: 't1', channel_id: 'c1', root_id: 'p1', limit: 5});
@@ -90,8 +94,60 @@ describe('tool call ID resolution', () => {
         renderCard({channel_id: 'gone', message: 'u1'});
 
         expect(await screen.findByText('gone')).not.toBeNull();
-        expect(mockGetChannelById).toHaveBeenCalledWith('gone');
+        expect(mockGetChannel).toHaveBeenCalledWith('gone');
         expect(mockGetProfilesByIds).not.toHaveBeenCalled();
         expect(screen.getByText('u1')).not.toBeNull();
+    });
+
+    test('resolves a DM channel that has no team', async () => {
+        mockGetChannel.mockResolvedValue({id: 'dm1', name: 'u1__u2', display_name: '', team_id: ''});
+
+        renderCard({channel_id: 'dm1'});
+
+        expect(await screen.findByText('u1__u2')).not.toBeNull();
+    });
+
+    test('one unresolvable team does not discard the others', async () => {
+        mockGetTeamsByIds.mockImplementation(async ([id]: string[]) => {
+            if (id === 'gone') {
+                throw new Error('404');
+            }
+            return [{id, name: id, display_name: `Team ${id}`}];
+        });
+
+        renderCard({team_ids: ['t1', 'gone', 't2']});
+
+        expect(await screen.findByText('Team t1')).not.toBeNull();
+        expect(await screen.findByText('Team t2')).not.toBeNull();
+        expect(screen.getByText('gone')).not.toBeNull();
+    });
+
+    test('escapes bidi and invisible characters in resolved names', async () => {
+        mockGetChannel.mockResolvedValue({id: 'c1', name: 'c1', display_name: 'safe\u202Eevil\u200B'});
+
+        renderCard({channel_id: 'c1'});
+
+        const label = await screen.findByText('safe[U+202E]evil[U+200B]');
+        expect(label.getAttribute('title')).toBe('c1');
+    });
+
+    test('drops a lookup superseded by changed arguments', async () => {
+        let resolveOld: (value: unknown) => void = jest.fn();
+        mockGetChannel.mockImplementation((id: string) => {
+            if (id === 'c1') {
+                return new Promise((resolve) => {
+                    resolveOld = resolve;
+                });
+            }
+            return Promise.resolve({id, name: id, display_name: `Channel ${id}`});
+        });
+
+        const view = renderCard({channel_id: 'c1'});
+        view.rerender(cardElement({channel_id: 'c2'}));
+        expect(await screen.findByText('Channel c2')).not.toBeNull();
+
+        resolveOld({id: 'c1', name: 'c1', display_name: 'Stale'});
+        await Promise.resolve();
+        expect(screen.queryByText('Stale')).toBeNull();
     });
 });
