@@ -15,6 +15,7 @@ import {useMenuTransition} from '@/hooks/use_menu_transition';
 import {useIsLicensedFor} from '@/license';
 
 import {CustomPrompt} from '@/types';
+import {MaxSkillDescriptionRunes} from '@/types/agents';
 import Dropdown from '../dropdown';
 
 import ContextVariablesDropdown from './context_variables_dropdown';
@@ -230,7 +231,7 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
                 )}
                 <FieldGroup>
                     <VisibilityLabel>
-                        <FormattedMessage defaultMessage='System Prompt'/>
+                        <FormattedMessage defaultMessage='Instructions'/>
                     </VisibilityLabel>
                     <ReadOnlyText>{prompt?.template}</ReadOnlyText>
                 </FieldGroup>
@@ -313,7 +314,7 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
                                 setErrors((prev) => ({...prev, name: false}));
                             }
                         }}
-                        placeholder={intl.formatMessage({defaultMessage: 'Enter a title for your prompt'})}
+                        placeholder={intl.formatMessage({defaultMessage: 'Enter a title for your skill'})}
                     />
                     {errors.name && (
                         <ErrorMessage message={<FormattedMessage defaultMessage='Action title is required'/>}/>
@@ -324,6 +325,7 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
                         id={`prompt-description-${prompt?.id ?? 'new'}`}
                         label={<FormattedMessage defaultMessage='Brief Description'/>}
                         rows={2}
+                        maxLength={MaxSkillDescriptionRunes}
                         value={description}
                         onChange={(e) => setDescription(e.target.value)}
                         placeholder={intl.formatMessage({defaultMessage: 'Enter a brief description'})}
@@ -332,7 +334,7 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
                 <FieldGroup>
                     <SystemPromptHeader>
                         <SystemPromptLabel htmlFor={`prompt-template-${prompt?.id ?? 'new'}`}>
-                            <FormattedMessage defaultMessage='System Prompt'/>
+                            <FormattedMessage defaultMessage='Instructions'/>
                         </SystemPromptLabel>
                         <Dropdown
                             target={
@@ -368,10 +370,10 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
                                 setErrors((prev) => ({...prev, template: false}));
                             }
                         }}
-                        placeholder={intl.formatMessage({defaultMessage: 'Enter the system prompt template'})}
+                        placeholder={intl.formatMessage({defaultMessage: 'Enter the skill instructions'})}
                     />
                     {errors.template && (
-                        <ErrorMessage message={<FormattedMessage defaultMessage='System prompt is required'/>}/>
+                        <ErrorMessage message={<FormattedMessage defaultMessage='Instructions are required'/>}/>
                     )}
                 </FieldGroup>
             </FormBody>

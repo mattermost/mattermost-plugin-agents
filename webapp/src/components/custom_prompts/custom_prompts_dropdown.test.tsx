@@ -62,7 +62,7 @@ describe('CustomPromptsDropdown', () => {
         mockPluginState = {customPrompts: [{id: 'a', name: 'Alpha'}, {id: 'b', name: 'Beta'}, {id: 'c', name: 'Gamma'}], pinnedPromptIds: pinned};
         renderDropdown();
 
-        const names = screen.getAllByRole('menuitem').map((item) => item.textContent).filter((text) => text !== 'Manage prompts');
+        const names = screen.getAllByRole('menuitem').map((item) => item.textContent).filter((text) => text !== 'Manage skills');
         expect(names).toEqual(expected);
     });
 

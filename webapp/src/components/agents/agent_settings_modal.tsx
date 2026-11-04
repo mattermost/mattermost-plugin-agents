@@ -81,7 +81,7 @@ const Sheet = styled.div`
     max-width: calc(100vw - 32px);
 `;
 
-// 80vh like the Custom Prompts modal; the editor's body scrolls inside it.
+// 80vh like the Skills modal; the editor's body scrolls inside it.
 const SettingsModal = styled(Modal)`
     && {
         height: 80vh;

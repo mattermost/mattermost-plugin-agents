@@ -142,6 +142,17 @@ export interface Turn {
     approval_state?: 'call' | 'result' | 'done';
 }
 
+// ActiveWait describes a pending wait_for_async_work pause in the
+// conversation's thread. Mirrors api.ActiveWaitResponse. Present only while the
+// wait is pending; absent once it resumes or is canceled. Times are unix ms.
+export interface ActiveWait {
+    post_id: string;
+    requester_user_id: string;
+    scheduled_at: number;
+    resume_at: number;
+    duration_minutes: number;
+}
+
 export interface ConversationResponse {
     id: string;
     user_id: string;
@@ -151,6 +162,7 @@ export interface ConversationResponse {
     title: string;
     operation: string;
     turns: Turn[];
+    active_wait?: ActiveWait;
 }
 
 // Composition mirrors the Go types in llm/composition.go. Per-source token
