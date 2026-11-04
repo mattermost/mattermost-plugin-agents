@@ -64,7 +64,7 @@ type Selection = {resolving: true} | {resolving: false; rootId?: string};
 // later pick by the user wins over it. Picking a chat also puts its root in the URL
 // (`/:team/messages/@agent/:rootId`), which the host's channel route accepts without reloading the
 // channel, so the chat survives a reload and can be linked; a new chat drops it.
-const AgentDMChannelView = ({channel, focusedPostId}: AgentDMChannelViewProps) => {
+const AgentDMChannelViewForChannel = ({channel, focusedPostId}: AgentDMChannelViewProps) => {
     const intl = useIntl();
     const dispatch = useDispatch();
     const store = useStore<GlobalState>();
@@ -102,6 +102,10 @@ const AgentDMChannelView = ({channel, focusedPostId}: AgentDMChannelViewProps) =
             console.error('Failed to load the linked agent chat post:', error); // eslint-disable-line no-console
             select(focusedPostId);
         });
+
+        return () => {
+            selectionSeq.current++;
+        };
     }, [focusedPostId, store]);
 
     const toChat = useCallback((targetBotId: string, rootId?: string) => {
@@ -238,5 +242,13 @@ const Centered = styled.div`
     align-items: center;
     justify-content: center;
 `;
+
+// Keyed by channel so that the open chat and any pending permalink lookup never carry over to another DM.
+const AgentDMChannelView = (props: AgentDMChannelViewProps) => (
+    <AgentDMChannelViewForChannel
+        key={props.channel.id}
+        {...props}
+    />
+);
 
 export default AgentDMChannelView;

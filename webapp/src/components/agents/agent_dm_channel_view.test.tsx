@@ -177,6 +177,28 @@ describe('AgentDMChannelView', () => {
         expect(screen.getByTestId('chat-page').textContent).toBe('root1');
     });
 
+    test('a permalink lookup pending in one DM does not open its chat in another DM', async () => {
+        let resolve: (post: unknown) => void = () => null;
+        mockGetPost.mockReturnValue(new Promise((r) => {
+            resolve = r;
+        }));
+        const {rerender} = renderView('reply9');
+
+        rerender(
+            <Provider store={makeStore()}>
+                <AgentDMChannelView
+                    channel={{id: 'dm2', type: 'D', name: 'agent1__me'} as Channel}
+                    channelId='dm2'
+                    teamId='team1'
+                />
+            </Provider>,
+        );
+        expect(screen.getByTestId('chat-page').textContent).toBe('new chat');
+
+        await act(async () => resolve({id: 'reply9', root_id: 'root9', channel_id: 'dm1'}));
+        expect(screen.getByTestId('chat-page').textContent).toBe('new chat');
+    });
+
     test('a later permalink in the same DM opens its chat', () => {
         const {setFocusedPost} = renderView();
         act(() => lastSection().onNewChat('agent1'));
