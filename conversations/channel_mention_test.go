@@ -781,7 +781,6 @@ func setupDeletedPostFixture(t *testing.T) *deletedPostFixture {
 		nil,
 		nil,
 		nil,
-		nil,
 		newDMPolicyChecker(),
 	)
 	service.SetConversationService(convService)
@@ -1154,7 +1153,9 @@ func TestStoredTurnTextFollowsAnchoredPost(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := setupDeletedPostFixture(t)
-			require.NoError(t, f.store.UpdateConversationTitle(f.conversationID, storedTitle))
+			renamed, err := f.store.RenameConversation(f.conversationID, storedTitle)
+			require.NoError(t, err)
+			require.True(t, renamed)
 
 			conversationID := f.conversationID
 			if tt.prepare != nil {
