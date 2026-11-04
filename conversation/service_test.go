@@ -3403,3 +3403,52 @@ func filterIDs(ids []string, want string) []string {
 	}
 	return out
 }
+
+// A second mention can append its user turn while the first run is still
+// executing tools, so the run's tool rounds land after that user turn. They
+// still belong to the first post and must go with it when it is regenerated.
+func TestRegenerateDeletesRoundsWrittenAfterALaterUserTurn(t *testing.T) {
+	svc, s := setupTestService(t)
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID: model.NewId(), BotID: model.NewId(), Operation: "conversation", SystemPrompt: "prompt", UserMessage: "go",
+	})
+	require.NoError(t, err)
+	convID := result.ConversationID
+
+	anchor := &store.Turn{
+		ID: model.NewId(), ConversationID: convID, PostID: new("post-a"), Role: "assistant",
+		Content: json.RawMessage(`[]`), Status: store.TurnStatusStreaming, CreatedAt: model.GetMillis(),
+	}
+	require.NoError(t, s.CreateTurnAutoSequence(anchor))
+	secondMention := &store.Turn{
+		ID: model.NewId(), ConversationID: convID, Role: "user",
+		Content: json.RawMessage(`[{"type":"text","text":"second mention"}]`), CreatedAt: model.GetMillis(),
+	}
+	require.NoError(t, s.CreateTurnAutoSequence(secondMention))
+	require.NoError(t, svc.WriteToolTurns(convID, []toolrunner.ToolTurn{{
+		AssistantToolCalls: []llm.ToolCall{{ID: "tc-a", Name: "tool", Arguments: json.RawMessage(`{"secret":"x"}`), Status: llm.ToolCallStatusAutoApproved}},
+		ToolResults:        []toolrunner.ToolResult{{ToolCallID: "tc-a", Name: "tool", Result: "private result"}},
+	}}, true, "post-a"))
+	settled, err := s.FinalizeStreamingTurn(anchor.ID, json.RawMessage(`[]`), 0, 0, store.TurnStatusComplete)
+	require.NoError(t, err)
+	require.True(t, settled)
+
+	require.NoError(t, svc.DeleteResponseTurns(convID, "post-a"))
+
+	turns, err := s.GetTurnsForConversation(convID)
+	require.NoError(t, err)
+	var ids []string
+	for _, turn := range turns {
+		uses, results := toolCallIDs(t, turn)
+		ids = append(ids, uses...)
+		ids = append(ids, results...)
+	}
+	assert.Empty(t, filterIDs(ids, "tc-a"), "the regenerated post's tool rounds must not outlive it")
+	var userTurns int
+	for _, turn := range turns {
+		if turn.Role == "user" {
+			userTurns++
+		}
+	}
+	assert.Equal(t, 2, userTurns, "both user turns stay")
+}
