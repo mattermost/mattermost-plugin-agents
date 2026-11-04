@@ -262,6 +262,7 @@ describe('ToolApprovalSet', () => {
         expect(getToolCardProps('tool_a').onApprove).toBeUndefined();
         expect(getToolCardProps('tool_b').onReject).toBeUndefined();
         getByText('Procurement Restricted', {exact: false});
+        getByText('This answer uses content from private channels');
         expect(queryByText('2 tools need decisions')).toBeNull();
 
         fireEvent.click(getByText('Keep private'));
@@ -280,5 +281,15 @@ describe('ToolApprovalSet', () => {
         expect(nonRequester.queryByText('This answer uses content from private channels')).toBeNull();
         expect(nonRequester.queryByText('Keep private')).toBeNull();
         expect(nonRequester.queryByText('Share with channel')).toBeNull();
+    });
+
+    test('uses a neutral title when no private channel was identified', () => {
+        const {getByText, queryByText} = renderComponent([
+            makeTool({id: 'tool_a', status: ToolCallStatus.Success, audience_review: true}),
+        ], 'result', true, []);
+
+        getByText('This answer needs review before sharing');
+        expect(queryByText('This answer uses content from private channels')).toBeNull();
+        expect(queryByText('private channel', {exact: false})).toBeNull();
     });
 });

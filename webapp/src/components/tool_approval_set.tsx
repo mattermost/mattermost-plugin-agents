@@ -330,10 +330,17 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
             {answerLevel && (
                 <AnswerReview>
                     <WarningTitle>
-                        <FormattedMessage
-                            id='ai.tool_call.private_source_warning_title'
-                            defaultMessage='This answer uses content from private channels'
-                        />
+                        {(props.privateChannelNames ?? []).length > 0 ? (
+                            <FormattedMessage
+                                id='ai.tool_call.private_source_warning_title'
+                                defaultMessage='This answer uses content from private channels'
+                            />
+                        ) : (
+                            <FormattedMessage
+                                id='ai.tool_call.private_source_warning_title_unconfirmed'
+                                defaultMessage='This answer needs review before sharing'
+                            />
+                        )}
                     </WarningTitle>
                     <WarningText>
                         {(props.privateChannelNames ?? []).length > 0 ? (
