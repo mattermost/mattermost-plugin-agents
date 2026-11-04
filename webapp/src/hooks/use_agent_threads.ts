@@ -16,7 +16,6 @@ import {
     AIThreadsReceived,
     AIThreadsRequested,
     AIThreadRemoved,
-    AIThreadRestored,
     AIThreadTitleSet,
     initialAIThreadsState,
     type AIThreadsState,
@@ -121,19 +120,14 @@ export async function renameAIThread(store: ThreadsStore, conversationId: string
     applyTitle(store, conversationId, title);
 }
 
-// Archives a chat, taking it out of the list right away. A failed archive puts it back where it
-// was and rejects.
+// Archives a chat, taking it out of the list right away. A failed archive rejects after reloading
+// the list, since the server may have archived it before the request failed.
 export async function archiveAIThread(store: ThreadsStore, conversationId: string): Promise<void> {
-    const threads = selectAIThreads(store.getState()) ?? [];
-    const index = threads.findIndex((t) => t.id === conversationId);
-    const previous = index >= 0 ? threads[index] : null;
     store.dispatch({type: AIThreadRemoved, conversationId});
     try {
         await archiveConversation(conversationId);
     } catch (e) {
-        if (previous) {
-            store.dispatch({type: AIThreadRestored, thread: previous, index});
-        }
+        fetchAIThreads(store.dispatch);
         throw e;
     }
     applyRemoval(store, conversationId);

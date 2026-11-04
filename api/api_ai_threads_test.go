@@ -113,6 +113,7 @@ func TestGetAIThreads(t *testing.T) {
 			e := SetupTestEnvironment(t)
 			defer e.Cleanup(t)
 			e.mockAPI.On("LogError", mock.Anything).Maybe()
+			e.mockAPI.On("GetPost", mock.Anything).Return(&model.Post{}, nil).Maybe()
 			e.api.conversationStore = convStore
 			mmClient := mmapimocks.NewMockClient(t)
 			mmClient.On("PublishWebSocketEvent", mock.Anything, mock.Anything, mock.Anything).Return().Maybe()

@@ -287,12 +287,23 @@ describe('stored AI threads', () => {
             expect(titles(store)).toEqual(['c1:', 'c3:']);
         });
 
-        test('a failed archive puts the chat back where it was and rejects', async () => {
+        test('a failed archive reloads the list and rejects', async () => {
             const store = await loaded();
             mockArchiveConversation.mockRejectedValue(new Error('nope'));
+            mockGetAIThreads.mockResolvedValueOnce([makeThread({id: 'c1'}), makeThread({id: 'c2'}), makeThread({id: 'c3'})]);
 
             await expect(archiveAIThread(store, 'c2')).rejects.toThrow('nope');
-            expect(titles(store)).toEqual(['c1:', 'c2:', 'c3:']);
+            await waitFor(() => expect(titles(store)).toEqual(['c1:', 'c2:', 'c3:']));
+        });
+
+        test('a failed archive the server did apply keeps the chat out of the list', async () => {
+            const store = await loaded();
+            mockArchiveConversation.mockRejectedValue(new Error('timeout'));
+            mockGetAIThreads.mockResolvedValueOnce([makeThread({id: 'c1'}), makeThread({id: 'c3'})]);
+
+            await expect(archiveAIThread(store, 'c2')).rejects.toThrow('timeout');
+            await waitFor(() => expect(mockGetAIThreads).toHaveBeenCalledTimes(2));
+            expect(titles(store)).toEqual(['c1:', 'c3:']);
         });
 
         test('a list that arrives while the archive request is in flight does not bring the chat back', async () => {
