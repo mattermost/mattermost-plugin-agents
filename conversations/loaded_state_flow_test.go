@@ -104,15 +104,6 @@ func (s *loadedStateFlowStore) GetLatestConversationByThreadBotUser(rootPostID, 
 	return &cp, nil
 }
 
-func (s *loadedStateFlowStore) ArchiveConversation(id string, archivedAt int64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if conv, ok := s.conversations[id]; ok && conv.DeleteAt == 0 {
-		conv.DeleteAt = archivedAt
-	}
-	return nil
-}
-
 func (s *loadedStateFlowStore) RestoreConversation(id string, archivedAt int64) (*store.Conversation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

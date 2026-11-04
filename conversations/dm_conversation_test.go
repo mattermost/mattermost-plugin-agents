@@ -40,8 +40,6 @@ type fakeConvStore struct {
 	turns         map[string][]store.Turn // keyed by conversationID
 	allTurns      map[string]*store.Turn  // keyed by turn ID
 	lookupErr     error
-	// appendErr, when set, fails CreateTurnAutoSequence.
-	appendErr error
 	// titleSet, when set, receives the result of each SetConversationTitleIfUnset.
 	titleSet chan bool
 }
@@ -152,15 +150,6 @@ func (s *fakeConvStore) RestoreConversation(id string, archivedAt int64) (*store
 	return &c, nil
 }
 
-func (s *fakeConvStore) ArchiveConversation(id string, archivedAt int64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if conv, ok := s.conversations[id]; ok && conv.DeleteAt == 0 {
-		conv.DeleteAt = archivedAt
-	}
-	return nil
-}
-
 // archive marks a conversation archived, as POST /conversations/:id/archive does.
 func (s *fakeConvStore) archive(id string) {
 	s.mu.Lock()
@@ -222,9 +211,6 @@ func (s *fakeConvStore) CreateTurn(turn *store.Turn) error {
 }
 
 func (s *fakeConvStore) CreateTurnAutoSequence(turn *store.Turn) error {
-	if s.appendErr != nil {
-		return s.appendErr
-	}
 	maxSeq, _ := s.GetMaxSequenceForConversation(turn.ConversationID)
 	turn.Sequence = maxSeq + 1
 	return s.CreateTurn(turn)

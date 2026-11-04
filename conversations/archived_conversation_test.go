@@ -5,7 +5,6 @@ package conversations_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -264,32 +263,4 @@ func TestRefusedResumeLeavesConversationArchived(t *testing.T) {
 			assert.Equal(t, before, env.state())
 		})
 	}
-}
-
-// TestDMReplyInArchivedThreadNotRecorded pins that a reply whose user turn
-// cannot be recorded leaves the archived conversation archived.
-func TestDMReplyInArchivedThreadNotRecorded(t *testing.T) {
-	env := setupDMTestEnv(t, dmMakeTextStream("Follow-up response"))
-	rootPostID := "root1"
-	env.mmClient.posts = map[string]*model.Post{rootPostID: {Id: rootPostID}}
-	channelID := env.channelID
-	created, err := env.convService.CreateConversation(conversation.CreateConversationParams{
-		UserID:       env.userID,
-		BotID:        env.botID,
-		ChannelID:    &channelID,
-		RootPostID:   &rootPostID,
-		Operation:    "conversation",
-		SystemPrompt: "You are helpful.",
-		UserMessage:  "First message",
-	})
-	require.NoError(t, err)
-	env.convStore.archive(created.ConversationID)
-	archivedAt := env.convStore.deleteAt(created.ConversationID)
-	env.convStore.appendErr = errors.New("db down")
-
-	reply := &model.Post{Id: "post2", UserId: env.userID, ChannelId: env.channelID, RootId: rootPostID, Message: "Follow up"}
-	_, err = env.conversations.CreateOrGetDMConversation(env.botID, env.user, env.channel, reply, nil)
-
-	require.ErrorContains(t, err, "db down")
-	assert.Equal(t, archivedAt, env.convStore.deleteAt(created.ConversationID), "an unrecorded reply must not un-archive the conversation")
 }

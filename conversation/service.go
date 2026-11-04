@@ -35,9 +35,6 @@ type Store interface {
 	// store.ErrConversationConflict when another active conversation owns its
 	// thread.
 	RestoreConversation(id string, archivedAt int64) (*store.Conversation, error)
-	// ArchiveConversation archives an active conversation at archivedAt; a
-	// missing or already archived one is a no-op.
-	ArchiveConversation(id string, archivedAt int64) error
 	// RenameConversation sets the title of an active conversation,
 	// reporting whether one was changed.
 	RenameConversation(id, title string) (bool, error)
@@ -285,11 +282,11 @@ const maxActivateAttempts = 3
 // a reply in an archived thread continues it with its history instead of
 // silently starting a new conversation. Returns store.ErrConversationNotFound
 // when the thread has no conversation at all.
-func (s *Service) findThreadConversation(rootPostID, botID, userID string) (active *store.Conversation, archivedAt int64, err error) {
+func (s *Service) findThreadConversation(rootPostID, botID, userID string) (*store.Conversation, error) {
 	for range maxActivateAttempts {
 		conv, err := s.store.GetLatestConversationByThreadBotUser(rootPostID, botID, userID)
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		active, err := s.ActivateConversation(conv)
 		if errors.Is(err, ErrConversationArchived) {
@@ -299,14 +296,14 @@ func (s *Service) findThreadConversation(rootPostID, botID, userID string) (acti
 			if errors.Is(err, store.ErrConversationNotFound) {
 				continue
 			}
-			return active, 0, err
+			return active, err
 		}
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
-		return active, conv.DeleteAt, nil
+		return active, nil
 	}
-	return nil, 0, ErrConversationArchived
+	return nil, ErrConversationArchived
 }
 
 // GetTurns returns all turns for a conversation, ordered by sequence.
@@ -453,7 +450,7 @@ type GetOrCreateResult struct {
 // GetOrCreateConversation looks up an existing conversation by (RootPostID, BotID),
 // or creates a new one if none exists.
 func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreateResult, error) {
-	existing, archivedAt, err := s.findThreadConversation(params.RootPostID, params.BotID, params.UserID)
+	existing, err := s.findThreadConversation(params.RootPostID, params.BotID, params.UserID)
 	if err != nil && !errors.Is(err, store.ErrConversationNotFound) {
 		return nil, fmt.Errorf("failed to look up conversation: %w", err)
 	}
@@ -461,12 +458,6 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 	if existing != nil {
 		turnID, appendErr := s.appendUserTurn(existing.ID, params.UserMessage, params.UserPostID, params.FileIDs, params.SessionID)
 		if appendErr != nil {
-			if archivedAt != 0 {
-				// The message was not recorded, so the restore must not stand.
-				if archiveErr := s.store.ArchiveConversation(existing.ID, archivedAt); archiveErr != nil {
-					return nil, errors.Join(appendErr, fmt.Errorf("failed to re-archive conversation: %w", archiveErr))
-				}
-			}
 			return nil, appendErr
 		}
 

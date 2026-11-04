@@ -120,10 +120,6 @@ func (m *mockConvServiceStore) GetLatestConversationByThreadBotUser(rootPostID, 
 	return m.GetConversationByThreadBotUser(rootPostID, botID, userID)
 }
 
-func (*mockConvServiceStore) ArchiveConversation(_ string, _ int64) error {
-	return nil
-}
-
 func (*mockConvServiceStore) RestoreConversation(_ string, _ int64) (*store.Conversation, error) {
 	return nil, store.ErrConversationNotFound
 }
