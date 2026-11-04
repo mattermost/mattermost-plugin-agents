@@ -122,8 +122,17 @@ type transcriptFile struct {
 	postType string
 	allowed  map[string]bool
 	reads    int
-	// channelRevoked denies the owner read access to the meeting channel.
+	// channelRevoked denies the owner read access to the file's channel.
 	channelRevoked bool
+	// channelID is the channel the file lives in; the meeting channel by default.
+	channelID string
+}
+
+func (f *transcriptFile) channel() string {
+	if f.channelID != "" {
+		return f.channelID
+	}
+	return summaryChannelID
 }
 
 func (f *transcriptFile) register(mm *mocks.MockClient) {
@@ -136,14 +145,14 @@ func (f *transcriptFile) register(mm *mocks.MockClient) {
 		Extension: "vtt",
 		Size:      int64(len(f.content)),
 		PostId:    summaryFilePost,
-		ChannelId: summaryChannelID,
+		ChannelId: f.channel(),
 	}, nil).Maybe()
 	mm.EXPECT().GetFile(f.id).RunAndReturn(func(string) (io.ReadCloser, error) {
 		f.reads++
 		return io.NopCloser(strings.NewReader(f.content)), nil
 	}).Maybe()
-	mm.EXPECT().GetPost(summaryFilePost).Return(&model.Post{Id: summaryFilePost, ChannelId: summaryChannelID, Type: f.postType}, nil).Maybe()
-	mm.EXPECT().HasPermissionToChannel(summaryUserID, summaryChannelID, model.PermissionReadChannel).
+	mm.EXPECT().GetPost(summaryFilePost).Return(&model.Post{Id: summaryFilePost, ChannelId: f.channel(), Type: f.postType}, nil).Maybe()
+	mm.EXPECT().HasPermissionToChannel(summaryUserID, f.channel(), model.PermissionReadChannel).
 		RunAndReturn(func(string, string, *model.Permission) bool { return !f.channelRevoked }).Maybe()
 	mm.EXPECT().LogError(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
 }
@@ -157,6 +166,11 @@ func newSummaryService(t *testing.T, convStore *store.Store, mm mmapi.Client) *S
 	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
 	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything).Maybe()
 	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+	// Setting the summary conversation's fixed title tells its owner.
+	if mockClient, ok := mm.(*mocks.MockClient); ok {
+		mockClient.On("PublishWebSocketEvent", conversation.WebsocketEventConversationUpdated, mock.Anything, mock.Anything).Return().Maybe()
+	}
 
 	return &Service{
 		pluginAPI:      pluginapi.NewClient(mockAPI, nil),
@@ -343,7 +357,7 @@ func TestRegenerateSummary(t *testing.T) {
 			conv, postID := startSummary(t, s, convStore, lm, file)
 			readsBefore := file.reads
 
-			stream, err := s.RegenerateSummary(auth.WithSessionID(t.Context(), regenSession), summaryBot(lm), summaryContext(), conv, postID)
+			stream, err := s.RegenerateSummary(auth.WithSessionID(t.Context(), regenSession), summaryBot(lm), summaryContext(), conv, &model.Post{Id: postID})
 
 			turns, turnsErr := convStore.GetTurnsForConversation(conv.ID)
 			require.NoError(t, turnsErr)
@@ -367,6 +381,66 @@ func TestRegenerateSummary(t *testing.T) {
 
 			require.Len(t, turns, 1, "the old response anchor must be scrubbed")
 			require.Equal(t, "user", turns[0].Role)
+		})
+	}
+}
+
+// TestRegenerateSummaryChecksRecordingSource covers a call-recording summary,
+// whose generated transcript lives in the bot DM: regenerate must still be
+// gated on the recording's own meeting channel and download policy.
+func TestRegenerateSummaryChecksRecordingSource(t *testing.T) {
+	convStore := newSummaryStore(t)
+	const dmChannelID = "bot-dm-channel"
+
+	tests := []struct {
+		name             string
+		recordingAllowed bool
+		channelRevoked   bool
+		wantErr          error
+	}{
+		{name: "recording still readable and downloadable", recordingAllowed: true},
+		{name: "owner lost the meeting channel", recordingAllowed: true, channelRevoked: true, wantErr: mmapi.ErrFileChannelForbidden},
+		{name: "recording download now denied by file policy", wantErr: mmapi.ErrFileActionForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			transcript := &transcriptFile{
+				id:        model.NewId(),
+				content:   longVTT(),
+				channelID: dmChannelID,
+				allowed:   map[string]bool{initialSession: true, regenSession: true},
+			}
+			recording := &transcriptFile{
+				id:             model.NewId(),
+				allowed:        map[string]bool{regenSession: tt.recordingAllowed},
+				channelRevoked: tt.channelRevoked,
+			}
+			mm := mocks.NewMockClient(t)
+			transcript.register(mm)
+			recording.register(mm)
+			lm := &summaryLLM{}
+			s := newSummaryService(t, convStore, mm)
+			conv, postID := startSummary(t, s, convStore, lm, transcript)
+
+			post := &model.Post{Id: postID}
+			post.AddProp(ReferencedRecordingFileID, recording.id)
+
+			stream, err := s.RegenerateSummary(auth.WithSessionID(t.Context(), regenSession), summaryBot(lm), summaryContext(), conv, post)
+
+			turns, turnsErr := convStore.GetTurnsForConversation(conv.ID)
+			require.NoError(t, turnsErr)
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+				require.Len(t, lm.streamed, 1, "no regenerate request may be sent")
+				require.Len(t, turns, 2, "a denied regenerate must leave the conversation untouched")
+				return
+			}
+			require.NoError(t, err)
+			_, err = stream.ReadAll()
+			require.NoError(t, err)
+			require.Len(t, lm.streamed, 2)
+			require.Len(t, turns, 1, "the old response anchor must be scrubbed")
 		})
 	}
 }

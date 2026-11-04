@@ -24,10 +24,12 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+const postRunReservationKeyPrefix = "post_run_reservation_"
+
 // MeetingSummaryRegenerator re-runs a meeting summary from the transcript
 // file its conversation references.
 type MeetingSummaryRegenerator interface {
-	RegenerateSummary(ctx stdcontext.Context, bot *bots.Bot, llmContext *llm.Context, conv *store.Conversation, postID string) (*llm.TextStreamResult, error)
+	RegenerateSummary(ctx stdcontext.Context, bot *bots.Bot, llmContext *llm.Context, conv *store.Conversation, post *model.Post) (*llm.TextStreamResult, error)
 }
 
 // SetMeetingSummaryRegenerator sets the service that regenerates meeting
@@ -127,18 +129,7 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		return ErrNotRegenerable
 	}
 
-	turns, err := c.convService.GetTurns(conv.ID)
-	if err != nil {
-		return fmt.Errorf("failed to get turns for regeneration: %w", err)
-	}
-
-	// The local stream map only covers this node. A fresh heartbeat on the
-	// post's turn means a stream (and possibly its tool loop) is still running
-	// on some node, so refuse rather than start a second run.
-	if hasLiveStreamingTurn(turns, post.Id, time.Now()) {
-		return fmt.Errorf("unable to regenerate post: %w", streaming.ErrAlreadyStreamingToPost)
-	}
-
+	// Read-only gates run before anything below claims or edits the post.
 	if err = c.checkRegenerateLicense(conv.Operation); err != nil {
 		return err
 	}
@@ -158,11 +149,42 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		return err
 	}
 
+	ctx, release, err := c.reservePostRun(ctx, post.Id)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	// Taken before settling: the node still running this post's stream
+	// refuses here, before it could claim that live run's turn.
 	ctx, err = c.streamingService.GetStreamingContext(ctx, post.Id)
 	if err != nil {
 		return fmt.Errorf("unable to get post streaming context: %w", err)
 	}
-	defer c.streamingService.FinishStreaming(post.Id)
+	// Finishing cancels the run; its tool runner must exit before the
+	// deferred release hands the post to another run.
+	var runDone <-chan struct{}
+	defer func() {
+		c.streamingService.FinishStreaming(post.Id)
+		c.awaitToolRunner(runDone, post.Id)
+	}()
+
+	// The local stream map only covers this node. A fresh heartbeat on the
+	// post's turn means a stream (and possibly its tool loop) is still running
+	// on some node, so refuse rather than start a second run. An abandoned one
+	// is settled first so the scrub below covers its saved tool rounds.
+	live, abandoned, err := c.convService.SettleAbandonedStreamingTurn(post.Id, streaming.StaleStreamThreshold)
+	if err != nil {
+		return fmt.Errorf("failed to check for a live stream before regeneration: %w", err)
+	}
+	if live {
+		return fmt.Errorf("unable to regenerate post: %w", streaming.ErrAlreadyStreamingToPost)
+	}
+	if abandoned != nil {
+		if err = c.markAbandonedPostInterrupted(post, *abandoned); err != nil {
+			return err
+		}
+	}
 
 	var result *llm.TextStreamResult
 	switch path {
@@ -174,7 +196,7 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 			return errors.New("meeting summary regeneration not available")
 		}
 		llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, c.contextBuilder.WithLLMContextNoTools())
-		result, err = c.meetingSummaries.RegenerateSummary(ctx, bot, llmContext, conv, post.Id)
+		result, err = c.meetingSummaries.RegenerateSummary(ctx, bot, llmContext, conv, post)
 
 	case regenerateChannelSummary:
 		result, err = c.regenerateChannelAnalysis(ctx, bot, user, conv, post)
@@ -183,7 +205,7 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		if _, ok := post.GetProp(streaming.RespondingToProp).(string); !ok {
 			return errors.New("post missing responding to prop")
 		}
-		result, err = c.regenerateViaConversation(ctx, policy, post)
+		result, runDone, err = c.regenerateViaConversation(ctx, policy, post)
 	}
 	if err != nil {
 		return fmt.Errorf("could not regenerate %s post: %w", conv.Operation, err)
@@ -204,19 +226,101 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	return nil
 }
 
-// hasLiveStreamingTurn reports whether postID's turn is still streaming with a
-// heartbeat newer than streaming.StaleStreamThreshold. An older one belongs to
-// a dead node and must not block regenerate.
-func hasLiveStreamingTurn(turns []store.Turn, postID string, now time.Time) bool {
-	for _, turn := range turns {
-		if turn.PostID == nil || *turn.PostID != postID || turn.Status != store.TurnStatusStreaming {
-			continue
-		}
-		if now.UnixMilli()-turn.UpdatedAt < streaming.StaleStreamThreshold.Milliseconds() {
-			return true
-		}
+// postRunReservationRenewInterval is how often a run extends its reservation;
+// a run (model calls and tool rounds included) can outlast the TTL.
+var postRunReservationRenewInterval = streaming.StaleStreamThreshold / 3
+
+// markAbandonedPostInterrupted repairs the post of a turn claimed from a dead
+// run, as the recovery sweep would, so it shows the interrupted notice if this
+// regenerate fails later. The sweep only revisits streaming turns, so the claim
+// is released when the post can't be updated.
+func (c *Conversations) markAbandonedPostInterrupted(post *model.Post, turn store.Turn) error {
+	if partial := streaming.PartialTextFromTurn(turn); len(partial) > len(post.Message) {
+		post.Message = partial
 	}
-	return false
+	streaming.MarkInterrupted(post, streaming.InterruptedReasonLost, model.GetMillis())
+	if err := c.mmClient.UpdatePost(post); err != nil {
+		if relErr := c.convService.ReleaseStreamingTurnClaim(turn.ID); relErr != nil {
+			c.mmClient.LogWarn("Failed to release abandoned streaming turn claim", "error", relErr, "turn_id", turn.ID)
+		}
+		return fmt.Errorf("failed to mark abandoned post interrupted: %w", err)
+	}
+	return nil
+}
+
+// toolRunnerExitWait bounds how long an ended run keeps its post reserved
+// while a canceled tool that ignores cancellation is still running.
+var toolRunnerExitWait = 2 * time.Minute
+
+// awaitToolRunner waits, after a run was canceled, for its tool runner to
+// exit, so no tool the run started is still running when the post goes to
+// another run. A nil done means the run had no tool runner.
+func (c *Conversations) awaitToolRunner(done <-chan struct{}, postID string) {
+	if done == nil {
+		return
+	}
+	select {
+	case <-done:
+	case <-time.After(toolRunnerExitWait):
+		c.mmClient.LogWarn("Tool runner still running after its run ended; releasing the post", "post_id", postID)
+	}
+}
+
+// reservePostRun atomically claims postID, across all nodes, for the one run
+// that writes to it: a new reply (see claimResponsePost), a regenerate, or a
+// tool decision. It is held from before the run's first model call until its
+// stream ends, so no second run can start on the post meanwhile. The claim is renewed until released, and
+// its TTL frees it if this node dies. The returned context is canceled if the
+// claim is lost, so the run stops before another node's can overlap it.
+func (c *Conversations) reservePostRun(ctx stdcontext.Context, postID string) (stdcontext.Context, func(), error) {
+	key := postRunReservationKeyPrefix + postID
+	token := model.NewId()
+	claimed, err := c.mmClient.KVCompareAndSetWithExpiry(key, nil, token, streaming.StaleStreamThreshold)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to reserve post for a run: %w", err)
+	}
+	if !claimed {
+		return nil, nil, fmt.Errorf("post already has a run in progress: %w", streaming.ErrAlreadyStreamingToPost)
+	}
+
+	ctx, cancel := stdcontext.WithCancel(ctx)
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(postRunReservationRenewInterval)
+		defer ticker.Stop()
+		lastRenewed := time.Now()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				renewed, renewErr := c.mmClient.KVCompareAndSetWithExpiry(key, token, token, streaming.StaleStreamThreshold)
+				if renewErr != nil {
+					c.mmClient.LogWarn("Failed to renew regenerate reservation", "error", renewErr, "post_id", postID)
+					if time.Since(lastRenewed) < streaming.StaleStreamThreshold {
+						continue
+					}
+				} else if renewed {
+					lastRenewed = time.Now()
+					continue
+				}
+				c.mmClient.LogWarn("Regenerate reservation was lost; stopping the run", "post_id", postID)
+				cancel()
+				return
+			}
+		}
+	}()
+
+	return ctx, func() {
+		close(stop)
+		<-done
+		cancel()
+		if _, err := c.mmClient.KVCompareAndSet(key, token, nil); err != nil {
+			c.mmClient.LogWarn("Failed to release regenerate reservation", "error", err, "post_id", postID)
+		}
+	}, nil
 }
 
 // checkRegenerateLicense gates regenerating any post of a conversation by the
@@ -301,17 +405,20 @@ func (c *Conversations) regenerateChannelAnalysis(
 
 // regenerateViaConversation rebuilds the completion request from the conversation entity
 // and runs the ToolRunner to produce a new response stream.
-func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy *turnPolicy, post *model.Post) (*llm.TextStreamResult, error) {
+func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy *turnPolicy, post *model.Post) (*llm.TextStreamResult, <-chan struct{}, error) {
 	conv := policy.conv
 	if conv == nil {
-		return nil, errors.New("post missing conversation_id for regeneration")
+		return nil, nil, errors.New("post missing conversation_id for regeneration")
 	}
 
 	// Regen truncates the request at the originating user message, so a
 	// steering note would never reach the model: cancel without one.
-	c.cancelThreadWake(responsePostMarkerKey(post))
+	c.cancelThreadWake(responsePostMarkerKey(post), post.ChannelId)
 
-	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences on regen, proceeding without filtering")
+	llmContext, err := policy.buildContext(ctx, "Failed to load user tool preferences on regen, proceeding without filtering")
+	if err != nil {
+		return nil, nil, err
+	}
 	llmContext.ResponsePostID = post.Id
 
 	// AllowUnsharedToolContent on DMs is a no-op (DM tool_results are shared)
@@ -321,7 +428,7 @@ func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy
 		SessionID:                auth.SessionIDFromContext(ctx),
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Clear prior attachments so the regenerated response starts clean.
@@ -334,8 +441,8 @@ func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy
 
 	runResult, runErr := policy.runToolLoop(ctx, llmContext, conv.ID, *completionReq, "Failed to write tool turns on regen")
 	if runErr != nil {
-		return nil, fmt.Errorf("tool runner failed on regen: %w", runErr)
+		return nil, nil, fmt.Errorf("tool runner failed on regen: %w", runErr)
 	}
 
-	return c.decorateStreamWithCreatedFiles(ctx, policy.bot, runResult.Stream, post, nil, llmContext, llmContext), nil
+	return c.decorateStreamWithCreatedFiles(ctx, policy.bot, runResult.Stream, post, nil, llmContext, llmContext), runResult.Done, nil
 }

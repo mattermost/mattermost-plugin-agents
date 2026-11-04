@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -25,8 +26,12 @@ type Store interface {
 	// GetConversation retrieves a conversation by ID. Returns an error if not found.
 	GetConversation(id string) (*store.Conversation, error)
 	GetConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error)
-	// UpdateConversationTitle updates the title of a conversation.
-	UpdateConversationTitle(id, title string) error
+	// RenameConversation sets the title of a non-deleted conversation,
+	// reporting whether one was changed.
+	RenameConversation(id, title string) (bool, error)
+	// SetConversationTitleIfUnset sets a generated title only while the
+	// conversation has none, reporting whether it did.
+	SetConversationTitleIfUnset(id, title string) (bool, error)
 	// UpdateConversationRootPostID sets the RootPostID on a conversation.
 	// Used when the post ID is only known after post creation (e.g., thread analysis DM posts).
 	UpdateConversationRootPostID(id string, rootPostID string) error
@@ -60,6 +65,15 @@ type Store interface {
 	// completion request before calling this — ExcludeAfterPostID needs the anchor.
 	DeleteResponseTurns(conversationID, postID string) error
 	GetMaxSequenceForConversation(conversationID string) (int, error)
+	// HasLiveStreamingTurn reports whether postID has a streaming turn whose
+	// heartbeat is newer than staleAfterMillis by the DB clock.
+	HasLiveStreamingTurn(postID string, staleAfterMillis int64) (bool, error)
+	// ClaimStaleStreamingTurn moves a stale streaming turn to interrupted at
+	// the end of its run, and reports whether this caller did.
+	ClaimStaleStreamingTurn(id string, staleAfterMillis int64) (bool, error)
+	// ReleaseStreamingTurnClaim returns a claimed turn to streaming so a later
+	// recovery sweep retries it.
+	ReleaseStreamingTurnClaim(id string) error
 }
 
 // BotLookup answers bot-membership and per-bot config queries.
@@ -184,6 +198,36 @@ func (s *Service) GetTurns(conversationID string) ([]store.Turn, error) {
 	return s.store.GetTurnsForConversation(conversationID)
 }
 
+// SettleAbandonedStreamingTurn prepares postID for a new run. It reports live
+// when the post's turn is still streaming with a heartbeat newer than
+// staleAfter (DB clock). A stale streaming turn belongs to a run whose node
+// died before settling it: it is claimed now, as the recovery sweep would, so
+// it sits after the tool rounds that run already saved and scrubbing its
+// response removes them too. The claimed turn is returned so the caller can
+// repair its post like the sweep does, or release the claim.
+func (s *Service) SettleAbandonedStreamingTurn(postID string, staleAfter time.Duration) (live bool, claimed *store.Turn, err error) {
+	turn, err := s.store.GetTurnByPostID(postID)
+	if err != nil {
+		return false, nil, fmt.Errorf("failed to get turn for post: %w", err)
+	}
+	if turn != nil && turn.Status == store.TurnStatusStreaming {
+		ok, claimErr := s.store.ClaimStaleStreamingTurn(turn.ID, staleAfter.Milliseconds())
+		if claimErr != nil {
+			return false, nil, fmt.Errorf("failed to settle abandoned streaming turn: %w", claimErr)
+		}
+		if ok {
+			claimed = turn
+		}
+	}
+	live, err = s.store.HasLiveStreamingTurn(postID, staleAfter.Milliseconds())
+	return live, claimed, err
+}
+
+// ReleaseStreamingTurnClaim undoes SettleAbandonedStreamingTurn's claim.
+func (s *Service) ReleaseStreamingTurnClaim(turnID string) error {
+	return s.store.ReleaseStreamingTurnClaim(turnID)
+}
+
 // GetInitiatingUserTurn returns the user turn that started the agent run
 // whose assistant turn produced postID. Used to derive the run's deterministic
 // TraceID at resume time so spans started on a different node still land in
@@ -301,9 +345,20 @@ func (s *Service) UpdateConversationRootPostID(id string, rootPostID string) err
 	return s.store.UpdateConversationRootPostID(id, rootPostID)
 }
 
-// UpdateConversationTitle updates the title of a conversation.
+// UpdateConversationTitle sets a conversation's title and tells its owner.
 func (s *Service) UpdateConversationTitle(id, title string) error {
-	return s.store.UpdateConversationTitle(id, title)
+	conv, err := s.store.GetConversation(id)
+	if err != nil {
+		return fmt.Errorf("failed to get conversation: %w", err)
+	}
+	renamed, err := s.store.RenameConversation(id, title)
+	if err != nil {
+		return fmt.Errorf("failed to set conversation title: %w", err)
+	}
+	if renamed {
+		PublishConversationTitleUpdated(s.mmClient, conv, title)
+	}
+	return nil
 }
 
 // GetOrCreateParams contains parameters for GetOrCreateConversation.
@@ -676,10 +731,15 @@ func pairToolResults(turns []store.Turn, blocksByTurn [][]ContentBlock) {
 			if b.Status == StatusPending || b.Status == StatusAccepted {
 				continue
 			}
+			content := MissingToolResultContent
+			if b.Status == StatusError && b.WouldAutoExecute {
+				// An auto-run batch stopped mid-execution: it may have run.
+				content = InterruptedToolResult
+			}
 			blocksByTurn[i] = append(blocksByTurn[i], ContentBlock{
 				Type:      BlockTypeToolResult,
 				ToolUseID: b.ID,
-				Content:   MissingToolResultContent,
+				Content:   content,
 				Status:    StatusError,
 				Shared:    new(true),
 			})
@@ -830,7 +890,24 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 	return nil
 }
 
-// GenerateTitle generates a short title for the conversation and saves it.
+// WebsocketEventConversationUpdated is published to a conversation's owner
+// when its title changes (webapp: custom_mattermost-ai_conversation_updated).
+const WebsocketEventConversationUpdated = "conversation_updated"
+
+// PublishConversationTitleUpdated tells only the conversation's owner its new title.
+func PublishConversationTitleUpdated(client mmapi.Client, conv *store.Conversation, title string) {
+	client.PublishWebSocketEvent(
+		WebsocketEventConversationUpdated,
+		map[string]any{
+			"conversation_id": conv.ID,
+			"title":           title,
+		},
+		&model.WebsocketBroadcast{UserId: conv.UserID},
+	)
+}
+
+// GenerateTitle generates a short title for an untitled conversation, saves it
+// unless the user set one meanwhile, and tells the owner.
 // This should be called asynchronously (in a goroutine) after conversation creation.
 // The lm parameter provides the language model for title generation.
 // The context parameter provides bot/user context for the LLM call; ctx
@@ -842,6 +919,14 @@ func (s *Service) GenerateTitle(
 	userMessage string,
 	context *llm.Context,
 ) error {
+	conv, err := s.store.GetConversation(conversationID)
+	if err != nil {
+		return fmt.Errorf("failed to get conversation: %w", err)
+	}
+	if conv.Title != "" {
+		return nil
+	}
+
 	request := "Write a short title for the following request. Include only the title and nothing else, no quotations. Request:\n" + userMessage
 
 	req := llm.CompletionRequest{
@@ -863,9 +948,18 @@ func (s *Service) GenerateTitle(
 	}
 
 	title = strings.Trim(title, "\n \"'")
+	if title == "" {
+		return nil
+	}
 
-	if err := s.store.UpdateConversationTitle(conversationID, title); err != nil {
+	// Conditional on the title still being unset: the user may have renamed
+	// the conversation while the title was generated.
+	updated, err := s.store.SetConversationTitleIfUnset(conversationID, title)
+	if err != nil {
 		return fmt.Errorf("failed to save title: %w", err)
+	}
+	if updated {
+		PublishConversationTitleUpdated(s.mmClient, conv, title)
 	}
 
 	return nil

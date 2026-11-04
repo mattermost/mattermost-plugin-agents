@@ -35,7 +35,7 @@ class IntegrationHelper {
      * Wait for the page to be fully loaded after login
      */
     async waitForPageReady() {
-        await this.page.waitForSelector('[class*="channel-header"], #channelHeaderInfo', { timeout: 30000 });
+        await new MattermostPage(this.page).waitForChannelHeader();
         await expect(this.page.getByTestId('ask-channel-button').first()).toBeVisible({ timeout: 30000 });
     }
 
@@ -273,7 +273,7 @@ data: [DONE]
 
         await aiPlugin.waitForThreadComposerIdle();
         await aiPlugin.ensureRhsNewChatTab();
-        await expect(aiPlugin.getRhsContainer().getByTestId('rhs-new-tab-create-post')).toBeVisible({ timeout: 10000 });
+        await expect(aiPlugin.getRhsContainer().getByTestId('agent-chat-new-composer')).toBeVisible({ timeout: 10000 });
         await aiPlugin.sendMessage(followUpUserText);
 
         await expect(aiPlugin.getRhsContainer().getByText(followUpText)).toBeVisible({ timeout: 30000 });

@@ -56,13 +56,22 @@ func (s *inMemoryStore) GetConversationByThreadBotUser(_, _, _ string) (*store.C
 	return nil, store.ErrConversationNotFound
 }
 
-func (s *inMemoryStore) UpdateConversationTitle(id, title string) error {
+func (s *inMemoryStore) RenameConversation(id, title string) (bool, error) {
 	conv, ok := s.conversations[id]
-	if !ok {
-		return store.ErrConversationNotFound
+	if !ok || conv.DeleteAt != 0 {
+		return false, nil
 	}
 	conv.Title = title
-	return nil
+	return true, nil
+}
+
+func (s *inMemoryStore) SetConversationTitleIfUnset(id, title string) (bool, error) {
+	conv, ok := s.conversations[id]
+	if !ok || conv.Title != "" || conv.DeleteAt != 0 {
+		return false, nil
+	}
+	conv.Title = title
+	return true, nil
 }
 
 func (s *inMemoryStore) UpdateConversationRootPostID(id string, rootPostID string) error {
@@ -921,4 +930,16 @@ func TestRegenerateAnalysisReusesConversation(t *testing.T) {
 	// User turn plus the regenerated tool round (assistant tool_use + tool_result).
 	require.Len(t, turns, 3)
 	require.Equal(t, "user", turns[0].Role)
+}
+
+func (s *inMemoryStore) HasLiveStreamingTurn(string, int64) (bool, error) {
+	return false, nil
+}
+
+func (*inMemoryStore) ClaimStaleStreamingTurn(string, int64) (bool, error) {
+	return false, nil
+}
+
+func (*inMemoryStore) ReleaseStreamingTurnClaim(string) error {
+	return nil
 }

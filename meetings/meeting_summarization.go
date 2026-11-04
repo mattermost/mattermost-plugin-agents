@@ -145,12 +145,17 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 		return nil, err
 	}
 
+	// The caller reads surePost after we return, while the worker below rewrites
+	// its post (pluginapi's UpdatePost copies the server's response into it), so
+	// the worker gets its own copy.
+	workerPost := surePost.Clone()
+
 	go func() (reterr error) {
 		// Update to an error if we return one.
 		defer func() {
 			if reterr != nil {
-				surePost.Message = T("agents.summairize_subscription_error", "Sorry! Something went wrong. Check the server logs for details.")
-				if err := s.pluginAPI.Post.UpdatePost(surePost); err != nil {
+				workerPost.Message = T("agents.summairize_subscription_error", "Sorry! Something went wrong. Check the server logs for details.")
+				if err := s.pluginAPI.Post.UpdatePost(workerPost); err != nil {
 					s.pluginAPI.Log.Error("Failed to update post in error handling newCallTranscriptionSummaryThread", "error", err)
 				}
 				s.pluginAPI.Log.Error("Error in call recording post", "error", reterr)
@@ -191,8 +196,8 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 		}
 
 		summaryPost := &model.Post{
-			RootId:    surePost.Id,
-			ChannelId: surePost.ChannelId,
+			RootId:    workerPost.Id,
+			ChannelId: workerPost.ChannelId,
 			Message:   "",
 		}
 		summaryPost.AddProp(ReferencedTranscriptPostID, transcriptionPost.Id)
@@ -401,11 +406,12 @@ func (s *Service) SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, 
 	}, nil
 }
 
-// RegenerateSummary re-runs the meeting summary answered by postID. The
-// transcript is re-read, with the requester's file policy, from the file
-// referenced by the conversation's first user turn, and the prior response
-// turns anchored to postID are scrubbed.
-func (s *Service) RegenerateSummary(ctx stdcontext.Context, bot *bots.Bot, llmContext *llm.Context, conv *store.Conversation, postID string) (*llm.TextStreamResult, error) {
+// RegenerateSummary re-runs the meeting summary answered by post. The
+// transcript is re-read from the file referenced by the conversation's first
+// user turn, and the prior response turns anchored to post are scrubbed. The
+// requester must still pass the download policy and channel read check for the
+// transcript and, for a call recording, for the recording it was made from.
+func (s *Service) RegenerateSummary(ctx stdcontext.Context, bot *bots.Bot, llmContext *llm.Context, conv *store.Conversation, post *model.Post) (*llm.TextStreamResult, error) {
 	if err := s.checkMeetingsLicense(); err != nil {
 		return nil, err
 	}
@@ -414,13 +420,20 @@ func (s *Service) RegenerateSummary(ctx stdcontext.Context, bot *bots.Bot, llmCo
 	if err != nil {
 		return nil, err
 	}
-	mm := mmapi.WithFilePolicy(s.mmClient, auth.SessionIDFromContext(ctx))
-	transcription, filePost, err := readTranscript(mm, fileID)
+	sessionID := auth.SessionIDFromContext(ctx)
+	sourceFileIDs := []string{fileID}
+	if recordingID, _ := post.GetProp(ReferencedRecordingFileID).(string); recordingID != "" {
+		sourceFileIDs = append(sourceFileIDs, recordingID)
+	}
+	for _, sourceFileID := range sourceFileIDs {
+		if _, err = mmapi.GetReadableFileInfo(s.mmClient, sessionID, conv.UserID, sourceFileID); err != nil {
+			return nil, err
+		}
+	}
+
+	transcription, _, err := readTranscript(mmapi.WithFilePolicy(s.mmClient, sessionID), fileID)
 	if err != nil {
 		return nil, err
-	}
-	if !s.mmClient.HasPermissionToChannel(conv.UserID, filePost.ChannelId, model.PermissionReadChannel) {
-		return nil, errors.New("user doesn't have permission to read the meeting transcript's channel")
 	}
 
 	request, err := s.buildSummaryRequest(ctx, bot, transcription, llmContext)
@@ -429,7 +442,7 @@ func (s *Service) RegenerateSummary(ctx stdcontext.Context, bot *bots.Bot, llmCo
 	}
 	request.OperationSubType = llm.SubTypeRegenerate
 
-	if err := s.convService.DeleteResponseTurns(conv.ID, postID); err != nil {
+	if err := s.convService.DeleteResponseTurns(conv.ID, post.Id); err != nil {
 		return nil, fmt.Errorf("unable to scrub prior meeting summary: %w", err)
 	}
 

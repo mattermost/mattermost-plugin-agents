@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
@@ -38,6 +39,11 @@ const PendingShareToolResultRedaction = "[result pending the user's decision to 
 // it as a call that ran and returned nothing.
 const NotExecutedToolResult = "Not executed: the user stopped the response or moved on without approving this tool call."
 
+// InterruptedToolResult is replayed for an auto-run tool call whose response
+// ended while the batch was executing, so its side effects may already have
+// happened.
+const InterruptedToolResult = "Unknown outcome: the response was interrupted while this tool call was running, so it may have already taken effect. Check its effects before calling it again."
+
 // unsharedToolUseArgumentsRedaction replaces tool_use arguments the requester
 // has not shared. Empty JSON keeps the call well-formed for providers that
 // require a JSON object while stripping any sensitive parameter values.
@@ -60,10 +66,7 @@ type PostConversionOptions struct {
 // conversation's own (e.g. a meeting's captions file), so access is re-checked
 // on every replay.
 func canReadFileChannel(opts PostConversionOptions, fileInfo *model.FileInfo) bool {
-	if opts.UserID == "" || fileInfo.ChannelId == "" {
-		return false
-	}
-	return opts.MMClient.HasPermissionToChannel(opts.UserID, fileInfo.ChannelId, model.PermissionReadChannel)
+	return mmapi.CheckFileChannelRead(opts.MMClient, opts.UserID, fileInfo) == nil
 }
 
 // BlocksToPost converts a slice of content blocks and a role string into an llm.Post.
@@ -91,6 +94,7 @@ func BlocksToPost(
 	var descriptors []string
 	var notices []string
 	resultIDs := make(map[string]bool)
+	autoRunIDs := make(map[string]bool)
 
 	for _, block := range blocks {
 		switch block.Type {
@@ -143,6 +147,9 @@ func BlocksToPost(
 				enrichToolCallFromStore(&toolCall, opts.ToolStore)
 			}
 			post.ToolUse = append(post.ToolUse, toolCall)
+			if block.WouldAutoExecute {
+				autoRunIDs[block.ID] = true
+			}
 
 		case BlockTypeToolResult:
 			content := block.Content
@@ -174,18 +181,18 @@ func BlocksToPost(
 				notices = append(notices, format.UnavailableAttachment("", format.AttachmentLoadFailed))
 				continue
 			}
-			// Fetched even with vision off: it re-checks the requester's access
-			// before the placeholder names the file.
+			// Fetched even with vision off: access is re-checked before the
+			// placeholder names the file.
 			fileInfo, err := opts.MMClient.GetFileInfo(block.FileID)
 			if err != nil || fileInfo == nil {
 				notices = append(notices, attachmentLoadNotice(opts.MMClient, block, err, "failed to get file info for image attachment"))
 				continue
 			}
-			if !opts.EnableVision {
-				notices = append(notices, format.UnavailableAttachment(fileInfo.Name, format.AttachmentImageInputDisabled))
+			if !canReadFileChannel(opts, fileInfo) {
 				continue
 			}
-			if !canReadFileChannel(opts, fileInfo) {
+			if !opts.EnableVision {
+				notices = append(notices, format.UnavailableAttachment(fileInfo.Name, format.AttachmentImageInputDisabled))
 				continue
 			}
 			if !llm.IsSupportedImageMimeType(fileInfo.MimeType) {
@@ -278,15 +285,27 @@ func BlocksToPost(
 		}
 	}
 
+	// A batch left awaiting a decision always holds a call that did not pass
+	// the auto-run policy; one where every unresolved call passed it was
+	// executing when the response ended.
+	unresolved := func(tc llm.ToolCall) bool {
+		return !resultIDs[tc.ID] && (tc.Status == llm.ToolCallStatusPending || tc.Status == llm.ToolCallStatusAccepted)
+	}
+	wasExecuting := slices.ContainsFunc(post.ToolUse, unresolved) && !slices.ContainsFunc(post.ToolUse, func(tc llm.ToolCall) bool {
+		return unresolved(tc) && !autoRunIDs[tc.ID]
+	})
 	for i := range post.ToolUse {
 		tc := &post.ToolUse[i]
-		if resultIDs[tc.ID] {
+		if !unresolved(*tc) {
 			continue
 		}
-		if tc.Status == llm.ToolCallStatusPending || tc.Status == llm.ToolCallStatusAccepted {
-			tc.Result = NotExecutedToolResult
-			tc.Status = llm.ToolCallStatusRejected
+		if wasExecuting {
+			tc.Result = InterruptedToolResult
+			tc.Status = llm.ToolCallStatusError
+			continue
 		}
+		tc.Result = NotExecutedToolResult
+		tc.Status = llm.ToolCallStatusRejected
 	}
 
 	if len(textParts) > 0 {

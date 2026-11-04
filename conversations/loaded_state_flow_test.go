@@ -83,8 +83,12 @@ func (s *loadedStateFlowStore) GetConversationByThreadBotUser(rootPostID, botID,
 	return nil, store.ErrConversationNotFound
 }
 
-func (s *loadedStateFlowStore) UpdateConversationTitle(id, title string) error {
-	return nil
+func (s *loadedStateFlowStore) RenameConversation(id, title string) (bool, error) {
+	return false, nil
+}
+
+func (s *loadedStateFlowStore) SetConversationTitleIfUnset(id, title string) (bool, error) {
+	return false, nil
 }
 
 func (s *loadedStateFlowStore) UpdateConversationRootPostID(id string, rootPostID string) error {
@@ -315,6 +319,70 @@ func (s *loadedStateFlowStore) GetMaxSequenceForConversation(conversationID stri
 	return maxSeq, nil
 }
 
+// HasLiveStreamingTurn mirrors the store query, with UpdatedAt read against
+// the local clock.
+func (s *loadedStateFlowStore) HasLiveStreamingTurn(postID string, staleAfterMillis int64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cutoff := model.GetMillis() - staleAfterMillis
+	for _, turns := range s.turns {
+		for _, turn := range turns {
+			if turn.PostID != nil && *turn.PostID == postID && turn.Status == store.TurnStatusStreaming && turn.UpdatedAt >= cutoff {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// ClaimStaleStreamingTurn mirrors the store: a stale streaming turn becomes
+// interrupted and moves after the turns its run saved, up to the next user turn.
+func (s *loadedStateFlowStore) ClaimStaleStreamingTurn(id string, staleAfterMillis int64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for convID, turns := range s.turns {
+		idx := slices.IndexFunc(turns, func(t store.Turn) bool { return t.ID == id })
+		if idx < 0 {
+			continue
+		}
+		if turns[idx].Status != store.TurnStatusStreaming || turns[idx].UpdatedAt >= model.GetMillis()-staleAfterMillis {
+			return false, nil
+		}
+		end := idx + 1
+		for end < len(turns) && turns[end].Role != "user" {
+			end++
+		}
+		free := turns[idx].Sequence
+		for j := idx + 1; j < end; j++ {
+			turns[j].Sequence, free = free, turns[j].Sequence
+		}
+		turns[idx].Sequence = free
+		turns[idx].Status = store.TurnStatusInterrupted
+		slices.SortFunc(turns, func(a, b store.Turn) int { return a.Sequence - b.Sequence })
+		for i := range turns {
+			cp := turns[i]
+			s.allTurns[cp.ID] = &cp
+		}
+		s.turns[convID] = turns
+		return true, nil
+	}
+	return false, nil
+}
+
+func (s *loadedStateFlowStore) ReleaseStreamingTurnClaim(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for convID, turns := range s.turns {
+		for i := range turns {
+			if turns[i].ID == id && turns[i].Status == store.TurnStatusInterrupted {
+				s.turns[convID][i].Status = store.TurnStatusStreaming
+				s.allTurns[id].Status = store.TurnStatusStreaming
+			}
+		}
+	}
+	return nil
+}
+
 type loadedStateLLM struct {
 	mu       sync.Mutex
 	requests []llm.CompletionRequest
@@ -535,6 +603,7 @@ func TestHandleToolCallExecutesApprovedToolRestoredFromLoadTurns(t *testing.T) {
 	botsService.SetBotsForTesting([]*bots.Bot{bot})
 
 	mmClient := mocks.NewMockClient(t)
+	allowPostRunReservation(mmClient)
 	seedRequesterInitiator(t, convStore, conv.ID, mmClient)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 
@@ -599,6 +668,7 @@ func TestHandleToolCallFailsSafelyWhenNoMatchingLoadTurn(t *testing.T) {
 	botsService.SetBotsForTesting([]*bots.Bot{bot})
 
 	mmClient := mocks.NewMockClient(t)
+	allowPostRunReservation(mmClient)
 	seedRequesterInitiator(t, convStore, conv.ID, mmClient)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 
@@ -666,6 +736,7 @@ func TestHandleToolCallRejectsServerOriginMismatchEvenAfterLoad(t *testing.T) {
 	botsService.SetBotsForTesting([]*bots.Bot{bot})
 
 	mmClient := mocks.NewMockClient(t)
+	allowPostRunReservation(mmClient)
 	seedRequesterInitiator(t, convStore, conv.ID, mmClient)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 
@@ -735,6 +806,7 @@ func TestHandleToolCallRestoresMultipleLoadsBeforeExecutingApprovedTool(t *testi
 	botsService.SetBotsForTesting([]*bots.Bot{bot})
 
 	mmClient := mocks.NewMockClient(t)
+	allowPostRunReservation(mmClient)
 	seedRequesterInitiator(t, convStore, conv.ID, mmClient)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 
@@ -894,7 +966,7 @@ func TestRegenerateRestoresLoadsBeforeAnchorButDropsLoadsInScrubbedGeneration(t 
 	})
 	require.NoError(t, err)
 
-	streamResult, err := c.regenerateViaConversation(context.Background(), policy, post)
+	streamResult, _, err := c.regenerateViaConversation(context.Background(), policy, post)
 	require.NoError(t, err)
 	_, readErr := streamResult.ReadAll()
 	require.NoError(t, readErr)
@@ -949,6 +1021,7 @@ func TestHandleToolResultScopesSharedToClickedPost(t *testing.T) {
 	botsService.SetBotsForTesting([]*bots.Bot{loadedStateBot(&loadedStateLLM{})})
 
 	mmClient := mocks.NewMockClient(t)
+	allowPostRunReservation(mmClient)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 	mmClient.On("GetUser", testRequesterID).Return(&model.User{Id: testRequesterID, Username: "user"}, nil).Once()
 

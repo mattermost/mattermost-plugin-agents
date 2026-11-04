@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/lifecycle"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -53,6 +54,12 @@ func (c *lockedStreamingClient) lastUpdate() *model.Post {
 		return nil
 	}
 	return c.updatedPosts[len(c.updatedPosts)-1]
+}
+
+func (c *lockedStreamingClient) updateCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.updatedPosts)
 }
 
 func (c *lockedStreamingClient) controlCount(control string) int {
@@ -234,6 +241,222 @@ func TestStreamHeartbeat(t *testing.T) {
 	turn := findStreamTurn(ts.turns, post.Id)
 	require.NotNil(t, turn)
 	assert.Equal(t, store.TurnStatusComplete, turn.Status)
+}
+
+// A stream whose turn can't be kept fresh would soon look abandoned to other
+// nodes, which may recover or regenerate it; it must stop instead of running on.
+func TestStreamStopsWhenItsTurnCannotBePersisted(t *testing.T) {
+	tests := []struct {
+		name         string
+		createErr    error
+		heartbeatErr error
+	}{
+		{name: "streaming turn insert fails", createErr: errors.New("db down")},
+		{name: "heartbeats keep failing", heartbeatErr: errors.New("db down")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service, client, ts := newRecoveryTestService(t)
+			service.SetHeartbeatInterval(5 * time.Millisecond)
+			turnLeaseMaxAge = 20 * time.Millisecond
+			t.Cleanup(func() { turnLeaseMaxAge = StaleStreamThreshold / 2 })
+			ts.createErr = tt.createErr
+			ts.heartbeatErr = tt.heartbeatErr
+
+			post := newStreamPost()
+			ctx, err := service.GetStreamingContext(context.Background(), post.Id)
+			require.NoError(t, err)
+			stream := make(chan llm.TextStreamEvent)
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				defer service.FinishStreaming(post.Id)
+				service.StreamToPost(ctx, &llm.TextStreamResult{Stream: stream}, post, "en", "requester-id")
+			}()
+
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				require.Fail(t, "the stream must stop on its own")
+			}
+			require.ErrorIs(t, context.Cause(ctx), errTurnLeaseLost, "the run's context is canceled so its tools stop")
+			last := client.lastUpdate()
+			require.NotNil(t, last)
+			assert.Equal(t, InterruptedReasonLost, last.GetProp(InterruptedProp))
+		})
+	}
+}
+
+// Once another node claims the turn as abandoned it owns the post (it may be
+// regenerating it), so this run stops calling tools and leaves the post alone.
+func TestStreamStopsWhenItsTurnIsClaimed(t *testing.T) {
+	service, client, ts := newRecoveryTestService(t)
+	service.SetHeartbeatInterval(5 * time.Millisecond)
+
+	post := newStreamPost()
+	ctx, err := service.GetStreamingContext(context.Background(), post.Id)
+	require.NoError(t, err)
+	stream := make(chan llm.TextStreamEvent)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer service.FinishStreaming(post.Id)
+		service.StreamToPost(ctx, &llm.TextStreamResult{Stream: stream}, post, "en", "requester-id")
+	}()
+
+	require.Eventually(t, func() bool {
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+		turn := findStreamTurn(ts.turns, post.Id)
+		if turn == nil {
+			return false
+		}
+		turn.Status = store.TurnStatusInterrupted
+		return true
+	}, 2*time.Second, time.Millisecond)
+	updatesAtClaim := client.updateCount()
+	heartbeatsAtClaim := client.controlCount(PostStreamingControlHeartbeat)
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "the stream must stop once its turn is claimed")
+	}
+	require.ErrorIs(t, context.Cause(ctx), errTurnClaimed)
+	assert.Equal(t, updatesAtClaim, client.updateCount(), "the claiming node owns the post")
+	assert.Zero(t, client.controlCount(PostStreamingControlEnd), "no end event may cut off the claiming node's stream")
+	assert.LessOrEqual(t, client.controlCount(PostStreamingControlHeartbeat), heartbeatsAtClaim+1, "no heartbeats after the claim is seen")
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	assert.Zero(t, ts.finalizes, "a claimed turn must not be finalized by the old run")
+}
+
+// A claim can land between heartbeats; the run learns of it only when it
+// finalizes at the end, and must then leave the claiming node's post alone.
+func TestStreamClaimedBeforeItEndsLeavesThePostAlone(t *testing.T) {
+	tests := []struct {
+		name     string
+		endEvent bool
+	}{
+		{name: "stream ends with an end event", endEvent: true},
+		{name: "stream channel just closes"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service, client, ts := newRecoveryTestService(t)
+			service.SetHeartbeatInterval(time.Hour)
+
+			post := newStreamPost()
+			ctx, err := service.GetStreamingContext(context.Background(), post.Id)
+			require.NoError(t, err)
+			stream := make(chan llm.TextStreamEvent)
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				defer service.FinishStreaming(post.Id)
+				service.StreamToPost(ctx, &llm.TextStreamResult{Stream: stream}, post, "en", "requester-id")
+			}()
+
+			stream <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "old run"}
+			ts.mu.Lock()
+			turn := findStreamTurn(ts.turns, post.Id)
+			require.NotNil(t, turn)
+			turn.Status = store.TurnStatusInterrupted
+			ts.mu.Unlock()
+			updatesAtClaim := client.updateCount()
+
+			if tt.endEvent {
+				stream <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+			}
+			close(stream)
+			<-done
+
+			assert.Equal(t, updatesAtClaim, client.updateCount(), "the claiming node owns the post")
+			assert.Zero(t, client.controlCount(PostStreamingControlEnd))
+			ts.mu.Lock()
+			defer ts.mu.Unlock()
+			assert.Equal(t, store.TurnStatusInterrupted, findStreamTurn(ts.turns, post.Id).Status)
+		})
+	}
+}
+
+// Stop during an auto-run batch must not leave its calls pending: they may
+// already have taken effect, and a pending call would be offered to run again.
+func TestStopDuringAutoRunBatchRecordsCallsAsErrored(t *testing.T) {
+	service, _, ts := newRecoveryTestService(t)
+	post := newStreamPost()
+	ctx, err := service.GetStreamingContext(context.Background(), post.Id)
+	require.NoError(t, err)
+	stream := make(chan llm.TextStreamEvent)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer service.FinishStreaming(post.Id)
+		service.StreamToPost(ctx, &llm.TextStreamResult{Stream: stream}, post, "en", "requester-id")
+	}()
+
+	stream <- llm.TextStreamEvent{Type: llm.EventTypeToolCallBatch, Value: llm.ToolCallBatch{
+		Phase: llm.ToolCallPhaseExecuting,
+		Calls: []llm.ToolCall{{ID: "call-1", Name: "create_post", Status: llm.ToolCallStatusPending, WouldAutoExecute: true}},
+	}}
+	service.StopStreaming(post.Id)
+	<-done
+
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	turn := findStreamTurn(ts.turns, post.Id)
+	require.NotNil(t, turn)
+	blocks, err := conversation.UnmarshalBlocks(turn.Content)
+	require.NoError(t, err)
+	var statuses []string
+	for _, b := range blocks {
+		if b.Type == conversation.BlockTypeToolUse {
+			statuses = append(statuses, b.Status)
+		}
+	}
+	assert.Equal(t, []string{conversation.StatusError}, statuses)
+}
+
+// A finalize that fails leaves the turn's ownership unknown: a transient
+// failure is retried, and one that keeps failing must not write the post.
+func TestStreamEndWhenFinalizeFails(t *testing.T) {
+	tests := []struct {
+		name         string
+		failures     int
+		wantPostEdit bool
+	}{
+		{name: "transient failure is retried", failures: 1, wantPostEdit: true},
+		{name: "persistent failure leaves the post alone", failures: finalizeAttempts},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			finalizeRetryDelay = time.Millisecond
+			t.Cleanup(func() { finalizeRetryDelay = 200 * time.Millisecond })
+			service, client, ts := newRecoveryTestService(t)
+			ts.finalizeFailures = tt.failures
+
+			post := newStreamPost()
+			stream := make(chan llm.TextStreamEvent, 2)
+			stream <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "final answer"}
+			stream <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+			close(stream)
+			service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: stream}, post, "en", "requester-id")
+
+			last := client.lastUpdate()
+			if tt.wantPostEdit {
+				require.NotNil(t, last)
+				assert.Equal(t, "final answer", last.Message)
+				assert.Equal(t, 1, client.controlCount(PostStreamingControlEnd))
+				return
+			}
+			assert.Nil(t, last, "a run that can't confirm it owns the post must not write it")
+			assert.Zero(t, client.controlCount(PostStreamingControlEnd))
+		})
+	}
 }
 
 func TestNewStreamClearsInterruptedMarker(t *testing.T) {

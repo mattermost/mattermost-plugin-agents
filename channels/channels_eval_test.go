@@ -146,11 +146,22 @@ func (s *evalInMemoryStore) GetConversationByThreadBotUser(_, _, _ string) (*sto
 	return nil, store.ErrConversationNotFound
 }
 
-func (s *evalInMemoryStore) UpdateConversationTitle(id, title string) error {
-	if c, ok := s.conversations[id]; ok {
-		c.Title = title
+func (s *evalInMemoryStore) RenameConversation(id, title string) (bool, error) {
+	c, ok := s.conversations[id]
+	if !ok || c.DeleteAt != 0 {
+		return false, nil
 	}
-	return nil
+	c.Title = title
+	return true, nil
+}
+
+func (s *evalInMemoryStore) SetConversationTitleIfUnset(id, title string) (bool, error) {
+	c, ok := s.conversations[id]
+	if !ok || c.Title != "" || c.DeleteAt != 0 {
+		return false, nil
+	}
+	c.Title = title
+	return true, nil
 }
 
 func (s *evalInMemoryStore) UpdateConversationRootPostID(id string, rootPostID string) error {
@@ -293,4 +304,16 @@ func setupChannelMocksFromThreadData(mmClient *mocks.MockClient, threadData *eva
 	for id, file := range threadData.Files {
 		mmClient.On("GetFile", id).Return(io.NopCloser(bytes.NewReader(file)), nil).Maybe()
 	}
+}
+
+func (s *evalInMemoryStore) HasLiveStreamingTurn(string, int64) (bool, error) {
+	return false, nil
+}
+
+func (*evalInMemoryStore) ClaimStaleStreamingTurn(string, int64) (bool, error) {
+	return false, nil
+}
+
+func (*evalInMemoryStore) ReleaseStreamingTurnClaim(string) error {
+	return nil
 }

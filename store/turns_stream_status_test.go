@@ -104,6 +104,37 @@ func TestGetStaleStreamingTurns(t *testing.T) {
 	}
 }
 
+func TestHasLiveStreamingTurn(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   string
+		ageMs    int64
+		wantLive bool
+	}{
+		{name: "fresh streaming turn is live", status: TurnStatusStreaming, wantLive: true},
+		{name: "stale streaming turn is not live", status: TurnStatusStreaming, ageMs: 2 * testStaleMillis},
+		{name: "complete turn is not live", status: TurnStatusComplete},
+		{name: "interrupted turn is not live", status: TurnStatusInterrupted},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, convID := setupStreamStore(t)
+			turn := createTurnWithStatus(t, s, convID, tc.status)
+			if tc.ageMs != 0 {
+				ageTurn(t, s, turn.ID, tc.ageMs)
+			}
+
+			live, err := s.HasLiveStreamingTurn(*turn.PostID, testStaleMillis)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantLive, live)
+
+			live, err = s.HasLiveStreamingTurn("other-post", testStaleMillis)
+			require.NoError(t, err)
+			assert.False(t, live)
+		})
+	}
+}
+
 func TestClaimStaleStreamingTurnConcurrent(t *testing.T) {
 	s, convID := setupStreamStore(t)
 	turn := createTurnWithStatus(t, s, convID, TurnStatusStreaming)
@@ -140,7 +171,9 @@ func TestHeartbeatStreamingTurn(t *testing.T) {
 	before := getTurn(t, s, turn.ID)
 
 	content := json.RawMessage(`[{"type":"text","text":"partial"}]`)
-	require.NoError(t, s.HeartbeatStreamingTurn(turn.ID, content))
+	alive, err := s.HeartbeatStreamingTurn(turn.ID, content)
+	require.NoError(t, err)
+	assert.True(t, alive)
 
 	after := getTurn(t, s, turn.ID)
 	assert.JSONEq(t, string(content), string(after.Content))
@@ -156,14 +189,18 @@ func TestHeartbeatStreamingTurn(t *testing.T) {
 	claimed, err = s.ClaimStaleStreamingTurn(turn.ID, testStaleMillis)
 	require.NoError(t, err)
 	require.True(t, claimed)
-	require.NoError(t, s.HeartbeatStreamingTurn(turn.ID, json.RawMessage(`[]`)))
+	alive, err = s.HeartbeatStreamingTurn(turn.ID, json.RawMessage(`[]`))
+	require.NoError(t, err)
+	assert.False(t, alive, "a heartbeat on a claimed turn reports it lost")
 	final := getTurn(t, s, turn.ID)
 	assert.Equal(t, TurnStatusInterrupted, final.Status)
 	assert.JSONEq(t, string(content), string(final.Content))
 
 	// Nor does a late finalize: the turn must not become complete (and its
 	// tool calls approvable) after the sweep reported it lost.
-	require.NoError(t, s.FinalizeStreamingTurn(turn.ID, json.RawMessage(`[{"type":"text","text":"late"}]`), 1, 1, TurnStatusComplete))
+	settled, err := s.FinalizeStreamingTurn(turn.ID, json.RawMessage(`[{"type":"text","text":"late"}]`), 1, 1, TurnStatusComplete)
+	require.NoError(t, err)
+	assert.False(t, settled, "a late finalize reports the turn lost")
 	final = getTurn(t, s, turn.ID)
 	assert.Equal(t, TurnStatusInterrupted, final.Status)
 	assert.JSONEq(t, string(content), string(final.Content))
@@ -190,7 +227,9 @@ func TestFinalizeStreamingTurn(t *testing.T) {
 			}
 
 			content := json.RawMessage(`[{"type":"text","text":"done"}]`)
-			require.NoError(t, s.FinalizeStreamingTurn(turn.ID, content, 3, 4, tc.status))
+			settled, err := s.FinalizeStreamingTurn(turn.ID, content, 3, 4, tc.status)
+			require.NoError(t, err)
+			require.True(t, settled)
 
 			turns, err := s.GetTurnsForConversation(convID)
 			require.NoError(t, err)
@@ -217,8 +256,10 @@ func TestReleaseStreamingTurnClaim(t *testing.T) {
 	require.NoError(t, s.ReleaseStreamingTurnClaim(turn.ID))
 	assert.Equal(t, TurnStatusStreaming, getTurn(t, s, turn.ID).Status)
 
-	// Released turns are claimable again once stale.
-	ageTurn(t, s, turn.ID, 2*testStaleMillis)
+	// A released turn is not live and can be claimed again at once.
+	live, err := s.HasLiveStreamingTurn(*turn.PostID, testStaleMillis)
+	require.NoError(t, err)
+	assert.False(t, live)
 	claimed, err = s.ClaimStaleStreamingTurn(turn.ID, testStaleMillis)
 	require.NoError(t, err)
 	assert.True(t, claimed)
@@ -246,4 +287,171 @@ func TestClaimStaleStreamingTurnMovesAfterToolRounds(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, turn.ID, turns[len(turns)-1].ID, "the interrupted response stays after its tool rounds")
 	assert.Equal(t, TurnStatusInterrupted, turns[len(turns)-1].Status)
+}
+
+func TestSettlingStreamingTurnKeepsLaterUserTurnsInPlace(t *testing.T) {
+	tests := []struct {
+		name   string
+		settle func(t *testing.T, s *Store, id string)
+	}{
+		{name: "sweep claims a dead node's turn", settle: func(t *testing.T, s *Store, id string) {
+			ageTurn(t, s, id, 2*testStaleMillis)
+			claimed, err := s.ClaimStaleStreamingTurn(id, testStaleMillis)
+			require.NoError(t, err)
+			require.True(t, claimed)
+		}},
+		{name: "stream finalizes", settle: func(t *testing.T, s *Store, id string) {
+			_, err := s.FinalizeStreamingTurn(id, json.RawMessage(`[]`), 0, 0, TurnStatusComplete)
+			require.NoError(t, err)
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, convID := setupStreamStore(t)
+			appendTurn := func(role string) string {
+				turn := makeTurn(convID, 0, func(tu *Turn) { tu.Role = role })
+				require.NoError(t, s.CreateTurnAutoSequence(turn))
+				return turn.ID
+			}
+			first := appendTurn("user")
+			anchor := createTurnWithStatus(t, s, convID, TurnStatusStreaming)
+			toolRound := appendTurn("tool_result")
+			followUp := appendTurn("user")
+			followUpReply := appendTurn("assistant")
+
+			tc.settle(t, s, anchor.ID)
+
+			turns, err := s.GetTurnsForConversation(convID)
+			require.NoError(t, err)
+			var order []string
+			for _, turn := range turns {
+				order = append(order, turn.ID)
+			}
+			assert.Equal(t, []string{first, toolRound, anchor.ID, followUp, followUpReply}, order)
+		})
+	}
+}
+
+func TestConcurrentSettlesInOneConversation(t *testing.T) {
+	s, convID := setupStreamStore(t)
+	const streams = 6
+	ids := make([]string, streams)
+	for i := range ids {
+		turn := makeTurn(convID, 0, func(tu *Turn) { tu.Role = "assistant"; tu.Status = TurnStatusStreaming })
+		require.NoError(t, s.CreateTurnAutoSequence(turn))
+		require.NoError(t, s.CreateTurnAutoSequence(makeTurn(convID, 0, func(tu *Turn) { tu.Role = "tool_result" })))
+		ids[i] = turn.ID
+	}
+
+	var wg sync.WaitGroup
+	errs := make([]error, streams)
+	start := make(chan struct{})
+	for i, id := range ids {
+		wg.Go(func() {
+			<-start
+			_, errs[i] = s.FinalizeStreamingTurn(id, json.RawMessage(`[]`), 0, 0, TurnStatusComplete)
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	for i, id := range ids {
+		require.NoError(t, errs[i])
+		assert.Equal(t, TurnStatusComplete, getTurn(t, s, id).Status)
+	}
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// TestRunSpanSkipsAnotherPostsToolResult pins that a tool_result a channel
+// approval appended for an earlier post is not treated as part of a later
+// post's run: settling that run does not move past it, and regenerating the
+// later post does not delete it.
+func TestRunSpanSkipsAnotherPostsToolResult(t *testing.T) {
+	block := func(kind, id string) string {
+		if kind == "tool_use" {
+			return `[{"type":"tool_use","id":"` + id + `","name":"x"}]`
+		}
+		return `[{"type":"tool_result","tool_use_id":"` + id + `","content":"ok"}]`
+	}
+	tests := []struct {
+		name string
+		// foreignResultInSpan places the earlier post's result between the
+		// later post's user turn and its anchor instead of after its run.
+		foreignResultInSpan bool
+		// foreignBeforeOwnRounds lands the earlier post's result after the
+		// later post's anchor but before that run's own tool rounds.
+		foreignBeforeOwnRounds bool
+	}{
+		{name: "earlier post's result appended after the run"},
+		{name: "earlier post's result inside the scrubbed span", foreignResultInSpan: true},
+		{name: "earlier post's result between the anchor and the run's own rounds", foreignBeforeOwnRounds: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, convID := setupStreamStore(t)
+			add := func(role, postID, content, status string) string {
+				turn := makeTurn(convID, 0, func(tu *Turn) {
+					tu.Role = role
+					tu.Content = json.RawMessage(content)
+					if postID != "" {
+						tu.PostID = &postID
+					}
+					if status != "" {
+						tu.Status = status
+					}
+				})
+				require.NoError(t, s.CreateTurnAutoSequence(turn))
+				return turn.ID
+			}
+			add("user", "", `[]`, "")
+			earlierAnchor := add("assistant", "post-1", block("tool_use", "tc-1"), "")
+			add("user", "", `[]`, "")
+			var foreign string
+			if tt.foreignResultInSpan {
+				foreign = add("tool_result", "", block("tool_result", "tc-1"), "")
+			}
+			anchor := add("assistant", "post-2", `[]`, TurnStatusStreaming)
+			if tt.foreignBeforeOwnRounds {
+				foreign = add("tool_result", "", block("tool_result", "tc-1"), "")
+			}
+			add("assistant", "", block("tool_use", "tc-2"), "")
+			add("tool_result", "", block("tool_result", "tc-2"), "")
+			if !tt.foreignResultInSpan && !tt.foreignBeforeOwnRounds {
+				foreign = add("tool_result", "", block("tool_result", "tc-1"), "")
+			}
+
+			settled, err := s.FinalizeStreamingTurn(anchor, json.RawMessage(`[]`), 0, 0, TurnStatusComplete)
+			require.NoError(t, err)
+			require.True(t, settled)
+			turns, err := s.GetTurnsForConversation(convID)
+			require.NoError(t, err)
+			index := map[string]int{}
+			for i, turn := range turns {
+				index[turn.ID] = i
+			}
+			if !tt.foreignResultInSpan && !tt.foreignBeforeOwnRounds {
+				assert.Less(t, index[anchor], index[foreign], "the run must not move past another post's result")
+			}
+			assert.Equal(t, len(turns)-1-boolToInt(!tt.foreignResultInSpan && !tt.foreignBeforeOwnRounds), index[anchor],
+				"the anchor ends after its run's own tool rounds")
+
+			require.NoError(t, s.DeleteResponseTurns(convID, "post-2"))
+			turns, err = s.GetTurnsForConversation(convID)
+			require.NoError(t, err)
+			var kept []string
+			for _, turn := range turns {
+				kept = append(kept, turn.ID)
+			}
+			assert.Contains(t, kept, foreign, "regenerating a later post must keep another post's tool result")
+			assert.Contains(t, kept, earlierAnchor)
+			assert.NotContains(t, kept, anchor)
+			assert.Len(t, kept, 4, "only the later post's run is scrubbed")
+		})
+	}
 }

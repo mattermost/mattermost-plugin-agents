@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
+import React, {useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
 import styled from 'styled-components';
@@ -13,7 +13,7 @@ import {CancelIcon} from '@mattermost/compass-icons/components';
 import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 
-import {doPostbackSummary, doRegenerate, doStopGenerating} from '@/client';
+import {doPostbackSummary, doRegenerate, doStopGenerating, doWaitCancel, doWaitCheckNow} from '@/client';
 import {useIsLicensedFor} from '@/license';
 import {PluginWebSocketMessage} from '@/types';
 import {useSelectNotAIPost} from '@/hooks';
@@ -31,6 +31,7 @@ import HTMLArtifacts from '../html_artifacts/html_artifacts';
 import {needsViewerDecision, selectDecisionToolCalls} from '../tool_decisions';
 import {ToolApprovalStage, ToolCall, ToolCallPhase, ToolCallStatus} from '../tool_types';
 import {Annotation} from '../citations/types';
+import {AgentChatSurfaceContext} from '../agent_chat/agent_chat_surface_context';
 
 import {
     Round,
@@ -41,10 +42,15 @@ import {
 } from './turn_content_utils';
 import {deriveActivity} from './activity_items';
 import {ControlsBarComponent} from './controls_bar';
+import {getCopyableText} from './copyable_text';
 import {extractPermalinkData} from './permalink_data';
 import {FoldingText, useFoldingText} from './folding_text';
 import {RoundView} from './round_view';
+import {ThinkingDots} from './thinking_dots';
 import ToolActivityDisplay from './tool_activity_display';
+import {WaitStatusFooter, WaitToolContext} from './wait_status';
+import {prefersReducedMotion} from './motion';
+import {useSmoothText} from './use_smooth_text';
 
 // Sentinel id for the in-progress streaming round; persisted rounds use turn ids.
 const LIVE_ROUND_ID = 'live';
@@ -95,11 +101,19 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const intl = useIntl();
     const selectPost = useSelectNotAIPost();
 
+    // Anti-impersonation: plugin props are trusted only on posts authored by a
+    // known agent bot, since any user can set props on their own posts.
+    const authorIsAgentBot = useSelector<GlobalState & Record<string, unknown>, boolean>((state) => {
+        const pluginState = state['plugins-' + manifest.id] as {bots?: LLMBot[] | null} | undefined;
+        const bots = pluginState?.bots;
+        return Boolean(bots?.some((bot) => bot.id === props.post.user_id));
+    });
+
     // Post props are free-form JSON; a conversation_id that is not a
     // well-formed id is treated as absent so no request is built from it and
     // the component falls back to its no-conversation rendering path.
     const rawConversationId: unknown = props.post.props?.conversation_id;
-    const conversationId: string | undefined = isValidId(rawConversationId) ? rawConversationId : undefined; // eslint-disable-line no-undefined
+    const conversationId: string | undefined = authorIsAgentBot && isValidId(rawConversationId) ? rawConversationId : undefined; // eslint-disable-line no-undefined
     const {conversation, loading: conversationLoading, error: conversationError} = useConversation(conversationId);
 
     // Invalidation empties the cache until the refetch lands. Who the requester
@@ -119,11 +133,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const isDM = channel?.type === 'D';
     const rootPost = useSelector<GlobalState, any>((state) => state.entities.posts.posts[props.post.root_id]);
 
-    // Anti-impersonation: only posts authored by a known agent bot may show the interrupted notice.
-    const authorIsAgentBot = useSelector<GlobalState, boolean>((state: any) => {
-        const bots: LLMBot[] | null | undefined = state['plugins-' + manifest.id]?.bots;
-        return Boolean(bots?.some((bot) => bot.id === props.post.user_id));
-    });
     const interruptReason = authorIsAgentBot ? parseInterruptReason(props.post.props?.llm_interrupted) : null;
 
     const [message, setMessage] = useState(props.post.message);
@@ -148,6 +157,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     const [reasoningSummary, setReasoningSummary] = useState('');
     const [isReasoningLoading, setIsReasoningLoading] = useState(false);
+
+    const {isAgentChat} = useContext(AgentChatSurfaceContext);
 
     const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
 
@@ -175,17 +186,22 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // An interrupted post is not generating, whatever the local stream state says.
     const generating = generatingState && !interrupted;
 
+    // Streamed text is revealed at a steady pace where the surface asks for
+    // it. A stop, cancel or error shows what arrived at once.
+    const [revealCut, setRevealCut] = useState(false);
+    const smoothReveal = isAgentChat && !prefersReducedMotion();
+    const revealed = useSmoothText(message, {
+        enabled: smoothReveal,
+        streaming: generating,
+        flushImmediately: revealCut || stopped || error !== '',
+    });
+    const shownMessage = revealed.text;
+
     // A settled turn means the end was missed (e.g. a dropped socket); the
     // persisted turn is then authoritative.
-    const postTurnSettled = Boolean(conversation?.turns.some((turn) => turn.post_id === props.post.id && turn.status !== 'streaming'));
+    const postTurns = conversation?.turns.filter((turn) => turn.post_id === props.post.id) ?? [];
+    const postTurnSettled = postTurns.length > 0 && postTurns.every((turn) => turn.status !== 'streaming');
     const liveStreamOpen = generating || (awaitingEnd && !postTurnSettled);
-
-    // A persisted turn still marked streaming means generation is unfinished
-    // even though heartbeats already flushed partial text onto the post, or
-    // that approved tool calls are running. Read the fresh conversation (not
-    // the last-known copy) so a refetch that lands with the turn complete
-    // clears this.
-    const turnStillStreaming = Boolean(conversation?.turns.some((turn) => turn.post_id === props.post.id && turn.status === 'streaming'));
 
     // Lets the WebSocket handler snapshot the live round without re-subscribing.
     const liveRef = useRef({message, toolCalls, reasoningSummary, annotations, serverTools});
@@ -484,6 +500,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (data.control === 'cancel') {
+                setRevealCut(true);
                 progressCompleteRef.current = true;
                 setProgressPhase(null);
                 setGenerating(false);
@@ -503,6 +520,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 }
                 reasoningSeenRef.current = false;
                 setError('');
+                setRevealCut(false);
                 setGenerating(true);
                 setAwaitingEnd(false);
                 setPrecontent(true);
@@ -526,6 +544,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
                 // Tool-approval resume: prior round comes from refetched
                 // persistedRounds, so reset all local state.
+                setRevealCut(false);
                 setGenerating(true);
                 setAwaitingEnd(false);
                 setPrecontent(true);
@@ -550,24 +569,30 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         };
     }, [props.post.id, conversationId]);
 
+    // Citations past the revealed text wait until it gets there.
+    const shownAnnotations = useMemo(
+        () => (shownMessage === message ? annotations : annotations.filter((annotation) => annotation.end_index <= shownMessage.length)),
+        [shownMessage, message, annotations],
+    );
+
     const currentRound: Round | null = useMemo(() => {
-        const hasContent = message !== '' ||
+        const hasContent = shownMessage !== '' ||
             toolCalls.length > 0 ||
             reasoningSummary !== '' ||
-            annotations.length > 0 ||
+            shownAnnotations.length > 0 ||
             serverTools.length > 0;
         if (!hasContent) {
             return null;
         }
         return {
             id: LIVE_ROUND_ID,
-            text: message,
+            text: shownMessage,
             toolCalls,
             reasoning: {summary: reasoningSummary, signature: ''},
-            annotations,
+            annotations: shownAnnotations,
             serverTools,
         };
-    }, [message, toolCalls, reasoningSummary, annotations, serverTools]);
+    }, [shownMessage, toolCalls, reasoningSummary, shownAnnotations, serverTools]);
 
     const renderedRounds = useMemo(() => {
         const rounds = computeRenderedRounds({
@@ -587,6 +612,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         progressCompleteRef.current = false;
         progressSequenceRef.current = 0;
         reasoningSeenRef.current = false;
+        setRevealCut(false);
         setMessage('');
         setGenerating(false);
         setAwaitingEnd(false);
@@ -625,7 +651,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setGenerating(false);
         setAwaitingEnd(true);
         setIsReasoningLoading(false);
-        doStopGenerating(props.post.id);
+        doStopGenerating(props.post.id).catch((e: unknown) => {
+            console.error('Failed to stop generating:', e); // eslint-disable-line no-console
+        });
     };
 
     const postSummary = async () => {
@@ -668,16 +696,26 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         break;
     }
 
-    // The interrupted notice carries its own Regenerate action, and so does the
-    // stale notice for a streaming turn that stops heartbeating.
-    const showRegenerate = isDM && !isGenerationInProgress && !interrupted && !turnStillStreaming && requesterIsCurrentUser && !isNoShowRegen;
+    // A persisted turn still marked streaming; see the staleness check below.
+    // While a refetch is in flight (or failed) the last loaded copy answers,
+    // so Stop and the stale timer keep tracking that turn.
+    const turnStillStreaming = Boolean(knownConversation?.turns.some((turn) => turn.post_id === props.post.id && turn.status === 'streaming'));
+
+    // A remounted post knows of a live stream only from its persisted turn
+    // once the cached start event is gone; Stop must still be offered then.
+    const liveStreamFromTurn = turnStillStreaming && !interrupted && !streamStale;
+
+    // The interrupted notice carries its own Regenerate action.
+    const showRegenerate = isDM && !isGenerationInProgress && !liveStreamFromTurn && !interrupted && requesterIsCurrentUser && !isNoShowRegen;
     const meetingsLicensed = useIsLicensedFor('meetings');
 
     // The server authorizes postback by DM membership, not conversation ownership.
     const showPostbackButton = meetingsLicensed && !isGenerationInProgress && isDM && isTranscriptionResult;
-    const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser;
+
+    // Approved tool runs are not a stream the Stop endpoint can cancel.
+    const approvalRunActive = Boolean(knownConversation?.turns.some((turn) => turn.post_id === props.post.id && turn.status === 'streaming' && turn.approval_state === 'call'));
+    const showStopGeneratingButton = (isGenerationInProgress || (liveStreamFromTurn && !approvalRunActive)) && requesterIsCurrentUser;
     const hasContent = renderedRounds.length > 0;
-    const showControlsBar = ((showRegenerate || showPostbackButton) && hasContent) || showStopGeneratingButton;
 
     // Only the anchor round gets a real approval stage: the latest persisted
     // round when nothing live follows it, or a live round with calls awaiting
@@ -730,6 +768,61 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         (state) => (requesterUserId ? state.entities.users.profiles?.[requesterUserId]?.username : undefined), // eslint-disable-line no-undefined
     );
 
+    // A pending wait_for_async_work pause on this post, surfaced by the
+    // conversation API while the bot is sleeping on the wait tool.
+    const activeWait = knownConversation?.active_wait;
+    const waitForThisPost = activeWait && activeWait.post_id === props.post.id ? activeWait : null;
+    const waitIsOwner = waitForThisPost != null && waitForThisPost.requester_user_id === currentUserId;
+    const [waitCancelled, setWaitCancelled] = useState(false);
+    const [waitBusy, setWaitBusy] = useState(false);
+
+    // A fresh wait on this post (new resume time) clears a prior cancel/busy.
+    const waitResumeAt = waitForThisPost?.resume_at;
+    useEffect(() => {
+        setWaitCancelled(false);
+        setWaitBusy(false);
+    }, [waitResumeAt]);
+
+    const botDisplayName = useSelector<GlobalState, string | undefined>((state) => {
+        const profile = state.entities.users.profiles?.[props.post.user_id];
+        return profile ? displayNameFor(profile, selectTeammateNameDisplay(state)) : undefined; // eslint-disable-line no-undefined
+    });
+
+    const handleWaitCheckNow = useCallback(async () => {
+        setWaitBusy(true);
+        try {
+            await doWaitCheckNow(props.post.id);
+        } catch {
+            // Re-enable the controls so a transient failure can be retried; a
+            // wait that already resolved reconciles via the refetch below.
+            setWaitBusy(false);
+        }
+        if (conversationId) {
+            invalidateConversation(conversationId);
+        }
+    }, [props.post.id, conversationId]);
+
+    const handleWaitCancel = useCallback(async () => {
+        setWaitBusy(true);
+        try {
+            await doWaitCancel(props.post.id);
+            setWaitCancelled(true);
+        } catch {
+            // Re-enable the controls so a transient failure can be retried; a
+            // wait that already resolved reconciles via the refetch below.
+            setWaitBusy(false);
+        }
+        if (conversationId) {
+            invalidateConversation(conversationId);
+        }
+    }, [props.post.id, conversationId]);
+
+    // Provided to the wait tool's row so it can show "waiting" vs "waited Nm".
+    const waitToolState = useMemo(
+        () => ({active: waitForThisPost !== null && !waitCancelled}),
+        [waitForThisPost, waitCancelled],
+    );
+
     // A question to the requester is answered, not approved.
     const awaitingAnswer = awaitingRequester && onlookerWaitRound !== null && onlookerWaitStage === 'call' &&
         onlookerWaitRound.toolCalls.some((call) => Boolean(call.user_interaction) && call.status === ToolCallStatus.Pending);
@@ -774,6 +867,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // Answer text that turns out to be narration folds away instead of
     // vanishing. Expanded, the round just moves into the stack in place.
     const answerText = activity.answerRounds.map((round) => round.text).filter((text) => text !== '').join('\n\n');
+
+    // Copy needs a finished answer with text; a tool-only post has nothing to copy.
+    const answerMarkdown = useMemo(() => getCopyableText(activity.answerRounds), [activity.answerRounds]);
+    const showCopy = isAgentChat && hasContent && !isGenerationInProgress && answerMarkdown !== '';
+    const showControlsBar = ((showRegenerate || showPostbackButton || showCopy) && hasContent) || showStopGeneratingButton;
     const foldingText = useFoldingText(answerText, activity.items.length > 0 && !activityExpanded);
 
     // An onlooker's waiting round keeps its real stage so its cards can show
@@ -805,9 +903,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 reasoningLoading={isLiveRound && isReasoningLoading}
                 reasoningCollapsed={!expandedReasoning[round.id]}
                 onToggleReasoning={toggleReasoning}
+                reveal={isLiveRound && smoothReveal}
             />
         );
     }, [
+        smoothReveal,
         props.post.id,
         props.post.channel_id,
         conversationId,
@@ -823,7 +923,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // Tool-only posts leave post.message empty, so precontent stays true on
     // remount. Hide Working... once rounds exist, except while generation is
     // actually resuming (continue/start still set precontent on purpose).
-    const showWorking = !interrupted && !generationStopped && (
+    const showWorkingStatus = !interrupted && !generationStopped && (
         (precontent && (generating || renderedRounds.length === 0)) ||
         (conversationLoading && !generating && renderedRounds.length === 0)
     );
@@ -833,6 +933,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // generation) restarts or cancels the timer.
     // An empty message with persisted rounds is a tool-only post (finished, or
     // waiting on the requester's approval), not a stalled generation.
+    // A persisted turn still marked streaming means generation is unfinished
+    // even though the post may already show partial text. A refetch that
+    // lands with the turn complete clears this; the timer restarts whenever
+    // the conversation is refetched, so a failed refetch still ends in the
+    // stale notice.
     const staleRefetchedRef = useRef(false);
     useEffect(() => {
         staleRefetchedRef.current = false;
@@ -855,7 +960,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             setStreamStale(true);
         }, STALE_STREAM_TIMEOUT_MS);
         return () => clearTimeout(timer);
-    }, [believesGenerating, awaitingUserDecision, streamEventCount, turnStillStreaming, isGenerationInProgress, conversationId]);
+    }, [believesGenerating, awaitingUserDecision, streamEventCount, turnStillStreaming, isGenerationInProgress, conversationId, conversation]);
 
     const canRegenerateFromNotice = requesterIsCurrentUser && !isNoShowRegen;
     let interruptedNotice: React.ReactNode = null;
@@ -885,6 +990,16 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         );
     }
 
+    // The dots stand in for the Working... status while nothing has arrived,
+    // never alongside it (or any other activity UI).
+    const thinkingActive = isAgentChat && !awaitingRequester && !error &&
+        (isGenerationInProgress || (regenerating && !pendingRefetch)) && renderedRounds.length === 0;
+    const showWorking = showWorkingStatus && !thinkingActive;
+    const agentName = useSelector<GlobalState, string | undefined>((state) => {
+        const profile = props.post.user_id ? state.entities.users.profiles?.[props.post.user_id] : undefined; // eslint-disable-line no-undefined
+        return profile ? displayNameFor(profile, selectTeammateNameDisplay(state)) : undefined; // eslint-disable-line no-undefined
+    });
+
     let statusMessage: string | undefined;
     if (awaitingRequester) {
         statusMessage = awaitingRequesterMessage;
@@ -893,77 +1008,98 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     }
 
     return (
-        <PostBody
-            data-testid='llm-bot-post'
-        >
-            {error && <ErrorMessage message={error}/>}
-            {conversationError && !generating && (
-                <ErrorMessage message={<FormattedMessage defaultMessage='Failed to load conversation data'/>}/>
-            )}
-            {isThreadSummaryPost && permalinkView &&
-            <>
-                {permalinkView}
-            </>
-            }
-            {(showWorking || awaitingRequester || activity.items.length > 0) && (
-                <ToolActivityDisplay
-                    activity={activity}
-                    expanded={activityExpanded}
-                    onToggleExpanded={setActivityExpanded}
-                    inProgress={isGenerationInProgress || awaitingDecision || awaitingRequester}
-                    working={isGenerationInProgress || progressPhase !== null}
-                    statusMessage={statusMessage}
-                    statusWaiting={awaitingRequester}
-                    renderRound={renderRound}
-                />
-            )}
-            {foldingText !== null && (
-                <FoldingText
-                    text={foldingText}
-                    channelID={props.post.channel_id}
-                    postID={props.post.id}
-                />
-            )}
-            <AnswerArea $afterActivity={activity.items.length > 0}>
-                {activity.answerRounds.map(renderRound)}
-            </AnswerArea>
-            {generationStopped && (
-                <GenerationStoppedNotice data-testid='llm-bot-generation-stopped'>
-                    <GenerationStoppedIcon
-                        size={14}
-                        aria-hidden={true}
+        <WaitToolContext.Provider value={waitToolState}>
+            <div
+                data-testid='llm-bot-post'
+                data-bubble-hug={isAgentChat ? '' : undefined} // eslint-disable-line no-undefined
+            >
+                {error && <ErrorMessage message={error}/>}
+                {conversationError && !generating && (
+                    <ErrorMessage message={<FormattedMessage defaultMessage='Failed to load conversation data'/>}/>
+                )}
+                {isThreadSummaryPost && permalinkView &&
+                <>
+                    {permalinkView}
+                </>
+                }
+                {(showWorking || awaitingRequester || activity.items.length > 0) && (
+                    <ToolActivityDisplay
+                        activity={activity}
+                        expanded={activityExpanded}
+                        onToggleExpanded={setActivityExpanded}
+                        inProgress={isGenerationInProgress || awaitingDecision || awaitingRequester}
+                        working={isGenerationInProgress || progressPhase !== null}
+                        statusMessage={statusMessage}
+                        statusWaiting={awaitingRequester}
+                        renderRound={renderRound}
                     />
-                    {generationStoppedMessage}
-                </GenerationStoppedNotice>
-            )}
-            <HTMLArtifacts
-                postId={props.post.id}
-                files={props.post.metadata?.files}
-            />
-            {interruptedNotice}
-            { showPostbackButton &&
-            <PostSummaryHelpMessage
-                data-testid='llm-bot-post-summary-help'
-                type='hint'
-                title={<FormattedMessage defaultMessage='Would you like to post this summary to the original call thread? You can also ask Agents to make changes.'/>}
-            />
-            }
-            { showControlsBar &&
-            <ControlsBarComponent
-                showStopGeneratingButton={showStopGeneratingButton}
-                showPostbackButton={showPostbackButton}
-                showRegenerate={showRegenerate}
-                onStopGenerating={stopGenerating}
-                onPostSummary={postSummary}
-                onRegenerate={regnerate}
-            />
-            }
-        </PostBody>
+                )}
+                {foldingText !== null && (
+                    <FoldingText
+                        text={foldingText}
+                        channelID={props.post.channel_id}
+                        postID={props.post.id}
+                    />
+                )}
+                {isAgentChat && (
+                    <ThinkingDots
+                        active={thinkingActive}
+                        agentName={agentName}
+                    />
+                )}
+                <AnswerArea $afterActivity={activity.items.length > 0}>
+                    {activity.answerRounds.map(renderRound)}
+                </AnswerArea>
+                {waitForThisPost && (
+                    <WaitStatusFooter
+                        resumeAt={waitForThisPost.resume_at}
+                        isOwner={waitIsOwner}
+                        requesterUsername={requesterUsername}
+                        botDisplayName={botDisplayName}
+                        resolution={waitCancelled ? 'cancelled' : 'pending'}
+                        busy={waitBusy}
+                        onCheckNow={handleWaitCheckNow}
+                        onCancel={handleWaitCancel}
+                    />
+                )}
+                {generationStopped && (
+                    <GenerationStoppedNotice data-testid='llm-bot-generation-stopped'>
+                        <GenerationStoppedIcon
+                            size={14}
+                            aria-hidden={true}
+                        />
+                        {generationStoppedMessage}
+                    </GenerationStoppedNotice>
+                )}
+                <HTMLArtifacts
+                    postId={props.post.id}
+                    files={props.post.metadata?.files}
+                />
+                {interruptedNotice}
+                { showPostbackButton &&
+                <PostSummaryHelpMessage
+                    data-testid='llm-bot-post-summary-help'
+                    type='hint'
+                    title={<FormattedMessage defaultMessage='Would you like to post this summary to the original call thread? You can also ask Agents to make changes.'/>}
+                />
+                }
+                { showControlsBar &&
+                <ControlsBarComponent
+                    showStopGeneratingButton={showStopGeneratingButton}
+                    showPostbackButton={showPostbackButton}
+                    showRegenerate={showRegenerate}
+                    copyText={showCopy ? answerMarkdown : null}
+                    belowBubble={isAgentChat}
+                    createAt={props.post.create_at}
+                    onStopGenerating={stopGenerating}
+                    onPostSummary={postSummary}
+                    onRegenerate={regnerate}
+                />
+                }
+            </div>
+        </WaitToolContext.Provider>
     );
 };
-
-const PostBody = styled.div`
-`;
 
 // Same gap as between stacked rounds, so a round moving from here into the
 // expanded activity stack stays where it is.
@@ -994,5 +1130,5 @@ const PostSummaryHelpMessage = styled(SectionNotice)`
 `;
 
 const InterruptedNotice = styled(SectionNotice)`
-    margin-top: 8px;
+    margin-top: var(--spacing-xs);
 `;

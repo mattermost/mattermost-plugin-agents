@@ -28,7 +28,11 @@ type fakeTurnStore struct {
 	lookupErr error
 	demoteErr error
 
-	heartbeats int
+	heartbeats   int
+	heartbeatErr error
+	finalizes    int
+	// finalizeFailures makes that many finalize calls fail first.
+	finalizeFailures int
 }
 
 // eventCountingTurnStore records how many websocket events had been published
@@ -46,7 +50,7 @@ func (s *eventCountingTurnStore) CreateTurnAutoSequence(turn *store.Turn) error 
 	return s.fakeTurnStore.CreateTurnAutoSequence(turn)
 }
 
-func (s *eventCountingTurnStore) FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) error {
+func (s *eventCountingTurnStore) FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) (bool, error) {
 	if status == store.TurnStatusComplete {
 		s.eventsAtSettle = len(s.client.events)
 	}
@@ -100,27 +104,38 @@ func (f *fakeTurnStore) UpdateTurnPostID(id string, postID *string) error {
 	return nil
 }
 
-func (f *fakeTurnStore) HeartbeatStreamingTurn(id string, content json.RawMessage) error {
+func (f *fakeTurnStore) HeartbeatStreamingTurn(id string, content json.RawMessage) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.heartbeats++
+	if f.heartbeatErr != nil {
+		return false, f.heartbeatErr
+	}
 	for _, t := range f.turns {
 		if t.ID == id && t.Status == store.TurnStatusStreaming {
 			t.Content = content
+			return true, nil
 		}
 	}
-	return nil
+	return false, nil
 }
 
 // FinalizeStreamingTurn mirrors the store: writes final state and moves the
 // turn after any turns appended since it was created.
-func (f *fakeTurnStore) FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) error {
+func (f *fakeTurnStore) FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.finalizes++
+	if f.finalizeFailures > 0 {
+		f.finalizeFailures--
+		return false, fmt.Errorf("db unavailable")
+	}
+	settled := false
 	for _, t := range f.turns {
-		if t.ID != id {
+		if t.ID != id || t.Status != store.TurnStatusStreaming {
 			continue
 		}
+		settled = true
 		maxSeq := 0
 		for _, o := range f.turns {
 			if o.ConversationID == t.ConversationID && o.Sequence > maxSeq {
@@ -135,7 +150,7 @@ func (f *fakeTurnStore) FinalizeStreamingTurn(id string, content json.RawMessage
 		t.TokensOut = tokensOut
 		t.Status = status
 	}
-	return nil
+	return settled, nil
 }
 
 func batchEvent(phase llm.ToolCallPhase, calls []llm.ToolCall) llm.TextStreamEvent {
@@ -1403,6 +1418,37 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 			}
 		}
 		require.True(t, sawStart)
+		assert.Empty(t, ts.turns, "a continuation that can't see the post's anchor must not add one")
+	})
+
+	t.Run("demote failure leaves the prior anchor as the post's only anchor", func(t *testing.T) {
+		prior := &store.Turn{ID: "prior-anchor", ConversationID: conversationID, PostID: new(postID), Role: "assistant", Status: store.TurnStatusComplete, Sequence: 1}
+		ts := &fakeTurnStore{turns: []*store.Turn{prior}, demoteErr: fmt.Errorf("transient db error")}
+		client := &fakeStreamingClient{
+			channels: map[string]*model.Channel{
+				channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+			},
+		}
+		service := NewMMPostStreamService(client, i18n.Init())
+		service.SetTurnStore(ts)
+
+		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
+		post.AddProp(ConversationIDProp, conversationID)
+
+		streamChannel := make(chan llm.TextStreamEvent, 2)
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Hi"}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(streamChannel)
+
+		service.StreamContinuationToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
+
+		anchors := 0
+		for _, turn := range ts.turns {
+			if turn.PostID != nil && *turn.PostID == postID {
+				anchors++
+			}
+		}
+		assert.Equal(t, 1, anchors)
 	})
 
 	// The webapp snapshots the round's text when the resolved tool_call

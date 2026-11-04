@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -95,20 +96,40 @@ func TestWakeJobFromProps(t *testing.T) {
 // kvFake is an in-memory plugin KV behind a MockClient, with the JSON encoding
 // and create-if-absent / compare-and-delete semantics of the real client.
 type kvFake struct {
+	// mu guards data: run reservations are released from stream goroutines.
+	mu      sync.Mutex
 	data    map[string][]byte
 	setFail error
+	// afterGet runs once after the next successful read, to interleave a
+	// competing writer between a caller's read and its follow-up write.
+	afterGet func()
+}
+
+func (kv *kvFake) len() int {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	return len(kv.data)
 }
 
 func newKVFake(mmClient *mocks.MockClient) *kvFake {
 	kv := &kvFake{data: map[string][]byte{}}
 	mmClient.EXPECT().KVGet(mock.Anything, mock.Anything).RunAndReturn(func(key string, value any) error {
+		kv.mu.Lock()
+		defer kv.mu.Unlock()
 		raw, ok := kv.data[key]
 		if !ok {
 			return mmapi.ErrKVNotFound
 		}
-		return json.Unmarshal(raw, value)
+		err := json.Unmarshal(raw, value)
+		if hook := kv.afterGet; hook != nil {
+			kv.afterGet = nil
+			hook()
+		}
+		return err
 	}).Maybe()
 	mmClient.EXPECT().KVCompareAndSetWithExpiry(mock.Anything, mock.Anything, mock.Anything, mock.Anything).RunAndReturn(func(key string, oldValue, newValue any, _ time.Duration) (bool, error) {
+		kv.mu.Lock()
+		defer kv.mu.Unlock()
 		if kv.setFail != nil {
 			return false, kv.setFail
 		}
@@ -123,6 +144,8 @@ func newKVFake(mmClient *mocks.MockClient) *kvFake {
 		return err == nil, err
 	}).Maybe()
 	mmClient.EXPECT().KVCompareAndSet(mock.Anything, mock.Anything, mock.Anything).RunAndReturn(func(key string, oldValue, newValue any) (bool, error) {
+		kv.mu.Lock()
+		defer kv.mu.Unlock()
 		oldRaw, err := json.Marshal(oldValue)
 		if err != nil || !bytes.Equal(kv.data[key], oldRaw) {
 			return false, err
@@ -154,6 +177,11 @@ type wakeEnv struct {
 	kv        *kvFake
 	c         *Conversations
 	wakePost  *model.Post
+
+	// convUpdates records the conversation IDs broadcast via the
+	// conversation_updated websocket event, so tests can assert that a
+	// resolving wait tells clients to refetch.
+	convUpdates []string
 }
 
 // newWakeEnv builds the env around bot; a nil bot uses the default test bot.
@@ -176,6 +204,16 @@ func newWakeEnv(t *testing.T, bot *bots.Bot) *wakeEnv {
 	env.mmClient.On("LogError", mock.Anything, mock.Anything).Maybe().Return()
 	env.mmClient.On("LogWarn", mock.Anything, mock.Anything).Maybe().Return()
 	env.mmClient.On("GetConfig").Return(&model.Config{}).Maybe()
+	env.mmClient.On("PublishWebSocketEvent", mock.Anything, mock.Anything, mock.Anything).Maybe().Run(func(args mock.Arguments) {
+		if args.Get(0).(string) != WebsocketEventConversationUpdated {
+			return
+		}
+		if payload, ok := args.Get(1).(map[string]any); ok {
+			if convID, ok := payload["conversation_id"].(string); ok {
+				env.convUpdates = append(env.convUpdates, convID)
+			}
+		}
+	}).Return()
 	env.kv = newKVFake(env.mmClient)
 
 	env.c = &Conversations{
@@ -213,6 +251,8 @@ func (e *wakeEnv) expectLiveWake(post *model.Post, channel *model.Channel, userI
 		e.wakePost = args.Get(0).(*model.Post)
 		e.wakePost.Id = "wake-post-id"
 	}).Return(nil).Once()
+	// Links the reserved wake post to its conversation.
+	e.mmClient.On("UpdatePost", mock.Anything).Return(nil).Maybe()
 }
 
 // resume fires the wake of post that userID scheduled, with its marker intact,
@@ -223,7 +263,8 @@ func (e *wakeEnv) resume(t *testing.T, post *model.Post, userID string) {
 	e.setMarker(t, post, job)
 	require.NoError(t, e.c.ResumeConversation(context.Background(), job))
 	e.streaming.waitForStreaming()
-	require.Empty(t, e.kv.data, "a resuming wake must consume its marker")
+	require.Eventually(t, func() bool { return e.kv.len() == 0 }, 2*time.Second, 5*time.Millisecond,
+		"a resuming wake must consume its marker and release its run reservation")
 }
 
 func TestResumeConversationWritesWakeTurnAndFollowsUp(t *testing.T) {
@@ -648,7 +689,7 @@ func TestRejectedConcurrentWaitDoesNotDropTheFirstWake(t *testing.T) {
 	env.streaming.waitForStreaming()
 
 	require.NotNil(t, env.wakePost, "the first wake must still resume the conversation")
-	require.Empty(t, env.kv.data)
+	require.Eventually(t, func() bool { return env.kv.len() == 0 }, 2*time.Second, 5*time.Millisecond)
 }
 
 func TestResumeConversationRunsAsSchedulingUser(t *testing.T) {
@@ -767,6 +808,7 @@ func TestRegenerationCancelsThreadWakeWithoutNote(t *testing.T) {
 	mmClient := mocks.NewMockClient(t)
 	kv := newKVFake(mmClient)
 	mmClient.On("GetPost", "root-post-id").Return(&model.Post{Id: "root-post-id"}, nil).Maybe()
+	mmClient.On("PublishWebSocketEvent", mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 	sched := &fakeWakeScheduler{scheduled: map[string]WakeJob{}}
 	post := &model.Post{Id: "response-post-id", UserId: "bot-id", RootId: "root-post-id"}
 	post.AddProp(streaming.ConversationIDProp, conv.ID)
@@ -793,7 +835,7 @@ func TestRegenerationCancelsThreadWakeWithoutNote(t *testing.T) {
 		post:    post,
 	})
 	require.NoError(t, err)
-	streamResult, err := c.regenerateViaConversation(context.Background(), policy, post)
+	streamResult, _, err := c.regenerateViaConversation(context.Background(), policy, post)
 	require.NoError(t, err)
 	_, err = streamResult.ReadAll()
 	require.NoError(t, err)

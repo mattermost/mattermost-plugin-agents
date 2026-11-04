@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	sq "github.com/Masterminds/squirrel"
+	"github.com/lib/pq"
 )
 
 // Turn represents a single turn in a conversation stored in LLM_Turns.
@@ -55,15 +56,27 @@ func turnStatusOrDefault(status string) string {
 	return status
 }
 
-// CreateTurn inserts a new turn row.
-// The caller must set ID, ConversationID, Role, Content, Sequence, and CreatedAt before calling.
-func (s *Store) CreateTurn(turn *Turn) error {
-	return s.execBuilder(s.builder.Insert("LLM_Turns").
+// bumpConversationActivity advances the conversation's UpdatedAt (its last
+// activity, which orders the conversation list) to the new turn's CreatedAt in
+// the same statement as the insert; GREATEST keeps it from moving backwards.
+// Arguments: the turn's CreatedAt, then its ConversationID.
+const bumpConversationActivity = "WITH bumped_conversation AS (UPDATE LLM_Conversations SET UpdatedAt = GREATEST(UpdatedAt, ?) WHERE ID = ?)"
+
+// insertTurn inserts a turn and bumps its conversation's activity. sequence and
+// updatedAt are the turn's values or expressions for them.
+func (s *Store) insertTurn(turn *Turn, sequence, updatedAt any) sq.InsertBuilder {
+	return s.builder.Insert("LLM_Turns").
+		Prefix(bumpConversationActivity, turn.CreatedAt, turn.ConversationID).
 		Columns(turnColumns...).
 		Values(turn.ID, turn.ConversationID, turn.PostID, turn.Role, string(turn.Content),
-			turn.TokensIn, turn.TokensOut, turn.Sequence, turn.CreatedAt,
-			turnStatusOrDefault(turn.Status), turn.CreatedAt),
-		"create turn")
+			turn.TokensIn, turn.TokensOut, sequence, turn.CreatedAt,
+			turnStatusOrDefault(turn.Status), updatedAt)
+}
+
+// CreateTurn inserts a new turn row and bumps its conversation's activity.
+// The caller must set ID, ConversationID, Role, Content, Sequence, and CreatedAt before calling.
+func (s *Store) CreateTurn(turn *Turn) error {
+	return s.execBuilder(s.insertTurn(turn, turn.Sequence, turn.CreatedAt), "create turn")
 }
 
 // GetTurnsForConversation retrieves all turns for a conversation ordered by Sequence ascending.
@@ -208,30 +221,26 @@ func (s *Store) GetTurnByPostID(postID string) (*Turn, error) {
 const maxAutoSequenceRetries = 3
 
 // CreateTurnAutoSequence inserts a new turn, atomically computing the next
-// Sequence value via a subquery. On success the assigned sequence is written
-// back into turn.Sequence.
+// Sequence value via a subquery, and records it as the conversation's latest
+// activity (see bumpConversationActivity). On success the assigned sequence is
+// written back into turn.Sequence.
 //
 // Under PostgreSQL READ COMMITTED, two concurrent inserts for the same
 // conversation can read the same MAX(Sequence) before either commits.
 // The UNIQUE index on (ConversationID, Sequence) catches this, and the
 // method retries (up to 3 times) so the second writer succeeds.
 func (s *Store) CreateTurnAutoSequence(turn *Turn) error {
-	const query = `
-INSERT INTO LLM_Turns (ID, ConversationID, PostID, Role, Content, TokensIn, TokensOut, Sequence, CreatedAt, Status, UpdatedAt)
-VALUES ($1, $2, $3, $4, $5, $6, $7,
-        COALESCE((SELECT MAX(Sequence) FROM LLM_Turns WHERE ConversationID = $2), 0) + 1,
-        $8, $9, ` + dbNowMillis + `)
-RETURNING Sequence, UpdatedAt`
+	nextSequence := sq.Expr("COALESCE((SELECT MAX(Sequence) FROM LLM_Turns WHERE ConversationID = ?), 0) + 1", turn.ConversationID)
+	query, args, err := s.insertTurn(turn, nextSequence, sq.Expr(dbNowMillis)).Suffix("RETURNING Sequence, UpdatedAt").ToSql()
+	if err != nil {
+		return fmt.Errorf("failed to build create turn query: %w", err)
+	}
 
 	var lastErr error
 	for range maxAutoSequenceRetries {
 		var seq int
 		var updatedAt int64
-		lastErr = s.db.QueryRow(query,
-			turn.ID, turn.ConversationID, turn.PostID, turn.Role,
-			string(turn.Content), turn.TokensIn, turn.TokensOut, turn.CreatedAt,
-			turnStatusOrDefault(turn.Status),
-		).Scan(&seq, &updatedAt)
+		lastErr = s.db.QueryRow(query, args...).Scan(&seq, &updatedAt)
 		if lastErr == nil {
 			turn.Sequence = seq
 			turn.Status = turnStatusOrDefault(turn.Status)
@@ -257,12 +266,106 @@ func (s *Store) UpdateTurnPostID(id string, postID *string) error {
 		"update turn post id")
 }
 
-// DeleteResponseTurns removes the post's anchor turn and any assistant or
-// tool_result turns between it and the originating user turn. Callers must
-// build any completion request before calling this.
-func (s *Store) DeleteResponseTurns(conversationID, postID string) error {
-	const query = `
-DELETE FROM LLM_Turns
+// turnSpanRow is a turn read to decide which run it belongs to.
+type turnSpanRow struct {
+	ID       string  `db:"id"`
+	Sequence int     `db:"sequence"`
+	Role     string  `db:"role"`
+	PostID   *string `db:"postid"`
+	Content  string  `db:"content"`
+}
+
+// toolBlockIDs returns the tool_use IDs and the tool_result tool_use IDs in a
+// turn's content blocks.
+func toolBlockIDs(content string) (uses, results []string) {
+	var blocks []struct {
+		Type      string `json:"type"`
+		ID        string `json:"id"`
+		ToolUseID string `json:"tool_use_id"`
+	}
+	if json.Unmarshal([]byte(content), &blocks) != nil {
+		return nil, nil
+	}
+	for _, b := range blocks {
+		switch {
+		case b.Type == "tool_use" && b.ID != "":
+			uses = append(uses, b.ID)
+		case b.Type == "tool_result" && b.ToolUseID != "":
+			results = append(results, b.ToolUseID)
+		}
+	}
+	return uses, results
+}
+
+// belongsToRun reports whether turn is part of the run whose tool_use IDs are
+// runUses and whose anchor post is postID. Turns carry no run ID, so another
+// post's anchor, a user turn, or a tool_result for a call this run did not
+// make (a channel approval appends results at the end of the conversation)
+// is someone else's.
+func belongsToRun(turn turnSpanRow, postID *string, runUses map[string]bool) bool {
+	if turn.Role == "user" {
+		return false
+	}
+	if turn.PostID != nil && (postID == nil || *turn.PostID != *postID) {
+		return false
+	}
+	if turn.Role == "tool_result" {
+		_, results := toolBlockIDs(turn.Content)
+		for _, id := range results {
+			if !runUses[id] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// runSpanEnd returns how many of the turns after a streaming anchor the
+// anchor must move past to end its run: up to its run's last turn, within the
+// window that ends at the next user turn or another post's anchor. Turns of
+// other runs inside that window (a tool_result a channel approval appended for
+// another post) are skipped, not stopped at, so the run's own later rounds
+// still come before the anchor.
+func runSpanEnd(later []turnSpanRow, postID *string) int {
+	runUses := map[string]bool{}
+	end := 0
+	for i, turn := range later {
+		if turn.Role == "user" || (turn.PostID != nil && (postID == nil || *turn.PostID != *postID)) {
+			break
+		}
+		if !belongsToRun(turn, postID, runUses) {
+			continue
+		}
+		if turn.Role == "assistant" {
+			uses, _ := toolBlockIDs(turn.Content)
+			for _, id := range uses {
+				runUses[id] = true
+			}
+		}
+		end = i + 1
+	}
+	return end
+}
+
+// DeleteResponseTurns removes the post's anchor turn and the assistant and
+// tool_result turns of its run, between it and the originating user turn.
+// Turns of other runs in that span (another post's anchor, a tool_result for
+// another post's call) are kept. Callers must build any completion request
+// before calling this.
+func (s *Store) DeleteResponseTurns(conversationID, postID string) (err error) {
+	tx, err := s.db.Beginx()
+	if err != nil {
+		return fmt.Errorf("failed to begin delete response turns: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var span []turnSpanRow
+	if err = tx.Select(&span, `
+SELECT ID, Sequence, Role, PostID, Content FROM LLM_Turns
 WHERE ConversationID = $1
   AND Sequence > COALESCE((
     SELECT MAX(Sequence) FROM LLM_Turns
@@ -278,9 +381,33 @@ WHERE ConversationID = $1
     SELECT Sequence FROM LLM_Turns
     WHERE ConversationID = $1 AND Role = 'assistant' AND PostID = $2
     LIMIT 1
-  )`
-	if _, err := s.db.Exec(query, conversationID, postID); err != nil {
-		return fmt.Errorf("failed to delete response turns: %w", err)
+  )
+ORDER BY Sequence ASC`, conversationID, postID); err != nil {
+		return fmt.Errorf("failed to read response turns: %w", err)
+	}
+
+	runUses := map[string]bool{}
+	for _, turn := range span {
+		if turn.Role == "assistant" && (turn.PostID == nil || *turn.PostID == postID) {
+			uses, _ := toolBlockIDs(turn.Content)
+			for _, id := range uses {
+				runUses[id] = true
+			}
+		}
+	}
+	var ids []string
+	for _, turn := range span {
+		if belongsToRun(turn, &postID, runUses) {
+			ids = append(ids, turn.ID)
+		}
+	}
+	if len(ids) > 0 {
+		if _, err = tx.Exec(`DELETE FROM LLM_Turns WHERE ConversationID = $1 AND ID = ANY($2)`, conversationID, pq.Array(ids)); err != nil {
+			return fmt.Errorf("failed to delete response turns: %w", err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit delete response turns: %w", err)
 	}
 	return nil
 }
@@ -296,51 +423,128 @@ func (s *Store) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {
 }
 
 // HeartbeatStreamingTurn records the partial content of an in-progress turn
-// and bumps UpdatedAt to the DB clock. It is a no-op once the turn has left
-// the streaming state (e.g. a sweep already marked it interrupted).
-func (s *Store) HeartbeatStreamingTurn(id string, content json.RawMessage) error {
-	return s.execBuilder(s.builder.
+// and bumps UpdatedAt to the DB clock. It reports false, writing nothing, once
+// the turn has left the streaming state (e.g. a sweep marked it interrupted).
+func (s *Store) HeartbeatStreamingTurn(id string, content json.RawMessage) (bool, error) {
+	query, args, err := s.builder.
 		Update("LLM_Turns").
 		Set("Content", string(content)).
 		Set("UpdatedAt", sq.Expr(dbNowMillis)).
-		Where(sq.Eq{"ID": id, "Status": TurnStatusStreaming}),
-		"heartbeat streaming turn")
+		Where(sq.Eq{"ID": id, "Status": TurnStatusStreaming}).
+		ToSql()
+	if err != nil {
+		return false, fmt.Errorf("failed to build heartbeat streaming turn query: %w", err)
+	}
+	res, err := s.db.Exec(query, args...)
+	if err != nil {
+		return false, fmt.Errorf("failed to heartbeat streaming turn: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to read heartbeat rows: %w", err)
+	}
+	return n == 1, nil
 }
 
 // FinalizeStreamingTurn writes the final content, token usage and status of
-// a turn created in the streaming state. If other turns (e.g. tool rounds
-// persisted by the tool runner) were appended to the conversation after the
-// turn reserved its sequence at stream start, the turn is moved to the end so
-// it stays the last turn of its run. It is a no-op once a recovery sweep has
-// claimed the turn, so a stalled stream that resumes cannot overwrite the
-// sweep's interrupted verdict.
-func (s *Store) FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) error {
-	const query = `
-UPDATE LLM_Turns AS t
-SET Content = $2,
-    TokensIn = $3,
-    TokensOut = $4,
-    Status = $5,
-    UpdatedAt = ` + dbNowMillis + `,
-    Sequence = CASE
-        WHEN t.Sequence < (SELECT MAX(o.Sequence) FROM LLM_Turns o WHERE o.ConversationID = t.ConversationID)
-        THEN (SELECT MAX(o.Sequence) FROM LLM_Turns o WHERE o.ConversationID = t.ConversationID) + 1
-        ELSE t.Sequence
-    END
-WHERE t.ID = $1
-  AND t.Status = $6`
+// a turn created in the streaming state, moving it to the end of its run (see
+// settleStreamingTurn). It is a no-op once a recovery sweep has claimed the
+// turn, so a stalled stream that resumes cannot overwrite the sweep's
+// interrupted verdict, and then reports false.
+func (s *Store) FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) (bool, error) {
+	settled, err := s.settleStreamingTurn(id, 0, `
+UPDATE LLM_Turns
+SET Content = $2, TokensIn = $3, TokensOut = $4, Status = $5, UpdatedAt = `+dbNowMillis+`
+WHERE ID = $1`, id, string(content), tokensIn, tokensOut, status)
+	if err != nil {
+		return false, fmt.Errorf("failed to finalize streaming turn: %w", err)
+	}
+	return settled, nil
+}
 
-	var lastErr error
-	for range maxAutoSequenceRetries {
-		_, lastErr = s.db.Exec(query, id, string(content), tokensIn, tokensOut, status, TurnStatusStreaming)
-		if lastErr == nil {
-			return nil
+// settleStreamingTurn runs update on turn id if it is still streaming (and,
+// when staleAfterMillis > 0, its heartbeat is older than that by the DB
+// clock), and reports whether it did. The turn reserved its sequence at stream
+// start, so it is first moved after the tool rounds its run persisted since,
+// but never past a later user turn: a follow-up posted meanwhile keeps its
+// place in history.
+func (s *Store) settleStreamingTurn(id string, staleAfterMillis int64, update string, args ...any) (settled bool, err error) {
+	tx, err := s.db.Beginx()
+	if err != nil {
+		return false, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if err != nil || !settled {
+			_ = tx.Rollback()
 		}
-		if !isUniqueViolation(lastErr) {
-			return fmt.Errorf("failed to finalize streaming turn: %w", lastErr)
+	}()
+
+	// Lock the conversation before the turn, the same order a turn insert
+	// takes them. One settle at a time per conversation: each reorders
+	// sequences, including other streaming turns, and parks its turn at
+	// MIN(Sequence)-1.
+	var conversationID string
+	if err = tx.Get(&conversationID, `SELECT ConversationID FROM LLM_Turns WHERE ID = $1`, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to read streaming turn: %w", err)
+	}
+	if _, err = tx.Exec(`SELECT 1 FROM LLM_Conversations WHERE ID = $1 FOR UPDATE`, conversationID); err != nil {
+		return false, fmt.Errorf("failed to lock conversation: %w", err)
+	}
+
+	var anchor struct {
+		ConversationID string  `db:"conversationid"`
+		Sequence       int     `db:"sequence"`
+		PostID         *string `db:"postid"`
+	}
+	lockQuery := `SELECT ConversationID, Sequence, PostID FROM LLM_Turns WHERE ID = $1 AND Status = $2`
+	lockArgs := []any{id, TurnStatusStreaming}
+	if staleAfterMillis > 0 {
+		lockQuery += ` AND UpdatedAt < ` + dbNowMillis + ` - $3`
+		lockArgs = append(lockArgs, staleAfterMillis)
+	}
+	if err = tx.Get(&anchor, lockQuery+` FOR UPDATE`, lockArgs...); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to lock streaming turn: %w", err)
+	}
+
+	var later []turnSpanRow
+	if err = tx.Select(&later, `SELECT ID, Sequence, Role, PostID, Content FROM LLM_Turns WHERE ConversationID = $1 AND Sequence > $2 ORDER BY Sequence ASC`,
+		anchor.ConversationID, anchor.Sequence); err != nil {
+		return false, fmt.Errorf("failed to read later turns: %w", err)
+	}
+	runEnd := runSpanEnd(later, anchor.PostID)
+
+	if runEnd > 0 {
+		// Rotate: park the anchor, shift each run turn into the slot freed
+		// before it, then drop the anchor into the last freed slot.
+		if _, err = tx.Exec(`UPDATE LLM_Turns SET Sequence = (SELECT MIN(Sequence) FROM LLM_Turns WHERE ConversationID = $1) - 1 WHERE ID = $2`,
+			anchor.ConversationID, id); err != nil {
+			return false, fmt.Errorf("failed to park streaming turn: %w", err)
+		}
+		free := anchor.Sequence
+		for _, turn := range later[:runEnd] {
+			if _, err = tx.Exec(`UPDATE LLM_Turns SET Sequence = $1 WHERE ID = $2`, free, turn.ID); err != nil {
+				return false, fmt.Errorf("failed to reorder run turn: %w", err)
+			}
+			free = turn.Sequence
+		}
+		if _, err = tx.Exec(`UPDATE LLM_Turns SET Sequence = $1 WHERE ID = $2`, free, id); err != nil {
+			return false, fmt.Errorf("failed to move streaming turn: %w", err)
 		}
 	}
-	return fmt.Errorf("failed to finalize streaming turn after %d retries: %w", maxAutoSequenceRetries, lastErr)
+
+	if _, err = tx.Exec(update, args...); err != nil {
+		return false, fmt.Errorf("failed to update streaming turn: %w", err)
+	}
+	if err = tx.Commit(); err != nil {
+		return false, fmt.Errorf("failed to commit: %w", err)
+	}
+	return true, nil
 }
 
 // GetStaleStreamingTurns returns up to limit turns still in the streaming
@@ -363,49 +567,39 @@ func (s *Store) GetStaleStreamingTurns(staleAfterMillis int64, limit uint64) ([]
 	return turns, nil
 }
 
-// ClaimStaleStreamingTurn atomically moves a stale streaming turn to the
-// interrupted state. It returns true only for the single caller whose update
-// won, so concurrent sweeps on several HA nodes never both repair the same
-// post. A turn that heartbeated since it was read is not claimed.
-func (s *Store) ClaimStaleStreamingTurn(id string, staleAfterMillis int64) (bool, error) {
-	// Like FinalizeStreamingTurn, move the turn after any tool-round turns
-	// persisted while it streamed so it stays the last turn of its response.
-	query := `
-UPDATE LLM_Turns AS t
-SET Status = $2,
-    UpdatedAt = ` + dbNowMillis + `,
-    Sequence = CASE
-        WHEN t.Sequence < (SELECT MAX(o.Sequence) FROM LLM_Turns o WHERE o.ConversationID = t.ConversationID)
-        THEN (SELECT MAX(o.Sequence) FROM LLM_Turns o WHERE o.ConversationID = t.ConversationID) + 1
-        ELSE t.Sequence
-    END
-WHERE t.ID = $1
-  AND t.Status = $3
-  AND t.UpdatedAt < ` + dbNowMillis + ` - $4`
-
-	var lastErr error
-	for range maxAutoSequenceRetries {
-		res, err := s.db.Exec(query, id, TurnStatusInterrupted, TurnStatusStreaming, staleAfterMillis)
-		if err != nil {
-			lastErr = err
-			if isUniqueViolation(err) {
-				continue
-			}
-			return false, fmt.Errorf("failed to claim stale streaming turn: %w", err)
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return false, fmt.Errorf("failed to read claimed rows: %w", err)
-		}
-		return n == 1, nil
+// HasLiveStreamingTurn reports whether postID has a streaming turn whose last
+// heartbeat is newer than staleAfterMillis by the DB clock, i.e. a stream that
+// is still running on some node.
+func (s *Store) HasLiveStreamingTurn(postID string, staleAfterMillis int64) (bool, error) {
+	var live bool
+	if err := s.db.Get(&live, `SELECT EXISTS (
+  SELECT 1 FROM LLM_Turns
+  WHERE PostID = $1 AND Status = $2 AND UpdatedAt >= `+dbNowMillis+` - $3
+)`, postID, TurnStatusStreaming, staleAfterMillis); err != nil {
+		return false, fmt.Errorf("failed to check live streaming turn: %w", err)
 	}
-	return false, fmt.Errorf("failed to claim stale streaming turn after %d retries: %w", maxAutoSequenceRetries, lastErr)
+	return live, nil
 }
 
-// ReleaseStreamingTurnClaim returns a claimed turn to the streaming state
-// without refreshing its heartbeat, so a later sweep can retry the repair.
+// ClaimStaleStreamingTurn atomically moves a stale streaming turn to the
+// interrupted state, at the end of its run (see settleStreamingTurn). It
+// returns true only for the single caller whose update won, so concurrent
+// sweeps on several HA nodes never both repair the same post. A turn that
+// heartbeated since it was read is not claimed.
+func (s *Store) ClaimStaleStreamingTurn(id string, staleAfterMillis int64) (bool, error) {
+	claimed, err := s.settleStreamingTurn(id, staleAfterMillis,
+		`UPDATE LLM_Turns SET Status = $2, UpdatedAt = `+dbNowMillis+` WHERE ID = $1`, id, TurnStatusInterrupted)
+	if err != nil {
+		return false, fmt.Errorf("failed to claim stale streaming turn: %w", err)
+	}
+	return claimed, nil
+}
+
+// ReleaseStreamingTurnClaim returns a claimed turn to the streaming state with
+// a stale heartbeat (the claim refreshed UpdatedAt), so a later sweep or
+// regenerate can retry the repair at once instead of seeing a live stream.
 func (s *Store) ReleaseStreamingTurnClaim(id string) error {
-	query := `UPDATE LLM_Turns SET Status = $2 WHERE ID = $1 AND Status = $3`
+	query := `UPDATE LLM_Turns SET Status = $2, UpdatedAt = 0 WHERE ID = $1 AND Status = $3`
 	if _, err := s.db.Exec(query, id, TurnStatusStreaming, TurnStatusInterrupted); err != nil {
 		return fmt.Errorf("failed to release streaming turn claim: %w", err)
 	}

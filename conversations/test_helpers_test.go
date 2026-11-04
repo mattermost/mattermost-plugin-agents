@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -37,8 +38,10 @@ type fakeWebSocketEvent struct {
 }
 
 type fakeMMClient struct {
-	users                map[string]*model.User
-	postThreads          map[string]*model.PostList
+	users       map[string]*model.User
+	postThreads map[string]*model.PostList
+	// kvMu guards kv: run reservations are released from stream goroutines.
+	kvMu                 sync.Mutex
 	kv                   map[string]any
 	createdPosts         []*model.Post
 	allowCreatePost      bool
@@ -51,7 +54,10 @@ type fakeMMClient struct {
 	fileInfos            map[string]*model.FileInfo
 	files                map[string][]byte
 	onUpdatePost         func(*model.Post)
-	websocketEvents      []fakeWebSocketEvent
+	// wsMu guards websocketEvents: title generation publishes from a
+	// background goroutine.
+	wsMu            sync.Mutex
+	websocketEvents []fakeWebSocketEvent
 	// dmChannelID, when set, is the channel DM posts are created in.
 	dmChannelID string
 	dmPosts     []*model.Post
@@ -103,7 +109,9 @@ func (c *fakeMMClient) UpdatePost(post *model.Post) error {
 }
 
 func (c *fakeMMClient) KVGet(key string, value any) error {
+	c.kvMu.Lock()
 	stored, ok := c.kv[key]
+	c.kvMu.Unlock()
 	if !ok {
 		return errors.New("not found")
 	}
@@ -115,6 +123,8 @@ func (c *fakeMMClient) KVGet(key string, value any) error {
 }
 
 func (c *fakeMMClient) KVSet(key string, value any) error {
+	c.kvMu.Lock()
+	defer c.kvMu.Unlock()
 	if c.kv == nil {
 		c.kv = make(map[string]any)
 	}
@@ -126,7 +136,18 @@ func (c *fakeMMClient) KVSetWithExpiry(key string, value any, _ time.Duration) e
 	return c.KVSet(key, value)
 }
 
+// kvValue reads a KV entry under the lock.
+func (c *fakeMMClient) kvValue(key string) (any, bool) {
+	c.kvMu.Lock()
+	defer c.kvMu.Unlock()
+	v, ok := c.kv[key]
+	return v, ok
+}
+
+// KVCompareAndSet mirrors the plugin KV: a nil newValue deletes the key.
 func (c *fakeMMClient) KVCompareAndSet(key string, oldValue, newValue any) (bool, error) {
+	c.kvMu.Lock()
+	defer c.kvMu.Unlock()
 	if c.kv == nil {
 		c.kv = make(map[string]any)
 	}
@@ -152,6 +173,10 @@ func (c *fakeMMClient) KVCompareAndSet(key string, oldValue, newValue any) (bool
 	if string(currentJSON) != string(oldJSON) {
 		return false, nil
 	}
+	if newValue == nil {
+		delete(c.kv, key)
+		return true, nil
+	}
 	c.kv[key] = newValue
 	return true, nil
 }
@@ -161,6 +186,8 @@ func (c *fakeMMClient) KVCompareAndSetWithExpiry(key string, oldValue, newValue 
 }
 
 func (c *fakeMMClient) KVDelete(key string) error {
+	c.kvMu.Lock()
+	defer c.kvMu.Unlock()
 	delete(c.kv, key)
 	c.kvDeletes = append(c.kvDeletes, key)
 	return nil
@@ -225,11 +252,20 @@ func (c *fakeMMClient) GetDirectChannel(string, string) (*model.Channel, error) 
 }
 
 func (c *fakeMMClient) PublishWebSocketEvent(event string, payload map[string]any, broadcast *model.WebsocketBroadcast) {
+	c.wsMu.Lock()
+	defer c.wsMu.Unlock()
 	c.websocketEvents = append(c.websocketEvents, fakeWebSocketEvent{
 		event:     event,
 		payload:   payload,
 		broadcast: broadcast,
 	})
+}
+
+// publishedWebSocketEvents returns a copy of the events published so far.
+func (c *fakeMMClient) publishedWebSocketEvents() []fakeWebSocketEvent {
+	c.wsMu.Lock()
+	defer c.wsMu.Unlock()
+	return slices.Clone(c.websocketEvents)
 }
 
 func (c *fakeMMClient) GetConfig() *model.Config {
@@ -326,6 +362,12 @@ type fakeStreamingService struct {
 	streamedPosts []*model.Post
 	// finished, when set, receives the ID of each post whose stream ends.
 	finished chan string
+	// stopAtExecuting ends a stream once a tool batch starts executing, as a
+	// Stop or a lost turn lease does, without reading the rest.
+	stopAtExecuting bool
+
+	mu      sync.Mutex
+	cancels map[string]context.CancelFunc
 }
 
 func (s *fakeStreamingService) StreamToNewPost(_ context.Context, _ string, _ string, _ *llm.TextStreamResult, post *model.Post, _ string) error {
@@ -337,25 +379,51 @@ func (s *fakeStreamingService) StreamToNewDM(context.Context, string, *llm.TextS
 	return nil
 }
 
-func (s *fakeStreamingService) StreamToPost(_ context.Context, stream *llm.TextStreamResult, _ *model.Post, _ string, _ string) {
-	if stream != nil {
+func (s *fakeStreamingService) consume(stream *llm.TextStreamResult) {
+	if stream == nil {
+		return
+	}
+	if !s.stopAtExecuting {
 		_, _ = stream.ReadAll()
+		return
+	}
+	for event := range stream.Stream {
+		if batch, ok := event.Value.(llm.ToolCallBatch); ok && batch.Phase == llm.ToolCallPhaseExecuting {
+			return
+		}
 	}
 }
 
+func (s *fakeStreamingService) StreamToPost(_ context.Context, stream *llm.TextStreamResult, _ *model.Post, _ string, _ string) {
+	s.consume(stream)
+}
+
 func (s *fakeStreamingService) StreamContinuationToPost(_ context.Context, stream *llm.TextStreamResult, _ *model.Post, _ string, _ string) {
-	if stream != nil {
-		_, _ = stream.ReadAll()
-	}
+	s.consume(stream)
 }
 
 func (s *fakeStreamingService) StopStreaming(string) {}
 
-func (s *fakeStreamingService) GetStreamingContext(inCtx context.Context, _ string) (context.Context, error) {
-	return inCtx, nil
+// GetStreamingContext and FinishStreaming mirror the real service: finishing
+// a post's stream cancels its context.
+func (s *fakeStreamingService) GetStreamingContext(inCtx context.Context, postID string) (context.Context, error) {
+	ctx, cancel := context.WithCancel(inCtx)
+	s.mu.Lock()
+	if s.cancels == nil {
+		s.cancels = map[string]context.CancelFunc{}
+	}
+	s.cancels[postID] = cancel
+	s.mu.Unlock()
+	return ctx, nil
 }
 
 func (s *fakeStreamingService) FinishStreaming(postID string) {
+	s.mu.Lock()
+	if cancel, ok := s.cancels[postID]; ok {
+		cancel()
+		delete(s.cancels, postID)
+	}
+	s.mu.Unlock()
 	if s.finished != nil {
 		s.finished <- postID
 	}

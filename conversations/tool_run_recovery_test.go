@@ -93,6 +93,7 @@ func TestApprovalRunOnDeadNodeIsRecovered(t *testing.T) {
 	mmClient.On("GetUser", botID).Maybe().Return(&model.User{Id: botID, Username: "matty", IsBot: true}, nil)
 	mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
 	mmClient.On("KVSet", mock.Anything, mock.Anything).Maybe().Return(nil)
+	allowPostRunReservation(mmClient)
 	mmClient.On("GetConfig").Maybe().Return(&model.Config{})
 	mmClient.On("GetChannel", channel.Id).Maybe().Return(channel, nil)
 	mmClient.On("PublishWebSocketEvent", mock.Anything, mock.Anything, mock.Anything).Maybe().Return()

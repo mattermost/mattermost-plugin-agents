@@ -129,7 +129,7 @@ func recoverTurn(rs RecoveryStore, client RecoveryClient, turn store.Turn, stale
 		release()
 		return RecoveredStream{}, recoveryRetry
 	}
-	if partial := partialTextFromTurn(turn); len(partial) > len(post.Message) {
+	if partial := PartialTextFromTurn(turn); len(partial) > len(post.Message) {
 		post.Message = partial
 	}
 	MarkInterrupted(post, InterruptedReasonLost, model.GetMillis())
@@ -141,8 +141,8 @@ func recoverTurn(rs RecoveryStore, client RecoveryClient, turn store.Turn, stale
 	return RecoveredStream{PostID: post.Id, ChannelID: post.ChannelId, TurnID: turn.ID}, recoveryRepaired
 }
 
-// partialTextFromTurn concatenates the text blocks of a turn's content.
-func partialTextFromTurn(turn store.Turn) string {
+// PartialTextFromTurn concatenates the text blocks of a turn's content.
+func PartialTextFromTurn(turn store.Turn) string {
 	blocks, err := conversation.UnmarshalBlocks(turn.Content)
 	if err != nil {
 		return ""

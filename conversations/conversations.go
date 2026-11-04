@@ -66,6 +66,11 @@ type Conversations struct {
 	rootCtx                  stdcontext.Context
 	toolRunHeartbeatInterval time.Duration
 	activeToolRuns           atomic.Int64
+
+	// resumeWake runs a check-now resume. Production leaves it nil and uses
+	// runWake on a goroutine (a full turn must not block the request); tests
+	// set it to observe the resume deterministically.
+	resumeWake func(WakeJob)
 }
 
 // New creates the conversations service. toolPolicyChecker is required: tool
@@ -206,6 +211,8 @@ type DMStreamResult struct {
 	// the tool loop. Call it once the consumer stops reading, including when
 	// it never starts.
 	release func()
+	// runnerDone is closed once the tool runner has exited.
+	runnerDone <-chan struct{}
 }
 
 // processDMRequest builds a completion request from the DM conversation and
@@ -274,7 +281,7 @@ func (c *Conversations) processDMRequest(
 		releaseSpan()
 		cancelLoop()
 	}
-	return &DMStreamResult{Stream: wrapped, release: release}, nil
+	return &DMStreamResult{Stream: wrapped, release: release, runnerDone: runResult.Done}, nil
 }
 
 // endSpanOnStreamClose forwards every event of stream and ends span when the

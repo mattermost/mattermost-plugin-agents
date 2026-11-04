@@ -99,6 +99,20 @@ type postStreamContext struct {
 // stopped, distinguishing it from shutdown or a superseded run.
 var errStoppedByUser = errors.New("generation stopped by user")
 
+// errTurnLeaseLost cancels a stream whose turn can no longer be kept fresh in
+// the DB: other nodes would soon treat the run as dead and recover or
+// regenerate it, so it must not keep running tools.
+var errTurnLeaseLost = errors.New("streaming turn could not be persisted")
+
+// errTurnClaimed cancels a stream whose turn another node already claimed as
+// abandoned. That node owns the post now, so this run stops without touching it.
+var errTurnClaimed = errors.New("streaming turn was claimed by recovery")
+
+// turnLeaseMaxAge is how long a stream runs without a successful turn write
+// before it stops itself, kept well under StaleStreamThreshold so it stops
+// before peers can consider it abandoned.
+var turnLeaseMaxAge = StaleStreamThreshold / 2
+
 // TurnStore is the subset of store operations needed by the streaming layer.
 // Finalize either creates a fresh anchor (first stream / regen, with the caller
 // having scrubbed any prior turns) or demotes the existing anchor and creates
@@ -107,8 +121,8 @@ type TurnStore interface {
 	CreateTurnAutoSequence(turn *store.Turn) error
 	GetTurnByPostID(postID string) (*store.Turn, error)
 	UpdateTurnPostID(id string, postID *string) error
-	HeartbeatStreamingTurn(id string, content json.RawMessage) error
-	FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) error
+	HeartbeatStreamingTurn(id string, content json.RawMessage) (bool, error)
+	FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) (bool, error)
 }
 
 // turnAccumulator collects stream state. The turn is not written to the
@@ -122,10 +136,17 @@ type turnAccumulator struct {
 	// start. Used only by continuation finalize to demote the prior anchor.
 	existingAnchorID string
 	isContinuation   bool
+	// anchorLookupFailed means a continuation could not tell whether the post
+	// already has an anchor, so it must not create one.
+	anchorLookupFailed bool
 
 	// turnID is the streaming turn inserted at stream start. Empty when that
 	// insert failed; finalize then falls back to creating the turn.
 	turnID string
+	// persistedAt is when the turn was last written successfully.
+	persistedAt time.Time
+	// executing is set while toolCalls is an auto-run batch being executed.
+	executing bool
 
 	sequence    llm.TurnSequence
 	annotations []llm.Annotation
@@ -229,16 +250,24 @@ func (p *MMPostStreamService) ActiveStreams() int64 {
 }
 
 // WaitForActiveStreams blocks until no stream is active on this node or the
-// timeout elapses. Returns true if all streams finished.
+// timeout elapses. Returns true if all streams finished. A post reserved with
+// GetStreamingContext counts too: its stream goroutine may not have started
+// writing yet, and must still get to mark itself interrupted.
 func (p *MMPostStreamService) WaitForActiveStreams(timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
-	for p.activeStreams.Load() > 0 {
+	for p.activeStreams.Load() > 0 || p.reservedPosts() > 0 {
 		if time.Now().After(deadline) {
 			return false
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	return true
+}
+
+func (p *MMPostStreamService) reservedPosts() int {
+	p.contextsMutex.Lock()
+	defer p.contextsMutex.Unlock()
+	return len(p.contexts)
 }
 
 // stopWaitTimeout bounds how long StopStreaming waits for the stopped stream
@@ -396,7 +425,11 @@ func newTurnAccumulator(conversationID, postID, existingAnchorID string, isConti
 // continuation streams it first demotes the prior anchor (demote must precede
 // create so two turns never share a post_id).
 func (p *MMPostStreamService) beginTurn(acc *turnAccumulator) {
-	p.demotePriorAnchor(acc)
+	if !p.demotePriorAnchor(acc) {
+		p.mmClient.LogError("Could not hand the post's anchor to the new turn; stopping the stream", "post_id", acc.postID)
+		p.cancelStream(acc.postID, errTurnLeaseLost)
+		return
+	}
 
 	postIDCopy := acc.postID
 	turn := &store.Turn{
@@ -409,20 +442,56 @@ func (p *MMPostStreamService) beginTurn(acc *turnAccumulator) {
 		Status:         store.TurnStatusStreaming,
 	}
 	if err := p.turnStore.CreateTurnAutoSequence(turn); err != nil {
-		p.mmClient.LogError("Failed to create streaming assistant turn", "error", err, "post_id", acc.postID)
+		p.mmClient.LogError("Failed to create streaming assistant turn; stopping the stream", "error", err, "post_id", acc.postID)
+		p.cancelStream(acc.postID, errTurnLeaseLost)
 		return
 	}
 	acc.turnID = turn.ID
+	acc.persistedAt = time.Now()
 }
 
-func (p *MMPostStreamService) demotePriorAnchor(acc *turnAccumulator) {
-	if acc.existingAnchorID == "" || !acc.isContinuation {
+// markExecutingCallsUnknown records a batch cut off mid-execution as errored:
+// its tools may already have taken effect, so it must not stay pending, where
+// it would offer to run again.
+func (a *turnAccumulator) markExecutingCallsUnknown() {
+	if a == nil || !a.executing {
 		return
+	}
+	for i := range a.toolCalls {
+		if a.toolCalls[i].Status == llm.ToolCallStatusPending || a.toolCalls[i].Status == llm.ToolCallStatusAccepted {
+			a.toolCalls[i].Status = llm.ToolCallStatusError
+		}
+	}
+	a.executing = false
+}
+
+// cancelStream cancels postID's stream context with cause, as Stop does,
+// without waiting for it to finish (the caller may be the stream itself).
+func (p *MMPostStreamService) cancelStream(postID string, cause error) {
+	p.contextsMutex.Lock()
+	sc, ok := p.contexts[postID]
+	p.contextsMutex.Unlock()
+	if ok {
+		sc.cancel(cause)
+	}
+}
+
+// demotePriorAnchor clears the prior anchor's post_id so the new turn becomes
+// the post's only anchor. On failure the prior anchor is kept for a retry and
+// false is returned: the caller must not create a second anchor.
+func (p *MMPostStreamService) demotePriorAnchor(acc *turnAccumulator) bool {
+	if acc.anchorLookupFailed {
+		return false
+	}
+	if acc.existingAnchorID == "" || !acc.isContinuation {
+		return true
 	}
 	if demoteErr := p.turnStore.UpdateTurnPostID(acc.existingAnchorID, nil); demoteErr != nil {
 		p.mmClient.LogError("Failed to demote prior anchor turn", "error", demoteErr, "post_id", acc.postID, "turn_id", acc.existingAnchorID)
+		return false
 	}
 	acc.existingAnchorID = ""
+	return true
 }
 
 // heartbeatTurn persists the current partial content of a streaming turn.
@@ -435,30 +504,73 @@ func (p *MMPostStreamService) heartbeatTurn(acc *turnAccumulator) {
 		p.mmClient.LogError("Failed to marshal turn content blocks", "error", err, "post_id", acc.postID)
 		return
 	}
-	if err := p.turnStore.HeartbeatStreamingTurn(acc.turnID, contentJSON); err != nil {
-		p.mmClient.LogWarn("Failed to heartbeat streaming turn", "error", err, "post_id", acc.postID)
+	alive, err := p.turnStore.HeartbeatStreamingTurn(acc.turnID, contentJSON)
+	if err == nil && !alive {
+		// Another node claimed the turn as abandoned and may already be
+		// regenerating the post: this run must not keep calling tools.
+		p.mmClient.LogWarn("Streaming turn was claimed by recovery; stopping the stream", "post_id", acc.postID)
+		p.cancelStream(acc.postID, errTurnClaimed)
+		return
 	}
+	if err != nil {
+		p.mmClient.LogWarn("Failed to heartbeat streaming turn", "error", err, "post_id", acc.postID)
+		if time.Since(acc.persistedAt) >= turnLeaseMaxAge {
+			p.mmClient.LogError("Streaming turn heartbeat kept failing; stopping the stream", "post_id", acc.postID)
+			p.cancelStream(acc.postID, errTurnLeaseLost)
+		}
+		return
+	}
+	acc.persistedAt = time.Now()
 }
 
+// finalizeAttempts and finalizeRetryDelay bound the retries of a failed turn
+// finalize before the stream gives the post up.
+const finalizeAttempts = 3
+
+var finalizeRetryDelay = 200 * time.Millisecond
+
 // finalizeTurn writes the accumulated content and final status onto the turn
-// created at stream start, or creates the turn if that insert failed.
-func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator, status string) {
+// created at stream start, or creates the turn if that insert failed. It
+// reports false when another node already claimed the turn (that node owns
+// the post) or when the finalize kept failing (ownership is unknown); either
+// way the caller must not write to the post.
+func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator, status string) bool {
 	blocks := acc.buildContentBlocks()
 
 	contentJSON, err := json.Marshal(blocks)
 	if err != nil {
 		p.mmClient.LogError("Failed to marshal turn content blocks", "error", err, "post_id", acc.postID)
-		return
+		return true
 	}
 
 	if acc.turnID != "" {
-		if err := p.turnStore.FinalizeStreamingTurn(acc.turnID, contentJSON, acc.tokensIn, acc.tokensOut, status); err != nil {
-			p.mmClient.LogError("Failed to finalize streaming assistant turn", "error", err, "post_id", acc.postID)
+		var settled bool
+		for attempt := range finalizeAttempts {
+			if attempt > 0 {
+				time.Sleep(finalizeRetryDelay * time.Duration(attempt))
+			}
+			settled, err = p.turnStore.FinalizeStreamingTurn(acc.turnID, contentJSON, acc.tokensIn, acc.tokensOut, status)
+			if err == nil {
+				break
+			}
 		}
-		return
+		if err != nil {
+			// Ownership is unknown, so the post is left alone: the turn stays
+			// streaming, the client's stale notice offers Regenerate, and
+			// recovery repairs it as an abandoned stream.
+			p.mmClient.LogError("Failed to finalize streaming assistant turn; leaving the post", "error", err, "post_id", acc.postID)
+			return false
+		}
+		if !settled {
+			p.mmClient.LogWarn("Streaming turn was claimed by recovery before it finished", "post_id", acc.postID)
+		}
+		return settled
 	}
 
-	p.demotePriorAnchor(acc)
+	if !p.demotePriorAnchor(acc) {
+		p.mmClient.LogError("Could not hand the post's anchor to the finished turn; not saving it", "post_id", acc.postID)
+		return true
+	}
 
 	postIDCopy := acc.postID
 	turn := &store.Turn{
@@ -476,6 +588,7 @@ func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator, status string) 
 	if err := p.turnStore.CreateTurnAutoSequence(turn); err != nil {
 		p.mmClient.LogError("Failed to create finalized assistant turn", "error", err, "post_id", acc.postID)
 	}
+	return true
 }
 
 // broadcastToolCalls sends tool call WebSocket events with privacy scoping.
@@ -604,8 +717,14 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 	// finalize). First stream and regen find none.
 	controlEvent := PostStreamingControlStart
 	existingAnchorID := ""
+	anchorLookupFailed := false
 	if p.turnStore != nil {
-		if existing, lookupErr := p.turnStore.GetTurnByPostID(post.Id); lookupErr == nil && existing != nil && existing.Role == "assistant" {
+		existing, lookupErr := p.turnStore.GetTurnByPostID(post.Id)
+		if lookupErr != nil {
+			p.mmClient.LogError("Failed to look up the post's anchor turn", "error", lookupErr, "post_id", post.Id)
+			anchorLookupFailed = isContinuation
+		}
+		if lookupErr == nil && existing != nil && existing.Role == "assistant" {
 			existingAnchorID = existing.ID
 			if isContinuation {
 				controlEvent = PostStreamingControlContinue
@@ -627,6 +746,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 				isDM = mmapi.IsDMWith(requesterUserID, ch)
 			}
 			acc = newTurnAccumulator(convID, post.Id, existingAnchorID, isContinuation, isDM)
+			acc.anchorLookupFailed = anchorLookupFailed
 			p.beginTurn(acc)
 		}
 	}
@@ -638,9 +758,24 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 	// reach the server before its turn is actionable. An interrupted stream
 	// never offers a decision.
 	var awaitingDecision *llm.ToolCallBatch
+	// settle finalizes the turn once, before the final post update, and
+	// reports whether this run still owns the post.
+	settled, ownsPost := false, true
+	settle := func() bool {
+		if acc == nil || settled {
+			return ownsPost
+		}
+		settled = true
+		acc.markExecutingCallsUnknown()
+		ownsPost = p.finalizeTurn(acc, finalStatus)
+		return ownsPost
+	}
 	defer func() {
-		if acc != nil {
-			p.finalizeTurn(acc, finalStatus)
+		// A claimed turn belongs to the node that claimed it: write nothing
+		// more, or a finalize could undo a released claim and events could
+		// cross that node's stream.
+		if errors.Is(context.Cause(ctx), errTurnClaimed) || !settle() {
+			return
 		}
 		if awaitingDecision != nil && finalStatus == store.TurnStatusComplete {
 			p.broadcastToolCalls(post, *awaitingDecision, requesterUserID)
@@ -668,12 +803,21 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 	// the user should be told about.
 	stopStream := func() {
 		outcome = telemetry.StreamOutcomeCancelled
+		if errors.Is(context.Cause(ctx), errTurnClaimed) {
+			return
+		}
 		switch {
 		case shuttingDown():
 			finalStatus = store.TurnStatusInterrupted
 			MarkInterrupted(post, InterruptedReasonShutdown, model.GetMillis())
+		case errors.Is(context.Cause(ctx), errTurnLeaseLost):
+			finalStatus = store.TurnStatusInterrupted
+			MarkInterrupted(post, InterruptedReasonLost, model.GetMillis())
 		case errors.Is(context.Cause(ctx), errStoppedByUser):
 			post.AddProp(GenerationStoppedProp, true)
+		}
+		if !settle() {
+			return
 		}
 		if err := p.mmClient.UpdatePost(post); err != nil {
 			p.mmClient.LogError("Error updating post on stop signaled", "error", err)
@@ -693,8 +837,14 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 			if acc != nil {
 				p.heartbeatTurn(acc)
 			}
+			if errors.Is(context.Cause(ctx), errTurnClaimed) {
+				return
+			}
 			p.sendPostStreamingEvent(post, broadcast, map[string]any{"control": PostStreamingControlHeartbeat})
 		case event, ok := <-stream.Stream:
+			if errors.Is(context.Cause(ctx), errTurnClaimed) {
+				return
+			}
 			// When the upstream shares this context it ends, errors or closes
 			// on cancel too, and select may pick that over ctx.Done(). Treat
 			// any of those as the cancellation so a shutdown interruption is
@@ -705,6 +855,9 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 			}
 			if !ok {
 				// Stream channel closed - persist final state
+				if !settle() {
+					return
+				}
 				if err := p.mmClient.UpdatePost(post); err != nil {
 					p.mmClient.LogError("Streaming failed to update post on channel close", "error", err)
 				}
@@ -766,6 +919,9 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 				if outcome != telemetry.StreamOutcomeEmpty {
 					outcome = telemetry.StreamOutcomeCompleted
 				}
+				if !settle() {
+					return
+				}
 				if err := p.mmClient.UpdatePost(post); err != nil {
 					p.mmClient.LogError("Streaming failed to update post", "error", err)
 					return
@@ -803,6 +959,9 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					acc.sequence.AppendText(errorText)
 				}
 
+				if !settle() {
+					return
+				}
 				if err := p.mmClient.UpdatePost(post); err != nil {
 					p.mmClient.LogError("Error recovering from streaming error", "error", err)
 					return
@@ -854,10 +1013,12 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 							// tool turn; the anchor counts only its own.
 							acc.tokensIn = 0
 							acc.tokensOut = 0
+							acc.executing = false
 							messageBuilder.Reset()
 							post.Message = ""
 						} else {
 							acc.toolCalls = batch.Calls
+							acc.executing = batch.Phase == llm.ToolCallPhaseExecuting
 						}
 					}
 					if batch.Phase == llm.ToolCallPhaseAwaitingDecision {

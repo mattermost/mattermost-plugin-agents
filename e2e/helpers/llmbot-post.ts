@@ -213,11 +213,10 @@ export class LLMBotPostHelper {
 
     /**
      * Get citation tooltip (appears on hover)
-     * @param postId - Optional post ID to scope the search
      */
-    getCitationTooltip(postId?: string): Locator {
-        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
-        return baseLocator.locator('[data-testid="llm-citation"] [data-testid="llm-citation-tooltip"]:visible').last();
+    getCitationTooltip(): Locator {
+        // The standard tooltip renders in a portal at the page root, not inside the citation.
+        return this.page.locator('[data-testid="llm-citation-tooltip"]:visible').last();
     }
 
     /**
@@ -285,8 +284,16 @@ export class LLMBotPostHelper {
      */
     async hoverCitation(index: number, postId?: string): Promise<void> {
         const citationWrapper = this.getCitationWrapper(index, postId);
-        await citationWrapper.hover();
-        await expect(this.getCitationTooltip(postId)).toBeVisible();
+        const tooltip = this.getCitationTooltip();
+
+        // Once streaming ends the post swaps its live round for the persisted
+        // one, which re-mounts every citation. A hover that lands on the old
+        // element leaves the pointer over a node that no longer exists, so
+        // retry the hover until the tooltip shows on the surviving element.
+        await expect(async () => {
+            await citationWrapper.hover();
+            await expect(tooltip).toBeVisible({ timeout: 2000 });
+        }).toPass({ timeout: 15000 });
     }
 
     /**
@@ -401,7 +408,7 @@ export class LLMBotPostHelper {
      * @param postId - Optional post ID (tooltip is typically global)
      */
     async expectCitationTooltip(domain: string, postId?: string): Promise<void> {
-        const tooltip = this.getCitationTooltip(postId);
+        const tooltip = this.getCitationTooltip();
         await expect(tooltip).toBeVisible();
         await expect(tooltip).toContainText(domain);
     }
@@ -555,7 +562,7 @@ export class LLMBotPostHelper {
      */
     async expectCitationsInline(postId?: string): Promise<void> {
         const postText = this.getPostText(postId);
-        const textBeforeSecondCitation = await postText.evaluate((el) => {
+        const textBeforeSecondCitation = () => postText.evaluate((el) => {
             const citations = el.querySelectorAll('[data-testid="llm-citation"]');
             if (citations.length < 2) return '';
             const secondCitation = citations[1];
@@ -578,7 +585,11 @@ export class LLMBotPostHelper {
 
         // With the bug, this would be empty (all citations clustered at position 0).
         // With the fix, there should be substantive text before the second citation.
-        expect(textBeforeSecondCitation.length).toBeGreaterThan(10);
+        // Polled because the post re-mounts when the persisted round replaces the live one.
+        await expect.poll(
+            async () => (await textBeforeSecondCitation().catch(() => '')).length,
+            { timeout: 15000 },
+        ).toBeGreaterThan(10);
     }
 
     /**
@@ -598,8 +609,8 @@ export class LLMBotPostHelper {
             throw new Error('Timeout waiting for bot post text to appear');
         }
 
-        // Wait for "Stop Generating" button to disappear (streaming complete)
-        const stopButton = this.getStopGeneratingButton();
+        // Wait for every post's Stop control to disappear (streaming complete).
+        const stopButton = this.page.getByTestId('stop-generating-button');
 
         // Wait until the stop button disappears (streaming complete)
         try {

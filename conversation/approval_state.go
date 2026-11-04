@@ -61,7 +61,11 @@ func ComputePostApprovalState(turns []store.Turn, postID string) string {
 
 	pendingToolUse := false
 	executedToolUseIDs := make(map[string]struct{})
-	for _, t := range responseTurns {
+	for i, t := range responseTurns {
+		// An anchor that never completed (interrupted mid-stream) holds a
+		// heartbeat snapshot, not a settled batch; its tool calls can't be
+		// decided, matching the tool approval handler.
+		undecidable := i == 0 && t.Status != "" && t.Status != store.TurnStatusComplete
 		blocks, err := UnmarshalBlocks(t.Content)
 		if err != nil {
 			continue
@@ -72,7 +76,9 @@ func ComputePostApprovalState(turns []store.Turn, postID string) string {
 			}
 			switch b.Status {
 			case StatusPending, StatusAccepted:
-				pendingToolUse = true
+				if !undecidable {
+					pendingToolUse = true
+				}
 			case StatusSuccess, StatusError, StatusAutoApproved:
 				executedToolUseIDs[b.ID] = struct{}{}
 			}

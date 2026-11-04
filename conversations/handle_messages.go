@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/lifecycle"
 
@@ -297,7 +298,10 @@ func (c *Conversations) handleMentionViaConversation(
 	bot, postingUser, channel := policy.bot, policy.user, policy.channel
 	// Build the context once WITH tools so the system prompt can reference
 	// .Tools and .DisabledTools.
-	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences")
+	llmContext, err := policy.buildContext(ctx, "Failed to load user tool preferences")
+	if err != nil {
+		return err
+	}
 	progress.Advance(responseProgressLoadingConversation)
 
 	systemPrompt, fmtErr := c.prompts.Format(prompts.PromptDirectMessageQuestionSystem, llmContext)
@@ -321,9 +325,9 @@ func (c *Conversations) handleMentionViaConversation(
 	if convErr != nil {
 		return fmt.Errorf("failed to get or create conversation: %w", convErr)
 	}
-	responsePost.AddProp(streaming.ConversationIDProp, convResult.Conversation.ID)
-	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
-		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
+	ctx, releaseRun, claimErr := c.claimResponsePost(ctx, responsePost, convResult.Conversation.ID)
+	if claimErr != nil {
+		return claimErr
 	}
 	llmContext.ResponsePostID = responsePost.Id
 
@@ -334,12 +338,13 @@ func (c *Conversations) handleMentionViaConversation(
 		post:       post,
 		response:   responsePost,
 	}, progress)
-	// Ownership of runSpan passes to the streaming goroutine once streaming
-	// starts, so the run's duration covers the whole response.
+	// Ownership of runSpan and the run reservation passes to the streaming
+	// goroutine once streaming starts, so they cover the whole response.
 	runHandedOff := false
 	defer func() {
 		if !runHandedOff {
 			runSpan.End()
+			releaseRun()
 		}
 	}()
 
@@ -365,16 +370,27 @@ func (c *Conversations) handleMentionViaConversation(
 	}
 
 	progress.Advance(responseProgressConnectingProvider)
-	result, runErr := policy.runToolLoop(ctx, llmContext, convResult.Conversation.ID, *completionRequest, "Failed to write tool turns")
+	// The tool loop ends with the stream, however the stream ends (Stop, a
+	// lost turn lease, shutdown), so no tool keeps running after it.
+	loopCtx, cancelLoop := context.WithCancel(ctx)
+	result, runErr := policy.runToolLoop(loopCtx, llmContext, convResult.Conversation.ID, *completionRequest, "Failed to write tool turns")
 
 	if runErr != nil {
+		cancelLoop()
 		return fmt.Errorf("tool runner failed: %w", runErr)
 	}
 
 	stream := decorateStreamWithWebSearchAnnotations(result.Stream, llmContext)
 	stream = c.decorateStreamWithCreatedFiles(ctx, bot, stream, responsePost, nil, llmContext, llmContext)
 
-	if streamErr := c.streamToExistingPost(ctx, stream, responsePost, postingUser, channel, false, func() { runSpan.End() }); streamErr != nil {
+	if streamErr := c.streamToExistingPost(ctx, stream, responsePost, postingUser, channel, false, func() {
+		cancelLoop()
+		c.awaitToolRunner(result.Done, responsePost.Id)
+		runSpan.End()
+		releaseRun()
+	}); streamErr != nil {
+		cancelLoop()
+		c.awaitToolRunner(result.Done, responsePost.Id)
 		return fmt.Errorf("unable to stream response: %w", streamErr)
 	}
 	runHandedOff = true
@@ -441,7 +457,10 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, policy *tur
 		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 	}
 	// Build the context once WITH tools so the system prompt can reference them.
-	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences", extraOpts...)
+	llmContext, err := policy.buildContext(ctx, "Failed to load user tool preferences", extraOpts...)
+	if err != nil {
+		return err
+	}
 	progress.Advance(responseProgressLoadingConversation)
 
 	convResult, err := c.createOrGetDMConversation(auth.SessionIDFromContext(ctx), policy.bot.GetMMBot().UserId, policy.user, policy.channel, post, llmContext)
@@ -464,9 +483,9 @@ func (c *Conversations) streamDMConversation(
 ) error {
 	bot, channel, postingUser := policy.bot, policy.channel, policy.user
 	ensureDMWebSearchTracking(llmContext)
-	responsePost.AddProp(streaming.ConversationIDProp, convResult.ConversationID)
-	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
-		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
+	ctx, releaseRun, claimErr := c.claimResponsePost(ctx, responsePost, convResult.ConversationID)
+	if claimErr != nil {
+		return claimErr
 	}
 	llmContext.ResponsePostID = responsePost.Id
 
@@ -477,12 +496,13 @@ func (c *Conversations) streamDMConversation(
 		post:       post,
 		response:   responsePost,
 	}, progress)
-	// Ownership of runSpan passes to the streaming goroutine once streaming
-	// starts, so the run's duration covers the whole response.
+	// Ownership of runSpan and the run reservation passes to the streaming
+	// goroutine once streaming starts, so they cover the whole response.
 	runHandedOff := false
 	defer func() {
 		if !runHandedOff {
 			runSpan.End()
+			releaseRun()
 		}
 	}()
 
@@ -498,9 +518,12 @@ func (c *Conversations) streamDMConversation(
 
 	if streamErr := c.streamToExistingPost(ctx, stream, responsePost, postingUser, channel, false, func() {
 		dmStream.release()
+		c.awaitToolRunner(dmStream.runnerDone, responsePost.Id)
 		runSpan.End()
+		releaseRun()
 	}); streamErr != nil {
 		dmStream.release()
+		c.awaitToolRunner(dmStream.runnerDone, responsePost.Id)
 		return fmt.Errorf("unable to stream response: %w", streamErr)
 	}
 	runHandedOff = true
@@ -616,6 +639,24 @@ func cloneWithAgentMention(post *model.Post, botUsername string) *model.Post {
 func (c *Conversations) createResponsePlaceholder(botID string, post *model.Post, respondingToPostID string) error {
 	streaming.ModifyPostForBot(botID, post, respondingToPostID)
 	return c.mmClient.CreatePost(post)
+}
+
+// claimResponsePost reserves a new response post for this run (see
+// reservePostRun) and only then links it to its conversation. Regenerate and
+// tool decisions reach a post only through that link, so none can start on
+// it while this run holds it. release frees the reservation; it is idempotent.
+func (c *Conversations) claimResponsePost(ctx context.Context, post *model.Post, conversationID string) (context.Context, func(), error) {
+	ctx, release, err := c.reservePostRun(ctx, post.Id)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to reserve response post: %w", err)
+	}
+	release = sync.OnceFunc(release)
+	post.AddProp(streaming.ConversationIDProp, conversationID)
+	if err := c.mmClient.UpdatePost(post); err != nil {
+		release()
+		return nil, nil, fmt.Errorf("failed to attach conversation to response placeholder: %w", err)
+	}
+	return ctx, release, nil
 }
 
 // streamToExistingPost streams an LLM response onto an existing post. With
