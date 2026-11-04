@@ -222,14 +222,25 @@ type ConversationSummary struct {
 // shares its database. The ordering uses the (UserID, UpdatedAt DESC) WHERE
 // DeleteAt = 0 index.
 func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int) ([]ConversationSummary, error) {
-	if limit < 0 {
-		limit = 0
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	var summaries []ConversationSummary
-	if err := s.selectBuilder(&summaries, s.builder.
+	return s.getConversationSummaries(s.conversationSummariesQuery(userID), limit, offset, "get conversation summaries")
+}
+
+// GetBotDMConversationSummariesForUser is GetConversationSummariesForUser
+// limited to conversations rooted in the user's DM with the conversation's
+// bot. The root post decides, not ChannelID: analysis results are delivered
+// into that DM with a NULL ChannelID, while channel threads (mentions, meeting
+// summaries) carry other people's posts.
+func (s *Store) GetBotDMConversationSummariesForUser(userID string, limit, offset int) ([]ConversationSummary, error) {
+	query := s.conversationSummariesQuery(userID).
+		Join("Posts p ON p.Id = c.RootPostID").
+		Join("Channels ch ON ch.Id = p.ChannelId").
+		Where(sq.Eq{"ch.Type": model.ChannelTypeDirect}).
+		Where("ch.Name IN (c.UserID || '__' || c.BotID, c.BotID || '__' || c.UserID)")
+	return s.getConversationSummaries(query, limit, offset, "get bot DM conversation summaries")
+}
+
+func (s *Store) conversationSummariesQuery(userID string) sq.SelectBuilder {
+	return s.builder.
 		Select(
 			"c.ID",
 			"c.UserID",
@@ -247,11 +258,22 @@ func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int
 			sq.Eq{"c.RootPostID": nil},
 			sq.Eq{"c.RootPostID": ""},
 			sq.Expr("EXISTS (SELECT 1 FROM Posts p WHERE p.Id = c.RootPostID AND p.DeleteAt = 0)"),
-		}).
+		})
+}
+
+func (s *Store) getConversationSummaries(query sq.SelectBuilder, limit, offset int, op string) ([]ConversationSummary, error) {
+	if limit < 0 {
+		limit = 0
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	var summaries []ConversationSummary
+	if err := s.selectBuilder(&summaries, query.
 		OrderBy("c.UpdatedAt DESC", "c.ID ASC").
 		Limit(uint64(limit)).   // #nosec G115 -- guarded above
 		Offset(uint64(offset)), // #nosec G115 -- guarded above
-		"get conversation summaries"); err != nil {
+		op); err != nil {
 		return nil, err
 	}
 	if summaries == nil {

@@ -146,8 +146,8 @@ type ConversationStore interface {
 	GetTurnsForConversation(conversationID string) ([]store.Turn, error)
 	GetTurnByPostID(postID string) (*store.Turn, error)
 	UpdateTurnContent(id string, content json.RawMessage) error
-	GetConversationSummariesForUser(userID string, limit, offset int) ([]store.ConversationSummary, error)
 	GetConversationIncludingArchived(id string) (*store.Conversation, error)
+	GetBotDMConversationSummariesForUser(userID string, limit, offset int) ([]store.ConversationSummary, error)
 	RenameConversation(id, title string) (bool, error)
 	ArchiveConversation(id string, archivedAt int64) error
 }
@@ -697,7 +697,7 @@ type aiThreadResponse struct {
 func (a *API) handleGetAIThreads(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 
-	summaries, err := a.conversationStore.GetConversationSummariesForUser(userID, 60, 0)
+	summaries, err := a.conversationStore.GetBotDMConversationSummariesForUser(userID, 60, 0)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get conversation summaries: %w", err))
 		return

@@ -81,7 +81,7 @@ func setupTestStore(t *testing.T) *Store {
 
 	// The plugin store shares Mattermost's database; queries that check a
 	// conversation's root post read its Posts table.
-	_, err = db.Exec(`CREATE TABLE Posts (Id VARCHAR(26) PRIMARY KEY, DeleteAt BIGINT NOT NULL DEFAULT 0)`)
+	_, err = db.Exec(`CREATE TABLE Posts (Id VARCHAR(26) PRIMARY KEY, ChannelId VARCHAR(26), DeleteAt BIGINT NOT NULL DEFAULT 0)`)
 	require.NoError(t, err)
 
 	return New(db)

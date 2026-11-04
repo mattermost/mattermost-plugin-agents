@@ -103,11 +103,12 @@ func (c *Conversations) collectCreatedFileIDsFromTurns(convID, postID string) []
 
 // createdFileIDsFromTurnWindow scans the turns of the agent run that produced
 // postID for built-in CreateFile tool_use blocks and their successful
-// results, returning the parsed file IDs in order of appearance. The window
-// mirrors conversation.Service.GetInitiatingUserTurn (every turn after the
-// user turn that initiated the run); when no assistant turn matches postID it
-// falls back to scanning from the last user turn onward, which at worst
-// over-collects within the newest run.
+// results, returning the parsed file IDs in order of appearance. The window is
+// every turn after the nearest preceding user turn; unlike
+// conversation.Service.GetInitiatingUserTurn it stops at synthetic wake turns,
+// so a wake post does not collect files of the run it resumed. When no
+// assistant turn matches postID it falls back to scanning from the last user
+// turn onward, which at worst over-collects within the newest run.
 func createdFileIDsFromTurnWindow(turns []store.Turn, postID string) []string {
 	anchorSeq, anchorFound := 0, false
 	for i := range turns {

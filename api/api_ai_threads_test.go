@@ -21,10 +21,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGetAIThreadsOrdersByLastActivity drives GET /ai_threads against the real
-// PostgreSQL conversation store: a conversation continued with a new turn must
-// sort by that turn's time, while renaming a conversation must not reorder it.
-func TestGetAIThreadsOrdersByLastActivity(t *testing.T) {
+// TestGetAIThreads drives GET /ai_threads against the real PostgreSQL
+// conversation store: it lists only chats rooted in the user's DM with the
+// agent, a conversation continued with a new turn sorts by that turn's time,
+// and renaming a conversation does not reorder it.
+func TestGetAIThreads(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
@@ -34,6 +35,9 @@ func TestGetAIThreadsOrdersByLastActivity(t *testing.T) {
 		updatedAt int64
 		turns     []int64
 		archived  bool
+		// inChannel roots the conversation in a channel thread instead of
+		// the user's DM with the agent.
+		inChannel bool
 		// renameTo, when set, renames the conversation through the API
 		// after its turns are added.
 		renameTo string
@@ -84,9 +88,16 @@ func TestGetAIThreadsOrdersByLastActivity(t *testing.T) {
 			convs: []convSpec{
 				{title: "live root", userID: testUserID, updatedAt: 3000, rootPostDeleteAt: new(int64(0))},
 				{title: "deleted root", userID: testUserID, updatedAt: 4000, rootPostDeleteAt: new(int64(3500))},
-				{title: "threadless", userID: testUserID, updatedAt: 2000},
 			},
-			want: []wantRow{{"live root", 3000}, {"threadless", 2000}},
+			want: []wantRow{{"live root", 3000}},
+		},
+		{
+			name: "channel threads with the agent are excluded",
+			convs: []convSpec{
+				{title: "mention", userID: testUserID, updatedAt: 3000, inChannel: true},
+				{title: "chat", userID: testUserID, updatedAt: 1000},
+			},
+			want: []wantRow{{"chat", 1000}},
 		},
 		{
 			name:  "no conversations returns an empty array",
@@ -107,20 +118,41 @@ func TestGetAIThreadsOrdersByLastActivity(t *testing.T) {
 			mmClient.On("PublishWebSocketEvent", mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 			e.api.mmClient = mmClient
 
+			for _, ddl := range []string{
+				`CREATE TABLE Channels (Id TEXT PRIMARY KEY, Type TEXT NOT NULL, Name TEXT NOT NULL)`,
+			} {
+				_, err := db.Exec(ddl)
+				require.NoError(t, err)
+			}
+			townSquareID := model.NewId()
+			_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ($1, $2, 'town-square')", townSquareID, model.ChannelTypeOpen)
+			require.NoError(t, err)
+
 			for _, spec := range tt.convs {
+				botID := model.NewId()
+				rootChannelID := townSquareID
+				if !spec.inChannel {
+					rootChannelID = model.NewId()
+					_, err = db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ($1, $2, $3)", rootChannelID, model.ChannelTypeDirect, model.GetDMNameFromIds(spec.userID, botID))
+					require.NoError(t, err)
+				}
+				rootPostID := model.NewId()
+				_, err = db.Exec("INSERT INTO Posts (Id, ChannelId) VALUES ($1, $2)", rootPostID, rootChannelID)
+				require.NoError(t, err)
+
 				conv := &store.Conversation{
-					ID:        model.NewId(),
-					UserID:    spec.userID,
-					BotID:     model.NewId(),
-					Title:     spec.title,
-					Operation: "conversation",
-					CreatedAt: spec.updatedAt,
-					UpdatedAt: spec.updatedAt,
+					ID:         model.NewId(),
+					UserID:     spec.userID,
+					BotID:      botID,
+					ChannelID:  &rootChannelID,
+					RootPostID: &rootPostID,
+					Title:      spec.title,
+					Operation:  "conversation",
+					CreatedAt:  spec.updatedAt,
+					UpdatedAt:  spec.updatedAt,
 				}
 				if spec.rootPostDeleteAt != nil {
-					rootPostID := model.NewId()
-					conv.RootPostID = &rootPostID
-					_, err := db.Exec("INSERT INTO Posts (Id, DeleteAt) VALUES ($1, $2)", rootPostID, *spec.rootPostDeleteAt)
+					_, err = db.Exec("UPDATE Posts SET DeleteAt = $1 WHERE Id = $2", *spec.rootPostDeleteAt, rootPostID)
 					require.NoError(t, err)
 				}
 				require.NoError(t, convStore.CreateConversation(conv))
