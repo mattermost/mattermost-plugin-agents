@@ -123,6 +123,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    jest.restoreAllMocks();
     delete window.WebappUtils;
 });
 
