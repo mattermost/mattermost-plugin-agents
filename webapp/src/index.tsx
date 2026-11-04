@@ -344,10 +344,10 @@ export default class Plugin {
         // An agent's DM in the Channels app shows the agent chat (servers with registerChannelViewComponent;
         // older ones keep the plain DM). The view's "View as messages" switches one DM to its plain
         // messages for this session, and a channel header icon switches it back (the host gives bot
-        // DMs no channel menu).
-        if (registry.registerChannelViewComponent) {
+        // DMs no channel menu), so the view needs both APIs.
+        if (registry.registerChannelViewComponent && registry.registerChannelHeaderIcon) {
             registry.registerChannelViewComponent({matcher: isAgentDMChannel, component: AgentDMChannelView});
-            registry.registerChannelHeaderIcon?.(AgentDMViewToggle);
+            registry.registerChannelHeaderIcon(AgentDMViewToggle);
 
             // The matcher reads the bots list: load it before the first agent DM opens.
             if (!registry.registerChannelSettingsTab) {

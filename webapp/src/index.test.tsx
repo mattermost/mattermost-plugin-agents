@@ -203,6 +203,13 @@ describe('agent DM channel view', () => {
         mockGetAIBots.mockResolvedValue({bots: [], searchEnabled: false, allowUnsafeLinks: false});
     });
 
+    test('is not registered on a server without registerChannelHeaderIcon, which is the way back', async () => {
+        const registerChannelViewComponent = jest.fn();
+        await initializePlugin('http://localhost:8065', {registerChannelViewComponent});
+
+        expect(registerChannelViewComponent).not.toHaveBeenCalled();
+    });
+
     test('is not registered on a server without registerChannelViewComponent', async () => {
         const registerChannelHeaderIcon = jest.fn();
         await initializePlugin('http://localhost:8065', {registerChannelHeaderIcon});
