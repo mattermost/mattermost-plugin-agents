@@ -123,15 +123,15 @@ func (b *LLM) configForHop(cfg llm.LanguageModelConfig, name schemas.ModelProvid
 	if entry := b.registration(name); entry != nil && entry.outputTokenLimit > 0 {
 		cfg.MaxGeneratedTokens = min(cfg.MaxGeneratedTokens, entry.outputTokenLimit)
 	}
-	cfg.MaxGeneratedTokens = clampToModelOutputLimit(model, cfg.MaxGeneratedTokens)
+	cfg.MaxGeneratedTokens = clampToModelOutputLimit(b.baseProvider(name), model, cfg.MaxGeneratedTokens)
 	return cfg
 }
 
 // clampToModelOutputLimit lowers requested to model's max output tokens.
 // Bifrost sends max tokens as given and the provider rejects a value above the
 // model's limit. Models without a known limit keep requested.
-func clampToModelOutputLimit(model string, requested int) int {
-	return min(requested, providerutils.GetMaxOutputTokensOrDefault(model, requested))
+func clampToModelOutputLimit(provider schemas.ModelProvider, model string, requested int) int {
+	return min(requested, providerutils.GetMaxOutputTokensOrDefault(provider, model, requested))
 }
 
 // maxTokensParam returns the max output tokens parameter for cfg, or nil
