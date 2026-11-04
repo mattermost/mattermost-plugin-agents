@@ -5,6 +5,7 @@ package api
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -38,6 +39,7 @@ const (
 	sentinelGoogleAPIKey         = "sentinel-google-key"
 	sentinelBraveAPIKey          = "sentinel-brave-key"
 	sentinelEmbeddingAPIKey      = "sentinel-embedding-key"
+	sentinelOTelHeaders          = "Authorization=Basic sentinel-otel-token"
 )
 
 // Identifiers are not credentials: the read response must keep returning them
@@ -64,7 +66,8 @@ const (
 // recognizable value.
 func storedCredentialConfig() *config.Config {
 	return &config.Config{
-		DefaultBotName: "ai",
+		DefaultBotName:       "ai",
+		OpenTelemetryHeaders: sentinelOTelHeaders,
 		Services: []llm.ServiceConfig{
 			{
 				ID:                    "svc-1",
@@ -243,6 +246,11 @@ func credentialFields() []credentialField {
 			name: "webSearch.google.apiKey",
 			get:  func(cfg config.Config) string { return cfg.WebSearch.Google.APIKey },
 			set:  func(cfg *config.Config, v string) { cfg.WebSearch.Google.APIKey = v },
+		},
+		{
+			name: "openTelemetryHeaders",
+			get:  func(cfg config.Config) string { return cfg.OpenTelemetryHeaders },
+			set:  func(cfg *config.Config, v string) { cfg.OpenTelemetryHeaders = v },
 		},
 		{
 			name: "webSearch.brave.apiKey",
@@ -575,6 +583,8 @@ func TestFetchModelsSendsStoredCredentialOnlyToStoredEndpoint(t *testing.T) {
 	tests := []struct {
 		name        string
 		serviceType string
+		// requestType is the provider type the request names; empty means serviceType.
+		requestType string
 		// storedURL is the endpoint held by the saved service. A provider reached
 		// at a fixed address holds none.
 		storedURL func(savedURL string) string
@@ -595,6 +605,13 @@ func TestFetchModelsSendsStoredCredentialOnlyToStoredEndpoint(t *testing.T) {
 			serviceType: llm.ServiceTypeOpenAICompatible,
 			storedURL:   func(savedURL string) string { return savedURL },
 			requestURL:  func(_, otherURL string) string { return otherURL },
+		},
+		{
+			name:        "request naming another provider type at the saved endpoint",
+			serviceType: llm.ServiceTypeOpenAICompatible,
+			requestType: llm.ServiceTypeOpenAI,
+			storedURL:   func(savedURL string) string { return savedURL },
+			requestURL:  func(savedURL, _ string) string { return savedURL },
 		},
 		{
 			name:        "request naming an endpoint for a service saved without one",
@@ -632,7 +649,7 @@ func TestFetchModelsSendsStoredCredentialOnlyToStoredEndpoint(t *testing.T) {
 			}
 
 			raw, err := json.Marshal(map[string]any{
-				"serviceType": tt.serviceType,
+				"serviceType": cmp.Or(tt.requestType, tt.serviceType),
 				"serviceID":   storedServiceID,
 				"apiURL":      tt.requestURL(saved.apiURL(), other.apiURL()),
 			})
@@ -654,6 +671,45 @@ func TestFetchModelsSendsStoredCredentialOnlyToStoredEndpoint(t *testing.T) {
 				assert.True(t, saved.sawValue(sentinelServiceAPIKey),
 					"the endpoint a service is saved with must receive that service's credentials")
 			}
+		})
+	}
+}
+
+// A saved service's credentials belong to the provider and endpoint they were
+// saved with, so a masked key does not follow the service to another one.
+func TestSaveConfigKeepsServiceCredentialOnlyForSavedEndpoint(t *testing.T) {
+	savedURL := storedCredentialConfig().Services[0].APIURL
+	savedType := storedCredentialConfig().Services[0].Type
+
+	tests := []struct {
+		name    string
+		apply   func(svc *llm.ServiceConfig)
+		wantKey string
+	}{
+		{name: "unchanged endpoint keeps the key", apply: func(*llm.ServiceConfig) {}, wantKey: sentinelServiceAPIKey},
+		{name: "trailing slash keeps the key", apply: func(svc *llm.ServiceConfig) { svc.APIURL = savedURL + "/" }, wantKey: sentinelServiceAPIKey},
+		{name: "another endpoint drops the key", apply: func(svc *llm.ServiceConfig) { svc.APIURL = "https://attacker.example.com/v1" }},
+		{name: "another provider type drops the key", apply: func(svc *llm.ServiceConfig) { svc.Type = savedType + "-other" }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &testConfigStore{cfg: storedCredentialConfig()}
+			router := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
+
+			var read config.Config
+			require.NoError(t, json.Unmarshal(getAdminConfig(t, store), &read))
+			tt.apply(&read.Services[0])
+			body, err := json.Marshal(read)
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, http.StatusOK, w.Code)
+
+			assert.Equal(t, tt.wantKey, store.cfg.Services[0].APIKey)
 		})
 	}
 }

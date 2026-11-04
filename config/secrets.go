@@ -48,6 +48,7 @@ func RedactSecrets(cfg Config) Config {
 
 	out.WebSearch.Google.APIKey = maskSecret(out.WebSearch.Google.APIKey)
 	out.WebSearch.Brave.APIKey = maskSecret(out.WebSearch.Brave.APIKey)
+	out.OpenTelemetryHeaders = maskSecret(out.OpenTelemetryHeaders)
 
 	provider := &out.EmbeddingSearchConfig.EmbeddingProvider
 	provider.Parameters = redactEmbeddingProviderSecrets(provider.Parameters)
@@ -99,6 +100,7 @@ func RestoreSecrets(incoming Config, stored *Config) Config {
 
 	out.WebSearch.Google.APIKey = resolveSecret(out.WebSearch.Google.APIKey, stored.WebSearch.Google.APIKey)
 	out.WebSearch.Brave.APIKey = resolveSecret(out.WebSearch.Brave.APIKey, stored.WebSearch.Brave.APIKey)
+	out.OpenTelemetryHeaders = resolveSecret(out.OpenTelemetryHeaders, stored.OpenTelemetryHeaders)
 
 	provider := &out.EmbeddingSearchConfig.EmbeddingProvider
 	provider.Parameters = restoreEmbeddingProviderSecrets(
@@ -138,8 +140,18 @@ func redactServiceSecrets(service *llm.ServiceConfig) {
 	service.VertexAuthCredentials = maskSecret(service.VertexAuthCredentials)
 }
 
+// BindsCredentials reports whether a request for the given service type and API
+// URL may use the credentials stored on service. They belong to the provider
+// and endpoint they were saved with; an empty URL is the provider's own address.
+func BindsCredentials(service llm.ServiceConfig, serviceType, apiURL string) bool {
+	normalize := func(u string) string {
+		return strings.TrimRight(strings.TrimSpace(u), "/")
+	}
+	return service.Type == serviceType && normalize(service.APIURL) == normalize(apiURL)
+}
+
 func restoreServiceSecrets(service *llm.ServiceConfig, stored *llm.ServiceConfig) {
-	if stored == nil {
+	if stored == nil || !BindsCredentials(*stored, service.Type, service.APIURL) {
 		stored = &llm.ServiceConfig{}
 	}
 	service.APIKey = resolveSecret(service.APIKey, stored.APIKey)

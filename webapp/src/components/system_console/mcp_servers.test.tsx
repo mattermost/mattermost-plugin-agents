@@ -921,6 +921,19 @@ describe('MCPServers credentials when the server URL changes', () => {
         expect(server().serviceAccountHeaders?.Authorization).toBe(serviceAccountHeaderValue);
     });
 
+    test('deleting an earlier server does not make the next server look moved', async () => {
+        const first = makeServerWithStoredCredentials();
+        const second = {...makeServerWithStoredCredentials(), id: 'second-server-id', name: 'Confluence', baseURL: 'https://mcp.example.com/confluence'};
+        const {server} = renderEditableServers(makeMCPConfig([first, second]), [first, second]);
+
+        fireEvent.click(screen.getAllByRole('button', {name: 'Delete Server'})[0]);
+        await leaveURLField();
+
+        expect(server().name).toBe('Confluence');
+        expect(server().clientSecret).toBe(SECRET_PLACEHOLDER);
+        expect(server().headers.Authorization).toBe(SECRET_PLACEHOLDER);
+    });
+
     test('mid-edit keystrokes leave the credential fields alone', () => {
         const {server} = renderStored();
 

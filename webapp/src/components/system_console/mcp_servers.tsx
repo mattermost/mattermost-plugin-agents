@@ -278,9 +278,6 @@ const MCPServer = ({
     // Last base URL we applied vetted seeding for (authoritative list from GET /admin/mcp/vetted-tool-seed).
     const lastSeededBaseURLRef = useRef<string | null>(serverConfig.baseURL?.trim() ?? null);
 
-    // Base URL the credentials currently in the fields belong to.
-    const credentialBaseURLRef = useRef<string>(serverConfig.baseURL?.trim() ?? '');
-
     const updateServerURL = (baseURL: string) => {
         onChange(serverIndex, {
             ...config,
@@ -293,8 +290,7 @@ const MCPServer = ({
     const handleURLBlur = (e: React.FocusEvent<HTMLInputElement>) => {
         const baseURL = e.currentTarget.value;
         const trimmed = baseURL.trim();
-        const pointsElsewhere = trimmed !== credentialBaseURLRef.current;
-        credentialBaseURLRef.current = trimmed;
+        const pointsElsewhere = savedServer !== undefined && trimmed !== savedServer.baseURL?.trim(); // eslint-disable-line no-undefined
         if (pointsElsewhere && hasMaskedCredential(config)) {
             setCredentialsCleared(true);
             onUpdate((current) => (current.baseURL === baseURL ? withoutMaskedCredentials(current) : current));
