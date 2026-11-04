@@ -19,9 +19,9 @@ type MattermostStdioMCPServer struct {
 }
 
 // NewStdioServer creates a new STDIO transport MCP server.
-// searchService and fileContentService are optional — if nil, default HTTP-based
-// services are created that call back to the plugin's /search/raw and /files/content endpoints.
-func NewStdioServer(config StdioConfig, logger loggerlib.Logger, searchService tools.SemanticSearchService, fileContentService tools.FileContentService) (*MattermostStdioMCPServer, error) {
+// searchService, fileContentService, and channelArtifactsService are optional —
+// if nil, default HTTP-based services are created that call back to the plugin.
+func NewStdioServer(config StdioConfig, logger loggerlib.Logger, searchService tools.SemanticSearchService, fileContentService tools.FileContentService, channelArtifactsService tools.ChannelArtifactsService) (*MattermostStdioMCPServer, error) {
 	if config.MMServerURL == "" {
 		return nil, fmt.Errorf("server URL cannot be empty")
 	}
@@ -61,18 +61,21 @@ func NewStdioServer(config StdioConfig, logger loggerlib.Logger, searchService t
 	}
 
 	// Use provided services or create default HTTP callback services
-	defaultSearchService, defaultFileContentService := newPluginCallbackServices(config.GetMMServerURL())
+	defaultSearchService, defaultFileContentService, defaultChannelArtifactsService := newPluginCallbackServices(config.GetMMServerURL())
 	if searchService == nil {
 		searchService = defaultSearchService
 	}
 	if fileContentService == nil {
 		fileContentService = defaultFileContentService
 	}
+	if channelArtifactsService == nil {
+		channelArtifactsService = defaultChannelArtifactsService
+	}
 
 	// Register tools with local access mode. Standalone stdio servers run
 	// outside the plugin and have no license information, so state-changing
 	// tools stay available.
-	mattermostServer.registerTools(tools.AccessModeLocal, searchService, fileContentService, func() bool { return true })
+	mattermostServer.registerTools(tools.AccessModeLocal, searchService, fileContentService, channelArtifactsService, func() bool { return true })
 
 	return mattermostServer, nil
 }
