@@ -850,25 +850,26 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 		a.contextBuilder.WithLLMContextConcreteTools(c.Request.Context(), bot)(toolContext)
 	}
 
-	// Scoped agents serve channel requests from the scoped catalog only.
-	scoped := llmcontext.ScopedChannelModeConfigured(bot)
-	var tools []bridgeclient.BridgeToolInfo
+	var catalog []llm.Tool
 	if toolContext.Tools != nil {
-		for _, tool := range toolContext.Tools.GetTools() {
-			if scoped && !mcp.ScopedCatalogAllows(tool) {
-				continue
-			}
-			info := llm.ToolInfo{Name: tool.Name, Description: tool.Description, ServerOrigin: tool.ServerOrigin}
-			if !bridgeAllowlistToolEligible(info.ServerOrigin) {
-				continue
-			}
-			tools = append(tools, bridgeclient.BridgeToolInfo{
-				Name:         info.Name,
-				BareName:     llm.BareMCPToolName(info.Name),
-				Description:  info.Description,
-				ServerOrigin: info.ServerOrigin,
-			})
+		catalog = toolContext.Tools.GetTools()
+	}
+	// Scoped agents serve channel requests from the scoped catalog only.
+	if llmcontext.ScopedChannelModeConfigured(bot) {
+		catalog = mcp.FilterScopedCatalog(catalog, bot.GetConfig().EnabledMCPTools)
+	}
+	var tools []bridgeclient.BridgeToolInfo
+	for _, tool := range catalog {
+		info := llm.ToolInfo{Name: tool.Name, Description: tool.Description, ServerOrigin: tool.ServerOrigin}
+		if !bridgeAllowlistToolEligible(info.ServerOrigin) {
+			continue
 		}
+		tools = append(tools, bridgeclient.BridgeToolInfo{
+			Name:         info.Name,
+			BareName:     llm.BareMCPToolName(info.Name),
+			Description:  info.Description,
+			ServerOrigin: info.ServerOrigin,
+		})
 	}
 	slices.SortFunc(tools, func(x, y bridgeclient.BridgeToolInfo) int {
 		return cmp.Or(cmp.Compare(x.Name, y.Name), cmp.Compare(x.ServerOrigin, y.ServerOrigin))

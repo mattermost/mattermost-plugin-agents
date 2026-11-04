@@ -323,3 +323,56 @@ func TestBridgeScopedRunStopsAutoRunningWhenRevoked(t *testing.T) {
 		})
 	}
 }
+
+func TestBridgeGetAgentToolsForScopedAgentMatchesScopedCatalog(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name      string
+		allowlist []llm.EnabledMCPTool
+		want      []string
+	}{
+		{
+			name:      "named tools only",
+			allowlist: []llm.EnabledMCPTool{{ServerOrigin: scopedBridgeOrigin, ToolName: "get_issue"}},
+			want:      []string{"get_issue"},
+		},
+		{
+			name:      "an all-tools grant lists nothing",
+			allowlist: []llm.EnabledMCPTool{{ServerOrigin: scopedBridgeOrigin, ToolName: llm.MCPServerToolWildcard}},
+			want:      []string{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
+
+			manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, e.client.Log, e.client, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
+			t.Cleanup(manager.Close)
+			catalog := &scopedBridgeCatalog{ClientManager: manager, tools: []llm.Tool{
+				bridgeMCPTool("jira", "get_issue", scopedBridgeOrigin),
+				bridgeMCPTool("jira", "delete_issue", scopedBridgeOrigin),
+			}}
+			e.api.contextBuilder = llmcontext.NewLLMContextBuilder(e.client, &testLLMContextToolProvider{}, catalog, scopedBridgeConfig{channelToolCalling: true})
+			e.setupTestBot(llm.BotConfig{
+				Name:                  "testbot",
+				DisplayName:           "Test Bot",
+				UserAccessLevel:       llm.UserAccessLevelAll,
+				UseServiceAccountAuth: true,
+				ScopedChannelMode:     true,
+				EnabledMCPTools:       tt.allowlist,
+			})
+
+			tools, err := e.CreateBridgeClient().GetAgentTools(testBotUserID, testUserID)
+			require.NoError(t, err)
+			names := make([]string, 0, len(tools))
+			for _, tool := range tools {
+				names = append(names, tool.BareName)
+			}
+			assert.Equal(t, tt.want, names)
+		})
+	}
+}
