@@ -9,43 +9,31 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
 // stoppedPluginCheckInterval matches the server's plugin health check, which
 // notices crashed plugins on the same schedule.
 const stoppedPluginCheckInterval = 30 * time.Second
 
-// pluginMCPRegistry is the part of mcp.ClientManager that keeps plugin MCP
-// servers in step with their source plugins.
-type pluginMCPRegistry interface {
-	KnownPluginServers() []mcp.PluginServerConfig
-	ReconcileKnownPluginServer(ctx context.Context, pluginID string) (bool, error)
-	DropStoppedPluginServers() []string
-}
-
 // externalMCPRebuilder rebuilds the external MCP server in the background.
 type externalMCPRebuilder interface {
 	RequestRebuild()
 }
 
-type lifecycleLogger interface {
-	Info(message string, keyValuePairs ...any)
-	Warn(message string, keyValuePairs ...any)
-}
-
 // pluginMCPLifecycle keeps plugin MCP servers connected only while their
 // source plugin is running, whatever order the server activates plugins in.
 type pluginMCPLifecycle struct {
-	registry  pluginMCPRegistry
+	registry  *mcp.ClientManager
 	rebuilder externalMCPRebuilder // nil when the external MCP server is unavailable
-	log       lifecycleLogger
+	log       *pluginapi.LogService
 
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 }
 
-func newPluginMCPLifecycle(registry pluginMCPRegistry, rebuilder externalMCPRebuilder, log lifecycleLogger) *pluginMCPLifecycle {
+func newPluginMCPLifecycle(registry *mcp.ClientManager, rebuilder externalMCPRebuilder, log *pluginapi.LogService) *pluginMCPLifecycle {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &pluginMCPLifecycle{
 		registry:  registry,
