@@ -1,6 +1,6 @@
 # Mattermost Agents Admin Guide
 
-This guide covers installing, configuring, and managing the Mattermost Agents plugin. You'll learn how to set up AI capabilities for your Mattermost instance and configure them for your organization's needs.
+Install, configure, and manage the Mattermost Agents plugin: LLM services, agents, MCP servers and the built-in Mattermost MCP server, tool approval policies, access control, web and semantic search, audit logging, OpenTelemetry tracing, and license requirements.
 
 ## Installation
 
@@ -58,6 +58,25 @@ When **Render AI-generated links** is set to **False** (default), AI-generated M
 When this setting is set to **True**, AI-generated links may be rendered as clickable links. This is a security tradeoff: AI output can include malicious destinations, which can increase phishing and data exfiltration risk.
 
 Enable this setting only in trusted or otherwise mitigated environments, such as where users are trained to validate links and your organization has endpoint protections and URL controls in place.
+
+#### Restricting links to allowed domains
+
+To limit which destinations can become clickable, set an allowlist of domains. This reduces the risk of a prompt injection steering users to an attacker-controlled site.
+
+- **System Console label**: **Allowed Link Domains (csv)** (shown when **Render AI-generated links** is **True**)
+- **Configuration key**: `allowedLinkDomains`
+- **Default value**: empty (links to any domain are clickable)
+
+Enter a comma-separated list of hostnames, for example `mattermost.atlassian.net, *.mycompany.com`. Matching rules:
+
+- A plain entry such as `example.com` matches only that exact host. It doesn't match `docs.example.com`.
+- A wildcard entry such as `*.example.com` matches any subdomain (`docs.example.com`, `a.b.example.com`) but not `example.com` itself. To allow both, list both.
+- Matching is case-insensitive, and ports and paths in entries are ignored.
+- Saving fails if an entry isn't a valid domain (for example `*` or `my domain.com`), so a typo can't silently block links you meant to allow.
+- When an allowlist is set, only `http` and `https` links can be clickable. Other schemes, such as `mailto:`, are shown as plain text.
+- Links to your own Mattermost server (the configured Site URL), such as permalinks and channel links, are always clickable.
+
+A link to a domain that isn't on the allowlist is shown as plain text followed by its destination (for example, `Sign in : https://unlisted.example/login`). Users can still see where the link points, but it isn't clickable.
 
 ### Agent version history limit
 
@@ -357,7 +376,7 @@ Notes on deferred reindex:
 
 Configure who can access AI features by setting team-level, channel-level, and user-level permissions for each agent.
 
-Per-channel agent auto-reply is governed by the channel-management permission (`manage_public_channel_properties` or `manage_private_channel_properties`, depending on the channel type), checked server-side on writes; channel members can read the current setting. The auto-reply endpoints do not depend on the workspace default agent: reads and writes work even when the default agent is restricted from the channel or user (or when no agents are configured at all), and writes validate the *selected* agent's channel access instead. Channel agent auto-reply is available at Enterprise Advanced; below that level the channel settings tab is hidden and any stored setting is inactive. Turning auto-reply off through the REST endpoint never requires a license, so an existing setting is always clearable. The channel settings tab UI requires Mattermost v11.10 or later; on older servers the tab is hidden, but the REST endpoint (`GET`/`PUT /plugins/mattermost-ai/channel/{channelid}/autoreply`) remains available.
+Per-channel agent auto-reply is governed by the channel-management permission (`manage_public_channel_properties` or `manage_private_channel_properties`, depending on the channel type), checked server-side on writes; channel members can read the current mode and agent, while the ambient instructions are returned only to users with that permission. The auto-reply endpoints do not depend on the workspace default agent: reads and writes work even when the default agent is restricted from the channel or user (or when no agents are configured at all), and writes validate the *selected* agent's channel access instead. Channel agent auto-reply is available at Enterprise Advanced; below that level the channel settings tab is hidden and any stored setting is inactive. Turning auto-reply off through the REST endpoint never requires a license, so an existing setting is always clearable. The two experimental ambient modes (**Ambient** and **Ambient in mentioned threads**) additionally require **Enable ambient auto-replies** in the plugin's system console settings, which is off by default. Ambient modes run an LLM classification call for each eligible message, so expect extra token usage in channels that use them. To bound that cost, each server node runs at most 8 classifications at once and classifies at most a burst of 6 messages per channel, then about one every 5 seconds; messages over those limits get no ambient reply. Turning the setting off immediately stops ambient replies in every channel and blocks saving ambient modes; stored ambient settings are kept, so they resume if the setting is turned back on. Before downgrading the plugin to a version without ambient modes, switch every ambient channel to another mode or off: older versions treat an unknown mode as replying to every message. The channel settings tab UI requires Mattermost v11.10 or later; on older servers the tab is hidden, but the REST endpoint (`GET`/`PUT /plugins/mattermost-ai/channel/{channelid}/autoreply`) remains available.
 
 ### Attribute-based access control (ABAC)
 
@@ -629,7 +648,7 @@ Traces include these semantic attributes for filtering and analysis. Cached toke
 
 ### Audit logging
 
-The plugin emits a server audit record for every state-changing operation: configuration saves, admin reindex and MCP cache operations, agent and custom prompt CRUD, MCP OAuth credential grant/revocation, per-user MCP preferences, inter-plugin MCP server registration, in-channel tool call approvals, and MCP session grants for external clients.
+The plugin emits a server audit record for every state-changing operation: configuration saves, admin reindex and MCP cache operations, agent and skill (custom prompt) CRUD, MCP OAuth credential grant/revocation, per-user MCP preferences, inter-plugin MCP server registration, in-channel tool call approvals, and MCP session grants for external clients.
 
 Records identify the actor (user ID, session, IP), the event, the request path, the outcome (including failures and permission denials, as HTTP status codes), the OpenTelemetry `trace_id` for pivoting into traces, and identifiers of affected objects using the same attribute names as the table above. Records never contain prompt content, conversation or channel content, tool arguments or results, configuration values, or free-form error text — a configuration save records only which top-level sections changed, and failure detail stays in the server log (correlate by timestamp, actor, or `trace_id`).
 
@@ -642,7 +661,7 @@ The plugin stores agent data across both plugin configuration and plugin databas
 1. Ensure your regular Mattermost backup includes plugin configuration data.
 2. Include plugin database tables in your normal backup and restore process. In particular:
    - `Agents_UserAgents` for agents created or managed from the **Agents** page
-   - `LLM_CustomPrompts` and `LLM_CustomPromptPins` for custom prompt templates and prompt pins
+   - `LLM_CustomPrompts` and `LLM_CustomPromptPins` for skills (custom prompt templates) and their pins
 3. For larger deployments, consider backing up indexed vector data separately.
 
 Restoring only plugin configuration isn't sufficient to restore agents managed from the **Agents** page.
@@ -779,12 +798,25 @@ You can't disable MCP entirely from the System Console. To limit access, disable
 2. Configure server settings:
 
    - **Server URL**: The endpoint URL for your MCP server. Use the server's final address: redirects to a different origin (including `http` to `https` upgrades) are refused so credentials cannot leak to another host.
+   - **Direct Messages Only**: Limit the server to a user's direct message with an agent, including the Agents tab (optional). See [Limit an MCP server to direct messages](#limit-an-mcp-server-to-direct-messages).
    - **Description**: What the integration is for, in up to 500 characters (optional). Agents use it to offer the server to users who haven't connected it yet. After saving the server, select **Auto-fill from server** to start from the description the server reports about itself, or from its usage instructions when it has no description. Auto-fill connects as you, so for an OAuth-backed server you may be asked to connect your account first. Review and edit the text, then select **Save**: nothing is stored until you do.
    - **Custom Headers**: Additional headers required by your MCP server (optional).
    - **Service Account Authentication**: Static headers used in place of per-user OAuth by agents with **Use service accounts for authentication** enabled (optional). See [Service account authentication](#service-account-authentication).
    - **Server Name**: Descriptive name for the server (auto-generated if not provided).
 
 3. Select **Save** to add the server.
+
+### Limit an MCP server to direct messages
+
+Some MCP servers return data that not everyone in a channel may see. One example is a CRM where each user's OAuth connection reaches a different set of records. In a channel, the only thing stopping that data from reaching other members is the requester reviewing each tool call and its results before approving or sharing them. Set **Direct Messages Only** to **True** on such a server to take that decision out of users' hands.
+
+A server limited to direct messages:
+
+- Is available only when a user talks to an agent in their own direct message with it, or in the Agents tab. Tool approval policies on the **Tools** tab apply there as usual.
+- Is never connected for channel mentions, channel thread replies, ambient channel replies, group messages, channel analysis, or LLM Bridge requests from other plugins. Its tools are left out of those requests entirely, so there is nothing to approve or share.
+- Is named, with its **Description**, to agents in channels and group messages, so they can tell a user who asks for it to send them a direct message instead. The server is named only in requests from users the server's access policy allows, and only by agents whose MCP allowlist includes it. Other channel members can see the agent's reply, so they can see the server's name.
+
+This setting doesn't stop a user from copying or forwarding what an agent told them in a direct message. In a direct message, an agent can also pass the server's results to other tools, such as posting to a channel, subject to those tools' approval policies. In a channel, an agent can read a user's earlier direct messages with it through the built-in Mattermost tools, again subject to those tools' approval policies and to sharing results.
 
 ### Plugin-registered MCP servers
 
@@ -895,11 +927,13 @@ After adding the domain, wait 1-2 minutes for changes to propagate before users 
 
 For more information, see [Atlassian's documentation on MCP server settings](https://support.atlassian.com/security-and-access-policies/docs/control-atlassian-rovo-mcp-server-settings/).
 
-> **Note:** By default, the plugin doesn't render AI-generated Markdown links (for example, JIRA ticket links) as clickable links. URLs are displayed in plain text to reduce potential phishing and data exfiltration risk. If an admin enables **Render AI-generated links** (`allowUnsafeLinks`), AI-generated links may become clickable; enable this only with appropriate trust boundaries and security mitigations in place.
+> **Note:** By default, the plugin doesn't render AI-generated Markdown links (for example, JIRA ticket links) as clickable links. URLs are displayed in plain text to reduce potential phishing and data exfiltration risk. If an admin enables **Render AI-generated links** (`allowUnsafeLinks`), AI-generated links may become clickable; enable this only with appropriate trust boundaries and security mitigations in place. To keep JIRA links clickable without allowing every destination, add your Atlassian site (for example, `mycompany.atlassian.net`) to **Allowed Link Domains** (`allowedLinkDomains`).
 
 ## Mattermost MCP Server
 
 The Mattermost MCP Server enables AI agents and external applications to interact with your Mattermost instance through the Model Context Protocol (MCP). This is a standardized protocol that allows AI assistants to read messages, search content, create posts, and manage channels and teams programmatically. The built-in Mattermost tools are always available to Agents through the embedded server, and the optional HTTP endpoint for external clients can also aggregate eligible tools from compatible plugin-registered MCP servers.
+
+To connect Claude Code, Claude Desktop, Cursor, VS Code, or another external MCP client, see [Mattermost MCP Server](mcp_server.md) for client setup, authentication, and troubleshooting. This section covers the admin-side configuration.
 
 **Standalone MCP server (separate process / stdio):** Running the standalone `mattermost-mcp-server` binary outside the Mattermost server is for **development and local use only** and is **not** intended for production. Production deployments should rely on the embedded Mattermost MCP server and the supported configuration in this plugin (System Console, HTTP endpoint for external clients, and agent MCP settings below).
 
@@ -948,6 +982,7 @@ The plugin also registers an extended catalog of read and write tools spanning M
 
 - **Posts & messages**: get_post_info, list_pinned_posts, list_saved_posts, ⚠ update_post, ⚠ delete_post, ⚠ pin_post, ⚠ unpin_post, ⚠ save_post, ⚠ acknowledge_post
 - **Scheduled posts & reminders**: list_scheduled_posts, ⚠ create_scheduled_post, ⚠ update_scheduled_post, ⚠ delete_scheduled_post, ⚠ set_post_reminder
+- **Drafts**: list_drafts, ⚠ create_draft, ⚠ delete_draft
 - **Reactions & emoji**: get_post_reactions, list_custom_emoji, search_custom_emoji, ⚠ add_reaction, ⚠ remove_reaction
 - **Threads, mentions & unread**: get_threads, get_mentions, get_unread_counts, get_channel_unread, get_posts_around_unread, ⚠ mark_channel_read, ⚠ mark_channels_viewed, ⚠ mark_post_unread, ⚠ set_thread_follow
 - **Channels**: get_channel_stats, get_channel_member_counts, search_channels, list_team_channels, list_archived_channels, ⚠ update_channel, ⚠ archive_channel, ⚠ restore_channel, ⚠ convert_channel_privacy
@@ -956,7 +991,7 @@ The plugin also registers an extended catalog of read and write tools spanning M
 - **Users & profiles**: get_me, get_user, get_user_by_username, get_user_by_email, get_users_by_ids, get_users_by_usernames, get_user_stats, get_user_cpa_values, list_cpa_fields, ⚠ update_user
 - **Status & presence**: get_user_status, get_users_statuses, get_user_custom_status, ⚠ set_status, ⚠ set_dnd
 - **Teams & team members**: get_team_member, get_team_stats, get_user_teams, get_users_in_team, get_users_not_in_team, get_new_users_in_team, get_dm_common_teams, search_teams, search_users_in_team, ⚠ add_team_members, ⚠ remove_team_member, ⚠ update_team, ⚠ invite_users_to_team, ⚠ invite_users_to_team_and_channels
-- **Files & attachments**: get_file_info, get_post_files, get_file_link, search_files, ⚠ upload_file
+- **Files & attachments**: read_file, get_file_info, get_post_files, get_file_link, search_files, ⚠ upload_file
 - **Integrations**: get_bot, list_bots, list_incoming_webhooks, list_outgoing_webhooks
 - **Groups**: get_group_info, list_groups, get_user_groups, get_channel_groups, get_team_groups, get_users_in_group_channels
 - **Roles & permissions**: get_role, get_channel_moderations, ⚠ update_channel_member_roles, ⚠ update_team_member_roles
@@ -984,7 +1019,7 @@ Per-tool admin policy applies to aggregated plugin tools. Proxied plugin tool ca
 If an exposed plugin tool name conflicts with a built-in Mattermost tool or with another exposed plugin tool, the conflicting plugin tool is skipped from the external endpoint. These conflicts are logged.
 
 **Requirements:**
-- Mattermost Server v11.2 or later
+- Mattermost Server v12.0 or later (the minimum version for the Agents plugin)
 - Valid authentication method (OAuth or Personal Access Token)
 
 **Note:** The server uses streamable HTTP transport and does not support traditional Server-Sent Events (SSE) transport. External clients must use the streamable HTTP transport available at the `/mcp` endpoint.
@@ -1033,7 +1068,7 @@ The plugin distinguishes four license levels: Free (no license), Professional, E
 | AI agents | 1 | 3 | unlimited | unlimited |
 | Bring your own LLM, incl. local models | ✅ 1 provider | ✅ 1 provider | ✅ multi | ✅ multi + fallback |
 | Vision / document understanding | ✅ | ✅ | ✅ | ✅ |
-| Personal custom prompts | ✅ | ✅ | ✅ | ✅ |
+| Personal skills | ✅ | ✅ | ✅ | ✅ |
 | Built-in Mattermost tools | read-only | read-only | read + write | read + write |
 | Agent direct messages | ✅ | ✅ | ✅ | ✅ |
 | Multiplayer agents in channels | — | ✅ | ✅ | ✅ |
@@ -1048,7 +1083,7 @@ The plugin distinguishes four license levels: Free (no license), Professional, E
 | Semantic AI search | — | — | ✅ | ✅ |
 | Meeting transcription & summaries | — | — | ✅ | ✅ |
 | MCP service-account authentication | — | — | ✅ | ✅ |
-| Shared prompt libraries | — | — | ✅ | ✅ |
+| Shared skills | — | — | ✅ | ✅ |
 | Channel agent auto-reply | — | — | — | ✅ |
 | Attribute-based access control for AI | — | — | — | ✅ |
 
@@ -1058,7 +1093,7 @@ How each row is enforced:
 - **Bring your own LLM** — Free and Professional workspaces use one LLM service: the first service in the **Services** list. Agents that reference another service are inactive at those levels and take no slot in the agent cap; they are named in the server log and marked **Inactive** on the Agents page. LLM Bridge service calls address only that service. Enterprise and above route agents and LLM Bridge calls to any configured service. Fallback chains are followed at Enterprise Advanced; at lower levels a configured fallback stays stored but requests use the primary service only.
 - **Built-in Mattermost tools** — read-only tools (retrieving messages, channels, users, teams, files and search results) are available at every level. Tools that change state in Mattermost (posting, reacting, editing, creating or modifying channels, bookmarks, scheduled posts and similar) are available at Enterprise and above; below that they are absent from the tool list and calls to them return a licensing message.
 - **Tool approval policies** — admin-configured per-tool execution policies apply at Enterprise and above. Below that, embedded Mattermost tools use the product defaults and every other tool asks before running; a policy an administrator set to be narrower than the default (for example, ask) still applies. A tool that an administrator has disabled stays disabled at every level.
-- **Shared prompt libraries** — personal prompts are available at every level. Publishing a prompt to other users, and discovering or using prompts published by others, is available at Enterprise and above.
+- **Shared skills** — personal skills are available at every level. Publishing a skill to other users, discovering or using skills published by others, and enabling shared skills on an agent is available at Enterprise and above.
 
 At every level:
 

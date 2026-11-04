@@ -2,10 +2,10 @@
 // seed: e2e/tests/seed.spec.ts
 
 import { test, expect } from '@playwright/test';
-import MattermostContainer from 'helpers/mmcontainer';
+import { containerTest } from 'helpers/container-fixture';
 import { MattermostPage } from 'helpers/mm';
 import { SystemConsoleHelper } from 'helpers/system-console';
-import { OpenAIMockContainer, RunOpenAIMocks } from 'helpers/openai-mock';
+import { RunOpenAIMocks } from 'helpers/openai-mock';
 import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers/system-console-container';
 
 /**
@@ -18,42 +18,176 @@ import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers
  * - Web Search checkbox with provider-specific help text
  */
 
-let mattermost: MattermostContainer;
-let openAIMock: OpenAIMockContainer;
+const anthropicTest = containerTest(async (own) => {
+    // Start container with Anthropic service
+    const mattermost = own(await RunSystemConsoleContainer({
+        services: [
+            {
+                id: 'anthropic-service',
+                name: 'Anthropic Service',
+                type: 'anthropic',
+                apiKey: 'test-key-anthropic',
+                defaultModel: 'claude-3-opus',
+                tokenLimit: 16384,
+                outputTokenLimit: 8192,
+            }
+        ],
+        bots: [
+            {
+                id: 'bot-1',
+                name: 'testbot',
+                displayName: 'Test Bot',
+                serviceID: 'anthropic-service',
+                customInstructions: 'You are a helpful assistant',
+                enableVision: false,
+                enableTools: false,
+                enabledNativeTools: [],
+            }
+        ],
+    }));
+    own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost };
+});
+
+const openAIResponsesTest = containerTest(async (own) => {
+    // Start container with OpenAI service that has useResponsesAPI set to true
+    const mattermost = own(await RunSystemConsoleContainer({
+        services: [
+            {
+                id: 'openai-service',
+                name: 'OpenAI Service',
+                type: 'openai',
+                apiKey: 'test-key-openai',
+                orgId: '',
+                defaultModel: 'gpt-4',
+                tokenLimit: 16384,
+                streamingTimeoutSeconds: 30,
+                outputTokenLimit: 4096,
+                useResponsesAPI: true,
+            }
+        ],
+        bots: [
+            {
+                id: 'bot-1',
+                name: 'testbot',
+                displayName: 'Test Bot',
+                serviceID: 'openai-service',
+                customInstructions: 'You are a helpful assistant',
+                enableVision: false,
+                enableTools: false,
+                enabledNativeTools: ['web_search'],
+            }
+        ],
+    }));
+    own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost };
+});
+
+const openAICompatibleTest = containerTest(async (own) => {
+    // Start container with OpenAI Compatible service that has useResponsesAPI set to false
+    // (OpenAI direct always uses Responses API, so this test uses openaicompatible)
+    const mattermost = own(await RunSystemConsoleContainer({
+        services: [
+            {
+                id: 'openai-service',
+                name: 'OpenAI Compatible Service',
+                type: 'openaicompatible',
+                apiKey: 'test-key-openai',
+                apiURL: 'http://openai:8080',
+                orgId: '',
+                defaultModel: 'gpt-4',
+                tokenLimit: 16384,
+                streamingTimeoutSeconds: 30,
+                outputTokenLimit: 4096,
+                useResponsesAPI: false,
+            }
+        ],
+        bots: [
+            {
+                id: 'bot-1',
+                name: 'testbot',
+                displayName: 'Test Bot',
+                serviceID: 'openai-service',
+                customInstructions: 'You are a helpful assistant',
+                enableVision: false,
+                enableTools: true,
+                enabledNativeTools: [],
+            }
+        ],
+    }));
+    own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost };
+});
+
+const anthropicWebSearchTest = containerTest(async (own) => {
+    // Start container with Anthropic service
+    const mattermost = own(await RunSystemConsoleContainer({
+        services: [
+            {
+                id: 'anthropic-service',
+                name: 'Anthropic Service',
+                type: 'anthropic',
+                apiKey: 'test-key-anthropic',
+                defaultModel: 'claude-3-opus',
+                tokenLimit: 16384,
+                outputTokenLimit: 8192,
+            }
+        ],
+        bots: [
+            {
+                id: 'bot-1',
+                name: 'testbot',
+                displayName: 'Test Bot',
+                serviceID: 'anthropic-service',
+                customInstructions: 'You are a helpful assistant',
+                enableVision: false,
+                enableTools: false,
+                enabledNativeTools: [],
+            }
+        ],
+    }));
+    own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost };
+});
+
+const openAIWebSearchTest = containerTest(async (own) => {
+    // Start container with OpenAI service with ResponsesAPI enabled
+    const mattermost = own(await RunSystemConsoleContainer({
+        services: [
+            {
+                id: 'openai-service',
+                name: 'OpenAI Service',
+                type: 'openai',
+                apiKey: 'test-key-openai',
+                orgId: '',
+                defaultModel: 'gpt-4',
+                tokenLimit: 16384,
+                streamingTimeoutSeconds: 30,
+                outputTokenLimit: 4096,
+                useResponsesAPI: true,
+            }
+        ],
+        bots: [
+            {
+                id: 'bot-1',
+                name: 'testbot',
+                displayName: 'Test Bot',
+                serviceID: 'openai-service',
+                customInstructions: 'You are a helpful assistant',
+                enableVision: false,
+                enableTools: false,
+                enabledNativeTools: [],
+            }
+        ],
+    }));
+    own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost };
+});
 
 // Legacy System Console bot editor removed (MM-65671). Covered by tests/agents/provider-config.spec.ts.
 test.describe.skip('Bot Native Tools', () => {
-    test('should show Native Claude Tools for Anthropic service', async ({ page }) => {
+    anthropicTest('should show Native Claude Tools for Anthropic service', async ({ page, containers: { mattermost } }) => {
         test.setTimeout(60000);
-
-        // Start container with Anthropic service
-        mattermost = await RunSystemConsoleContainer({
-            services: [
-                {
-                    id: 'anthropic-service',
-                    name: 'Anthropic Service',
-                    type: 'anthropic',
-                    apiKey: 'test-key-anthropic',
-                    defaultModel: 'claude-3-opus',
-                    tokenLimit: 16384,
-                    outputTokenLimit: 8192,
-                }
-            ],
-            bots: [
-                {
-                    id: 'bot-1',
-                    name: 'testbot',
-                    displayName: 'Test Bot',
-                    serviceID: 'anthropic-service',
-                    customInstructions: 'You are a helpful assistant',
-                    enableVision: false,
-                    enableTools: false,
-                    enabledNativeTools: [],
-                }
-            ],
-        });
-
-        openAIMock = await RunOpenAIMocks(mattermost.network);
 
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
@@ -122,45 +256,10 @@ test.describe.skip('Bot Native Tools', () => {
         } else {
             await expect(reloadedWebSearchCheckbox).toBeChecked();
         }
-
-        await openAIMock.stop();
-        await mattermost.stop();
     });
 
-    test('should show Native OpenAI Tools for OpenAI service with ResponsesAPI', async ({ page }) => {
+    openAIResponsesTest('should show Native OpenAI Tools for OpenAI service with ResponsesAPI', async ({ page, containers: { mattermost } }) => {
         test.setTimeout(60000);
-
-        // Start container with OpenAI service that has useResponsesAPI set to true
-        mattermost = await RunSystemConsoleContainer({
-            services: [
-                {
-                    id: 'openai-service',
-                    name: 'OpenAI Service',
-                    type: 'openai',
-                    apiKey: 'test-key-openai',
-                    orgId: '',
-                    defaultModel: 'gpt-4',
-                    tokenLimit: 16384,
-                    streamingTimeoutSeconds: 30,
-                    outputTokenLimit: 4096,
-                    useResponsesAPI: true,
-                }
-            ],
-            bots: [
-                {
-                    id: 'bot-1',
-                    name: 'testbot',
-                    displayName: 'Test Bot',
-                    serviceID: 'openai-service',
-                    customInstructions: 'You are a helpful assistant',
-                    enableVision: false,
-                    enableTools: false,
-                    enabledNativeTools: ['web_search'],
-                }
-            ],
-        });
-
-        openAIMock = await RunOpenAIMocks(mattermost.network);
 
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
@@ -217,47 +316,10 @@ test.describe.skip('Bot Native Tools', () => {
         // 18. Verify checkbox is unchecked
         const reloadedWebSearchCheckbox = reloadedBotCard.getByRole('checkbox').first();
         await expect(reloadedWebSearchCheckbox).not.toBeChecked();
-
-        await openAIMock.stop();
-        await mattermost.stop();
     });
 
-    test('should NOT show native tools for OpenAI Compatible service without ResponsesAPI', async ({ page }) => {
+    openAICompatibleTest('should NOT show native tools for OpenAI Compatible service without ResponsesAPI', async ({ page, containers: { mattermost } }) => {
         test.setTimeout(60000);
-
-        // Start container with OpenAI Compatible service that has useResponsesAPI set to false
-        // (OpenAI direct always uses Responses API, so this test uses openaicompatible)
-        mattermost = await RunSystemConsoleContainer({
-            services: [
-                {
-                    id: 'openai-service',
-                    name: 'OpenAI Compatible Service',
-                    type: 'openaicompatible',
-                    apiKey: 'test-key-openai',
-                    apiURL: 'http://openai:8080',
-                    orgId: '',
-                    defaultModel: 'gpt-4',
-                    tokenLimit: 16384,
-                    streamingTimeoutSeconds: 30,
-                    outputTokenLimit: 4096,
-                    useResponsesAPI: false,
-                }
-            ],
-            bots: [
-                {
-                    id: 'bot-1',
-                    name: 'testbot',
-                    displayName: 'Test Bot',
-                    serviceID: 'openai-service',
-                    customInstructions: 'You are a helpful assistant',
-                    enableVision: false,
-                    enableTools: true,
-                    enabledNativeTools: [],
-                }
-            ],
-        });
-
-        openAIMock = await RunOpenAIMocks(mattermost.network);
 
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
@@ -334,42 +396,10 @@ test.describe.skip('Bot Native Tools', () => {
         // 17. Verify help text reads 'Enable OpenAI's built-in web search capability'
         const helpText = botCard.locator('text=/.*openai.*web search capability.*/i');
         await expect(helpText).toBeVisible();
-
-        await openAIMock.stop();
-        await mattermost.stop();
     });
 
-    test('should enable and disable Web Search for Anthropic service', async ({ page }) => {
+    anthropicWebSearchTest('should enable and disable Web Search for Anthropic service', async ({ page, containers: { mattermost } }) => {
         test.setTimeout(60000);
-
-        // Start container with Anthropic service
-        mattermost = await RunSystemConsoleContainer({
-            services: [
-                {
-                    id: 'anthropic-service',
-                    name: 'Anthropic Service',
-                    type: 'anthropic',
-                    apiKey: 'test-key-anthropic',
-                    defaultModel: 'claude-3-opus',
-                    tokenLimit: 16384,
-                    outputTokenLimit: 8192,
-                }
-            ],
-            bots: [
-                {
-                    id: 'bot-1',
-                    name: 'testbot',
-                    displayName: 'Test Bot',
-                    serviceID: 'anthropic-service',
-                    customInstructions: 'You are a helpful assistant',
-                    enableVision: false,
-                    enableTools: false,
-                    enabledNativeTools: [],
-                }
-            ],
-        });
-
-        openAIMock = await RunOpenAIMocks(mattermost.network);
 
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
@@ -428,45 +458,10 @@ test.describe.skip('Bot Native Tools', () => {
         await reloadedBotCard2.click();
         const reloadedCheckbox2 = reloadedBotCard2.getByRole('checkbox').first();
         await expect(reloadedCheckbox2).not.toBeChecked();
-
-        await openAIMock.stop();
-        await mattermost.stop();
     });
 
-    test('should enable and disable Web Search for OpenAI service with ResponsesAPI', async ({ page }) => {
+    openAIWebSearchTest('should enable and disable Web Search for OpenAI service with ResponsesAPI', async ({ page, containers: { mattermost } }) => {
         test.setTimeout(60000);
-
-        // Start container with OpenAI service with ResponsesAPI enabled
-        mattermost = await RunSystemConsoleContainer({
-            services: [
-                {
-                    id: 'openai-service',
-                    name: 'OpenAI Service',
-                    type: 'openai',
-                    apiKey: 'test-key-openai',
-                    orgId: '',
-                    defaultModel: 'gpt-4',
-                    tokenLimit: 16384,
-                    streamingTimeoutSeconds: 30,
-                    outputTokenLimit: 4096,
-                    useResponsesAPI: true,
-                }
-            ],
-            bots: [
-                {
-                    id: 'bot-1',
-                    name: 'testbot',
-                    displayName: 'Test Bot',
-                    serviceID: 'openai-service',
-                    customInstructions: 'You are a helpful assistant',
-                    enableVision: false,
-                    enableTools: false,
-                    enabledNativeTools: [],
-                }
-            ],
-        });
-
-        openAIMock = await RunOpenAIMocks(mattermost.network);
 
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
@@ -525,8 +520,5 @@ test.describe.skip('Bot Native Tools', () => {
         await reloadedBotCard2.click();
         const reloadedCheckbox2 = reloadedBotCard2.getByRole('checkbox').first();
         await expect(reloadedCheckbox2).not.toBeChecked();
-
-        await openAIMock.stop();
-        await mattermost.stop();
     });
 });

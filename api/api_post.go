@@ -254,8 +254,7 @@ func (a *API) handleTranscribeFile(c *gin.Context) {
 
 	result, err := a.meetingsService.HandleTranscribeFile(userID, bot, post, channel, fileID, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
-		var licErr *enterprise.LicenseError
-		if errors.As(err, &licErr) {
+		if _, ok := errors.AsType[*enterprise.LicenseError](err); ok {
 			abortNotLicensed(c, err)
 			return
 		}
@@ -283,8 +282,7 @@ func (a *API) handleSummarizeTranscription(c *gin.Context) {
 
 	result, err := a.meetingsService.HandleSummarizeTranscription(userID, bot, post, channel, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
-		var licErr *enterprise.LicenseError
-		if errors.As(err, &licErr) {
+		if _, ok := errors.AsType[*enterprise.LicenseError](err); ok {
 			abortNotLicensed(c, err)
 			return
 		}
@@ -440,17 +438,61 @@ func (a *API) handleToolResult(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+func (a *API) handleWaitCheckNow(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+
+	if err := a.enforceEmptyBody(c); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if err := a.conversationsService.HandleWaitCheckNow(userID, post); err != nil {
+		c.AbortWithError(waitControlHTTPStatus(err), err)
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+func (a *API) handleWaitCancel(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+
+	if err := a.enforceEmptyBody(c); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if err := a.conversationsService.HandleWaitCancel(userID, post); err != nil {
+		c.AbortWithError(waitControlHTTPStatus(err), err)
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+// waitControlHTTPStatus maps errors from the wait-control routes to HTTP
+// statuses: a non-requester is forbidden (403); a wait that is no longer
+// pending is a stale client view (409); everything else is a server fault.
+func waitControlHTTPStatus(err error) int {
+	switch {
+	case errors.Is(err, conversations.ErrNotWaitOwner):
+		return http.StatusForbidden
+	case errors.Is(err, conversations.ErrNoPendingWait):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
 // isConversationOwner checks whether the given user is the owner of the
 // conversation associated with the post (via the conversation_id prop).
-//
-// Falls back to the llm_requester_user_id prop for legacy custom_llmbot posts
-// that were not produced via the conversation entity flow — currently only
-// meeting summarization. Remove the fallback once meeting flows migrate.
+// Posts without a conversation have no owner.
 func (a *API) isConversationOwner(post *model.Post, userID string) bool {
 	convID, ok := post.GetProp(streaming.ConversationIDProp).(string)
 	if !ok || convID == "" {
-		requester, _ := post.GetProp(streaming.LLMRequesterUserIDProp).(string)
-		return requester != "" && requester == userID
+		return false
 	}
 
 	// Try the full conversation service first, then fall back to the store interface.
@@ -487,8 +529,7 @@ func (a *API) handlePostbackSummary(c *gin.Context) {
 
 	result, err := a.meetingsService.HandlePostbackSummary(userID, post)
 	if err != nil {
-		var licErr *enterprise.LicenseError
-		if errors.As(err, &licErr) {
+		if _, ok := errors.AsType[*enterprise.LicenseError](err); ok {
 			abortNotLicensed(c, err)
 			return
 		}
@@ -555,11 +596,9 @@ func makeAnalysisPost(postIDToAnalyze string, analysisType string, conversationI
 	return post
 }
 
-// makeChannelAnalysisPost creates a post for channel analysis results. The
-// post is not regenerable; see conversations.ErrNotRegenerable.
+// makeChannelAnalysisPost creates a post for channel analysis results.
 func makeChannelAnalysisPost(channelID string, analysisType string, conversationID string) *model.Post {
 	post := &model.Post{}
-	post.AddProp(streaming.NoRegen, "true")
 	post.AddProp(conversations.AnalyzedChannelIDProp, channelID)
 	post.AddProp(conversations.AnalysisTypeProp, analysisType)
 	if conversationID != "" {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"testing"
 	"time"
 
@@ -69,6 +70,15 @@ func formatKV(kvs []any) string {
 // Compile-time check that testLogger satisfies logger.Logger.
 var _ loggerlib.Logger = (*testLogger)(nil)
 
+// withLatestMattermostImage runs the suite against the latest stable server; the
+// library default is an old release.
+func withLatestMattermostImage(req *mmcontainer.MattermostContainerRequest) {
+	req.Image = "mattermost/mattermost-enterprise-edition:latest"
+	if image := os.Getenv("MM_IMAGE"); image != "" {
+		req.Image = image
+	}
+}
+
 // TestSuite represents the integration test suite
 type TestSuite struct {
 	t          *testing.T
@@ -101,6 +111,7 @@ func SetupTestSuite(t *testing.T) *TestSuite {
 		container, err = mmcontainer.RunContainer(ctx,
 			mmcontainer.WithLicense(""),
 			mmcontainer.WithConfig(cfg),
+			withLatestMattermostImage,
 		)
 		if err == nil {
 			break
@@ -173,10 +184,8 @@ func (suite *TestSuite) createMCPServerWithConfig(devMode bool, fileContentServi
 	require.NotEmpty(suite.t, suite.adminToken, "Admin token must be set")
 
 	stdioConfig := mcpserver.StdioConfig{
-		BaseConfig: mcpserver.BaseConfig{
-			MMServerURL: suite.serverURL,
-			DevMode:     devMode,
-		},
+		MMServerURL:         suite.serverURL,
+		DevMode:             devMode,
 		PersonalAccessToken: suite.adminToken,
 	}
 	mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, fileContentService)

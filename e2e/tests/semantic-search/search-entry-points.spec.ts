@@ -1,4 +1,5 @@
-import { test, expect, Page } from '@playwright/test';
+import { expect, Page } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import { RunAIMockContainer } from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -9,16 +10,17 @@ import { mattermostAIPluginRoutes } from 'helpers/plugin-http';
 const username = 'regularuser';
 const password = 'regularuser';
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunAIMockContainer());
+    return { mattermost };
+});
+
 let mattermost: MattermostContainer;
 
 // RunAIMockContainer configures no embedding search, so semantic search is
 // unavailable while the license still allows Agents search.
-test.beforeAll(async () => {
-    mattermost = await RunAIMockContainer();
-});
-
-test.afterAll(async () => {
-    await mattermost.stop();
+test.beforeAll(async ({ containers }) => {
+    ({ mattermost } = containers);
 });
 
 async function setupTestPage(page: Page) {

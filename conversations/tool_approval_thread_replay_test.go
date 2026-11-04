@@ -184,13 +184,11 @@ func TestChannelApprovalsOutOfOrderKeepThreadReplayable(t *testing.T) {
 
 	// Native tools route Anthropic requests through the Responses path.
 	lm, err := bifrost.New(bifrost.Config{
-		ProviderSettings: bifrost.ProviderSettings{
-			Provider:         schemas.Anthropic,
-			APIKey:           "test-key",
-			APIURL:           server.URL,
-			DefaultModel:     "claude-sonnet-4-6",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:           schemas.Anthropic,
+		APIKey:             "test-key",
+		APIURL:             server.URL,
+		DefaultModel:       "claude-sonnet-4-6",
+		StreamingTimeout:   10 * time.Second,
 		EnabledNativeTools: []string{llm.NativeToolWebSearch, llm.NativeToolWebFetch},
 	})
 	require.NoError(t, err)

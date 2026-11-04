@@ -4,12 +4,13 @@
 package mcp
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -321,6 +322,9 @@ type eligibleServers struct {
 	remote   []ServerConfig
 	plugins  []PluginServerConfig
 	embedded bool
+	// dmOnly holds remote servers left out only because the selection
+	// excludes DM-only servers.
+	dmOnly []ServerConfig
 	// origins holds every eligible origin, so discovered tools from a server
 	// that is cached but no longer eligible are never handed to the LLM.
 	origins map[string]bool
@@ -366,6 +370,9 @@ func (m *ClientManager) resolveEligibleServers(cfg Config, embeddedClient *Embed
 		case deniedOrigins[llm.NormalizeMCPServerOrigin(server.BaseURL)]:
 			continue
 		case !selection.Allows(server.BaseURL):
+			continue
+		case selection.ExcludeDMOnlyServers && server.DMOnly:
+			resolved.dmOnly = append(resolved.dmOnly, server)
 			continue
 		}
 		resolved.remote = append(resolved.remote, server)
@@ -549,17 +556,13 @@ func (m *ClientManager) deniedMCPServerOrigins(ctx context.Context, userID strin
 
 	var denied map[string]bool
 	check := func(origin, serverID, name string) {
-		if serverID == "" {
-			return
-		}
-		if err := m.accessChecker.CanUseMCPServer(accesscontrol.WithResourceName(ctx, name), userID, serverID); err == nil {
+		if m.canUseServer(ctx, userID, serverID, name) {
 			return
 		}
 		if denied == nil {
 			denied = make(map[string]bool)
 		}
 		denied[llm.NormalizeMCPServerOrigin(origin)] = true
-		m.log.Debug("Omitting MCP server for user by access policy", "userID", userID, "serverID", serverID)
 	}
 
 	for _, server := range cfg.Servers {
@@ -574,6 +577,20 @@ func (m *ClientManager) deniedMCPServerOrigins(ctx context.Context, userID strin
 		check(pluginServerOriginKey(server.PluginID), server.ID, server.Name)
 	}
 	return denied
+}
+
+// canUseServer reports whether the access policy for serverID lets userID
+// use it. ID-less servers remain available until migration assigns their
+// durable IDs.
+func (m *ClientManager) canUseServer(ctx context.Context, userID, serverID, name string) bool {
+	if m.accessChecker == nil || serverID == "" {
+		return true
+	}
+	if err := m.accessChecker.CanUseMCPServer(accesscontrol.WithResourceName(ctx, name), userID, serverID); err != nil {
+		m.log.Debug("Omitting MCP server for user by access policy", "userID", userID, "serverID", serverID)
+		return false
+	}
+	return true
 }
 
 func joinMCPErrors(groups ...*Errors) *Errors {
@@ -724,8 +741,8 @@ func (m *ClientManager) snapshotEnabledPluginServers() []PluginServerConfig {
 			enabled = append(enabled, cfg)
 		}
 	}
-	sort.Slice(enabled, func(i, j int) bool {
-		return enabled[i].PluginID < enabled[j].PluginID
+	slices.SortFunc(enabled, func(a, b PluginServerConfig) int {
+		return cmp.Compare(a.PluginID, b.PluginID)
 	})
 	return enabled
 }
@@ -1073,8 +1090,8 @@ func (m *ClientManager) ListPluginServers() []PluginServerConfig {
 		}
 		out = append(out, cfg)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].PluginID < out[j].PluginID
+	slices.SortFunc(out, func(a, b PluginServerConfig) int {
+		return cmp.Compare(a.PluginID, b.PluginID)
 	})
 	return out
 }
@@ -1288,8 +1305,8 @@ func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *Embedd
 		}
 
 		// Sort for deterministic output.
-		sort.Slice(filtered, func(i, j int) bool {
-			return filtered[i].Name < filtered[j].Name
+		slices.SortFunc(filtered, func(a, b llm.Tool) int {
+			return cmp.Compare(a.Name, b.Name)
 		})
 
 		result = append(result, filtered...)

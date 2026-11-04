@@ -17,12 +17,12 @@ import (
 
 var ErrUsageRestriction = errors.New("usage restriction")
 
-func (m *MMBots) CheckUsageRestrictions(ctx context.Context, requestingUserID string, bot *Bot, channel *model.Channel) error {
-	if err := m.CheckUsageRestrictionsForUser(ctx, bot, requestingUserID); err != nil {
+func (b *MMBots) CheckUsageRestrictions(ctx context.Context, requestingUserID string, bot *Bot, channel *model.Channel) error {
+	if err := b.CheckUsageRestrictionsForUser(ctx, bot, requestingUserID); err != nil {
 		return err
 	}
 
-	if err := m.CheckUsageRestrictionsForChannel(bot, channel); err != nil {
+	if err := b.CheckUsageRestrictionsForChannel(bot, channel); err != nil {
 		return err
 	}
 
@@ -34,7 +34,7 @@ func (m *MMBots) CheckUsageRestrictions(ctx context.Context, requestingUserID st
 // an error wrapping ErrUsageRestriction. Unlike CheckUsageRestrictions it does
 // not consider user-scope restrictions, so callers can validate channel-level
 // settings (e.g. auto-reply) independent of any requesting user.
-func (m *MMBots) CheckUsageRestrictionsForChannel(bot *Bot, channel *model.Channel) error {
+func (b *MMBots) CheckUsageRestrictionsForChannel(bot *Bot, channel *model.Channel) error {
 	switch bot.GetConfig().ChannelAccessLevel {
 	case llm.ChannelAccessLevelAll:
 		return nil
@@ -123,12 +123,12 @@ func UsageRestrictionsForUserConfig(client *pluginapi.Client, cfg llm.BotConfig,
 // ABAC agent decision (legacy UserAccessLevel as legacyCheck), then ABAC
 // service for cfg.ServiceID. Denied fallback hops are dropped per request
 // rather than hiding the agent; see allowedFallbackServiceIDs.
-func (m *MMBots) CheckUsageRestrictionsForUserConfig(ctx context.Context, cfg llm.BotConfig, requestingUserID string) error {
-	legacy := func() error { return UsageRestrictionsForUserConfig(m.pluginAPI, cfg, requestingUserID) }
-	if err := m.accessChecker.CanUseAgent(ctx, requestingUserID, &cfg, legacy); err != nil {
+func (b *MMBots) CheckUsageRestrictionsForUserConfig(ctx context.Context, cfg llm.BotConfig, requestingUserID string) error {
+	legacy := func() error { return UsageRestrictionsForUserConfig(b.pluginAPI, cfg, requestingUserID) }
+	if err := b.accessChecker.CanUseAgent(ctx, requestingUserID, &cfg, legacy); err != nil {
 		return wrapDeny(err)
 	}
-	if err := m.accessChecker.CanUseService(ctx, requestingUserID, cfg.ServiceID); err != nil {
+	if err := b.accessChecker.CanUseService(ctx, requestingUserID, cfg.ServiceID); err != nil {
 		return wrapDeny(err)
 	}
 	return nil
@@ -144,6 +144,6 @@ func wrapDeny(err error) error {
 	return err
 }
 
-func (m *MMBots) CheckUsageRestrictionsForUser(ctx context.Context, bot *Bot, requestingUserID string) error {
-	return m.CheckUsageRestrictionsForUserConfig(ctx, bot.GetConfig(), requestingUserID)
+func (b *MMBots) CheckUsageRestrictionsForUser(ctx context.Context, bot *Bot, requestingUserID string) error {
+	return b.CheckUsageRestrictionsForUserConfig(ctx, bot.GetConfig(), requestingUserID)
 }

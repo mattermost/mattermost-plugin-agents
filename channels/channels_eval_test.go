@@ -146,11 +146,22 @@ func (s *evalInMemoryStore) GetConversationByThreadBotUser(_, _, _ string) (*sto
 	return nil, store.ErrConversationNotFound
 }
 
-func (s *evalInMemoryStore) UpdateConversationTitle(id, title string) error {
-	if c, ok := s.conversations[id]; ok {
-		c.Title = title
+func (s *evalInMemoryStore) RenameConversation(id, title string) (bool, error) {
+	c, ok := s.conversations[id]
+	if !ok || c.DeleteAt != 0 {
+		return false, nil
 	}
-	return nil
+	c.Title = title
+	return true, nil
+}
+
+func (s *evalInMemoryStore) SetConversationTitleIfUnset(id, title string) (bool, error) {
+	c, ok := s.conversations[id]
+	if !ok || c.Title != "" || c.DeleteAt != 0 {
+		return false, nil
+	}
+	c.Title = title
+	return true, nil
 }
 
 func (s *evalInMemoryStore) UpdateConversationRootPostID(id string, rootPostID string) error {
@@ -188,6 +199,15 @@ func (s *evalInMemoryStore) UpdateTurnContent(id string, content json.RawMessage
 		t.Content = content
 	}
 	return nil
+}
+
+func (s *evalInMemoryStore) CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error) {
+	t, ok := s.turns[id]
+	if !ok || !bytes.Equal(t.Content, expected) {
+		return false, nil
+	}
+	t.Content = content
+	return true, nil
 }
 
 func (s *evalInMemoryStore) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {

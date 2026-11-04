@@ -246,6 +246,13 @@ func fillNonZero(t *testing.T, v reflect.Value, path string) {
 		for i := range v.NumField() {
 			fillNonZero(t, v.Field(i), path+"."+v.Type().Field(i).Name)
 		}
+	case reflect.Map:
+		key := reflect.New(v.Type().Key()).Elem()
+		fillNonZero(t, key, path+"[key]")
+		elem := reflect.New(v.Type().Elem()).Elem()
+		fillNonZero(t, elem, path+"[value]")
+		v.Set(reflect.MakeMap(v.Type()))
+		v.SetMapIndex(key, elem)
 	default:
 		t.Fatalf("%s has kind %s, which fillNonZero cannot set; extend fillNonZero", path, v.Kind())
 	}
@@ -282,6 +289,7 @@ func TestAgentVersionSnapshotKeys(t *testing.T) {
 		"enabledMCPTools", "autoEnableNewMCPTools", "mcpDynamicToolLoading",
 		"useServiceAccountAuth", "reasoningEnabled", "reasoningEffort",
 		"thinkingBudget", "structuredOutputEnabled", "maxToolTurns", "adminUserIDs",
+		"skills",
 	}
 	// Cleared by agentVersionSnapshot: secrets, lifecycle metadata and IDs
 	// that restore must not change.
@@ -433,6 +441,28 @@ func TestAgentVersionChangedFields(t *testing.T) {
 	}
 }
 
+// Versions recorded before skills existed have no "skills" key; an agent that
+// never configured skills must not report them changed on its next edit.
+func TestChangedVersionFieldsSkillsSinceVersioning(t *testing.T) {
+	prev := `{"name":"agent","displayName":"Agent"}`
+	tests := []struct {
+		name string
+		next llm.BotConfig
+		want []string
+	}{
+		{name: "skills never configured", next: llm.BotConfig{Name: "agent", DisplayName: "Agent"}, want: []string{}},
+		{name: "skills configured", next: llm.BotConfig{Name: "agent", DisplayName: "Agent", Skills: llm.SkillsConfig{AllowPersonal: true}}, want: []string{"skills"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			changed := slices.DeleteFunc(changedVersionFields(prev, tt.next), func(key string) bool {
+				return key != "skills"
+			})
+			assert.Equal(t, tt.want, changed)
+		})
+	}
+}
+
 func TestChangedVersionFieldsIgnoresUnversionedKeys(t *testing.T) {
 	next := llm.BotConfig{Name: "agent", StructuredOutputEnabled: false} //nolint:staticcheck // deprecated field still persisted
 	prevJSON, err := json.Marshal(next)
@@ -552,13 +582,11 @@ func TestAgentVersionConcurrentUpdates(t *testing.T) {
 	var wg sync.WaitGroup
 	errCh := make(chan error, writers)
 	for i := range writers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			cfg := *agent
 			cfg.CustomInstructions = fmt.Sprintf("writer %d", i)
 			errCh <- s.UpdateAgent(&cfg, AgentVersionMeta{Source: AgentVersionSourceUpdate})
-		}()
+		})
 	}
 	wg.Wait()
 	close(errCh)
@@ -622,13 +650,11 @@ func TestAgentVersionUnversionedAgents(t *testing.T) {
 		counts := make(chan int, nodes)
 		errCh := make(chan error, nodes)
 		for range nodes {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				n, err := s.BackfillAgentVersions()
 				counts <- n
 				errCh <- err
-			}()
+			})
 		}
 		wg.Wait()
 		close(counts)

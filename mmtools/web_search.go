@@ -855,11 +855,11 @@ func DecorateStreamWithAnnotations(result *llm.TextStreamResult, searchData []We
 				}
 				// Pass through text events as normal during streaming
 				output <- event
-			case llm.EventTypeToolCalls:
-				// A resolved client-tool event closes the preceding round. The
-				// streaming accumulator resets at the same boundary, so citation
-				// cleanup at final End must target only the current round's text.
-				if toolCalls, ok := event.Value.([]llm.ToolCall); ok && llm.IsResolvedToolCallBatch(toolCalls) {
+			case llm.EventTypeToolCallBatch:
+				// A resolved batch closes the preceding round. The streaming
+				// accumulator resets at the same boundary, so citation cleanup
+				// at final End must target only the current round's text.
+				if batch, ok := event.Value.(llm.ToolCallBatch); ok && batch.Phase == llm.ToolCallPhaseResolved {
 					builder.Reset()
 				}
 				output <- event
@@ -903,7 +903,7 @@ func buildWebSearchAnnotationsAndCleanText(message string, results []WebSearchRe
 }
 
 func buildWebSearchAnnotationsAndCleanTextRanges(message string, results []WebSearchResult) ([]llm.Annotation, string, []llm.TextRange) {
-	if len(message) == 0 || len(results) == 0 {
+	if message == "" || len(results) == 0 {
 		return nil, message, nil
 	}
 

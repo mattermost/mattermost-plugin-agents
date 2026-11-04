@@ -318,7 +318,7 @@ func TestCacheHitBehavior(t *testing.T) {
 	// Retrieve from cache
 	cachedTools := cache.GetTools(serverID)
 	require.NotNil(t, cachedTools)
-	require.Equal(t, len(tools), len(cachedTools))
+	require.Len(t, cachedTools, len(tools))
 
 	// Verify tool details are preserved
 	require.Equal(t, "calculator", cachedTools["calculator"].Name)
@@ -369,7 +369,7 @@ func TestCacheUpdateOnNewTools(t *testing.T) {
 	// Now tools should be in cache
 	cachedTools = cache.GetTools(serverID)
 	require.NotNil(t, cachedTools)
-	require.Equal(t, 2, len(cachedTools))
+	require.Len(t, cachedTools, 2)
 	require.Contains(t, cachedTools, "file_read")
 	require.Contains(t, cachedTools, "file_write")
 }

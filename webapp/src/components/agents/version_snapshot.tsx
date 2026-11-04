@@ -8,7 +8,7 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import {Tag} from '@mattermost/compass-ui/components/tag';
 
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
-import {DefaultMaxToolTurns, ServiceInfo, UserAgent} from '@/types/agents';
+import {DefaultMaxToolTurns, ServiceInfo, UserAgent, normalizeSkillsConfig} from '@/types/agents';
 
 import {changedFieldLabels} from './agent_version_labels';
 
@@ -30,6 +30,7 @@ const FIELD_GROUPS = {
     maxToolTurns: ['maxToolTurns'],
     dynamicToolLoading: ['mcpDynamicToolLoading'],
     mcpTools: ['enabledMCPTools', 'autoEnableNewMCPTools'],
+    skills: ['skills'],
     vision: ['enableVision'],
     reasoning: ['reasoningEnabled', 'reasoningEffort', 'thinkingBudget'],
     nativeTools: ['enabledNativeTools'],
@@ -112,6 +113,15 @@ const VersionSnapshot = ({config, services, changedFields}: Props) => {
         }
     }
 
+    const skills = normalizeSkillsConfig(config.skills);
+    let skillsValue = disabled;
+    if (!skills.disabled) {
+        skillsValue = intl.formatMessage(
+            {defaultMessage: 'Enabled, personal skills {personal, select, true {allowed} other {not allowed}}, {count, plural, one {# shared skill} other {# shared skills}}'},
+            {personal: String(skills.allowPersonal), count: skills.enabledSharedIDs?.length ?? 0},
+        );
+    }
+
     let mcpToolsValue: React.ReactNode = none;
     if (config.autoEnableNewMCPTools) {
         mcpToolsValue = intl.formatMessage({defaultMessage: 'All MCP tools'});
@@ -186,6 +196,12 @@ const VersionSnapshot = ({config, services, changedFields}: Props) => {
                     changed={isChanged('mcpTools')}
                 >
                     {mcpToolsValue}
+                </Row>
+                <Row
+                    label={intl.formatMessage({defaultMessage: 'Skills'})}
+                    changed={isChanged('skills')}
+                >
+                    {skillsValue}
                 </Row>
                 <Row
                     label={intl.formatMessage({defaultMessage: 'Vision'})}

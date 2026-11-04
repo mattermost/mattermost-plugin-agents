@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { OpenAIMockContainer, RunOpenAIMocks, responseTest } from 'helpers/openai-mock';
@@ -12,20 +13,19 @@ import {
 import { AgentAPIHelper } from 'helpers/agent-api';
 import { AgentPageHelper } from 'helpers/agent-page';
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunAgentContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
 test.describe('Agent CRUD', () => {
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        mattermost = await RunAgentContainer();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
         await openAIMock.addCompletionMock(responseTest);
-    });
-
-    test.afterAll(async () => {
-        await openAIMock?.stop();
-        await mattermost?.stop();
     });
 
     test('should create a new agent via UI', async ({ page }) => {
@@ -319,6 +319,11 @@ test.describe('Agent CRUD', () => {
         await mmPage.login(mattermost.url(), agentRegularUsername, agentRegularPassword);
         await agentPage.navigateToAgents(mattermost.url());
         await expect(agentPage.getAgentRowByName(`Visible To Regular ${suffix}`)).toBeVisible({ timeout: 10000 });
+
+        // The row's primary action starts a new chat for everyone, including users who cannot edit the agent.
+        await agentPage.clickAgentRow(`Visible To Regular ${suffix}`);
+        await expect(page).toHaveURL(/\/plug\/mattermost-ai\/agents\/chat\/[a-z0-9]{26}$/, { timeout: 15000 });
+        await expect(page.getByTestId('agent-chat-new-composer').getByRole('textbox')).toBeVisible({ timeout: 15000 });
     });
 
     test('denies create in UI when user lacks manage_own_agent permission', async ({ page }) => {

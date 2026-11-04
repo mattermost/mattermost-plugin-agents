@@ -197,7 +197,7 @@ func TestRunMigrations(t *testing.T) {
 				err := s.db.Get(&count, `
 					SELECT COUNT(*) FROM Agents_DB_Migrations`)
 				require.NoError(t, err)
-				assert.Equal(t, 12, count, "Should have 12 migration records")
+				assert.Equal(t, 14, count, "Should have 14 migration records")
 			},
 		},
 		{
@@ -253,7 +253,7 @@ func TestSystemKeyValue(t *testing.T) {
 			validate: func(t *testing.T, s *Store) {
 				val, err := s.GetSystemValue("nonexistent")
 				require.NoError(t, err)
-				assert.Equal(t, "", val)
+				assert.Empty(t, val)
 			},
 		},
 		{
@@ -309,7 +309,7 @@ func TestSystemKeyValue(t *testing.T) {
 			validate: func(t *testing.T, s *Store) {
 				val, err := s.GetSystemValue("empty_key")
 				require.NoError(t, err)
-				assert.Equal(t, "", val)
+				assert.Empty(t, val)
 			},
 		},
 	}

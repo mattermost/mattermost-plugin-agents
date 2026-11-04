@@ -146,9 +146,7 @@ func TestLogSpanProcessor_ParentSpanID(t *testing.T) {
 			childEntry = &fake.entries[i]
 		}
 	}
-	if childEntry == nil {
-		t.Fatal("child entry not found")
-	}
+	require.NotNil(t, childEntry, "child entry not found")
 	if _, ok := kvLookup(childEntry.kvs, "parent_span_id"); !ok {
 		t.Error("child entry missing parent_span_id")
 	}

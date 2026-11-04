@@ -4,6 +4,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings/mocks"
@@ -67,8 +69,10 @@ type TestEnvironment struct {
 // testConfigImpl is a minimal implementation of Config for testing
 type testConfigImpl struct {
 	allowUnsafeLinks                bool
+	allowedLinkDomains              string
 	enableHTMLArtifacts             bool
 	enableChannelMentionToolCalling bool
+	enableAmbientAutoReply          bool
 	mcpConfig                       mcp.Config
 	services                        []llm.ServiceConfig
 	defaultBotUserID                string
@@ -91,6 +95,10 @@ func (tc *testConfigImpl) AllowUnsafeLinks() bool {
 	return tc.allowUnsafeLinks
 }
 
+func (tc *testConfigImpl) LinkPolicy() config.LinkPolicy {
+	return config.NewLinkPolicy(tc.allowUnsafeLinks, tc.allowedLinkDomains)
+}
+
 func (tc *testConfigImpl) EnableHTMLArtifacts() bool {
 	return tc.enableHTMLArtifacts
 }
@@ -101,6 +109,10 @@ func (tc *testConfigImpl) EmbeddingSearchConfig() embeddings.EmbeddingSearchConf
 
 func (tc *testConfigImpl) EnableChannelMentionToolCalling() bool {
 	return tc.enableChannelMentionToolCalling
+}
+
+func (tc *testConfigImpl) EnableAmbientAutoReply() bool {
+	return tc.enableAmbientAutoReply
 }
 
 func (tc *testConfigImpl) AllowNativeWebSearchInChannels() bool {
@@ -405,19 +417,13 @@ func (f *fakeChannelAutoReplyStore) Get(channelID string) (*autoreply.Setting, e
 	return f.settings[channelID], nil
 }
 
-func (f *fakeChannelAutoReplyStore) Set(channelID, botID string, mode autoreply.Mode, updatedBy string) (*autoreply.Setting, error) {
+func (f *fakeChannelAutoReplyStore) Set(setting autoreply.Setting) (*autoreply.Setting, error) {
 	if f.setErr != nil {
 		return nil, f.setErr
 	}
-	setting := autoreply.Setting{
-		ChannelID: channelID,
-		BotID:     botID,
-		Mode:      mode,
-		UpdatedBy: updatedBy,
-		UpdateAt:  time.Now().UnixMilli(),
-	}
+	setting.UpdateAt = time.Now().UnixMilli()
 	f.setCalls = append(f.setCalls, setting)
-	f.settings[channelID] = &setting
+	f.settings[setting.ChannelID] = &setting
 	return &setting, nil
 }
 
@@ -446,6 +452,7 @@ type mockConversationStore struct {
 	turns         map[string][]store.Turn // keyed by conversation ID
 	turnsByPost   map[string]*store.Turn  // keyed by post ID
 	err           error                   // if set, all methods return this error
+	renameErr     error                   // if set, RenameConversation returns this error
 }
 
 func newMockConversationStore() *mockConversationStore {
@@ -461,10 +468,25 @@ func (m *mockConversationStore) GetConversation(id string) (*store.Conversation,
 		return nil, m.err
 	}
 	conv, ok := m.conversations[id]
-	if !ok {
+	if !ok || conv.DeleteAt != 0 {
 		return nil, store.ErrConversationNotFound
 	}
 	return conv, nil
+}
+
+func (m *mockConversationStore) RenameConversation(id, title string) (bool, error) {
+	if m.err != nil {
+		return false, m.err
+	}
+	if m.renameErr != nil {
+		return false, m.renameErr
+	}
+	conv, ok := m.conversations[id]
+	if !ok || conv.DeleteAt != 0 {
+		return false, nil
+	}
+	conv.Title = title
+	return true, nil
 }
 
 func (m *mockConversationStore) GetTurnsForConversation(conversationID string) ([]store.Turn, error) {
@@ -487,6 +509,24 @@ func (m *mockConversationStore) GetTurnByPostID(postID string) (*store.Turn, err
 		return nil, nil
 	}
 	return turn, nil
+}
+
+func (m *mockConversationStore) CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error) {
+	if m.err != nil {
+		return false, m.err
+	}
+	for convID, turns := range m.turns {
+		for i, turn := range turns {
+			if turn.ID == id {
+				if !bytes.Equal(turn.Content, expected) {
+					return false, nil
+				}
+				m.turns[convID][i].Content = content
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func (m *mockConversationStore) UpdateTurnContent(id string, content json.RawMessage) error {
@@ -567,8 +607,11 @@ func (m *mockAgentStore) recordVersion(cfg, prev *llm.BotConfig, meta store.Agen
 	history := m.versions[cfg.ID]
 	if len(history) == 0 && prev != nil {
 		history = append(history, store.AgentVersionDetail{
-			AgentVersion: store.AgentVersion{Version: 1, Source: store.AgentVersionSourceInitial, CreateAt: prev.UpdateAt, ChangedFields: []string{}},
-			Config:       mockVersionSnapshot(prev),
+			Version:       1,
+			Source:        store.AgentVersionSourceInitial,
+			CreateAt:      prev.UpdateAt,
+			ChangedFields: []string{},
+			Config:        mockVersionSnapshot(prev),
 		})
 	}
 	snap := mockVersionSnapshot(cfg)
@@ -577,15 +620,13 @@ func (m *mockAgentStore) recordVersion(cfg, prev *llm.BotConfig, meta store.Agen
 		changed = audit.ChangedJSONKeys(history[len(history)-1].Config, snap)
 	}
 	history = append(history, store.AgentVersionDetail{
-		AgentVersion: store.AgentVersion{
-			Version:             mockLatestVersion(history) + 1,
-			CreatedBy:           meta.ActorID,
-			CreateAt:            cfg.UpdateAt,
-			Source:              meta.Source,
-			RestoredFromVersion: meta.RestoredFromVersion,
-			ChangedFields:       changed,
-		},
-		Config: snap,
+		Version:             mockLatestVersion(history) + 1,
+		CreatedBy:           meta.ActorID,
+		CreateAt:            cfg.UpdateAt,
+		Source:              meta.Source,
+		RestoredFromVersion: meta.RestoredFromVersion,
+		ChangedFields:       changed,
+		Config:              snap,
 	})
 	m.versions[cfg.ID] = history
 }
@@ -596,15 +637,15 @@ func (m *mockAgentStore) ListAgentVersions(agentID string, before, limit int) (s
 	}
 	history := m.versions[agentID]
 	page := store.AgentVersionPage{CurrentVersion: mockLatestVersion(history), Versions: []store.AgentVersion{}}
-	for i := len(history) - 1; i >= 0; i-- {
-		if before > 0 && history[i].Version >= before {
+	for _, h := range slices.Backward(history) {
+		if before > 0 && h.Version >= before {
 			continue
 		}
 		if len(page.Versions) == limit {
 			page.HasMore = true
 			break
 		}
-		page.Versions = append(page.Versions, history[i].AgentVersion)
+		page.Versions = append(page.Versions, h.AgentVersion)
 	}
 	return page, nil
 }
@@ -933,7 +974,6 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		nil,
 		contextBuilder,
 		testBots,
-		nil,
 		nil,
 		nil,
 		nil,
@@ -1280,6 +1320,8 @@ func TestPostRouter(t *testing.T) {
 		"stop":                    "/post/postid/stop",
 		"regenerate":              "/post/postid/regenerate",
 		"loop_in_agent":           "/post/postid/loop_in_agent",
+		"wait_check_now":          "/post/postid/wait/check_now",
+		"wait_cancel":             "/post/postid/wait/cancel",
 	} {
 		for name, test := range map[string]struct {
 			request        *http.Request
@@ -1318,7 +1360,7 @@ func TestPostRouter(t *testing.T) {
 		} {
 			// The agent-post routes check access to the post's agent in the
 			// service; TestPostResumeRoutesUseThePostsAgent covers them.
-			if name == "user not allowed" && (urlName == "stop" || urlName == "regenerate") {
+			if name == "user not allowed" && (urlName == "stop" || urlName == "regenerate" || urlName == "wait_check_now" || urlName == "wait_cancel") {
 				continue
 			}
 			t.Run(urlName+" "+name, func(t *testing.T) {
@@ -1472,6 +1514,8 @@ func TestEmptyBodyCheckerInApi(t *testing.T) {
 		"regen":                   "/post/postid/regenerate",
 		"postback summary":        "/post/postid/postback_summary",
 		"loop in agent":           "/post/postid/loop_in_agent?botUsername=thebot",
+		"wait check now":          "/post/postid/wait/check_now",
+		"wait cancel":             "/post/postid/wait/cancel",
 		"cancel":                  "/admin/reindex/cancel",
 	} {
 		t.Run(urlName, func(t *testing.T) {
@@ -1573,6 +1617,8 @@ func TestHandleGetAIBots(t *testing.T) {
 		expectedUseServiceAccountAuth bool
 		expectedSearchEnabled         bool
 		expectedAllowUnsafeLinks      bool
+		expectedLinkPolicyKind        config.LinkPolicyKind
+		expectedAllowedDomains        []config.LinkDomainRule
 		expectedHTMLArtifacts         bool
 		expectedStatus                int
 		envSetup                      func(e *TestEnvironment)
@@ -1585,6 +1631,7 @@ func TestHandleGetAIBots(t *testing.T) {
 			}(),
 			expectedSearchEnabled:    true,
 			expectedAllowUnsafeLinks: false,
+			expectedLinkPolicyKind:   config.LinkPolicyPlainText,
 			expectedStatus:           http.StatusOK,
 			envSetup: func(e *TestEnvironment) {
 				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
@@ -1595,6 +1642,7 @@ func TestHandleGetAIBots(t *testing.T) {
 			searchService:            search.New(nil, nil, nil),
 			expectedSearchEnabled:    false,
 			expectedAllowUnsafeLinks: false,
+			expectedLinkPolicyKind:   config.LinkPolicyPlainText,
 			expectedStatus:           http.StatusOK,
 			envSetup: func(e *TestEnvironment) {
 				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
@@ -1605,6 +1653,7 @@ func TestHandleGetAIBots(t *testing.T) {
 			searchService:            nil,
 			expectedSearchEnabled:    false,
 			expectedAllowUnsafeLinks: false,
+			expectedLinkPolicyKind:   config.LinkPolicyPlainText,
 			expectedStatus:           http.StatusOK,
 			envSetup: func(e *TestEnvironment) {
 				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
@@ -1618,6 +1667,7 @@ func TestHandleGetAIBots(t *testing.T) {
 			expectedUseServiceAccountAuth: true,
 			expectedSearchEnabled:         false,
 			expectedAllowUnsafeLinks:      true,
+			expectedLinkPolicyKind:        config.LinkPolicyAnyDomain,
 			expectedStatus:                http.StatusOK,
 			envSetup: func(e *TestEnvironment) {
 				e.config.allowUnsafeLinks = true
@@ -1625,9 +1675,23 @@ func TestHandleGetAIBots(t *testing.T) {
 			},
 		},
 		{
-			name:                  "html artifacts enabled via config",
-			expectedHTMLArtifacts: true,
-			expectedStatus:        http.StatusOK,
+			name:                     "link domain allowlist is returned as the link policy",
+			searchService:            nil,
+			expectedAllowUnsafeLinks: true,
+			expectedLinkPolicyKind:   config.LinkPolicyAllowlist,
+			expectedAllowedDomains:   []config.LinkDomainRule{{Host: "example.com"}, {Host: "mattermost.com", Wildcard: true}},
+			expectedStatus:           http.StatusOK,
+			envSetup: func(e *TestEnvironment) {
+				e.config.allowUnsafeLinks = true
+				e.config.allowedLinkDomains = "example.com, *.mattermost.com"
+				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
+			},
+		},
+		{
+			name:                   "html artifacts enabled via config",
+			expectedHTMLArtifacts:  true,
+			expectedLinkPolicyKind: config.LinkPolicyPlainText,
+			expectedStatus:         http.StatusOK,
 			envSetup: func(e *TestEnvironment) {
 				e.config.enableHTMLArtifacts = true
 				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
@@ -1642,6 +1706,7 @@ func TestHandleGetAIBots(t *testing.T) {
 			expectedUseServiceAccountAuth: false,
 			expectedSearchEnabled:         false,
 			expectedAllowUnsafeLinks:      false,
+			expectedLinkPolicyKind:        config.LinkPolicyPlainText,
 			expectedStatus:                http.StatusOK,
 			envSetup: func(e *TestEnvironment) {
 				e.OverrideLicense(nil)
@@ -1688,6 +1753,8 @@ func TestHandleGetAIBots(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, test.expectedSearchEnabled, response.SearchEnabled, "SearchEnabled field should match expected value")
 				require.Equal(t, test.expectedAllowUnsafeLinks, response.AllowUnsafeLinks, "AllowUnsafeLinks field should match expected value")
+				require.Equal(t, test.expectedLinkPolicyKind, response.LinkPolicy.Kind, "LinkPolicy kind should match expected value")
+				require.ElementsMatch(t, test.expectedAllowedDomains, response.LinkPolicy.AllowedDomains, "LinkPolicy allowed domains should match expected value")
 				require.Equal(t, test.expectedHTMLArtifacts, response.HTMLArtifactsEnabled, "HTMLArtifactsEnabled field should match expected value")
 				require.NotEmpty(t, response.Bots, "Should return at least one bot")
 				require.Equal(t, test.expectedUseServiceAccountAuth, response.Bots[0].UseServiceAccountAuth,

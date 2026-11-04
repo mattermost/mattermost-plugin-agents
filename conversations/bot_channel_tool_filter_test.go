@@ -77,6 +77,10 @@ func (c *channelFollowUpTestConfig) EnableChannelMentionToolCalling() bool {
 	return c.enableChannelMentionToolCalling
 }
 
+func (c *channelFollowUpTestConfig) EnableAmbientAutoReply() bool {
+	return false
+}
+
 func (c *channelFollowUpTestConfig) AllowNativeWebSearchInChannels() bool {
 	return false
 }
@@ -440,7 +444,8 @@ func TestChannelFollowUpStrictRegistry(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			llmContext := policy.buildContext(context.Background(), "Failed to load user tool preferences")
+			llmContext, err := policy.buildContext(context.Background(), "Failed to load user tool preferences")
+			require.NoError(t, err)
 
 			require.Contains(t, channelFollowUpSearchToolNames(t, llmContext.Tools, "safe"), "jira__safe_tool")
 			if tt.expectAskTool {
@@ -480,16 +485,15 @@ func TestChannelMentionSystemPromptDynamicToolWorkflow(t *testing.T) {
 			}, &channelFollowUpTestConfig{enableChannelMentionToolCalling: tt.allowToolsInChannel})
 			isDM := tt.channelType == model.ChannelTypeDirect
 			policy := &turnPolicy{
-				c: &Conversations{contextBuilder: builder, toolPolicyChecker: mapPolicyChecker{}},
-				turnRequest: turnRequest{
-					bot:     channelFollowUpTestBot(),
-					user:    &model.User{Id: testRequesterID, Username: "user", Locale: "en"},
-					channel: &model.Channel{Id: "channel-id", TeamId: "team-id", Type: tt.channelType},
-				},
+				c:            &Conversations{contextBuilder: builder, toolPolicyChecker: mapPolicyChecker{}},
+				bot:          channelFollowUpTestBot(),
+				user:         &model.User{Id: testRequesterID, Username: "user", Locale: "en"},
+				channel:      &model.Channel{Id: "channel-id", TeamId: "team-id", Type: tt.channelType},
 				isDM:         isDM,
 				toolsEnabled: isDM || tt.allowToolsInChannel,
 			}
-			llmContext := policy.buildContext(context.Background(), "")
+			llmContext, err := policy.buildContext(context.Background(), "")
+			require.NoError(t, err)
 			require.NotNil(t, llmContext.Tools.GetTool(mcp.SearchToolsName))
 
 			systemPrompt, err := promptsEngine.Format(prompts.PromptDirectMessageQuestionSystem, llmContext)

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -517,7 +518,7 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 			require.NotNil(t, pluginRow, "expected a plugin-type row in response.Servers")
 			require.Equal(t, tt.expectServerType, pluginRow.ServerType)
 			require.Equal(t, tt.expectEnabled, pluginRow.Enabled)
-			require.Equal(t, tt.expectToolCount, len(pluginRow.Tools))
+			require.Len(t, pluginRow.Tools, tt.expectToolCount)
 			if tt.expectErrorNotNil {
 				require.NotNil(t, pluginRow.Error)
 			} else {
@@ -866,9 +867,7 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			mgr.orphanPluginIDs = tt.orphanPluginIDs
 			pluginServersBefore := append([]mcp.PluginServerConfig(nil), mgr.pluginServers...)
 			orphanPluginIDsBefore := make(map[string]bool, len(mgr.orphanPluginIDs))
-			for pluginID, orphaned := range mgr.orphanPluginIDs {
-				orphanPluginIDsBefore[pluginID] = orphaned
-			}
+			maps.Copy(orphanPluginIDsBefore, mgr.orphanPluginIDs)
 
 			// Seed a baseline persisted config so the handler can clone it
 			// instead of treating the store's nil as a 500.

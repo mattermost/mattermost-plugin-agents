@@ -110,16 +110,12 @@ func TestInit_UnknownMode(t *testing.T) {
 
 func TestTracer(t *testing.T) {
 	tracer := Tracer()
-	if tracer == nil {
-		t.Fatal("Tracer() returned nil")
-	}
+	require.NotNil(t, tracer, "Tracer() returned nil")
 }
 
 func TestSpanFromContext(t *testing.T) {
 	span := SpanFromContext(context.Background())
-	if span == nil {
-		t.Fatal("SpanFromContext returned nil for background context")
-	}
+	require.NotNil(t, span, "SpanFromContext returned nil for background context")
 	if span.SpanContext().IsValid() {
 		t.Error("expected invalid span context from background context")
 	}
@@ -200,12 +196,8 @@ func TestSpanHierarchy(t *testing.T) {
 		}
 	}
 
-	if !parentSpan.SpanContext.TraceID().IsValid() {
-		t.Fatal("parent span has invalid trace ID")
-	}
-	if !childSpan.SpanContext.TraceID().IsValid() {
-		t.Fatal("child span has invalid trace ID")
-	}
+	require.True(t, parentSpan.SpanContext.TraceID().IsValid(), "parent span has invalid trace ID")
+	require.True(t, childSpan.SpanContext.TraceID().IsValid(), "child span has invalid trace ID")
 
 	if parentSpan.SpanContext.TraceID() != childSpan.SpanContext.TraceID() {
 		t.Error("parent and child spans should share the same trace ID")
@@ -314,6 +306,6 @@ func TestInitOTLPSendsHeaders(t *testing.T) {
 	case md := <-collector.got:
 		require.Equal(t, []string{"tenant-1"}, md.Get("x-scope-orgid"))
 	case <-ctx.Done():
-		t.Fatal("collector received no export")
+		require.FailNow(t, "collector received no export")
 	}
 }

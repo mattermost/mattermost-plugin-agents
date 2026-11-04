@@ -1,4 +1,5 @@
-import {test, expect, type Locator} from '@playwright/test';
+import {expect, type Locator} from '@playwright/test';
+import {containerTest} from 'helpers/container-fixture';
 
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {
@@ -73,20 +74,27 @@ async function approvalPlacement(post: Locator): Promise<ApprovalPlacement> {
     });
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigAIMockContainer({
+        toolConfigs: [
+            {name: 'read_channel', policy: 'auto_run_in_dm', enabled: true},
+            {name: 'get_channel_info', policy: 'ask', enabled: true},
+        ],
+    }));
+    const aimock = own(await RunAIMockSidecar(mattermost.network));
+    return {mattermost, aimock};
+});
+
 test.describe('Tool Activity Approval Placement (Aimock)', () => {
     test.describe.configure({mode: 'serial'});
 
     let mattermost: MattermostContainer;
     let aimock: AIMockContainer;
 
-    test.beforeAll(async () => {
-        test.setTimeout(300000);
-        mattermost = await RunToolConfigAIMockContainer({
-            toolConfigs: [
-                {name: 'read_channel', policy: 'auto_run_in_dm', enabled: true},
-                {name: 'get_channel_info', policy: 'ask', enabled: true},
-            ],
-        });
+    test.beforeAll(async ({containers}) => {
+        // setFixtures can fall back to restarting aimock, which outlasts the default hook timeout.
+        test.setTimeout(180000);
+        ({mattermost, aimock} = containers);
         await setupRegularTestUser(mattermost);
         const townSquare = await getTownSquareChannel(mattermost, username, password);
 
@@ -115,28 +123,21 @@ test.describe('Tool Activity Approval Placement (Aimock)', () => {
 
         // The title fixture matches by substring and every title request embeds
         // the original prompt, so it has to be matched first.
-        aimock = await RunAIMockSidecar(mattermost.network, {
-            fixtures: mergeFixtureFiles(
-                {fixtures: [buildTitleFixture('Tool activity approval')]},
-                preludeThenAsk({
-                    prompt: acceptPrompt,
-                    readCallId: 'call_ta_accept_read',
-                    infoCallId: 'call_ta_accept_info',
-                    finalText: acceptFinal,
-                }),
-                preludeThenAsk({
-                    prompt: rejectPrompt,
-                    readCallId: 'call_ta_reject_read',
-                    infoCallId: 'call_ta_reject_info',
-                    finalText: rejectFinal,
-                }),
-            ),
-        });
-    });
-
-    test.afterAll(async () => {
-        await aimock?.stop();
-        await mattermost?.stop();
+        await aimock.setFixtures(mergeFixtureFiles(
+            {fixtures: [buildTitleFixture('Tool activity approval')]},
+            preludeThenAsk({
+                prompt: acceptPrompt,
+                readCallId: 'call_ta_accept_read',
+                infoCallId: 'call_ta_accept_info',
+                finalText: acceptFinal,
+            }),
+            preludeThenAsk({
+                prompt: rejectPrompt,
+                readCallId: 'call_ta_reject_read',
+                infoCallId: 'call_ta_reject_info',
+                finalText: rejectFinal,
+            }),
+        ));
     });
 
     test('renders the approval card below the collapsed activity area and folds it back in on accept', async ({page}) => {

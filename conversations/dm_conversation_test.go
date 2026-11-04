@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
@@ -38,6 +40,8 @@ type fakeConvStore struct {
 	turns         map[string][]store.Turn // keyed by conversationID
 	allTurns      map[string]*store.Turn  // keyed by turn ID
 	lookupErr     error
+	// titleSet, when set, receives the result of each SetConversationTitleIfUnset.
+	titleSet chan bool
 }
 
 func newFakeConvStore() *fakeConvStore {
@@ -91,15 +95,30 @@ func (s *fakeConvStore) GetConversationByThreadBotUser(rootPostID, botID, userID
 	return nil, store.ErrConversationNotFound
 }
 
-func (s *fakeConvStore) UpdateConversationTitle(id, title string) error {
+func (s *fakeConvStore) RenameConversation(id, title string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	conv, ok := s.conversations[id]
-	if !ok {
-		return store.ErrConversationNotFound
+	if !ok || conv.DeleteAt != 0 {
+		return false, nil
 	}
 	conv.Title = title
-	return nil
+	return true, nil
+}
+
+func (s *fakeConvStore) SetConversationTitleIfUnset(id, title string) (bool, error) {
+	s.mu.Lock()
+	conv, ok := s.conversations[id]
+	updated := ok && conv.Title == "" && conv.DeleteAt == 0
+	if updated {
+		conv.Title = title
+	}
+	titleSet := s.titleSet
+	s.mu.Unlock()
+	if titleSet != nil {
+		titleSet <- updated
+	}
+	return updated, nil
 }
 
 func (s *fakeConvStore) UpdateConversationRootPostID(id string, rootPostID string) error {
@@ -140,6 +159,29 @@ func (s *fakeConvStore) GetTurnsForConversation(conversationID string) ([]store.
 func (s *fakeConvStore) UpdateTurnContent(id string, content json.RawMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.updateTurnContentLocked(id, content)
+}
+
+func (s *fakeConvStore) CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.allTurns[id]
+	if !ok || !jsonContentEqual(t.Content, expected) {
+		return false, nil
+	}
+	return true, s.updateTurnContentLocked(id, content)
+}
+
+// jsonContentEqual mirrors the store's JSONB comparison.
+func jsonContentEqual(a, b json.RawMessage) bool {
+	var av, bv any
+	if json.Unmarshal(a, &av) != nil || json.Unmarshal(b, &bv) != nil {
+		return false
+	}
+	return reflect.DeepEqual(av, bv)
+}
+
+func (s *fakeConvStore) updateTurnContentLocked(id string, content json.RawMessage) error {
 	t, ok := s.allTurns[id]
 	if !ok {
 		return fmt.Errorf("turn %s not found", id)
@@ -210,7 +252,7 @@ func (s *fakeConvStore) DeleteResponseTurns(conversationID, postID string) error
 
 	keep := turns[:0]
 	for _, t := range turns {
-		if t.Sequence > userSeq && t.Sequence < anchorSeq {
+		if t.Sequence > userSeq && t.Sequence <= anchorSeq {
 			delete(s.allTurns, t.ID)
 			continue
 		}
@@ -300,8 +342,18 @@ type dmTestLLM struct {
 	onChat    func()
 	// callTraces records the trace each call ran under, in call order.
 	callTraces []trace.TraceID
-	// titleDone, when set, is signaled after each ChatCompletionNoStream.
+	// titleDone, when set, is signaled after each title ChatCompletionNoStream.
 	titleDone chan struct{}
+	// onTitle, when set, runs during each title ChatCompletionNoStream.
+	onTitle func()
+
+	noStreamResponseByOp map[string]string
+	noStreamErrByOp      map[string]error
+	// lastNoStreamReq and lastNoStreamCfg record the latest classifier call only,
+	// so asynchronous title generation cannot overwrite them.
+	lastNoStreamReq llm.CompletionRequest
+	lastNoStreamCfg llm.LanguageModelConfig
+	classifierCalls int
 }
 
 func newDMTestLLM(responses ...*llm.TextStreamResult) *dmTestLLM {
@@ -325,10 +377,41 @@ func (f *dmTestLLM) ChatCompletion(ctx context.Context, request llm.CompletionRe
 }
 
 func (f *dmTestLLM) ChatCompletionNoStream(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	var cfg llm.LanguageModelConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	isClassifier := request.Operation == llm.OperationAmbientClassification
 	f.mu.Lock()
 	f.callTraces = append(f.callTraces, trace.SpanContextFromContext(ctx).TraceID())
+	if isClassifier {
+		f.lastNoStreamReq = request
+		f.lastNoStreamCfg = cfg
+		f.classifierCalls++
+	}
+	opErr := f.noStreamErrByOp[request.Operation]
+	resp, hasResp := f.noStreamResponseByOp[request.Operation]
 	done := f.titleDone
+	onTitle := f.onTitle
 	f.mu.Unlock()
+
+	if opErr != nil {
+		return "", opErr
+	}
+	if hasResp {
+		return resp, nil
+	}
+	if isClassifier {
+		return "", fmt.Errorf("no classifier response configured")
+	}
+	if onTitle != nil {
+		onTitle()
+	}
 	if done != nil {
 		done <- struct{}{}
 	}
@@ -480,7 +563,7 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 	contextBuilder := llmcontext.NewLLMContextBuilder(client, tp, mcpMgr, nil)
 
 	convFakeStore := newFakeConvStore()
-	convSvc := conversation.NewService(convFakeStore, promptsManager, nil, botsService)
+	convSvc := conversation.NewService(convFakeStore, promptsManager, mmClient, botsService)
 	botsService.SetBotsForTesting([]*bots.Bot{
 		bots.NewBot(
 			llm.BotConfig{
@@ -505,7 +588,6 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 		nil, // db
 		licenseChecker,
 		i18nBundle,
-		nil, // meetings
 		&testToolCallingConfig{},
 		policyChecker,
 	)
@@ -535,6 +617,33 @@ type testMCPClientManager struct {
 	tools      []llm.Tool
 	errors     *mcp.Errors
 	onGetTools func()
+	// dmOnly mirrors ServerConfig.DMOnly: these servers are left out of
+	// selections that exclude DM-only servers and described instead.
+	dmOnly []llm.DMOnlyMCPServer
+	// dmOnlyOrigins maps each dmOnly server name to its origin.
+	dmOnlyOrigins map[string]string
+}
+
+func (m *testMCPClientManager) isDMOnlyOrigin(origin string) bool {
+	for _, dmOnlyOrigin := range m.dmOnlyOrigins {
+		if dmOnlyOrigin == origin {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *testMCPClientManager) DescribeDMOnlyMCPServers(_ context.Context, _ mcp.CatalogRequest, selection mcp.ToolSelection) []llm.DMOnlyMCPServer {
+	if !selection.ExcludeDMOnlyServers {
+		return nil
+	}
+	var described []llm.DMOnlyMCPServer
+	for _, server := range m.dmOnly {
+		if selection.Allows(m.dmOnlyOrigins[server.Name]) {
+			described = append(described, server)
+		}
+	}
+	return described
 }
 
 func (m *testMCPClientManager) GetToolsWithSelection(_ context.Context, _ mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
@@ -544,9 +653,13 @@ func (m *testMCPClientManager) GetToolsWithSelection(_ context.Context, _ mcp.Ca
 
 	tools := make([]llm.Tool, 0, len(m.tools))
 	for _, tool := range m.tools {
-		if selection.Allows(tool.ServerOrigin) {
-			tools = append(tools, tool)
+		if !selection.Allows(tool.ServerOrigin) {
+			continue
 		}
+		if selection.ExcludeDMOnlyServers && m.isDMOnlyOrigin(tool.ServerOrigin) {
+			continue
+		}
+		tools = append(tools, tool)
 	}
 	return tools, m.errors
 }
@@ -873,7 +986,7 @@ func TestDMManualApprovalTools_ToolRunnerReturnsUnresolved(t *testing.T) {
 	// Consume stream and check for tool call events
 	var foundToolCalls bool
 	for event := range streamResult.Stream.Stream {
-		if event.Type == llm.EventTypeToolCalls {
+		if event.Type == llm.EventTypeToolCallBatch {
 			foundToolCalls = true
 		}
 	}
@@ -1225,4 +1338,85 @@ func TestDMCompletionRequest_BuiltFromTurns(t *testing.T) {
 	// Should contain both user messages from turns
 	assert.Contains(t, req.Posts[1].Message, "What is 2+2?")
 	assert.Contains(t, req.Posts[2].Message, "And what is 3+3?")
+}
+
+// --- Test: generated titles never replace a user's rename -------------------
+
+// The title is generated asynchronously after the first reply, so in the
+// product view the user can rename the conversation first. The generated
+// title must then be dropped, and only a saved title is announced.
+func TestDMTitleGenerationKeepsUserRename(t *testing.T) {
+	tests := []struct {
+		name         string
+		renameDuring bool
+		wantTitle    string
+		wantEvent    bool
+	}{
+		{name: "generated title is saved and sent to the owner", wantTitle: "Test Title", wantEvent: true},
+		{name: "rename during generation survives", renameDuring: true, wantTitle: "Named by me"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupDMTestEnv(t, dmMakeTextStream("Hello!"))
+			env.streamService.finished = make(chan string, 1)
+			env.convStore.titleSet = make(chan bool, 1)
+			if tt.renameDuring {
+				env.fakeLLM.onTitle = func() {
+					env.convStore.mu.Lock()
+					defer env.convStore.mu.Unlock()
+					for _, conv := range env.convStore.conversations {
+						conv.Title = "Named by me"
+					}
+				}
+			}
+
+			env.conversations.MessageHasBeenPosted(nil, &model.Post{
+				Id:        model.NewId(),
+				UserId:    env.userID,
+				ChannelId: env.channelID,
+				Message:   "Hello bot",
+			})
+
+			select {
+			case <-env.streamService.finished:
+			case <-time.After(5 * time.Second):
+				require.FailNow(t, "response never finished streaming")
+			}
+			var updated bool
+			select {
+			case updated = <-env.convStore.titleSet:
+			case <-time.After(5 * time.Second):
+				require.FailNow(t, "generated title was never written")
+			}
+			assert.Equal(t, tt.wantEvent, updated)
+
+			env.convStore.mu.Lock()
+			require.Len(t, env.convStore.conversations, 1)
+			var conv store.Conversation
+			for _, c := range env.convStore.conversations {
+				conv = *c
+			}
+			env.convStore.mu.Unlock()
+			assert.Equal(t, tt.wantTitle, conv.Title)
+
+			titleEvents := func() []fakeWebSocketEvent {
+				var out []fakeWebSocketEvent
+				for _, ev := range env.mmClient.publishedWebSocketEvents() {
+					if ev.event == conversation.WebsocketEventConversationUpdated {
+						out = append(out, ev)
+					}
+				}
+				return out
+			}
+			if !tt.wantEvent {
+				assert.Empty(t, titleEvents())
+				return
+			}
+			require.Eventually(t, func() bool { return len(titleEvents()) == 1 }, 5*time.Second, 10*time.Millisecond)
+			ev := titleEvents()[0]
+			assert.Equal(t, map[string]any{"conversation_id": conv.ID, "title": "Test Title"}, ev.payload)
+			assert.Equal(t, &model.WebsocketBroadcast{UserId: env.userID}, ev.broadcast)
+		})
+	}
 }

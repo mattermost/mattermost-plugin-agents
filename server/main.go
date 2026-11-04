@@ -35,6 +35,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
+	"github.com/mattermost/mattermost-plugin-agents/v2/skills"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
@@ -537,7 +538,6 @@ func (p *Plugin) OnActivate() error {
 		dbClient,
 		licenseChecker,
 		i18nBundle,
-		nil, // meetingsService will be set after it's created
 		&p.configuration,
 		policyChecker,
 	)
@@ -555,15 +555,29 @@ func (p *Plugin) OnActivate() error {
 		i18nBundle,
 		metricsService,
 		contextBuilder,
-		conversationsService,
+		convService,
 		licenseChecker,
 	)
-
-	// Set the meetings service on conversations to break circular dependency
-	// TODO: Refactor to avoid circular dependency
-	conversationsService.SetMeetingsService(meetingsService)
+	conversationsService.SetMeetingSummaryRegenerator(meetingsService)
 
 	streamingService.SetTurnStore(p.store)
+
+	// wait_for_async_work wakes ride on the cluster JobOnce scheduler: jobs
+	// persist in KV, survive restarts, and fire exactly once cluster-wide.
+	wakeJobs := cluster.GetJobOnceScheduler(p.API)
+	if wakeErr := wakeJobs.SetCallback(conversationsService.HandleWakeJob); wakeErr != nil {
+		pluginAPI.Log.Error("Failed to set wait_for_async_work wake callback", "error", wakeErr)
+	} else {
+		// The scheduler is a process-wide singleton: on OnActivate re-runs
+		// Start errors with "already been started" while the refreshed
+		// callback above keeps working, so a Start error must not disable
+		// scheduling. ScheduleOnce self-guards if Start genuinely failed.
+		if wakeErr := wakeJobs.Start(); wakeErr != nil {
+			pluginAPI.Log.Warn("wait_for_async_work wake scheduler did not (re)start", "error", wakeErr)
+		}
+		conversationsService.SetWakeScheduler(wakeJobs, p.API)
+		toolProvider.SetScheduleWake(conversationsService.ScheduleWake)
+	}
 
 	// Initialize embedded MCP server handlers for plugin endpoints
 	var mcpHandlers *mcpserver.PluginMCPHandlers
@@ -585,6 +599,9 @@ func (p *Plugin) OnActivate() error {
 	}
 
 	customPromptsStore := customprompts.NewStore(dbClient)
+	contextBuilder.SetSkillProvider(skills.NewProvider(customPromptsStore, prompts, func() bool {
+		return licenseChecker.Allows(enterprise.CapSharedPrompts)
+	}))
 
 	apiService := api.New(
 		bots,
@@ -778,9 +795,9 @@ func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
 	// Index the new message in the vector database
 	if p.indexerService != nil {
 		// Get channel to retrieve team ID
-		channel, err := p.API.GetChannel(post.ChannelId)
-		if err != nil {
-			p.pluginAPI.Log.Error("Failed to get channel for post indexing", "error", err)
+		channel, appErr := p.API.GetChannel(post.ChannelId)
+		if appErr != nil {
+			p.pluginAPI.Log.Error("Failed to get channel for post indexing", "error", appErr)
 		} else {
 			if err := p.indexerService.IndexPost(context.Background(), post, channel); err != nil {
 				p.pluginAPI.Log.Error("Failed to index post in vector database", "error", err)
@@ -791,9 +808,9 @@ func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
 
 func (p *Plugin) MessageHasBeenUpdated(c *plugin.Context, newPost, oldPost *model.Post) {
 	if p.indexerService != nil {
-		channel, err := p.API.GetChannel(newPost.ChannelId)
-		if err != nil {
-			p.pluginAPI.Log.Error("Failed to get channel for post indexing", "error", err)
+		channel, appErr := p.API.GetChannel(newPost.ChannelId)
+		if appErr != nil {
+			p.pluginAPI.Log.Error("Failed to get channel for post indexing", "error", appErr)
 		} else {
 			if err := p.indexerService.IndexPost(context.Background(), newPost, channel); err != nil {
 				p.pluginAPI.Log.Error("Failed to index updated post in vector database", "error", err)

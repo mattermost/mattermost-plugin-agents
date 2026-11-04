@@ -225,19 +225,25 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) er
 	// features work in tandem. When auto-reply declines for a normal reason
 	// (root_posts mode skipping a thread reply, missing license, stale bot),
 	// fall through to the reminder so the user still learns that @mentioning
-	// the agent works — it does in every one of those cases. Only a real
-	// failure returns without the reminder.
+	// the agent works — it does in every one of those cases. A real failure
+	// returns without the reminder, and when the ambient classifier
+	// deliberately stays silent there is no reminder about the configured
+	// agent.
 	if setting := c.autoReplySettingForChannel(channel); setting != nil {
 		autoReplyErr := c.handleAutoReply(ctx, setting, post, postingUser, channel)
 		if errors.Is(autoReplyErr, ErrNoResponse) {
-			c.maybeNotifyAgentMentionNeeded(ctx, post, channel)
+			skipBotID := ""
+			if errors.Is(autoReplyErr, errAmbientDeclined) {
+				skipBotID = setting.BotID
+			}
+			c.maybeNotifyAgentMentionNeeded(ctx, post, channel, skipBotID)
 		}
 		return autoReplyErr
 	}
 
 	// Reply in a thread that did not @mention an agent: when the previous post
 	// was authored by an agent, nudge the user with an ephemeral reminder.
-	c.maybeNotifyAgentMentionNeeded(ctx, post, channel)
+	c.maybeNotifyAgentMentionNeeded(ctx, post, channel, "")
 
 	return nil
 }
@@ -261,7 +267,7 @@ func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post 
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
-	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); placeholderErr != nil {
+	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, responsePost, post.Id); placeholderErr != nil {
 		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
 	}
 	progress := newResponseProgressReporter(ctx, c.mmClient, responsePost)
@@ -289,7 +295,10 @@ func (c *Conversations) handleMentionViaConversation(
 	bot, postingUser, channel := policy.bot, policy.user, policy.channel
 	// Build the context once WITH tools so the system prompt can reference
 	// .Tools and .DisabledTools.
-	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences")
+	llmContext, err := policy.buildContext(ctx, "Failed to load user tool preferences")
+	if err != nil {
+		return err
+	}
 	progress.Advance(responseProgressLoadingConversation)
 
 	systemPrompt, fmtErr := c.prompts.Format(prompts.PromptDirectMessageQuestionSystem, llmContext)
@@ -298,7 +307,7 @@ func (c *Conversations) handleMentionViaConversation(
 	}
 
 	userPostID := post.Id
-	convResult, convErr := c.convService.GetOrCreateConversation(conversation.GetOrCreateParams{
+	convResult, convErr := c.getOrCreateConversation(conversation.GetOrCreateParams{
 		UserID:       postingUser.Id,
 		SessionID:    auth.SessionIDFromContext(ctx),
 		BotID:        bot.GetMMBot().UserId,
@@ -317,6 +326,7 @@ func (c *Conversations) handleMentionViaConversation(
 	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
 		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
 	}
+	llmContext.ResponsePostID = responsePost.Id
 
 	ctx, runSpan := c.startAgentRunSpan(ctx, agentRunInfo{
 		convID:     convResult.Conversation.ID,
@@ -402,7 +412,7 @@ func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *m
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
-	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); placeholderErr != nil {
+	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, responsePost, post.Id); placeholderErr != nil {
 		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
 	}
 	progress := newResponseProgressReporter(ctx, c.mmClient, responsePost)
@@ -432,7 +442,10 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, policy *tur
 		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 	}
 	// Build the context once WITH tools so the system prompt can reference them.
-	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences", extraOpts...)
+	llmContext, err := policy.buildContext(ctx, "Failed to load user tool preferences", extraOpts...)
+	if err != nil {
+		return err
+	}
 	progress.Advance(responseProgressLoadingConversation)
 
 	convResult, err := c.createOrGetDMConversation(auth.SessionIDFromContext(ctx), policy.bot.GetMMBot().UserId, policy.user, policy.channel, post, llmContext)
@@ -459,6 +472,7 @@ func (c *Conversations) streamDMConversation(
 	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
 		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
 	}
+	llmContext.ResponsePostID = responsePost.Id
 
 	ctx, runSpan := c.startAgentRunSpan(ctx, agentRunInfo{
 		convID:     convResult.ConversationID,
@@ -603,8 +617,8 @@ func cloneWithAgentMention(post *model.Post, botUsername string) *model.Post {
 	return mentionPost
 }
 
-func (c *Conversations) createResponsePlaceholder(botID, requesterUserID string, post *model.Post, respondingToPostID string) error {
-	streaming.ModifyPostForBot(botID, requesterUserID, post, respondingToPostID)
+func (c *Conversations) createResponsePlaceholder(botID string, post *model.Post, respondingToPostID string) error {
+	streaming.ModifyPostForBot(botID, post, respondingToPostID)
 	return c.mmClient.CreatePost(post)
 }
 

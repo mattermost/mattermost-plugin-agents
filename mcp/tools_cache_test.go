@@ -133,7 +133,7 @@ func TestGetTools_CacheHit(t *testing.T) {
 
 	retrievedTools := cache.GetTools(serverID)
 	require.NotNil(t, retrievedTools)
-	require.Equal(t, len(tools), len(retrievedTools))
+	require.Len(t, retrievedTools, len(tools))
 	require.Equal(t, tools["test_tool_1"].Name, retrievedTools["test_tool_1"].Name)
 	require.Equal(t, tools["test_tool_2"].Name, retrievedTools["test_tool_2"].Name)
 }
@@ -166,7 +166,7 @@ func TestSetTools(t *testing.T) {
 	key := cache.buildCacheKey(serverID)
 	err = kvAPI.Get(key, &storedCache)
 	require.NoError(t, err)
-	require.Equal(t, len(tools), len(storedCache.Tools))
+	require.Len(t, storedCache.Tools, len(tools))
 	require.Equal(t, serverName, storedCache.ServerName)
 	require.Equal(t, serverURL, storedCache.ServerURL)
 	require.Equal(t, timestamp.Unix(), storedCache.Timestamp.Unix())
@@ -292,7 +292,7 @@ func TestClearAll(t *testing.T) {
 	for _, serverID := range servers {
 		cachedTools := cache.GetTools(serverID)
 		require.NotNil(t, cachedTools)
-		require.Equal(t, len(tools), len(cachedTools))
+		require.Len(t, cachedTools, len(tools))
 	}
 
 	// Clear all cache

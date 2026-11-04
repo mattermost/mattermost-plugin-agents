@@ -126,9 +126,9 @@ func TestGetToolsStoreOffersMCPConnections(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := &describingMCPToolProvider{
-				staticMCPToolProvider: staticMCPToolProvider{errors: &mcp.Errors{ToolAuthErrors: tt.authErrors}},
-				described:             []llm.UnconnectedMCPServer{jira},
-				origins:               origins,
+				errors:    &mcp.Errors{ToolAuthErrors: tt.authErrors},
+				described: []llm.UnconnectedMCPServer{jira},
+				origins:   origins,
 			}
 			builder := newTestBuilder(t, &emptyToolProvider{}, provider)
 			bot := newTestBotWithConfig(tt.botConfig)
@@ -171,9 +171,9 @@ func TestGetToolsStoreOffersMCPConnections(t *testing.T) {
 func TestGetToolsStoreServiceAccountNeverOffersMCPConnections(t *testing.T) {
 	const jiraOrigin = "https://jira.example.com/mcp"
 	provider := &describingMCPToolProvider{
-		staticMCPToolProvider: staticMCPToolProvider{errors: &mcp.Errors{ToolAuthErrors: []llm.ToolAuthError{
+		errors: &mcp.Errors{ToolAuthErrors: []llm.ToolAuthError{
 			{ServerName: "Jira", ServerOrigin: jiraOrigin},
-		}}},
+		}},
 		described: []llm.UnconnectedMCPServer{{Name: "Jira", ServerOrigin: jiraOrigin}},
 		origins:   map[string]string{"Jira": jiraOrigin},
 	}
