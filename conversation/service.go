@@ -276,26 +276,37 @@ func (s *Service) ActivateConversation(conv *store.Conversation) (*store.Convers
 	}
 }
 
+// maxActivateAttempts bounds how often a reply re-reads a thread whose
+// conversation keeps being restored and archived underneath it.
+const maxActivateAttempts = 3
+
 // findThreadConversation returns the active conversation for the thread, bot,
 // and user. A user-archived conversation is restored rather than replaced, so
 // a reply in an archived thread continues it with its history instead of
 // silently starting a new conversation. Returns store.ErrConversationNotFound
 // when the thread has no conversation at all.
 func (s *Service) findThreadConversation(rootPostID, botID, userID string) (active *store.Conversation, archivedAt int64, err error) {
-	conv, err := s.store.GetLatestConversationByThreadBotUser(rootPostID, botID, userID)
-	if err != nil {
-		return nil, 0, err
+	for range maxActivateAttempts {
+		conv, err := s.store.GetLatestConversationByThreadBotUser(rootPostID, botID, userID)
+		if err != nil {
+			return nil, 0, err
+		}
+		active, err := s.ActivateConversation(conv)
+		if errors.Is(err, ErrConversationArchived) {
+			// Another conversation became active first, or this one was
+			// restored and archived again since it was read: re-read.
+			active, err = s.store.GetConversationByThreadBotUser(rootPostID, botID, userID)
+			if errors.Is(err, store.ErrConversationNotFound) {
+				continue
+			}
+			return active, 0, err
+		}
+		if err != nil {
+			return nil, 0, err
+		}
+		return active, conv.DeleteAt, nil
 	}
-	active, err = s.ActivateConversation(conv)
-	if errors.Is(err, ErrConversationArchived) {
-		// A concurrent create made another conversation active first.
-		active, err = s.store.GetConversationByThreadBotUser(rootPostID, botID, userID)
-		return active, 0, err
-	}
-	if err != nil {
-		return nil, 0, err
-	}
-	return active, conv.DeleteAt, nil
+	return nil, 0, ErrConversationArchived
 }
 
 // GetTurns returns all turns for a conversation, ordered by sequence.
