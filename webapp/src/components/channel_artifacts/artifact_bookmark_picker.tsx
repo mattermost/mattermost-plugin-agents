@@ -234,7 +234,7 @@ const ArtifactBookmarkPicker = () => {
 export default ArtifactBookmarkPicker;
 
 const Copy = styled.p`
-    margin: 0 0 16px;
+    margin: 0 0 var(--spacing-md, 16px);
     color: rgba(var(--center-channel-color-rgb), 0.72);
     font-size: 14px;
     line-height: 20px;
@@ -243,18 +243,18 @@ const Copy = styled.p`
 const List = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--spacing-xxs, 4px);
     overflow: auto;
-    margin: 0 -8px;
-    padding: 0 8px;
+    margin: 0 calc(var(--spacing-xs, 8px) * -1);
+    padding: 0 var(--spacing-xs, 8px);
 `;
 
 const Row = styled.button`
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: var(--spacing-xs, 8px);
     width: 100%;
-    padding: 10px 12px;
+    padding: var(--spacing-xs, 8px) var(--spacing-sm, 12px);
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
     border-radius: 8px;
     background: var(--center-channel-bg);
@@ -299,7 +299,7 @@ const RowStatus = styled.div`
 `;
 
 const Empty = styled.div`
-    padding: 16px 8px;
+    padding: var(--spacing-md, 16px) var(--spacing-xs, 8px);
     color: rgba(var(--center-channel-color-rgb), 0.72);
     font-size: 14px;
     line-height: 20px;
@@ -307,7 +307,7 @@ const Empty = styled.div`
 `;
 
 const ErrorText = styled.div`
-    margin-bottom: 8px;
+    margin-bottom: var(--spacing-xs, 8px);
     color: var(--error-text);
     font-size: 13px;
     line-height: 18px;
@@ -316,5 +316,5 @@ const ErrorText = styled.div`
 const Actions = styled.div`
     display: flex;
     justify-content: flex-end;
-    margin-top: 16px;
+    margin-top: var(--spacing-md, 16px);
 `;
