@@ -132,23 +132,6 @@ func TestPluginLifecycleReconcileKnownOnActivation(t *testing.T) {
 	require.Equal(t, int32(1), rebuilder.calls.Load())
 }
 
-// A known plugin that was still starting at activation comes back on a later
-// tick once it is running.
-func TestPluginLifecycleWatchBringsKnownPluginBackWhenRunning(t *testing.T) {
-	p, manager, rebuilder, source := newLifecycleTestPlugin(t)
-	manager.RegisterPluginServer(lifecycleSourceServer)
-	manager.UnregisterPluginServer(lifecycleSourceServer.PluginID)
-	source.state.Store(int32(model.PluginStateStarting))
-
-	p.mcpLifecycle.watchStoppedPlugins(time.Millisecond)
-	time.Sleep(50 * time.Millisecond)
-	require.False(t, manager.IsPluginRegistered(lifecycleSourcePluginID))
-
-	source.state.Store(int32(model.PluginStateRunning))
-	require.Eventually(t, func() bool { return manager.IsPluginRegistered(lifecycleSourcePluginID) }, 5*time.Second, 5*time.Millisecond)
-	require.Eventually(t, func() bool { return rebuilder.calls.Load() > 0 }, 5*time.Second, 5*time.Millisecond)
-}
-
 func knownPluginIDs(m *mcp.ClientManager) []string {
 	var ids []string
 	for _, known := range m.KnownPluginServers() {

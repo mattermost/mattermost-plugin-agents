@@ -66,8 +66,7 @@ func (l *pluginMCPLifecycle) reconcileKnown() {
 }
 
 // watchStoppedPlugins periodically takes plugin servers out of service when
-// their source plugin stopped without unregistering, for example after a crash,
-// and brings known servers back once their source plugin is running.
+// their source plugin stopped without unregistering, for example after a crash.
 func (l *pluginMCPLifecycle) watchStoppedPlugins(interval time.Duration) {
 	l.wg.Go(func() {
 		ticker := time.NewTicker(interval)
@@ -82,7 +81,6 @@ func (l *pluginMCPLifecycle) watchStoppedPlugins(interval time.Duration) {
 				l.log.Info("Took plugin MCP servers of stopped plugins out of service", "plugin_ids", dropped)
 				l.requestRebuild()
 			}
-			l.reconcileKnown()
 		}
 	})
 }
