@@ -61,7 +61,7 @@ In **System Console > Plugins > Agents > Debug**, set **Trace Output**:
 | Value | Config value | Behavior |
 |---|---|---|
 | **Off** | `off` | No tracing and no overhead. Default. |
-| **Server Logs** | `logs` | Finished spans are written to the Mattermost Server log as `agents trace span` entries. No collector needed. Span events are a JSON array under `events` and span links under `links`, so Loki's `| json` can parse both. Spans log at ERROR level only when they record a failure. |
+| **Server Logs** | `logs` | Finished spans are written to the Mattermost Server log as `agents trace span` entries. No collector needed. Span events are a JSON array under `events` and span links under `links`, so Loki's `\| json` can parse both. Spans log at ERROR level only when they record a failure. |
 | **OTLP Endpoint** | `otlp` | Spans are exported over OTLP gRPC to **OpenTelemetry Endpoint**, for example `localhost:4317`. Use it with Grafana Tempo, Jaeger, or another collector. |
 
 For OTLP, the exporter connects over plaintext gRPC by default. That suits a collector on the same host or a private network. For one that needs TLS or credentials, such as hosted Grafana Tempo:

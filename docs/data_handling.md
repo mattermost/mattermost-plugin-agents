@@ -2,7 +2,7 @@
 
 What Mattermost Agents sends to the LLM and other services for each feature, and what it stores, for admins and security reviewers. With a self-hosted model, content stays in your environment. With a cloud provider, the provider receives it and its own terms apply. End users read a shorter version in [What agents can see and keep](what_agents_see.md).
 
-For strict privacy requirements, run the LLM yourself so PII and message content never reach an outside vendor. See [Sovereign AI deployments](sovereign_ai.md).
+For strict privacy requirements, run the LLM yourself, and self-host or turn off every other service that receives content: the embedding provider, web search, and remote MCP servers. Otherwise PII and message content can still reach an outside vendor. See [Sovereign AI deployments](sovereign_ai.md).
 
 ## What every request includes
 

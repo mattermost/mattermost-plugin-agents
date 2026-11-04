@@ -8,7 +8,7 @@ Approve or reject an agent's tool calls, share or hide results in channels, and 
 - **Channels:** tools are off unless your admin turned on **Enable Channel Mention Tool Calling**. When it's off and you ask for something that needs a tool, the agent tells you to use a direct message or the Agents pane.
 - **Which tools:** Mattermost tools, tools from remote MCP servers your admin connected, and tools from Mattermost plugins that register with Agents. Availability also depends on your permissions and on whether your account is connected to each provider.
 
-Tools run as you, so an agent reaches only what you can reach.
+Mattermost tools run as you. External MCP tools use your credentials unless the agent uses a shared service account.
 
 ## Approve or reject a tool call
 

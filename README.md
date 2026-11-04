@@ -78,7 +78,7 @@ Documentation is in the [`docs`](docs/) directory. The same pages are published 
 
 After installation, complete these steps to get started:
 
-1. Go to **System Console > Plugins > Agents** and select **Add a Service**. Choose your LLM provider and enter its credentials and a default model.
+1. Go to **System Console > Plugins > Agents** and select **Add an AI Service**. Choose your LLM provider and enter its credentials and a default model.
 2. Open the **Agents** page from the product switcher (grid icon) and select **Create agent**. Choose a username and the service.
 3. Optionally set who can use the agent on its **Access** tab.
 4. Send the agent a direct message, or open the Agents pane from the apps bar.

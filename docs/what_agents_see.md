@@ -24,7 +24,7 @@ Anything a tool returns goes to the AI model so it can continue. In a channel, y
 
 ## What is stored and who can see it
 
-- **Conversations** are stored in Mattermost's database with their tool calls and results. A conversation is deleted when its root post is deleted.
+- **Conversations** are stored in Mattermost's database with their tool calls and results. A conversation is hidden when its root post is deleted, but it stays in the database.
 - **Channel replies** are ordinary posts, so everyone in the channel can read them.
 - **Direct messages and the Agents pane** are private to you.
 - **Admins** can see audit records of who did what and, if enabled, token usage counts. Neither holds message content.

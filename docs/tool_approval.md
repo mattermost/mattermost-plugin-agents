@@ -58,7 +58,7 @@ Setting a policy that runs tools automatically needs an Enterprise license. Belo
 
 - Only the initiator can accept or reject a pending call. The server checks that the clicking user is the conversation's recorded initiator and rejects any other request before a tool runs. An admin can't approve someone else's call. Admins control approval only by setting the tool's policy.
 - A pending call that nobody answers stays pending. It never approves itself or moves to someone else, and nothing runs. Starting a new conversation creates a new initiator.
-- A reply can mix automatic and pending tools. Automatic ones show an **Auto-approved** badge. Pending ones keep **Accept** and **Reject**. When several wait, **Accept all** and **Reject all** follow the same initiator-only rule.
+- A reply can mix automatic and pending tools. Automatic ones show an **Auto-approved** badge. Pending ones keep **Accept** and **Reject**. When several calls are pending, **Accept all** and **Reject all** follow the same initiator-only rule.
 - No other channel member, channel admin, or System Admin can approve. If the user's token is missing or rejected, the call fails. It never falls back to the bot or a shared credential.
 
 ## Share or keep private

@@ -1,6 +1,6 @@
 # Use Mattermost Agents
 
-A Mattermost agent searches, reads, and posts in Mattermost, and works in systems like Jira and GitHub through MCP servers. It acts as you, with your permissions, and asks before it changes anything it isn't set to do automatically.
+A Mattermost agent searches, reads, and posts in Mattermost, and works in systems like Jira and GitHub through MCP servers. It acts as you, with your permissions, and asks before it changes anything it isn't set to do automatically. Tools use your own account unless an agent is set up with a shared service account. See [Use tools and approve actions](using_tools.md).
 
 An agent is a bot backed by a large language model (LLM) that your System Admin chose, which can be a self-hosted model. Mattermost Agents was formerly called Mattermost Copilot. This page is for people who work with agents. To set up Agents, see the [Admin guide](admin_guide.md).
 

@@ -59,7 +59,7 @@ aws iam create-policy \
   }'
 ```
 
-Replace `<YOUR_ACCOUNT_ID>` with your 12-digit account ID. Bedrock's Converse API uses these two actions. `bedrock:Converse` isn't a valid IAM action. The `inference-profile/*` resource is required for Claude models. To limit access to specific models, replace the wildcards with model ARNs. For Claude you need both a `foundation-model` ARN and an `inference-profile` ARN, for example `arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-6` and `arn:aws:bedrock:us-east-1:<YOUR_ACCOUNT_ID>:inference-profile/us.anthropic.claude-sonnet-4-6`.
+Replace `<YOUR_ACCOUNT_ID>` with your 12-digit account ID. Bedrock's Converse API uses these two actions. The `inference-profile/*` resource is required for Claude models. To limit access to specific models, replace the wildcards with model ARNs. For Claude you need both a `foundation-model` ARN and an `inference-profile` ARN, for example `arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-6` and `arn:aws:bedrock:us-east-1:<YOUR_ACCOUNT_ID>:inference-profile/us.anthropic.claude-sonnet-4-6`.
 
 Create a role EC2 can assume, attach the policy, and create an instance profile:
 

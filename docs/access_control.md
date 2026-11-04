@@ -39,7 +39,7 @@ Requirements:
 | Resource | Where you author it | Behavior |
 |---|---|---|
 | Agent | Agent editor, **Access** tab. Set **User access** to **Attribute-based (access policy)**, save, then define the policy. | The policy is the only user gate. The agent's allow and block lists are ignored. |
-| LLM service | **System Console > Plugins > Agents**, on the service panel | Restricts every agent that uses the service, on top of each agent's own rules. Also affects who sees the service and its agents. |
+| LLM service | **System Console > Plugins > Agents**, on the service panel | Restricts every agent that uses the service, on top of each agent's own rules. The policy also affects who can see the service and its agents. |
 | MCP server | **System Console > Plugins > Agents > Model Context Protocol (MCP)**, **Configuration** tab. Built-in and plugin servers are under **Built-in & plugin servers**. | Applies to remote servers, the built-in Mattermost MCP server, and plugin-registered servers. Users who are denied lose that server's tools without notice. |
 
 Denying the built-in Mattermost MCP server removes nearly all Mattermost tools for the users it matches.

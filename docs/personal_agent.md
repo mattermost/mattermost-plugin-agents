@@ -5,7 +5,7 @@ See LICENSE.txt for license information.
 
 # Use Mattermost Agents as your personal AI assistant
 
-Ask an agent to search and post across Mattermost, act in Jira or GitHub through MCP servers, schedule posts, and hand off long-running work. It acts as you and asks before it changes anything.
+Ask an agent to search and post across Mattermost, act in Jira or GitHub through MCP servers, schedule posts, and hand off long-running work. It acts as you and asks before it changes anything, unless your admin set a tool to run automatically.
 
 ## How an agent works
 
@@ -16,7 +16,7 @@ You message an agent in a direct message or the **Agents** pane. The agent is a 
 - **Plugin tools** from Mattermost plugins that register with Agents.
 - **Built-in tools** to search the web (if your admin set it up), create files, ask you a multiple-choice question, and wait for long-running work.
 
-Every Mattermost and MCP tool call runs as you, so the agent reaches only what you can reach, and external systems see your identity. Calls that need your approval wait for you to accept them. See [Use tools and approve actions](using_tools.md), which also covers agents that use a shared service account.
+Mattermost and plugin tool calls run as you, so the agent reaches only what you can reach. MCP tool calls use your own account on each system unless the agent uses a shared service account. Calls that need your approval wait for you to accept them. See [Use tools and approve actions](using_tools.md), which also covers agents that use a shared service account.
 
 ## Work across Mattermost
 
@@ -29,7 +29,7 @@ The built-in Mattermost tools cover most day-to-day actions:
 - Check unread counts, mentions, and followed threads.
 - Create channels and add people to channels and teams.
 
-If the agent says it can't post or change things, your workspace's plan doesn't include tools that change something. Ask your admin.
+If the agent says it can't post or change things, ask your admin. Possible causes are your workspace plan, the tools granted to the agent, your permissions, or an access policy.
 
 Example prompts:
 
@@ -39,7 +39,7 @@ Example prompts:
 
 ## Reach other systems with MCP
 
-Admins can connect remote MCP servers such as Jira, GitHub, or an internal service. You sign in to each system with your own account, so the agent has your access there and nothing more. If the agent can't reach a system you expect, ask your admin whether it's connected. To connect your account, see [Use tools and approve actions](using_tools.md#connect-your-account-to-a-tool-provider).
+Admins can connect remote MCP servers such as Jira, GitHub, or an internal service. You sign in to each system with your own account, so the agent has your access there and nothing more. An agent set up with a shared service account uses that account's access instead. If the agent can't reach a system you expect, ask your admin whether it's connected. To connect your account, see [Use tools and approve actions](using_tools.md#connect-your-account-to-a-tool-provider).
 
 Example prompts:
 

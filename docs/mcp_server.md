@@ -16,7 +16,7 @@ It runs inside Mattermost and is installed and upgraded with the Agents plugin, 
 ## Requirements
 
 - Mattermost Server v12.0 or later, with the Agents plugin enabled and **Site URL** set. The OAuth discovery response that clients use to sign in is built from the Site URL.
-- An admin has enabled the endpoint, which needs an Enterprise license. See [External client endpoint](mcp_integrations.md#external-client-endpoint).
+- An admin has enabled the endpoint, which needs an Enterprise license to turn on. See [External client endpoint](mcp_integrations.md#external-client-endpoint).
 - Mattermost reachable from the MCP client. Clients that run in a vendor's cloud, such as the Claude web app, connect from the vendor's network, so a Mattermost Server on a private network must be reachable from it.
 
 ## Authentication
@@ -160,7 +160,7 @@ Any client that supports remote MCP servers over streamable HTTP can connect. Gi
 3. Then try tasks that use several tools:
    - "Read this thread (paste a post permalink) and list the open questions."
    - "Find posts from this week about the login bug and summarize them."
-   - "Post a short release note for this branch in ~dev-releases." The client asks you to confirm because this changes something.
+   - "Post a short release note for this branch in ~dev-releases." The client asks you to confirm if its confirmation setting is on, because this changes something.
 
 ## Tools
 
