@@ -300,11 +300,12 @@ func runSpanEnd(later []turnSpanRow, postID *string) int {
 	return end
 }
 
-// DeleteResponseTurns removes the post's anchor turn and the turns its run
-// wrote (RunPostID), between it and the originating user turn. Turns of other
-// runs in that span are kept. Turns written before runs were recorded have no
-// RunPostID and are treated as this response's. Callers must build any completion request
-// before calling this.
+// DeleteResponseTurns removes the post's anchor turn and every turn its run
+// wrote (RunPostID), including rounds written after a later user turn arrived
+// while the run was still executing tools. Turns of other runs are kept. Turns
+// written before runs were recorded have no RunPostID and are treated as this
+// response's when they sit between its anchor and the originating user turn.
+// Callers must build any completion request before calling this.
 func (s *Store) DeleteResponseTurns(conversationID, postID string) (err error) {
 	tx, err := s.db.Beginx()
 	if err != nil {
@@ -357,6 +358,9 @@ ORDER BY Sequence ASC`, conversationID, postID); err != nil {
 		if _, err = tx.Exec(`DELETE FROM LLM_Turns WHERE ConversationID = $1 AND ID = ANY($2)`, conversationID, pq.Array(ids)); err != nil {
 			return fmt.Errorf("failed to delete response turns: %w", err)
 		}
+	}
+	if _, err = tx.Exec(`DELETE FROM LLM_Turns WHERE ConversationID = $1 AND RunPostID = $2`, conversationID, postID); err != nil {
+		return fmt.Errorf("failed to delete run turns: %w", err)
 	}
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit delete response turns: %w", err)
