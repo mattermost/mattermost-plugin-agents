@@ -151,6 +151,7 @@ func TestBridgeScopedAgentCompletion(t *testing.T) {
 			e.mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: publicChannel.TeamId}, nil).Maybe()
 			e.mockAPI.On("HasPermissionToChannel", testUserID, mock.Anything, mock.Anything).Return(true).Maybe()
 			e.mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
+			e.mockAPI.On("RolesGrantPermission", mock.Anything, model.PermissionJoinPublicTeams.Id).Return(true).Maybe()
 			e.mockAPI.On("HasPermissionToTeam", testUserID, mock.Anything, model.PermissionReadPublicChannel).Return(true).Maybe()
 
 			minter := &scopedBridgeMinter{}
@@ -236,6 +237,7 @@ func TestBridgeScopedRunStopsAutoRunningWhenRevoked(t *testing.T) {
 			e.mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: channel.TeamId}, nil).Maybe()
 			e.mockAPI.On("HasPermissionToChannel", testUserID, mock.Anything, mock.Anything).Return(true).Maybe()
 			e.mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
+			e.mockAPI.On("RolesGrantPermission", mock.Anything, model.PermissionJoinPublicTeams.Id).Return(true).Maybe()
 			e.mockAPI.On("HasPermissionToTeam", testUserID, mock.Anything, model.PermissionReadPublicChannel).Return(true).Maybe()
 
 			manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, e.client.Log, e.client, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
@@ -351,6 +353,7 @@ func TestBridgeGetAgentToolsForScopedAgentMatchesScopedCatalog(t *testing.T) {
 			e := SetupTestEnvironment(t)
 			defer e.Cleanup(t)
 			e.mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
+			e.mockAPI.On("RolesGrantPermission", mock.Anything, model.PermissionJoinPublicTeams.Id).Return(true).Maybe()
 
 			manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, e.client.Log, e.client, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
 			t.Cleanup(manager.Close)
@@ -398,6 +401,7 @@ func TestBridgeScopedAgentRefusesRequesterWithoutTeamRead(t *testing.T) {
 			e.mockAPI.On("GetChannel", channel.Id).Return(channel, nil).Maybe()
 			e.mockAPI.On("HasPermissionToTeam", testUserID, channel.TeamId, model.PermissionReadPublicChannel).Return(false).Maybe()
 			e.mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
+			e.mockAPI.On("RolesGrantPermission", mock.Anything, model.PermissionJoinPublicTeams.Id).Return(true).Maybe()
 
 			minter := &scopedBridgeMinter{}
 			manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, e.client.Log, e.client, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
@@ -455,6 +459,7 @@ func TestBridgeScopedAgentInactiveModeIgnoresRequesterRestriction(t *testing.T) 
 			e.mockAPI.On("HasPermissionToTeam", testUserID, channel.TeamId, model.PermissionReadPublicChannel).Return(false).Maybe()
 			e.mockAPI.On("HasPermissionToChannel", testUserID, channel.Id, model.PermissionReadChannel).Return(true).Maybe()
 			e.mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
+			e.mockAPI.On("RolesGrantPermission", mock.Anything, model.PermissionJoinPublicTeams.Id).Return(true).Maybe()
 
 			manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, e.client.Log, e.client, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
 			t.Cleanup(manager.Close)

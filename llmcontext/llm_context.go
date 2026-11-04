@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -496,8 +497,9 @@ func (b *Builder) mintScopedRun(ctx stdcontext.Context, c *llm.Context, bot *bot
 	audit.AddParam(rec, audit.KeyPostID, c.ToolCatalog.ScopedTurn.TriggerPostID)
 	audit.AddParam(rec, audit.KeyThreadRootPostID, c.ToolCatalog.ScopedTurn.ThreadRootID)
 	audit.AddParam(rec, audit.KeyConversationID, c.ToolCatalog.ScopedTurn.ConversationID)
-	audit.AddParam(rec, audit.KeyScopeOpenTeamPublicChannels, true)
-	audit.AddParam(rec, audit.KeyScopeTriggeringTeamPublicChannels, true)
+	grantsOff := scopedsession.PublicGrantsOffReason(pluginServerSettings{b.pluginAPI})
+	audit.AddParam(rec, audit.KeyScopeOpenTeamPublicChannels, grantsOff == scopedsession.PublicGrantsOn)
+	audit.AddParam(rec, audit.KeyScopeTriggeringTeamPublicChannels, !scopedsession.TeamGrantOff(grantsOff))
 	grantDeferred := false
 	defer func() {
 		if !grantDeferred {

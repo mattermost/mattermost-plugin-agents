@@ -204,6 +204,7 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	mockAPI.On("GetBotUsers").Return(nil, nil).Maybe()
 	mockAPI.On("HasPermissionToChannel", mock.Anything, mock.Anything, model.PermissionReadChannel).Return(true).Maybe()
 	mockAPI.On("HasPermissionToTeam", mock.Anything, mock.Anything, model.PermissionReadPublicChannel).Return(!opts.noTeamRead && !opts.guestRequester).Maybe()
+	mockAPI.On("RolesGrantPermission", mock.Anything, model.PermissionJoinPublicTeams.Id).Return(true).Maybe()
 	mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
 	mockAPI.On("LogAuditRec", mock.Anything).Run(func(args mock.Arguments) {
 		env.auditMu.Lock()

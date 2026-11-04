@@ -925,6 +925,7 @@ func (env *policyEnv) enableScopedSessions(t *testing.T) *scopedPolicyRecorder {
 	env.mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
 	env.mockAPI.On("HasPermissionToChannel", mock.Anything, mock.Anything, model.PermissionReadChannel).Return(true).Maybe()
 	env.mockAPI.On("HasPermissionToTeam", mock.Anything, mock.Anything, model.PermissionReadPublicChannel).Return(true).Maybe()
+	env.mockAPI.On("RolesGrantPermission", mock.Anything, model.PermissionJoinPublicTeams.Id).Return(true).Maybe()
 	env.mockAPI.On("LogAuditRec", mock.Anything).Run(func(args mock.Arguments) {
 		rec.mu.Lock()
 		defer rec.mu.Unlock()

@@ -97,6 +97,8 @@ type scopedTestEnv struct {
 	noScopedSessions    bool
 	channelToolCalling  bool
 	requesterCannotRead bool
+	compliance          bool
+	usersCannotJoin     bool
 }
 
 func defaultScopedTestEnv() scopedTestEnv {
@@ -107,7 +109,12 @@ func newScopedTestBuilder(t *testing.T, env scopedTestEnv, toolProvider ToolProv
 	t.Helper()
 
 	mockAPI := &plugintest.API{}
-	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+	cfg := &model.Config{}
+	if env.compliance {
+		cfg.ComplianceSettings.Enable = model.NewPointer(true)
+	}
+	mockAPI.On("GetConfig").Return(cfg).Maybe()
+	mockAPI.On("RolesGrantPermission", mock.Anything, model.PermissionJoinPublicTeams.Id).Return(!env.usersCannotJoin).Maybe()
 	mockAPI.On("GetLicense").Return(enterprisetest.LicenseFor(env.level)).Maybe()
 	mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: scopedTestTeamID, Name: "acme", DisplayName: "Acme"}, nil).Maybe()
 	mockAPI.On("HasPermissionToChannel", mock.Anything, mock.Anything, model.PermissionReadChannel).Return(!env.requesterCannotRead).Maybe()
@@ -789,6 +796,45 @@ func TestScopedChannelTurnPromptNamesTheScope(t *testing.T) {
 			for _, unwanted := range tt.excludes {
 				assert.NotContains(t, prompt, unwanted)
 			}
+		})
+	}
+}
+
+// The grant record states the public-channel grants the server really applies:
+// compliance mode turns both off, and users who cannot join teams turn off the
+// open-team grant only.
+func TestScopedSessionGrantAuditMatchesTheEffectiveGrant(t *testing.T) {
+	tests := []struct {
+		name         string
+		env          func(*scopedTestEnv)
+		wantOpenTeam bool
+		wantTrigger  bool
+	}{
+		{name: "defaults", env: func(*scopedTestEnv) {}, wantOpenTeam: true, wantTrigger: true},
+		{name: "compliance mode", env: func(e *scopedTestEnv) { e.compliance = true }},
+		{name: "users cannot join teams", env: func(e *scopedTestEnv) { e.usersCannotJoin = true }, wantTrigger: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := defaultScopedTestEnv()
+			tt.env(&env)
+			requester := &model.User{Id: model.NewId(), Username: "alice"}
+			channel := &model.Channel{Id: model.NewId(), TeamId: scopedTestTeamID, Type: model.ChannelTypePrivate}
+			provider := newScopedCatalogProvider(t, &recordingScopedMinter{}, scopedTestMCPCatalog())
+			builder, auditRecords := newScopedTestBuilder(t, env, &staticToolProvider{}, provider)
+			bot := newScopedTestBot(scopedTestBotConfig())
+
+			llmContext := builder.BuildLLMContextUserRequest(bot, requester, channel,
+				builder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{TriggerPostID: model.NewId(), ConversationID: model.NewId()}),
+				builder.WithLLMContextTools(stdcontext.Background(), bot),
+			)
+			require.True(t, llmContext.ToolsScoped)
+
+			records := auditRecords()
+			require.Len(t, records, 1)
+			params := records[0].EventData.Parameters
+			assert.Equal(t, tt.wantOpenTeam, params[audit.KeyScopeOpenTeamPublicChannels])
+			assert.Equal(t, tt.wantTrigger, params[audit.KeyScopeTriggeringTeamPublicChannels])
 		})
 	}
 }
