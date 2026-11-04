@@ -1,4 +1,3 @@
-import { expect } from '@playwright/test';
 import { containerTest } from 'helpers/container-fixture';
 
 import RunContainer from 'helpers/plugincontainer';
@@ -129,7 +128,6 @@ test.describe('Edge Cases and Boundary Conditions', () => {
         await aiPlugin.expectRHSOpenWithPost();
 
         // Expected Results: AI responds with message indicating no action items
-        const rhsContainer = page.getByTestId('mattermost-ai-rhs');
-        await expect(rhsContainer.getByText(/no action items/i)).toBeVisible();
+        await aiPlugin.expectBotPostText(/no action items/i);
     });
 });

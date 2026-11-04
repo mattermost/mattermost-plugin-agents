@@ -10,6 +10,8 @@ import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {TextInput} from '@mattermost/compass-ui/components/text-input';
 
+import {copyToClipboard} from '@/utils/clipboard';
+
 import {FormRow, HelpText, ItemLabel, TextFieldContainer} from './item';
 
 export type CopyableTextItemProps = {
@@ -32,21 +34,14 @@ export const CopyableTextItem = (props: CopyableTextItemProps) => {
     }, []);
 
     const handleCopy = async () => {
-        try {
-            if (!navigator.clipboard?.writeText) {
-                return;
-            }
-
-            await navigator.clipboard.writeText(props.value);
-            setCopied(true);
-            if (copyResetTimer.current) {
-                clearTimeout(copyResetTimer.current);
-            }
-            copyResetTimer.current = setTimeout(() => setCopied(false), 2000);
-        } catch (e) {
-            // eslint-disable-next-line no-console
-            console.error('Failed to copy to clipboard:', e);
+        if (!await copyToClipboard(props.value)) {
+            return;
         }
+        setCopied(true);
+        if (copyResetTimer.current) {
+            clearTimeout(copyResetTimer.current);
+        }
+        copyResetTimer.current = setTimeout(() => setCopied(false), 2000);
     };
 
     const copyLabel = copied ?

@@ -9,52 +9,46 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
-	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCheckRegenerateLicense(t *testing.T) {
-	threadPost := &model.Post{}
-	threadPost.AddProp(ThreadIDProp, "thread-root")
-	threadPost.AddProp(AnalysisTypeProp, "summarize_thread")
-
-	recordingPost := &model.Post{}
-	recordingPost.AddProp(ReferencedRecordingFileID, "fileid")
-
-	transcriptPost := &model.Post{}
-	transcriptPost.AddProp(ReferencedTranscriptPostID, "transcript-post")
-
-	plainPost := &model.Post{}
-
 	tests := []struct {
-		name     string
-		post     *model.Post
-		cap      enterprise.Capability
-		minLevel enterprise.Level
-		ungated  bool
+		name      string
+		operation string
+		cap       enterprise.Capability
+		minLevel  enterprise.Level
+		ungated   bool
 	}{
 		{
-			name:     "thread summary",
-			post:     threadPost,
-			cap:      enterprise.CapThreadSummarization,
-			minLevel: enterprise.LevelProfessional,
+			name:      "thread summary",
+			operation: llm.OperationThreadAnalysis,
+			cap:       enterprise.CapThreadSummarization,
+			minLevel:  enterprise.LevelProfessional,
 		},
 		{
-			name:     "recording transcription summary",
-			post:     recordingPost,
-			cap:      enterprise.CapMeetings,
-			minLevel: enterprise.LevelEnterprise,
+			name:      "channel summary",
+			operation: llm.OperationChannelSummary,
+			cap:       enterprise.CapChannelSummarization,
+			minLevel:  enterprise.LevelProfessional,
 		},
 		{
-			name:     "transcription summary",
-			post:     transcriptPost,
-			cap:      enterprise.CapMeetings,
-			minLevel: enterprise.LevelEnterprise,
+			name:      "channel interval summary",
+			operation: llm.OperationChannelInterval,
+			cap:       enterprise.CapChannelSummarization,
+			minLevel:  enterprise.LevelProfessional,
 		},
 		{
-			name:    "plain conversation post is not gated",
-			post:    plainPost,
-			ungated: true,
+			name:      "meeting summary",
+			operation: llm.OperationMeetingSummary,
+			cap:       enterprise.CapMeetings,
+			minLevel:  enterprise.LevelEnterprise,
+		},
+		{
+			name:      "plain conversation post is not gated",
+			operation: llm.OperationConversation,
+			ungated:   true,
 		},
 	}
 
@@ -63,7 +57,7 @@ func TestCheckRegenerateLicense(t *testing.T) {
 			for _, level := range enterprisetest.AllLevels {
 				t.Run(level.String(), func(t *testing.T) {
 					c := &Conversations{licenseChecker: enterprisetest.CheckerAt(level)}
-					err := c.checkRegenerateLicense(tc.post)
+					err := c.checkRegenerateLicense(tc.operation)
 					if tc.ungated || level >= tc.minLevel {
 						require.NoError(t, err)
 						return
@@ -78,7 +72,7 @@ func TestCheckRegenerateLicense(t *testing.T) {
 
 			t.Run("nil checker fails closed", func(t *testing.T) {
 				c := &Conversations{}
-				err := c.checkRegenerateLicense(tc.post)
+				err := c.checkRegenerateLicense(tc.operation)
 				if tc.ungated {
 					require.NoError(t, err)
 					return

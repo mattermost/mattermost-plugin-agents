@@ -78,20 +78,26 @@ func (s *Service) GetContent(ctx context.Context, userID, fileID string, offset,
 		return Content{}, err
 	}
 
-	mm := mmapi.WithFilePolicy(s.mm, auth.SessionIDFromContext(ctx))
-	fileInfo, err := mm.GetFileInfo(fileID)
+	sessionID := auth.SessionIDFromContext(ctx)
+	mm := mmapi.WithFilePolicy(s.mm, sessionID)
+	var fileInfo *model.FileInfo
+	if scope != nil {
+		fileInfo, err = mm.GetFileInfo(fileID)
+	} else {
+		fileInfo, err = mmapi.GetReadableFileInfo(s.mm, sessionID, userID, fileID)
+	}
 	if err != nil {
-		if errors.Is(err, mmapi.ErrFileActionForbidden) {
+		if errors.Is(err, mmapi.ErrFileActionForbidden) || errors.Is(err, mmapi.ErrFileChannelForbidden) {
 			return Content{}, ErrForbidden
 		}
 		return Content{}, fmt.Errorf("failed to get file info: %w", err)
 	}
 
-	// The plugin API is admin-level, so permission must be checked explicitly.
-	if fileInfo.ChannelId == "" {
-		return Content{}, ErrForbidden
-	}
 	if scope != nil {
+		// The plugin API is admin-level, so the scope is checked explicitly.
+		if fileInfo.ChannelId == "" {
+			return Content{}, ErrForbidden
+		}
 		allowed, scopeErr := s.scopeAllowsChannel(scope, fileInfo.ChannelId)
 		if scopeErr != nil {
 			return Content{}, scopeErr
@@ -99,8 +105,6 @@ func (s *Service) GetContent(ctx context.Context, userID, fileID string, offset,
 		if !allowed {
 			return Content{}, ErrForbidden
 		}
-	} else if !s.mm.HasPermissionToChannel(userID, fileInfo.ChannelId, model.PermissionReadChannel) {
-		return Content{}, ErrForbidden
 	}
 
 	text, err := s.extractText(mm, fileInfo)

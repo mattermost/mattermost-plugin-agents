@@ -33,6 +33,13 @@ type UnconnectedMCPServer struct {
 	Tools        []ToolInfo
 }
 
+// DMOnlyMCPServer is an MCP server the requester can use only in a direct
+// message with the agent, named so the model can point them there.
+type DMOnlyMCPServer struct {
+	Name        string
+	Description string
+}
+
 // Context represents the per-turn data necessary to build the context of the LLM.
 // For consumers none of the fields can be assumed to be present.
 type Context struct {
@@ -75,7 +82,12 @@ type Context struct {
 	// UnconnectedMCPServers lists servers the requester can connect from the
 	// conversation; set only when the connection request tool is cataloged.
 	UnconnectedMCPServers []UnconnectedMCPServer
-	Parameters            map[string]any
+	// Skills is the catalog load_skill can load; set only when it is cataloged.
+	Skills []SkillInfo
+	// DMOnlyMCPServers lists servers left out of this context because they
+	// are limited to direct messages; set only for an interactive requester.
+	DMOnlyMCPServers []DMOnlyMCPServer
+	Parameters       map[string]any
 
 	// ResponsePostID is the bot's streamed response post for this run. Set by
 	// conversation entry points after the placeholder post exists; not
@@ -115,6 +127,11 @@ type ToolCatalogContext struct {
 	// Tool.UserInteraction) are only cataloged when this is set.
 	InteractiveUserPresent bool
 
+	// DirectMessage marks the request as the requester's direct message with
+	// the agent, the only place DM-only MCP servers are cataloged. It counts
+	// only when Channel is exactly the requester's DM with the agent.
+	DirectMessage bool
+
 	// MCPServerOrigins maps configured remote MCP server names to their
 	// origins so an answered connection request can find the server's tools.
 	// It is nil where connection requests cannot be offered.
@@ -135,6 +152,10 @@ type ToolCatalogContext struct {
 	// session for the agent's bot. It only takes effect when the agent's
 	// scoped channel mode is active in the Context's channel.
 	ScopedTurn *ScopedTurn
+
+	// SkillsEnabled catalogs the skill tools. Only conversation turns set
+	// it; analysis, search, and bridge flows run without skills.
+	SkillsEnabled bool
 }
 
 // ScopedTurn identifies the channel-triggered run a scoped session is minted
