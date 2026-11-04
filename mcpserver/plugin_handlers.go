@@ -468,7 +468,7 @@ func (h *PluginMCPHandlers) discoverProxyTools(ps mcppkg.PluginServerConfig) pro
 		return proxyDiscovery{err: errSourcePluginNotRunning}
 	}
 
-	discoveryCtx, cancel := context.WithTimeout(context.Background(), h.proxyDiscoveryTimeout)
+	discoveryCtx, cancel := context.WithTimeout(h.rebuildCtx, h.proxyDiscoveryTimeout)
 	defer cancel()
 
 	proxyTools, proxyHandlers, err := BuildProxyTools(discoveryCtx, ps, h.sourcePluginAPI)
@@ -515,11 +515,8 @@ func (h *PluginMCPHandlers) RequestRebuild() {
 // Close stops the background rebuild loop and waits for it to exit.
 func (h *PluginMCPHandlers) Close() {
 	h.rebuildCancel()
-	started := true
-	h.rebuildLoopOnce.Do(func() { started = false })
-	if started {
-		<-h.rebuildDone
-	}
+	h.rebuildLoopOnce.Do(func() { close(h.rebuildDone) })
+	<-h.rebuildDone
 }
 
 func (h *PluginMCPHandlers) rebuild() bool {

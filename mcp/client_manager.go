@@ -1020,8 +1020,8 @@ func (m *ClientManager) KnownPluginServers() []PluginServerConfig {
 			out = append(out, cfg)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].PluginID < out[j].PluginID
+	slices.SortFunc(out, func(a, b PluginServerConfig) int {
+		return cmp.Compare(a.PluginID, b.PluginID)
 	})
 	return out
 }

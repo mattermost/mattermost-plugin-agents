@@ -104,7 +104,7 @@ func TestRequestRebuildDoesNotWaitForDiscovery(t *testing.T) {
 	select {
 	case <-returned:
 	case <-time.After(time.Second):
-		t.Fatal("RequestRebuild blocked on discovery")
+		require.Fail(t, "RequestRebuild blocked on discovery")
 	}
 
 	close(release)

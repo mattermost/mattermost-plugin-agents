@@ -466,6 +466,71 @@ func TestRebuildExternalServer_DoesNotBlockExternalRequestsWhileDiscovering(t *t
 	}
 }
 
+func TestPluginMCPHandlers_CloseCancelsInFlightDiscovery(t *testing.T) {
+	startedHungRequest := make(chan struct{})
+	reg := &stubRegistry{servers: nil}
+	var hangOnce sync.Once
+	mockAPI := &stubPluginAPI{pluginHTTP: func(req *http.Request) *http.Response {
+		hang := false
+		hangOnce.Do(func() {
+			hang = true
+			close(startedHungRequest)
+		})
+		if hang {
+			<-req.Context().Done()
+		}
+		rec := httptest.NewRecorder()
+		rec.WriteHeader(http.StatusGatewayTimeout)
+		return rec.Result()
+	}}
+	logger, err := loggerlib.CreateDefaultLogger()
+	require.NoError(t, err)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, allowAllStateChangingTools, nil, nil)
+	require.NoError(t, err)
+	h.proxyDiscoveryTimeout = time.Minute
+
+	reg.set([]mcppkg.PluginServerConfig{
+		{PluginID: "com.example.hung", Name: "Hung", Path: "/mcp", Enabled: true, ExposeExternal: true},
+	})
+	h.RequestRebuild()
+
+	select {
+	case <-startedHungRequest:
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "timed out waiting for discovery to start")
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		h.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "Close should cancel in-flight discovery instead of waiting for its timeout")
+	}
+}
+
+func TestPluginMCPHandlers_CloseIsIdempotent(t *testing.T) {
+	logger, err := loggerlib.CreateDefaultLogger()
+	require.NoError(t, err)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, nil, nil, nil, nil, allowAllStateChangingTools, nil, nil)
+	require.NoError(t, err)
+
+	closed := make(chan struct{})
+	go func() {
+		h.Close()
+		h.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "second Close should not block")
+	}
+}
+
 // A nil registry disables aggregation but keeps native tools available.
 func TestNewPluginMCPHandlers_NilRegistryIsNoOp(t *testing.T) {
 	logger, err := loggerlib.CreateDefaultLogger()
