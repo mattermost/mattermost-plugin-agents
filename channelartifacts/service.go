@@ -270,25 +270,40 @@ func (s *Service) ReplaceContent(
 }
 
 func (s *Service) Patch(userID, id string, req PatchRequest) (*Entry, error) {
-	entry, err := s.store.Get(id)
-	if err != nil {
-		return nil, err
+	for range 8 {
+		entry, raw, err := s.store.loadMetaRaw(id)
+		if err != nil {
+			return nil, err
+		}
+		if !s.CanManage(userID, entry.ChannelID) {
+			return nil, ErrNotFound
+		}
+		if entry.Purging {
+			return nil, ErrConflict
+		}
+		if req.Title != nil {
+			entry.Title = strings.TrimSpace(*req.Title)
+		}
+		if req.Description != nil {
+			entry.Description = strings.TrimSpace(*req.Description)
+		}
+		if err := validateTitle(entry.Title); err != nil {
+			return nil, err
+		}
+		if err := validateDescription(entry.Description); err != nil {
+			return nil, err
+		}
+		entry.UpdateAt = model.GetMillis()
+		entry.UpdatedBy = userID
+		if err := s.store.saveMetaCAS(id, raw, entry); err != nil {
+			if errors.Is(err, ErrConflict) {
+				continue
+			}
+			return nil, err
+		}
+		return entry, nil
 	}
-	if !s.CanManage(userID, entry.ChannelID) {
-		return nil, ErrNotFound
-	}
-	if req.Title != nil {
-		entry.Title = strings.TrimSpace(*req.Title)
-	}
-	if req.Description != nil {
-		entry.Description = strings.TrimSpace(*req.Description)
-	}
-	entry.UpdateAt = model.GetMillis()
-	entry.UpdatedBy = userID
-	if err := s.store.UpdateMeta(entry); err != nil {
-		return nil, err
-	}
-	return entry, nil
+	return nil, ErrConflict
 }
 
 func (s *Service) Rollback(userID, id string, toVersion int) (*Entry, error) {
@@ -350,25 +365,15 @@ func (s *Service) ListByTeam(userID, teamID string) (*TeamListResponse, error) {
 		if !seeAll && !s.CanRead(userID, channelID) {
 			return nil
 		}
+		channel, err := s.mm.GetChannel(channelID)
+		if err != nil || channel == nil || channel.TeamId != teamID {
+			return nil
+		}
 		entries, err := s.store.List(channelID)
 		if err != nil {
 			return err
 		}
-		for _, entry := range entries {
-			if entry.TeamID == teamID {
-				out = append(out, entry)
-				continue
-			}
-			if entry.TeamID == "" {
-				channel, err := s.mm.GetChannel(channelID)
-				if err != nil || channel == nil {
-					continue
-				}
-				if channel.TeamId == teamID {
-					out = append(out, entry)
-				}
-			}
-		}
+		out = append(out, entries...)
 		return nil
 	})
 	if err != nil {
@@ -391,6 +396,9 @@ func (s *Service) PurgeChannel(channelID string) error {
 	for _, id := range idx.IDs {
 		entry, getErr := s.store.Get(id)
 		if errors.Is(getErr, ErrNotFound) {
+			if err := s.store.forgetIndexID(channelID, id); err != nil {
+				return err
+			}
 			continue
 		}
 		if getErr != nil {
@@ -399,6 +407,13 @@ func (s *Service) PurgeChannel(channelID string) error {
 		if err := s.store.Purge(entry); err != nil {
 			return err
 		}
+	}
+	remaining, raw, err := s.store.getIndex(channelID)
+	if err != nil {
+		return err
+	}
+	if len(remaining.IDs) == 0 && raw != nil {
+		return s.store.forgetIndexID(channelID, "")
 	}
 	return nil
 }

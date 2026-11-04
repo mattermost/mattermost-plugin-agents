@@ -4,6 +4,7 @@
 package channelartifacts
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -76,8 +77,8 @@ func TestReplaceContentReturnsTheCommittedHeadWhenPruneFails(t *testing.T) {
 	_, err = svc.ReplaceContent(userID, entry.ID, ReplaceRequest{PostID: model.NewId(), FileID: model.NewId()}, []byte("<html>2</html>"), "2.html", userID, "Author", "", ContentLimits{MaxSize: 1024, VersionsToKeep: 2})
 	require.NoError(t, err)
 
-	kv.histSetCount = 0
-	kv.failHistSet = 1
+	kv.histCASCount = 0
+	kv.failHistCASErrorAt = 2
 	updated, err := svc.ReplaceContent(userID, entry.ID, ReplaceRequest{PostID: model.NewId(), FileID: model.NewId()}, []byte("<html>3</html>"), "3.html", userID, "Author", "", ContentLimits{MaxSize: 1024, VersionsToKeep: 2})
 	require.ErrorIs(t, err, ErrCleanupDeferred)
 	require.Equal(t, 3, updated.Version)
@@ -325,6 +326,106 @@ func TestPurgeChannelFinishesAPurgingArtifact(t *testing.T) {
 	idx, _, err := store.getIndex(channelID)
 	require.NoError(t, err)
 	require.NotContains(t, idx.IDs, entry.ID)
+}
+
+func TestListByTeamFollowsTheChannelCurrentTeam(t *testing.T) {
+	kv := newMemoryKV()
+	kv.permissionAll = true
+	store := NewStore(kv)
+	svc := NewService(store, kv, allowAllMembers{})
+	oldTeam := model.NewId()
+	newTeam := model.NewId()
+	channelID := model.NewId()
+	userID := model.NewId()
+	kv.channels[channelID] = &model.Channel{Id: channelID, TeamId: oldTeam, Type: model.ChannelTypeOpen}
+
+	_, err := svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID,
+		PostID:    model.NewId(),
+		FileID:    model.NewId(),
+		Title:     "Moved",
+	}, []byte("<html>a</html>"), "a.html", userID, "Author", oldTeam, model.NewId(), ContentLimits{MaxSize: 1024})
+	require.NoError(t, err)
+
+	kv.channels[channelID].TeamId = newTeam
+	moved, err := svc.ListByTeam(userID, newTeam)
+	require.NoError(t, err)
+	require.Len(t, moved.Entries, 1)
+	require.Equal(t, "Moved", moved.Entries[0].Title)
+	left, err := svc.ListByTeam(userID, oldTeam)
+	require.NoError(t, err)
+	require.Empty(t, left.Entries)
+}
+
+func TestPatchReappliesTheTitleAfterAConflict(t *testing.T) {
+	kv := newMemoryKV()
+	kv.permissionAll = true
+	store := NewStore(kv)
+	svc := NewService(store, kv, allowAllMembers{})
+	userID := model.NewId()
+	channelID := model.NewId()
+	kv.channels[channelID] = &model.Channel{Id: channelID, Type: model.ChannelTypeOpen}
+	entry, err := svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), Title: "Notes",
+	}, []byte("<html>a</html>"), "a.html", userID, "Author", "", model.NewId(), ContentLimits{MaxSize: 1024})
+	require.NoError(t, err)
+
+	kv.conflictNextMeta = true
+	kv.onFailNextMeta = func(data map[string][]byte) {
+		var stored Entry
+		if err := json.Unmarshal(data[metaKey(entry.ID)], &stored); err != nil {
+			return
+		}
+		stored.Description = "from the other write"
+		raw, err := json.Marshal(stored)
+		if err != nil {
+			return
+		}
+		data[metaKey(entry.ID)] = raw
+	}
+	title := "Renamed"
+	updated, err := svc.Patch(userID, entry.ID, PatchRequest{Title: &title})
+	require.NoError(t, err)
+	require.Equal(t, "Renamed", updated.Title)
+	require.Equal(t, "from the other write", updated.Description)
+}
+
+func TestPurgeChannelDropsAnIndexIDWhoseMetaIsGone(t *testing.T) {
+	kv := newMemoryKV()
+	kv.permissionAll = true
+	store := NewStore(kv)
+	svc := NewService(store, kv, allowAllMembers{})
+	channelID := model.NewId()
+	userID := model.NewId()
+	kv.channels[channelID] = &model.Channel{Id: channelID, Type: model.ChannelTypeOpen}
+	limits := ContentLimits{MaxSize: 1024, MaxSitewide: 2}
+	kept, err := svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), Title: "Kept",
+	}, []byte("<html>kept</html>"), "kept.html", userID, "Author", "", model.NewId(), limits)
+	require.NoError(t, err)
+	gone, err := svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), Title: "Gone",
+	}, []byte("<html>gone</html>"), "gone.html", userID, "Author", "", model.NewId(), limits)
+	require.NoError(t, err)
+	require.NoError(t, kv.KVDelete(metaKey(gone.ID)))
+
+	require.NoError(t, svc.PurgeChannel(channelID))
+	_, raw, err := store.getIndex(channelID)
+	require.NoError(t, err)
+	require.Nil(t, raw)
+	_, err = store.Get(gone.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = store.Get(kept.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+
+	_, err = svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), Title: "Again",
+	}, []byte("<html>again</html>"), "again.html", userID, "Author", "", model.NewId(), limits)
+	require.NoError(t, err)
+	_, err = svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), Title: "Twice",
+	}, []byte("<html>twice</html>"), "twice.html", userID, "Author", "", model.NewId(), limits)
+	require.NoError(t, err)
 }
 
 func TestPurgeChannelRejectsInvalidID(t *testing.T) {

@@ -607,29 +607,70 @@ func (s *Store) deleteAllVersionBlobKeys(hist *VersionHistory, id string) error 
 	return first
 }
 
-func (s *Store) pruneOldestVersions(entry *Entry, hist *VersionHistory, maxKeep int) error {
-	if maxKeep <= 0 || len(hist.Versions) <= maxKeep {
-		return nil
-	}
-	slices.SortFunc(hist.Versions, func(a, b VersionRecord) int {
+// versionsAfterPrune drops the oldest versions until maxKeep remain, and never
+// drops headVersion. The head stays even when a rollback made it the oldest.
+func versionsAfterPrune(versions []VersionRecord, headVersion, maxKeep int) (pruned, kept []VersionRecord) {
+	sorted := append([]VersionRecord(nil), versions...)
+	slices.SortFunc(sorted, func(a, b VersionRecord) int {
 		return cmp.Compare(a.Version, b.Version)
 	})
-	var pruned []VersionRecord
-	for len(hist.Versions) > maxKeep {
-		oldest := hist.Versions[0]
-		if oldest.Version == entry.Version {
-			break
+	if maxKeep <= 0 || len(sorted) <= maxKeep {
+		return nil, sorted
+	}
+	excess := len(sorted) - maxKeep
+	kept = make([]VersionRecord, 0, len(sorted))
+	for _, rec := range sorted {
+		if excess > 0 && rec.Version != headVersion {
+			pruned = append(pruned, rec)
+			excess--
+			continue
 		}
-		pruned = append(pruned, oldest)
-		hist.Versions = hist.Versions[1:]
+		kept = append(kept, rec)
 	}
-	if err := s.saveHistory(entry.ID, hist); err != nil {
-		return err
+	return pruned, kept
+}
+
+// pruneOldestVersions reloads history and compare-and-sets the shortened
+// document, so a version committed after this call started is not overwritten.
+// The stored head is kept. Blobs are removed only after that write lands.
+func (s *Store) pruneOldestVersions(entry *Entry, maxKeep int) error {
+	if entry == nil || maxKeep <= 0 {
+		return nil
 	}
-	for _, rec := range pruned {
-		s.deleteVersionBlobs(rec, entry.ID)
+	for range 8 {
+		stored, _, err := s.loadMetaRaw(entry.ID)
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		hist, raw, err := s.loadHistoryRaw(entry.ID)
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		pruned, kept := versionsAfterPrune(hist.Versions, stored.Version, maxKeep)
+		if len(pruned) == 0 {
+			return nil
+		}
+		if err := s.claimHistory(entry.ID, raw, &VersionHistory{Versions: kept}); err != nil {
+			if errors.Is(err, ErrConflict) {
+				continue
+			}
+			return err
+		}
+		var first error
+		for _, rec := range pruned {
+			if err := s.deleteVersionBlobKeys(rec, entry.ID); err != nil && first == nil {
+				first = err
+			}
+		}
+		return first
 	}
-	return nil
+	return ErrConflict
 }
 
 // Save writes a new artifact: blobs, meta, history, sha index, and channel index.
@@ -808,7 +849,7 @@ func (s *Store) casHead(expectedVersion int, expectedSHA string, entry *Entry) e
 		if err != nil {
 			return err
 		}
-		if stored.Version != expectedVersion || stored.SHA256 != expectedSHA {
+		if stored.Purging || stored.Version != expectedVersion || stored.SHA256 != expectedSHA {
 			return ErrConflict
 		}
 		if err := s.saveMetaCAS(entry.ID, raw, entry); err != nil {
@@ -841,6 +882,12 @@ func (s *Store) ReplaceContent(entry *Entry, content []byte, maxSize int64, maxK
 	if entry == nil || !model.IsValidId(entry.ID) {
 		return ErrInvalidInput
 	}
+	if err := validateTitle(entry.Title); err != nil {
+		return err
+	}
+	if err := validateDescription(entry.Description); err != nil {
+		return err
+	}
 	if int64(len(content)) == 0 {
 		return ErrInvalidInput
 	}
@@ -857,11 +904,10 @@ func (s *Store) ReplaceContent(entry *Entry, content []byte, maxSize int64, maxK
 		if err := s.ensureOwnSHA(entry.ChannelID, sha, entry.ID); err != nil {
 			return err
 		}
-		hist, histErr := s.ensureHistory(entry)
-		if histErr != nil {
+		if _, histErr := s.ensureHistory(entry); histErr != nil {
 			return histErr
 		}
-		if pruneErr := s.pruneOldestVersions(entry, hist, maxKeep); pruneErr != nil {
+		if pruneErr := s.pruneOldestVersions(entry, maxKeep); pruneErr != nil {
 			return fmt.Errorf("%w: %w", ErrCleanupDeferred, pruneErr)
 		}
 		return nil
@@ -935,7 +981,7 @@ func (s *Store) ReplaceContent(entry *Entry, content []byte, maxSize int64, maxK
 		if ownErr := s.ensureOwnSHA(entry.ChannelID, sha, entry.ID); ownErr != nil {
 			return ownErr
 		}
-		if pruneErr := s.pruneOldestVersions(entry, hist, maxKeep); pruneErr != nil {
+		if pruneErr := s.pruneOldestVersions(entry, maxKeep); pruneErr != nil {
 			return fmt.Errorf("%w: %w", ErrCleanupDeferred, pruneErr)
 		}
 		return nil
@@ -1203,7 +1249,18 @@ func (s *Store) DeleteHead(entry *Entry) error {
 		previous = remaining[len(remaining)-1]
 	}
 	previousHistory := append([]VersionRecord(nil), hist.Versions...)
+	var reserved bool
+	if previous.SHA256 != "" && previous.SHA256 != entry.SHA256 {
+		var reserveErr error
+		reserved, reserveErr = s.reserveSHA(entry.ChannelID, previous.SHA256, entry.ID)
+		if reserveErr != nil {
+			return reserveErr
+		}
+	}
 	if err := s.claimHistory(entry.ID, raw, &VersionHistory{Versions: remaining}); err != nil {
+		if relErr := s.releaseReservedSHA(entry.ChannelID, previous.SHA256, entry.ID, reserved); relErr != nil {
+			return errors.Join(err, relErr)
+		}
 		return err
 	}
 	oldSHA := entry.SHA256
@@ -1211,8 +1268,12 @@ func (s *Store) DeleteHead(entry *Entry) error {
 	applyVersionToEntry(entry, previous)
 	if err := s.casHead(oldVersion, oldSHA, entry); err != nil {
 		applyVersionToEntry(entry, head)
+		relErr := s.releaseReservedSHA(entry.ChannelID, previous.SHA256, entry.ID, reserved)
 		if _, restoreErr := s.restoreHistoryIfUnchanged(entry.ID, remaining, previousHistory); restoreErr != nil {
-			return errors.Join(err, restoreErr)
+			return errors.Join(err, relErr, restoreErr)
+		}
+		if relErr != nil {
+			return errors.Join(err, relErr)
 		}
 		return err
 	}
@@ -1285,11 +1346,31 @@ func (s *Store) markPurging(entry *Entry) error {
 	return ErrConflict
 }
 
+func (s *Store) deleteIndexCAS(channelID string, oldRaw []byte) error {
+	if oldRaw == nil {
+		return nil
+	}
+	ok, err := s.kv.KVCompareAndSet(indexKey(channelID), oldRaw, nil)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrConflict
+	}
+	return nil
+}
+
+// finishPurgeIndex drops id from the channel index and decrements the site
+// counter. An empty index key is deleted. A failed decrement puts the id back
+// so a retry can count it down.
 func (s *Store) finishPurgeIndex(entry *Entry) error {
 	for range 8 {
 		idx, oldRaw, err := s.getIndex(entry.ChannelID)
 		if err != nil {
 			return err
+		}
+		if oldRaw == nil {
+			return nil
 		}
 		next := make([]string, 0, len(idx.IDs))
 		removed := false
@@ -1300,19 +1381,64 @@ func (s *Store) finishPurgeIndex(entry *Entry) error {
 			}
 			next = append(next, id)
 		}
-		idx.IDs = next
-		if err := s.setIndexCAS(entry.ChannelID, oldRaw, idx); err != nil {
+		if len(next) == 0 {
+			if err := s.deleteIndexCAS(entry.ChannelID, oldRaw); err != nil {
+				if errors.Is(err, ErrConflict) {
+					continue
+				}
+				return err
+			}
+		} else {
+			idx.IDs = next
+			if err := s.setIndexCAS(entry.ChannelID, oldRaw, idx); err != nil {
+				if errors.Is(err, ErrConflict) {
+					continue
+				}
+				return err
+			}
+		}
+		if !removed {
+			return nil
+		}
+		if err := s.adjustSiteCount(-1); err != nil {
+			if putErr := s.restorePurgedIndexID(entry.ChannelID, entry.ID); putErr != nil {
+				return errors.Join(err, putErr)
+			}
+			return err
+		}
+		return nil
+	}
+	return ErrConflict
+}
+
+func (s *Store) restorePurgedIndexID(channelID, id string) error {
+	if id == "" {
+		return nil
+	}
+	for range 8 {
+		idx, oldRaw, err := s.getIndex(channelID)
+		if err != nil {
+			return err
+		}
+		if slices.Contains(idx.IDs, id) {
+			return nil
+		}
+		idx.IDs = append(idx.IDs, id)
+		if err := s.setIndexCAS(channelID, oldRaw, idx); err != nil {
 			if errors.Is(err, ErrConflict) {
 				continue
 			}
 			return err
 		}
-		if removed {
-			_ = s.adjustSiteCount(-1)
-		}
 		return nil
 	}
 	return ErrConflict
+}
+
+// forgetIndexID removes an index id whose metadata is already gone, and deletes
+// the index key once nothing remains.
+func (s *Store) forgetIndexID(channelID, id string) error {
+	return s.finishPurgeIndex(&Entry{ID: id, ChannelID: channelID})
 }
 
 // Delete removes all versions of the artifact (alias for Purge).

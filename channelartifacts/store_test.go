@@ -23,24 +23,26 @@ import (
 )
 
 type memoryKV struct {
-	mu              sync.Mutex
-	data            map[string][]byte
-	permissionAll   bool
-	readAll         bool
-	channels        map[string]*model.Channel
-	histSetCount    int
-	failHistSet     int
-	failNextMeta    bool
-	onFailNextMeta  func(data map[string][]byte)
-	beforeHistCAS   func(data map[string][]byte)
-	unreadable      map[string]bool
-	beforeSHAClaim  func(data map[string][]byte, key string)
-	rejectHistCAS   bool
-	histCASCount    int
-	failHistCASAt   int
-	failSHADeletes  int
-	failMetaDelete  bool
-	failBlobDeletes int
+	mu                 sync.Mutex
+	data               map[string][]byte
+	permissionAll      bool
+	readAll            bool
+	channels           map[string]*model.Channel
+	histSetCount       int
+	failHistSet        int
+	failNextMeta       bool
+	conflictNextMeta   bool
+	onFailNextMeta     func(data map[string][]byte)
+	beforeHistCAS      func(data map[string][]byte)
+	unreadable         map[string]bool
+	beforeSHAClaim     func(data map[string][]byte, key string)
+	rejectHistCAS      bool
+	histCASCount       int
+	failHistCASAt      int
+	failHistCASErrorAt int
+	failSHADeletes     int
+	failMetaDelete     bool
+	failBlobDeletes    int
 }
 
 func newMemoryKV() *memoryKV {
@@ -124,17 +126,25 @@ func (kv *memoryKV) KVDelete(key string) error {
 func (kv *memoryKV) KVCompareAndSet(key string, oldValue, newValue any) (bool, error) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
-	if strings.HasPrefix(key, keyPrefixMeta) && newValue != nil && kv.failNextMeta {
+	if strings.HasPrefix(key, keyPrefixMeta) && newValue != nil && (kv.failNextMeta || kv.conflictNextMeta) {
+		fail := kv.failNextMeta
 		kv.failNextMeta = false
+		kv.conflictNextMeta = false
 		hook := kv.onFailNextMeta
 		kv.onFailNextMeta = nil
 		if hook != nil {
 			hook(kv.data)
 		}
-		return false, errors.New("kv set failed")
+		if fail {
+			return false, errors.New("kv set failed")
+		}
+		return false, nil
 	}
 	if strings.HasPrefix(key, keyPrefixHist) {
 		kv.histCASCount++
+		if kv.failHistCASErrorAt > 0 && kv.histCASCount == kv.failHistCASErrorAt {
+			return false, errors.New("kv set failed")
+		}
 		if kv.failHistCASAt > 0 && kv.histCASCount == kv.failHistCASAt {
 			return false, nil
 		}
@@ -585,8 +595,8 @@ func TestPruneKeepsBlobsWhenHistorySaveFails(t *testing.T) {
 	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
 	require.NoError(t, store.ReplaceContent(entry, []byte("<html>2</html>"), 1024, 2))
 
-	kv.histSetCount = 0
-	kv.failHistSet = 1
+	kv.histCASCount = 0
+	kv.failHistCASErrorAt = 2
 	err := store.ReplaceContent(entry, []byte("<html>3</html>"), 1024, 2)
 	require.ErrorIs(t, err, ErrCleanupDeferred)
 	require.Equal(t, 3, entry.Version)
@@ -1038,6 +1048,100 @@ func TestPurgeKeepsTheLookupWhenBlobDeleteFails(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	_, err = store.FindBySHA(entry.ChannelID, entry.SHA256)
 	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestPruneKeepsTheHeadWhenItIsTheOldestVersion(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	original := []byte("<html>1</html>")
+	require.NoError(t, store.Save(entry, original, 1024, 0, 0))
+	require.NoError(t, store.ReplaceContent(entry, []byte("<html>2</html>"), 1024, 0))
+	require.NoError(t, store.ReplaceContent(entry, []byte("<html>3</html>"), 1024, 0))
+	require.NoError(t, store.Rollback(entry, 1))
+
+	require.NoError(t, store.ReplaceContent(entry, original, 1024, 1))
+
+	versions, err := store.ListVersions(entry.ID)
+	require.NoError(t, err)
+	require.Len(t, versions, 1)
+	require.Equal(t, 1, versions[0].Version)
+	body, err := store.ReadContent(entry)
+	require.NoError(t, err)
+	require.Equal(t, string(original), string(body))
+	_, err = store.ReadContentAt(entry, 2)
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = store.ReadContentAt(entry, 3)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestReplaceContentRejectsAnOverlongTitle(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
+	entry.Title = strings.Repeat("a", MaxTitleRunes+1)
+
+	err := store.ReplaceContent(entry, []byte("<html>2</html>"), 1024, 0)
+	require.ErrorIs(t, err, ErrInvalidInput)
+
+	stored, err := store.Get(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, 1, stored.Version)
+	require.NotEqual(t, entry.Title, stored.Title)
+}
+
+func TestCasHeadRejectsAPurgingEntry(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
+	require.NoError(t, store.markPurging(entry))
+	entry.Title = "changed"
+
+	err := store.UpdateMeta(entry)
+	require.ErrorIs(t, err, ErrConflict)
+
+	stored, err := store.Get(entry.ID)
+	require.NoError(t, err)
+	require.True(t, stored.Purging)
+	require.NotEqual(t, "changed", stored.Title)
+}
+
+func TestDeleteHeadRefusesASHAOwnedByAnotherArtifact(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	channelID := model.NewId()
+	first := testEntry(channelID)
+	require.NoError(t, store.Save(first, []byte("<html>1</html>"), 1024, 0, 0))
+	require.NoError(t, store.ReplaceContent(first, []byte("<html>2</html>"), 1024, 0))
+	other := testEntry(channelID)
+	require.NoError(t, store.Save(other, []byte("<html>1</html>"), 1024, 0, 0))
+
+	err := store.DeleteHead(first)
+	require.ErrorIs(t, err, ErrDuplicate)
+
+	stored, err := store.Get(first.ID)
+	require.NoError(t, err)
+	require.Equal(t, 2, stored.Version)
+	body, err := store.ReadContent(stored)
+	require.NoError(t, err)
+	require.Equal(t, "<html>2</html>", string(body))
+	versions, err := store.ListVersions(first.ID)
+	require.NoError(t, err)
+	require.Len(t, versions, 2)
+}
+
+func TestPurgeDeletesAnEmptyChannelIndex(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
+	require.NoError(t, store.Purge(entry))
+
+	var raw []byte
+	err := kv.KVGet(indexKey(entry.ChannelID), &raw)
+	require.ErrorIs(t, err, mmapi.ErrKVNotFound)
 }
 
 func sha256Hex(content []byte) string {
