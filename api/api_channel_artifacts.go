@@ -117,6 +117,13 @@ func (a *API) handleCreateChannelArtifact(c *gin.Context) {
 		c.String(http.StatusBadRequest, "invalid request")
 		return
 	}
+	audit.AddParam(auditRec(c), audit.KeyChannelID, req.ChannelID)
+	if req.ReplaceID != "" {
+		if rec := auditRec(c); rec != nil {
+			rec.EventName = AuditEventReplaceChannelArtifact
+		}
+		audit.AddParam(auditRec(c), audit.KeyChannelArtifactID, req.ReplaceID)
+	}
 
 	userID := c.GetHeader("Mattermost-User-Id")
 	body, info, post, authorDisplay, teamID, limit, ok := a.readPostArtifactBody(c, userID, req.FileID, req.PostID, req.ChannelID)
@@ -170,6 +177,7 @@ func (a *API) handleReplaceChannelArtifact(c *gin.Context) {
 		c.String(http.StatusBadRequest, "invalid id")
 		return
 	}
+	audit.AddParam(auditRec(c), audit.KeyChannelArtifactID, id)
 	var req channelartifacts.ReplaceRequest
 	if err := c.ShouldBindJSON(&req); err != nil || !model.IsValidId(req.PostID) || !model.IsValidId(req.FileID) {
 		c.String(http.StatusBadRequest, "invalid request")
@@ -269,6 +277,7 @@ func (a *API) handlePatchChannelArtifact(c *gin.Context) {
 		c.String(http.StatusBadRequest, "invalid id")
 		return
 	}
+	audit.AddParam(auditRec(c), audit.KeyChannelArtifactID, id)
 	var req channelartifacts.PatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.String(http.StatusBadRequest, "invalid request")
@@ -297,6 +306,7 @@ func (a *API) handleRollbackChannelArtifact(c *gin.Context) {
 		c.String(http.StatusBadRequest, "invalid id")
 		return
 	}
+	audit.AddParam(auditRec(c), audit.KeyChannelArtifactID, id)
 	var req channelartifacts.RollbackRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.Version < 1 {
 		c.String(http.StatusBadRequest, "invalid request")
@@ -325,6 +335,7 @@ func (a *API) handleDeleteChannelArtifact(c *gin.Context) {
 		c.String(http.StatusBadRequest, "invalid id")
 		return
 	}
+	audit.AddParam(auditRec(c), audit.KeyChannelArtifactID, id)
 	userID := c.GetHeader("Mattermost-User-Id")
 	entry, err := a.channelArtifacts.GetReadable(userID, id)
 	if err != nil {
@@ -332,31 +343,42 @@ func (a *API) handleDeleteChannelArtifact(c *gin.Context) {
 		return
 	}
 	channelID := entry.ChannelID
-	purge := strings.EqualFold(c.Query("purge"), "true") || c.Query("purge") == "1"
-	hadMultiple := false
-	if !purge {
-		if versions, err := a.channelArtifacts.ListVersions(userID, id); err == nil {
-			hadMultiple = len(versions) > 1
-		}
+	purge, purgeErr := purgeQuery(c.Query("purge"))
+	if purgeErr != nil {
+		c.String(http.StatusBadRequest, "invalid purge")
+		return
 	}
 	if err := a.channelArtifacts.Delete(userID, id, purge); err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
-	if !purge && hadMultiple {
-		updated, err := a.channelArtifacts.GetReadable(userID, id)
-		if err == nil {
-			a.channelArtifacts.Publish(WebsocketEventChannelArtifactUpdated, channelID, map[string]any{
-				"artifact": updated,
-			})
-			c.JSON(http.StatusOK, updated)
-			return
-		}
+	updated, getErr := a.channelArtifacts.GetReadable(userID, id)
+	if getErr == nil {
+		a.channelArtifacts.Publish(WebsocketEventChannelArtifactUpdated, channelID, map[string]any{
+			"artifact": updated,
+		})
+		c.JSON(http.StatusOK, updated)
+		return
+	}
+	if !errors.Is(getErr, channelartifacts.ErrNotFound) {
+		a.writeChannelArtifactError(c, getErr)
+		return
 	}
 	a.channelArtifacts.Publish(WebsocketEventChannelArtifactDeleted, channelID, map[string]any{
 		"id": id,
 	})
 	c.Status(http.StatusNoContent)
+}
+
+func purgeQuery(value string) (bool, error) {
+	switch strings.ToLower(value) {
+	case "", "false", "0":
+		return false, nil
+	case "true", "1":
+		return true, nil
+	default:
+		return false, errors.New("invalid purge")
+	}
 }
 
 func (a *API) handleReorderChannelArtifacts(c *gin.Context) {
