@@ -158,7 +158,7 @@ export interface AgentVersionDetail extends AgentVersionSummary {
     config: Partial<AgentResponse>;
 }
 
-// Mirrors AgentExportDocument in webapp/src/types/agents.ts (schemaVersion 1).
+// Mirrors AgentExportDocument in webapp/src/types/agents.ts.
 export interface AgentExportMCPTool {
     serverOrigin: string;
     toolName: string;
@@ -189,6 +189,24 @@ export interface AgentExportDocument {
         mcpTools: AgentExportMCPTool[];
         documents?: AgentExportReferenceDocument[];
     };
+}
+
+/** Status and parsed JSON body of a plugin response, for asserting on error paths. */
+export interface RawJSONResponse<T> {
+    status: number;
+    headers: Headers;
+    body: T;
+}
+
+async function toRawJSON<T>(response: Response): Promise<RawJSONResponse<T>> {
+    const text = await response.text();
+    let body: unknown = text;
+    try {
+        body = JSON.parse(text);
+    } catch {
+        // Keep the raw text for non-JSON bodies.
+    }
+    return { status: response.status, headers: response.headers, body: body as T };
 }
 
 /**

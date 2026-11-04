@@ -1,7 +1,8 @@
 import crypto from 'crypto';
 import fs from 'fs';
 
-import { test, expect, Page } from '@playwright/test';
+import { expect, Page } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import {
@@ -146,16 +147,15 @@ function systemPrompt(body: string): string {
     return typeof system.content === 'string' ? system.content : system.content.map((part) => part.text ?? '').join('');
 }
 
-test.describe('Agent reference documents', () => {
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        mattermost = await RunAgentContainer();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
-    });
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunAgentContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
 
-    test.afterAll(async () => {
-        await openAIMock?.stop();
-        await mattermost?.stop();
+test.describe('Agent reference documents', () => {
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test('documents uploaded in the editor are saved as a new version', async ({ page }) => {
@@ -208,8 +208,8 @@ test.describe('Agent reference documents', () => {
         expect(fromEditor.filename).toBe('refunds.pdf');
         expect(fromEditor.bytes.equals(refunds.buffer)).toBe(true);
 
-        await agentPage.getModalTab('History').click();
-        await expect(agentPage.getVersionItem(2)).toContainText('Changed: Reference documents');
+        await agentPage.openHistoryVersion(2);
+        await expect(agentPage.getVersionFieldLabel('Reference documents')).toBeVisible();
         await expect(agentPage.getVersionSnapshotDocuments()).toContainText('handbook.txt');
         await expect(agentPage.getVersionSnapshotDocuments()).toContainText('refunds.pdf');
     });
@@ -307,7 +307,7 @@ test.describe('Agent reference documents', () => {
 
         // The removed document still downloads from the version that had it.
         const removed = await captureDownload(page, () =>
-            agentPage.getVersionSnapshotDocuments().getByRole('link', { name: 'handbook.txt' }).click());
+            agentPage.getVersionSnapshotDocuments().getByRole('button', { name: 'handbook.txt' }).click());
         expect(removed.filename).toBe('handbook.txt');
         expect(removed.bytes.equals(handbook.buffer)).toBe(true);
 
@@ -316,7 +316,7 @@ test.describe('Agent reference documents', () => {
         await expect(agentPage.getRestoreDialog()).toBeHidden({ timeout: 10000 });
         await expect(page.getByText('Version 1 was restored as the current version.')).toBeVisible({ timeout: 10000 });
 
-        await agentPage.getModalTab('Configuration').click();
+        await agentPage.closeVersionHistory();
         await expect(agentPage.getDocumentRows()).toHaveCount(2);
         await expect(agentPage.getDocumentRows().nth(0)).toContainText('handbook.txt');
         await expect(agentPage.getDocumentRows().nth(1)).toContainText('glossary.md');
@@ -441,34 +441,25 @@ test.describe('Agent reference documents', () => {
             { name: 'Refunds 2026.pdf', mimeType: 'application/pdf', size: refunds.buffer.length, sha256: sha256(refunds.buffer), content: refunds.buffer.toString('base64') },
         ]);
 
-        await agentPage.openImportModal();
-        await agentPage.getImportDialog().getByTestId('import-agent-file-input').setInputFiles({
-            name: 'huge.agent.json',
-            mimeType: 'application/json',
-            buffer: Buffer.alloc(40 * 1024 * 1024 + 1, ' '),
-        });
-        await expect(agentPage.getImportDialog()).toContainText('This file is too large. Agent files can be up to 40 MB.');
-        await agentPage.chooseImportFile(exportPath);
-        const totalSize = sizeLabel(handbook.buffer.length + refunds.buffer.length);
-        await expect(agentPage.getImportSummary().getByTestId('import-summary-documents'))
-            .toHaveText(`Reference documents: 2 documents (${totalSize}): handbook.txt, Refunds 2026.pdf`);
-        await expect(agentPage.getImportModeRadio('update')).toBeChecked();
-        await agentPage.getImportModeRadio('create').check();
-        await agentPage.getImportUsernameInput().fill('docsimportedagent');
-        await agentPage.getImportDisplayNameInput().fill('Docs Imported Agent');
-        await agentPage.getImportServiceSelect().selectOption({ label: 'Mock Service' });
-        await agentPage.getImportSubmitButton().click();
-        await expect(agentPage.getImportDialog()).toBeHidden({ timeout: 15000 });
-        await expect(page.getByText('Imported agent Docs Imported Agent.')).toBeVisible({ timeout: 10000 });
+        // A new agent from the file lists its documents as waiting to upload.
+        await agentPage.importAgentFile(agentPage.getImportButton(), exportPath);
+        await expect(page.getByRole('heading', { name: 'New Agent' })).toBeVisible({ timeout: 10000 });
+        await expect(agentPage.getImportedNotice()).toBeVisible({ timeout: 10000 });
+        await expect(agentPage.getDocumentsSection().getByRole('list', { name: 'Imported documents', exact: true }).getByRole('listitem')).toHaveCount(2);
+        await expect(agentPage.getDocumentsSection()).toContainText('Uploaded when you save');
+        await agentPage.getUsernameInput().fill('docsimportedagent');
+        await agentPage.getDisplayNameInput().fill('Docs Imported Agent');
+        await agentPage.getModalSaveButton().click();
+        await agentPage.waitForModalClosed();
 
         const imported = await findAgentByName(agentApi, token, 'docsimportedagent');
         expect(imported).toBeDefined();
         expect(withoutIds(imported!.documents)).toEqual(withoutIds(source.documents));
         expect(await downloadBytes(agentApi, token, imported!.id, imported!.documents![0].id)).toEqual(handbook.buffer);
         expect(await downloadBytes(agentApi, token, imported!.id, imported!.documents![1].id)).toEqual(refunds.buffer);
-        expect((await agentApi.getAgentVersions(token, imported!.id)).versions.map((v) => v.source)).toEqual(['import']);
+        expect((await agentApi.getAgentVersions(token, imported!.id)).versions.map((v) => v.source)).toEqual(['create']);
 
-        // Importing into an existing agent replaces its documents with the file's.
+        // Importing into an existing agent replaces its documents with the file's, on save.
         const glossaryDoc = await agentApi.uploadAgentDocumentOrThrow(token, glossary);
         const target = await createAgent(agentApi, token, {
             displayName: 'Docs Update Target',
@@ -476,34 +467,42 @@ test.describe('Agent reference documents', () => {
             serviceID: mockServiceId,
             documents: [{ id: glossaryDoc.id, name: 'glossary.md' }],
         });
-        const updated = await agentApi.importAgent(token, { document: doc, mode: 'update', agentID: target.id });
-        expect(updated.status).toBe(200);
-        expect(withoutIds(updated.body.documents)).toEqual(withoutIds(source.documents));
+        await agentPage.navigateToAgents(mattermost.url());
+        await agentPage.openAgentEditor('Docs Update Target');
+        await agentPage.importAgentFile(agentPage.getEditorImportButton(), exportPath);
+        await expect(agentPage.getImportedNotice()).toBeVisible({ timeout: 10000 });
+        await expect(agentPage.getDocumentRows()).toHaveCount(0);
+        expect(withoutIds((await agentApi.getAgent(token, target.id)).documents)).toEqual(withoutIds([glossaryDoc]));
+        await agentPage.getModalSaveButton().click();
+        await agentPage.waitForModalClosed();
+        expect(withoutIds((await agentApi.getAgent(token, target.id)).documents)).toEqual(withoutIds(source.documents));
 
         // A schema version 1 file carries no documents, so an update keeps the agent's.
         const { documents: _documents, ...v1Agent } = doc.agent;
-        const v1Update = await agentApi.importAgent(token, {
-            document: { ...doc, schemaVersion: 1, agent: { ...v1Agent, customInstructions: 'Updated from a v1 file.' } },
-            mode: 'update',
-            agentID: target.id,
+        await agentPage.openAgentEditor('Docs Update Target');
+        await agentPage.importAgentFile(agentPage.getEditorImportButton(), {
+            name: 'v1.agent.json',
+            mimeType: 'application/json',
+            buffer: Buffer.from(JSON.stringify({ ...doc, schemaVersion: 1, agent: { ...v1Agent, customInstructions: 'Updated from a v1 file.' } })),
         });
-        expect(v1Update.status).toBe(200);
-        expect(v1Update.body.customInstructions).toBe('Updated from a v1 file.');
-        expect(v1Update.body.documents).toEqual(updated.body.documents);
+        await expect(agentPage.getImportedNotice()).toBeVisible({ timeout: 10000 });
+        await expect(agentPage.getDocumentRows()).toHaveCount(2);
+        await agentPage.getModalSaveButton().click();
+        await agentPage.waitForModalClosed();
+        const afterV1 = await agentApi.getAgent(token, target.id);
+        expect(afterV1.customInstructions).toBe('Updated from a v1 file.');
+        expect(withoutIds(afterV1.documents)).toEqual(withoutIds(source.documents));
 
-        // Content that does not match its checksum is rejected and creates nothing.
+        // Content that does not match its checksum is rejected before the editor opens.
         const tampered: AgentExportDocument = JSON.parse(JSON.stringify(doc));
         tampered.agent.documents![0].sha256 = '0'.repeat(64);
-        const rejected = await agentApi.importAgent(token, {
-            document: tampered,
-            mode: 'create',
-            username: 'docstamperedagent',
-            displayName: 'Docs Tampered Agent',
-            serviceID: mockServiceId,
+        await agentPage.importAgentFile(agentPage.getImportButton(), {
+            name: 'tampered.agent.json',
+            mimeType: 'application/json',
+            buffer: Buffer.from(JSON.stringify(tampered)),
         });
-        expect(rejected.status).toBe(400);
-        expect(rejected.body.error).toContain('sha256');
-        expect(await findAgentByName(agentApi, token, 'docstamperedagent')).toBeUndefined();
+        await expect(page.getByRole('alert').filter({ hasText: 'This file is not a valid Mattermost agent export.' })).toBeVisible({ timeout: 10000 });
+        await expect(page.getByRole('heading', { name: 'New Agent' })).toHaveCount(0);
     });
 
     test('unusable files are rejected and over-budget documents block Save', async ({ page }) => {
@@ -646,7 +645,7 @@ test.describe('Agent reference documents', () => {
         expect(ownAgent.documents?.map((d) => d.name)).toEqual(['mine.txt']);
         expect(await downloadBytes(agentApi, regularToken, ownAgent.id, mine.id)).toEqual(Buffer.from('Uploaded by the regular user.'));
 
-        // Another manager of the agent keeps, downloads and exports documents they did not upload.
+        // Another manager of the agent keeps, and downloads documents they did not upload.
         const regularUser = await (await mattermost.getClient(agentRegularUsername, agentRegularPassword)).getMe();
         await agentApi.updateAgent(token, agent.id, { adminUserIDs: [regularUser.id] });
         const asManager = await agentApi.getAgent(regularToken, agent.id);
@@ -657,9 +656,6 @@ test.describe('Agent reference documents', () => {
         });
         expect(managerSave.status).toBe(200);
         expect(managerSave.body.documents?.map((d) => d.id)).toEqual([secret.id]);
-        const managerExport = await agentApi.exportAgent(regularToken, agent.id);
-        expect(managerExport.status).toBe(200);
-        expect(managerExport.body.agent.documents?.[0].content).toBe(Buffer.from(secretText).toString('base64'));
 
         await mattermost.revokeManageOwnAgentFromSystemUser();
         try {

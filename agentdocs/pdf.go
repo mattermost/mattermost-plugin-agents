@@ -309,7 +309,7 @@ func (x *pdfTextReader) showText(enc pdf.TextEncoding, raw string) {
 		x.write(raw)
 		return
 	}
-	for len(raw) > 0 {
+	for raw != "" {
 		n := min(len(raw), pdfDecodeChunkBytes)
 		x.write(enc.Decode(raw[:n]))
 		raw = raw[n:]

@@ -643,8 +643,8 @@ func (m *mockAgentStore) ListAgentDocumentReferences(agentID string) ([]llm.Agen
 		refs = append(refs, cfg.Documents...)
 	}
 	history := m.versions[agentID]
-	for i := len(history) - 1; i >= 0; i-- {
-		refs = append(refs, history[i].Config.Documents...)
+	for _, version := range slices.Backward(history) {
+		refs = append(refs, version.Config.Documents...)
 	}
 	return refs, nil
 }
