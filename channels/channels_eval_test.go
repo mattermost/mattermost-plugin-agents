@@ -150,6 +150,10 @@ func (s *evalInMemoryStore) GetLatestConversationByThreadBotUser(rootPostID, bot
 	return s.GetConversationByThreadBotUser(rootPostID, botID, userID)
 }
 
+func (*evalInMemoryStore) ArchiveConversation(_ string, _ int64) error {
+	return nil
+}
+
 func (*evalInMemoryStore) RestoreConversation(_ string, _ int64) (*store.Conversation, error) {
 	return nil, store.ErrConversationNotFound
 }
