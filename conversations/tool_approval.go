@@ -454,6 +454,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		Role:           "tool_result",
 		Content:        resultContent,
 		CreatedAt:      model.GetMillis(),
+		RunPostID:      &post.Id,
 	}
 	if err = c.convService.CreateTurnAutoSequence(resultTurn); err != nil {
 		return fmt.Errorf("failed to create tool result turn: %w", err)

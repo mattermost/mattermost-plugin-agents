@@ -31,6 +31,10 @@ type Turn struct {
 	// UpdatedAt is the DB-clock time (ms) of the last write. For streaming
 	// turns it doubles as the heartbeat used to detect abandoned streams.
 	UpdatedAt int64 `json:"updated_at" db:"updatedat"`
+	// RunPostID is the response post whose run wrote this turn. Tool-round
+	// turns carry it so a run's rows can be told from another run's in the
+	// same conversation; it is nil for turns that belong to no run.
+	RunPostID *string `json:"-" db:"runpostid"`
 }
 
 // Turn status values stored in LLM_Turns.Status.
@@ -46,7 +50,7 @@ const dbNowMillis = "(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT"
 
 var turnColumns = []string{
 	"ID", "ConversationID", "PostID", "Role", "Content",
-	"TokensIn", "TokensOut", "Sequence", "CreatedAt", "Status", "UpdatedAt",
+	"TokensIn", "TokensOut", "Sequence", "CreatedAt", "Status", "UpdatedAt", "RunPostID",
 }
 
 func turnStatusOrDefault(status string) string {
@@ -70,7 +74,7 @@ func (s *Store) insertTurn(turn *Turn, sequence, updatedAt any) sq.InsertBuilder
 		Columns(turnColumns...).
 		Values(turn.ID, turn.ConversationID, turn.PostID, turn.Role, string(turn.Content),
 			turn.TokensIn, turn.TokensOut, sequence, turn.CreatedAt,
-			turnStatusOrDefault(turn.Status), updatedAt)
+			turnStatusOrDefault(turn.Status), updatedAt, turn.RunPostID)
 }
 
 // CreateTurn inserts a new turn row and bumps its conversation's activity.
@@ -213,89 +217,38 @@ func (s *Store) UpdateTurnPostID(id string, postID *string) error {
 
 // turnSpanRow is a turn read to decide which run it belongs to.
 type turnSpanRow struct {
-	ID       string  `db:"id"`
-	Sequence int     `db:"sequence"`
-	Role     string  `db:"role"`
-	PostID   *string `db:"postid"`
-	Content  string  `db:"content"`
-}
-
-// toolBlockIDs returns the tool_use IDs and the tool_result tool_use IDs in a
-// turn's content blocks.
-func toolBlockIDs(content string) (uses, results []string) {
-	var blocks []struct {
-		Type      string `json:"type"`
-		ID        string `json:"id"`
-		ToolUseID string `json:"tool_use_id"`
-	}
-	if json.Unmarshal([]byte(content), &blocks) != nil {
-		return nil, nil
-	}
-	for _, b := range blocks {
-		switch {
-		case b.Type == "tool_use" && b.ID != "":
-			uses = append(uses, b.ID)
-		case b.Type == "tool_result" && b.ToolUseID != "":
-			results = append(results, b.ToolUseID)
-		}
-	}
-	return uses, results
-}
-
-// belongsToRun reports whether turn is part of the run whose tool_use IDs are
-// runUses and whose anchor post is postID. Turns carry no run ID, so another
-// post's anchor, a user turn, or a tool_result for a call this run did not
-// make (a channel approval appends results at the end of the conversation)
-// is someone else's.
-func belongsToRun(turn turnSpanRow, postID *string, runUses map[string]bool) bool {
-	if turn.Role == "user" {
-		return false
-	}
-	if turn.PostID != nil && (postID == nil || *turn.PostID != *postID) {
-		return false
-	}
-	if turn.Role == "tool_result" {
-		_, results := toolBlockIDs(turn.Content)
-		for _, id := range results {
-			if !runUses[id] {
-				return false
-			}
-		}
-	}
-	return true
+	ID        string  `db:"id"`
+	Sequence  int     `db:"sequence"`
+	Role      string  `db:"role"`
+	PostID    *string `db:"postid"`
+	RunPostID *string `db:"runpostid"`
 }
 
 // runSpanEnd returns how many of the turns after a streaming anchor the
-// anchor must move past to end its run: up to its run's last turn, within the
-// window that ends at the next user turn or another post's anchor. Turns of
-// other runs inside that window (a tool_result a channel approval appended for
-// another post) are skipped, not stopped at, so the run's own later rounds
-// still come before the anchor.
+// anchor must move past to end its run: up to the last turn written by its
+// run (RunPostID), within the window that ends at the next user turn or
+// another post's anchor. Other runs' turns inside that window are skipped, so
+// the run's own later rounds still come before the anchor.
 func runSpanEnd(later []turnSpanRow, postID *string) int {
-	runUses := map[string]bool{}
+	if postID == nil {
+		return 0
+	}
 	end := 0
 	for i, turn := range later {
-		if turn.Role == "user" || (turn.PostID != nil && (postID == nil || *turn.PostID != *postID)) {
+		if turn.Role == "user" || (turn.PostID != nil && *turn.PostID != *postID) {
 			break
 		}
-		if !belongsToRun(turn, postID, runUses) {
-			continue
+		if turn.RunPostID != nil && *turn.RunPostID == *postID {
+			end = i + 1
 		}
-		if turn.Role == "assistant" {
-			uses, _ := toolBlockIDs(turn.Content)
-			for _, id := range uses {
-				runUses[id] = true
-			}
-		}
-		end = i + 1
 	}
 	return end
 }
 
-// DeleteResponseTurns removes the post's anchor turn and the assistant and
-// tool_result turns of its run, between it and the originating user turn.
-// Turns of other runs in that span (another post's anchor, a tool_result for
-// another post's call) are kept. Callers must build any completion request
+// DeleteResponseTurns removes the post's anchor turn and the turns its run
+// wrote (RunPostID), between it and the originating user turn. Turns of other
+// runs in that span are kept. Turns written before runs were recorded have no
+// RunPostID and are treated as this response's. Callers must build any completion request
 // before calling this.
 func (s *Store) DeleteResponseTurns(conversationID, postID string) (err error) {
 	tx, err := s.db.Beginx()
@@ -310,7 +263,7 @@ func (s *Store) DeleteResponseTurns(conversationID, postID string) (err error) {
 
 	var span []turnSpanRow
 	if err = tx.Select(&span, `
-SELECT ID, Sequence, Role, PostID, Content FROM LLM_Turns
+SELECT ID, Sequence, Role, PostID, RunPostID FROM LLM_Turns
 WHERE ConversationID = $1
   AND Sequence > COALESCE((
     SELECT MAX(Sequence) FROM LLM_Turns
@@ -331,18 +284,17 @@ ORDER BY Sequence ASC`, conversationID, postID); err != nil {
 		return fmt.Errorf("failed to read response turns: %w", err)
 	}
 
-	runUses := map[string]bool{}
-	for _, turn := range span {
-		if turn.Role == "assistant" && (turn.PostID == nil || *turn.PostID == postID) {
-			uses, _ := toolBlockIDs(turn.Content)
-			for _, id := range uses {
-				runUses[id] = true
-			}
-		}
-	}
 	var ids []string
 	for _, turn := range span {
-		if belongsToRun(turn, &postID, runUses) {
+		if turn.Role == "user" {
+			continue
+		}
+		switch {
+		case turn.RunPostID != nil:
+			if *turn.RunPostID == postID {
+				ids = append(ids, turn.ID)
+			}
+		case turn.PostID == nil || *turn.PostID == postID:
 			ids = append(ids, turn.ID)
 		}
 	}
@@ -458,7 +410,7 @@ func (s *Store) settleStreamingTurn(id string, staleAfterMillis int64, update st
 	}
 
 	var later []turnSpanRow
-	if err = tx.Select(&later, `SELECT ID, Sequence, Role, PostID, Content FROM LLM_Turns WHERE ConversationID = $1 AND Sequence > $2 ORDER BY Sequence ASC`,
+	if err = tx.Select(&later, `SELECT ID, Sequence, Role, PostID, RunPostID FROM LLM_Turns WHERE ConversationID = $1 AND Sequence > $2 ORDER BY Sequence ASC`,
 		anchor.ConversationID, anchor.Sequence); err != nil {
 		return false, fmt.Errorf("failed to read later turns: %w", err)
 	}

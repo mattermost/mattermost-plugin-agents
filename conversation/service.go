@@ -795,6 +795,7 @@ func (s *Service) FinalizeAssistantTurn(
 }
 
 // WriteToolTurns persists tool execution rounds from the ToolRunner.
+// runPostID is the response post whose run wrote the rounds ("" for none).
 // The shared flag controls the `shared` field on tool content blocks:
 //   - true in DMs (everything visible to requester)
 //   - false in channels (non-requester sees redacted content until shared)
@@ -802,9 +803,10 @@ func (s *Service) WriteToolTurns(
 	conversationID string,
 	toolTurns []toolrunner.ToolTurn,
 	shared bool,
+	runPostID string,
 ) error {
 	for _, tt := range toolTurns {
-		if writeErr := s.writeToolRound(conversationID, tt, shared); writeErr != nil {
+		if writeErr := s.writeToolRound(conversationID, tt, shared, runPostID); writeErr != nil {
 			return writeErr
 		}
 	}
@@ -813,7 +815,11 @@ func (s *Service) WriteToolTurns(
 }
 
 // writeToolRound writes one assistant + tool_result turn pair for a single tool round.
-func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, shared bool) error {
+func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, shared bool, runPostID string) error {
+	var runPost *string
+	if runPostID != "" {
+		runPost = &runPostID
+	}
 	assistantBlocks := toolUseBlocks(
 		tt.AssistantMessage,
 		tt.AssistantReasoning,
@@ -835,6 +841,7 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 		TokensIn:       tt.TokensIn,
 		TokensOut:      tt.TokensOut,
 		CreatedAt:      model.GetMillis(),
+		RunPostID:      runPost,
 	}
 	err = s.store.CreateTurnAutoSequence(assistantTurn)
 	if err != nil {
@@ -853,6 +860,7 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 		Role:           "tool_result",
 		Content:        resultContent,
 		CreatedAt:      model.GetMillis(),
+		RunPostID:      runPost,
 	}
 	err = s.store.CreateTurnAutoSequence(resultTurn)
 	if err != nil {

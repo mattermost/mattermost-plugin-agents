@@ -195,7 +195,7 @@ func (c *Channels) AnalyzeChannelWithRequest(
 	}
 	completionRequest.OperationSubType = operationSubType
 
-	stream, err := c.runAnalysis(ctx, *completionRequest, convResult.ConversationID)
+	stream, err := c.runAnalysis(ctx, *completionRequest, convResult.ConversationID, "")
 	if err != nil {
 		return nil, err
 	}
@@ -227,19 +227,19 @@ func (c *Channels) RegenerateAnalysis(
 		return nil, err
 	}
 
-	return c.runAnalysis(ctx, *completionRequest, conv.ID)
+	return c.runAnalysis(ctx, *completionRequest, conv.ID, postID)
 }
 
 // runAnalysis runs the ToolRunner loop, always approving the bound tools and
 // persisting tool turns to the conversation.
-func (c *Channels) runAnalysis(ctx stdcontext.Context, request llm.CompletionRequest, conversationID string) (*llm.TextStreamResult, error) {
+func (c *Channels) runAnalysis(ctx stdcontext.Context, request llm.CompletionRequest, conversationID, runPostID string) (*llm.TextStreamResult, error) {
 	runner := toolrunner.New(c.llm)
 	runResult, err := runner.Run(
 		ctx,
 		request,
 		func(_ llm.ToolCall) bool { return true },
 		func(turns []toolrunner.ToolTurn) {
-			if writeErr := c.convSvc.WriteToolTurns(conversationID, turns, true); writeErr != nil {
+			if writeErr := c.convSvc.WriteToolTurns(conversationID, turns, true, runPostID); writeErr != nil {
 				c.client.LogError("Failed to write tool turns", "error", writeErr, "conversation_id", conversationID)
 			}
 		},
