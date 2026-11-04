@@ -90,6 +90,7 @@ function makeRegistry(websocketHandlers: WebSocketHandlers) {
         registerWebSocketEventHandler: (event: string, handler: (msg: unknown) => void) => {
             websocketHandlers.set(event, handler);
         },
+        registerReconnectHandler: jest.fn(),
     };
 }
 
