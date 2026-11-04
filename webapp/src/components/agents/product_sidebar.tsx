@@ -6,6 +6,7 @@ import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 import CodeBracketsIcon from '@mattermost/compass-icons/components/code-brackets';
 import CreationOutlineIcon from '@mattermost/compass-icons/components/creation-outline';
+import SettingsOutlineIcon from '@mattermost/compass-icons/components/settings-outline';
 import {ChannelSidebarItem} from '@mattermost/compass-ui/components/channel-sidebar-item';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {Scrollbar} from '@mattermost/compass-ui/components/scrollbar';
@@ -19,6 +20,7 @@ import {useGeneratingThreadRoots} from '@/components/agent_chat/use_thread_gener
 import AgentThreadsList from './agent_threads_list';
 import FindAgentsButton from './find_agents_button';
 import SidebarAddMenu from './sidebar_add_menu';
+import {useSettingsAccess} from './settings/use_settings_access';
 import {useAgentsRoute, type AgentsView} from './use_agents_route';
 import {ChatActionsDialogs, useChatActions} from './use_chat_actions';
 
@@ -26,6 +28,7 @@ interface ProductSidebarProps {
     activeView: AgentsView;
     onSelectAll: () => void;
     onSelectPrompts: () => void;
+    onSelectSettings: () => void;
 }
 
 interface NavRowProps {
@@ -86,9 +89,13 @@ const YourAgentsSection = () => {
     );
 };
 
-const ProductSidebar = ({activeView, onSelectAll, onSelectPrompts}: ProductSidebarProps) => {
+const ProductSidebar = ({activeView, onSelectAll, onSelectPrompts, onSelectSettings}: ProductSidebarProps) => {
     const intl = useIntl();
     const title = intl.formatMessage({defaultMessage: 'Agents'});
+
+    // System admins and the users they delegate settings access to.
+    const settingsAccess = useSettingsAccess();
+    const showSettings = settingsAccess.level !== 'none';
 
     return (
         <Aside aria-label={title}>
@@ -114,6 +121,14 @@ const ProductSidebar = ({activeView, onSelectAll, onSelectPrompts}: ProductSideb
                             active={activeView === 'prompts'}
                             onClick={onSelectPrompts}
                         />
+                        {showSettings && (
+                            <NavRow
+                                name={intl.formatMessage({defaultMessage: 'Settings'})}
+                                glyph={<SettingsOutlineIcon/>}
+                                active={activeView === 'settings'}
+                                onClick={onSelectSettings}
+                            />
+                        )}
                     </NavGroup>
                 </nav>
                 <YourAgentsSection/>

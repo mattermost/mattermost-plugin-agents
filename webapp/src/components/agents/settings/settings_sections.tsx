@@ -1,35 +1,31 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useState} from 'react';
+import React from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {AdminPanel} from '@mattermost/compass-ui/components/admin-panel';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
-import {Spinner} from '@mattermost/compass-ui/components/spinner';
 import {Tag} from '@mattermost/compass-ui/components/tag';
 
-import {getPluginConfig, getAIBots, savePluginConfig} from '@/client';
 import {useIsLicensedFor} from '@/license';
 
-import Services, {firstNewService} from './services';
-import {LLMService} from './service';
-import {BooleanItem, ItemList, SelectionItem, TextItem} from './item';
-import {LicenseChip} from './enterprise_chip';
-import NoServicesPage from './no_services_page';
-import BotsMovedNotice from './bots_moved_notice';
-import EmbeddingSearchPanel from './embedding_search/embedding_search_panel';
-import {HNSW_DEFAULTS, REINDEX_DEFAULTS, REINDEX_INDEX_STRATEGY, VECTOR_ELEMENT_TYPE} from './embedding_search/types';
-import MCPServers, {MCPServerConfig} from './mcp_servers';
-import {PersistMCPServerScope} from './mcp_types';
-import {PluginConfig} from './plugin_config_types';
-import WebSearchPanel from './web_search/web_search_panel';
+import Services from '@/components/system_console/services';
+import {LLMService} from '@/components/system_console/service';
+import {BooleanItem, ItemList, SelectionItem, TextItem} from '@/components/system_console/item';
+import {LicenseChip} from '@/components/system_console/enterprise_chip';
+import EmbeddingSearchPanel from '@/components/system_console/embedding_search/embedding_search_panel';
+import {HNSW_DEFAULTS, REINDEX_DEFAULTS, REINDEX_INDEX_STRATEGY, VECTOR_ELEMENT_TYPE} from '@/components/system_console/embedding_search/types';
+import MCPServers, {MCPServerConfig} from '@/components/system_console/mcp_servers';
+import {MCPConfig, PersistMCPServerScope} from '@/components/system_console/mcp_types';
+import {PluginConfig} from '@/components/system_console/plugin_config_types';
+import WebSearchPanel from '@/components/system_console/web_search/web_search_panel';
 
-type Config = PluginConfig;
+import {SettingsSection} from './sections';
 
 /** Minimal fields from GET /ai_bots used for the default-bot dropdown. */
-type RuntimeBotOption = {
+export type RuntimeBotOption = {
     id: string;
     username: string;
     displayName: string;
@@ -56,51 +52,9 @@ export const effectiveDefaultBotID = (configuredID: string | undefined, legacyNa
     return bots[0]?.id ?? '';
 };
 
-type Props = {
-    id: string
-    label: string
-    helpText: React.ReactNode
-    value: Config
-    disabled: boolean
-    config: any
-    currentState: any
-    license: any
-    setByEnv: boolean
-    onChange: (id: string, value: any) => void
-    setSaveNeeded: () => void
-    registerSaveAction: (action: () => Promise<{ error?: { message?: string } }>) => void
-    unRegisterSaveAction: (action: () => Promise<{ error?: { message?: string } }>) => void
-}
-
-const ConfigContainer = styled.div`
-	display: flex;
-	flex-direction: column;
-	gap: var(--spacing-xl);
-`;
-
-const PanelFooterText = styled.div`
-	margin-top: var(--spacing-xl);
-	color: rgba(var(--center-channel-color-rgb), 0.72);
-	font-size: var(--font-size-100);
-`;
-
-const Horizontal = styled.div`
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--spacing-xxxs);
-`;
-
-const LoadingContainer = styled.div`
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    padding: var(--spacing-xxxxl);
-`;
-
 const DEFAULT_AGENT_VERSIONS_TO_KEEP = 50;
 
-const defaultConfig: Config = {
+export const defaultConfig: PluginConfig = {
     services: [],
     bots: [],
     defaultBotUserID: '',
@@ -175,7 +129,7 @@ const defaultConfig: Config = {
     },
 };
 
-const BetaMessage = () => (
+export const BetaMessage = () => (
     <SectionNotice
         type='info'
         title={(
@@ -197,278 +151,43 @@ const BetaMessage = () => (
     />
 );
 
-// withSavedMCPServer reflects a server saved on its own in the page's local
-// configuration. Only a newly added server is appended: saving an existing
-// server's settings or tool policies does not bring back a server removed
-// here but not yet saved, and a tool policy save changes only tool_configs.
-export const withSavedMCPServer = (prev: Config, savedServer: MCPServerConfig, scope: PersistMCPServerScope): Config => {
-    const localMCP = prev.mcp || defaultConfig.mcp;
-    const localServers: MCPServerConfig[] = localMCP.servers ?? [];
-    const present = localServers.some((s) => s.id === savedServer.id);
-    if (!present && scope !== 'server') {
-        return prev;
-    }
-    const merged = present ? localServers.map((s) => {
-        if (s.id !== savedServer.id) {
-            return s;
-        }
-        if (scope === 'tool_configs') {
-            return {...s, tool_configs: savedServer.tool_configs};
-        }
+type Props = {
+    section: SettingsSection;
+    value: PluginConfig;
 
-        // A settings save keeps tool policy edits still pending on this page,
-        // unless the server moved to another URL, which drops its policies.
-        if (scope === 'settings' && s.baseURL === savedServer.baseURL) {
-            return {...savedServer, tool_configs: s.tool_configs};
-        }
-        return savedServer;
-    }) : [...localServers, savedServer];
-    return {...prev, mcp: {...localMCP, servers: merged}};
-};
-
-// withoutMCPServer removes a server from the page's local configuration.
-export const withoutMCPServer = (prev: Config, serverID: string): Config => {
-    const localMCP = prev.mcp || defaultConfig.mcp;
-    return {...prev, mcp: {...localMCP, servers: (localMCP.servers ?? []).filter((s: MCPServerConfig) => s.id !== serverID)}};
-};
-
-const Config = (props: Props) => {
-    const [localConfig, setLocalConfig] = useState<Config>(defaultConfig);
-
-    // The last loaded or saved configuration, for actions that only work
+    // The configuration as last loaded or saved, for actions that only work
     // against what the server already has.
-    const [savedConfig, setSavedConfig] = useState<Config>(defaultConfig);
-    const [loading, setLoading] = useState(true);
-    const [loadError, setLoadError] = useState<string | null>(null);
-    const [runtimeBots, setRuntimeBots] = useState<RuntimeBotOption[]>([]);
-    const [runtimeBotsError, setRuntimeBotsError] = useState<string | null>(null);
+    savedConfig: PluginConfig;
+    runtimeBots: RuntimeBotOption[];
+    runtimeBotsError: string | null;
 
-    // Core's admin console only uses a save action's error to keep Save
-    // enabled, so field-level errors have to be rendered here.
-    const [linkDomainsError, setLinkDomainsError] = useState('');
+    // The server's rejection of the allowed link domains on the last save.
+    linkDomainsError: string;
+    updateConfig: (updates: Partial<PluginConfig>) => void;
+
+    // Applies an MCP change to the configuration as it is when the change
+    // lands, for work that finishes after other edits.
+    updateMCP: (update: MCPConfig | ((current: MCPConfig) => MCPConfig)) => void;
+
+    // Save or delete one MCP server on its own, leaving other unsaved edits unsaved.
+    persistMCPServer: (server: MCPServerConfig, scope?: PersistMCPServerScope) => Promise<MCPServerConfig>;
+    deleteMCPServer: (serverID: string) => Promise<void>;
+};
+
+// The panels of one Settings section.
+const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runtimeBotsError, linkDomainsError, updateConfig, updateMCP, persistMCPServer, deleteMCPServer}: Props) => {
     const intl = useIntl();
     const tokenAccountingLicensed = useIsLicensedFor('token_accounting');
     const providerWebSearchLicensed = useIsLicensedFor('provider_web_search');
     const channelAutoReplyLicensed = useIsLicensedFor('channel_auto_reply');
 
-    // Load config from plugin API on mount
-    useEffect(() => {
-        const loadConfig = async () => {
-            try {
-                const cfg = await getPluginConfig();
-                setLocalConfig({...defaultConfig, ...cfg});
-                setSavedConfig({...defaultConfig, ...cfg});
-                setLoadError(null);
-            } catch (e: any) {
-                setLoadError(intl.formatMessage({defaultMessage: 'Failed to load configuration.'}));
-            } finally {
-                setLoading(false);
-            }
-        };
-        loadConfig();
-    }, [intl]);
-
-    useEffect(() => {
-        if (loading || loadError) {
-            return;
-        }
-        const loadRuntimeBots = async () => {
-            try {
-                const res = await getAIBots();
-                setRuntimeBots(res.bots ?? []);
-                setRuntimeBotsError(null);
-            } catch {
-                setRuntimeBotsError(intl.formatMessage({defaultMessage: 'Failed to load the runtime bot list. The previous list is kept.'}));
-            }
-        };
-        loadRuntimeBots();
-    }, [loading, loadError]);
-
-    // Register save action that PUTs config to plugin API
-    useEffect(() => {
-        const save = async () => {
-            try {
-                const saved = await savePluginConfig(localConfig);
-
-                // Adopt the normalized saved config so server-minted
-                // service/MCP IDs (and the UI gated on them) appear
-                // immediately instead of after a page reload.
-                setLocalConfig({...defaultConfig, ...saved});
-                setSavedConfig({...defaultConfig, ...saved});
-                setLinkDomainsError('');
-                return {};
-            } catch (e: any) {
-                if (e?.server_error_id === 'invalid_allowed_link_domains') {
-                    setLinkDomainsError(intl.formatMessage({defaultMessage: 'One or more entries are not valid domains.'}));
-                }
-                return {error: {message: intl.formatMessage({defaultMessage: 'Failed to save configuration.'})}};
-            }
-        };
-        props.registerSaveAction(save);
-        return () => {
-            props.unRegisterSaveAction(save);
-        };
-    }, [localConfig, intl, props.registerSaveAction, props.unRegisterSaveAction]);
-
-    // persistMCPServer saves one MCP server on its own, merged into the
-    // configuration as the server has it, so other unsaved edits on this page
-    // are not saved with it. A server without an id is added. Scope
-    // tool_configs writes only its tool policies; settings writes everything
-    // else and keeps the saved tool policies unless server carries
-    // tool_configs. The saved server is then reflected in the page's local
-    // configuration.
-    const persistMCPServer = useCallback(async (server: MCPServerConfig, scope: PersistMCPServerScope = 'server'): Promise<MCPServerConfig> => {
-        const current = {...defaultConfig, ...(await getPluginConfig())};
-        const currentMCP = current.mcp || defaultConfig.mcp;
-        const currentServers: MCPServerConfig[] = currentMCP.servers ?? [];
-        const stored = server.id ? currentServers.find((s) => s.id === server.id) : undefined; // eslint-disable-line no-undefined
-        if (server.id && !stored) {
-            throw new Error(intl.formatMessage({defaultMessage: 'The server is no longer configured. Reload the page.'}));
-        }
-        let next = server;
-        if (stored && scope === 'tool_configs') {
-            next = {...stored, tool_configs: server.tool_configs};
-        } else if (stored && scope === 'settings') {
-            next = {...stored, ...server, tool_configs: server.tool_configs ?? stored.tool_configs};
-        }
-        const servers = stored ? currentServers.map((s) => (s.id === server.id ? next : s)) : [...currentServers, next];
-
-        let saved: Config;
-        try {
-            saved = {...defaultConfig, ...(await savePluginConfig({...current, mcp: {...currentMCP, servers}}))};
-        } catch (e: any) {
-            throw new Error(e?.message || intl.formatMessage({defaultMessage: 'Failed to save configuration.'}));
-        }
-        const savedServer = (saved.mcp?.servers ?? []).find((s: MCPServerConfig) => (
-            server.id ? s.id === server.id : s.name === next.name && s.baseURL === next.baseURL
-        ));
-        if (!savedServer) {
-            throw new Error(intl.formatMessage({defaultMessage: 'The saved server could not be found. Reload the page.'}));
-        }
-
-        setSavedConfig(saved);
-        setLocalConfig((prev) => withSavedMCPServer(prev, savedServer, scope));
-        return savedServer;
-    }, [intl]);
-
-    // deleteMCPServer removes one saved MCP server on its own, like
-    // persistMCPServer, leaving other unsaved edits on this page unsaved.
-    const deleteMCPServer = useCallback(async (serverID: string): Promise<void> => {
-        const current = {...defaultConfig, ...(await getPluginConfig())};
-        const currentMCP = current.mcp || defaultConfig.mcp;
-        const currentServers: MCPServerConfig[] = currentMCP.servers ?? [];
-        let saved: Config;
-        try {
-            saved = {...defaultConfig, ...(await savePluginConfig({...current, mcp: {...currentMCP, servers: currentServers.filter((s) => s.id !== serverID)}}))};
-        } catch (e: any) {
-            throw new Error(e?.message || intl.formatMessage({defaultMessage: 'Failed to save configuration.'}));
-        }
-        setSavedConfig(saved);
-        setLocalConfig((prev) => withoutMCPServer(prev, serverID));
-    }, [intl]);
-
-    const updateConfig = useCallback((updates: Partial<Config>) => {
-        setLocalConfig((prev) => ({...prev, ...updates}));
-        props.setSaveNeeded();
-    }, [props.setSaveNeeded]);
-
-    // No id is assigned client-side: the backend mints the stable service ID
-    // on save (normalizeAdminConfig).
-    const addFirstService = () => {
-        updateConfig({
-            services: [{...firstNewService}],
-        });
-    };
-
-    if (loading) {
+    switch (section) {
+    case 'general': {
+        const defaultBotID = effectiveDefaultBotID(value.defaultBotUserID, value.defaultBotName, runtimeBots);
         return (
-            <ConfigContainer>
-                <LoadingContainer>
-                    <Spinner
-                        size='32'
-                        aria-label={intl.formatMessage({defaultMessage: 'Loading configuration...'})}
-                    />
-                </LoadingContainer>
-            </ConfigContainer>
-        );
-    }
-
-    if (loadError) {
-        return (
-            <ConfigContainer>
-                <SectionNotice
-                    type='danger'
-                    title={loadError}
-                />
-            </ConfigContainer>
-        );
-    }
-
-    const value = localConfig;
-
-    const hasServiceConfigured = value.services && value.services.length > 0;
-
-    if (!hasServiceConfigured) {
-        return (
-            <ConfigContainer>
-                <BetaMessage/>
-                <NoServicesPage onAddServicePressed={addFirstService}/>
-            </ConfigContainer>
-        );
-    }
-
-    // Initialize with default empty config if not provided
-    const mcpConfig = value.mcp || defaultConfig.mcp;
-    const defaultBotID = effectiveDefaultBotID(value.defaultBotUserID, value.defaultBotName, runtimeBots);
-
-    return (
-        <ConfigContainer>
-            <BetaMessage/>
-            <AdminPanel
-                title={intl.formatMessage({defaultMessage: 'AI Services'})}
-                subtitle={intl.formatMessage({defaultMessage: 'Configure AI services to power your bots.'})}
-            >
-                <Services
-                    services={value.services ?? []}
-                    bots={value.bots ?? []}
-                    onChange={(services: LLMService[]) => {
-                        updateConfig({services});
-                    }}
-                />
-                <PanelFooterText>
-                    <FormattedMessage defaultMessage='AI services are third-party services. Mattermost is not responsible for service output.'/>
-                </PanelFooterText>
-            </AdminPanel>
-            <AdminPanel
-                title={intl.formatMessage({defaultMessage: 'AI Bots'})}
-                subtitle={intl.formatMessage({defaultMessage: 'AI agents are managed from the Agents product page.'})}
-            >
-                <ItemList>
-                    <BotsMovedNotice/>
-                    <BooleanItem
-                        label={<FormattedMessage defaultMessage='Limit agent version history'/>}
-                        value={(value.agentVersionsToKeep ?? 0) > 0}
-                        onChange={(to) => updateConfig({agentVersionsToKeep: to ? DEFAULT_AGENT_VERSIONS_TO_KEEP : 0})}
-                        helpText={intl.formatMessage({defaultMessage: 'When false, every saved version of each agent is kept. When true, each agent keeps only its most recent versions and older ones are permanently deleted.'})}
-                    />
-                    {(value.agentVersionsToKeep ?? 0) > 0 && (
-                        <TextItem
-                            label={intl.formatMessage({defaultMessage: 'Versions to keep per agent'})}
-                            type='number'
-                            min='1'
-                            value={String(value.agentVersionsToKeep)}
-                            onChange={(e) => {
-                                const parsed = parseInt(e.target.value, 10);
-                                updateConfig({agentVersionsToKeep: Number.isNaN(parsed) || parsed < 1 ? 1 : parsed});
-                            }}
-                            helptext={intl.formatMessage({defaultMessage: 'Includes the current version. Older versions are deleted when this setting is saved and each time an agent is saved.'})}
-                        />
-                    )}
-                </ItemList>
-            </AdminPanel>
             <AdminPanel
                 title={intl.formatMessage({defaultMessage: 'AI Functions'})}
-                subtitle={intl.formatMessage({defaultMessage: 'Choose a default bot.'})}
+                subtitle={intl.formatMessage({defaultMessage: 'Choose a default agent and how agents behave across the workspace.'})}
             >
                 <ItemList>
                     {runtimeBotsError && (
@@ -504,10 +223,7 @@ const Config = (props: Props) => {
                         <TextItem
                             label={intl.formatMessage({defaultMessage: 'Allowed Link Domains (csv)'})}
                             value={value.allowedLinkDomains}
-                            onChange={(e) => {
-                                setLinkDomainsError('');
-                                updateConfig({allowedLinkDomains: e.target.value});
-                            }}
+                            onChange={(e) => updateConfig({allowedLinkDomains: e.target.value})}
                             error={linkDomainsError}
                             helptext={intl.formatMessage({defaultMessage: 'Comma separated list of domains that AI-generated links may point to. Links to any other domain are shown as plain text. Supports wildcards like *.mydomain.com, which matches subdomains but not mydomain.com itself. Links to this Mattermost server are always allowed. Leave empty to allow links to any domain.'})}
                             placeholder={'example.com, *.mydomain.com'}
@@ -577,8 +293,73 @@ const Config = (props: Props) => {
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, bots with native web search (Anthropic Claude, OpenAI with Responses API) can use their built-in web search capability in public and private channels, not just direct messages. This only affects native provider web search, not custom tools or MCP integrations.'})}
                     />
+                    <BooleanItem
+                        label={<FormattedMessage defaultMessage='Limit agent version history'/>}
+                        value={(value.agentVersionsToKeep ?? 0) > 0}
+                        onChange={(to) => updateConfig({agentVersionsToKeep: to ? DEFAULT_AGENT_VERSIONS_TO_KEEP : 0})}
+                        helpText={intl.formatMessage({defaultMessage: 'When false, every saved version of each agent is kept. When true, each agent keeps only its most recent versions and older ones are permanently deleted.'})}
+                    />
+                    {(value.agentVersionsToKeep ?? 0) > 0 && (
+                        <TextItem
+                            label={intl.formatMessage({defaultMessage: 'Versions to keep per agent'})}
+                            type='number'
+                            min='1'
+                            value={String(value.agentVersionsToKeep)}
+                            onChange={(e) => {
+                                const parsed = parseInt(e.target.value, 10);
+                                updateConfig({agentVersionsToKeep: Number.isNaN(parsed) || parsed < 1 ? 1 : parsed});
+                            }}
+                            helptext={intl.formatMessage({defaultMessage: 'Includes the current version. Older versions are deleted when this setting is saved and each time an agent is saved.'})}
+                        />
+                    )}
                 </ItemList>
             </AdminPanel>
+        );
+    }
+    case 'services':
+        return (
+            <AdminPanel
+                title={intl.formatMessage({defaultMessage: 'AI Services'})}
+                subtitle={intl.formatMessage({defaultMessage: 'Configure AI services to power your bots.'})}
+            >
+                <Services
+                    services={value.services ?? []}
+                    bots={value.bots ?? []}
+                    onChange={(services: LLMService[]) => {
+                        updateConfig({services});
+                    }}
+                />
+                <PanelFooterText>
+                    <FormattedMessage defaultMessage='AI services are third-party services. Mattermost is not responsible for service output.'/>
+                </PanelFooterText>
+            </AdminPanel>
+        );
+    case 'mcp':
+        return (
+            <MCPServers
+                mcpConfig={value.mcp || defaultConfig.mcp}
+                savedServers={savedConfig.mcp?.servers ?? []}
+                onPersistServer={persistMCPServer}
+                onDeleteServer={deleteMCPServer}
+                onChange={updateMCP}
+            />
+        );
+    case 'search':
+        return (
+            <EmbeddingSearchPanel
+                value={{...defaultConfig.embeddingSearchConfig, ...(value.embeddingSearchConfig || {})}}
+                onChange={(config) => updateConfig({embeddingSearchConfig: config})}
+            />
+        );
+    case 'web-search':
+        return (
+            <WebSearchPanel
+                value={value.webSearch || defaultConfig.webSearch}
+                onChange={(config) => updateConfig({webSearch: config})}
+            />
+        );
+    case 'debug':
+        return (
             <AdminPanel title={intl.formatMessage({defaultMessage: 'Debug'})}>
                 <ItemList>
                     <SelectionItem
@@ -630,34 +411,25 @@ const Config = (props: Props) => {
                     />
                 </ItemList>
             </AdminPanel>
-            <EmbeddingSearchPanel
-                value={{...defaultConfig.embeddingSearchConfig, ...(value.embeddingSearchConfig || {})}}
-                onChange={(config) => {
-                    updateConfig({embeddingSearchConfig: config});
-                }}
-            />
-            <WebSearchPanel
-                value={value.webSearch || defaultConfig.webSearch}
-                onChange={(config) => {
-                    updateConfig({webSearch: config});
-                }}
-            />
-            <MCPServers
-                mcpConfig={mcpConfig}
-                savedServers={savedConfig.mcp?.servers ?? []}
-                onPersistServer={persistMCPServer}
-                onDeleteServer={deleteMCPServer}
-                onChange={(update) => {
-                    setLocalConfig((prev) => {
-                        const updated = typeof update === 'function' ? update(prev.mcp || defaultConfig.mcp) : update;
-
-                        // Ensure we're creating a valid structure for the server configuration
-                        return {...prev, mcp: {...updated, servers: updated.servers || []}};
-                    });
-                    props.setSaveNeeded();
-                }}
-            />
-        </ConfigContainer>
-    );
+        );
+    default: {
+        const exhaustive: never = section;
+        throw new Error(`unknown settings section: ${exhaustive}`);
+    }
+    }
 };
-export default Config;
+
+const PanelFooterText = styled.div`
+    margin-top: var(--spacing-xl);
+    color: rgba(var(--center-channel-color-rgb), 0.72);
+    font-size: var(--font-size-100);
+`;
+
+const Horizontal = styled.div`
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-xxxs);
+`;
+
+export default SettingsSectionContent;

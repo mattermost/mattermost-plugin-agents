@@ -1164,6 +1164,59 @@ export async function savePluginConfig(config: PluginConfig): Promise<PluginConf
     });
 }
 
+// --- Settings access ---
+
+// How much of the plugin configuration a user may reach from the Agents
+// product: system admins and read/write delegates 'write', read-only
+// delegates 'read'.
+export type SettingsAccessLevel = 'none' | 'read' | 'write';
+
+// The users a system admin delegated access to: the plugin configuration
+// (read-only, read/write), and every agent (agent managers, as the
+// manage_others_agent permission allows).
+export type SettingsAccess = {
+    readOnlyUserIDs: string[];
+    readWriteUserIDs: string[];
+    agentManagerUserIDs: string[];
+};
+
+// What the current user was delegated: how much of the plugin configuration
+// they reach, and whether they manage every agent (through the
+// manage_others_agent permission or the agent managers list).
+export type MySettingsAccess = {
+    level: SettingsAccessLevel;
+    manageOthersAgents: boolean;
+};
+
+async function settingsRequest<T>(path: string, init: Parameters<typeof Client4.getOptions>[0]): Promise<T> {
+    const url = `${baseRoute()}${path}`;
+    const response = await fetch(url, Client4.getOptions(init));
+    if (response.ok) {
+        return response.json();
+    }
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function getMySettingsAccess(): Promise<MySettingsAccess> {
+    return settingsRequest<MySettingsAccess>('/settings/access', {method: 'GET'});
+}
+
+export async function getSettingsAccess(): Promise<SettingsAccess> {
+    return settingsRequest<SettingsAccess>('/admin/settings-access', {method: 'GET'});
+}
+
+export async function saveSettingsAccess(access: SettingsAccess): Promise<SettingsAccess> {
+    return settingsRequest<SettingsAccess>('/admin/settings-access', {
+        method: 'PUT',
+        body: JSON.stringify(access),
+        headers: {'Content-Type': 'application/json'},
+    });
+}
+
 // --- Agent CRUD ---
 
 export type AgentsListResult = {

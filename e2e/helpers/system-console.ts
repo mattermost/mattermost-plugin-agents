@@ -1,10 +1,22 @@
 import { Page, Locator, expect } from '@playwright/test';
 import { MATTERMOST_AI_PLUGIN_ID } from './plugin-http';
 
+/** A section of the Agents product's Settings view; also its URL segment. */
+export type SettingsSection = 'general' | 'services' | 'mcp' | 'search' | 'web-search' | 'debug';
+
+const SECTION_TABS: Record<SettingsSection, string> = {
+    general: 'General',
+    services: 'AI services',
+    mcp: 'MCP servers',
+    search: 'Embedding search',
+    'web-search': 'Web search',
+    debug: 'Debug',
+};
+
 /**
- * SystemConsoleHelper - Page object for System Console AI Plugin configuration
- *
- * Provides navigation and locators for testing the system console UI
+ * SystemConsoleHelper - Page object for the AI plugin settings: the Settings
+ * view of the Agents product, where the configuration lives, and the plugin's
+ * System Console page, which only lists who else may view or change it.
  */
 export class SystemConsoleHelper {
     readonly page: Page;
@@ -13,11 +25,7 @@ export class SystemConsoleHelper {
         this.page = page;
     }
 
-    /**
-     * Navigate to the AI plugin system console page
-     * @param baseUrl - Mattermost base URL
-     */
-    async navigateToPluginConfig(baseUrl: string): Promise<void> {
+    private async polyfillRandomUUID(): Promise<void> {
         // Polyfill crypto.randomUUID for insecure contexts (e.g., Docker test environments
         // where the Mattermost URL uses a non-localhost IP like http://172.17.0.1:PORT).
         // crypto.randomUUID requires a secure context but crypto.getRandomValues does not.
@@ -33,10 +41,9 @@ export class SystemConsoleHelper {
                 };
             }
         });
+    }
 
-        await this.page.goto(`${baseUrl}/admin_console/plugins/plugin_mattermost-ai`);
-        await this.page.waitForLoadState('domcontentloaded');
-
+    private async dismissViewInBrowser(): Promise<void> {
         // Handle "View in Browser" button if it appears (mobile preview page)
         const viewInBrowserButton = this.page.getByRole('button', { name: /view in browser/i });
         const isVisible = await viewInBrowserButton.isVisible().catch(() => false);
@@ -44,10 +51,39 @@ export class SystemConsoleHelper {
             await viewInBrowserButton.click();
             await this.page.waitForLoadState('domcontentloaded');
         }
+    }
 
-        // Wait for the plugin configuration UI to fully render
+    /**
+     * Open a section of the Agents settings.
+     * @param baseUrl - Mattermost base URL
+     */
+    async navigateToAgentsSettings(baseUrl: string, section: SettingsSection = 'general'): Promise<void> {
+        await this.polyfillRandomUUID();
+        await this.page.goto(`${baseUrl}/plug/${MATTERMOST_AI_PLUGIN_ID}/agents/settings/${section}`);
+        await this.page.waitForLoadState('domcontentloaded');
+        await this.dismissViewInBrowser();
+
         // The beta message is always present and indicates the React components have loaded
         await this.page.waitForSelector('text=To report a bug or to provide feedback', { timeout: 15000 });
+    }
+
+    /** Switch the Agents settings to another section through its tab. */
+    async openSection(section: SettingsSection): Promise<void> {
+        await this.getSectionTab(section).click();
+        await expect(this.getSectionTab(section)).toHaveAttribute('aria-selected', 'true');
+    }
+
+    getSectionTab(section: SettingsSection): Locator {
+        return this.page.getByRole('tab', { name: SECTION_TABS[section], exact: true });
+    }
+
+    /** Open the plugin's System Console page (who may view or change the Agents settings). */
+    async navigateToSystemConsole(baseUrl: string): Promise<void> {
+        await this.polyfillRandomUUID();
+        await this.page.goto(`${baseUrl}/admin_console/plugins/plugin_${MATTERMOST_AI_PLUGIN_ID}`);
+        await this.page.waitForLoadState('domcontentloaded');
+        await this.dismissViewInBrowser();
+        await this.page.getByText('Agents settings have moved').waitFor({ state: 'visible', timeout: 15000 });
     }
 
     /**
@@ -58,28 +94,10 @@ export class SystemConsoleHelper {
     }
 
     /**
-     * Get the "Add Bot" button on the no bots page
-     */
-    getAddBotButton(): Locator {
-        return this.page.getByRole('button', { name: /add.*ai.*(agent|bot)/i });
-    }
-
-    /**
-     * Wait for the AI Agents panel to be fully loaded
-     * This ensures the bots list or "no bots" message is visible
-     */
-    async waitForBotsPanel(): Promise<void> {
-        // AI Bots panel shows a "moved" notice instead of the legacy bot editor
-        const botsPanel = this.getBotsPanel();
-        await botsPanel.waitFor({ state: 'visible', timeout: 15000 });
-        await this.page.getByText(/AI bot configuration has moved/i).waitFor({ state: 'visible', timeout: 15000 });
-    }
-
-    /**
-     * Get the Save button
+     * Get the Save button. It shows once there is something to save.
      */
     getSaveButton(): Locator {
-        return this.page.getByRole('button', { name: /save/i });
+        return this.page.getByRole('button', { name: 'Save', exact: true });
     }
 
     /**
@@ -97,24 +115,10 @@ export class SystemConsoleHelper {
     }
 
     /**
-     * Get the no agents message
-     */
-    getNoBotsMessage(): Locator {
-        return this.page.locator('text=/no ai agents/i');
-    }
-
-    /**
      * Get AI Services panel
      */
     getServicesPanel(): Locator {
         return this.page.getByText('AI Services').first();
-    }
-
-    /**
-     * Get AI Bots panel
-     */
-    getBotsPanel(): Locator {
-        return this.page.getByText(/AI (Bots|Agents)/i).first();
     }
 
     /**
@@ -125,10 +129,10 @@ export class SystemConsoleHelper {
     }
 
     /**
-     * Get Debug panel
+     * Get the Debug section's panel (not its tab)
      */
     getDebugPanel(): Locator {
-        return this.page.getByText('Debug').first();
+        return this.page.getByText('Trace Output').first();
     }
 
     /**
@@ -136,13 +140,6 @@ export class SystemConsoleHelper {
      */
     async clickAddService(): Promise<void> {
         await this.getAddServiceButton().click();
-    }
-
-    /**
-     * Click add bot button
-     */
-    async clickAddBot(): Promise<void> {
-        await this.getAddBotButton().click();
     }
 
     /**

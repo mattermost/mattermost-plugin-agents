@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -861,6 +862,54 @@ func TestHandleGetUserMCPToolsServiceAccountCatalog(t *testing.T) {
 		require.Equal(t, []string{testUserID}, mcpMock.getServiceAccountInvokerCalls)
 		require.True(t, response.Servers[0].Authenticated)
 	})
+
+	// Read/write settings delegates set the service account credentials and may
+	// turn service account auth on, so they preview its catalog like admins.
+	previewBySettingsAccess := []struct {
+		name       string
+		access     config.SettingsAccess
+		unsaved    bool
+		wantStatus int
+	}{
+		{name: "read/write settings delegate previews a saved agent", access: config.SettingsAccess{ReadWriteUserIDs: []string{testUserID}}, wantStatus: http.StatusOK},
+		{name: "read/write settings delegate previews an unsaved agent", access: config.SettingsAccess{ReadWriteUserIDs: []string{testUserID}}, unsaved: true, wantStatus: http.StatusOK},
+		{name: "read-only settings delegate cannot preview a saved agent", access: config.SettingsAccess{ReadOnlyUserIDs: []string{testUserID}}, wantStatus: http.StatusForbidden},
+		{name: "read-only settings delegate cannot preview an unsaved agent", access: config.SettingsAccess{ReadOnlyUserIDs: []string{testUserID}}, unsaved: true, wantStatus: http.StatusForbidden},
+		{name: "agent manager without settings access cannot preview a saved agent", access: config.SettingsAccess{AgentManagerUserIDs: []string{testUserID}}, wantStatus: http.StatusForbidden},
+	}
+	for _, tt := range previewBySettingsAccess {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.agentStore.agents["agent-1"] = &llm.BotConfig{
+				ID:                    "agent-1",
+				CreatorID:             testUserID,
+				BotUserID:             testBotUserID,
+				UseServiceAccountAuth: false,
+			}
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false).Maybe()
+			e.config.settingsAccess = tt.access
+			mcpMock := &mockMCPClientManager{serviceAccountTools: []llm.Tool{saTool}}
+			e.api.mcpClientManager = mcpMock
+			e.config.mcpConfig = mcp.Config{Enabled: true, Servers: []mcp.ServerConfig{n8nServer}}
+
+			query := "catalog=service_account&agent_id=agent-1"
+			owner := testBotUserID
+			if tt.unsaved {
+				query = "catalog=service_account"
+				owner = testUserID
+			}
+			_, status := requestUserMCPTools(t, e.api, query)
+			require.Equal(t, tt.wantStatus, status)
+			if tt.wantStatus != http.StatusOK {
+				require.Empty(t, mcpMock.getServiceAccountCalls)
+				return
+			}
+			require.Equal(t, []string{owner}, mcpMock.getServiceAccountCalls)
+		})
+	}
 
 	t.Run("empty BotUserID returns 500 and does not fetch SA tools", func(t *testing.T) {
 		e := SetupTestEnvironment(t)

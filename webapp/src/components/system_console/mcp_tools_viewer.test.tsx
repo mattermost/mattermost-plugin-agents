@@ -70,6 +70,7 @@ import MCPServers from './mcp_servers';
 import MCPToolsViewer from './mcp_tools_viewer';
 import {useMCPToolsList} from './use_mcp_tools_list';
 import {MCPConfig, MCPToolsResponse} from './mcp_types';
+import {SettingsReadOnlyContext} from './settings_read_only';
 /* eslint-enable import/first, import/order */
 
 const mockGetMCPTools = getMCPTools as jest.Mock;
@@ -131,16 +132,18 @@ function ViewerWithList({initial, mcpConfig, onConfigChange}: {initial: MCPTools
     );
 }
 
-function renderViewer(toolsData: MCPToolsResponse | null, mcpConfig: MCPConfig = makeMCPConfig()) {
+function renderViewer(toolsData: MCPToolsResponse | null, mcpConfig: MCPConfig = makeMCPConfig(), readOnly = false) {
     const onConfigChange = jest.fn();
     return {
         ...render(
             <IntlProvider locale='en'>
-                <ViewerWithList
-                    initial={toolsData}
-                    mcpConfig={mcpConfig}
-                    onConfigChange={onConfigChange}
-                />
+                <SettingsReadOnlyContext.Provider value={readOnly}>
+                    <ViewerWithList
+                        initial={toolsData}
+                        mcpConfig={mcpConfig}
+                        onConfigChange={onConfigChange}
+                    />
+                </SettingsReadOnlyContext.Provider>
             </IntlProvider>,
         ),
         onConfigChange,
@@ -463,4 +466,117 @@ describe('MCPToolsViewer — tools list owned by the MCP page', () => {
         expect(await screen.findByText('1/1 tools enabled')).not.toBeNull();
         expect(screen.queryByText('Failed to load MCP tools')).toBeNull();
     });
+});
+
+test('lists servers that share a URL, as read-only viewers get them, as separate rows', () => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => null);
+    try {
+        renderViewer({
+            servers: ['Tracker', 'Wiki'].map((name) => ({
+                name,
+                url: 'https://mcp.example.com',
+                serverType: 'remote',
+                enabled: true,
+                tools: [],
+                needsOAuth: false,
+                error: null,
+            })),
+        }, makeMCPConfig(), true);
+
+        expect(screen.getByText('Tracker')).toBeTruthy();
+        expect(screen.getByText('Wiki')).toBeTruthy();
+        expect(consoleError.mock.calls.flat().join(' ')).not.toMatch(/same key/);
+    } finally {
+        consoleError.mockRestore();
+    }
+});
+
+test('maps each server on a shared URL to its own configuration by name', () => {
+    const shared = 'https://mcp.example.com';
+    const servers = ['Tracker', 'Wiki'].map((name) => ({
+        name,
+        url: shared,
+        serverType: 'remote',
+        enabled: true,
+        tools: [],
+        needsOAuth: false,
+        error: null,
+    }));
+    const mcpConfig = makeMCPConfig({
+        servers: [
+            {name: 'Tracker', enabled: true, baseURL: shared, headers: {}},
+            {name: 'Wiki', enabled: false, baseURL: shared, headers: {}},
+        ],
+    });
+    const {onConfigChange} = renderViewer({servers}, mcpConfig);
+
+    const toggles = screen.getAllByRole('switch');
+    expect(toggles[0].getAttribute('aria-checked')).toBe('true');
+    expect(toggles[1].getAttribute('aria-checked')).toBe('false');
+
+    fireEvent.click(toggles[1]);
+
+    const [updated] = onConfigChange.mock.calls[0];
+    expect(updated.servers).toEqual([
+        {name: 'Tracker', enabled: true, baseURL: shared, headers: {}},
+        {name: 'Wiki', enabled: true, baseURL: shared, headers: {}},
+    ]);
+});
+
+test('maps servers to their configuration by ID when names were swapped by renames', () => {
+    const servers = [
+        {id: 'id-a', name: 'A', url: 'https://a.example.com', serverType: 'remote', enabled: true, tools: [], needsOAuth: false, error: null},
+        {id: 'id-x', name: 'X', url: 'https://x.example.com', serverType: 'remote', enabled: true, tools: [], needsOAuth: false, error: null},
+    ];
+
+    // The tools payload still carries the names from before A->B and X->A.
+    const mcpConfig = makeMCPConfig({
+        servers: [
+            {id: 'id-a', name: 'B', enabled: false, baseURL: 'https://a.example.com', headers: {}},
+            {id: 'id-x', name: 'A', enabled: true, baseURL: 'https://x.example.com', headers: {}},
+        ],
+    });
+    const {onConfigChange} = renderViewer({servers}, mcpConfig);
+
+    const toggles = screen.getAllByRole('switch');
+    expect(toggles[0].getAttribute('aria-checked')).toBe('false');
+    expect(toggles[1].getAttribute('aria-checked')).toBe('true');
+
+    fireEvent.click(toggles[0]);
+
+    const [updated] = onConfigChange.mock.calls[0];
+    expect(updated.servers).toEqual([
+        {id: 'id-a', name: 'B', enabled: true, baseURL: 'https://a.example.com', headers: {}},
+        {id: 'id-x', name: 'A', enabled: true, baseURL: 'https://x.example.com', headers: {}},
+    ]);
+});
+
+test('read-only viewers get the embedded server seeded but no policy applied to a remote server', async () => {
+    mockGetVettedToolSeed.mockImplementation((baseURL: string) => Promise.resolve(
+        baseURL === 'embedded://mattermost' ?
+            [{name: 'embedded_seeded_tool', policy: 'ask', enabled: true}] :
+            [{name: 'seeded_tool', policy: 'auto_run_in_dm', enabled: true}],
+    ));
+    const cfg = makeMCPConfig({
+        servers: [{name: 'Remote', enabled: true, baseURL: 'https://remote.example', headers: {}, tool_configs: []}],
+        embeddedServer: {enabled: true, tool_configs: []},
+    });
+
+    const {onConfigChange} = renderViewer({
+        servers: [{
+            name: 'Remote',
+            url: 'https://remote.example',
+            serverType: 'remote',
+            enabled: true,
+            tools: [],
+            needsOAuth: false,
+            error: null,
+        }],
+    }, cfg, true);
+
+    await waitFor(() => expect(onConfigChange).toHaveBeenCalled());
+    const updated: MCPConfig = onConfigChange.mock.calls[0][0](cfg);
+    expect(updated.servers?.[0].tool_configs).toEqual([]);
+    expect(updated.embeddedServer.tool_configs).toEqual([{name: 'embedded_seeded_tool', policy: 'ask', enabled: true}]);
+    expect(mockGetVettedToolSeed).not.toHaveBeenCalledWith('https://remote.example');
 });
