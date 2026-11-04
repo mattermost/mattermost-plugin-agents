@@ -200,10 +200,10 @@ func TestMCPToolClassification(t *testing.T) {
 // is in this set or in scopedUnsupportedTools, so a new tool must be classified.
 var scopedSupportedReadTools = map[string]bool{
 	"read_channel": true, "get_channel_info": true, "search_channels": true, "list_team_channels": true,
-	"get_channel_stats": true, "search_users_in_channel": true, "read_post": true, "list_pinned_posts": true,
+	"get_channel_stats": true, "read_post": true, "list_pinned_posts": true,
 	"get_post_reactions": true, "get_mentions": true, "search_posts": true, "search_users": true,
 	"search_files": true, "read_file": true, "get_file_info": true, "get_post_files": true,
-	"get_team_info": true, "search_teams": true, "search_users_in_team": true, "get_me": true,
+	"get_team_info": true, "search_teams": true, "get_me": true,
 	"get_user": true, "get_user_custom_status": true, "get_user_by_username": true,
 	"get_users_by_ids": true, "get_users_by_usernames": true,
 }

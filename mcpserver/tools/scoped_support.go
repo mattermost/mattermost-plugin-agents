@@ -21,6 +21,7 @@ var scopedUnsupportedTools = map[string]struct{}{
 	"get_channel_members_by_status": {},
 	"get_user_channel_memberships":  {},
 	"get_users_not_in_channel":      {},
+	"search_users_in_channel":       {},
 	"list_sidebar_categories":       {},
 
 	// posts, threads, and unreads
@@ -42,6 +43,7 @@ var scopedUnsupportedTools = map[string]struct{}{
 	"get_users_in_team":     {},
 	"get_users_not_in_team": {},
 	"get_new_users_in_team": {},
+	"search_users_in_team":  {},
 	"get_dm_common_teams":   {},
 
 	// users and status
