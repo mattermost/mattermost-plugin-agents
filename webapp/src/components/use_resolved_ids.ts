@@ -12,6 +12,10 @@ export type IdKind = 'user' | 'channel' | 'team' | 'post';
 
 const POST_SNIPPET_LENGTH = 80;
 
+// Cards from bulk tools can list many IDs; past this many per kind the rest
+// simply keep showing the raw ID, which stays the primary value anyway.
+const MAX_LOOKUPS_PER_KIND = 20;
+
 const kindPatterns: Array<[IdKind, RegExp]> = [
     ['user', /(^|_)user_ids?$/],
     ['channel', /(^|_)channel_ids?$/],
@@ -141,10 +145,17 @@ function resolveRefs(refs: Array<{kind: IdKind; id: string}>, onSettled: () => v
 export function useResolvedIds(entries: Array<[string, JSONValue]>): (key: string, id: string) => string | undefined {
     const refs = useMemo(() => {
         const found = new Map<string, {kind: IdKind; id: string}>();
+        const perKind = new Map<IdKind, number>();
         for (const [key, value] of entries) {
             const kind = idKindForKey(key);
             if (kind) {
-                idsOf(value).forEach((id) => found.set(refKey(kind, id), {kind, id}));
+                for (const id of idsOf(value)) {
+                    const count = perKind.get(kind) ?? 0;
+                    if (!found.has(refKey(kind, id)) && count < MAX_LOOKUPS_PER_KIND) {
+                        found.set(refKey(kind, id), {kind, id});
+                        perKind.set(kind, count + 1);
+                    }
+                }
             }
         }
         return [...found.values()];

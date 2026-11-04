@@ -193,8 +193,15 @@ interface FieldValueProps {
     resolveId: (id: string) => string | undefined;
 }
 
+const IdGroup = styled.span`
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--spacing-xs);
+    max-width: 100%;
+`;
+
 const IdHint = styled.span`
-    margin-left: 8px;
     font-size: 12px;
     line-height: 20px;
     color: rgba(var(--center-channel-color-rgb), 0.56);
@@ -205,11 +212,14 @@ const IdHint = styled.span`
 const FieldValue: React.FC<FieldValueProps> = ({value, clamped, resolveId}) => {
     if (typeof value === 'string') {
         const hint = resolveId(value);
+        if (!hint) {
+            return <StringValue $clamped={clamped}>{value}</StringValue>;
+        }
         return (
-            <>
+            <IdGroup>
                 <StringValue $clamped={clamped}>{value}</StringValue>
-                {hint && <IdHint>{hint}</IdHint>}
-            </>
+                <IdHint>{hint}</IdHint>
+            </IdGroup>
         );
     }
     if (isPrimitive(value)) {
@@ -223,11 +233,14 @@ const FieldValue: React.FC<FieldValueProps> = ({value, clamped, resolveId}) => {
             <PillRow>
                 {value.map((item, idx) => {
                     const hint = typeof item === 'string' ? resolveId(item) : undefined; // eslint-disable-line no-undefined
+                    if (!hint) {
+                        return <ValuePill key={idx}>{scalarText(item)}</ValuePill>;
+                    }
                     return (
-                        <React.Fragment key={idx}>
+                        <IdGroup key={idx}>
                             <ValuePill>{scalarText(item)}</ValuePill>
-                            {hint && <IdHint>{hint}</IdHint>}
-                        </React.Fragment>
+                            <IdHint>{hint}</IdHint>
+                        </IdGroup>
                     );
                 })}
             </PillRow>

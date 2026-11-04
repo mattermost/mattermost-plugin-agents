@@ -210,4 +210,26 @@ describe('tool call ID resolution', () => {
         expect(await screen.findByText('~first')).not.toBeNull();
         expect(mockGetChannel).toHaveBeenCalledTimes(2);
     });
+
+    test('keeps each pill and its hint together in one item of the pill row', async () => {
+        mockGetProfilesByIds.mockResolvedValue([{id: id('u1'), username: 'alice'}, {id: id('u2'), username: 'bob'}]);
+
+        renderCard({user_ids: [id('u1'), id('u2')]});
+
+        const hint = await screen.findByText('@alice');
+        const pill = screen.getByText(id('u1'));
+        expect(hint.parentElement).toBe(pill.parentElement);
+        expect(pill.parentElement?.parentElement).toBe(screen.getByText(id('u2')).parentElement?.parentElement);
+    });
+
+    test('looks up at most a bounded number of IDs per kind and leaves the rest raw', async () => {
+        const many = Array.from({length: 30}, (_, i) => id(`c${String(i).padStart(2, 'a')}`));
+        mockGetChannel.mockImplementation(async (channelId: string) => ({id: channelId, name: 'n', display_name: '', team_id: ''}));
+
+        renderCard({channel_ids: many});
+
+        expect(await screen.findAllByText('~n')).toHaveLength(20);
+        expect(mockGetChannel).toHaveBeenCalledTimes(20);
+        expect(screen.getByText(many[29])).not.toBeNull();
+    });
 });
