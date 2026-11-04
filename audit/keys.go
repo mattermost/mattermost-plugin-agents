@@ -53,6 +53,14 @@ const (
 	// KeyMCPServerKind is where a tool ran: builtin, embedded, plugin, or remote.
 	KeyMCPServerKind = "agents.mcp.server_kind"
 
+	// KeyMCPSignInsClearedServerIDs lists the remote MCP servers whose users'
+	// saved sign-ins a configuration change removed.
+	KeyMCPSignInsClearedServerIDs = "agents.mcp_server.signins_cleared.ids"
+
+	// KeyMCPSignInsClearFailed marks a configuration change whose removal of
+	// saved MCP sign-ins did not complete.
+	KeyMCPSignInsClearFailed = "agents.mcp_server.signins_clear_failed"
+
 	// MetaTraceID is the meta key carrying the OpenTelemetry trace ID of the
 	// request, letting an auditor pivot from an audit record to the full
 	// trace of what happened.
