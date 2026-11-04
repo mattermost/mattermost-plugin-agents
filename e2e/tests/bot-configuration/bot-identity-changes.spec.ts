@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -10,6 +11,12 @@ import { createBotConfigHelper } from 'helpers/bot-config';
 // Test configuration
 const username = 'regularuser';
 const password = 'regularuser';
+
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
 
 function createTestSuite() {
     let mattermost: MattermostContainer;
@@ -27,16 +34,8 @@ function createTestSuite() {
     }
 
     test.describe('Bot Identity Changes', () => {
-    // Setup for all tests in the file
-    test.beforeAll(async () => {
-        mattermost = await RunContainer();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
-    });
-
-    // Cleanup after all tests
-    test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test('should update bot display name and reflect in UI', async ({ page }) => {
@@ -57,18 +56,15 @@ function createTestSuite() {
         const updatedBot = await botConfig.getBot(originalBot!.id);
         expect(updatedBot?.displayName).toBe('AI Assistant');
 
-        // Wait for configuration to propagate
-        await page.waitForTimeout(1000);
-
         // Reload page to pick up configuration changes
         await page.reload();
         await page.waitForLoadState('domcontentloaded');
 
-        // Verify in UI: Open RHS and check bot selector
+        // Verify in UI: Open RHS and check the title
         await aiPlugin.openRHS();
 
-        // The bot selector should show the new display name
-        const botSelector = page.getByTestId('bot-selector-rhs');
+        // The RHS title shows the new display name
+        const botSelector = page.getByTestId('rhs-title');
         await expect(botSelector).toContainText('AI Assistant');
 
         // Restore original name for other tests
@@ -94,7 +90,7 @@ function createTestSuite() {
         await page.waitForLoadState('domcontentloaded');
 
         await aiPlugin.openRHS();
-        let botSelector = page.getByTestId('bot-selector-rhs');
+        let botSelector = page.getByTestId('rhs-title');
         await expect(botSelector).toContainText('Assistant v1');
 
         // Second change
@@ -109,7 +105,7 @@ function createTestSuite() {
         // Need to open RHS again after page reload
         await aiPlugin.openRHS();
 
-        botSelector = page.getByTestId('bot-selector-rhs');
+        botSelector = page.getByTestId('rhs-title');
         await expect(botSelector).toContainText('Assistant v2');
 
         // Restore original name
@@ -131,23 +127,20 @@ function createTestSuite() {
             displayName: 'Persistent Bot'
         });
 
-        // Wait for configuration to propagate
-        await page.waitForTimeout(1000);
-
         // Reload page to pick up configuration changes
         await page.reload();
         await page.waitForLoadState('domcontentloaded');
 
         // Open RHS and send a message
         await aiPlugin.openRHS();
-        await expect(page.getByTestId('bot-selector-rhs')).toContainText('Persistent Bot');
+        await expect(page.getByTestId('rhs-title')).toContainText('Persistent Bot');
 
         await openAIMock.addCompletionMock(responseTest);
         await aiPlugin.sendMessage('Test persistence');
         await aiPlugin.waitForBotResponse(responseTestText);
 
         // Display name should still be visible after interaction
-        await expect(page.getByTestId('bot-selector-rhs')).toContainText('Persistent Bot');
+        await expect(page.getByTestId('rhs-title')).toContainText('Persistent Bot');
 
         // Restore original name
         await botConfig.updateBot(originalBot!.id, {

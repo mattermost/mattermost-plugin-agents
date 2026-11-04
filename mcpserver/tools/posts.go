@@ -4,8 +4,9 @@
 package tools
 
 import (
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
@@ -22,7 +23,7 @@ type ReadPostArgs struct {
 type CreatePostArgs struct {
 	ChannelID          string       `json:"channel_id" jsonschema:"The ID of the channel to post in,minLength=26,maxLength=26"`
 	ChannelDisplayName string       `json:"channel_display_name" jsonschema:"The display name of the channel (for context verification),minLength=1"`
-	TeamDisplayName    string       `json:"team_display_name" jsonschema:"The display name of the team (for context verification),minLength=1"`
+	TeamDisplayName    string       `json:"team_display_name,omitempty" jsonschema:"The display name of the channel's team (for context verification). Required for public and private channels; omit for direct and group message channels, which have no team."`
 	Message            string       `json:"message" jsonschema:"The message content,minLength=1"`
 	RootID             string       `json:"root_id,omitempty" jsonschema:"Optional root post ID for replies,minLength=26,maxLength=26"`
 	Attachments        []string     `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach to the post"`
@@ -42,7 +43,7 @@ type CreatePostAsUserArgs struct {
 
 // DMArgs represents arguments for the dm tool
 type DMArgs struct {
-	Username    string       `json:"username,omitempty" jsonschema:"Target username. If omitted the message is sent to yourself."`
+	Username    string       `json:"username,omitempty" jsonschema:"Target username (a user ID is also accepted). If omitted the message is sent to yourself."`
 	Message     string       `json:"message" jsonschema:"The message content to send,minLength=1"`
 	Attachments []string     `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach"`
 	Files       []InlineFile `json:"files,omitempty" jsonschema:"Optional text files to create from inline content and attach to the post (max 10). The file name extension determines the file type."`
@@ -50,7 +51,7 @@ type DMArgs struct {
 
 // GroupMessageArgs represents arguments for the group_message tool
 type GroupMessageArgs struct {
-	Usernames   []string     `json:"usernames" jsonschema:"Target usernames (must be at least 2)."`
+	Usernames   []string     `json:"usernames" jsonschema:"Target usernames (must be at least 2; user IDs are also accepted)."`
 	Message     string       `json:"message" jsonschema:"The message content to send,minLength=1"`
 	Attachments []string     `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach"`
 	Files       []InlineFile `json:"files,omitempty" jsonschema:"Optional text files to create from inline content and attach to the post (max 10). The file name extension determines the file type."`
@@ -62,9 +63,9 @@ type GroupMessageArgs struct {
 const (
 	readPostDescription = "Read a specific post and its thread from Mattermost. Parameters: post_id (required), include_thread (boolean, default true). Returns post content, author info, and optionally all replies in the thread. Example: {\"post_id\": \"8xqzn3pfmtbyfkr9hqbw4hheoa\", \"include_thread\": true}"
 
-	createPostDescriptionFmt = "Create a new post in Mattermost. IMPORTANT WORKFLOW: You MUST first call get_channel_info to obtain the channel_id, channel_display_name, and team_display_name. Present this context to the user before posting. Then call this tool with all required parameters. This ensures full transparency about where the message will be posted. Parameters: channel_id (required), message (required), root_id (optional - for replies), files (optional: create and attach text files inline by providing name + content; the extension sets the file type; max 10)%s. Returns created post details including ID and timestamp. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"message\": \"Hello team!\"}"
+	createPostDescriptionFmt = "Create a new post in Mattermost. IMPORTANT WORKFLOW: You MUST first call get_channel_info to obtain the channel_id, channel_display_name, and team_display_name (team_display_name only applies to public and private channels; omit it for direct and group message channels, which have no team). Present this context to the user before posting. Then call this tool with all required parameters. This ensures full transparency about where the message will be posted. Parameters: channel_id (required), channel_display_name (required), team_display_name (required unless the channel is a direct or group message), message (required), root_id (optional - for replies), files (optional: create and attach text files inline by providing name + content; the extension sets the file type; max 10)%s. Returns created post details including ID and timestamp. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"message\": \"Hello team!\"}"
 
-	dmDescriptionFmt = "Send a direct message to a user. Provide username to specify the recipient. If username is omitted, the message is sent to yourself. This is the DEFAULT way to message people — call it multiple times to message multiple people individually. Only use the group_message tool when the user explicitly asks for a group chat. Parameters: message (required), username (optional), files (optional: create and attach text files inline by providing name + content; the extension sets the file type; max 10)%s. Returns confirmation with message ID. Example: {\"message\": \"Hello!\", \"username\": \"john\"}"
+	dmDescriptionFmt = "Send a direct message to a user. Provide username to specify the recipient (a user ID is also accepted). If username is omitted, the message is sent to yourself. This is the DEFAULT way to message people — call it multiple times to message multiple people individually. Only use the group_message tool when the user explicitly asks for a group chat. Parameters: message (required), username (optional), files (optional: create and attach text files inline by providing name + content; the extension sets the file type; max 10)%s. Returns confirmation with message ID. Example: {\"message\": \"Hello!\", \"username\": \"john\"}"
 
 	groupMessageDescriptionFmt = "Send a message to a shared group conversation with 2 or more other users. All participants can see each other's messages. ONLY use this when the user explicitly asks for a group message, group chat, or group conversation. If the user just asks to 'message' or 'send to' multiple people, use the dm tool once per person instead. Parameters: message (required), usernames (at least 2 required), files (optional: create and attach text files inline by providing name + content; the extension sets the file type; max 10)%s. Returns confirmation with message ID. Example: {\"message\": \"Hey team!\", \"usernames\": [\"alice\", \"bob\"]}"
 )
@@ -164,9 +165,12 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, args R
 		channel, _, err := client.GetChannel(ctx, posts[0].ChannelId)
 		if err == nil {
 			channelName = channel.DisplayName
-			team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
-			if teamErr == nil {
-				teamName = team.DisplayName
+			// DM and group message channels have no team.
+			if channel.TeamId != "" {
+				team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
+				if teamErr == nil {
+					teamName = team.DisplayName
+				}
 			}
 		}
 	}
@@ -230,9 +234,6 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 	if args.ChannelDisplayName == "" {
 		return "", fmt.Errorf("channel_display_name cannot be empty - you must call get_channel_info first")
 	}
-	if args.TeamDisplayName == "" {
-		return "", fmt.Errorf("team_display_name cannot be empty - you must call get_channel_info first")
-	}
 	// Validate root ID if provided (for replies)
 	if err := optionalID("root_id", args.RootID); err != nil {
 		return "", err
@@ -242,28 +243,38 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
-	// Validate that the provided display names match the actual channel and team
+	// Validate that the provided display names match the actual channel and
+	// team, so the model confirms where it is posting. Cosmetic differences
+	// (emoji, case, whitespace) are tolerated; different names are not.
 	channel, _, err := client.GetChannel(ctx, args.ChannelID)
 	if err != nil {
 		return "", fmt.Errorf("error fetching channel for validation: %w", err)
 	}
 
-	// Check if channel display name matches
-	if channel.DisplayName != args.ChannelDisplayName {
-		return "", fmt.Errorf("channel_display_name mismatch: provided '%s' but channel ID '%s' has display name '%s'",
-			args.ChannelDisplayName, args.ChannelID, channel.DisplayName)
+	channelDisplayName := channelDisplayNameOrFallback(channel)
+	if !displayNamesMatch(args.ChannelDisplayName, channelDisplayName) {
+		return "", fmt.Errorf("channel_display_name mismatch: provided '%s' but channel ID '%s' has display name '%s' - confirm this is the intended channel, then retry with channel_display_name set to exactly '%s'",
+			args.ChannelDisplayName, args.ChannelID, channelDisplayName, channelDisplayName)
 	}
 
-	// Get team info to validate team display name
-	team, _, err := client.GetTeam(ctx, channel.TeamId, "")
-	if err != nil {
-		return "", fmt.Errorf("error fetching team for validation: %w", err)
-	}
+	// Direct and group message channels have no team, so there is nothing to
+	// validate team_display_name against.
+	var teamDisplayName string
+	if channel.TeamId != "" {
+		if args.TeamDisplayName == "" {
+			return "", fmt.Errorf("team_display_name cannot be empty for a team channel - you must call get_channel_info first")
+		}
 
-	// Check if team display name matches
-	if team.DisplayName != args.TeamDisplayName {
-		return "", fmt.Errorf("team_display_name mismatch: provided '%s' but team ID '%s' has display name '%s'",
-			args.TeamDisplayName, channel.TeamId, team.DisplayName)
+		team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
+		if teamErr != nil {
+			return "", fmt.Errorf("error fetching team for validation: %w", teamErr)
+		}
+
+		if !displayNamesMatch(args.TeamDisplayName, team.DisplayName) {
+			return "", fmt.Errorf("team_display_name mismatch: provided '%s' but team ID '%s' has display name '%s' - confirm this is the intended team, then retry with team_display_name set to exactly '%s'",
+				args.TeamDisplayName, channel.TeamId, team.DisplayName, team.DisplayName)
+		}
+		teamDisplayName = team.DisplayName
 	}
 
 	fileIDs, filesMessage, err := resolvePostFiles(ctx, client, args.ChannelID, args.Attachments, args.Files, mcpContext.AccessMode)
@@ -286,8 +297,12 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 		return "", fmt.Errorf("error creating post: %w", err)
 	}
 
+	if teamDisplayName == "" {
+		return fmt.Sprintf("Successfully created post in channel '%s' with ID: %s%s",
+			channelDisplayName, createdPost.Id, filesMessage), nil
+	}
 	return fmt.Sprintf("Successfully created post in channel '%s' (Team: %s) with ID: %s%s",
-		channel.DisplayName, team.DisplayName, createdPost.Id, filesMessage), nil
+		channel.DisplayName, teamDisplayName, createdPost.Id, filesMessage), nil
 }
 
 // toolCreatePostAsUser implements the create_post_as_user tool with custom authentication
@@ -335,7 +350,7 @@ func (p *MattermostToolProvider) toolCreatePostAsUser(mcpContext *MCPToolContext
 	if args.Props != "" {
 		// For simplicity, we'll just add it as a string. In a real implementation,
 		// you might want to parse the JSON properly
-		post.SetProps(map[string]interface{}{"custom_props": args.Props})
+		post.SetProps(map[string]any{"custom_props": args.Props})
 	}
 
 	createdPost, _, err := userClient.CreatePost(ctx, post)
@@ -368,9 +383,9 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, args DMArgs)
 	dmSelf := false
 	username := strings.TrimPrefix(args.Username, "@")
 	if username != "" {
-		targetUser, _, err = client.GetUserByUsername(ctx, username, "")
+		targetUser, err = getUserByUsernameOrID(ctx, client, username)
 		if err != nil {
-			return "", fmt.Errorf("error getting user by username %q: %w", username, err)
+			return "", err
 		}
 		dmSelf = targetUser.Id == currentUser.Id
 	} else {
@@ -394,11 +409,6 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, args DMArgs)
 		ChannelId: dmChannel.Id,
 		Message:   args.Message,
 		FileIds:   fileIDs,
-	}
-
-	// Set from_webhook only when DM'ing yourself (prevents AI auto-response loop)
-	if dmSelf {
-		post.AddProp("from_webhook", "true")
 	}
 
 	p.stampAIGenerated(post, mcpContext, currentUser.Id)
@@ -433,9 +443,9 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 
 	for _, uname := range args.Usernames {
 		uname = strings.TrimPrefix(uname, "@")
-		resolvedUser, _, resolveErr := client.GetUserByUsername(ctx, uname, "")
+		resolvedUser, resolveErr := getUserByUsernameOrID(ctx, client, uname)
 		if resolveErr != nil {
-			return "", fmt.Errorf("error getting user by username %q: %w", uname, resolveErr)
+			return "", resolveErr
 		}
 		if resolvedUser.Id != currentUser.Id {
 			targets[resolvedUser.Id] = resolvedUser.Username
@@ -743,8 +753,8 @@ func (p *MattermostToolProvider) formatPostListChrono(mcpContext *MCPToolContext
 	for _, post := range postList.Posts {
 		posts = append(posts, post)
 	}
-	sort.Slice(posts, func(i, j int) bool {
-		return posts[i].CreateAt < posts[j].CreateAt
+	slices.SortFunc(posts, func(a, b *model.Post) int {
+		return cmp.Compare(a.CreateAt, b.CreateAt)
 	})
 
 	client := mcpContext.Client

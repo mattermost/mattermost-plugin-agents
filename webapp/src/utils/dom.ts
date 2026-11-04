@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 /**
- * Returns the element to portal floating UI (e.g. react-select menus,
+ * Returns the element to portal floating UI (e.g. picker menus,
  * dropdown popovers) into.
  *
  * Prefer `#root` so portaled content inherits the Mattermost theme CSS

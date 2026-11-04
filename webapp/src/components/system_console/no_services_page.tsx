@@ -3,56 +3,42 @@
 
 import {PlusIcon} from '@mattermost/compass-icons/components';
 import React from 'react';
+import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 
-import {PrimaryButton} from 'src/components/assets/buttons';
-import SparklesGraphic from 'src/components/assets/sparkles_graphic';
+import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
+import {Icon} from '@mattermost/compass-ui/components/icon';
 
-import {PanelContainer} from './panel';
+import SparklesGraphic from 'src/components/assets/sparkles_graphic';
 
 type Props = {
     onAddServicePressed: () => void;
 };
 
 const NoServicesPage = (props: Props) => {
+    const intl = useIntl();
     return (
-        <StyledPanelContainer>
-            <SparklesGraphic/>
-            <Title>{'No AI services added yet'}</Title>
-            <Subtitle>{'To get started with Agents, add an AI service'}</Subtitle>
-            <PrimaryButton onClick={props.onAddServicePressed}>
-                <StyledPlusIcon/>
-                {'Add an AI Service'}
-            </PrimaryButton>
-        </StyledPanelContainer>
+        <Card>
+            <EmptyState
+                illustration={{children: <SparklesGraphic/>, 'aria-label': ''}}
+                title={intl.formatMessage({defaultMessage: 'No AI services added yet'})}
+                description={intl.formatMessage({defaultMessage: 'To get started with Agents, add an AI service'})}
+                action={{
+                    children: intl.formatMessage({defaultMessage: 'Add an AI Service'}),
+                    leadingIcon: <Icon glyph={<PlusIcon/>}/>,
+                    onClick: props.onAddServicePressed,
+                }}
+            />
+        </Card>
     );
 };
 
-const StyledPlusIcon = styled(PlusIcon)`
-	margin-right: 8px;
-	width: 18px;
-	height: 18px;
-`;
-
-const StyledPanelContainer = styled(PanelContainer)`
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 16px;
-	padding-bottom: 56px;
-`;
-
-const Title = styled.div`
-	font-size: 20px;
-	font-weight: 600;
-	font-family: Metropolis;
-	line-height: 28px;
-`;
-
-const Subtitle = styled.div`
-	font-size: 14px;
-	font-weight: 400;
-	line-height: 20px;
+const Card = styled.div`
+	padding: var(--spacing-xxxl) var(--spacing-xxxl) 56px;
+	border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
+	border-radius: var(--radius-s);
+	background: var(--center-channel-bg);
+	box-shadow: var(--elevation-1);
 `;
 
 export default NoServicesPage;

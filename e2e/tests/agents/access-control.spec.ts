@@ -10,7 +10,8 @@
 //   - abac-authoring-authz.spec.ts: per-agent admin can author the agent policy
 //     (CEL autocomplete via ?agent_id=) but not service/MCP policies.
 
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { OpenAIMockContainer, RunOpenAIMocks, responseTest } from 'helpers/openai-mock';
@@ -23,22 +24,19 @@ import {
 import { AgentAPIHelper } from 'helpers/agent-api';
 import { AgentPageHelper } from 'helpers/agent-page';
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunAgentContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
 test.describe('Agent Access Control', () => {
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        mattermost = await RunAgentContainer();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
         await openAIMock.addCompletionMock(responseTest);
-    });
-
-    test.afterAll(async () => {
-        await Promise.allSettled([
-            openAIMock ? openAIMock.stop() : Promise.resolve(),
-            mattermost ? mattermost.stop() : Promise.resolve(),
-        ]);
     });
 
     test('should block user when UserAccessLevel=Block', async ({ page }) => {

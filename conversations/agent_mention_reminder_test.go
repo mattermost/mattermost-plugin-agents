@@ -75,7 +75,7 @@ func newReminderFixtureWithBotConfig(t *testing.T, botConfig llm.BotConfig) *rem
 		&model.Bot{UserId: reminderBotID, Username: reminderBotUsername, DisplayName: reminderBotDisplay},
 		fLLM,
 	)
-	botService.SetBotsForTesting([]*bots.Bot{bot})
+	conversations.SetBotsWithAccounts(mockAPI, botService, bot)
 
 	contextBuilder := llmcontext.NewLLMContextBuilder(pluginClient, &testToolProvider{}, nil, &mockConfigProvider{})
 	promptsManager, err := llm.NewPrompts(prompts.PromptsFolder)
@@ -91,7 +91,7 @@ func newReminderFixtureWithBotConfig(t *testing.T, botConfig llm.BotConfig) *rem
 		allowCreatePost: true,
 	}
 
-	conv := conversations.New(promptsManager, client, &fakeStreamingService{}, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, &testToolCallingConfig{})
+	conv := conversations.New(promptsManager, client, &fakeStreamingService{}, contextBuilder, botService, nil, licenseChecker, i18n.Init(), &testToolCallingConfig{}, newDMPolicyChecker())
 	conv.SetConversationService(conversation.NewService(newFakeConvStore(), promptsManager, client, botService))
 
 	return &reminderFixture{

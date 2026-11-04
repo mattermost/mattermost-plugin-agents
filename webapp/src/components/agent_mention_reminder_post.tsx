@@ -5,6 +5,8 @@ import React, {useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 
+import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
+
 import {doLoopInAgent} from '@/client';
 import {isValidId} from '@/utils/ids';
 
@@ -12,8 +14,7 @@ const Hint = styled.div`
     color: rgba(var(--center-channel-color-rgb), 0.64);
 `;
 
-const ErrorMessage = styled.div`
-    color: rgba(var(--error-text-color-rgb), 1);
+const LoopInError = styled(ErrorMessage)`
     margin-top: 4px;
 `;
 
@@ -42,6 +43,7 @@ interface Props {
         type?: string;
         message: string;
         props?: {
+            bot_user_id?: unknown;
             bot_username?: unknown;
             bot_display_name?: unknown;
             target_post_id?: unknown;
@@ -52,11 +54,12 @@ interface Props {
 type LoopInStatus = 'idle' | 'pending' | 'done' | 'error';
 
 export const AgentMentionReminderPost = ({post}: Props) => {
+    const botUserId = stringProp(post.props?.bot_user_id);
     const botUsername = stringProp(post.props?.bot_username);
     const botDisplayName = stringProp(post.props?.bot_display_name).trim() || botUsername;
     const targetPostId = post.props?.target_post_id ?? post.id;
     const loopInPostId = isValidId(targetPostId) ? targetPostId : '';
-    const canLoopIn = post.type === EphemeralPostType && botUsername !== '' && loopInPostId !== '';
+    const canLoopIn = post.type === EphemeralPostType && isValidId(botUserId) && loopInPostId !== '';
 
     const [status, setStatus] = useState<LoopInStatus>('idle');
     const pending = status === 'pending';
@@ -68,7 +71,7 @@ export const AgentMentionReminderPost = ({post}: Props) => {
         }
         setStatus('pending');
         try {
-            await doLoopInAgent(loopInPostId, botUsername);
+            await doLoopInAgent(loopInPostId, botUserId);
             setStatus('done');
         } catch (err) {
             console.error('Failed to loop in agent:', err); // eslint-disable-line no-console
@@ -114,13 +117,15 @@ export const AgentMentionReminderPost = ({post}: Props) => {
                 }}
             />
             {status === 'error' && (
-                <ErrorMessage>
-                    <FormattedMessage
-                        id='agents.agent_mention_reminder_error'
-                        defaultMessage='Failed to loop in @{botDisplayName}. Please try again.'
-                        values={{botDisplayName}}
-                    />
-                </ErrorMessage>
+                <LoopInError
+                    message={
+                        <FormattedMessage
+                            id='agents.agent_mention_reminder_error'
+                            defaultMessage='Failed to loop in @{botDisplayName}. Please try again.'
+                            values={{botDisplayName}}
+                        />
+                    }
+                />
             )}
         </Hint>
     );

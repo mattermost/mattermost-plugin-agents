@@ -182,3 +182,27 @@ func TestUpstreamPluginAPIMissingKeyContract(t *testing.T) {
 	require.NoError(t, err, "upstream signals missing via nil err, not an error")
 	require.Empty(t, raw, "upstream signals missing via empty bytes")
 }
+
+func TestIsNotFoundForGetPost(t *testing.T) {
+	tests := []struct {
+		name   string
+		apiErr *model.AppError
+		want   bool
+	}{
+		{name: "post does not exist", apiErr: model.NewAppError("GetPost", "app.post.get.app_error", nil, "", http.StatusNotFound), want: true},
+		{name: "post lookup fails", apiErr: model.NewAppError("GetPost", "app.post.get.app_error", nil, "", http.StatusInternalServerError)},
+		{name: "requester may not read the post", apiErr: model.NewAppError("GetPost", "api.context.permissions.app_error", nil, "", http.StatusForbidden)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mockAPI := &plugintest.API{}
+			mockAPI.On("GetPost", "post-id").Return(nil, tc.apiErr).Once()
+
+			_, err := newTestClient(mockAPI).GetPost("post-id")
+
+			require.Error(t, err)
+			require.Equal(t, tc.want, IsNotFound(err))
+			require.Equal(t, tc.want, IsNotFound(fmt.Errorf("wrapped: %w", err)))
+		})
+	}
+}

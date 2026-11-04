@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 
+	sq "github.com/Masterminds/squirrel"
 	"github.com/jmoiron/sqlx"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -26,7 +28,6 @@ const (
 	AgentVersionSourceCreate  AgentVersionSource = "create"
 	AgentVersionSourceUpdate  AgentVersionSource = "update"
 	AgentVersionSourceRestore AgentVersionSource = "restore"
-	AgentVersionSourceImport  AgentVersionSource = "import"
 	// AgentVersionSourceSystem marks internal writes (migrations, rollbacks).
 	AgentVersionSourceSystem AgentVersionSource = "system"
 )
@@ -117,6 +118,7 @@ func agentVersionSnapshot(cfg *llm.BotConfig) llm.BotConfig {
 	snap.AdminUserIDs = emptyToNil(snap.AdminUserIDs)
 	snap.EnabledMCPTools = emptyToNil(snap.EnabledMCPTools)
 	snap.EnabledNativeTools = emptyToNil(snap.EnabledNativeTools)
+	snap.Skills = normalizeSkills(snap.Skills)
 	if snap.Documents == nil {
 		snap.Documents = []llm.AgentDocument{}
 	}
@@ -158,7 +160,7 @@ func changedVersionFields(prev string, next llm.BotConfig) []string {
 func validateAgentVersionMeta(meta AgentVersionMeta) error {
 	switch meta.Source {
 	case AgentVersionSourceInitial, AgentVersionSourceCreate, AgentVersionSourceUpdate,
-		AgentVersionSourceImport, AgentVersionSourceSystem:
+		AgentVersionSourceSystem:
 		if meta.RestoredFromVersion != 0 {
 			return fmt.Errorf("restoredFromVersion is only valid for source %q", AgentVersionSourceRestore)
 		}
@@ -173,10 +175,12 @@ func validateAgentVersionMeta(meta AgentVersionMeta) error {
 	}
 }
 
-func insertAgentVersionTx(tx *sqlx.Tx, agentID string, version int, snapshot llm.BotConfig, meta AgentVersionMeta, changed []string, createAt int64) error {
+// insertAgentVersionTx records snapshot as the given version of agentID and
+// returns the config JSON it stored.
+func insertAgentVersionTx(tx *sqlx.Tx, agentID string, version int, snapshot llm.BotConfig, meta AgentVersionMeta, changed []string, createAt int64) (string, error) {
 	configJSON, err := json.Marshal(snapshot)
 	if err != nil {
-		return fmt.Errorf("failed to marshal agent version config: %w", err)
+		return "", fmt.Errorf("failed to marshal agent version config: %w", err)
 	}
 	if _, err := tx.Exec(
 		`INSERT INTO Agents_AgentVersions (
@@ -192,9 +196,9 @@ func insertAgentVersionTx(tx *sqlx.Tx, agentID string, version int, snapshot llm
 		meta.RestoredFromVersion,
 		marshalJSONSlice(changed),
 	); err != nil {
-		return fmt.Errorf("failed to insert version %d of agent %q: %w", version, agentID, err)
+		return "", fmt.Errorf("failed to insert version %d of agent %q: %w", version, agentID, err)
 	}
-	return nil
+	return string(configJSON), nil
 }
 
 // latestAgentVersionTx returns the highest version number of agentID and its
@@ -241,25 +245,6 @@ func lockActiveAgentTx(tx *sqlx.Tx, agentID string) (*llm.BotConfig, error) {
 	return row.toBotConfig()
 }
 
-// ensureInitialAgentVersionTx records current (the locked, pre-write row) as
-// version 1 when the agent has no versions yet. It returns the latest
-// version number and that version's raw config JSON.
-func ensureInitialAgentVersionTx(tx *sqlx.Tx, current *llm.BotConfig) (int, string, error) {
-	latest, latestConfig, err := latestAgentVersionTx(tx, current.ID)
-	if err != nil || latest > 0 {
-		return latest, latestConfig, err
-	}
-	snapshot := agentVersionSnapshot(current)
-	if err = insertAgentVersionTx(tx, current.ID, 1, snapshot, AgentVersionMeta{Source: AgentVersionSourceInitial}, nil, current.UpdateAt); err != nil {
-		return 0, "", err
-	}
-	configJSON, err := json.Marshal(snapshot)
-	if err != nil {
-		return 0, "", fmt.Errorf("failed to marshal agent version config: %w", err)
-	}
-	return 1, string(configJSON), nil
-}
-
 // ensureCurrentAgentVersionTx makes sure the latest version of current (the
 // locked, pre-write row) records that row. An agent without versions gets
 // version 1 (source "initial"); one whose row differs from its latest
@@ -273,50 +258,86 @@ func ensureCurrentAgentVersionTx(tx *sqlx.Tx, current *llm.BotConfig) (int, stri
 	if err != nil {
 		return 0, "", false, err
 	}
-	if latest == 0 {
-		latest, latestConfig, err = ensureInitialAgentVersionTx(tx, current)
-		return latest, latestConfig, err == nil, err
-	}
 
 	snapshot := agentVersionSnapshot(current)
-	changed := changedVersionFields(latestConfig, snapshot)
-	if len(changed) == 0 {
-		return latest, latestConfig, false, nil
+	meta := AgentVersionMeta{Source: AgentVersionSourceInitial}
+	var changed []string
+	if latest > 0 {
+		changed = changedVersionFields(latestConfig, snapshot)
+		if len(changed) == 0 {
+			return latest, latestConfig, false, nil
+		}
+		meta = SystemAgentVersionMeta()
 	}
-	if err = insertAgentVersionTx(tx, current.ID, latest+1, snapshot, SystemAgentVersionMeta(), changed, current.UpdateAt); err != nil {
+	configJSON, err := insertAgentVersionTx(tx, current.ID, latest+1, snapshot, meta, changed, current.UpdateAt)
+	if err != nil {
 		return 0, "", false, err
 	}
-	configJSON, err := json.Marshal(snapshot)
-	if err != nil {
-		return 0, "", false, fmt.Errorf("failed to marshal agent version config: %w", err)
-	}
-	return latest + 1, string(configJSON), true, nil
+	return latest + 1, configJSON, true, nil
 }
 
-// ListAgentVersions returns the versions of agentID, newest first. Deleted
-// agents keep their versions; callers gate access on the agent itself.
-func (s *Store) ListAgentVersions(agentID string) ([]AgentVersion, error) {
-	var rows []agentVersionRow
-	err := s.db.Select(&rows,
-		`SELECT Version, CreatedBy, CreateAt, Source, RestoredFromVersion, ChangedFields
-		FROM Agents_AgentVersions
-		WHERE AgentID = $1
-		ORDER BY Version DESC`,
-		agentID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list versions of agent %q: %w", agentID, err)
+// AgentVersionPage is one page of an agent's versions, newest first.
+type AgentVersionPage struct {
+	// CurrentVersion is the agent's latest version number whatever page this
+	// is, or 0 when it has no versions.
+	CurrentVersion int            `json:"currentVersion"`
+	Versions       []AgentVersion `json:"versions"`
+	// HasMore reports whether versions older than this page exist.
+	HasMore bool `json:"hasMore"`
+}
+
+// ListAgentVersions returns up to limit versions of agentID older than
+// before (no upper bound when before is 0), newest first. Callers gate access
+// on the agent itself.
+func (s *Store) ListAgentVersions(agentID string, before, limit int) (AgentVersionPage, error) {
+	if limit < 1 {
+		return AgentVersionPage{}, fmt.Errorf("invalid agent version page size %d", limit)
+	}
+	if before <= 0 {
+		before = math.MaxInt32
 	}
 
-	versions := make([]AgentVersion, 0, len(rows))
+	var rows []struct {
+		agentVersionRow
+		CurrentVersion int `db:"currentversion"`
+	}
+	err := s.db.Select(&rows,
+		`SELECT Version, CreatedBy, CreateAt, Source, RestoredFromVersion, ChangedFields,
+			(SELECT MAX(Version) FROM Agents_AgentVersions WHERE AgentID = $1) AS CurrentVersion
+		FROM Agents_AgentVersions
+		WHERE AgentID = $1 AND Version < $2
+		ORDER BY Version DESC
+		LIMIT $3`,
+		agentID, before, limit+1,
+	)
+	if err != nil {
+		return AgentVersionPage{}, fmt.Errorf("failed to list versions of agent %q: %w", agentID, err)
+	}
+
+	page := AgentVersionPage{Versions: make([]AgentVersion, 0, min(len(rows), limit))}
+	if len(rows) > limit {
+		page.HasMore = true
+		rows = rows[:limit]
+	}
 	for i := range rows {
 		v, parseErr := rows[i].toAgentVersion()
 		if parseErr != nil {
-			return nil, parseErr
+			return AgentVersionPage{}, parseErr
 		}
-		versions = append(versions, v)
+		page.Versions = append(page.Versions, v)
 	}
-	return versions, nil
+
+	if len(rows) > 0 {
+		page.CurrentVersion = rows[0].CurrentVersion
+		return page, nil
+	}
+	if err := s.db.Get(&page.CurrentVersion,
+		`SELECT COALESCE(MAX(Version), 0) FROM Agents_AgentVersions WHERE AgentID = $1`,
+		agentID,
+	); err != nil {
+		return AgentVersionPage{}, fmt.Errorf("failed to get current version of agent %q: %w", agentID, err)
+	}
+	return page, nil
 }
 
 // GetAgentVersion returns one version of agentID with its configuration
@@ -348,20 +369,6 @@ func (s *Store) GetAgentVersion(agentID string, version int) (*AgentVersionDetai
 		detail.Config.Documents = []llm.AgentDocument{}
 	}
 	return detail, nil
-}
-
-// GetLatestAgentVersion returns the current (highest) version number of
-// agentID, or 0 when it has no versions.
-func (s *Store) GetLatestAgentVersion(agentID string) (int, error) {
-	var latest int
-	err := s.db.Get(&latest,
-		`SELECT COALESCE(MAX(Version), 0) FROM Agents_AgentVersions WHERE AgentID = $1`,
-		agentID,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("failed to get latest version of agent %q: %w", agentID, err)
-	}
-	return latest, nil
 }
 
 // BackfillAgentVersions makes the latest version of every active agent
@@ -413,15 +420,137 @@ func (s *Store) backfillAgentVersion(agentID string) (wrote bool, err error) {
 		return false, tx.Rollback()
 	}
 	// Another node that got here first leaves nothing to write.
-	_, _, wrote, err = ensureCurrentAgentVersionTx(tx, current)
+	latest, _, wrote, err := ensureCurrentAgentVersionTx(tx, current)
 	if err != nil {
 		return false, err
 	}
 	if !wrote {
 		return false, tx.Rollback()
 	}
+	if err = s.pruneAgentVersionsTx(tx, agentID, latest); err != nil {
+		return false, err
+	}
 	if err = tx.Commit(); err != nil {
 		return false, fmt.Errorf("failed to commit agent version backfill: %w", err)
 	}
 	return true, nil
+}
+
+// ErrCurrentAgentVersion is returned for a request to delete an agent's
+// current version, which holds its live configuration.
+var ErrCurrentAgentVersion = errors.New("the current version of an agent cannot be deleted")
+
+// SetAgentVersionsToKeep sets how many versions of each agent are kept: older
+// versions are deleted whenever a new version is written and by
+// PruneAgentVersions. 0 or less keeps every version.
+func (s *Store) SetAgentVersionsToKeep(n int) {
+	s.agentVersionsToKeep.Store(int64(max(n, 0)))
+}
+
+// pruneAgentVersionsTx deletes the versions of agentID that fall outside the
+// number to keep, given its latest version.
+func (s *Store) pruneAgentVersionsTx(tx *sqlx.Tx, agentID string, latest int) error {
+	keep := s.agentVersionsToKeep.Load()
+	if keep <= 0 || int64(latest) <= keep {
+		return nil
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM Agents_AgentVersions WHERE AgentID = $1 AND Version <= $2`,
+		agentID, int64(latest)-keep,
+	); err != nil {
+		return fmt.Errorf("failed to prune versions of agent %q: %w", agentID, err)
+	}
+	return nil
+}
+
+// PruneAgentVersions deletes, for every agent, the versions that fall outside
+// the number to keep, and returns how many it deleted. It is a single
+// statement, so it is safe to run concurrently with writes and on several
+// nodes: a concurrent write only raises an agent's latest version, so nothing
+// within the number to keep is ever deleted.
+func (s *Store) PruneAgentVersions() (int64, error) {
+	keep := s.agentVersionsToKeep.Load()
+	if keep <= 0 {
+		return 0, nil
+	}
+	result, err := s.db.Exec(
+		`DELETE FROM Agents_AgentVersions v
+		USING (SELECT AgentID, MAX(Version) AS Latest FROM Agents_AgentVersions GROUP BY AgentID) latest
+		WHERE v.AgentID = latest.AgentID AND v.Version <= latest.Latest - $1`,
+		keep,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("failed to prune agent versions: %w", err)
+	}
+	return result.RowsAffected()
+}
+
+// DeleteAgentVersions permanently deletes the given versions of agentID and
+// returns how many existed. Versions that do not exist are skipped, and
+// ErrCurrentAgentVersion is returned, deleting nothing, when versions
+// includes the current version.
+func (s *Store) DeleteAgentVersions(agentID string, versions []int) (int64, error) {
+	return s.deleteAgentVersions(agentID, func(current int) (sq.Sqlizer, error) {
+		if slices.Contains(versions, current) {
+			return nil, ErrCurrentAgentVersion
+		}
+		return sq.Eq{"Version": versions}, nil
+	})
+}
+
+// DeletePreviousAgentVersions permanently deletes every version of agentID
+// except the current one and returns how many it deleted.
+func (s *Store) DeletePreviousAgentVersions(agentID string) (int64, error) {
+	return s.deleteAgentVersions(agentID, func(current int) (sq.Sqlizer, error) {
+		return sq.Lt{"Version": current}, nil
+	})
+}
+
+// deleteAgentVersions deletes the versions of agentID that match the filter
+// built from its current version, holding the agent row lock that UpdateAgent
+// takes so the current version cannot change underneath.
+func (s *Store) deleteAgentVersions(agentID string, filter func(current int) (sq.Sqlizer, error)) (deleted int64, err error) {
+	tx, err := s.db.Beginx()
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin agent version delete transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	agent, err := lockActiveAgentTx(tx, agentID)
+	if err != nil {
+		return 0, err
+	}
+	if agent == nil {
+		return 0, fmt.Errorf("agent %q not found or already deleted", agentID)
+	}
+	current, _, err := latestAgentVersionTx(tx, agentID)
+	if err != nil {
+		return 0, err
+	}
+	versions, err := filter(current)
+	if err != nil {
+		return 0, err
+	}
+	query, args, err := s.builder.Delete("Agents_AgentVersions").
+		Where(sq.Eq{"AgentID": agentID}).
+		Where(versions).
+		ToSql()
+	if err != nil {
+		return 0, fmt.Errorf("failed to build agent version delete query: %w", err)
+	}
+	result, err := tx.Exec(query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete versions of agent %q: %w", agentID, err)
+	}
+	if deleted, err = result.RowsAffected(); err != nil {
+		return 0, fmt.Errorf("failed to count deleted versions of agent %q: %w", agentID, err)
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit agent version delete: %w", err)
+	}
+	return deleted, nil
 }

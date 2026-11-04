@@ -4,8 +4,10 @@
 package tools
 
 import (
+	"context"
 	"fmt"
-	"sort"
+	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
@@ -22,7 +24,7 @@ type GetUserArgs struct {
 
 // GetUserByUsernameArgs represents arguments for the get_user_by_username tool.
 type GetUserByUsernameArgs struct {
-	Username string `json:"username" jsonschema:"The username (without @),minLength=1"`
+	Username string `json:"username" jsonschema:"The username (without @). A user ID is also accepted.,minLength=1"`
 }
 
 // GetUserByEmailArgs represents arguments for the get_user_by_email tool.
@@ -63,7 +65,7 @@ type UpdateUserArgs struct {
 const (
 	getMeDescription               = "Get the authenticated agent/bot's own user profile (current user). No parameters."
 	getUserDescription             = "Get a single user's full profile by ID. Parameters: user_id (required)."
-	getUserByUsernameDescription   = "Get a user's profile by username. Parameters: username (required, without @)."
+	getUserByUsernameDescription   = "Get a user's profile by username. Parameters: username (required, without @; a user ID is also accepted)."
 	getUserByEmailDescription      = "Get a user's profile by email. Parameters: email (required)."
 	getUsersByIDsDescription       = "Batch-fetch user profiles by a list of IDs. Parameters: user_ids (required list)."
 	getUsersByUsernamesDescription = "Batch-fetch user profiles by a list of usernames. Parameters: usernames (required list, without @)."
@@ -110,15 +112,56 @@ func (p *MattermostToolProvider) toolGetUser(mcpContext *MCPToolContext, args Ge
 	return formatSingleUser(user), nil
 }
 
+// getUserByUsernameOrID resolves a user by username or, when the value is
+// shaped like a Mattermost ID, by user ID. Models sometimes pass a user ID
+// where a username is expected (e.g. from a scheduled prompt that embeds one).
+// A 26-character lowercase alphanumeric username is also a valid ID, so for
+// ID-shaped values both lookups run; if they resolve to different accounts the
+// call fails rather than letting a username squat on another user's ID.
+func getUserByUsernameOrID(ctx context.Context, client *model.Client4, value string) (*model.User, error) {
+	byName, nameResp, err := client.GetUserByUsername(ctx, value, "")
+	if !model.IsValidId(value) {
+		if err != nil {
+			return nil, fmt.Errorf("error getting user by username %q: %w", value, err)
+		}
+		return byName, nil
+	}
+
+	// Only a confirmed not-found counts as an absent candidate; any other
+	// failure could hide a collision, so it is returned as is.
+	byID, idResp, idErr := client.GetUser(ctx, value, "")
+	if err != nil && !isNotFound(nameResp) {
+		return nil, fmt.Errorf("error getting user by username %q: %w", value, err)
+	}
+	if idErr != nil && !isNotFound(idResp) {
+		return nil, fmt.Errorf("error getting user by ID %q: %w", value, idErr)
+	}
+
+	switch {
+	case err == nil && idErr == nil && byName.Id != byID.Id:
+		return nil, fmt.Errorf("%q is ambiguous: it is the username of one user and the ID of another; ask the user which account they mean", value)
+	case idErr == nil:
+		return byID, nil
+	case err == nil:
+		return byName, nil
+	default:
+		return nil, fmt.Errorf("error getting user by username %q: %w", value, err)
+	}
+}
+
+func isNotFound(resp *model.Response) bool {
+	return resp != nil && resp.StatusCode == http.StatusNotFound
+}
+
 // toolGetUserByUsername implements the get_user_by_username tool.
 func (p *MattermostToolProvider) toolGetUserByUsername(mcpContext *MCPToolContext, args GetUserByUsernameArgs) (string, error) {
 	username := strings.TrimPrefix(strings.TrimSpace(args.Username), "@")
 	if username == "" {
 		return "", fmt.Errorf("username cannot be empty")
 	}
-	user, _, err := mcpContext.Client.GetUserByUsername(mcpContext.Ctx, username, "")
+	user, err := getUserByUsernameOrID(mcpContext.Ctx, mcpContext.Client, username)
 	if err != nil {
-		return "", fmt.Errorf("error fetching user by username: %w", err)
+		return "", err
 	}
 	return formatSingleUser(user), nil
 }
@@ -188,7 +231,7 @@ func (p *MattermostToolProvider) toolGetUserCPAValues(mcpContext *MCPToolContext
 	for fieldID := range values {
 		fieldIDs = append(fieldIDs, fieldID)
 	}
-	sort.Strings(fieldIDs)
+	slices.Sort(fieldIDs)
 
 	var result strings.Builder
 	fmt.Fprintf(&result, "Custom Profile Attribute (CPA) values for user %s:\n", args.UserID)

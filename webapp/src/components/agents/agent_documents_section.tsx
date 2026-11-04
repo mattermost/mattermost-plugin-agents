@@ -5,20 +5,23 @@ import React, {useMemo, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {Button} from '@mattermost/compass-ui/components/button';
+import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
+import {TextInput} from '@mattermost/compass-ui/components/text-input';
+
 import {AgentDocument, MaxAgentDocumentBytes, MaxAgentDocuments, MaxAgentDocumentsTextRunes} from '@/types/agents';
-import {TertiaryButton} from '@/components/assets/buttons';
+
 import {
-    FieldErrorText,
     FormRow,
     HelpText,
     ItemLabel,
-    StyledInput,
     TextFieldContainer,
 } from '@/components/system_console/item';
 import {downloadAgentDocument} from '@/utils/download_agent_document';
 
 import {
     AgentDocumentAccept,
+    PendingAgentDocument,
     documentNameError,
     documentTypeLabel,
     formatDocumentSize,
@@ -29,6 +32,10 @@ import type {DocumentUploadItem} from './use_agent_document_uploads';
 type Props = {
     documents: AgentDocument[];
     uploads: DocumentUploadItem[];
+
+    /** Imported documents that are uploaded when the agent is saved. */
+    pending?: PendingAgentDocument[];
+    onRemovePending?: (key: string) => void;
 
     /** Set for existing agents; downloads need a saved agent. */
     agentId?: string;
@@ -42,7 +49,7 @@ type Props = {
 }
 
 const AgentDocumentsSection = (props: Props) => {
-    const {documents, uploads, agentId, savedDocumentIds, error, onChange, onUpload, onDismissUpload} = props;
+    const {documents, uploads, pending = [], onRemovePending, agentId, savedDocumentIds, error, onChange, onUpload, onDismissUpload} = props;
     const intl = useIntl();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -121,7 +128,7 @@ const AgentDocumentsSection = (props: Props) => {
                 {intl.formatMessage({defaultMessage: 'Reference documents'})}
             </SectionLabel>
             <TextFieldContainer>
-                {error && <FieldErrorText role='alert'>{error}</FieldErrorText>}
+                {error && <ErrorMessage message={error}/>}
 
                 {documents.length > 0 && (
                     <DocumentList aria-label={intl.formatMessage({defaultMessage: 'Reference documents'})}>
@@ -133,7 +140,7 @@ const AgentDocumentsSection = (props: Props) => {
                                     <DocumentMain>
                                         {renaming ? (
                                             <RenameRow>
-                                                <StyledInput
+                                                <TextInput
                                                     autoFocus={true}
                                                     aria-label={intl.formatMessage({defaultMessage: 'Document name'})}
                                                     value={renameValue}
@@ -167,7 +174,7 @@ const AgentDocumentsSection = (props: Props) => {
                                         ) : (
                                             <DocumentName title={doc.name}>{doc.name}</DocumentName>
                                         )}
-                                        {renaming && renameError && <FieldErrorText role='alert'>{renameError}</FieldErrorText>}
+                                        {renaming && renameError && <ErrorMessage message={renameError}/>}
                                         <DocumentMeta>
                                             {[
                                                 documentTypeLabel(intl, doc),
@@ -224,7 +231,7 @@ const AgentDocumentsSection = (props: Props) => {
                                             <FormattedMessage defaultMessage='Uploading...'/>
                                         </DocumentMeta>
                                     ) : (
-                                        <FieldErrorText role='alert'>{item.error}</FieldErrorText>
+                                        <ErrorMessage message={item.error}/>
                                     )}
                                 </DocumentMain>
                                 {item.status === 'error' && (
@@ -243,15 +250,44 @@ const AgentDocumentsSection = (props: Props) => {
                     </DocumentList>
                 )}
 
-                {downloadError && <FieldErrorText role='alert'>{downloadError}</FieldErrorText>}
+                {pending.length > 0 && (
+                    <DocumentList aria-label={intl.formatMessage({defaultMessage: 'Imported documents'})}>
+                        {pending.map((item) => (
+                            <DocumentRow key={item.key}>
+                                <DocumentMain>
+                                    <DocumentName title={item.name}>{item.name}</DocumentName>
+                                    <DocumentMeta>
+                                        {[
+                                            documentTypeLabel(intl, item),
+                                            formatDocumentSize(intl, item.size),
+                                            intl.formatMessage({defaultMessage: 'Uploaded when you save'}),
+                                        ].join(' · ')}
+                                    </DocumentMeta>
+                                </DocumentMain>
+                                <DocumentActions>
+                                    <RowButton
+                                        type='button'
+                                        aria-label={intl.formatMessage({defaultMessage: 'Remove {name}'}, {name: item.name})}
+                                        onClick={() => onRemovePending?.(item.key)}
+                                    >
+                                        <FormattedMessage defaultMessage='Remove'/>
+                                    </RowButton>
+                                </DocumentActions>
+                            </DocumentRow>
+                        ))}
+                    </DocumentList>
+                )}
+
+                {downloadError && <ErrorMessage message={downloadError}/>}
 
                 <UploadRow>
-                    <TertiaryButton
+                    <Button
+                        emphasis='tertiary'
                         type='button'
                         onClick={() => fileInputRef.current?.click()}
                     >
                         <FormattedMessage defaultMessage='Upload documents'/>
-                    </TertiaryButton>
+                    </Button>
                     <HiddenFileInput
                         ref={fileInputRef}
                         type='file'

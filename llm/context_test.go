@@ -36,6 +36,66 @@ func TestContext_SetBotFields(t *testing.T) {
 	assert.Equal(t, "Be helpful and concise", c.CustomInstructions)
 }
 
+func TestContextToolCallability(t *testing.T) {
+	tests := []struct {
+		name                string
+		tools               []string
+		disabled            []string
+		wantCallable        []string
+		wantDisabled        []string
+		wantNotCallableTool string
+	}{
+		{
+			name:                "every cataloged tool is callable",
+			tools:               []string{"b_tool", "a_tool"},
+			wantCallable:        []string{"a_tool", "b_tool"},
+			wantNotCallableTool: "missing_tool",
+		},
+		{
+			name:                "disabled tools are not callable",
+			tools:               []string{"a_tool", "b_tool", "c_tool"},
+			disabled:            []string{"a_tool", "uncataloged", "c_tool"},
+			wantCallable:        []string{"b_tool"},
+			wantDisabled:        []string{"a_tool", "uncataloged", "c_tool"},
+			wantNotCallableTool: "c_tool",
+		},
+		{
+			name:                "a tool disabled twice is listed once",
+			tools:               []string{"a_tool"},
+			disabled:            []string{"a_tool", "a_tool"},
+			wantDisabled:        []string{"a_tool"},
+			wantNotCallableTool: "a_tool",
+		},
+	}
+
+	names := func(infos []ToolInfo) []string {
+		var result []string
+		for _, info := range infos {
+			result = append(result, info.Name)
+		}
+		return result
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Context{Tools: NewToolStore()}
+			for _, name := range tt.tools {
+				c.Tools.AddTools([]Tool{{Name: name}})
+			}
+			for _, name := range tt.disabled {
+				c.DisableTools(ToolInfo{Name: name})
+			}
+
+			assert.Equal(t, tt.wantCallable, names(c.CallableToolsInfo()))
+			assert.Equal(t, tt.wantDisabled, names(c.DisabledTools))
+			for _, name := range tt.wantCallable {
+				assert.True(t, c.IsToolCallable(name), name)
+			}
+			assert.False(t, c.IsToolCallable(tt.wantNotCallableTool))
+		})
+	}
+}
+
 func TestContext_CustomPromptVars(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -437,6 +437,95 @@ func TestCheckUsageRestrictionsForChannel(t *testing.T) {
 	}
 }
 
+func TestTeamMemberActive(t *testing.T) {
+	const (
+		teamID = "team1"
+		userID = "user1"
+	)
+
+	testCases := []struct {
+		name       string
+		member     *model.TeamMember
+		appErr     *model.AppError
+		wantActive bool
+		wantErr    bool
+	}{
+		{
+			name:       "current membership",
+			member:     &model.TeamMember{TeamId: teamID, UserId: userID},
+			wantActive: true,
+		},
+		{
+			name:   "membership no longer current",
+			member: &model.TeamMember{TeamId: teamID, UserId: userID, DeleteAt: 1700000000000},
+		},
+		{
+			name:   "no membership",
+			appErr: &model.AppError{Message: "not found", StatusCode: http.StatusNotFound},
+		},
+		{
+			name:    "lookup failure is reported",
+			appErr:  &model.AppError{Message: "store unavailable", StatusCode: http.StatusInternalServerError},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.mockAPI.On("GetTeamMember", teamID, userID).Return(tc.member, tc.appErr)
+
+			active, err := TeamMemberActive(e.client, teamID, userID)
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, tc.wantActive, active)
+		})
+	}
+}
+
+// TestUsageRestrictionsForUserConfigTeamLookupFailure pins the fail-closed
+// behavior of the team-scoped access levels: a membership lookup that fails
+// must not be read as an answer in either direction.
+func TestUsageRestrictionsForUserConfigTeamLookupFailure(t *testing.T) {
+	testCases := []struct {
+		name string
+		cfg  llm.BotConfig
+	}{
+		{
+			name: "allow list scoped to a team",
+			cfg: llm.BotConfig{
+				UserAccessLevel: llm.UserAccessLevelAllow,
+				TeamIDs:         []string{"team1"},
+			},
+		},
+		{
+			name: "block list scoped to a team",
+			cfg: llm.BotConfig{
+				UserAccessLevel: llm.UserAccessLevelBlock,
+				TeamIDs:         []string{"team1"},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.mockAPI.On("GetTeamMember", "team1", "user1").Return(
+				nil, &model.AppError{Message: "store unavailable", StatusCode: http.StatusInternalServerError},
+			)
+
+			require.Error(t, UsageRestrictionsForUserConfig(e.client, tc.cfg, "user1"))
+		})
+	}
+}
+
 func TestCheckUsageRestrictionsForUserConfigParity(t *testing.T) {
 	e := SetupTestEnvironment(t)
 	defer e.Cleanup(t)
@@ -528,8 +617,13 @@ func abacDeny() *model.AccessDecision  { return &model.AccessDecision{Decision: 
 
 func setupABACTestEnvironment(t *testing.T, stub abacStubClient) *TestEnvironment {
 	t.Helper()
+	return setupABACTestEnvironmentAtLevel(t, stub, enterprise.LevelEnterpriseAdvanced)
+}
+
+func setupABACTestEnvironmentAtLevel(t *testing.T, stub abacStubClient, level enterprise.Level) *TestEnvironment {
+	t.Helper()
 	mockAPI := &plugintest.API{}
-	enterprisetest.StubLicense(mockAPI, enterprise.LevelEnterpriseAdvanced)
+	enterprisetest.StubLicense(mockAPI, level)
 	client := pluginapi.NewClient(mockAPI, nil)
 	checker := accesscontrol.New(stub, nil, accesscontrol.NoMCPServerIDs, nil)
 	mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), nil, nil, checker, &http.Client{}, nil)

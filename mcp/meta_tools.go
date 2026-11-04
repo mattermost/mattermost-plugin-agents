@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -73,7 +75,7 @@ func NewMetaTools(registry *ToolRegistry) []llm.Tool {
 }
 
 func searchToolsResolver(registry *ToolRegistry) llm.ToolResolver {
-	return func(_ context.Context, llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+	return func(ctx context.Context, llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 		observe := func(result string) {
 			if llmContext != nil {
 				llmContext.ObserveMCPDynamicToolEvent("search", result)
@@ -104,13 +106,20 @@ func searchToolsResolver(registry *ToolRegistry) llm.ToolResolver {
 		} else {
 			observe("success")
 		}
+		// Record which tools were offered (names only; the query is an
+		// argument and stays out of the span).
+		names := make([]string, 0, len(items))
+		for _, item := range items {
+			names = append(names, item.Name)
+		}
+		trace.SpanFromContext(ctx).SetAttributes(telemetry.ToolReturnedNames.StringSlice(names))
 
 		return marshalMetaToolResult(SearchToolsResult{Tools: items})
 	}
 }
 
 func loadToolResolver(registry *ToolRegistry) llm.ToolResolver {
-	return func(_ context.Context, llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+	return func(ctx context.Context, llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 		observe := func(result string) {
 			if llmContext != nil {
 				llmContext.ObserveMCPDynamicToolEvent("load", result)
@@ -148,6 +157,7 @@ func loadToolResolver(registry *ToolRegistry) llm.ToolResolver {
 		if len(loaded) == 1 {
 			llmContext.MarkMCPDynamicToolLoaded(loaded[0].Name)
 			observe("loaded")
+			trace.SpanFromContext(ctx).SetAttributes(telemetry.ToolLoadedName.String(loaded[0].Name))
 			return marshalMetaToolResult(LoadToolResult{
 				Loaded: true,
 				Name:   loaded[0].Name,
@@ -158,6 +168,7 @@ func loadToolResolver(registry *ToolRegistry) llm.ToolResolver {
 		// Already-loaded tools are idempotent successes.
 		if existing := llmContext.Tools.GetTool(name); existing != nil {
 			observe("loaded")
+			trace.SpanFromContext(ctx).SetAttributes(telemetry.ToolLoadedName.String(existing.Name))
 			return marshalMetaToolResult(LoadToolResult{
 				Loaded: true,
 				Name:   name,

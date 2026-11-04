@@ -10,11 +10,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/agentdocs"
-	"github.com/mattermost/mattermost-plugin-agents/v2/agentexport"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
@@ -149,6 +147,24 @@ func (a *API) resolveAgentDocuments(c *gin.Context, userID, agentID string, refs
 	return docs, true
 }
 
+// canCreateOrManageAnyAgent reports whether userID may create agents or
+// manages at least one agent.
+func (a *API) canCreateOrManageAnyAgent(userID string) (bool, error) {
+	if canCreateAgent(a.pluginAPI, userID) {
+		return true, nil
+	}
+	agents, err := a.agentStore.ListAgents()
+	if err != nil {
+		return false, fmt.Errorf("failed to list agents: %w", err)
+	}
+	for _, agent := range agents {
+		if canManageAgent(a.pluginAPI, agent, userID) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // handleUploadAgentDocument handles POST /agents/documents (multipart field
 // "file"): validates the file, extracts its text and stores it for the
 // caller to reference from an agent they create or manage. It is not
@@ -242,69 +258,6 @@ func extractAgentDocument(c *gin.Context, rawName, mimeType string, data []byte,
 		ExtractedText: text,
 		CreatedBy:     userID,
 	}, true
-}
-
-// storeImportedDocuments extracts and stores the documents of an import
-// document for userID and returns the references to save on the agent, in
-// document order. Documents with the same content and type are stored once
-// for userID, so only the first of them is referenced, with its name. The
-// extracted-text budget is checked before anything is stored. It writes the
-// abort response and returns false on failure.
-func (a *API) storeImportedDocuments(c *gin.Context, userID string, docs []agentexport.AgentDocument) ([]AgentDocumentRef, bool) {
-	extracted := make([]*store.AgentDocument, 0, len(docs))
-	budget := make([]llm.AgentDocument, 0, len(docs))
-	for _, doc := range docs {
-		stored, ok := extractAgentDocument(c, doc.Name, doc.MimeType, doc.Content, userID)
-		if !ok {
-			return nil, false
-		}
-		extracted = append(extracted, stored)
-		budget = append(budget, llm.AgentDocument{Size: int64(len(stored.Content)), TextRunes: utf8.RuneCountInString(stored.ExtractedText)})
-	}
-	if err := checkAgentDocumentLimits(budget); err != nil {
-		abortAgentRequest(c, http.StatusBadRequest, err)
-		return nil, false
-	}
-
-	refs := make([]AgentDocumentRef, 0, len(extracted))
-	seen := make(map[string]bool, len(extracted))
-	for _, doc := range extracted {
-		if err := a.agentStore.SaveAgentDocument(doc); err != nil {
-			abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to save document: %w", err))
-			return nil, false
-		}
-		if seen[doc.ID] {
-			continue
-		}
-		seen[doc.ID] = true
-		refs = append(refs, AgentDocumentRef{ID: doc.ID, Name: doc.Name})
-	}
-	return refs, true
-}
-
-// exportAgentDocuments loads the content of cfg's documents for an export.
-// It writes the abort response and returns false on failure.
-func (a *API) exportAgentDocuments(c *gin.Context, cfg *llm.BotConfig) ([]agentexport.AgentDocument, bool) {
-	docs := make([]agentexport.AgentDocument, 0, len(cfg.Documents))
-	for _, ref := range cfg.Documents {
-		stored, err := a.agentStore.GetAgentDocument(ref.ID)
-		if err != nil {
-			abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to load document %q: %w", ref.ID, err))
-			return nil, false
-		}
-		if stored == nil {
-			abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("document %q of agent %q is missing", ref.ID, cfg.ID))
-			return nil, false
-		}
-		docs = append(docs, agentexport.AgentDocument{
-			Name:     ref.Name,
-			MimeType: stored.MimeType,
-			Size:     stored.Size,
-			SHA256:   stored.SHA256,
-			Content:  stored.Content,
-		})
-	}
-	return docs, true
 }
 
 // loadManageableAgentDocument loads the :documentid document of the

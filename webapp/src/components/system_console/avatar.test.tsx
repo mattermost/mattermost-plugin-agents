@@ -106,7 +106,7 @@ describe('AvatarItem', () => {
             expect(getBotProfilePictureUrl).toHaveBeenCalledWith('newbot');
         });
 
-        expect(screen.getByRole('img').getAttribute('src')).toBe(aiIcon);
+        expect(screen.getByRole('img', {name: 'Bot avatar'}).getAttribute('src')).toBe(aiIcon);
     });
 
     it('keeps the placeholder when the avatar fetch rejects (no unhandled rejection)', async () => {

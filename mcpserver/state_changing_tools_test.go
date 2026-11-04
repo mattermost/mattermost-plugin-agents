@@ -20,10 +20,8 @@ import (
 func newTestInMemoryServer(t *testing.T, allowStateChangingTools func() bool) *mcpserver.MattermostInMemoryMCPServer {
 	t.Helper()
 	config := mcpserver.InMemoryConfig{
-		BaseConfig: mcpserver.BaseConfig{
-			MMServerURL: "http://localhost:8065",
-			DevMode:     false,
-		},
+		MMServerURL: "http://localhost:8065",
+		DevMode:     false,
 	}
 	server, err := mcpserver.NewInMemoryServer(config, &testLogger{t: t}, nil, nil, allowStateChangingTools)
 	require.NoError(t, err)

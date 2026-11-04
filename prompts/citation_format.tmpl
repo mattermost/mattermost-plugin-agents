@@ -12,7 +12,7 @@ The format is: `[permalink](<URL>?view=citation)`
 DO NOT output the raw URL. ALWAYS wrap it in a markdown link with the text "permalink".
 
 To cite a specific post:
-[permalink]({{.SiteURL}}/{{if .Team}}{{.Team.Name}}{{else}}_redirect{{end}}/pl/<post_id>?view=citation)
+[permalink]({{.SiteURL}}/_redirect/pl/<post_id>?view=citation)
 
 To cite a channel:
 [permalink]({{.SiteURL}}/{{if .Team}}{{.Team.Name}}{{else}}_redirect{{end}}/channels/<channel_name>?view=citation)
@@ -21,6 +21,6 @@ To cite a team:
 [permalink]({{.SiteURL}}/{{if .Team}}{{.Team.Name}}{{else}}_redirect{{end}}?view=citation)
 
 
-For example, if you return the text "John smith was sad no one attended his birthday party.", from post with ID abc123, on team 'missionops', where site URL is https://your-mattermost-url, your result should look like this:
+For example, if you return the text "John smith was sad no one attended his birthday party.", from post with ID abc123, where site URL is https://your-mattermost-url, your result should look like this:
 
-John Smith was sad no one attended his birthday party. [permalink](https://your-mattermost-url/missionops/pl/abc123?view=citation)
+John Smith was sad no one attended his birthday party. [permalink](https://your-mattermost-url/_redirect/pl/abc123?view=citation)

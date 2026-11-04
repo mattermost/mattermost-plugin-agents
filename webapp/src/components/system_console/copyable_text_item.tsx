@@ -6,7 +6,13 @@ import styled from 'styled-components';
 import {CheckIcon, ContentCopyIcon} from '@mattermost/compass-icons/components';
 import {useIntl} from 'react-intl';
 
-import {HelpText, ItemLabel, StyledInput, TextFieldContainer} from './item';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {TextInput} from '@mattermost/compass-ui/components/text-input';
+
+import {copyToClipboard} from '@/utils/clipboard';
+
+import {FormRow, HelpText, ItemLabel, TextFieldContainer} from './item';
 
 export type CopyableTextItemProps = {
     label: string;
@@ -28,21 +34,14 @@ export const CopyableTextItem = (props: CopyableTextItemProps) => {
     }, []);
 
     const handleCopy = async () => {
-        try {
-            if (!navigator.clipboard?.writeText) {
-                return;
-            }
-
-            await navigator.clipboard.writeText(props.value);
-            setCopied(true);
-            if (copyResetTimer.current) {
-                clearTimeout(copyResetTimer.current);
-            }
-            copyResetTimer.current = setTimeout(() => setCopied(false), 2000);
-        } catch (e) {
-            // eslint-disable-next-line no-console
-            console.error('Failed to copy to clipboard:', e);
+        if (!await copyToClipboard(props.value)) {
+            return;
         }
+        setCopied(true);
+        if (copyResetTimer.current) {
+            clearTimeout(copyResetTimer.current);
+        }
+        copyResetTimer.current = setTimeout(() => setCopied(false), 2000);
     };
 
     const copyLabel = copied ?
@@ -50,31 +49,30 @@ export const CopyableTextItem = (props: CopyableTextItemProps) => {
         intl.formatMessage({id: 'aCdAsIsV', defaultMessage: 'Copy to clipboard'});
 
     return (
-        <>
+        <FormRow>
             <ItemLabel>{props.label}</ItemLabel>
             <TextFieldContainer>
                 <CopyableInputRow>
-                    <StyledInput
+                    <TextInput
                         type='text'
                         value={props.value}
                         readOnly={true}
                         aria-label={props.label}
                         onFocus={(e) => e.currentTarget.select()}
                     />
-                    <CopyButton
-                        type='button'
+                    <IconButton
+                        icon={<Icon glyph={copied ? <CheckIcon/> : <ContentCopyIcon/>}/>}
+                        size='small'
                         onClick={handleCopy}
                         aria-label={copyLabel}
                         title={copyLabel}
-                    >
-                        {copied ? <CheckIcon size={16}/> : <ContentCopyIcon size={16}/>}
-                    </CopyButton>
+                    />
                 </CopyableInputRow>
                 {props.helptext &&
                 <HelpText>{props.helptext}</HelpText>
                 }
             </TextFieldContainer>
-        </>
+        </FormRow>
     );
 };
 
@@ -82,34 +80,10 @@ const CopyableInputRow = styled.div`
 	display: flex;
 	flex-direction: row;
 	gap: 8px;
-	align-items: stretch;
+	align-items: center;
 
-	& > input {
+	& > div {
 		flex: 1 1 auto;
 		min-width: 0;
-	}
-`;
-
-const CopyButton = styled.button`
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	height: 35px;
-	min-width: 35px;
-	padding: 0 8px;
-	border-radius: 2px;
-	border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-	background: var(--center-channel-bg);
-	color: rgba(var(--center-channel-color-rgb), 0.72);
-	cursor: pointer;
-
-	&:hover {
-		background: rgba(var(--center-channel-color-rgb), 0.08);
-		color: var(--center-channel-color);
-	}
-
-	&:focus {
-		border-color: var(--button-bg);
-		outline: none;
 	}
 `;

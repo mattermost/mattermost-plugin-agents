@@ -23,14 +23,14 @@ export type EnabledTool = {
     tool_name: string; // tool identifier on that server
 }
 
+// Mirrors llm.MaxSkillDescriptionRunes on the backend; also caps per-agent overrides.
+export const MaxSkillDescriptionRunes = 1024;
+
 // Reference-document limits. Mirror the constants of the same meaning on the backend.
 export const MaxAgentDocuments = 20;
 export const MaxAgentDocumentBytes = 10 * 1024 * 1024;
 export const MaxAgentDocumentsTextRunes = 100000;
 export const MaxAgentDocumentNameLength = 256;
-
-// Largest agent file the import endpoints accept (preview and import bodies).
-export const MaxAgentImportFileBytes = 40 * 1024 * 1024;
 
 // AgentDocument matches llm.AgentDocument: a reference to an immutable, content-addressed
 // document blob. Extracted text and bytes are never part of the agent.
@@ -47,6 +47,27 @@ export type AgentDocument = {
 export type AgentDocumentReference = {
     id: string;
     name: string;
+}
+
+// SkillsConfig matches llm.SkillsConfig. Shared skills are opt-in per agent;
+// descriptionOverrides is keyed by skill ID.
+export type SkillsConfig = {
+    disabled: boolean;
+    allowPersonal: boolean;
+
+    // Server sends nil Go slices and maps as JSON null.
+    enabledSharedIDs: string[] | null;
+    descriptionOverrides: Record<string, string> | null;
+}
+
+// normalizeSkillsConfig fills in what older servers and snapshots omit.
+export function normalizeSkillsConfig(skills?: Partial<SkillsConfig> | null): SkillsConfig {
+    return {
+        disabled: skills?.disabled ?? false,
+        allowPersonal: skills?.allowPersonal ?? false,
+        enabledSharedIDs: [...(skills?.enabledSharedIDs ?? [])],
+        descriptionOverrides: {...(skills?.descriptionOverrides ?? {})},
+    };
 }
 
 // Mirrors config.AgentInactiveReason on the backend.
@@ -97,6 +118,9 @@ export type UserAgent = {
     thinkingBudget: number;
     maxToolTurns: number;
 
+    // Absent or null from servers that predate skills.
+    skills?: SkillsConfig | null;
+
     // Server sends nil Go slices as JSON null; absent on responses from older servers.
     documents?: AgentDocument[] | null;
 
@@ -109,6 +133,9 @@ export type UserAgent = {
 
     // Only on GET /agents; absent when the agent is running.
     inactiveReason?: AgentInactiveReason;
+
+    // Only on GET /agents: whether the current user may edit, export and delete the agent.
+    canManage?: boolean;
 
     // Admin / lifecycle metadata (omitempty on backend).
     botUserID?: string;
@@ -156,6 +183,10 @@ export type CreateAgentRequest = {
     reasoningEffort?: string;
     thinkingBudget?: number;
     maxToolTurns?: number;
+
+    // Required so payload builders can't silently drop it on full-replace PUT.
+    skills: SkillsConfig;
+
     documents?: AgentDocumentReference[];
 }
 
@@ -187,6 +218,7 @@ export type UpdateAgentRequest = {
     reasoningEffort?: string;
     thinkingBudget?: number;
     maxToolTurns?: number;
+    skills: SkillsConfig;
 
     // Full replace: an omitted or empty list removes every document.
     documents?: AgentDocumentReference[];
@@ -203,7 +235,7 @@ export type ServiceInfo = {
 }
 
 // Mirrors the Source column of the agent versions table on the backend.
-export type AgentVersionSource = 'initial' | 'create' | 'update' | 'restore' | 'import' | 'system';
+export type AgentVersionSource = 'initial' | 'create' | 'update' | 'restore' | 'system';
 
 // AgentVersionSummary is one entry of GET /agents/:id/versions (newest first).
 // changedFields holds BotConfig JSON keys (e.g. "customInstructions"); names only.
@@ -216,9 +248,12 @@ export type AgentVersionSummary = {
     changedFields: string[] | null;
 }
 
+// AgentVersionList is one page of GET /agents/:id/versions. currentVersion is
+// the agent's latest version on every page.
 export type AgentVersionList = {
     currentVersion: number;
     versions: AgentVersionSummary[];
+    hasMore: boolean;
 }
 
 // AgentVersionDetail is GET /agents/:id/versions/:version. config is the stored
@@ -228,16 +263,18 @@ export type AgentVersionDetail = AgentVersionSummary & {
 }
 
 export const AgentExportKind = 'mattermost-agent';
+export const AgentExportSchemaVersion = 2;
+export const AgentExportSchemaVersions = [1, AgentExportSchemaVersion];
 
-// MCP tool reference inside an export document. Matching on import is by serverOrigin.
+// MCP tool reference inside an export document. Imports match it to a server
+// on this instance by serverOrigin.
 export type AgentExportMCPTool = {
     serverOrigin: string;
-    serverName: string;
     toolName: string;
 }
 
-// A reference document inside a schemaVersion 2 export document; content is the
-// base64 of the original file bytes.
+// A reference document inside an export document; content is the base64 of the
+// original file bytes.
 export type AgentExportDocumentFile = {
     name: string;
     mimeType: string;
@@ -246,7 +283,8 @@ export type AgentExportDocumentFile = {
     content: string;
 }
 
-// The `agent` section of an export document (schemaVersion 1 has no documents).
+// The `agent` section of an export document: only configuration that means
+// the same thing on every server. Version 1 files have no documents.
 export type AgentExportAgent = {
     name: string;
     displayName: string;
@@ -256,69 +294,16 @@ export type AgentExportAgent = {
     mcpDynamicToolLoading: boolean;
     autoEnableNewMCPTools: boolean;
     mcpTools: AgentExportMCPTool[];
-    documents?: AgentExportDocumentFile[] | null;
+
+    // Skill IDs only resolve on the exporting server; elsewhere they match no skill.
+    skills: SkillsConfig;
+    documents?: AgentExportDocumentFile[];
 }
 
 export type AgentExportDocument = {
-    kind: string;
-    schemaVersion: 1 | 2;
+    kind: typeof AgentExportKind;
+    schemaVersion: number;
     exportedAt: number;
     agentVersion: number;
     agent: AgentExportAgent;
-}
-
-export type AgentImportMCPServer = {
-    sourceOrigin: string;
-    sourceName: string;
-    toolNames: string[];
-    autoTargetOrigin: string; // '' when no server on this instance matches
-}
-
-export type AgentImportAvailableMCPServer = {
-    origin: string;
-    name: string;
-}
-
-export type AgentImportExistingAgent = {
-    id: string;
-    displayName: string;
-    username: string;
-    canManage: boolean;
-}
-
-// Summary of one document in an import preview (no content).
-export type AgentImportPreviewDocument = {
-    name: string;
-    mimeType: string;
-    size: number;
-}
-
-export type AgentImportPreview = {
-
-    // Normalized echo of the file with document content stripped. Never send this to
-    // /agents/import; send the locally parsed file instead.
-    document: AgentExportDocument;
-    documents?: AgentImportPreviewDocument[] | null;
-    mcpServers: AgentImportMCPServer[] | null;
-    availableMCPServers: AgentImportAvailableMCPServer[] | null;
-    existingAgent?: AgentImportExistingAgent | null;
-}
-
-// targetOrigin '' means "remove these tools".
-export type AgentImportMCPServerMapping = {
-    sourceOrigin: string;
-    targetOrigin: string;
-}
-
-export type AgentImportMode = 'create' | 'update';
-
-export type AgentImportRequest = {
-    document: AgentExportDocument;
-    mode: AgentImportMode;
-    agentID?: string;
-    username?: string;
-    displayName?: string;
-    serviceID?: string;
-    model?: string;
-    mcpServerMappings: AgentImportMCPServerMapping[];
 }

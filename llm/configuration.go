@@ -228,17 +228,20 @@ type BotConfig struct {
 	ReasoningEnabled bool `json:"reasoningEnabled"`
 
 	// ReasoningEffort determines the reasoning effort level.
-	// Valid values: "minimal", "low", "medium", "high".
-	// Applicable to OpenAI (with ResponsesAPI) and Gemini / Vertex AI (maps to
-	// Gemini's thinkingLevel on 3.0+, and to a thinkingBudget estimate on 2.5).
-	// Default: "medium".
+	// - OpenAI (with ResponsesAPI): "minimal", "low", "medium", "high"; sent as
+	//   the reasoning effort. Default: "medium".
+	// - Gemini / Vertex AI: "minimal", "low", "medium", "high"; maps to Gemini's
+	//   thinkingLevel on 3.0+, and to a thinkingBudget estimate on 2.5.
+	//   Default: "medium".
+	// - Anthropic: "low", "medium", "high", "xhigh", "max"; sent as
+	//   output_config.effort on adaptive-thinking models (xhigh falls back to
+	//   high where unsupported) and mapped to a thinking budget on older models.
+	//   "minimal" is treated as "low". Empty uses the model's default.
 	ReasoningEffort string `json:"reasoningEffort"`
 
 	// ThinkingBudget determines the token budget for reasoning/thinking.
-	// - Anthropic: must be at least 1024 and cannot exceed the OutputTokenLimit.
-	//   Default: 1/4 of OutputTokenLimit, capped at 8192.
-	// - Gemini / Vertex AI: maps to thinkingConfig.thinkingBudget. When set, it
-	//   takes priority over ReasoningEffort.
+	// Gemini / Vertex AI only: maps to thinkingConfig.thinkingBudget and, when
+	// set, takes priority over ReasoningEffort. Ignored for Anthropic.
 	ThinkingBudget int `json:"thinkingBudget"`
 
 	// StructuredOutputEnabled is deprecated and ignored at runtime. Structured
@@ -257,11 +260,16 @@ type BotConfig struct {
 	StructuredOutputEnabled bool `json:"structuredOutputEnabled"`
 
 	// MaxToolTurns is the maximum number of LLM-call → tool-execute iterations
-	// the tool runner will perform for this agent before stopping. A non-positive
+	// the tool runner will perform for this agent; one more LLM call with tools
+	// disabled then produces the final answer. A non-positive
 	// value falls back to DefaultMaxToolTurns. Lower this when using a smaller
 	// model that tends to call tools in loops; raise it for agents that rely on
 	// long dynamic-tool-discovery chains (e.g. search → load → execute).
 	MaxToolTurns int `json:"maxToolTurns"`
+
+	// Skills is omitted when zero so agent versions recorded before skills
+	// existed compare equal to agents that never configured them.
+	Skills SkillsConfig `json:"skills,omitzero"`
 
 	// Admin / lifecycle metadata.
 	BotUserID    string   `json:"botUserID,omitempty"`
@@ -272,6 +280,11 @@ type BotConfig struct {
 	DeleteAt     int64    `json:"deleteAt,omitempty"`
 }
 
+// UnmarshalJSON defaults fields whose zero value is not their behavior from
+// before the field existed. Stored agent versions and configs written before
+// a field was added omit its key and are never rewritten, so a new field whose
+// zero value changes behavior must get its default here (as
+// MCPDynamicToolLoading does).
 func (c *BotConfig) UnmarshalJSON(data []byte) error {
 	type botConfigAlias BotConfig
 	defaults := botConfigAlias{
@@ -311,7 +324,10 @@ func (c *BotConfig) Validate() error {
 	if c.MaxToolTurns > MaxAllowedMaxToolTurns {
 		return fmt.Errorf("maxToolTurns must be less than or equal to %d", MaxAllowedMaxToolTurns)
 	}
-	return c.validateIdentifierLists()
+	if err := c.validateIdentifierLists(); err != nil {
+		return err
+	}
+	return c.Skills.Validate()
 }
 
 // validateIdentifierLists rejects control characters (including NUL, which

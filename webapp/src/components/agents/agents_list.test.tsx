@@ -8,8 +8,8 @@ import {useSelector} from 'react-redux';
 import {deleteAgent, getAgents, getServices} from '@/client';
 import {useAgentLimit, useLicenseLevel} from '@/license';
 import {userHasSystemPermission} from '@/utils/permissions';
-import {downloadAgentExport} from '@/utils/download_agent_export';
-import {UserAgent} from '@/types/agents';
+import {downloadAgentExport, readAgentExportFile} from '@/utils/agent_export';
+import {AgentExportDocument, UserAgent} from '@/types/agents';
 
 import AgentsList from './agents_list';
 
@@ -33,11 +33,15 @@ jest.mock('react-redux', () => ({
     useSelector: jest.fn(),
 }));
 
-// OverlayTrigger renders the overlay alongside children so tests can assert the tooltip text.
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
+// WithTooltip renders its title alongside children so tests can assert the tooltip text.
+jest.mock('@mattermost/shared/components/tooltip', () => ({
+    WithTooltip: ({children, title}: {children: React.ReactNode; title?: React.ReactNode}) => (
+        <>
+            {children}
+            <div>{title}</div>
+        </>
+    ),
+}));
 
 jest.mock('@/license', () => ({
     LicenseLevel: {
@@ -64,37 +68,9 @@ jest.mock('@/utils/permissions', () => ({
     userHasSystemPermission: jest.fn(),
 }));
 
-jest.mock('@/utils/download_agent_export', () => ({
+jest.mock('@/utils/agent_export', () => ({
     downloadAgentExport: jest.fn(),
-}));
-
-jest.mock('./import_agent_modal', () => ({
-    __esModule: true,
-    default: ({manageableAgents, canCreate, createDisabledReason, onClose, onImported}: {
-        manageableAgents: UserAgent[];
-        canCreate: boolean;
-        createDisabledReason?: string;
-        onClose: () => void;
-        onImported: (result: {agent: UserAgent; mode: 'create' | 'update'}) => void;
-    }) => (
-        <div data-testid='import-agent-modal'>
-            <span data-testid='import-manageable'>{manageableAgents.map((a) => a.id).join(',')}</span>
-            <span data-testid='import-can-create'>{String(canCreate)}</span>
-            <span data-testid='import-create-disabled-reason'>{createDisabledReason}</span>
-            <button
-                type='button'
-                onClick={() => onImported({agent: {id: 'new', name: 'imported', displayName: 'Imported Agent'} as UserAgent, mode: 'create'})}
-            >
-                {'Finish import'}
-            </button>
-            <button
-                type='button'
-                onClick={onClose}
-            >
-                {'Close import'}
-            </button>
-        </div>
-    ),
+    readAgentExportFile: jest.fn(),
 }));
 
 jest.mock('./agent_row', () => ({
@@ -123,7 +99,14 @@ jest.mock('./agent_row', () => ({
 
 jest.mock('./agent_config_view', () => ({
     __esModule: true,
-    default: () => null,
+    default: ({mode, importedDocument}: {mode: string; importedDocument?: AgentExportDocument}) => (
+        <div
+            data-testid='agent-config-view'
+            data-mode={mode}
+        >
+            {importedDocument?.agent.customInstructions}
+        </div>
+    ),
 }));
 
 jest.mock('./delete_agent_dialog', () => ({
@@ -154,6 +137,7 @@ const mockGetServices = getServices as unknown as jest.Mock;
 const mockDeleteAgent = deleteAgent as unknown as jest.Mock;
 const mockUserHasSystemPermission = userHasSystemPermission as unknown as jest.Mock;
 const mockDownloadAgentExport = downloadAgentExport as unknown as jest.Mock;
+const mockReadAgentExportFile = readAgentExportFile as unknown as jest.Mock;
 
 const unlicensedQuotaMessage = 'Your current plan allows 1 agent. Additional agents are available on Professional plans and above.';
 const professionalQuotaMessage = 'Your current plan allows 3 agents. Additional agents are available on Enterprise plans and above.';
@@ -167,8 +151,13 @@ function makeAgent(id: string): UserAgent {
     } as UserAgent;
 }
 
-function renderList() {
-    return render(<AgentsList/>);
+function renderList(props: Partial<React.ComponentProps<typeof AgentsList>> = {}) {
+    return render(
+        <AgentsList
+            onStartChat={jest.fn()}
+            {...props}
+        />,
+    );
 }
 
 beforeEach(() => {
@@ -345,77 +334,66 @@ describe('AgentsList delete quota refresh', () => {
 });
 
 describe('AgentsList import and export', () => {
-    test('shows Import agent to users who can create agents and opens the modal', async () => {
+    const importedDocument = {
+        kind: 'mattermost-agent',
+        schemaVersion: 1,
+        exportedAt: 1,
+        agentVersion: 2,
+        agent: {name: 'helper', displayName: 'Helper', customInstructions: 'Imported instructions', disableTools: false, maxToolTurns: 10, mcpDynamicToolLoading: true, autoEnableNewMCPTools: true, mcpTools: [], skills: {disabled: false, allowPersonal: false, enabledSharedIDs: [], descriptionOverrides: {}}},
+    } as AgentExportDocument;
+
+    function pickFile() {
+        const file = new File(['{}'], 'helper.agent.json', {type: 'application/json'});
+        fireEvent.change(screen.getByTestId('agent-import-file-input'), {target: {files: [file]}});
+        return file;
+    }
+
+    test('picking a file opens the create view with the imported settings', async () => {
         mockGetAgents.mockResolvedValue({agents: [], activeAgentCount: 0});
+        mockReadAgentExportFile.mockResolvedValue(importedDocument);
 
         renderList();
 
-        const button = await screen.findByRole('button', {name: 'Import agent'}) as HTMLButtonElement;
+        const button = await screen.findByRole('button', {name: 'Import'}) as HTMLButtonElement;
         await waitFor(() => expect(button.disabled).toBe(false));
-        expect(screen.queryByTestId('import-agent-modal')).toBeNull();
+        const file = pickFile();
 
-        fireEvent.click(button);
-
-        expect(screen.getByTestId('import-agent-modal')).not.toBeNull();
-        expect(screen.getByTestId('import-can-create').textContent).toBe('true');
+        const view = await screen.findByTestId('agent-config-view');
+        expect(view.getAttribute('data-mode')).toBe('create');
+        expect(view.textContent).toBe('Imported instructions');
+        expect(mockReadAgentExportFile).toHaveBeenCalledWith(file, expect.anything());
     });
 
-    test('shows Import agent to users who can only manage a listed agent', async () => {
+    test('an unreadable file shows the error and stays on the list', async () => {
+        mockGetAgents.mockResolvedValue({agents: [], activeAgentCount: 0});
+        mockReadAgentExportFile.mockRejectedValue(new Error('This file is not a valid Mattermost agent export.'));
+
+        renderList();
+
+        await screen.findByRole('button', {name: 'Import'});
+        pickFile();
+
+        expect(await screen.findByText('This file is not a valid Mattermost agent export.')).not.toBeNull();
+        expect(screen.queryByTestId('agent-config-view')).toBeNull();
+    });
+
+    test('hides Import from users who cannot create agents', async () => {
         mockUserHasSystemPermission.mockReturnValue(false);
-        mockGetAgents.mockResolvedValue({
-            agents: [
-                {...makeAgent('a1'), creatorID: 'someone_else', adminUserIDs: ['user_1']},
-                {...makeAgent('a2'), creatorID: 'someone_else'},
-            ],
-        });
+        mockGetAgents.mockResolvedValue({agents: [{...makeAgent('a1'), creatorID: 'someone_else', adminUserIDs: ['user_1']}]});
 
         renderList();
 
         await screen.findByText('Agent a1');
-        expect(screen.queryByRole('button', {name: 'Create agent'})).toBeNull();
-        fireEvent.click(screen.getByRole('button', {name: 'Import agent'}));
-
-        expect(screen.getByTestId('import-can-create').textContent).toBe('false');
-        expect(screen.getByTestId('import-manageable').textContent).toBe('a1');
+        expect(screen.queryByRole('button', {name: 'Import'})).toBeNull();
     });
 
-    test('hides Import agent from users who cannot create or manage any agent', async () => {
-        mockUserHasSystemPermission.mockReturnValue(false);
-        mockGetAgents.mockResolvedValue({agents: [{...makeAgent('a1'), creatorID: 'someone_else'}]});
-
-        renderList();
-
-        await screen.findByText('Agent a1');
-        expect(screen.queryByRole('button', {name: 'Import agent'})).toBeNull();
-    });
-
-    test('passes the quota message to the modal when the agent limit is reached', async () => {
+    test('disables Import when the agent limit is reached', async () => {
         mockGetAgents.mockResolvedValue({agents: [makeAgent('a1')], activeAgentCount: 1});
 
         renderList();
 
         await screen.findByText('Agent a1');
-        fireEvent.click(screen.getByRole('button', {name: 'Import agent'}));
-
-        expect(screen.getByTestId('import-create-disabled-reason').textContent).toBe(unlicensedQuotaMessage);
-    });
-
-    test('closes the modal, refreshes the list, and confirms after a successful import', async () => {
-        mockGetAgents.
-            mockResolvedValueOnce({agents: [], activeAgentCount: 0}).
-            mockResolvedValueOnce({agents: [makeAgent('a1')], activeAgentCount: 1});
-
-        renderList();
-
-        const button = await screen.findByRole('button', {name: 'Import agent'});
-        await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
-        fireEvent.click(button);
-        fireEvent.click(screen.getByRole('button', {name: 'Finish import'}));
-
-        expect(screen.queryByTestId('import-agent-modal')).toBeNull();
-        expect(screen.getByText('Imported agent Imported Agent.')).not.toBeNull();
-        await waitFor(() => expect(mockGetAgents).toHaveBeenCalledTimes(2));
-        await screen.findByText('Agent a1');
+        expect((screen.getByRole('button', {name: 'Import'}) as HTMLButtonElement).disabled).toBe(true);
     });
 
     test('exports an agent from the list and reports failures', async () => {
@@ -426,10 +404,45 @@ describe('AgentsList import and export', () => {
 
         await screen.findByText('Agent a1');
         fireEvent.click(screen.getByRole('button', {name: 'Export Agent a1'}));
-        await waitFor(() => expect(mockDownloadAgentExport).toHaveBeenCalledWith('a1', 'a1'));
+        await waitFor(() => expect(mockDownloadAgentExport).toHaveBeenCalledWith('a1'));
 
         mockDownloadAgentExport.mockRejectedValueOnce({message: 'Export is not allowed.'});
         fireEvent.click(screen.getByRole('button', {name: 'Export Agent a1'}));
         expect(await screen.findByText('Export is not allowed.')).not.toBeNull();
+    });
+});
+
+describe('AgentsList route-driven create (/agents/all/new)', () => {
+    const cases = [
+        {name: 'allowed: opens the create view', perm: 'manage_own_agent', limit: 3, agents: ['a1'], opens: true},
+        {name: 'system admin: opens the create view', perm: 'manage_system', limit: null, agents: [], opens: true},
+        {name: 'no permission: refused and closed', perm: '', limit: null, agents: [], opens: false},
+        {name: 'plan limit reached: refused and closed', perm: 'manage_own_agent', limit: 1, agents: ['a1'], opens: false},
+    ];
+    test.each(cases)('$name', async ({perm, limit, agents, opens}) => {
+        mockUserHasSystemPermission.mockImplementation((_s, _u, permission) => permission === perm);
+        mockUseAgentLimit.mockReturnValue(limit);
+        mockGetAgents.mockResolvedValue({agents: agents.map(makeAgent), activeAgentCount: agents.length});
+        const onCloseCreate = jest.fn();
+
+        renderList({openCreate: true, onCloseCreate});
+
+        if (opens) {
+            expect((await screen.findByTestId('agent-config-view')).getAttribute('data-mode')).toBe('create');
+            expect(onCloseCreate).not.toHaveBeenCalled();
+        } else {
+            await waitFor(() => expect(onCloseCreate).toHaveBeenCalledTimes(1));
+            expect(screen.queryByTestId('agent-config-view')).toBeNull();
+        }
+    });
+
+    test('closes the view when the route leaves create', async () => {
+        mockUseAgentLimit.mockReturnValue(null);
+        mockGetAgents.mockResolvedValue({agents: [], activeAgentCount: 0});
+        const {rerender} = renderList({openCreate: true});
+        await screen.findByTestId('agent-config-view');
+
+        rerender(<AgentsList onStartChat={jest.fn()}/>);
+        await waitFor(() => expect(screen.queryByTestId('agent-config-view')).toBeNull());
     });
 });

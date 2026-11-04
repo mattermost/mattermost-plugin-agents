@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 
-import { test, expect, Page } from '@playwright/test';
+import { expect, Page } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { OpenAIMockContainer, RunOpenAIMocks, responseTest } from 'helpers/openai-mock';
@@ -21,7 +22,7 @@ import { mattermostAIAdminConfigApiFromClient, mattermostAIPluginRoutes } from '
 const embeddedMattermostOrigin = 'embedded://mattermost';
 
 // A remote MCP server configured on the instance but disabled, so nothing tries
-// to connect to it; import still offers it as a mapping target to system admins.
+// to connect to it and the MCPs tab does not list it.
 const jiraServerName = 'Jira';
 const jiraOrigin = 'https://mcp.example.com/mcp';
 const goneOrigin = 'https://gone.example.com/mcp';
@@ -121,26 +122,25 @@ async function captureDownload(page: Page, trigger: () => Promise<void>): Promis
     return { filename: download.suggestedFilename(), filePath, doc };
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunAgentContainer({
+        mcpServers: [
+            { name: jiraServerName, enabled: false, baseURL: jiraOrigin },
+            { name: trackerServerName, enabled: true, baseURL: trackerOrigin },
+        ],
+    }));
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 test.describe('Agent versioning, export and import', () => {
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        mattermost = await RunAgentContainer({
-            mcpServers: [
-                { name: jiraServerName, enabled: false, baseURL: jiraOrigin },
-                { name: trackerServerName, enabled: true, baseURL: trackerOrigin },
-            ],
-        });
-        openAIMock = await RunOpenAIMocks(mattermost.network);
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
         await openAIMock.addCompletionMock(responseTest);
         await registerMCPToolsServerMocks(openAIMock, trackerMockPath, trackerTools);
     });
 
-    test.afterAll(async () => {
-        await openAIMock?.stop();
-        await mattermost?.stop();
-    });
-
-    test('History tab lists every save and shows an old version read-only', async ({ page }) => {
+    test('the version history modal lists every save and shows an old version read-only', async ({ page }) => {
         test.setTimeout(90000);
         const agentApi = new AgentAPIHelper(mattermost.url());
         const token = await adminToken();
@@ -164,16 +164,33 @@ test.describe('Agent versioning, export and import', () => {
         }
 
         await agentPage.openAgentEditor('History Agent');
-        await agentPage.getModalTab('History').click();
+
+        // History is a version line by the title, not a tab.
+        await expect(agentPage.getModalTab('Configuration')).toBeVisible();
+        await expect(page.getByRole('tab', { name: 'History', exact: true })).toHaveCount(0);
+        await expect(agentPage.getVersionLine()).toContainText('v3');
+        await expect(agentPage.getVersionLine()).toContainText(agentAdminUsername);
+        await expect(agentPage.getVersionHistoryButton()).toBeVisible();
+        await agentPage.openVersionHistory();
 
         await expect(agentPage.getVersionItems()).toHaveCount(3, { timeout: 10000 });
         await expect(agentPage.getVersionItems().first()).toContainText('Version 3');
         await expect(agentPage.getVersionItem(3)).toContainText('Current');
-        await expect(agentPage.getVersionItem(3)).toContainText('Edited');
-        await expect(agentPage.getVersionItem(3)).toContainText('Changed: Custom instructions');
         await expect(agentPage.getVersionItem(2)).not.toContainText('Current');
         await expect(agentPage.getVersionItem(1)).not.toContainText('Current');
-        await expect(agentPage.getVersionItem(1)).toContainText('Created');
+
+        // Rows stay simple; the selected version marks the fields it changed.
+        for (const version of [1, 2, 3]) {
+            await expect(agentPage.getVersionItem(version)).not.toContainText('Changed');
+            await expect(agentPage.getVersionItem(version)).not.toContainText('Edited');
+        }
+        await expect(agentPage.getVersionFieldLabel('Custom instructions')).toContainText('Changed');
+        await expect(agentPage.getVersionFieldLabel('Model')).not.toContainText('Changed');
+        await expect(agentPage.getVersionHistoryDialog()).toContainText('Edited');
+        await expect(agentPage.getVersionHistoryDialog()).toContainText(`Created by ${agentAdminUsername}`);
+        // The current version has no row menu.
+        await expect(agentPage.getVersionActionsButton(3)).toHaveCount(0);
+        await expect(agentPage.getVersionActionsButton(2)).toHaveCount(1);
         for (const version of [1, 2, 3]) {
             await expect(agentPage.getVersionItem(version)).toContainText(agentAdminUsername);
             await expect(agentPage.getVersionItem(version)).not.toContainText('Unknown user');
@@ -184,16 +201,17 @@ test.describe('Agent versioning, export and import', () => {
         await expect(agentPage.getVersionSnapshotInstructions()).toHaveText(v3);
         await expect(agentPage.getRestoreVersionButton()).toHaveCount(0);
 
-        // Nothing on the History tab is saved by the editor footer.
-        await expect(agentPage.getModalSaveButton()).toBeHidden();
-
         await agentPage.openHistoryVersion(1);
+        await expect(agentPage.getVersionHistoryDialog()).toContainText('Created');
         await expect(agentPage.getVersionSnapshotInstructions()).toHaveText(v1);
         // Whitespace in the snapshot is shown exactly as saved.
         expect(await agentPage.getVersionSnapshotInstructions().textContent()).toBe(v1);
         await expect(agentPage.getVersionSnapshot()).toContainText('Mock Service');
-        await expect(agentPage.getCustomInstructionsInput()).toHaveCount(0);
         await expect(agentPage.getRestoreVersionButton()).toBeVisible();
+
+        // Closing the modal returns to the editor, which still holds the current configuration.
+        await agentPage.closeVersionHistory();
+        await expect(agentPage.getCustomInstructionsInput()).toHaveValue(v3);
 
         const history = await agentApi.getAgentVersions(token, agent.id);
         expect(history.currentVersion).toBe(3);
@@ -234,18 +252,22 @@ test.describe('Agent versioning, export and import', () => {
 
         await expect(agentPage.getRestoreDialog()).toBeVisible();
         await expect(agentPage.getRestoreDialog()).toContainText('Restoring will discard them');
+        // The confirmation names what the restore changes.
+        await expect(agentPage.getRestoreDialog().getByTestId('restore-changes')).toContainText('Custom instructions');
         await agentPage.getRestoreConfirmButton().click();
         await expect(agentPage.getRestoreDialog()).toBeHidden({ timeout: 10000 });
 
         await expect(page.getByText('Version 1 was restored as the current version.')).toBeVisible({ timeout: 10000 });
         await expect(agentPage.getVersionItems()).toHaveCount(4, { timeout: 10000 });
         await expect(agentPage.getVersionItem(4)).toContainText('Current');
-        await expect(agentPage.getVersionItem(4)).toContainText('Restored from version 1');
+        await expect(agentPage.getVersionHistoryDialog()).toContainText('Restored from version 1');
         await expect(agentPage.getVersionItem(4)).toHaveAttribute('aria-current', 'true');
         await expect(agentPage.getVersionSnapshotInstructions()).toHaveText(v1);
 
         // The editor now holds the restored agent with no leftover unsaved state.
-        await agentPage.getModalTab('Configuration').click();
+        await agentPage.closeVersionHistory();
+        await expect(agentPage.getVersionLine()).toContainText('v4');
+        await expect(agentPage.getVersionLine()).not.toContainText('Unsaved changes');
         await expect(agentPage.getCustomInstructionsInput()).toHaveValue(v1);
         await expect(agentPage.getAvatarPreview()).not.toHaveAttribute('src', /^blob:/);
         await agentPage.getBackButton().click();
@@ -336,7 +358,7 @@ test.describe('Agent versioning, export and import', () => {
             autoEnableNewMCPTools: false,
         });
         expect(doc.agent.mcpTools).toEqual([
-            { serverOrigin: embeddedMattermostOrigin, serverName: 'Mattermost', toolName: 'read_post' },
+            { serverOrigin: embeddedMattermostOrigin, toolName: 'read_post' },
         ]);
         const keys = collectKeys(doc);
         for (const key of forbiddenExportKeys) {
@@ -355,7 +377,7 @@ test.describe('Agent versioning, export and import', () => {
         expect(fromRow.doc.agent).toEqual(doc.agent);
     });
 
-    test('importing an exported file creates a new agent', async ({ page }) => {
+    test('importing an exported file from the Agents list opens a prefilled new agent', async ({ page }) => {
         test.setTimeout(90000);
         const agentApi = new AgentAPIHelper(mattermost.url());
         const token = await adminToken();
@@ -375,27 +397,20 @@ test.describe('Agent versioning, export and import', () => {
         await agentPage.openAgentActions('Import Source');
         const exported = await captureDownload(page, () => agentPage.clickExportAction('Import Source'));
 
-        await agentPage.openImportModal();
-        await agentPage.chooseImportFile(exported.filePath);
-        await expect(agentPage.getImportSummary()).toContainText('Import Source');
-        await expect(agentPage.getImportSummary()).toContainText('Exported from version 1');
-        await expect(agentPage.getImportSummary()).toContainText('MCP tools: 1 tool');
-        await expect(agentPage.getImportSummary()).toContainText(instructions);
+        await agentPage.importAgentFile(agentPage.getImportButton(), exported.filePath);
+        await expect(page.getByRole('heading', { name: 'New Agent' })).toBeVisible({ timeout: 10000 });
+        await expect(agentPage.getImportedNotice()).toBeVisible({ timeout: 10000 });
+        await expect(agentPage.getCustomInstructionsInput()).toHaveValue(instructions);
+        await expect(agentPage.getUsernameInput()).toHaveValue('importsource');
 
-        // The source agent exists here and is manageable, so update is preselected.
-        await expect(agentPage.getImportModeRadio('update')).toBeChecked();
-        await agentPage.getImportModeRadio('create').check();
+        // The file's username is taken here, so saving reports it on the form.
+        await agentPage.getModalSaveButton().click();
+        await expect(page.getByText('This username is already taken')).toBeVisible({ timeout: 10000 });
 
-        await expect(agentPage.getImportUsernameInput()).toHaveValue('importsource');
-        await expect(agentPage.getImportDisplayNameInput()).toHaveValue('Import Source');
-        await agentPage.getImportUsernameInput().fill('importedcopy');
-        await agentPage.getImportDisplayNameInput().fill('Imported Copy');
-        await agentPage.getImportServiceSelect().selectOption({ label: 'Mock Service' });
-        await expect(agentPage.getImportMCPMappingSelect('Mattermost')).toHaveValue(embeddedMattermostOrigin);
-
-        await agentPage.getImportSubmitButton().click();
-        await expect(agentPage.getImportDialog()).toBeHidden({ timeout: 10000 });
-        await expect(page.getByText('Imported agent Imported Copy.')).toBeVisible({ timeout: 10000 });
+        await agentPage.getUsernameInput().fill('importedcopy');
+        await agentPage.getDisplayNameInput().fill('Imported Copy');
+        await agentPage.getModalSaveButton().click();
+        await agentPage.waitForModalClosed();
         await expect(agentPage.getAgentRowByName('Imported Copy')).toBeVisible({ timeout: 10000 });
 
         const imported = await findAgentByName(agentApi, token, 'importedcopy');
@@ -411,7 +426,7 @@ test.describe('Agent versioning, export and import', () => {
             { server_origin: embeddedMattermostOrigin, tool_name: 'read_post' },
         ]);
         const history = await agentApi.getAgentVersions(token, imported!.id);
-        expect(history.versions.map((v) => v.source)).toEqual(['import']);
+        expect(history.versions.map((v) => v.source)).toEqual(['create']);
 
         const source = await findAgentByName(agentApi, token, 'importsource');
         expect(source?.customInstructions).toBe(instructions);
@@ -436,28 +451,30 @@ test.describe('Agent versioning, export and import', () => {
             maxToolTurns: 10,
         });
 
-        const exported = await agentApi.exportAgent(token, target.id);
-        expect(exported.status).toBe(200);
-        const doc = exported.body;
-        doc.agent.displayName = 'Display Name From File';
-        doc.agent.customInstructions = 'Instructions after import.';
-        doc.agent.maxToolTurns = 7;
-        doc.agent.disableTools = false;
-        doc.agent.autoEnableNewMCPTools = false;
-        doc.agent.mcpTools = [{ serverOrigin: embeddedMattermostOrigin, serverName: 'Mattermost', toolName: 'search_posts' }];
+        const doc = exportDocument({
+            name: 'someoneelse',
+            displayName: 'Display Name From File',
+            customInstructions: 'Instructions after import.',
+            maxToolTurns: 7,
+            mcpTools: [{ serverOrigin: embeddedMattermostOrigin, toolName: 'search_posts' }],
+        });
 
         const agentPage = await loginToAgents(page);
-        await agentPage.openImportModal();
-        await agentPage.chooseImportFile({
+        await agentPage.openAgentEditor('Update Target');
+        await agentPage.importAgentFile(agentPage.getEditorImportButton(), {
             name: 'updatetarget-edited.agent.json',
             mimeType: 'application/json',
             buffer: Buffer.from(JSON.stringify(doc)),
         });
-        await expect(agentPage.getImportModeRadio('update')).toBeChecked();
-        await expect(agentPage.getImportTargetAgentSelect()).toHaveValue(target.id);
-        await agentPage.getImportSubmitButton().click();
-        await expect(agentPage.getImportDialog()).toBeHidden({ timeout: 10000 });
-        await expect(page.getByText('Updated agent Update Target from the imported file.')).toBeVisible({ timeout: 10000 });
+        await expect(agentPage.getImportedNotice()).toBeVisible({ timeout: 10000 });
+        await expect(agentPage.getCustomInstructionsInput()).toHaveValue('Instructions after import.');
+        await expect(agentPage.getUsernameInput()).toHaveValue('updatetarget');
+        await expect(agentPage.getDisplayNameInput()).toHaveValue('Update Target');
+
+        // Nothing is saved until the editor is saved.
+        expect((await agentApi.getAgent(token, target.id)).customInstructions).toBe('Instructions before import.');
+        await agentPage.getModalSaveButton().click();
+        await agentPage.waitForModalClosed();
 
         const updated = await agentApi.getAgent(token, target.id);
         expect(updated).toMatchObject({
@@ -480,7 +497,7 @@ test.describe('Agent versioning, export and import', () => {
 
         const history = await agentApi.getAgentVersions(token, target.id);
         expect(history.currentVersion).toBe(2);
-        expect(history.versions[0].source).toBe('import');
+        expect(history.versions[0].source).toBe('update');
         expect(history.versions[0].changedFields).toEqual(expect.arrayContaining([
             'customInstructions', 'maxToolTurns', 'autoEnableNewMCPTools', 'enabledMCPTools',
         ]));
@@ -489,114 +506,78 @@ test.describe('Agent versioning, export and import', () => {
         }
     });
 
-    test('import API requires every unknown MCP server to be mapped or removed', async () => {
-        test.setTimeout(60000);
+    test('import keeps tools of MCP servers the MCPs tab lists and names the rest', async ({ page }) => {
+        test.setTimeout(120000);
         const agentApi = new AgentAPIHelper(mattermost.url());
         const token = await adminToken();
         const doc = exportDocument({
-            name: 'mcpmappingapi',
-            customInstructions: 'Agent with tools from three servers.',
+            name: 'mcpimport',
+            displayName: 'MCP Import',
+            customInstructions: 'Imported with tools from four servers.',
             mcpTools: [
-                { serverOrigin: goneOrigin, serverName: 'Gone Server', toolName: 'do_thing' },
-                { serverOrigin: `${jiraOrigin}/`, serverName: 'Jira Elsewhere', toolName: 'create_issue' },
-                { serverOrigin: embeddedMattermostOrigin, serverName: 'Mattermost', toolName: 'read_post' },
+                { serverOrigin: goneOrigin, toolName: 'do_thing' },
+                { serverOrigin: jiraOrigin, toolName: 'create_issue' },
+                { serverOrigin: trackerNormalizedOrigin, toolName: 'create_issue' },
+                { serverOrigin: embeddedMattermostOrigin, toolName: 'read_post' },
             ],
         });
 
-        const preview = await agentApi.previewAgentImport(token, doc);
-        expect(preview.status).toBe(200);
-        expect(preview.body.existingAgent ?? null).toBeNull();
-        const groups = Object.fromEntries(preview.body.mcpServers.map((s) => [s.sourceOrigin, s]));
-        expect(Object.keys(groups).sort()).toEqual([embeddedMattermostOrigin, goneOrigin, jiraOrigin].sort());
-        expect(groups[goneOrigin]).toMatchObject({ autoTargetOrigin: '', toolNames: ['do_thing'], sourceName: 'Gone Server' });
-        expect(groups[jiraOrigin]).toMatchObject({ autoTargetOrigin: jiraOrigin, toolNames: ['create_issue'] });
-        expect(groups[embeddedMattermostOrigin]).toMatchObject({ autoTargetOrigin: embeddedMattermostOrigin });
-        expect(preview.body.availableMCPServers).toEqual(expect.arrayContaining([
-            { origin: jiraOrigin, name: jiraServerName },
-            { origin: trackerOrigin, name: trackerServerName },
-            { origin: embeddedMattermostOrigin, name: 'Mattermost' },
-        ]));
-
-        const createBase = {
-            document: doc,
-            mode: 'create' as const,
-            displayName: 'MCP Mapping API',
-            serviceID: mockServiceId,
-        };
-
-        // A manager who is not a system admin is offered only the servers their
-        // MCPs tab lists, so the disabled Jira server is neither shown nor accepted.
-        const regularToken = (await mattermost.getClient(agentRegularUsername, agentRegularPassword)).getToken();
-        const regularPreview = await agentApi.previewAgentImport(regularToken, doc);
-        expect(regularPreview.status).toBe(200);
-        const regularOrigins = regularPreview.body.availableMCPServers.map((s) => s.origin);
-        expect(regularOrigins).toEqual(expect.arrayContaining([trackerOrigin, embeddedMattermostOrigin]));
-        expect(regularOrigins).not.toContain(jiraOrigin);
-        const regularGroups = Object.fromEntries(regularPreview.body.mcpServers.map((s) => [s.sourceOrigin, s]));
-        expect(regularGroups[jiraOrigin]).toMatchObject({ autoTargetOrigin: '' });
-        const regularImport = await agentApi.importAgent(regularToken, {
-            ...createBase,
-            username: 'mcpmappingregular',
-            mcpServerMappings: [
-                { sourceOrigin: goneOrigin, targetOrigin: '' },
-                { sourceOrigin: jiraOrigin, targetOrigin: jiraOrigin },
-            ],
+        const agentPage = await loginToAgents(page);
+        await agentPage.importAgentFile(agentPage.getImportButton(), {
+            name: 'mcpimport.agent.json',
+            mimeType: 'application/json',
+            buffer: Buffer.from(JSON.stringify(doc)),
         });
-        expect(regularImport.status).toBe(400);
-        expect(regularImport.body.error).toContain('not configured');
-        expect(await findAgentByName(agentApi, token, 'mcpmappingregular')).toBeUndefined();
+        const notice = agentPage.getImportedNotice();
+        await expect(notice).toContainText('left out', { timeout: 30000 });
+        await expect(notice).toContainText(goneOrigin);
+        await expect(notice).toContainText(jiraOrigin);
+        await expect(notice).not.toContainText(trackerNormalizedOrigin);
 
-        const unmapped = await agentApi.importAgent(token, { ...createBase, username: 'mcpmappingapi' });
-        expect(unmapped.status).toBe(400);
-        expect(unmapped.body.error).toContain('must be mapped to a server on this instance or removed');
-        expect(unmapped.body.error).toContain(goneOrigin);
+        await agentPage.getModalSaveButton().click();
+        await agentPage.waitForModalClosed();
 
-        const unknownTarget = await agentApi.importAgent(token, {
-            ...createBase,
-            username: 'mcpmappingapi',
-            mcpServerMappings: [{ sourceOrigin: goneOrigin, targetOrigin: 'https://not-here.example.com/mcp' }],
-        });
-        expect(unknownTarget.status).toBe(400);
-        expect(unknownTarget.body.error).toContain('not configured');
-        expect(await findAgentByName(agentApi, token, 'mcpmappingapi')).toBeUndefined();
-
-        const removed = await agentApi.importAgent(token, {
-            ...createBase,
-            username: 'mcpmappingapi',
-            mcpServerMappings: [{ sourceOrigin: goneOrigin, targetOrigin: '' }],
-        });
-        expect(removed.status).toBe(201);
-        expect(sortTools(removed.body.enabledMCPTools)).toEqual([
+        // Tools take the origin as configured, trailing slash included, so the
+        // MCPs tab shows them enabled and a later save keeps them.
+        const expectedTools = sortTools([
             { server_origin: embeddedMattermostOrigin, tool_name: 'read_post' },
-            { server_origin: jiraOrigin, tool_name: 'create_issue' },
+            { server_origin: trackerOrigin, tool_name: 'create_issue' },
         ]);
+        const imported = await findAgentByName(agentApi, token, 'mcpimport');
+        expect(imported).toBeDefined();
+        expect(sortTools(imported!.enabledMCPTools)).toEqual(expectedTools);
 
-        const remapped = await agentApi.importAgent(token, {
-            ...createBase,
-            username: 'mcpmappingapi2',
-            displayName: 'MCP Mapping API 2',
-            mcpServerMappings: [{ sourceOrigin: goneOrigin, targetOrigin: jiraOrigin }],
-        });
-        expect(remapped.status).toBe(201);
-        expect(sortTools(remapped.body.enabledMCPTools)).toEqual([
-            { server_origin: embeddedMattermostOrigin, tool_name: 'read_post' },
-            { server_origin: jiraOrigin, tool_name: 'create_issue' },
-            { server_origin: jiraOrigin, tool_name: 'do_thing' },
-        ]);
+        await agentPage.openAgentEditor('MCP Import');
+        await agentPage.getModalTab('MCPs').click();
+        const trackerHeader = page.getByRole('button', { name: new RegExp(`^${trackerServerName}, 1 of 2 tools enabled`) });
+        await expect(trackerHeader).toBeVisible({ timeout: 30000 });
+        await trackerHeader.click();
+        await expect(page.getByRole('switch', { name: `Disable tool create_issue on ${trackerServerName}` })).toBeChecked();
+        await expect(page.getByRole('switch', { name: `Enable tool search_issues on ${trackerServerName}` })).not.toBeChecked();
 
-        // Auto-enable-all ignores the allowlist, so unknown servers need no mapping.
-        const autoAll = await agentApi.importAgent(token, {
-            ...createBase,
-            document: { ...doc, agent: { ...doc.agent, autoEnableNewMCPTools: true } },
-            username: 'mcpmappingauto',
-            displayName: 'MCP Mapping Auto',
-        });
-        expect(autoAll.status).toBe(201);
-        expect(autoAll.body.autoEnableNewMCPTools).toBe(true);
-        expect(autoAll.body.enabledMCPTools ?? []).toEqual([]);
+        await agentPage.getModalTab('Configuration').click();
+        await agentPage.getCustomInstructionsInput().fill('Edited after the import.');
+        await agentPage.getModalSaveButton().click();
+        await agentPage.waitForModalClosed();
+
+        const saved = await agentApi.getAgent(token, imported!.id);
+        expect(saved.customInstructions).toBe('Edited after the import.');
+        expect(sortTools(saved.enabledMCPTools)).toEqual(expectedTools);
     });
 
-    test('a bot migrated from the plugin config has a version and can be exported', async () => {
+    test('an invalid agent file is rejected without opening the editor', async ({ page }) => {
+        test.setTimeout(60000);
+        const agentPage = await loginToAgents(page);
+        await agentPage.importAgentFile(agentPage.getImportButton(), {
+            name: 'notes.json',
+            mimeType: 'application/json',
+            buffer: Buffer.from(JSON.stringify({ kind: 'something-else' })),
+        });
+        await expect(page.getByRole('alert').filter({ hasText: 'This file is not a valid Mattermost agent export.' })).toBeVisible({ timeout: 10000 });
+        await expect(page.getByRole('heading', { name: 'New Agent' })).toHaveCount(0);
+    });
+
+    test('a bot migrated from the plugin config has a version', async () => {
         test.setTimeout(60000);
         const agentApi = new AgentAPIHelper(mattermost.url());
         const token = await adminToken();
@@ -606,17 +587,101 @@ test.describe('Agent versioning, export and import', () => {
         const history = await agentApi.getAgentVersions(token, legacy!.id);
         expect(history.versions.length).toBeGreaterThanOrEqual(1);
         expect(history.versions[history.versions.length - 1].version).toBe(1);
-
-        const exported = await agentApi.exportAgent(token, legacy!.id);
-        expect(exported.status).toBe(200);
-        expect(exported.headers.get('content-type')).toContain('application/json');
-        expect(exported.headers.get('content-disposition'))
-            .toBe(`attachment; filename="mock-v${history.currentVersion}.agent.json"`);
-        expect(exported.body.agentVersion).toBe(history.currentVersion);
-        expect(exported.body.agent.name).toBe('mock');
     });
 
-    test('users who cannot manage an agent cannot see its history, export it or import over it', async ({ page }) => {
+    test('deleting versions from the row menu, by multi-select, and all previous from the list menu', async ({ page }) => {
+        test.setTimeout(90000);
+        const agentApi = new AgentAPIHelper(mattermost.url());
+        const token = await adminToken();
+        const agent = await agentApi.createTestAgent(token, {
+            displayName: 'Prune Agent',
+            username: 'pruneagent',
+            serviceID: mockServiceId,
+            customInstructions: 'Version 1 holds a leaked secret.',
+        });
+        for (const instructions of ['Version 2.', 'Version 3.', 'Version 4.']) {
+            await agentApi.updateAgent(token, agent.id, { customInstructions: instructions });
+        }
+
+        const agentPage = await loginToAgents(page);
+        await agentPage.openAgentEditor('Prune Agent');
+        await agentPage.openVersionHistory();
+        await expect(agentPage.getVersionItems()).toHaveCount(4, { timeout: 10000 });
+
+        // Deleting is tucked away: no standalone Delete button or checkboxes until
+        // multi-select is turned on, and the current version (the live
+        // configuration) has no row menu.
+        await expect(agentPage.getVersionActionsButton(4)).toHaveCount(0);
+
+        await agentPage.clickVersionAction(1, 'Delete this version');
+        await expect(page.getByRole('dialog', { name: 'Delete version 1?' })).toBeVisible();
+        await agentPage.confirmVersionDelete();
+        await expect(page.getByText('Deleted 1 version.')).toBeVisible({ timeout: 10000 });
+        await expect(agentPage.getVersionItems()).toHaveCount(3);
+        expect((await agentApi.getAgentVersions(token, agent.id)).versions.map((v) => v.version)).toEqual([4, 3, 2]);
+
+        await expect(agentPage.getVersionList().getByRole('checkbox')).toHaveCount(0);
+        await expect(page.getByRole('button', { name: 'Delete', exact: true })).toHaveCount(0);
+        await agentPage.startSelectingVersions();
+        await expect(agentPage.getVersionList().getByRole('checkbox')).toHaveCount(2);
+        await expect(agentPage.getVersionCheckbox(4)).toHaveCount(0);
+        await expect(agentPage.getDeleteSelectedVersionsButton()).toBeDisabled();
+        await agentPage.getVersionCheckbox(2).check();
+        await agentPage.getDeleteSelectedVersionsButton().click();
+        await agentPage.confirmVersionDelete();
+        await expect(page.getByText('Deleted 1 version.')).toBeVisible({ timeout: 10000 });
+        await expect(agentPage.getVersionItems()).toHaveCount(2);
+        expect((await agentApi.getAgentVersions(token, agent.id)).versions.map((v) => v.version)).toEqual([4, 3]);
+
+        await agentPage.clickDeleteAllPreviousVersions();
+        await expect(page.getByRole('dialog', { name: 'Delete all previous versions?' })).toBeVisible();
+        await agentPage.confirmVersionDelete();
+        await expect(agentPage.getVersionItems()).toHaveCount(1, { timeout: 10000 });
+        await expect(agentPage.getVersionItem(4)).toContainText('Current');
+        await expect(agentPage.getVersionHistoryMenuButton()).toHaveCount(0);
+
+        const history = await agentApi.getAgentVersions(token, agent.id);
+        expect(history).toMatchObject({ currentVersion: 4, hasMore: false });
+        expect(history.versions.map((v) => v.version)).toEqual([4]);
+        expect((await agentApi.getAgent(token, agent.id)).customInstructions).toBe('Version 4.');
+
+        const refused = await agentApi.deleteAgentVersions(token, agent.id, [4]);
+        expect(refused.status).toBe(400);
+    });
+
+    test('the version history limit prunes existing agents and every later save', async () => {
+        test.setTimeout(90000);
+        const agentApi = new AgentAPIHelper(mattermost.url());
+        const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
+        const token = adminClient.getToken();
+        const agent = await agentApi.createTestAgent(token, {
+            displayName: 'Retention Agent',
+            username: 'retentionagent',
+            serviceID: mockServiceId,
+            customInstructions: 'Version 1.',
+        });
+        for (const instructions of ['Version 2.', 'Version 3.', 'Version 4.']) {
+            await agentApi.updateAgent(token, agent.id, { customInstructions: instructions });
+        }
+
+        const configApi = mattermostAIAdminConfigApiFromClient(adminClient, mattermost.url());
+        const originalConfig = await configApi.get();
+        try {
+            await configApi.put({ ...originalConfig, agentVersionsToKeep: 2 });
+            await expect.poll(async () => (await agentApi.getAgentVersions(token, agent.id)).versions.map((v) => v.version), { timeout: 15000 }).toEqual([4, 3]);
+
+            await agentApi.updateAgent(token, agent.id, { customInstructions: 'Version 5.' });
+            expect((await agentApi.getAgentVersions(token, agent.id)).versions.map((v) => v.version)).toEqual([5, 4]);
+        } finally {
+            await configApi.put({ ...originalConfig, agentVersionsToKeep: 0 });
+        }
+
+        // Keeping every version again stops pruning.
+        await agentApi.updateAgent(token, agent.id, { customInstructions: 'Version 6.' });
+        expect((await agentApi.getAgentVersions(token, agent.id)).versions.map((v) => v.version)).toEqual([6, 5, 4]);
+    });
+
+    test('users who cannot manage an agent cannot see or change its history', async ({ page }) => {
         test.setTimeout(90000);
         const agentApi = new AgentAPIHelper(mattermost.url());
         const token = await adminToken();
@@ -628,36 +693,25 @@ test.describe('Agent versioning, export and import', () => {
             customInstructions: secret,
             userAccessLevel: 0,
         });
+        await agentApi.updateAgent(token, agent.id, { customInstructions: `${secret} Edited.` });
 
         const regularClient = await mattermost.getClient(agentRegularUsername, agentRegularPassword);
         const regularToken = regularClient.getToken();
         const routes = mattermostAIPluginRoutes(mattermost.url());
-        for (const [method, route] of [
-            ['GET', `agents/${agent.id}/versions`],
-            ['GET', `agents/${agent.id}/versions/1`],
-            ['POST', `agents/${agent.id}/versions/1/restore`],
-            ['GET', `agents/${agent.id}/export`],
+        for (const [method, route, body] of [
+            ['GET', `agents/${agent.id}/versions`, undefined],
+            ['GET', `agents/${agent.id}/versions/1`, undefined],
+            ['POST', `agents/${agent.id}/versions/1/restore`, undefined],
+            ['DELETE', `agents/${agent.id}/versions`, { all: true }],
         ] as const) {
-            const response = await routes.request(method, route, regularToken);
+            const response = await routes.request(method, route, regularToken, body);
             expect(response.status, `${method} ${route}`).toBe(403);
             expect(await response.text()).not.toContain(secret);
         }
-
-        const exported = (await agentApi.exportAgent(token, agent.id)).body;
-        const updateOther = await agentApi.importAgent(regularToken, {
-            document: { ...exported, agent: { ...exported.agent, customInstructions: 'Hijacked.' } },
-            mode: 'update',
-            agentID: agent.id,
-        });
-        expect(updateOther.status).toBe(403);
-        expect((await agentApi.getAgent(token, agent.id)).customInstructions).toBe(secret);
+        expect((await agentApi.getAgentVersions(token, agent.id)).versions).toHaveLength(2);
 
         await mattermost.revokeManageOwnAgentFromSystemUser();
         try {
-            const unprivilegedClient = await mattermost.getClient(agentUnprivilegedUsername, agentUnprivilegedPassword);
-            const preview = await agentApi.previewAgentImport(unprivilegedClient.getToken(), exported);
-            expect(preview.status).toBe(403);
-
             const mmPage = new MattermostPage(page);
             const agentPage = new AgentPageHelper(page);
             await mmPage.login(mattermost.url(), agentUnprivilegedUsername, agentUnprivilegedPassword);
@@ -667,107 +721,5 @@ test.describe('Agent versioning, export and import', () => {
         } finally {
             await mattermost.grantSelfServiceAgentPermissions();
         }
-    });
-
-    test('import modal preselects same-origin MCP servers and blocks until the rest are mapped', async ({ page }) => {
-        test.setTimeout(90000);
-        const agentApi = new AgentAPIHelper(mattermost.url());
-        const token = await adminToken();
-        const doc = exportDocument({
-            name: 'mcpmappingui',
-            displayName: 'MCP Mapping UI',
-            customInstructions: 'Imported through the modal with MCP mappings.',
-            mcpTools: [
-                { serverOrigin: goneOrigin, serverName: 'Gone Server', toolName: 'do_thing' },
-                { serverOrigin: jiraOrigin, serverName: 'Jira Elsewhere', toolName: 'create_issue' },
-                { serverOrigin: embeddedMattermostOrigin, serverName: 'Mattermost', toolName: 'read_post' },
-            ],
-        });
-
-        const agentPage = await loginToAgents(page);
-        await agentPage.openImportModal();
-        await agentPage.chooseImportFile({
-            name: 'mcpmappingui.agent.json',
-            mimeType: 'application/json',
-            buffer: Buffer.from(JSON.stringify(doc)),
-        });
-
-        await expect(agentPage.getImportModeRadio('create')).toBeChecked();
-        await expect(agentPage.getImportMCPMappingSelect('Jira Elsewhere')).toHaveValue(jiraOrigin);
-        await expect(agentPage.getImportMCPMappingSelect('Mattermost')).toHaveValue(embeddedMattermostOrigin);
-        await expect(agentPage.getImportMCPMappingSelect('Gone Server')).toHaveValue('');
-        await expect(agentPage.getImportSubmitButton()).toBeDisabled();
-
-        await agentPage.getImportMCPMappingSelect('Gone Server').selectOption({ label: 'Remove these tools' });
-        await expect(agentPage.getImportSubmitButton()).toBeEnabled();
-
-        // A server-side rejection is shown in the modal, which stays open for a retry.
-        await agentPage.getImportUsernameInput().fill('mock');
-        await agentPage.getImportSubmitButton().click();
-        await expect(agentPage.getImportDialog().getByRole('alert')).toContainText('username "mock" is already taken');
-        await expect(agentPage.getImportDialog()).toBeVisible();
-
-        await agentPage.getImportUsernameInput().fill('mcpmappingui');
-        await agentPage.getImportSubmitButton().click();
-        await expect(agentPage.getImportDialog()).toBeHidden({ timeout: 10000 });
-        await expect(agentPage.getAgentRowByName('MCP Mapping UI')).toBeVisible({ timeout: 10000 });
-
-        const imported = await findAgentByName(agentApi, token, 'mcpmappingui');
-        expect(imported).toBeDefined();
-        expect(imported!.customInstructions).toBe('Imported through the modal with MCP mappings.');
-        expect(sortTools(imported!.enabledMCPTools)).toEqual([
-            { server_origin: embeddedMattermostOrigin, tool_name: 'read_post' },
-            { server_origin: jiraOrigin, tool_name: 'create_issue' },
-        ]);
-    });
-
-    test('tools imported for a server configured with a trailing slash stay enabled through an editor save', async ({ page }) => {
-        test.setTimeout(90000);
-        const agentApi = new AgentAPIHelper(mattermost.url());
-        const token = await adminToken();
-        const doc = exportDocument({
-            name: 'trackerimport',
-            displayName: 'Tracker Import',
-            customInstructions: 'Uses tools from a server configured with a trailing slash.',
-            mcpTools: [{ serverOrigin: trackerNormalizedOrigin, serverName: 'Tracker Elsewhere', toolName: 'create_issue' }],
-        });
-
-        const preview = await agentApi.previewAgentImport(token, doc);
-        expect(preview.status).toBe(200);
-        expect(preview.body.mcpServers).toEqual([
-            expect.objectContaining({ sourceOrigin: trackerNormalizedOrigin, autoTargetOrigin: trackerOrigin }),
-        ]);
-
-        const imported = await agentApi.importAgent(token, {
-            document: doc,
-            mode: 'create',
-            username: 'trackerimport',
-            displayName: 'Tracker Import',
-            serviceID: mockServiceId,
-        });
-        expect(imported.status).toBe(201);
-        const expectedTools = [{ server_origin: trackerOrigin, tool_name: 'create_issue' }];
-        expect(sortTools(imported.body.enabledMCPTools)).toEqual(expectedTools);
-
-        const agentPage = await loginToAgents(page);
-        await agentPage.openAgentEditor('Tracker Import');
-        await agentPage.getModalTab('MCPs').click();
-        const trackerHeader = page.getByRole('button', { name: new RegExp(`^${trackerServerName}, 1 of 2 tools enabled`) });
-        await expect(trackerHeader).toBeVisible({ timeout: 30000 });
-        await trackerHeader.click();
-        await expect(page.getByRole('button', { name: `Disable tool create_issue on ${trackerServerName}` }))
-            .toHaveAttribute('aria-checked', 'true');
-        await expect(page.getByRole('button', { name: `Enable tool search_issues on ${trackerServerName}` }))
-            .toHaveAttribute('aria-checked', 'false');
-
-        // Saving an unrelated edit sends the reconciled tool list back to the server.
-        await agentPage.getModalTab('Configuration').click();
-        await agentPage.getCustomInstructionsInput().fill('Edited after the import.');
-        await agentPage.getModalSaveButton().click();
-        await agentPage.waitForModalClosed();
-
-        const saved = await agentApi.getAgent(token, imported.body.id);
-        expect(saved.customInstructions).toBe('Edited after the import.');
-        expect(sortTools(saved.enabledMCPTools)).toEqual(expectedTools);
     });
 });

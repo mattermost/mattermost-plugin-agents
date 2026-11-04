@@ -1,4 +1,5 @@
 import { Page, Locator, expect } from '@playwright/test';
+import { MATTERMOST_AI_PLUGIN_ID } from './plugin-http';
 
 /**
  * SystemConsoleHelper - Page object for System Console AI Plugin configuration
@@ -148,7 +149,12 @@ export class SystemConsoleHelper {
      * Click save button
      */
     async clickSave(): Promise<void> {
-        await this.getSaveButton().click();
-        await this.page.waitForTimeout(1000);
+        await Promise.all([
+            this.page.waitForResponse((response) => (
+                response.request().method() === 'PUT' &&
+                response.url().includes(`/plugins/${MATTERMOST_AI_PLUGIN_ID}/admin/config`)
+            )),
+            this.getSaveButton().click(),
+        ]);
     }
 }

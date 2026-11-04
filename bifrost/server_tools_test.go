@@ -205,13 +205,11 @@ func TestStreamResponsesEmitsServerToolActivity(t *testing.T) {
 			defer backend.Close()
 
 			llmClient, err := New(Config{
-				ProviderSettings: ProviderSettings{
-					Provider:         schemas.Anthropic,
-					APIKey:           "test-key",
-					APIURL:           backend.URL,
-					DefaultModel:     "claude-sonnet-4-6",
-					StreamingTimeout: 10 * time.Second,
-				},
+				Provider:           schemas.Anthropic,
+				APIKey:             "test-key",
+				APIURL:             backend.URL,
+				DefaultModel:       "claude-sonnet-4-6",
+				StreamingTimeout:   10 * time.Second,
 				EnabledNativeTools: tt.enabledNativeTools,
 			})
 			require.NoError(t, err)
@@ -279,16 +277,12 @@ func TestStreamResponsesCapturesFallbackFileRoute(t *testing.T) {
 	defer fallback.Close()
 
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.Anthropic, APIKey: "primary-key", APIURL: primary.URL,
-			DefaultModel: "claude-sonnet-4-6", StreamingTimeout: 10 * time.Second,
-		},
+		Provider: schemas.Anthropic, APIKey: "primary-key", APIURL: primary.URL,
+		DefaultModel: "claude-sonnet-4-6", StreamingTimeout: 10 * time.Second,
 		Fallbacks: []FallbackEntry{{
-			ID: "backup",
-			ProviderSettings: ProviderSettings{
-				Provider: schemas.Anthropic, APIKey: "fallback-key", APIURL: fallback.URL,
-				DefaultModel: "claude-sonnet-4-6", StreamingTimeout: 10 * time.Second,
-			},
+			ID:       "backup",
+			Provider: schemas.Anthropic, APIKey: "fallback-key", APIURL: fallback.URL,
+			DefaultModel: "claude-sonnet-4-6", StreamingTimeout: 10 * time.Second,
 		}},
 		EnabledNativeTools: []string{llm.NativeToolCodeInterpreter},
 	})
@@ -327,22 +321,31 @@ func TestProviderServices(t *testing.T) {
 	tests := []struct {
 		name             string
 		provider         schemas.ModelProvider
+		fallbacks        []schemas.ModelProvider
 		wantFileDownload bool
 	}{
 		{name: "anthropic serves file content", provider: schemas.Anthropic, wantFileDownload: true},
 		{name: "openai has no usable file retrieval yet", provider: schemas.OpenAI, wantFileDownload: false},
 		{name: "gemini has no file retrieval", provider: schemas.Gemini, wantFileDownload: false},
+		{name: "an anthropic fallback serves files created on its turns", provider: schemas.OpenAI, fallbacks: []schemas.ModelProvider{schemas.Anthropic}, wantFileDownload: true},
+		{name: "fallbacks without file retrieval add none", provider: schemas.OpenAI, fallbacks: []schemas.ModelProvider{schemas.Gemini}, wantFileDownload: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var fallbacks []FallbackEntry
+			for i, provider := range tt.fallbacks {
+				fallbacks = append(fallbacks, FallbackEntry{
+					Provider: provider, APIKey: "fallback-key", DefaultModel: "test-model",
+					ID: fmt.Sprintf("fallback-%d", i),
+				})
+			}
 			llmClient, err := New(Config{
-				ProviderSettings: ProviderSettings{
-					Provider:         tt.provider,
-					APIKey:           "test-key",
-					DefaultModel:     "test-model",
-					StreamingTimeout: 10 * time.Second,
-				},
+				Provider:         tt.provider,
+				APIKey:           "test-key",
+				DefaultModel:     "test-model",
+				StreamingTimeout: 10 * time.Second,
+				Fallbacks:        fallbacks,
 			})
 			require.NoError(t, err)
 			defer llmClient.Shutdown()
@@ -378,13 +381,11 @@ func TestDownloadProviderFile(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.Anthropic,
-			APIKey:           "test-key",
-			APIURL:           backend.URL,
-			DefaultModel:     "claude-sonnet-4-6",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.Anthropic,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "claude-sonnet-4-6",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.Shutdown()
@@ -476,16 +477,12 @@ func TestDownloadProviderFileUsesCapturedFallbackRoute(t *testing.T) {
 	defer fallback.Close()
 
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.Anthropic, APIKey: "primary-key", APIURL: primary.URL,
-			DefaultModel: "claude-sonnet-4-6", StreamingTimeout: 10 * time.Second,
-		},
+		Provider: schemas.Anthropic, APIKey: "primary-key", APIURL: primary.URL,
+		DefaultModel: "claude-sonnet-4-6", StreamingTimeout: 10 * time.Second,
 		Fallbacks: []FallbackEntry{{
-			ID: "backup",
-			ProviderSettings: ProviderSettings{
-				Provider: schemas.Anthropic, APIKey: "fallback-key", APIURL: fallback.URL,
-				DefaultModel: "claude-sonnet-4-6", StreamingTimeout: 10 * time.Second,
-			},
+			ID:       "backup",
+			Provider: schemas.Anthropic, APIKey: "fallback-key", APIURL: fallback.URL,
+			DefaultModel: "claude-sonnet-4-6", StreamingTimeout: 10 * time.Second,
 		}},
 	})
 	require.NoError(t, err)
@@ -597,8 +594,8 @@ func TestFilesAPIBetaAppliedForAnthropicFallback(t *testing.T) {
 			name:    "anthropic fallback behind an openai primary",
 			primary: schemas.OpenAI,
 			fallbacks: []FallbackEntry{{
-				ID:               "backup",
-				ProviderSettings: ProviderSettings{Provider: schemas.Anthropic, APIKey: "anthropic-key", DefaultModel: "claude-sonnet-4-6"},
+				ID:       "backup",
+				Provider: schemas.Anthropic, APIKey: "anthropic-key", DefaultModel: "claude-sonnet-4-6",
 			}},
 			wantBeta: true,
 		},
@@ -612,12 +609,10 @@ func TestFilesAPIBetaAppliedForAnthropicFallback(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			llmClient, err := New(Config{
-				ProviderSettings: ProviderSettings{
-					Provider:         tt.primary,
-					APIKey:           "primary-key",
-					DefaultModel:     "primary-model",
-					StreamingTimeout: 10 * time.Second,
-				},
+				Provider:           tt.primary,
+				APIKey:             "primary-key",
+				DefaultModel:       "primary-model",
+				StreamingTimeout:   10 * time.Second,
 				EnabledNativeTools: []string{llm.NativeToolCodeInterpreter},
 				Fallbacks:          tt.fallbacks,
 			})

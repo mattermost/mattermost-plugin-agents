@@ -99,7 +99,7 @@ func TestNewJSONSchemaForAccessMode(t *testing.T) {
 		require.NotNil(t, schema)
 		// Properties might be nil or empty for empty struct
 		if schema.Properties != nil {
-			assert.Len(t, schema.Properties, 0)
+			assert.Empty(t, schema.Properties)
 		}
 	})
 

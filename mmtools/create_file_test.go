@@ -29,7 +29,7 @@ func createFileArgsGetter(t *testing.T, args CreateFileArgs) llm.ToolArgumentGet
 }
 
 func TestNewCreateFileTool(t *testing.T) {
-	tool := NewCreateFileTool(mocks.NewMockClient(t))
+	tool := NewCreateFileTool(mocks.NewMockClient(t), false)
 
 	require.Equal(t, "CreateFile", tool.Name)
 	require.True(t, tool.AutoExecute)
@@ -38,6 +38,24 @@ func TestNewCreateFileTool(t *testing.T) {
 	require.NotEmpty(t, tool.Description)
 	require.NotNil(t, tool.Schema)
 	require.NotNil(t, tool.Resolver)
+}
+
+func TestCreateFileToolHTMLArtifactDescription(t *testing.T) {
+	tests := []struct {
+		name          string
+		htmlArtifacts bool
+	}{
+		{name: "disabled omits artifact guidance", htmlArtifacts: false},
+		{name: "enabled includes artifact guidance", htmlArtifacts: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tool := NewCreateFileTool(nil, tt.htmlArtifacts)
+			require.True(t, strings.HasPrefix(tool.Description, createFileDescription))
+			require.Equal(t, tt.htmlArtifacts, strings.Contains(tool.Description, "window.mattermost.getCurrentUser()"))
+			require.Equal(t, tt.htmlArtifacts, strings.Contains(tool.Description, "--mm-center-channel-bg"))
+		})
+	}
 }
 
 // TestCreateFileResolverValidation covers every failure that must reject the
@@ -238,7 +256,7 @@ func TestCreateFileResolverValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tool := NewCreateFileTool(nil)
+			tool := NewCreateFileTool(nil, false)
 			if !tt.nilClient {
 				client := mocks.NewMockClient(t)
 				if tt.setup != nil {
@@ -250,7 +268,7 @@ func TestCreateFileResolverValidation(t *testing.T) {
 					FileSettings: model.FileSettings{EnableFileAttachments: model.NewPointer(true)},
 				}).Maybe()
 				client.On("HasPermissionToChannel", mock.Anything, mock.Anything, model.PermissionUploadFile).Return(true).Maybe()
-				tool = NewCreateFileTool(client)
+				tool = NewCreateFileTool(client, false)
 			}
 
 			argsGetter := createFileArgsGetter(t, tt.args)
@@ -345,7 +363,7 @@ func TestCreateFileResolverUpload(t *testing.T) {
 				Channel:        &model.Channel{Id: channelID},
 				RequestingUser: &model.User{Id: "user-id"},
 			}
-			tool := NewCreateFileTool(client)
+			tool := NewCreateFileTool(client, false)
 
 			result, err := tool.Resolver(context.Background(), llmCtx, createFileArgsGetter(t, tt.args))
 

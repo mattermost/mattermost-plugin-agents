@@ -5,9 +5,19 @@ import type {IntlShape} from 'react-intl';
 
 import {
     AgentDocument,
+    AgentExportDocumentFile,
     MaxAgentDocumentBytes,
     MaxAgentDocumentNameLength,
 } from '@/types/agents';
+
+// An imported document that is uploaded when the agent is saved; content is base64.
+export type PendingAgentDocument = {
+    key: string;
+    name: string;
+    mimeType: string;
+    size: number;
+    content: string;
+}
 
 // Extensions the backend accepts for reference documents.
 export const AgentDocumentExtensions = ['.pdf', '.txt', '.md', '.markdown', '.csv', '.json'];
@@ -95,4 +105,23 @@ export function documentNameError(intl: IntlShape, name: string): string {
         return intl.formatMessage({defaultMessage: 'Names cannot contain slashes.'});
     }
     return '';
+}
+
+export function pendingFromExport(files: AgentExportDocumentFile[]): PendingAgentDocument[] {
+    return files.map((file, index) => ({
+        key: `import-${index}`,
+        name: file.name,
+        mimeType: file.mimeType,
+        size: file.size,
+        content: file.content,
+    }));
+}
+
+export function base64ToFile(doc: PendingAgentDocument): File {
+    const binary = atob(doc.content);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return new File([bytes], doc.name, {type: doc.mimeType});
 }

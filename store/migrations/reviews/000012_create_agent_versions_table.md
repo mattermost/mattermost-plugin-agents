@@ -3,9 +3,10 @@
 > **Context:** New append-only plugin table holding one row per saved version of a
 > self-service agent (`Agents_UserAgents`). Every agent create/update writes a row in the
 > same transaction as the agent write. Rows are never updated or deleted (soft-deleted
-> agents keep their history; no pruning). Empty on creation; existing agents get a
-> version 1 row from an idempotent Go backfill (`Store.BackfillAgentVersions`) that runs
-> at plugin activation, not from this migration. Growth is bounded by the number of agent
+> agents keep their history; no pruning). Empty on creation; an idempotent Go backfill
+> (`Store.BackfillAgentVersions`) that runs at plugin activation, not this migration, gives
+> existing agents a version 1 row and records a "system" version for any agent whose row
+> differs from its latest version. Growth is bounded by the number of agent
 > saves, which are human-driven admin actions.
 
 ## Schema Changes
@@ -37,8 +38,9 @@
 - Compatible with previous ESR: Yes (plugin-owned table; no Mattermost core change).
 - Can previous Mattermost version run with new schema: Yes — additive; older plugin code
   never references the table. Agent saves made by an older plugin version after a
-  downgrade do not write versions; the new code lazily records the pre-update state as
-  version 1 on the next save, and the activation backfill only covers agents with no rows.
+  downgrade do not write versions. On the next save, or at the next activation backfill,
+  the new code records the unversioned row first: as version 1 for an agent with no rows,
+  or as a "system" version when the row differs from the agent's latest version.
 - Impact if not compatible: N/A.
 
 ## Observations
@@ -58,7 +60,7 @@
 
 ## Large-Dataset Testing Recommendation
 - **Recommended: No**
-- Reason: Empty new table; the activation backfill inserts at most one row per active
+- Reason: Empty new table; each activation backfill inserts at most one row per active
   agent.
 - Tables to seed for testing: —
 

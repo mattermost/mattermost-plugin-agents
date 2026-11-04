@@ -3,14 +3,14 @@
 
 import React, {ChangeEvent, useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
-import {FormattedMessage} from 'react-intl';
+import {FormattedMessage, useIntl} from 'react-intl';
 
 //@ts-ignore it exists
 import aiIcon from 'src/../../assets/bot_icon.png';
 
-import {getBotProfilePictureUrl} from '@/client';
+import {Button} from '@mattermost/compass-ui/components/button';
 
-import {TertiaryButton} from '../assets/buttons';
+import {getBotProfilePictureUrl} from '@/client';
 
 import {FormRow, ItemLabel} from './item';
 
@@ -33,6 +33,7 @@ type LocalPreview = {
 }
 
 const AvatarItem = (props: AvatarItemProps) => {
+    const intl = useIntl();
     const {pendingFile} = props;
     const [serverIcon, setServerIcon] = useState<string>(aiIcon);
     const [preview, setPreview] = useState<LocalPreview | null>(null);
@@ -111,22 +112,26 @@ const AvatarItem = (props: AvatarItemProps) => {
         <FormRow>
             <ItemLabel><FormattedMessage defaultMessage='Bot avatar'/></ItemLabel>
             <AvatarSelectorContainer>
-                <Avatar src={icon}/>
-                <TertiaryButton
+                <Avatar
+                    src={icon}
+                    alt={intl.formatMessage({defaultMessage: 'Bot avatar'})}
+                />
+                <HiddenInput
+                    ref={hiddenInput}
+                    type='file'
+                    accept='.jpeg,.jpg,.png,.gif' // From the MM server requirements
+                    onChange={onUploadChange}
+                />
+                <Button
+                    emphasis='tertiary'
                     onClick={() => {
                         if (hiddenInput.current) {
                             hiddenInput.current.click();
                         }
                     }}
                 >
-                    <HiddenInput
-                        ref={hiddenInput}
-                        type='file'
-                        accept='.jpeg,.jpg,.png,.gif' // From the MM server requirements
-                        onChange={onUploadChange}
-                    />
                     <FormattedMessage defaultMessage='Upload Image'/>
-                </TertiaryButton>
+                </Button>
             </AvatarSelectorContainer>
         </FormRow>
     );
@@ -148,7 +153,7 @@ const AvatarSelectorContainer = styled.div`
 	display: flex;
 	flex-direction: row;
 	align-items: center;
-	gap: 16px;
+	gap: var(--spacing-l);
 `;
 
 export default AvatarItem;

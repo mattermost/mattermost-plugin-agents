@@ -140,9 +140,9 @@ func TestFetchNorthModels(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				sawAuth = r.Header.Get("Authorization")
 				paths = append(paths, r.URL.Path+"?"+r.URL.RawQuery)
-				require.Equal(t, http.MethodGet, r.Method)
-				require.Equal(t, "application/json", r.Header.Get("Accept"))
-				require.Equal(t, "/api/v2/models", r.URL.Path)
+				assert.Equal(t, http.MethodGet, r.Method)
+				assert.Equal(t, "application/json", r.Header.Get("Accept"))
+				assert.Equal(t, "/api/v2/models", r.URL.Path)
 
 				if tt.status != 0 {
 					w.WriteHeader(tt.status)
@@ -168,7 +168,7 @@ func TestFetchNorthModels(t *testing.T) {
 				}
 				assert.Equal(t, "100", r.URL.Query().Get("limit"))
 				w.Header().Set("Content-Type", "application/json")
-				require.NoError(t, json.NewEncoder(w).Encode(tt.pages[idx]))
+				assert.NoError(t, json.NewEncoder(w).Encode(tt.pages[idx]))
 			}))
 			defer server.Close()
 

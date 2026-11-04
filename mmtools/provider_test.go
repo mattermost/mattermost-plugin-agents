@@ -37,7 +37,7 @@ func TestGetToolsCreateFileCatalog(t *testing.T) {
 			if !tt.nilClient {
 				client = mocks.NewMockClient(t)
 			}
-			provider := NewMMToolProvider(client, nil)
+			provider := NewMMToolProvider(client, nil, nil)
 
 			names := []string{}
 			for _, tool := range provider.GetTools(nil, tt.llmContext) {

@@ -14,6 +14,14 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 )
 
+// Plugin callback routes, relative to <siteURL>/plugins/mattermost-ai. They
+// must match the routes registered in api/api.go; api tests route requests
+// built by the real clients through the plugin router to keep them in sync.
+const (
+	SemanticSearchCallbackPath = "/search/raw"
+	FileContentCallbackPath    = "/files/content"
+)
+
 // postPluginJSON marshals reqBody to JSON and POSTs it to a plugin callback
 // endpoint, forwarding a bearer token (direct or session-resolved) and user
 // id from ctx (falling back to fallbackUserID when ctx carries no user id).

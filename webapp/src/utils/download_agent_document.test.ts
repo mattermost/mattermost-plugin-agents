@@ -1,12 +1,12 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {downloadAgentDocument as fetchAgentDocument} from '@/client';
+import {fetchAgentDocument} from '@/client';
 
 import {downloadAgentDocument} from './download_agent_document';
 
 jest.mock('@/client', () => ({
-    downloadAgentDocument: jest.fn(),
+    fetchAgentDocument: jest.fn(),
 }));
 
 const mockFetchDocument = fetchAgentDocument as jest.MockedFunction<typeof fetchAgentDocument>;
@@ -29,16 +29,13 @@ describe('downloadAgentDocument', () => {
         jest.restoreAllMocks();
     });
 
-    test.each([
-        {name: 'uses the server-provided filename', filename: 'Handbook v2.pdf', expected: 'Handbook v2.pdf'},
-        {name: 'falls back to the document name without Content-Disposition', filename: null, expected: 'handbook.pdf'},
-    ])('$name', async ({filename, expected}) => {
-        mockFetchDocument.mockResolvedValue({blob: new Blob(['pdf']), filename});
+    test('downloads the document bytes under the given name', async () => {
+        mockFetchDocument.mockResolvedValue(new Blob(['pdf']));
 
         await downloadAgentDocument('agent_1', 'doc_1', 'handbook.pdf');
 
         expect(mockFetchDocument).toHaveBeenCalledWith('agent_1', 'doc_1');
-        expect(clickedDownloads).toEqual([{download: expected, href: 'blob:agent-document'}]);
+        expect(clickedDownloads).toEqual([{download: 'handbook.pdf', href: 'blob:agent-document'}]);
     });
 
     test('does not start a download when the request fails', async () => {

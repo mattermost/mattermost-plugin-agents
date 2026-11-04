@@ -21,8 +21,6 @@ export function versionSourceLabel(intl: IntlShape, summary: Pick<AgentVersionSu
             );
         }
         return intl.formatMessage({defaultMessage: 'Restored'});
-    case 'import':
-        return intl.formatMessage({defaultMessage: 'Imported'});
     case 'system':
         return intl.formatMessage({defaultMessage: 'System'});
     default:
@@ -30,7 +28,56 @@ export function versionSourceLabel(intl: IntlShape, summary: Pick<AgentVersionSu
     }
 }
 
-// changedFieldLabel maps a BotConfig JSON key to a label for the History tab.
+const MINUTE = 60;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+const WEEK = 7 * DAY;
+const MONTH = 30 * DAY;
+const YEAR = 365 * DAY;
+
+// formatRelativeTime renders compact "2d ago" style text, rounding down so a
+// version never reads as older than it is. A timestamp ahead of the clock
+// (client and server clocks disagree) reads as "now", never "in 2m".
+export function formatRelativeTime(intl: IntlShape, timestamp: number, now: number = Date.now()): string {
+    const abs = Math.trunc((now - timestamp) / 1000);
+    const options = {style: 'narrow', numeric: 'always'} as const;
+
+    if (abs < MINUTE) {
+        return intl.formatRelativeTime(0, 'second', {numeric: 'auto'});
+    }
+    if (abs < HOUR) {
+        return intl.formatRelativeTime(-Math.floor(abs / MINUTE), 'minute', options);
+    }
+    if (abs < DAY) {
+        return intl.formatRelativeTime(-Math.floor(abs / HOUR), 'hour', options);
+    }
+    if (abs < WEEK) {
+        return intl.formatRelativeTime(-Math.floor(abs / DAY), 'day', options);
+    }
+    if (abs < MONTH) {
+        return intl.formatRelativeTime(-Math.floor(abs / WEEK), 'week', options);
+    }
+    if (abs < YEAR) {
+        // Months are 30 days, so the last days of the year would round up to 12.
+        return intl.formatRelativeTime(-Math.min(11, Math.floor(abs / MONTH)), 'month', options);
+    }
+    return intl.formatRelativeTime(-Math.floor(abs / YEAR), 'year', options);
+}
+
+// Not reported as changes: lifecycle ids, deprecated or non-snapshot keys, and
+// the username, which a restore never changes.
+const IGNORED_CONFIG_FIELDS = new Set(['id', 'name', 'service', 'structuredOutputEnabled']);
+
+// differingConfigFields returns the keys whose values differ between two
+// version snapshots, e.g. what restoring one over the other would change.
+export function differingConfigFields(a: Record<string, unknown>, b: Record<string, unknown>): string[] {
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+    return Array.from(keys).filter((key) => (
+        !IGNORED_CONFIG_FIELDS.has(key) && JSON.stringify(a[key] ?? null) !== JSON.stringify(b[key] ?? null)
+    ));
+}
+
+// changedFieldLabel maps a BotConfig JSON key to a label for a version's changes.
 export function changedFieldLabel(intl: IntlShape, field: string): string {
     switch (field) {
     case 'name':
@@ -39,6 +86,8 @@ export function changedFieldLabel(intl: IntlShape, field: string): string {
         return intl.formatMessage({defaultMessage: 'Display name'});
     case 'customInstructions':
         return intl.formatMessage({defaultMessage: 'Custom instructions'});
+    case 'documents':
+        return intl.formatMessage({defaultMessage: 'Reference documents'});
     case 'serviceID':
         return intl.formatMessage({defaultMessage: 'AI service'});
     case 'model':
@@ -72,8 +121,8 @@ export function changedFieldLabel(intl: IntlShape, field: string): string {
         return intl.formatMessage({defaultMessage: 'Reasoning'});
     case 'maxToolTurns':
         return intl.formatMessage({defaultMessage: 'Max tool turns'});
-    case 'documents':
-        return intl.formatMessage({defaultMessage: 'Reference documents'});
+    case 'skills':
+        return intl.formatMessage({defaultMessage: 'Skills'});
     default:
         return humanizeFieldKey(field);
     }

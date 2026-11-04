@@ -69,7 +69,7 @@ func (m *OAuthManager) bodyLimitedHTTPClient() *http.Client {
 // no legitimate reason to redirect, and following one would replay the secrets
 // to the redirect target. Callers treat the returned non-2xx as an error.
 func noRedirectClient(base *http.Client) *http.Client {
-	clientCopy := http.Client{}
+	clientCopy := http.Client{} //nolint:httpclienttimeout // nil base only in tests; otherwise a copy of the caller's client and its Timeout
 	if base != nil {
 		clientCopy = *base
 	}

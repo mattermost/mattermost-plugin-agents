@@ -4,11 +4,14 @@
 package conversations_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -18,6 +21,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -46,13 +50,28 @@ type fakeMMClient struct {
 	ephemeralPosts       []*model.Post
 	ephemeralPostUserIDs []string
 	fileInfos            map[string]*model.FileInfo
+	files                map[string][]byte
 	onUpdatePost         func(*model.Post)
-	websocketEvents      []fakeWebSocketEvent
+	// wsMu guards websocketEvents: title generation publishes from a
+	// background goroutine.
+	wsMu            sync.Mutex
+	websocketEvents []fakeWebSocketEvent
+	// dmChannelID, when set, is the channel DM posts are created in.
+	dmChannelID string
+	dmPosts     []*model.Post
+	// directChannelRequests counts GetDirectChannel calls, which create the
+	// DM in production.
+	directChannelRequests int
+	// postErrors are returned by GetPost for their post IDs.
+	postErrors map[string]error
+	// unreadableChannels are channels HasPermissionToChannel denies.
+	unreadableChannels map[string]bool
 
-	// logMu guards logErrors: background goroutines (e.g. title generation)
+	// logMu guards logErrors and logWarns: background goroutines (e.g. title generation)
 	// may log while the test goroutine reads.
 	logMu     sync.Mutex
 	logErrors []string
+	logWarns  []string
 }
 
 func (c *fakeMMClient) GetUser(userID string) (*model.User, error) {
@@ -156,12 +175,15 @@ func (c *fakeMMClient) AddReaction(*model.Reaction) error {
 }
 
 func (c *fakeMMClient) GetPost(postID string) (*model.Post, error) {
+	if err := c.postErrors[postID]; err != nil {
+		return nil, err
+	}
 	if c.posts != nil {
 		if post, ok := c.posts[postID]; ok {
 			return post, nil
 		}
 	}
-	return nil, errors.New("post not found")
+	return nil, pluginapi.ErrNotFound
 }
 
 func (c *fakeMMClient) GetPostsSince(string, int64) (*model.PostList, error) {
@@ -172,8 +194,17 @@ func (c *fakeMMClient) GetPostsBefore(string, string, int, int) (*model.PostList
 	return nil, errors.New("not implemented")
 }
 
-func (c *fakeMMClient) DM(string, string, *model.Post) error {
-	return errors.New("not implemented")
+func (c *fakeMMClient) DM(senderID, _ string, post *model.Post) error {
+	if c.dmChannelID == "" {
+		return errors.New("not implemented")
+	}
+	if post.Id == "" {
+		post.Id = model.NewId()
+	}
+	post.UserId = senderID
+	post.ChannelId = c.dmChannelID
+	c.dmPosts = append(c.dmPosts, post)
+	return nil
 }
 
 func (c *fakeMMClient) GetTeam(string) (*model.Team, error) {
@@ -190,10 +221,16 @@ func (c *fakeMMClient) GetChannel(channelID string) (*model.Channel, error) {
 }
 
 func (c *fakeMMClient) GetDirectChannel(string, string) (*model.Channel, error) {
-	return nil, errors.New("not implemented")
+	c.directChannelRequests++
+	if c.dmChannelID == "" {
+		return nil, errors.New("not implemented")
+	}
+	return c.GetChannel(c.dmChannelID)
 }
 
 func (c *fakeMMClient) PublishWebSocketEvent(event string, payload map[string]any, broadcast *model.WebsocketBroadcast) {
+	c.wsMu.Lock()
+	defer c.wsMu.Unlock()
 	c.websocketEvents = append(c.websocketEvents, fakeWebSocketEvent{
 		event:     event,
 		payload:   payload,
@@ -201,8 +238,15 @@ func (c *fakeMMClient) PublishWebSocketEvent(event string, payload map[string]an
 	})
 }
 
+// publishedWebSocketEvents returns a copy of the events published so far.
+func (c *fakeMMClient) publishedWebSocketEvents() []fakeWebSocketEvent {
+	c.wsMu.Lock()
+	defer c.wsMu.Unlock()
+	return slices.Clone(c.websocketEvents)
+}
+
 func (c *fakeMMClient) GetConfig() *model.Config {
-	return &model.Config{}
+	return &model.Config{LocalizationSettings: model.LocalizationSettings{DefaultServerLocale: model.NewPointer("en")}}
 }
 
 func (c *fakeMMClient) LogError(msg string, _ ...any) {
@@ -218,7 +262,19 @@ func (c *fakeMMClient) loggedErrors() []string {
 	return append([]string(nil), c.logErrors...)
 }
 
-func (c *fakeMMClient) LogWarn(string, ...any) {}
+func (c *fakeMMClient) LogWarn(msg string, keyValuePairs ...any) {
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	c.logWarns = append(c.logWarns, fmt.Sprintf("%s %v", msg, keyValuePairs))
+}
+
+// loggedWarnings returns a snapshot of the warn-level log lines, each the
+// message followed by its key/value pairs.
+func (c *fakeMMClient) loggedWarnings() []string {
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	return append([]string(nil), c.logWarns...)
+}
 
 func (c *fakeMMClient) GetUserByUsername(string) (*model.User, error) {
 	return nil, errors.New("not implemented")
@@ -246,8 +302,8 @@ func (c *fakeMMClient) GetChannelByName(string, string, bool) (*model.Channel, e
 	return nil, errors.New("not implemented")
 }
 
-func (c *fakeMMClient) HasPermissionToChannel(string, string, *model.Permission) bool {
-	return true
+func (c *fakeMMClient) HasPermissionToChannel(_, channelID string, _ *model.Permission) bool {
+	return !c.unreadableChannels[channelID]
 }
 
 func (c *fakeMMClient) HasPermissionToFileAction(sessionID, _, _ string) bool {
@@ -263,7 +319,10 @@ func (c *fakeMMClient) GetFileInfo(fileID string) (*model.FileInfo, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (c *fakeMMClient) GetFile(string) (io.ReadCloser, error) {
+func (c *fakeMMClient) GetFile(fileID string) (io.ReadCloser, error) {
+	if data, ok := c.files[fileID]; ok {
+		return io.NopCloser(bytes.NewReader(data)), nil
+	}
 	return nil, errors.New("not implemented")
 }
 
@@ -278,6 +337,8 @@ func (c *fakeMMClient) SendEphemeralPost(userID string, post *model.Post) {
 
 type fakeStreamingService struct {
 	streamedPosts []*model.Post
+	// finished, when set, receives the ID of each post whose stream ends.
+	finished chan string
 }
 
 func (s *fakeStreamingService) StreamToNewPost(_ context.Context, _ string, _ string, _ *llm.TextStreamResult, post *model.Post, _ string) error {
@@ -307,7 +368,11 @@ func (s *fakeStreamingService) GetStreamingContext(inCtx context.Context, _ stri
 	return inCtx, nil
 }
 
-func (s *fakeStreamingService) FinishStreaming(string) {}
+func (s *fakeStreamingService) FinishStreaming(postID string) {
+	if s.finished != nil {
+		s.finished <- postID
+	}
+}
 
 type testToolProvider struct {
 	tools []llm.Tool
@@ -320,10 +385,15 @@ func (p *testToolProvider) GetTools(_ *bots.Bot, _ *llm.Context) []llm.Tool {
 // testToolCallingConfig implements conversations.ConfigProvider for testing
 type testToolCallingConfig struct {
 	enableChannelMentionToolCalling bool
+	enableAmbientAutoReply          bool
 }
 
 func (c *testToolCallingConfig) EnableChannelMentionToolCalling() bool {
 	return c.enableChannelMentionToolCalling
+}
+
+func (c *testToolCallingConfig) EnableAmbientAutoReply() bool {
+	return c.enableAmbientAutoReply
 }
 
 func (c *testToolCallingConfig) AllowNativeWebSearchInChannels() bool {

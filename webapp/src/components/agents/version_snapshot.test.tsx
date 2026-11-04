@@ -22,10 +22,6 @@ jest.mock('react-intl', () => {
     return {...actual, useIntl: () => intl};
 });
 
-jest.mock('@/client', () => ({
-    agentDocumentUrl: (agentId: string, documentId: string) => `/plugins/mattermost-ai/agents/${agentId}/documents/${documentId}`,
-}));
-
 jest.mock('@/utils/download_agent_document', () => ({
     downloadAgentDocument: jest.fn(),
 }));
@@ -62,26 +58,21 @@ beforeEach(() => {
 });
 
 describe('VersionSnapshot reference documents', () => {
-    test('lists each document with its size and a download link to the document route', () => {
+    test('lists each document with its size and a download button', () => {
         renderSnapshot({documents: [handbook, faq]}, 'agent_1');
 
-        const links = within(documentsRow()).getAllByRole('link');
-        expect(links.map((l) => l.textContent)).toEqual(['handbook.pdf', 'faq.txt']);
-        expect(links.map((l) => l.getAttribute('href'))).toEqual([
-            '/plugins/mattermost-ai/agents/agent_1/documents/doc_1',
-            '/plugins/mattermost-ai/agents/agent_1/documents/doc_2',
-        ]);
+        const buttons = within(documentsRow()).getAllByRole('button');
+        expect(buttons.map((b) => b.textContent)).toEqual(['handbook.pdf', 'faq.txt']);
         expect(within(documentsRow()).getByText('2 MB')).not.toBeNull();
         expect(within(documentsRow()).getByText('300 B')).not.toBeNull();
     });
 
-    test('clicking a link downloads through the authenticated helper instead of navigating', () => {
+    test('clicking a document downloads it through the authenticated helper', () => {
         mockDownload.mockResolvedValue();
         renderSnapshot({documents: [handbook]}, 'agent_1');
 
-        const notPrevented = fireEvent.click(screen.getByRole('link', {name: 'handbook.pdf'}));
+        fireEvent.click(screen.getByRole('button', {name: 'handbook.pdf'}));
 
-        expect(notPrevented).toBe(false);
         expect(mockDownload).toHaveBeenCalledWith('agent_1', 'doc_1', 'handbook.pdf');
     });
 
@@ -89,7 +80,7 @@ describe('VersionSnapshot reference documents', () => {
         mockDownload.mockRejectedValue({message: 'document not found'});
         renderSnapshot({documents: [handbook]}, 'agent_1');
 
-        fireEvent.click(screen.getByRole('link', {name: 'handbook.pdf'}));
+        fireEvent.click(screen.getByRole('button', {name: 'handbook.pdf'}));
 
         expect(await screen.findByText('document not found')).not.toBeNull();
     });
@@ -102,13 +93,13 @@ describe('VersionSnapshot reference documents', () => {
         renderSnapshot(config, 'agent_1');
 
         expect(documentsRow().textContent).toBe('None');
-        expect(screen.queryByRole('link')).toBeNull();
+        expect(screen.queryByRole('button')).toBeNull();
     });
 
-    test('lists names without links when the agent is unknown', () => {
+    test('lists names without download buttons when the agent is unknown', () => {
         renderSnapshot({documents: [faq]});
 
         expect(within(documentsRow()).getByText(/faq\.txt/)).not.toBeNull();
-        expect(screen.queryByRole('link')).toBeNull();
+        expect(screen.queryByRole('button')).toBeNull();
     });
 });

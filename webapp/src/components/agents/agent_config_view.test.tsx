@@ -2,32 +2,31 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render, screen, waitFor, waitForElementToBeRemoved, within} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor, waitForElementToBeRemoved, within} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
-import {createAgent, getAgentVersion, getAgentVersions, getProfilesByIds, restoreAgentVersion, updateAgent, uploadAgentDocument} from '@/client';
-import {AgentDocument, AgentVersionDetail, AgentVersionList, EnabledTool, MaxCustomInstructionsRunes, ServiceInfo, UserAgent} from '@/types/agents';
-import {downloadAgentExport} from '@/utils/download_agent_export';
+import {createAgent, deleteAgentVersions, getAgentVersion, getAgentVersions, getProfilesByIds, getUserMCPTools, restoreAgentVersion, updateAgent, uploadAgentDocument} from '@/client';
+import {AgentExportDocument, AgentExportDocumentFile, AgentVersionDetail, AgentVersionList, EnabledTool, MaxCustomInstructionsRunes, ServiceInfo, SkillsConfig, UserAgent, normalizeSkillsConfig} from '@/types/agents';
+import {downloadAgentExport} from '@/utils/agent_export';
 import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
 
 import AgentConfigView, {AgentDraft} from './agent_config_view';
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
+
+    // Message ids are derived from defaultMessage at build time; mirror that here.
+    const real = actual.createIntl({locale: 'en', defaultLocale: 'en', onError: () => null});
     return {
         ...actual,
         useIntl: () => ({
-            formatMessage: ({defaultMessage}: {defaultMessage: string}, values?: Record<string, string | number>) => {
-                if (!values) {
-                    return defaultMessage;
-                }
-                return Object.entries(values).reduce(
-                    (message, [key, value]) => message.replace(`{${key}}`, String(value)),
-                    defaultMessage,
-                );
-            },
+            formatMessage: (descriptor: {id?: string; defaultMessage: string}, values?: Record<string, string | number>) =>
+                real.formatMessage({id: descriptor.id ?? descriptor.defaultMessage, ...descriptor}, values),
             formatNumber: (value: number) => new Intl.NumberFormat('en').format(value),
+            formatList: (items: string[]) => new Intl.ListFormat('en', {type: 'conjunction'}).format(items),
             formatDate: (value: number) => new Date(value).toISOString().slice(0, 10),
+            formatRelativeTime: (value: number, unit: Intl.RelativeTimeFormatUnit, options?: Intl.RelativeTimeFormatOptions) =>
+                real.formatRelativeTime(value, unit, options),
         }),
         FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
     };
@@ -35,6 +34,10 @@ jest.mock('react-intl', () => {
 
 jest.mock('@/license', () => ({
     useIsLicensedFor: jest.fn(() => true),
+}));
+
+jest.mock('react-redux', () => ({
+    useSelector: (selector: (state: unknown) => unknown) => selector({entities: {users: {currentUserId: 'user_1'}}}),
 }));
 
 jest.mock('@/utils/permissions', () => ({
@@ -45,16 +48,17 @@ jest.mock('@/client', () => ({
     createAgent: jest.fn(),
     updateAgent: jest.fn(),
     uploadAgentAvatar: jest.fn(),
+    uploadAgentDocument: jest.fn(),
     getUserMCPTools: jest.fn(),
     getAgentVersions: jest.fn(),
     getAgentVersion: jest.fn(),
     restoreAgentVersion: jest.fn(),
+    deleteAgentVersions: jest.fn(),
     getProfilesByIds: jest.fn(),
-    uploadAgentDocument: jest.fn(),
-    agentDocumentUrl: (agentId: string, documentId: string) => `/agents/${agentId}/documents/${documentId}`,
 }));
 
-jest.mock('@/utils/download_agent_export', () => ({
+jest.mock('@/utils/agent_export', () => ({
+    ...jest.requireActual('@/utils/agent_export'),
     downloadAgentExport: jest.fn(),
 }));
 
@@ -67,6 +71,20 @@ jest.mock('@/hooks/use_mcp_connection_events', () => ({
 }));
 
 const mockedUseCurrentUserHasSystemPermission = useCurrentUserHasSystemPermission as unknown as jest.Mock;
+
+async function openHistory() {
+    fireEvent.click(await screen.findByRole('button', {name: /^Version history, v/}));
+    return screen.findByTestId('version-list');
+}
+
+async function closeHistory() {
+    fireEvent.click(within(screen.getByRole('dialog', {name: 'Version history'})).getByRole('button', {name: 'Close'}));
+    await waitFor(() => expect(screen.queryByTestId('version-list')).toBeNull());
+}
+
+async function openVersionMenu(version: number) {
+    fireEvent.click(await screen.findByRole('button', {name: `Actions for version ${version}`}));
+}
 
 jest.mock('@/components/system_console/bot', () => ({
     ChannelAccessLevel: {
@@ -92,64 +110,14 @@ jest.mock('./tabs/config_tab', () => ({
         onAvatarChange,
         avatarFile,
         errors = {},
-        savedDocumentIds = [],
-        documentUploads = [],
-        onUploadDocuments,
-        onDismissDocumentUpload,
     }: {
         draft: AgentDraft;
         onChange: (updates: Partial<AgentDraft>) => void;
         onAvatarChange: (file: File | null) => void;
         avatarFile?: File | null;
         errors?: Record<string, string>;
-        savedDocumentIds?: string[];
-        documentUploads?: Array<{key: string; name: string; status: string; error?: string}>;
-        onUploadDocuments: (files: File[]) => void;
-        onDismissDocumentUpload: (key: string) => void;
     }) => (
         <>
-            <input
-                aria-label='Upload documents'
-                type='file'
-                multiple={true}
-                onChange={(e) => onUploadDocuments(Array.from(e.target.files ?? []))}
-            />
-            <ul data-testid='draft-documents'>
-                {draft.documents.map((doc) => (
-                    <li
-                        key={doc.id}
-                        data-saved={String(savedDocumentIds.includes(doc.id))}
-                    >
-                        {doc.name}
-                        <button
-                            type='button'
-                            onClick={() => onChange({documents: draft.documents.filter((d) => d.id !== doc.id)})}
-                        >
-                            {`Remove ${doc.name}`}
-                        </button>
-                        <button
-                            type='button'
-                            onClick={() => onChange({documents: draft.documents.map((d) => (d.id === doc.id ? {...d, name: 'renamed.txt'} : d))})}
-                        >
-                            {`Rename ${doc.name}`}
-                        </button>
-                    </li>
-                ))}
-            </ul>
-            <ul data-testid='document-uploads'>
-                {documentUploads.map((item) => (
-                    <li key={item.key}>
-                        {`${item.name}: ${item.status}${item.error ? ` - ${item.error}` : ''}`}
-                        <button
-                            type='button'
-                            onClick={() => onDismissDocumentUpload(item.key)}
-                        >
-                            {`Dismiss ${item.name}`}
-                        </button>
-                    </li>
-                ))}
-            </ul>
-            {errors.documents && <div role='alert'>{errors.documents}</div>}
             <input
                 aria-label='Bot avatar'
                 type='file'
@@ -166,6 +134,7 @@ jest.mock('./tabs/config_tab', () => ({
                 value={draft.username}
                 onChange={(e) => onChange({username: e.target.value})}
             />
+            {errors.username && <div>{errors.username}</div>}
             <input
                 aria-label='Max tool turns'
                 value={draft.maxToolTurns}
@@ -210,7 +179,7 @@ jest.mock('./tabs/config_tab', () => ({
 
 jest.mock('./tabs/access_tab', () => {
     const {useState} = jest.requireActual('react');
-    const Select = jest.requireActual('react-select').default;
+    const {Combobox} = jest.requireActual('@mattermost/compass-ui/components/combobox');
     const ConfirmationDialog = jest.requireActual('@/components/confirmation_dialog').default;
 
     const MockAccessTab = ({onChange}: {onChange: (updates: Partial<AgentDraft>) => void}) => {
@@ -227,7 +196,7 @@ jest.mock('./tabs/access_tab', () => {
                 >
                     {'Switch user access to everyone'}
                 </button>
-                <Select
+                <Combobox
                     aria-label='Agent admins'
                     options={[{value: 'user_1', label: 'Admin User'}]}
                 />
@@ -292,6 +261,35 @@ jest.mock('./tabs/mcps_tab', () => ({
     ),
 }));
 
+jest.mock('./tabs/skills_tab', () => ({
+    __esModule: true,
+    default: ({
+        skills,
+        onChange,
+        currentUserId,
+    }: {
+        skills: SkillsConfig;
+        onChange: (updates: Partial<SkillsConfig>) => void;
+        currentUserId: string;
+    }) => (
+        <>
+            <div data-testid='skills-tab-user'>{currentUserId}</div>
+            <input
+                aria-label='Enable skills'
+                type='checkbox'
+                checked={!skills.disabled}
+                onChange={(e) => onChange({disabled: !e.target.checked})}
+            />
+            <button
+                type='button'
+                onClick={() => onChange({enabledSharedIDs: [...(skills.enabledSharedIDs ?? []), 'bbbbbbbbbbbbbbbbbbbbbbbbbb']})}
+            >
+                {'Enable visible skill'}
+            </button>
+        </>
+    ),
+}));
+
 const services: ServiceInfo[] = [
     {
         id: 'svc_1',
@@ -305,6 +303,7 @@ const services: ServiceInfo[] = [
 
 const mockCreateAgent = createAgent as jest.MockedFunction<typeof createAgent>;
 const mockUpdateAgent = updateAgent as jest.MockedFunction<typeof updateAgent>;
+const mockUploadAgentDocument = uploadAgentDocument as jest.MockedFunction<typeof uploadAgentDocument>;
 
 const savedAgent = {
     id: 'agent_1',
@@ -391,6 +390,84 @@ describe('AgentConfigView', () => {
         expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
     });
 
+    test('renderFrame places the header actions, tabs, body and footer in the owner\'s frame instead of the page\'s', () => {
+        const onBack = jest.fn();
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='create'
+                    services={services}
+                    onBack={onBack}
+                    onSaved={jest.fn()}
+                    renderFrame={({title, headerAction, tabs, body, footer}) => (
+                        <div data-testid='frame'>
+                            <h2>{title}</h2>
+                            <div data-testid='frame-header-action'>{headerAction}</div>
+                            <div data-testid='frame-tabs'>{tabs}</div>
+                            <div data-testid='frame-body'>{body}</div>
+                            <div data-testid='frame-footer'>{footer}</div>
+                        </div>
+                    )}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByRole('heading', {name: 'New Agent'})).not.toBeNull();
+        expect(within(screen.getByTestId('frame-header-action')).getByRole('button', {name: 'Import'})).not.toBeNull();
+        expect(within(screen.getByTestId('frame-tabs')).getByRole('tab', {name: 'Access'})).not.toBeNull();
+        expect(within(screen.getByTestId('frame-body')).getByLabelText('Display Name')).not.toBeNull();
+        expect(screen.queryByRole('button', {name: 'Back to agents'})).toBeNull();
+
+        fireEvent.click(within(screen.getByTestId('frame-footer')).getByRole('button', {name: 'Cancel'}));
+        expect(onBack).toHaveBeenCalledTimes(1);
+        expect(within(screen.getByTestId('frame-footer')).getByRole('button', {name: 'Save'})).not.toBeNull();
+    });
+
+    describe('in a modal', () => {
+        const renderModalView = () => {
+            const onBack = jest.fn();
+            const closeRequestRef: React.MutableRefObject<(() => void) | null> = {current: null};
+            const result = render(
+                <IntlProvider locale='en'>
+                    <AgentConfigView
+                        mode='create'
+                        services={services}
+                        closeRequestRef={closeRequestRef}
+                        onBack={onBack}
+                        onSaved={jest.fn()}
+                        renderFrame={({body, footer}) => (
+                            <div>
+                                {body}
+                                {footer}
+                            </div>
+                        )}
+                    />
+                </IntlProvider>,
+            );
+            return {...result, onBack, closeRequestRef};
+        };
+
+        test('has no Back button, and the owner closes it through the close request', () => {
+            const {onBack, closeRequestRef} = renderModalView();
+            expect(screen.queryByRole('button', {name: 'Back to agents'})).toBeNull();
+
+            act(() => closeRequestRef.current?.());
+            expect(onBack).toHaveBeenCalledTimes(1);
+        });
+
+        test('the close request asks before discarding changes, and Escape is left to the modal', () => {
+            const {onBack, closeRequestRef} = renderModalView();
+            fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'Unsaved Agent'}});
+
+            fireEvent.keyDown(document, {key: 'Escape'});
+            expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
+
+            act(() => closeRequestRef.current?.());
+            expect(screen.getByRole('dialog', {name: 'Discard changes?'})).not.toBeNull();
+            expect(onBack).not.toHaveBeenCalled();
+        });
+    });
+
     // Regression test for MM-69185.
     //
     // After saving on the MCP tab, navigating back to the same agent's MCP tab and
@@ -450,7 +527,7 @@ describe('AgentConfigView', () => {
         // Open the MCP tab and trigger reconciliation. The mocked McpsTab exposes
         // a button that fires onReconcileEnabledTools with an empty list, which
         // mirrors what the real tab does when every saved tool is orphaned.
-        fireEvent.click(screen.getByRole('button', {name: 'MCPs'}));
+        fireEvent.click(screen.getByRole('tab', {name: 'MCPs'}));
         fireEvent.click(screen.getByRole('button', {name: /Reconcile/}));
 
         fireEvent.click(screen.getByRole('button', {name: 'Cancel'}));
@@ -548,37 +625,126 @@ describe('AgentConfigView', () => {
 
     test.each([
         {
-            name: 'closing an open react-select menu',
+            name: 'closing an open picker menu',
             dismissChild: () => {
                 const input = screen.getByLabelText('Agent admins');
                 fireEvent.keyDown(input, {key: 'ArrowDown'});
-                expect(screen.getByText('Admin User')).not.toBeNull();
+                expect(input.getAttribute('aria-expanded')).toBe('true');
 
                 fireEvent.keyDown(input, {key: 'Escape'});
-                expect(screen.queryByText('Admin User')).toBeNull();
+                expect(input.getAttribute('aria-expanded')).toBe('false');
             },
         },
         {
             name: 'cancelling a nested confirmation dialog',
-            dismissChild: () => {
+            dismissChild: async () => {
                 fireEvent.click(screen.getByRole('button', {name: 'Open nested dialog'}));
                 expect(screen.getByRole('dialog', {name: 'Remove access policy?'})).not.toBeNull();
 
                 fireEvent.keyDown(document, {key: 'Escape'});
-                expect(screen.queryByRole('dialog', {name: 'Remove access policy?'})).toBeNull();
+
+                // The overlay stays mounted for its exit fade before unmounting.
+                await waitFor(() => expect(screen.queryByRole('dialog', {name: 'Remove access policy?'})).toBeNull());
             },
         },
-    ])('Escape used for $name stays on the page; a plain Escape still goes back', ({dismissChild}) => {
+    ])('Escape used for $name stays on the page; a plain Escape still goes back', async ({dismissChild}) => {
         const {onBack} = renderView();
-        fireEvent.click(screen.getByRole('button', {name: 'Access'}));
+        fireEvent.click(screen.getByRole('tab', {name: 'Access'}));
 
-        dismissChild();
+        await dismissChild();
 
         expect(onBack).not.toHaveBeenCalled();
 
         fireEvent.keyDown(document, {key: 'Escape'});
 
         expect(onBack).toHaveBeenCalledTimes(1);
+    });
+
+    test('disabling tools blocks the MCPs tab and leaves it if it was open', () => {
+        renderView();
+
+        fireEvent.click(screen.getByRole('tab', {name: 'MCPs'}));
+        expect(screen.getByLabelText('Use service accounts')).not.toBeNull();
+
+        fireEvent.click(screen.getByRole('tab', {name: 'Configuration'}));
+        fireEvent.click(screen.getByLabelText('Enable Tools'));
+        fireEvent.click(screen.getByRole('tab', {name: 'MCPs'}));
+
+        expect(screen.queryByLabelText('Use service accounts')).toBeNull();
+        expect(screen.getByRole('tab', {name: 'MCPs'}).getAttribute('title')).toBe('Enable Tools to configure MCP integrations');
+    });
+
+    test('disabling tools blocks the Skills tab and leaves it if it was open', () => {
+        renderView();
+
+        fireEvent.click(screen.getByRole('tab', {name: 'Skills'}));
+        expect(screen.getByTestId('skills-tab-user').textContent).toBe('user_1');
+
+        fireEvent.click(screen.getByRole('tab', {name: 'Configuration'}));
+        fireEvent.click(screen.getByLabelText('Enable Tools'));
+        fireEvent.click(screen.getByRole('tab', {name: 'Skills'}));
+
+        expect(screen.queryByTestId('skills-tab-user')).toBeNull();
+        expect(screen.getByRole('tab', {name: 'Skills'}).getAttribute('title')).toBe('Enable Tools to configure skills');
+    });
+
+    test('saving keeps skill settings for skills the editor cannot see', async () => {
+        const hiddenID = 'h'.repeat(26);
+        const visibleID = 'b'.repeat(26);
+        const agent: UserAgent = {
+            ...savedAgent,
+            skills: {disabled: false, allowPersonal: true, enabledSharedIDs: [hiddenID], descriptionOverrides: {[hiddenID]: 'Hidden override'}},
+        };
+        mockUpdateAgent.mockResolvedValue(agent);
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='edit'
+                    agent={agent}
+                    services={services}
+                    onBack={jest.fn()}
+                    onSaved={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        fireEvent.click(screen.getByRole('tab', {name: 'Skills'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Enable visible skill'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+        expect(mockUpdateAgent.mock.calls[0][1].skills).toEqual({
+            disabled: false,
+            allowPersonal: true,
+            enabledSharedIDs: [hiddenID, visibleID],
+            descriptionOverrides: {[hiddenID]: 'Hidden override'},
+        });
+    });
+
+    test('sends default skill settings for an agent saved before skills existed', async () => {
+        mockUpdateAgent.mockResolvedValue(savedAgent);
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='edit'
+                    agent={{...savedAgent, skills: null}}
+                    services={services}
+                    onBack={jest.fn()}
+                    onSaved={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'Renamed Agent'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+        expect(mockUpdateAgent.mock.calls[0][1].skills).toEqual({
+            disabled: false,
+            allowPersonal: false,
+            enabledSharedIDs: [],
+            descriptionOverrides: {},
+        });
     });
 
     test('serializes dynamic tool loading default true on create', async () => {
@@ -621,7 +787,7 @@ describe('AgentConfigView', () => {
         fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'My Agent'}});
         fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'myagent'}});
         fireEvent.click(screen.getByLabelText('Dynamic tool loading'));
-        fireEvent.click(screen.getByRole('button', {name: 'MCPs'}));
+        fireEvent.click(screen.getByRole('tab', {name: 'MCPs'}));
         fireEvent.click(screen.getByLabelText('Use service accounts'));
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));
 
@@ -703,6 +869,122 @@ describe('AgentConfigView', () => {
         }));
     });
 
+    describe('renaming an agent', () => {
+        const renderEdit = (onSaved = jest.fn()) => {
+            render(
+                <IntlProvider locale='en'>
+                    <AgentConfigView
+                        mode='edit'
+                        agent={savedAgent}
+                        services={services}
+                        onBack={jest.fn()}
+                        onSaved={onSaved}
+                    />
+                </IntlProvider>,
+            );
+            return {onSaved};
+        };
+
+        test('asks for confirmation and saves the new username only after confirming', async () => {
+            mockUpdateAgent.mockResolvedValue({...savedAgent, name: 'renamed'});
+            const {onSaved} = renderEdit();
+
+            fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'renamed'}});
+            fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+            expect(screen.getByRole('dialog', {name: 'Change agent username?'})).not.toBeNull();
+            expect(mockUpdateAgent).not.toHaveBeenCalled();
+
+            fireEvent.click(screen.getByRole('button', {name: 'Change username'}));
+
+            await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+            expect(mockUpdateAgent).toHaveBeenCalledWith('agent_1', expect.objectContaining({username: 'renamed'}));
+            await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+        });
+
+        test('confirming twice while the dialog closes saves only once', async () => {
+            mockUpdateAgent.mockReturnValueOnce(new Promise(() => null));
+            renderEdit();
+
+            fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'renamed'}});
+            fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+            const confirm = screen.getByRole('button', {name: 'Change username'});
+            fireEvent.click(confirm);
+            fireEvent.click(confirm);
+
+            await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+            expect(mockUpdateAgent).toHaveBeenCalledTimes(1);
+        });
+
+        test('keeping the current username does not save', async () => {
+            renderEdit();
+
+            fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'renamed'}});
+            fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+            fireEvent.click(screen.getByRole('button', {name: 'Keep current username'}));
+
+            await waitForElementToBeRemoved(() => screen.queryByRole('dialog', {name: 'Change agent username?'}));
+            expect(mockUpdateAgent).not.toHaveBeenCalled();
+            expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe('renamed');
+        });
+
+        test('saves without confirmation when the username is unchanged', async () => {
+            mockUpdateAgent.mockResolvedValue(savedAgent);
+            renderEdit();
+
+            fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'New Display Name'}});
+            fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+            await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+            expect(screen.queryByRole('dialog', {name: 'Change agent username?'})).toBeNull();
+        });
+    });
+
+    test.each([
+        {serviceType: 'anthropic', expected: ''},
+        {serviceType: 'openai', expected: 'medium'},
+    ])('defaults reasoning effort for a new $serviceType agent to "$expected"', async ({serviceType, expected}) => {
+        mockCreateAgent.mockResolvedValue(savedAgent);
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='create'
+                    services={[{...services[0], type: serviceType}]}
+                    onBack={jest.fn()}
+                    onSaved={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'My Agent'}});
+        fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'myagent'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+        expect(mockCreateAgent).toHaveBeenCalledWith(expect.objectContaining({reasoningEffort: expected}));
+    });
+
+    test('keeps an unset Anthropic effort at the model default when saving an existing agent', async () => {
+        mockUpdateAgent.mockResolvedValue(savedAgent);
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='edit'
+                    agent={{...savedAgent, reasoningEffort: ''}}
+                    services={[{...services[0], type: 'anthropic'}]}
+                    onBack={jest.fn()}
+                    onSaved={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'Renamed Agent'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+        expect(mockUpdateAgent).toHaveBeenCalledWith('agent_1', expect.objectContaining({reasoningEffort: ''}));
+    });
+
     test('blocks saving when maxToolTurns exceeds the hard cap', () => {
         render(
             <IntlProvider locale='en'>
@@ -778,7 +1060,7 @@ describe('AgentConfigView', () => {
     }
 
     function switchAwayAndSave() {
-        fireEvent.click(screen.getByRole('button', {name: 'Access'}));
+        fireEvent.click(screen.getByRole('tab', {name: 'Access'}));
         fireEvent.click(screen.getByRole('button', {name: 'Switch user access to everyone'}));
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));
     }
@@ -846,6 +1128,21 @@ describe('AgentConfigView', () => {
     });
 
     test.each([
+        ['username_held_by_deactivated_bot', 'This username belongs to a deactivated bot account. Permanently delete that bot account to make the username available.'],
+        ['username_taken', 'This username is already taken'],
+        ['', 'This username is already taken'],
+    ])('shows a translated message on the username field for conflict code %s', async (code, expected) => {
+        mockCreateAgent.mockRejectedValue(Object.assign(new Error('username "myagent" is already taken'), {status_code: 409, server_error_id: code}));
+        renderView();
+
+        fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'My Agent'}});
+        fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'myagent'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        expect(await screen.findByText(expected)).not.toBeNull();
+    });
+
+    test.each([
         ['ASCII characters', 'a'.repeat(MaxCustomInstructionsRunes + 1)],
         ['astral characters', '😀'.repeat(MaxCustomInstructionsRunes + 1)],
     ])('blocks saving when custom instructions exceed the character limit using %s', (_description, customInstructions) => {
@@ -897,6 +1194,88 @@ describe('AgentConfigView', () => {
         }));
     });
 
+    describe('imported reference documents', () => {
+        const existingDoc = {id: 'doc_old', name: 'old.md', mimeType: 'text/markdown', size: 5, sha256: 'a', textRunes: 5};
+        const guideContent = 'IyBHdWlkZQ==';
+        const storedGuide = {id: 'doc_new', name: 'guide.md', mimeType: 'text/markdown', size: 7, sha256: 'b', textRunes: 7};
+
+        function exportFile(schemaVersion: number, documents: AgentExportDocumentFile[]): AgentExportDocument {
+            return {
+                kind: 'mattermost-agent',
+                schemaVersion,
+                exportedAt: 1,
+                agentVersion: 1,
+                agent: {
+                    name: 'imported',
+                    displayName: 'Imported',
+                    customInstructions: 'Imported instructions',
+                    disableTools: false,
+                    maxToolTurns: 10,
+                    mcpDynamicToolLoading: true,
+                    autoEnableNewMCPTools: false,
+                    mcpTools: [],
+                    skills: normalizeSkillsConfig(),
+                    documents,
+                },
+            };
+        }
+
+        function renderImport(importedDocument: AgentExportDocument) {
+            render(
+                <IntlProvider locale='en'>
+                    <AgentConfigView
+                        mode='edit'
+                        agent={{...savedAgent, documents: [existingDoc]}}
+                        services={services}
+                        importedDocument={importedDocument}
+                        onBack={jest.fn()}
+                        onSaved={jest.fn()}
+                    />
+                </IntlProvider>,
+            );
+        }
+
+        const guideFile: AgentExportDocumentFile = {name: 'guide.md', mimeType: 'text/markdown', size: 7, sha256: 'b', content: guideContent};
+
+        test('saving uploads them first and replaces the agent\'s documents', async () => {
+            mockUploadAgentDocument.mockResolvedValue(storedGuide);
+            mockUpdateAgent.mockResolvedValue({...savedAgent, documents: [storedGuide]});
+            renderImport(exportFile(2, [guideFile]));
+
+            await waitFor(() => expect(screen.getByLabelText('Custom instructions')).toHaveProperty('value', 'Imported instructions'));
+            fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+            await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+            const uploaded = mockUploadAgentDocument.mock.calls[0][0];
+            expect(uploaded.name).toBe('guide.md');
+            expect(uploaded.size).toBe(7);
+            expect(mockUpdateAgent).toHaveBeenCalledWith('agent_1', expect.objectContaining({documents: [{id: 'doc_new', name: 'guide.md'}]}));
+        });
+
+        test('a version 1 file leaves the agent\'s documents alone', async () => {
+            mockUpdateAgent.mockResolvedValue(savedAgent);
+            renderImport(exportFile(1, []));
+
+            await waitFor(() => expect(screen.getByLabelText('Custom instructions')).toHaveProperty('value', 'Imported instructions'));
+            fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+            await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+            expect(mockUploadAgentDocument).not.toHaveBeenCalled();
+            expect(mockUpdateAgent).toHaveBeenCalledWith('agent_1', expect.objectContaining({documents: [{id: 'doc_old', name: 'old.md'}]}));
+        });
+
+        test('does not save the agent when an upload fails', async () => {
+            mockUploadAgentDocument.mockRejectedValue({message: 'text extraction failed'});
+            renderImport(exportFile(2, [guideFile]));
+
+            await waitFor(() => expect(screen.getByLabelText('Custom instructions')).toHaveProperty('value', 'Imported instructions'));
+            fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+            expect(await screen.findByText('text extraction failed')).not.toBeNull();
+            expect(mockUpdateAgent).not.toHaveBeenCalled();
+        });
+    });
+
     // Parent-level soft-lock: Save stays enabled, banner explains the policy, and
     // turning SA off clears the lock. Per-control disabled state is covered by
     // config_tab / access_tab / mcps_tab real-component tests.
@@ -929,7 +1308,7 @@ describe('AgentConfigView', () => {
         fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'SA Agent Updated'}});
         expect((screen.getByRole('button', {name: 'Save'}) as HTMLButtonElement).disabled).toBe(false);
 
-        fireEvent.click(screen.getByRole('button', {name: 'MCPs'}));
+        fireEvent.click(screen.getByRole('tab', {name: 'MCPs'}));
         expect((screen.getByLabelText('Use service accounts') as HTMLInputElement).disabled).toBe(false);
 
         fireEvent.click(screen.getByLabelText('Use service accounts'));
@@ -959,6 +1338,7 @@ describe('AgentConfigView history and export', () => {
             {version: 2, createdBy: 'user_1', createAt: 1759600000000, source: 'update', restoredFromVersion: 0, changedFields: ['customInstructions']},
             {version: 1, createdBy: '', createAt: 1759500000000, source: 'initial', restoredFromVersion: 0, changedFields: []},
         ],
+        hasMore: false,
     };
 
     function versionDetail(version: number, customInstructions: string): AgentVersionDetail {
@@ -992,48 +1372,228 @@ describe('AgentConfigView history and export', () => {
         mockGetProfilesByIds.mockResolvedValue([{id: 'user_1', username: 'alice', first_name: 'Alice', last_name: 'Smith', nickname: ''}] as never);
     });
 
-    test('offers the History tab and Export only for existing agents', () => {
+    test('offers version history and Export only for existing agents', () => {
         renderView();
-        expect(screen.queryByRole('button', {name: 'History'})).toBeNull();
+        expect(screen.queryByRole('button', {name: /^Version history/})).toBeNull();
         expect(screen.queryByRole('button', {name: 'Export'})).toBeNull();
+        expect(screen.queryByRole('tab', {name: 'History'})).toBeNull();
     });
 
-    test('History tab lists versions newest first and badges the current one', async () => {
+    test('the version history button to the left of Import and Export opens the version history', async () => {
         renderEdit();
-        fireEvent.click(screen.getByRole('button', {name: 'History'}));
 
-        const list = await screen.findByTestId('version-list');
+        fireEvent.click(await screen.findByRole('button', {name: 'Version history'}));
+
+        expect(await screen.findByTestId('version-list')).not.toBeNull();
+        expect(within(screen.getByRole('dialog', {name: 'Version history'})).getByText('Existing Agent', {selector: 'p'})).not.toBeNull();
+        expect(within(screen.getByRole('dialog', {name: 'Version history'})).getByRole('button', {name: 'Close'}).getAttribute('title')).toBe('Close');
+    });
+
+    test('has no version history button while creating an agent', () => {
+        renderView();
+        expect(screen.queryByRole('button', {name: 'Version history'})).toBeNull();
+    });
+
+    describe('version line', () => {
+        let nowSpy: jest.SpyInstance | null = null;
+
+        afterEach(() => {
+            nowSpy?.mockRestore();
+            nowSpy = null;
+        });
+
+        test('shows the current version, its author and relative time next to the title', async () => {
+            nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1759600000000 + (2 * 24 * 60 * 60 * 1000));
+            renderEdit();
+
+            const button = await screen.findByRole('button', {name: /^Version history, v2/});
+            await waitFor(() => expect(button.textContent).toBe('v2 · by Alice Smith, 2d ago'));
+            expect(screen.queryByRole('tab', {name: 'History'})).toBeNull();
+        });
+
+        test('flags unsaved changes while the editor is dirty', async () => {
+            renderEdit();
+            const button = await screen.findByRole('button', {name: /^Version history, v2/});
+            expect(button.textContent).not.toContain('Unsaved changes');
+
+            fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'Unsaved edit'}});
+
+            await waitFor(() => expect(screen.getByRole('button', {name: /^Version history, v2.*Unsaved changes$/}).textContent).toContain('· Unsaved changes'));
+        });
+
+        test.each([
+            {name: 'no versions', list: {currentVersion: 0, versions: []}},
+            {name: 'a null version list', list: {currentVersion: 0, versions: null}},
+            {name: 'no current version', list: {currentVersion: 0, versions: versionList.versions}},
+        ])('is hidden and requests no version for $name', async ({list}) => {
+            mockGetAgentVersions.mockResolvedValue(list as unknown as AgentVersionList);
+            renderEdit();
+
+            await waitFor(() => expect(mockGetAgentVersions).toHaveBeenCalled());
+            expect(screen.queryByRole('button', {name: /^Version history/})).toBeNull();
+            expect(mockGetAgentVersion).not.toHaveBeenCalled();
+        });
+
+        test('shows a failed history load with a retry that restores the version line', async () => {
+            mockGetAgentVersions.mockRejectedValueOnce(new Error('boom'));
+            renderEdit();
+
+            const alert = await screen.findByRole('alert');
+            expect(alert.textContent).toContain('boom');
+            expect(screen.queryByRole('button', {name: /^Version history/})).toBeNull();
+
+            fireEvent.click(within(alert).getByRole('button', {name: 'Retry'}));
+
+            expect(await screen.findByRole('button', {name: /^Version history, v2/})).not.toBeNull();
+            expect(screen.queryByRole('alert')).toBeNull();
+        });
+    });
+
+    test('selecting another version cancels a pending row-menu restore', async () => {
+        renderEdit();
+        const list = await openHistory();
+        await screen.findByTestId('version-snapshot');
+
+        let resolveVersion1: (d: AgentVersionDetail) => void = jest.fn();
+        mockGetAgentVersion.mockImplementation((_id, version) => (
+            version === 1 ? new Promise((resolve) => {
+                resolveVersion1 = resolve;
+            }) : Promise.resolve(versionDetail(2, 'current instructions'))
+        ));
+
+        await openVersionMenu(1);
+        fireEvent.click(await screen.findByText('Restore this version'));
+        fireEvent.click(within(list).getByText('Version 2'));
+        resolveVersion1(versionDetail(1, 'original instructions'));
+
+        mockGetAgentVersion.mockImplementation(async (_id, version) => (
+            version === 2 ? versionDetail(2, 'current instructions') : versionDetail(1, 'original instructions')
+        ));
+        fireEvent.click(within(list).getByText('Version 1'));
+        await waitFor(() => expect(screen.getByText('original instructions')).not.toBeNull());
+        await expect(screen.findByRole('dialog', {name: 'Restore this version?'}, {timeout: 500})).rejects.toThrow();
+    });
+
+    test('lists versions newest first with only the author and time on each row', async () => {
+        renderEdit();
+        const list = await openHistory();
         await waitFor(() => expect(within(list).getByText(/Alice Smith/)).not.toBeNull());
 
         const items = within(list).getAllByRole('listitem');
         expect(items).toHaveLength(2);
         expect(within(items[0]).getByText('Version 2')).not.toBeNull();
         expect(within(items[0]).getByText('Current')).not.toBeNull();
-        expect(within(items[0]).getByText('Edited')).not.toBeNull();
-        expect(within(items[0]).getByText('Changed: Custom instructions')).not.toBeNull();
         expect(within(items[1]).getByText('Version 1')).not.toBeNull();
         expect(within(items[1]).queryByText('Current')).toBeNull();
-        expect(within(items[1]).getByText('Initial version')).not.toBeNull();
-        expect(within(items[1]).getByText(/^System/)).not.toBeNull();
+        expect(within(items[1]).getByText(/^by System · /)).not.toBeNull();
+
+        // What changed lives in the detail column, not in the list.
+        expect(within(list).queryByText(/Changed:|Changes:/)).toBeNull();
+        expect(within(list).queryByText('Edited')).toBeNull();
+        expect(within(list).queryByText('Initial version')).toBeNull();
+        expect(screen.queryByTestId('version-changes')).toBeNull();
+        expect(screen.getByText(/^Edited · Created by Alice Smith · /)).not.toBeNull();
+    });
+
+    describe('changed fields in the detail column', () => {
+        const labelOf = (name: string) => screen.getByText(name, {selector: 'dt'});
+
+        test('marks the rows the selected version changed', async () => {
+            renderEdit();
+            await openHistory();
+            await screen.findByTestId('version-snapshot');
+
+            expect(within(labelOf('Custom instructions')).getByText('Changed')).not.toBeNull();
+            expect(within(labelOf('Model')).queryByText('Changed')).toBeNull();
+            expect(screen.getAllByText('Changed')).toHaveLength(1);
+            expect(screen.queryByTestId('version-other-changes')).toBeNull();
+        });
+
+        test('marks a row when any setting shown in it changed, and lists settings with no row', async () => {
+            mockGetAgentVersion.mockImplementation(async () => ({
+                ...versionList.versions[0],
+                changedFields: ['userIDs', 'enabledMCPTools', 'name', 'adminUserIDs'],
+                config: existingAgent,
+            }));
+            renderEdit();
+            await openHistory();
+            await screen.findByTestId('version-snapshot');
+
+            expect(within(labelOf('User access')).getByText('Changed')).not.toBeNull();
+            expect(within(labelOf('MCP tools')).getByText('Changed')).not.toBeNull();
+            expect(screen.getAllByText('Changed')).toHaveLength(2);
+            expect(screen.getByTestId('version-other-changes').textContent).toBe('Also changed: Username, Agent admins');
+        });
+
+        test('summarizes the skill settings of a version', async () => {
+            mockGetAgentVersion.mockImplementation(async () => ({
+                ...versionList.versions[0],
+                changedFields: ['skills'],
+                config: {...existingAgent, skills: {disabled: false, allowPersonal: true, enabledSharedIDs: ['a'.repeat(26), 'b'.repeat(26)], descriptionOverrides: null}},
+            }));
+            renderEdit();
+            await openHistory();
+            await screen.findByTestId('version-snapshot');
+
+            expect(within(labelOf('Skills')).getByText('Changed')).not.toBeNull();
+            expect(screen.getByText('Enabled, personal skills allowed, 2 shared skills')).not.toBeNull();
+            expect(screen.queryByTestId('version-other-changes')).toBeNull();
+        });
+
+        test('marks nothing for a version without changes', async () => {
+            renderEdit();
+            const list = await openHistory();
+            fireEvent.click(within(list).getByText('Version 1'));
+            await waitFor(() => expect(screen.getByText(/^Initial version · Created by System · /)).not.toBeNull());
+
+            expect(screen.queryByText('Changed')).toBeNull();
+        });
+    });
+
+    test('the list header singularizes the version count', async () => {
+        mockGetAgentVersions.mockResolvedValue({...versionList, versions: [versionList.versions[0]]});
+        renderEdit();
+        await openHistory();
+
+        expect(screen.getByText('1 version')).not.toBeNull();
+    });
+
+    test('the list header shows the version count and swaps to the selection count', async () => {
+        renderEdit();
+        await openHistory();
+        expect(screen.getByText('2 versions')).not.toBeNull();
+
+        fireEvent.click(screen.getByRole('button', {name: 'More version history actions'}));
+        fireEvent.click(await screen.findByText('Select multiple versions'));
+
+        expect(screen.queryByText('2 versions')).toBeNull();
+        expect(screen.getByText('0 selected')).not.toBeNull();
+    });
+
+    test('only previous versions have a row menu', async () => {
+        renderEdit();
+        await openHistory();
+
+        expect(screen.queryByRole('button', {name: 'Actions for version 2'})).toBeNull();
+        expect(screen.getByRole('button', {name: 'Actions for version 1'})).not.toBeNull();
     });
 
     test('selecting a version shows its instructions read-only', async () => {
         renderEdit();
-        fireEvent.click(screen.getByRole('button', {name: 'History'}));
-        const list = await screen.findByTestId('version-list');
+        const list = await openHistory();
 
         fireEvent.click(within(list).getByText('Version 1'));
 
         const instructions = await screen.findByTestId('version-snapshot-instructions');
         await waitFor(() => expect(instructions.textContent).toBe('original instructions'));
-        expect(instructions.tagName).toBe('PRE');
-        expect(screen.getByText('Mock Service')).not.toBeNull();
+        expect(instructions.tagName).not.toBe('TEXTAREA');
+        expect(within(screen.getByTestId('version-snapshot')).getByText('Mock Service')).not.toBeNull();
         expect(screen.getByRole('button', {name: 'Restore this version'})).not.toBeNull();
     });
 
     test('does not offer restore for the current version', async () => {
         renderEdit();
-        fireEvent.click(screen.getByRole('button', {name: 'History'}));
+        await openHistory();
         await screen.findByTestId('version-snapshot');
 
         expect(screen.queryByRole('button', {name: 'Restore this version'})).toBeNull();
@@ -1045,8 +1605,7 @@ describe('AgentConfigView history and export', () => {
         const {onRestored} = renderEdit();
 
         fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'Unsaved edit'}});
-        fireEvent.click(screen.getByRole('button', {name: 'History'}));
-        const list = await screen.findByTestId('version-list');
+        const list = await openHistory();
         fireEvent.click(within(list).getByText('Version 1'));
         await waitFor(() => expect((screen.getByRole('button', {name: 'Restore this version'}) as HTMLButtonElement).disabled).toBe(false));
 
@@ -1061,15 +1620,16 @@ describe('AgentConfigView history and export', () => {
                 {version: 3, createdBy: 'user_1', createAt: 1759700000000, source: 'restore', restoredFromVersion: 1, changedFields: ['customInstructions']},
                 ...versionList.versions,
             ],
+            hasMore: false,
         });
         fireEvent.click(within(dialog).getByRole('button', {name: 'Restore'}));
 
         await waitFor(() => expect(mockRestoreAgentVersion).toHaveBeenCalledWith('agent_1', 1));
         await waitFor(() => expect(onRestored).toHaveBeenCalledWith(restored));
         expect(await screen.findByText('Version 1 was restored as the current version.')).not.toBeNull();
-        await waitFor(() => expect(screen.getByText('Restored from version 1')).not.toBeNull());
+        await waitFor(() => expect(screen.getByText(/^Restored from version 1 · /)).not.toBeNull());
 
-        fireEvent.click(screen.getByRole('button', {name: 'Configuration'}));
+        await closeHistory();
         expect((screen.getByLabelText('Display Name') as HTMLInputElement).value).toBe('Restored Agent');
         expect((screen.getByLabelText('Custom instructions') as HTMLTextAreaElement).value).toBe('original instructions');
 
@@ -1078,18 +1638,16 @@ describe('AgentConfigView history and export', () => {
         expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
     });
 
-    test('History tab hides the editor Save and Cancel buttons', async () => {
+    test('Escape closes the history modal without prompting to discard editor changes', async () => {
         renderEdit();
-        expect(screen.getByRole('button', {name: 'Save'})).not.toBeNull();
+        fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'Unsaved edit'}});
+        await openHistory();
 
-        fireEvent.click(screen.getByRole('button', {name: 'History'}));
-        await screen.findByTestId('version-list');
-        expect(screen.queryByRole('button', {name: 'Save'})).toBeNull();
-        expect(screen.queryByRole('button', {name: 'Cancel'})).toBeNull();
+        fireEvent.keyDown(screen.getByRole('dialog', {name: 'Version history'}), {key: 'Escape'});
 
-        fireEvent.click(screen.getByRole('button', {name: 'Configuration'}));
-        expect(screen.getByRole('button', {name: 'Save'})).not.toBeNull();
-        expect(screen.getByRole('button', {name: 'Cancel'})).not.toBeNull();
+        await waitFor(() => expect(screen.queryByTestId('version-list')).toBeNull());
+        expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
+        expect((screen.getByLabelText('Display Name') as HTMLInputElement).value).toBe('Unsaved edit');
     });
 
     test('restore discards a pending avatar upload along with the other edits', async () => {
@@ -1100,8 +1658,7 @@ describe('AgentConfigView history and export', () => {
         fireEvent.change(screen.getByLabelText('Bot avatar'), {target: {files: [avatar]}});
         expect(screen.getByTestId('pending-avatar').textContent).toBe('new-avatar.png');
 
-        fireEvent.click(screen.getByRole('button', {name: 'History'}));
-        const list = await screen.findByTestId('version-list');
+        const list = await openHistory();
         fireEvent.click(within(list).getByText('Version 1'));
         await waitFor(() => expect((screen.getByRole('button', {name: 'Restore this version'}) as HTMLButtonElement).disabled).toBe(false));
         fireEvent.click(screen.getByRole('button', {name: 'Restore this version'}));
@@ -1110,7 +1667,7 @@ describe('AgentConfigView history and export', () => {
         fireEvent.click(within(dialog).getByRole('button', {name: 'Restore'}));
         expect(await screen.findByText('Version 1 was restored as the current version.')).not.toBeNull();
 
-        fireEvent.click(screen.getByRole('button', {name: 'Configuration'}));
+        await closeHistory();
         expect(screen.getByTestId('pending-avatar').textContent).toBe('');
         fireEvent.keyDown(document, {key: 'Escape'});
         expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
@@ -1118,8 +1675,7 @@ describe('AgentConfigView history and export', () => {
 
     test('restore confirmation omits the discard warning when the editor is clean', async () => {
         renderEdit();
-        fireEvent.click(screen.getByRole('button', {name: 'History'}));
-        const list = await screen.findByTestId('version-list');
+        const list = await openHistory();
         fireEvent.click(within(list).getByText('Version 1'));
         await waitFor(() => expect((screen.getByRole('button', {name: 'Restore this version'}) as HTMLButtonElement).disabled).toBe(false));
 
@@ -1129,11 +1685,87 @@ describe('AgentConfigView history and export', () => {
         expect(within(dialog).queryByText(/unsaved changes/)).toBeNull();
     });
 
+    test('Escape closes an open row menu first and the modal only on the next press', async () => {
+        renderEdit();
+        await openHistory();
+
+        await openVersionMenu(1);
+        const menu = await screen.findByTestId('dropdownmenu');
+        fireEvent.keyDown(menu, {key: 'Escape'});
+
+        await waitFor(() => expect(document.querySelector('[data-open-popup]')).toBeNull());
+        expect(screen.queryByTestId('version-list')).not.toBeNull();
+
+        fireEvent.keyDown(screen.getByTestId('version-list'), {key: 'Escape'});
+        await waitFor(() => expect(screen.queryByTestId('version-list')).toBeNull());
+    });
+
+    test('restore confirmation lists the settings it will change', async () => {
+        renderEdit();
+        const list = await openHistory();
+        fireEvent.click(within(list).getByText('Version 1'));
+        await waitFor(() => expect((screen.getByRole('button', {name: 'Restore this version'}) as HTMLButtonElement).disabled).toBe(false));
+
+        fireEvent.click(screen.getByRole('button', {name: 'Restore this version'}));
+        const dialog = screen.getByRole('dialog', {name: 'Restore this version?'});
+
+        const changes = await within(dialog).findByTestId('restore-changes');
+        expect(within(changes).getAllByRole('listitem').map((el) => el.textContent)).toEqual(['Custom instructions']);
+        expect(mockGetAgentVersion).toHaveBeenCalledWith('agent_1', 2);
+    });
+
+    test('restore confirmation says when the version matches the current settings', async () => {
+        mockGetAgentVersion.mockImplementation(async (_id, version) => versionDetail(version, 'current instructions'));
+        renderEdit();
+        const list = await openHistory();
+        fireEvent.click(within(list).getByText('Version 1'));
+        await waitFor(() => expect((screen.getByRole('button', {name: 'Restore this version'}) as HTMLButtonElement).disabled).toBe(false));
+
+        fireEvent.click(screen.getByRole('button', {name: 'Restore this version'}));
+        const dialog = screen.getByRole('dialog', {name: 'Restore this version?'});
+
+        expect(await within(dialog).findByText('Its settings are the same as the current version.')).not.toBeNull();
+        expect(within(dialog).queryByTestId('restore-changes')).toBeNull();
+    });
+
+    test('restore confirmation does not list the username, which a restore never changes', async () => {
+        mockGetAgentVersion.mockImplementation(async (_id, version) => {
+            const detail = versionDetail(version, 'current instructions');
+            return {...detail, config: {...detail.config, name: version === 1 ? 'oldusername' : 'newusername'}};
+        });
+        renderEdit();
+        const list = await openHistory();
+        fireEvent.click(within(list).getByText('Version 1'));
+        await waitFor(() => expect((screen.getByRole('button', {name: 'Restore this version'}) as HTMLButtonElement).disabled).toBe(false));
+
+        fireEvent.click(screen.getByRole('button', {name: 'Restore this version'}));
+        const dialog = screen.getByRole('dialog', {name: 'Restore this version?'});
+
+        expect(await within(dialog).findByText('Its settings are the same as the current version.')).not.toBeNull();
+        expect(within(dialog).queryByText('Username')).toBeNull();
+    });
+
+    test('restores a version from its row menu after confirming', async () => {
+        mockRestoreAgentVersion.mockResolvedValue({...existingAgent, customInstructions: 'original instructions'});
+        renderEdit();
+        await openHistory();
+
+        await openVersionMenu(1);
+        fireEvent.click(await screen.findByText('Restore this version'));
+
+        const dialog = await screen.findByRole('dialog', {name: 'Restore this version?'});
+        expect(await within(dialog).findByTestId('restore-changes')).not.toBeNull();
+        expect(mockRestoreAgentVersion).not.toHaveBeenCalled();
+
+        fireEvent.click(within(dialog).getByRole('button', {name: 'Restore'}));
+        await waitFor(() => expect(mockRestoreAgentVersion).toHaveBeenCalledWith('agent_1', 1));
+        expect(await screen.findByText('Version 1 was restored as the current version.')).not.toBeNull();
+    });
+
     test('shows the server error when restore fails and leaves the draft alone', async () => {
         mockRestoreAgentVersion.mockRejectedValue({message: 'The AI service for this version no longer exists.'});
         const {onRestored} = renderEdit();
-        fireEvent.click(screen.getByRole('button', {name: 'History'}));
-        const list = await screen.findByTestId('version-list');
+        const list = await openHistory();
         fireEvent.click(within(list).getByText('Version 1'));
         await waitFor(() => expect((screen.getByRole('button', {name: 'Restore this version'}) as HTMLButtonElement).disabled).toBe(false));
 
@@ -1145,17 +1777,101 @@ describe('AgentConfigView history and export', () => {
     });
 
     test.each([
-        {name: 'no versions', list: {currentVersion: 0, versions: []}},
-        {name: 'a null version list', list: {currentVersion: 0, versions: null}},
-        {name: 'no current version', list: {currentVersion: 0, versions: versionList.versions}},
-    ])('History tab shows an empty state and requests no version for $name', async ({list}) => {
-        mockGetAgentVersions.mockResolvedValue(list as unknown as AgentVersionList);
+        {name: 'more versions exist', hasMore: true},
+        {name: 'all versions are loaded', hasMore: false},
+    ])('version history offers older versions only when $name', async ({hasMore}) => {
+        mockGetAgentVersions.mockResolvedValue({...versionList, hasMore});
         renderEdit();
-        fireEvent.click(screen.getByRole('button', {name: 'History'}));
+        await openHistory();
 
-        expect(await screen.findByText('No versions recorded yet. Saving the agent creates the first version.')).not.toBeNull();
-        expect(screen.queryByTestId('version-list')).toBeNull();
-        expect(mockGetAgentVersion).not.toHaveBeenCalled();
+        expect(mockGetAgentVersions).toHaveBeenCalledWith('agent_1');
+        expect(screen.queryByRole('button', {name: 'Load older versions'}) !== null).toBe(hasMore);
+    });
+
+    describe('paging older versions', () => {
+        const summary = (version: number) => ({
+            version,
+            createdBy: '',
+            createAt: 1759500000000 + version,
+            source: 'update' as const,
+            restoredFromVersion: 0,
+            changedFields: ['customInstructions'],
+        });
+        const firstPage: AgentVersionList = {currentVersion: 4, versions: [summary(4), summary(3)], hasMore: true};
+        const lastPage: AgentVersionList = {currentVersion: 4, versions: [summary(2), summary(1)], hasMore: false};
+
+        beforeEach(() => {
+            mockGetAgentVersion.mockImplementation(async (_id, version) => ({
+                ...summary(version),
+                config: {...existingAgent, customInstructions: `instructions ${version}`},
+            }));
+        });
+
+        test('appends the page before the oldest loaded version until none are left', async () => {
+            mockGetAgentVersions.mockResolvedValueOnce(firstPage).mockResolvedValueOnce(lastPage);
+            renderEdit();
+            const list = await openHistory();
+            expect(within(list).getAllByRole('listitem')).toHaveLength(2);
+
+            fireEvent.click(screen.getByRole('button', {name: 'Load older versions'}));
+
+            await waitFor(() => expect(within(list).getAllByRole('listitem')).toHaveLength(4));
+            expect(mockGetAgentVersions).toHaveBeenLastCalledWith('agent_1', {before: 3});
+            const titles = within(list).getAllByText(/^Version \d$/).map((el) => el.firstChild?.textContent);
+            expect(titles).toEqual(['Version 4', 'Version 3', 'Version 2', 'Version 1']);
+            expect(within(list).getAllByText('Current')).toHaveLength(1);
+            expect(screen.queryByRole('button', {name: 'Load older versions'})).toBeNull();
+
+            fireEvent.click(within(list).getByText('Version 1'));
+            const instructions = await screen.findByTestId('version-snapshot-instructions');
+            await waitFor(() => expect(instructions.textContent).toBe('instructions 1'));
+            expect(screen.getByRole('button', {name: 'Restore this version'})).not.toBeNull();
+        });
+
+        test('drops an older page requested before a restore reloaded the list', async () => {
+            let resolveReload: (list: AgentVersionList) => void = jest.fn();
+            let resolveOlder: (list: AgentVersionList) => void = jest.fn();
+            mockGetAgentVersions.
+                mockResolvedValueOnce(firstPage).
+                mockImplementationOnce(() => new Promise((resolve) => {
+                    resolveReload = resolve;
+                })).
+                mockImplementationOnce(() => new Promise((resolve) => {
+                    resolveOlder = resolve;
+                }));
+            mockRestoreAgentVersion.mockResolvedValue(existingAgent);
+            renderEdit();
+            const list = await openHistory();
+
+            fireEvent.click(within(list).getByText('Version 3'));
+            await waitFor(() => expect((screen.getByRole('button', {name: 'Restore this version'}) as HTMLButtonElement).disabled).toBe(false));
+            fireEvent.click(screen.getByRole('button', {name: 'Restore this version'}));
+            fireEvent.click(within(screen.getByRole('dialog', {name: 'Restore this version?'})).getByRole('button', {name: 'Restore'}));
+            await waitFor(() => expect(mockGetAgentVersions).toHaveBeenCalledTimes(2));
+
+            // The pre-restore list is still on screen while the reload is pending.
+            fireEvent.click(screen.getByRole('button', {name: 'Load older versions'}));
+            expect(mockGetAgentVersions).toHaveBeenLastCalledWith('agent_1', {before: 3});
+
+            await act(async () => resolveReload({currentVersion: 5, versions: [summary(5), summary(4)], hasMore: true}));
+            await act(async () => resolveOlder(lastPage));
+
+            const titles = within(screen.getByTestId('version-list')).getAllByText(/^Version \d$/).map((el) => el.firstChild?.textContent);
+            expect(titles).toEqual(['Version 5', 'Version 4']);
+            expect(screen.getByRole('button', {name: 'Load older versions'})).not.toBeNull();
+        });
+
+        test('keeps the loaded versions and the button when an older page fails', async () => {
+            mockGetAgentVersions.mockResolvedValueOnce(firstPage).mockRejectedValueOnce({message: 'Server unavailable'});
+            renderEdit();
+            const list = await openHistory();
+
+            fireEvent.click(screen.getByRole('button', {name: 'Load older versions'}));
+
+            expect(await screen.findByText('Server unavailable')).not.toBeNull();
+            expect(within(list).getAllByRole('listitem')).toHaveLength(2);
+            expect(screen.getByRole('button', {name: 'Load older versions'})).not.toBeNull();
+        });
     });
 
     test.each([
@@ -1171,8 +1887,7 @@ describe('AgentConfigView history and export', () => {
         mockRestoreAgentVersion.mockResolvedValue(restored);
         renderEdit(jest.fn(), agent);
 
-        fireEvent.click(screen.getByRole('button', {name: 'History'}));
-        const list = await screen.findByTestId('version-list');
+        const list = await openHistory();
         fireEvent.click(within(list).getByText('Version 1'));
         expect(await screen.findByText('Attribute-based (policy not stored in versions)')).not.toBeNull();
         await waitFor(() => expect((screen.getByRole('button', {name: 'Restore this version'}) as HTMLButtonElement).disabled).toBe(false));
@@ -1187,7 +1902,9 @@ describe('AgentConfigView history and export', () => {
 
         if (expectWarning) {
             expect(await screen.findByRole('button', {name: 'Switch user access to everyone'})).not.toBeNull();
-            expect(screen.queryByTestId('version-list')).toBeNull();
+
+            // The modal closes so the Access tab is in view.
+            await waitFor(() => expect(screen.queryByTestId('version-list')).toBeNull());
         } else {
             expect(await screen.findByText('Version 1 was restored as the current version.')).not.toBeNull();
             expect(screen.queryByRole('button', {name: 'Switch user access to everyone'})).toBeNull();
@@ -1200,7 +1917,7 @@ describe('AgentConfigView history and export', () => {
 
         fireEvent.click(screen.getByRole('button', {name: 'Export'}));
 
-        await waitFor(() => expect(mockDownloadAgentExport).toHaveBeenCalledWith('agent_1', 'existingagent'));
+        await waitFor(() => expect(mockDownloadAgentExport).toHaveBeenCalledWith('agent_1'));
     });
 
     test('Export shows the server error when the download fails', async () => {
@@ -1213,242 +1930,300 @@ describe('AgentConfigView history and export', () => {
     });
 });
 
-describe('AgentConfigView reference documents', () => {
-    const mockUploadAgentDocument = uploadAgentDocument as jest.MockedFunction<typeof uploadAgentDocument>;
-    const mockGetAgentVersions = getAgentVersions as jest.MockedFunction<typeof getAgentVersions>;
-    const mockGetAgentVersion = getAgentVersion as jest.MockedFunction<typeof getAgentVersion>;
-    const mockRestoreAgentVersion = restoreAgentVersion as jest.MockedFunction<typeof restoreAgentVersion>;
+describe('AgentConfigView import from file', () => {
+    const mockGetUserMCPTools = getUserMCPTools as jest.MockedFunction<typeof getUserMCPTools>;
 
-    function makeDocument(id: string, name: string, overrides: Partial<AgentDocument> = {}): AgentDocument {
-        return {id, name, mimeType: 'application/pdf', size: 2048, sha256: `sha-${id}`, textRunes: 1000, ...overrides};
-    }
-
-    const handbook = makeDocument('doc_1', 'handbook.pdf');
-    const faq = makeDocument('doc_2', 'faq.txt', {mimeType: 'text/plain'});
-
-    const agentWithDocuments: UserAgent = {
-        ...savedAgent,
-        id: 'agent_1',
-        name: 'existingagent',
-        displayName: 'Existing Agent',
-        documents: [handbook, faq],
+    const exported: AgentExportDocument = {
+        kind: 'mattermost-agent',
+        schemaVersion: 1,
+        exportedAt: 1,
+        agentVersion: 4,
+        agent: {
+            name: 'releasehelper',
+            displayName: 'Release Helper',
+            customInstructions: 'Imported instructions',
+            disableTools: false,
+            maxToolTurns: 12,
+            mcpDynamicToolLoading: false,
+            autoEnableNewMCPTools: false,
+            mcpTools: [
+                {serverOrigin: 'https://jira.example.com/mcp', toolName: 'search'},
+                {serverOrigin: 'https://linear.example.com', toolName: 'issues'},
+            ],
+            skills: {disabled: false, allowPersonal: true, enabledSharedIDs: ['aaaaaaaaaaaaaaaaaaaaaaaaaa'], descriptionOverrides: {}},
+        },
     };
 
-    function renderEdit(agent: UserAgent = agentWithDocuments, onSaved = jest.fn()) {
-        render(
+    const existingAgent: UserAgent = {...savedAgent, name: 'existingagent', displayName: 'Existing Agent', customInstructions: 'old instructions', autoEnableNewMCPTools: true};
+
+    function renderWith(props: Partial<React.ComponentProps<typeof AgentConfigView>>) {
+        return render(
             <IntlProvider locale='en'>
                 <AgentConfigView
-                    mode='edit'
-                    agent={agent}
+                    mode='create'
                     services={services}
                     onBack={jest.fn()}
-                    onSaved={onSaved}
-                    onRestored={jest.fn()}
+                    onSaved={jest.fn()}
+                    {...props}
                 />
             </IntlProvider>,
         );
     }
 
-    function uploadFiles(files: File[]) {
-        fireEvent.change(screen.getByLabelText('Upload documents'), {target: {files}});
-    }
-
-    function documentNames(): string[] {
-        return within(screen.getByTestId('draft-documents')).queryAllByRole('listitem').map((li) => li.firstChild?.textContent ?? '');
+    function pickFile(content: unknown) {
+        const file = new File([JSON.stringify(content)], 'agent.json', {type: 'application/json'});
+        fireEvent.change(screen.getByTestId('agent-import-file-input'), {target: {files: [file]}});
     }
 
     beforeEach(() => {
         jest.clearAllMocks();
         mockedUseCurrentUserHasSystemPermission.mockReturnValue(true);
-        mockUpdateAgent.mockResolvedValue(agentWithDocuments);
-        mockCreateAgent.mockResolvedValue(savedAgent);
+        mockGetUserMCPTools.mockResolvedValue({servers: [
+            {name: 'Jira', serverOrigin: 'https://jira.example.com/mcp/', tools: []},
+        ]} as never);
     });
 
-    test('loads the agent documents into the draft without marking it dirty', () => {
-        const onBack = jest.fn();
+    test('a file opened from the Agents list fills the new agent and saves through create', async () => {
+        mockCreateAgent.mockResolvedValue({...savedAgent, id: 'agent_new'});
+        renderWith({importedDocument: exported});
+
+        expect(await screen.findByText(/Tools from MCP servers that are not available here were left out: https:\/\/linear.example.com/)).not.toBeNull();
+        expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe('releasehelper');
+        expect((screen.getByLabelText('Display Name') as HTMLInputElement).value).toBe('Release Helper');
+        expect((screen.getByLabelText('Custom instructions') as HTMLTextAreaElement).value).toBe('Imported instructions');
+        expect(mockGetUserMCPTools).toHaveBeenCalledWith({serviceAccount: false});
+
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+        expect(mockCreateAgent.mock.calls[0][0]).toEqual(expect.objectContaining({
+            username: 'releasehelper',
+            displayName: 'Release Helper',
+            serviceID: 'svc_1',
+            customInstructions: 'Imported instructions',
+            maxToolTurns: 12,
+            mcpDynamicToolLoading: false,
+            autoEnableNewMCPTools: false,
+            enabledMCPTools: [{server_origin: 'https://jira.example.com/mcp/', tool_name: 'search'}],
+            skills: {disabled: false, allowPersonal: true, enabledSharedIDs: ['aaaaaaaaaaaaaaaaaaaaaaaaaa'], descriptionOverrides: {}},
+        }));
+    });
+
+    test('importing into an existing agent replaces only the transferable settings', async () => {
+        mockUpdateAgent.mockResolvedValue(existingAgent);
+        renderWith({mode: 'edit', agent: existingAgent});
+
+        pickFile(exported);
+
+        await waitFor(() => expect((screen.getByLabelText('Custom instructions') as HTMLTextAreaElement).value).toBe('Imported instructions'));
+        expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe('existingagent');
+        expect((screen.getByLabelText('Display Name') as HTMLInputElement).value).toBe('Existing Agent');
+        expect(mockGetUserMCPTools).toHaveBeenCalledWith({agentId: 'agent_1', serviceAccount: false});
+        expect(mockUpdateAgent).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+        expect(mockUpdateAgent.mock.calls[0][1]).toEqual(expect.objectContaining({
+            username: 'existingagent',
+            displayName: 'Existing Agent',
+            customInstructions: 'Imported instructions',
+            autoEnableNewMCPTools: false,
+            enabledMCPTools: [{server_origin: 'https://jira.example.com/mcp/', tool_name: 'search'}],
+        }));
+    });
+
+    test('a file that enables every MCP tool does not look up MCP servers', async () => {
+        renderWith({importedDocument: {...exported, agent: {...exported.agent, autoEnableNewMCPTools: true}}});
+
+        expect(await screen.findByText('Settings loaded from the agent file')).not.toBeNull();
+        expect(screen.getByText('Review the settings, then save to apply them.')).not.toBeNull();
+        expect(mockGetUserMCPTools).not.toHaveBeenCalled();
+    });
+
+    test('leaves the form unchanged when MCP servers cannot be loaded', async () => {
+        mockGetUserMCPTools.mockRejectedValue(new Error('offline'));
+        renderWith({mode: 'edit', agent: existingAgent});
+
+        pickFile(exported);
+
+        expect(await screen.findByText('Failed to load your MCP servers, so the agent file was not imported. Please try again.')).not.toBeNull();
+        expect((screen.getByLabelText('Custom instructions') as HTMLTextAreaElement).value).toBe('old instructions');
+    });
+
+    test('shows why a file cannot be imported', async () => {
+        renderWith({mode: 'edit', agent: existingAgent});
+
+        pickFile({kind: 'something-else'});
+
+        expect(await screen.findByText('This file is not a valid Mattermost agent export.')).not.toBeNull();
+        expect(mockGetUserMCPTools).not.toHaveBeenCalled();
+    });
+});
+
+describe('AgentConfigView history deletion', () => {
+    const mockGetAgentVersions = getAgentVersions as jest.MockedFunction<typeof getAgentVersions>;
+    const mockGetAgentVersion = getAgentVersion as jest.MockedFunction<typeof getAgentVersion>;
+    const mockDeleteAgentVersions = deleteAgentVersions as jest.MockedFunction<typeof deleteAgentVersions>;
+    const mockGetProfilesByIds = getProfilesByIds as jest.MockedFunction<typeof getProfilesByIds>;
+
+    const summary = (version: number) => ({version, createdBy: '', createAt: 1759500000000 + version, source: 'update' as const, restoredFromVersion: 0, changedFields: []});
+    const listOf = (...versions: number[]): AgentVersionList => ({currentVersion: 3, versions: versions.map(summary), hasMore: false});
+
+    async function renderHistory() {
         render(
             <IntlProvider locale='en'>
                 <AgentConfigView
                     mode='edit'
-                    agent={agentWithDocuments}
+                    agent={savedAgent}
                     services={services}
-                    onBack={onBack}
+                    onBack={jest.fn()}
                     onSaved={jest.fn()}
                 />
             </IntlProvider>,
         );
+        return openHistory();
+    }
 
-        expect(documentNames()).toEqual(['handbook.pdf', 'faq.txt']);
-        fireEvent.keyDown(document, {key: 'Escape'});
-        expect(onBack).toHaveBeenCalledTimes(1);
+    async function confirmDelete() {
+        const dialog = await screen.findByRole('dialog', {name: /^Delete /});
+        fireEvent.click(within(dialog).getByRole('button', {name: 'Delete'}));
+    }
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockedUseCurrentUserHasSystemPermission.mockReturnValue(true);
+        mockGetAgentVersions.mockResolvedValueOnce(listOf(3, 2, 1));
+        mockGetAgentVersion.mockImplementation(async (_id, version) => ({...summary(version), config: {...savedAgent, customInstructions: `v${version}`}}));
+        mockGetProfilesByIds.mockResolvedValue([]);
     });
 
-    test('an uploaded document is appended to the draft and makes the editor dirty', async () => {
-        const uploaded = makeDocument('doc_3', 'notes.md', {mimeType: 'text/markdown'});
-        mockUploadAgentDocument.mockResolvedValue(uploaded);
-        renderEdit();
+    test('deletes a version from its row menu and reloads the list', async () => {
+        mockDeleteAgentVersions.mockResolvedValue(1);
+        mockGetAgentVersions.mockResolvedValue(listOf(3, 2));
+        const list = await renderHistory();
 
-        const file = new File(['# notes'], 'notes.md', {type: 'text/markdown'});
-        uploadFiles([file]);
+        expect(screen.queryByRole('button', {name: 'Delete'})).toBeNull();
+        expect(screen.queryByRole('button', {name: 'Actions for version 3'})).toBeNull();
+        expect(within(list).queryByRole('checkbox')).toBeNull();
 
-        await waitFor(() => expect(documentNames()).toEqual(['handbook.pdf', 'faq.txt', 'notes.md']));
-        expect(mockUploadAgentDocument).toHaveBeenCalledWith(file);
-        expect(within(screen.getByTestId('document-uploads')).queryAllByRole('listitem')).toHaveLength(0);
+        await openVersionMenu(1);
+        fireEvent.click(await screen.findByText('Delete this version'));
+        expect(within(await screen.findByRole('dialog', {name: 'Delete version 1?'})).getByText(/Version 1 will be permanently deleted/)).not.toBeNull();
+        expect(mockDeleteAgentVersions).not.toHaveBeenCalled();
+        await confirmDelete();
 
-        // New uploads are not saved yet, so they are not downloadable.
-        const items = within(screen.getByTestId('draft-documents')).getAllByRole('listitem');
-        expect(items.map((li) => li.getAttribute('data-saved'))).toEqual(['true', 'true', 'false']);
-
-        fireEvent.keyDown(document, {key: 'Escape'});
-        expect(screen.getByRole('dialog', {name: 'Discard changes?'})).not.toBeNull();
+        await waitFor(() => expect(mockDeleteAgentVersions).toHaveBeenCalledWith('agent_1', [1]));
+        await waitFor(() => expect(within(list).getAllByRole('listitem')).toHaveLength(2));
+        expect(mockGetAgentVersions).toHaveBeenCalledTimes(2);
+        expect(await screen.findByText('Deleted 1 version.')).not.toBeNull();
     });
 
-    test('save sends documents as {id, name} references only', async () => {
-        const uploaded = makeDocument('doc_3', 'notes.md', {mimeType: 'text/markdown'});
-        mockUploadAgentDocument.mockResolvedValue(uploaded);
-        renderEdit();
+    test('selects multiple versions from the list menu and deletes them', async () => {
+        mockDeleteAgentVersions.mockResolvedValue(2);
+        mockGetAgentVersions.mockResolvedValue(listOf(3));
+        const list = await renderHistory();
 
-        uploadFiles([new File(['# notes'], 'notes.md')]);
-        await waitFor(() => expect(documentNames()).toContain('notes.md'));
-        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+        expect(within(list).queryAllByRole('checkbox')).toHaveLength(0);
+        fireEvent.click(screen.getByRole('button', {name: 'More version history actions'}));
+        fireEvent.click(await screen.findByText('Select multiple versions'));
 
-        await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
-        expect(mockUpdateAgent.mock.calls[0][1].documents).toEqual([
-            {id: 'doc_1', name: 'handbook.pdf'},
-            {id: 'doc_2', name: 'faq.txt'},
-            {id: 'doc_3', name: 'notes.md'},
-        ]);
+        // The current version is the live configuration, so it has no checkbox.
+        expect(within(list).getAllByRole('checkbox')).toHaveLength(2);
+        expect(within(list).queryByRole('checkbox', {name: 'Select version 3'})).toBeNull();
+        expect(screen.queryByRole('button', {name: 'Actions for version 1'})).toBeNull();
+        expect((screen.getByRole('button', {name: 'Delete selected'}) as HTMLButtonElement).disabled).toBe(true);
+
+        fireEvent.click(within(list).getByRole('checkbox', {name: 'Select version 2'}));
+        fireEvent.click(within(list).getByRole('checkbox', {name: 'Select version 1'}));
+        expect(screen.getByText('2 selected')).not.toBeNull();
+        fireEvent.click(screen.getByRole('button', {name: 'Delete selected'}));
+        expect(within(await screen.findByRole('dialog', {name: /^Delete /})).getByText(/Versions 1 and 2 will be permanently deleted/)).not.toBeNull();
+        expect(mockDeleteAgentVersions).not.toHaveBeenCalled();
+        await confirmDelete();
+
+        await waitFor(() => expect(mockDeleteAgentVersions).toHaveBeenCalledWith('agent_1', [1, 2]));
+        await waitFor(() => expect(within(list).getAllByRole('listitem')).toHaveLength(1));
+        expect(within(list).queryAllByRole('checkbox')).toHaveLength(0);
+        expect(screen.queryByRole('button', {name: 'More version history actions'})).toBeNull();
     });
 
-    test('create sends an empty documents list when none were added', async () => {
-        renderView();
+    test('Escape leaves select-multiple mode first and closes the modal on the next press', async () => {
+        const list = await renderHistory();
 
-        fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'New Agent'}});
-        fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'newagent'}});
-        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+        fireEvent.click(screen.getByRole('button', {name: 'More version history actions'}));
+        fireEvent.click(await screen.findByText('Select multiple versions'));
+        await waitFor(() => expect(document.querySelector('[data-open-popup]')).toBeNull());
+        fireEvent.click(within(list).getByRole('checkbox', {name: 'Select version 1'}));
 
-        await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
-        expect(mockCreateAgent.mock.calls[0][0].documents).toEqual([]);
+        fireEvent.keyDown(list, {key: 'Escape'});
+        expect(within(list).queryAllByRole('checkbox')).toHaveLength(0);
+        expect(screen.queryByTestId('version-list')).not.toBeNull();
+        expect(mockDeleteAgentVersions).not.toHaveBeenCalled();
+
+        fireEvent.keyDown(list, {key: 'Escape'});
+        await waitFor(() => expect(screen.queryByTestId('version-list')).toBeNull());
     });
 
-    test('removing and renaming documents is reflected in the save payload', async () => {
-        renderEdit();
+    test('cancelling selection leaves the versions alone', async () => {
+        const list = await renderHistory();
 
-        fireEvent.click(screen.getByRole('button', {name: 'Remove handbook.pdf'}));
-        fireEvent.click(screen.getByRole('button', {name: 'Rename faq.txt'}));
-        expect(documentNames()).toEqual(['renamed.txt']);
-        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+        fireEvent.click(screen.getByRole('button', {name: 'More version history actions'}));
+        fireEvent.click(await screen.findByText('Select multiple versions'));
+        fireEvent.click(within(list).getByRole('checkbox', {name: 'Select version 1'}));
+        fireEvent.click(within(screen.getByRole('dialog', {name: 'Version history'})).getByRole('button', {name: 'Cancel'}));
 
-        await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
-        expect(mockUpdateAgent.mock.calls[0][1].documents).toEqual([{id: 'doc_2', name: 'renamed.txt'}]);
+        expect(within(list).queryAllByRole('checkbox')).toHaveLength(0);
+        expect(screen.getByRole('button', {name: 'Actions for version 1'})).not.toBeNull();
+        expect(mockDeleteAgentVersions).not.toHaveBeenCalled();
     });
 
-    test('removing every document saves an empty list', async () => {
-        renderEdit();
+    test('deletes every previous version from the modal menu', async () => {
+        mockDeleteAgentVersions.mockResolvedValue(2);
+        mockGetAgentVersions.mockResolvedValue(listOf(3));
+        const list = await renderHistory();
 
-        fireEvent.click(screen.getByRole('button', {name: 'Remove handbook.pdf'}));
-        fireEvent.click(screen.getByRole('button', {name: 'Remove faq.txt'}));
-        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+        fireEvent.click(screen.getByRole('button', {name: 'More version history actions'}));
+        fireEvent.click(await screen.findByText('Delete all previous versions'));
+        expect(await screen.findByText('Delete all previous versions?')).not.toBeNull();
+        expect(mockDeleteAgentVersions).not.toHaveBeenCalled();
+        await confirmDelete();
 
-        await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
-        expect(mockUpdateAgent.mock.calls[0][1].documents).toEqual([]);
+        await waitFor(() => expect(mockDeleteAgentVersions).toHaveBeenCalledWith('agent_1', 'all'));
+        await waitFor(() => expect(within(list).getAllByRole('listitem')).toHaveLength(1));
+
+        // Nothing is left to delete, so the menu goes away.
+        expect(screen.queryByRole('button', {name: 'More version history actions'})).toBeNull();
     });
 
-    test('blocks saving when the extracted text is over the budget', () => {
-        const big = [
-            makeDocument('doc_a', 'a.txt', {textRunes: 60000}),
-            makeDocument('doc_b', 'b.txt', {textRunes: 40001}),
-        ];
-        renderEdit({...agentWithDocuments, documents: big});
+    test('deleting the viewed version falls back to the current version', async () => {
+        mockDeleteAgentVersions.mockResolvedValue(1);
+        mockGetAgentVersions.mockResolvedValue(listOf(3, 2));
+        const list = await renderHistory();
 
-        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
-
-        expect(screen.getByText(/over the limit of 100,000/)).not.toBeNull();
-        expect(mockUpdateAgent).not.toHaveBeenCalled();
-
-        // Removing a document clears the error and unblocks Save.
-        fireEvent.click(screen.getByRole('button', {name: 'Remove b.txt'}));
-        expect(screen.queryByText(/over the limit of 100,000/)).toBeNull();
-    });
-
-    test('allows saving exactly at the budget', async () => {
-        const exact = [makeDocument('doc_a', 'a.txt', {textRunes: 100000})];
-        renderEdit({...agentWithDocuments, documents: exact});
-
-        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
-
-        await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
-    });
-
-    test('shows the server error for a failed upload and does not add the document', async () => {
-        mockUploadAgentDocument.mockRejectedValue({message: 'no extractable text found in "scan.pdf"'});
-        renderEdit();
-
-        uploadFiles([new File(['x'], 'scan.pdf')]);
-
-        expect(await screen.findByText('scan.pdf: error - no extractable text found in "scan.pdf"')).not.toBeNull();
-        expect(documentNames()).toEqual(['handbook.pdf', 'faq.txt']);
-
-        fireEvent.click(screen.getByRole('button', {name: 'Dismiss scan.pdf'}));
-        expect(screen.queryByText(/scan.pdf: error/)).toBeNull();
-    });
-
-    test('blocks saving while an upload is still in flight', async () => {
-        let finish: (doc: AgentDocument) => void = jest.fn();
-        mockUploadAgentDocument.mockImplementation(() => new Promise((resolve) => {
-            finish = resolve;
-        }));
-        renderEdit();
-
-        uploadFiles([new File(['x'], 'slow.txt')]);
-        expect(await screen.findByText('slow.txt: uploading')).not.toBeNull();
-        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
-
-        expect(screen.getByText('Wait for document uploads to finish before saving.')).not.toBeNull();
-        expect(mockUpdateAgent).not.toHaveBeenCalled();
-
-        finish(makeDocument('doc_4', 'slow.txt', {mimeType: 'text/plain'}));
-        await waitFor(() => expect(documentNames()).toContain('slow.txt'));
-        expect(screen.queryByText('Wait for document uploads to finish before saving.')).toBeNull();
-    });
-
-    test('restoring a version resets the draft documents and the baseline', async () => {
-        const restored: UserAgent = {...agentWithDocuments, documents: [faq]};
-        mockGetAgentVersions.mockResolvedValue({
-            currentVersion: 2,
-            versions: [
-                {version: 2, createdBy: '', createAt: 1759600000000, source: 'update', restoredFromVersion: 0, changedFields: ['documents']},
-                {version: 1, createdBy: '', createAt: 1759500000000, source: 'initial', restoredFromVersion: 0, changedFields: []},
-            ],
-        });
-        mockGetAgentVersion.mockImplementation(async (_id, version) => ({
-            version,
-            createdBy: '',
-            createAt: 1759500000000,
-            source: 'update',
-            restoredFromVersion: 0,
-            changedFields: null,
-            config: {...agentWithDocuments, documents: version === 1 ? [faq] : [handbook, faq]},
-        }));
-        mockRestoreAgentVersion.mockResolvedValue(restored);
-        renderEdit();
-
-        // An unsaved local removal must be replaced by the restored documents.
-        fireEvent.click(screen.getByRole('button', {name: 'Remove faq.txt'}));
-        fireEvent.click(screen.getByRole('button', {name: 'History'}));
-        const list = await screen.findByTestId('version-list');
-        expect(within(list).getByText('Changed: Reference documents')).not.toBeNull();
         fireEvent.click(within(list).getByText('Version 1'));
-        await waitFor(() => expect((screen.getByRole('button', {name: 'Restore this version'}) as HTMLButtonElement).disabled).toBe(false));
-        fireEvent.click(screen.getByRole('button', {name: 'Restore this version'}));
-        fireEvent.click(within(screen.getByRole('dialog', {name: 'Restore this version?'})).getByRole('button', {name: 'Restore'}));
-        await waitFor(() => expect(mockRestoreAgentVersion).toHaveBeenCalledWith('agent_1', 1));
-        await screen.findByText('Version 1 was restored as the current version.');
+        await waitFor(() => expect(mockGetAgentVersion).toHaveBeenCalledWith('agent_1', 1));
+        await openVersionMenu(1);
+        fireEvent.click(await screen.findByText('Delete this version'));
+        await confirmDelete();
 
-        fireEvent.click(screen.getByRole('button', {name: 'Configuration'}));
-        expect(documentNames()).toEqual(['faq.txt']);
+        await waitFor(() => expect(mockDeleteAgentVersions).toHaveBeenCalledWith('agent_1', [1]));
+        await waitFor(() => expect(screen.queryByRole('button', {name: 'Restore this version'})).toBeNull());
+        expect(mockGetAgentVersion).toHaveBeenLastCalledWith('agent_1', 3);
+    });
 
-        fireEvent.keyDown(document, {key: 'Escape'});
-        expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
+    test('shows the server error and keeps the list', async () => {
+        mockDeleteAgentVersions.mockRejectedValue({message: 'the current version of an agent cannot be deleted'});
+        const list = await renderHistory();
+
+        await openVersionMenu(1);
+        fireEvent.click(await screen.findByText('Delete this version'));
+        await confirmDelete();
+
+        expect(await screen.findByText('the current version of an agent cannot be deleted')).not.toBeNull();
+
+        // The confirmation dialog is portaled to <body>, so the page behind it is aria-hidden.
+        expect(within(list).getAllByRole('listitem', {hidden: true})).toHaveLength(3);
+        expect(mockGetAgentVersions).toHaveBeenCalledTimes(1);
     });
 });

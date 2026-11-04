@@ -5,41 +5,15 @@ import React from 'react';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 
-//eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
-import {OverlayTrigger, Tooltip} from 'react-bootstrap';
+import {Tag} from '@mattermost/compass-ui/components/tag';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {Capability, requiredLevelFor, useLicenseLevelName} from '@/license';
 
-const Chip = styled.div`
+const ChipAnchor = styled.span`
     display: inline-flex;
-    align-items: center;
-    padding: 0 8px;
     margin-left: 8px;
-    border-radius: 10px;
-    height: 18px;
-    width: fit-content;
     white-space: nowrap;
-
-    font-size: 10px;
-    font-weight: 600;
-    line-height: 16px;
-
-    color: var(--button-bg);
-    background: rgba(var(--button-bg-rgb), 0.12);
-`;
-
-const MainText = styled.div`
-	font-size: 12px;
-	fong-weight: 600;
-	line-height: 15px;
-`;
-
-const SubText = styled.div`
-	font-size: 11px;
-	font-weight: 600;
-	line-height: 16px;
-	letter-spacing: 0.22px;
-	opacity: 0.56;
 `;
 
 type Props = {
@@ -53,19 +27,17 @@ type Props = {
 
 const EnterpriseChip = (props: Props) => {
     return (
-        <OverlayTrigger
-            placement='top'
-            overlay={
-                <Tooltip>
-                    <MainText>{props.title || 'Enterprise feature'}</MainText>
-                    <SubText>{props.subtext}</SubText>
-                </Tooltip>
-            }
+        <WithTooltip
+            title={props.title || 'Enterprise feature'}
+            hint={props.subtext}
         >
-            <Chip>
-                {props.text || 'Enterprise'}
-            </Chip>
-        </OverlayTrigger>
+            <ChipAnchor>
+                <Tag
+                    type='info'
+                    label={props.text || 'Enterprise'}
+                />
+            </ChipAnchor>
+        </WithTooltip>
     );
 };
 

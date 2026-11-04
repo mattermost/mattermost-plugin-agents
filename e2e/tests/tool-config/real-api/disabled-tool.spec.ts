@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -37,25 +38,24 @@ function buildEmbeddedToolConfigs(disabledToolNames: string[] = []) {
     }));
 }
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigAIMockContainer(buildEmbeddedToolConfigs([TARGET_TOOL_NAME])));
+    const aimock = own(await RunAIMockSidecar(mattermost.network, {
+        fixtures: buildTextResponse({
+            userMessage: 'aimock-disabled-tool-placeholder',
+            content: 'placeholder',
+        }),
+    }));
+    return { mattermost, aimock };
+});
+
 test.describe('Disabled Tool Excluded (Aimock)', () => {
     let mattermost: MattermostContainer;
     let aimock: AIMockContainer;
 
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        mattermost = await RunToolConfigAIMockContainer(buildEmbeddedToolConfigs([TARGET_TOOL_NAME]));
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, aimock } = containers);
         await setupRegularTestUser(mattermost);
-        aimock = await RunAIMockSidecar(mattermost.network, {
-            fixtures: buildTextResponse({
-                userMessage: 'aimock-disabled-tool-placeholder',
-                content: 'placeholder',
-            }),
-        });
-    });
-
-    test.afterAll(async () => {
-        await aimock?.stop();
-        await mattermost?.stop();
     });
 
     test('disabled embedded tool is filtered out and does not surface in RHS turn', async ({ page }) => {

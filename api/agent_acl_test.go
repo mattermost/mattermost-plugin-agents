@@ -16,6 +16,7 @@ import (
 // change while service account auth stays on. Must stay in sync with
 // clearManagerEditableFields. Every other BotConfig field is sensitive by default.
 var managerEditableBotConfigFields = map[string]bool{
+	"Name":                    true,
 	"DisplayName":             true,
 	"CustomInstructions":      true,
 	"Documents":               true,
@@ -31,6 +32,7 @@ var managerEditableBotConfigFields = map[string]bool{
 	"StructuredOutputEnabled": true,
 	"MaxToolTurns":            true,
 	"UseServiceAccountAuth":   true,
+	"Skills":                  true,
 }
 
 func TestServiceAccountChangeNeedsAdmin(t *testing.T) {
@@ -204,6 +206,9 @@ func mutateBotConfigField(t *testing.T, cfg *llm.BotConfig, fieldName string) {
 		return
 	case "ChannelIDs", "UserIDs", "TeamIDs", "AdminUserIDs", "EnabledNativeTools":
 		v.Set(reflect.ValueOf([]string{"mutated-id"}))
+		return
+	case "Skills":
+		v.Set(reflect.ValueOf(llm.SkillsConfig{AllowPersonal: true, EnabledSharedIDs: []string{"mutated-id"}}))
 		return
 	}
 

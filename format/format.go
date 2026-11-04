@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -241,6 +242,26 @@ func WriteScheduledPost(w *strings.Builder, entry ScheduledPostEntry) {
 		fmt.Fprintf(w, "Error: %s\n", sp.ErrorCode)
 	}
 	fmt.Fprintf(w, "Message: %s\n\n", sp.Message)
+}
+
+// DraftEntry holds data for formatting a single message draft.
+type DraftEntry struct {
+	HeaderLabel string // e.g. "Draft 1"; empty to omit
+	Draft       *model.Draft
+}
+
+// WriteDraft writes a formatted draft entry to the builder.
+func WriteDraft(w *strings.Builder, entry DraftEntry) {
+	writeHeader(w, entry.HeaderLabel)
+	d := entry.Draft
+	fmt.Fprintf(w, "Channel ID: %s\n", d.ChannelId)
+	if d.RootId != "" {
+		fmt.Fprintf(w, "Root ID: %s\n", d.RootId)
+	}
+	if d.UpdateAt > 0 {
+		fmt.Fprintf(w, "Last updated: %s\n", TimeFromMillis(d.UpdateAt))
+	}
+	fmt.Fprintf(w, "Message: %s\n\n", d.Message)
 }
 
 // WriteReactions writes a post's emoji reactions grouped by emoji, with the
@@ -703,6 +724,7 @@ func WriteUser(w *strings.Builder, entry UserEntry) {
 type ChannelEntry struct {
 	HeaderLabel string         // e.g. "Channel Information:", "1. **General**"; empty to omit
 	Channel     *model.Channel // the source channel
+	DisplayName string         // shown instead of Channel.DisplayName when set (e.g. a DM placeholder)
 	TeamName    string         // resolved team display name
 	TeamID      string         // team ID (shown when TeamName is empty but TeamID is set)
 	MemberCount int64          // -1 means don't show
@@ -717,7 +739,11 @@ func WriteChannel(w *strings.Builder, entry ChannelEntry) {
 
 	fmt.Fprintf(w, "ID: %s\n", entry.Channel.Id)
 	fmt.Fprintf(w, "Name: %s\n", entry.Channel.Name)
-	fmt.Fprintf(w, "Display Name: %s\n", entry.Channel.DisplayName)
+	displayName := entry.Channel.DisplayName
+	if entry.DisplayName != "" {
+		displayName = entry.DisplayName
+	}
+	fmt.Fprintf(w, "Display Name: %s\n", displayName)
 	fmt.Fprintf(w, "Type: %s\n", entry.Channel.Type)
 
 	if entry.TeamName != "" {
@@ -801,6 +827,65 @@ func WriteFileDescriptor(w *strings.Builder, entry FileDescriptorEntry) {
 	fmt.Fprintf(w, "Size: %d bytes\n", entry.FileInfo.Size)
 
 	w.WriteString("\n")
+}
+
+// UnavailableAttachmentReason says why an attachment's content is not in the
+// conversation.
+type UnavailableAttachmentReason int
+
+const (
+	// AttachmentImageInputDisabled means the agent does not accept images.
+	AttachmentImageInputDisabled UnavailableAttachmentReason = iota + 1
+	// AttachmentLoadFailed means the file's metadata or bytes could not be read.
+	AttachmentLoadFailed
+	// AttachmentForbidden means the requesting user may not access the file.
+	AttachmentForbidden
+)
+
+// maxAttachmentNameRunes bounds a user-controlled filename in a placeholder.
+const maxAttachmentNameRunes = 100
+
+// UnavailableAttachment renders a placeholder for an attachment the model
+// cannot see. A forbidden attachment is never named, so the model cannot
+// reveal files the requesting user has no access to.
+func UnavailableAttachment(name string, reason UnavailableAttachmentReason) string {
+	name = sanitizeAttachmentName(name)
+	switch reason {
+	case AttachmentForbidden:
+		return "[An attachment here is not available to the requesting user.]"
+	case AttachmentImageInputDisabled:
+		if name == "" {
+			return "[An image is attached. Image input is disabled for this agent, so you cannot see it.]"
+		}
+		return fmt.Sprintf("[Image attached: %s. Image input is disabled for this agent, so you cannot see it.]", name)
+	default:
+		if name == "" {
+			return "[An attachment could not be loaded.]"
+		}
+		return fmt.Sprintf("[Attachment %s could not be loaded.]", name)
+	}
+}
+
+// sanitizeAttachmentName keeps a filename on one line and inside its
+// placeholder: control and format characters and brackets are dropped,
+// whitespace is collapsed, and long names are cut.
+func sanitizeAttachmentName(name string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		switch {
+		case r == '[' || r == ']':
+			return -1
+		case unicode.IsSpace(r):
+			return ' '
+		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
+			return -1
+		}
+		return r
+	}, name)
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	if runes := []rune(cleaned); len(runes) > maxAttachmentNameRunes {
+		cleaned = string(runes[:maxAttachmentNameRunes]) + "…"
+	}
+	return cleaned
 }
 
 // AgentDocumentEntry is one agent reference document for AgentReferenceDocuments.

@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState, useRef, useEffect, useCallback} from 'react';
+import React, {useCallback} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {
@@ -10,28 +10,33 @@ import {
     PencilOutlineIcon,
     TrashCanOutlineIcon,
 } from '@mattermost/compass-icons/components';
-//eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
-import {OverlayTrigger, Tooltip} from 'react-bootstrap';
+import MessageOutlineIcon from '@mattermost/compass-icons/components/message-outline';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {Button} from '@mattermost/compass-ui/components/button';
+import {Tag} from '@mattermost/compass-ui/components/tag';
+import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {getProfilePictureUrl} from '@/client';
-import {getPortalTarget} from '@/utils/dom';
+import DotMenu, {DropdownMenuItem} from '@/components/dot_menu';
 
 import {AgentInactiveReason, UserAgent, ServiceInfo} from '@/types/agents';
+import {VisuallyHidden} from '@/components/visually_hidden';
+import {noMotionWhenReduced} from '@/components/llmbot_post/motion';
 
 type Props = {
     agent: UserAgent;
     services: ServiceInfo[];
     servicesLoaded: boolean;
     canManage: boolean;
+    onStartChat: (botUserId: string) => void;
     onEdit: (agent: UserAgent) => void;
     onDelete: (agent: UserAgent) => void;
     onExport: (agent: UserAgent) => void;
 }
 
 const AgentRow = (props: Props) => {
-    const {agent, services, servicesLoaded, canManage, onEdit, onDelete, onExport} = props;
-    const [menuOpen, setMenuOpen] = useState(false);
-    const menuRef = useRef<HTMLDivElement>(null);
+    const {agent, services, servicesLoaded, canManage, onStartChat, onEdit, onDelete, onExport} = props;
     const intl = useIntl();
 
     const avatarUrl = getProfilePictureUrl(agent.botUserID ?? '', 0);
@@ -50,191 +55,142 @@ const AgentRow = (props: Props) => {
     let mcpBadge: React.ReactNode = null;
     if (autoEnableNewMCPTools) {
         mcpBadge = (
-            <Badge>
-                <FormattedMessage defaultMessage='All MCP tools'/>
-            </Badge>
+            <Tag label={<FormattedMessage defaultMessage='All MCP tools'/>}/>
         );
     } else if (toolCount > 0) {
         mcpBadge = (
-            <Badge>
-                {intl.formatMessage(
+            <Tag
+                label={intl.formatMessage(
                     {defaultMessage: '{count, plural, one {# tool} other {# tools}}'},
                     {count: toolCount},
                 )}
-            </Badge>
+            />
         );
     }
 
-    // Close menu on outside click
-    useEffect(() => {
-        if (!menuOpen) {
-            return () => {
-                // No mousedown listener while menu is closed
-            };
-        }
-        const handler = (e: MouseEvent) => {
-            if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-                setMenuOpen(false);
-            }
-        };
-        document.addEventListener('mousedown', handler);
-        return () => document.removeEventListener('mousedown', handler);
-    }, [menuOpen]);
-
-    const handleEdit = useCallback(() => {
-        setMenuOpen(false);
+    const handleMenuItemEdit = useCallback(() => {
         onEdit(agent);
     }, [agent, onEdit]);
 
-    const handleDelete = useCallback(() => {
-        setMenuOpen(false);
+    const handleMenuItemDelete = useCallback(() => {
         onDelete(agent);
     }, [agent, onDelete]);
 
-    const handleExport = useCallback(() => {
-        setMenuOpen(false);
+    const handleMenuItemExport = useCallback(() => {
         onExport(agent);
     }, [agent, onExport]);
 
+    // The chat route is keyed by the bot user id; without one there is nothing
+    // safe to navigate to, so the row is not actionable.
+    const botUserId = agent.botUserID || '';
+    const actionable = botUserId !== '';
+    const agentLabel = agent.displayName || agent.name;
+    const unavailableId = `agent-row-unavailable-${agent.id}`;
+
     const handleRowActivate = useCallback(() => {
-        if (!canManage || menuOpen) {
-            return;
+        if (actionable) {
+            onStartChat(botUserId);
         }
-        onEdit(agent);
-    }, [canManage, menuOpen, agent, onEdit]);
+    }, [actionable, botUserId, onStartChat]);
 
     const handleRowKeyDown = useCallback(
         (e: React.KeyboardEvent) => {
-            if (!canManage || menuOpen) {
-                return;
-            }
-            if (e.key === 'Enter' || e.key === ' ') {
+            if (actionable && (e.key === 'Enter' || e.key === ' ')) {
                 e.preventDefault();
-                onEdit(agent);
+                onStartChat(botUserId);
             }
         },
-        [canManage, menuOpen, agent, onEdit],
+        [actionable, botUserId, onStartChat],
     );
 
-    const handleMenuButtonClick = useCallback((e: React.MouseEvent) => {
-        e.stopPropagation();
-        setMenuOpen((prev) => !prev);
-    }, []);
-
-    const handleMenuItemEdit = useCallback((e: React.MouseEvent) => {
-        e.stopPropagation();
-        handleEdit();
-    }, [handleEdit]);
-
-    const handleMenuItemExport = useCallback((e: React.MouseEvent) => {
-        e.stopPropagation();
-        handleExport();
-    }, [handleExport]);
-
-    const handleMenuItemDelete = useCallback((e: React.MouseEvent) => {
-        e.stopPropagation();
-        handleDelete();
-    }, [handleDelete]);
-
+    // The row's primary action is RowMain, a button that holds only text and the avatar. Its ::after
+    // stretches over the whole row so a click anywhere starts a chat, while the other controls (the
+    // hover button, the badges, the actions menu) are siblings above it, never inside a button.
     return (
         <RowContainer
-            $clickable={canManage}
-            {...(canManage ? {
-                onClick: handleRowActivate,
-                onKeyDown: handleRowKeyDown,
-                role: 'button',
-                tabIndex: 0,
-                'aria-label': intl.formatMessage(
-                    {defaultMessage: 'Edit agent {name}'},
-                    {name: agent.displayName || agent.name},
-                ),
-            } : {})}
+            $clickable={actionable}
+            data-testid='agent-row'
         >
-            <RowMain>
+            <RowMain
+                role='button'
+                tabIndex={0}
+                onClick={handleRowActivate}
+                onKeyDown={handleRowKeyDown}
+                {...(actionable ? {} : {'aria-disabled': true, 'aria-describedby': unavailableId})}
+                aria-label={intl.formatMessage(
+                    {defaultMessage: 'Start a new chat with {name}'},
+                    {name: agentLabel},
+                )}
+            >
+                {!actionable && (
+                    <VisuallyHidden id={unavailableId}>
+                        <FormattedMessage defaultMessage='This agent has no bot account, so a chat cannot be started.'/>
+                    </VisuallyHidden>
+                )}
                 <Avatar
                     src={avatarUrl}
                     alt=''
                     aria-hidden='true'
+                    size='24'
                 />
                 <NameColumn>
                     <DisplayName>{agent.displayName}</DisplayName>
                     <Username>{'@'}{agent.name}</Username>
                 </NameColumn>
-                <BadgesColumn>
-                    {inactiveReason && (
-                        <OverlayTrigger
-                            placement='top'
-                            container={getPortalTarget}
-                            overlay={
-                                <Tooltip id={`inactive-agent-tooltip-${agent.id}`}>
-                                    <InactiveReasonMessage reason={inactiveReason}/>
-                                </Tooltip>
-                            }
-                        >
-                            <BadgeTrigger tabIndex={0}>
-                                <InactiveBadge>
-                                    <FormattedMessage defaultMessage='Inactive'/>
-                                </InactiveBadge>
-                            </BadgeTrigger>
-                        </OverlayTrigger>
-                    )}
-                    {!canManage && (
-                        <OverlayTrigger
-                            placement='top'
-                            container={getPortalTarget}
-                            overlay={
-                                <Tooltip id={`read-only-agent-tooltip-${agent.id}`}>
-                                    <FormattedMessage
-                                        defaultMessage='Mention @{username} in a channel or direct message to chat with this agent.'
-                                        values={{username: agent.name}}
-                                    />
-                                </Tooltip>
-                            }
-                        >
-                            <BadgeTrigger tabIndex={0}>
-                                <ReadOnlyBadge>
-                                    <FormattedMessage defaultMessage='Read only'/>
-                                </ReadOnlyBadge>
-                            </BadgeTrigger>
-                        </OverlayTrigger>
-                    )}
-                    {mcpBadge}
-                </BadgesColumn>
             </RowMain>
-            {canManage && (
-                <ActionsColumn ref={menuRef}>
-                    <MenuButton
-                        type='button'
-                        onClick={handleMenuButtonClick}
-                        aria-label={intl.formatMessage({defaultMessage: 'Agent actions'})}
+            {actionable && (
+                <NewChatSlot>
+                    <Button
+                        emphasis='dim'
+                        size='x-small'
+                        leadingIcon={<Icon glyph={<MessageOutlineIcon/>}/>}
+                        aria-label={intl.formatMessage({defaultMessage: 'Start new chat with {agent}'}, {agent: agentLabel})}
+                        data-testid='agent-row-new-chat'
+                        onClick={handleRowActivate}
                     >
-                        <DotsHorizontalIcon size={18}/>
-                    </MenuButton>
-                    {menuOpen && (
-                        <DropdownMenu>
-                            <MenuItem
-                                type='button'
-                                onClick={handleMenuItemEdit}
-                            >
-                                <PencilOutlineIcon size={16}/>
-                                <FormattedMessage defaultMessage='Edit'/>
-                            </MenuItem>
-                            <MenuItem
-                                type='button'
-                                onClick={handleMenuItemExport}
-                            >
-                                <ExportVariantIcon size={16}/>
-                                <FormattedMessage defaultMessage='Export'/>
-                            </MenuItem>
-                            <MenuItemDanger
-                                type='button'
-                                onClick={handleMenuItemDelete}
-                            >
-                                <TrashCanOutlineIcon size={16}/>
-                                <FormattedMessage defaultMessage='Delete'/>
-                            </MenuItemDanger>
-                        </DropdownMenu>
-                    )}
+                        {intl.formatMessage({defaultMessage: 'Start new chat'})}
+                    </Button>
+                </NewChatSlot>
+            )}
+            <BadgesColumn>
+                {inactiveReason && (
+                    <WithTooltip title={<InactiveReasonMessage reason={inactiveReason}/>}>
+                        <Tag
+                            type='danger'
+                            tabIndex={0}
+                            label={<FormattedMessage defaultMessage='Inactive'/>}
+                        />
+                    </WithTooltip>
+                )}
+                {mcpBadge}
+            </BadgesColumn>
+            {canManage && (
+                <ActionsColumn>
+                    <DotMenu
+                        icon={<DotsHorizontalIcon/>}
+                        title={intl.formatMessage({defaultMessage: 'Agent actions'})}
+                        placement='bottom-end'
+
+                        // Rendered in place so the menu stays inside the row's DOM subtree.
+                        portal={false}
+                    >
+                        <DropdownMenuItem
+                            icon={<PencilOutlineIcon/>}
+                            label={<FormattedMessage defaultMessage='Edit'/>}
+                            onClick={handleMenuItemEdit}
+                        />
+                        <DropdownMenuItem
+                            icon={<ExportVariantIcon/>}
+                            label={<FormattedMessage defaultMessage='Export'/>}
+                            onClick={handleMenuItemExport}
+                        />
+                        <DropdownMenuItem
+                            icon={<TrashCanOutlineIcon/>}
+                            label={<FormattedMessage defaultMessage='Delete'/>}
+                            onClick={handleMenuItemDelete}
+                            destructive={true}
+                        />
+                    </DotMenu>
                 </ActionsColumn>
             )}
         </RowContainer>
@@ -257,61 +213,61 @@ const InactiveReasonMessage = ({reason}: {reason: AgentInactiveReason}) => {
 // --- Styled Components ---
 
 const RowContainer = styled.div<{$clickable: boolean}>`
+    position: relative;
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 8px;
+    gap: var(--spacing-xs);
     height: 60px;
-    padding: 0 16px;
-    border-radius: 4px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
+    padding: 0 var(--spacing-l);
+    border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
     background: var(--center-channel-bg, #fff);
     cursor: ${({$clickable}) => ($clickable ? 'pointer' : 'default')};
-    outline: none;
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.04);
     }
-
-    ${({$clickable}) =>
-        $clickable &&
-        `
-        &:focus-visible {
-            box-shadow: 0 0 0 2px rgba(var(--button-bg-rgb, 28, 88, 217), 0.4);
-        }
-    `}
 `;
 
+// Not positioned itself, so its ::after covers the whole row (RowContainer is the positioned ancestor).
 const RowMain = styled.div`
     display: flex;
+    flex: 0 1 auto;
     flex-direction: row;
     align-items: center;
-    gap: 8px;
-    flex: 1;
+    gap: var(--spacing-xs);
     min-width: 0;
+    outline: none;
+
+    &::after {
+        position: absolute;
+        inset: 0;
+        content: '';
+    }
+
+    &:focus-visible::after {
+        box-shadow: inset 0 0 0 2px rgba(var(--button-bg-rgb, 28, 88, 217), 0.4);
+    }
 `;
 
-const Avatar = styled.img`
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
+const Avatar = styled(UserAvatar)`
     flex-shrink: 0;
 `;
 
 const NameColumn = styled.div`
     display: flex;
+    flex: 0 1 auto;
     flex-direction: row;
     align-items: center;
-    gap: 8px;
-    flex: 1;
+    gap: var(--spacing-xs);
     min-width: 0;
 `;
 
 const DisplayName = styled.div`
-    font-family: 'Open Sans', sans-serif;
-    font-size: 14px;
-    font-weight: 600;
-    line-height: 20px;
+    font-family: var(--font-family-body, 'Open Sans', sans-serif);
+    font-size: var(--font-size-100);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-100);
     color: var(--center-channel-color);
     white-space: nowrap;
     overflow: hidden;
@@ -319,119 +275,53 @@ const DisplayName = styled.div`
 `;
 
 const Username = styled.div`
-    font-family: 'Open Sans', sans-serif;
-    font-size: 14px;
-    font-weight: 400;
-    line-height: 20px;
+    font-family: var(--font-family-body, 'Open Sans', sans-serif);
+    font-size: var(--font-size-100);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-100);
     color: rgba(var(--center-channel-color-rgb), 0.75);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 `;
 
-const BadgesColumn = styled.div`
-    display: flex;
-    flex-direction: row;
-    gap: 8px;
-    align-items: center;
-    flex-shrink: 0;
-`;
-
-const InactiveBadge = styled.span`
-    padding: 2px 8px;
-    border-radius: 4px;
-    background: rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.08);
-    color: var(--dnd-indicator, #D24B4E);
-    font-size: 12px;
-    white-space: nowrap;
-`;
-
-const BadgeTrigger = styled.span`
+// Shown only while the row is hovered or has focus inside it (the button itself stays in the tab order).
+const NewChatSlot = styled.span`
+    position: relative;
+    z-index: 1;
     display: inline-flex;
     flex-shrink: 0;
-    cursor: default;
+    opacity: 0;
+    transition: opacity var(--duration-quick) var(--ease-transition);
+
+    ${RowContainer}:hover &,
+    ${RowContainer}:focus-within & {
+        opacity: 1;
+    }
+
+    ${noMotionWhenReduced}
 `;
 
-const ReadOnlyBadge = styled.span`
-    padding: 2px 8px;
-    border-radius: 4px;
-    background: rgba(var(--center-channel-color-rgb), 0.08);
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    font-size: 12px;
-    font-weight: 600;
-    white-space: nowrap;
-`;
-
-const Badge = styled.span`
-    font-family: 'Open Sans', sans-serif;
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
-    color: rgba(var(--center-channel-color-rgb), 0.75);
-    white-space: nowrap;
+const BadgesColumn = styled.div`
+    position: relative;
+    z-index: 1;
+    display: flex;
+    margin-left: auto;
+    flex-direction: row;
+    gap: var(--spacing-xs);
+    align-items: center;
+    flex-shrink: 0;
 `;
 
 const ActionsColumn = styled.div`
     position: relative;
+    z-index: 1;
     flex-shrink: 0;
-`;
 
-const MenuButton = styled.button`
-    width: 32px;
-    height: 32px;
-    padding: 8px;
-    border: none;
-    background: transparent;
-    border-radius: 4px;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
-        color: rgba(var(--center-channel-color-rgb), 0.72);
-    }
-`;
-
-const DropdownMenu = styled.div`
-    position: absolute;
-    top: 100%;
-    right: 0;
-    z-index: 10;
-    min-width: 160px;
-    padding: 4px 0;
-    margin-top: 4px;
-    background: var(--center-channel-bg, #fff);
-    border-radius: 4px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.12);
-`;
-
-const MenuItem = styled.button`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 8px 16px;
-    border: none;
-    background: transparent;
-    font-size: 14px;
-    color: var(--center-channel-color);
-    cursor: pointer;
-    text-align: left;
-
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
-    }
-`;
-
-const MenuItemDanger = styled(MenuItem)`
-    color: var(--dnd-indicator, #D24B4E);
-
-    &:hover {
-        background: rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.08);
+    /* The open menu hangs below the row, over the rows after it. Their badges and buttons are positioned at
+       the same level and later in the DOM, so they would paint over the menu items and take the clicks. */
+    &:has([aria-expanded='true']) {
+        z-index: 2;
     }
 `;
 

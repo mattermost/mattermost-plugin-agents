@@ -1,10 +1,11 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
 import { buildToolCallAndTextResponse } from 'helpers/aimock-fixtures';
-import { expandToolActivity, expectToolActivitySummary } from 'helpers/llmbot-post';
+import { expandToolActivity, expectToolActivitySummary, toolCard } from 'helpers/llmbot-post';
 import { RunToolConfigAIMockContainer, setupRegularTestUser } from 'helpers/tool-config-container';
 
 const username = 'regularuser';
@@ -17,31 +18,30 @@ const getChannelInfoLabel = 'Get Channel Info';
 const userMessage = 'aimock dm auto-run get channel info';
 const continuationText = 'Aimock DM auto-run completed after channel lookup.';
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigAIMockContainer([
+        { name: getChannelInfoConfigName, policy: 'auto_run_in_dm', enabled: true },
+    ]));
+    const aimock = own(await RunAIMockSidecar(mattermost.network, {
+        fixtures: buildToolCallAndTextResponse({
+            userMessage,
+            toolCallId: 'call_aimock_dm_auto_get_channel_info',
+            toolName: embeddedGetChannelInfoTool,
+            toolArguments: { channel_name: 'Town Square' },
+            finalContent: continuationText,
+            title: 'Aimock DM auto-run',
+        }),
+    }));
+    return { mattermost, aimock };
+});
+
 test.describe('Auto Run (DM) Policy (Aimock)', () => {
     let mattermost: MattermostContainer;
     let aimock: AIMockContainer;
 
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        mattermost = await RunToolConfigAIMockContainer([
-            { name: getChannelInfoConfigName, policy: 'auto_run_in_dm', enabled: true },
-        ]);
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, aimock } = containers);
         await setupRegularTestUser(mattermost);
-        aimock = await RunAIMockSidecar(mattermost.network, {
-            fixtures: buildToolCallAndTextResponse({
-                userMessage,
-                toolCallId: 'call_aimock_dm_auto_get_channel_info',
-                toolName: embeddedGetChannelInfoTool,
-                toolArguments: { channel_name: 'Town Square' },
-                finalContent: continuationText,
-                title: 'Aimock DM auto-run',
-            }),
-        });
-    });
-
-    test.afterAll(async () => {
-        await aimock?.stop();
-        await mattermost?.stop();
     });
 
     test('auto_run embedded tool executes without approval in DM', async ({ page }) => {
@@ -72,7 +72,7 @@ test.describe('Auto Run (DM) Policy (Aimock)', () => {
         await expectToolActivitySummary(latestBotPost, 1);
 
         const activityRounds = await expandToolActivity(latestBotPost);
-        await expect(activityRounds.getByText(getChannelInfoLabel, { exact: true })).toBeVisible({
+        await expect(toolCard(activityRounds, getChannelInfoLabel)).toBeVisible({
             timeout: 120000,
         });
         await expect(rhsContainer.getByText('Auto-approved').first()).toBeVisible({ timeout: 30000 });

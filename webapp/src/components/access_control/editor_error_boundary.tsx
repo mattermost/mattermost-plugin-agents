@@ -5,6 +5,8 @@ import React, {Component, ReactNode} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 
+import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
+
 type Props = {
     children: ReactNode;
 };
@@ -25,17 +27,15 @@ export default class EditorErrorBoundary extends Component<Props, State> {
     render() {
         if (this.state.hasError) {
             return (
-                <ErrorText>
-                    <FormattedMessage defaultMessage='The access policy editor failed to load. Refresh the page and try again.'/>
-                </ErrorText>
+                <EditorLoadError
+                    message={<FormattedMessage defaultMessage='The access policy editor failed to load. Refresh the page and try again.'/>}
+                />
             );
         }
         return this.props.children;
     }
 }
 
-const ErrorText = styled.div`
-    color: var(--dnd-indicator, #D24B4E);
-    font-size: 13px;
+const EditorLoadError = styled(ErrorMessage)`
     padding: 12px 0;
 `;

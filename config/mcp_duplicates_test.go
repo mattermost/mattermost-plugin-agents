@@ -40,6 +40,36 @@ func TestCanonicalMCPEndpointURL(t *testing.T) {
 	}
 }
 
+func TestMCPConfigValidateDescriptionLength(t *testing.T) {
+	testCases := []struct {
+		name        string
+		description string
+		wantErr     bool
+	}{
+		{name: "empty description", description: ""},
+		{name: "description at the limit", description: strings.Repeat("a", MaxMCPServerDescriptionRunes)},
+		{name: "limit counts characters, not bytes", description: strings.Repeat("é", MaxMCPServerDescriptionRunes)},
+		{name: "description over the limit", description: strings.Repeat("a", MaxMCPServerDescriptionRunes+1), wantErr: true},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := MCPConfig{Servers: []MCPServerConfig{
+				{Name: "Jira", BaseURL: "https://jira.example.com/mcp", Description: tc.description},
+				{Name: "GitHub", BaseURL: "https://github.example.com/mcp"},
+			}}
+
+			err := cfg.Validate()
+			if !tc.wantErr {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			require.Contains(t, err.Error(), `MCP server "Jira" description`)
+		})
+	}
+}
+
 func TestMCPConfigValidateDuplicates(t *testing.T) {
 	testCases := []struct {
 		name             string
