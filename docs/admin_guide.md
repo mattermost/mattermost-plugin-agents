@@ -1,1115 +1,121 @@
-# Mattermost Agents Admin Guide
+# Mattermost Agents admin guide
 
-Install, configure, and manage the Mattermost Agents plugin: LLM services, agents, MCP servers and the built-in Mattermost MCP server, tool approval policies, access control, web and semantic search, audit logging, OpenTelemetry tracing, and license requirements.
+Set up Mattermost Agents (plugin `mattermost-ai`): connect LLMs, create agents, connect MCP servers and tools, and control access, approval, and licensing.
 
-## Installation
+An agent is a Mattermost bot backed by an LLM that you choose, including a model that runs on your own infrastructure. Agents act through tools: the built-in Mattermost tools, remote MCP servers, and tools registered by other plugins. The plugin also ships a built-in Mattermost MCP server for external AI clients such as Claude Code and Cursor.
 
-### Prerequisites
+## How the pieces fit
 
-Before installing the Agents plugin, ensure your environment meets these requirements:
+1. An **LLM service** holds the connection to a provider: type, credentials, default model, and optional fallback. You configure services in the System Console.
+2. An **agent** is a bot with a name, instructions, a model, access rules, and tool grants. Agents use a service. You create them on the **Agents** page.
+3. **Tools** give an agent abilities. Admins decide which tools exist, which need approval, and which users can reach each MCP server.
+4. **Users** talk to agents in direct messages, the Agents pane, and channels. Every tool call runs with the permissions of the person who asked, unless an agent uses a shared service account for external MCP servers.
 
-- Mattermost Server v12.0.0+
-- PostgreSQL database
-- For semantic search: PostgreSQL with pgvector extension
-- Network access to your chosen LLM provider
-- If outbound LLM traffic must use an HTTP proxy, set `HTTP_PROXY` and `HTTPS_PROXY` on the Mattermost server process or container environment.
-- API keys if using a cloud LLM service
+Custom instructions can't grant or restrict access. Use the agent's **Access** tab, MCP access policies, and tool approval policies.
 
-### Installation Steps
+## Requirements
 
-#### Use pre-installed plugin
+| Requirement | Detail |
+|---|---|
+| Mattermost Server | v12.0.0 or later. |
+| Site URL | **Site URL** must be set under **System Console > Environment > Web Server**. The plugin doesn't activate without it. |
+| Database | The Mattermost PostgreSQL database. Agents creates its own tables and runs migrations on start. |
+| pgvector | Only for [semantic search](embedding_search.md). PostgreSQL needs the `pgvector` extension. |
+| LLM access | Network access from the Mattermost Server to your LLM provider, and credentials. |
+| Outbound proxy | LLM provider traffic follows the `HTTP_PROXY` and `HTTPS_PROXY` environment variables of the Mattermost Server process. |
 
-From Mattermost v10.3, Agents comes installed automatically and ready for you to configure a large language model (LLM). When no LLMs are configured, the Agents panel prompts users to configure one.
+Mattermost Server can ship with Agents pre-installed. Check **System Console > Plugins > Plugin Management**. To install or upgrade, download a release `.tar.gz` from the [releases page](https://github.com/mattermost/mattermost-plugin-agents/releases), select **Upload Plugin**, and enable it. Set **Enable Plugin** to **True** under **System Console > Plugins > Agents** if needed.
 
-#### Install latest version
+## Quick start
 
-For the most recent features and improvements, you can download and install the latest plugin version from the [GitHub releases page](https://github.com/mattermost/mattermost-plugin-agents/releases). 
+1. Go to **System Console > Plugins > Agents** and select **Add an AI Service**. Choose a **Service type**, enter the credentials and a **Default model**, and save. See [Configure LLM services](llm_services.md) and [Provider configuration](providers.md). For a self-hosted model, see [Sovereign AI deployments](sovereign_ai.md).
+2. Open the **Agents** page from the product switcher (grid icon). Select **Create agent**, choose a username, the service, and optional instructions. See [Create and manage agents](managing_agents.md).
+3. Back in **System Console > Plugins > Agents**, pick the **Default bot**. Users who haven't chosen an agent get this one, and so do features that don't let users choose, such as meeting summaries. If the default agent becomes unavailable, those features fail until you pick another. Mattermost never substitutes a different agent.
+4. Send the agent a direct message to test it.
+5. Optionally add [MCP servers](mcp_integrations.md), [web search](web_search.md), or [semantic search](embedding_search.md), and set [access controls](access_control.md).
 
-Install the plugin through the System Console by navigating to **System Console > Plugin Management**, clicking **Upload Plugin**, selecting the downloaded plugin file (.tar.gz), and clicking **Upload**. Enable the plugin after upload completes, then configure plugin settings as detailed in the Configuration section below.
+## Admin tasks
 
-## Configuration
+| I want to | Go to |
+|---|---|
+| Connect an LLM provider, set fallbacks and token limits | [Configure LLM services](llm_services.md), [Provider configuration](providers.md), [AWS Bedrock](aws_bedrock_setup.md) |
+| Create agents, delegate agent management, export and import agents | [Create and manage agents](managing_agents.md) |
+| Restrict who can use an agent, service, or MCP server | [Control who can use agents](access_control.md) |
+| Connect remote MCP servers and let agents use tools | [Connect agents to MCP servers](mcp_integrations.md) |
+| Decide which tool calls need approval | [Tool approval and credentials](tool_approval.md) |
+| Control tools, auto-reply, and web search in channels | [Control agents in channels](channel_settings.md) |
+| Let external AI clients use Mattermost | [External client endpoint](mcp_integrations.md#external-client-endpoint) |
+| Give agents web search | [Web search](web_search.md) |
+| Turn on semantic search | [Set up semantic search](embedding_search.md) |
+| Control links and HTML in AI output | [Secure AI-generated links and HTML](ai_output_security.md) |
+| Know what is sent to the LLM and what is stored | [Data handling](data_handling.md) |
+| Track usage, tracing, and audit events | [Monitor Agents](observability.md) |
+| Back up Agents or automate configuration | [Back up and automate](backup_and_automation.md) |
+| Run fully self-hosted or air-gapped | [Sovereign AI deployments](sovereign_ai.md) |
+| Fix a problem | [Troubleshooting](troubleshooting.md) |
+| Upgrade from Agents 1.x | [Upgrade from Agents 1.x](upgrading_to_2.0.md) |
 
-### Access plugin settings
+For developers and integrators, see the [Mattermost MCP server](mcp_server.md) for connecting Claude Code or Cursor, the [tool reference](mcp_tools.md), and the [LLM Bridge](llm_bridge.md) for plugins.
 
-Navigate to **System Console > Plugins > Agents** to configure plugin-wide settings such as AI services, the default bot, web search, embedding search, and MCP settings.
+## Plugin settings
 
-Create and manage agents from the top-level **Agents** product page. If an agent selector dropdown is available in the Agents experience, use its **Manage** link to open the same page. The **AI Bots** section in the System Console links to the Agents page instead of hosting the full agent editor.
+Everything is under **System Console > Plugins > Agents**. The plugin stores its configuration, and agents, in its own database tables. See [Back up and automate](backup_and_automation.md).
 
-### Enable the plugin
-
-Agents is enabled automatically when using the pre-installed version. If you've manually installed a newer version, you may need to enable it by going to **System Console > Plugins > Agents** and setting **Enable Plugin** to **True**, then complete configuration in the System Console.
-
-### Basic configuration
-
-If you have a Professional, Enterprise, or Enterprise Advanced license, upload it to unlock additional features (see [license requirements](#license-requirements)). If you don't have a license but are running Mattermost Enterprise Edition, an Entry license will be automatically applied for you and behaves as Enterprise.
-
-For general settings, you can toggle to enable or disable the plugin system-wide, enable debug logging for troubleshooting (use only when needed), enable token usage logging for tracking LLM interactions, and configure the hostname allowlist for API calls. Outbound LLM provider traffic respects `HTTP_PROXY` and `HTTPS_PROXY` when they are set on the Mattermost server process.
-
-### AI response link rendering
-
-Mattermost Agents includes a setting that controls whether AI-generated Markdown links are rendered as clickable links in responses:
-
-- **System Console label**: **Render AI-generated links**
-- **Configuration key**: `allowUnsafeLinks`
-- **Default value**: `false`
-
-When **Render AI-generated links** is set to **False** (default), AI-generated Markdown links are shown as plain text and are not rendered as clickable links.
-
-When this setting is set to **True**, AI-generated links may be rendered as clickable links. This is a security tradeoff: AI output can include malicious destinations, which can increase phishing and data exfiltration risk.
-
-Enable this setting only in trusted or otherwise mitigated environments, such as where users are trained to validate links and your organization has endpoint protections and URL controls in place.
-
-#### Restricting links to allowed domains
-
-To limit which destinations can become clickable, set an allowlist of domains. This reduces the risk of a prompt injection steering users to an attacker-controlled site.
-
-- **System Console label**: **Allowed Link Domains (csv)** (shown when **Render AI-generated links** is **True**)
-- **Configuration key**: `allowedLinkDomains`
-- **Default value**: empty (links to any domain are clickable)
-
-Enter a comma-separated list of hostnames, for example `mattermost.atlassian.net, *.mycompany.com`. Matching rules:
-
-- A plain entry such as `example.com` matches only that exact host. It doesn't match `docs.example.com`.
-- A wildcard entry such as `*.example.com` matches any subdomain (`docs.example.com`, `a.b.example.com`) but not `example.com` itself. To allow both, list both.
-- Matching is case-insensitive, and ports and paths in entries are ignored.
-- Saving fails if an entry isn't a valid domain (for example `*` or `my domain.com`), so a typo can't silently block links you meant to allow.
-- When an allowlist is set, only `http` and `https` links can be clickable. Other schemes, such as `mailto:`, are shown as plain text.
-- Links to your own Mattermost server (the configured Site URL), such as permalinks and channel links, are always clickable.
-
-A link to a domain that isn't on the allowlist is shown as plain text followed by its destination (for example, `Sign in : https://unlisted.example/login`). Users can still see where the link points, but it isn't clickable.
-
-### Agent version history limit
-
-Every save of an agent records a version in its history. By default every version is kept.
-
-- **System Console labels**: **Limit agent version history** and **Versions to keep per agent**
-- **Configuration key**: `agentVersionsToKeep` (`0` keeps every version)
-- **Default value**: `0`
-
-When a limit is set, each agent keeps only its most recent versions, including the current one. Saving the setting deletes older versions of every agent, and each later save of an agent deletes the versions that fall outside the limit. Deleted versions can't be recovered. Agent managers can also delete versions themselves; see [Deleting versions](features/managing_agents.md#deleting-versions).
-
-### Service configuration
-
-Configure an LLM provider (Service) for your Agents integration. Services manage the connection to the LLM provider, including authentication, model defaults, and optional fallback behavior. You can create multiple services for different providers or configurations, and share them across multiple agents.
-
-Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
-
-| Setting | Description |
-|---------|-------------|
-| **Name** | Internal name for this service configuration |
-| **Type** | LLM provider (OpenAI, Anthropic, AWS Bedrock, Cohere, Cohere North, Mistral, Scale AI, Azure OpenAI, OpenAI-compatible) |
-| **API Key** | Your provider's API key (requirements vary by provider) |
-| **Default Model** | Default model to use for this service |
-| **Fallback Service** | Optional service to use when this service is unavailable. Defaults to **No fallback**. Available at Enterprise Advanced (see [license requirements](#license-requirements)). |
-| **Input Token Limit** | Maximum tokens allowed in input. When provider metadata includes an input limit for the selected model, Mattermost auto-populates this field, disables it, and shows **Auto-detected from provider**. If the selected model is unknown or the provider does not report an input limit, the field stays editable and Mattermost uses the saved manual value. Set this manually for models without provider metadata if you want Mattermost to enforce a request-size limit before sending upstream. A value of `0` means Mattermost does not apply client-side truncation. |
-| **Output Token Limit** | Maximum tokens allowed in output. When provider metadata includes an output limit for the selected model, Mattermost auto-populates this field, disables it, and shows **Auto-detected from provider**. If the selected model is unknown or the provider does not report an output limit, the field stays editable and Mattermost uses the saved manual value. |
-| **Streaming Timeout Seconds** | Timeout in seconds for streaming responses |
-| **Use Responses API** | (OpenAI Compatible and Azure OpenAI only) Use OpenAI's Responses API for native provider tools, reasoning controls, and structured output on those endpoints. OpenAI (direct) and Cohere North always use the Responses API, so this control isn't shown for those service types. |
-| **Structured output** | How this service handles requests that ask for JSON matching a schema. Defaults to **Auto (recommended)**. See [Structured output](#structured-output). |
-
-Fallback services are tried per request after the primary service fails, and the primary service is tried again on the next request. Fallback chains are supported, and each fallback uses its own default model, API endpoint, and settings. Invalid fallback chains, such as cycles or missing services, fail setup visibly.
-
-Fallback selects which configured service handles an LLM request. It doesn't change user permissions, channel scoping, or tool execution. One exception affects prompt construction: for requests that ask for structured output, the complete fallback chain determines up front whether the request uses native schema support or the prompt fallback (see [Structured output](#structured-output)). OpenAI-compatible services can be used as local or on-prem keyless fallbacks, including chat-only endpoints when the primary uses the Responses API.
-
-Input and output token limits are detected independently, so one field can be auto-detected while the other remains editable. If you switch back from an auto-detected model to an unknown or custom model, Mattermost restores the previously saved manual values.
-
-#### Structured output
-
-Some requests ask the LLM for JSON matching a schema — agent features that need machine-readable output, and LLM Bridge callers that supply a `json_output_format` schema. The **Structured output** setting on the service controls how that schema reaches the provider:
-
-| Option | Stored value | Behavior |
-|--------|--------------|----------|
-| **Auto (recommended)** | `auto`, or empty | Sends the schema natively only when this service's provider, model, and API path are positively known to support native structured output. Every other combination, including unrecognized models and operator-supplied endpoints, uses the prompt fallback: the schema is converted into JSON instructions in the prompt and is not sent to the provider. |
-| **Native supported** | `native` | Asserts that this service accepts a native JSON schema. Use it for custom or OpenAI-compatible endpoints whose capabilities Mattermost can't detect. If the assertion is wrong, the provider rejects those requests. |
-| **Prompt fallback** | `prompt_fallback` | Never sends the schema natively. The schema is always converted into prompt instructions. |
-
-The stored configuration key is `structuredOutputPolicy` on each service entry. An empty value means `auto`, so services configured before this setting existed remain valid without any change.
-
-The setting describes one service's capability, but the decision is made once per request and covers the service's entire fallback chain, because the prompt conversion happens before Mattermost picks which service actually serves the request. A schema is sent natively only when every possible attempt — the primary service and every service in its fallback chain — is either known-capable under **Auto (recommended)** or marked **Native supported**. If any link in the chain needs the prompt fallback, the whole request uses prompt instructions. Marking a service as **Native supported** therefore doesn't force native output for a chain that contains a service requiring the fallback.
-
-Structured output is configured on the service only. The former agent-level structured output setting (`structuredOutputEnabled` in agent configuration) is deprecated: it's no longer shown in the agent editor and is ignored at runtime. The service policy applies both to agent conversations and to direct service calls through the LLM Bridge.
-
-#### Provider Specific Settings
-
-Each provider has specific configuration requirements:
-
-| Provider | Required Settings | Optional Settings |
-|----------|-------------------|-------------------|
-| **OpenAI** | API Key | Organization ID |
-| **OpenAI Compatible** | API URL | API Key, Organization ID |
-| **Anthropic** | API Key | |
-| **AWS Bedrock** | AWS Region | API Key (can use IAM role), Access/Secret Keys |
-| **Cohere** | API Key | |
-| **Cohere North** | North instance URL, Service token, Default Model | Streaming timeout, token limits, fallback service |
-| **Mistral** | API Key | |
-| **Scale AI** | API Key, API URL | Account ID (required for ScaleGov) |
-| **Azure OpenAI** | API Key, API URL | |
-
-For AWS Bedrock, authentication can be configured using AWS credentials in the API Key/Secret fields, or by using IAM roles when running Mattermost on AWS infrastructure.
-
-**Important for Anthropic Claude models**: Before using Claude models via AWS Bedrock, you must submit a one-time First Time Use (FTU) form in the AWS Bedrock Model Catalog, and attach Bedrock API permissions to your Mattermost servers' IAM role. See the [AWS Bedrock setup guide](https://docs.mattermost.com/agents/docs/aws_bedrock_setup.html) for detailed instructions.
-
-OpenAI services always use the Responses API. OpenAI Compatible and Azure services keep the **Use Responses API** setting so you can disable it for endpoints that still require legacy Chat Completions compatibility.
-
-See the [Provider Guide](https://docs.mattermost.com/agents/docs/providers.html) for detailed provider-specific configuration.
-
-### Agent configuration
-
-Create and manage agents from the **Agents** product page. Open it from the top-level **Agents** product entry, or use the **Manage** link in an agent selector dropdown to navigate there. Agents use the service inventory configured in **System Console > Plugins > Agents**, and multiple agents can reuse the same service configuration. See [license requirements](#license-requirements) for details on features that require a license.
-
-If you can manage an agent, select its row in the Agents list to open the full-page configuration view directly. The overflow menu remains available for **Edit** and **Delete**. Use **Back to agents** to return to the list.
-
-When you create or edit an agent, use the three tabs in the full-page agent configuration view:
-
-- **Configuration** for identity, model selection, instructions, and core capabilities
-- **Access** for channel, team, and user restrictions, plus delegated agent admins
-- **MCPs** for the agent's allowed MCP tools
-
-If you have unsaved changes and try to leave the agent configuration view by selecting **Back to agents**, **Cancel**, or by pressing Escape, Mattermost shows a **Discard changes?** confirmation with **Discard** and **Keep editing**.
-
-#### Configuration tab
-
-| Setting | Description |
-|---------|-------------|
-| **Display Name** | User-facing name shown in Mattermost |
-| **Agent Username** | The Mattermost username for the agent. @mentions use this name. Changing it later renames the existing bot account, so conversations are kept, but old @mentions and integrations that use the previous name stop reaching the agent. See [Renaming an agent](features/managing_agents.md#renaming-an-agent). |
-| **Agent Avatar** | Custom image for the agent |
-| **Service** | Select a configured Service from the dropdown |
-| **Model** | (Optional) Override the service's default model for this agent |
-| **Max tool turns** | Maximum consecutive tool-call/execute rounds per response; after the last round the agent answers without tools. Default **30**, range **1–250**. Lower for smaller models that loop on tool calls; raise for agents that chain many MCP tools per turn. |
-| **Custom Instructions** | Custom instructions that define the agent's personality and capabilities |
-| **Enable Vision** | Enable Vision to allow the agent to process images. Requires a compatible model and service. |
-| **Enable Tools** | Enables tool use for integrations and other tool-based capabilities. Disable this only for models or use cases where tool calling shouldn't be available. Some features won't work without tools. |
-
-#### LLM Specific Agent Settings
-
-Some capabilities depend on the selected Service type and, for OpenAI Compatible and Azure, whether **Use Responses API** is enabled on that service.
-
-| Setting | Description |
-|---------|-------------|
-| **Web Search** (native tool) | Available for Anthropic, OpenAI, Google Gemini, and Google Vertex AI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Gemini and Vertex map this to Google Search grounding via the provider's Responses API. Allows the Agent to leverage the provider's native web search tool to respond with recent information. Capabilities and pricing are documented by the provider — see Anthropic's [web search tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool) docs. |
-| **Web Fetch** (native tool) | Available for Anthropic. Lets the agent retrieve the full content of specific web pages and PDFs during a response. See Anthropic's [web fetch tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool) docs for capabilities and pricing. |
-| **Code Execution / Code Interpreter** (native tool) | Available for Anthropic, OpenAI, and (with **Use Responses API**) OpenAI Compatible and Azure. Lets the agent run code in the provider's managed sandbox. For Anthropic, enabling this also permits web search and web fetch to post-process results inside that sandbox (Anthropic's [dynamic filtering](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool#dynamic-filtering)); when it is **not** enabled, the plugin pins those tools' `allowed_callers` to `direct` so no sandbox is ever provisioned. Refer to Anthropic's [code execution tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/code-execution-tool) docs for pricing, data-retention, and ZDR implications. |
-| **Reasoning Enabled** | Available for Anthropic, OpenAI, Cohere North, Google Gemini, and Google Vertex AI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Enables extended thinking or reasoning capabilities for complex tasks. For Anthropic, a thinking effort (model default, low, medium, high, extra high, or max) is sent natively to adaptive-thinking models and mapped to a thinking budget on older models; models that always think run at low effort with their reasoning hidden when this setting is off. For Gemini / Vertex, Bifrost maps a token budget to `thinkingConfig.thinkingBudget` and an effort level to `thinkingConfig.thinkingLevel` on Gemini 3.0+. For Cohere North, reasoning is controlled via effort level. See the [Provider Guide](https://docs.mattermost.com/agents/docs/providers.html) for details. |
-
-Structured output is not an agent setting. It's configured per service — see [Structured output](#structured-output) — and applies to every request that asks for JSON matching a schema, whichever agent makes it.
-
-New agents enable native web search by default where the selected provider supports it. For providers that don't support native tools, native tool selections are ignored.
-
-Native tool activity (searches performed, pages fetched, code runs) is shown on the agent's response as it streams and is preserved with the conversation. Known limitations of the native tool integration:
-
-- Very long provider-side tool loops that Anthropic pauses (`pause_turn`) are not resumed; the response ends with what was produced so far.
-- On Claude models older than 4.6 (which have no dynamic filtering), enabling web search or web fetch alongside code execution leaves the sandbox unavailable: the LLM gateway omits the explicit code execution tool whenever web tools are present, to avoid conflicting with the auto-injection newer models perform.
-- Files created in Anthropic's code execution sandbox can be shared by the agent: it copies the ones worth sharing into the sandbox's output directory, and those are attached to its reply automatically. Files it writes elsewhere in the sandbox stay there. The server's file-attachment settings, size limits, the per-post attachment cap, and the requesting user's upload permission all apply. OpenAI code-interpreter files are not yet retrievable, so this applies to Anthropic agents only.
-- Native tool activity is replayed to the model in later requests as a labeled summary (what ran, its output, and how many files were captured for attachment), not as the provider's original result blocks. Long commands and output are truncated, and the sandbox container is not reused, so the model sees a record of the work rather than a resumable session.
-
-For Anthropic services, extended thinking and native structured output work together: requests that send a JSON schema keep the agent's extended thinking settings.
-
-If you need an OpenAI-style endpoint without the Responses API path, use an **OpenAI Compatible** service and turn **Use Responses API** off for that service instead of using the **OpenAI** service type.
-
-#### Access tab
-
-Use this tab to control who can interact with and manage the agent:
-
-- **Channel access** controls which channels the agent can be mentioned in
-- **User access** controls which users can interact with the agent
-- **Agent admins** can edit and delete the agent; the agent creator is always an admin
-
-#### MCPs tab
-
-Use this tab to control how the agent can use MCP tools. This tab is available only when **Enable Tools** is turned on.
-
-- **Dynamic tool loading** is on by default. It exposes MCP discovery and loading helpers first, then loads full MCP tool schemas only when the agent needs them. Turn it off to expose the full MCP tool list to this agent up front.
-- **Automatically enable all MCP tools** gives the agent access to every currently available MCP tool and any MCP tools added later.
-- When **Automatically enable all MCP tools** is off, select the specific MCP tools the agent may use.
-- If a previously selected MCP tool is no longer available, it is removed from the agent configuration when you save.
-
-Dynamic tool loading and automatically enabled MCP tools are separate controls: auto-enable controls which tools the agent is allowed to use, while dynamic loading controls when tool schemas are exposed to the model.
-
-Updating an agent's display name also updates the linked Mattermost bot display name. Deleting an agent deactivates the linked Mattermost bot account.
-
-Legacy bots previously stored in plugin configuration are migrated on startup into database-backed agents and then managed from the **Agents** page. Migrated agents don't have a creator and can be managed by system admins.
-
-### Custom instructions
-
-Text input in the custom instructions field is included in the prompt for every request. Use this to give your agents extra context or instructions. 
-
-For example, you could list your organization's specific acronyms so the agent knows your vernacular and users can ask for definitions. Or you could give it specialized instructions like adopting a specific personality or following a certain workflow. By customizing the instructions for each individual agent, you can create a more tailored AI experience for your specific needs.
-
-### Built-in web search configuration
-
-The built-in web search tool lets agents retrieve current information from the internet when the model or deployment doesn't use the provider's own search. Prefer native provider web search when your service supports it.
-
-#### When to use built-in web search
-
-Built-in web search is intended for LLM models that lack native web search functionality. If your chosen model already provides native web search (such as OpenAI, Anthropic, Google Gemini, Google Vertex AI, or an OpenAI Compatible/Azure service with **Use Responses API** enabled), it's strongly recommended to use the provider's native implementation instead. Native web search tools typically offer:
-
-- Better integration with the model
-- More reliable search results
-- Optimized performance
-
-For configuration details on native web search with supported providers, see the [LLM Specific Agent Settings](#llm-specific-agent-settings) section above.
-
-#### Provider comparison
-
-Mattermost supports two web search providers, each with varying capabilities:
-
-##### Brave Search (Recommended)
-
-Brave Search offers a superior experience for AI-powered search:
-
-- **Purpose-built for AI**: Brave's Search API is specifically designed and optimized for LLM integrations
-- **Better content extraction**: Returns pre-processed, LLM-ready summaries with citations
-- **Fewer tool calls**: Often provides complete answers without requiring follow-up web page fetches or scraping
-
-**Important**: Administrators must ensure they subscribe to Brave's **Pro AI plan** when using this feature. Using Brave's regular Search API (non-AI tier) violates Brave's Terms of Service and may result in account suspension. The Pro AI plan is specifically licensed for AI/LLM use cases.
-
-##### Google Custom Search
-
-Google Custom Search provides access to Google's search index but has several important limitations:
-
-- **Not a first-party integration**: Mattermost uses Google's Custom Search API, which doesn't provide the same quality of results as searching directly on google.com
-- **Relies on web scraping**: After receiving search results, Mattermost must scrape web pages to extract content for the agent. Many websites block automated scraping or return limited content to bots
-- **Rate limits**: Google Custom Search has strict daily quota limits
-
-Due to these limitations, Google Custom Search may not always provide optimal results for agent queries.
-
-#### Configuration
-
-To enable built-in web search:
-
-1. Navigate to **System Console > Plugins > Agents > Web Search**
-2. Set **Enable Web Search** to **True**
-3. Select your preferred provider from the **Provider** dropdown
-4. Configure provider-specific settings
-
-##### Brave Search configuration
-
-| Setting | Description | Required |
-|---------|-------------|----------|
-| **Brave API Key** | Your Brave Search API key (Pro AI plan) | Yes |
-| **Result Limit** | Maximum number of results to return (1-10) | No (default: 5) |
-| **API URL** | Override the default Brave endpoint if needed | No |
-
-To obtain a Brave Search API key:
-
-1. Visit [Brave Search API](https://brave.com/search/api/)
-2. Sign up for an account
-3. **Subscribe to the Pro AI plan** (required for LLM usage)
-4. Generate an API key from your dashboard
-
-**Warning**: Ensure you subscribe to the Pro AI plan. Using other Brave Search plans for AI/LLM integrations violates their Terms of Service.
-
-##### Google Custom Search configuration
-
-| Setting | Description | Required |
-|---------|-------------|----------|
-| **Google API Key** | Your Google Custom Search API key | Yes |
-| **Search Engine ID** | Custom search engine identifier (cx parameter) | Yes |
-| **Result Limit** | Maximum number of results to return (1-10) | No (default: 5) |
-| **API URL** | Override the default Google endpoint if needed | No |
-
-To obtain Google Custom Search credentials:
-
-1. Create a project in [Google Cloud Console](https://console.cloud.google.com)
-2. Enable the Custom Search API
-3. Create API credentials (API key)
-4. Set up a custom search engine at [Google Programmable Search Engine](https://programmablesearchengine.google.com)
-5. Note the Search Engine ID (cx parameter)
-
-##### Shared configuration
-
-| Setting | Description |
-|---------|-------------|
-| **Domain Denylist** | Comma-separated list of domains to exclude from all search results (e.g., `example.com, spam-site.org`). Results from these domains are filtered out before being sent to the agent. |
-
-#### Usage and limitations
-
-- Agents are limited to **3 web searches per response** to manage API costs and prevent LLMs from looping indefinitely
-- Agents cannot repeat the same search query within a response
-- Search results include clickable citations that link back to source websites
-- Domain denylisting applies to all providers and is enforced for _web page fetching only_. 
-
-### Embed search configuration
-
-To enable semantic search capabilities, you'll need to enable the `pgvector` extension in your PostgreSQL database, then configure embeddings provider settings including the provider (OpenAI, etc.), model for embeddings, and dimensions that match your chosen embedding model. Embedding search is available at Enterprise and above (see [license requirements](#license-requirements)) and is available as an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature. Performance may vary with large datasets.
-
-Embedding search is optional for Agents search from the search bar and `/ask-channel`: without it, agents search with keyword search; with it, they also get semantic results.
-
-Configure chunking options based on your needs:
-
-| Setting | Recommended Value | Description |
-|---------|-------------------|-------------|
-| **Chunking Strategy** | Sentences, Paragraphs, or Fixed Size | Choose based on your content type |
-| **Chunk Size** | 512-1024 tokens | Varies by strategy |
-| **Chunk Overlap** | 20-50 tokens | For better context continuity |
-
-Bulk reindexing throughput can be tuned for large datasets:
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| **Reindex Worker Count** | 4 (max 32) | Concurrent embedding/storage workers during bulk reindexing. Raise for faster reindexing if your embedding provider rate limits allow (limits are respected automatically via retry with backoff); lower to reduce database and provider load. Values above the maximum are clamped. |
-| **Reindex Batch Size** | 200 (max 1000) | Posts fetched and embedded per batch. Larger batches amortize request overhead; requests are split automatically to stay within provider per-request limits. Values above the maximum are clamped. |
-| **Reindex Index Strategy** | Maintain index during reindex | Controls how the vector similarity index is handled during a full reindex. `maintain` keeps the index up to date on every insert (default). `defer` drops the index up front, bulk-loads without index maintenance, and rebuilds the index once at the end — much faster for large databases, but semantic search is unavailable until the rebuild completes. |
-| **HNSW M** | 8 (range 2–100) | Graph connections per row in the HNSW vector index. Lower values use less RAM and are slightly less accurate. Changing M rebuilds the vector index; it does **not** re-embed posts. Existing indexes created before this setting stay at pgvector's default `m=16` until you run **Rebuild vector index**. |
-| **Vector precision** | Standard (`vector`) | Storage type for embedding values. Standard uses 4-byte `vector`; half precision uses 2-byte `halfvec` (pgvector 0.7+, including Amazon RDS). Half precision uses less RAM and disk. Changing this **drops the embeddings table** — run **Full Reindex**, not Resume and not Rebuild vector index. Default is standard so existing indexes keep working. |
-| **Index posts from the last N days** | 0 (all posts) | Limits how far back indexing looks. `0` indexes all posts. A positive value indexes only posts created in the last N days. Raising N and running **Catch Up** embeds older posts that are not already in the index without disabling search. Lowering N does **not** delete already-indexed posts; search still returns rows already in the index. RAM does not drop until a later Full Reindex. |
-
-The defaults stay comfortably within OpenAI Tier 1 rate limits. On Azure OpenAI, throughput is capped by your deployment's tokens-per-minute quota — raise it to benefit from higher worker counts.
-
-Run the initial indexing process after configuration. For a large historical corpus, set **Index posts from the last N days** first, then run **Full Reindex**. That Full Reindex is the historical cut — for example `N=365` indexes only the last year instead of hundreds of millions of older posts.
-
-#### Large database reindexing
-
-For large installations (tens of millions of posts), set **Reindex Index Strategy** to `defer` before a full reindex. Maintaining the HNSW index on every insert dominates cost at scale (especially once it no longer fits in memory); dropping it for the bulk load and rebuilding once afterwards is typically an order of magnitude faster.
-
-Notes on deferred reindex:
-
-- **Semantic search is unavailable** from reindex start until the final index build finishes (API returns HTTP 503). Live posts still index during the bulk load. During the final build (hours on large DBs), live indexing, deletions, and retention pause instead of blocking on CREATE INDEX — catch-up repairs new posts, the repair pass handles edits/deletions, and retention runs on its next schedule.
-- **Repair phase after the build.** Search returns once the index exists; the job then enters a short `repairing` phase to re-embed posts edited while live indexing was paused (catch-up sweeps new posts). If the job stops after the build but before repair finishes, the `repairing` marker stays durable — resume or reindex to finish. Search works in this phase; a few recent edits may be slightly stale until repair completes.
-- **Tune the build on the database.** The plugin does not override server settings. Keep the HNSW graph in `maintenance_work_mem` — roughly `rows × (4 × dimensions + graph)` bytes for standard `vector`, or `rows × (2 × dimensions + graph)` for `halfvec`. Graph overhead shrinks with **HNSW M** (about `2 × m` integer links per layer; at the default `m=8` this is well under the older ~300-byte-per-row rule of thumb used at `m=16`). Example: ~1.4 KB/element at 256 dims with `m=8`, or ~28 GB for 20M posts. Half precision at 256 dimensions is **not** a 2× RAM cut — graph edges still use integer links, so only the vector payload shrinks. Beyond that budget PostgreSQL spills to disk and build speed can drop ~40x. pgvector 0.6+ can parallelize with `max_parallel_maintenance_workers`. `halfvec` requires pgvector 0.7+ (Amazon RDS includes it on supported engine versions).
-- **Crash recovery.** Lifecycle state is durable. After a restart, **Check Index Health** shows the vector index state and search stays gated until you resume or start a full reindex (the plugin never rebuilds during activation). Canceling or failing mid-bulk-load likewise leaves the index dropped rather than rebuilding it over a partial corpus, so a resume continues defer-style. Any full or resumed reindex rebuilds a dropped index and finishes pending repair, even if strategy was changed back to `maintain`.
-- Strategy applies to full reindexes only. Catch-up never drops the index. Live indexing maintains the index except during the final build.
-- **Index retention window.** Catch Up after increasing N (for example 365 → 730, or 365 → all posts) can take a long time because it maintains the HNSW index as it inserts. A jump from a one-year window to all posts on a huge corpus may still prefer a deferred Full Reindex (re-embeds everything; search is down until the rebuild finishes). Changing N while a job is running does not change that job's window; abort and start a new job if you want the new bounds.
-
-### Permission configuration
-
-Configure who can access AI features by setting team-level, channel-level, and user-level permissions for each agent.
-
-Per-channel agent auto-reply is governed by the channel-management permission (`manage_public_channel_properties` or `manage_private_channel_properties`, depending on the channel type), checked server-side on writes; channel members can read the current mode and agent, while the ambient instructions are returned only to users with that permission. The auto-reply endpoints do not depend on the workspace default agent: reads and writes work even when the default agent is restricted from the channel or user (or when no agents are configured at all), and writes validate the *selected* agent's channel access instead. Channel agent auto-reply is available at Enterprise Advanced; below that level the channel settings tab is hidden and any stored setting is inactive. Turning auto-reply off through the REST endpoint never requires a license, so an existing setting is always clearable. The two experimental ambient modes (**Ambient** and **Ambient in mentioned threads**) additionally require **Enable ambient auto-replies** in the plugin's system console settings, which is off by default. Ambient modes run an LLM classification call for each eligible message, so expect extra token usage in channels that use them. To bound that cost, each server node runs at most 8 classifications at once and classifies at most a burst of 6 messages per channel, then about one every 5 seconds; messages over those limits get no ambient reply. Turning the setting off immediately stops ambient replies in every channel and blocks saving ambient modes; stored ambient settings are kept, so they resume if the setting is turned back on. Before downgrading the plugin to a version without ambient modes, switch every ambient channel to another mode or off: older versions treat an unknown mode as replying to every message. The channel settings tab UI requires Mattermost v11.10 or later; on older servers the tab is hidden, but the REST endpoint (`GET`/`PUT /plugins/mattermost-ai/channel/{channelid}/autoreply`) remains available.
-
-### Attribute-based access control (ABAC)
-
-Attribute-based access control lets you restrict who can use agents, LLM services, and MCP servers with policies written against user attributes (for example `user.attributes.department == "engineering"`), instead of maintaining explicit user or team lists.
-
-**Prerequisites:**
-
-- A Mattermost server (v12.0.0 or later) with attribute-based access control enabled and licensed (Enterprise Advanced). The plugin probes the server and hides all ABAC UI when the feature is unavailable. On servers without ABAC: legacy access modes keep their user/team-list checks, services and MCP servers are unrestricted — but **agents in attribute-based mode are unusable** (every user is denied, since the plugin cannot check whether a policy restricts them) until the server is upgraded or the agent is switched to a legacy access mode.
-- User attributes (custom profile attributes) configured on the server, since policies are written against them.
-
-**Policy-addressable resources.** Policies always grant or deny the `use` action for one resource:
-
-- **Agents** — set the agent's user access to **Attribute-based (access policy)** in the agent's Access tab, then author the policy there. In this mode, the agent's allow/block user and team lists are ignored; the policy is the only user-access gate. Anyone who can manage the agent — its creator, its agent admins, and users with the manage-others'-agents permission — can author the policy with the simplified (table) editor; system admins additionally get the advanced (CEL) editor.
-- **LLM services** — authored by system admins in **System Console > Plugins > Agents** on the service panel. System admins get the simplified (table) editor and the advanced (CEL) editor, the same as on the agent Access tab; Advanced is used for expressions the table can't display. A service policy restricts every agent backed by that service, on top of any per-agent restrictions. It also drives list/picker visibility for non–system-admins (see [Visibility (services and agents)](#visibility-services-and-agents)).
-- **MCP servers** — authored by system admins on the MCP **Configuration** tab (same Simple and Advanced editors as agents; Advanced is used for expressions the table can't display). Policies apply to remote servers, the built-in (embedded) Mattermost MCP server, and plugin-registered MCP servers. Users denied by an MCP server policy silently lose that server's tools; there is no notification in chat, the tools simply don't appear. Denying the built-in Mattermost server removes nearly all in-product Mattermost tools for matching users.
-
-**Allow and deny semantics.** For each request the plugin evaluates the applicable policies and applies these rules:
-
-- When ABAC is available and no policy exists for a resource → legacy checks apply unchanged (user/team lists for agents in legacy access modes; nothing for services/MCP servers), while agents in attribute-based mode allow every user. Installing or upgrading the plugin changes nothing until you author a policy.
-- A policy exists → the policy decides: matching users are allowed, non-matching users are denied.
-- The ABAC engine is unavailable (for example, the license lapsed or PDP evaluation fails) → evaluation fails closed: users are denied access to attribute-based agents and resources with policies, rather than falling back to unrestricted access. In legacy access modes without an active policy, legacy user/team lists continue to apply.
-
-#### Visibility (services and agents)
-
-List and picker visibility follows who can *use* the resource, with one exception for system admins:
-
-- **System admins** may see AI services — and agents backed by those services — even when a service ABAC policy would deny them personally. That lets them audit bindings and repair access.
-- **Everyone else** (including the agent creator and delegated agent admins) only sees services and agents they can actually use. For an agent, that means both agent access and the agent's AI service access. Denied services and agents are omitted from lists and pickers — there are no ghost agents, and ABAC deny is not surfaced as an "Inactive" agent for non–system-admins.
-
-Tradeoff: if a non–system-admin agent admin loses access to the agent's service under ABAC, they stop seeing that agent and cannot rebind or fix it themselves. A system admin must restore their service access or change the agent's service binding.
-
-**Resource lifecycle note.** Deleting an agent removes its policy best-effort; deleting a service or MCP server from the configuration does not delete its policy. The same applies when a plugin unregisters its MCP server: the policy is left in place and re-attaches if that plugin registers again under the same identity. If you recreate a resource with the same ID, the old policy applies again. Remove the policy first (via the resource's policy editor) if that is not what you want.
-
-**Authoring permissions:**
-
-| Route | Who |
-|-------|-----|
-| Agent policy (read/write/delete) | Agent creator, agent admins, and users with the manage-others'-agents permission |
-| Service policy (read/write/delete) | System admins only |
-| MCP server policy (read/write/delete) | System admins only |
-| CEL helper endpoints (validation, autocomplete, test) | Anyone who can manage some agent (their own or as agent admin); system admins |
-
-## Management tasks
-
-### Plugin metrics
-
-Metrics for Agents are exposed through the `/plugins/mattermost-ai/metrics` subpath under the existing Mattermost server metrics endpoint. This is controlled by the Listen address for performance configuration setting. It defaults to port `8067`, and the following metrics are available:
-
-- `agents_system_plugin_start_timestamp_seconds`: The time the plugin started.
-- `agents_system_plugin_info`: The plugin version and installation ID.
-- `agents_api_time_seconds`: How long to execute API.
-- `agents_http_requests_total`: The total number of API requests.
-- `agents_http_errors_total`: The total number of http API errors.
-- `agents_llm_requests_total`: The total number of requests to upstream LLMs.
-
-### Token usage tracking
-
-The Agents plugin can track token usage for all LLM interactions to support billing and usage analytics. When enabled, token usage data is logged to a dedicated file at `logs/agents/token_usage.log` in JSON format, capturing detailed information about each request:
-
-- **User ID**: The Mattermost user who initiated the request
-- **Team ID**: The team context for the request
-- **Bot Username**: Which agent was used for the interaction
-- **Service ID** and **Service Name**: Which configured LLM service handled the request, logged as `service_id` and `service_name` directly after the existing `service_type` field
-- **Acting User ID**: The identity used for catalog attribution — the requesting user, or the agent's bot user ID when the agent uses service account authentication (external MCP servers then use shared credentials; Mattermost and plugin tools still run as the requesting user)
-- **Tool Auth Mode**: `user` or `service_account`, recording which credential mode built the request's tool catalog
-- **Input Tokens**: Number of tokens in the request to the LLM
-- **Output Tokens**: Number of tokens in the LLM response
-- **Total Tokens**: Combined input and output token count
-- **Cached Read Tokens**: Number of prompt tokens served from provider cache, when reported
-- **Cached Write Tokens**: Number of prompt tokens written to provider cache, when reported
-- **Reasoning Tokens**: Number of tokens used for provider reasoning or thinking, when reported
-- **Cost**: Provider-reported request cost, when reported
-
-To enable token usage tracking, navigate to **System Console > Plugins > Agents** and set **Enable Token Usage Logging** to **True**. When enabled, log files automatically rotate when they reach 100MB in size, and rotated log files are compressed to save disk space. The token usage logs provide administrators with visibility into LLM usage patterns and can be used for cost tracking, chargeback, resource planning, and debugging. Providers that report usage data populate these fields. When a provider does not expose cached token, reasoning token, or cost details, those values remain `0`.
-
-`service_id` and `service_name` are additive, so the log schema version stays `1` and existing queries and dashboards keep working.
-
-Requests that go directly to a service through the LLM Bridge have no agent behind them. Those records carry the service fields and log the agent dimensions — `agent_name`, `agent_username`, `bot_username`, and `agent_user_id` — as empty strings, while the Prometheus token usage metrics continue to count them under `bot_name="unknown"`. In the service fields, an empty `service_name` means the configured service itself has a blank name (a known-blank identity that callers reach by service ID), whereas the value `unknown` means the identity was missing.
-
-#### Converting token usage logs for analysis
-
-The token usage log file contains one JSON object per line, which is not directly compatible with tools like Microsoft Excel. Use these commands to convert the logs to different formats. Each requires `jq` to be installed for easy JSON parsing:
-
-**Convert to Excel-compatible JSON:**
-
-```bash
-jq -s '.' logs/agents/token_usage.log > token_usage.json
-```
-
-**Convert to CSV format:**
-
-```bash
-echo "timestamp,user_id,acting_user_id,tool_auth_mode,team_id,bot_username,input_tokens,output_tokens,total_tokens,cached_read_tokens,cached_write_tokens,reasoning_tokens,cost" > token_usage.csv
-jq -r '[.timestamp, .user_id, .acting_user_id, .tool_auth_mode, .team_id, .bot_username, .input_tokens, .output_tokens, .total_tokens, (.cached_read_tokens // 0), (.cached_write_tokens // 0), (.reasoning_tokens // 0), (.cost // 0)] | @csv' logs/agents/token_usage.log >> token_usage.csv
-```
-
-### Post indexing
-
-Post indexing occurs automatically during initial setup. Changing the embedding **provider**, **model**, **dimensions**, or **vector precision** (`vector` vs `halfvec`) requires a **Full Reindex** (do not use Resume for a dimension or type change — Resume keeps the existing table schema). Full Reindex recreates the embeddings table when dimensions or vector precision change so new vectors match the configured column. Changing **HNSW M** requires **Rebuild vector index**, not Full Reindex — existing embeddings are reused and only the HNSW graph is rebuilt. After upgrading, existing indexes stay at `m=16` until you rebuild. Rebuild vector index cannot change the column type.
-
-**Index posts from the last N days** controls how far back indexing looks. `0` (the default) indexes all posts. A positive N is the historical cut for the first Full Reindex on a large corpus.
-
-- **Increase N** (365 → 730, or 365 → 0/all posts): search stays available. Run **Catch Up** to embed posts now in-window that are not already in the index. Catch Up does not re-embed rows that already exist. Do not Full Reindex just to widen the window. Catch Up after a large increase can take a long time and maintains HNSW as it inserts; jumping from a one-year window to all posts on a huge corpus may still prefer a deferred Full Reindex (re-embeds everything; search is down).
-- **Decrease N**: live indexing and later reindexes use the tighter floor. Rows already in the index are **not** deleted, and search still returns them. RAM and table size do not drop until a later Full Reindex. Catch Up still indexes in-window posts that have no embedding row (`NOT EXISTS`); after a complete index that is usually no extra work.
-- Saving N does **not** start Catch Up or Full Reindex automatically. Use the banner and the Catch Up button.
-- Changing N while a job is running does not change that job's window; abort and start a new job if you want the new bounds.
-
-1. Navigate to **System Console > Plugins > Agents > Embedding Search**
-2. Use the reindex controls to:
-   
-   - Monitor indexing progress during initial setup.
-   - Trigger a Full Reindex when changing embedding providers, models, dimensions, or vector precision, or when you want the first historical cut for N.
-   - Trigger Catch Up after increasing N, or to index posts created since the last successful index that are not already stored.
-   - Trigger Rebuild vector index when changing HNSW M (search is unavailable during the build).
-   - Check indexing status.
-
-### OpenTelemetry tracing
-
-The plugin supports distributed tracing via [OpenTelemetry](https://opentelemetry.io/) to provide visibility into request latency, LLM call performance, tool execution, and error diagnosis.
-
-#### What gets traced
-
-When enabled, the plugin creates spans for:
-
-- **HTTP requests**: Every API call to the plugin, with method, route, and status code (via otelgin middleware)
-- **LLM completions**: Provider, model, operation type, streaming status, input/output token counts, and errors
-- **Tool execution**: Tool name, ID, resolution status, and errors for both built-in and MCP tools
-- **MCP tool calls**: Remote MCP server and tool name
-- **Semantic search**: Search queries and result retrieval
-- **Web search**: Brave and Google search API calls
-- **Post streaming**: Duration and context for streaming LLM responses to posts
-
-Spans are organized in a parent-child hierarchy that follows the request flow, so a single user message produces a trace like:
-
-```text
-HTTP POST /post/:postid/react
-  └── process user request
-       ├── llm chat completion (provider=openai, model=gpt-4o, tokens=150/42)
-       ├── resolve tool (tool=web_search)
-       └── stream to post
-```
-
-#### Enabling tracing
-
-The plugin offers three trace output modes, configurable via **Trace Output** in the System Console:
-
-- **Off** — tracing disabled, zero overhead.
-- **Server Logs** — finished spans are written to the Mattermost server log via the standard plugin logger. No collector required; pick this if you don't run Tempo, Jaeger, or another OTLP backend.
-- **OTLP Endpoint** — spans are exported over OTLP gRPC to the endpoint configured in **OpenTelemetry Endpoint** (e.g. `localhost:4317`). Use this for full distributed tracing with a backend like Grafana Tempo or Jaeger.
-
-The setting can also be configured directly in the plugin configuration JSON:
-
-```json
-{
-  "telemetryOutput": "otlp",
-  "openTelemetryEndpoint": "your-collector:4317"
-}
-```
-
-Valid values for `telemetryOutput` are `off`, `logs`, and `otlp`. When set to `off` (or omitted), the plugin uses a no-op tracer with zero overhead. The `openTelemetryEndpoint`, `openTelemetryTLS`, and `openTelemetryHeaders` fields are only consulted when the mode is `otlp`.
-
-In **Server Logs** mode each finished span is one `agents trace span` log entry. Span events (such as the four `agent.progress` phases of a reply) are written as a JSON array under the `events` key, and span links (such as the link from a turn to the previous turn) as a JSON array under `links`, so Loki's `| json` can parse both. Spans log at ERROR level only when they record a failure; an access policy denial is an expected decision and logs at INFO.
-
-#### Following one turn
-
-One user message produces one `agent run` trace whose ID is derived from the user turn, so a turn can be found from its post:
-
-1. Find the `message has been posted` span with `agents.post.id` set to the user's post ID. Its `agents.agent.run.trace_id` attribute names the run's trace.
-2. The `agent run` span in that trace carries `agents.post.id`, `agents.channel.id`, `agents.user.id`, `agents.conversation.id`, and `agents.conversation.user_turn.id`, and links back to the message hook span and to the previous turn's trace.
-3. Everything the turn did — `process dm request`, every `llm chat completion` round, `resolve tool`, `stream to post`, and the conversation's title generation — is in the run's trace. `agent run` lasts until the reply finishes streaming.
-
-The agent's own response posts don't start a trace.
-
-HTTP spans are named by method and route template (for example `POST /bridge/v1/completion/agent/:agent`). Requests that match no route aren't traced, and neither is the long-lived `GET /mcp-server/mcp` stream that an MCP client holds open; the MCP `POST` requests that carry tool calls are traced.
-
-#### Access control spans
-
-Per-request access decisions (`abac can_use_agent`, `abac can_use_service`, `abac can_use_mcp_server`) run on nearly every request and would otherwise outnumber all other spans. Both output modes drop decisions that allowed access. Policy administration spans and `abac is_available` (one span per uncached probe, recording `agents.abac.available`) are always kept. Denials (`agents.abac.denied=true`) and failed evaluations (status Error) are kept. Denied resources carry `agents.abac.resource_name` (the agent or MCP server name) next to `agents.abac.resource_id`.
-
-#### Local development with Grafana Tempo
-
-For local development and debugging, use the included Docker Compose file to run [Grafana Tempo](https://grafana.com/oss/tempo/) and Grafana:
-
-```bash
-docker compose -f dev/docker-compose.otel.yml up -d
-```
-
-This starts:
-- **Tempo** with OTLP gRPC on port `4317` and OTLP HTTP on port `4318`
-- **Grafana** at `http://localhost:3001` with the Tempo datasource preprovisioned (anonymous Admin, no login required)
-
-Configure the plugin with endpoint `localhost:4317`, then interact with the bot. Open Grafana → **Explore** → **Tempo** and search by service name `mattermost-ai-agents`, or paste a trace ID directly.
-
-Grafana is mapped to port `3001` (not the default `3000`) so it does not collide with Mattermost's webapp dev server or the `mattermost-server` build/docker-compose stack.
-
-To stop the stack:
-
-```bash
-docker compose -f dev/docker-compose.otel.yml down
-```
-
-Add `-v` to also discard accumulated traces.
-
-#### Production deployment
-
-For production, send traces to your existing OpenTelemetry Collector or directly to a backend:
-
-- **OpenTelemetry Collector**: Point the endpoint to your collector's OTLP gRPC address. The collector can then export to Jaeger, Zipkin, Datadog, Grafana Tempo, AWS X-Ray, or any other supported backend.
-- **Direct export**: Point the endpoint directly to a backend that supports OTLP gRPC (e.g., Grafana Tempo at `tempo:4317`).
-
-By default the exporter connects over plaintext gRPC, which suits a collector on the same host or private network. For a collector that requires TLS or credentials, such as hosted Grafana Tempo:
-
-- Enable **Use TLS for OTLP Export** (`openTelemetryTLS`). The endpoint's certificate is verified against the system root certificates.
-- Set **OTLP Export Headers** (`openTelemetryHeaders`) to the headers the collector expects, as comma-separated `key=value` pairs in the `OTEL_EXPORTER_OTLP_HEADERS` format, for example `Authorization=Basic <base64 of instance-id:token>`. Percent-encode commas in values as `%2C`. The value is a credential: it's stored with the plugin configuration like other API keys, and it's never written to logs, spans, or audit records. Use it with TLS, or the credentials are sent in plaintext.
-
-```json
-{
-  "telemetryOutput": "otlp",
-  "openTelemetryEndpoint": "tempo-prod-04-prod-us-east-0.grafana.net:443",
-  "openTelemetryTLS": true,
-  "openTelemetryHeaders": "Authorization=Basic <credentials>"
-}
-```
-
-#### Custom span attributes
-
-Traces include these semantic attributes for filtering and analysis. Cached token, reasoning token, and cost attributes are added only when the provider reports non-zero values:
-
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `agents.llm.provider` | LLM provider name | `openai`, `anthropic` |
-| `agents.llm.model` | Model identifier | `gpt-4o`, `claude-3-opus` |
-| `agents.llm.operation` | Operation type | `conversation`, `title_generation` |
-| `agents.llm.input_tokens` | Input token count | `150` |
-| `agents.llm.output_tokens` | Output token count | `42` |
-| `agents.llm.cached_read_tokens` | Cached read token count, when reported | `800` |
-| `agents.llm.cached_write_tokens` | Cached write token count, when reported | `100` |
-| `agents.llm.reasoning_tokens` | Reasoning token count, when reported | `64` |
-| `agents.llm.cost` | Provider-reported request cost, when reported | `0.0123` |
-| `agents.tool.name` | Tool being called | `web_search`, `read_channel` |
-| `agents.tool.id` | Tool call identifier | `call_abc123` |
-| `agents.tool.status` | Tool resolution outcome | `success`, `error` |
-| `agents.tool.execution` | Whether the call ran automatically or after the user approved it | `auto`, `approved` |
-| `agents.tool.result.bytes` | Size of the tool result in bytes (the result itself is never recorded) | `86016` |
-| `agents.tool.result.tokens_estimate` | Estimated tokens in the tool result | `21504` |
-| `agents.tool.returned_names` | Tools returned by `search_tools` | `["jira__get_issue"]` |
-| `agents.tool.loaded_name` | Tool loaded by `load_tool` | `jira__get_issue` |
-| `agents.llm.finish_reason` | Why the LLM round ended | `stop`, `tool_calls`, `length` |
-| `agents.llm.time_to_first_token_ms` | Time from request to the first model output | `850` |
-| `agents.llm.round` | 0-based index of the LLM call within a turn's tool loop | `3` |
-| `agents.stream.outcome` | How streaming a reply ended | `completed`, `canceled`, `errored`, `empty` |
-| `agents.stream.message_length` | Length of the final reply in bytes | `1834` |
-| `agents.conversation.id` | Conversation ID | `abc123def456` |
-| `agents.conversation.user_turn.id` | User turn the run answers | `abc123def456` |
-| `agents.agent.run.trace_id` | On the message hook span: the trace ID of the agent run | `8d5576c0…` |
-| `agents.abac.resource_name` | Name of the agent or MCP server an access check evaluated | `jira` |
-| `agents.abac.denied` | The access check denied access | `true` |
-| `agents.abac.decision_source` | Set when the agent's legacy allow/block lists, not an access policy, made the decision | `legacy` |
-| `agents.abac.available` | On `abac is_available`: whether ABAC is licensed and enabled | `false` |
-| `agents.abac.probe_status_code` / `agents.abac.probe_error_id` | On `abac is_available`: why the probe reported unavailable | `501` / `app.pap.init.app_error` |
-| `agents.bridge.plugin_id` | On LLM bridge HTTP spans: the calling plugin | `com.mattermost.calls` |
-| `agents.service.id` | On LLM bridge service-completion spans: the requested service | `abc123def456` |
-| `agents.mcp.server` | MCP server name | `github-server` |
-| `agents.mcp.tool` | MCP tool name | `search_issues` |
-| `agents.user.id` | Requesting user ID | `abc123def456` |
-| `agents.channel.id` | Channel ID | `abc123def456` |
-| `agents.post.id` | Post ID | `abc123def456` |
-| `agents.thread.root_post.id` | Root post ID for thread correlation | `abc123def456` |
-
-### Audit logging
-
-The plugin emits a server audit record for every state-changing operation: configuration saves, admin reindex and MCP cache operations, agent and skill (custom prompt) CRUD, MCP OAuth credential grant/revocation, per-user MCP preferences, inter-plugin MCP server registration, in-channel tool call approvals, and MCP session grants for external clients.
-
-Records identify the actor (user ID, session, IP), the event, the request path, the outcome (including failures and permission denials, as HTTP status codes), the OpenTelemetry `trace_id` for pivoting into traces, and identifiers of affected objects using the same attribute names as the table above. Records never contain prompt content, conversation or channel content, tool arguments or results, configuration values, or free-form error text — a configuration save records only which top-level sections changed, and failure detail stays in the server log (correlate by timestamp, actor, or `trace_id`).
-
-There is no plugin-side toggle: records are always handed to the server, and persistence is governed entirely by the server's [audit logging configuration](https://docs.mattermost.com/administration-guide/manage/logging.html) (System Console → Compliance, or `ExperimentalAuditSettings`).
-
-### Backup and restore
-
-The plugin stores agent data across both plugin configuration and plugin database tables. To backup:
-
-1. Ensure your regular Mattermost backup includes plugin configuration data.
-2. Include plugin database tables in your normal backup and restore process. In particular:
-   - `Agents_UserAgents` for agents created or managed from the **Agents** page
-   - `LLM_CustomPrompts` and `LLM_CustomPromptPins` for skills (custom prompt templates) and their pins
-3. For larger deployments, consider backing up indexed vector data separately.
-
-Restoring only plugin configuration isn't sufficient to restore agents managed from the **Agents** page.
-
-### Configuration format
-
-The plugin uses a service-based architecture:
-
-- `PluginSettings.Plugins["mattermost-ai"]["config"]` stores plugin-wide settings and AI service configurations, including `defaultBotUserID`
-- Agents are stored separately in the `Agents_UserAgents` table
-
-This separation allows multiple agents to share the same LLM service configuration while keeping agent lifecycle and access data out of `config.bots`.
-
-**Configuration structure:**
-```json
-{
-  "config": {
-    "services": [
-      {
-        "id": "k3g8sdb1ntbibnyt8u5jmqhc7w",
-        "name": "OpenAI Service",
-        "type": "openai",
-        "apiKey": "sk-...",
-        "defaultModel": "gpt-4o",
-        "fallbackServiceID": "z9d4meq7jtrx5nch1u8kwsoa3e"
-      }
-    ],
-    "defaultBotUserID": "q8n4w7bpstfxjcmk3yr9zhde1a"
-  }
-}
-```
-
-`defaultBotUserID` and `transcriptBotUserID` select the default and transcript agents by bot user ID, so renaming an agent doesn't change which agent they select. The legacy `defaultBotName` and `transcriptBackend` username fields are still read when the matching ID field is empty: they select only the agent whose account currently holds that username. On startup, and whenever the configuration is saved, the plugin replaces each legacy username with the bot user ID of the agent holding it; a username that no agent holds is left in place and logged as a warning. Automation should write the ID fields and set the legacy fields to `""`.
-
-Service IDs are Mattermost-style 26-character IDs. Configurations created before this format was adopted used UUIDs; those are rewritten once on upgrade, so external automation that hard-coded UUID service IDs must re-read `GET /plugins/mattermost-ai/admin/config` to pick up the new IDs.
-
-**Supported service types:** `openai`, `anthropic`, `azure`, `openaicompatible`, `asage`, `cohere`, `north`, `mistral`, `scale`
-
-**Legacy format:** Older configurations that stored bots in `config.bots`, or embedded service objects within bots, are migrated on plugin startup. After legacy bot migration completes, stored `config.bots` entries are removed to avoid duplicate bot registration.
-
-## Troubleshooting
-
-### Logging
-
-Enhanced logging can help diagnose issues:
-
-1. Check server logs for entries with the structured logging field `plugin_ai` set to `mattermost-ai`.
-2. Enable **LLM Trace** in the plugin configuration to see detailed request/response information for all LLM interactions.
-3. Enable debug logging in the plugin configuration for additional diagnostic information.
-4. For production environments, disable debug logging and LLM Trace after troubleshooting to reduce log volume.
-
-### Tool execution failures
-
-When a tool call fails, the agent does not always stop immediately. It may continue with a follow-up model turn so it can recover, explain the failure, or answer without that tool.
-
-To avoid endless retries, the plugin enforces a limit of **three consecutive failed tool attempts**. After that, no further tool calls are made for that sequence; the model is instructed to describe the latest error and ask the user for guidance or any missing information such as permissions, identifiers, or configuration details.
-
-When users report repeated tool failures, use **LLM Trace** and debug logging to inspect tool errors and upstream responses. Also verify integration configuration such as API keys, endpoints, MCP connectivity, and third-party authorization, and confirm the user can access the underlying Mattermost resources the tool targets.
-
-## Integrations
-
-Integrations are available in direct messages by default. If you enable the experimental **Enable Channel Mention Tool Calling** setting, @mentioning an agent in a public channel can also allow tool calling there. Native provider web search in public and private channels is controlled separately by **Allow native web search in channels**.
-
-### File creation by agents
-
-The built-in `CreateFile` tool lets an agent create a text file that is attached to its own reply. It executes automatically without an approval prompt — like the dynamic tool loading meta-tools — because its only effect is attaching a file to the agent's own response; users see a resolved (auto-approved) tool card. The embedded and external MCP posting tools (`create_post`, `dm`, `group_message`) also accept an inline `files` parameter and create the attachments as the acting user, subject to those tools' configured approval policies. In channels, availability of all of these follows the existing **Enable Channel Mention Tool Calling** setting.
-
-### HTML artifacts
-
-When **Enable HTML artifacts** is turned on (`enableHTMLArtifacts` in the plugin configuration, off by default), HTML files (`.html`/`.htm`) attached to a post by one of the plugin's agents are rendered as interactive artifacts inline in the agent's reply and can be opened in a fullscreen viewer. This covers files the agent creates with the `CreateFile` tool and HTML files produced by the code execution sandbox (code interpreter) that the agent attaches to its reply. The `CreateFile` tool description also tells the model that HTML files must be self-contained and how to use the theme variables and viewer API. HTML artifacts are an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature.
-
-Requirements:
-
-- **Chromium 152 or later for full network isolation.** The plugin sends a `Connection-Allowlist: ()` response header that blocks every network connection an artifact starts, including WebRTC. Only Chromium 152 and later honor it: Chrome, Edge, and Mattermost Desktop App versions built on Chromium 152 or later. Other browsers, such as Firefox and Safari, ignore it, and in those browsers an artifact can still send data out through WebRTC (see Known limitations). If full isolation is required, enable this setting only where users run a supported browser.
-- **HTTPS or `localhost`.** Browsers send Fetch Metadata headers only to secure origins, so artifacts render only when Mattermost is served over HTTPS (or from `localhost`). Over plain HTTP the viewer sees the "can only be viewed inside Mattermost" page.
-- **A matching Site URL.** The **Site URL** (`ServiceSettings.SiteURL`) must match the address users open Mattermost at. The artifact's bridge posts its messages only to the origin of the Site URL, so if users reach Mattermost at a different origin, those messages are dropped and artifacts fail to load ("This artifact could not be loaded."). If the Site URL is not set, the bridge falls back to posting to any origin, which weakens this protection.
-
-Security model:
-
-- Artifacts are served by the plugin from `/plugins/mattermost-ai/artifacts/{file_id}` only for HTML files attached to a post authored by one of this plugin's agents, and only to users who can read the post's channel (and pass the file download access policy).
-- The response carries a `Content-Security-Policy` with `sandbox allow-scripts`, so the document runs in an opaque origin even when opened directly in a tab, and the embedding iframe uses `sandbox="allow-scripts"`. Artifact scripts cannot read Mattermost cookies, local storage, or call the Mattermost API.
-- The plugin serves artifact markup only to iframe loads started by Mattermost's own page (`Sec-Fetch-Dest: iframe` and `Sec-Fetch-Site: same-origin`). Any other load, such as opening the artifact URL in a new tab, gets a static, script-free page saying the artifact can only be viewed inside Mattermost, so artifact content never fills a tab without the host's safety notice. Each load carries a fresh random nonce (the `n` query parameter), and the bridge token authenticates one viewer, one file, and one load (an HMAC of the viewer, the file, and the nonce), so a token from one load is useless for any other.
-- The CSP allows no network requests via fetch/XHR/WebSocket (`connect-src 'none'`) and no external resources (scripts, styles, fonts, images); only inline code and `data:`/`blob:` resources are allowed.
-- The webapp embeds each artifact inside a script-free wrapper frame (same origin as Mattermost) whose `Content-Security-Policy` `frame-src` allows only that artifact's own URL. Browsers enforce a parent frame's `frame-src` on every navigation of a child frame, including navigations the child starts, so an artifact cannot navigate its frame to another site through links, `location` changes, meta refresh, or `blob:`/`data:` URLs. The navigation is blocked. This was verified in Chromium, Firefox, and WebKit.
-- The `Connection-Allowlist: ()` header (Chromium 152 and later only, see Requirements) blocks every network connection the document or its local-scheme child frames (`srcdoc`, `data:`, `blob:`) start, including WebRTC (STUN/TURN), navigations, and DNS prefetch.
-- The response carries a `Permissions-Policy` that denies browser features such as camera, microphone, geolocation, clipboard read and write, fullscreen, payment, and USB, serial, HID, and Bluetooth access, including the privacy-sandbox features an opaque-origin frame would otherwise get by default.
-- An artifact can reach user data only through a small host-mediated `postMessage` API (`window.mattermost`). In this version it exposes the viewer's theme and `getCurrentUser()`, which returns the viewer's name (first name, last name, nickname, and display name) and username (never their user ID, email, roles, or tokens) and requires the viewer's explicit consent; the artifact can only ask while the viewer is interacting with it, which includes right after the viewer's click on **Run**, **Open fullscreen**, **Reload**, or **Retry** (see the "Click to interact" bullet below). A keyboard answer to the consent prompt counts as **Allow** only if focus reached **Allow** and the key press started after the prompt armed (600 ms after it appeared); **Deny** works as soon as the prompt is armed. The viewer's locale is sent with the theme, without consent.
-- Artifacts larger than 5 MiB (or the server's maximum file size, if smaller) are not rendered; viewers can download them instead.
-- No artifact runs automatically, including for the user who asked the agent for it. Everyone sees a placeholder, and the artifact loads only after they click **Run** (or open it fullscreen). An artifact that ran without a click could act on a prompt injection with no human decision. Once a viewer runs an artifact, it keeps running when shown again during that browser session (for example in the right-hand sidebar), but it is not engaged there (see the next bullet).
-- A loaded artifact can take keyboard focus only while the viewer is interacting with it. The click that starts a run counts as the viewer's first interaction: after a click on **Run**, **Open fullscreen**, **Reload**, or **Retry**, the artifact loads engaged, receives keyboard focus when it finishes loading (so typing and scrolling go to it) without a second click, and may ask for consent right away; the consent prompt's protections are unchanged. If the viewer moves focus elsewhere before it finishes loading, it does not get focus. An artifact that starts running without a click (one the viewer already ran this browser session, shown again) is not engaged. Whenever the artifact is not engaged, a transparent "Click to interact" layer covers it and the viewer clicks it to continue; the layer's hint is always visible, and when the viewer tries to scroll over the artifact, the hint is briefly emphasized ("Click to scroll and interact") while the page keeps scrolling normally. An artifact that focuses itself while not engaged is stopped and unloaded, with focus returned to where the viewer was (for example the message box). Focus moving back to the page ends the interaction until the next click.
-- The injected bridge script sends the webapp a token-authenticated heartbeat. If it stops for 2 seconds the frame is hidden, and after 8 seconds it is unloaded. The webapp also stops and unloads an artifact whose frame loads a second time, for example when the artifact reloads itself or when Chromium or WebKit replace a blocked navigation with an error page. These guards are defense in depth behind the navigation block. Whatever replaced the artifact cannot use the `window.mattermost` API, because every message from the artifact must carry a bridge token that only the injected bridge script knows (it runs before any artifact script and removes itself from the page), and the webapp ignores messages without it.
-- The bridge prevents artifact code from re-opening the document after it loads (`document.open()`, and `document.write()` outside parsing), which would otherwise remove the bridge's listeners.
-- The **Download** button gives the original HTML file. Opened from disk, it runs in the browser without the sandbox, the CSP, or any of the protections above, so treat a downloaded artifact like any other untrusted HTML file.
-
-Known limitations: artifacts are not fully isolated from the network in every browser, and not at all from the clipboard.
-
-- In browsers other than Chromium 152 or later (for example Firefox and Safari), `Connection-Allowlist` is ignored and an artifact can open WebRTC connections, which are not governed by CSP or the iframe sandbox, and send data out that way. The bridge script removes the WebRTC constructors from the artifact's window before any artifact code runs, but this is best effort only: child frames (`srcdoc`, `about:blank`) and `blob:`/`data:` documents get fresh constructors, and the CSP does not block those child frames. Only `Connection-Allowlist` blocks WebRTC.
-- A known Chromium issue (observed in Chrome 155) crashes the browser tab when an artifact creates a WebRTC connection inside a nested `srcdoc` frame while `Connection-Allowlist` is in effect. No data leaves, but the viewer has to reload Mattermost. An artifact can therefore crash the tab; artifacts only run after the viewer clicks **Run**.
-- An artifact can write to the clipboard on a click (via `document.execCommand('copy')`), which no sandbox flag or Permissions-Policy controls. What it places on the clipboard may differ from what it displays, so treat anything copied out of an artifact, especially commands, as untrusted.
-
-Artifact navigation is blocked in every supported browser, and in Chromium 152 or later all network connections are blocked. In Firefox and Safari, WebRTC remains a way out for the artifact's own content, any profile data the viewer allowed it to read through the `window.mattermost` API, and anything the viewer types into the artifact. An artifact can draw anything inside its frame, including a convincing imitation of a Mattermost sign-in or "session expired" dialog, so it could phish for a password. To counter this, the artifact is always shown inside a bordered frame below a header that the artifact cannot draw over, and that header permanently tells viewers the content is AI-generated and that they should never enter passwords or sensitive information into it. Because the model writes the artifact, its content may include conversation or channel content the model had access to, and a prompt injection could cause the model to write an artifact that tries to leak it. This is why an artifact runs only after the viewer clicks **Run** and why the feature is off by default; enable it only where this risk is acceptable.
-
-## Model Context Protocol (MCP) Integration
-
-The Model Context Protocol (MCP) integration lets Agents use tools exposed by MCP servers, including the embedded Mattermost tools, plugin-registered MCP servers from compatible Mattermost plugins, and optional remote servers.
-
-The MCP client and the embedded Mattermost MCP server are always enabled. Admins manage remote MCP servers and connection timeout from the MCP UI in the System Console. The **Tools** tab also shows plugin-registered MCP servers, where admins can enable or disable each plugin server and set per-tool enabled state and approval policies. Agent-level MCP access is configured separately on each agent's **MCPs** tab.
-
-Remote and external MCP servers are available at Enterprise and above (see [license requirements](#license-requirements)). Below that level, stored remote servers remain visible but cannot be added or enabled, and tools from remote servers are not made available to agents; the embedded Mattermost MCP tools remain available on all plans (read-only tools at every level, state-changing tools at Enterprise and above).
-
-### Configuration
-
-1. Navigate to **System Console > Plugins > Agents > Model Context Protocol (MCP)**.
-2. Use the **Configuration** tab for:
-
-   - **Enable Mattermost MCP Server (HTTP)**: Optional HTTP endpoint for external MCP clients. See [Mattermost MCP Server](#mattermost-mcp-server).
-   - **Connection Idle Timeout (minutes)**: Timeout for inactive user MCP connections (default: 30 minutes).
-   - **Remote MCP servers**: a list of the configured servers, showing each server's URL, whether it is disabled, and how many of its tools are not reviewed. Select a server to edit it, or the delete icon to remove it; both take effect right away.
-   - **Built-in & plugin servers**: Read-only cards for the embedded Mattermost MCP server and any currently registered plugin MCP servers. Use each card's **Access policy** section to restrict which users can use that server's tools (see [Attribute-based access control (ABAC)](#attribute-based-access-control-abac)). Denying the built-in server removes nearly all in-product Mattermost tools for matching users. Plugin enablement and per-tool approval remain on the **Tools** tab.
-
-3. To add a remote MCP server, select **Add Remote MCP Server**. The dialog walks through three steps:
-
-   - **Server details**: name, URL, and optional description, headers, service account headers, and OAuth client settings.
-   - **Connect**: the server is saved and Mattermost connects to it as you. When the server uses OAuth, select **Sign in** to complete the provider's sign-in; this checks that OAuth works for the server and connects only your account.
-   - **Review tools**: the server's tools are listed in **Read-only tools** and **Write tools** groups, with each tool's approval policy pre-set from what the server reports about it. Tools the server marks as read-only (the `readOnlyHint` tool annotation) are set to **Auto Run (DM)**; all other tools are set to **Ask Every Time**. Each group, and **All tools**, has a control that sets every tool in it. Check the policies, then select **Accept and save** to save a policy for every tool.
-
-   You can select **Skip connecting** to save the server without connecting to it. Its tools then use default policies until you review them: they ask for approval before every run, except where Mattermost has curated defaults for known servers (Atlassian, Figma, and the embedded Mattermost server).
-
-   Selecting a server in the list opens the same dialog to edit it, with every setting, including **Enable server**, **Auto-fill from server** for the description, service account headers, and the server's **Access policy**. **Save** applies the change right away. Some changes end the sign-ins users already have, so Mattermost warns that every user will have to sign in again before saving: renaming the server, moving it to another host (a different scheme, host, or port; its tool policies are also cleared), and changing the OAuth client ID (existing sign-ins cannot be renewed with a different client). Saving a rename or a move to another host removes every user's saved sign-ins for the server, so they are never sent to a different server; deleting a server removes them too, and adding a server removes any sign-ins left under its name by an earlier server. Changing only the URL's path keeps sign-ins and tool policies. A saved sign-in is only ever used by the server it was issued for (the same host and the same server entry), even if removing it fails. Sign-ins saved by plugin versions that predate this protection are tied to their server the first time they are used; very old sign-ins that cannot be tied to a server are discarded, and those users sign in again. Automation that changes MCP servers must read the configuration with `GET /plugins/mattermost-ai/admin/config` and send it back with `PUT` keeping each server's `id`: a server sent without its `id` is treated as deleted and added again, which removes its users' saved sign-ins. After a change that ends sign-ins you sign in to the server again and review its tools; policies you already chose are kept unless the server moved to another host. Changing the client secret, headers, service account headers, description, or whether the server is enabled does not affect users' sign-ins. Annotations reported by a server never change how its tools run until you save a policy.
-4. Use the **Tools** tab to set each tool's enabled state and approval policy. Remote servers show how many of their tools are **Not reviewed**, meaning no administrator has chosen a policy for them. An unreviewed tool shows the policy suggested from what the server reports about it (**Auto Run (DM)** for tools it marks read-only, otherwise **Ask Every Time**), but keeps its default policy until you choose one: open the server's tool list, then select **Mark tools as reviewed** (it is inactive until the list is open) and save to store the suggested policy for every unreviewed tool, or choose policies yourself. Turning a tool on or off does not set its approval policy. Approval policies require tool approval policies to be licensed. Expand a tool row to add an optional **Retrieval description override** for dynamic tool loading search; this helps the agent find the tool but does not change the tool schema sent after loading. Plugin-registered MCP servers appear as separate plugin rows in this tab.
-5. When creating or editing an agent on the **Agents** page, use the **MCPs** tab to choose whether that agent can use all MCP tools automatically or only a selected set of tools, and whether MCP tool schemas are loaded dynamically or exposed up front.
-
-Agent MCP access is filtered by admin tool policy, MCP server access policies (when configured), the agent's MCP allowlist or **Automatically enable all MCP tools** setting, user-disabled provider preferences, and any context restrictions for the current request. For agents using [service account authentication](#service-account-authentication), user-disabled provider preferences don't apply.
-
-The **Tools** tab refreshes automatically after the current user connects or disconnects an OAuth-backed MCP server. Because MCP OAuth connections are per-user, this live refresh applies only to the user who completed the connection or disconnection action.
-
-You can't disable MCP entirely from the System Console. To limit access, disable individual tools or change their policy in the **Tools** tab.
-
-
-### Add MCP servers
-
-1. On the **Configuration** tab, select **Add Remote MCP Server**. This opens the add-server dialog described in step 3 of the MCP **Configuration** section above.
-2. In **Server details**, enter:
-
-   - **Server Name**: Descriptive name for the server (required, and must differ from every other server's name).
-   - **Server URL**: The endpoint URL for your MCP server. Use the server's final address: redirects to a different origin (including `http` to `https` upgrades) are refused so credentials cannot leak to another host.
-   - **Direct Messages Only**: Limit the server to a user's direct message with an agent, including the Agents tab (optional). See [Limit an MCP server to direct messages](#limit-an-mcp-server-to-direct-messages).
-   - **Description**: What the integration is for, in up to 500 characters (optional). Agents use it to offer the server to users who haven't connected it yet. Once the server is saved, select **Auto-fill from server** to start from the description the server reports about itself, or from its usage instructions when it has no description. Auto-fill connects as you with the saved settings, so for an OAuth-backed server you may be asked to connect your account first. Review and edit the text, then save.
-   - **Headers**: Additional headers required by your MCP server (optional).
-   - **Service Account Authentication**: Static headers used in place of per-user OAuth by agents with **Use service accounts for authentication** enabled (optional). See [Service account authentication](#service-account-authentication).
-   - **OAuth client ID** and **OAuth client secret**: Only needed when the server does not support dynamic client registration.
-
-3. Select **Save and connect** to save the server, connect to it, and review its tools, or **Skip connecting** and then **Save without connecting** to save it without reviewing its tools. The page's **Save** button does not add the server.
-
-To change a server later, select it in the **Remote MCP servers** list.
-
-### Limit an MCP server to direct messages
-
-Some MCP servers return data that not everyone in a channel may see. One example is a CRM where each user's OAuth connection reaches a different set of records. In a channel, the only thing stopping that data from reaching other members is the requester reviewing each tool call and its results before approving or sharing them. Set **Direct Messages Only** to **True** on such a server to take that decision out of users' hands.
-
-A server limited to direct messages:
-
-- Is available only when a user talks to an agent in their own direct message with it, or in the Agents tab. Tool approval policies on the **Tools** tab apply there as usual.
-- Is never connected for channel mentions, channel thread replies, ambient channel replies, group messages, channel analysis, or LLM Bridge requests from other plugins. Its tools are left out of those requests entirely, so there is nothing to approve or share.
-- Is named, with its **Description**, to agents in channels and group messages, so they can tell a user who asks for it to send them a direct message instead. The server is named only in requests from users the server's access policy allows, and only by agents whose MCP allowlist includes it. Other channel members can see the agent's reply, so they can see the server's name.
-
-This setting doesn't stop a user from copying or forwarding what an agent told them in a direct message. In a direct message, an agent can also pass the server's results to other tools, such as posting to a channel, subject to those tools' approval policies. In a channel, an agent can read a user's earlier direct messages with it through the built-in Mattermost tools, again subject to those tools' approval policies and to sharing results.
-
-### Plugin-registered MCP servers
-
-Compatible Mattermost plugins can register MCP servers with Agents. In the **Tools** tab, each registered plugin server appears as its own plugin row, where admins can enable or disable the entire plugin server and configure per-tool approval policies. Plugin tool names are shown in a friendlier form instead of the raw wire-format names.
-
-Access policies for plugin servers are authored on the **Configuration** tab under **Built-in & plugin servers**. Policy identity is keyed by the source plugin ID, so a policy survives unregister/re-register and path changes. Policies are not deleted automatically when a plugin unregisters; the dormant policy re-attaches if the same plugin registers again.
-
-These admin-owned settings (enablement, per-tool approval, and access policy) persist across plugin re-registration and restart.
-
-The source plugin controls the plugin server's name, path, and whether it is eligible for external exposure. Admins do not configure the external exposure flag in the Agents UI.
-
-When a plugin server is enabled and the source plugin marks it for external exposure, its enabled tools can be added to the external Mattermost MCP HTTP endpoint. Per-tool admin policy applies to those tools there as well.
-
-Proxied tool calls to plugin-registered MCP servers carry the authenticated Mattermost user context through to the source plugin, so user-scoped permissions still apply.
-
-### Configure OAuth-backed servers for agents
-
-When you create or edit an agent from the **Agents** page, the **MCPs** tab in the full-page agent editor lists the MCP servers available to that agent.
-
-- For agents using per-user authentication, if an OAuth-backed server is not connected for your account yet, the row shows a **Connect** button so you can complete the provider sign-in flow without leaving the editor.
-- For agents with **Use service accounts for authentication** enabled, the tab shows that agent's service-account catalog — not your personal connections. A server that only has service account credentials is **Connected** when those credentials work, and **Connect** is not shown. Servers without service account credentials are labeled **No service account credentials** and are excluded from the agent.
-
-The MCPs tab refreshes automatically after you connect or disconnect, and it reloads when you toggle service account authentication, so you don't need to reopen it to see updated server status.
-
-If a disconnected OAuth-backed server currently exposes no tools, you can still toggle that server on while configuring the agent. Saving the agent in this state grants the agent access to every tool that server exposes after a user connects to that provider.
-
-The **Automatically enable all MCP tools** option remains the broadest setting. When enabled, the agent can use every currently available MCP tool as well as MCP tools added later.
-
-Enabling a server or tool for an agent controls what the agent is allowed to use, but it does not bypass tool approval policies. Tool execution still follows the policy configured in the **Tools** tab and each user's Mattermost and provider permissions.
-
-### Service account authentication
-
-By default, MCP tool calls run with the credentials of the user who triggered the agent: per-user OAuth on external MCP servers, and the requesting user's own identity for embedded Mattermost tools. An agent can instead be switched to **service account authentication**, where external MCP servers use shared, admin-configured credentials. Embedded Mattermost and plugin tools still run as the requesting user.
-
-To set it up:
-
-1. Navigate to **System Console > Plugins > Agents > Model Context Protocol (MCP)**, open the remote MCP server on the **Configuration** tab, and add the static headers the server should receive from service account agents in the **Service Account Authentication** section. Put the header **name** and **value** in separate fields — for example name `Authorization` and value `Bearer <token>` or `Basic <base64>`, or a custom name such as `X-API-KEY`. Do not repeat the header name in the value. Rows with a blank name or value are ignored, so a server whose entries are all blank counts as having no service account credentials. Select **Save**.
-2. On the agent's **MCPs** tab (Agents page), turn on **Use service accounts for authentication**. Only system administrators can turn this setting on. While it is enabled, managers may still edit non-sensitive config; Access and MCP grants (including auto-enable) remain system-admin-only — see [What's editable vs locked](features/managing_agents.md#whats-editable-vs-locked). Anyone who can manage the agent can still turn the setting off or delete the agent.
-
-The agent setting is all-or-nothing:
-
-- **External MCP servers**: connections send the server's service account headers in place of per-user OAuth. The server's custom headers are still sent in both modes; when both define the same header, the service account value wins. Servers without service account headers are excluded from this agent entirely — it fails closed, with no fallback to any user's personal OAuth connection. To mix personal and service account access, use two agents or separate MCP server entries.
-- **Embedded Mattermost tools and plugin-registered MCP servers**: tool calls run as the **requesting user**, the same as in per-user mode. Channel membership and Mattermost permissions of that user are the access boundary — reading posts, searching, and listing channel members return what that user can read.
-- Users are never prompted to connect accounts for this agent, per-user tool provider preferences don't apply, and the Agents RHS **Tools** popover is hidden.
-- Tool approval is unchanged: the person who triggered the agent still approves or rejects tool calls according to the configured tool policies. See [Multiplayer Tool Calling](features/multiplayer_tool_calling.md).
-
-> **Warning:** Service account authentication flattens permissions on **external** MCP servers — **every user who can use the agent acts with the agent's shared access** there. Restrict who can use the agent on its **Access** tab, and prefer a dedicated service account (and MCP server entry) per integration, scoped to the minimum permissions the agent needs. External systems attribute the agent's actions to the service account, not to the Mattermost user who triggered them; to correlate, enable [token usage tracking](#token-usage-tracking), where each record carries the triggering user (`user_id`), the acting identity (`acting_user_id`), and the auth mode (`tool_auth_mode`). Mattermost and plugin tools still run with each requesting user's own permissions. Header values are stored in the plugin configuration and are visible to system admins, like the server's other credentials.
-
-Service account authentication is available at Enterprise and above, the same as remote and external MCP servers (see [license requirements](#license-requirements)). Below that level, the service account header configuration cannot be added and the agent setting doesn't change how tool calls authenticate.
-
-### MCP dynamic tool loading
-
-When an agent's MCP dynamic tool loading setting is enabled, the model doesn't receive every full MCP tool schema at once. Instead, it sees `search_tools` and `load_tool` meta-tools, plus any preloaded or internal tools available for that request.
-
-`search_tools` returns up to 8 candidate tools with names and summaries. `load_tool` loads one tool's full schema by exact name. A business MCP tool must be loaded before it can be executed; attempts to execute an unloaded MCP tool are rejected with guidance to call `load_tool` first.
-
-After a tool is loaded successfully, it remains available for the rest of the conversation. On later turns, loaded tools are restored from retained conversation history when they are still authorized and available.
-
-The `search_tools` and `load_tool` meta-tools run automatically without approval. The loaded business tool still follows its configured approval policy and the user's Mattermost and provider permissions — or, for agents using [service account authentication](#service-account-authentication), service account credentials on external MCP servers and the requesting user's Mattermost permissions for embedded and plugin tools.
-
-Dynamic loading applies to normal agent conversation turns. Bridge integrations and direct tool catalog requests can still request concrete tool schemas directly.
-
-### Management
-
-- **Connection Management**: The system automatically manages user connections to MCP servers
-- **Idle Cleanup**: Inactive client connections are automatically closed after the configured timeout
-- **Per-User Connections**: Each user gets their own connection to MCP servers for security and isolation. Agents using service account authentication share one remote connection per agent (keyed to the agent's bot account) for external MCP servers; embedded Mattermost and plugin connections stay per requesting user
-- **Tool Policies**: Use the **Tools** tab to allow, require approval for, or disable individual tools, and to add optional retrieval description overrides used by dynamic tool loading search
-- **Agent Scoping**: The RHS **Tools** popover only shows MCP providers allowed for the selected agent, and is hidden entirely for agents using service account authentication (there are no per-user remote connections or preferences to manage; embedded Mattermost and plugin connections still run as the requesting user). Tool use is still subject to admin tool policies and the user's Mattermost permissions
-
-### OAuth-backed MCP servers
-
-Some MCP servers require OAuth per Mattermost user. For those servers, the plugin exposes `needsOAuth` and `authURL` to the Agents webapp so the UI can show when authorization is required and where to begin the flow. The webapp starts OAuth through the plugin route `GET /plugins/mattermost-ai/mcp/oauth/<server name>/start` and can clear the current user's stored token with `DELETE /plugins/mattermost-ai/mcp/oauth/<server name>`.
-
-**Agents panel (web and desktop):** In the Agents right-hand sidebar, start a new chat and open **Tools**. OAuth-backed servers show **Connect** when the signed-in user is not authenticated, and **Disconnect** when an OAuth session applies.
-
-**System Console (admin tool configuration):** On **System Console > Plugins > Agents > MCP Servers**, expanding an OAuth-backed server shows that you must authenticate to fetch that server's tool list and configure per-tool approval policies. That sign-in only applies to your administrator account. Each end user must authenticate separately, even after an admin has connected in the System Console.
-
-**Conversations:** The plugin no longer posts ephemeral in-channel or in-thread messages to prompt MCP OAuth. Instead, when a user who hasn't connected an OAuth-backed server asks for something that needs it, the agent can ask them to connect from inside the conversation. The agent is told which allowed servers the user hasn't connected yet, using only what you configured: the server's **Name**, its **Description**, and any tools you've configured for it on the **Tools** tab, with their retrieval description overrides. Admin-disabled tools and tools outside the agent's allowlist are left out. Nothing a server reports to another user's connection is shown, so write a description for servers whose name alone doesn't say what they're for. The user then sees a **Connect** card with **Connect** and **Skip**; once they finish signing in, the conversation continues automatically. If a user's sign-in to a server expires or is revoked partway through a conversation, the agent drops that connection and offers the same card in the same reply instead of failing the request. Agents using service account authentication never show the card. The recorded outcome of a card, which other channel members can read, says only whether the user connected; it doesn't list the tools their account unlocked. The agent gets those tools in its next step, the same way as any connected server's tools. Users can also use the Agents webapp **Tools** menu to view connection state and run **Connect** or **Disconnect**.
-
-**Mobile and other clients:** MCP OAuth is not initiated from the mobile app or other clients that do not use the Agents webapp. Users need Mattermost web or desktop to connect OAuth-backed MCP servers.
-
-**Custom MCP OAuth setups:** If the OAuth start URL includes a `resource_metadata` query parameter, it is accepted only when its origin matches the origin of the configured MCP server **Server URL**. This prevents cross-origin metadata injection during discovery.
-
-### Atlassian MCP server authorization
-
-When users connect to the Atlassian MCP server, they may encounter an authorization error requiring an organization admin to authorize your Mattermost domain. This configuration must be completed in Atlassian's admin console.
-
-**To authorize your Mattermost domain:**
-
-1. Go to [admin.atlassian.com](https://admin.atlassian.com) and select your organization.
-2. Go to **Apps > AI settings > Rovo MCP server**.
-3. Select **Add domain** and enter your Mattermost domain with the path wildcard: `https://your-instance.mattermost.cloud/**`
-4. Select **Save**.
-
-**Important:** The `/**` path wildcard is required. Example domain patterns:
-- Single instance: `https://your-company.mattermost.cloud/**`
-- All subdomains: `https://*.mattermost.cloud/**`
-- Custom domain: `https://chat.yourcompany.com/**`
-
-After adding the domain, wait 1-2 minutes for changes to propagate before users retry the connection.
-
-**Troubleshooting:**
-- Verify you have Organization Admin permissions (Site Admin is insufficient)
-- Confirm you're configuring the organization that owns the Atlassian site
-- Ensure the domain includes `https://` and the `/**` wildcard
-- Check for typos in the domain
-
-For more information, see [Atlassian's documentation on MCP server settings](https://support.atlassian.com/security-and-access-policies/docs/control-atlassian-rovo-mcp-server-settings/).
-
-> **Note:** By default, the plugin doesn't render AI-generated Markdown links (for example, JIRA ticket links) as clickable links. URLs are displayed in plain text to reduce potential phishing and data exfiltration risk. If an admin enables **Render AI-generated links** (`allowUnsafeLinks`), AI-generated links may become clickable; enable this only with appropriate trust boundaries and security mitigations in place. To keep JIRA links clickable without allowing every destination, add your Atlassian site (for example, `mycompany.atlassian.net`) to **Allowed Link Domains** (`allowedLinkDomains`).
-
-## Mattermost MCP Server
-
-The Mattermost MCP Server enables AI agents and external applications to interact with your Mattermost instance through the Model Context Protocol (MCP). This is a standardized protocol that allows AI assistants to read messages, search content, create posts, and manage channels and teams programmatically. The built-in Mattermost tools are always available to Agents through the embedded server, and the optional HTTP endpoint for external clients can also aggregate eligible tools from compatible plugin-registered MCP servers.
-
-To connect Claude Code, Claude Desktop, Cursor, VS Code, or another external MCP client, see [Mattermost MCP Server](mcp_server.md) for client setup, authentication, and troubleshooting. This section covers the admin-side configuration.
-
-**Standalone MCP server (separate process / stdio):** Running the standalone `mattermost-mcp-server` binary outside the Mattermost server is for **development and local use only** and is **not** intended for production. Production deployments should rely on the embedded Mattermost MCP server and the supported configuration in this plugin (System Console, HTTP endpoint for external clients, and agent MCP settings below).
-
-### Overview
-
-The Mattermost MCP Server provides:
-
-- **Direct Mattermost Integration**: AI agents can access your Mattermost data and functionality through a standardized API
-- **Security and Permissions**: All operations respect Mattermost's permission system - users only access what they're authorized to see
-- **Flexible Deployment**: Available as an embedded server for Mattermost AI agents or as an HTTP server for external MCP clients
-- **Rich Toolset**: Comprehensive tools for reading, searching, and creating content
-
-**Use Cases**
-
-With the Mattermost MCP Server, you can:
-
-- **Automate Channel Summaries**: Ask your AI agent to summarize activity across channels, catching up on discussions while you were away.
-- **Share Updates Across Channels**: Have your agent post status updates to multiple channels simultaneously, keeping distributed teams synchronized.
-- **Search Intelligently**: Search across your entire Mattermost workspace from any MCP-enabled client to find relevant discussions, decisions, or information.
-- **Coordinate Teams**: Get lists of channel or team members to quickly identify who to contact or mention.
-- **Automate Workflows**: Use external MCP clients to automate routine tasks like posting stand-up updates, creating project channels, or notifying teams of important events.
-- **Access Context-Aware Assistance**: AI agents can read conversation threads to understand context before responding or taking action.
-
-### Available Tools
-
-The built-in Mattermost MCP server provides the following native Mattermost tools:
-
-- **read_post**: Read a specific post and its thread
-- **read_channel**: Retrieve recent posts from a channel
-- **search_posts**: Search across Mattermost content with optional team/channel filters
-- **create_post**: Create new posts or replies in channels
-- **dm**: Send a direct message to a user
-- **group_message**: Send a message to a group conversation
-- **create_channel**: Create new public or private channels
-- **get_channel_info**: Retrieve channel details by ID or name
-- **get_team_info**: Retrieve team details by ID or name
-- **search_users**: Find users by username, email, or name
-- **get_channel_members**: List all members of a channel
-- **add_channel_member**: Add a user to a channel
-- **get_user_channels**: List the channels the current user is a member of
-- **get_team_members**: List all members of a team
-- **add_team_member**: Add a user to a team
-- **list_agents**: List the AI agents (bots) available to the current user, including each agent's ID, display name, and username
-
-The plugin also registers an extended catalog of read and write tools spanning Mattermost's main domains. Because the plugin supports dynamic tool loading, agents discover these on demand via the `search_tools` and `load_tool` meta-tools rather than carrying every schema in context. Write/destructive/permission-sensitive tools are marked with ⚠ and follow each user's Mattermost permissions.
-
-- **Posts & messages**: get_post_info, list_pinned_posts, list_saved_posts, ⚠ update_post, ⚠ delete_post, ⚠ pin_post, ⚠ unpin_post, ⚠ save_post, ⚠ acknowledge_post
-- **Scheduled posts & reminders**: list_scheduled_posts, ⚠ create_scheduled_post, ⚠ update_scheduled_post, ⚠ delete_scheduled_post, ⚠ set_post_reminder
-- **Drafts**: list_drafts, ⚠ create_draft, ⚠ delete_draft
-- **Reactions & emoji**: get_post_reactions, list_custom_emoji, search_custom_emoji, ⚠ add_reaction, ⚠ remove_reaction
-- **Threads, mentions & unread**: get_threads, get_mentions, get_unread_counts, get_channel_unread, get_posts_around_unread, ⚠ mark_channel_read, ⚠ mark_channels_viewed, ⚠ mark_post_unread, ⚠ set_thread_follow
-- **Channels**: get_channel_stats, get_channel_member_counts, search_channels, list_team_channels, list_archived_channels, ⚠ update_channel, ⚠ archive_channel, ⚠ restore_channel, ⚠ convert_channel_privacy
-- **Channel members & settings**: get_channel_member, get_channel_members_by_ids, get_channel_members_by_status, get_user_channel_memberships, get_users_not_in_channel, search_users_in_channel, list_sidebar_categories, ⚠ add_channel_members, ⚠ remove_channel_member, ⚠ set_channel_mute, ⚠ set_channel_favorite, ⚠ update_channel_notify_props
-- **Channel bookmarks**: list_channel_bookmarks, ⚠ create_channel_bookmark, ⚠ update_channel_bookmark, ⚠ delete_channel_bookmark
-- **Users & profiles**: get_me, get_user, get_user_by_username, get_user_by_email, get_users_by_ids, get_users_by_usernames, get_user_stats, get_user_cpa_values, list_cpa_fields, ⚠ update_user
-- **Status & presence**: get_user_status, get_users_statuses, get_user_custom_status, ⚠ set_status, ⚠ set_dnd
-- **Teams & team members**: get_team_member, get_team_stats, get_user_teams, get_users_in_team, get_users_not_in_team, get_new_users_in_team, get_dm_common_teams, search_teams, search_users_in_team, ⚠ add_team_members, ⚠ remove_team_member, ⚠ update_team, ⚠ invite_users_to_team, ⚠ invite_users_to_team_and_channels
-- **Files & attachments**: read_file, get_file_info, get_post_files, get_file_link, search_files, ⚠ upload_file
-- **Integrations**: get_bot, list_bots, list_incoming_webhooks, list_outgoing_webhooks
-- **Groups**: get_group_info, list_groups, get_user_groups, get_channel_groups, get_team_groups, get_users_in_group_channels
-- **Roles & permissions**: get_role, get_channel_moderations, ⚠ update_channel_member_roles, ⚠ update_team_member_roles
-
-These are the native Mattermost tools included by the Agents plugin itself. Plugin-registered MCP tools are configured separately in the **Tools** tab and are not part of the built-in list above.
-
-### Deployment
-
-#### For AI Agents
-
-The embedded Mattermost MCP server is available automatically to configured AI agents. No System Console switch is required to enable embedded MCP for in-product agents.
-
-Use **System Console > Plugins > Agents > Model Context Protocol (MCP)** to configure remote MCP servers, review plugin-registered MCP servers, set the idle timeout, control the optional HTTP endpoint for external clients, and manage per-tool enablement and approval policies. Then use each agent's **MCPs** tab on the **Agents** page to either automatically enable all MCP tools or restrict that agent to specific tools.
-
-Configured agents can use these tools subject to their own MCP settings, admin tool policies, user permissions, and any required approval flow.
-
-#### For External Clients
-
-You can enable external MCP clients, such as Claude web, Claude Code, or other MCP-compatible applications, to interact with your Mattermost instance. This HTTP server is separate from the always-on embedded MCP server used by Mattermost Agents.
-
-When enabled, the external HTTP endpoint exposes the built-in Mattermost MCP tools. It can also aggregate enabled tools from plugin-registered MCP servers when the source plugin marks that server for external exposure and the plugin server is enabled in Agents.
-
-Per-tool admin policy applies to aggregated plugin tools. Proxied plugin tool calls carry the authenticated Mattermost user context through to the source plugin, so the source plugin can continue to enforce user-scoped permissions.
-
-If an exposed plugin tool name conflicts with a built-in Mattermost tool or with another exposed plugin tool, the conflicting plugin tool is skipped from the external endpoint. These conflicts are logged.
-
-**Requirements:**
-- Mattermost Server v12.0 or later (the minimum version for the Agents plugin)
-- Valid authentication method (OAuth or Personal Access Token)
-
-**Note:** The server uses streamable HTTP transport and does not support traditional Server-Sent Events (SSE) transport. External clients must use the streamable HTTP transport available at the `/mcp` endpoint.
-
-To enable an external MCP client:
-
-1. Go to **System Console > Plugins > Agents > Model Context Protocol (MCP)**
-2. Set **Enable Mattermost MCP Server (HTTP)** to **True**.
-The MCP server will be available at: `https://your-mattermost-server/plugins/mattermost-ai/mcp-server/mcp`
-
-**Authentication:**
-
-*OAuth 2.0*
-
-The MCP server supports OAuth 2.0 authentication with both manual and automatic client registration.
-
-**Prerequisites:**
-- Enable OAuth 2.0 service provider in **System Console > Integrations > Integration Management**:
-  - Set **Enable OAuth 2.0 Service Provider** to **True**
-  - For automatic client registration, set **Enable OAuth 2.0 Dynamic Client Registration** to **True** (Note: DCR is an unprotected endpoint, meaning it is publicly accessible and does not require authentication—anyone can register OAuth clients if this feature is enabled. See the [OAuth 2.0 documentation](https://developers.mattermost.com/integrate/apps/authentication/oauth2/) for security considerations.)
-
-**Client Registration Methods:**
-- **Dynamic Client Registration (DCR/RFC 7591)**: External clients can automatically register and obtain credentials without manual setup.
-- **Manual Registration**: Create OAuth applications through **Product menu > Integrations > OAuth 2.0 Applications**. See the [OAuth 2.0 documentation](https://developers.mattermost.com/integrate/apps/authentication/oauth2/) for details.
-
-**Additional Details:**
-- Supports both public clients (e.g., desktop applications) and confidential clients (e.g., server applications)
-- Authorization through standard Mattermost OAuth flows
-- OAuth metadata endpoints:
-  - Protected resource metadata: `https://your-mattermost-server/plugins/mattermost-ai/mcp-server/.well-known/oauth-protected-resource`
-  - Authorization server metadata: `https://your-mattermost-server/.well-known/oauth-authorization-server`
-
-*Personal Access Tokens*
-
-You can authenticate using Mattermost Personal Access Tokens (PAT):
-
-1. Create a Personal Access Token in Mattermost (**User Settings > Security > Personal Access Tokens**).
-2. Configure your MCP client to use Bearer token authentication with the PAT.
-
-### License requirements
-
-The plugin distinguishes four license levels: Free (no license), Professional, Enterprise, and Enterprise Advanced. Each level includes everything available at the levels below it. The Entry license behaves as Enterprise. A development server (`EnableDeveloper` and `EnableTesting` both on) exercises every capability.
-
-| | Free | Professional | Enterprise | Ent. Advanced |
+| Panel | Setting | Config key | Default | Details |
 |---|---|---|---|---|
-| AI agents | 1 | 3 | unlimited | unlimited |
-| Bring your own LLM, incl. local models | ✅ 1 provider | ✅ 1 provider | ✅ multi | ✅ multi + fallback |
-| Vision / document understanding | ✅ | ✅ | ✅ | ✅ |
-| Personal skills | ✅ | ✅ | ✅ | ✅ |
-| Built-in Mattermost tools | read-only | read-only | read + write | read + write |
-| Agent direct messages | ✅ | ✅ | ✅ | ✅ |
-| Multiplayer agents in channels | — | ✅ | ✅ | ✅ |
-| Thread summarization | — | ✅ | ✅ | ✅ |
-| Channel & unread summarization | — | ✅ | ✅ | ✅ |
-| Provider-native web search | — | ✅ | ✅ | ✅ |
-| Agent access controls (users / teams / channels) | — | ✅ | ✅ | ✅ |
-| Token accounting | — | ✅ | ✅ | ✅ |
-| Sovereign web search | — | — | ✅ | ✅ |
-| Tool approval policies | — | — | ✅ | ✅ |
-| Remote & external MCP servers | — | — | ✅ | ✅ |
-| Semantic AI search | — | — | ✅ | ✅ |
-| Meeting transcription & summaries | — | — | ✅ | ✅ |
-| MCP service-account authentication | — | — | ✅ | ✅ |
-| Shared skills | — | — | ✅ | ✅ |
-| Channel agent auto-reply | — | — | — | ✅ |
-| Attribute-based access control for AI | — | — | — | ✅ |
+| AI Services | Services | `services` | none | [Configure LLM services](llm_services.md) |
+| AI Bots | Limit agent version history, Versions to keep per agent | `agentVersionsToKeep` | Off (`0`, keep all). Turning it on sets 50. | [Create and manage agents](managing_agents.md#keep-a-limited-history) |
+| AI Functions | Default bot | `defaultBotUserID` | The first agent, until you pick one | [Create and manage agents](managing_agents.md) |
+| AI Functions | Render AI-generated links | `allowUnsafeLinks` | Off | [Secure AI-generated links and HTML](ai_output_security.md) |
+| AI Functions | Allowed Link Domains (csv) | `allowedLinkDomains` | Empty (any domain, when links are on) | [Secure AI-generated links and HTML](ai_output_security.md) |
+| AI Functions | Enable HTML artifacts (experimental) | `enableHTMLArtifacts` | Off | [Secure AI-generated links and HTML](ai_output_security.md#html-artifacts) |
+| AI Functions | Enable Channel Mention Tool Calling (experimental) | `enableChannelMentionToolCalling` | Off | [Control agents in channels](channel_settings.md) |
+| AI Functions | Enable ambient auto-replies (experimental) | `enableAmbientAutoReply` | Off | [Control agents in channels](channel_settings.md#ambient-limits-and-cost) |
+| AI Functions | Allow native web search in channels | `allowNativeWebSearchInChannels` | Off | [Control agents in channels](channel_settings.md) |
+| Debug | Trace Output, OpenTelemetry Endpoint, Use TLS for OTLP Export, OTLP Export Headers | `telemetryOutput`, `openTelemetryEndpoint`, `openTelemetryTLS`, `openTelemetryHeaders` | Off | [Monitor Agents](observability.md#opentelemetry-tracing) |
+| Debug | Enable Token Usage Logging | `enableTokenUsageLogging` | Off | [Monitor Agents](observability.md#token-usage-log) |
+| Embedding Search (experimental) | Embedding settings and reindex controls | `embeddingSearchConfig` | Off | [Set up semantic search](embedding_search.md) |
+| Web Search | Built-in web search | `webSearch` | Off | [Web search](web_search.md) |
+| Model Context Protocol (MCP) | Servers, tools, HTTP endpoint, idle timeout | `mcp` | HTTP endpoint off, idle timeout 30 minutes | [Connect agents to MCP servers](mcp_integrations.md) |
 
-How each row is enforced:
+## License requirements
 
-- **AI agents** counts configuration-file bots and user-created agents together as one pool. When a workspace holds more agents than its level allows, the plugin activates configuration-file bots first (in configuration order), then user-created agents (oldest first), up to the cap. Remaining agents stay stored but inactive; they are named in the server log and marked **Inactive** on the Agents page, with the reason. Creating an agent beyond the cap returns a licensing error that names the level that raises the cap.
-- **Bring your own LLM** — Free and Professional workspaces use one LLM service: the first service in the **Services** list. Agents that reference another service are inactive at those levels and take no slot in the agent cap; they are named in the server log and marked **Inactive** on the Agents page. LLM Bridge service calls address only that service. Enterprise and above route agents and LLM Bridge calls to any configured service. Fallback chains are followed at Enterprise Advanced; at lower levels a configured fallback stays stored but requests use the primary service only.
-- **Built-in Mattermost tools** — read-only tools (retrieving messages, channels, users, teams, files and search results) are available at every level. Tools that change state in Mattermost (posting, reacting, editing, creating or modifying channels, bookmarks, scheduled posts and similar) are available at Enterprise and above; below that they are absent from the tool list and calls to them return a licensing message.
-- **Tool approval policies** — admin-configured per-tool execution policies apply at Enterprise and above. Below that, embedded Mattermost tools use the product defaults and every other tool asks before running; a policy an administrator set to be narrower than the default (for example, ask) still applies. A tool that an administrator has disabled stays disabled at every level.
-- **Shared skills** — personal skills are available at every level. Publishing a skill to other users, discovering or using skills published by others, and enabling shared skills on an agent is available at Enterprise and above.
+The plugin distinguishes four license levels: Free (no license), Professional, Enterprise, and Enterprise Advanced. Each level includes everything below it. The Entry license behaves as Enterprise. Legacy E10 licenses count as Professional and E20 licenses as Enterprise. A development server (`EnableDeveloper` and `EnableTesting` both on) enables every capability.
 
-At every level:
+| Capability | Free | Professional | Enterprise | Enterprise Advanced |
+|---|---|---|---|---|
+| Agents | 1 | 3 | Unlimited | Unlimited |
+| LLM services | 1 | 1 | Multiple | Multiple, with fallback chains |
+| Direct messages with an agent | Yes | Yes | Yes | Yes |
+| Vision and document attachments | Yes | Yes | Yes | Yes |
+| Personal skills | Yes | Yes | Yes | Yes |
+| Built-in Mattermost tools | Read-only | Read-only | Read and write | Read and write |
+| Agents in channels (@mention) | No | Yes | Yes | Yes |
+| Thread, channel, and unread summaries | No | Yes | Yes | Yes |
+| Provider-native web search | No | Yes | Yes | Yes |
+| Agent access controls (users, teams, channels) | No | Yes | Yes | Yes |
+| Token usage logging | No | Yes | Yes | Yes |
+| Built-in web search (Brave, Google, SearXNG) | No | No | Yes | Yes |
+| Tool approval policies | No | No | Yes | Yes |
+| Remote and external MCP servers, HTTP MCP endpoint | No | No | Yes | Yes |
+| MCP service account authentication | No | No | Yes | Yes |
+| Semantic search and AI search | No | No | Yes | Yes |
+| Meeting summaries | No | No | Yes | Yes |
+| Shared skills | No | No | Yes | Yes |
+| Channel auto-reply | No | No | No | Yes |
+| Attribute-based access control | No | No | No | Yes |
 
-- Reading configuration is never gated: administrators and users always see how things are configured.
-- Turning things off is never gated: disabling, clearing or deleting configuration for any capability is always permitted, so a workspace can tidy up state after its license level changes.
-- License changes take effect without restarting the plugin on Mattermost Server v12.0 or later. On earlier servers, request-time checks follow the new license immediately, while the set of active agents and services, semantic search, and MCP connections are re-evaluated on the next plugin configuration change or restart.
-- Requests denied for licensing reasons return HTTP 403 with a JSON body containing an actionable `error` message and a `license_required` field (`professional`, `enterprise` or `enterprise_advanced`).
+### Limits by level
+
+- **Agent cap.** Configuration-file bots and user-created agents share one pool. Over the cap, the plugin activates configuration-file bots first, then user-created agents oldest first. The rest stay stored but inactive, marked **Inactive** on the Agents page and named in the server log. Creating an agent over the cap fails with a message naming the level that raises it.
+- **One service below Enterprise.** Free and Professional use only the first service in the list. Agents that use another service are inactive and don't count toward the agent cap. LLM Bridge calls reach only the first service.
+- **Fallback chains.** Followed at Enterprise Advanced only. Below that, a stored fallback stays in the configuration but requests use the primary service.
+- **Write tools.** Tools that change something in Mattermost (post, react, edit, create channels, and similar) are absent from the tool list below Enterprise, and calls return a licensing message.
+- **Approval policies.** Below Enterprise, built-in Mattermost tools use the product defaults and every other tool asks first. A stricter policy you set earlier still applies. A disabled tool stays disabled.
+
+### At every level
+
+- Reading configuration is never blocked.
+- Turning something off is never blocked. You can disable, clear, or delete a gated setting after a license downgrade.
+- License changes apply without restarting the plugin.
+- A System Console or REST API request denied for licensing returns HTTP 403 with an `error` message and a `license_required` field set to `professional`, `enterprise`, or `enterprise_advanced`. LLM Bridge completions, MCP tools, and channel mentions report licensing differently. See [LLM Bridge](llm_bridge.md#permissions-and-licensing).
