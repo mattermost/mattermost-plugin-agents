@@ -429,22 +429,15 @@ func (a *API) bridgeScopedChannel(bot *bots.Bot, userID, channelID string, tools
 	if channelID == "" {
 		return nil, http.StatusBadRequest, errors.New("channel_id is required for agents in scoped channel mode")
 	}
-	var requester *model.User
-	if userID != "" {
-		var err error
-		if requester, err = a.pluginAPI.User.Get(userID); err != nil {
-			return nil, http.StatusInternalServerError, fmt.Errorf("failed to get user: %w", err)
-		}
-	}
 	channel, err := a.pluginAPI.Channel.Get(channelID)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("failed to get channel: %w", err)
 	}
-	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
+	if !llmcontext.ScopedChannelModeAppliesTo(channel) {
 		return nil, 0, nil
 	}
-	if requester != nil && requester.IsGuest() {
-		return nil, http.StatusForbidden, llmcontext.ErrScopedGuestRequester
+	if userID != "" && !a.contextBuilder.RequesterCanUseScopedChannelMode(userID, channel) {
+		return nil, http.StatusForbidden, llmcontext.ErrScopedRequesterCannotReadTeamChannels
 	}
 	if !toolsRequested {
 		return nil, 0, nil

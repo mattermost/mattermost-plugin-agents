@@ -373,10 +373,13 @@ func ScopedChannelModeConfigured(bot *bots.Bot) bool {
 // prerequisite holds right now, and channel is a public or private channel.
 // DMs and group messages never run scoped.
 func (b *Builder) ScopedChannelModeActive(bot *bots.Bot, channel *model.Channel) bool {
-	if channel == nil || (channel.Type != model.ChannelTypeOpen && channel.Type != model.ChannelTypePrivate) {
-		return false
-	}
-	return b.ScopedChannelModeAvailable(bot)
+	return ScopedChannelModeAppliesTo(channel) && b.ScopedChannelModeAvailable(bot)
+}
+
+// ScopedChannelModeAppliesTo reports whether scoped channel mode can apply in
+// channel at all: only public and private channels, never DMs or group messages.
+func ScopedChannelModeAppliesTo(channel *model.Channel) bool {
+	return channel != nil && (channel.Type == model.ChannelTypeOpen || channel.Type == model.ChannelTypePrivate)
 }
 
 // ScopedChannelModeAvailable is ScopedChannelModeActive without the channel:
@@ -464,9 +467,20 @@ func (b *Builder) channelToolCallingEnabled() bool {
 // requester cannot read the channel the session would be scoped to.
 var ErrScopedRequesterCannotReadChannel = errors.New("requester cannot read the scoped turn's channel")
 
-// ErrScopedGuestRequester is returned for a guest requester of an agent in
-// scoped channel mode: the scope reads public channels a guest cannot browse.
-var ErrScopedGuestRequester = errors.New("guests cannot use agents in scoped channel mode")
+// ErrScopedRequesterCannotReadTeamChannels is returned for a requester of an
+// agent in scoped channel mode who cannot read public channels on the
+// channel's team (guests, or a role scheme that withholds the permission): the
+// scope reads those channels on the requester's behalf.
+var ErrScopedRequesterCannotReadTeamChannels = errors.New("this agent can only be used by people who can read public channels on the team")
+
+// RequesterCanUseScopedChannelMode reports whether requesterID may use a
+// scoped-mode agent in channel. It fails closed.
+func (b *Builder) RequesterCanUseScopedChannelMode(requesterID string, channel *model.Channel) bool {
+	if b == nil || requesterID == "" || channel == nil || channel.TeamId == "" {
+		return false
+	}
+	return b.pluginAPI.User.HasPermissionToTeam(requesterID, channel.TeamId, model.PermissionReadPublicChannel)
+}
 
 // mintScopedRun mints the turn's scoped session and records the grant. The
 // returned run is owned by c: ReleaseScopedSession closes it.
@@ -491,8 +505,8 @@ func (b *Builder) mintScopedRun(ctx stdcontext.Context, c *llm.Context, bot *bot
 		}
 	}()
 
-	if c.RequestingUser == nil || c.RequestingUser.IsGuest() {
-		return nil, ErrScopedGuestRequester
+	if !b.RequesterCanUseScopedChannelMode(requesterID, c.Channel) {
+		return nil, ErrScopedRequesterCannotReadTeamChannels
 	}
 
 	// The scope grants its channel regardless of membership, so the requester

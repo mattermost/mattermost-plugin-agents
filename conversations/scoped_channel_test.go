@@ -169,6 +169,8 @@ type scopedEnvOpts struct {
 	streamingErr error
 	// guestRequester makes the user who mentions the agent a guest.
 	guestRequester bool
+	// noTeamRead withholds read_public_channel on the team from the requester.
+	noTeamRead bool
 	// skillErr fails skill loading, which happens after the session is minted.
 	skillErr error
 	// onToolRun runs inside the tool, while the turn is in flight.
@@ -191,6 +193,7 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: scopedTeamID, Name: "team"}, nil).Maybe()
 	mockAPI.On("GetBotUsers").Return(nil, nil).Maybe()
 	mockAPI.On("HasPermissionToChannel", mock.Anything, mock.Anything, model.PermissionReadChannel).Return(true).Maybe()
+	mockAPI.On("HasPermissionToTeam", mock.Anything, mock.Anything, model.PermissionReadPublicChannel).Return(!opts.noTeamRead && !opts.guestRequester).Maybe()
 	mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
 	mockAPI.On("LogAuditRec", mock.Anything).Run(func(args mock.Arguments) {
 		env.auditMu.Lock()
@@ -297,7 +300,7 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	mmClient.posts = map[string]*model.Post{post.Id: post}
 	env.channel, env.trigger = channel, post
 	env.conversations.MessageHasBeenPosted(nil, post)
-	if opts.streamingErr != nil || opts.skillErr != nil || opts.guestRequester {
+	if opts.streamingErr != nil || opts.skillErr != nil || ((opts.guestRequester || opts.noTeamRead) && llmcontext.ScopedChannelModeAppliesTo(channel)) {
 		return env
 	}
 
@@ -536,21 +539,44 @@ func TestScopedChannelTurnStopsAutoRunningWhenRevoked(t *testing.T) {
 // A guest cannot browse the public channels a scoped session reads, so the
 // agent refuses their mention outright rather than falling back to approvals.
 func TestScopedChannelTurnRefusesGuestRequester(t *testing.T) {
-	channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypeOpen, Name: "town-square"}
 	toolCall := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
-	env := setupScopedTestEnv(t, channel, scopedEnvOpts{guestRequester: true}, dmMakeToolCallStream(toolCall), dmMakeTextStream("done"))
 
-	minted, _ := env.minter.snapshot()
-	assert.Empty(t, minted)
-	assert.Zero(t, env.catalog.scoped)
-	assert.Zero(t, env.catalog.unscoped, "no catalog is built for a refused turn")
-	assert.Zero(t, env.runs())
-	assert.Empty(t, allConversations(env.convStore), "the turn never started")
-	select {
-	case <-env.streaming.finished:
-		require.Fail(t, "a refused turn must not stream a response")
-	default:
+	requesters := []struct {
+		name string
+		opts scopedEnvOpts
+	}{
+		{name: "guest", opts: scopedEnvOpts{guestRequester: true}},
+		{name: "member without read_public_channel", opts: scopedEnvOpts{noTeamRead: true}},
 	}
+	for _, requester := range requesters {
+		for _, channelType := range []model.ChannelType{model.ChannelTypeOpen, model.ChannelTypePrivate} {
+			t.Run(requester.name+" in a "+string(channelType)+" channel", func(t *testing.T) {
+				channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: channelType, Name: "town-square"}
+				env := setupScopedTestEnv(t, channel, requester.opts, dmMakeToolCallStream(toolCall), dmMakeTextStream("done"))
+
+				minted, _ := env.minter.snapshot()
+				assert.Empty(t, minted)
+				assert.Zero(t, env.catalog.scoped)
+				assert.Zero(t, env.catalog.unscoped, "no catalog is built for a refused turn")
+				assert.Zero(t, env.runs())
+				assert.Empty(t, allConversations(env.convStore), "the turn never started")
+				select {
+				case <-env.streaming.finished:
+					require.Fail(t, "a refused turn must not stream a response")
+				default:
+				}
+			})
+		}
+	}
+
+	t.Run("group messages never run scoped, so guests are not refused", func(t *testing.T) {
+		channel := &model.Channel{Id: scopedChannelID, Type: model.ChannelTypeGroup, Name: "group"}
+		env := setupScopedTestEnv(t, channel, scopedEnvOpts{guestRequester: true}, dmMakeTextStream("done"))
+
+		minted, _ := env.minter.snapshot()
+		assert.Empty(t, minted)
+		assert.Len(t, allConversations(env.convStore), 1, "the turn ran")
+	})
 }
 
 type failingSkillProvider struct{ err error }

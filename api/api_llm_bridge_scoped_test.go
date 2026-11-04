@@ -151,7 +151,7 @@ func TestBridgeScopedAgentCompletion(t *testing.T) {
 			e.mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: publicChannel.TeamId}, nil).Maybe()
 			e.mockAPI.On("HasPermissionToChannel", testUserID, mock.Anything, mock.Anything).Return(true).Maybe()
 			e.mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
-			e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Roles: model.SystemUserRoleId}, nil).Maybe()
+			e.mockAPI.On("HasPermissionToTeam", testUserID, mock.Anything, model.PermissionReadPublicChannel).Return(true).Maybe()
 
 			minter := &scopedBridgeMinter{}
 			manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, e.client.Log, e.client, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
@@ -236,7 +236,7 @@ func TestBridgeScopedRunStopsAutoRunningWhenRevoked(t *testing.T) {
 			e.mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: channel.TeamId}, nil).Maybe()
 			e.mockAPI.On("HasPermissionToChannel", testUserID, mock.Anything, mock.Anything).Return(true).Maybe()
 			e.mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
-			e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Roles: model.SystemUserRoleId}, nil).Maybe()
+			e.mockAPI.On("HasPermissionToTeam", testUserID, mock.Anything, model.PermissionReadPublicChannel).Return(true).Maybe()
 
 			manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, e.client.Log, e.client, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
 			t.Cleanup(manager.Close)
@@ -379,28 +379,24 @@ func TestBridgeGetAgentToolsForScopedAgentMatchesScopedCatalog(t *testing.T) {
 	}
 }
 
-func TestBridgeScopedAgentRefusesGuestRequester(t *testing.T) {
+func TestBridgeScopedAgentRefusesRequesterWithoutTeamRead(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
 	channel := &model.Channel{Id: model.NewId(), TeamId: model.NewId(), Type: model.ChannelTypeOpen}
 	tests := []struct {
 		name         string
-		user         *model.User
-		lookupErr    *model.AppError
 		allowedTools []string
-		wantStatus   int
 	}{
-		{name: "guest with tools", user: &model.User{Id: testUserID, Roles: model.SystemGuestRoleId}, allowedTools: []string{"jira__get_issue"}, wantStatus: http.StatusForbidden},
-		{name: "guest without tools", user: &model.User{Id: testUserID, Roles: model.SystemGuestRoleId}, wantStatus: http.StatusForbidden},
-		{name: "user lookup fails", lookupErr: model.NewAppError("GetUser", "app.user.get.app_error", nil, "", http.StatusInternalServerError), wantStatus: http.StatusInternalServerError},
+		{name: "with tools", allowedTools: []string{"jira__get_issue"}},
+		{name: "without tools"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := SetupTestEnvironment(t)
 			defer e.Cleanup(t)
 			e.mockAPI.On("GetChannel", channel.Id).Return(channel, nil).Maybe()
-			e.mockAPI.On("GetUser", testUserID).Return(tt.user, tt.lookupErr).Maybe()
+			e.mockAPI.On("HasPermissionToTeam", testUserID, channel.TeamId, model.PermissionReadPublicChannel).Return(false).Maybe()
 			e.mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
 
 			minter := &scopedBridgeMinter{}
@@ -426,8 +422,8 @@ func TestBridgeScopedAgentRefusesGuestRequester(t *testing.T) {
 				AllowedTools: tt.allowedTools,
 			}
 			_, status, err := e.api.prepareAgentBridgeCompletion(context.Background(), testBotUserID, req, llm.OperationBridgeAgent, llm.SubTypeNoStream)
-			require.Error(t, err)
-			assert.Equal(t, tt.wantStatus, status)
+			require.ErrorIs(t, err, llmcontext.ErrScopedRequesterCannotReadTeamChannels)
+			assert.Equal(t, http.StatusForbidden, status)
 			assert.Empty(t, minter.minted)
 			assert.Zero(t, catalog.unscopedRequests)
 		})

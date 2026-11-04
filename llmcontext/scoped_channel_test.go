@@ -111,6 +111,7 @@ func newScopedTestBuilder(t *testing.T, env scopedTestEnv, toolProvider ToolProv
 	mockAPI.On("GetLicense").Return(enterprisetest.LicenseFor(env.level)).Maybe()
 	mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: scopedTestTeamID, Name: "acme", DisplayName: "Acme"}, nil).Maybe()
 	mockAPI.On("HasPermissionToChannel", mock.Anything, mock.Anything, model.PermissionReadChannel).Return(!env.requesterCannotRead).Maybe()
+	mockAPI.On("HasPermissionToTeam", mock.Anything, mock.Anything, model.PermissionReadPublicChannel).Return(true).Maybe()
 	for i := 1; i <= 10; i++ {
 		args := make([]any, i)
 		for j := range args {
