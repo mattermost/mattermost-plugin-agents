@@ -176,16 +176,18 @@ describe('stored AI threads', () => {
     });
 
     test.each([
-        {name: 'a superseded response', outcome: 'resolve' as const},
-        {name: 'a superseded failure', outcome: 'reject' as const},
-    ])('$name does not overwrite newer data', async ({outcome}) => {
+        {name: 'a response', outcome: 'resolve' as const},
+        {name: 'a failure', outcome: 'reject' as const},
+    ])('a fetch requested while one is in flight runs once after $name', async ({outcome}) => {
         jest.spyOn(console, 'error').mockImplementation(() => null);
         const first = deferred<AIThread[]>();
         mockGetAIThreads.mockReturnValueOnce(first.promise).mockResolvedValueOnce([makeThread({id: 'new'})]);
         const store = makeStore();
 
         const firstFetch = fetchAIThreads(store.dispatch);
-        await fetchAIThreads(store.dispatch);
+        fetchAIThreads(store.dispatch);
+        fetchAIThreads(store.dispatch);
+        expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
         if (outcome === 'resolve') {
             first.resolve([makeThread({id: 'stale'})]);
         } else {
@@ -193,7 +195,8 @@ describe('stored AI threads', () => {
         }
         await firstFetch;
 
-        expect(titles(store)).toEqual(['new:']);
+        await waitFor(() => expect(titles(store)).toEqual(['new:']));
+        expect(mockGetAIThreads).toHaveBeenCalledTimes(2);
         expect((store.getState() as any)[`plugins-${manifest.id}`].aiThreads.error).toBe(false);
         jest.restoreAllMocks();
     });
@@ -337,6 +340,71 @@ describe('stored AI threads', () => {
             sync.handlePostUpdate(end('mine'));
             await settle();
             expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
+        });
+
+        describe('a reply streaming into a chat', () => {
+            const chunk = (postId: string) => ({data: {post_id: postId, control: 'continue', next: 'x'}} as never);
+
+            test('a chat the list does not have yet is fetched while chunks keep coming', async () => {
+                const {sync} = await setup();
+                await act(async () => {
+                    for (let i = 0; i < 5; i++) {
+                        sync.handlePostUpdate(chunk('mine'));
+                        jest.advanceTimersByTime(THREADS_REFRESH_DEBOUNCE_MS / 4);
+                    }
+                });
+                expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
+            });
+
+            test('a slow fetch is left to finish instead of being superseded by later chunks', async () => {
+                const {store, sync} = await setup();
+                const slow = deferred<AIThread[]>();
+                mockGetAIThreads.mockReturnValue(slow.promise);
+                await act(async () => {
+                    for (let i = 0; i < 12; i++) {
+                        sync.handlePostUpdate(chunk('mine'));
+                        jest.advanceTimersByTime(THREADS_REFRESH_DEBOUNCE_MS / 2);
+                    }
+                });
+                expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
+
+                await act(async () => {
+                    slow.resolve([makeThread({id: 'c1'}), makeThread({id: 'new', root_post_id: 'mine'})]);
+                });
+                expect(titles(store)).toEqual(['c1:', 'new:']);
+            });
+
+            test('a chat that streamed in during the first load is fetched once the load settles', async () => {
+                const store = makeStore({bots, posts});
+                const first = deferred<AIThread[]>();
+                mockGetAIThreads.mockReturnValueOnce(first.promise).mockResolvedValue([makeThread({id: 'new', root_post_id: 'mine'})]);
+                const sync = createAgentThreadsSync(store as never);
+                const loading = fetchAIThreads(store.dispatch);
+
+                sync.handlePostUpdate(chunk('mine'));
+                await act(async () => {
+                    first.resolve([makeThread({id: 'c1'})]);
+                    await loading;
+                    jest.advanceTimersByTime(THREADS_REFRESH_DEBOUNCE_MS);
+                });
+                expect(mockGetAIThreads).toHaveBeenCalledTimes(2);
+                expect(titles(store)).toEqual(['new:']);
+            });
+
+            test.each([
+                {name: 'a chat the list has', post: {id: 'listed', channel_id: 'dm_a', root_id: 'root', user_id: 'a'}},
+                {name: 'someone else\'s request in a shared channel', post: posts.others},
+            ])('$name is not fetched', async ({post}) => {
+                const store = makeStore({bots, posts: {...posts, [post.id]: post}});
+                mockGetAIThreads.mockResolvedValue([makeThread({id: 'c1'})]);
+                await act(async () => {
+                    await fetchAIThreads(store.dispatch);
+                });
+                mockGetAIThreads.mockClear();
+                createAgentThreadsSync(store as never).handlePostUpdate(chunk(post.id));
+                await settle();
+                expect(mockGetAIThreads).not.toHaveBeenCalled();
+            });
         });
 
         test('nothing is fetched for a list no view has loaded', async () => {
