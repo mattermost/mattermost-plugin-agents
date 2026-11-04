@@ -54,8 +54,9 @@ func (e *classifiedError) Error() string { return e.msg }
 // never from error text.
 type toolFailure struct {
 	class string
-	// code is the HTTP status or JSON-RPC error code, 0 when there is none.
-	code int
+	// code is the HTTP status or JSON-RPC error code; valid only when hasCode.
+	code    int
+	hasCode bool
 	// errType is the Go type of the innermost error, set only for unknown.
 	errType string
 }
@@ -66,7 +67,7 @@ func (f *toolFailure) Error() string { return f.class }
 
 func (f *toolFailure) logFields() []any {
 	fields := []any{"errorClass", f.class}
-	if f.code != 0 {
+	if f.hasCode {
 		fields = append(fields, "errorCode", f.code)
 	}
 	if f.errType != "" {
@@ -93,15 +94,22 @@ func classifyToolCallError(err error) *toolFailure {
 	if retrieveErr, ok := errors.AsType[*oauth2.RetrieveError](err); ok {
 		failure := &toolFailure{class: toolFailureOAuthExchange}
 		if retrieveErr.Response != nil {
-			failure.code = retrieveErr.Response.StatusCode
+			failure.code, failure.hasCode = retrieveErr.Response.StatusCode, true
 		}
 		return failure
 	}
-	if code := httpStatusFromError(err); code != 0 {
-		return &toolFailure{class: toolFailureHTTPStatus, code: code}
+	rpcErr, isRPC := errors.AsType[*jsonrpc.Error](err)
+	// A transport HTTP failure wraps the JSON-RPC error and appends the status
+	// phrase after it. When the JSON-RPC error text is the tail instead, any
+	// status phrase in it came from the server, not from HTTP.
+	serverRPCError := isRPC && strings.HasSuffix(err.Error(), rpcErr.Error())
+	if !serverRPCError {
+		if code := httpStatusFromError(err); code != 0 {
+			return &toolFailure{class: toolFailureHTTPStatus, code: code, hasCode: true}
+		}
 	}
-	if rpcErr, ok := errors.AsType[*jsonrpc.Error](err); ok {
-		return &toolFailure{class: toolFailureJSONRPC, code: int(rpcErr.Code)}
+	if isRPC {
+		return &toolFailure{class: toolFailureJSONRPC, code: int(rpcErr.Code), hasCode: true}
 	}
 	if errors.Is(err, mcp.ErrSessionMissing) {
 		return &toolFailure{class: toolFailureSessionMissing}
@@ -163,7 +171,7 @@ func (c *Client) recordToolCallFailure(span trace.Span, toolName string, err err
 	failure := classifyToolCallError(err)
 
 	span.SetAttributes(telemetry.MCPErrorClass.String(failure.class))
-	if failure.code != 0 {
+	if failure.hasCode {
 		span.SetAttributes(telemetry.MCPErrorCode.Int(failure.code))
 	}
 	span.RecordError(failure)

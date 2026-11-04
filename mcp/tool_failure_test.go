@@ -86,19 +86,19 @@ func TestToolCallFailureIsLoggedAndTraced(t *testing.T) {
 		canceled   bool
 
 		wantClass string
-		wantCode  int
+		wantCode  *int
 	}{
 		{
 			name:       "upstream server error",
 			httpStatus: http.StatusInternalServerError,
 			wantClass:  toolFailureHTTPStatus,
-			wantCode:   http.StatusInternalServerError,
+			wantCode:   new(http.StatusInternalServerError),
 		},
 		{
 			name:       "upstream forbidden",
 			httpStatus: http.StatusForbidden,
 			wantClass:  toolFailureHTTPStatus,
-			wantCode:   http.StatusForbidden,
+			wantCode:   new(http.StatusForbidden),
 		},
 		{
 			name:       "authorization lapsed",
@@ -110,7 +110,13 @@ func TestToolCallFailureIsLoggedAndTraced(t *testing.T) {
 			name:      "json-rpc error from the server",
 			toolError: errors.New(upstreamSentinel),
 			wantClass: toolFailureJSONRPC,
-			wantCode:  0,
+			wantCode:  new(0),
+		},
+		{
+			name:      "json-rpc error whose message ends in an http phrase",
+			toolError: errors.New("upstream: Bad Gateway"),
+			wantClass: toolFailureJSONRPC,
+			wantCode:  new(0),
 		},
 		{
 			name: "tool reports isError",
@@ -209,8 +215,8 @@ func TestToolCallFailureIsLoggedAndTraced(t *testing.T) {
 			assert.Equal(t, "Tickets", line["serverID"])
 			assert.Equal(t, "search", line["tool"])
 			assert.Equal(t, tt.wantClass, line["errorClass"])
-			if tt.wantCode != 0 {
-				assert.EqualValues(t, tt.wantCode, line["errorCode"])
+			if tt.wantCode != nil {
+				assert.EqualValues(t, *tt.wantCode, line["errorCode"])
 			} else {
 				assert.NotContains(t, line, "errorCode")
 			}
@@ -233,8 +239,10 @@ func TestToolCallFailureIsLoggedAndTraced(t *testing.T) {
 				attrs[string(a.Key)] = a.Value.AsInterface()
 			}
 			assert.Equal(t, tt.wantClass, attrs[string(telemetry.MCPErrorClass)])
-			if tt.wantCode != 0 {
-				assert.EqualValues(t, tt.wantCode, attrs[string(telemetry.MCPErrorCode)])
+			if tt.wantCode != nil {
+				assert.EqualValues(t, *tt.wantCode, attrs[string(telemetry.MCPErrorCode)])
+			} else {
+				assert.NotContains(t, attrs, string(telemetry.MCPErrorCode))
 			}
 
 			// Nothing from the request or the upstream response may leak into
@@ -258,7 +266,7 @@ func TestClassifyToolCallError(t *testing.T) {
 	}{
 		{name: "deadline", err: fmt.Errorf("call: %w", context.DeadlineExceeded), want: toolFailure{class: toolFailureDeadlineExceeded}},
 		{name: "closed connection", err: fmt.Errorf("call: %w", mcp.ErrConnectionClosed), want: toolFailure{class: toolFailureConnectionClosed}},
-		{name: "http status phrase", err: errors.New("failed to call tool x on server y: sending \"tools/call\": Bad Gateway"), want: toolFailure{class: toolFailureHTTPStatus, code: http.StatusBadGateway}},
+		{name: "http status phrase", err: errors.New("failed to call tool x on server y: sending \"tools/call\": Bad Gateway"), want: toolFailure{class: toolFailureHTTPStatus, code: http.StatusBadGateway, hasCode: true}},
 		{name: "unknown names only the type", err: fmt.Errorf("wrapped: %w", errors.New("secret body")), want: toolFailure{class: toolFailureUnknown, errType: "*errors.errorString"}},
 	}
 	for _, tt := range tests {
