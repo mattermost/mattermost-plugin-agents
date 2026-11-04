@@ -27,7 +27,6 @@ var (
 	KeyMCPTool          = string(telemetry.MCPTool)
 	KeyABACResourceType = string(telemetry.ABACResourceType)
 	KeyABACResourceID   = string(telemetry.ABACResourceID)
-	KeyConversationID   = string(telemetry.ConversationID)
 )
 
 const (
