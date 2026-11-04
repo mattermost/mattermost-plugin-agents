@@ -35,14 +35,14 @@ const UnsharedToolResultRedaction = "[arguments and result not shared by user]"
 const PendingShareToolResultRedaction = "[result pending the user's decision to share it]"
 
 // NotExecutedToolResult is replayed as the result of a tool call that was
-// still pending or accepted when the turn ended, so the model does not read
-// it as a call that ran and returned nothing.
+// still pending when the turn ended, so the model does not read it as a call
+// that ran and returned nothing.
 const NotExecutedToolResult = "Not executed: the user stopped the response or moved on without approving this tool call."
 
-// InterruptedToolResult is replayed for an auto-run tool call whose response
-// ended while the batch was executing, so its side effects may already have
-// happened.
-const InterruptedToolResult = "Unknown outcome: the response was interrupted while this tool call was running, so it may have already taken effect. Check its effects before calling it again."
+// InterruptedToolResult is replayed for an approved or auto-run tool call
+// whose response ended while it was executing, so it may already have taken
+// effect.
+const InterruptedToolResult = "Interrupted: the response ended while this tool call was running, so its outcome is unknown."
 
 // unsharedToolUseArgumentsRedaction replaces tool_use arguments the requester
 // has not shared. Empty JSON keeps the call well-formed for providers that
@@ -285,21 +285,22 @@ func BlocksToPost(
 		}
 	}
 
-	// A batch left awaiting a decision always holds a call that did not pass
-	// the auto-run policy; one where every unresolved call passed it was
+	// An accepted call was approved and claimed to run, so without a result it
+	// may have taken effect. A pending call was never decided, except that one
+	// in a batch where every unresolved call passed the auto-run policy was
 	// executing when the response ended.
 	unresolved := func(tc llm.ToolCall) bool {
 		return !resultIDs[tc.ID] && (tc.Status == llm.ToolCallStatusPending || tc.Status == llm.ToolCallStatusAccepted)
 	}
 	wasExecuting := slices.ContainsFunc(post.ToolUse, unresolved) && !slices.ContainsFunc(post.ToolUse, func(tc llm.ToolCall) bool {
-		return unresolved(tc) && !autoRunIDs[tc.ID]
+		return unresolved(tc) && tc.Status == llm.ToolCallStatusPending && !autoRunIDs[tc.ID]
 	})
 	for i := range post.ToolUse {
 		tc := &post.ToolUse[i]
 		if !unresolved(*tc) {
 			continue
 		}
-		if wasExecuting {
+		if tc.Status == llm.ToolCallStatusAccepted || wasExecuting {
 			tc.Result = InterruptedToolResult
 			tc.Status = llm.ToolCallStatusError
 			continue
