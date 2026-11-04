@@ -174,6 +174,11 @@ type scopedEnvOpts struct {
 	botRequester bool
 	// toolPolicy is the admin policy of the scoped test tool (default "ask").
 	toolPolicy string
+	// expectRun says the requester restriction is not expected to refuse the turn.
+	expectRun bool
+	// noScopedSessions leaves the server unable to mint scoped sessions, so
+	// scoped mode is configured but inactive.
+	noScopedSessions bool
 	// noTeamRead withholds read_public_channel on the team from the requester.
 	noTeamRead bool
 	// skillErr fails skill loading, which happens after the session is minted.
@@ -235,7 +240,9 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	}
 	manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
 	t.Cleanup(manager.Close)
-	manager.SetScopedSessions(env.minter)
+	if !opts.noScopedSessions {
+		manager.SetScopedSessions(env.minter)
+	}
 	env.catalog = &scopedCatalogManager{ClientManager: manager, tool: tool}
 
 	enabledTools := []llm.EnabledMCPTool{{ServerOrigin: scopedRemote, ToolName: "get_issue"}}
@@ -308,7 +315,7 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	mmClient.posts = map[string]*model.Post{post.Id: post}
 	env.channel, env.trigger = channel, post
 	env.conversations.MessageHasBeenPosted(nil, post)
-	if opts.streamingErr != nil || opts.skillErr != nil || ((opts.guestRequester || opts.noTeamRead) && llmcontext.ScopedChannelModeAppliesTo(channel)) {
+	if opts.streamingErr != nil || opts.skillErr != nil || ((opts.guestRequester || opts.noTeamRead) && !opts.expectRun && llmcontext.ScopedChannelModeAppliesTo(channel)) {
 		return env
 	}
 
@@ -583,6 +590,17 @@ func TestScopedChannelTurnRefusesGuestRequester(t *testing.T) {
 			})
 		}
 	}
+
+	t.Run("scoped mode configured but inactive falls back to approvals for guests", func(t *testing.T) {
+		channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypeOpen, Name: "town-square"}
+		env := setupScopedTestEnv(t, channel, scopedEnvOpts{guestRequester: true, noScopedSessions: true, expectRun: true},
+			dmMakeToolCallStream(toolCall), dmMakeTextStream("done"))
+
+		minted, _ := env.minter.snapshot()
+		assert.Empty(t, minted)
+		assert.Len(t, allConversations(env.convStore), 1, "the turn ran")
+		assert.Zero(t, env.runs(), "the tool waits for approval")
+	})
 
 	t.Run("group messages never run scoped, so guests are not refused", func(t *testing.T) {
 		channel := &model.Channel{Id: scopedChannelID, Type: model.ChannelTypeGroup, Name: "group"}

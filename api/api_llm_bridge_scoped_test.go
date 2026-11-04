@@ -429,3 +429,61 @@ func TestBridgeScopedAgentRefusesRequesterWithoutTeamRead(t *testing.T) {
 		})
 	}
 }
+
+// Scoped mode that is configured but cannot take effect does not refuse
+// requesters who lack team read access: such requests run unscoped as usual,
+// and tool requests are refused for the inactive mode, not for the requester.
+func TestBridgeScopedAgentInactiveModeIgnoresRequesterRestriction(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	channel := &model.Channel{Id: model.NewId(), TeamId: model.NewId(), Type: model.ChannelTypeOpen}
+	tests := []struct {
+		name         string
+		allowedTools []string
+		wantStatus   int
+		wantErr      string
+	}{
+		{name: "without tools runs"},
+		{name: "with tools is refused for the inactive mode", allowedTools: []string{"jira__get_issue"}, wantStatus: http.StatusForbidden, wantErr: "scoped channel mode is not available"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.mockAPI.On("GetChannel", channel.Id).Return(channel, nil).Maybe()
+			e.mockAPI.On("HasPermissionToTeam", testUserID, channel.TeamId, model.PermissionReadPublicChannel).Return(false).Maybe()
+			e.mockAPI.On("HasPermissionToChannel", testUserID, channel.Id, model.PermissionReadChannel).Return(true).Maybe()
+			e.mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
+
+			manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, e.client.Log, e.client, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
+			t.Cleanup(manager.Close)
+			catalog := &scopedBridgeCatalog{ClientManager: manager}
+			e.api.contextBuilder = llmcontext.NewLLMContextBuilder(e.client, &testLLMContextToolProvider{}, catalog, scopedBridgeConfig{channelToolCalling: true})
+			e.setupTestBot(llm.BotConfig{
+				Name:                  "testbot",
+				DisplayName:           "Test Bot",
+				UserAccessLevel:       llm.UserAccessLevelAll,
+				ChannelAccessLevel:    llm.ChannelAccessLevelAll,
+				UseServiceAccountAuth: true,
+				ScopedChannelMode:     true,
+				EnabledMCPTools:       []llm.EnabledMCPTool{{ServerOrigin: scopedBridgeOrigin, ToolName: "get_issue"}},
+			})
+
+			req := bridgeclient.CompletionRequest{
+				Posts:        []bridgeclient.Post{{Role: "user", Message: "Find the issue"}},
+				UserID:       testUserID,
+				ChannelID:    channel.Id,
+				AllowedTools: tt.allowedTools,
+			}
+			_, status, err := e.api.prepareAgentBridgeCompletion(context.Background(), testBotUserID, req, llm.OperationBridgeAgent, llm.SubTypeNoStream)
+			if tt.wantStatus == 0 {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Equal(t, tt.wantStatus, status)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}

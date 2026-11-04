@@ -436,7 +436,8 @@ func (a *API) bridgeScopedChannel(bot *bots.Bot, userID, channelID string, tools
 	if !llmcontext.ScopedChannelModeAppliesTo(channel) {
 		return nil, 0, nil
 	}
-	if userID != "" && !a.contextBuilder.RequesterCanUseScopedChannelMode(userID, channel) {
+	active := a.contextBuilder != nil && a.contextBuilder.ScopedChannelModeActive(bot, channel)
+	if active && userID != "" && !a.contextBuilder.RequesterCanUseScopedChannelMode(userID, channel) {
 		return nil, http.StatusForbidden, llmcontext.ErrScopedRequesterCannotReadTeamChannels
 	}
 	if !toolsRequested {
@@ -447,7 +448,7 @@ func (a *API) bridgeScopedChannel(bot *bots.Bot, userID, channelID string, tools
 	if !a.pluginAPI.User.HasPermissionToChannel(userID, channel.Id, model.PermissionReadChannel) {
 		return nil, http.StatusForbidden, errors.New("user_id cannot read channel_id")
 	}
-	if a.contextBuilder == nil || !a.contextBuilder.ScopedChannelModeActive(bot, channel) {
+	if !active {
 		return nil, http.StatusForbidden, errors.New("this agent's scoped channel mode is not available, so it cannot run tools")
 	}
 	return channel, 0, nil

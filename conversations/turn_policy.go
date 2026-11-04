@@ -85,7 +85,8 @@ func (c *Conversations) resolveTurnPolicy(ctx context.Context, req turnRequest) 
 			return nil, err
 		}
 		if llmcontext.ScopedChannelModeConfigured(req.bot) && llmcontext.ScopedChannelModeAppliesTo(req.channel) &&
-			!c.contextBuilder.RequesterCanUseScopedChannelMode(req.user.Id, req.channel) {
+			(c.contextBuilder == nil ||
+				(c.contextBuilder.ScopedChannelModeActive(req.bot, req.channel) && !c.contextBuilder.RequesterCanUseScopedChannelMode(req.user.Id, req.channel))) {
 			return nil, llmcontext.ErrScopedRequesterCannotReadTeamChannels
 		}
 		if err := c.licenseChecker.Check(enterprise.CapMultiplayerChannels); err != nil {
