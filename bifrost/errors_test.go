@@ -107,7 +107,7 @@ func TestDescribeBifrostError(t *testing.T) {
 func TestProviderErrorRedactsConfiguredKeys(t *testing.T) {
 	const apiKey = "sk-proj-SECRETKEY1234567890"
 
-	err := providerError(nil, "bifrost stream error", &schemas.BifrostError{
+	err := providerError(nil, nil, "bifrost stream error", &schemas.BifrostError{
 		Error: &schemas.ErrorField{Message: "Incorrect API key provided: " + apiKey},
 	}, apiKey)
 

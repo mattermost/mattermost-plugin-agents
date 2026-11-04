@@ -21,14 +21,13 @@ import (
 
 const (
 	// mcpRequestMaxLifetime bounds every request delegated to the plugin MCP
-	// handler. The Mattermost plugin RPC layer reconstructs HTTP requests
-	// without their original context, so a client that disconnects (for
-	// example after opening a long-lived subscriptions/listen stream) never
-	// cancels the handler; without a bound, the handler goroutine, SDK
-	// session, and host RPC resources would be retained indefinitely. The
-	// limit is deliberately generous — far beyond any real tool call — and
-	// long-lived streams that hit it are simply re-opened by spec-compliant
-	// clients (MCP streams may end at any time).
+	// handler. Client disconnects cancel the request on servers that propagate
+	// the plugin request context; the bound covers a stream whose client
+	// stays connected but idle, so the handler goroutine, SDK session, and
+	// host RPC resources are not retained indefinitely. The limit is
+	// deliberately generous — far beyond any real tool call — and long-lived
+	// streams that hit it are simply re-opened by spec-compliant clients (MCP
+	// streams may end at any time).
 	mcpRequestMaxLifetime = 30 * time.Minute
 
 	// mcpMaxConcurrentRequestsPerUser caps how many delegated MCP requests a
@@ -200,8 +199,8 @@ func (a *API) delegateToMCPHandler(c *gin.Context, handler http.Handler) {
 
 	// Add session ID + token resolver to request context
 	// Uses the same context keys as the embedded server for consistency.
-	// The lifetime cap substitutes for client-disconnect cancellation, which
-	// the plugin RPC layer does not propagate (see mcpRequestMaxLifetime).
+	// The lifetime cap also ends streams whose client never disconnects
+	// (see mcpRequestMaxLifetime).
 	ctx, cancel := context.WithTimeout(c.Request.Context(), mcpRequestMaxLifetime)
 	defer cancel()
 	ctx = context.WithValue(ctx, auth.SessionIDContextKey, sessionID)

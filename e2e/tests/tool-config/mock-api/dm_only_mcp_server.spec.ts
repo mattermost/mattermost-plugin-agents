@@ -138,13 +138,22 @@ test.describe('MCP servers limited to direct messages (Mocked LLM)', () => {
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
         await systemConsole.navigateToPluginConfig(mattermost.url());
 
-        const settings = page.getByRole('radiogroup', { name: 'Direct Messages Only' });
-        await expect(settings).toHaveCount(2);
-        await expect(settings.nth(0).getByRole('radio', { name: 'True' })).toBeChecked();
-        await expect(settings.nth(1).getByRole('radio', { name: 'False' })).toBeChecked();
-
-        await page.getByRole('button', { name: 'Rename Salesforce' }).scrollIntoViewIfNeeded();
-        await attachScreenshot(page, testInfo, 'system-console-setting');
+        const list = page.getByRole('list', { name: 'Remote MCP servers' });
+        const expectations = [
+            { server: 'Salesforce', checked: 'True' },
+            { server: 'Docs', checked: 'False' },
+        ];
+        for (const { server, checked } of expectations) {
+            await list.getByRole('button', { name: `Edit ${server}` }).click();
+            const dialog = page.getByRole('dialog', { name: `Edit ${server}` });
+            const setting = dialog.getByRole('radiogroup', { name: 'Direct Messages Only' });
+            await expect(setting.getByRole('radio', { name: checked })).toBeChecked();
+            if (server === 'Salesforce') {
+                await attachScreenshot(page, testInfo, 'system-console-setting');
+            }
+            await dialog.getByRole('button', { name: 'Cancel' }).click();
+            await expect(dialog).toBeHidden();
+        }
     });
 
     test('a DM with the agent offers the server', async ({ page }, testInfo) => {

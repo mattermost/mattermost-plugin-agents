@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/internal/mmtestcontainer"
+	"github.com/mattermost/mattermost-plugin-agents/v2/internal/mmcontainer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver"
 	"github.com/mattermost/mattermost/server/public/model"
 	plugintest "github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -110,10 +110,7 @@ func setupSharedSuiteAttempt(t *testing.T) (*EmbeddedTestSuite, error) {
 	cfg.TeamSettings.EnableUserCreation = model.NewPointer(true)
 
 	// Start Mattermost container with config at creation time
-	container, err := mmtestcontainer.RunContainer(ctx,
-		mmtestcontainer.WithLicense(""),
-		mmtestcontainer.WithConfig(cfg),
-	)
+	container, err := mmcontainer.Run(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start shared Mattermost container: %w", err)
 	}
@@ -126,7 +123,7 @@ func setupSharedSuiteAttempt(t *testing.T) (*EmbeddedTestSuite, error) {
 	}
 
 	// Get admin client
-	adminClient, err := container.GetAdminClient(ctx)
+	adminClient, err := container.AdminClient(ctx)
 	if err != nil {
 		_ = container.Terminate(ctx)
 		return nil, fmt.Errorf("failed to get admin client: %w", err)
@@ -143,7 +140,7 @@ func setupSharedSuiteAttempt(t *testing.T) (*EmbeddedTestSuite, error) {
 // EmbeddedTestSuite provides infrastructure for testing the embedded MCP server
 type EmbeddedTestSuite struct {
 	t              *testing.T
-	container      *mmtestcontainer.MattermostContainer
+	container      *mmcontainer.Container
 	serverURL      string
 	adminClient    *model.Client4
 	embeddedServer *mcpserver.MattermostInMemoryMCPServer
@@ -164,10 +161,7 @@ func SetupEmbeddedTestSuite(t *testing.T) *EmbeddedTestSuite {
 	cfg.TeamSettings.EnableUserCreation = model.NewPointer(true)
 
 	// Start Mattermost container with config at creation time
-	container, err := mmtestcontainer.RunContainer(ctx,
-		mmtestcontainer.WithLicense(""),
-		mmtestcontainer.WithConfig(cfg),
-	)
+	container, err := mmcontainer.Run(ctx, cfg)
 	require.NoError(t, err, "Failed to start Mattermost container")
 
 	// Get connection details
@@ -175,7 +169,7 @@ func SetupEmbeddedTestSuite(t *testing.T) *EmbeddedTestSuite {
 	require.NoError(t, err, "Failed to get server URL")
 
 	// Get admin client
-	adminClient, err := container.GetAdminClient(ctx)
+	adminClient, err := container.AdminClient(ctx)
 	require.NoError(t, err, "Failed to get admin client")
 
 	suite := &EmbeddedTestSuite{

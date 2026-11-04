@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 	"testing"
 	"time"
 
@@ -16,7 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/internal/mmtestcontainer"
+	"github.com/mattermost/mattermost-plugin-agents/v2/internal/mmcontainer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver"
 	loggerlib "github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/tools"
@@ -70,19 +69,10 @@ func formatKV(kvs []any) string {
 // Compile-time check that testLogger satisfies logger.Logger.
 var _ loggerlib.Logger = (*testLogger)(nil)
 
-// withLatestMattermostImage runs the suite against the latest stable server; the
-// library default is an old release.
-func withLatestMattermostImage(req *mmtestcontainer.MattermostContainerRequest) {
-	req.Image = "mattermost/mattermost-enterprise-edition:latest"
-	if image := os.Getenv("MM_IMAGE"); image != "" {
-		req.Image = image
-	}
-}
-
 // TestSuite represents the integration test suite
 type TestSuite struct {
 	t          *testing.T
-	container  *mmtestcontainer.MattermostContainer
+	container  *mmcontainer.Container
 	serverURL  string
 	adminToken string
 	logger     loggerlib.Logger
@@ -105,14 +95,10 @@ func SetupTestSuite(t *testing.T) *TestSuite {
 	cfg.ServiceSettings.EnableUserAccessTokens = model.NewPointer(true)
 
 	// Retry once — the container init (team/user creation via mmctl) can hit transient races.
-	var container *mmtestcontainer.MattermostContainer
+	var container *mmcontainer.Container
 	var err error
 	for attempt := range 2 {
-		container, err = mmtestcontainer.RunContainer(ctx,
-			mmtestcontainer.WithLicense(""),
-			mmtestcontainer.WithConfig(cfg),
-			withLatestMattermostImage,
-		)
+		container, err = mmcontainer.Run(ctx, cfg)
 		if err == nil {
 			break
 		}
@@ -126,7 +112,7 @@ func SetupTestSuite(t *testing.T) *TestSuite {
 	serverURL, err := container.URL(ctx)
 	require.NoError(t, err, "Failed to get server URL")
 
-	adminClient, err := container.GetAdminClient(ctx)
+	adminClient, err := container.AdminClient(ctx)
 	require.NoError(t, err, "Failed to get admin client")
 
 	var pat *model.UserAccessToken

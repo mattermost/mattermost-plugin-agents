@@ -78,6 +78,7 @@ const groups = {
         'tests/notifications/notification-lab-baseline.spec.ts',
         'tests/notifications/agent-channel.spec.ts',
         'tests/notifications/agent-tools.spec.ts',
+        'tests/system-console/mcp-add-server-wizard.spec.ts',
         'tests/tool-config/mock-api/dm_only_mcp_server.spec.ts',
     ],
     'e2e-shard-4': [
