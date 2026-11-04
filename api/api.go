@@ -147,6 +147,7 @@ type ConversationStore interface {
 	GetTurnByPostID(postID string) (*store.Turn, error)
 	UpdateTurnContent(id string, content json.RawMessage) error
 	GetConversationSummariesForUser(userID string, limit, offset int) ([]store.ConversationSummary, error)
+	RenameConversation(id, title string) (bool, error)
 }
 
 // ChannelAutoReplyStore provides read/write access to per-channel auto-reply settings.
@@ -375,6 +376,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 
 	router.GET("/conversations/:conversationid", a.handleGetConversation)
 	router.GET("/conversations/:conversationid/context", a.handleGetConversationContext)
+	router.PUT("/conversations/:conversationid/title", a.handleRenameConversation)
 
 	router.GET("/oauth/callback", a.handleOAuthCallback)
 	router.GET("/ai_threads", a.handleGetAIThreads)
@@ -452,6 +454,8 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	agentPostRouter.POST("/regenerate", a.handleRegenerate)
 	agentPostRouter.POST("/tool_call", a.handleToolCall)
 	agentPostRouter.POST("/tool_result", a.handleToolResult)
+	agentPostRouter.POST("/wait/check_now", a.handleWaitCheckNow)
+	agentPostRouter.POST("/wait/cancel", a.handleWaitCancel)
 
 	channelRouter := botRequiredRouter.Group("/channel/:channelid")
 	channelRouter.Use(a.channelAuthorizationRequired)
