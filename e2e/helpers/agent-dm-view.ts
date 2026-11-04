@@ -14,6 +14,9 @@ const RAW_VIEW_ACTION = 'AI_AGENT_DM_RAW_VIEW_SET';
 
 const DECISION_TIMEOUT_MS = 30000;
 
+// How long the stock composer may show before the agent view takes over on a host that supports it.
+const VIEW_SWITCH_GRACE_MS = 5000;
+
 /** Waits until the plugin's agents are loaded and `channelId` is the open channel, so the host has picked the DM's view. */
 async function waitForViewDecision(page: Page, channelId: string): Promise<void> {
     await expect.poll(() => page.evaluate(({key, id}) => {
@@ -32,7 +35,7 @@ export async function hostShowsAgentDMView(page: Page, channelId: string): Promi
 
     // The channel's own composer (the agent view's new-chat composer is a host editor too, outside it).
     await expect(agentView.or(page.getByTestId('post-create')).first()).toBeVisible({timeout: DECISION_TIMEOUT_MS});
-    return agentView.isVisible();
+    return agentView.waitFor({state: 'visible', timeout: VIEW_SWITCH_GRACE_MS}).then(() => true, () => false);
 }
 
 /**
@@ -60,4 +63,5 @@ export async function showAgentDMAsMessages(page: Page, channelId?: string): Pro
     await page.evaluate(({type, channel}) => {
         (window as any).store.dispatch({type, channelId: channel, raw: true});
     }, {type: RAW_VIEW_ACTION, channel: id});
+    await expect(page.getByTestId('agent-dm-channel-view')).toHaveCount(0, {timeout: DECISION_TIMEOUT_MS});
 }
