@@ -544,7 +544,7 @@ func (m *mockConversationStore) UpdateTurnContent(id string, content json.RawMes
 	return nil
 }
 
-func (m *mockConversationStore) GetConversationSummariesForUser(_ string, _, _ int) ([]store.ConversationSummary, error) {
+func (m *mockConversationStore) GetBotDMConversationSummariesForUser(_ string, _, _ int) ([]store.ConversationSummary, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
