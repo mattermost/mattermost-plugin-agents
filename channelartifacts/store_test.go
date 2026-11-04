@@ -23,21 +23,27 @@ import (
 )
 
 type memoryKV struct {
-	mu             sync.Mutex
-	data           map[string][]byte
-	permissionAll  bool
-	readAll        bool
-	channels       map[string]*model.Channel
-	histSetCount   int
-	failHistSet    int
-	failNextMeta   bool
-	onFailNextMeta func(data map[string][]byte)
-	beforeHistCAS  func(data map[string][]byte)
-	unreadable     map[string]bool
-	beforeSHAClaim func(data map[string][]byte, key string)
-	rejectHistCAS  bool
-	failSHADelete  bool
-	failMetaDelete bool
+	mu                     sync.Mutex
+	data                   map[string][]byte
+	permissionAll          bool
+	readAll                bool
+	channels               map[string]*model.Channel
+	histSetCount           int
+	failHistSet            int
+	failNextMeta           bool
+	onFailNextMeta         func(data map[string][]byte)
+	beforeHistCAS          func(data map[string][]byte)
+	unreadable             map[string]bool
+	beforeSHAClaim         func(data map[string][]byte, key string)
+	rejectHistCAS          bool
+	histCASCount           int
+	failHistCASAt          int
+	failSHADeletes         int
+	failMetaDelete         bool
+	failBlobDeletes        int
+	siteCountWriteCount    int
+	failSiteCountWriteAt   int
+	failSiteCountWriteFrom int
 }
 
 func newMemoryKV() *memoryKV {
@@ -110,6 +116,10 @@ func (kv *memoryKV) KVDelete(key string) error {
 		kv.failMetaDelete = false
 		return errors.New("kv delete failed")
 	}
+	if kv.failBlobDeletes > 0 && strings.HasPrefix(key, keyPrefixBlob) {
+		kv.failBlobDeletes--
+		return errors.New("blob delete failed")
+	}
 	delete(kv.data, key)
 	return nil
 }
@@ -117,11 +127,33 @@ func (kv *memoryKV) KVDelete(key string) error {
 func (kv *memoryKV) KVCompareAndSet(key string, oldValue, newValue any) (bool, error) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
+	if strings.HasPrefix(key, keyPrefixMeta) && newValue != nil && kv.failNextMeta {
+		kv.failNextMeta = false
+		hook := kv.onFailNextMeta
+		kv.onFailNextMeta = nil
+		if hook != nil {
+			hook(kv.data)
+		}
+		return false, errors.New("kv set failed")
+	}
+	if key == keySiteCount && newValue != nil {
+		kv.siteCountWriteCount++
+		if (kv.failSiteCountWriteAt > 0 && kv.siteCountWriteCount == kv.failSiteCountWriteAt) ||
+			(kv.failSiteCountWriteFrom > 0 && kv.siteCountWriteCount >= kv.failSiteCountWriteFrom) {
+			return false, errors.New("site count write failed")
+		}
+	}
+	if strings.HasPrefix(key, keyPrefixHist) {
+		kv.histCASCount++
+		if kv.failHistCASAt > 0 && kv.histCASCount == kv.failHistCASAt {
+			return false, nil
+		}
+	}
 	if strings.HasPrefix(key, keyPrefixHist) && kv.rejectHistCAS {
 		return false, nil
 	}
-	if newValue == nil && strings.HasPrefix(key, keyPrefixSHA) && kv.failSHADelete {
-		kv.failSHADelete = false
+	if newValue == nil && strings.HasPrefix(key, keyPrefixSHA) && kv.failSHADeletes > 0 {
+		kv.failSHADeletes--
 		return false, errors.New("sha delete failed")
 	}
 	if strings.HasPrefix(key, keyPrefixHist) && kv.beforeHistCAS != nil {
@@ -563,7 +595,8 @@ func TestPruneKeepsBlobsWhenHistorySaveFails(t *testing.T) {
 	kv.histSetCount = 0
 	kv.failHistSet = 1
 	err := store.ReplaceContent(entry, []byte("<html>3</html>"), 1024, 2)
-	require.Error(t, err)
+	require.ErrorIs(t, err, ErrCleanupDeferred)
+	require.Equal(t, 3, entry.Version)
 
 	body, err := store.ReadContentAt(entry, 1)
 	require.NoError(t, err)
@@ -787,18 +820,22 @@ func TestPurgeLeavesTheArtifactReadableWhenSHADeleteFails(t *testing.T) {
 	entry := testEntry(model.NewId())
 	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
 
-	kv.failSHADelete = true
+	kv.failSHADeletes = 1
 	require.Error(t, store.Purge(entry))
 
 	stored, err := store.Get(entry.ID)
 	require.NoError(t, err)
-	require.Equal(t, entry.ID, stored.ID)
+	require.True(t, stored.Purging)
 	owner, err := store.FindBySHA(entry.ChannelID, entry.SHA256)
 	require.NoError(t, err)
 	require.Equal(t, entry.ID, owner)
 	listed, err := store.List(entry.ChannelID)
 	require.NoError(t, err)
-	require.Len(t, listed, 1)
+	require.Empty(t, listed)
+
+	require.NoError(t, store.Purge(entry))
+	_, err = store.Get(entry.ID)
+	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestPurgeRetriesCleanupAfterAMetaDeleteFailure(t *testing.T) {
@@ -811,9 +848,12 @@ func TestPurgeRetriesCleanupAfterAMetaDeleteFailure(t *testing.T) {
 	require.Error(t, store.Purge(entry))
 	_, err := store.FindBySHA(entry.ChannelID, entry.SHA256)
 	require.ErrorIs(t, err, ErrNotFound)
+	stored, err := store.Get(entry.ID)
+	require.NoError(t, err)
+	require.True(t, stored.Purging)
 	listed, err := store.List(entry.ChannelID)
 	require.NoError(t, err)
-	require.Len(t, listed, 1)
+	require.Empty(t, listed)
 
 	require.NoError(t, store.Purge(entry))
 	_, err = store.Get(entry.ID)
@@ -866,6 +906,163 @@ func TestRetentionChannelIDsResumesAndWraps(t *testing.T) {
 		}
 	}
 	require.Len(t, seenAgain, len(want))
+}
+
+func TestSaveRepairsASiteCountLeftHighByACrash(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	first := testEntry(model.NewId())
+	require.NoError(t, store.Save(first, []byte("<html>a</html>"), 1024, 10, 0))
+	require.NoError(t, kv.KVSet(keySiteCount, 5))
+	require.NoError(t, kv.KVSet(keySiteCountDirty, true))
+
+	second := testEntry(model.NewId())
+	require.NoError(t, store.Save(second, []byte("<html>b</html>"), 1024, 10, 2))
+	third := testEntry(model.NewId())
+	err := store.Save(third, []byte("<html>c</html>"), 1024, 10, 2)
+	require.ErrorIs(t, err, ErrLimitReached)
+}
+
+func TestSaveRepairsTheSiteCountWhenReleaseFails(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	channelID := model.NewId()
+	first := testEntry(channelID)
+	require.NoError(t, store.Save(first, []byte("<html>a</html>"), 1024, 1, 0))
+
+	kv.failSiteCountWriteAt = 3
+	second := testEntry(channelID)
+	err := store.Save(second, []byte("<html>b</html>"), 1024, 1, 0)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrLimitReached)
+
+	kv.failSiteCountWriteAt = 0
+	third := testEntry(model.NewId())
+	require.NoError(t, store.Save(third, []byte("<html>c</html>"), 1024, 10, 2))
+	fourth := testEntry(model.NewId())
+	err = store.Save(fourth, []byte("<html>d</html>"), 1024, 10, 2)
+	require.ErrorIs(t, err, ErrLimitReached)
+}
+
+func TestPurgeReturnsTheSiteCountErrorWhenRepairFails(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>a</html>"), 1024, 10, 1))
+
+	kv.failSiteCountWriteFrom = 2
+	require.Error(t, store.Purge(entry))
+	_, err := store.Get(entry.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+
+	kv.failSiteCountWriteFrom = 0
+	again := testEntry(model.NewId())
+	require.NoError(t, store.Save(again, []byte("<html>b</html>"), 1024, 10, 1))
+}
+
+func TestUpdateMetaDoesNotOverwriteANewerHead(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
+	stale := *entry
+	stale.Title = "stale"
+	require.NoError(t, store.ReplaceContent(entry, []byte("<html>2</html>"), 1024, 0))
+
+	err := store.UpdateMeta(&stale)
+	require.ErrorIs(t, err, ErrConflict)
+	stored, err := store.Get(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, 2, stored.Version)
+	require.NotEqual(t, "stale", stored.Title)
+}
+
+func TestRollbackPersistsTheStampWhenTheVersionIsCurrent(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
+	entry.UpdatedBy = "actor"
+	entry.UpdateAt = 42
+	require.NoError(t, store.Rollback(entry, 1))
+
+	stored, err := store.Get(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, 1, stored.Version)
+	require.Equal(t, "actor", stored.UpdatedBy)
+	require.Equal(t, int64(42), stored.UpdateAt)
+}
+
+func TestReplaceContentReportsASHAReleaseFailure(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
+	body := []byte("<html>2</html>")
+	kv.failNextMeta = true
+	kv.failSHADeletes = 8
+
+	err := store.ReplaceContent(entry, body, 1024, 0)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "sha delete failed")
+	require.Equal(t, 1, entry.Version)
+
+	versions, err := store.ListVersions(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, []int{1}, []int{versions[0].Version})
+	owner, err := store.FindBySHA(entry.ChannelID, sha256Hex(body))
+	require.NoError(t, err)
+	require.Equal(t, entry.ID, owner)
+}
+
+func TestReplaceContentDropsAVersionWhenHistoryRestoreConflicts(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
+	require.NoError(t, store.ReplaceContent(entry, []byte("<html>2</html>"), 1024, 0))
+	body := []byte("<html>3</html>")
+
+	kv.histCASCount = 0
+	kv.failHistCASAt = 2
+	kv.failNextMeta = true
+	err := store.ReplaceContent(entry, body, 1024, 0)
+	require.Error(t, err)
+
+	versions, err := store.ListVersions(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, []int{1, 2}, []int{versions[0].Version, versions[1].Version})
+	_, err = store.FindBySHA(entry.ChannelID, sha256Hex(body))
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = store.ReadContentAt(entry, 3)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestPurgeKeepsTheLookupWhenBlobDeleteFails(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	body := []byte("<html>1</html>")
+	require.NoError(t, store.Save(entry, body, 1024, 0, 0))
+
+	kv.failBlobDeletes = 1
+	require.Error(t, store.Purge(entry))
+
+	owner, err := store.FindBySHA(entry.ChannelID, entry.SHA256)
+	require.NoError(t, err)
+	require.Equal(t, entry.ID, owner)
+	read, err := store.ReadContent(entry)
+	require.NoError(t, err)
+	require.Equal(t, string(body), string(read))
+	listed, err := store.List(entry.ChannelID)
+	require.NoError(t, err)
+	require.Empty(t, listed)
+
+	require.NoError(t, store.Purge(entry))
+	_, err = store.Get(entry.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = store.FindBySHA(entry.ChannelID, entry.SHA256)
+	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func sha256Hex(content []byte) string {

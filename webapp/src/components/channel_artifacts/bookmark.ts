@@ -205,6 +205,17 @@ export async function pinLibraryArtifactBookmark(
     return keeper;
 }
 
+async function listBookmarksForDuplicateCheck(channelId: string, attemptsLeft: number): Promise<ChannelBookmark[]> {
+    try {
+        return await Client4.getChannelBookmarks(channelId);
+    } catch (err) {
+        if (attemptsLeft <= 1) {
+            throw err instanceof Error ? err : new Error('bookmark duplicate cleanup did not run');
+        }
+        return listBookmarksForDuplicateCheck(channelId, attemptsLeft - 1);
+    }
+}
+
 async function keepEarliestLibraryBookmark(
     state: GlobalState,
     channelId: string,
@@ -212,13 +223,7 @@ async function keepEarliestLibraryBookmark(
     created: ChannelBookmark,
     dispatch?: Dispatch,
 ): Promise<ChannelBookmark> {
-    let listed: ChannelBookmark[];
-    try {
-        listed = await Client4.getChannelBookmarks(channelId);
-    } catch {
-        dispatchReceivedBookmark(dispatch, created);
-        return created;
-    }
+    const listed = await listBookmarksForDuplicateCheck(channelId, 3);
     const matches = listed.filter((bookmark) => bookmark.type === 'link' && libraryBookmarkLink(bookmark.link_url, artifactId));
     if (matches.length <= 1) {
         dispatchReceivedBookmark(dispatch, created);
@@ -277,8 +282,12 @@ export async function syncLibraryArtifactBookmarkTitle(
         return false;
     }
     const fromState = state.entities?.channelBookmarks?.byChannelId?.[channelId];
-    const existing = fromState ? Object.values(fromState) : await Client4.getChannelBookmarks(channelId);
-    const found = findLibraryArtifactBookmark(existing, artifactId);
+    let existing = fromState ? Object.values(fromState) : await Client4.getChannelBookmarks(channelId);
+    let found = findLibraryArtifactBookmark(existing, artifactId);
+    if (!found && fromState) {
+        existing = await Client4.getChannelBookmarks(channelId);
+        found = findLibraryArtifactBookmark(existing, artifactId);
+    }
     if (!found || found.display_name === displayName) {
         return false;
     }

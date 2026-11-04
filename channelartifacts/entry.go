@@ -53,6 +53,9 @@ type Entry struct {
 	// when the HTML body is replaced; rename/description patches leave it alone.
 	Version       int `json:"version"`
 	SchemaVersion int `json:"schema_version"`
+	// Purging hides the entry from listings while a failed purge is retried.
+	// Content and the SHA lookup stay until that cleanup finishes.
+	Purging bool `json:"purging,omitempty"`
 }
 
 // VersionRecord is one immutable content snapshot for an artifact.

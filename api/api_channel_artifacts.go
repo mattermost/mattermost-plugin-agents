@@ -137,9 +137,12 @@ func (a *API) handleCreateChannelArtifact(c *gin.Context) {
 		channelartifacts.RootPostID(post),
 		limits,
 	)
-	if err != nil {
+	if err != nil && !errors.Is(err, channelartifacts.ErrCleanupDeferred) {
 		a.writeChannelArtifactError(c, err)
 		return
+	}
+	if errors.Is(err, channelartifacts.ErrCleanupDeferred) && a.pluginAPI != nil {
+		a.pluginAPI.Log.Warn("channel artifact version prune deferred", "artifact_id", entry.ID, "error", err.Error())
 	}
 	event := WebsocketEventChannelArtifactCreated
 	status := http.StatusCreated
@@ -195,9 +198,12 @@ func (a *API) handleReplaceChannelArtifact(c *gin.Context) {
 		channelartifacts.RootPostID(post),
 		limits,
 	)
-	if err != nil {
+	if err != nil && !errors.Is(err, channelartifacts.ErrCleanupDeferred) {
 		a.writeChannelArtifactError(c, err)
 		return
+	}
+	if errors.Is(err, channelartifacts.ErrCleanupDeferred) && a.pluginAPI != nil {
+		a.pluginAPI.Log.Warn("channel artifact version prune deferred", "artifact_id", updated.ID, "error", err.Error())
 	}
 	a.channelArtifacts.Publish(WebsocketEventChannelArtifactUpdated, updated.ChannelID, map[string]any{
 		"artifact": updated,

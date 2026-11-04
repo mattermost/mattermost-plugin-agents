@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -29,19 +30,23 @@ const (
 	keyPrefixSHA          = "cart_sha_"
 	keyPrefixHist         = "cart_hist_"
 	keySiteCount          = "cart_site_count"
+	keySiteCountDirty     = "cart_site_count_dirty"
+	keySiteLock           = "cart_site_lock"
+	siteLockTTL           = 30 * time.Second
 	keyRetentionCursor    = "cart_retention_cursor"
 	retentionPageSize     = 100
 	defaultRetentionBatch = 100
 )
 
 var (
-	ErrNotFound       = errors.New("channel artifact not found")
-	ErrConflict       = errors.New("channel artifact index conflict")
-	ErrLimitReached   = errors.New("channel artifact limit reached")
-	ErrDuplicate      = errors.New("identical artifact already saved")
-	ErrInvalidInput   = errors.New("invalid channel artifact input")
-	ErrTooLarge       = errors.New("channel artifact too large")
-	ErrNotPermutation = errors.New("order is not a permutation of current ids")
+	ErrNotFound        = errors.New("channel artifact not found")
+	ErrConflict        = errors.New("channel artifact index conflict")
+	ErrLimitReached    = errors.New("channel artifact limit reached")
+	ErrDuplicate       = errors.New("identical artifact already saved")
+	ErrInvalidInput    = errors.New("invalid channel artifact input")
+	ErrTooLarge        = errors.New("channel artifact too large")
+	ErrNotPermutation  = errors.New("order is not a permutation of current ids")
+	ErrCleanupDeferred = errors.New("channel artifact cleanup deferred")
 )
 
 // Store persists channel artifact catalog entries and gzipped HTML blobs in plugin KV.
@@ -164,6 +169,104 @@ func (s *Store) adjustSiteCount(delta int) error {
 	return ErrConflict
 }
 
+func (s *Store) lockSite() (string, error) {
+	owner := model.NewId()
+	for range 8 {
+		ok, err := s.kv.KVCompareAndSetWithExpiry(keySiteLock, nil, owner, siteLockTTL)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return owner, nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return "", ErrConflict
+}
+
+func (s *Store) unlockSite(owner string) {
+	_, _ = s.kv.KVCompareAndSet(keySiteLock, owner, nil)
+}
+
+func (s *Store) withSiteCount(fn func() error) error {
+	owner, err := s.lockSite()
+	if err != nil {
+		return err
+	}
+	defer s.unlockSite(owner)
+	return fn()
+}
+
+func (s *Store) siteCountDirty() (bool, error) {
+	var raw []byte
+	err := s.kv.KVGet(keySiteCountDirty, &raw)
+	if mmapi.IsKVNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Store) markSiteCountDirty() error {
+	return s.kv.KVSet(keySiteCountDirty, true)
+}
+
+func (s *Store) clearSiteCountDirty() error {
+	return s.kv.KVDelete(keySiteCountDirty)
+}
+
+func (s *Store) countIndexedArtifacts() (int, error) {
+	ids, err := s.channelIndexIDs()
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for _, channelID := range ids {
+		idx, _, idxErr := s.getIndex(channelID)
+		if idxErr != nil {
+			return 0, idxErr
+		}
+		total += len(idx.IDs)
+	}
+	return total, nil
+}
+
+// reconcileSiteCount sets the counter from the channel indexes. Callers hold
+// the site lock, so a save cannot be between its reservation and its index write.
+func (s *Store) reconcileSiteCount() error {
+	total, err := s.countIndexedArtifacts()
+	if err != nil {
+		return err
+	}
+	for range 8 {
+		_, oldRaw, countErr := s.getSiteCount()
+		if countErr != nil {
+			return countErr
+		}
+		if setErr := s.setSiteCountCAS(oldRaw, total); setErr != nil {
+			if errors.Is(setErr, ErrConflict) {
+				continue
+			}
+			return setErr
+		}
+		return s.clearSiteCountDirty()
+	}
+	return ErrConflict
+}
+
+func (s *Store) repairSiteCountIfDirty() error {
+	dirty, err := s.siteCountDirty()
+	if err != nil {
+		return err
+	}
+	if !dirty {
+		return nil
+	}
+	return s.reconcileSiteCount()
+}
+
 func (s *Store) Get(id string) (*Entry, error) {
 	var entry Entry
 	err := s.kv.KVGet(metaKey(id), &entry)
@@ -243,11 +346,21 @@ func (s *Store) reserveSHA(channelID, sha, ownerID string) (created bool, err er
 }
 
 // releaseReservedSHA removes a lookup only when this call created it.
-func (s *Store) releaseReservedSHA(channelID, sha, ownerID string, created bool) {
+// The delete is retried because its compare value is this artifact's id, so a
+// retry cannot remove another artifact's lookup. A remaining error is returned.
+func (s *Store) releaseReservedSHA(channelID, sha, ownerID string, created bool) error {
 	if !created {
-		return
+		return nil
 	}
-	_ = s.deleteSHAIfOwner(channelID, sha, ownerID)
+	var last error
+	for range 8 {
+		if err := s.deleteSHAIfOwner(channelID, sha, ownerID); err != nil {
+			last = err
+			continue
+		}
+		return nil
+	}
+	return last
 }
 
 func (s *Store) List(channelID string) ([]*Entry, error) {
@@ -263,6 +376,9 @@ func (s *Store) List(channelID string) ([]*Entry, error) {
 		}
 		if err != nil {
 			return nil, err
+		}
+		if entry.Purging {
+			continue
 		}
 		out = append(out, entry)
 	}
@@ -690,50 +806,65 @@ func (s *Store) Save(entry *Entry, content []byte, maxSize int64, maxPerChannel,
 		return fmt.Errorf("%w: %s", ErrDuplicate, existing)
 	}
 
-	siteCounted := false
-	cleanup := func() {
-		if siteCounted {
-			_ = s.adjustSiteCount(-1)
+	if err := s.commitNewArtifact(entry, maxPerChannel, maxSitewide); err != nil {
+		idx, _, indexErr := s.getIndex(entry.ChannelID)
+		if indexErr != nil || !slices.Contains(idx.IDs, entry.ID) {
+			_ = s.deleteSHAIfOwner(entry.ChannelID, sha, entry.ID)
+			_ = s.kv.KVDelete(metaKey(entry.ID))
+			s.deleteAllVersionBlobs(hist, entry.ID)
+			_ = s.kv.KVDelete(histKey(entry.ID))
 		}
-		_ = s.deleteSHAIfOwner(entry.ChannelID, sha, entry.ID)
-		_ = s.kv.KVDelete(metaKey(entry.ID))
-		s.deleteAllVersionBlobs(hist, entry.ID)
-		_ = s.kv.KVDelete(histKey(entry.ID))
+		return err
 	}
+	return nil
+}
 
-	for range 8 {
-		count, oldRaw, err := s.getSiteCount()
-		if err != nil {
-			cleanup()
+// commitNewArtifact reserves a site slot and appends the channel index.
+// The site lock covers both writes. A dirty counter is rebuilt from the
+// indexes before the limit check, so a crash between the two writes cannot
+// leave the counter high.
+func (s *Store) commitNewArtifact(entry *Entry, maxPerChannel, maxSitewide int) error {
+	return s.withSiteCount(func() error {
+		if err := s.repairSiteCountIfDirty(); err != nil {
 			return err
 		}
-		if maxSitewide > 0 && count >= maxSitewide {
-			cleanup()
-			return ErrLimitReached
-		}
-		if err := s.setSiteCountCAS(oldRaw, count+1); err != nil {
-			if errors.Is(err, ErrConflict) {
-				continue
+		for range 8 {
+			count, oldRaw, err := s.getSiteCount()
+			if err != nil {
+				return err
 			}
-			cleanup()
-			return err
+			if maxSitewide > 0 && count >= maxSitewide {
+				return ErrLimitReached
+			}
+			if err := s.markSiteCountDirty(); err != nil {
+				return err
+			}
+			if err := s.setSiteCountCAS(oldRaw, count+1); err != nil {
+				if errors.Is(err, ErrConflict) {
+					continue
+				}
+				return err
+			}
+			if err := s.appendChannelIndex(entry, maxPerChannel); err != nil {
+				if recErr := s.reconcileSiteCount(); recErr != nil {
+					return errors.Join(err, recErr)
+				}
+				return err
+			}
+			_ = s.clearSiteCountDirty()
+			return nil
 		}
-		siteCounted = true
-		break
-	}
-	if !siteCounted {
-		cleanup()
 		return ErrConflict
-	}
+	})
+}
 
+func (s *Store) appendChannelIndex(entry *Entry, maxPerChannel int) error {
 	for range 8 {
 		idx, oldRaw, err := s.getIndex(entry.ChannelID)
 		if err != nil {
-			cleanup()
 			return err
 		}
 		if len(idx.IDs) >= maxPerChannel {
-			cleanup()
 			return ErrLimitReached
 		}
 		idx.IDs = append(idx.IDs, entry.ID)
@@ -741,12 +872,63 @@ func (s *Store) Save(entry *Entry, content []byte, maxSize int64, maxPerChannel,
 			if errors.Is(err, ErrConflict) {
 				continue
 			}
-			cleanup()
 			return err
 		}
 		return nil
 	}
-	cleanup()
+	return ErrConflict
+}
+
+func (s *Store) loadMetaRaw(id string) (*Entry, []byte, error) {
+	var raw []byte
+	err := s.kv.KVGet(metaKey(id), &raw)
+	if mmapi.IsKVNotFound(err) {
+		return nil, nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	var entry Entry
+	if err := json.Unmarshal(raw, &entry); err != nil {
+		return nil, nil, err
+	}
+	return &entry, raw, nil
+}
+
+func (s *Store) saveMetaCAS(id string, oldRaw []byte, entry *Entry) error {
+	var old any
+	if oldRaw != nil {
+		old = oldRaw
+	}
+	ok, err := s.kv.KVCompareAndSet(metaKey(id), old, entry)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrConflict
+	}
+	return nil
+}
+
+// casHead writes entry only while the stored head still has expectedVersion and
+// expectedSHA. A newer content write returns ErrConflict instead of being overwritten.
+func (s *Store) casHead(expectedVersion int, expectedSHA string, entry *Entry) error {
+	for range 8 {
+		stored, raw, err := s.loadMetaRaw(entry.ID)
+		if err != nil {
+			return err
+		}
+		if stored.Version != expectedVersion || stored.SHA256 != expectedSHA {
+			return ErrConflict
+		}
+		if err := s.saveMetaCAS(entry.ID, raw, entry); err != nil {
+			if errors.Is(err, ErrConflict) {
+				continue
+			}
+			return err
+		}
+		return nil
+	}
 	return ErrConflict
 }
 
@@ -760,7 +942,7 @@ func (s *Store) UpdateMeta(entry *Entry) error {
 	if err := validateDescription(entry.Description); err != nil {
 		return err
 	}
-	return s.kv.KVSet(metaKey(entry.ID), entry)
+	return s.casHead(entry.Version, entry.SHA256, entry)
 }
 
 // ReplaceContent appends a new content version, keeping prior gzip blobs.
@@ -782,7 +964,17 @@ func (s *Store) ReplaceContent(entry *Entry, content []byte, maxSize int64, maxK
 		if err := s.UpdateMeta(entry); err != nil {
 			return err
 		}
-		return s.ensureOwnSHA(entry.ChannelID, sha, entry.ID)
+		if err := s.ensureOwnSHA(entry.ChannelID, sha, entry.ID); err != nil {
+			return err
+		}
+		hist, histErr := s.ensureHistory(entry)
+		if histErr != nil {
+			return histErr
+		}
+		if pruneErr := s.pruneOldestVersions(entry, hist, maxKeep); pruneErr != nil {
+			return fmt.Errorf("%w: %w", ErrCleanupDeferred, pruneErr)
+		}
+		return nil
 	}
 	if existing, err := s.FindBySHA(entry.ChannelID, sha); err == nil && existing != "" && existing != entry.ID {
 		return fmt.Errorf("%w: %s", ErrDuplicate, existing)
@@ -821,7 +1013,10 @@ func (s *Store) ReplaceContent(entry *Entry, content []byte, maxSize int64, maxK
 		}
 		hist.Versions = append(hist.Versions, rec)
 		if claimErr := s.claimHistory(entry.ID, raw, hist); claimErr != nil {
-			s.releaseReservedSHA(entry.ChannelID, sha, entry.ID, reserved)
+			if relErr := s.releaseReservedSHA(entry.ChannelID, sha, entry.ID, reserved); relErr != nil {
+				*entry = original
+				return errors.Join(claimErr, relErr)
+			}
 			if errors.Is(claimErr, ErrConflict) {
 				continue
 			}
@@ -836,7 +1031,7 @@ func (s *Store) ReplaceContent(entry *Entry, content []byte, maxSize int64, maxK
 			}
 			return writeErr
 		}
-		if metaErr := s.kv.KVSet(metaKey(entry.ID), entry); metaErr != nil {
+		if metaErr := s.casHead(original.Version, original.SHA256, entry); metaErr != nil {
 			undoErr := s.undoClaimedVersion(entry.ChannelID, entry.ID, sha, entry.ID, previous, hist.Versions, rec, reserved)
 			*entry = original
 			if undoErr != nil {
@@ -850,7 +1045,10 @@ func (s *Store) ReplaceContent(entry *Entry, content []byte, maxSize int64, maxK
 		if ownErr := s.ensureOwnSHA(entry.ChannelID, sha, entry.ID); ownErr != nil {
 			return ownErr
 		}
-		return s.pruneOldestVersions(entry, hist, maxKeep)
+		if pruneErr := s.pruneOldestVersions(entry, hist, maxKeep); pruneErr != nil {
+			return fmt.Errorf("%w: %w", ErrCleanupDeferred, pruneErr)
+		}
+		return nil
 	}
 	*entry = original
 	return ErrConflict
@@ -894,12 +1092,52 @@ func (s *Store) claimHistory(id string, raw []byte, hist *VersionHistory) error 
 
 func (s *Store) undoClaimedVersion(channelID, id, sha, ownerID string, previous, claimed []VersionRecord, rec VersionRecord, reserved bool) error {
 	restored, err := s.restoreHistoryIfUnchanged(id, claimed, previous)
-	if err != nil || !restored {
+	if err != nil {
 		return err
 	}
+	if !restored {
+		absent, dropErr := s.dropVersionRecord(id, rec.Version)
+		if dropErr != nil || !absent {
+			return dropErr
+		}
+	}
 	s.deleteVersionBlobs(rec, id)
-	s.releaseReservedSHA(channelID, sha, ownerID, reserved)
-	return nil
+	return s.releaseReservedSHA(channelID, sha, ownerID, reserved)
+}
+
+// dropVersionRecord removes version from history with a compare-and-set retry.
+// absent is true when the version is no longer stored.
+func (s *Store) dropVersionRecord(id string, version int) (bool, error) {
+	for range 8 {
+		hist, raw, err := s.loadHistoryRaw(id)
+		if errors.Is(err, ErrNotFound) {
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		next := make([]VersionRecord, 0, len(hist.Versions))
+		found := false
+		for _, rec := range hist.Versions {
+			if rec.Version == version {
+				found = true
+				continue
+			}
+			next = append(next, rec)
+		}
+		if !found {
+			return true, nil
+		}
+		hist.Versions = next
+		if claimErr := s.claimHistory(id, raw, hist); claimErr != nil {
+			if errors.Is(claimErr, ErrConflict) {
+				continue
+			}
+			return false, claimErr
+		}
+		return true, nil
+	}
+	return false, ErrConflict
 }
 
 // ListVersions returns content version metadata (no HTML bodies).
@@ -1005,6 +1243,9 @@ func (s *Store) Rollback(entry *Entry, toVersion int) error {
 		return ErrNotFound
 	}
 	if entry.Version == toVersion {
+		if err := s.casHead(entry.Version, entry.SHA256, entry); err != nil {
+			return err
+		}
 		return s.ensureOwnSHA(entry.ChannelID, entry.SHA256, entry.ID)
 	}
 	original := *entry
@@ -1021,8 +1262,11 @@ func (s *Store) Rollback(entry *Entry, toVersion int) error {
 			return reserveErr
 		}
 	}
-	if err := s.kv.KVSet(metaKey(entry.ID), entry); err != nil {
-		s.releaseReservedSHA(entry.ChannelID, entry.SHA256, entry.ID, reserved)
+	if err := s.casHead(original.Version, original.SHA256, entry); err != nil {
+		if relErr := s.releaseReservedSHA(entry.ChannelID, entry.SHA256, entry.ID, reserved); relErr != nil {
+			*entry = original
+			return errors.Join(err, relErr)
+		}
 		*entry = original
 		return err
 	}
@@ -1071,8 +1315,9 @@ func (s *Store) DeleteHead(entry *Entry) error {
 		return err
 	}
 	oldSHA := entry.SHA256
+	oldVersion := entry.Version
 	applyVersionToEntry(entry, previous)
-	if err := s.kv.KVSet(metaKey(entry.ID), entry); err != nil {
+	if err := s.casHead(oldVersion, oldSHA, entry); err != nil {
 		applyVersionToEntry(entry, head)
 		if _, restoreErr := s.restoreHistoryIfUnchanged(entry.ID, remaining, previousHistory); restoreErr != nil {
 			return errors.Join(err, restoreErr)
@@ -1091,12 +1336,12 @@ func (s *Store) Purge(entry *Entry) error {
 	if entry == nil {
 		return ErrInvalidInput
 	}
+	if err := s.markPurging(entry); err != nil {
+		return err
+	}
 	hist, histErr := s.ensureHistory(entry)
 	if histErr != nil && !errors.Is(histErr, ErrNotFound) {
 		return histErr
-	}
-	if err := s.deleteSHAIfOwner(entry.ChannelID, entry.SHA256, entry.ID); err != nil {
-		return err
 	}
 	if hist != nil {
 		if err := s.deleteAllVersionBlobKeys(hist, entry.ID); err != nil {
@@ -1110,39 +1355,85 @@ func (s *Store) Purge(entry *Entry) error {
 			return err
 		}
 	}
+	if err := s.deleteSHAIfOwner(entry.ChannelID, entry.SHA256, entry.ID); err != nil {
+		return err
+	}
 	if err := s.kv.KVDelete(histKey(entry.ID)); err != nil {
 		return err
 	}
 	if err := s.kv.KVDelete(metaKey(entry.ID)); err != nil {
 		return err
 	}
+	return s.finishPurgeIndex(entry)
+}
+
+func (s *Store) markPurging(entry *Entry) error {
 	for range 8 {
-		idx, oldRaw, err := s.getIndex(entry.ChannelID)
+		stored, raw, err := s.loadMetaRaw(entry.ID)
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
-		next := make([]string, 0, len(idx.IDs))
-		removed := false
-		for _, id := range idx.IDs {
-			if id == entry.ID {
-				removed = true
-				continue
-			}
-			next = append(next, id)
+		if stored.Purging {
+			entry.Purging = true
+			return nil
 		}
-		idx.IDs = next
-		if err := s.setIndexCAS(entry.ChannelID, oldRaw, idx); err != nil {
+		stored.Purging = true
+		if err := s.saveMetaCAS(entry.ID, raw, stored); err != nil {
 			if errors.Is(err, ErrConflict) {
 				continue
 			}
 			return err
 		}
-		if removed {
-			_ = s.adjustSiteCount(-1)
-		}
+		entry.Purging = true
 		return nil
 	}
 	return ErrConflict
+}
+
+func (s *Store) finishPurgeIndex(entry *Entry) error {
+	return s.withSiteCount(func() error {
+		if err := s.repairSiteCountIfDirty(); err != nil {
+			return err
+		}
+		if err := s.markSiteCountDirty(); err != nil {
+			return err
+		}
+		for range 8 {
+			idx, oldRaw, err := s.getIndex(entry.ChannelID)
+			if err != nil {
+				return err
+			}
+			next := make([]string, 0, len(idx.IDs))
+			removed := false
+			for _, id := range idx.IDs {
+				if id == entry.ID {
+					removed = true
+					continue
+				}
+				next = append(next, id)
+			}
+			idx.IDs = next
+			if err := s.setIndexCAS(entry.ChannelID, oldRaw, idx); err != nil {
+				if errors.Is(err, ErrConflict) {
+					continue
+				}
+				return err
+			}
+			if removed {
+				if err := s.adjustSiteCount(-1); err != nil {
+					if recErr := s.reconcileSiteCount(); recErr != nil {
+						return errors.Join(err, recErr)
+					}
+				}
+			}
+			_ = s.clearSiteCountDirty()
+			return nil
+		}
+		return ErrConflict
+	})
 }
 
 // Delete removes all versions of the artifact (alias for Purge).

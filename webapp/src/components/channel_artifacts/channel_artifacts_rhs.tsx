@@ -87,6 +87,10 @@ const ChannelArtifactsRHS = () => {
     }, [refresh]);
 
     useEffect(() => {
+        setBookmarkWarning(false);
+    }, [channelId]);
+
+    useEffect(() => {
         const onCreated = () => refresh();
         window.addEventListener('focus', onCreated);
         return () => window.removeEventListener('focus', onCreated);

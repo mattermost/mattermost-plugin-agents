@@ -59,6 +59,33 @@ func TestServiceFindLineageMatchAndDelete(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestReplaceContentReturnsTheCommittedHeadWhenPruneFails(t *testing.T) {
+	kv := newMemoryKV()
+	kv.permissionAll = true
+	store := NewStore(kv)
+	svc := NewService(store, kv, allowAllMembers{})
+	userID := model.NewId()
+	channelID := model.NewId()
+	entry, err := svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID,
+		PostID:    model.NewId(),
+		FileID:    model.NewId(),
+		Title:     "Notes",
+	}, []byte("<html>1</html>"), "1.html", userID, "Author", "", "", ContentLimits{MaxSize: 1024})
+	require.NoError(t, err)
+	_, err = svc.ReplaceContent(userID, entry.ID, ReplaceRequest{PostID: model.NewId(), FileID: model.NewId()}, []byte("<html>2</html>"), "2.html", userID, "Author", "", ContentLimits{MaxSize: 1024, VersionsToKeep: 2})
+	require.NoError(t, err)
+
+	kv.histSetCount = 0
+	kv.failHistSet = 1
+	updated, err := svc.ReplaceContent(userID, entry.ID, ReplaceRequest{PostID: model.NewId(), FileID: model.NewId()}, []byte("<html>3</html>"), "3.html", userID, "Author", "", ContentLimits{MaxSize: 1024, VersionsToKeep: 2})
+	require.ErrorIs(t, err, ErrCleanupDeferred)
+	require.Equal(t, 3, updated.Version)
+	stored, err := store.Get(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, 3, stored.Version)
+}
+
 func TestRootPostID(t *testing.T) {
 	root := model.NewId()
 	tests := []struct {

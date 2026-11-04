@@ -226,6 +226,9 @@ func (s *Service) replaceLocked(
 	entry.UpdateAt = model.GetMillis()
 	entry.UpdatedBy = userID
 	if err := s.store.ReplaceContent(entry, content, limits.MaxSize, limits.VersionsToKeep); err != nil {
+		if errors.Is(err, ErrCleanupDeferred) {
+			return entry, err
+		}
 		return nil, err
 	}
 	return entry, nil
@@ -258,6 +261,9 @@ func (s *Service) ReplaceContent(
 	entry.UpdateAt = model.GetMillis()
 	entry.UpdatedBy = userID
 	if err := s.store.ReplaceContent(entry, content, limits.MaxSize, limits.VersionsToKeep); err != nil {
+		if errors.Is(err, ErrCleanupDeferred) {
+			return entry, err
+		}
 		return nil, err
 	}
 	return entry, nil

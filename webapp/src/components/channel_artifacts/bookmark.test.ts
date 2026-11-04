@@ -164,6 +164,31 @@ describe('channel artifact bookmark helpers', () => {
         expect(mockUpdateBookmark).not.toHaveBeenCalled();
     });
 
+    test('syncLibraryArtifactBookmarkTitle fetches the server when the cache misses the artifact', async () => {
+        const cached = {
+            id: 'other',
+            type: 'link',
+            display_name: 'Other',
+            link_url: 'http://localhost:8065/t/channels/c?mm_ai_library_artifact=other',
+        };
+        const server = {
+            id: 'bm1',
+            type: 'link',
+            display_name: 'Old',
+            link_url: 'http://localhost:8065/t/channels/c?mm_ai_library_artifact=art1',
+        };
+        mockGetBookmarks.mockResolvedValue([server]);
+        mockUpdateBookmark.mockResolvedValue({updated: {...server, display_name: 'New'}});
+
+        const updated = await syncLibraryArtifactBookmarkTitle({
+            entities: {channelBookmarks: {byChannelId: {ch1: {other: cached}}}},
+        } as any, 'ch1', 'art1', 'New');
+
+        expect(updated).toBe(true);
+        expect(mockGetBookmarks).toHaveBeenCalledWith('ch1');
+        expect(mockUpdateBookmark).toHaveBeenCalled();
+    });
+
     test('syncLibraryArtifactBookmarkTitle rejects when the lookup fails', async () => {
         mockGetBookmarks.mockRejectedValue(new Error('bookmarks unavailable'));
 
@@ -206,5 +231,30 @@ describe('channel artifact bookmark helpers', () => {
             type: 'RECEIVED_BOOKMARK',
             data: expect.objectContaining({id: 'older'}),
         }));
+    });
+
+    test('pinLibraryArtifactBookmark retries a failed duplicate check and then rejects', async () => {
+        const link = 'http://localhost:8065/test/channels/town?mm_ai_library_artifact=art1';
+        const created = {id: 'created', type: 'link', channel_id: 'ch1', create_at: 2, display_name: 'A', link_url: link};
+        mockGetBookmarks.mockResolvedValueOnce([]).mockRejectedValue(new Error('bookmarks unavailable'));
+        mockCreateBookmark.mockResolvedValue(created);
+
+        const state = {
+            entities: {
+                general: {license: {IsLicensed: 'true'}},
+                users: {currentUserId: 'me', profiles: {me: {roles: 'system_user'}}},
+                roles: {roles: {channel_user: {permissions: ['add_bookmark_public_channel']}}},
+                teams: {teams: {team1: {name: 'test'}}, myMembers: {}},
+                channels: {
+                    channels: {ch1: {id: 'ch1', name: 'town', type: 'O', delete_at: 0, team_id: 'team1'}},
+                    myMembers: {},
+                    roles: {ch1: new Set(['channel_user'])},
+                },
+            },
+            websocket: {connectionId: 'conn1'},
+        } as any;
+
+        await expect(pinLibraryArtifactBookmark(state, 'ch1', 'art1', 'A', jest.fn())).rejects.toThrow('bookmarks unavailable');
+        expect(mockGetBookmarks).toHaveBeenCalledTimes(4);
     });
 });
