@@ -56,7 +56,7 @@ function renderRHS(): Store {
         }
         return state;
     };
-    const store = createStore(combineReducers({
+    const store: Store = createStore(combineReducers({
         [`plugins-${manifest.id}`]: pluginReducer,
         entities,
     } as never));
