@@ -21,6 +21,8 @@ const kindPatterns: Array<[IdKind, RegExp]> = [
 // Resolved names outlive a single card so a re-rendered or reloaded post
 // doesn't refetch what it already looked up.
 const resolvedNames = new Map<string, string>();
+const failedRefs = new Set<string>();
+const inflight = new Map<string, Promise<void>>();
 
 function refKey(kind: IdKind, id: string) {
     return `${kind}:${id}`;
@@ -84,6 +86,32 @@ async function fetchNames(kind: IdKind, ids: string[]): Promise<Array<[string, s
     ));
 }
 
+// Starts one batched lookup per kind for the IDs nobody has resolved, failed or
+// started yet, and calls onSettled as each lookup finishes. Each ID's result is
+// stored independently of the others and of whichever hook asked.
+function resolveRefs(refs: Array<{kind: IdKind; id: string}>, onSettled: () => void) {
+    const idsByKind = new Map<IdKind, string[]>();
+    for (const {kind, id} of refs) {
+        const key = refKey(kind, id);
+        if (!resolvedNames.has(key) && !failedRefs.has(key) && !inflight.has(key)) {
+            idsByKind.set(kind, [...(idsByKind.get(kind) ?? []), id]);
+        }
+    }
+    idsByKind.forEach((ids, kind) => {
+        const lookup = fetchNames(kind, ids).catch(() => [] as Array<[string, string]>).then((names) => {
+            names.forEach(([id, name]) => resolvedNames.set(refKey(kind, id), name));
+            ids.forEach((id) => {
+                inflight.delete(refKey(kind, id));
+                if (!resolvedNames.has(refKey(kind, id))) {
+                    failedRefs.add(refKey(kind, id));
+                }
+            });
+        });
+        ids.forEach((id) => inflight.set(refKey(kind, id), lookup));
+    });
+    new Set(refs.map(({kind, id}) => inflight.get(refKey(kind, id)))).forEach((lookup) => lookup?.then(onSettled));
+}
+
 /**
  * Resolves the opaque Mattermost IDs held by a tool call's ID-named arguments
  * (user_id, channel_ids, team_id, post_id, ...) to human-readable names.
@@ -104,36 +132,23 @@ export function useResolvedIds(entries: Array<[string, JSONValue]>): (key: strin
     }, [entries]);
 
     const [, setVersion] = useState(0);
-    const pendingKey = refs.filter(({kind, id}) => !resolvedNames.has(refKey(kind, id))).map(({kind, id}) => refKey(kind, id)).sort().join(',');
+    const refsKey = refs.map(({kind, id}) => refKey(kind, id)).sort().join(',');
 
     useEffect(() => {
-        let cancelled = false;
-        if (!pendingKey) {
-            return () => {
-                cancelled = true;
-            };
-        }
-        const byKind = new Map<IdKind, string[]>();
-        for (const ref of pendingKey.split(',')) {
-            const sep = ref.indexOf(':');
-            const kind = ref.slice(0, sep) as IdKind;
-            byKind.set(kind, [...(byKind.get(kind) ?? []), ref.slice(sep + 1)]);
-        }
-        byKind.forEach((ids, kind) => {
-            fetchNames(kind, ids).then((names) => {
-                if (cancelled || names.length === 0) {
-                    return;
-                }
-                names.forEach(([id, name]) => resolvedNames.set(refKey(kind, id), name));
+        let mounted = true;
+        resolveRefs(refs, () => {
+            if (mounted) {
                 setVersion((v) => v + 1);
-            }).catch(() => {
-                // Unresolved IDs keep rendering as the raw value.
-            });
+            }
         });
         return () => {
-            cancelled = true;
+            mounted = false;
         };
-    }, [pendingKey]);
+
+        // refs is derived from refsKey; keying on it keeps the lookup stable
+        // while the set of IDs is unchanged.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [refsKey]);
 
     return (key, id) => {
         const kind = idKindForKey(key);
@@ -143,4 +158,6 @@ export function useResolvedIds(entries: Array<[string, JSONValue]>): (key: strin
 
 export function clearResolvedIdsForTest() {
     resolvedNames.clear();
+    failedRefs.clear();
+    inflight.clear();
 }

@@ -131,7 +131,34 @@ describe('tool call ID resolution', () => {
         expect(label.getAttribute('title')).toBe('c1');
     });
 
-    test('drops a lookup superseded by changed arguments', async () => {
+    test('mixed kinds resolve with one request per kind and no refetch', async () => {
+        mockGetProfilesByIds.mockResolvedValue([{id: 'u1', username: 'alice'}, {id: 'u2', username: 'bob'}]);
+        mockGetChannel.mockResolvedValue({id: 'c1', name: 'c1', display_name: 'Town Square'});
+
+        const view = renderCard({user_ids: ['u1', 'u2'], channel_id: 'c1'});
+        expect(await screen.findByText('alice')).not.toBeNull();
+        expect(await screen.findByText('Town Square')).not.toBeNull();
+
+        view.rerender(cardElement({user_ids: ['u1', 'u2'], channel_id: 'c1', limit: 3}));
+        expect(await screen.findByText('3')).not.toBeNull();
+
+        expect(mockGetProfilesByIds).toHaveBeenCalledTimes(1);
+        expect(mockGetChannel).toHaveBeenCalledTimes(1);
+    });
+
+    test('a failed lookup is not retried and does not disturb the others', async () => {
+        mockGetProfilesByIds.mockResolvedValue([{id: 'u1', username: 'alice'}]);
+
+        const view = renderCard({user_id: 'u1', channel_id: 'gone'});
+        expect(await screen.findByText('alice')).not.toBeNull();
+        view.rerender(cardElement({user_id: 'u1', channel_id: 'gone', limit: 3}));
+        expect(await screen.findByText('3')).not.toBeNull();
+
+        expect(screen.getByText('gone')).not.toBeNull();
+        expect(mockGetChannel).toHaveBeenCalledTimes(1);
+    });
+
+    test('keeps names from a lookup that finishes after the arguments change', async () => {
         let resolveOld: (value: unknown) => void = jest.fn();
         mockGetChannel.mockImplementation((id: string) => {
             if (id === 'c1') {
@@ -143,11 +170,11 @@ describe('tool call ID resolution', () => {
         });
 
         const view = renderCard({channel_id: 'c1'});
-        view.rerender(cardElement({channel_id: 'c2'}));
+        view.rerender(cardElement({channel_ids: ['c1', 'c2']}));
         expect(await screen.findByText('Channel c2')).not.toBeNull();
 
-        resolveOld({id: 'c1', name: 'c1', display_name: 'Stale'});
-        await Promise.resolve();
-        expect(screen.queryByText('Stale')).toBeNull();
+        resolveOld({id: 'c1', name: 'c1', display_name: 'Channel c1'});
+        expect(await screen.findByText('Channel c1')).not.toBeNull();
+        expect(mockGetChannel).toHaveBeenCalledTimes(2);
     });
 });
