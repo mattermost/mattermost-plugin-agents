@@ -33,8 +33,10 @@ function isGuest(state: GlobalState): boolean {
 }
 
 /**
- * Whether the current user may add a link bookmark in this channel
- * (licensed + add_bookmark_* / non-guest DM·GM membership).
+ * Whether the current user may pin a library artifact in this channel.
+ * Direct and group channels have no team path for a library bookmark, so the
+ * pin action stays hidden there. Other channels follow the license and
+ * add_bookmark_* permission.
  */
 export function canAddChannelBookmarks(state: GlobalState, channelId: string): boolean {
     if (!areChannelBookmarksLicensed(state) || !channelId) {
@@ -45,10 +47,7 @@ export function canAddChannelBookmarks(state: GlobalState, channelId: string): b
         return false;
     }
     if (channel.type === 'D' || channel.type === 'G') {
-        if (isGuest(state)) {
-            return false;
-        }
-        return state.entities.channels.myMembers?.[channelId]?.channel_id === channelId;
+        return false;
     }
     if (channel.type === 'O') {
         return userHasChannelPermission(state, channel.team_id, channelId, ADD_BOOKMARK_PUBLIC);
@@ -202,8 +201,47 @@ export async function pinLibraryArtifactBookmark(
         {type: 'link', display_name: displayName, link_url: linkUrl},
         connectionIdFromState(state),
     );
-    dispatchReceivedBookmark(dispatch, created);
-    return created;
+    const keeper = await keepEarliestLibraryBookmark(state, channelId, artifactId, created, dispatch);
+    return keeper;
+}
+
+async function keepEarliestLibraryBookmark(
+    state: GlobalState,
+    channelId: string,
+    artifactId: string,
+    created: ChannelBookmark,
+    dispatch?: Dispatch,
+): Promise<ChannelBookmark> {
+    let listed: ChannelBookmark[];
+    try {
+        listed = await Client4.getChannelBookmarks(channelId);
+    } catch {
+        dispatchReceivedBookmark(dispatch, created);
+        return created;
+    }
+    const matches = listed.filter((bookmark) => bookmark.type === 'link' && libraryBookmarkLink(bookmark.link_url, artifactId));
+    if (matches.length <= 1) {
+        dispatchReceivedBookmark(dispatch, created);
+        return created;
+    }
+    const ranked = [...matches].sort((left, right) => {
+        const byTime = (left.create_at || 0) - (right.create_at || 0);
+        if (byTime !== 0) {
+            return byTime;
+        }
+        return left.id.localeCompare(right.id);
+    });
+    const keep = ranked[0];
+    await Promise.all(ranked.slice(1).map(async (extra) => {
+        try {
+            await Client4.deleteChannelBookmark(channelId, extra.id, connectionIdFromState(state));
+            dispatchDeletedBookmark(dispatch, extra);
+        } catch {
+            // A concurrent pin may already have removed this duplicate.
+        }
+    }));
+    dispatchReceivedBookmark(dispatch, keep);
+    return keep;
 }
 
 export async function unpinLibraryArtifactBookmark(
@@ -238,32 +276,28 @@ export async function syncLibraryArtifactBookmarkTitle(
     if (!channelId || !artifactId || !displayName) {
         return false;
     }
-    try {
-        const fromState = state.entities?.channelBookmarks?.byChannelId?.[channelId];
-        const existing = fromState ? Object.values(fromState) : await Client4.getChannelBookmarks(channelId);
-        const found = findLibraryArtifactBookmark(existing, artifactId);
-        if (!found || found.display_name === displayName) {
-            return false;
-        }
-        const result = await Client4.updateChannelBookmark(
-            channelId,
-            found.id,
-            {display_name: displayName},
-            connectionIdFromState(state),
-        );
-        if (result?.updated) {
-            dispatchReceivedBookmark(dispatch, result.updated);
-        } else {
-            // Fallback if the response shape is unexpected: patch locally.
-            dispatchReceivedBookmark(dispatch, {...found, display_name: displayName});
-        }
-        if (result?.deleted) {
-            dispatchDeletedBookmark(dispatch, result.deleted);
-        }
-        return true;
-    } catch {
+    const fromState = state.entities?.channelBookmarks?.byChannelId?.[channelId];
+    const existing = fromState ? Object.values(fromState) : await Client4.getChannelBookmarks(channelId);
+    const found = findLibraryArtifactBookmark(existing, artifactId);
+    if (!found || found.display_name === displayName) {
         return false;
     }
+    const result = await Client4.updateChannelBookmark(
+        channelId,
+        found.id,
+        {display_name: displayName},
+        connectionIdFromState(state),
+    );
+    if (result?.updated) {
+        dispatchReceivedBookmark(dispatch, result.updated);
+    } else {
+        // Fallback if the response shape is unexpected: patch locally.
+        dispatchReceivedBookmark(dispatch, {...found, display_name: displayName});
+    }
+    if (result?.deleted) {
+        dispatchDeletedBookmark(dispatch, result.deleted);
+    }
+    return true;
 }
 
 export function parseLibraryArtifactIdFromSearch(search: string): string | null {

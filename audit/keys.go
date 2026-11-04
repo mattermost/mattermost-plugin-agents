@@ -30,6 +30,9 @@ var (
 )
 
 const (
+	// KeyChannelArtifactID identifies a channel-artifact library entry.
+	KeyChannelArtifactID = "agents.channel_artifact.id"
+
 	// KeyCallerPluginID identifies the calling plugin on inter-plugin bridge
 	// routes. It must not be named "plugin_id": the server unconditionally
 	// stamps that parameter with this plugin's own ID when the record is

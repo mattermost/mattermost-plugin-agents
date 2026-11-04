@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -339,4 +340,85 @@ func TestMCPListAndGetChannelArtifact(t *testing.T) {
 	assert.True(t, view.ContentIncluded)
 	assert.Equal(t, "<htm", view.Content)
 	assert.True(t, view.HasMore)
+}
+
+func TestChannelArtifactAuditRecordsNameTheObjects(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	t.Run("create", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+		e.config.enableHTMLArtifacts = true
+		e.config.enableChannelArtifacts = true
+		kv := newArtifactTokenKV()
+		e.api.SetChannelArtifacts(libraryService(kv))
+
+		channelID := model.NewId()
+		postID := model.NewId()
+		fileID := model.NewId()
+		sessionID := model.NewId()
+		html := "<html>notes</html>"
+		m := mocks.NewMockClient(t)
+		m.EXPECT().HasPermissionToFileAction(sessionID, fileID, model.AccessControlPolicyActionDownloadFileAttachment).Return(true)
+		m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{
+			Id: fileID, PostId: postID, Name: "notes.html", Extension: "html", Size: int64(len(html)),
+		}, nil)
+		m.EXPECT().GetPost(postID).Return(&model.Post{
+			Id: postID, UserId: testUserID, ChannelId: channelID, FileIds: model.StringArray{fileID},
+		}, nil)
+		m.EXPECT().HasPermissionToChannel(testUserID, channelID, model.PermissionReadChannel).Return(true)
+		m.EXPECT().GetConfig().Return(&model.Config{})
+		m.EXPECT().GetFile(fileID).Return(io.NopCloser(strings.NewReader(html)), nil)
+		m.EXPECT().GetUser(testUserID).Return(&model.User{Id: testUserID, Username: "user"}, nil)
+		m.EXPECT().GetChannel(channelID).Return(&model.Channel{Id: channelID, Type: model.ChannelTypeOpen}, nil)
+		e.api.mmClient = m
+
+		records := e.CaptureAuditRecords()
+		rec := serveLibrary(e, http.MethodPost, "/channel-artifacts", `{"channel_id":"`+channelID+`","post_id":"`+postID+`","file_id":"`+fileID+`","title":"Notes"}`, sessionID)
+		require.Equal(t, http.StatusCreated, rec.Code)
+		var created channelartifacts.Entry
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+		require.Len(t, *records, 1)
+		assert.Equal(t, AuditEventCreateChannelArtifact, (*records)[0].EventName)
+		assert.Equal(t, created.ID, (*records)[0].EventData.Parameters[audit.KeyChannelArtifactID])
+		assert.Equal(t, channelID, (*records)[0].EventData.Parameters[audit.KeyChannelID])
+	})
+
+	t.Run("reorder", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+		e.config.enableHTMLArtifacts = true
+		e.config.enableChannelArtifacts = true
+		kv := newArtifactTokenKV()
+		svc := libraryService(kv)
+		e.api.SetChannelArtifacts(svc)
+		channelID := model.NewId()
+		entry := saveLibraryEntry(t, svc, channelID, "Notes", "<html>notes</html>")
+
+		records := e.CaptureAuditRecords()
+		body := `{"channel_id":"` + channelID + `","ids":["` + entry.ID + `"]}`
+		rec := serveLibrary(e, http.MethodPut, "/channel-artifacts/order", body, "")
+		require.Equal(t, http.StatusNoContent, rec.Code)
+		require.Len(t, *records, 1)
+		assert.Equal(t, AuditEventReorderChannelArtifacts, (*records)[0].EventName)
+		assert.Equal(t, channelID, (*records)[0].EventData.Parameters[audit.KeyChannelID])
+	})
+
+	t.Run("export", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+		e.config.enableHTMLArtifacts = true
+		e.config.enableChannelArtifacts = true
+		e.api.SetChannelArtifacts(libraryService(newArtifactTokenKV()))
+		e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(true)
+		channelID := model.NewId()
+
+		records := e.CaptureAuditRecords()
+		rec := serveLibrary(e, http.MethodGet, "/channel-artifacts/export?channel_id="+channelID, "", "")
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Len(t, *records, 1)
+		assert.Equal(t, AuditEventExportChannelArtifacts, (*records)[0].EventName)
+		assert.Equal(t, channelID, (*records)[0].EventData.Parameters[audit.KeyChannelID])
+	})
 }

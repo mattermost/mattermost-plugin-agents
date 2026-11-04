@@ -61,11 +61,20 @@ func TestServiceFindLineageMatchAndDelete(t *testing.T) {
 
 func TestRootPostID(t *testing.T) {
 	root := model.NewId()
-	child := &model.Post{Id: model.NewId(), RootId: root}
-	require.Equal(t, root, RootPostID(child))
-	top := &model.Post{Id: root}
-	require.Equal(t, root, RootPostID(top))
-	require.Empty(t, RootPostID(nil))
+	tests := []struct {
+		name string
+		post *model.Post
+		want string
+	}{
+		{name: "child post", post: &model.Post{Id: model.NewId(), RootId: root}, want: root},
+		{name: "top-level post", post: &model.Post{Id: root}, want: root},
+		{name: "nil post", post: nil, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, RootPostID(tt.post))
+		})
+	}
 }
 
 func TestServiceListByTeam(t *testing.T) {

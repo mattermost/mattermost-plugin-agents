@@ -298,12 +298,6 @@ func (s *Service) Rollback(userID, id string, toVersion int) (*Entry, error) {
 	if err := s.store.Rollback(entry, toVersion); err != nil {
 		return nil, err
 	}
-	// Rollback overwrites UpdateAt from the version record; re-stamp the actor.
-	entry.UpdatedBy = userID
-	entry.UpdateAt = model.GetMillis()
-	if err := s.store.UpdateMeta(entry); err != nil {
-		return nil, err
-	}
 	return entry, nil
 }
 

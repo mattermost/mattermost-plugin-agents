@@ -845,7 +845,7 @@ func (p *Plugin) RunDataRetention(nowTime, batchSize int64) (int64, error) {
 	}
 
 	if p.channelArtifacts != nil {
-		purged, err := p.purgeOrphanedChannelArtifacts()
+		purged, err := p.purgeOrphanedChannelArtifacts(batchSize)
 		if err != nil {
 			p.pluginAPI.Log.Error("Failed to purge orphaned channel artifacts", "error", err)
 			return count + purged, err
@@ -859,25 +859,28 @@ func (p *Plugin) RunDataRetention(nowTime, batchSize int64) (int64, error) {
 	return count, nil
 }
 
-func (p *Plugin) purgeOrphanedChannelArtifacts() (int64, error) {
+func (p *Plugin) purgeOrphanedChannelArtifacts(batchSize int64) (int64, error) {
+	ids, err := p.channelArtifacts.Store().RetentionChannelIDs(int(batchSize))
+	if err != nil {
+		return 0, err
+	}
 	var purged int64
-	err := p.channelArtifacts.Store().ForEachChannelIndex(func(channelID string) error {
+	for _, channelID := range ids {
 		channel, getErr := p.pluginAPI.Channel.Get(channelID)
 		if getErr != nil {
 			if !mmapi.IsNotFound(getErr) {
-				return getErr
+				return purged, getErr
 			}
 		} else if channel != nil && channel.DeleteAt == 0 {
-			return nil
+			continue
 		}
 		if err := p.channelArtifacts.PurgeChannel(channelID); err != nil {
 			p.pluginAPI.Log.Error("Failed to purge channel artifacts for deleted channel", "channel_id", channelID, "error", err)
-			return err
+			return purged, err
 		}
 		purged++
-		return nil
-	})
-	return purged, err
+	}
+	return purged, nil
 }
 
 func (p *Plugin) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Request) {

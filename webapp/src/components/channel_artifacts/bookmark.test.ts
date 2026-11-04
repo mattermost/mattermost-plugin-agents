@@ -6,8 +6,10 @@ import {Client4} from '@/client';
 import {
     artifactIdFromBookmarkUrl,
     buildLibraryArtifactBookmarkUrl,
+    canAddChannelBookmarks,
     findLibraryArtifactBookmark,
     parseLibraryArtifactIdFromSearch,
+    pinLibraryArtifactBookmark,
     stripLibraryArtifactQuery,
     syncLibraryArtifactBookmarkTitle,
 } from './bookmark';
@@ -24,11 +26,37 @@ jest.mock('@/client', () => ({
 
 const mockGetBookmarks = Client4.getChannelBookmarks as jest.Mock;
 const mockUpdateBookmark = Client4.updateChannelBookmark as jest.Mock;
+const mockCreateBookmark = Client4.createChannelBookmark as jest.Mock;
+const mockDeleteBookmark = Client4.deleteChannelBookmark as jest.Mock;
 
 describe('channel artifact bookmark helpers', () => {
     beforeEach(() => {
         mockGetBookmarks.mockReset();
         mockUpdateBookmark.mockReset();
+        mockCreateBookmark.mockReset();
+        mockDeleteBookmark.mockReset();
+    });
+
+    test('canAddChannelBookmarks is false for direct and group channels', () => {
+        const state = {
+            entities: {
+                general: {license: {IsLicensed: 'true'}},
+                users: {currentUserId: 'me', profiles: {me: {roles: 'system_user'}}},
+                channels: {
+                    channels: {
+                        dm: {id: 'dm', type: 'D', delete_at: 0, name: 'a__b', team_id: ''},
+                        gm: {id: 'gm', type: 'G', delete_at: 0, name: 'group', team_id: ''},
+                    },
+                    myMembers: {
+                        dm: {channel_id: 'dm'},
+                        gm: {channel_id: 'gm'},
+                    },
+                },
+            },
+        } as any;
+
+        expect(canAddChannelBookmarks(state, 'dm')).toBe(false);
+        expect(canAddChannelBookmarks(state, 'gm')).toBe(false);
     });
 
     test('buildLibraryArtifactBookmarkUrl encodes path and query', () => {
@@ -134,5 +162,49 @@ describe('channel artifact bookmark helpers', () => {
 
         expect(updated).toBe(false);
         expect(mockUpdateBookmark).not.toHaveBeenCalled();
+    });
+
+    test('syncLibraryArtifactBookmarkTitle rejects when the lookup fails', async () => {
+        mockGetBookmarks.mockRejectedValue(new Error('bookmarks unavailable'));
+
+        await expect(syncLibraryArtifactBookmarkTitle({} as any, 'ch1', 'art1', 'Title')).rejects.toThrow('bookmarks unavailable');
+    });
+
+    test('pinLibraryArtifactBookmark keeps the earliest bookmark when a race creates two', async () => {
+        const link = 'http://localhost:8065/test/channels/town?mm_ai_library_artifact=art1';
+        const older = {id: 'older', type: 'link', channel_id: 'ch1', create_at: 1, display_name: 'A', link_url: link};
+        const newer = {id: 'newer', type: 'link', channel_id: 'ch1', create_at: 2, display_name: 'A', link_url: link};
+        mockGetBookmarks.mockResolvedValueOnce([]).mockResolvedValueOnce([newer, older]);
+        mockCreateBookmark.mockResolvedValue(newer);
+        mockDeleteBookmark.mockResolvedValue({});
+
+        const state = {
+            entities: {
+                general: {license: {IsLicensed: 'true'}},
+                users: {currentUserId: 'me', profiles: {me: {roles: 'system_user'}}},
+                roles: {roles: {channel_user: {permissions: ['add_bookmark_public_channel']}}},
+                teams: {teams: {team1: {name: 'test'}}, myMembers: {}},
+                channels: {
+                    channels: {ch1: {id: 'ch1', name: 'town', type: 'O', delete_at: 0, team_id: 'team1'}},
+                    myMembers: {},
+                    roles: {ch1: new Set(['channel_user'])},
+                },
+            },
+            websocket: {connectionId: 'conn1'},
+        } as any;
+        const dispatch = jest.fn();
+
+        const kept = await pinLibraryArtifactBookmark(state, 'ch1', 'art1', 'A', dispatch);
+
+        expect(kept?.id).toBe('older');
+        expect(mockDeleteBookmark).toHaveBeenCalledWith('ch1', 'newer', 'conn1');
+        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'BOOKMARK_DELETED',
+            data: expect.objectContaining({id: 'newer'}),
+        }));
+        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'RECEIVED_BOOKMARK',
+            data: expect.objectContaining({id: 'older'}),
+        }));
     });
 });

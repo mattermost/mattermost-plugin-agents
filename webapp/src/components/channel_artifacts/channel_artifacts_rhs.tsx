@@ -46,6 +46,7 @@ const ChannelArtifactsRHS = () => {
     const [renderEnabled, setRenderEnabled] = useState(true);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(false);
+    const [bookmarkWarning, setBookmarkWarning] = useState(false);
     const [openId, setOpenId] = useState<string | null>(null);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editTitle, setEditTitle] = useState('');
@@ -111,10 +112,15 @@ const ChannelArtifactsRHS = () => {
             return;
         }
         renamePending.current = true;
+        setBookmarkWarning(false);
         try {
             const entry = await patchChannelArtifact(id, {title: next});
             if (channelId) {
-                await syncLibraryArtifactBookmarkTitle(store.getState(), channelId, id, entry.title || next, store.dispatch);
+                try {
+                    await syncLibraryArtifactBookmarkTitle(store.getState(), channelId, id, entry.title || next, store.dispatch);
+                } catch {
+                    setBookmarkWarning(true);
+                }
             }
             refresh();
         } catch {
@@ -202,6 +208,11 @@ const ChannelArtifactsRHS = () => {
                     data-testid='channel-artifacts-refresh'
                 />
             </Toolbar>
+            {bookmarkWarning && (
+                <Warning>
+                    <FormattedMessage defaultMessage='Renamed the artifact, but could not update its bookmark.'/>
+                </Warning>
+            )}
             {loading && (
                 <Empty><FormattedMessage defaultMessage='Loading…'/></Empty>
             )}
@@ -437,6 +448,13 @@ const Empty = styled.div`
     font-size: 14px;
     line-height: 20px;
     text-align: center;
+`;
+
+const Warning = styled.div`
+    margin: 0 0 var(--spacing-sm, 12px);
+    color: var(--error-text);
+    font-size: 13px;
+    line-height: 18px;
 `;
 
 const Hint = styled.div`

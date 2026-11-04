@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -146,6 +147,8 @@ func (a *API) handleCreateChannelArtifact(c *gin.Context) {
 		event = WebsocketEventChannelArtifactUpdated
 		status = http.StatusOK
 	}
+	audit.AddParam(auditRec(c), audit.KeyChannelArtifactID, entry.ID)
+	audit.AddParam(auditRec(c), audit.KeyChannelID, entry.ChannelID)
 	a.channelArtifacts.Publish(event, entry.ChannelID, map[string]any{
 		"artifact": entry,
 	})
@@ -362,6 +365,7 @@ func (a *API) handleReorderChannelArtifacts(c *gin.Context) {
 		c.String(http.StatusBadRequest, "invalid request")
 		return
 	}
+	audit.AddParam(auditRec(c), audit.KeyChannelID, req.ChannelID)
 	if err := a.channelArtifacts.Reorder(c.GetHeader("Mattermost-User-Id"), req); err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
@@ -409,6 +413,7 @@ func (a *API) handleExportChannelArtifacts(c *gin.Context) {
 		c.String(http.StatusBadRequest, "invalid channel id")
 		return
 	}
+	audit.AddParam(auditRec(c), audit.KeyChannelID, channelID)
 	resp, err := a.channelArtifacts.ExportChannel(channelID)
 	if err != nil {
 		a.writeChannelArtifactError(c, err)

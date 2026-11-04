@@ -42,26 +42,14 @@ function shaPrefix(sha?: string): string {
 function pickReplaceTarget(
     entries: ChannelArtifactEntry[],
     fileId: string,
-    rootPostId: string,
 ): ChannelArtifactEntry | null {
-    const byFile = entries.find((e) => e.source_file_id === fileId);
-    if (byFile) {
-        return byFile;
-    }
-    if (!rootPostId) {
-        return null;
-    }
-    return entries.find((e) => e.source_root_post_id === rootPostId) || null;
+    return entries.find((entry) => entry.source_file_id === fileId) || null;
 }
 
 const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
     const intl = useIntl();
     const store = useStore<GlobalState>();
     const enabled = useSelector(getChannelArtifactsEnabled);
-    const rootPostId = useSelector<GlobalState, string>((state) => {
-        const post = state.entities.posts?.posts?.[postId];
-        return (post?.root_id || postId) || '';
-    });
     const canPin = useSelector<GlobalState, boolean>((state) => canAddChannelBookmarks(state, channelId));
     const [open, setOpen] = useState(false);
     const [canManage, setCanManage] = useState(false);
@@ -86,7 +74,7 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
             setCanManage(Boolean(resp.can_manage));
             const entries = resp.entries || [];
             setExisting(entries);
-            const match = pickReplaceTarget(entries, fileId, rootPostId || postId);
+            const match = pickReplaceTarget(entries, fileId);
             if (match) {
                 setSavedId(match.id);
             }
@@ -98,7 +86,7 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
         return () => {
             cancelled = true;
         };
-    }, [enabled, channelId, fileId, postId, rootPostId]);
+    }, [enabled, channelId, fileId]);
 
     if (!enabled || !channelId || !postId || !canManage) {
         return null;
@@ -118,7 +106,7 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
         setAckUpdate(false);
         setPinBookmark(false);
 
-        const target = pickReplaceTarget(existing, fileId, rootPostId || postId);
+        const target = pickReplaceTarget(existing, fileId);
         if (target) {
             setReplaceId(target.id);
             setTitle(target.title || nextTitle);
@@ -162,6 +150,10 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
         } catch (err: any) {
             if (typeof err?.message === 'string' && err.message.startsWith('duplicate:')) {
                 const id = err.message.slice('duplicate:'.length);
+                if (replaceId && id !== replaceId) {
+                    setError(intl.formatMessage({defaultMessage: 'This file matches a different library entry.'}));
+                    return;
+                }
                 const stored = existing.find((entry) => entry.id === id);
                 await pinSaved(id, stored?.title || title.trim() || defaultTitle());
             } else if (err?.status_code === 403 || err?.status_code === 404) {
