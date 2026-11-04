@@ -17,8 +17,8 @@ const test = containerTest(async (own) => {
 
 let mattermost: MattermostContainer;
 
-// RunAIMockContainer configures no embedding search, so semantic search is
-// unavailable while the license still allows Agents search.
+// RunAIMockContainer configures no embedding search, so Agents search is
+// unregistered and the host falls back to keyword search.
 test.beforeAll(async ({ containers }) => {
     ({ mattermost } = containers);
 });
@@ -31,7 +31,7 @@ async function setupTestPage(page: Page) {
 }
 
 test.describe('Search Entry Points', () => {
-    test('Agents search option is visible without embedding search', async ({ page }) => {
+    test('Agents search option is hidden without embedding search', async ({ page }) => {
         const userClient = await mattermost.getClient(username, password);
         const aiBots = await mattermostAIPluginRoutes(mattermost.url()).getJson('ai_bots', userClient.getToken()) as { searchEnabled: boolean };
         expect(aiBots.searchEnabled).toBe(false);
@@ -43,6 +43,6 @@ test.describe('Search Entry Points', () => {
         await expect(aiPlugin.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
         await aiPlugin.closeRHS();
 
-        await aiPlugin.expectAgentsSearchVisible();
+        await aiPlugin.expectAgentsSearchHidden();
     });
 });
