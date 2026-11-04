@@ -72,10 +72,16 @@ export const resolveActiveBot = (bots: LLMBot[] | null, preferredId: string): LL
 // plugin's redux slice. Shared by useBotlist, the channel-settings loadValues,
 // and the initialize() warm-up. Returns the fetched bots, or null when the
 // response is falsy.
+let latestBotsRequest = 0;
+
 export async function fetchAndStoreBots(dispatch: Dispatch): Promise<LLMBot[] | null> {
+    const requestId = ++latestBotsRequest;
     const response = await getAIBots();
     if (!response) {
         return null;
+    }
+    if (requestId !== latestBotsRequest) {
+        return response.bots;
     }
 
     dispatch({

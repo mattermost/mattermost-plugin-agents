@@ -279,6 +279,24 @@ describe('fetchAndStoreBots', () => {
         expect(dispatch).toHaveBeenCalledWith({type: 'SET_HTML_ARTIFACTS_ENABLED', htmlArtifactsEnabled: true});
     });
 
+    test('ignores the response of a request superseded by a newer one', async () => {
+        let resolveOlder: (value: unknown) => void = () => {};
+        mockGetAIBots.mockReturnValueOnce(new Promise((resolve) => {
+            resolveOlder = resolve;
+        }));
+        mockGetAIBots.mockResolvedValueOnce({bots: [makeBot('new')], searchEnabled: true});
+        const dispatch = jest.fn();
+
+        const older = fetchAndStoreBots(dispatch);
+        await fetchAndStoreBots(dispatch);
+        dispatch.mockClear();
+
+        resolveOlder({bots: [makeBot('old')], searchEnabled: false});
+        await older;
+
+        expect(dispatch).not.toHaveBeenCalled();
+    });
+
     test('falls back to the plain text link policy when the server omits linkPolicy', async () => {
         mockGetAIBots.mockResolvedValue({bots: [makeBot('a')], searchEnabled: true});
 

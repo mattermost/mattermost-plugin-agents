@@ -195,6 +195,7 @@ export default class Plugin {
             registry.registerReconnectHandler(() => {
                 clearGeneratingPosts();
                 agentThreadsSync.handleReconnect();
+                fetchAndStoreBots(store.dispatch).catch(() => { /* best effort */ });
             });
         }
 

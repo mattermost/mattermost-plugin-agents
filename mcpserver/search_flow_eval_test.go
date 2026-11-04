@@ -200,7 +200,7 @@ func TestSearchBarSyntaxHintsEval(t *testing.T) {
 			name:  "from: becomes the from filter",
 			query: "from:@" + data.alice.Username + " MySQL",
 			wantMatch: func(args searchArgs) bool {
-				return strings.TrimPrefix(args.From, "@") == data.alice.Username && !strings.Contains(args.Query, "from:")
+				return strings.TrimPrefix(args.From, "@") == data.alice.Username && !strings.Contains(args.Query, "from:") && !strings.Contains(args.Query, data.alice.Username)
 			},
 		},
 		{
@@ -208,7 +208,7 @@ func TestSearchBarSyntaxHintsEval(t *testing.T) {
 			query: "in:" + data.designChannel.Name + " dashboard mockups",
 			wantMatch: func(args searchArgs) bool {
 				inChannel := args.In == data.designChannel.Name || args.In == data.designChannel.Id || args.ChannelID == data.designChannel.Id
-				return inChannel && !strings.Contains(args.Query, "in:")
+				return inChannel && !strings.Contains(args.Query, "in:") && !strings.Contains(args.Query, data.designChannel.Name)
 			},
 		},
 	}
