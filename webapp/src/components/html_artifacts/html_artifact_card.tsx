@@ -19,6 +19,8 @@ import {
     RefreshIcon,
 } from '@mattermost/compass-icons/components';
 
+import SaveToChannelButton from '../channel_artifacts/save_to_channel_button';
+
 import ArtifactFrame, {ArtifactFrameHandle} from './artifact_frame';
 import ArtifactNotice from './artifact_notice';
 import {downloadArtifact} from './download';
@@ -37,9 +39,11 @@ export function resetArtifactRunDecisions() {
 interface Props {
     fileId: string;
     fileName: string;
+    postId: string;
+    channelId: string;
 }
 
-const HTMLArtifactCard = ({fileId, fileName}: Props) => {
+const HTMLArtifactCard = ({fileId, fileName, postId, channelId}: Props) => {
     const intl = useIntl();
     const frameRef = useRef<ArtifactFrameHandle>(null);
     const [fullscreen, setFullscreen] = useState(false);
@@ -103,6 +107,12 @@ const HTMLArtifactCard = ({fileId, fileName}: Props) => {
                 <Spacer/>
                 <ArtifactNotice wrapBelowPx={NARROW_CARD_PX}/>
                 <Actions>
+                    <SaveToChannelButton
+                        fileId={fileId}
+                        fileName={fileName}
+                        postId={postId}
+                        channelId={channelId}
+                    />
                     <IconButton
                         size='x-small'
                         icon={<Icon glyph={<ArrowExpandIcon/>}/>}

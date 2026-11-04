@@ -22,19 +22,7 @@ export const ShowCustomPromptsModalHandler = 'SHOW_CUSTOM_PROMPTS_MODAL';
 export const SetLinkPolicyHandler = 'SET_LINK_POLICY';
 
 export async function setupRedux(registry: any, store: WebappStore) {
-    const reducer = combineReducers({
-        callsPostButtonClickedTranscription,
-        bots,
-        selectedPostId,
-        rhsTab,
-        aiThreads,
-        linkPolicy,
-        htmlArtifactsEnabled,
-        customPrompts,
-        pinnedPromptIds,
-        showCustomPromptsModal,
-    });
-    registry.registerReducer(reducer);
+    registry.registerReducer(pluginReducer);
 
     if (licenseAllows(store.getState(), 'meetings')) {
         store.dispatch({
@@ -94,6 +82,53 @@ function htmlArtifactsEnabled(state = false, action: any) {
     switch (action.type) {
     case 'SET_HTML_ARTIFACTS_ENABLED':
         return action.htmlArtifactsEnabled;
+    default:
+        return state;
+    }
+}
+
+function channelArtifactsEnabled(state = false, action: any) {
+    switch (action.type) {
+    case 'SET_CHANNEL_ARTIFACTS_ENABLED':
+        return action.channelArtifactsEnabled;
+    default:
+        return state;
+    }
+}
+
+function channelArtifactsLoaded(state = false, action: any) {
+    switch (action.type) {
+    case 'SET_CHANNEL_ARTIFACTS_ENABLED':
+        return true;
+    default:
+        return state;
+    }
+}
+
+function channelArtifactsLoadFailed(state = false, action: any) {
+    switch (action.type) {
+    case 'SET_CHANNEL_ARTIFACTS_ENABLED':
+        return false;
+    case 'SET_CHANNEL_ARTIFACTS_LOAD_FAILED':
+        return true;
+    default:
+        return state;
+    }
+}
+
+function channelArtifactDownloadEnabled(state = true, action: any) {
+    switch (action.type) {
+    case 'SET_CHANNEL_ARTIFACTS_ENABLED':
+        return action.channelArtifactDownloadEnabled !== false;
+    default:
+        return state;
+    }
+}
+
+function channelArtifactRenderingEnabled(state = true, action: any) {
+    switch (action.type) {
+    case 'SET_CHANNEL_ARTIFACTS_ENABLED':
+        return action.channelArtifactRenderingEnabled !== false;
     default:
         return state;
     }
@@ -222,3 +257,21 @@ export function fetchPinnedPromptIds() {
         }
     };
 }
+
+export const pluginReducer = combineReducers({
+    callsPostButtonClickedTranscription,
+    bots,
+    selectedPostId,
+    rhsTab,
+    aiThreads,
+    linkPolicy,
+    htmlArtifactsEnabled,
+    channelArtifactsEnabled,
+    channelArtifactsLoaded,
+    channelArtifactsLoadFailed,
+    channelArtifactDownloadEnabled,
+    channelArtifactRenderingEnabled,
+    customPrompts,
+    pinnedPromptIds,
+    showCustomPromptsModal,
+});
