@@ -69,7 +69,7 @@ jest.mock('@/client', () => ({
 }));
 
 const ME = 'me';
-const CONFIRM_TEXT = 'Are you sure you want to delete this prompt? This action cannot be undone.';
+const CONFIRM_TEXT = 'Are you sure you want to delete this skill? This action cannot be undone.';
 const key = `plugins-${manifest.id}`;
 
 function makePrompt(overrides: Partial<CustomPrompt>): CustomPrompt {
@@ -122,7 +122,7 @@ async function renderPage() {
     await screen.findByText(mine.name);
 }
 
-const rowNames = () => screen.queryAllByRole('button', {name: /^Open prompt /}).map((e) => e.getAttribute('aria-label'));
+const rowNames = () => screen.queryAllByRole('button', {name: /^Open skill /}).map((e) => e.getAttribute('aria-label'));
 const heading = () => screen.getByRole('heading', {level: 1}).textContent;
 
 describe('CustomPromptsPage', () => {
@@ -141,22 +141,22 @@ describe('CustomPromptsPage', () => {
 
     test('fetches on mount and renders the titled list without a back button', async () => {
         await renderPage();
-        expect(heading()).toBe('Custom Prompts');
+        expect(heading()).toBe('Skills');
         expect(rowNames()).toHaveLength(2);
         expect(screen.getByText('Summarizes things')).not.toBeNull();
-        expect(screen.queryByRole('button', {name: 'Back to prompts'})).toBeNull();
+        expect(screen.queryByRole('button', {name: 'Back to skills'})).toBeNull();
         expect(mockGetCustomPrompts).toHaveBeenCalledTimes(1);
         expect(mockGetCustomPromptPins).toHaveBeenCalledTimes(1);
     });
 
     test('list view shows the description and Create new in the header; forms drop both', async () => {
         await renderPage();
-        const description = 'Reusable prompts you can run from the message composer in any channel.';
+        const description = 'Saved instructions you can run from the message composer in any channel, and that agents can load when a request matches.';
         expect(screen.getByText(description)).not.toBeNull();
-        expect(screen.getByRole('tab', {name: 'All Prompts', selected: true})).not.toBeNull();
-        fireEvent.click(screen.getByRole('tab', {name: 'Your Prompts'}));
-        expect(rowNames()).toEqual(['Open prompt My Own Prompt']);
-        expect(screen.getByPlaceholderText('Search prompts')).not.toBeNull();
+        expect(screen.getByRole('tab', {name: 'All Skills', selected: true})).not.toBeNull();
+        fireEvent.click(screen.getByRole('tab', {name: 'Your Skills'}));
+        expect(rowNames()).toEqual(['Open skill My Own Prompt']);
+        expect(screen.getByPlaceholderText('Search skills')).not.toBeNull();
 
         fireEvent.click(screen.getByRole('button', {name: 'Create new'}));
         expect(screen.queryByText(description)).toBeNull();
@@ -167,37 +167,37 @@ describe('CustomPromptsPage', () => {
         {
             name: 'create form',
             open: () => fireEvent.click(screen.getByRole('button', {name: 'Create new'})),
-            title: 'New Prompt',
+            title: 'New Skill',
         },
         {
             name: 'owned prompt',
-            open: () => fireEvent.click(screen.getByRole('button', {name: 'Open prompt My Own Prompt'})),
+            open: () => fireEvent.click(screen.getByRole('button', {name: 'Open skill My Own Prompt'})),
             title: 'My Own Prompt',
         },
         {
             name: 'non-owned prompt',
-            open: () => fireEvent.click(screen.getByRole('button', {name: 'Open prompt Shared Admin Prompt'})),
+            open: () => fireEvent.click(screen.getByRole('button', {name: 'Open skill Shared Admin Prompt'})),
             title: 'Shared Admin Prompt',
         },
     ])('$name shows its title and back returns to the list', async ({open, title}) => {
         await renderPage();
         open();
         expect(heading()).toBe(title);
-        expect(screen.queryByRole('tab', {name: 'All Prompts'})).toBeNull();
+        expect(screen.queryByRole('tab', {name: 'All Skills'})).toBeNull();
 
-        fireEvent.click(screen.getByRole('button', {name: 'Back to prompts'}));
-        expect(heading()).toBe('Custom Prompts');
-        expect(screen.getByRole('tab', {name: 'All Prompts'})).not.toBeNull();
+        fireEvent.click(screen.getByRole('button', {name: 'Back to skills'}));
+        expect(heading()).toBe('Skills');
+        expect(screen.getByRole('tab', {name: 'All Skills'})).not.toBeNull();
         expect(mockCreateCustomPrompt).not.toHaveBeenCalled();
         expect(mockUpdateCustomPrompt).not.toHaveBeenCalled();
     });
 
     test('non-owner sees a read-only form with no save or delete', async () => {
         await renderPage();
-        fireEvent.click(screen.getByRole('button', {name: 'Open prompt Shared Admin Prompt'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Open skill Shared Admin Prompt'}));
 
         expect(screen.getByText('Admin template')).not.toBeNull();
-        expect(screen.queryByPlaceholderText('Enter a title for your prompt')).toBeNull();
+        expect(screen.queryByPlaceholderText('Enter a title for your skill')).toBeNull();
         expect(screen.queryByRole('button', {name: 'Save'})).toBeNull();
         expect(screen.queryByRole('button', {name: 'Delete'})).toBeNull();
     });
@@ -208,13 +208,13 @@ describe('CustomPromptsPage', () => {
         });
         await renderPage();
         fireEvent.click(screen.getByRole('button', {name: 'Create new'}));
-        fireEvent.change(screen.getByPlaceholderText('Enter a title for your prompt'), {target: {value: 'Brand New'}});
-        fireEvent.change(screen.getByPlaceholderText('Enter the system prompt template'), {target: {value: 'Do it'}});
+        fireEvent.change(screen.getByPlaceholderText('Enter a title for your skill'), {target: {value: 'Brand New'}});
+        fireEvent.change(screen.getByPlaceholderText('Enter the skill instructions'), {target: {value: 'Do it'}});
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));
 
         await waitFor(() => expect(mockCreateCustomPrompt).toHaveBeenCalledTimes(1));
         expect(await screen.findByText('Brand New')).not.toBeNull();
-        expect(heading()).toBe('Custom Prompts');
+        expect(heading()).toBe('Skills');
     });
 
     test('delete from the owner form goes through the confirmation', async () => {
@@ -222,7 +222,7 @@ describe('CustomPromptsPage', () => {
             serverPrompts = serverPrompts.filter((p) => p.id !== id);
         });
         await renderPage();
-        fireEvent.click(screen.getByRole('button', {name: 'Open prompt My Own Prompt'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Open skill My Own Prompt'}));
         fireEvent.click(screen.getByRole('button', {name: 'Delete'}));
         await screen.findByText(CONFIRM_TEXT);
         expect(mockDeleteCustomPrompt).not.toHaveBeenCalled();
@@ -230,13 +230,13 @@ describe('CustomPromptsPage', () => {
         fireEvent.click(screen.getAllByRole('button', {name: 'Delete'}).pop()!);
         await waitFor(() => expect(mockDeleteCustomPrompt).toHaveBeenCalledWith('mine'));
         await waitFor(() => expect(screen.queryByText('My Own Prompt')).toBeNull());
-        expect(heading()).toBe('Custom Prompts');
+        expect(heading()).toBe('Skills');
     });
 
     test('pin failure shows the error banner', async () => {
         mockSetCustomPromptPin.mockRejectedValueOnce(new Error('boom'));
         await renderPage();
-        fireEvent.click(screen.getAllByRole('button', {name: 'Pin prompt'})[0]);
+        fireEvent.click(screen.getAllByRole('button', {name: 'Pin skill'})[0]);
         expect(await screen.findByText('Failed to update pin. Please try again.')).not.toBeNull();
     });
 });
