@@ -278,7 +278,7 @@ func TestReInitDiscardsInFlightInvalidatedOrigin(t *testing.T) {
 			select {
 			case <-done:
 			case <-time.After(3 * time.Second):
-				t.Fatal("in-flight connect did not finish after ReInit")
+				require.FailNow(t, "in-flight connect did not finish after ReInit")
 			}
 			require.Nil(t, cachedUserClient(manager, "alice", "first"),
 				"an origin invalidated during dial must not commit a stale session")
@@ -431,9 +431,7 @@ func TestClientManagerConcurrentReInitKeepsUnaffectedSessions(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for worker := range 6 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for n := range 20 {
 				reinitConfig(manager, func(cfg *Config) {
 					cfg.IdleTimeoutMinutes = 10 + (worker+n)%7
@@ -441,7 +439,7 @@ func TestClientManagerConcurrentReInitKeepsUnaffectedSessions(t *testing.T) {
 					cfg.PluginServers[0].ExposeExternal = n%2 == 0
 				})
 			}
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -469,13 +467,11 @@ func TestClientManagerReInitRaceSafe(t *testing.T) {
 	var stop atomic.Bool
 	var wg sync.WaitGroup
 	run := func(body func()) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := 0; i < 40 && !stop.Load(); i++ {
 				body()
 			}
-		}()
+		})
 	}
 
 	run(func() { manager.GetToolsForUser(context.Background(), "alice", ToolSelection{}) })
@@ -506,7 +502,7 @@ func TestClientManagerReInitRaceSafe(t *testing.T) {
 	case <-done:
 	case <-time.After(20 * time.Second):
 		stop.Store(true)
-		t.Fatal("timed out running concurrent ReInit against runtime operations")
+		require.FailNow(t, "timed out running concurrent ReInit against runtime operations")
 	}
 
 	manager.Close()

@@ -127,7 +127,7 @@ func TestToolRunnerStopsWhenCanceledWhileUnread(t *testing.T) {
 	case _, open := <-run.Stream.Stream:
 		require.False(t, open, "loop kept forwarding after cancel instead of stopping")
 	case <-time.After(time.Second):
-		t.Fatal("tool loop still blocked after cancel")
+		require.FailNow(t, "tool loop still blocked after cancel")
 	}
 }
 

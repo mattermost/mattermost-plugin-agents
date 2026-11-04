@@ -21,6 +21,7 @@ type MMToolProvider struct {
 	pluginAPI     mmapi.Client
 	webSearch     WebSearchService
 	htmlArtifacts func() bool
+	scheduleWake  ScheduleWake
 }
 
 // NewMMToolProvider creates a new tool provider. htmlArtifacts reports
@@ -32,6 +33,12 @@ func NewMMToolProvider(pluginAPI mmapi.Client, webSearch WebSearchService, htmlA
 		webSearch:     webSearch,
 		htmlArtifacts: htmlArtifacts,
 	}
+}
+
+// SetScheduleWake installs the wake scheduler used by wait_for_async_work.
+// Called after conversations are wired because the wake handler resumes them.
+func (p *MMToolProvider) SetScheduleWake(schedule ScheduleWake) {
+	p.scheduleWake = schedule
 }
 
 // GetTools returns all available tools. Tool execution is restricted at runtime via
@@ -63,6 +70,13 @@ func (p *MMToolProvider) GetTools(bot *bots.Bot, llmContext *llm.Context) []llm.
 
 	if llmContext != nil && llmContext.ToolCatalog.InteractiveUserPresent {
 		builtInTools = append(builtInTools, NewAskUserQuestionTool())
+	}
+
+	// Same catalog gate as CreateFile: every flow that streams a response post
+	// stamps llm.Context.ResponsePostID before tools run, so the wake always
+	// has a post to resume onto. The wake runs as the requesting user.
+	if p.scheduleWake != nil && llmContext != nil && llmContext.ToolCatalog.ResponseFilesSupported && llmContext.RequestingUser != nil {
+		builtInTools = append(builtInTools, NewWaitForAsyncWorkTool(p.scheduleWake))
 	}
 
 	return builtInTools

@@ -99,12 +99,10 @@ func TestServerToolActivityRecord(t *testing.T) {
 
 func TestServerToolActivityReplayedInRequest(t *testing.T) {
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.Anthropic,
-			APIKey:           "test-key",
-			DefaultModel:     "claude-sonnet-4-6",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.Anthropic,
+		APIKey:           "test-key",
+		DefaultModel:     "claude-sonnet-4-6",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.Shutdown()
@@ -131,7 +129,9 @@ func TestServerToolActivityReplayedInRequest(t *testing.T) {
 		{Role: llm.PostRoleUser, Message: "now make it blue"},
 	}}
 
-	messages := llmClient.convertToResponsesMessages(request.Posts)
+	respReq, err := llmClient.convertToBifrostResponsesRequest(request, llmClient.GetDefaultConfig())
+	require.NoError(t, err)
+	messages := respReq.Input
 
 	var texts []string
 	for _, msg := range messages {
@@ -182,19 +182,18 @@ func TestServerToolActivityReplayHeaderEmittedOncePerTurn(t *testing.T) {
 
 func TestServerToolActivityNotReplayedWhenAbsent(t *testing.T) {
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.Anthropic,
-			APIKey:           "test-key",
-			DefaultModel:     "claude-sonnet-4-6",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.Anthropic,
+		APIKey:           "test-key",
+		DefaultModel:     "claude-sonnet-4-6",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.Shutdown()
 
-	messages := llmClient.convertToResponsesMessages([]llm.Post{
+	respReq, err := llmClient.convertToBifrostResponsesRequest(llm.CompletionRequest{Posts: []llm.Post{
 		{Role: llm.PostRoleUser, Message: "hi"},
 		{Role: llm.PostRoleBot, Message: "hello"},
-	})
-	require.Len(t, messages, 2)
+	}}, llmClient.GetDefaultConfig())
+	require.NoError(t, err)
+	require.Len(t, respReq.Input, 2)
 }

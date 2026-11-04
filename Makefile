@@ -10,10 +10,11 @@ DLV_DEBUG_PORT := 2346
 DEFAULT_GOOS := $(shell go env GOOS)
 DEFAULT_GOARCH := $(shell go env GOARCH)
 
-# loadtest/controller is a nested Go module that keeps mattermost-load-test-ng out
-# of the production plugin build. It is invisible to the root-module gates, so the
-# loadtest-controller-* targets run the same lint/test/drift checks against it.
-LOADTEST_CONTROLLER_DIR := loadtest/controller
+# Nested Go modules keep their dependencies out of the production plugin build:
+# loadtest/controller (mattermost-load-test-ng) and build/releasenotes (the
+# Anthropic SDK). They are invisible to the root-module gates, so the
+# nested-modules-* targets run the same lint/test/drift checks against each.
+NESTED_GO_MODULES := loadtest/controller build/releasenotes
 
 export GO111MODULE=on
 
@@ -226,32 +227,35 @@ check-locks:
 
 ## Verify nested Go modules are tidy (no go.mod/go.sum drift).
 .PHONY: check-go-mods
-check-go-mods: loadtest-controller-mod-check
+check-go-mods: nested-modules-mod-check
 
-## Run the controller module unit tests (race-enabled, matching root).
-.PHONY: loadtest-controller-test
-loadtest-controller-test: install-go-tools
-	cd $(LOADTEST_CONTROLLER_DIR) && $(GOBIN)/gotestsum -- $(GO_TEST_FLAGS) ./...
+## Run the nested modules' unit tests (race-enabled, matching root).
+.PHONY: nested-modules-test
+nested-modules-test: install-go-tools
+	@for d in $(NESTED_GO_MODULES); do (cd $$d && $(GOBIN)/gotestsum -- $(GO_TEST_FLAGS) ./...) || exit 1; done
 
-## Lint the controller module: go vet, golangci-lint, and license headers.
+## Lint the nested modules: go vet, golangci-lint, and license headers.
 ## golangci-lint v2 walks up to the root config; pass it explicitly since we run
 ## from the module dir.
-.PHONY: loadtest-controller-lint
-loadtest-controller-lint: install-go-tools
-	cd $(LOADTEST_CONTROLLER_DIR) && $(GO) vet ./...
-	cd $(LOADTEST_CONTROLLER_DIR) && $(GOBIN)/golangci-lint run --config $(PWD)/.golangci.yml ./...
-	cd $(LOADTEST_CONTROLLER_DIR) && $(GO) vet -vettool=$(GOBIN)/mattermost-govet -license -license.year=2023 ./...
+.PHONY: nested-modules-lint
+nested-modules-lint: install-go-tools
+	@for d in $(NESTED_GO_MODULES); do \
+		(cd $$d && $(GO) vet ./... && \
+			$(GOBIN)/golangci-lint run --config $(PWD)/.golangci.yml ./... && \
+			$(GO) vet -vettool=$(GOBIN)/agents-govet ./...) || exit 1; \
+	done
 
-## Fail when the controller module's go.mod/go.sum drift from `go mod tidy`.
-.PHONY: loadtest-controller-mod-check
-loadtest-controller-mod-check:
-	cd $(LOADTEST_CONTROLLER_DIR) && $(GO) mod tidy
-	git diff --exit-code $(LOADTEST_CONTROLLER_DIR)/go.mod $(LOADTEST_CONTROLLER_DIR)/go.sum
+## Fail when a nested module's go.mod/go.sum drift from `go mod tidy`.
+.PHONY: nested-modules-mod-check
+nested-modules-mod-check:
+	@for d in $(NESTED_GO_MODULES); do \
+		(cd $$d && $(GO) mod tidy) && git diff --exit-code $$d/go.mod $$d/go.sum || exit 1; \
+	done
 
-## Compile-smoke the controller module.
-.PHONY: loadtest-controller-build
-loadtest-controller-build:
-	$(GO) build -C $(LOADTEST_CONTROLLER_DIR) ./...
+## Compile-smoke the nested modules.
+.PHONY: nested-modules-build
+nested-modules-build:
+	@for d in $(NESTED_GO_MODULES); do $(GO) build -C $$d ./... || exit 1; done
 
 ## Ensures the plugin manifest is valid
 .PHONY: manifest-check
@@ -266,28 +270,27 @@ apply:
 # Pinned tool versions. Bump these here, not at the install site — keeping the
 # pins in one place lets contributors update a tool with a single edit and
 # makes Go-version-skew fixes obvious.
-GOLANGCI_LINT_VERSION    ?= v2.13.1
+GOLANGCI_LINT_VERSION    ?= v2.15.0
 GOTESTSUM_VERSION        ?= v1.7.0
-MATTERMOST_GOVET_VERSION ?= 2fbfca354651528bffd39e63d7c5a2b32e6adf3e
+
+# `go install pkg@version` ignores our go.mod, so pin the toolchain explicitly;
+# golangci-lint refuses to lint code targeting a newer Go than it was built with.
+GO_TOOLS_TOOLCHAIN := go$(shell GOWORK=off $(GO) list -m -f '{{.GoVersion}}')
 
 ## Install go tools.
+install-go-tools: export GOTOOLCHAIN = $(GO_TOOLS_TOOLCHAIN)
 install-go-tools:
 	@echo Installing go tools
 	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	$(GO) install gotest.tools/gotestsum@$(GOTESTSUM_VERSION)
-	@if ! $(GO) install github.com/mattermost/mattermost-govet/v2@$(MATTERMOST_GOVET_VERSION); then \
-		echo "" >&2; \
-		echo "*** Failed to install mattermost-govet@$(MATTERMOST_GOVET_VERSION)." >&2; \
-		echo "*** This is usually Go toolchain skew: the pinned commit does not" >&2; \
-		echo "*** build against $$($(GO) version | awk '{print $$3}'). Bump" >&2; \
-		echo "*** MATTERMOST_GOVET_VERSION in the Makefile to a newer commit." >&2; \
-		exit 1; \
-	fi
+	$(GO) build -o $(GOBIN)/agents-govet ./build/govet
 
 ## Runs eslint and golangci-lint
 .PHONY: check-style
-check-style: manifest-check apply webapp/node_modules install-go-tools
+check-style: manifest-check apply webapp/node_modules e2e/node_modules install-go-tools
 	@echo Checking for style guide compliance
+
+	cd e2e && $(NPM) run lint
 
 ifneq ($(HAS_WEBAPP),)
 	cd webapp && npm run lint
@@ -306,8 +309,8 @@ ifneq ($(HAS_SERVER),)
 	$(GO) vet ./...
 	$(GOBIN)/golangci-lint run ./...
 	# npm dependencies can contain Go packages; do not lint third-party sources.
-	$(GO) vet -vettool=$(GOBIN)/mattermost-govet -license -license.year=2023 $$($(GO) list ./... | awk '!/\/node_modules\//')
-	$(MAKE) loadtest-controller-lint
+	$(GO) vet -vettool=$(GOBIN)/agents-govet $$($(GO) list ./... | awk '!/\/node_modules\//')
+	$(MAKE) nested-modules-lint
 endif
 
 ## Runs all style checks but fixes anything it can. Also re-extracts webapp
@@ -436,6 +439,16 @@ evalviewer:
 	@echo Building evalviewer...
 	$(GO) build $(GO_BUILD_FLAGS) -C cmd/evalviewer -o ../../bin/evalviewer .
 
+## Generates release notes with an LLM: make release-notes BASE=v2.10.0 HEAD=v2.11.0.
+## Needs ANTHROPIC_API_KEY and the gh CLI (logged in, or GITHUB_TOKEN set).
+## BASE defaults to the previous release before HEAD (default HEAD). Optional: TAG=vX.Y.Z,
+## OUTPUT=path (default stdout), RELEASE_NOTES_MODEL, PRINT_PROMPT=1 to only print the prompt.
+## See build/releasenotes/README.md.
+.PHONY: release-notes
+release-notes:
+	$(GO) build -C build/releasenotes -o ../../bin/releasenotes .
+	./bin/releasenotes $(if $(BASE),--base $(BASE)) $(if $(HEAD),--head $(HEAD)) $(if $(TAG),--tag $(TAG)) $(if $(OUTPUT),--output $(OUTPUT)) $(if $(PRINT_PROMPT),--print-prompt)
+
 # Packages with evals. Eval test names end in "Eval" so -run skips unit tests;
 # mcpserver evals boot Mattermost containers and need Docker.
 EVAL_PACKAGES = ./conversations ./threads ./channels ./react ./mcpserver
@@ -532,8 +545,8 @@ detach: setup-attach
 .PHONY: test
 test: apply webapp/node_modules install-go-tools
 ifneq ($(HAS_SERVER),)
-	$(GOBIN)/gotestsum -- -v ./...
-	$(MAKE) loadtest-controller-test
+	$(GOBIN)/gotestsum --rerun-fails=1 --packages="./..." -- -v
+	$(MAKE) nested-modules-test
 endif
 ifneq ($(HAS_WEBAPP),)
 	cd webapp && $(NPM) run test;
@@ -545,7 +558,7 @@ endif
 test-ci: apply webapp/node_modules install-go-tools
 ifneq ($(HAS_SERVER),)
 	$(GOBIN)/gotestsum --format standard-verbose --junitfile report.xml -- ./...
-	$(MAKE) loadtest-controller-test
+	$(MAKE) nested-modules-test
 endif
 ifneq ($(HAS_WEBAPP),)
 	cd webapp && $(NPM) run test;
@@ -632,7 +645,7 @@ logs-watch:
 help:
 	@printf "\nUsage: make \033[36m<target>\033[0m\n\nMost-used targets first; run 'make help | sort' for alphabetical:\n\n"
 	@printf "  \033[36m%-22s\033[0m %s\n" "check" "Lint + unit tests + e2e shard coverage (recommended pre-PR)"
-	@printf "  \033[36m%-22s\033[0m %s\n" "check-style" "Lint Go and webapp"
+	@printf "  \033[36m%-22s\033[0m %s\n" "check-style" "Lint Go, webapp, and e2e"
 	@printf "  \033[36m%-22s\033[0m %s\n" "check-style-fix" "Lint and auto-fix what's fixable; re-extracts i18n strings"
 	@printf "  \033[36m%-22s\033[0m %s\n" "test" "Run all unit tests"
 	@printf "  \033[36m%-22s\033[0m %s\n" "e2e" "Run Playwright e2e suite (slow, defer to CI when possible)"

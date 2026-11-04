@@ -10,7 +10,14 @@ import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
-import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
+import {
+    UserAgent,
+    CreateAgentRequest,
+    UpdateAgentRequest,
+    ServiceInfo,
+    AgentVersionList,
+    AgentVersionDetail,
+} from '@/types/agents';
 import {isValidId} from '@/utils/ids';
 
 import manifest from './manifest';
@@ -335,6 +342,44 @@ export async function doToolResult(postid: string, toolIDs: string[]): Promise<v
     });
 }
 
+// doWaitCheckNow ends a pending wait_for_async_work pause early and resumes the
+// bot immediately. The server authorizes only the wait's requester.
+export async function doWaitCheckNow(postid: string) {
+    const url = `${postRoute(postid)}/wait/check_now`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+// doWaitCancel cancels a pending wait_for_async_work pause so the bot does not
+// resume from it. The server authorizes only the wait's requester.
+export async function doWaitCancel(postid: string) {
+    const url = `${postRoute(postid)}/wait/cancel`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function doPostbackSummary(postid: string) {
     const url = `${postRoute(postid)}/postback_summary`;
     const response = await fetch(url, Client4.getOptions({
@@ -394,6 +439,37 @@ export async function getAIThreads() {
 
     if (response.ok) {
         return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+function invalidConversationIdError() {
+    return new ClientError(Client4.url, {
+        message: 'Invalid conversation id',
+        status_code: 400,
+        url: Client4.url,
+    });
+}
+
+// renameConversation sets the user-visible title of one of the caller's conversations.
+export async function renameConversation(conversationId: string, title: string): Promise<void> {
+    if (!isValidId(conversationId)) {
+        throw invalidConversationIdError();
+    }
+
+    const url = `${conversationRoute(conversationId)}/title`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify({title}),
+    }));
+
+    if (response.ok) {
+        return;
     }
 
     throw new ClientError(Client4.url, {
@@ -500,6 +576,12 @@ export function updateRead(userId: string, teamId: string, selectedPostId: strin
 
 export function getProfilePictureUrl(userId: string, lastIconUpdate: number) {
     return Client4.getProfilePictureUrl(userId, lastIconUpdate);
+}
+
+// The root posts of chats for the history list's previews (message and reply count). The server
+// only returns the posts the user may read.
+export function getPostsByIds(postIds: string[]) {
+    return Client4.getPostsByIds(postIds);
 }
 
 export async function getBotProfilePictureUrl(username: string) {
@@ -931,11 +1013,12 @@ export async function updateUserToolPreferences(prefs: {disabled_servers: string
     });
 }
 
-export type ChannelAutoReplyMode = 'off' | 'root_posts' | 'threads';
+export type ChannelAutoReplyMode = 'off' | 'root_posts' | 'threads' | 'ambient' | 'ambient_threads';
 
 export type ChannelAutoReplySettings = {
     bot_id: string;
     mode: ChannelAutoReplyMode;
+    instructions: string;
 };
 
 export async function getChannelAutoReply(channelId: string): Promise<ChannelAutoReplySettings> {
@@ -1057,7 +1140,7 @@ export async function savePluginConfig(config: PluginConfig): Promise<PluginConf
     }
 
     throw new ClientError(Client4.url, {
-        message: await readClientErrorMessage(response),
+        ...(await readAgentError(response)),
         status_code: response.status,
         url,
     });
@@ -1146,6 +1229,50 @@ export async function deleteAgent(id: string): Promise<void> {
         status_code: response.status,
         url,
     });
+}
+
+// fetchAgentJSON sends an authenticated request to an agent route and throws
+// a ClientError carrying the server's message for any non-2xx response.
+async function fetchAgentJSON<T>(url: string, init: {method: string; body?: string}): Promise<T> {
+    const response = await fetch(url, Client4.getOptions(init));
+    if (!response.ok) {
+        throw new ClientError(Client4.url, {
+            message: await readAgentErrorMessage(response),
+            status_code: response.status,
+            url,
+        });
+    }
+    return response.json();
+}
+
+// getAgentVersions fetches one page of versions, newest first: those older
+// than `before` (from the newest when omitted), at most `limit` long.
+export function getAgentVersions(agentId: string, page: {before?: number; limit?: number} = {}): Promise<AgentVersionList> {
+    const params = new URLSearchParams();
+    if (typeof page.before === 'number') {
+        params.set('before', String(page.before));
+    }
+    if (typeof page.limit === 'number') {
+        params.set('limit', String(page.limit));
+    }
+    const query = params.toString();
+    return fetchAgentJSON(`${agentRoute(agentId)}/versions${query ? `?${query}` : ''}`, {method: 'GET'});
+}
+
+export function getAgentVersion(agentId: string, version: number): Promise<AgentVersionDetail> {
+    return fetchAgentJSON(`${agentRoute(agentId)}/versions/${version}`, {method: 'GET'});
+}
+
+export function restoreAgentVersion(agentId: string, version: number): Promise<UserAgent> {
+    return fetchAgentJSON(`${agentRoute(agentId)}/versions/${version}/restore`, {method: 'POST'});
+}
+
+// deleteAgentVersions permanently deletes the given versions, or with 'all'
+// every version except the current one, and resolves to how many were deleted.
+export async function deleteAgentVersions(agentId: string, versions: number[] | 'all'): Promise<number> {
+    const body = versions === 'all' ? {all: true} : {versions};
+    const result: {deleted: number} = await fetchAgentJSON(`${agentRoute(agentId)}/versions`, {method: 'DELETE', body: JSON.stringify(body)});
+    return result.deleted;
 }
 
 export async function uploadAgentAvatar(agentId: string, file: File): Promise<void> {
@@ -1252,7 +1379,8 @@ export async function createCustomPrompt(prompt: {name: string; description: str
     });
 }
 
-export async function updateCustomPrompt(id: string, prompt: {name: string; description: string; template: string; is_shared: boolean}): Promise<void> {
+// updated_at, when set, makes the update fail with 409 if the prompt changed since it was read.
+export async function updateCustomPrompt(id: string, prompt: {name: string; description: string; template: string; is_shared: boolean; updated_at?: number}): Promise<void> {
     const url = `${baseRoute()}/custom-prompts/${id}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'PUT',

@@ -6,10 +6,12 @@ package customprompts
 import (
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -113,7 +115,7 @@ func TestCreateAndGetEmptyDescription(t *testing.T) {
 
 	got, err := store.Get(created.ID)
 	require.NoError(t, err)
-	require.Equal(t, "", got.Description)
+	require.Empty(t, got.Description)
 }
 
 func TestGetNonExistent(t *testing.T) {
@@ -468,4 +470,27 @@ func TestGetPinnedIDsExcludesDeletedPrompts(t *testing.T) {
 	pinnedIDs, err := store.GetPinnedIDs(userID)
 	require.NoError(t, err)
 	require.Empty(t, pinnedIDs, "GetPinnedIDs should exclude deleted prompts")
+}
+
+func TestCustomPromptValidate(t *testing.T) {
+	tests := []struct {
+		name        string
+		description string
+		wantErr     bool
+	}{
+		{name: "empty description", description: ""},
+		{name: "description at the limit", description: strings.Repeat("a", llm.MaxSkillDescriptionRunes)},
+		{name: "description over the limit", description: strings.Repeat("a", llm.MaxSkillDescriptionRunes+1), wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			prompt := CustomPrompt{Name: "Skill", Description: tc.description, Template: "x"}
+			err := prompt.Validate()
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }

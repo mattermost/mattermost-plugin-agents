@@ -1,4 +1,5 @@
-import { test, expect, type Page, type Locator } from '@playwright/test';
+import { expect, type Page, type Locator } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { expandToolActivity } from 'helpers/llmbot-post';
 import { MattermostPage } from 'helpers/mm';
@@ -56,15 +57,15 @@ async function waitForSentPost(page: Page, message: string, timeout = 30000): Pr
     return post;
 }
 
-test.describe('AskUserQuestion with malformed arguments (Mocked LLM)', () => {
-    test.beforeAll(async () => {
-        mattermost = await RunToolConfigContainerWithPolicies();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
-    });
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigContainerWithPolicies());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
 
-    test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
+test.describe('AskUserQuestion with malformed arguments (Mocked LLM)', () => {
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test('rejects the malformed call and shows the model\'s valid retry as a question card', async ({ page }) => {

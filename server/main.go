@@ -35,6 +35,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
+	"github.com/mattermost/mattermost-plugin-agents/v2/skills"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
@@ -210,6 +211,17 @@ func (p *Plugin) OnActivate() error {
 		return fmt.Errorf("failed to run ABAC ID migrations: %w", err)
 	}
 
+	// Runs after the ID migration so agent versions record the remapped
+	// service IDs. Not fatal: the next update of an agent records its prior
+	// state first anyway.
+	backfilled, backfillErr := p.store.BackfillAgentVersions()
+	if backfilled > 0 {
+		pluginAPI.Log.Info("Backfilled agent versions", "count", backfilled)
+	}
+	if backfillErr != nil {
+		pluginAPI.Log.Error("Failed to backfill versions of some agents", "error", backfillErr.Error())
+	}
+
 	// Runs after the ID migration (it matches agents to services by ID) and
 	// before runtime config is loaded, so every node — including a follower
 	// that found nothing left to migrate — loads the migrated policies and
@@ -228,6 +240,9 @@ func (p *Plugin) OnActivate() error {
 		p.configuration.Update(dbConfig)
 	}
 	p.configMigrated = true
+
+	p.applyAgentVersionRetention()
+	p.configuration.RegisterUpdateListener(p.applyAgentVersionRetention)
 
 	if idsMigrated || structuredOutputMigrated {
 		if pubErr := p.PublishConfigUpdate(); pubErr != nil {
@@ -509,6 +524,9 @@ func (p *Plugin) OnActivate() error {
 	)
 	contextBuilder.SetMCPDynamicToolTelemetry(metricsService)
 
+	policyChecker := mcp.NewConfigToolPolicyChecker(p.configuration.MCP, func() bool {
+		return licenseChecker.Allows(enterprise.CapToolApprovalPolicies)
+	})
 	conversationsService := conversations.New(
 		prompts,
 		mmClient,
@@ -518,8 +536,8 @@ func (p *Plugin) OnActivate() error {
 		dbClient,
 		licenseChecker,
 		i18nBundle,
-		nil, // meetingsService will be set after it's created
 		&p.configuration,
+		policyChecker,
 	)
 
 	convService := conversation.NewService(p.store, prompts, mmClient, bots)
@@ -535,20 +553,29 @@ func (p *Plugin) OnActivate() error {
 		i18nBundle,
 		metricsService,
 		contextBuilder,
-		conversationsService,
+		convService,
 		licenseChecker,
 	)
+	conversationsService.SetMeetingSummaryRegenerator(meetingsService)
 
-	// Set the meetings service on conversations to break circular dependency
-	// TODO: Refactor to avoid circular dependency
-	conversationsService.SetMeetingsService(meetingsService)
-
-	// Wire per-tool policy checker for auto-approval in streaming and conversations.
-	policyChecker := mcp.NewConfigToolPolicyChecker(p.configuration.MCP, func() bool {
-		return licenseChecker.Allows(enterprise.CapToolApprovalPolicies)
-	})
 	streamingService.SetTurnStore(p.store)
-	conversationsService.SetToolPolicyChecker(policyChecker)
+
+	// wait_for_async_work wakes ride on the cluster JobOnce scheduler: jobs
+	// persist in KV, survive restarts, and fire exactly once cluster-wide.
+	wakeJobs := cluster.GetJobOnceScheduler(p.API)
+	if wakeErr := wakeJobs.SetCallback(conversationsService.HandleWakeJob); wakeErr != nil {
+		pluginAPI.Log.Error("Failed to set wait_for_async_work wake callback", "error", wakeErr)
+	} else {
+		// The scheduler is a process-wide singleton: on OnActivate re-runs
+		// Start errors with "already been started" while the refreshed
+		// callback above keeps working, so a Start error must not disable
+		// scheduling. ScheduleOnce self-guards if Start genuinely failed.
+		if wakeErr := wakeJobs.Start(); wakeErr != nil {
+			pluginAPI.Log.Warn("wait_for_async_work wake scheduler did not (re)start", "error", wakeErr)
+		}
+		conversationsService.SetWakeScheduler(wakeJobs, p.API)
+		toolProvider.SetScheduleWake(conversationsService.ScheduleWake)
+	}
 
 	// Initialize embedded MCP server handlers for plugin endpoints
 	var mcpHandlers *mcpserver.PluginMCPHandlers
@@ -570,6 +597,9 @@ func (p *Plugin) OnActivate() error {
 	}
 
 	customPromptsStore := customprompts.NewStore(dbClient)
+	contextBuilder.SetSkillProvider(skills.NewProvider(customPromptsStore, prompts, func() bool {
+		return licenseChecker.Allows(enterprise.CapSharedPrompts)
+	}))
 
 	apiService := api.New(
 		bots,
@@ -651,6 +681,21 @@ type telemetryOTLPSettings struct {
 	endpoint string
 	tls      bool
 	headers  string
+}
+
+// applyAgentVersionRetention applies the configured number of agent versions
+// to keep and deletes the versions beyond it. Config updates reach every
+// node, and the delete is idempotent, so each node may run it.
+func (p *Plugin) applyAgentVersionRetention() {
+	p.store.SetAgentVersionsToKeep(p.configuration.Config().AgentVersionsToKeep)
+	pruned, err := p.store.PruneAgentVersions()
+	if err != nil {
+		p.pluginAPI.Log.Error("Failed to delete agent versions beyond the retention limit", "error", err.Error())
+		return
+	}
+	if pruned > 0 {
+		p.pluginAPI.Log.Info("Deleted agent versions beyond the retention limit", "count", pruned)
+	}
 }
 
 // applyTelemetryConfig (re)initializes the global OpenTelemetry TracerProvider
@@ -736,9 +781,9 @@ func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
 	// Index the new message in the vector database
 	if p.indexerService != nil {
 		// Get channel to retrieve team ID
-		channel, err := p.API.GetChannel(post.ChannelId)
-		if err != nil {
-			p.pluginAPI.Log.Error("Failed to get channel for post indexing", "error", err)
+		channel, appErr := p.API.GetChannel(post.ChannelId)
+		if appErr != nil {
+			p.pluginAPI.Log.Error("Failed to get channel for post indexing", "error", appErr)
 		} else {
 			if err := p.indexerService.IndexPost(context.Background(), post, channel); err != nil {
 				p.pluginAPI.Log.Error("Failed to index post in vector database", "error", err)
@@ -749,9 +794,9 @@ func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
 
 func (p *Plugin) MessageHasBeenUpdated(c *plugin.Context, newPost, oldPost *model.Post) {
 	if p.indexerService != nil {
-		channel, err := p.API.GetChannel(newPost.ChannelId)
-		if err != nil {
-			p.pluginAPI.Log.Error("Failed to get channel for post indexing", "error", err)
+		channel, appErr := p.API.GetChannel(newPost.ChannelId)
+		if appErr != nil {
+			p.pluginAPI.Log.Error("Failed to get channel for post indexing", "error", appErr)
 		} else {
 			if err := p.indexerService.IndexPost(context.Background(), newPost, channel); err != nil {
 				p.pluginAPI.Log.Error("Failed to index updated post in vector database", "error", err)

@@ -2,11 +2,11 @@
 // seed: e2e/tests/seed.spec.ts
 
 import { test, expect } from '@playwright/test';
-import MattermostContainer from 'helpers/mmcontainer';
+import { containerTest } from 'helpers/container-fixture';
 import { MattermostPage } from 'helpers/mm';
 import { SystemConsoleHelper } from 'helpers/system-console';
 import { chooseCompassOption } from 'helpers/compass-select';
-import { OpenAIMockContainer, RunOpenAIMocks } from 'helpers/openai-mock';
+import { RunOpenAIMocks } from 'helpers/openai-mock';
 import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers/system-console-container';
 
 /**
@@ -20,41 +20,190 @@ import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers
  * - Badges appear in collapsed card state with red/danger styling and alert icon
  */
 
-let mattermost: MattermostContainer;
-let openAIMock: OpenAIMockContainer;
+const emptyUsernameTest = containerTest(async (own) => {
+    // Start container with bot configured with empty name
+    const mattermost = own(await RunSystemConsoleContainer({
+        services: [
+            {
+                id: 'service-1',
+                name: 'Test Service',
+                type: 'openai',
+                apiKey: 'test-key',
+                defaultModel: 'gpt-4',
+                tokenLimit: 16384,
+                outputTokenLimit: 4096,
+            }
+        ],
+        bots: [
+            {
+                id: 'bot-1',
+                name: '',
+                displayName: 'Test Bot',
+                serviceID: 'service-1',
+                customInstructions: 'You are a helpful assistant',
+                enableVision: false,
+                enableTools: false,
+            }
+        ],
+    }));
+    own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost };
+});
+
+const usernameWithSpacesTest = containerTest(async (own) => {
+    // Start container with bot configured with name containing space
+    const mattermost = own(await RunSystemConsoleContainer({
+        services: [
+            {
+                id: 'service-1',
+                name: 'Test Service',
+                type: 'openai',
+                apiKey: 'test-key',
+                defaultModel: 'gpt-4',
+                tokenLimit: 16384,
+                outputTokenLimit: 4096,
+            }
+        ],
+        bots: [
+            {
+                id: 'bot-1',
+                name: 'test bot',
+                displayName: 'Test Bot',
+                serviceID: 'service-1',
+                customInstructions: 'You are a helpful assistant',
+                enableVision: false,
+                enableTools: false,
+            }
+        ],
+    }));
+    own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost };
+});
+
+const usernameStartingWithNumberTest = containerTest(async (own) => {
+    // Start container with bot configured with name starting with number
+    const mattermost = own(await RunSystemConsoleContainer({
+        services: [
+            {
+                id: 'service-1',
+                name: 'Test Service',
+                type: 'openai',
+                apiKey: 'test-key',
+                defaultModel: 'gpt-4',
+                tokenLimit: 16384,
+                outputTokenLimit: 4096,
+            }
+        ],
+        bots: [
+            {
+                id: 'bot-1',
+                name: '1testbot',
+                displayName: 'Test Bot',
+                serviceID: 'service-1',
+                customInstructions: 'You are a helpful assistant',
+                enableVision: false,
+                enableTools: false,
+            }
+        ],
+    }));
+    own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost };
+});
+
+const uppercaseUsernameTest = containerTest(async (own) => {
+    // Start container with bot configured with uppercase name
+    const mattermost = own(await RunSystemConsoleContainer({
+        services: [
+            {
+                id: 'service-1',
+                name: 'Test Service',
+                type: 'openai',
+                apiKey: 'test-key',
+                defaultModel: 'gpt-4',
+                tokenLimit: 16384,
+                outputTokenLimit: 4096,
+            }
+        ],
+        bots: [
+            {
+                id: 'bot-1',
+                name: 'TestBot',
+                displayName: 'Test Bot',
+                serviceID: 'service-1',
+                customInstructions: 'You are a helpful assistant',
+                enableVision: false,
+                enableTools: false,
+            }
+        ],
+    }));
+    own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost };
+});
+
+const missingServiceTest = containerTest(async (own) => {
+    // Start container with bot configured with empty serviceID
+    const mattermost = own(await RunSystemConsoleContainer({
+        services: [
+            {
+                id: 'service-1',
+                name: 'Test Service',
+                type: 'openai',
+                apiKey: 'test-key',
+                defaultModel: 'gpt-4',
+                tokenLimit: 16384,
+                outputTokenLimit: 4096,
+            }
+        ],
+        bots: [
+            {
+                id: 'bot-1',
+                name: 'testbot',
+                displayName: 'Test Bot',
+                serviceID: '',
+                customInstructions: 'You are a helpful assistant',
+                enableVision: false,
+                enableTools: false,
+            }
+        ],
+    }));
+    own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost };
+});
+
+const multipleBadgesTest = containerTest(async (own) => {
+    // Start container with bot configured with both empty name and empty serviceID
+    const mattermost = own(await RunSystemConsoleContainer({
+        services: [
+            {
+                id: 'service-1',
+                name: 'Test Service',
+                type: 'openai',
+                apiKey: 'test-key',
+                defaultModel: 'gpt-4',
+                tokenLimit: 16384,
+                outputTokenLimit: 4096,
+            }
+        ],
+        bots: [
+            {
+                id: 'bot-1',
+                name: '',
+                displayName: 'Broken Bot',
+                serviceID: '',
+                customInstructions: 'You are a helpful assistant',
+                enableVision: false,
+                enableTools: false,
+            }
+        ],
+    }));
+    own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost };
+});
 
 // Legacy System Console bot editor removed (MM-65671). Covered by tests/agents/provider-config.spec.ts.
 test.describe.skip('Bot Validation Badges', () => {
-    test('should show "No Username" badge when username is empty', async ({ page }) => {
+    emptyUsernameTest('should show "No Username" badge when username is empty', async ({ page, containers: { mattermost } }) => {
         test.setTimeout(60000);
-
-        // Start container with bot configured with empty name
-        mattermost = await RunSystemConsoleContainer({
-            services: [
-                {
-                    id: 'service-1',
-                    name: 'Test Service',
-                    type: 'openai',
-                    apiKey: 'test-key',
-                    defaultModel: 'gpt-4',
-                    tokenLimit: 16384,
-                    outputTokenLimit: 4096,
-                }
-            ],
-            bots: [
-                {
-                    id: 'bot-1',
-                    name: '',
-                    displayName: 'Test Bot',
-                    serviceID: 'service-1',
-                    customInstructions: 'You are a helpful assistant',
-                    enableVision: false,
-                    enableTools: false,
-                }
-            ],
-        });
-
-        openAIMock = await RunOpenAIMocks(mattermost.network);
 
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
@@ -104,41 +253,10 @@ test.describe.skip('Bot Validation Badges', () => {
         // 14. Verify the 'No Username' badge reappears
         await systemConsole.getBotsPanel().click();
         await expect(noUsernameBadge).toBeVisible();
-
-        await openAIMock.stop();
-        await mattermost.stop();
     });
 
-    test('should show "Invalid Username" badge for username with spaces', async ({ page }) => {
+    usernameWithSpacesTest('should show "Invalid Username" badge for username with spaces', async ({ page, containers: { mattermost } }) => {
         test.setTimeout(60000);
-
-        // Start container with bot configured with name containing space
-        mattermost = await RunSystemConsoleContainer({
-            services: [
-                {
-                    id: 'service-1',
-                    name: 'Test Service',
-                    type: 'openai',
-                    apiKey: 'test-key',
-                    defaultModel: 'gpt-4',
-                    tokenLimit: 16384,
-                    outputTokenLimit: 4096,
-                }
-            ],
-            bots: [
-                {
-                    id: 'bot-1',
-                    name: 'test bot',
-                    displayName: 'Test Bot',
-                    serviceID: 'service-1',
-                    customInstructions: 'You are a helpful assistant',
-                    enableVision: false,
-                    enableTools: false,
-                }
-            ],
-        });
-
-        openAIMock = await RunOpenAIMocks(mattermost.network);
 
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
@@ -189,41 +307,10 @@ test.describe.skip('Bot Validation Badges', () => {
         // 15. Verify badge reappears after losing focus on field
         await systemConsole.getBotsPanel().click();
         await expect(invalidUsernameBadge).toBeVisible();
-
-        await openAIMock.stop();
-        await mattermost.stop();
     });
 
-    test('should show "Invalid Username" badge for username starting with number', async ({ page }) => {
+    usernameStartingWithNumberTest('should show "Invalid Username" badge for username starting with number', async ({ page, containers: { mattermost } }) => {
         test.setTimeout(60000);
-
-        // Start container with bot configured with name starting with number
-        mattermost = await RunSystemConsoleContainer({
-            services: [
-                {
-                    id: 'service-1',
-                    name: 'Test Service',
-                    type: 'openai',
-                    apiKey: 'test-key',
-                    defaultModel: 'gpt-4',
-                    tokenLimit: 16384,
-                    outputTokenLimit: 4096,
-                }
-            ],
-            bots: [
-                {
-                    id: 'bot-1',
-                    name: '1testbot',
-                    displayName: 'Test Bot',
-                    serviceID: 'service-1',
-                    customInstructions: 'You are a helpful assistant',
-                    enableVision: false,
-                    enableTools: false,
-                }
-            ],
-        });
-
-        openAIMock = await RunOpenAIMocks(mattermost.network);
 
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
@@ -260,41 +347,10 @@ test.describe.skip('Bot Validation Badges', () => {
 
         // 11. Verify badge disappears
         await expect(invalidUsernameBadge).not.toBeVisible();
-
-        await openAIMock.stop();
-        await mattermost.stop();
     });
 
-    test('should show "Invalid Username" badge for uppercase letters', async ({ page }) => {
+    uppercaseUsernameTest('should show "Invalid Username" badge for uppercase letters', async ({ page, containers: { mattermost } }) => {
         test.setTimeout(60000);
-
-        // Start container with bot configured with uppercase name
-        mattermost = await RunSystemConsoleContainer({
-            services: [
-                {
-                    id: 'service-1',
-                    name: 'Test Service',
-                    type: 'openai',
-                    apiKey: 'test-key',
-                    defaultModel: 'gpt-4',
-                    tokenLimit: 16384,
-                    outputTokenLimit: 4096,
-                }
-            ],
-            bots: [
-                {
-                    id: 'bot-1',
-                    name: 'TestBot',
-                    displayName: 'Test Bot',
-                    serviceID: 'service-1',
-                    customInstructions: 'You are a helpful assistant',
-                    enableVision: false,
-                    enableTools: false,
-                }
-            ],
-        });
-
-        openAIMock = await RunOpenAIMocks(mattermost.network);
 
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
@@ -334,41 +390,10 @@ test.describe.skip('Bot Validation Badges', () => {
         // 11. Verify badge reappears
         await systemConsole.getBotsPanel().click();
         await expect(invalidUsernameBadge).toBeVisible();
-
-        await openAIMock.stop();
-        await mattermost.stop();
     });
 
-    test('should show "No Service Selected" badge when service is missing', async ({ page }) => {
+    missingServiceTest('should show "No Service Selected" badge when service is missing', async ({ page, containers: { mattermost } }) => {
         test.setTimeout(60000);
-
-        // Start container with bot configured with empty serviceID
-        mattermost = await RunSystemConsoleContainer({
-            services: [
-                {
-                    id: 'service-1',
-                    name: 'Test Service',
-                    type: 'openai',
-                    apiKey: 'test-key',
-                    defaultModel: 'gpt-4',
-                    tokenLimit: 16384,
-                    outputTokenLimit: 4096,
-                }
-            ],
-            bots: [
-                {
-                    id: 'bot-1',
-                    name: 'testbot',
-                    displayName: 'Test Bot',
-                    serviceID: '',
-                    customInstructions: 'You are a helpful assistant',
-                    enableVision: false,
-                    enableTools: false,
-                }
-            ],
-        });
-
-        openAIMock = await RunOpenAIMocks(mattermost.network);
 
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
@@ -419,41 +444,10 @@ test.describe.skip('Bot Validation Badges', () => {
         // 16. Verify badge reappears
         await systemConsole.getBotsPanel().click();
         await expect(noServiceBadge).toBeVisible();
-
-        await openAIMock.stop();
-        await mattermost.stop();
     });
 
-    test('should show multiple validation badges simultaneously', async ({ page }) => {
+    multipleBadgesTest('should show multiple validation badges simultaneously', async ({ page, containers: { mattermost } }) => {
         test.setTimeout(60000);
-
-        // Start container with bot configured with both empty name and empty serviceID
-        mattermost = await RunSystemConsoleContainer({
-            services: [
-                {
-                    id: 'service-1',
-                    name: 'Test Service',
-                    type: 'openai',
-                    apiKey: 'test-key',
-                    defaultModel: 'gpt-4',
-                    tokenLimit: 16384,
-                    outputTokenLimit: 4096,
-                }
-            ],
-            bots: [
-                {
-                    id: 'bot-1',
-                    name: '',
-                    displayName: 'Broken Bot',
-                    serviceID: '',
-                    customInstructions: 'You are a helpful assistant',
-                    enableVision: false,
-                    enableTools: false,
-                }
-            ],
-        });
-
-        openAIMock = await RunOpenAIMocks(mattermost.network);
 
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
@@ -514,8 +508,5 @@ test.describe.skip('Bot Validation Badges', () => {
         await systemConsole.getBotsPanel().click();
         await expect(noUsernameBadge).toBeVisible();
         await expect(noServiceBadge).not.toBeVisible();
-
-        await openAIMock.stop();
-        await mattermost.stop();
     });
 });

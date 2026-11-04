@@ -49,7 +49,9 @@ const groups = {
         'tests/llmbot-post-component/debug-test.spec.ts',
         'tests/agents/create-file-attachment.spec.ts',
         'tests/agents/html-artifact.spec.ts',
+        'tests/agents/agent-chat-bubbles.spec.ts',
         'tests/tool-activity/collapsed-activity.spec.ts',
+        'tests/rhs-core/link-domain-allowlist.spec.ts',
     ],
     'e2e-shard-3': [
         'tests/system-console/bot-native-tools.spec.ts',
@@ -64,12 +66,14 @@ const groups = {
         'tests/agents-tour/edge-cases.spec.ts',
         'tests/agents/access-control.spec.ts',
         'tests/agents/crud.spec.ts',
+        'tests/agents/agents-product-view.spec.ts',
         'tests/agents/mcp-tools.spec.ts',
         'tests/tool-config/tool-toggle.spec.ts',
         'tests/tool-config/vetted-seed.spec.ts',
         'tests/llmbot-post-component/reasoning-display.spec.ts',
         'tests/llmbot-post-component/streaming-persistence.spec.ts',
         'tests/llmbot-post-component/edge-cases.spec.ts',
+        'tests/tool-config/mock-api/dm_only_mcp_server.spec.ts',
     ],
     'e2e-shard-4': [
         'tests/channel-analysis/response-citations/response-citations.spec.ts',
@@ -96,6 +100,7 @@ const groups = {
         'tests/tool-config/real-api/channel-auto-run.spec.ts',
         'tests/tool-config/real-api/disabled-tool.spec.ts',
         'tests/channel-autoreply/channel_autoreply.spec.ts',
+        'tests/agents/versioning-import-export.spec.ts',
     ],
 };
 

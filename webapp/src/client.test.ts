@@ -15,6 +15,10 @@ import {
     doLoopInAgent,
     doRunSearch,
     doThreadAnalysis,
+    deleteAgentVersions,
+    getAgentVersion,
+    getAgentVersions,
+    restoreAgentVersion,
     getArtifactToken,
     getChannelAutoReply,
     getChannelInterval,
@@ -299,7 +303,7 @@ describe('agent selection by bot id', () => {
 
 describe('getChannelAutoReply', () => {
     test('issues a GET to the channel autoreply route and returns the parsed body', async () => {
-        const body = {bot_id: 'bot-1', mode: 'threads'};
+        const body = {bot_id: 'bot-1', mode: 'threads', instructions: ''};
         mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve(body)} as unknown as Response);
 
         await expect(getChannelAutoReply('channel-1')).resolves.toEqual(body);
@@ -311,7 +315,7 @@ describe('getChannelAutoReply', () => {
     });
 
     test('percent-encodes the channel id so it occupies a single path segment', async () => {
-        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve({bot_id: '', mode: 'off'})} as unknown as Response);
+        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve({bot_id: '', mode: 'off', instructions: ''})} as unknown as Response);
 
         await getChannelAutoReply('cha/nnel');
 
@@ -331,14 +335,19 @@ describe('updateChannelAutoReply', () => {
         const json = jest.fn();
         mockFetch.mockResolvedValue({ok: true, status: 200, json} as unknown as Response);
 
-        await expect(updateChannelAutoReply('channel-1', {bot_id: 'bot-1', mode: 'root_posts'})).resolves.toBeUndefined();
+        const settings = {
+            bot_id: 'bot-1',
+            mode: 'ambient' as const,
+            instructions: 'when asked',
+        };
+        await expect(updateChannelAutoReply('channel-1', settings)).resolves.toBeUndefined();
 
         expect(mockFetch).toHaveBeenCalledTimes(1);
         const [url, options] = mockFetch.mock.calls[0];
         expect(url).toBe(`${siteURL}/plugins/${manifest.id}/channel/channel-1/autoreply`);
         expect(options).toEqual(expect.objectContaining({
             method: 'PUT',
-            body: JSON.stringify({bot_id: 'bot-1', mode: 'root_posts'}),
+            body: JSON.stringify(settings),
         }));
         expect(json).not.toHaveBeenCalled();
     });
@@ -346,7 +355,7 @@ describe('updateChannelAutoReply', () => {
     test.each([403, 413, 500])('throws an error carrying status %d on a non-ok response', async (status) => {
         mockFetch.mockResolvedValue({ok: false, status, json: jest.fn()} as unknown as Response);
 
-        await expect(updateChannelAutoReply('channel-1', {bot_id: '', mode: 'off'})).rejects.toMatchObject({status_code: status});
+        await expect(updateChannelAutoReply('channel-1', {bot_id: '', mode: 'off', instructions: ''})).rejects.toMatchObject({status_code: status});
     });
 });
 
@@ -432,6 +441,58 @@ describe('license denial errors', () => {
         await expect(doThreadAnalysis('post-1', 'summarize_thread', 'bot')).rejects.toMatchObject({
             status_code: 500,
             message: '',
+        });
+    });
+});
+
+describe('agent versioning client', () => {
+    const agentBase = `${siteURL}/plugins/${manifest.id}/agents`;
+
+    function jsonResponse(body: unknown, init: {ok?: boolean; status?: number} = {}): Response {
+        return {
+            ok: init.ok ?? true,
+            status: init.status ?? 200,
+            json: () => Promise.resolve(body),
+        } as unknown as Response;
+    }
+
+    test.each([
+        {name: 'list versions', call: () => getAgentVersions('a1'), url: `${agentBase}/a1/versions`, method: 'GET'},
+        {name: 'list older versions', call: () => getAgentVersions('a1', {before: 51}), url: `${agentBase}/a1/versions?before=51`, method: 'GET'},
+        {name: 'list a page of versions', call: () => getAgentVersions('a1', {before: 51, limit: 20}), url: `${agentBase}/a1/versions?before=51&limit=20`, method: 'GET'},
+        {name: 'get one version', call: () => getAgentVersion('a1', 3), url: `${agentBase}/a1/versions/3`, method: 'GET'},
+        {name: 'restore a version', call: () => restoreAgentVersion('a1', 3), url: `${agentBase}/a1/versions/3/restore`, method: 'POST'},
+        {name: 'delete versions', call: () => deleteAgentVersions('a1', [1, 2]), url: `${agentBase}/a1/versions`, method: 'DELETE'},
+    ])('$name uses the contract route', async ({call, url, method}) => {
+        mockFetch.mockResolvedValue(jsonResponse({}));
+
+        await call();
+
+        const [calledUrl, options] = mockFetch.mock.calls[0];
+        expect(calledUrl).toBe(url);
+        expect(options).toEqual(expect.objectContaining({method}));
+    });
+
+    test.each([
+        {name: 'selected versions', versions: [1, 4] as number[] | 'all', body: {versions: [1, 4]}},
+        {name: 'every previous version', versions: 'all' as number[] | 'all', body: {all: true}},
+    ])('deleteAgentVersions sends $name and returns the count', async ({versions, body}) => {
+        mockFetch.mockResolvedValue(jsonResponse({deleted: 2}));
+
+        await expect(deleteAgentVersions('a1', versions)).resolves.toBe(2);
+        expect(JSON.parse(mockFetch.mock.calls[0][1].body as string)).toEqual(body);
+    });
+
+    test.each([
+        {name: 'restore', call: () => restoreAgentVersion('a1', 3)},
+        {name: 'delete', call: () => deleteAgentVersions('a1', [3])},
+        {name: 'list versions', call: () => getAgentVersions('a1')},
+    ])('$name surfaces the server error message and status', async ({call}) => {
+        mockFetch.mockResolvedValue(jsonResponse({error: 'the current version of an agent cannot be deleted'}, {ok: false, status: 400}));
+
+        await expect(call()).rejects.toMatchObject({
+            status_code: 400,
+            message: 'the current version of an agent cannot be deleted',
         });
     });
 });

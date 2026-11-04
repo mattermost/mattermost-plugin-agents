@@ -21,14 +21,19 @@ type fakeStreamingClient struct {
 	updatedPosts []*model.Post
 	events       []publishedEvent
 	warnings     []string
+	onPublish    func(publishedEvent)
 }
 
 func (c *fakeStreamingClient) PublishWebSocketEvent(event string, payload map[string]any, broadcast *model.WebsocketBroadcast) {
-	c.events = append(c.events, publishedEvent{
+	ev := publishedEvent{
 		event:     event,
 		payload:   payload,
 		broadcast: broadcast,
-	})
+	}
+	c.events = append(c.events, ev)
+	if c.onPublish != nil {
+		c.onPublish(ev)
+	}
 }
 
 func (c *fakeStreamingClient) UpdatePost(post *model.Post) error {

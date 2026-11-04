@@ -21,7 +21,8 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 	)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, b.streamingTimeout*10)
 	defer cancel()
-	b.withHopReasoning(bifrostCtx, cfg)
+	request = bufferFiles(request)
+	b.withHopRequest(bifrostCtx, request, cfg)
 
 	// Convert to Bifrost request
 	bifrostReq := b.convertToBifrostRequest(request, cfg)
@@ -176,16 +177,11 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 	}
 }
 
-// buildChatReasoning creates the ChatReasoning configuration for the primary
-// provider, or nil when no reasoning block should be sent.
-func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReasoning {
-	return b.chatReasoningFor(b.provider, cfg)
-}
-
-// chatReasoningFor creates the ChatReasoning configuration for provider and
-// cfg.Model, or nil when no reasoning block should be sent.
-func (b *LLM) chatReasoningFor(provider schemas.ModelProvider, cfg llm.LanguageModelConfig) *schemas.ChatReasoning {
-	params, ok := b.providerReasoning(provider, cfg)
+// chatReasoningFor creates the ChatReasoning configuration for cfg.Model on
+// the provider registered as name, or nil when no reasoning block should be
+// sent.
+func (b *LLM) chatReasoningFor(name schemas.ModelProvider, cfg llm.LanguageModelConfig) *schemas.ChatReasoning {
+	params, ok := b.providerReasoning(messagesAPIProvider(b.baseProvider(name), cfg.Model), cfg)
 	if !ok {
 		return nil
 	}
@@ -196,22 +192,29 @@ func (b *LLM) chatReasoningFor(provider schemas.ModelProvider, cfg llm.LanguageM
 	return reasoning
 }
 
-// convertToBifrostRequest converts our CompletionRequest to Bifrost's format.
+// convertToBifrostRequest converts our CompletionRequest to Bifrost's format,
+// built for the primary. Bifrost replays it to each fallback, whose body the
+// hopRequestPlugin rebuilds with chatRequestForHop.
 func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.LanguageModelConfig) *schemas.BifrostChatRequest {
-	messages := b.convertMessages(request.Posts)
-	tools := b.convertTools(request, cfg)
-
-	req := &schemas.BifrostChatRequest{
+	messages, params := b.chatRequestForHop(request, cfg, b.provider, cfg.Model)
+	return &schemas.BifrostChatRequest{
 		Provider: b.provider,
 		Model:    cfg.Model,
 		Input:    messages,
+		Params:   params,
+		// Attach fallback chain so Bifrost retries with alternative providers on failure.
+		Fallbacks: b.requestFallbacks(request),
 	}
+}
 
-	// Set parameters
-	params := &schemas.ChatParameters{}
-	if cfg.MaxGeneratedTokens > 0 {
-		params.MaxCompletionTokens = new(cfg.MaxGeneratedTokens)
-	}
+// chatRequestForHop returns the messages and parameters for model on the
+// provider registered as name, shaped for that hop's own rules.
+func (b *LLM) chatRequestForHop(request llm.CompletionRequest, cfg llm.LanguageModelConfig, name schemas.ModelProvider, model string) ([]schemas.ChatMessage, *schemas.ChatParameters) {
+	rules := b.messageRulesFor(name, model, countRequestImages(request.Posts))
+	messages := convertMessages(normalizePosts(request.Posts, rules), rules)
+	tools := convertTools(request, cfg)
+
+	var params schemas.ChatParameters
 	if len(tools) > 0 {
 		params.Tools = tools
 		if cfg.ToolsDisabled {
@@ -219,34 +222,28 @@ func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.Lan
 			params.ToolChoice = &schemas.ChatToolChoice{ChatToolChoiceStr: &none}
 		}
 	}
-	// Apply reasoning configuration
-	params.Reasoning = b.buildChatReasoning(cfg)
 	// Apply structured output (JSON schema) configuration
 	if cfg.JSONOutputFormat != nil {
 		params.ResponseFormat = buildChatResponseFormat(cfg.JSONOutputFormat)
 	}
-	fallbacks := b.requestFallbacks(request)
-	if b.promptCachingEnabledFor(fallbacks) {
+	if rules.promptCaching {
 		params.CacheControl = &schemas.CacheControl{Type: schemas.CacheControlTypeEphemeral}
 	}
-	req.Params = params
-
-	// Attach fallback chain so Bifrost retries with alternative providers on failure.
-	req.Fallbacks = fallbacks
-
-	return req
+	return messages, b.chatHopParams(params, name, model, cfg)
 }
 
-// convertMessages converts llm.Post messages to Bifrost ChatMessage format.
-func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
+// convertMessages converts posts normalized for rules to Bifrost ChatMessage format.
+func convertMessages(posts []llm.Post, rules messageRules) []schemas.ChatMessage {
 	messages := make([]schemas.ChatMessage, 0, len(posts))
-	maxDim := maxImageDimension(b.provider, countRequestImages(posts))
 
 	for _, post := range posts {
 		var msg schemas.ChatMessage
 
 		switch post.Role {
 		case llm.PostRoleSystem:
+			if isBlank(post.Message) {
+				continue
+			}
 			msg = schemas.ChatMessage{
 				Role: schemas.ChatMessageRoleSystem,
 				Content: &schemas.ChatMessageContent{
@@ -257,7 +254,10 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 		case llm.PostRoleUser:
 			if len(post.Files) > 0 {
 				// Multimodal message with images
-				parts := b.createMultimodalContent(post, maxDim)
+				parts := createMultimodalContent(post, rules.imageDimensionLimit)
+				if len(parts) == 0 {
+					continue
+				}
 				msg = schemas.ChatMessage{
 					Role: schemas.ChatMessageRoleUser,
 					Content: &schemas.ChatMessageContent{
@@ -265,6 +265,9 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 					},
 				}
 			} else {
+				if isBlank(post.Message) {
+					continue
+				}
 				msg = schemas.ChatMessage{
 					Role: schemas.ChatMessageRoleUser,
 					Content: &schemas.ChatMessageContent{
@@ -276,18 +279,15 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 		case llm.PostRoleBot:
 			msg = schemas.ChatMessage{
 				Role: schemas.ChatMessageRoleAssistant,
-				Content: &schemas.ChatMessageContent{
+			}
+			if post.Message != "" {
+				msg.Content = &schemas.ChatMessageContent{
 					ContentStr: new(post.Message),
-				},
+				}
 			}
 
 			// Add reasoning details for thinking-enabled conversations.
-			// Anthropic requires historical thinking blocks to include a valid
-			// provider-issued signature. If a previous stream failed before the
-			// signature arrived, we persist partial reasoning for display only; do
-			// not replay it to Anthropic as an unsigned thinking block. Other
-			// providers may accept unsigned reasoning, so preserve it for them.
-			if post.Reasoning != "" && (b.provider != schemas.Anthropic || post.ReasoningSignature != "") {
+			if post.Reasoning != "" {
 				if msg.ChatAssistantMessage == nil {
 					msg.ChatAssistantMessage = &schemas.ChatAssistantMessage{}
 				}
@@ -301,9 +301,6 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 
 			// Handle tool calls in assistant messages
 			if len(post.ToolUse) > 0 {
-				if post.Message == "" {
-					msg.Content = nil
-				}
 				toolCalls := make([]schemas.ChatAssistantMessageToolCall, 0, len(post.ToolUse))
 				for i, tc := range post.ToolUse {
 					toolCalls = append(toolCalls, schemas.ChatAssistantMessageToolCall{
@@ -324,36 +321,38 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 				// Add the assistant message with tool calls
 				messages = append(messages, msg)
 
-				// Add tool result messages. Anthropic rejects tool result
-				// messages with empty content ("text content blocks must be
-				// non-empty"), so substitute a placeholder if the tool
-				// returned an empty string.
 				for _, tc := range post.ToolUse {
-					result := tc.Result
-					if result == "" {
-						result = "(no output)"
-					}
+					// OpenAI-wire converters strip IsError; Anthropic and
+					// Bedrock map it to their tool-result error markers.
 					toolResultMsg := schemas.ChatMessage{
 						Role: schemas.ChatMessageRoleTool,
 						Content: &schemas.ChatMessageContent{
-							ContentStr: new(result),
+							ContentStr: new(tc.Result),
 						},
 						ChatToolMessage: &schemas.ChatToolMessage{
 							ToolCallID: new(tc.ID),
 						},
 					}
+					if toolResultIsError(tc) {
+						toolResultMsg.IsError = new(true)
+					}
 					messages = append(messages, toolResultMsg)
 				}
 				continue // Skip adding msg again
+			}
+
+			if msg.Content == nil && msg.ChatAssistantMessage == nil {
+				continue
 			}
 		}
 
 		messages = append(messages, msg)
 	}
 
-	// Merge consecutive same-role messages for Anthropic
-	if b.provider == schemas.Anthropic {
-		messages = b.mergeConsecutiveSameRoleMessages(messages)
+	// Bifrost does not merge same-role turns for Anthropic or Bedrock on the
+	// chat path, and Bedrock Converse rejects them.
+	if rules.strictMessages {
+		messages = mergeConsecutiveSameRoleMessages(messages)
 	}
 
 	return messages
@@ -361,7 +360,7 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 
 // mergeConsecutiveSameRoleMessages merges consecutive messages with the same role
 // into a single message with combined content blocks. Tool messages are never merged.
-func (b *LLM) mergeConsecutiveSameRoleMessages(messages []schemas.ChatMessage) []schemas.ChatMessage {
+func mergeConsecutiveSameRoleMessages(messages []schemas.ChatMessage) []schemas.ChatMessage {
 	if len(messages) <= 1 {
 		return messages
 	}
@@ -416,7 +415,7 @@ func messageToContentBlocks(msg *schemas.ChatMessage) []schemas.ChatContentBlock
 }
 
 // createMultimodalContent creates content blocks for messages with images.
-func (b *LLM) createMultimodalContent(post llm.Post, maxDim int) []schemas.ChatContentBlock {
+func createMultimodalContent(post llm.Post, maxDim int) []schemas.ChatContentBlock {
 	return multimodalContent(post, maxDim,
 		func(text string) schemas.ChatContentBlock {
 			return schemas.ChatContentBlock{
@@ -436,7 +435,7 @@ func (b *LLM) createMultimodalContent(post llm.Post, maxDim int) []schemas.ChatC
 }
 
 // convertTools converts llm.Tool to Bifrost ChatTool format.
-func (b *LLM) convertTools(request llm.CompletionRequest, cfg llm.LanguageModelConfig) []schemas.ChatTool {
+func convertTools(request llm.CompletionRequest, cfg llm.LanguageModelConfig) []schemas.ChatTool {
 	if request.Context == nil || request.Context.Tools == nil {
 		return nil
 	}
@@ -464,4 +463,10 @@ func (b *LLM) convertTools(request llm.CompletionRequest, cfg llm.LanguageModelC
 	}
 
 	return result
+}
+
+// toolResultIsError reports whether a replayed tool call did not produce a
+// real result: it failed, or was rejected, denied by policy, or never run.
+func toolResultIsError(tc llm.ToolCall) bool {
+	return tc.Status == llm.ToolCallStatusError || tc.Status == llm.ToolCallStatusRejected
 }

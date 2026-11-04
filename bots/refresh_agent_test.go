@@ -457,8 +457,8 @@ func TestRefreshAgentWaitsForInFlightRebuild(t *testing.T) {
 	go func() { refreshDone <- mmBots.RefreshAgent("a1") }()
 
 	select {
-	case <-refreshDone:
-		t.Fatal("RefreshAgent must wait for the in-flight rebuild to swap its registry")
+	case err := <-refreshDone:
+		t.Fatalf("RefreshAgent must wait for the in-flight rebuild to swap its registry (returned %v)", err)
 	case <-time.After(50 * time.Millisecond):
 	}
 	close(release)

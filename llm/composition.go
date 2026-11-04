@@ -147,9 +147,9 @@ func EstimateRequestTokens(inputs []CompositionInput) int {
 // Composition derives the per-source attribution for this request from its
 // posts and tool context. It is a pure function of the request, so it stays
 // consistent through truncation and needs no stored state.
-func (r CompletionRequest) Composition() []CompositionInput {
+func (b CompletionRequest) Composition() []CompositionInput {
 	var out []CompositionInput
-	for _, p := range r.Posts {
+	for _, p := range b.Posts {
 		source := SourceHistory
 		if p.Role == PostRoleSystem {
 			source = SourceSystem
@@ -167,8 +167,8 @@ func (r CompletionRequest) Composition() []CompositionInput {
 			out = append(out, CompositionInput{Source: SourceImage})
 		}
 	}
-	if r.Context != nil && r.Context.Tools != nil {
-		for _, t := range r.Context.Tools.GetTools() {
+	if b.Context != nil && b.Context.Tools != nil {
+		for _, t := range b.Context.Tools.GetTools() {
 			out = append(out, CompositionInput{Source: SourceToolDefs, Text: toolDefText(t)})
 		}
 	}

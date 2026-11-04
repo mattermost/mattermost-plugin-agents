@@ -32,33 +32,77 @@ const (
 )
 
 func (a *API) postAuthorizationRequired(c *gin.Context) {
-	userID := c.GetHeader("Mattermost-User-Id")
-	postID := c.Param("postid")
+	_, channel := a.readablePost(c)
+	if c.IsAborted() {
+		return
+	}
 
-	post, err := a.pluginAPI.Post.GetPost(postID)
+	userID := c.GetHeader("Mattermost-User-Id")
+	bot := c.MustGet(ContextBotKey).(*bots.Bot)
+	if err := a.bots.CheckUsageRestrictions(c.Request.Context(), userID, bot, channel); err != nil {
+		c.AbortWithError(http.StatusForbidden, err)
+		return
+	}
+}
+
+// readablePost loads the :postid post and its channel into the request
+// context, returning whichever it loaded, and aborts unless the requester can
+// read that channel.
+func (a *API) readablePost(c *gin.Context) (*model.Post, *model.Channel) {
+	post, err := a.pluginAPI.Post.GetPost(c.Param("postid"))
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
-		return
+		return nil, nil
 	}
 	c.Set(ContextPostKey, post)
 
 	channel, err := a.pluginAPI.Channel.Get(post.ChannelId)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
-		return
+		return post, nil
 	}
 	c.Set(ContextChannelKey, channel)
 
-	if !a.pluginAPI.User.HasPermissionToChannel(userID, channel.Id, model.PermissionReadChannel) {
-		c.AbortWithError(http.StatusForbidden, errors.New("user doesn't have permission to read channel post in in"))
+	if !a.pluginAPI.User.HasPermissionToChannel(c.GetHeader("Mattermost-User-Id"), channel.Id, model.PermissionReadChannel) {
+		c.AbortWithError(http.StatusForbidden, errors.New("user doesn't have permission to read the post's channel"))
+	}
+	return post, channel
+}
+
+// agentPostAuthorizationRequired authorizes a request on the run behind an
+// agent post: the requester must be able to read the post's channel, and the
+// post must be one an agent wrote. Whether the requester may still use that
+// agent is checked by the service for each route that runs it again.
+func (a *API) agentPostAuthorizationRequired(c *gin.Context) {
+	post, channel := a.readablePost(c)
+	rec := auditRec(c)
+	if post != nil {
+		audit.AddParam(rec, audit.KeyPostID, post.Id)
+	}
+	if channel != nil {
+		audit.AddParam(rec, audit.KeyChannelID, channel.Id)
+	}
+	if c.IsAborted() {
 		return
 	}
 
-	bot := c.MustGet(ContextBotKey).(*bots.Bot)
-	if err := a.bots.CheckUsageRestrictions(c.Request.Context(), userID, bot, channel); err != nil {
-		c.AbortWithError(http.StatusForbidden, err)
+	bot := a.bots.GetBotByID(post.UserId)
+	if bot == nil {
+		c.AbortWithError(http.StatusBadRequest, errors.New("not a bot post"))
 		return
 	}
+	c.Set(ContextBotKey, bot)
+	audit.AddParam(rec, audit.KeyAgentID, bot.GetMMBot().UserId)
+}
+
+// abortWithServiceError aborts with err: a missing license gets the license
+// error response, anything else the status statusFor maps it to.
+func abortWithServiceError(c *gin.Context, err error, statusFor func(error) int) {
+	if _, ok := errors.AsType[*enterprise.LicenseError](err); ok {
+		abortNotLicensed(c, err)
+		return
+	}
+	c.AbortWithError(statusFor(err), err)
 }
 
 func (a *API) handleReact(c *gin.Context) {
@@ -210,8 +254,7 @@ func (a *API) handleTranscribeFile(c *gin.Context) {
 
 	result, err := a.meetingsService.HandleTranscribeFile(userID, bot, post, channel, fileID, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
-		var licErr *enterprise.LicenseError
-		if errors.As(err, &licErr) {
+		if _, ok := errors.AsType[*enterprise.LicenseError](err); ok {
 			abortNotLicensed(c, err)
 			return
 		}
@@ -239,8 +282,7 @@ func (a *API) handleSummarizeTranscription(c *gin.Context) {
 
 	result, err := a.meetingsService.HandleSummarizeTranscription(userID, bot, post, channel, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
-		var licErr *enterprise.LicenseError
-		if errors.As(err, &licErr) {
+		if _, ok := errors.AsType[*enterprise.LicenseError](err); ok {
 			abortNotLicensed(c, err)
 			return
 		}
@@ -261,12 +303,6 @@ func (a *API) handleStop(c *gin.Context) {
 
 	if err := a.enforceEmptyBody(c); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err)
-		return
-	}
-
-	botID := post.UserId
-	if !a.bots.IsAnyBot(botID) {
-		c.AbortWithError(http.StatusBadRequest, errors.New("not a bot post"))
 		return
 	}
 
@@ -302,50 +338,34 @@ func (a *API) handleRegenerate(c *gin.Context) {
 		return
 	}
 
-	if !a.isConversationOwner(post, userID) {
-		c.AbortWithError(http.StatusForbidden, errors.New("only the original poster can regenerate"))
-		return
-	}
-
-	err := a.conversationsService.HandleRegenerate(c.Request.Context(), userID, post, channel)
-	if err != nil {
-		var licErr *enterprise.LicenseError
-		if errors.As(err, &licErr) {
-			abortNotLicensed(c, err)
-			return
-		}
-		if errors.Is(err, mmapi.ErrFileActionForbidden) {
-			c.AbortWithError(http.StatusForbidden, err)
-			return
-		}
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("unable to regenerate post: %w", err))
+	if err := a.conversationsService.HandleRegenerate(c.Request.Context(), userID, post, channel); err != nil {
+		abortWithServiceError(c, err, regenerateHTTPStatus)
 		return
 	}
 
 	c.Status(http.StatusOK)
 }
 
+// regenerateHTTPStatus maps errors from HandleRegenerate to HTTP statuses.
+func regenerateHTTPStatus(err error) int {
+	switch {
+	case errors.Is(err, conversations.ErrNotRegenerable):
+		return http.StatusBadRequest
+	case errors.Is(err, conversations.ErrNotRequester),
+		errors.Is(err, mmapi.ErrFileActionForbidden),
+		errors.Is(err, bots.ErrUsageRestriction),
+		errors.Is(err, conversations.ErrAnalysisSourceUnavailable):
+		return http.StatusForbidden
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
 func (a *API) handleToolCall(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	post := c.MustGet(ContextPostKey).(*model.Post)
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
-
-	// Enrich the audit record as soon as the objects are bound so the
-	// permission fail paths below still carry post and channel.
 	rec := auditRec(c)
-	audit.AddParam(rec, audit.KeyPostID, post.Id)
-	audit.AddParam(rec, audit.KeyChannelID, channel.Id)
-
-	isDM := mmapi.IsDMWith(post.UserId, channel)
-	if !isDM && !a.config.EnableChannelMentionToolCalling() {
-		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
-		return
-	}
-
-	if !a.isConversationOwner(post, userID) {
-		c.AbortWithError(http.StatusForbidden, errors.New("only the original requester can approve/reject tool calls"))
-		return
-	}
 
 	var data struct {
 		AcceptedToolIDs []string `json:"accepted_tool_ids" binding:"required"`
@@ -364,7 +384,7 @@ func (a *API) handleToolCall(c *gin.Context) {
 	audit.AddParam(rec, "accepted_tool_ids", audit.TruncateIDs(data.AcceptedToolIDs))
 
 	if err := a.conversationsService.HandleToolCall(c.Request.Context(), userID, post, channel, data.AcceptedToolIDs, data.ToolAnswers); err != nil {
-		c.AbortWithError(toolApprovalHTTPStatus(err), err)
+		abortWithServiceError(c, err, toolApprovalHTTPStatus)
 		return
 	}
 
@@ -373,8 +393,9 @@ func (a *API) handleToolCall(c *gin.Context) {
 
 // toolApprovalHTTPStatus maps errors from HandleToolCall/HandleToolResult to
 // HTTP statuses. Stale-click and missing-conversation cases are client-side
-// issues (400); requester-mismatch and unlicensed remote MCP use are
-// permission denials (403); everything else falls through to 500.
+// issues (400); requester-mismatch, lost agent or source access, disabled
+// tool calling, and unlicensed remote MCP use are permission denials (403);
+// everything else falls through to 500.
 func toolApprovalHTTPStatus(err error) int {
 	switch {
 	case errors.Is(err, conversations.ErrStaleToolClick),
@@ -382,7 +403,10 @@ func toolApprovalHTTPStatus(err error) int {
 		errors.Is(err, conversations.ErrInvalidToolAnswer):
 		return http.StatusBadRequest
 	case errors.Is(err, conversations.ErrNotRequester),
-		errors.Is(err, conversations.ErrRemoteMCPNotLicensed):
+		errors.Is(err, conversations.ErrRemoteMCPNotLicensed),
+		errors.Is(err, conversations.ErrToolCallingDisabled),
+		errors.Is(err, conversations.ErrAnalysisSourceUnavailable),
+		errors.Is(err, bots.ErrUsageRestriction):
 		return http.StatusForbidden
 	default:
 		return http.StatusInternalServerError
@@ -393,23 +417,7 @@ func (a *API) handleToolResult(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	post := c.MustGet(ContextPostKey).(*model.Post)
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
-
-	// Enrich the audit record as soon as the objects are bound so the
-	// permission fail paths below still carry post and channel.
 	rec := auditRec(c)
-	audit.AddParam(rec, audit.KeyPostID, post.Id)
-	audit.AddParam(rec, audit.KeyChannelID, channel.Id)
-
-	isDM := mmapi.IsDMWith(post.UserId, channel)
-	if !isDM && !a.config.EnableChannelMentionToolCalling() {
-		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
-		return
-	}
-
-	if !a.isConversationOwner(post, userID) {
-		c.AbortWithError(http.StatusForbidden, errors.New("only the original requester can approve/reject tool results"))
-		return
-	}
 
 	var data struct {
 		AcceptedToolIDs []string `json:"accepted_tool_ids" binding:"required"`
@@ -423,24 +431,68 @@ func (a *API) handleToolResult(c *gin.Context) {
 	audit.AddParam(rec, "accepted_tool_ids", audit.TruncateIDs(data.AcceptedToolIDs))
 
 	if err := a.conversationsService.HandleToolResult(c.Request.Context(), userID, post, channel, data.AcceptedToolIDs); err != nil {
-		c.AbortWithError(toolApprovalHTTPStatus(err), err)
+		abortWithServiceError(c, err, toolApprovalHTTPStatus)
 		return
 	}
 
 	c.Status(http.StatusOK)
 }
 
+func (a *API) handleWaitCheckNow(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+
+	if err := a.enforceEmptyBody(c); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if err := a.conversationsService.HandleWaitCheckNow(userID, post); err != nil {
+		c.AbortWithError(waitControlHTTPStatus(err), err)
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+func (a *API) handleWaitCancel(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+
+	if err := a.enforceEmptyBody(c); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if err := a.conversationsService.HandleWaitCancel(userID, post); err != nil {
+		c.AbortWithError(waitControlHTTPStatus(err), err)
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+// waitControlHTTPStatus maps errors from the wait-control routes to HTTP
+// statuses: a non-requester is forbidden (403); a wait that is no longer
+// pending is a stale client view (409); everything else is a server fault.
+func waitControlHTTPStatus(err error) int {
+	switch {
+	case errors.Is(err, conversations.ErrNotWaitOwner):
+		return http.StatusForbidden
+	case errors.Is(err, conversations.ErrNoPendingWait):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
 // isConversationOwner checks whether the given user is the owner of the
 // conversation associated with the post (via the conversation_id prop).
-//
-// Falls back to the llm_requester_user_id prop for legacy custom_llmbot posts
-// that were not produced via the conversation entity flow — currently only
-// meeting summarization. Remove the fallback once meeting flows migrate.
+// Posts without a conversation have no owner.
 func (a *API) isConversationOwner(post *model.Post, userID string) bool {
 	convID, ok := post.GetProp(streaming.ConversationIDProp).(string)
 	if !ok || convID == "" {
-		requester, _ := post.GetProp(streaming.LLMRequesterUserIDProp).(string)
-		return requester != "" && requester == userID
+		return false
 	}
 
 	// Try the full conversation service first, then fall back to the store interface.
@@ -477,8 +529,7 @@ func (a *API) handlePostbackSummary(c *gin.Context) {
 
 	result, err := a.meetingsService.HandlePostbackSummary(userID, post)
 	if err != nil {
-		var licErr *enterprise.LicenseError
-		if errors.As(err, &licErr) {
+		if _, ok := errors.AsType[*enterprise.LicenseError](err); ok {
 			abortNotLicensed(c, err)
 			return
 		}
@@ -511,12 +562,7 @@ func (a *API) handleLoopInAgent(c *gin.Context) {
 		auth.SessionIDFromContext(c.Request.Context()),
 	)
 	if err := a.conversationsService.HandleLoopInAgent(detachedCtx, userID, bot, post, channel); err != nil {
-		var licErr *enterprise.LicenseError
-		if errors.As(err, &licErr) {
-			abortNotLicensed(c, err)
-			return
-		}
-		c.AbortWithError(loopInAgentHTTPStatus(err), err)
+		abortWithServiceError(c, err, loopInAgentHTTPStatus)
 		return
 	}
 
@@ -542,6 +588,18 @@ func loopInAgentHTTPStatus(err error) int {
 func makeAnalysisPost(postIDToAnalyze string, analysisType string, conversationID string) *model.Post {
 	post := &model.Post{}
 	post.AddProp(conversations.ThreadIDProp, postIDToAnalyze)
+	post.AddProp(conversations.AnalysisTypeProp, analysisType)
+	if conversationID != "" {
+		post.AddProp(streaming.ConversationIDProp, conversationID)
+	}
+
+	return post
+}
+
+// makeChannelAnalysisPost creates a post for channel analysis results.
+func makeChannelAnalysisPost(channelID string, analysisType string, conversationID string) *model.Post {
+	post := &model.Post{}
+	post.AddProp(conversations.AnalyzedChannelIDProp, channelID)
 	post.AddProp(conversations.AnalysisTypeProp, analysisType)
 	if conversationID != "" {
 		post.AddProp(streaming.ConversationIDProp, conversationID)

@@ -82,6 +82,8 @@ var (
 	// ToolLoadedName is the tool load_tool loaded.
 	ToolReturnedNames = attribute.Key("agents.tool.returned_names")
 	ToolLoadedName    = attribute.Key("agents.tool.loaded_name")
+	// SkillID is the skill load_skill loaded.
+	SkillID = attribute.Key("agents.skill.id")
 )
 
 const (
@@ -119,6 +121,13 @@ var (
 	// RunTraceID is set on spans outside an agent run's trace (the message
 	// hook) to name the trace the run was recorded under.
 	RunTraceID = attribute.Key("agents.agent.run.trace_id")
+)
+
+// Attribute keys for ambient auto-reply
+var (
+	// AmbientShouldReply is the ambient classifier's decision; it is unset
+	// when classification failed.
+	AmbientShouldReply = attribute.Key("agents.ambient.should_reply")
 )
 
 // Attribute keys for post streaming

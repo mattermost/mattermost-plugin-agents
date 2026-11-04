@@ -37,13 +37,6 @@ func (a *API) handleRunSearch(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
-	// Search runs a full agent conversation, so the agent+service usage gate
-	// applies (user-level only: the conversation happens in the agent DM).
-	if err := a.bots.CheckUsageRestrictionsForUser(c.Request.Context(), bot, userID); err != nil {
-		c.AbortWithError(http.StatusForbidden, err)
-		return
-	}
-
 	var req SearchRequest
 	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request: %w", err))
@@ -109,7 +102,7 @@ func (a *API) handleRunSearch(c *gin.Context) {
 	)
 	questionPost, err := a.conversationsService.HandleSearch(ctx, bot, user, searchReq)
 	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err)
+		abortWithServiceError(c, err, searchHTTPStatus)
 		return
 	}
 
@@ -117,6 +110,15 @@ func (a *API) handleRunSearch(c *gin.Context) {
 		"postid":    questionPost.Id,
 		"channelid": questionPost.ChannelId,
 	})
+}
+
+// searchHTTPStatus maps errors from HandleSearch: losing access to the agent
+// is 403, anything else 500.
+func searchHTTPStatus(err error) int {
+	if errors.Is(err, bots.ErrUsageRestriction) {
+		return http.StatusForbidden
+	}
+	return http.StatusInternalServerError
 }
 
 // RawSearchRequest represents the request body for the raw semantic search endpoint
@@ -196,8 +198,7 @@ func (a *API) handleRawSearch(c *gin.Context) {
 		UserID:    userID,
 	})
 	if err != nil {
-		var licErr *enterprise.LicenseError
-		if errors.As(err, &licErr) {
+		if _, ok := errors.AsType[*enterprise.LicenseError](err); ok {
 			abortNotLicensed(c, err)
 			return
 		}

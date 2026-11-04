@@ -6,7 +6,7 @@ import {fireEvent, render, screen, within} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
-import {DefaultMaxToolTurns} from '@/types/agents';
+import {DefaultMaxToolTurns, normalizeSkillsConfig} from '@/types/agents';
 
 import {AgentDraft} from '../agent_config_view';
 
@@ -47,12 +47,16 @@ jest.mock('@/components/select', () => ({
     SelectUser: ({disabled}: {disabled?: boolean}) => (
         <input
             role='combobox'
+            aria-controls='mock-listbox'
+            aria-expanded={false}
             disabled={disabled}
         />
     ),
     SelectChannel: ({disabled}: {disabled?: boolean}) => (
         <input
             role='combobox'
+            aria-controls='mock-listbox'
+            aria-expanded={false}
             disabled={disabled}
         />
     ),
@@ -97,6 +101,7 @@ function makeDraft(overrides: Partial<AgentDraft> = {}): AgentDraft {
         reasoningEffort: 'medium',
         thinkingBudget: 0,
         maxToolTurns: DefaultMaxToolTurns,
+        skills: normalizeSkillsConfig(),
         ...overrides,
     };
 }
