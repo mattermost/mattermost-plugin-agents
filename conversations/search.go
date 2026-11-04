@@ -103,7 +103,7 @@ func (c *Conversations) runSearch(ctx context.Context, policy *turnPolicy, quest
 		ChannelId: channel.Id,
 		RootId:    questionPost.Id,
 	}
-	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, user.Id, responsePost, questionPost.Id); placeholderErr != nil {
+	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, responsePost, questionPost.Id); placeholderErr != nil {
 		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
 	}
 	progress := newResponseProgressReporter(ctx, c.mmClient, responsePost)
@@ -119,7 +119,10 @@ func (c *Conversations) runSearch(ctx context.Context, policy *turnPolicy, quest
 		}
 	}()
 
-	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences for search", c.searchToolsContextOption(bot))
+	llmContext, err := policy.buildContext(ctx, "Failed to load user tool preferences for search", c.searchToolsContextOption(bot), c.contextBuilder.WithLLMContextSkills(false))
+	if err != nil {
+		return err
+	}
 	progress.Advance(responseProgressLoadingConversation)
 
 	if _, ok := llmContext.Tools.LookupTool("search_posts", mcp.EmbeddedClientKey); !ok {

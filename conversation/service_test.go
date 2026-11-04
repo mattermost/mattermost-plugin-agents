@@ -30,7 +30,10 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
-const attachmentTestSessionID = "attachment-test-session"
+const (
+	attachmentTestSessionID = "attachment-test-session"
+	attachmentTestChannelID = "attachment-test-channel"
+)
 
 var testConnStr string
 
@@ -1362,26 +1365,111 @@ func TestWriteToolTurns_ErroredTool(t *testing.T) {
 	assert.Equal(t, "something went wrong", resultBlocks[0].Content)
 }
 
+// renamingLLM renames the conversation while the title is being generated,
+// as a user can from the product view right after sending a message.
+type renamingLLM struct {
+	testLLM
+	rename func()
+	calls  int
+}
+
+func (r *renamingLLM) ChatCompletionNoStream(ctx context.Context, req llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+	r.calls++
+	if r.rename != nil {
+		r.rename()
+	}
+	return r.testLLM.ChatCompletionNoStream(ctx, req, opts...)
+}
+
 func TestGenerateTitle(t *testing.T) {
-	svc, s := setupTestService(t)
+	type wsEvent struct {
+		name      string
+		payload   map[string]any
+		broadcast *model.WebsocketBroadcast
+	}
 
-	result, err := svc.CreateConversation(CreateConversationParams{
-		UserID:       model.NewId(),
-		BotID:        model.NewId(),
-		Operation:    "conversation",
-		SystemPrompt: "prompt",
-		UserMessage:  "Tell me about Go",
-	})
-	require.NoError(t, err)
+	tests := []struct {
+		name string
+		// renameBefore and renameDuring rename the conversation through the
+		// store, before generation starts or while the LLM call runs.
+		renameBefore  bool
+		renameDuring  bool
+		wantTitle     string
+		wantLLMCalled bool
+		wantEvent     bool
+	}{
+		{
+			name:          "an untitled conversation gets the generated title and the owner is told",
+			wantTitle:     "Go Programming Language",
+			wantLLMCalled: true,
+			wantEvent:     true,
+		},
+		{
+			name:         "a rename before generation is kept and no title is generated",
+			renameBefore: true,
+			wantTitle:    "Named by me",
+		},
+		{
+			name:          "a rename while the title is generated is kept",
+			renameDuring:  true,
+			wantTitle:     "Named by me",
+			wantLLMCalled: true,
+		},
+	}
 
-	mockLLM := &testLLM{noStreamResponse: `"Go Programming Language"`}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var events []wsEvent
+			mmClient := mmapimocks.NewMockClient(t)
+			mmClient.On("PublishWebSocketEvent", mock.AnythingOfType("string"), mock.AnythingOfType("map[string]interface {}"), mock.AnythingOfType("*model.WebsocketBroadcast")).
+				Run(func(args mock.Arguments) {
+					payload, _ := args.Get(1).(map[string]any)
+					broadcast, _ := args.Get(2).(*model.WebsocketBroadcast)
+					events = append(events, wsEvent{name: args.String(0), payload: payload, broadcast: broadcast})
+				}).Return().Maybe()
+			svc, s := setupTestServiceWithClient(t, mmClient, nil)
 
-	err = svc.GenerateTitle(context.Background(), result.ConversationID, mockLLM, "Tell me about Go", &llm.Context{})
-	require.NoError(t, err)
+			userID := model.NewId()
+			result, err := svc.CreateConversation(CreateConversationParams{
+				UserID:       userID,
+				BotID:        model.NewId(),
+				Operation:    "conversation",
+				SystemPrompt: "prompt",
+				UserMessage:  "Tell me about Go",
+			})
+			require.NoError(t, err)
 
-	conv, err := s.GetConversation(result.ConversationID)
-	require.NoError(t, err)
-	assert.Equal(t, "Go Programming Language", conv.Title)
+			rename := func() {
+				renamed, renameErr := s.RenameConversation(result.ConversationID, "Named by me")
+				assert.NoError(t, renameErr)
+				assert.True(t, renamed)
+			}
+			mockLLM := &renamingLLM{noStreamResponse: `"Go Programming Language"`}
+			if tt.renameBefore {
+				rename()
+			}
+			if tt.renameDuring {
+				mockLLM.rename = rename
+			}
+
+			err = svc.GenerateTitle(context.Background(), result.ConversationID, mockLLM, "Tell me about Go", &llm.Context{})
+			require.NoError(t, err)
+
+			conv, err := s.GetConversation(result.ConversationID)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantTitle, conv.Title)
+			assert.Equal(t, tt.wantLLMCalled, mockLLM.calls > 0)
+
+			if !tt.wantEvent {
+				assert.Empty(t, events, "no event when the generated title was not saved")
+				return
+			}
+			require.Len(t, events, 1)
+			assert.Equal(t, WebsocketEventConversationUpdated, events[0].name)
+			assert.Equal(t, map[string]any{"conversation_id": result.ConversationID, "title": tt.wantTitle}, events[0].payload)
+			assert.Equal(t, &model.WebsocketBroadcast{UserId: userID}, events[0].broadcast)
+		})
+	}
 }
 
 func TestBuildChannelMentionRequest_BotTurnsOnly(t *testing.T) {
@@ -2274,6 +2362,12 @@ func setupTestServiceWithClient(
 			mock.Anything,
 			model.AccessControlPolicyActionDownloadFileAttachment,
 		).Return(true).Maybe()
+		mockClient.On(
+			"HasPermissionToChannel",
+			mock.Anything,
+			attachmentTestChannelID,
+			model.PermissionReadChannel,
+		).Return(true).Maybe()
 	}
 
 	db, err := sqlx.Connect("postgres", testConnStr)
@@ -2496,11 +2590,11 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 		// Used twice: once for user-turn creation (read MIME) and once at
 		// request build time (lazy resolve).
 		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
-			Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
+			ChannelId: attachmentTestChannelID, Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
 		}, nil)
 		mmClient.On("GetFile", "img1").Return(io.NopCloser(strings.NewReader("PNGDATA")), nil)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
+			ChannelId: attachmentTestChannelID, Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
 		}, nil)
 		mmClient.On("GetFile", "doc1").Return(io.NopCloser(strings.NewReader("hello")), nil)
 
@@ -2548,10 +2642,10 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 		mmClient := mmapimocks.NewMockClient(t)
 
 		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
-			Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
+			ChannelId: attachmentTestChannelID, Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
 		}, nil)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
+			ChannelId: attachmentTestChannelID, Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
 		}, nil)
 		mmClient.On("GetFile", "doc1").Return(io.NopCloser(strings.NewReader("hello")), nil)
 		// NOTE: no GetFile(img1) expectation — vision is off so it must NOT be called.
@@ -2679,11 +2773,11 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 		mmClient := mmapimocks.NewMockClient(t)
 
 		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
-			Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
+			ChannelId: attachmentTestChannelID, Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
 		}, nil)
 		mmClient.On("GetFile", "img1").Return(io.NopCloser(strings.NewReader("PNGDATA")), nil)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
+			ChannelId: attachmentTestChannelID, Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
 		}, nil)
 		mmClient.On("GetFile", "doc1").Return(io.NopCloser(strings.NewReader("hello")), nil)
 
@@ -2747,10 +2841,10 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 		mmClient := mmapimocks.NewMockClient(t)
 
 		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
-			Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
+			ChannelId: attachmentTestChannelID, Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
 		}, nil)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
+			ChannelId: attachmentTestChannelID, Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
 		}, nil)
 		mmClient.On("GetFile", "doc1").Return(io.NopCloser(strings.NewReader("hello")), nil)
 		// NOTE: no GetFile(img1) expectation — vision is off so the
@@ -2811,7 +2905,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 		mmClient := mmapimocks.NewMockClient(t)
 
 		mmClient.On("GetFileInfo", "img-root").Return(&model.FileInfo{
-			Id: "img-root", Name: "screenshot.png", MimeType: "image/png", Size: 100,
+			ChannelId: attachmentTestChannelID, Id: "img-root", Name: "screenshot.png", MimeType: "image/png", Size: 100,
 		}, nil)
 		mmClient.On("GetFile", "img-root").Return(io.NopCloser(strings.NewReader("PNGDATA")), nil)
 

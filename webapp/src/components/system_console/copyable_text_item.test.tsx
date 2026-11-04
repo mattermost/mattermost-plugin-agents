@@ -130,24 +130,17 @@ describe('CopyableTextItem', () => {
         }
     });
 
-    it('does not show success when navigator.clipboard.writeText fails', async () => {
-        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(jest.fn());
+    it('does not show success when navigator.clipboard.writeText fails and the fallback cannot copy', async () => {
         writeTextMock.mockRejectedValue(new Error('denied'));
+        renderItem('https://example.com/plugins/mattermost-ai/oauth/callback');
 
-        try {
-            renderItem('https://example.com/plugins/mattermost-ai/oauth/callback');
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', {name: /copy to clipboard/i}));
+        });
 
-            await act(async () => {
-                fireEvent.click(screen.getByRole('button', {name: /copy to clipboard/i}));
-            });
-
-            expect(writeTextMock).toHaveBeenCalledWith('https://example.com/plugins/mattermost-ai/oauth/callback');
-            expect(screen.getByRole('button', {name: /copy to clipboard/i})).toBeTruthy();
-            expect(screen.queryByRole('button', {name: /^copied$/i})).toBeNull();
-            expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to copy to clipboard:', expect.any(Error));
-        } finally {
-            consoleErrorSpy.mockRestore();
-        }
+        expect(writeTextMock).toHaveBeenCalledWith('https://example.com/plugins/mattermost-ai/oauth/callback');
+        expect(screen.getByRole('button', {name: /copy to clipboard/i})).toBeTruthy();
+        expect(screen.queryByRole('button', {name: /^copied$/i})).toBeNull();
     });
 
     it('does not call onChange when the user types into the field (read-only)', () => {
