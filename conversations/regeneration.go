@@ -413,9 +413,12 @@ func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy
 
 	// Regen truncates the request at the originating user message, so a
 	// steering note would never reach the model: cancel without one.
-	c.cancelThreadWake(responsePostMarkerKey(post))
+	c.cancelThreadWake(responsePostMarkerKey(post), post.ChannelId)
 
-	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences on regen, proceeding without filtering")
+	llmContext, err := policy.buildContext(ctx, "Failed to load user tool preferences on regen, proceeding without filtering")
+	if err != nil {
+		return nil, nil, err
+	}
 	llmContext.ResponsePostID = post.Id
 
 	// AllowUnsharedToolContent on DMs is a no-op (DM tool_results are shared)

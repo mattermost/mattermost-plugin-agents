@@ -148,7 +148,7 @@ const ErrorBanner = styled(SectionNotice)<{$page?: boolean}>`
 
 export interface CustomPromptsContentRenderProps {
 
-    /** Header title for the current view: list, "New Prompt", or the prompt being edited. */
+    /** Header title for the current view: list, "New Skill", or the skill being edited. */
     title: React.ReactNode;
 
     /** True while the create or edit form is showing, i.e. a back affordance applies. */
@@ -250,7 +250,7 @@ const CustomPromptsContent = ({active, layout = 'modal', children}: CustomPrompt
             setShowCreateForm(false);
         } catch (e) {
             console.error('Failed to create prompt:', e); // eslint-disable-line no-console
-            setError(intl.formatMessage({defaultMessage: 'Failed to create prompt. Please try again.'}));
+            setError(intl.formatMessage({defaultMessage: 'Failed to create skill. Please try again.'}));
         }
     }, [dispatch, intl]);
 
@@ -261,7 +261,7 @@ const CustomPromptsContent = ({active, layout = 'modal', children}: CustomPrompt
             setEditingPromptId(null);
         } catch (e) {
             console.error('Failed to update prompt:', e); // eslint-disable-line no-console
-            setError(intl.formatMessage({defaultMessage: 'Failed to update prompt. Please try again.'}));
+            setError(intl.formatMessage({defaultMessage: 'Failed to update skill. Please try again.'}));
         }
     }, [dispatch, intl]);
 
@@ -274,7 +274,7 @@ const CustomPromptsContent = ({active, layout = 'modal', children}: CustomPrompt
             setDeleteConfirmId(null);
         } catch (e) {
             console.error('Failed to delete prompt:', e); // eslint-disable-line no-console
-            setError(intl.formatMessage({defaultMessage: 'Failed to delete prompt. Please try again.'}));
+            setError(intl.formatMessage({defaultMessage: 'Failed to delete skill. Please try again.'}));
             setDeleteConfirmId(null);
         }
     }, [dispatch, intl]);
@@ -317,20 +317,20 @@ const CustomPromptsContent = ({active, layout = 'modal', children}: CustomPrompt
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onClear={() => setSearchQuery('')}
                 clearLabel={intl.formatMessage({defaultMessage: 'Clear search'})}
-                placeholder={intl.formatMessage({defaultMessage: 'Search prompts'})}
-                aria-label={intl.formatMessage({defaultMessage: 'Search prompts'})}
+                placeholder={intl.formatMessage({defaultMessage: 'Search skills'})}
+                aria-label={intl.formatMessage({defaultMessage: 'Search skills'})}
             />
         </SearchContainer>
     );
 
     const title = (() => {
         if (showCreateForm) {
-            return <FormattedMessage defaultMessage='New Prompt'/>;
+            return <FormattedMessage defaultMessage='New Skill'/>;
         }
         if (editingPrompt) {
             return editingPrompt.name;
         }
-        return <FormattedMessage defaultMessage='Custom Prompts'/>;
+        return <FormattedMessage defaultMessage='Skills'/>;
     })();
 
     const body = (
@@ -376,8 +376,8 @@ const CustomPromptsContent = ({active, layout = 'modal', children}: CustomPrompt
                         <>
                             <PageTabs
                                 tabs={[
-                                    {key: 'all', label: <FormattedMessage defaultMessage='All Prompts'/>},
-                                    {key: 'yours', label: <FormattedMessage defaultMessage='Your Prompts'/>},
+                                    {key: 'all', label: <FormattedMessage defaultMessage='All Skills'/>},
+                                    {key: 'yours', label: <FormattedMessage defaultMessage='Your Skills'/>},
                                 ]}
                                 activeKey={activeTab}
                                 onChange={(key) => setActiveTab(key as 'all' | 'yours')}
@@ -395,7 +395,7 @@ const CustomPromptsContent = ({active, layout = 'modal', children}: CustomPrompt
                                     tabIndex={activeTab === 'all' ? 0 : -1}
                                     onClick={() => setActiveTab('all')}
                                 >
-                                    <FormattedMessage defaultMessage='All Prompts'/>
+                                    <FormattedMessage defaultMessage='All Skills'/>
                                 </UnderlineTab>
                                 <UnderlineTab
                                     type='button'
@@ -405,7 +405,7 @@ const CustomPromptsContent = ({active, layout = 'modal', children}: CustomPrompt
                                     tabIndex={activeTab === 'yours' ? 0 : -1}
                                     onClick={() => setActiveTab('yours')}
                                 >
-                                    <FormattedMessage defaultMessage='Your Prompts'/>
+                                    <FormattedMessage defaultMessage='Your Skills'/>
                                 </UnderlineTab>
                             </TabBar>
                             <ToolbarRow>
@@ -425,9 +425,9 @@ const CustomPromptsContent = ({active, layout = 'modal', children}: CustomPrompt
                         <PromptList $page={isPage}>
                             {filteredPrompts.map((prompt) => {
                                 const isPinned = pinnedIds.includes(prompt.id);
-                                let pinLabel = intl.formatMessage({defaultMessage: 'Pin prompt'});
+                                let pinLabel = intl.formatMessage({defaultMessage: 'Pin skill'});
                                 if (isPinned) {
-                                    pinLabel = intl.formatMessage({defaultMessage: 'Unpin prompt'});
+                                    pinLabel = intl.formatMessage({defaultMessage: 'Unpin skill'});
                                 }
                                 const openPrompt = () => {
                                     setEditingPromptId(prompt.id);
@@ -441,7 +441,7 @@ const CustomPromptsContent = ({active, layout = 'modal', children}: CustomPrompt
                                                 role='button'
                                                 tabIndex={0}
                                                 aria-label={intl.formatMessage(
-                                                    {defaultMessage: 'Open prompt {name}'},
+                                                    {defaultMessage: 'Open skill {name}'},
                                                     {name: prompt.name},
                                                 )}
                                                 onClick={openPrompt}
@@ -475,9 +475,9 @@ const CustomPromptsContent = ({active, layout = 'modal', children}: CustomPrompt
                             })}
                             {filteredPrompts.length === 0 && (
                                 isPage ? (
-                                    <PagePromptEmptyState title={<FormattedMessage defaultMessage='No prompts found'/>}/>
+                                    <PagePromptEmptyState title={<FormattedMessage defaultMessage='No skills found'/>}/>
                                 ) : (
-                                    <EmptyState title={<FormattedMessage defaultMessage='No prompts found'/>}/>
+                                    <EmptyState title={<FormattedMessage defaultMessage='No skills found'/>}/>
                                 )
                             )}
                         </PromptList>
@@ -498,8 +498,8 @@ const CustomPromptsContent = ({active, layout = 'modal', children}: CustomPrompt
             })}
             <ConfirmationDialog
                 show={deleteConfirmId !== null}
-                title={<FormattedMessage defaultMessage='Delete prompt'/>}
-                message={<FormattedMessage defaultMessage='Are you sure you want to delete this prompt? This action cannot be undone.'/>}
+                title={<FormattedMessage defaultMessage='Delete skill'/>}
+                message={<FormattedMessage defaultMessage='Are you sure you want to delete this skill? This action cannot be undone.'/>}
                 confirmButtonText={<FormattedMessage defaultMessage='Delete'/>}
                 onConfirm={() => deleteConfirmId && handleDelete(deleteConfirmId)}
                 onCancel={() => setDeleteConfirmId(null)}

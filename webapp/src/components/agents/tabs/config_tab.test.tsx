@@ -6,7 +6,7 @@ import {fireEvent, render, screen, waitFor, within} from '@testing-library/react
 import {IntlProvider} from 'react-intl';
 
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
-import {ServiceInfo} from '@/types/agents';
+import {ServiceInfo, normalizeSkillsConfig} from '@/types/agents';
 
 import {AgentDraft} from '../agent_config_view';
 
@@ -89,6 +89,7 @@ function makeDraft(overrides: Partial<AgentDraft> = {}): AgentDraft {
         reasoningEffort: 'medium',
         thinkingBudget: 0,
         maxToolTurns: 30,
+        skills: normalizeSkillsConfig(),
         ...overrides,
     };
 }

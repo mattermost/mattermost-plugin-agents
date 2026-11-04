@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 // Agents product view: the product-switcher entry lands in a new chat with the
-// workspace default agent, a left sidebar lists agents/threads/Custom Prompts,
+// workspace default agent, a left sidebar lists agents/threads/Skills,
 // and a thread renders in the host ThreadViewer under the product chrome. The
 // same thread must stay visible in the Channels DM with the agent.
 
@@ -442,34 +442,34 @@ test.describe('Agents product view', () => {
         await expect(page.getByRole('tab', {name: 'Configuration'})).toBeVisible({timeout: 15000});
     });
 
-    test('Custom Prompts page: create, edit, pin and delete a prompt', async ({page}) => {
+    test('Skills page: create, edit, pin and delete a skill', async ({page}) => {
         await login(page);
         await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
-        await sidebar(page).getByRole('button', {name: 'Custom Prompts'}).click();
+        await sidebar(page).getByRole('button', {name: 'Skills'}).click();
         await expect(page).toHaveURL(/\/agents\/prompts$/);
-        await expect(page.getByRole('heading', {name: 'Custom Prompts', level: 1}).and(page.locator(':not(#global-header *)'))).toBeVisible({timeout: 30000});
+        await expect(page.getByRole('heading', {name: 'Skills', level: 1}).and(page.locator(':not(#global-header *)'))).toBeVisible({timeout: 30000});
 
         await page.getByRole('button', {name: 'Create new'}).click();
-        await page.getByPlaceholder('Enter a title for your prompt').fill('Product Page Prompt');
+        await page.getByPlaceholder('Enter a title for your skill').fill('Product Page Prompt');
         await page.getByPlaceholder('Enter a brief description').fill('Created on the product page');
-        await page.getByPlaceholder('Enter the system prompt template').fill('Summarize {{.Username}} notes');
+        await page.getByPlaceholder('Enter the skill instructions').fill('Summarize {{.Username}} notes');
         await page.getByRole('button', {name: 'Save', exact: true}).click();
 
-        const open = page.getByRole('button', {name: 'Open prompt Product Page Prompt'});
+        const open = page.getByRole('button', {name: 'Open skill Product Page Prompt'});
         await expect(open).toBeVisible({timeout: 10000});
         await shot(page, '04_custom_prompts');
 
         // Edit.
         await open.click();
-        const title = page.getByPlaceholder('Enter a title for your prompt');
+        const title = page.getByPlaceholder('Enter a title for your skill');
         await expect(title).toHaveValue('Product Page Prompt');
         await title.fill('Product Page Prompt Edited');
         await page.getByRole('button', {name: 'Save', exact: true}).click();
-        await expect(page.getByRole('button', {name: 'Open prompt Product Page Prompt Edited'})).toBeVisible({timeout: 10000});
+        await expect(page.getByRole('button', {name: 'Open skill Product Page Prompt Edited'})).toBeVisible({timeout: 10000});
 
         // Pin (persisted server side).
-        await page.getByRole('button', {name: 'Pin prompt'}).click();
-        await expect(page.getByRole('button', {name: 'Unpin prompt'})).toHaveAttribute('aria-pressed', 'true');
+        await page.getByRole('button', {name: 'Pin skill'}).click();
+        await expect(page.getByRole('button', {name: 'Unpin skill'})).toHaveAttribute('aria-pressed', 'true');
         const client = await mattermost.getClient(username, password);
         const prompts = await (await fetch(`${mattermost.url()}/plugins/mattermost-ai/custom-prompts`, {
             headers: {Authorization: `Bearer ${client.getToken()}`},
@@ -484,15 +484,15 @@ test.describe('Agents product view', () => {
         }).toContain(created.id);
 
         // Delete with confirmation: cancel keeps it, confirm removes it.
-        await page.getByRole('button', {name: 'Open prompt Product Page Prompt Edited'}).click();
+        await page.getByRole('button', {name: 'Open skill Product Page Prompt Edited'}).click();
         await page.getByRole('button', {name: 'Delete', exact: true}).click();
-        const dialog = page.getByRole('dialog', {name: 'Delete prompt'});
+        const dialog = page.getByRole('dialog', {name: 'Delete skill'});
         await expect(dialog).toBeVisible();
         await dialog.getByRole('button', {name: 'Cancel'}).click();
         await expect(dialog).toBeHidden();
         await page.getByRole('button', {name: 'Delete', exact: true}).click();
-        await page.getByRole('dialog', {name: 'Delete prompt'}).getByRole('button', {name: 'Delete'}).click();
-        await expect(page.getByRole('button', {name: 'Open prompt Product Page Prompt Edited'})).toHaveCount(0, {timeout: 10000});
+        await page.getByRole('dialog', {name: 'Delete skill'}).getByRole('button', {name: 'Delete'}).click();
+        await expect(page.getByRole('button', {name: 'Open skill Product Page Prompt Edited'})).toHaveCount(0, {timeout: 10000});
     });
 
     test('the same thread is visible in the Channels DM and the stock DM view still works', async ({page}) => {
