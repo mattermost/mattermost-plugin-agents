@@ -20,7 +20,7 @@ const agentSelectColumns = `ID, BotUserID, CreatorID, DisplayName, Username, Ser
 	EnabledTools, AutoEnableNewMCPTools, mcp_dynamic_tool_loading,
 	Model, EnableVision, DisableTools, EnabledNativeTools,
 	ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
-	MaxToolTurns, UseServiceAccountAuth, ScopedChannelMode, ScopedExtraChannelIDs,
+	MaxToolTurns, UseServiceAccountAuth, ScopedChannelMode, ScopedExtraChannelIDs, Skills,
 	CreateAt, UpdateAt, DeleteAt`
 
 // marshalJSONSlice serializes a slice for a JSON TEXT column.
@@ -43,6 +43,24 @@ func unmarshalJSONSlice[T any](raw string, target *[]T) error {
 		return nil
 	}
 	return json.Unmarshal([]byte(raw), target)
+}
+
+// normalizeSkills drops empty collections so equal settings round-trip and
+// snapshot identically.
+func normalizeSkills(s llm.SkillsConfig) llm.SkillsConfig {
+	s.EnabledSharedIDs = emptyToNil(s.EnabledSharedIDs)
+	if len(s.DescriptionOverrides) == 0 {
+		s.DescriptionOverrides = nil
+	}
+	return s
+}
+
+func marshalSkills(s llm.SkillsConfig) string {
+	b, err := json.Marshal(normalizeSkills(s))
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }
 
 // agentRow is the DB-level representation of a UserAgent row.
@@ -77,6 +95,7 @@ type agentRow struct {
 	UseServiceAccountAuth   bool   `db:"useserviceaccountauth"`
 	ScopedChannelMode       bool   `db:"scopedchannelmode"`
 	ScopedExtraChannelIDs   string `db:"scopedextrachannelids"`
+	Skills                  string `db:"skills"`
 	CreateAt                int64  `db:"createat"`
 	UpdateAt                int64  `db:"updateat"`
 	DeleteAt                int64  `db:"deleteat"`
@@ -132,6 +151,12 @@ func (r *agentRow) toBotConfig() (*llm.BotConfig, error) {
 	if err := unmarshalJSONSlice(r.ScopedExtraChannelIDs, &cfg.ScopedExtraChannelIDs); err != nil {
 		return nil, fmt.Errorf("failed to parse ScopedExtraChannelIDs: %w", err)
 	}
+	if r.Skills != "" {
+		if err := json.Unmarshal([]byte(r.Skills), &cfg.Skills); err != nil {
+			return nil, fmt.Errorf("failed to parse Skills: %w", err)
+		}
+	}
+	cfg.Skills = normalizeSkills(cfg.Skills)
 
 	return cfg, nil
 }
@@ -168,9 +193,9 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 			EnabledTools, AutoEnableNewMCPTools, mcp_dynamic_tool_loading,
 			Model, EnableVision, DisableTools, EnabledNativeTools,
 			ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
-			MaxToolTurns, UseServiceAccountAuth, ScopedChannelMode, ScopedExtraChannelIDs,
+			MaxToolTurns, UseServiceAccountAuth, ScopedChannelMode, ScopedExtraChannelIDs, Skills,
 			CreateAt, UpdateAt, DeleteAt
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)`,
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)`,
 		cfg.ID,
 		cfg.BotUserID,
 		cfg.CreatorID,
@@ -199,6 +224,7 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 		cfg.UseServiceAccountAuth,
 		cfg.ScopedChannelMode,
 		marshalJSONSlice(cfg.ScopedExtraChannelIDs),
+		marshalSkills(cfg.Skills),
 		cfg.CreateAt,
 		cfg.UpdateAt,
 		cfg.DeleteAt,
@@ -365,8 +391,9 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 			UseServiceAccountAuth = $23,
 			ScopedChannelMode = $24,
 			ScopedExtraChannelIDs = $25,
-			UpdateAt = $26
-		WHERE ID = $27 AND DeleteAt = 0`,
+			Skills = $26,
+			UpdateAt = $27
+		WHERE ID = $28 AND DeleteAt = 0`,
 		cfg.DisplayName,
 		cfg.Name,
 		cfg.ServiceID,
@@ -392,6 +419,7 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 		cfg.UseServiceAccountAuth,
 		cfg.ScopedChannelMode,
 		marshalJSONSlice(cfg.ScopedExtraChannelIDs),
+		marshalSkills(cfg.Skills),
 		cfg.UpdateAt,
 		cfg.ID,
 	)

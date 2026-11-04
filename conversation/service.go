@@ -24,8 +24,12 @@ type Store interface {
 	// GetConversation retrieves a conversation by ID. Returns an error if not found.
 	GetConversation(id string) (*store.Conversation, error)
 	GetConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error)
-	// UpdateConversationTitle updates the title of a conversation.
-	UpdateConversationTitle(id, title string) error
+	// RenameConversation sets the title of a non-deleted conversation,
+	// reporting whether one was changed.
+	RenameConversation(id, title string) (bool, error)
+	// SetConversationTitleIfUnset sets a generated title only while the
+	// conversation has none, reporting whether it did.
+	SetConversationTitleIfUnset(id, title string) (bool, error)
 	// UpdateConversationRootPostID sets the RootPostID on a conversation.
 	// Used when the post ID is only known after post creation (e.g., thread analysis DM posts).
 	UpdateConversationRootPostID(id string, rootPostID string) error
@@ -248,15 +252,44 @@ func (s *Service) DeleteResponseTurns(conversationID, postID string) error {
 	return s.store.DeleteResponseTurns(conversationID, postID)
 }
 
+// BuildRegenerateRequest builds the request that regenerates postID's
+// response from the turns before it, then scrubs that prior response so the
+// new stream runs like a first one.
+func (s *Service) BuildRegenerateRequest(conv *store.Conversation, context *llm.Context, postID string, opts BuildOptions) (*llm.CompletionRequest, error) {
+	// Build before scrubbing: ExcludeAfterPostID needs the anchor.
+	opts.ExcludeAfterPostID = postID
+	req, err := s.BuildCompletionRequest(conv, context, opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build completion request for regen: %w", err)
+	}
+	req.OperationSubType = llm.SubTypeRegenerate
+
+	if err := s.DeleteResponseTurns(conv.ID, postID); err != nil {
+		return nil, fmt.Errorf("failed to scrub prior response turns on regen: %w", err)
+	}
+	return req, nil
+}
+
 // UpdateConversationRootPostID sets the RootPostID on a conversation.
 // Used when the post ID is only known after post creation (e.g., thread analysis DM posts).
 func (s *Service) UpdateConversationRootPostID(id string, rootPostID string) error {
 	return s.store.UpdateConversationRootPostID(id, rootPostID)
 }
 
-// UpdateConversationTitle updates the title of a conversation.
+// UpdateConversationTitle sets a conversation's title and tells its owner.
 func (s *Service) UpdateConversationTitle(id, title string) error {
-	return s.store.UpdateConversationTitle(id, title)
+	conv, err := s.store.GetConversation(id)
+	if err != nil {
+		return fmt.Errorf("failed to get conversation: %w", err)
+	}
+	renamed, err := s.store.RenameConversation(id, title)
+	if err != nil {
+		return fmt.Errorf("failed to set conversation title: %w", err)
+	}
+	if renamed {
+		PublishConversationTitleUpdated(s.mmClient, conv, title)
+	}
+	return nil
 }
 
 // GetOrCreateParams contains parameters for GetOrCreateConversation.
@@ -503,6 +536,7 @@ func AssembleRequest(
 	conversionOpts := PostConversionOptions{
 		RedactUnshared: redactUnshared,
 		MMClient:       mmClient,
+		UserID:         conv.UserID,
 		EnableVision:   enableVision,
 		MaxFileSize:    maxFileSize,
 	}
@@ -781,7 +815,24 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 	return nil
 }
 
-// GenerateTitle generates a short title for the conversation and saves it.
+// WebsocketEventConversationUpdated is published to a conversation's owner
+// when its title changes (webapp: custom_mattermost-ai_conversation_updated).
+const WebsocketEventConversationUpdated = "conversation_updated"
+
+// PublishConversationTitleUpdated tells only the conversation's owner its new title.
+func PublishConversationTitleUpdated(client mmapi.Client, conv *store.Conversation, title string) {
+	client.PublishWebSocketEvent(
+		WebsocketEventConversationUpdated,
+		map[string]any{
+			"conversation_id": conv.ID,
+			"title":           title,
+		},
+		&model.WebsocketBroadcast{UserId: conv.UserID},
+	)
+}
+
+// GenerateTitle generates a short title for an untitled conversation, saves it
+// unless the user set one meanwhile, and tells the owner.
 // This should be called asynchronously (in a goroutine) after conversation creation.
 // The lm parameter provides the language model for title generation.
 // The context parameter provides bot/user context for the LLM call; ctx
@@ -793,6 +844,14 @@ func (s *Service) GenerateTitle(
 	userMessage string,
 	context *llm.Context,
 ) error {
+	conv, err := s.store.GetConversation(conversationID)
+	if err != nil {
+		return fmt.Errorf("failed to get conversation: %w", err)
+	}
+	if conv.Title != "" {
+		return nil
+	}
+
 	request := "Write a short title for the following request. Include only the title and nothing else, no quotations. Request:\n" + userMessage
 
 	req := llm.CompletionRequest{
@@ -814,9 +873,18 @@ func (s *Service) GenerateTitle(
 	}
 
 	title = strings.Trim(title, "\n \"'")
+	if title == "" {
+		return nil
+	}
 
-	if err := s.store.UpdateConversationTitle(conversationID, title); err != nil {
+	// Conditional on the title still being unset: the user may have renamed
+	// the conversation while the title was generated.
+	updated, err := s.store.SetConversationTitleIfUnset(conversationID, title)
+	if err != nil {
 		return fmt.Errorf("failed to save title: %w", err)
+	}
+	if updated {
+		PublishConversationTitleUpdated(s.mmClient, conv, title)
 	}
 
 	return nil
@@ -972,6 +1040,7 @@ func (s *Service) BuildChannelMentionRequest(
 	conversionOpts := PostConversionOptions{
 		RedactUnshared: redactUnshared,
 		MMClient:       mmClient,
+		UserID:         conv.UserID,
 		EnableVision:   enableVision,
 		MaxFileSize:    maxFileSize,
 	}
@@ -1042,7 +1111,7 @@ func (s *Service) BuildChannelMentionRequest(
 				username = user.Username
 			}
 			blocks := userBlocksWithAttachments(format.AuthoredPost(threadPost, username), threadPost.FileIds, mmClient)
-			posts = append(posts, BlocksToPost(blocks, "user", PostConversionOptions{RedactUnshared: redactUnshared, MMClient: mmClient, EnableVision: enableVision, MaxFileSize: maxFileSize}))
+			posts = append(posts, BlocksToPost(blocks, "user", PostConversionOptions{RedactUnshared: redactUnshared, MMClient: mmClient, UserID: conv.UserID, EnableVision: enableVision, MaxFileSize: maxFileSize}))
 		}
 		if latestPostLinkedRole == "user" && threadPost.Id == latestPostLinkedPostID {
 			break

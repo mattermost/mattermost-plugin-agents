@@ -188,7 +188,6 @@ func setupAutoReplyTestEnvWithTools(
 		nil, // db
 		licenseChecker,
 		i18n.Init(),
-		nil, // meetings
 		config,
 		checker,
 	)
@@ -767,7 +766,7 @@ func TestAutoReplyLicenseGate(t *testing.T) {
 			BotID:     autoReplyBotUserID,
 			Mode:      autoreply.ModeThreads,
 		})
-		nilConv := conversations.New(nil, env.mmClient, nil, nil, env.botService, nil, nil, nil, nil, nil, env.checker)
+		nilConv := conversations.New(nil, env.mmClient, nil, nil, env.botService, nil, nil, nil, nil, env.checker)
 		nilConv.SetAutoReplySettings(env.settings)
 
 		nilConv.MessageHasBeenPosted(nil, env.rootPost(autoReplyUserID, "hello there"))

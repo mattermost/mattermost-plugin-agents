@@ -9,7 +9,7 @@ import {Button} from '@mattermost/compass-ui/components/button';
 import {Modal} from '@mattermost/compass-ui/components/modal';
 import {TextInput} from '@mattermost/compass-ui/components/text-input';
 
-import {AnimatedModalShell, MODAL_SHEET_CLASS} from '@/components/animated_modal_shell';
+import {AnimatedModalShell} from '@/components/animated_modal_shell';
 import {DatePicker} from '@/mm_webapp';
 
 const Sheet = styled.div`
@@ -219,7 +219,6 @@ export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName
         >
             {/* eslint-disable-next-line agents/click-events-have-key-events, agents/no-static-element-interactions -- only stops clicks inside the sheet from reaching the backdrop */}
             <Sheet
-                className={MODAL_SHEET_CLASS}
                 onClick={handleModalClick}
             >
                 <SummarizeModal

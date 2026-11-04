@@ -82,8 +82,12 @@ func (s *loadedStateFlowStore) GetConversationByThreadBotUser(rootPostID, botID,
 	return nil, store.ErrConversationNotFound
 }
 
-func (s *loadedStateFlowStore) UpdateConversationTitle(id, title string) error {
-	return nil
+func (s *loadedStateFlowStore) RenameConversation(id, title string) (bool, error) {
+	return false, nil
+}
+
+func (s *loadedStateFlowStore) SetConversationTitleIfUnset(id, title string) (bool, error) {
+	return false, nil
 }
 
 func (s *loadedStateFlowStore) UpdateConversationRootPostID(id string, rootPostID string) error {
@@ -241,7 +245,7 @@ func (s *loadedStateFlowStore) DeleteResponseTurns(conversationID, postID string
 
 	keep := turns[:0]
 	for _, t := range turns {
-		if t.Sequence > userSeq && t.Sequence < anchorSeq {
+		if t.Sequence > userSeq && t.Sequence <= anchorSeq {
 			delete(s.allTurns, t.ID)
 			continue
 		}

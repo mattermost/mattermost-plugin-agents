@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
+import React, {useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
 import styled from 'styled-components';
@@ -13,7 +13,7 @@ import {CancelIcon} from '@mattermost/compass-icons/components';
 import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 
-import {doPostbackSummary, doRegenerate, doStopGenerating} from '@/client';
+import {doPostbackSummary, doRegenerate, doStopGenerating, doWaitCancel, doWaitCheckNow} from '@/client';
 import {useIsLicensedFor} from '@/license';
 import {PluginWebSocketMessage} from '@/types';
 import {useSelectNotAIPost} from '@/hooks';
@@ -29,6 +29,7 @@ import HTMLArtifacts from '../html_artifacts/html_artifacts';
 import {needsViewerDecision, selectDecisionToolCalls} from '../tool_decisions';
 import {ToolApprovalStage, ToolCall, ToolCallPhase, ToolCallStatus} from '../tool_types';
 import {Annotation} from '../citations/types';
+import {AgentChatSurfaceContext} from '../agent_chat/agent_chat_surface_context';
 
 import {
     Round,
@@ -38,10 +39,15 @@ import {
 } from './turn_content_utils';
 import {deriveActivity} from './activity_items';
 import {ControlsBarComponent} from './controls_bar';
+import {getCopyableText} from './copyable_text';
 import {extractPermalinkData} from './permalink_data';
 import {FoldingText, useFoldingText} from './folding_text';
 import {RoundView} from './round_view';
+import {ThinkingDots} from './thinking_dots';
 import ToolActivityDisplay from './tool_activity_display';
+import {WaitStatusFooter, WaitToolContext} from './wait_status';
+import {prefersReducedMotion} from './motion';
+import {useSmoothText} from './use_smooth_text';
 
 // Sentinel id for the in-progress streaming round; persisted rounds use turn ids.
 const LIVE_ROUND_ID = 'live';
@@ -97,14 +103,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     }
     const knownConversation = conversation ?? (lastConversationRef.current?.id === conversationId ? lastConversationRef.current : null);
 
-    // Meeting summarization posts have no conversation entity yet; fall back to
-    // the legacy llm_requester_user_id prop.
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
-    const legacyRequester: string | undefined = props.post.props?.llm_requester_user_id;
-    const requesterIsCurrentUser = Boolean(
-        (knownConversation && knownConversation.user_id === currentUserId) ||
-        (!conversationId && legacyRequester && legacyRequester === currentUserId),
-    );
+    const requesterIsCurrentUser = Boolean(knownConversation && knownConversation.user_id === currentUserId);
 
     const channel = useSelector<GlobalState, {type?: string} | undefined>(
         (state) => state.entities.channels.channels[props.post.channel_id],
@@ -132,6 +132,19 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     const [reasoningSummary, setReasoningSummary] = useState('');
     const [isReasoningLoading, setIsReasoningLoading] = useState(false);
+
+    const {isAgentChat} = useContext(AgentChatSurfaceContext);
+
+    // Streamed text is revealed at a steady pace where the surface asks for
+    // it. A stop, cancel or error shows what arrived at once.
+    const [revealCut, setRevealCut] = useState(false);
+    const smoothReveal = isAgentChat && !prefersReducedMotion();
+    const revealed = useSmoothText(message, {
+        enabled: smoothReveal,
+        streaming: generating,
+        flushImmediately: revealCut || stopped || error !== '',
+    });
+    const shownMessage = revealed.text;
 
     const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
 
@@ -433,6 +446,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (data.control === 'cancel') {
+                setRevealCut(true);
                 progressCompleteRef.current = true;
                 setProgressPhase(null);
                 setGenerating(false);
@@ -449,6 +463,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     return;
                 }
                 reasoningSeenRef.current = false;
+                setRevealCut(false);
                 setGenerating(true);
                 setPrecontent(true);
                 setStopped(false);
@@ -471,6 +486,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
                 // Tool-approval resume: prior round comes from refetched
                 // persistedRounds, so reset all local state.
+                setRevealCut(false);
                 setGenerating(true);
                 setPrecontent(true);
                 setStopped(false);
@@ -494,24 +510,30 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         };
     }, [props.post.id, conversationId]);
 
+    // Citations past the revealed text wait until it gets there.
+    const shownAnnotations = useMemo(
+        () => (shownMessage === message ? annotations : annotations.filter((annotation) => annotation.end_index <= shownMessage.length)),
+        [shownMessage, message, annotations],
+    );
+
     const currentRound: Round | null = useMemo(() => {
-        const hasContent = message !== '' ||
+        const hasContent = shownMessage !== '' ||
             toolCalls.length > 0 ||
             reasoningSummary !== '' ||
-            annotations.length > 0 ||
+            shownAnnotations.length > 0 ||
             serverTools.length > 0;
         if (!hasContent) {
             return null;
         }
         return {
             id: LIVE_ROUND_ID,
-            text: message,
+            text: shownMessage,
             toolCalls,
             reasoning: {summary: reasoningSummary, signature: ''},
-            annotations,
+            annotations: shownAnnotations,
             serverTools,
         };
-    }, [message, toolCalls, reasoningSummary, annotations, serverTools]);
+    }, [shownMessage, toolCalls, reasoningSummary, shownAnnotations, serverTools]);
 
     const renderedRounds = useMemo(() => computeRenderedRounds({
         regenerating,
@@ -527,6 +549,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         progressCompleteRef.current = false;
         progressSequenceRef.current = 0;
         reasoningSeenRef.current = false;
+        setRevealCut(false);
         setMessage('');
         setGenerating(false);
         setPrecontent(true);
@@ -547,7 +570,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setStopped(true);
         setGenerating(false);
         setIsReasoningLoading(false);
-        doStopGenerating(props.post.id);
+        doStopGenerating(props.post.id).catch((e: unknown) => {
+            console.error('Failed to stop generating:', e); // eslint-disable-line no-console
+        });
     };
 
     const postSummary = async () => {
@@ -592,10 +617,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     const showRegenerate = isDM && !isGenerationInProgress && requesterIsCurrentUser && !isNoShowRegen;
     const meetingsLicensed = useIsLicensedFor('meetings');
-    const showPostbackButton = meetingsLicensed && !isGenerationInProgress && requesterIsCurrentUser && isTranscriptionResult;
+
+    // The server authorizes postback by DM membership, not conversation ownership.
+    const showPostbackButton = meetingsLicensed && !isGenerationInProgress && isDM && isTranscriptionResult;
     const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser;
     const hasContent = renderedRounds.length > 0;
-    const showControlsBar = ((showRegenerate || showPostbackButton) && hasContent) || showStopGeneratingButton;
 
     // Only the anchor round gets a real approval stage: the latest persisted
     // round when nothing live follows it, or a live round with calls awaiting
@@ -629,7 +655,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     // Onlookers owe no decision, but should see that the requester does instead
     // of an empty post. Tool calls reach them redacted; only statuses are used.
-    const requesterUserId = knownConversation?.user_id ?? (conversationId ? undefined : legacyRequester); // eslint-disable-line no-undefined
+    const requesterUserId = knownConversation?.user_id;
     const isOnlooker = Boolean(requesterUserId) && requesterUserId !== currentUserId;
     const isLivePending = lastRendered?.id === LIVE_ROUND_ID &&
         selectDecisionToolCalls(lastRendered.toolCalls, 'call', true).length > 0;
@@ -646,6 +672,61 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         needsViewerDecision(onlookerWaitRound.toolCalls, onlookerWaitStage, true);
     const requesterUsername = useSelector<GlobalState, string | undefined>(
         (state) => (requesterUserId ? state.entities.users.profiles?.[requesterUserId]?.username : undefined), // eslint-disable-line no-undefined
+    );
+
+    // A pending wait_for_async_work pause on this post, surfaced by the
+    // conversation API while the bot is sleeping on the wait tool.
+    const activeWait = knownConversation?.active_wait;
+    const waitForThisPost = activeWait && activeWait.post_id === props.post.id ? activeWait : null;
+    const waitIsOwner = waitForThisPost != null && waitForThisPost.requester_user_id === currentUserId;
+    const [waitCancelled, setWaitCancelled] = useState(false);
+    const [waitBusy, setWaitBusy] = useState(false);
+
+    // A fresh wait on this post (new resume time) clears a prior cancel/busy.
+    const waitResumeAt = waitForThisPost?.resume_at;
+    useEffect(() => {
+        setWaitCancelled(false);
+        setWaitBusy(false);
+    }, [waitResumeAt]);
+
+    const botDisplayName = useSelector<GlobalState, string | undefined>((state) => {
+        const profile = state.entities.users.profiles?.[props.post.user_id];
+        return profile ? displayNameFor(profile, selectTeammateNameDisplay(state)) : undefined; // eslint-disable-line no-undefined
+    });
+
+    const handleWaitCheckNow = useCallback(async () => {
+        setWaitBusy(true);
+        try {
+            await doWaitCheckNow(props.post.id);
+        } catch {
+            // Re-enable the controls so a transient failure can be retried; a
+            // wait that already resolved reconciles via the refetch below.
+            setWaitBusy(false);
+        }
+        if (conversationId) {
+            invalidateConversation(conversationId);
+        }
+    }, [props.post.id, conversationId]);
+
+    const handleWaitCancel = useCallback(async () => {
+        setWaitBusy(true);
+        try {
+            await doWaitCancel(props.post.id);
+            setWaitCancelled(true);
+        } catch {
+            // Re-enable the controls so a transient failure can be retried; a
+            // wait that already resolved reconciles via the refetch below.
+            setWaitBusy(false);
+        }
+        if (conversationId) {
+            invalidateConversation(conversationId);
+        }
+    }, [props.post.id, conversationId]);
+
+    // Provided to the wait tool's row so it can show "waiting" vs "waited Nm".
+    const waitToolState = useMemo(
+        () => ({active: waitForThisPost !== null && !waitCancelled}),
+        [waitForThisPost, waitCancelled],
     );
 
     // A question to the requester is answered, not approved.
@@ -692,6 +773,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // Answer text that turns out to be narration folds away instead of
     // vanishing. Expanded, the round just moves into the stack in place.
     const answerText = activity.answerRounds.map((round) => round.text).filter((text) => text !== '').join('\n\n');
+
+    // Copy needs a finished answer with text; a tool-only post has nothing to copy.
+    const answerMarkdown = useMemo(() => getCopyableText(activity.answerRounds), [activity.answerRounds]);
+    const showCopy = isAgentChat && hasContent && !isGenerationInProgress && answerMarkdown !== '';
+    const showControlsBar = ((showRegenerate || showPostbackButton || showCopy) && hasContent) || showStopGeneratingButton;
     const foldingText = useFoldingText(answerText, activity.items.length > 0 && !activityExpanded);
 
     // An onlooker's waiting round keeps its real stage so its cards can show
@@ -723,9 +809,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 reasoningLoading={isLiveRound && isReasoningLoading}
                 reasoningCollapsed={!expandedReasoning[round.id]}
                 onToggleReasoning={toggleReasoning}
+                reveal={isLiveRound && smoothReveal}
             />
         );
     }, [
+        smoothReveal,
         props.post.id,
         props.post.channel_id,
         conversationId,
@@ -741,10 +829,20 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // Tool-only posts leave post.message empty, so precontent stays true on
     // remount. Hide Working... once rounds exist, except while generation is
     // actually resuming (continue/start still set precontent on purpose).
-    const showWorking = !generationStopped && (
+    const showWorkingStatus = !generationStopped && (
         (precontent && (generating || renderedRounds.length === 0)) ||
         (conversationLoading && !generating && renderedRounds.length === 0)
     );
+
+    // The dots stand in for the Working... status while nothing has arrived,
+    // never alongside it (or any other activity UI).
+    const thinkingActive = isAgentChat && !awaitingRequester && !error &&
+        (isGenerationInProgress || (regenerating && !pendingRefetch)) && renderedRounds.length === 0;
+    const showWorking = showWorkingStatus && !thinkingActive;
+    const agentName = useSelector<GlobalState, string | undefined>((state) => {
+        const profile = props.post.user_id ? state.entities.users.profiles?.[props.post.user_id] : undefined; // eslint-disable-line no-undefined
+        return profile ? displayNameFor(profile, selectTeammateNameDisplay(state)) : undefined; // eslint-disable-line no-undefined
+    });
 
     let statusMessage: string | undefined;
     if (awaitingRequester) {
@@ -754,76 +852,97 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     }
 
     return (
-        <PostBody
-            data-testid='llm-bot-post'
-        >
-            {error && <ErrorMessage message={error}/>}
-            {conversationError && !generating && (
-                <ErrorMessage message={<FormattedMessage defaultMessage='Failed to load conversation data'/>}/>
-            )}
-            {isThreadSummaryPost && permalinkView &&
-            <>
-                {permalinkView}
-            </>
-            }
-            {(showWorking || awaitingRequester || activity.items.length > 0) && (
-                <ToolActivityDisplay
-                    activity={activity}
-                    expanded={activityExpanded}
-                    onToggleExpanded={setActivityExpanded}
-                    inProgress={isGenerationInProgress || awaitingDecision || awaitingRequester}
-                    working={isGenerationInProgress || progressPhase !== null}
-                    statusMessage={statusMessage}
-                    statusWaiting={awaitingRequester}
-                    renderRound={renderRound}
-                />
-            )}
-            {foldingText !== null && (
-                <FoldingText
-                    text={foldingText}
-                    channelID={props.post.channel_id}
-                    postID={props.post.id}
-                />
-            )}
-            <AnswerArea $afterActivity={activity.items.length > 0}>
-                {activity.answerRounds.map(renderRound)}
-            </AnswerArea>
-            {generationStopped && (
-                <GenerationStoppedNotice data-testid='llm-bot-generation-stopped'>
-                    <GenerationStoppedIcon
-                        size={14}
-                        aria-hidden={true}
+        <WaitToolContext.Provider value={waitToolState}>
+            <div
+                data-testid='llm-bot-post'
+                data-bubble-hug={isAgentChat ? '' : undefined} // eslint-disable-line no-undefined
+            >
+                {error && <ErrorMessage message={error}/>}
+                {conversationError && !generating && (
+                    <ErrorMessage message={<FormattedMessage defaultMessage='Failed to load conversation data'/>}/>
+                )}
+                {isThreadSummaryPost && permalinkView &&
+                <>
+                    {permalinkView}
+                </>
+                }
+                {(showWorking || awaitingRequester || activity.items.length > 0) && (
+                    <ToolActivityDisplay
+                        activity={activity}
+                        expanded={activityExpanded}
+                        onToggleExpanded={setActivityExpanded}
+                        inProgress={isGenerationInProgress || awaitingDecision || awaitingRequester}
+                        working={isGenerationInProgress || progressPhase !== null}
+                        statusMessage={statusMessage}
+                        statusWaiting={awaitingRequester}
+                        renderRound={renderRound}
                     />
-                    {generationStoppedMessage}
-                </GenerationStoppedNotice>
-            )}
-            <HTMLArtifacts
-                postId={props.post.id}
-                files={props.post.metadata?.files}
-            />
-            { showPostbackButton &&
-            <PostSummaryHelpMessage
-                data-testid='llm-bot-post-summary-help'
-                type='hint'
-                title={<FormattedMessage defaultMessage='Would you like to post this summary to the original call thread? You can also ask Agents to make changes.'/>}
-            />
-            }
-            { showControlsBar &&
-            <ControlsBarComponent
-                showStopGeneratingButton={showStopGeneratingButton}
-                showPostbackButton={showPostbackButton}
-                showRegenerate={showRegenerate}
-                onStopGenerating={stopGenerating}
-                onPostSummary={postSummary}
-                onRegenerate={regnerate}
-            />
-            }
-        </PostBody>
+                )}
+                {foldingText !== null && (
+                    <FoldingText
+                        text={foldingText}
+                        channelID={props.post.channel_id}
+                        postID={props.post.id}
+                    />
+                )}
+                {isAgentChat && (
+                    <ThinkingDots
+                        active={thinkingActive}
+                        agentName={agentName}
+                    />
+                )}
+                <AnswerArea $afterActivity={activity.items.length > 0}>
+                    {activity.answerRounds.map(renderRound)}
+                </AnswerArea>
+                {waitForThisPost && (
+                    <WaitStatusFooter
+                        resumeAt={waitForThisPost.resume_at}
+                        isOwner={waitIsOwner}
+                        requesterUsername={requesterUsername}
+                        botDisplayName={botDisplayName}
+                        resolution={waitCancelled ? 'cancelled' : 'pending'}
+                        busy={waitBusy}
+                        onCheckNow={handleWaitCheckNow}
+                        onCancel={handleWaitCancel}
+                    />
+                )}
+                {generationStopped && (
+                    <GenerationStoppedNotice data-testid='llm-bot-generation-stopped'>
+                        <GenerationStoppedIcon
+                            size={14}
+                            aria-hidden={true}
+                        />
+                        {generationStoppedMessage}
+                    </GenerationStoppedNotice>
+                )}
+                <HTMLArtifacts
+                    postId={props.post.id}
+                    files={props.post.metadata?.files}
+                />
+                { showPostbackButton &&
+                <PostSummaryHelpMessage
+                    data-testid='llm-bot-post-summary-help'
+                    type='hint'
+                    title={<FormattedMessage defaultMessage='Would you like to post this summary to the original call thread? You can also ask Agents to make changes.'/>}
+                />
+                }
+                { showControlsBar &&
+                <ControlsBarComponent
+                    showStopGeneratingButton={showStopGeneratingButton}
+                    showPostbackButton={showPostbackButton}
+                    showRegenerate={showRegenerate}
+                    copyText={showCopy ? answerMarkdown : null}
+                    belowBubble={isAgentChat}
+                    createAt={props.post.create_at}
+                    onStopGenerating={stopGenerating}
+                    onPostSummary={postSummary}
+                    onRegenerate={regnerate}
+                />
+                }
+            </div>
+        </WaitToolContext.Provider>
     );
 };
-
-const PostBody = styled.div`
-`;
 
 // Same gap as between stacked rounds, so a round moving from here into the
 // expanded activity stack stays where it is.

@@ -277,7 +277,7 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	env.builder = contextBuilder
 	policies := newDMPolicyChecker()
 	policies.policies[scopedRemote+":get_issue"] = mcp.ToolPolicyAsk
-	env.conversations = conversations.New(promptsManager, mmClient, env.streaming, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil,
+	env.conversations = conversations.New(promptsManager, mmClient, env.streaming, contextBuilder, botService, nil, licenseChecker, i18n.Init(),
 		&testToolCallingConfig{enableChannelMentionToolCalling: true}, policies)
 	env.conversations.SetConversationService(conversation.NewService(env.convStore, promptsManager, mmClient, botService))
 

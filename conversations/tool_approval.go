@@ -215,7 +215,10 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 
 	// The approval runs in the same context as the run it resumes, so a
 	// click cannot reach tools the run itself could not have been offered.
-	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences for tool approval")
+	llmContext, err := policy.buildContext(ctx, "Failed to load user tool preferences for tool approval")
+	if err != nil {
+		return err
+	}
 	llmContext.ResponsePostID = post.Id
 	// Approved tools run below, before this returns; the follow-up builds its
 	// own context and session.
@@ -713,7 +716,10 @@ func (c *Conversations) streamToolFollowUp(
 		unattended.interactive = false
 		policy = &unattended
 	}
-	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences for tool follow-up")
+	llmContext, err := policy.buildContext(ctx, "Failed to load user tool preferences for tool follow-up")
+	if err != nil {
+		return err
+	}
 	llmContext.ResponsePostID = post.Id
 	scopedHandedOff := false
 	defer func() {

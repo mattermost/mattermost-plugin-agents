@@ -11,7 +11,9 @@ import AgentRow from './agent_row';
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
     const intl = {
-        formatMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
+        formatMessage: ({defaultMessage}: {defaultMessage: string}, values?: Record<string, string>) => (
+            defaultMessage.replace(/\{(\w+)\}/g, (_, key: string) => values?.[key] ?? `{${key}}`)
+        ),
     };
     return {
         ...actual,
@@ -41,6 +43,7 @@ jest.mock('@mattermost/shared/components/tooltip', () => ({
 function makeAgent(): UserAgent {
     return {
         id: 'a1',
+        botUserID: 'bot-1',
         name: 'agent1',
         displayName: 'Agent One',
         serviceID: 'svc-1',
@@ -123,6 +126,7 @@ describe('AgentRow inactive badge', () => {
                 services={services}
                 servicesLoaded={servicesLoaded}
                 canManage={false}
+                onStartChat={noop}
                 onEdit={noop}
                 onDelete={noop}
                 onExport={noop}
@@ -135,24 +139,6 @@ describe('AgentRow inactive badge', () => {
         } else {
             expect(screen.queryByText('Inactive')).toBeNull();
         }
-        expect(screen.getByText('Read only')).not.toBeNull();
-        expect(screen.getByText('Mention @agent1 in a channel or direct message to chat with this agent.')).not.toBeNull();
-    });
-
-    test('does not show Read only badge when the user can manage the agent', () => {
-        render(
-            <AgentRow
-                agent={makeAgent()}
-                services={[availableService]}
-                servicesLoaded={true}
-                canManage={true}
-                onEdit={noop}
-                onDelete={noop}
-                onExport={noop}
-            />,
-        );
-
-        expect(screen.queryByText('Read only')).toBeNull();
     });
 });
 
@@ -165,12 +151,14 @@ describe('AgentRow actions menu', () => {
         const onEdit = jest.fn();
         const onDelete = jest.fn();
         const onExport = jest.fn();
+        const onStartChat = jest.fn();
         render(
             <AgentRow
                 agent={makeAgent()}
                 services={[availableService]}
                 servicesLoaded={true}
                 canManage={true}
+                onStartChat={onStartChat}
                 onEdit={onEdit}
                 onDelete={onDelete}
                 onExport={onExport}
@@ -183,16 +171,19 @@ describe('AgentRow actions menu', () => {
         expect(onEdit).toHaveBeenCalledTimes(expectEdit);
         expect(onDelete).toHaveBeenCalledTimes(expectDelete);
         expect(onExport).toHaveBeenCalledTimes(expectExport);
+        expect(onStartChat).not.toHaveBeenCalled();
     });
 
-    test('Enter on the actions button opens the menu without editing the agent', () => {
+    test('Enter on the actions button opens the menu without editing the agent or starting a chat', () => {
         const onEdit = jest.fn();
+        const onStartChat = jest.fn();
         render(
             <AgentRow
                 agent={makeAgent()}
                 services={[availableService]}
                 servicesLoaded={true}
                 canManage={true}
+                onStartChat={onStartChat}
                 onEdit={onEdit}
                 onDelete={noop}
                 onExport={noop}
@@ -202,15 +193,17 @@ describe('AgentRow actions menu', () => {
         fireEvent.keyDown(screen.getByRole('button', {name: 'Agent actions'}), {key: 'Enter'});
 
         expect(onEdit).not.toHaveBeenCalled();
+        expect(onStartChat).not.toHaveBeenCalled();
     });
 
-    test('has no actions menu, and so no Export, for read-only rows', () => {
+    test('has no actions menu (the editor has no read-only mode) for non-managers', () => {
         render(
             <AgentRow
                 agent={makeAgent()}
                 services={[availableService]}
                 servicesLoaded={true}
                 canManage={false}
+                onStartChat={noop}
                 onEdit={noop}
                 onDelete={noop}
                 onExport={noop}
@@ -219,5 +212,111 @@ describe('AgentRow actions menu', () => {
 
         expect(screen.queryByRole('button', {name: 'Agent actions'})).toBeNull();
         expect(screen.queryByRole('button', {name: 'Export'})).toBeNull();
+    });
+});
+
+describe('AgentRow primary action', () => {
+    const rowName = 'Start a new chat with Agent One';
+
+    const renderRow = (props: Partial<React.ComponentProps<typeof AgentRow>> = {}) => render(
+        <AgentRow
+            agent={makeAgent()}
+            services={[availableService]}
+            servicesLoaded={true}
+            canManage={false}
+            onStartChat={noop}
+            onEdit={noop}
+            onDelete={noop}
+            onExport={noop}
+            {...props}
+        />,
+    );
+
+    test.each([
+        {who: 'manager', canManage: true, how: 'click'},
+        {who: 'non-manager', canManage: false, how: 'click'},
+        {who: 'manager', canManage: true, how: 'Enter'},
+        {who: 'non-manager', canManage: false, how: 'Enter'},
+        {who: 'manager', canManage: true, how: ' '},
+        {who: 'non-manager', canManage: false, how: ' '},
+    ])('$who: "$how" starts a new chat with the bot user id', ({canManage, how}) => {
+        const onStartChat = jest.fn();
+        const onEdit = jest.fn();
+        renderRow({canManage, onStartChat, onEdit});
+
+        const row = screen.getByRole('button', {name: rowName});
+        if (how === 'click') {
+            fireEvent.click(row);
+        } else {
+            fireEvent.keyDown(row, {key: how});
+        }
+
+        expect(onStartChat).toHaveBeenCalledTimes(1);
+        expect(onStartChat).toHaveBeenCalledWith('bot-1');
+        expect(onEdit).not.toHaveBeenCalled();
+    });
+
+    test.each([
+        {who: 'manager', canManage: true},
+        {who: 'non-manager', canManage: false},
+    ])('$who: the New chat button starts one chat, not two', ({canManage}) => {
+        const onStartChat = jest.fn();
+        renderRow({canManage, onStartChat});
+
+        fireEvent.click(screen.getByRole('button', {name: 'Start new chat with Agent One'}));
+
+        expect(onStartChat).toHaveBeenCalledTimes(1);
+        expect(onStartChat).toHaveBeenCalledWith('bot-1');
+    });
+
+    test('an agent with no bot account has no New chat button', () => {
+        renderRow({agent: {...makeAgent(), botUserID: ''}});
+        expect(screen.queryByRole('button', {name: 'Start new chat with Agent One'})).toBeNull();
+    });
+
+    // A button's children are presentational to assistive technology: nothing interactive may sit inside it.
+    test('no other control sits inside the row button', () => {
+        renderRow({canManage: true, agent: {...makeAgent(), inactiveReason: 'agent_limit' as const}});
+
+        const row = screen.getByRole('button', {name: rowName});
+        expect(row.contains(screen.getByRole('button', {name: 'Agent actions'}))).toBe(false);
+        expect(row.contains(screen.getByRole('button', {name: 'Start new chat with Agent One'}))).toBe(false);
+        expect(row.querySelector('[tabindex="0"]')).toBeNull();
+    });
+
+    test('is keyboard focusable', () => {
+        renderRow();
+        expect(screen.getByRole('button', {name: rowName}).getAttribute('tabindex')).toBe('0');
+    });
+
+    test('clicking the actions button does not start a chat', () => {
+        const onStartChat = jest.fn();
+        renderRow({canManage: true, onStartChat});
+
+        fireEvent.click(screen.getByRole('button', {name: 'Agent actions'}));
+
+        expect(onStartChat).not.toHaveBeenCalled();
+    });
+
+    test.each([
+        {name: 'empty', agent: {...makeAgent(), botUserID: ''}},
+        {name: 'missing',
+            agent: (() => {
+                const a = makeAgent();
+                delete a.botUserID;
+                return a;
+            })()},
+    ])('is not actionable when the bot user id is $name', ({agent}) => {
+        const onStartChat = jest.fn();
+        renderRow({agent, onStartChat});
+
+        const row = screen.getByRole('button', {name: rowName});
+        fireEvent.click(row);
+        fireEvent.keyDown(row, {key: 'Enter'});
+
+        expect(onStartChat).not.toHaveBeenCalled();
+        expect(row.getAttribute('aria-disabled')).toBe('true');
+        const describedBy = row.getAttribute('aria-describedby') ?? '';
+        expect(document.getElementById(describedBy)?.textContent).toBe('This agent has no bot account, so a chat cannot be started.');
     });
 });

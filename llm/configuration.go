@@ -266,6 +266,10 @@ type BotConfig struct {
 	// long dynamic-tool-discovery chains (e.g. search → load → execute).
 	MaxToolTurns int `json:"maxToolTurns"`
 
+	// Skills is omitted when zero so agent versions recorded before skills
+	// existed compare equal to agents that never configured them.
+	Skills SkillsConfig `json:"skills,omitzero"`
+
 	// Admin / lifecycle metadata.
 	BotUserID    string   `json:"botUserID,omitempty"`
 	CreatorID    string   `json:"creatorID,omitempty"`
@@ -336,7 +340,7 @@ func (c *BotConfig) Validate() error {
 			return errors.New("scopedExtraChannelIDs contains an invalid channel ID")
 		}
 	}
-	return nil
+	return c.Skills.Validate()
 }
 
 // EffectiveMaxToolTurns returns the configured MaxToolTurns or DefaultMaxToolTurns

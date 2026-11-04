@@ -452,6 +452,7 @@ type mockConversationStore struct {
 	turns         map[string][]store.Turn // keyed by conversation ID
 	turnsByPost   map[string]*store.Turn  // keyed by post ID
 	err           error                   // if set, all methods return this error
+	renameErr     error                   // if set, RenameConversation returns this error
 }
 
 func newMockConversationStore() *mockConversationStore {
@@ -467,10 +468,25 @@ func (m *mockConversationStore) GetConversation(id string) (*store.Conversation,
 		return nil, m.err
 	}
 	conv, ok := m.conversations[id]
-	if !ok {
+	if !ok || conv.DeleteAt != 0 {
 		return nil, store.ErrConversationNotFound
 	}
 	return conv, nil
+}
+
+func (m *mockConversationStore) RenameConversation(id, title string) (bool, error) {
+	if m.err != nil {
+		return false, m.err
+	}
+	if m.renameErr != nil {
+		return false, m.renameErr
+	}
+	conv, ok := m.conversations[id]
+	if !ok || conv.DeleteAt != 0 {
+		return false, nil
+	}
+	conv.Title = title
+	return true, nil
 }
 
 func (m *mockConversationStore) GetTurnsForConversation(conversationID string) ([]store.Turn, error) {
@@ -961,7 +977,6 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		nil,
 		nil,
 		nil,
-		nil,
 		cfg,
 		askForEveryTool,
 	)
@@ -1305,6 +1320,8 @@ func TestPostRouter(t *testing.T) {
 		"stop":                    "/post/postid/stop",
 		"regenerate":              "/post/postid/regenerate",
 		"loop_in_agent":           "/post/postid/loop_in_agent",
+		"wait_check_now":          "/post/postid/wait/check_now",
+		"wait_cancel":             "/post/postid/wait/cancel",
 	} {
 		for name, test := range map[string]struct {
 			request        *http.Request
@@ -1343,7 +1360,7 @@ func TestPostRouter(t *testing.T) {
 		} {
 			// The agent-post routes check access to the post's agent in the
 			// service; TestPostResumeRoutesUseThePostsAgent covers them.
-			if name == "user not allowed" && (urlName == "stop" || urlName == "regenerate") {
+			if name == "user not allowed" && (urlName == "stop" || urlName == "regenerate" || urlName == "wait_check_now" || urlName == "wait_cancel") {
 				continue
 			}
 			t.Run(urlName+" "+name, func(t *testing.T) {
@@ -1498,6 +1515,8 @@ func TestEmptyBodyCheckerInApi(t *testing.T) {
 		"regen":                   "/post/postid/regenerate",
 		"postback summary":        "/post/postid/postback_summary",
 		"loop in agent":           "/post/postid/loop_in_agent?botUsername=thebot",
+		"wait check now":          "/post/postid/wait/check_now",
+		"wait cancel":             "/post/postid/wait/cancel",
 		"cancel":                  "/admin/reindex/cancel",
 	} {
 		t.Run(urlName, func(t *testing.T) {

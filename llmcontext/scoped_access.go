@@ -249,7 +249,7 @@ func (b *Builder) scopedAccessTools(ctx stdcontext.Context, bot *bots.Bot, viewe
 		catalog, _ = b.mcpToolProvider.GetToolsWithSelection(
 			ctx,
 			mcp.ServiceAccountCatalogRequest(bot.BotUserID(), viewerID),
-			mcpToolSelection(cfg, llm.NewContext(), b.isRemoteMCPLicensed()),
+			mcpToolSelection(cfg, llm.NewContext(), b.isRemoteMCPLicensed(), false),
 		)
 	}
 	summarizer, _ := b.mcpToolProvider.(ScopedServerSummarizer)

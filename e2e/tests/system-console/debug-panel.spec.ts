@@ -15,35 +15,18 @@ import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers
  */
 
 /**
- * Radio button indices on the system console page.
- * Each BooleanItem setting renders two radio buttons (true at index 0, false at index 1).
- * Specific accessors were not reliable enough to use, this approach is much more consistent.
- *
- * UPDATE THESE if the page structure changes (e.g., settings added/removed/reordered):
- *
- * Current order of radio button pairs on the page:
- *   0-1:  Plugin Enable (Mattermost built-in)
- *   2-3:  Render AI-generated links
- *   4-5:  Enable Channel Mention Tool Calling
- *   6-7:  Allow native web search in channels
- *   8-9:  Enable OpenTelemetry
- *   10-11: Enable Token Usage Logging
- *   12+:  Web Search, MCP settings...
+ * Radio buttons of a Debug panel boolean setting, found by the setting's label
+ * so they do not depend on how many other settings render before them.
  */
-const RADIO_INDICES = {
-    enableTokenUsageLogging: { true: 10, false: 11 },
-} as const;
-
-/**
- * Helper to get radio buttons for a debug panel setting.
- */
-function getSettingRadios(page: Page, setting: keyof typeof RADIO_INDICES) {
-    const indices = RADIO_INDICES[setting];
+function getSettingRadios(page: Page, label: string) {
+    const group = page.getByRole('radiogroup', { name: label });
     return {
-        true: page.getByRole('radio').nth(indices.true),
-        false: page.getByRole('radio').nth(indices.false),
+        true: group.getByRole('radio', { name: 'True' }),
+        false: group.getByRole('radio', { name: 'False' }),
     };
 }
+
+const tokenUsageLoggingLabel = 'Enable Token Usage Logging';
 
 const test = containerTest(async (own) => {
     // Start container with enableTokenUsageLogging set to false
@@ -97,7 +80,7 @@ test.describe.serial('Debug Panel', () => {
         await debugPanel.scrollIntoViewIfNeeded();
 
         // Locate the 'Enable Token Usage Logging' radio buttons
-        const tokenLogging = getSettingRadios(page, 'enableTokenUsageLogging');
+        const tokenLogging = getSettingRadios(page, tokenUsageLoggingLabel);
 
         // Verify the toggle is currently OFF
         await expect(tokenLogging.false).toBeChecked();
@@ -109,17 +92,13 @@ test.describe.serial('Debug Panel', () => {
         await expect(tokenLogging.true).toBeChecked();
 
         // Click Save button
-        const saveButton = systemConsole.getSaveButton();
-        await Promise.all([
-            page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().includes('/admin/config')),
-            saveButton.click(),
-        ]);
+        await systemConsole.clickSave();
 
         // Reload the page
         await page.reload();
 
         // Verify 'Enable Token Usage Logging' toggle is ON after reload
-        const reloadedTokenLogging = getSettingRadios(page, 'enableTokenUsageLogging');
+        const reloadedTokenLogging = getSettingRadios(page, tokenUsageLoggingLabel);
         await expect(reloadedTokenLogging.true).toBeChecked();
 
         // Toggle it OFF
@@ -128,13 +107,13 @@ test.describe.serial('Debug Panel', () => {
         // Verify the toggle changes to OFF state
         await expect(reloadedTokenLogging.false).toBeChecked();
 
-        // Save the change
+        // Save the change; reloading before the PUT lands would read the old value
         await systemConsole.clickSave();
 
         // Reload and verify it's OFF
         await page.reload();
 
-        const finalTokenLogging = getSettingRadios(page, 'enableTokenUsageLogging');
+        const finalTokenLogging = getSettingRadios(page, tokenUsageLoggingLabel);
         await expect(finalTokenLogging.false).toBeChecked();
     });
 });

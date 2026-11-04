@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState} from 'react';
+import React, {useContext, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {ChevronDownIcon, ChevronRightIcon, CheckIcon, AlertCircleOutlineIcon, ClockOutlineIcon, CloseCircleOutlineIcon, GlobeIcon, HelpCircleOutlineIcon, LockIcon} from '@mattermost/compass-icons/components';
@@ -13,7 +13,8 @@ import {Spinner} from '@mattermost/compass-ui/components/spinner';
 import {Tag} from '@mattermost/compass-ui/components/tag';
 import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
-import {toolDisplayName} from '@/utils/tool_identity';
+import {originKind, toolDisplayName} from '@/utils/tool_identity';
+import {WAIT_TOOL_NAME, WaitStepClock, WaitStepLabel, WaitToolContext, parseWaitMinutes} from '@/components/llmbot_post/wait_status';
 
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
 import {ToolArgumentsRaw, ToolResultBody, hasInspectableArguments} from '../tool_arguments';
@@ -188,6 +189,35 @@ export interface ToolCardShellProps {
 // Props for a card component: everything the shell takes except the body.
 export type RichCardProps = Omit<ToolCardShellProps, 'children'>;
 
+// renderHeaderStatusIcon picks the glyph shown left of a tool name: an amber
+// clock while a wait_for_async_work pause is active, the waiting glyph while a
+// call awaits the requester, else the standard status icon.
+function renderHeaderStatusIcon(opts: {
+    waitActive: boolean;
+    awaitingRequester: boolean;
+    isPending: boolean;
+    status: ToolCallStatus;
+    isProcessing: boolean;
+}): React.ReactNode {
+    if (opts.waitActive) {
+        return <WaitStepClock data-testid='llm-bot-wait-step-clock'/>;
+    }
+    if (opts.awaitingRequester && opts.isPending) {
+        return (
+            <WaitingIcon
+                size={12}
+                data-testid='llm-bot-tool-status-waiting'
+            />
+        );
+    }
+    return (
+        <ToolStatusIcon
+            status={opts.status}
+            isProcessing={opts.isProcessing}
+        />
+    );
+}
+
 /**
  * ToolCardShell renders the shared approval chrome for a tool call: expandable
  * header, arguments body (children) with a "View raw" toggle, result section,
@@ -212,6 +242,14 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
 }) => {
     const {formatMessage} = useIntl();
     const [showRaw, setShowRaw] = useState(false);
+
+    // wait_for_async_work rows swap the green check for an amber "waiting"
+    // indicator while the pause is still pending; the context carries whether
+    // this post's wait is active.
+    const waitState = useContext(WaitToolContext);
+    const isWaitTool = tool.name === WAIT_TOOL_NAME && originKind(tool.server_origin) === 'builtin';
+    const waitActive = isWaitTool && Boolean(waitState?.active);
+    const waitMinutes = isWaitTool ? parseWaitMinutes(tool.arguments) : null;
 
     const isPending = tool.status === ToolCallStatus.Pending;
     const isSuccess = tool.status === ToolCallStatus.Success || tool.status === ToolCallStatus.AutoApproved;
@@ -356,18 +394,14 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                         {isCollapsed ? <ChevronRightIcon size={16}/> : <ChevronDownIcon size={16}/>}
                     </StyledChevronIcon>
                 )}
-                {awaitingRequester && isPending ? (
-                    <WaitingIcon
-                        size={12}
-                        data-testid='llm-bot-tool-status-waiting'
-                    />
-                ) : (
-                    <ToolStatusIcon
-                        status={tool.status}
-                        isProcessing={isProcessing}
+                {renderHeaderStatusIcon({waitActive, awaitingRequester, isPending, status: tool.status, isProcessing})}
+                <ToolName title={displayName}>{displayName}</ToolName>
+                {isWaitTool && (
+                    <WaitStepLabel
+                        active={waitActive}
+                        minutes={waitMinutes}
                     />
                 )}
-                <ToolName title={displayName}>{displayName}</ToolName>
                 {awaitingRequester && (
                     <Tag
                         type='warning'

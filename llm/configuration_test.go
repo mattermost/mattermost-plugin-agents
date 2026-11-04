@@ -269,6 +269,36 @@ func TestBotConfig_MaxToolTurnsValidation(t *testing.T) {
 	}
 }
 
+func TestBotConfig_SkillsValidation(t *testing.T) {
+	skillID := "abcdefghijklmnopqrstuvwxyz"
+	tests := []struct {
+		name      string
+		skills    SkillsConfig
+		wantValid bool
+	}{
+		{name: "empty", wantValid: true},
+		{name: "enabled shared skill", skills: SkillsConfig{EnabledSharedIDs: []string{skillID}}, wantValid: true},
+		{name: "enabled shared skill must be an ID", skills: SkillsConfig{EnabledSharedIDs: []string{"mattermost/summarize-conversations"}}, wantValid: false},
+		{name: "override at the limit", skills: SkillsConfig{DescriptionOverrides: map[string]string{skillID: strings.Repeat("a", MaxSkillDescriptionRunes)}}, wantValid: true},
+		{name: "override over the limit", skills: SkillsConfig{DescriptionOverrides: map[string]string{skillID: strings.Repeat("a", MaxSkillDescriptionRunes+1)}}, wantValid: false},
+		{name: "override must be keyed by ID", skills: SkillsConfig{DescriptionOverrides: map[string]string{"not-an-id": "x"}}, wantValid: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &BotConfig{
+				Name:               "n",
+				DisplayName:        "d",
+				ServiceID:          "svc",
+				ChannelAccessLevel: ChannelAccessLevelAll,
+				UserAccessLevel:    UserAccessLevelAll,
+				Skills:             tt.skills,
+			}
+			assert.Equal(t, tt.wantValid, c.IsValid())
+		})
+	}
+}
+
 func TestBotConfig_EffectiveMaxToolTurns(t *testing.T) {
 	tests := []struct {
 		name string

@@ -705,6 +705,10 @@ func TestListAgentsFiltersByAccess(t *testing.T) {
 		ID: "agent-1", CreatorID: "other-user", DisplayName: "Public Agent",
 		ServiceID: "svc-1", UserAccessLevel: llm.UserAccessLevelAll,
 		CustomInstructions: "internal procedures",
+		Skills: llm.SkillsConfig{
+			EnabledSharedIDs:     []string{"skillid12345678901234567ab"},
+			DescriptionOverrides: map[string]string{"skillid12345678901234567ab": "internal skill guidance"},
+		},
 	}
 	e.agentStore.agents["agent-2"] = &llm.BotConfig{
 		ID: "agent-2", CreatorID: "other-user", DisplayName: "Private Agent",
@@ -719,8 +723,59 @@ func TestListAgentsFiltersByAccess(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&agents))
 	assert.Len(t, agents, 1)
 	assert.Equal(t, "Public Agent", agents[0].DisplayName)
-	// Non-managers must not see customInstructions.
+	// Non-managers must not see customInstructions or skill description overrides.
 	assert.Empty(t, agents[0].CustomInstructions)
+	assert.Empty(t, agents[0].Skills.DescriptionOverrides)
+	assert.Equal(t, []string{"skillid12345678901234567ab"}, agents[0].Skills.EnabledSharedIDs)
+	assert.Equal(t, "internal skill guidance", e.agentStore.agents["agent-1"].Skills.DescriptionOverrides["skillid12345678901234567ab"], "redaction must not modify the stored agent")
+}
+
+func TestListAgentsReportsCanManage(t *testing.T) {
+	tests := []struct {
+		name           string
+		creatorID      string
+		adminIDs       []string
+		manageOthers   bool
+		manageSystem   bool
+		wantCanManage  bool
+		wantSeesPrompt bool
+	}{
+		{name: "creator", creatorID: testUserID, wantCanManage: true, wantSeesPrompt: true},
+		{name: "agent admin", creatorID: "other-user", adminIDs: []string{testUserID}, wantCanManage: true, wantSeesPrompt: true},
+		{name: "manage others agent", creatorID: "other-user", manageOthers: true, wantCanManage: true, wantSeesPrompt: true},
+		{name: "system admin on a migrated legacy bot", creatorID: "", manageSystem: true, wantCanManage: true, wantSeesPrompt: true},
+		{name: "system admin on another user's agent", creatorID: "other-user", manageSystem: true},
+		{name: "plain user", creatorID: "other-user"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			mockLicensed(e.mockAPI)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(tt.manageOthers).Maybe()
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(tt.manageSystem).Maybe()
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+			e.agentStore.agents["agent-1"] = &llm.BotConfig{
+				ID: "agent-1", CreatorID: tt.creatorID, AdminUserIDs: tt.adminIDs, DisplayName: "Agent",
+				ServiceID: "svc-1", UserAccessLevel: llm.UserAccessLevelAll,
+				CustomInstructions: "internal procedures",
+			}
+
+			recorder := doRequest(e.api, http.MethodGet, "/agents", nil, testUserID)
+			require.Equal(t, http.StatusOK, recorder.Code)
+
+			var agents []struct {
+				CanManage          bool   `json:"canManage"`
+				CustomInstructions string `json:"customInstructions"`
+			}
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &agents))
+			require.Len(t, agents, 1)
+			assert.Equal(t, tt.wantCanManage, agents[0].CanManage)
+			assert.Equal(t, tt.wantSeesPrompt, agents[0].CustomInstructions != "")
+		})
+	}
 }
 
 func TestUpdateAgentAsCreator(t *testing.T) {

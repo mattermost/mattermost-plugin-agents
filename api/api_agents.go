@@ -136,8 +136,9 @@ type AgentRequestFields struct {
 	// StructuredOutputEnabled is deprecated: it is accepted and persisted for
 	// compatibility with existing callers, but ignored at runtime. Structured
 	// output is a per-service policy (ServiceConfig.StructuredOutputPolicy).
-	StructuredOutputEnabled bool `json:"structuredOutputEnabled"`
-	MaxToolTurns            int  `json:"maxToolTurns"`
+	StructuredOutputEnabled bool             `json:"structuredOutputEnabled"`
+	MaxToolTurns            int              `json:"maxToolTurns"`
+	Skills                  llm.SkillsConfig `json:"skills"`
 }
 
 // applyTo overwrites the request-controlled fields on cfg.
@@ -174,6 +175,7 @@ func (r AgentRequestFields) applyTo(cfg *llm.BotConfig) {
 	// reads ServiceConfig.StructuredOutputPolicy instead.
 	cfg.StructuredOutputEnabled = r.StructuredOutputEnabled //nolint:staticcheck
 	cfg.MaxToolTurns = r.MaxToolTurns
+	cfg.Skills = r.Skills
 }
 
 // CreateAgentRequest is the JSON body for POST /agents.
@@ -556,6 +558,7 @@ func requestFieldsFromConfig(cfg *llm.BotConfig) AgentRequestFields {
 		ThinkingBudget:          cfg.ThinkingBudget,
 		StructuredOutputEnabled: cfg.StructuredOutputEnabled, //nolint:staticcheck // deprecated field is still persisted verbatim
 		MaxToolTurns:            cfg.MaxToolTurns,
+		Skills:                  cfg.Skills,
 	}
 }
 
@@ -693,10 +696,12 @@ func (a *API) discardUnusedBot(botUserID string) {
 }
 
 // agentListItem is an agent as listed on GET /agents, with the reason it is
-// not running when it is inactive.
+// not running when it is inactive, and whether the caller may manage it
+// (canManageAgent), so the webapp gates editing without re-deriving the rule.
 type agentListItem struct {
 	*llm.BotConfig
 	InactiveReason config.AgentInactiveReason `json:"inactiveReason,omitempty"`
+	CanManage      bool                       `json:"canManage"`
 }
 
 // handleListAgents handles GET /agents: agents the caller may access.
@@ -732,9 +737,11 @@ func (a *API) handleListAgents(c *gin.Context) {
 	accessible := make([]agentListItem, 0, len(agents))
 	for _, cfg := range agents {
 		if a.canUserAccessAgent(c.Request.Context(), cfg, userID) {
+			canManage := canManageAgent(a.pluginAPI, cfg, userID)
 			accessible = append(accessible, agentListItem{
-				BotConfig:      sanitizeAgentForUser(a.pluginAPI, cfg, userID),
+				BotConfig:      redactUnmanageableAgent(cfg, canManage),
 				InactiveReason: inactive[cfg.ID],
+				CanManage:      canManage,
 			})
 		}
 	}
@@ -1203,11 +1210,17 @@ func sanitizeAgentForUser(client *pluginapi.Client, cfg *llm.BotConfig, userID s
 	if cfg == nil {
 		return nil
 	}
-	if canManageAgent(client, cfg, userID) {
+	return redactUnmanageableAgent(cfg, canManageAgent(client, cfg, userID))
+}
+
+// redactUnmanageableAgent drops what only an agent's managers may read.
+func redactUnmanageableAgent(cfg *llm.BotConfig, canManage bool) *llm.BotConfig {
+	if canManage {
 		return cfg
 	}
 	redacted := *cfg
 	redacted.CustomInstructions = ""
 	redacted.ScopedExtraChannelIDs = []string{}
+	redacted.Skills.DescriptionOverrides = nil
 	return &redacted
 }
