@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -229,12 +230,12 @@ func (s *singleTurnStore) GetTurnByPostID(postID string) (*store.Turn, error) {
 	return &copied, nil
 }
 
-func (s *singleTurnStore) UpdateTurnContent(id string, content json.RawMessage) error {
-	if id != s.turn.ID {
-		return nil
+func (s *singleTurnStore) CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error) {
+	if id != s.turn.ID || !bytes.Equal(s.turn.Content, expected) {
+		return false, nil
 	}
 	s.turn.Content = content
-	return nil
+	return true, nil
 }
 
 // setupEditedPostPlugin wires a Plugin around a conversation service holding a
