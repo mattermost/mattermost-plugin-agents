@@ -122,6 +122,7 @@ describe('groupDMThreadsByBot', () => {
 interface TestPost {
     id: string;
     channel_id: string;
+    root_id?: string;
     user_id: string;
     props?: Record<string, unknown>;
 }
@@ -344,6 +345,8 @@ describe('stored AI threads', () => {
             mine: {id: 'mine', channel_id: 'dm_a', user_id: 'a'},
             requested: {id: 'requested', channel_id: 'town', user_id: 'a', props: {llm_requester_user_id: 'me'}},
             others: {id: 'others', channel_id: 'town', user_id: 'a', props: {llm_requester_user_id: 'someone'}},
+            unlisted: {id: 'unlisted', channel_id: 'dm_a', root_id: 'new-root', user_id: 'a'},
+            listed: {id: 'listed', channel_id: 'dm_a', root_id: 'root', user_id: 'a'},
         };
 
         const setup = async () => {
@@ -372,6 +375,30 @@ describe('stored AI threads', () => {
             sync.handlePostUpdate(end(postId));
             await settle();
             expect(mockGetAIThreads).toHaveBeenCalledTimes(refetch ? 1 : 0);
+        });
+
+        test.each([
+            {name: 'a chat the list does not have yet', postId: 'unlisted', control: 'start', refetch: true},
+            {name: 'a chat the list does not have yet, seen first from a text chunk', postId: 'unlisted', control: undefined, refetch: true}, // eslint-disable-line no-undefined
+            {name: 'a listed chat', postId: 'listed', control: 'start', refetch: false},
+            {name: 'a reply to someone else in a shared channel', postId: 'others', control: 'start', refetch: false},
+            {name: 'a canceled reply in a chat the list does not have', postId: 'unlisted', control: 'cancel', refetch: false},
+        ])('a streaming reply in $name refetches: $refetch', async ({postId, control, refetch}) => {
+            const {sync} = await setup();
+            sync.handlePostUpdate({data: {post_id: postId, control, next: 'chunk'}} as never);
+            await settle();
+            expect(mockGetAIThreads).toHaveBeenCalledTimes(refetch ? 1 : 0);
+        });
+
+        test('a reply streaming in a chat the list does not have fetches it once', async () => {
+            const {sync} = await setup();
+            sync.handlePostUpdate({data: {post_id: 'unlisted', control: 'start'}} as never);
+            await settle();
+            for (let i = 0; i < 3; i++) {
+                sync.handlePostUpdate({data: {post_id: 'unlisted', next: `chunk ${i}`}} as never);
+            }
+            await settle();
+            expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
         });
 
         test('a burst of finished turns costs one request', async () => {

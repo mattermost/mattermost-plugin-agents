@@ -30,6 +30,10 @@ const (
 
 	listToolsMethod = "tools/list"
 
+	// legacySSEProtocolVersion is the newest MCP revision with an HTTP+SSE
+	// transport binding.
+	legacySSEProtocolVersion = "2025-11-25"
+
 	// RemoteConnectTimeout bounds one remote MCP server's whole connection
 	// sequence: streamable-transport negotiation, the legacy HTTP+SSE
 	// fallback, and the initial tools/list. Without it a server that stalls
@@ -166,7 +170,7 @@ func maybeInvalidateSharedToolsBeforeOAuthListTools(userID string, serverConfig 
 	}
 
 	serverID := serverConfig.Name
-	hasStoredToken, tokenErr := oauthManager.HasStoredToken(userID, serverID)
+	hasStoredToken, tokenErr := oauthManager.HasStoredToken(userID, serverConfig)
 	if tokenErr != nil {
 		log.Warn("Failed to check stored OAuth token before MCP tool discovery",
 			"serverID", serverID,
@@ -203,12 +207,12 @@ func NewSDKClient(impl *mcp.Implementation, opts *mcp.ClientOptions) *mcp.Client
 	return client
 }
 
-// dropNilTools removes null entries from tools/list responses. go-sdk v1.7.0's
-// ListTools panics (nil dereference in filterValidTools) when a server's
-// tools/list result contains a JSON null tool entry, so a misbehaving remote
-// MCP server could crash the whole plugin process before any of our own nil
-// checks run. Stripping the entries in sending middleware runs before the
-// SDK's validation pass. Upstream report:
+// dropNilTools removes null entries from tools/list responses. go-sdk before
+// v1.8.0 panicked (nil dereference in filterValidTools) when a server's
+// tools/list result contained a JSON null tool entry, so a misbehaving remote
+// MCP server could crash the whole plugin process. v1.8.0 skips them itself;
+// stripping them here as well keeps the guard independent of the SDK
+// version. Upstream report:
 // https://github.com/modelcontextprotocol/go-sdk/issues/1119
 func dropNilTools(next mcp.MethodHandler) mcp.MethodHandler {
 	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
@@ -229,6 +233,11 @@ func dropNilTools(next mcp.MethodHandler) mcp.MethodHandler {
 		listResult.Tools = kept
 		return listResult, nil
 	}
+}
+
+// toolReadOnlyHint reports whether the server annotated tool as read-only.
+func toolReadOnlyHint(tool *mcp.Tool) bool {
+	return tool != nil && tool.Annotations != nil && tool.Annotations.ReadOnlyHint
 }
 
 // ListSessionTools lists every tool available on session in wire order,
@@ -544,7 +553,7 @@ func (c *Client) staticOAuthTokenMissing() (bool, error) {
 	if c.serviceAccount || c.oauthManager == nil || staticOAuthCreds(c.config) == nil {
 		return false, nil
 	}
-	hasToken, err := c.oauthManager.HasStoredToken(c.userID, c.config.Name)
+	hasToken, err := c.oauthManager.HasStoredToken(c.userID, c.config)
 	if err != nil {
 		return false, fmt.Errorf("failed to check stored OAuth token for MCP server %s: %w", c.config.Name, err)
 	}
@@ -621,10 +630,13 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 	// Fall back to the HTTP+SSE transport for legacy servers that only implement
 	// the 2024-11-05 HTTP+SSE transport. SSEClientTransport has no OAuthHandler
 	// field, so OAuth is applied through a RoundTripper adapter instead.
+	// MCP 2026-07-28 has no HTTP+SSE binding, so the session starts with the
+	// legacy initialize handshake: a server/discover probe that an older server
+	// rejects with a non-2xx status would leave the SSE connection unusable.
 	session, errSSE := client.Connect(ctx, &mcp.SSEClientTransport{
 		Endpoint:   serverConfig.BaseURL,
 		HTTPClient: c.httpClientForLegacySSE(serverConfig.BaseURL, oauthHandler, headers),
-	}, nil)
+	}, &mcp.ClientSessionOptions{ProtocolVersion: legacySSEProtocolVersion})
 	if errSSE == nil {
 		// Successfully connected using SSE transport
 		return session, nil

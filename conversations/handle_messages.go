@@ -634,7 +634,13 @@ func (c *Conversations) streamToExistingPost(ctx context.Context, stream *llm.Te
 	if err != nil {
 		return err
 	}
+	c.streamToExistingPostOnContext(streamCtx, stream, post, postingUser, channel, continuation, onFinish)
+	return nil
+}
 
+// streamToExistingPostOnContext streams on a streaming context the caller
+// already holds for post. It releases that context when the stream ends.
+func (c *Conversations) streamToExistingPostOnContext(streamCtx context.Context, stream *llm.TextStreamResult, post *model.Post, postingUser *model.User, channel *model.Channel, continuation bool, onFinish func()) {
 	locale := c.responseLocale(postingUser, channel)
 	go func() {
 		if onFinish != nil {
@@ -647,8 +653,6 @@ func (c *Conversations) streamToExistingPost(ctx context.Context, stream *llm.Te
 			c.streamingService.StreamToPost(streamCtx, stream, post, locale, postingUser.Id)
 		}
 	}()
-
-	return nil
 }
 
 func (c *Conversations) failResponsePlaceholder(post *model.Post, userLocale string) {
