@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	mcppkg "github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	loggerlib "github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
@@ -51,6 +52,11 @@ type PluginMCPHandlers struct {
 	registry        PluginServerRegistry
 	sourcePluginAPI mmapi.Client
 
+	// The plugin's own search and file-content services, called in-process
+	// rather than over an HTTP callback through the public site URL.
+	searchService      tools.SemanticSearchService
+	fileContentService tools.FileContentService
+
 	accessChecker           mcppkg.ServerAccessChecker
 	embeddedServerID        func() string
 	allowStateChangingTools func() bool
@@ -67,7 +73,9 @@ type PluginMCPHandlers struct {
 }
 
 // NewPluginMCPHandlers creates MCP handlers for the Mattermost plugin.
-// registry may be nil to disable plugin-server aggregation. Callers must
+// registry may be nil to disable plugin-server aggregation. searchService and
+// fileContentService are the plugin's in-process services; either may be nil
+// when the capability is unavailable. Callers must
 // inject auth (bearer token or user-ID) via plugin middleware.
 // allowStateChangingTools is a runtime predicate evaluated per request; a nil
 // predicate means state-changing tools are not available.
@@ -79,6 +87,8 @@ func NewPluginMCPHandlers(
 	logger loggerlib.Logger,
 	registry PluginServerRegistry,
 	sourcePluginAPI mmapi.Client,
+	searchService tools.SemanticSearchService,
+	fileContentService tools.FileContentService,
 	allowStateChangingTools func() bool,
 	runtimeServices ...any,
 ) (*PluginMCPHandlers, error) {
@@ -122,6 +132,8 @@ func NewPluginMCPHandlers(
 		logger:                  logger,
 		registry:                registry,
 		sourcePluginAPI:         sourcePluginAPI,
+		searchService:           searchService,
+		fileContentService:      fileContentService,
 		accessChecker:           accessChecker,
 		embeddedServerID:        embeddedServerID,
 		allowStateChangingTools: allowStateChangingTools,
@@ -175,15 +187,13 @@ func (h *PluginMCPHandlers) buildServer() *mcp.Server {
 	}
 
 	authProvider := auth.NewSessionAuthenticationProvider(h.siteURL, h.internalURL, h.logger)
-	searchService, fileContentService := newPluginCallbackServices(h.siteURL)
-
 	toolProvider := tools.NewMattermostToolProvider(
 		authProvider,
 		h.logger,
 		config,
 		tools.AccessModeRemote,
-		searchService,
-		fileContentService,
+		h.searchService,
+		h.fileContentService,
 		h.allowStateChangingTools,
 	)
 	toolProvider.ProvideTools(mcpServer)
@@ -371,7 +381,7 @@ func (h *PluginMCPHandlers) toolAccessDenied(ctx context.Context, userID, toolNa
 	if denied, cached := cache[serverID]; cached {
 		return denied
 	}
-	denied := h.accessChecker.CanUseMCPServer(ctx, userID, serverID) != nil
+	denied := h.accessChecker.CanUseMCPServer(accesscontrol.WithResourceName(ctx, owner.ownerKey), userID, serverID) != nil
 	cache[serverID] = denied
 	if denied {
 		h.logger.Debug("Omitting MCP server for user by access policy", "userID", userID, "serverID", serverID)

@@ -1,7 +1,8 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { OpenAIMockContainer, RunOpenAIMocks, responseTest } from 'helpers/openai-mock';
@@ -14,57 +15,56 @@ import {
     registerMCPOAuthMocks,
 } from 'helpers/mcp-oauth-mock';
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunSystemConsoleContainer({
+        services: [
+            {
+                id: 'mock-service',
+                name: 'Mock Service',
+                type: 'openaicompatible',
+                apiKey: 'mock',
+                apiURL: 'http://openai:8080',
+                defaultModel: 'gpt-mock',
+                useResponsesAPI: false,
+            },
+        ],
+        bots: [
+            {
+                id: 'test-bot',
+                name: 'testbot',
+                displayName: 'Test Bot',
+                serviceID: 'mock-service',
+                customInstructions: '',
+                enabledNativeTools: [],
+            },
+        ],
+        mcp: {
+            enabled: true,
+            enablePluginServer: true,
+            embeddedServer: { enabled: true },
+            idleTimeoutMinutes: 30,
+            servers: [
+                {
+                    name: MOCK_OAUTH_SERVER_NAME,
+                    enabled: true,
+                    baseURL: MOCK_OAUTH_SERVER_URL,
+                    clientID: 'test-client-id',
+                    clientSecret: 'test-client-secret',
+                },
+            ],
+        },
+    }));
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
 test.describe('MCP OAuth Authentication', () => {
-    test.beforeAll(async () => {
-        mattermost = await RunSystemConsoleContainer({
-            services: [
-                {
-                    id: 'mock-service',
-                    name: 'Mock Service',
-                    type: 'openaicompatible',
-                    apiKey: 'mock',
-                    apiURL: 'http://openai:8080',
-                    defaultModel: 'gpt-mock',
-                    useResponsesAPI: false,
-                },
-            ],
-            bots: [
-                {
-                    id: 'test-bot',
-                    name: 'testbot',
-                    displayName: 'Test Bot',
-                    serviceID: 'mock-service',
-                    customInstructions: '',
-                    enabledNativeTools: [],
-                },
-            ],
-            mcp: {
-                enabled: true,
-                enablePluginServer: true,
-                embeddedServer: { enabled: true },
-                idleTimeoutMinutes: 30,
-                servers: [
-                    {
-                        name: MOCK_OAUTH_SERVER_NAME,
-                        enabled: true,
-                        baseURL: MOCK_OAUTH_SERVER_URL,
-                        clientID: 'test-client-id',
-                        clientSecret: 'test-client-secret',
-                    },
-                ],
-            },
-        });
-
-        openAIMock = await RunOpenAIMocks(mattermost.network);
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
         await registerMCPOAuthMocks(openAIMock, responseTest);
-    });
-
-    test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
     });
 
     test('embedded server should return authenticated=true and needsOAuth=false', async () => {

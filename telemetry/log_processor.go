@@ -5,6 +5,7 @@ package telemetry
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"go.opentelemetry.io/otel/codes"
@@ -35,6 +36,9 @@ func NewLogSpanProcessor(log LogService) sdktrace.SpanProcessor {
 func (p *logSpanProcessor) OnStart(context.Context, sdktrace.ReadWriteSpan) {}
 
 func (p *logSpanProcessor) OnEnd(s sdktrace.ReadOnlySpan) {
+	if !keepSpan(s) {
+		return
+	}
 	sc := s.SpanContext()
 	kv := []any{
 		"span", s.Name(),
@@ -48,8 +52,22 @@ func (p *logSpanProcessor) OnEnd(s sdktrace.ReadOnlySpan) {
 	for _, a := range s.Attributes() {
 		kv = append(kv, string(a.Key), a.Value.AsInterface())
 	}
-	for _, e := range s.Events() {
-		kv = append(kv, "event", formatEvent(e))
+	// Events and links are each written as one JSON array string so every
+	// entry survives (repeating a key keeps only the last one) and Loki's
+	// `| json` can parse them.
+	if events := s.Events(); len(events) > 0 {
+		out := make([]map[string]any, 0, len(events))
+		for _, e := range events {
+			out = append(out, formatEvent(e))
+		}
+		kv = append(kv, "events", marshalJSON(out))
+	}
+	if links := s.Links(); len(links) > 0 {
+		out := make([]map[string]any, 0, len(links))
+		for _, l := range links {
+			out = append(out, formatLink(l))
+		}
+		kv = append(kv, "links", marshalJSON(out))
 	}
 
 	status := s.Status()
@@ -75,4 +93,23 @@ func formatEvent(e sdktrace.Event) map[string]any {
 		out[string(a.Key)] = a.Value.AsInterface()
 	}
 	return out
+}
+
+func formatLink(l sdktrace.Link) map[string]any {
+	out := map[string]any{
+		"trace_id": l.SpanContext.TraceID().String(),
+		"span_id":  l.SpanContext.SpanID().String(),
+	}
+	for _, a := range l.Attributes {
+		out[string(a.Key)] = a.Value.AsInterface()
+	}
+	return out
+}
+
+func marshalJSON(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
 }

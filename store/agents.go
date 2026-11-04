@@ -20,7 +20,7 @@ const agentSelectColumns = `ID, BotUserID, CreatorID, DisplayName, Username, Ser
 	EnabledTools, AutoEnableNewMCPTools, mcp_dynamic_tool_loading,
 	Model, EnableVision, DisableTools, EnabledNativeTools,
 	ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
-	MaxToolTurns, UseServiceAccountAuth,
+	MaxToolTurns, UseServiceAccountAuth, Skills,
 	CreateAt, UpdateAt, DeleteAt`
 
 // marshalJSONSlice serializes a slice for a JSON TEXT column.
@@ -43,6 +43,24 @@ func unmarshalJSONSlice[T any](raw string, target *[]T) error {
 		return nil
 	}
 	return json.Unmarshal([]byte(raw), target)
+}
+
+// normalizeSkills drops empty collections so equal settings round-trip and
+// snapshot identically.
+func normalizeSkills(s llm.SkillsConfig) llm.SkillsConfig {
+	s.EnabledSharedIDs = emptyToNil(s.EnabledSharedIDs)
+	if len(s.DescriptionOverrides) == 0 {
+		s.DescriptionOverrides = nil
+	}
+	return s
+}
+
+func marshalSkills(s llm.SkillsConfig) string {
+	b, err := json.Marshal(normalizeSkills(s))
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }
 
 // agentRow is the DB-level representation of a UserAgent row.
@@ -75,6 +93,7 @@ type agentRow struct {
 	StructuredOutputEnabled bool   `db:"structuredoutputenabled"`
 	MaxToolTurns            int    `db:"maxtoolturns"`
 	UseServiceAccountAuth   bool   `db:"useserviceaccountauth"`
+	Skills                  string `db:"skills"`
 	CreateAt                int64  `db:"createat"`
 	UpdateAt                int64  `db:"updateat"`
 	DeleteAt                int64  `db:"deleteat"`
@@ -126,20 +145,41 @@ func (r *agentRow) toBotConfig() (*llm.BotConfig, error) {
 	if err := unmarshalJSONSlice(r.EnabledNativeTools, &cfg.EnabledNativeTools); err != nil {
 		return nil, fmt.Errorf("failed to parse EnabledNativeTools: %w", err)
 	}
+	if r.Skills != "" {
+		if err := json.Unmarshal([]byte(r.Skills), &cfg.Skills); err != nil {
+			return nil, fmt.Errorf("failed to parse Skills: %w", err)
+		}
+	}
+	cfg.Skills = normalizeSkills(cfg.Skills)
 
 	return cfg, nil
 }
 
-// CreateAgent inserts a new user agent into the database.
+// CreateAgent inserts a new user agent into the database together with its
+// version 1, recorded with meta, in one transaction.
 // It generates the ID and sets CreateAt/UpdateAt timestamps automatically.
-func (s *Store) CreateAgent(cfg *llm.BotConfig) error {
+func (s *Store) CreateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err error) {
+	if err = validateAgentVersionMeta(meta); err != nil {
+		return err
+	}
+
 	cfg.ID = model.NewId()
 	now := model.GetMillis()
 	cfg.CreateAt = now
 	cfg.UpdateAt = now
 	cfg.DeleteAt = 0
 
-	_, err := s.db.Exec(
+	tx, err := s.db.Beginx()
+	if err != nil {
+		return fmt.Errorf("failed to begin agent create transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	_, err = tx.Exec(
 		`INSERT INTO Agents_UserAgents (
 			ID, BotUserID, CreatorID, DisplayName, Username, ServiceID,
 			CustomInstructions, ChannelAccessLevel, ChannelIDs,
@@ -147,9 +187,9 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig) error {
 			EnabledTools, AutoEnableNewMCPTools, mcp_dynamic_tool_loading,
 			Model, EnableVision, DisableTools, EnabledNativeTools,
 			ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
-			MaxToolTurns, UseServiceAccountAuth,
+			MaxToolTurns, UseServiceAccountAuth, Skills,
 			CreateAt, UpdateAt, DeleteAt
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)`,
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)`,
 		cfg.ID,
 		cfg.BotUserID,
 		cfg.CreatorID,
@@ -176,12 +216,20 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig) error {
 		cfg.StructuredOutputEnabled, //nolint:staticcheck // deprecated field persisted verbatim for compatibility
 		cfg.MaxToolTurns,
 		cfg.UseServiceAccountAuth,
+		marshalSkills(cfg.Skills),
 		cfg.CreateAt,
 		cfg.UpdateAt,
 		cfg.DeleteAt,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create agent: %w", err)
+	}
+
+	if _, err = insertAgentVersionTx(tx, cfg.ID, 1, agentVersionSnapshot(cfg), meta, nil, now); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit agent create: %w", err)
 	}
 
 	return nil
@@ -267,18 +315,48 @@ func (s *Store) ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error) 
 	return agents, nil
 }
 
-// UpdateAgent updates an existing agent's mutable fields.
-// It sets UpdateAt automatically. The caller must supply the full agent struct
+// UpdateAgent updates an existing agent's mutable fields and records the
+// result as its next version, with meta, in one transaction. An agent that
+// has no versions yet first gets its pre-update state recorded as version 1,
+// and one whose pre-update state differs from its latest version gets that
+// state recorded as a "system" version first. It sets UpdateAt automatically. The caller must supply the full agent struct
 // (read-modify-write pattern). Does NOT update ID, CreatorID, BotUserID, CreateAt, or DeleteAt.
-func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
+func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err error) {
+	if err = validateAgentVersionMeta(meta); err != nil {
+		return err
+	}
+
+	tx, err := s.db.Beginx()
+	if err != nil {
+		return fmt.Errorf("failed to begin agent update transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	current, err := lockActiveAgentTx(tx, cfg.ID)
+	if err != nil {
+		return err
+	}
+	if current == nil {
+		return fmt.Errorf("agent %q not found or already deleted", cfg.ID)
+	}
+
+	latest, latestConfig, _, err := ensureCurrentAgentVersionTx(tx, current)
+	if err != nil {
+		return err
+	}
+
 	// Millisecond timestamps can collide when create and update run in the same ms; ensure UpdateAt advances.
 	now := model.GetMillis()
-	if now <= cfg.UpdateAt {
-		now = cfg.UpdateAt + 1
+	if floor := max(cfg.UpdateAt, current.UpdateAt); now <= floor {
+		now = floor + 1
 	}
 	cfg.UpdateAt = now
 
-	result, err := s.db.Exec(
+	result, err := tx.Exec(
 		`UPDATE Agents_UserAgents SET
 			DisplayName = $1,
 			Username = $2,
@@ -303,8 +381,9 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
 			StructuredOutputEnabled = $21,
 			MaxToolTurns = $22,
 			UseServiceAccountAuth = $23,
-			UpdateAt = $24
-		WHERE ID = $25 AND DeleteAt = 0`,
+			Skills = $24,
+			UpdateAt = $25
+		WHERE ID = $26 AND DeleteAt = 0`,
 		cfg.DisplayName,
 		cfg.Name,
 		cfg.ServiceID,
@@ -328,6 +407,7 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
 		cfg.StructuredOutputEnabled, //nolint:staticcheck // deprecated field persisted verbatim for compatibility
 		cfg.MaxToolTurns,
 		cfg.UseServiceAccountAuth,
+		marshalSkills(cfg.Skills),
 		cfg.UpdateAt,
 		cfg.ID,
 	)
@@ -343,12 +423,34 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
 		return fmt.Errorf("agent %q not found or already deleted", cfg.ID)
 	}
 
+	snapshot := agentVersionSnapshot(cfg)
+	if _, err = insertAgentVersionTx(tx, cfg.ID, latest+1, snapshot, meta, changedVersionFields(latestConfig, snapshot), now); err != nil {
+		return err
+	}
+	if err = s.pruneAgentVersionsTx(tx, cfg.ID, latest+1); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit agent update: %w", err)
+	}
+
 	return nil
 }
 
-// DeleteAgent performs a soft delete by setting DeleteAt to the current timestamp.
-func (s *Store) DeleteAgent(id string) error {
-	result, err := s.db.Exec(
+// DeleteAgent performs a soft delete by setting DeleteAt to the current
+// timestamp, and permanently deletes every version of the agent.
+func (s *Store) DeleteAgent(id string) (err error) {
+	tx, err := s.db.Beginx()
+	if err != nil {
+		return fmt.Errorf("failed to begin agent delete transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	result, err := tx.Exec(
 		`UPDATE Agents_UserAgents SET DeleteAt = $1 WHERE ID = $2 AND DeleteAt = 0`,
 		model.GetMillis(),
 		id,
@@ -365,5 +467,11 @@ func (s *Store) DeleteAgent(id string) error {
 		return fmt.Errorf("agent %q not found or already deleted", id)
 	}
 
+	if _, err = tx.Exec(`DELETE FROM Agents_AgentVersions WHERE AgentID = $1`, id); err != nil {
+		return fmt.Errorf("failed to delete versions of agent %q: %w", id, err)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit agent delete: %w", err)
+	}
 	return nil
 }

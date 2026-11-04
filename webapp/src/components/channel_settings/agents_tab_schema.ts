@@ -10,7 +10,6 @@ import {Channel} from '@mattermost/types/channels';
 import {GlobalState} from '@mattermost/types/store';
 
 import {
-    ChannelAutoReplyMode,
     ChannelAutoReplySettings,
     getChannelAutoReply,
     getChannelInstructions,
@@ -27,8 +26,13 @@ import manifest from '@/manifest';
 import {licenseAllows} from '@/license';
 
 import {AutoReplyAgentPicker} from './autoreply_agent_picker';
+import {AutoReplyInstructionsField} from './autoreply_ambient_fields';
 import {
+    ChannelAutoReplySaveErrorKind,
+    MAX_INSTRUCTIONS_RUNES,
+    countRunes,
     normalizeChannelAutoReply,
+    parseChannelAutoReplyMode,
     setChannelAutoReplyDraft,
     setChannelAutoReplySaveError,
 } from './autoreply_state';
@@ -106,9 +110,9 @@ export type AgentsTabBaseline = {values: ChannelSettingsValues | null};
 
 export const makeLoadValues = (store: WebappStore, baseline: AgentsTabBaseline) => async (channel: Channel): Promise<ChannelSettingsValues> => {
     let raw: ChannelAutoReplySettings;
-    let instructions: string;
+    let channelInstructions: string;
     try {
-        [raw, {instructions}] = await Promise.all([
+        [raw, {instructions: channelInstructions}] = await Promise.all([
             getChannelAutoReply(channel.id),
             getChannelInstructions(channel.id),
         ]);
@@ -130,8 +134,13 @@ export const makeLoadValues = (store: WebappStore, baseline: AgentsTabBaseline) 
     // saved agent instead of clearing it like an empty agent list would.
     const saved = normalizeChannelAutoReply(raw, bots, channel.id);
     setChannelAutoReplyDraft({channelId: channel.id, saved, saveError: null});
-    setChannelInstructionsDraft({channelId: channel.id, saved: instructions, saveError: null});
-    baseline.values = {mode: saved.mode, bot_id: saved.bot_id, instructions};
+    setChannelInstructionsDraft({channelId: channel.id, saved: channelInstructions, saveError: null});
+    baseline.values = {
+        mode: saved.mode,
+        bot_id: saved.bot_id,
+        instructions: saved.instructions,
+        channel_instructions: channelInstructions,
+    };
     return baseline.values;
 };
 
@@ -141,37 +150,55 @@ function saveErrorStatus(e: unknown): number {
     return e instanceof ClientError ? e.status_code ?? 0 : 0;
 }
 
+function saveErrorKindForStatus(status: number): ChannelAutoReplySaveErrorKind {
+    switch (status) {
+    case 403:
+        return 'forbidden';
+    case 409:
+        return 'ambient_disabled';
+    case 400:
+        return 'invalid';
+    default:
+        return 'generic';
+    }
+}
+
 async function saveAutoReply(values: ChannelSettingsValues, channel: Channel, baseline: AgentsTabBaseline): Promise<void> {
-    const mode: ChannelAutoReplyMode = values.mode === 'root_posts' || values.mode === 'threads' ? values.mode : 'off';
+    const mode = parseChannelAutoReplyMode(values.mode);
     const botId = mode === 'off' ? '' : (values.bot_id ?? '');
+    const instructions = mode === 'off' ? '' : (values.instructions ?? '');
     const before = baseline.values;
-    if (before && mode === before.mode && (mode === 'off' || botId === before.bot_id)) {
+    if (before && mode === before.mode && (mode === 'off' || (botId === before.bot_id && instructions === before.instructions))) {
         return;
     }
     if (mode !== 'off' && !botId) {
         setChannelAutoReplySaveError('no_agent');
         throw new Error('no agent selected for channel auto-reply');
     }
+    if (countRunes(instructions) > MAX_INSTRUCTIONS_RUNES) {
+        throw new Error('auto-reply instructions exceed the maximum length');
+    }
+    const saved: ChannelAutoReplySettings = {bot_id: botId, mode, instructions};
     try {
-        await updateChannelAutoReply(channel.id, {bot_id: botId, mode});
+        await updateChannelAutoReply(channel.id, saved);
     } catch (e) {
-        setChannelAutoReplySaveError(saveErrorStatus(e) === 403 ? 'forbidden' : 'generic');
+        setChannelAutoReplySaveError(saveErrorKindForStatus(saveErrorStatus(e)));
 
         // The host swallows the rejection and keeps the tab dirty; the picker
         // is the plugin-rendered element that displays the recorded error.
         throw e;
     }
-    setChannelAutoReplyDraft({channelId: channel.id, saved: {bot_id: botId, mode}, saveError: null});
+    setChannelAutoReplyDraft({channelId: channel.id, saved, saveError: null});
     if (baseline.values) {
-        baseline.values = {...baseline.values, mode, bot_id: values.bot_id ?? ''};
+        baseline.values = {...baseline.values, mode, bot_id: values.bot_id ?? '', instructions};
     }
 }
 
 async function saveInstructions(values: ChannelSettingsValues, channel: Channel, baseline: AgentsTabBaseline): Promise<void> {
-    const instructions = values.instructions;
+    const instructions = values.channel_instructions;
 
     // Absent when hydration failed and the host fell back to schema defaults.
-    if (typeof instructions === 'undefined' || instructions === baseline.values?.instructions) {
+    if (typeof instructions === 'undefined' || instructions === baseline.values?.channel_instructions) {
         return;
     }
     let saved: string;
@@ -190,7 +217,7 @@ async function saveInstructions(values: ChannelSettingsValues, channel: Channel,
     }
     setChannelInstructionsDraft({channelId: channel.id, saved, saveError: null});
     if (baseline.values) {
-        baseline.values = {...baseline.values, instructions};
+        baseline.values = {...baseline.values, channel_instructions: instructions};
     }
 }
 
@@ -239,6 +266,16 @@ export function makeChannelAgentsTabSchema(store: WebappStore, intl: IntlShape):
                                 text: intl.formatMessage({defaultMessage: 'Threads too'}),
                                 helpText: intl.formatMessage({defaultMessage: 'The agent also automatically replies to replies in threads.'}),
                             },
+                            {
+                                value: 'ambient',
+                                text: intl.formatMessage({defaultMessage: 'Ambient (Experimental)'}),
+                                helpText: intl.formatMessage({defaultMessage: 'The agent watches the channel and replies only when it decides a response is useful.'}),
+                            },
+                            {
+                                value: 'ambient_threads',
+                                text: intl.formatMessage({defaultMessage: 'Ambient in mentioned threads (Experimental)'}),
+                                helpText: intl.formatMessage({defaultMessage: 'Once the agent is @-mentioned in a thread, it keeps watching that thread and replies only when it decides a response is useful.'}),
+                            },
                         ],
                     },
                     {
@@ -251,13 +288,18 @@ export function makeChannelAgentsTabSchema(store: WebappStore, intl: IntlShape):
                         type: 'custom',
                         component: AutoReplyAgentPicker,
                     },
+                    {
+                        name: 'instructions',
+                        type: 'custom',
+                        component: AutoReplyInstructionsField,
+                    },
                 ],
             },
             {
                 title: intl.formatMessage({defaultMessage: 'Channel instructions'}),
                 settings: [
                     {
-                        name: 'instructions',
+                        name: 'channel_instructions',
                         type: 'custom',
                         component: ChannelInstructionsSetting,
                     },

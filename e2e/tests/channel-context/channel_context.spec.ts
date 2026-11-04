@@ -6,11 +6,12 @@
 // mutually exclusive smocker mocks keyed on sentinel strings, so which reply
 // the agent streams proves whether the sentinel reached the LLM request.
 
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
 import type { Client4 } from '@mattermost/client';
 import type { Channel } from '@mattermost/types/channels';
 import type { UserProfile } from '@mattermost/types/users';
 
+import { containerTest } from 'helpers/container-fixture';
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
@@ -29,17 +30,17 @@ const password = 'regularuser';
 
 type ContextPosts = { posts: Array<{ post_id: string }>; max_posts: number };
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
-test.beforeAll(async () => {
-    mattermost = await RunContainer();
-    openAIMock = await RunOpenAIMocks(mattermost.network);
-});
-
-test.afterAll(async () => {
-    await openAIMock?.stop();
-    await mattermost?.stop();
+test.beforeAll(async ({ containers }) => {
+    ({ mattermost, openAIMock } = containers);
 });
 
 /**

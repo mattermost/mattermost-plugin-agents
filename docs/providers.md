@@ -1,6 +1,6 @@
 # LLM Provider Configuration Guide
 
-This guide covers configuring different Large Language Model (LLM) providers with the Mattermost Agents plugin. Each provider has specific configuration requirements and capabilities.
+Configure the LLM providers that Mattermost Agents can use, including local models through OpenAI-compatible APIs (Ollama, vLLM), OpenAI, Anthropic, AWS Bedrock, Azure OpenAI, Google Gemini and Vertex AI, Cohere, Mistral, and Scale AI. This guide lists each provider's authentication, configuration options, and capabilities.
 
 ## Supported Providers
 
@@ -76,6 +76,25 @@ Obtain an [Anthropic API key](https://console.anthropic.com/settings/keys), then
 |---------|----------|-------------|
 | **API Key** | Yes | Your Anthropic API key |
 | **Default Model** | Yes | The model to use by default (see [Anthropic's model documentation](https://docs.anthropic.com/claude/docs/models-overview)) |
+
+### Extended thinking
+
+Enable **Extended Thinking** on the agent (System Console > Agents > select agent > **Config** tab) and pick a **Thinking Effort**: Model default, Low, Medium, High, Extra high, or Max. **Model default** (the default) sends no effort, so the model uses its own default: medium on Claude Opus 5.5 and high on other models. How the effort is applied depends on the model:
+
+| Model | What **Thinking Effort** does |
+|-------|-------------------------------|
+| Claude Opus 4.6+, Sonnet 4.6+, Fable / Mythos | Sent as the native effort level (`output_config.effort`) with adaptive thinking, so the model decides how much to think within that effort. Extra high isn't available on Opus 4.6, Sonnet 4.6, or Mythos Preview; those models run at High instead. |
+| Older models (for example, Haiku 4.5, Sonnet 4.5, Opus 4.5) | Mapped to a thinking token budget as a share of the output token limit: Low 1/16 (at most 2048), Medium 1/8 (at most 4096), High and Model default 1/4 (at most 8192), Extra high 1/3 (at most 16384), and Max 1/2 (at most 32768), never below 1024. Thinking is skipped when the output token limit leaves no room for the 1024-token minimum. |
+
+Some newer models think even when no thinking is requested, and some can't turn thinking off at all. When extended thinking is disabled on the agent, or a request runs without it (such as conversation title generation), the agent turns thinking off as far as the model allows:
+
+| Model | With extended thinking off |
+|-------|----------------------------|
+| Claude Opus 4.8 and earlier, Sonnet 4.6 and earlier, Haiku | No thinking. |
+| Claude Opus 5, Sonnet 5 | Thinking is explicitly disabled. |
+| Claude Opus 5.5+, Sonnet 5.5+, Fable / Mythos | These models always think. They run at low effort, and their reasoning isn't shown. |
+
+When a service has a fallback chain, these rules are applied separately to each fallback service's model, so a fallback never receives a thinking setting meant for a different model.
 
 ## AWS Bedrock
 

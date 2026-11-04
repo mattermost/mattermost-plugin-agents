@@ -127,7 +127,7 @@ func TestChannelContextReadRoutes(t *testing.T) {
 			envSetup: func(e *TestEnvironment) {
 				e.allowChannelContextPermissions(true, false)
 				e.channelContext.pins["channelid"] = []channelcontext.PinnedPost{{
-					Pin:  channelcontext.Pin{ChannelID: "channelid", PostID: testContextPostID, PinnedBy: "pinner", PinnedAt: 20},
+					ChannelID: "channelid", PostID: testContextPostID, PinnedBy: "pinner", PinnedAt: 20,
 					Post: &model.Post{Id: testContextPostID, ChannelId: "channelid", UserId: "author", RootId: "root", Message: "hello", CreateAt: 10},
 				}}
 			},

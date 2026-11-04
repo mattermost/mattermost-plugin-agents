@@ -56,17 +56,40 @@ jest.mock('../client', () => ({
 
 jest.mock('./dot_menu', () => ({
     __esModule: true,
-    default: ({children}: {children: React.ReactNode}) => <div data-testid='ai-actions-menu'>{children}</div>,
+    default: ({
+        children,
+        size,
+        padding,
+        title,
+        testId,
+    }: {
+        children: React.ReactNode;
+        size?: string;
+        padding?: string;
+        title?: string;
+        testId?: string;
+    }) => (
+        <div>
+            <button
+                type='button'
+                data-testid={testId}
+                data-size={size}
+                data-padding={padding}
+                aria-label={title}
+            />
+            {children}
+        </div>
+    ),
     DropdownMenu: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-    DropdownMenuItem: ({children, onClick}: {children: React.ReactNode; onClick?: () => void}) => (
+    DropdownMenuItem: ({label, onClick, disabled}: {label: React.ReactNode; onClick?: () => void; disabled?: boolean}) => (
         <button
             type='button'
+            disabled={disabled}
             onClick={onClick}
         >
-            {children}
+            {label}
         </button>
     ),
-    DisabledDropdownMenuItemStyled: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
 }));
 
 jest.mock('./bot_selector', () => ({
@@ -223,5 +246,17 @@ describe('PostMenu agent context pinning', () => {
 
         expect(screen.queryByText('Pin to agent context')).toBeNull();
         expect(client.getChannelContextPosts).not.toHaveBeenCalled();
+    });
+});
+
+describe('PostMenu sizing', () => {
+    test('uses small + compact IconButton to match host post-menu actions (28px)', () => {
+        renderMenu();
+
+        const button = screen.getByTestId('ai-actions-menu');
+        expect(button.getAttribute('data-size')).toBe('small');
+        expect(button.getAttribute('data-padding')).toBe('compact');
+        expect(button.getAttribute('aria-label')).toBe('AI Actions');
+        expect(button.getAttribute('title')).toBeNull();
     });
 });

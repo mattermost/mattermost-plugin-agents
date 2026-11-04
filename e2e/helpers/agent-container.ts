@@ -1,4 +1,5 @@
-import { RunSystemConsoleContainer } from './system-console-container';
+import { withDeadline } from './deadline';
+import { MCPServerConfig, RunSystemConsoleContainer } from './system-console-container';
 import MattermostContainer from './mmcontainer';
 
 export const agentAdminUsername = 'sysadmin';
@@ -16,8 +17,12 @@ export const secondServiceId = 'second-service';
  * - Two mock LLM services (for service switching tests)
  * - MCP enabled with embedded server (for tool selection tests)
  * - Three users: admin (sysadmin), regularuser, unprivileged (self-service agent perms come from RunSystemConsoleContainer)
+ *
+ * @param options.mcpServers external MCP servers to add to the plugin config (none by default)
  */
-export async function RunAgentContainer(): Promise<MattermostContainer> {
+export async function RunAgentContainer(
+    options: { mcpServers?: MCPServerConfig[] } = {},
+): Promise<MattermostContainer> {
     const mattermost = await RunSystemConsoleContainer({
         services: [
             {
@@ -54,41 +59,43 @@ export async function RunAgentContainer(): Promise<MattermostContainer> {
             enablePluginServer: true,
             embeddedServer: { enabled: true },
             idleTimeoutMinutes: 30,
-            servers: [],
+            servers: options.mcpServers ?? [],
         },
     });
 
-    // Create additional test users
-    await mattermost.createUser(
-        'regularuser@sample.com', agentRegularUsername, agentRegularPassword
-    );
-    await mattermost.addUserToTeam(agentRegularUsername, 'test');
+    await withDeadline('Seeding the agent test users', 60000, async () => {
+        // Create additional test users
+        await mattermost.createUser(
+            'regularuser@sample.com', agentRegularUsername, agentRegularPassword
+        );
+        await mattermost.addUserToTeam(agentRegularUsername, 'test');
 
-    await mattermost.createUser(
-        'unprivileged@sample.com', agentUnprivilegedUsername, agentUnprivilegedPassword
-    );
-    await mattermost.addUserToTeam(agentUnprivilegedUsername, 'test');
+        await mattermost.createUser(
+            'unprivileged@sample.com', agentUnprivilegedUsername, agentUnprivilegedPassword
+        );
+        await mattermost.addUserToTeam(agentUnprivilegedUsername, 'test');
 
-    // Set user preferences to skip tours/onboarding
-    for (const [username, password] of [
-        [agentRegularUsername, agentRegularPassword],
-        [agentUnprivilegedUsername, agentUnprivilegedPassword],
-    ] as const) {
-        const client = await mattermost.getClient(username, password);
-        const user = await client.getMe();
-        await client.savePreferences(user.id, [
-            { user_id: user.id, category: 'tutorial_step', name: user.id, value: '999' },
-            { user_id: user.id, category: 'onboarding_task_list', name: 'onboarding_task_list_show', value: 'false' },
-            { user_id: user.id, category: 'onboarding_task_list', name: 'onboarding_task_list_open', value: 'false' },
-            {
-                user_id: user.id,
-                category: 'drafts',
-                name: 'drafts_tour_tip_showed',
-                value: JSON.stringify({ drafts_tour_tip_showed: true }),
-            },
-            { user_id: user.id, category: 'crt_thread_pane_step', name: user.id, value: '999' },
-        ]);
-    }
+        // Set user preferences to skip tours/onboarding
+        for (const [username, password] of [
+            [agentRegularUsername, agentRegularPassword],
+            [agentUnprivilegedUsername, agentUnprivilegedPassword],
+        ] as const) {
+            const client = await mattermost.getClient(username, password);
+            const user = await client.getMe();
+            await client.savePreferences(user.id, [
+                { user_id: user.id, category: 'tutorial_step', name: user.id, value: '999' },
+                { user_id: user.id, category: 'onboarding_task_list', name: 'onboarding_task_list_show', value: 'false' },
+                { user_id: user.id, category: 'onboarding_task_list', name: 'onboarding_task_list_open', value: 'false' },
+                {
+                    user_id: user.id,
+                    category: 'drafts',
+                    name: 'drafts_tour_tip_showed',
+                    value: JSON.stringify({ drafts_tour_tip_showed: true }),
+                },
+                { user_id: user.id, category: 'crt_thread_pane_step', name: user.id, value: '999' },
+            ]);
+        }
+    });
 
     return mattermost;
 }

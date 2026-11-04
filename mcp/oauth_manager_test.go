@@ -15,6 +15,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -321,7 +322,7 @@ func TestResolveOAuthConfig_UsesDiscoveredRegistrationEndpoint(t *testing.T) {
 			})
 		case "/resources/res_123/register":
 			registrationCalled = true
-			require.Equal(t, http.MethodPost, r.Method)
+			assert.Equal(t, http.MethodPost, r.Method)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]string{
@@ -600,7 +601,7 @@ func TestProcessCallbackReturnsSessionWhenAuthNeededCleanupFails(t *testing.T) {
 			http.NotFound(w, r)
 		case "/.well-known/oauth-authorization-server":
 			w.Header().Set("Content-Type", "application/json")
-			require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+			assert.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
 				Issuer:                        authServer.URL,
 				AuthorizationEndpoint:         authServer.URL + "/authorize",
 				TokenEndpoint:                 authServer.URL + "/token",
@@ -608,7 +609,7 @@ func TestProcessCallbackReturnsSessionWhenAuthNeededCleanupFails(t *testing.T) {
 			}))
 		case "/token":
 			w.Header().Set("Content-Type", "application/json")
-			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 				"access_token": "access-token",
 				"token_type":   "Bearer",
 				"expires_in":   3600,

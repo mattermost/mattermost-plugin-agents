@@ -33,6 +33,16 @@ func (t *ThreadExport) RequestingUser() *model.User {
 	return t.Users[t.LatestPost().UserId]
 }
 
+// BotUser returns the first bot user in the export, or nil if there is none.
+func (t *ThreadExport) BotUser() *model.User {
+	for _, user := range t.Users {
+		if user.IsBot {
+			return user
+		}
+	}
+	return nil
+}
+
 func (t *ThreadExport) LatestPost() *model.Post {
 	return t.PostList.Posts[t.PostList.Order[0]]
 }

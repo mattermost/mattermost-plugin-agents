@@ -69,7 +69,7 @@ describe('ChannelInstructionsSetting', () => {
 
         fireEvent.change(screen.getByTestId('channel-instructions-textarea'), {target: {value: 'New instructions'}});
 
-        expect(informChange).toHaveBeenCalledWith('instructions', 'New instructions');
+        expect(informChange).toHaveBeenCalledWith('channel_instructions', 'New instructions');
         expect(getChannelInstructionsDraft()?.saveError).toBeNull();
     });
 

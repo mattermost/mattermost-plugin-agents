@@ -11,17 +11,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// boolPtr returns a pointer to b for use in optional *bool args.
-func boolPtr(b bool) *bool {
-	return &b
-}
 
 func TestStampAIGenerated(t *testing.T) {
 	botID := model.NewId()
@@ -182,13 +178,13 @@ func TestReadPostIncludeThread(t *testing.T) {
 		},
 		{
 			name:          "true includes the thread",
-			includeThread: boolPtr(true),
+			includeThread: new(true),
 			wantThreadHit: true,
 			wantSingleHit: false,
 		},
 		{
 			name:          "false fetches only the single post",
-			includeThread: boolPtr(false),
+			includeThread: new(false),
 			wantThreadHit: false,
 			wantSingleHit: true,
 		},
@@ -272,7 +268,7 @@ func TestToolCreatePostWithInlineFiles(t *testing.T) {
 			})
 			mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
 				postHit = true
-				require.NoError(t, json.NewDecoder(r.Body).Decode(&postedPost))
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&postedPost))
 				postedPost.Id = model.NewId()
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(&postedPost)
@@ -432,7 +428,7 @@ func TestPostToolsCombinedAttachmentCap(t *testing.T) {
 				})
 				mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
 					postHit = true
-					require.NoError(t, json.NewDecoder(r.Body).Decode(&postedPost))
+					assert.NoError(t, json.NewDecoder(r.Body).Decode(&postedPost))
 					postedPost.Id = model.NewId()
 					encode(w, &postedPost)
 				})
@@ -491,7 +487,7 @@ func TestToolDMWithInlineFiles(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(&model.FileUploadResponse{FileInfos: []*model.FileInfo{{Id: id}}})
 	})
 	mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&postedPost))
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&postedPost))
 		postedPost.Id = model.NewId()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(&postedPost)
@@ -514,4 +510,306 @@ func TestToolDMWithInlineFiles(t *testing.T) {
 	assert.Equal(t, dmChannelID, postedPost.ChannelId)
 	assert.Equal(t, uploadedIDs, []string(postedPost.FileIds))
 	assert.Contains(t, result, "created and attached 1 file(s)")
+}
+
+func TestToolCreatePostDisplayNameValidation(t *testing.T) {
+	teamID := model.NewId()
+
+	tests := []struct {
+		name            string
+		channel         model.Channel
+		channelName     string
+		teamName        string
+		wantErr         string // substring of the returned error; empty means success
+		wantTeamFetched bool
+	}{
+		{
+			name:            "team channel with matching names",
+			channel:         model.Channel{TeamId: teamID, DisplayName: "Town Square", Type: model.ChannelTypeOpen},
+			channelName:     "Town Square",
+			teamName:        "Staff",
+			wantTeamFetched: true,
+		},
+		{
+			name:        "direct message channel without team_display_name",
+			channel:     model.Channel{DisplayName: "alice, bob", Type: model.ChannelTypeDirect},
+			channelName: "alice, bob",
+		},
+		{
+			name:        "direct message channel with empty display name uses the get_channel_info placeholder",
+			channel:     model.Channel{Type: model.ChannelTypeDirect},
+			channelName: "Direct Message",
+			teamName:    "Direct Message",
+		},
+		{
+			name:        "direct message channel with empty display name rejects other names",
+			channel:     model.Channel{Type: model.ChannelTypeDirect},
+			channelName: "alice",
+			wantErr:     "set to exactly 'Direct Message'",
+		},
+		{
+			name:        "group message channel ignores team_display_name",
+			channel:     model.Channel{DisplayName: "alice, bob, carol", Type: model.ChannelTypeGroup},
+			channelName: "alice, bob, carol",
+			teamName:    "Staff",
+		},
+		{
+			name:            "channel name differing only by emoji",
+			channel:         model.Channel{TeamId: teamID, DisplayName: "🚶‍♀️Company KPI Hallway", Type: model.ChannelTypeOpen},
+			channelName:     "Company KPI Hallway",
+			teamName:        "staff",
+			wantTeamFetched: true,
+		},
+		{
+			name:        "different channel name is rejected with the exact name to send",
+			channel:     model.Channel{TeamId: teamID, DisplayName: "🚶‍♀️Company KPI Hallway", Type: model.ChannelTypeOpen},
+			channelName: "Company KPI Lobby",
+			teamName:    "Staff",
+			wantErr:     "set to exactly '🚶‍♀️Company KPI Hallway'",
+		},
+		{
+			name:            "different team name is rejected",
+			channel:         model.Channel{TeamId: teamID, DisplayName: "Town Square", Type: model.ChannelTypeOpen},
+			channelName:     "Town Square",
+			teamName:        "Mattermost",
+			wantErr:         "team_display_name mismatch: provided 'Mattermost'",
+			wantTeamFetched: true,
+		},
+		{
+			name:        "team channel requires team_display_name",
+			channel:     model.Channel{TeamId: teamID, DisplayName: "Town Square", Type: model.ChannelTypeOpen},
+			channelName: "Town Square",
+			wantErr:     "team_display_name cannot be empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			channelID := model.NewId()
+			tt.channel.Id = channelID
+
+			teamFetched := false
+			postHit := false
+
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/v4/channels/"+channelID, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(&tt.channel)
+			})
+			mux.HandleFunc("/api/v4/teams/"+teamID, func(w http.ResponseWriter, _ *http.Request) {
+				teamFetched = true
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(&model.Team{Id: teamID, DisplayName: "Staff"})
+			})
+			mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
+				postHit = true
+				var post model.Post
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&post))
+				post.Id = model.NewId()
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(&post)
+			})
+
+			ts := httptest.NewServer(mux)
+			defer ts.Close()
+
+			provider := newTestProvider(t, ts.URL)
+			mcpCtx := &MCPToolContext{Ctx: t.Context(), Client: newTestClient(ts.URL), AccessMode: AccessModeRemote}
+
+			_, err := provider.toolCreatePost(mcpCtx, CreatePostArgs{
+				ChannelID:          channelID,
+				ChannelDisplayName: tt.channelName,
+				TeamDisplayName:    tt.teamName,
+				Message:            "hello",
+			})
+
+			assert.Equal(t, tt.wantTeamFetched, teamFetched)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				assert.False(t, postHit, "post must not be created when validation fails")
+				return
+			}
+			require.NoError(t, err)
+			assert.True(t, postHit, "post endpoint must be hit on success")
+		})
+	}
+}
+
+func TestUserLookupAcceptsUserID(t *testing.T) {
+	meID := model.NewId()
+	john := &model.User{Id: model.NewId(), Username: "john"}
+	unknownID := model.NewId()
+	// squatter's username is victim's user ID.
+	victim := &model.User{Id: model.NewId(), Username: "victim"}
+	squatter := &model.User{Id: model.NewId(), Username: victim.Id}
+	// longname is a real 26-character username that is no one's ID.
+	longname := &model.User{Id: model.NewId(), Username: model.NewId()}
+	// failingID is a user ID whose username lookup fails with a server error.
+	failingID := model.NewId()
+
+	tests := []struct {
+		name      string
+		value     string
+		wantErr   string // substring of the returned error; empty means success
+		wantMatch string // substring the successful result must contain
+	}{
+		{name: "username", value: "john", wantMatch: "john"},
+		{name: "username with @", value: "@john", wantMatch: "john"},
+		{name: "user ID falls back to ID lookup", value: john.Id, wantMatch: "john"},
+		{name: "ID-shaped username that is no one's ID", value: longname.Username, wantMatch: longname.Username},
+		{name: "username squatting on another user's ID is rejected", value: victim.Id, wantErr: "ambiguous"},
+		{name: "server error on one lookup is not treated as not found", value: failingID, wantErr: "error getting user by username"},
+		{name: "unknown username", value: "nobody", wantErr: `error getting user by username "nobody"`},
+		{name: "unknown user ID", value: unknownID, wantErr: fmt.Sprintf("error getting user by username %q", unknownID)},
+	}
+
+	mux := http.NewServeMux()
+	writeJSON := func(w http.ResponseWriter, v any) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(v)
+	}
+	notFound := func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(model.NewAppError("GetUser", "app.user.missing_account.const", nil, "", http.StatusNotFound))
+	}
+	mux.HandleFunc("/api/v4/users/me", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, &model.User{Id: meID, Username: "me"})
+	})
+	mux.HandleFunc("/api/v4/users/username/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.TrimPrefix(r.URL.Path, "/api/v4/users/username/") == failingID {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		for _, u := range []*model.User{john, squatter, longname} {
+			if strings.TrimPrefix(r.URL.Path, "/api/v4/users/username/") == u.Username {
+				writeJSON(w, u)
+				return
+			}
+		}
+		notFound(w)
+	})
+	mux.HandleFunc("/api/v4/users/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.TrimPrefix(r.URL.Path, "/api/v4/users/") == failingID {
+			writeJSON(w, &model.User{Id: failingID, Username: "someone"})
+			return
+		}
+		for _, u := range []*model.User{john, victim, squatter, longname} {
+			if strings.TrimPrefix(r.URL.Path, "/api/v4/users/") == u.Id {
+				writeJSON(w, u)
+				return
+			}
+		}
+		notFound(w)
+	})
+	mux.HandleFunc("/api/v4/channels/direct", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, &model.Channel{Id: model.NewId(), Type: model.ChannelTypeDirect})
+	})
+	mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
+		var post model.Post
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&post))
+		post.Id = model.NewId()
+		writeJSON(w, &post)
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	provider := newTestProvider(t, ts.URL)
+	mcpCtx := &MCPToolContext{Ctx: t.Context(), Client: newTestClient(ts.URL), AccessMode: AccessModeRemote}
+
+	tools := []struct {
+		name string
+		call func(value string) (string, error)
+	}{
+		{"dm", func(value string) (string, error) {
+			return provider.toolDM(mcpCtx, DMArgs{Username: value, Message: "hello"})
+		}},
+		{"get_user_by_username", func(value string) (string, error) {
+			return provider.toolGetUserByUsername(mcpCtx, GetUserByUsernameArgs{Username: value})
+		}},
+	}
+
+	for _, tool := range tools {
+		for _, tt := range tests {
+			t.Run(tool.name+"/"+tt.name, func(t *testing.T) {
+				result, err := tool.call(tt.value)
+				if tt.wantErr != "" {
+					require.Error(t, err)
+					assert.Contains(t, err.Error(), tt.wantErr)
+					return
+				}
+				require.NoError(t, err)
+				assert.Contains(t, result, tt.wantMatch)
+			})
+		}
+	}
+}
+
+// TestCreatePostAcceptsGetChannelInfoNames pins that the display name
+// get_channel_info reports is one create_post accepts on the first try,
+// including for DMs and group messages whose stored display name is empty.
+func TestCreatePostAcceptsGetChannelInfoNames(t *testing.T) {
+	teamID := model.NewId()
+
+	tests := []struct {
+		name     string
+		channel  model.Channel
+		teamName string
+		wantName string
+	}{
+		{name: "team channel", channel: model.Channel{Name: "town-square", DisplayName: "Town Square", Type: model.ChannelTypeOpen, TeamId: teamID}, teamName: "Staff", wantName: "Town Square"},
+		{name: "direct message with empty display name", channel: model.Channel{Name: "a__b", Type: model.ChannelTypeDirect}, wantName: "Direct Message"},
+		{name: "group message with empty display name", channel: model.Channel{Name: "abc", Type: model.ChannelTypeGroup}, wantName: "Group Message"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			channelID := model.NewId()
+			tt.channel.Id = channelID
+
+			writeJSON := func(w http.ResponseWriter, v any) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(v)
+			}
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/v4/channels/"+channelID, func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, &tt.channel) })
+			mux.HandleFunc("/api/v4/channels/"+channelID+"/stats", func(w http.ResponseWriter, _ *http.Request) {
+				writeJSON(w, &model.ChannelStats{ChannelId: channelID, MemberCount: 2})
+			})
+			mux.HandleFunc("/api/v4/teams/"+teamID, func(w http.ResponseWriter, _ *http.Request) {
+				writeJSON(w, &model.Team{Id: teamID, DisplayName: "Staff"})
+			})
+			mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
+				var post model.Post
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&post))
+				post.Id = model.NewId()
+				writeJSON(w, &post)
+			})
+			ts := httptest.NewServer(mux)
+			defer ts.Close()
+
+			provider := newTestProvider(t, ts.URL)
+			mcpCtx := &MCPToolContext{Ctx: t.Context(), Client: newTestClient(ts.URL), AccessMode: AccessModeRemote}
+
+			info, err := provider.toolGetChannelInfo(mcpCtx, GetChannelInfoArgs{ChannelID: channelID})
+			require.NoError(t, err)
+
+			var reported string
+			for line := range strings.SplitSeq(info, "\n") {
+				if name, ok := strings.CutPrefix(line, "Display Name: "); ok {
+					reported = name
+				}
+			}
+			require.Equal(t, tt.wantName, reported)
+
+			_, err = provider.toolCreatePost(mcpCtx, CreatePostArgs{
+				ChannelID:          channelID,
+				ChannelDisplayName: reported,
+				TeamDisplayName:    tt.teamName,
+				Message:            "hello",
+			})
+			require.NoError(t, err)
+		})
+	}
 }

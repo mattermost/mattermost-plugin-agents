@@ -486,7 +486,7 @@ type embeddedServerWrapper struct {
 // CreateClientTransport implements EmbeddedMCPServer interface
 // Note: The signature must match the interface (takes *pluginapi.Client), but in tests
 // we ignore the passed pluginAPI parameter and use our mock instead
-func (w *embeddedServerWrapper) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error) {
+func (w *embeddedServerWrapper) CreateClientTransport(userID, sessionID, _ string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error) {
 	// Create token resolver using our mock (ignore the passed pluginAPI in tests)
 	tokenResolver := func(sid string) (string, error) {
 		session, err := w.api.GetSession(sid)

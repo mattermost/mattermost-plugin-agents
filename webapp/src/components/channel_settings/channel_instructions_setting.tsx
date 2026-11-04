@@ -56,7 +56,7 @@ export const ChannelInstructionsSetting = ({informChange}: Props) => {
                 onChange={(e) => {
                     setLocalValue(e.target.value);
                     setChannelInstructionsSaveError(null);
-                    informChange('instructions', e.target.value);
+                    informChange('channel_instructions', e.target.value);
                 }}
             />
             <Footer>

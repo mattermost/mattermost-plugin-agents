@@ -95,8 +95,8 @@ func TestChannelContext(t *testing.T) {
 
 			contextBuilder := llmcontext.NewLLMContextBuilder(
 				pluginapi.NewClient(mockAPI, nil),
-				&mockToolProvider{},
-				&mockMCPClientManager{},
+				&testToolProvider{},
+				nil,
 				&mockConfigProvider{},
 			)
 			contextBuilder.SetChannelContextProvider(&staticChannelContextProvider{channelContext: config.channelContext})

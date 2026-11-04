@@ -30,9 +30,10 @@ func newSanitizingLogger(inner schemas.Logger, apiKeys ...string) schemas.Logger
 // provider's credential never leaks through Bifrost's own request/error logs.
 func newBifrostClient(account schemas.Account, apiKeys ...string) (*bifrostcore.Bifrost, error) {
 	return bifrostcore.Init(context.Background(), schemas.BifrostConfig{
-		Account: account,
-		Logger:  newSanitizingLogger(bifrostcore.NewDefaultLogger(schemas.LogLevelInfo), apiKeys...),
-		Tracer:  newOTelTracer(),
+		Account:    account,
+		LLMPlugins: []schemas.LLMPlugin{hopRequestPlugin{}},
+		Logger:     newSanitizingLogger(bifrostcore.NewDefaultLogger(schemas.LogLevelInfo), apiKeys...),
+		Tracer:     newOTelTracer(),
 	})
 }
 

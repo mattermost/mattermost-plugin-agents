@@ -9,6 +9,7 @@ import {Channel} from '@mattermost/types/channels';
 import {GlobalState} from '@mattermost/types/store';
 
 import {
+    ChannelAutoReplySettings,
     getAIBots,
     getChannelAutoReply,
     getChannelInstructions,
@@ -32,8 +33,9 @@ import {
     makeOnSave,
     shouldRenderChannelAgentsTab,
 } from './agents_tab_schema';
-import {getChannelAutoReplyDraft, setChannelAutoReplyDraft} from './autoreply_state';
+import {MAX_INSTRUCTIONS_RUNES, getChannelAutoReplyDraft, setChannelAutoReplyDraft} from './autoreply_state';
 import {AutoReplyAgentPicker} from './autoreply_agent_picker';
+import {AutoReplyInstructionsField} from './autoreply_ambient_fields';
 import {getChannelInstructionsDraft, setChannelInstructionsDraft} from './channel_instructions_state';
 import {ChannelInstructionsSetting} from './channel_instructions_setting';
 import {ChannelContextPostsSection} from './channel_context_posts_section';
@@ -87,6 +89,8 @@ const intl = {
 const botsKey = `plugins-${manifest.id}`;
 const TEAM_ID = 'team1';
 const CHANNEL_ID = 'chan1';
+const emptyExtras = {instructions: ''};
+const emptyValues = {...emptyExtras, channel_instructions: ''};
 
 function makeBot(id: string, overrides: Partial<LLMBot> = {}): LLMBot {
     return {
@@ -178,23 +182,23 @@ describe('makeLoadValues', () => {
     const other = makeBot('other');
 
     test('returns the normalized GET payload and seeds the draft store', async () => {
-        mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'threads'});
+        mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'threads', ...emptyExtras});
         const store = makeTestStore(makeState({bots: [defaultBot, other]}));
 
         const values = await makeLoadValues(store, {values: null})(makeChannel('O'));
 
         expect(mockedGetChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID);
-        expect(values).toEqual({mode: 'threads', bot_id: 'other', instructions: ''});
+        expect(values).toEqual({mode: 'threads', bot_id: 'other', ...emptyValues});
         expect(getChannelAutoReplyDraft()).toEqual({
             channelId: CHANNEL_ID,
-            saved: {bot_id: 'other', mode: 'threads'},
+            saved: {bot_id: 'other', mode: 'threads', ...emptyExtras},
             saveError: null,
         });
         expect(mockedGetAIBots).not.toHaveBeenCalled();
     });
 
     test('hydrates the channel instructions, seeds their draft, and records the baseline', async () => {
-        mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'off'});
+        mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'off', ...emptyExtras});
         mockedGetChannelInstructions.mockResolvedValue({instructions: 'Deploys freeze on Fridays.'});
         const store = makeTestStore(makeState({bots: [other]}));
         const baseline: AgentsTabBaseline = {values: null};
@@ -202,73 +206,96 @@ describe('makeLoadValues', () => {
         const values = await makeLoadValues(store, baseline)(makeChannel('O'));
 
         expect(mockedGetChannelInstructions).toHaveBeenCalledWith(CHANNEL_ID);
-        expect(values).toEqual({mode: 'off', bot_id: 'other', instructions: 'Deploys freeze on Fridays.'});
+        expect(values).toEqual({mode: 'off', bot_id: 'other', instructions: '', channel_instructions: 'Deploys freeze on Fridays.'});
         expect(getChannelInstructionsDraft()).toEqual({channelId: CHANNEL_ID, saved: 'Deploys freeze on Fridays.', saveError: null});
         expect(baseline.values).toEqual(values);
     });
 
     test('resolves the default agent when the setting is unset', async () => {
-        mockedGetChannelAutoReply.mockResolvedValue({bot_id: '', mode: 'off'});
+        mockedGetChannelAutoReply.mockResolvedValue({bot_id: '', mode: 'off', ...emptyExtras});
         const store = makeTestStore(makeState({bots: [other, defaultBot]}));
 
         const values = await makeLoadValues(store, {values: null})(makeChannel('O'));
 
-        expect(values).toEqual({mode: 'off', bot_id: 'def', instructions: ''});
+        expect(values).toEqual({mode: 'off', bot_id: 'def', ...emptyValues});
     });
 
     test('resolves the single agent when exactly one is available', async () => {
-        mockedGetChannelAutoReply.mockResolvedValue({bot_id: '', mode: 'off'});
+        mockedGetChannelAutoReply.mockResolvedValue({bot_id: '', mode: 'off', ...emptyExtras});
         const store = makeTestStore(makeState({bots: [other]}));
 
         const values = await makeLoadValues(store, {values: null})(makeChannel('O'));
 
-        expect(values).toEqual({mode: 'off', bot_id: 'other', instructions: ''});
+        expect(values).toEqual({mode: 'off', bot_id: 'other', ...emptyValues});
     });
 
     test('awaits a bots fetch when the runtime cache is null', async () => {
-        mockedGetChannelAutoReply.mockResolvedValue({bot_id: '', mode: 'off'});
+        mockedGetChannelAutoReply.mockResolvedValue({bot_id: '', mode: 'off', ...emptyExtras});
         mockedGetAIBots.mockResolvedValue({bots: [other], searchEnabled: false, allowUnsafeLinks: false});
         const store = makeTestStore(makeState({bots: null}));
 
         const values = await makeLoadValues(store, {values: null})(makeChannel('O'));
 
         expect(mockedGetAIBots).toHaveBeenCalled();
-        expect(values).toEqual({mode: 'off', bot_id: 'other', instructions: ''});
+        expect(values).toEqual({mode: 'off', bot_id: 'other', ...emptyValues});
     });
 
     test('preserves the saved agent when the bots fetch fails', async () => {
-        mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'threads'});
+        mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'threads'} as ChannelAutoReplySettings);
         mockedGetAIBots.mockRejectedValue(new Error('bots unavailable'));
         const store = makeTestStore(makeState({bots: null}));
 
         const values = await makeLoadValues(store, {values: null})(makeChannel('O'));
 
-        expect(values).toEqual({mode: 'threads', bot_id: 'other', instructions: ''});
-        expect(getChannelAutoReplyDraft()?.saved).toEqual({bot_id: 'other', mode: 'threads'});
+        expect(values).toEqual({mode: 'threads', bot_id: 'other', ...emptyValues});
+        expect(getChannelAutoReplyDraft()?.saved).toEqual({bot_id: 'other', mode: 'threads', ...emptyExtras});
     });
 
     test('clears the saved agent when the fetch returns a genuinely empty agent list', async () => {
-        mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'threads'});
+        mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'threads'} as ChannelAutoReplySettings);
         mockedGetAIBots.mockResolvedValue({bots: [], searchEnabled: false, allowUnsafeLinks: false});
         const store = makeTestStore(makeState({bots: null}));
 
         const values = await makeLoadValues(store, {values: null})(makeChannel('O'));
 
-        expect(values).toEqual({mode: 'threads', bot_id: '', instructions: ''});
+        expect(values).toEqual({mode: 'threads', bot_id: '', ...emptyValues});
+    });
+
+    test('returns ambient extras from GET and seeds them on the draft', async () => {
+        mockedGetChannelAutoReply.mockResolvedValue({
+            bot_id: 'other',
+            mode: 'ambient',
+            instructions: 'only if asked',
+        });
+        const store = makeTestStore(makeState({bots: [other]}));
+
+        const values = await makeLoadValues(store, {values: null})(makeChannel('O'));
+
+        expect(values).toEqual({
+            mode: 'ambient',
+            bot_id: 'other',
+            instructions: 'only if asked',
+            channel_instructions: '',
+        });
+        expect(getChannelAutoReplyDraft()?.saved).toEqual({
+            bot_id: 'other',
+            mode: 'ambient',
+            instructions: 'only if asked',
+        });
     });
 
     test.each([
         {name: 'auto-reply GET', failAutoReply: true},
         {name: 'instructions GET', failAutoReply: false},
     ])('clears any stale drafts and baseline and rejects when the $name fails', async ({failAutoReply}) => {
-        setChannelAutoReplyDraft({channelId: 'previous-channel', saved: {bot_id: 'x', mode: 'off'}, saveError: null});
+        setChannelAutoReplyDraft({channelId: 'previous-channel', saved: {bot_id: 'x', mode: 'off', ...emptyExtras}, saveError: null});
         setChannelInstructionsDraft({channelId: 'previous-channel', saved: 'old', saveError: null});
-        const baseline: AgentsTabBaseline = {values: {mode: 'off', bot_id: 'x', instructions: 'old'}};
+        const baseline: AgentsTabBaseline = {values: {mode: 'off', bot_id: 'x', instructions: '', channel_instructions: 'old'}};
         const error = httpError(403);
         if (failAutoReply) {
             mockedGetChannelAutoReply.mockRejectedValue(error);
         } else {
-            mockedGetChannelAutoReply.mockResolvedValue({bot_id: '', mode: 'off'});
+            mockedGetChannelAutoReply.mockResolvedValue({bot_id: '', mode: 'off', ...emptyExtras});
             mockedGetChannelInstructions.mockRejectedValue(error);
         }
         const store = makeTestStore(makeState({bots: [other]}));
@@ -285,7 +312,7 @@ describe('makeOnSave', () => {
     const onSave = makeOnSave({values: null});
 
     function seedDraft(saveError: 'forbidden' | 'no_agent' | 'generic' | null = null) {
-        setChannelAutoReplyDraft({channelId: CHANNEL_ID, saved: {bot_id: 'other', mode: 'off'}, saveError});
+        setChannelAutoReplyDraft({channelId: CHANNEL_ID, saved: {bot_id: 'other', mode: 'off', ...emptyExtras}, saveError});
     }
 
     test('PUTs the selected mode and agent, then updates the draft and clears the error', async () => {
@@ -294,31 +321,88 @@ describe('makeOnSave', () => {
 
         await onSave({mode: 'root_posts', bot_id: 'other'}, makeChannel('O'));
 
-        expect(mockedUpdateChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID, {bot_id: 'other', mode: 'root_posts'});
+        expect(mockedUpdateChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID, {bot_id: 'other', mode: 'root_posts', ...emptyExtras});
         expect(getChannelAutoReplyDraft()).toEqual({
             channelId: CHANNEL_ID,
-            saved: {bot_id: 'other', mode: 'root_posts'},
+            saved: {bot_id: 'other', mode: 'root_posts', ...emptyExtras},
             saveError: null,
         });
     });
 
     test.each([
-        {name: 'off', values: {mode: 'off', bot_id: 'other'}},
-        {name: 'an unknown mode', values: {mode: 'banana', bot_id: 'other'}},
-        {name: 'a missing mode', values: {bot_id: 'other'}},
-    ])('PUTs an empty bot_id and mode off for $name', async ({values}) => {
+        {name: 'off', values: {mode: 'off', bot_id: 'other', instructions: 'stale'}},
+        {name: 'an unknown mode', values: {mode: 'banana', bot_id: 'other', instructions: 'stale'}},
+        {name: 'a missing mode', values: {bot_id: 'other', instructions: 'stale'}},
+    ])('PUTs an empty bot_id, empty extras, and mode off for $name', async ({values}) => {
         seedDraft();
         mockedUpdateChannelAutoReply.mockImplementation(() => Promise.resolve());
 
         await onSave(values as ChannelSettingsValues, makeChannel('O'));
 
-        expect(mockedUpdateChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID, {bot_id: '', mode: 'off'});
-        expect(getChannelAutoReplyDraft()?.saved).toEqual({bot_id: '', mode: 'off'});
+        expect(mockedUpdateChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID, {bot_id: '', mode: 'off', ...emptyExtras});
+        expect(getChannelAutoReplyDraft()?.saved).toEqual({bot_id: '', mode: 'off', ...emptyExtras});
+    });
+
+    test('PUTs ambient extras with the selected agent', async () => {
+        seedDraft();
+        mockedUpdateChannelAutoReply.mockImplementation(() => Promise.resolve());
+
+        await onSave({
+            mode: 'ambient',
+            bot_id: 'other',
+            instructions: 'only if asked',
+        }, makeChannel('O'));
+
+        expect(mockedUpdateChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID, {
+            bot_id: 'other',
+            mode: 'ambient',
+            instructions: 'only if asked',
+        });
+        expect(getChannelAutoReplyDraft()?.saved).toEqual({
+            bot_id: 'other',
+            mode: 'ambient',
+            instructions: 'only if asked',
+        });
+    });
+
+    test('PUTs ambient_threads with the shared ambient extras', async () => {
+        seedDraft();
+        mockedUpdateChannelAutoReply.mockImplementation(() => Promise.resolve());
+
+        await onSave({
+            mode: 'ambient_threads',
+            bot_id: 'other',
+            instructions: 'only if asked',
+        }, makeChannel('O'));
+
+        expect(mockedUpdateChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID, {
+            bot_id: 'other',
+            mode: 'ambient_threads',
+            instructions: 'only if asked',
+        });
+    });
+
+    test('preserves extras when saving a non-ambient enabled mode', async () => {
+        seedDraft();
+        mockedUpdateChannelAutoReply.mockImplementation(() => Promise.resolve());
+
+        await onSave({
+            mode: 'threads',
+            bot_id: 'other',
+            instructions: 'only if asked',
+        }, makeChannel('O'));
+
+        expect(mockedUpdateChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID, {
+            bot_id: 'other',
+            mode: 'threads',
+            instructions: 'only if asked',
+        });
     });
 
     test.each([
         {name: 'an empty bot_id', values: {mode: 'root_posts', bot_id: ''}},
         {name: 'a bot_id absent from the values', values: {mode: 'threads'}},
+        {name: 'ambient with an empty bot_id', values: {mode: 'ambient', bot_id: '', instructions: 'x'}},
     ])('rejects with no_agent and performs no PUT for $name', async ({values}) => {
         seedDraft();
 
@@ -326,6 +410,45 @@ describe('makeOnSave', () => {
 
         expect(mockedUpdateChannelAutoReply).not.toHaveBeenCalled();
         expect(getChannelAutoReplyDraft()?.saveError).toBe('no_agent');
+    });
+
+    test.each([
+        {name: 'ASCII at the limit', instructions: 'a'.repeat(MAX_INSTRUCTIONS_RUNES), accepted: true},
+        {name: 'ASCII over the limit', instructions: 'a'.repeat(MAX_INSTRUCTIONS_RUNES + 1), accepted: false},
+        {name: 'astral characters at the limit', instructions: '😀'.repeat(MAX_INSTRUCTIONS_RUNES), accepted: true},
+        {name: 'astral characters over the limit', instructions: '😀'.repeat(MAX_INSTRUCTIONS_RUNES + 1), accepted: false},
+    ])('enforces the instructions length limit for $name', async ({instructions, accepted}) => {
+        seedDraft();
+        mockedUpdateChannelAutoReply.mockImplementation(() => Promise.resolve());
+
+        const result = onSave({mode: 'ambient', bot_id: 'other', instructions}, makeChannel('O'));
+
+        if (accepted) {
+            await expect(result).resolves.toBeUndefined();
+            expect(mockedUpdateChannelAutoReply).toHaveBeenCalledTimes(1);
+        } else {
+            await expect(result).rejects.toThrow();
+            expect(mockedUpdateChannelAutoReply).not.toHaveBeenCalled();
+        }
+    });
+
+    test('does not block turning auto-reply off when stale instructions are over the limit', async () => {
+        seedDraft();
+        mockedUpdateChannelAutoReply.mockImplementation(() => Promise.resolve());
+
+        await onSave({mode: 'off', instructions: 'a'.repeat(MAX_INSTRUCTIONS_RUNES + 1)}, makeChannel('O'));
+
+        expect(mockedUpdateChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID, {bot_id: '', mode: 'off', ...emptyExtras});
+    });
+
+    test('records invalid and re-throws when the PUT fails with a 400', async () => {
+        seedDraft();
+        const error = new ClientError('http://localhost', {message: '', status_code: 400, url: 'u'});
+        mockedUpdateChannelAutoReply.mockRejectedValue(error);
+
+        await expect(onSave({mode: 'ambient', bot_id: 'other', instructions: 'x'}, makeChannel('O'))).rejects.toBe(error);
+
+        expect(getChannelAutoReplyDraft()?.saveError).toBe('invalid');
     });
 
     test('records forbidden and re-throws when the PUT fails with a 403', async () => {
@@ -336,6 +459,16 @@ describe('makeOnSave', () => {
         await expect(onSave({mode: 'threads', bot_id: 'other'}, makeChannel('O'))).rejects.toBe(error);
 
         expect(getChannelAutoReplyDraft()?.saveError).toBe('forbidden');
+    });
+
+    test('records ambient_disabled and re-throws when the PUT conflicts with the admin setting', async () => {
+        seedDraft();
+        const error = new ClientError('http://localhost', {message: '', status_code: 409, url: 'u'});
+        mockedUpdateChannelAutoReply.mockRejectedValue(error);
+
+        await expect(onSave({mode: 'ambient_threads', bot_id: 'other'}, makeChannel('O'))).rejects.toBe(error);
+
+        expect(getChannelAutoReplyDraft()?.saveError).toBe('ambient_disabled');
     });
 
     test('records generic and re-throws when the PUT fails with a 500', async () => {
@@ -360,11 +493,11 @@ describe('makeOnSave', () => {
 });
 
 describe('makeOnSave change detection', () => {
-    const hydrated = {mode: 'threads', bot_id: 'other', instructions: 'Deploys freeze on Fridays.'};
+    const hydrated = {mode: 'threads', bot_id: 'other', instructions: '', channel_instructions: 'Deploys freeze on Fridays.'};
 
     function hydrate(): AgentsTabBaseline {
-        setChannelAutoReplyDraft({channelId: CHANNEL_ID, saved: {bot_id: 'other', mode: 'threads'}, saveError: null});
-        setChannelInstructionsDraft({channelId: CHANNEL_ID, saved: hydrated.instructions, saveError: null});
+        setChannelAutoReplyDraft({channelId: CHANNEL_ID, saved: {bot_id: 'other', mode: 'threads', ...emptyExtras}, saveError: null});
+        setChannelInstructionsDraft({channelId: CHANNEL_ID, saved: hydrated.channel_instructions, saveError: null});
         mockedUpdateChannelAutoReply.mockImplementation(() => Promise.resolve());
         return {values: {...hydrated}};
     }
@@ -372,12 +505,12 @@ describe('makeOnSave change detection', () => {
     test('saving only new instructions leaves the auto-reply setting untouched', async () => {
         const baseline = hydrate();
 
-        await makeOnSave(baseline)({...hydrated, instructions: '  On-call is #payments-oncall. '}, makeChannel('O'));
+        await makeOnSave(baseline)({...hydrated, channel_instructions: '  On-call is #payments-oncall. '}, makeChannel('O'));
 
         expect(mockedUpdateChannelAutoReply).not.toHaveBeenCalled();
         expect(mockedUpdateChannelInstructions).toHaveBeenCalledWith(CHANNEL_ID, '  On-call is #payments-oncall. ');
         expect(getChannelInstructionsDraft()).toEqual({channelId: CHANNEL_ID, saved: 'On-call is #payments-oncall.', saveError: null});
-        expect(baseline.values?.instructions).toBe('  On-call is #payments-oncall. ');
+        expect(baseline.values?.channel_instructions).toBe('  On-call is #payments-oncall. ');
     });
 
     test('saving only a new auto-reply mode leaves the instructions untouched', async () => {
@@ -385,7 +518,7 @@ describe('makeOnSave change detection', () => {
 
         await makeOnSave(baseline)({...hydrated, mode: 'root_posts'}, makeChannel('O'));
 
-        expect(mockedUpdateChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID, {bot_id: 'other', mode: 'root_posts'});
+        expect(mockedUpdateChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID, {bot_id: 'other', mode: 'root_posts', ...emptyExtras});
         expect(mockedUpdateChannelInstructions).not.toHaveBeenCalled();
     });
 
@@ -405,7 +538,7 @@ describe('makeOnSave change detection', () => {
         const baseline = hydrate();
         mockedUpdateChannelAutoReply.mockRejectedValue(httpError(400));
 
-        await makeOnSave(baseline)({...hydrated, instructions: 'New'}, makeChannel('O'));
+        await makeOnSave(baseline)({...hydrated, channel_instructions: 'New'}, makeChannel('O'));
 
         expect(mockedUpdateChannelAutoReply).not.toHaveBeenCalled();
         expect(mockedUpdateChannelInstructions).toHaveBeenCalledWith(CHANNEL_ID, 'New');
@@ -414,7 +547,7 @@ describe('makeOnSave change detection', () => {
     test('a retry after a partial failure re-sends only the failed part', async () => {
         const baseline = hydrate();
         mockedUpdateChannelInstructions.mockRejectedValueOnce(httpError(500));
-        const values = {mode: 'root_posts', bot_id: 'other', instructions: 'New'};
+        const values = {mode: 'root_posts', bot_id: 'other', instructions: '', channel_instructions: 'New'};
 
         await expect(makeOnSave(baseline)(values, makeChannel('O'))).rejects.toMatchObject({status_code: 500});
         expect(mockedUpdateChannelAutoReply).toHaveBeenCalledTimes(1);
@@ -436,10 +569,10 @@ describe('makeOnSave change detection', () => {
         const error = httpError(status);
         mockedUpdateChannelInstructions.mockRejectedValue(error);
 
-        await expect(makeOnSave(baseline)({...hydrated, instructions: 'New'}, makeChannel('O'))).rejects.toBe(error);
+        await expect(makeOnSave(baseline)({...hydrated, channel_instructions: 'New'}, makeChannel('O'))).rejects.toBe(error);
 
         expect(getChannelInstructionsDraft()?.saveError).toBe(kind);
-        expect(baseline.values?.instructions).toBe(hydrated.instructions);
+        expect(baseline.values?.channel_instructions).toBe(hydrated.channel_instructions);
     });
 
     test('skips the instructions PUT when hydration failed and the host has no instructions value', async () => {
@@ -486,8 +619,8 @@ describe('makeChannelAgentsTabSchema shape', () => {
         for (const title of titles) {
             expect(title.length).toBeGreaterThan(0);
         }
-        expect(settingsAt(0).map((s) => s.name)).toEqual(['mode', 'bot_id']);
-        expect(settingsAt(1).map((s) => s.name)).toEqual(['instructions']);
+        expect(settingsAt(0).map((s) => s.name)).toEqual(['mode', 'bot_id', 'instructions']);
+        expect(settingsAt(1).map((s) => s.name)).toEqual(['channel_instructions']);
     });
 
     test('instructions setting provides the instructions component', () => {
@@ -503,13 +636,13 @@ describe('makeChannelAgentsTabSchema shape', () => {
         expect('component' in section && section.component).toBe(ChannelContextPostsSection);
     });
 
-    test('radio setting has default off matching one of three non-empty options', () => {
+    test('radio setting has default off matching one of five non-empty options', () => {
         const radio = settingsAt(0)[0];
         if (radio.type !== 'radio') {
             throw new Error('expected the first setting to be the radio');
         }
         expect(radio.default).toBe('off');
-        expect(radio.options.map((o) => o.value)).toEqual(['off', 'root_posts', 'threads']);
+        expect(radio.options.map((o) => o.value)).toEqual(['off', 'root_posts', 'threads', 'ambient', 'ambient_threads']);
         expect(radio.options.map((o) => o.value)).toContain(radio.default);
         for (const option of radio.options) {
             expect(option.value.length).toBeGreaterThan(0);
@@ -517,14 +650,23 @@ describe('makeChannelAgentsTabSchema shape', () => {
         }
     });
 
-    test('custom setting provides the agent picker component and no title/helpText/default', () => {
-        const custom = settingsAt(0)[1];
-        if (custom.type !== 'custom') {
-            throw new Error('expected the second setting to be the custom picker');
+    test('auto-reply custom settings provide picker and instructions components with no title/helpText/default', () => {
+        const expected = [
+            {name: 'bot_id', component: AutoReplyAgentPicker},
+            {name: 'instructions', component: AutoReplyInstructionsField},
+        ];
+        const customs = settingsAt(0).slice(1);
+        expect(customs).toHaveLength(expected.length);
+        for (let i = 0; i < expected.length; i++) {
+            const custom = customs[i];
+            if (custom.type !== 'custom') {
+                throw new Error(`expected setting ${expected[i].name} to be custom`);
+            }
+            expect(custom.name).toBe(expected[i].name);
+            expect(custom.component).toBe(expected[i].component);
+            expect(custom).not.toHaveProperty('title');
+            expect(custom).not.toHaveProperty('helpText');
+            expect(custom).not.toHaveProperty('default');
         }
-        expect(custom.component).toBe(AutoReplyAgentPicker);
-        expect(custom).not.toHaveProperty('title');
-        expect(custom).not.toHaveProperty('helpText');
-        expect(custom).not.toHaveProperty('default');
     });
 });

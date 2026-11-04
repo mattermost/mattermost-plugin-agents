@@ -36,6 +36,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
+	"github.com/mattermost/mattermost-plugin-agents/v2/skills"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
@@ -65,7 +66,7 @@ type Plugin struct {
 	telemetryShutdown    telemetry.ShutdownFunc
 	telemetryMu          sync.Mutex
 	telemetryMode        telemetry.OutputMode
-	telemetryEndpoint    string
+	telemetryOTLP        telemetryOTLPSettings
 	store                *store.Store
 	autoreplyService     channelAutoReplyRefresher
 	configMigrated       bool
@@ -211,6 +212,17 @@ func (p *Plugin) OnActivate() error {
 		return fmt.Errorf("failed to run ABAC ID migrations: %w", err)
 	}
 
+	// Runs after the ID migration so agent versions record the remapped
+	// service IDs. Not fatal: the next update of an agent records its prior
+	// state first anyway.
+	backfilled, backfillErr := p.store.BackfillAgentVersions()
+	if backfilled > 0 {
+		pluginAPI.Log.Info("Backfilled agent versions", "count", backfilled)
+	}
+	if backfillErr != nil {
+		pluginAPI.Log.Error("Failed to backfill versions of some agents", "error", backfillErr.Error())
+	}
+
 	// Runs after the ID migration (it matches agents to services by ID) and
 	// before runtime config is loaded, so every node — including a follower
 	// that found nothing left to migrate — loads the migrated policies and
@@ -230,13 +242,16 @@ func (p *Plugin) OnActivate() error {
 	}
 	p.configMigrated = true
 
+	p.applyAgentVersionRetention()
+	p.configuration.RegisterUpdateListener(p.applyAgentVersionRetention)
+
 	if idsMigrated || structuredOutputMigrated {
 		if pubErr := p.PublishConfigUpdate(); pubErr != nil {
 			pluginAPI.Log.Error("Failed to publish config update after migration", "error", pubErr.Error())
 		}
 	}
 	if idsMigrated {
-		if pubErr := p.PublishAgentUpdate(); pubErr != nil {
+		if pubErr := p.PublishAgentUpdate(""); pubErr != nil {
 			pluginAPI.Log.Error("Failed to publish agent update after ID migration", "error", pubErr.Error())
 		}
 	}
@@ -284,7 +299,7 @@ func (p *Plugin) OnActivate() error {
 		bots.ForceRefreshOnNextEnsure()
 		if ensureErr := bots.EnsureBots(); ensureErr != nil {
 			pluginAPI.Log.Error("failed to ensure bots after legacy bot migration", "context", context, "error", ensureErr)
-		} else if pubErr := p.PublishAgentUpdate(); pubErr != nil {
+		} else if pubErr := p.PublishAgentUpdate(""); pubErr != nil {
 			pluginAPI.Log.Error("Failed to publish agent update cluster event", "error", pubErr.Error())
 		}
 	}
@@ -313,6 +328,8 @@ func (p *Plugin) OnActivate() error {
 		pluginAPI.Log.Error("failed to ensure bots", "error", ensureBotsErr)
 	}
 	migrateAndRefresh("activation")
+
+	p.migrateAgentReferences(pluginAPI, p.store, bots)
 
 	autoreplyStore := autoreply.NewStore(dbClient)
 	autoreplyService := autoreply.NewService(autoreplyStore, bots, mmClient, p)
@@ -405,10 +422,7 @@ func (p *Plugin) OnActivate() error {
 	searchService := search.New(
 		searchAvailability.QuerySearch,
 		mmClient,
-		prompts,
-		streamingService,
 		licenseChecker,
-		nil, // conversation service wired in a later step
 	)
 
 	// Reinitialize embedding search on config changes and license changes.
@@ -443,6 +457,7 @@ func (p *Plugin) OnActivate() error {
 	toolProvider := mmtools.NewMMToolProvider(
 		mmClient,
 		webSearchService,
+		p.configuration.EnableHTMLArtifacts,
 	)
 
 	// Build redirect URI
@@ -513,6 +528,9 @@ func (p *Plugin) OnActivate() error {
 	channelContextService := channelcontext.NewService(channelcontext.NewStore(dbClient), mmClient)
 	contextBuilder.SetChannelContextProvider(channelContextService)
 
+	policyChecker := mcp.NewConfigToolPolicyChecker(p.configuration.MCP, func() bool {
+		return licenseChecker.Allows(enterprise.CapToolApprovalPolicies)
+	})
 	conversationsService := conversations.New(
 		prompts,
 		mmClient,
@@ -522,14 +540,13 @@ func (p *Plugin) OnActivate() error {
 		dbClient,
 		licenseChecker,
 		i18nBundle,
-		nil, // meetingsService will be set after it's created
 		&p.configuration,
+		policyChecker,
 	)
 
 	convService := conversation.NewService(p.store, prompts, mmClient, bots)
 	conversationsService.SetConversationService(convService)
 	conversationsService.SetAutoReplySettings(autoreplyService)
-	searchService.SetConversationService(convService)
 
 	meetingsService := meetings.NewService(
 		pluginAPI,
@@ -540,20 +557,29 @@ func (p *Plugin) OnActivate() error {
 		i18nBundle,
 		metricsService,
 		contextBuilder,
-		conversationsService,
+		convService,
 		licenseChecker,
 	)
+	conversationsService.SetMeetingSummaryRegenerator(meetingsService)
 
-	// Set the meetings service on conversations to break circular dependency
-	// TODO: Refactor to avoid circular dependency
-	conversationsService.SetMeetingsService(meetingsService)
-
-	// Wire per-tool policy checker for auto-approval in streaming and conversations.
-	policyChecker := mcp.NewConfigToolPolicyChecker(p.configuration.MCP, func() bool {
-		return licenseChecker.Allows(enterprise.CapToolApprovalPolicies)
-	})
 	streamingService.SetTurnStore(p.store)
-	conversationsService.SetToolPolicyChecker(policyChecker)
+
+	// wait_for_async_work wakes ride on the cluster JobOnce scheduler: jobs
+	// persist in KV, survive restarts, and fire exactly once cluster-wide.
+	wakeJobs := cluster.GetJobOnceScheduler(p.API)
+	if wakeErr := wakeJobs.SetCallback(conversationsService.HandleWakeJob); wakeErr != nil {
+		pluginAPI.Log.Error("Failed to set wait_for_async_work wake callback", "error", wakeErr)
+	} else {
+		// The scheduler is a process-wide singleton: on OnActivate re-runs
+		// Start errors with "already been started" while the refreshed
+		// callback above keeps working, so a Start error must not disable
+		// scheduling. ScheduleOnce self-guards if Start genuinely failed.
+		if wakeErr := wakeJobs.Start(); wakeErr != nil {
+			pluginAPI.Log.Warn("wait_for_async_work wake scheduler did not (re)start", "error", wakeErr)
+		}
+		conversationsService.SetWakeScheduler(wakeJobs, p.API)
+		toolProvider.SetScheduleWake(conversationsService.ScheduleWake)
+	}
 
 	// Initialize embedded MCP server handlers for plugin endpoints
 	var mcpHandlers *mcpserver.PluginMCPHandlers
@@ -561,7 +587,7 @@ func (p *Plugin) OnActivate() error {
 	mcpHandlerLogger := NewPluginAPILoggerAdapter(pluginAPI.Log)
 	internalServerURL := deriveInternalServerURL(pluginAPI, *siteURL)
 	pluginServers := licensedPluginServers{registry: mcpClientManager, allowed: remoteMCPAllowed}
-	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger, pluginServers, mmClient, func() bool {
+	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger, pluginServers, mmClient, searchService, fileContentService, func() bool {
 		return licenseChecker.Allows(enterprise.CapStateChangingTools)
 	}, accessChecker, func() string {
 		return p.configuration.MCP().EmbeddedServer.ID
@@ -575,6 +601,9 @@ func (p *Plugin) OnActivate() error {
 	}
 
 	customPromptsStore := customprompts.NewStore(dbClient)
+	contextBuilder.SetSkillProvider(skills.NewProvider(customPromptsStore, prompts, func() bool {
+		return licenseChecker.Allows(enterprise.CapSharedPrompts)
+	}))
 
 	apiService := api.New(
 		bots,
@@ -651,6 +680,29 @@ func (p *Plugin) OnDeactivate() error {
 	return nil
 }
 
+// telemetryOTLPSettings is the OTLP part of the config that, when changed,
+// requires re-initializing the TracerProvider.
+type telemetryOTLPSettings struct {
+	endpoint string
+	tls      bool
+	headers  string
+}
+
+// applyAgentVersionRetention applies the configured number of agent versions
+// to keep and deletes the versions beyond it. Config updates reach every
+// node, and the delete is idempotent, so each node may run it.
+func (p *Plugin) applyAgentVersionRetention() {
+	p.store.SetAgentVersionsToKeep(p.configuration.Config().AgentVersionsToKeep)
+	pruned, err := p.store.PruneAgentVersions()
+	if err != nil {
+		p.pluginAPI.Log.Error("Failed to delete agent versions beyond the retention limit", "error", err.Error())
+		return
+	}
+	if pruned > 0 {
+		p.pluginAPI.Log.Info("Deleted agent versions beyond the retention limit", "count", pruned)
+	}
+}
+
 // applyTelemetryConfig (re)initializes the global OpenTelemetry TracerProvider
 // from the current plugin configuration. It is safe to call repeatedly: when
 // the mode and endpoint match what's already running, it is a no-op. When the
@@ -661,13 +713,30 @@ func (p *Plugin) applyTelemetryConfig() {
 	if mode == "" {
 		mode = telemetry.OutputModeOff
 	}
-	endpoint := cfg.OpenTelemetryEndpoint
+	otlp := telemetryOTLPSettings{
+		endpoint: cfg.OpenTelemetryEndpoint,
+		tls:      cfg.OpenTelemetryTLS,
+		headers:  cfg.OpenTelemetryHeaders,
+	}
 
 	p.telemetryMu.Lock()
 	defer p.telemetryMu.Unlock()
 
-	if mode == p.telemetryMode && endpoint == p.telemetryEndpoint {
+	if mode == p.telemetryMode && otlp == p.telemetryOTLP {
 		return
+	}
+
+	// Headers only matter for OTLP; a malformed value must not block
+	// switching to another mode.
+	var headers map[string]string
+	if mode == telemetry.OutputModeOTLP {
+		var parseErr error
+		headers, parseErr = telemetry.ParseHeaders(otlp.headers)
+		if parseErr != nil {
+			// The error names the bad pair's position only, never its value.
+			p.pluginAPI.Log.Error("Failed to initialize OpenTelemetry: invalid OTLP headers", "error", parseErr)
+			return
+		}
 	}
 
 	if p.telemetryShutdown != nil {
@@ -677,7 +746,17 @@ func (p *Plugin) applyTelemetryConfig() {
 		p.telemetryShutdown = nil
 	}
 
-	shutdown, err := telemetry.Init(context.Background(), "mattermost-ai-agents", manifest.Version, mode, endpoint, &p.pluginAPI.Log)
+	shutdown, err := telemetry.Init(context.Background(), telemetry.Options{
+		ServiceName:    "mattermost-ai-agents",
+		ServiceVersion: manifest.Version,
+		Mode:           mode,
+		OTLP: telemetry.OTLPOptions{
+			Endpoint: otlp.endpoint,
+			TLS:      otlp.tls,
+			Headers:  headers,
+		},
+		Log: &p.pluginAPI.Log,
+	})
 	if err != nil {
 		p.pluginAPI.Log.Error("Failed to initialize OpenTelemetry", "error", err, "mode", string(mode))
 		// Leave previous mode tracked so the next change still triggers a re-init.
@@ -685,7 +764,7 @@ func (p *Plugin) applyTelemetryConfig() {
 	}
 	p.telemetryShutdown = shutdown
 	p.telemetryMode = mode
-	p.telemetryEndpoint = endpoint
+	p.telemetryOTLP = otlp
 	if mode == telemetry.OutputModeOff {
 		p.pluginAPI.Log.Info("OpenTelemetry tracing disabled")
 	} else {
@@ -707,9 +786,9 @@ func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
 	// Index the new message in the vector database
 	if p.indexerService != nil {
 		// Get channel to retrieve team ID
-		channel, err := p.API.GetChannel(post.ChannelId)
-		if err != nil {
-			p.pluginAPI.Log.Error("Failed to get channel for post indexing", "error", err)
+		channel, appErr := p.API.GetChannel(post.ChannelId)
+		if appErr != nil {
+			p.pluginAPI.Log.Error("Failed to get channel for post indexing", "error", appErr)
 		} else {
 			if err := p.indexerService.IndexPost(context.Background(), post, channel); err != nil {
 				p.pluginAPI.Log.Error("Failed to index post in vector database", "error", err)
@@ -720,9 +799,9 @@ func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
 
 func (p *Plugin) MessageHasBeenUpdated(c *plugin.Context, newPost, oldPost *model.Post) {
 	if p.indexerService != nil {
-		channel, err := p.API.GetChannel(newPost.ChannelId)
-		if err != nil {
-			p.pluginAPI.Log.Error("Failed to get channel for post indexing", "error", err)
+		channel, appErr := p.API.GetChannel(newPost.ChannelId)
+		if appErr != nil {
+			p.pluginAPI.Log.Error("Failed to get channel for post indexing", "error", appErr)
 		} else {
 			if err := p.indexerService.IndexPost(context.Background(), newPost, channel); err != nil {
 				p.pluginAPI.Log.Error("Failed to index updated post in vector database", "error", err)

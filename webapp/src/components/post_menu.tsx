@@ -31,7 +31,7 @@ import IconAI from './assets/icon_ai';
 import IconReactForMe from './assets/icon_react_for_me';
 import IconSparkleCheckmark from './assets/icon_sparkle_checkmark';
 import IconSparkleQuestion from './assets/icon_sparkle_question';
-import DotMenu, {DisabledDropdownMenuItemStyled, DropdownMenu, DropdownMenuItem} from './dot_menu';
+import DotMenu, {DropdownMenu, DropdownMenuItem} from './dot_menu';
 import IconThreadSummarization from './assets/icon_thread_summarization';
 import {Divider, DropdownInfoOnlyVisibleToYou} from './dropdown_info';
 import {DropdownBotSelector} from './bot_selector';
@@ -55,7 +55,7 @@ const PostMenu = (props: Props) => {
     const contextFull = Boolean(contextPosts && contextPosts.posts.length >= contextPosts.max_posts);
 
     const analyzeThread = async (postId: string, analysisType: string) => {
-        const result = await doThreadAnalysis(postId, analysisType, activeBot?.username || '');
+        const result = await doThreadAnalysis(postId, analysisType, activeBot?.id || '');
         selectPost(result.postid, result.channelid);
     };
 
@@ -73,26 +73,31 @@ const PostMenu = (props: Props) => {
     let contextPinItem = null;
     if (canPinToContext && contextPinned) {
         contextPinItem = (
-            <DropdownMenuItem onClick={() => toggleContextPin(false)}>
-                <span className='icon'><PinOutlineIcon size={18}/></span>
-                <FormattedMessage defaultMessage='Unpin from agent context'/>
-            </DropdownMenuItem>
+            <DropdownMenuItem
+                icon={<PinOutlineIcon size={18}/>}
+                label={<FormattedMessage defaultMessage='Unpin from agent context'/>}
+                onClick={() => toggleContextPin(false)}
+            />
         );
     } else if (canPinToContext && contextFull) {
         contextPinItem = (
-            <DisabledDropdownMenuItemStyled>
-                <FormattedMessage
-                    defaultMessage='Agent context is full ({max} posts)'
-                    values={{max: contextPosts?.max_posts}}
-                />
-            </DisabledDropdownMenuItemStyled>
+            <DropdownMenuItem
+                disabled={true}
+                label={
+                    <FormattedMessage
+                        defaultMessage='Agent context is full ({max} posts)'
+                        values={{max: contextPosts?.max_posts}}
+                    />
+                }
+            />
         );
     } else if (canPinToContext) {
         contextPinItem = (
-            <DropdownMenuItem onClick={() => toggleContextPin(true)}>
-                <span className='icon'><PinOutlineIcon size={18}/></span>
-                <FormattedMessage defaultMessage='Pin to agent context'/>
-            </DropdownMenuItem>
+            <DropdownMenuItem
+                icon={<PinOutlineIcon size={18}/>}
+                label={<FormattedMessage defaultMessage='Pin to agent context'/>}
+                onClick={() => toggleContextPin(true)}
+            />
         );
     }
 
@@ -107,6 +112,8 @@ const PostMenu = (props: Props) => {
             title={intl.formatMessage({defaultMessage: 'AI Actions'})}
             dropdownMenu={StyledDropdownMenu}
             testId='ai-actions-menu'
+            size='small'
+            padding='compact'
             onOpenChange={props.handleDropdownOpened}
         >
             <DropdownBotSelector
@@ -117,24 +124,28 @@ const PostMenu = (props: Props) => {
             <Divider/>
             {threadSummarizationLicensed && (
                 <>
-                    <DropdownMenuItem onClick={() => analyzeThread(post.id, 'summarize_thread')}>
-                        <span className='icon'><IconThreadSummarization/></span>
-                        <FormattedMessage defaultMessage='Summarize Thread'/>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => analyzeThread(post.id, 'action_items')}>
-                        <span className='icon'><IconSparkleCheckmarkStyled/></span>
-                        <FormattedMessage defaultMessage='Find action items'/>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => analyzeThread(post.id, 'open_questions')}>
-                        <span className='icon'><IconSparkleQuestionStyled/></span>
-                        <FormattedMessage defaultMessage='Find open questions'/>
-                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                        icon={<IconThreadSummarization/>}
+                        label={<FormattedMessage defaultMessage='Summarize Thread'/>}
+                        onClick={() => analyzeThread(post.id, 'summarize_thread')}
+                    />
+                    <DropdownMenuItem
+                        icon={<IconSparkleCheckmark/>}
+                        label={<FormattedMessage defaultMessage='Find action items'/>}
+                        onClick={() => analyzeThread(post.id, 'action_items')}
+                    />
+                    <DropdownMenuItem
+                        icon={<IconSparkleQuestion/>}
+                        label={<FormattedMessage defaultMessage='Find open questions'/>}
+                        onClick={() => analyzeThread(post.id, 'open_questions')}
+                    />
                 </>
             )}
-            <DropdownMenuItem onClick={() => doReaction(post.id)}>
-                <span className='icon'><IconReactForMe/></span>
-                <FormattedMessage defaultMessage='React for me'/>
-            </DropdownMenuItem>
+            <DropdownMenuItem
+                icon={<IconReactForMe/>}
+                label={<FormattedMessage defaultMessage='React for me'/>}
+                onClick={() => doReaction(post.id)}
+            />
             {contextPinItem && (
                 <>
                     <Divider/>
@@ -146,14 +157,6 @@ const PostMenu = (props: Props) => {
         </DotMenu>
     );
 };
-
-const IconSparkleCheckmarkStyled = styled(IconSparkleCheckmark)`
-	color: rgba(var(--center-channel-color-rgb), 0.56);
-`;
-
-const IconSparkleQuestionStyled = styled(IconSparkleQuestion)`
-	color: rgba(var(--center-channel-color-rgb), 0.56);
-`;
 
 const StyledDropdownMenu = styled(DropdownMenu)`
 	min-width: 240px;

@@ -71,7 +71,7 @@ func TestHandleGetConversationContext_TotalSource(t *testing.T) {
 		t.Helper()
 		mmBot := &model.Bot{UserId: testBotUserID, Username: "ai", DisplayName: "AI"}
 		bot := bots.NewBot(llm.BotConfig{Name: "ai", DisplayName: "AI"}, llm.ServiceConfig{}, mmBot, fake)
-		e.bots.SetBotsForTesting([]*bots.Bot{bot})
+		e.setBots(bot)
 	}
 
 	tests := []struct {
@@ -306,6 +306,7 @@ func TestHandleGetConversationContextPassesSessionToFilePolicy(t *testing.T) {
 	fileID := model.NewId()
 	sessionID := model.NewId()
 	channelID := testChannelID
+	fileChannelID := model.NewId()
 
 	fileBlocks := mustMarshalBlocks(t, []conversation.ContentBlock{
 		{Type: conversation.BlockTypeText, Text: "see attached"},
@@ -313,22 +314,32 @@ func TestHandleGetConversationContextPassesSessionToFilePolicy(t *testing.T) {
 	})
 
 	tests := []struct {
-		name          string
-		allowed       bool
-		wantFileBody  bool
-		wantAdminRead bool
+		name                string
+		allowed             bool
+		fileChannelReadable bool
+		wantFileBody        bool
+		wantAdminRead       bool
 	}{
 		{
-			name:          "allowed session inlines stored file content",
-			allowed:       true,
-			wantFileBody:  true,
-			wantAdminRead: true,
+			name:                "allowed session inlines stored file content",
+			allowed:             true,
+			fileChannelReadable: true,
+			wantFileBody:        true,
+			wantAdminRead:       true,
 		},
 		{
-			name:          "denied session omits stored file content",
-			allowed:       false,
-			wantFileBody:  false,
-			wantAdminRead: false,
+			name:                "denied session omits stored file content",
+			allowed:             false,
+			fileChannelReadable: true,
+			wantFileBody:        false,
+			wantAdminRead:       false,
+		},
+		{
+			name:                "owner without read access to the file's channel omits stored file content",
+			allowed:             true,
+			fileChannelReadable: false,
+			wantFileBody:        false,
+			wantAdminRead:       true,
 		},
 	}
 
@@ -357,7 +368,7 @@ func TestHandleGetConversationContextPassesSessionToFilePolicy(t *testing.T) {
 			fake := &FakeLLM{TokenCount: 100, TokenLimit: 200000}
 			mmBot := &model.Bot{UserId: testBotUserID, Username: "ai", DisplayName: "AI"}
 			bot := bots.NewBot(llm.BotConfig{Name: "ai", DisplayName: "AI"}, llm.ServiceConfig{}, mmBot, fake)
-			e.bots.SetBotsForTesting([]*bots.Bot{bot})
+			e.setBots(bot)
 
 			mmClient := mmapimocks.NewMockClient(t)
 			mmClient.On(
@@ -370,9 +381,10 @@ func TestHandleGetConversationContextPassesSessionToFilePolicy(t *testing.T) {
 			mmClient.EXPECT().GetFileInfo(fileID).
 				Run(func(string) { adminReadCalled = true }).
 				Return(&model.FileInfo{
-					Id: fileID, Name: "notes.txt", MimeType: "text/plain", Size: int64(len(fileBody)), Content: fileBody,
+					Id: fileID, ChannelId: fileChannelID, Name: "notes.txt", MimeType: "text/plain", Size: int64(len(fileBody)), Content: fileBody,
 				}, nil).
 				Maybe()
+			mmClient.On("HasPermissionToChannel", testUserID, fileChannelID, model.PermissionReadChannel).Return(tt.fileChannelReadable).Maybe()
 			mmClient.On("LogError", mock.Anything, mock.Anything).Maybe()
 			e.api.mmClient = mmClient
 
@@ -393,6 +405,77 @@ func TestHandleGetConversationContextPassesSessionToFilePolicy(t *testing.T) {
 				require.NotContains(t, combined.String(), fileBody)
 			}
 			require.Equal(t, tt.wantAdminRead, adminReadCalled)
+		})
+	}
+}
+
+// The context estimate must count the same tools the conversation's real turn
+// gets: a DM-only server's tools in the requester's DM with the agent, and
+// none elsewhere.
+func TestHandleGetConversationContextCountsDMOnlyToolsOnlyInDM(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+	const salesforceOrigin = "https://salesforce.example.com"
+
+	tests := []struct {
+		name           string
+		channel        *model.Channel
+		wantSalesforce bool
+	}{
+		{
+			name:           "the requester's DM with the agent counts the DM-only tool",
+			channel:        &model.Channel{Id: testChannelID, Type: model.ChannelTypeDirect, Name: model.GetDMNameFromIds(testUserID, testBotUserID)},
+			wantSalesforce: true,
+		},
+		{
+			name:    "a channel does not",
+			channel: &model.Channel{Id: testChannelID, Type: model.ChannelTypeOpen},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+			provider := e.setupBridgeMCPProvider([]llm.Tool{
+				bridgeMCPTool("salesforce", "query_accounts", salesforceOrigin),
+				bridgeMCPTool("mattermost", "search_posts", embeddedOrigin),
+			})
+			provider.dmOnlyOrigins = map[string]bool{salesforceOrigin: true}
+
+			fake := &FakeLLM{TokenCount: 100, TokenLimit: 200000}
+			mmBot := &model.Bot{UserId: testBotUserID, Username: "ai", DisplayName: "AI"}
+			e.setBots(bots.NewBot(llm.BotConfig{Name: "ai", DisplayName: "AI", AutoEnableNewMCPTools: true}, llm.ServiceConfig{}, mmBot, fake))
+
+			channelID := testChannelID
+			e.conversationStore.conversations["conv-dm-only"] = &store.Conversation{
+				ID: "conv-dm-only", UserID: testUserID, BotID: testBotUserID, ChannelID: &channelID, Operation: "conversation",
+			}
+			e.conversationStore.turns["conv-dm-only"] = []store.Turn{{
+				ID: "turn-1", ConversationID: "conv-dm-only", Role: "user", Sequence: 1,
+				Content: mustMarshalBlocks(t, []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: "biggest accounts?"}}),
+			}}
+			e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
+			e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID}, nil).Maybe()
+			e.mockAPI.On("GetChannel", channelID).Return(tt.channel, nil).Maybe()
+			e.mockAPI.On("GetTeam", mock.AnythingOfType("string")).Return(&model.Team{}, nil).Maybe()
+
+			request := httptest.NewRequest(http.MethodGet, "/conversations/conv-dm-only/context", nil)
+			request.Header.Add("Mattermost-User-ID", testUserID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+			require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+			counted := fake.LastRequest()
+			require.NotNil(t, counted.Context)
+			require.NotNil(t, counted.Context.Tools.GetTool("mattermost__search_posts"), "other servers are counted everywhere")
+			if tt.wantSalesforce {
+				require.NotNil(t, counted.Context.Tools.GetTool("salesforce__query_accounts"))
+			} else {
+				require.Nil(t, counted.Context.Tools.GetTool("salesforce__query_accounts"))
+			}
 		})
 	}
 }

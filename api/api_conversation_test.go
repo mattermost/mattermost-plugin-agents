@@ -177,7 +177,7 @@ func TestHandleGetConversation(t *testing.T) {
 				err = json.Unmarshal(response.Turns[2].Content, &resultBlocks)
 				require.NoError(t, err)
 				require.Len(t, resultBlocks, 1)
-				assert.Equal(t, "", resultBlocks[0].Content, "non-owner should not see tool_result content")
+				assert.Empty(t, resultBlocks[0].Content, "non-owner should not see tool_result content")
 			},
 		},
 		{
@@ -314,7 +314,7 @@ func TestHandleGetConversation(t *testing.T) {
 				err := json.NewDecoder(resp.Body).Decode(&response)
 				require.NoError(t, err)
 				require.NotNil(t, response.Turns, "turns should not be null")
-				assert.Len(t, response.Turns, 0, "turns should be empty array")
+				assert.Empty(t, response.Turns, "turns should be empty array")
 			},
 		},
 		{

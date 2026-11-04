@@ -58,6 +58,14 @@ type UserIdentityProvider interface {
 	GetAuthenticatedUser(ctx context.Context) (*model.User, error)
 }
 
+// ClientAndUserProvider returns the authenticated client and user from a
+// single validation. Callers needing both use it instead of calling
+// GetAuthenticatedMattermostClient and GetAuthenticatedUser, which would each
+// validate the session (one GET /users/me apiece).
+type ClientAndUserProvider interface {
+	GetAuthenticatedClientAndUser(ctx context.Context) (*model.Client4, *model.User, error)
+}
+
 // providerBase holds what every authentication provider needs: the Mattermost
 // server URL for API communication and a logger.
 type providerBase struct {

@@ -23,21 +23,20 @@ func TestConvertToResponsesToolsSkipNativeWebSearch(t *testing.T) {
 	}
 
 	t.Run("configured native web search is omitted when skipped", func(t *testing.T) {
-		b := &LLM{provider: schemas.OpenAI, enabledNativeTools: []string{llm.NativeToolWebSearch}}
+		nativeTools := []string{llm.NativeToolWebSearch}
 		request := llm.CompletionRequest{Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello"}}}
 
-		require.True(t, hasWebSearch(b.convertToResponsesTools(request, llm.LanguageModelConfig{})))
-		require.False(t, hasWebSearch(b.convertToResponsesTools(request, llm.LanguageModelConfig{SkipNativeWebSearch: true})))
+		require.True(t, hasWebSearch(convertToResponsesTools(request, llm.LanguageModelConfig{}, nativeTools)))
+		require.False(t, hasWebSearch(convertToResponsesTools(request, llm.LanguageModelConfig{SkipNativeWebSearch: true}, nativeTools)))
 	})
 
 	t.Run("NativeWebSearchAllowed does not attach web search when skipped", func(t *testing.T) {
-		b := &LLM{provider: schemas.OpenAI}
 		request := llm.CompletionRequest{Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello"}}}
 
-		require.True(t, hasWebSearch(b.convertToResponsesTools(request, llm.LanguageModelConfig{NativeWebSearchAllowed: true})))
-		require.False(t, hasWebSearch(b.convertToResponsesTools(request, llm.LanguageModelConfig{
+		require.True(t, hasWebSearch(convertToResponsesTools(request, llm.LanguageModelConfig{NativeWebSearchAllowed: true}, nil)))
+		require.False(t, hasWebSearch(convertToResponsesTools(request, llm.LanguageModelConfig{
 			NativeWebSearchAllowed: true,
 			SkipNativeWebSearch:    true,
-		})))
+		}, nil)))
 	})
 }

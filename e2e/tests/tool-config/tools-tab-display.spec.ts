@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { OpenAIMockContainer, RunOpenAIMocks } from 'helpers/openai-mock';
@@ -13,18 +14,18 @@ import { adminUsername, adminPassword } from 'helpers/system-console-container';
  * including tool names, descriptions, policy dropdowns, and enable toggles.
  */
 
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunToolConfigContainer());
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    return { mattermost, openAIMock };
+});
+
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
 test.describe('Tools Tab Display', () => {
-    test.beforeAll(async () => {
-        mattermost = await RunToolConfigContainer();
-        openAIMock = await RunOpenAIMocks(mattermost.network);
-    });
-
-    test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test('should display embedded server with tools in Tools tab', async ({ page }) => {
@@ -49,19 +50,18 @@ test.describe('Tools Tab Display', () => {
         // Click the server row header to expand
         const serverHeader = page.getByText(/\d+\/\d+ tools? enabled/).first();
         await serverHeader.click();
-        await page.waitForTimeout(500);
 
         // Verify individual tool rows are now visible
         // Known embedded server tools include read_post, get_channel_info, etc.
         await expect(page.getByText('read_post', { exact: true })).toBeVisible({ timeout: 5000 });
 
         // Verify each tool row has a policy dropdown (select element)
-        const policyDropdowns = page.locator('select');
+        const policyDropdowns = toolConfig.getAllToolPolicyDropdowns();
         const dropdownCount = await policyDropdowns.count();
         expect(dropdownCount).toBeGreaterThan(0);
 
         // Verify each tool row has a toggle (checkbox)
-        const toggles = page.locator('input[type="checkbox"]');
+        const toggles = page.getByRole('switch');
         const toggleCount = await toggles.count();
         expect(toggleCount).toBeGreaterThan(0);
     });
@@ -78,12 +78,11 @@ test.describe('Tools Tab Display', () => {
         // Expand the embedded server
         const serverHeader = page.getByText(/\d+\/\d+ tools? enabled/).first();
         await serverHeader.click();
-        await page.waitForTimeout(500);
 
         // Verify read_post (a vetted READ tool) shows the DM-scoped auto-run policy
         await expect(page.getByText('read_post', { exact: true })).toBeVisible({ timeout: 5000 });
         const readPostPolicy = toolConfig.getToolPolicyDropdown('read_post');
-        await expect(readPostPolicy).toHaveValue('auto_run_in_dm');
+        await expect(readPostPolicy).toHaveText('Auto Run (DM)');
 
         // Verify the toggle is checked (enabled) for read_post
         const readPostToggle = toolConfig.getToolToggle('read_post');

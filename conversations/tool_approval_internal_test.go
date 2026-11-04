@@ -143,7 +143,7 @@ func TestResolveApprovedToolUseBlockUsesPersistedMetadata(t *testing.T) {
 		ServerOrigin: "https://jira.example.com",
 		Input:        json.RawMessage(`{"key":"MM-1"}`),
 		MCPBareName:  "get_issue",
-	})
+	}, "approved")
 
 	require.NoError(t, err)
 	assert.True(t, called)
@@ -167,7 +167,7 @@ func TestResolveApprovedToolUseBlockRejectsServerOriginMismatch(t *testing.T) {
 		ServerOrigin: "https://jira.example.com",
 		Input:        json.RawMessage(`{}`),
 		MCPBareName:  "get_issue",
-	})
+	}, "approved")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no longer matches the approved tool metadata")
@@ -191,7 +191,7 @@ func TestResolveApprovedToolUseBlockRejectsBareNameMismatch(t *testing.T) {
 		ServerOrigin: "https://jira.example.com",
 		Input:        json.RawMessage(`{}`),
 		MCPBareName:  "delete_issue",
-	})
+	}, "approved")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no longer matches the approved tool metadata")
@@ -206,7 +206,7 @@ func TestResolveApprovedToolUseBlockLoadedStateMissingFailsSafely(t *testing.T) 
 		Name:        "jira__get_issue",
 		Input:       json.RawMessage(`{}`),
 		MCPBareName: "get_issue",
-	})
+	}, "approved")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "available but not loaded")
@@ -217,7 +217,7 @@ func TestResolveApprovedToolUseBlockNoLongerAvailable(t *testing.T) {
 	_, err := resolveApprovedToolUseBlock(context.Background(), &llm.Context{Tools: llm.NewToolStore()}, conversation.ContentBlock{
 		Name:  "jira__get_issue",
 		Input: json.RawMessage(`{}`),
-	})
+	}, "approved")
 
 	require.Error(t, err)
 	assert.EqualError(t, err, "tool jira__get_issue is no longer available")
@@ -241,7 +241,7 @@ func TestResolveApprovedToolUseBlockSchemaDriftDoesNotBlockMatchingTool(t *testi
 		ServerOrigin: "https://jira.example.com",
 		Input:        json.RawMessage(`{}`),
 		MCPBareName:  "get_issue",
-	})
+	}, "approved")
 
 	require.NoError(t, err)
 	assert.True(t, called)
@@ -263,7 +263,7 @@ func TestResolveApprovedToolUseBlockAllowsOldBlockWithoutNewMetadata(t *testing.
 	result, err := resolveApprovedToolUseBlock(context.Background(), &llm.Context{Tools: store}, conversation.ContentBlock{
 		Name:  "jira__get_issue",
 		Input: json.RawMessage(`{}`),
-	})
+	}, "approved")
 
 	require.NoError(t, err)
 	assert.True(t, called)

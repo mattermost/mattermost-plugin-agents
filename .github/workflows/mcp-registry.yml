@@ -1,0 +1,148 @@
+name: mcp-registry
+
+# Publishes server.json (the official Mattermost MCP server, built into this
+# plugin) to the official MCP Registry at registry.modelcontextprotocol.io.
+#
+# - Pull requests that touch server.json (or this workflow) only validate.
+# - Release tags (same pattern as ci.yml) validate and then publish, with the
+#   server.json version taken from the tag. The committed version is a
+#   placeholder.
+# - workflow_dispatch on a release tag re-publishes it; on any other ref it
+#   only validates. Publishing only ever happens from a release tag.
+#
+# Authentication is GitHub OIDC (no secrets). The registry checks the
+# namespace, not the remote host, so the checks below pin the name, the
+# remote URL and the auth header to their canonical values: a server.json
+# change cannot point the official listing at another host or add a package.
+# The publish job runs in the mcp-registry environment, so a required reviewer
+# or tag restriction can be added there in the repository settings.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  pull_request:
+    paths:
+      - server.json
+      - .github/workflows/mcp-registry.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Pinned mcp-publisher release from github.com/modelcontextprotocol/registry.
+  # To upgrade, change both values together: take the new tag and the SHA-256 of
+  # mcp-publisher_linux_amd64.tar.gz from the release page.
+  MCP_PUBLISHER_VERSION: v1.8.6
+  MCP_PUBLISHER_SHA256: 1fbe93fc0783c2394d8012c8d6e50a59e98cb2cc2d216264cc69f405d0e21340
+
+jobs:
+  validate:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Check server.json invariants
+        run: |
+          set -euo pipefail
+          jq -e '
+            .name == "io.github.mattermost/mattermost-plugin-agents"
+            and (.description | length >= 1 and length <= 100)
+            and (.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
+            and ((.packages // []) | length == 0)
+            and (.remotes | length == 1)
+            and .remotes[0].type == "streamable-http"
+            and .remotes[0].url == "https://{mattermost_host}/plugins/mattermost-ai/mcp-server/mcp"
+            and (.remotes[0].variables | keys == ["mattermost_host"])
+            and .remotes[0].variables.mattermost_host.isRequired == true
+            and ([(.remotes[0].headers // [])[] | {name, value, isSecret}] == [{"name": "Authorization", "value": "Bearer {personal_access_token}", "isSecret": true}])
+            and (.remotes[0].headers[0].variables | keys == ["personal_access_token"])
+            and .remotes[0].headers[0].variables.personal_access_token.isSecret == true
+            # Every input stays user-supplied: a preset value, default or
+            # choices list would let a client fill in the host or token.
+            and ([.. | objects | select(has("variables")) | .variables[] | has("value") or has("default") or has("choices")] | any | not)
+          ' server.json >/dev/null || {
+            echo "::error file=server.json::server.json must keep the canonical name, remote URL and Authorization header, user-supplied inputs only (no value, default or choices), no packages, a description of at most 100 characters, and a plain x.y.z version."
+            exit 1
+          }
+
+      - name: Install mcp-publisher
+        run: |
+          set -euo pipefail
+          archive="mcp-publisher_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error --output "$RUNNER_TEMP/$archive" \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/${archive}"
+          echo "${MCP_PUBLISHER_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check --strict -
+          tar xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" mcp-publisher
+          rm -f "$RUNNER_TEMP/$archive"
+
+      - name: Set version from release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version '$VERSION' (expected x.y.z)"
+            exit 1
+          fi
+          jq --arg v "$VERSION" '.version = $v' server.json > "$RUNNER_TEMP/server.json"
+          mv "$RUNNER_TEMP/server.json" server.json
+          jq '{name, version}' server.json
+
+      # Calls the registry's validation endpoint; needs no authentication and
+      # publishes nothing.
+      - name: Validate server.json
+        run: $RUNNER_TEMP/mcp-publisher validate server.json
+
+  publish:
+    # Only from a release tag, whose name is the version.
+    if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v')
+    needs: validate
+    environment: mcp-registry
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    # One publish at a time, never cancelled half-way.
+    concurrency:
+      group: mcp-registry-publish
+      cancel-in-progress: false
+    permissions:
+      id-token: write # GitHub OIDC token for mcp-publisher login github-oidc
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Install mcp-publisher
+        run: |
+          set -euo pipefail
+          archive="mcp-publisher_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error --output "$RUNNER_TEMP/$archive" \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/${archive}"
+          echo "${MCP_PUBLISHER_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check --strict -
+          tar xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" mcp-publisher
+          rm -f "$RUNNER_TEMP/$archive"
+
+      - name: Set version from release tag
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version '$VERSION' (expected x.y.z)"
+            exit 1
+          fi
+          jq --arg v "$VERSION" '.version = $v' server.json > "$RUNNER_TEMP/server.json"
+          mv "$RUNNER_TEMP/server.json" server.json
+          jq '{name, version}' server.json
+
+      - name: Validate server.json
+        run: $RUNNER_TEMP/mcp-publisher validate server.json
+
+      - name: Log in to the MCP Registry (GitHub OIDC)
+        run: $RUNNER_TEMP/mcp-publisher login github-oidc
+
+      - name: Publish to the MCP Registry
+        run: $RUNNER_TEMP/mcp-publisher publish

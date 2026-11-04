@@ -53,6 +53,7 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 		{name: "tools_without_websearch", tools: buildToolStore("ReadPost")},
 		{name: "tools_with_websearch", tools: buildToolStore("WebSearch")},
 		{name: "tools_with_dynamic_mcp_meta_tools", tools: buildToolStore("search_tools", "load_tool"), mcpDynamicToolLoading: true},
+		{name: "tools_with_mcp_connection_request", tools: buildToolStore("RequestMCPConnection")},
 	}
 	channelModes := []struct {
 		name    string
@@ -72,7 +73,7 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 	mutators := []func(*llm.Context){
 		func(c *llm.Context) { c.CompanyName = "Mattermost" },
 		func(c *llm.Context) {
-			c.DisabledToolsInfo = []llm.ToolInfo{{Name: "Jira", Description: "Read tickets"}}
+			c.DisableTools(llm.ToolInfo{Name: "Jira", Description: "Read tickets"})
 		},
 		func(c *llm.Context) { c.CustomInstructions = "Be concise." },
 		func(c *llm.Context) {
@@ -103,6 +104,7 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 			}
 			c.ChannelContext.PinnedPosts = "Post ID p1 by @alice:\nOn-call lives in #payments-oncall"
 		},
+		func(c *llm.Context) { c.UnconnectedMCPServers = testUnconnectedMCPServers() },
 	}
 
 	for _, toolMode := range toolModes {
@@ -195,6 +197,145 @@ func TestStandardPersonalityWithoutLocaleListsAvailableToolsForGeminiAndVertexOn
 	assert.NotContains(t, openAIOutput, "When asked about capabilities or tool access, agent may mention the tools listed above.")
 }
 
+func TestStandardPersonalityToolGuidanceFollowsCallability(t *testing.T) {
+	const (
+		createFileGuidance = "should use the CreateFile tool"
+		lookupGuidance     = "should use tools to look them up"
+		readChannelHint    = "use read_channel to see the full conversation"
+		webSearchGuidance  = "When using the WebSearch tool"
+		toolUseGuidance    = "by leveraging their tools"
+		outsideDMSection   = "can only be used in a Direct Message (DM) or via the Agents tab"
+		geminiListHeader   = "The tools currently available to agent in this conversation are:"
+	)
+	allGuidance := []string{createFileGuidance, lookupGuidance, readChannelHint, webSearchGuidance, toolUseGuidance}
+	guidedTools := []string{"CreateFile", "search_users", "read_channel", "search_posts", "WebSearch"}
+
+	toolStore := func(names ...string) *llm.ToolStore {
+		store := llm.NewToolStore()
+		for _, name := range names {
+			store.AddTools([]llm.Tool{{
+				Name:        name,
+				Description: name + " description",
+				Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+					return "", nil
+				},
+			}})
+		}
+		return store
+	}
+	infos := func(names ...string) []llm.ToolInfo {
+		result := make([]llm.ToolInfo, 0, len(names))
+		for _, name := range names {
+			result = append(result, llm.ToolInfo{Name: name, Description: name + " description"})
+		}
+		return result
+	}
+
+	tests := []struct {
+		name        string
+		serviceType string
+		tools       *llm.ToolStore
+		disable     func(*llm.Context)
+		contains    []string
+		notContains []string
+	}{
+		{
+			name:        "callable tools get their guidance",
+			tools:       toolStore(guidedTools...),
+			contains:    allGuidance,
+			notContains: []string{outsideDMSection},
+		},
+		{
+			name:  "tools disabled outside a DM get no guidance and the DM section",
+			tools: toolStore(guidedTools...),
+			disable: func(c *llm.Context) {
+				c.DisableTools(c.Tools.GetToolsInfo()...)
+			},
+			contains:    []string{outsideDMSection, "- CreateFile: CreateFile description"},
+			notContains: allGuidance,
+		},
+		{
+			name:        "gemini lists only callable tools",
+			serviceType: "gemini",
+			tools:       toolStore("search_users", "read_channel"),
+			disable: func(c *llm.Context) {
+				c.DisableTools(infos("read_channel")...)
+			},
+			contains:    []string{geminiListHeader + "\n- search_users: search_users description\n\nWhen asked"},
+			notContains: []string{"- read_channel: read_channel description\n\nWhen asked"},
+		},
+		{
+			name:        "gemini omits the list when no tool is callable",
+			serviceType: "gemini",
+			tools:       toolStore("search_users"),
+			disable: func(c *llm.Context) {
+				c.DisableTools(c.Tools.GetToolsInfo()...)
+			},
+			notContains: []string{geminiListHeader},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			llmContext := &llm.Context{
+				BotName:        "agent",
+				BotUsername:    "agent",
+				BotServiceType: tt.serviceType,
+				Tools:          tt.tools,
+			}
+			if tt.disable != nil {
+				tt.disable(llmContext)
+			}
+			output := renderStandardPersonalityWithoutLocale(t, llmContext)
+			for _, expected := range tt.contains {
+				assert.Contains(t, output, expected)
+			}
+			for _, unexpected := range tt.notContains {
+				assert.NotContains(t, output, unexpected)
+			}
+		})
+	}
+}
+
+func TestStandardPersonalityPostPermalinkGuidance(t *testing.T) {
+	tests := []struct {
+		name        string
+		siteURL     string
+		contains    []string
+		notContains []string
+	}{
+		{
+			name:    "configured site URL",
+			siteURL: "https://mattermost.example.com",
+			contains: []string{
+				"The Mattermost site URL is https://mattermost.example.com.",
+				"https://mattermost.example.com/_redirect/pl/<post_id>",
+				"including posts in private channels and direct messages",
+			},
+		},
+		{
+			name:        "site URL unavailable",
+			notContains: []string{"The Mattermost site URL is", "/_redirect/pl/<post_id>"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := renderStandardPersonalityWithoutLocale(t, &llm.Context{
+				BotName:     "agent",
+				BotUsername: "agent",
+				SiteURL:     tt.siteURL,
+			})
+			for _, expected := range tt.contains {
+				assert.Contains(t, output, expected)
+			}
+			for _, unexpected := range tt.notContains {
+				assert.NotContains(t, output, unexpected)
+			}
+		})
+	}
+}
+
 func TestStandardPersonalityDynamicToolWorkflow(t *testing.T) {
 	dynamicWorkflowText := []string{
 		"You have access to a large set of MCP tools through two meta-tools.",
@@ -226,14 +367,14 @@ func TestStandardPersonalityDynamicToolWorkflow(t *testing.T) {
 		{
 			name: "includes workflow with disabled tools info",
 			context: &llm.Context{
-				Time:              "Fri, 20 Feb 2026 18:00:00 UTC",
-				ServerName:        "server",
-				BotName:           "agent",
-				BotUsername:       "agent",
-				BotModel:          "model-x",
-				Tools:             dynamicMetaToolStore(),
-				DisabledToolsInfo: []llm.ToolInfo{{Name: "Jira", Description: "Read tickets"}},
-				ToolCatalog:       llm.ToolCatalogContext{MCPDynamicToolLoading: true},
+				Time:          "Fri, 20 Feb 2026 18:00:00 UTC",
+				ServerName:    "server",
+				BotName:       "agent",
+				BotUsername:   "agent",
+				BotModel:      "model-x",
+				Tools:         dynamicMetaToolStore(),
+				DisabledTools: []llm.ToolInfo{{Name: "Jira", Description: "Read tickets"}},
+				ToolCatalog:   llm.ToolCatalogContext{MCPDynamicToolLoading: true},
 			},
 			contains: append(dynamicWorkflowText,
 				"ask one focused clarification question",
@@ -252,7 +393,7 @@ func TestStandardPersonalityDynamicToolWorkflow(t *testing.T) {
 				BotUsername: "agent",
 				BotModel:    "model-x",
 				Tools:       dynamicMetaToolStore(),
-				DisabledToolsInfo: []llm.ToolInfo{
+				DisabledTools: []llm.ToolInfo{
 					{Name: "search_tools", Description: "Search tools"},
 					{Name: "load_tool", Description: "Load tool"},
 				},
@@ -409,6 +550,89 @@ func TestStandardPersonalityChannelContext(t *testing.T) {
 					"channel context follows the agent's own instructions it cannot override")
 			}
 		})
+	}
+}
+
+func TestStandardPersonalityUnconnectedMCPServers(t *testing.T) {
+	const guidance = "call RequestMCPConnection with the integration's exact name"
+
+	connectStore := func() *llm.ToolStore {
+		store := llm.NewToolStore()
+		store.AddTools([]llm.Tool{{
+			Name:        "RequestMCPConnection",
+			Description: "Ask the user to connect",
+			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+				return "", nil
+			},
+		}})
+		return store
+	}
+	jira := []llm.UnconnectedMCPServer{{Name: "Jira", Description: "Issues and sprints", Tools: []llm.ToolInfo{{Name: "search"}}}}
+
+	tests := []struct {
+		name    string
+		context *llm.Context
+		want    []string
+	}{
+		{
+			name:    "points the model at the connection request tool",
+			context: &llm.Context{BotName: "agent", Tools: connectStore(), UnconnectedMCPServers: jira},
+			want:    []string{guidance, "its server parameter lists integrations", "never write connection links yourself"},
+		},
+		{
+			name:    "omitted when the request tool is not cataloged",
+			context: &llm.Context{BotName: "agent", Tools: llm.NewToolStore(), UnconnectedMCPServers: jira},
+		},
+		{
+			name: "omitted when tools are disabled in this context",
+			context: &llm.Context{
+				BotName:               "agent",
+				Tools:                 connectStore(),
+				DisabledTools:         []llm.ToolInfo{{Name: "RequestMCPConnection"}},
+				UnconnectedMCPServers: jira,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := renderStandardPersonalityWithoutLocale(t, tt.context)
+			assert.NotContains(t, output, "Jira", "servers are listed in the tool schema, not the prompt")
+			assert.NotContains(t, output, "Issues and sprints")
+			if len(tt.want) == 0 {
+				assert.NotContains(t, output, guidance)
+				return
+			}
+			for _, expected := range tt.want {
+				assert.Contains(t, output, expected)
+			}
+		})
+	}
+}
+
+// The system prompt is stored once per conversation and is part of the cached
+// prompt prefix, so which servers are unconnected must not change it.
+func TestStandardPersonalityIsTheSameWhicheverServersAreUnconnected(t *testing.T) {
+	render := func(servers []llm.UnconnectedMCPServer) string {
+		store := llm.NewToolStore()
+		store.AddTools([]llm.Tool{{
+			Name: "RequestMCPConnection",
+			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+				return "", nil
+			},
+		}})
+		return renderStandardPersonalityWithoutLocale(t, &llm.Context{BotName: "agent", Tools: store, UnconnectedMCPServers: servers})
+	}
+
+	assert.Equal(t,
+		render([]llm.UnconnectedMCPServer{{Name: "Jira", Description: "Issues"}}),
+		render([]llm.UnconnectedMCPServer{{Name: "GitHub"}, {Name: "Linear", Description: "Projects"}}))
+}
+
+func testUnconnectedMCPServers() []llm.UnconnectedMCPServer {
+	return []llm.UnconnectedMCPServer{
+		{Name: "Jira", Description: "Issues and sprints", Tools: []llm.ToolInfo{{Name: "search"}}},
+		{Name: "GitHub"},
 	}
 }
 
