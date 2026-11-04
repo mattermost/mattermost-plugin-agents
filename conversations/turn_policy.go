@@ -84,6 +84,9 @@ func (c *Conversations) resolveTurnPolicy(ctx context.Context, req turnRequest) 
 		if err := c.bots.CheckUsageRestrictions(ctx, req.user.Id, req.bot, req.channel); err != nil {
 			return nil, err
 		}
+		if llmcontext.ScopedChannelModeConfigured(req.bot) && req.user.IsGuest() {
+			return nil, llmcontext.ErrScopedGuestRequester
+		}
 		if err := c.licenseChecker.Check(enterprise.CapMultiplayerChannels); err != nil {
 			return nil, err
 		}

@@ -167,6 +167,8 @@ func (env *scopedTestEnv) auditRecords(event string) []*model.AuditRecord {
 // its session is minted and before streaming starts.
 type scopedEnvOpts struct {
 	streamingErr error
+	// guestRequester makes the user who mentions the agent a guest.
+	guestRequester bool
 	// skillErr fails skill loading, which happens after the session is minted.
 	skillErr error
 	// onToolRun runs inside the tool, while the turn is in flight.
@@ -262,9 +264,13 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 		newDMTestLLM(llmResponses...),
 	))
 
+	requesterRoles := model.SystemUserRoleId
+	if opts.guestRequester {
+		requesterRoles = model.SystemGuestRoleId
+	}
 	mmClient := &fakeMMClient{
 		users: map[string]*model.User{
-			scopedUserID: {Id: scopedUserID, Username: "alice", Locale: "en"},
+			scopedUserID: {Id: scopedUserID, Username: "alice", Locale: "en", Roles: requesterRoles},
 		},
 		channels:        map[string]*model.Channel{channel.Id: channel},
 		kv:              make(map[string]any),
@@ -291,7 +297,7 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	mmClient.posts = map[string]*model.Post{post.Id: post}
 	env.channel, env.trigger = channel, post
 	env.conversations.MessageHasBeenPosted(nil, post)
-	if opts.streamingErr != nil || opts.skillErr != nil {
+	if opts.streamingErr != nil || opts.skillErr != nil || opts.guestRequester {
 		return env
 	}
 
@@ -525,6 +531,26 @@ func TestScopedChannelTurnStopsAutoRunningWhenRevoked(t *testing.T) {
 	toolUse, _ := scopedToolBlocks(t, env)
 	require.Len(t, toolUse, 1, "the call after the revocation waits for approval")
 	assert.Equal(t, "call-1", toolUse[0].ID)
+}
+
+// A guest cannot browse the public channels a scoped session reads, so the
+// agent refuses their mention outright rather than falling back to approvals.
+func TestScopedChannelTurnRefusesGuestRequester(t *testing.T) {
+	channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypeOpen, Name: "town-square"}
+	toolCall := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+	env := setupScopedTestEnv(t, channel, scopedEnvOpts{guestRequester: true}, dmMakeToolCallStream(toolCall), dmMakeTextStream("done"))
+
+	minted, _ := env.minter.snapshot()
+	assert.Empty(t, minted)
+	assert.Zero(t, env.catalog.scoped)
+	assert.Zero(t, env.catalog.unscoped, "no catalog is built for a refused turn")
+	assert.Zero(t, env.runs())
+	assert.Empty(t, allConversations(env.convStore), "the turn never started")
+	select {
+	case <-env.streaming.finished:
+		require.Fail(t, "a refused turn must not stream a response")
+	default:
+	}
 }
 
 type failingSkillProvider struct{ err error }

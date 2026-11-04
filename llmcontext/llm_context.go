@@ -464,6 +464,10 @@ func (b *Builder) channelToolCallingEnabled() bool {
 // requester cannot read the channel the session would be scoped to.
 var ErrScopedRequesterCannotReadChannel = errors.New("requester cannot read the scoped turn's channel")
 
+// ErrScopedGuestRequester is returned for a guest requester of an agent in
+// scoped channel mode: the scope reads public channels a guest cannot browse.
+var ErrScopedGuestRequester = errors.New("guests cannot use agents in scoped channel mode")
+
 // mintScopedRun mints the turn's scoped session and records the grant. The
 // returned run is owned by c: ReleaseScopedSession closes it.
 func (b *Builder) mintScopedRun(ctx stdcontext.Context, c *llm.Context, bot *bots.Bot, requesterID string) (*mcp.ScopedRun, error) {
@@ -486,6 +490,10 @@ func (b *Builder) mintScopedRun(ctx stdcontext.Context, c *llm.Context, bot *bot
 			b.pluginAPI.Audit.Record(rec)
 		}
 	}()
+
+	if c.RequestingUser == nil || c.RequestingUser.IsGuest() {
+		return nil, ErrScopedGuestRequester
+	}
 
 	// The scope grants its channel regardless of membership, so the requester
 	// must be able to read it; otherwise a caller-supplied channel (the LLM
