@@ -6,12 +6,12 @@ For strict privacy requirements, run the LLM yourself, and self-host or turn off
 
 ## What every request includes
 
-Each request to the LLM starts with a system prompt that contains:
+Chat requests to the LLM start with a system prompt that contains the items below. Other request types, such as summaries and the ambient classifier, use their own prompts, which don't include the requester details.
 
 - The agent's display name and username, and the model name.
 - The Mattermost Server name, the company name if one is set, and the Site URL.
 - The current date and time in the requesting user's location.
-- The requesting user's username, first and last name, position, and locale, and whether they're a System Admin. Not their email address or user ID.
+- When there is a requesting user, their username, plus first and last name, position, and locale if set, and that they're a System Admin if they are. Not their email address or user ID.
 - In a channel, the channel name and display name, and the team name and display name.
 - The agent's custom instructions.
 

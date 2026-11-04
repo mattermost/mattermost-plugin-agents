@@ -14,7 +14,7 @@ What goes to the AI model depends on where you ask:
 | Meeting summary | The meeting transcript. |
 | Search with AI | Your question, plus the posts the agent opens while it searches. |
 
-Every request also tells the model who you are: your username, name, position, and locale, and whether you're a System Admin. It doesn't include your email address.
+Chat requests also tell the model who you are: your username, and your name, position and locale if set, and that you're a System Admin if you are. It doesn't include your email address.
 
 ## What an agent can reach
 
