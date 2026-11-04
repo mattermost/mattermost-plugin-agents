@@ -378,15 +378,24 @@ func (s *Service) ListByTeam(userID, teamID string) (*TeamListResponse, error) {
 }
 
 // PurgeChannel removes every artifact in a channel (deleted-channel cleanup).
+// It reads the channel index. List hides an entry whose purge already started,
+// and this sweep is what finishes that purge.
 func (s *Service) PurgeChannel(channelID string) error {
 	if !model.IsValidId(channelID) {
 		return ErrInvalidInput
 	}
-	entries, err := s.store.List(channelID)
+	idx, _, err := s.store.getIndex(channelID)
 	if err != nil {
 		return err
 	}
-	for _, entry := range entries {
+	for _, id := range idx.IDs {
+		entry, getErr := s.store.Get(id)
+		if errors.Is(getErr, ErrNotFound) {
+			continue
+		}
+		if getErr != nil {
+			return getErr
+		}
 		if err := s.store.Purge(entry); err != nil {
 			return err
 		}

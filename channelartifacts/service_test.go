@@ -299,6 +299,34 @@ func TestPurgeChannelRemovesEveryArtifact(t *testing.T) {
 	require.Empty(t, left)
 }
 
+func TestPurgeChannelFinishesAPurgingArtifact(t *testing.T) {
+	kv := newMemoryKV()
+	kv.permissionAll = true
+	store := NewStore(kv)
+	svc := NewService(store, kv, allowAllMembers{})
+	channelID := model.NewId()
+	userID := model.NewId()
+	kv.channels[channelID] = &model.Channel{Id: channelID, Type: model.ChannelTypeOpen}
+
+	entry, err := svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), Title: "Notes",
+	}, []byte("<html>notes</html>"), "notes.html", userID, "Author", "", model.NewId(), ContentLimits{MaxSize: 1024})
+	require.NoError(t, err)
+
+	kv.failBlobDeletes = 1
+	require.Error(t, store.Purge(entry))
+	listed, err := store.List(channelID)
+	require.NoError(t, err)
+	require.Empty(t, listed)
+
+	require.NoError(t, svc.PurgeChannel(channelID))
+	_, err = store.Get(entry.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	idx, _, err := store.getIndex(channelID)
+	require.NoError(t, err)
+	require.NotContains(t, idx.IDs, entry.ID)
+}
+
 func TestPurgeChannelRejectsInvalidID(t *testing.T) {
 	svc := NewService(NewStore(newMemoryKV()), newMemoryKV(), allowAllMembers{})
 	require.ErrorIs(t, svc.PurgeChannel("not-an-id"), ErrInvalidInput)

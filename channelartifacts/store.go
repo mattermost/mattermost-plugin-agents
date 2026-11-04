@@ -16,7 +16,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -30,9 +29,6 @@ const (
 	keyPrefixSHA          = "cart_sha_"
 	keyPrefixHist         = "cart_hist_"
 	keySiteCount          = "cart_site_count"
-	keySiteCountDirty     = "cart_site_count_dirty"
-	keySiteLock           = "cart_site_lock"
-	siteLockTTL           = 30 * time.Second
 	keyRetentionCursor    = "cart_retention_cursor"
 	retentionPageSize     = 100
 	defaultRetentionBatch = 100
@@ -167,104 +163,6 @@ func (s *Store) adjustSiteCount(delta int) error {
 		return nil
 	}
 	return ErrConflict
-}
-
-func (s *Store) lockSite() (string, error) {
-	owner := model.NewId()
-	for range 8 {
-		ok, err := s.kv.KVCompareAndSetWithExpiry(keySiteLock, nil, owner, siteLockTTL)
-		if err != nil {
-			return "", err
-		}
-		if ok {
-			return owner, nil
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return "", ErrConflict
-}
-
-func (s *Store) unlockSite(owner string) {
-	_, _ = s.kv.KVCompareAndSet(keySiteLock, owner, nil)
-}
-
-func (s *Store) withSiteCount(fn func() error) error {
-	owner, err := s.lockSite()
-	if err != nil {
-		return err
-	}
-	defer s.unlockSite(owner)
-	return fn()
-}
-
-func (s *Store) siteCountDirty() (bool, error) {
-	var raw []byte
-	err := s.kv.KVGet(keySiteCountDirty, &raw)
-	if mmapi.IsKVNotFound(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func (s *Store) markSiteCountDirty() error {
-	return s.kv.KVSet(keySiteCountDirty, true)
-}
-
-func (s *Store) clearSiteCountDirty() error {
-	return s.kv.KVDelete(keySiteCountDirty)
-}
-
-func (s *Store) countIndexedArtifacts() (int, error) {
-	ids, err := s.channelIndexIDs()
-	if err != nil {
-		return 0, err
-	}
-	total := 0
-	for _, channelID := range ids {
-		idx, _, idxErr := s.getIndex(channelID)
-		if idxErr != nil {
-			return 0, idxErr
-		}
-		total += len(idx.IDs)
-	}
-	return total, nil
-}
-
-// reconcileSiteCount sets the counter from the channel indexes. Callers hold
-// the site lock, so a save cannot be between its reservation and its index write.
-func (s *Store) reconcileSiteCount() error {
-	total, err := s.countIndexedArtifacts()
-	if err != nil {
-		return err
-	}
-	for range 8 {
-		_, oldRaw, countErr := s.getSiteCount()
-		if countErr != nil {
-			return countErr
-		}
-		if setErr := s.setSiteCountCAS(oldRaw, total); setErr != nil {
-			if errors.Is(setErr, ErrConflict) {
-				continue
-			}
-			return setErr
-		}
-		return s.clearSiteCountDirty()
-	}
-	return ErrConflict
-}
-
-func (s *Store) repairSiteCountIfDirty() error {
-	dirty, err := s.siteCountDirty()
-	if err != nil {
-		return err
-	}
-	if !dirty {
-		return nil
-	}
-	return s.reconcileSiteCount()
 }
 
 func (s *Store) Get(id string) (*Entry, error) {
@@ -819,43 +717,35 @@ func (s *Store) Save(entry *Entry, content []byte, maxSize int64, maxPerChannel,
 	return nil
 }
 
-// commitNewArtifact reserves a site slot and appends the channel index.
-// The site lock covers both writes. A dirty counter is rebuilt from the
-// indexes before the limit check, so a crash between the two writes cannot
-// leave the counter high.
+// commitNewArtifact increments the site counter, then appends the channel index.
+// The counter is one compare-and-set key and is an advisory cap.
 func (s *Store) commitNewArtifact(entry *Entry, maxPerChannel, maxSitewide int) error {
-	return s.withSiteCount(func() error {
-		if err := s.repairSiteCountIfDirty(); err != nil {
+	counted := false
+	for range 8 {
+		count, oldRaw, err := s.getSiteCount()
+		if err != nil {
 			return err
 		}
-		for range 8 {
-			count, oldRaw, err := s.getSiteCount()
-			if err != nil {
-				return err
-			}
-			if maxSitewide > 0 && count >= maxSitewide {
-				return ErrLimitReached
-			}
-			if err := s.markSiteCountDirty(); err != nil {
-				return err
-			}
-			if err := s.setSiteCountCAS(oldRaw, count+1); err != nil {
-				if errors.Is(err, ErrConflict) {
-					continue
-				}
-				return err
-			}
-			if err := s.appendChannelIndex(entry, maxPerChannel); err != nil {
-				if recErr := s.reconcileSiteCount(); recErr != nil {
-					return errors.Join(err, recErr)
-				}
-				return err
-			}
-			_ = s.clearSiteCountDirty()
-			return nil
+		if maxSitewide > 0 && count >= maxSitewide {
+			return ErrLimitReached
 		}
+		if err := s.setSiteCountCAS(oldRaw, count+1); err != nil {
+			if errors.Is(err, ErrConflict) {
+				continue
+			}
+			return err
+		}
+		counted = true
+		break
+	}
+	if !counted {
 		return ErrConflict
-	})
+	}
+	if err := s.appendChannelIndex(entry, maxPerChannel); err != nil {
+		_ = s.adjustSiteCount(-1)
+		return err
+	}
+	return nil
 }
 
 func (s *Store) appendChannelIndex(entry *Entry, maxPerChannel int) error {
@@ -1282,7 +1172,10 @@ func (s *Store) DeleteHead(entry *Entry) error {
 	if entry == nil {
 		return ErrInvalidInput
 	}
-	hist, err := s.ensureHistory(entry)
+	if _, err := s.ensureHistory(entry); err != nil {
+		return err
+	}
+	hist, raw, err := s.loadHistoryRaw(entry.ID)
 	if err != nil {
 		return err
 	}
@@ -1310,8 +1203,7 @@ func (s *Store) DeleteHead(entry *Entry) error {
 		previous = remaining[len(remaining)-1]
 	}
 	previousHistory := append([]VersionRecord(nil), hist.Versions...)
-	hist.Versions = remaining
-	if err := s.saveHistory(entry.ID, hist); err != nil {
+	if err := s.claimHistory(entry.ID, raw, &VersionHistory{Versions: remaining}); err != nil {
 		return err
 	}
 	oldSHA := entry.SHA256
@@ -1394,46 +1286,33 @@ func (s *Store) markPurging(entry *Entry) error {
 }
 
 func (s *Store) finishPurgeIndex(entry *Entry) error {
-	return s.withSiteCount(func() error {
-		if err := s.repairSiteCountIfDirty(); err != nil {
+	for range 8 {
+		idx, oldRaw, err := s.getIndex(entry.ChannelID)
+		if err != nil {
 			return err
 		}
-		if err := s.markSiteCountDirty(); err != nil {
+		next := make([]string, 0, len(idx.IDs))
+		removed := false
+		for _, id := range idx.IDs {
+			if id == entry.ID {
+				removed = true
+				continue
+			}
+			next = append(next, id)
+		}
+		idx.IDs = next
+		if err := s.setIndexCAS(entry.ChannelID, oldRaw, idx); err != nil {
+			if errors.Is(err, ErrConflict) {
+				continue
+			}
 			return err
 		}
-		for range 8 {
-			idx, oldRaw, err := s.getIndex(entry.ChannelID)
-			if err != nil {
-				return err
-			}
-			next := make([]string, 0, len(idx.IDs))
-			removed := false
-			for _, id := range idx.IDs {
-				if id == entry.ID {
-					removed = true
-					continue
-				}
-				next = append(next, id)
-			}
-			idx.IDs = next
-			if err := s.setIndexCAS(entry.ChannelID, oldRaw, idx); err != nil {
-				if errors.Is(err, ErrConflict) {
-					continue
-				}
-				return err
-			}
-			if removed {
-				if err := s.adjustSiteCount(-1); err != nil {
-					if recErr := s.reconcileSiteCount(); recErr != nil {
-						return errors.Join(err, recErr)
-					}
-				}
-			}
-			_ = s.clearSiteCountDirty()
-			return nil
+		if removed {
+			_ = s.adjustSiteCount(-1)
 		}
-		return ErrConflict
-	})
+		return nil
+	}
+	return ErrConflict
 }
 
 // Delete removes all versions of the artifact (alias for Purge).

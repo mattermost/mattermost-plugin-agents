@@ -23,27 +23,24 @@ import (
 )
 
 type memoryKV struct {
-	mu                     sync.Mutex
-	data                   map[string][]byte
-	permissionAll          bool
-	readAll                bool
-	channels               map[string]*model.Channel
-	histSetCount           int
-	failHistSet            int
-	failNextMeta           bool
-	onFailNextMeta         func(data map[string][]byte)
-	beforeHistCAS          func(data map[string][]byte)
-	unreadable             map[string]bool
-	beforeSHAClaim         func(data map[string][]byte, key string)
-	rejectHistCAS          bool
-	histCASCount           int
-	failHistCASAt          int
-	failSHADeletes         int
-	failMetaDelete         bool
-	failBlobDeletes        int
-	siteCountWriteCount    int
-	failSiteCountWriteAt   int
-	failSiteCountWriteFrom int
+	mu              sync.Mutex
+	data            map[string][]byte
+	permissionAll   bool
+	readAll         bool
+	channels        map[string]*model.Channel
+	histSetCount    int
+	failHistSet     int
+	failNextMeta    bool
+	onFailNextMeta  func(data map[string][]byte)
+	beforeHistCAS   func(data map[string][]byte)
+	unreadable      map[string]bool
+	beforeSHAClaim  func(data map[string][]byte, key string)
+	rejectHistCAS   bool
+	histCASCount    int
+	failHistCASAt   int
+	failSHADeletes  int
+	failMetaDelete  bool
+	failBlobDeletes int
 }
 
 func newMemoryKV() *memoryKV {
@@ -136,13 +133,6 @@ func (kv *memoryKV) KVCompareAndSet(key string, oldValue, newValue any) (bool, e
 		}
 		return false, errors.New("kv set failed")
 	}
-	if key == keySiteCount && newValue != nil {
-		kv.siteCountWriteCount++
-		if (kv.failSiteCountWriteAt > 0 && kv.siteCountWriteCount == kv.failSiteCountWriteAt) ||
-			(kv.failSiteCountWriteFrom > 0 && kv.siteCountWriteCount >= kv.failSiteCountWriteFrom) {
-			return false, errors.New("site count write failed")
-		}
-	}
 	if strings.HasPrefix(key, keyPrefixHist) {
 		kv.histCASCount++
 		if kv.failHistCASAt > 0 && kv.histCASCount == kv.failHistCASAt {
@@ -157,8 +147,9 @@ func (kv *memoryKV) KVCompareAndSet(key string, oldValue, newValue any) (bool, e
 		return false, errors.New("sha delete failed")
 	}
 	if strings.HasPrefix(key, keyPrefixHist) && kv.beforeHistCAS != nil {
-		kv.beforeHistCAS(kv.data)
+		hook := kv.beforeHistCAS
 		kv.beforeHistCAS = nil
+		hook(kv.data)
 	}
 	if oldValue == nil && strings.HasPrefix(key, keyPrefixSHA) && kv.beforeSHAClaim != nil {
 		kv.beforeSHAClaim(kv.data, key)
@@ -543,17 +534,19 @@ func TestDeleteHeadLeavesHistoryWrittenDuringRestore(t *testing.T) {
 	require.NoError(t, store.ReplaceContent(entry, []byte("<html>2</html>"), 1024, 0))
 
 	kv.failNextMeta = true
-	kv.beforeHistCAS = func(data map[string][]byte) {
-		raw, err := json.Marshal(VersionHistory{Versions: []VersionRecord{
-			{Version: 1, SHA256: "old"},
-			{Version: 3, SHA256: "during-restore"},
-		}})
-		if err != nil {
-			return
-		}
-		for key := range data {
-			if strings.HasPrefix(key, keyPrefixHist) {
-				data[key] = raw
+	kv.beforeHistCAS = func(map[string][]byte) {
+		kv.beforeHistCAS = func(data map[string][]byte) {
+			raw, err := json.Marshal(VersionHistory{Versions: []VersionRecord{
+				{Version: 1, SHA256: "old"},
+				{Version: 3, SHA256: "during-restore"},
+			}})
+			if err != nil {
+				return
+			}
+			for key := range data {
+				if strings.HasPrefix(key, keyPrefixHist) {
+					data[key] = raw
+				}
 			}
 		}
 	}
@@ -610,8 +603,8 @@ func TestDeleteHeadKeepsBlobsWhenHistorySaveFails(t *testing.T) {
 	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
 	require.NoError(t, store.ReplaceContent(entry, []byte("<html>2</html>"), 1024, 0))
 
-	kv.histSetCount = 0
-	kv.failHistSet = 1
+	kv.histCASCount = 0
+	kv.failHistCASAt = 1
 	require.Error(t, store.DeleteHead(entry))
 
 	body, err := store.ReadContentAt(entry, 2)
@@ -908,56 +901,38 @@ func TestRetentionChannelIDsResumesAndWraps(t *testing.T) {
 	require.Len(t, seenAgain, len(want))
 }
 
-func TestSaveRepairsASiteCountLeftHighByACrash(t *testing.T) {
-	kv := newMemoryKV()
-	store := NewStore(kv)
-	first := testEntry(model.NewId())
-	require.NoError(t, store.Save(first, []byte("<html>a</html>"), 1024, 10, 0))
-	require.NoError(t, kv.KVSet(keySiteCount, 5))
-	require.NoError(t, kv.KVSet(keySiteCountDirty, true))
-
-	second := testEntry(model.NewId())
-	require.NoError(t, store.Save(second, []byte("<html>b</html>"), 1024, 10, 2))
-	third := testEntry(model.NewId())
-	err := store.Save(third, []byte("<html>c</html>"), 1024, 10, 2)
-	require.ErrorIs(t, err, ErrLimitReached)
-}
-
-func TestSaveRepairsTheSiteCountWhenReleaseFails(t *testing.T) {
-	kv := newMemoryKV()
-	store := NewStore(kv)
-	channelID := model.NewId()
-	first := testEntry(channelID)
-	require.NoError(t, store.Save(first, []byte("<html>a</html>"), 1024, 1, 0))
-
-	kv.failSiteCountWriteAt = 3
-	second := testEntry(channelID)
-	err := store.Save(second, []byte("<html>b</html>"), 1024, 1, 0)
-	require.Error(t, err)
-	require.ErrorIs(t, err, ErrLimitReached)
-
-	kv.failSiteCountWriteAt = 0
-	third := testEntry(model.NewId())
-	require.NoError(t, store.Save(third, []byte("<html>c</html>"), 1024, 10, 2))
-	fourth := testEntry(model.NewId())
-	err = store.Save(fourth, []byte("<html>d</html>"), 1024, 10, 2)
-	require.ErrorIs(t, err, ErrLimitReached)
-}
-
-func TestPurgeReturnsTheSiteCountErrorWhenRepairFails(t *testing.T) {
+func TestDeleteHeadLeavesAHistoryWriteThatLandsBeforeTheShorten(t *testing.T) {
 	kv := newMemoryKV()
 	store := NewStore(kv)
 	entry := testEntry(model.NewId())
-	require.NoError(t, store.Save(entry, []byte("<html>a</html>"), 1024, 10, 1))
+	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
+	require.NoError(t, store.ReplaceContent(entry, []byte("<html>2</html>"), 1024, 0))
 
-	kv.failSiteCountWriteFrom = 2
-	require.Error(t, store.Purge(entry))
-	_, err := store.Get(entry.ID)
-	require.ErrorIs(t, err, ErrNotFound)
+	kv.beforeHistCAS = func(data map[string][]byte) {
+		raw, err := json.Marshal(VersionHistory{Versions: []VersionRecord{
+			{Version: 1, SHA256: "old"},
+			{Version: 3, SHA256: "concurrent"},
+		}})
+		if err != nil {
+			return
+		}
+		for key := range data {
+			if strings.HasPrefix(key, keyPrefixHist) {
+				data[key] = raw
+			}
+		}
+	}
+	err := store.DeleteHead(entry)
+	require.ErrorIs(t, err, ErrConflict)
 
-	kv.failSiteCountWriteFrom = 0
-	again := testEntry(model.NewId())
-	require.NoError(t, store.Save(again, []byte("<html>b</html>"), 1024, 10, 1))
+	versions, err := store.ListVersions(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, []int{1, 3}, []int{versions[0].Version, versions[1].Version})
+	stored, err := store.Get(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, 2, stored.Version)
+	var blob []byte
+	require.NoError(t, kv.KVGet(versionedBlobKey(entry.ID, 2, 0), &blob))
 }
 
 func TestUpdateMetaDoesNotOverwriteANewerHead(t *testing.T) {
