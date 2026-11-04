@@ -40,7 +40,7 @@ import type {
 
 import {LicenseChip} from './enterprise_chip';
 
-import {BooleanItem, FormRow, HelpText, ItemLabel, ItemList, TextFieldContainer, TextItem} from './item';
+import {BooleanItem, CredentialsClearedNote, FormRow, HelpText, ItemLabel, ItemList, TextFieldContainer, TextItem} from './item';
 import {SECRET_PLACEHOLDER} from './plugin_config_types';
 
 export type MCPToolConfig = BaseMCPToolConfig;
@@ -1027,11 +1027,6 @@ const HeaderRow = styled.div`
     display: flex;
     gap: var(--spacing-xs);
     align-items: center;
-`;
-
-const CredentialsClearedNote = styled.div`
-    margin-top: 4px;
-    color: var(--error-text);
 `;
 
 const HeaderInput = styled(TextInput)`

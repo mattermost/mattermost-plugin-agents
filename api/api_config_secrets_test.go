@@ -713,3 +713,42 @@ func TestSaveConfigKeepsServiceCredentialOnlyForSavedEndpoint(t *testing.T) {
 		})
 	}
 }
+
+// The save response carries the stored config, so it must be masked like GET.
+func TestSaveConfigResponseDoesNotReturnCredentials(t *testing.T) {
+	const typedKey = "typed-replacement-key"
+
+	tests := []struct {
+		name  string
+		apply func(cfg *config.Config)
+	}{
+		{name: "unmodified read response", apply: func(*config.Config) {}},
+		{name: "replaced credential", apply: func(cfg *config.Config) { cfg.Services[0].APIKey = typedKey }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &testConfigStore{cfg: storedCredentialConfig()}
+			router := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
+
+			var read config.Config
+			require.NoError(t, json.Unmarshal(getAdminConfig(t, store), &read))
+			tt.apply(&read)
+			payload, err := json.Marshal(read)
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(payload))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, http.StatusOK, w.Code)
+
+			body := w.Body.String()
+			for _, field := range credentialFields() {
+				assert.NotContains(t, body, field.get(*storedCredentialConfig()), "%s must not be returned by the save response", field.name)
+			}
+			assert.NotContains(t, body, typedKey)
+			assert.Contains(t, body, config.SecretPlaceholder)
+		})
+	}
+}

@@ -114,8 +114,8 @@ func (a *API) handleGetConfig(c *gin.Context) {
 
 // handleSaveConfig saves a new plugin configuration to the database,
 // updates the in-memory configuration, and notifies other cluster nodes.
-// It responds with the normalized saved config so clients can adopt
-// server-minted service/MCP server IDs without a refetch.
+// It responds with the normalized saved config, credentials masked as in GET,
+// so clients can adopt server-minted service/MCP server IDs without a refetch.
 // PUT /admin/config
 func (a *API) handleSaveConfig(c *gin.Context) {
 	var cfg config.Config
@@ -226,7 +226,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, saved)
+	c.JSON(http.StatusOK, config.RedactSecrets(saved))
 }
 
 // vettedDefaultToolPolicy returns the vetted default policy the System Console

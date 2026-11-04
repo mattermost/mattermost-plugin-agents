@@ -1,12 +1,13 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {useState} from 'react';
 import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import {chooseOption, getSelect, optionLabels, selectedLabel} from '../../../tests/compass_select';
 
+import {SECRET_PLACEHOLDER} from './plugin_config_types';
 import Service, {ServiceFields, type LLMService} from './service';
 
 jest.mock('react-intl', () => {
@@ -532,5 +533,71 @@ describe('ServiceFields Cohere North', () => {
         renderFields(northService);
         expect(screen.getByText('Structured output')).toBeTruthy();
         expect(screen.getByText('Auto (recommended)')).toBeTruthy();
+    });
+});
+
+describe('ServiceFields credentials when the provider or endpoint changes', () => {
+    const CLEARED_NOTE = 'Saved credentials do not carry over to a different URL. Re-enter them before saving.';
+    const savedService: LLMService = {
+        ...baseService,
+        type: 'openaicompatible',
+        apiURL: 'https://llm.example.com/v1',
+        apiKey: SECRET_PLACEHOLDER,
+    };
+
+    beforeEach(() => {
+        fetchModels.mockResolvedValue([]);
+    });
+
+    function renderEditable() {
+        let latest = savedService;
+        const Harness = () => {
+            const [service, setService] = useState(savedService);
+            latest = service;
+            return (
+                <IntlProvider locale='en'>
+                    <ServiceFields
+                        service={service}
+                        onChange={setService}
+                    />
+                </IntlProvider>
+            );
+        };
+        render(<Harness/>);
+        return () => latest;
+    }
+
+    const urlField = () => screen.getByDisplayValue('https://llm.example.com/v1');
+
+    it('empties the masked key and explains why when the provider type changes', () => {
+        const service = renderEditable();
+
+        chooseOption(getSelect('Service type'), 'Anthropic');
+
+        expect(service().apiKey).toBe('');
+        expect(screen.getByText(CLEARED_NOTE)).toBeTruthy();
+    });
+
+    it('empties the masked key when the API URL changes and the field is left', () => {
+        const service = renderEditable();
+
+        fireEvent.change(urlField(), {target: {value: 'https://other.example.com/v1'}});
+        expect(service().apiKey).toBe(SECRET_PLACEHOLDER);
+
+        fireEvent.blur(screen.getByDisplayValue('https://other.example.com/v1'));
+
+        expect(service().apiKey).toBe('');
+        expect(screen.getByText(CLEARED_NOTE)).toBeTruthy();
+    });
+
+    it('keeps the masked key when the URL is put back before leaving the field', () => {
+        const service = renderEditable();
+
+        fireEvent.change(urlField(), {target: {value: 'https://other.example.com/v1'}});
+        fireEvent.change(screen.getByDisplayValue('https://other.example.com/v1'), {target: {value: savedService.apiURL}});
+        fireEvent.blur(urlField());
+
+        expect(service().apiKey).toBe(SECRET_PLACEHOLDER);
+        expect(screen.queryByText(CLEARED_NOTE)).toBeNull();
     });
 });
