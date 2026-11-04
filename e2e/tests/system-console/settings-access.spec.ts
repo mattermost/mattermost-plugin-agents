@@ -66,7 +66,8 @@ async function grant(page: Page, pickerName: string, username: string): Promise<
     const picker = page.getByRole('combobox', { name: pickerName });
     await picker.click();
     await picker.fill(username);
-    await page.getByRole('listbox').getByRole('option', { name: username, exact: true }).click();
+    const listboxID = await picker.getAttribute('aria-controls');
+    await page.locator(`[id="${listboxID}"]`).getByRole('option', { name: username, exact: true }).click();
 }
 
 const settingsRow = (page: Page) => page.getByRole('navigation', { name: 'Agents' }).getByRole('button', { name: 'Settings' });
