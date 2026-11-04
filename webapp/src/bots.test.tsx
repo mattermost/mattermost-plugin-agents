@@ -266,13 +266,13 @@ describe('filterBotsByChannelAccess', () => {
 });
 
 describe('fetchAndStoreBots', () => {
-    test('dispatches the bots and feature flags, and returns the bots', async () => {
+    test('dispatches the bots and feature flags', async () => {
         const bots = [makeBot('a')];
         const linkPolicy = {kind: 'allowlist', allowedDomains: [{host: 'example.com', wildcard: false}]};
         mockGetAIBots.mockResolvedValue({bots, searchEnabled: true, allowUnsafeLinks: true, linkPolicy, htmlArtifactsEnabled: true});
         const dispatch = jest.fn();
 
-        await expect(fetchAndStoreBots(dispatch)).resolves.toBe(bots);
+        await fetchAndStoreBots(dispatch);
 
         expect(dispatch).toHaveBeenCalledWith({type: BotsHandler, bots});
         expect(dispatch).toHaveBeenCalledWith({type: SetLinkPolicyHandler, linkPolicy});
@@ -329,16 +329,16 @@ describe('fetchAndStoreBots', () => {
             ['plugins-' + manifest.id]: pluginReducer!(state['plugins-' + manifest.id], action),
         }));
 
-        await expect(fetchAndStoreBots(store.dispatch)).resolves.toHaveLength(1);
+        await fetchAndStoreBots(store.dispatch);
 
         expect(getLinkPolicy(store.getState() as any)).toEqual({kind: 'plain_text'});
     });
 
-    test('returns null and dispatches nothing when the response is falsy', async () => {
+    test('dispatches nothing when the response is falsy', async () => {
         mockGetAIBots.mockResolvedValue(null);
         const dispatch = jest.fn();
 
-        await expect(fetchAndStoreBots(dispatch)).resolves.toBeNull();
+        await fetchAndStoreBots(dispatch);
 
         expect(dispatch).not.toHaveBeenCalled();
     });
