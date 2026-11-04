@@ -42,7 +42,6 @@ describeAIMockCitationCase({
         await llmBotHelper.expectReasoningExpanded(true);
         await expect(llmBotHelper.getReasoningContent()).toContainText(COMBINED_REASONING_TEXT);
 
-        await llmBotHelper.getCitationWrapper(1).scrollIntoViewIfNeeded();
         await llmBotHelper.hoverCitation(1);
         await expect(llmBotHelper.getCitationTooltip()).toBeVisible({ timeout: 5000 });
         await expect(llmBotHelper.getCitationTooltip()).toContainText('typescriptlang.org');
