@@ -119,6 +119,9 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	if conv.UserID != userID {
 		return ErrNotRequester
 	}
+	if err = conversation.CheckRootPost(c.mmClient, conv); err != nil {
+		return err
+	}
 	// Props select the regenerate path and its sources, so they are only
 	// trusted on a post the conversation's own bot authored.
 	if post.UserId != conv.BotID {

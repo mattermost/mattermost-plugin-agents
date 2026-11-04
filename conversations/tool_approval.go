@@ -144,6 +144,9 @@ func (c *Conversations) beginToolDecision(ctx context.Context, spanName, logMsg,
 	if conv.UserID != userID {
 		return fail(ErrNotRequester)
 	}
+	if err = conversation.CheckRootPost(c.mmClient, conv); err != nil {
+		return fail(err)
+	}
 
 	turns, err := c.convService.GetTurns(convID)
 	if err != nil {

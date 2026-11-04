@@ -4,9 +4,11 @@
 package conversations_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -151,4 +153,48 @@ func TestArchiveDuringAcceptedDMTurn(t *testing.T) {
 	require.NotEmpty(t, archivedConvID, "the conversation must have been archived mid-turn")
 	assert.Len(t, env.llmRequests(), 1, "the accepted turn must still reach the LLM")
 	assert.NotZero(t, env.convStore.deleteAt(archivedConvID), "the running turn must not restore the conversation")
+}
+
+// TestRegenerateAndToolDecisionRefuseDeletedRoot pins that regenerate and
+// tool decisions refuse an active conversation whose root post was deleted,
+// even though root deletion leaves the conversation row untouched.
+func TestRegenerateAndToolDecisionRefuseDeletedRoot(t *testing.T) {
+	entries := []struct {
+		name string
+		call func(t *testing.T, env *policyEnv) func() error
+	}{
+		{
+			name: "regenerate",
+			call: func(t *testing.T, env *policyEnv) func() error {
+				botPost := env.seedRun(t, env.dm, nil, humanPost("what is the weather"), earlierAnswer(), nil)
+				return func() error {
+					return env.conversations.HandleRegenerate(context.Background(), autoReplyUserID, botPost, env.dm)
+				}
+			},
+		},
+		{
+			name: "tool approve",
+			call: func(t *testing.T, env *policyEnv) func() error {
+				botPost := env.seedRun(t, env.dm, nil, humanPost("what time is it"), pendingTimeBlock(), nil)
+				return func() error {
+					return env.conversations.HandleToolCall(context.Background(), autoReplyUserID, botPost, env.dm, []string{"tc-time"}, nil)
+				}
+			},
+		},
+	}
+
+	for _, entry := range entries {
+		t.Run(entry.name, func(t *testing.T) {
+			env := setupInvariantEnv(t, policyBotConfig(), dmMakeTextStream("answer"))
+			start := entry.call(t, env)
+			convs := allConversations(env.convStore)
+			require.Len(t, convs, 1)
+			require.NotNil(t, convs[0].RootPostID)
+			env.mmClient.posts[*convs[0].RootPostID] = &model.Post{Id: *convs[0].RootPostID, DeleteAt: model.GetMillis()}
+			before := env.state()
+
+			require.ErrorIs(t, start(), conversation.ErrRootPostDeleted)
+			requireNothingRan(t, env, before)
+		})
+	}
 }
