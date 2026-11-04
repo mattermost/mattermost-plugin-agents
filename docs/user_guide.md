@@ -13,7 +13,7 @@ You message an agent in a direct message or the Agents pane. When a request need
 - "Open a GitHub issue for the bug in this thread and reply with the link."
 - "Summarize what I missed in ~incident-room since yesterday, then post a two-line status in ~leadership."
 
-Every tool call runs as you, and the agent asks before it changes anything your admin hasn't set to run automatically. See [Use Agents as your personal AI assistant](personal_agent.md) for what agents can do and how to prompt them, and [Use tools and approve actions](using_tools.md) for approvals.
+Tools run as you, except external MCP tools on an agent that uses a shared service account. The agent asks before it changes anything your admin hasn't set to run automatically. See [Use Agents as your personal AI assistant](personal_agent.md) for what agents can do and how to prompt them, and [Use tools and approve actions](using_tools.md) for approvals.
 
 ## What you can do
 
@@ -77,7 +77,7 @@ Ask the agent to put long output in a file, for example "the meeting notes as a 
 
 ## What an agent sees and keeps
 
-An agent reads the conversation it's in and whatever its tools return, all with your permissions. Conversations are stored in Mattermost's database. With a cloud model the provider receives the content, and with a self-hosted model it stays in your organization. See [What agents can see and keep](what_agents_see.md).
+An agent reads the conversation it's in and whatever its tools return, with your permissions, except external MCP tools on an agent that uses a shared service account. Conversations are stored in Mattermost's database. With a cloud model the provider receives the content sent to the model, and with a self-hosted model that content stays in your organization. See [What agents can see and keep](what_agents_see.md).
 
 ## Links in AI responses
 

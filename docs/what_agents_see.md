@@ -1,6 +1,6 @@
 # What agents can see and keep
 
-An agent reads the conversation it's in plus what its tools return, and it acts with your permissions. Conversations with an agent are stored in the Mattermost database. Your System Admin chose the AI model, so ask your admin whether it's self-hosted or run by a vendor.
+An agent reads the conversation it's in plus what its tools return, and it normally acts with your permissions. An agent set up with a shared service account uses that account for external tools. Conversations with an agent are stored in the Mattermost database. Your System Admin chose the AI model, so ask your admin whether it's self-hosted or run by a vendor.
 
 ## What an agent reads
 

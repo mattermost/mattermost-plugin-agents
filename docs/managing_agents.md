@@ -17,7 +17,7 @@ The page lists the agents you can use, on two tabs: **All agents** and **Your ag
 | **Inactive** | The agent is stored but not running. Hover for the reason. See [Inactive agents](#inactive-agents). |
 | **Read only** | You can use the agent but can't edit it. |
 
-**System Console > Plugins > Agents > AI Bots** shows a notice that points to this page. Only the **Limit agent version history** setting lives there.
+**System Console > Plugins > Agents > AI Bots** shows a notice that points to this page. Only the **Limit agent version history** and **Versions to keep per agent** settings live there.
 
 ## Who can create and edit agents
 
@@ -31,7 +31,7 @@ By default the System User role includes `manage_own_agent`, so every user can c
 
 A user can edit or delete an agent when they're its creator, listed in its **Agent admins**, hold `manage_others_agent`, or are a System Admin and the agent has no creator. The server applies the same rules to the API.
 
-A user sees an agent only if they can use it, with exceptions for System Admins and agent admins. See [Visibility](access_control.md#visibility). Agent counts are capped by license. See [License requirements](admin_guide.md#license-requirements).
+A user sees an agent only if they can use it. System Admins also see agents whose service policy denies them, and an agent's creator and agent admins also see it when its agent policy denies them. See [Visibility](access_control.md#visibility). Agent counts are capped by license. See [License requirements](admin_guide.md#license-requirements).
 
 ## Create an agent
 

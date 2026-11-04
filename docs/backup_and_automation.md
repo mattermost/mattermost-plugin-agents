@@ -25,7 +25,7 @@ Restoring a backup that predates a credential change restores the old credential
 
 ## Back up
 
-1. Include the Mattermost database in your normal backup. That covers every table above.
+1. Include the Mattermost database in your normal backup. That covers every table above. Agent avatars are profile images, so also back up the Mattermost file store.
 2. For a large semantic search index, snapshot `llm_posts_embeddings` too.
 3. To restore, restore the database, then enable the plugin. Restoring only `config.json` doesn't bring back agents or services.
 
@@ -78,7 +78,7 @@ Service types are `openai`, `anthropic`, `azure`, `openaicompatible`, `bedrock`,
 
 Agents have REST routes under `/plugins/mattermost-ai/agents`: `POST` to create, `GET` to list, and `GET`, `PUT`, and `DELETE` on `/{agentid}`. They also have `/{agentid}/avatar`, `/{agentid}/versions`, and `/{agentid}/access_policy`. These routes enforce the same permissions and license limits as the Agents page. `PUT` is a full-document save. Send every field. Send `mcpDynamicToolLoading` explicitly on create and update, because omitting it stores `false`.
 
-Every state-changing call is written to the audit log. See [Monitor Agents](observability.md#audit-logging).
+Every state-changing call except skill pins is written to the audit log. See [Monitor Agents](observability.md#audit-logging).
 
 ## High availability
 

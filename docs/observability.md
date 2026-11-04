@@ -120,13 +120,14 @@ Cached token, reasoning token, and cost attributes appear only when the provider
 
 ## Audit logging
 
-Agents sends a server audit record for every state-changing operation:
+Agents sends a server audit record for every state-changing operation except pinning and unpinning skills:
 
 - Configuration saves.
 - Reindex, cancel, catch up, and rebuild actions, and the MCP tool cache clear.
 - Agent create, update, delete, avatar, version restore, and version deletion.
 - Skill (custom prompt) create, update, and delete.
 - Channel auto-reply changes.
+- Conversation renames and the wait controls (check now, cancel).
 - MCP OAuth start, callback, and disconnect, and per-user tool preferences.
 - Access policy changes for agents, services, and MCP servers.
 - Inter-plugin MCP server registration and unregistration, and admin changes to plugin-registered MCP servers (`updateMCPPluginServer`).

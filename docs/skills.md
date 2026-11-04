@@ -36,7 +36,7 @@ Instructions use Go `text/template` syntax. These are the only variables availab
 | `{{.ChannelName}}` | The current channel's name |
 | `{{.Team}}` | The current team's display name |
 | `{{.TeamName}}` | The current team's name |
-| `{{.Time}}` | The current date and time in UTC, in RFC 1123 format |
+| `{{.Time}}` | The current date and time in your time zone, in RFC 1123 format. UTC if your time zone isn't set |
 | `{{.BotName}}` | The selected agent's display name |
 
 A variable with no value in the current context, such as `{{.Team}}` in a direct message, renders as empty text.

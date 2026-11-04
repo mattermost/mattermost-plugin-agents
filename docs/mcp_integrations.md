@@ -166,7 +166,7 @@ Request limits and client-side symptoms are in [Mattermost MCP server](mcp_serve
 
 ## Connections and timeouts
 
-Each user has their own connection to each MCP server. **Connection Idle Timeout (minutes)** closes inactive connections. The default is 30. A lower value frees resources, and a higher one speeds up repeat requests.
+Each user has their own connection to each MCP server, except agents that use service accounts, which share one connection per agent. **Connection Idle Timeout (minutes)** closes inactive connections. The default is 30. A lower value frees resources, and a higher one speeds up repeat requests.
 
 ## Related
 
