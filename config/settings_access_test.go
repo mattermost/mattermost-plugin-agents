@@ -174,12 +174,17 @@ func TestRedactURL(t *testing.T) {
 		in   string
 		want string
 	}{
-		{name: "plain URL is kept", in: "https://api.example.com/v1", want: "https://api.example.com/v1"},
+		{name: "origin is kept", in: "https://api.example.com", want: "https://api.example.com"},
+		{name: "port is kept", in: "http://collector.example.com:4318/v1/traces", want: "http://collector.example.com:4318"},
 		{name: "host and port without a scheme are kept", in: "collector:4317", want: "collector:4317"},
-		{name: "user info is removed", in: "https://user:pass@api.example.com/v1", want: "https://api.example.com/v1"},
-		{name: "query values are blanked, names kept", in: "https://api.example.com/v1?api-key=secret&region=eu", want: "https://api.example.com/v1?api-key=&region="},
-		{name: "fragment is removed", in: "https://api.example.com/#token=secret", want: "https://api.example.com/"},
-		{name: "credentials without a scheme are dropped", in: "user:pass@collector:4317", want: ""},
+		{name: "path is removed: it can carry a token", in: "https://gateway.example.com/sk-secret/v1", want: "https://gateway.example.com"},
+		{name: "user info is removed", in: "https://user:pass@api.example.com/v1", want: "https://api.example.com"},
+		{name: "query is removed", in: "https://api.example.com/v1?api-key=secret&region=eu", want: "https://api.example.com"},
+		{name: "fragment is removed", in: "https://api.example.com/#token=secret", want: "https://api.example.com"},
+		{name: "credentials without a scheme are removed", in: "user:pass@collector:4317", want: "collector:4317"},
+		{name: "path without a scheme is removed", in: "collector:4317/secret-token", want: "collector:4317"},
+		{name: "IPv6 host and port are kept", in: "http://[::1]:8080/secret", want: "http://[::1]:8080"},
+		{name: "scheme without a host is dropped", in: "file:///etc/secret", want: ""},
 		{name: "empty stays empty", in: "", want: ""},
 	}
 	for _, tt := range tests {

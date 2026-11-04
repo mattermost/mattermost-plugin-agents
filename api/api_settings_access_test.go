@@ -195,13 +195,13 @@ func configWithEverySecret() *config.Config {
 			AWSAccessKeyID:        "sentinel-aws-access-key-id",
 			AWSSecretAccessKey:    "sentinel-aws-secret",
 			VertexAuthCredentials: "sentinel-vertex-credentials",
-			APIURL:                "https://proxyuser:sentinel-service-url-password@llm.example.com/v1?api-key=sentinel-service-url-key",
+			APIURL:                "https://proxyuser:sentinel-service-url-password@llm.example.com/sentinel-service-path-token/v1?api-key=sentinel-service-url-key",
 		}},
 		MCP: config.MCPConfig{
 			Servers: []config.MCPServerConfig{{
 				ID:                    "server1",
 				Name:                  "Tracker",
-				BaseURL:               "https://mcp.example.com/sse?token=sentinel-mcp-url-token",
+				BaseURL:               "https://mcp.example.com/sentinel-mcp-path-token/sse?token=sentinel-mcp-url-token",
 				Headers:               map[string]string{"X-Api-Key": "sentinel-mcp-header"},
 				ServiceAccountHeaders: map[string]string{"Authorization": "sentinel-mcp-service-account"},
 				ClientID:              "client-id",
@@ -210,17 +210,17 @@ func configWithEverySecret() *config.Config {
 		},
 		WebSearch: config.WebSearchConfig{
 			Google:  config.WebSearchGoogleConfig{APIKey: "sentinel-google-key"},
-			Brave:   config.WebSearchBraveConfig{APIKey: "sentinel-brave-key"},
 			SearXNG: config.WebSearchSearXNGConfig{BaseURL: "https://searx:sentinel-searxng-password@searx.example.com"},
+			Brave:   config.WebSearchBraveConfig{APIKey: "sentinel-brave-key", APIURL: "https://brave.example.com/sentinel-brave-path-token/search"},
 		},
 		EmbeddingSearchConfig: embeddings.EmbeddingSearchConfig{
 			EmbeddingProvider: embeddings.UpstreamConfig{
 				Type:       "openai",
-				Parameters: json.RawMessage(`{"apiKey":"sentinel-embedding-key","embeddingModel":"text-embedding-3-small","apiURL":"https://embed.example.com/v1?key=sentinel-embedding-url-key","fallbacks":[{"apiKey":"sentinel-embedding-nested-key"}]}`),
+				Parameters: json.RawMessage(`{"apiKey":"sentinel-embedding-key","embeddingModel":"text-embedding-3-small","apiURL":"https://embed.example.com/sentinel-embedding-path-token/v1?key=sentinel-embedding-url-key","fallbacks":[{"apiKey":"sentinel-embedding-nested-key"}]}`),
 			},
 		},
 		OpenTelemetryHeaders:  "Authorization=sentinel-otlp-header",
-		OpenTelemetryEndpoint: "https://otlp:sentinel-otlp-url-password@collector.example.com:4317",
+		OpenTelemetryEndpoint: "https://otlp:sentinel-otlp-url-password@collector.example.com:4317/sentinel-otlp-path-token",
 	}
 }
 
@@ -243,6 +243,11 @@ var everySecret = []string{
 	"sentinel-embedding-url-key",
 	"sentinel-embedding-nested-key",
 	"sentinel-otlp-url-password",
+	"sentinel-service-path-token",
+	"sentinel-mcp-path-token",
+	"sentinel-brave-path-token",
+	"sentinel-embedding-path-token",
+	"sentinel-otlp-path-token",
 }
 
 func TestGetConfigSecretsByAccessLevel(t *testing.T) {
@@ -278,7 +283,7 @@ func TestGetConfigSecretsByAccessLevel(t *testing.T) {
 			assert.Contains(t, body, "Primary")
 			assert.Contains(t, body, "text-embedding-3-small")
 			assert.Contains(t, body, "X-Api-Key")
-			assert.Contains(t, body, "llm.example.com/v1")
+			assert.Contains(t, body, "llm.example.com")
 			assert.NotContains(t, body, "settingsAccess")
 			assert.NotContains(t, body, users.readOnly)
 		})

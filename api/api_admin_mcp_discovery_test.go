@@ -377,7 +377,7 @@ func TestHandleGetMCPToolsReadOnlyConflictErrorsCarryNoURLCredentials(t *testing
 	api.config.(*testConfigImpl).settingsAccess = config.SettingsAccess{ReadOnlyUserIDs: []string{"admin-user"}}
 
 	// Two stored entries on the same endpoint, saved before duplicates were rejected.
-	endpoint := "https://mcpuser:sentinel-conflict-password@mcp.example.com/mcp?token=sentinel-conflict-token"
+	endpoint := "https://mcpuser:sentinel-conflict-password@mcp.example.com/sentinel-conflict-path/mcp?token=sentinel-conflict-token"
 	api.config.(*testConfigImpl).mcpConfig = mcp.Config{
 		Enabled: true,
 		Servers: []mcp.ServerConfig{
@@ -396,11 +396,13 @@ func TestHandleGetMCPToolsReadOnlyConflictErrorsCarryNoURLCredentials(t *testing
 		require.Contains(t, *row.Error, "mcp.example.com", "the message still names the endpoint")
 		require.NotContains(t, *row.Error, "sentinel-conflict-password")
 		require.NotContains(t, *row.Error, "sentinel-conflict-token")
+		require.NotContains(t, *row.Error, "sentinel-conflict-path")
 	}
 	require.Positive(t, conflicted, "the duplicate endpoint is reported")
 }
 
 func TestHandleGetMCPToolsReadOnlyViewersDoNotReachRemoteServers(t *testing.T) {
+	const secretPath = "/sentinel-mcp-path-token/"
 	const secretQuery = "token=sentinel-mcp-url-token"
 
 	tests := []struct {
@@ -423,7 +425,7 @@ func TestHandleGetMCPToolsReadOnlyViewersDoNotReachRemoteServers(t *testing.T) {
 			remote := newDiscoveryMCPServer(t, "remote_tool", 0)
 			api.config.(*testConfigImpl).mcpConfig = mcp.Config{
 				Enabled: true,
-				Servers: []mcp.ServerConfig{{Name: "Remote", BaseURL: remote.URL + "/?" + secretQuery, Enabled: true}},
+				Servers: []mcp.ServerConfig{{Name: "Remote", BaseURL: remote.URL + secretPath + "?" + secretQuery, Enabled: true}},
 			}
 			api.mcpClientManager.(*mockMCPClientManager).httpClient = &http.Client{}
 
@@ -439,6 +441,7 @@ func TestHandleGetMCPToolsReadOnlyViewersDoNotReachRemoteServers(t *testing.T) {
 			require.Zero(t, remote.requests.Load(), "a read-only viewer must not make the server connect with the admin's headers")
 			require.Empty(t, row.Tools, "nothing is cached, so nothing is listed")
 			require.NotContains(t, row.URL, "sentinel-mcp-url-token")
+			require.NotContains(t, row.URL, "sentinel-mcp-path-token")
 		})
 	}
 }

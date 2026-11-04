@@ -351,3 +351,25 @@ describe('MCPToolsViewer — plugin branch', () => {
     });
 });
 
+test('lists servers that share a URL, as read-only viewers get them, as separate rows', () => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => null);
+    try {
+        renderViewer({
+            servers: ['Tracker', 'Wiki'].map((name) => ({
+                name,
+                url: 'https://mcp.example.com',
+                serverType: 'remote',
+                enabled: true,
+                tools: [],
+                needsOAuth: false,
+                error: null,
+            })),
+        });
+
+        expect(screen.getByText('Tracker')).toBeTruthy();
+        expect(screen.getByText('Wiki')).toBeTruthy();
+        expect(consoleError.mock.calls.flat().join(' ')).not.toMatch(/same key/);
+    } finally {
+        consoleError.mockRestore();
+    }
+});

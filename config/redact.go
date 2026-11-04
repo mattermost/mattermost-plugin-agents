@@ -19,8 +19,7 @@ var secretParameterMarkers = []string{"key", "secret", "token", "password", "cre
 // service API keys and cloud credentials, MCP server headers and OAuth client
 // secrets, web search API keys, embedding provider keys, and OTLP export
 // headers. Header names are kept so viewers can see which headers are set.
-// Every URL loses its user info and query values, where admins sometimes put
-// credentials.
+// Every URL is reduced to its scheme, host and port (RedactURL).
 func (c *Config) WithoutSecrets() Config {
 	out := *c.Clone()
 
@@ -137,31 +136,27 @@ func isSecretParameter(name string) bool {
 	return false
 }
 
-// RedactURL removes the user info and blanks the query values of a URL, the
-// places a credential can hide in one. A value that has user info or a query
-// but cannot be parsed is dropped.
+// RedactURL reduces a URL to its scheme, host and port. Credentials hide in
+// the user info, the query, the fragment and the path (gateway and webhook
+// URLs carry tokens as path segments), and which path segments are secret
+// cannot be told apart, so only the origin is kept. A value without a scheme
+// keeps only its host and port. A value that cannot be parsed is dropped.
 func RedactURL(raw string) string {
-	if !strings.ContainsAny(raw, "@?#") {
-		return raw
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if !strings.Contains(raw, "://") {
+		// "host:port" or "user:pass@host:port/path": parse it as an authority.
+		u, err := url.Parse("//" + raw)
+		if err != nil {
+			return ""
+		}
+		return u.Host
 	}
 	u, err := url.Parse(raw)
-	if err != nil {
+	if err != nil || u.Scheme == "" || u.Host == "" {
 		return ""
 	}
-	// Without a scheme, "user:pass@host" parses as an opaque URL with the
-	// credentials in Opaque instead of User.
-	if strings.Contains(u.Opaque, "@") {
-		return ""
-	}
-	u.User = nil
-	u.Fragment = ""
-	u.RawFragment = ""
-	if u.RawQuery != "" {
-		query := u.Query()
-		for key := range query {
-			query[key] = []string{""}
-		}
-		u.RawQuery = query.Encode()
-	}
-	return u.String()
+	return (&url.URL{Scheme: u.Scheme, Host: u.Host}).String()
 }

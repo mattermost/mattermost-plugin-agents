@@ -333,9 +333,12 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
 
                 {toolsData && toolsData.servers.length > 0 && (
                     <ServersList>
-                        {toolsData.servers.map((server) => (
+                        {toolsData.servers.map((server, index) => (
                             <MCPServerToolRow
-                                key={server.url}
+
+                                // Read-only viewers get every URL reduced to its origin, so two servers on
+                                // one host share a URL; duplicate-endpoint conflicts do for everyone.
+                                key={`${index}:${server.name}:${server.url}`}
                                 server={server}
                                 serverConfig={findServerConfig(server)}
                                 onServerConfigChange={(updatedConfig) =>
