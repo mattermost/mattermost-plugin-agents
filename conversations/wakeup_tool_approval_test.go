@@ -22,6 +22,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm/llmtest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
@@ -37,42 +38,6 @@ const (
 	createPullRequestTool = "github__create_pull_request"
 )
 
-// scriptedToolCallLLM answers each request with the next scripted tool call
-// batch, then with plain text once the script runs out.
-type scriptedToolCallLLM struct {
-	mu       sync.Mutex
-	script   [][]llm.ToolCall
-	requests []llm.CompletionRequest
-}
-
-func (l *scriptedToolCallLLM) ChatCompletion(_ context.Context, request llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.requests = append(l.requests, request)
-	if len(l.script) == 0 {
-		return dynamicWorkflowStream(llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Opened the pull request."}), nil
-	}
-	calls := l.script[0]
-	l.script = l.script[1:]
-	return dynamicWorkflowStream(llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: calls}), nil
-}
-
-func (l *scriptedToolCallLLM) ChatCompletionNoStream(context.Context, llm.CompletionRequest, ...llm.LanguageModelOption) (string, error) {
-	return "title", nil
-}
-
-func (l *scriptedToolCallLLM) CountTokens(context.Context, llm.CompletionRequest, ...llm.LanguageModelOption) (int, error) {
-	return 0, llm.ErrUnsupportedTokenCount
-}
-func (l *scriptedToolCallLLM) InputTokenLimit() int  { return 100000 }
-func (l *scriptedToolCallLLM) OutputTokenLimit() int { return 8192 }
-
-func (l *scriptedToolCallLLM) recorded() []llm.CompletionRequest {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return append([]llm.CompletionRequest(nil), l.requests...)
-}
-
 // channelWakeApprovalEnv is a channel thread in which the requester asked the
 // agent to wait, wired with the production streaming service so every
 // response the agent streams is persisted as the turn a click resolves.
@@ -80,7 +45,7 @@ type channelWakeApprovalEnv struct {
 	convStore     *loadedStateFlowStore
 	convService   *conversation.Service
 	conv          *store.Conversation
-	lm            *scriptedToolCallLLM
+	lm            *llmtest.ScriptedToolCallLLM
 	kv            *kvFake
 	c             *Conversations
 	channel       *model.Channel
@@ -96,7 +61,7 @@ type channelWakeApprovalEnv struct {
 func newChannelWakeApprovalEnv(t *testing.T) *channelWakeApprovalEnv {
 	t.Helper()
 	env := &channelWakeApprovalEnv{
-		lm:      &scriptedToolCallLLM{},
+		lm:      &llmtest.ScriptedToolCallLLM{},
 		channel: &model.Channel{Id: wakeApprovalChannelID, TeamId: "team-id", Type: model.ChannelTypeOpen},
 		posts:   map[string]*model.Post{},
 	}
@@ -315,10 +280,10 @@ func (e *channelWakeApprovalEnv) shareAndFollowUp(t *testing.T, wakePost *model.
 	t.Helper()
 	anchor, err := e.convStore.GetTurnByPostID(wakePost.Id)
 	require.NoError(t, err)
-	before := len(e.lm.recorded())
+	before := len(e.lm.Recorded())
 	require.NoError(t, e.c.HandleToolResult(context.Background(), wakeUserID, wakePost, e.channel, []string{toolUseID}))
 	e.waitForAnchor(t, wakePost.Id, anchor.ID)
-	requests := e.lm.recorded()
+	requests := e.lm.Recorded()
 	require.Len(t, requests, before+1, "sharing must stream exactly one follow-up")
 	return requests[before]
 }
@@ -343,10 +308,10 @@ func TestApproveToolCallOnWakePost(t *testing.T) {
 			for range tt.priorWakes {
 				waitPostID = env.addPriorWake(t)
 			}
-			env.lm.script = [][]llm.ToolCall{
+			env.lm.SetScript([][]llm.ToolCall{
 				{{ID: "load-1", Name: mcp.LoadToolName, Arguments: json.RawMessage(`{"name":"` + createPullRequestTool + `"}`)}},
 				{{ID: "pr-1", Name: createPullRequestTool, Arguments: json.RawMessage(`{}`)}},
-			}
+			})
 
 			wakePost := env.fireWake(t, waitPostID)
 			require.Equal(t, conversation.StatusPending, env.toolUseBlock(t, wakePost.Id, "pr-1").Status, "the wake must stop on the call awaiting approval")
