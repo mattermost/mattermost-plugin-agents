@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Audit event names for every state-changing operation in the plugin: 32
+// Audit event names for every state-changing operation in the plugin: 35
 // routed events plus the non-gin MCP session grant. All are declared here,
 // including ones whose instrumentation lands in later changes, so call sites
 // never use inline string literals; new state-changing routes add their
@@ -51,6 +51,9 @@ const (
 	// User preference: opting out of the agent mention reminder.
 	AuditEventSetAgentMentionReminderOptOut = "setAgentMentionReminderOptOut"
 
+	// Conversation management by its owner.
+	AuditEventRenameConversation = "renameConversation"
+
 	// Credentials: third-party MCP OAuth grant/revocation and per-user tool
 	// provider preferences.
 	AuditEventMCPOAuthStart            = "mcpOAuthStart"
@@ -65,6 +68,10 @@ const (
 	// In-channel tool approval: the human decision the server cannot see.
 	AuditEventToolCallApproval   = "toolCallApproval"
 	AuditEventToolResultApproval = "toolResultApproval"
+
+	// wait_for_async_work controls: the requester ending or canceling a pause.
+	AuditEventWaitCheckNow = "waitCheckNow"
+	AuditEventWaitCancel   = "waitCancel"
 
 	// MCP session grant: an external MCP client obtained a dedicated session
 	// holding API access as the user. Not a gin route — emitted directly by
@@ -131,6 +138,9 @@ func buildAuditEventRegistry(a *API) map[string]string {
 		// User preference.
 		handlerFuncName(a.handleAgentMentionReminderOptOut): AuditEventSetAgentMentionReminderOptOut,
 
+		// Conversation management.
+		handlerFuncName(a.handleRenameConversation): AuditEventRenameConversation,
+
 		// Credentials.
 		handlerFuncName(a.handleOAuthStart):         AuditEventMCPOAuthStart,
 		handlerFuncName(a.handleOAuthCallback):      AuditEventMCPOAuthCallback,
@@ -144,6 +154,10 @@ func buildAuditEventRegistry(a *API) map[string]string {
 		// Tool approval.
 		handlerFuncName(a.handleToolCall):   AuditEventToolCallApproval,
 		handlerFuncName(a.handleToolResult): AuditEventToolResultApproval,
+
+		// wait_for_async_work controls.
+		handlerFuncName(a.handleWaitCheckNow): AuditEventWaitCheckNow,
+		handlerFuncName(a.handleWaitCancel):   AuditEventWaitCancel,
 
 		// Access-policy authoring.
 		handlerFuncName(a.handlePutAgentPolicy):      AuditEventPutAgentPolicy,

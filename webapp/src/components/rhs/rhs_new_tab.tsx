@@ -1,207 +1,82 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState, useEffect} from 'react';
+import React, {useCallback} from 'react';
 import styled from 'styled-components';
-import {useIntl, FormattedMessage} from 'react-intl';
-
-import {useDispatch, useSelector} from 'react-redux';
+import {FormattedMessage} from 'react-intl';
 
 import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
-import {Spinner} from '@mattermost/compass-ui/components/spinner';
 
-import RHSImage from '../assets/rhs_image';
+import type {LLMBot} from '@/bots';
+import {useRefreshAgentThreads} from '@/hooks/use_agent_threads';
 
-import {createPost, getBotDirectChannel} from '@/client';
-
-import {AdvancedTextEditor, CreatePost} from '@/mm_webapp';
-
-import {LLMBot} from '@/bots';
-import {BotsHandler} from '@/redux';
-import manifest from '@/manifest';
-
-import RHSPromptButtons from '../custom_prompts/rhs_prompt_buttons';
-
-import {RHSPaddingContainer, RHSText, RHSTitle} from './common';
-
-const CreatePostContainer = styled.div`
-	.custom-textarea {
-		padding-top: 13px;
-		padding-bottom: 13px;
-		passing-left: 16px;
-	}
-    .AdvancedTextEditor {
-        padding: 0px;
-    }
-`;
-
-const ReverseScroll = styled.div`
-	display: flex;
-	flex-direction: column;
-	flex-grow: 1;
-	justify-content: flex-end;
-`;
-
-const EditorStatus = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 20px;
-`;
+import AgentNewChat from '../agent_chat/agent_new_chat';
+import ChatSetupStatus from '../agent_chat/chat_setup_status';
+import {useAgentDMChannel} from '../agents/use_agent_dm_channel';
 
 type Props = {
     selectPost: (postId: string) => void
-    setCurrentTab: (tab: string) => void
     activeBot: LLMBot | null
 }
 
-const EMPTY_BOTS: LLMBot[] = [];
+// The RHS new-chat tab: the same new-chat state as the Agents product view
+// (avatar, greeting, host composer), sized to fill the RHS.
+const RHSNewTab = ({selectPost, activeBot}: Props) => {
+    // Creates the bot DM when missing, stores its id on the bot in Redux, and
+    // loads the channel, membership and roles the host ThreadViewer needs.
+    const dm = useAgentDMChannel(activeBot);
+    const refreshThreads = useRefreshAgentThreads();
 
-const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
-    const intl = useIntl();
-    const dispatch = useDispatch();
-    const [draft, updateDraft] = useState<any>(null);
-    const [creatingChannel, setCreatingChannel] = useState(false);
-    const currentUserId = useSelector((state: any) => state.entities.users.currentUserId);
-    const botChannelId = activeBot?.dmChannelID || '';
+    const onCreated = useCallback((rootId: string) => {
+        selectPost(rootId);
 
-    const currentBots = useSelector((state: any) =>
-        state[`plugins-${manifest.id}`]?.bots ?? EMPTY_BOTS,
-    );
+        // The chat lists pick up the new chat; its title follows over the websocket.
+        refreshThreads();
+    }, [selectPost, refreshThreads]);
 
-    // State for error handling
-    const [channelError, setChannelError] = useState(false);
-
-    // If botChannelId is empty, we need to create a direct channel
-    useEffect(() => {
-        const createDirectChannel = async () => {
-            if (!botChannelId && !creatingChannel && activeBot) {
-                setCreatingChannel(true);
-                setChannelError(false);
-                const botId = activeBot.id;
-
-                try {
-                    // This will, as a side effect, create the direct channel for us
-                    const newChannelID = await getBotDirectChannel(currentUserId, botId);
-
-                    // Update the bots list in Redux with the new channel ID
-                    const updatedBots = currentBots.map((bot: LLMBot) => {
-                        if (bot.id === activeBot.id) {
-                            return {
-                                ...bot,
-                                dmChannelID: newChannelID,
-                            };
-                        }
-                        return bot;
-                    });
-                    dispatch({
-                        type: BotsHandler,
-                        bots: updatedBots,
-                    });
-                } catch (error) {
-                    setChannelError(true);
-                } finally {
-                    setCreatingChannel(false);
-                }
-            }
-        };
-        createDirectChannel();
-    }, [botChannelId, currentUserId, activeBot, creatingChannel, dispatch, currentBots]);
-
-    // Show loading indicator if creating channel or error message if failed
-    let editorComponent;
-    if (channelError) {
-        editorComponent = (
-            <EditorStatus>
+    let content;
+    if (dm.status === 'error') {
+        content = (
+            <Status>
                 <ErrorMessage message={<FormattedMessage defaultMessage='Failed to create chat channel. Please try again later.'/>}/>
-            </EditorStatus>
+            </Status>
         );
-    } else if (creatingChannel || !botChannelId) {
-        editorComponent = (
-            <EditorStatus>
-                <Spinner size='16'/>
-                <FormattedMessage defaultMessage='Setting up chat channel...'/>
-            </EditorStatus>
-        );
-    } else if (AdvancedTextEditor) {
-        editorComponent = (
-            <AdvancedTextEditor
-                channelId={botChannelId}
-                rootId={''}
-                placeholder={intl.formatMessage({defaultMessage: 'Ask Agents anything...'})}
-                isThreadView={true}
-                location={'RHS_COMMENT'}
-                afterSubmit={(result: {created?: {id: string}}) => {
-                    if (result.created?.id) {
-                        selectPost(result.created?.id);
-                        setCurrentTab('thread');
-                    }
-                }}
-            />
-        );
+    } else if (dm.status === 'loading' || !activeBot) {
+        content = <ChatSetupStatus/>;
     } else {
-        editorComponent = (
-            <CreatePost
-                channelId={botChannelId}
-                placeholder={intl.formatMessage({defaultMessage: 'Ask Agents anything...'})}
-                rootId={'ai_agents'}
-                onSubmit={async (p: any) => {
-                    const post = {...p};
-                    post.channel_id = botChannelId || '';
-                    post.props = {};
-                    post.uploadsInProgress = [];
-                    post.file_ids = p.fileInfos.map((f: any) => f.id);
-                    const created = await createPost(post);
-                    selectPost(created.id);
-                    setCurrentTab('thread');
-                    dispatch({
-                        type: 'SET_GLOBAL_ITEM',
-                        data: {
-                            name: 'comment_draft_ai_agents',
-                            value: {message: '', fileInfos: [], uploadsInProgress: []},
-                        },
-                    });
-                }}
-                draft={draft}
-                onUpdateCommentDraft={(newDraft: any) => {
-                    updateDraft(newDraft);
-                    const timestamp = new Date().getTime();
-                    newDraft.updateAt = timestamp;
-                    newDraft.createAt = newDraft.createAt || timestamp;
-                    dispatch({
-                        type: 'SET_GLOBAL_ITEM',
-                        data: {
-                            name: 'comment_draft_ai_agents',
-                            value: newDraft,
-                        },
-                    });
-                }}
+        content = (
+            <AgentNewChat
+                key={activeBot.id}
+                layout='panel'
+                bot={activeBot}
+                channelId={dm.channelId}
+                onCreated={onCreated}
             />
         );
     }
 
     return (
-        <RHSPaddingContainer>
-            <ReverseScroll>
-                <RHSImage/>
-                <RHSTitle><FormattedMessage defaultMessage='Ask Agents anything'/></RHSTitle>
-                <RHSText><FormattedMessage defaultMessage='Agents can help you with almost anything. Choose from the prompts below or write your own.'/></RHSText>
-                {botChannelId && (
-                    <RHSPromptButtons
-                        channelId={botChannelId}
-                        selectPost={selectPost}
-                        setCurrentTab={setCurrentTab}
-                    />
-                )}
-                <CreatePostContainer
-                    data-testid='rhs-new-tab-create-post'
-                >
-                    {editorComponent}
-                </CreatePostContainer>
-            </ReverseScroll>
-        </RHSPaddingContainer>
+        <Frame data-testid='rhs-new-tab'>
+            {content}
+        </Frame>
     );
 };
+
+const Frame = styled.div`
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow-y: auto;
+`;
+
+const Status = styled.div`
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-xl);
+`;
 
 export default React.memo(RHSNewTab);

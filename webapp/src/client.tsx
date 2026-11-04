@@ -342,6 +342,44 @@ export async function doToolResult(postid: string, toolIDs: string[]): Promise<v
     });
 }
 
+// doWaitCheckNow ends a pending wait_for_async_work pause early and resumes the
+// bot immediately. The server authorizes only the wait's requester.
+export async function doWaitCheckNow(postid: string) {
+    const url = `${postRoute(postid)}/wait/check_now`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+// doWaitCancel cancels a pending wait_for_async_work pause so the bot does not
+// resume from it. The server authorizes only the wait's requester.
+export async function doWaitCancel(postid: string) {
+    const url = `${postRoute(postid)}/wait/cancel`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function doPostbackSummary(postid: string) {
     const url = `${postRoute(postid)}/postback_summary`;
     const response = await fetch(url, Client4.getOptions({
@@ -418,6 +456,37 @@ export async function getAIThreads() {
 
     if (response.ok) {
         return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+function invalidConversationIdError() {
+    return new ClientError(Client4.url, {
+        message: 'Invalid conversation id',
+        status_code: 400,
+        url: Client4.url,
+    });
+}
+
+// renameConversation sets the user-visible title of one of the caller's conversations.
+export async function renameConversation(conversationId: string, title: string): Promise<void> {
+    if (!isValidId(conversationId)) {
+        throw invalidConversationIdError();
+    }
+
+    const url = `${conversationRoute(conversationId)}/title`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify({title}),
+    }));
+
+    if (response.ok) {
+        return;
     }
 
     throw new ClientError(Client4.url, {
@@ -524,6 +593,12 @@ export function updateRead(userId: string, teamId: string, selectedPostId: strin
 
 export function getProfilePictureUrl(userId: string, lastIconUpdate: number) {
     return Client4.getProfilePictureUrl(userId, lastIconUpdate);
+}
+
+// The root posts of chats for the history list's previews (message and reply count). The server
+// only returns the posts the user may read.
+export function getPostsByIds(postIds: string[]) {
+    return Client4.getPostsByIds(postIds);
 }
 
 export async function getBotProfilePictureUrl(username: string) {
@@ -1082,7 +1157,7 @@ export async function savePluginConfig(config: PluginConfig): Promise<PluginConf
     }
 
     throw new ClientError(Client4.url, {
-        message: await readClientErrorMessage(response),
+        ...(await readAgentError(response)),
         status_code: response.status,
         url,
     });
@@ -1321,7 +1396,8 @@ export async function createCustomPrompt(prompt: {name: string; description: str
     });
 }
 
-export async function updateCustomPrompt(id: string, prompt: {name: string; description: string; template: string; is_shared: boolean}): Promise<void> {
+// updated_at, when set, makes the update fail with 409 if the prompt changed since it was read.
+export async function updateCustomPrompt(id: string, prompt: {name: string; description: string; template: string; is_shared: boolean; updated_at?: number}): Promise<void> {
     const url = `${baseRoute()}/custom-prompts/${id}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'PUT',

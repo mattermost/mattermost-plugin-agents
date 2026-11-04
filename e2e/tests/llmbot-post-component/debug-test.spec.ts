@@ -43,6 +43,6 @@ test.describe('Debug', () => {
         await aiPlugin.waitForBotResponse(responseTestText);
 
         // If we get here, basic mocking works
-        await expect(page.getByText(responseTestText)).toBeVisible();
+        await expect(page.getByTestId('posttext').getByText(responseTestText)).toBeVisible();
     });
 });

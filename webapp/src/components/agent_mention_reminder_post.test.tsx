@@ -147,6 +147,27 @@ describe('AgentMentionReminderPost', () => {
         expect(screen.queryByRole('button', {name: "Don't show again"})).toBeNull();
     });
 
+    test('keeps the loop-in confirmation when it succeeds after dismissal succeeded', async () => {
+        let resolveLoopIn!: () => void;
+        mockedDoLoopInAgent.mockImplementation(() => new Promise<void>((resolve) => {
+            resolveLoopIn = resolve;
+        }));
+
+        renderPost({bot_user_id: BOT_USER_ID, bot_username: 'matty', bot_display_name: 'Matty', target_post_id: TARGET_POST_ID});
+
+        fireEvent.click(screen.getByRole('link', {name: 'Click here to loop in @Matty'}));
+        fireEvent.click(screen.getByRole('button', {name: "Don't show again"}));
+
+        expect(await screen.findByText("You won't see this reminder again.")).not.toBeNull();
+
+        await act(async () => {
+            resolveLoopIn();
+        });
+
+        expect(await screen.findByText('Looped in @Matty.')).not.toBeNull();
+        expect(screen.getByText("You won't see this reminder again.")).not.toBeNull();
+    });
+
     test('falls back to the post id when no target post id is set', async () => {
         renderPost({bot_user_id: BOT_USER_ID, bot_username: 'matty', bot_display_name: 'Matty'});
 

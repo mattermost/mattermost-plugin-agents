@@ -1,6 +1,6 @@
 # LLM Provider Configuration Guide
 
-This guide covers configuring different Large Language Model (LLM) providers with the Mattermost Agents plugin. Each provider has specific configuration requirements and capabilities.
+Configure the LLM providers that Mattermost Agents can use, including local models through OpenAI-compatible APIs (Ollama, vLLM), OpenAI, Anthropic, AWS Bedrock, Azure OpenAI, Google Gemini and Vertex AI, Cohere, Mistral, and Scale AI. This guide lists each provider's authentication, configuration options, and capabilities.
 
 ## Supported Providers
 

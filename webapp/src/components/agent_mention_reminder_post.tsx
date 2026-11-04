@@ -126,10 +126,9 @@ export const AgentMentionReminderPost = ({post}: Props) => {
         );
     }
 
-    // Dismissal succeeded: the reminder is gone. Keep rendering the loop-in
-    // error and retry link, though, if loop-in is still in a failed state that
-    // the user may want to retry.
-    if (dismissDone && !loopInError) {
+    // Dismissal succeeded: the reminder is gone. While loop-in is pending,
+    // failed, or done, keep the composed render so its outcome stays visible.
+    if (dismissDone && status === 'idle') {
         return (
             <Hint>
                 <FormattedMessage
