@@ -280,7 +280,7 @@ describe('fetchAndStoreBots', () => {
     });
 
     test('ignores the response of a request superseded by a newer one', async () => {
-        let resolveOlder: (value: unknown) => void = () => {};
+        let resolveOlder: (value: unknown) => void = jest.fn();
         mockGetAIBots.mockReturnValueOnce(new Promise((resolve) => {
             resolveOlder = resolve;
         }));
