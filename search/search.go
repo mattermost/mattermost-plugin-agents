@@ -13,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -180,6 +181,19 @@ func (s *Search) Search(ctx context.Context, query string, opts Options) ([]RAGR
 		TeamID:    opts.TeamID,
 		ChannelID: opts.ChannelID,
 		UserID:    opts.UserID,
+	}
+
+	scope, err := scopedsession.ScopeFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if scope != nil {
+		var settings scopedsession.ServerSettings
+		if s.mmclient != nil {
+			settings = s.mmclient
+		}
+		readable := scopedsession.ContentChannels(scope, scopedsession.OpenTeamGrantDisabled(settings))
+		searchOpts.Scope = &readable
 	}
 
 	searchResults, err := search.Search(ctx, query, searchOpts)

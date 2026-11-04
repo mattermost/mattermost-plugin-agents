@@ -91,8 +91,10 @@ require (
 	github.com/containerd/log v0.2.0 // indirect
 	github.com/containerd/platforms v0.2.1 // indirect
 	github.com/cpuguy83/dockercfg v0.3.2 // indirect
+	github.com/creack/pty v1.1.24 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/dlclark/regexp2 v1.12.0 // indirect
+	github.com/docker/docker v28.5.2+incompatible // indirect
 	github.com/docker/go-connections v0.8.2 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
@@ -146,8 +148,6 @@ require (
 	github.com/mattn/go-sqlite3 v2.0.3+incompatible // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.3.3 // indirect
-	github.com/moby/moby/api v1.56.1 // indirect
-	github.com/moby/moby/client v0.6.2 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/sequential v0.7.0 // indirect
 	github.com/moby/sys/user v0.5.0 // indirect
@@ -156,6 +156,7 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/molecule-man/go-brrr v1.3.1 // indirect
+	github.com/morikuni/aec v1.0.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/oklog/run v1.2.0 // indirect
@@ -233,3 +234,19 @@ require (
 )
 
 replace github.com/antchfx/xpath => github.com/antchfx/xpath v1.3.8
+
+// TEMPORARY: pins server/public to the head of the unmerged server PR
+// https://github.com/mattermost/mattermost/pull/39367 (branch
+// cursor/scoped-sessions-enforcement-88d9) for CreateScopedSession and
+// model.SessionScope. Remove it and require a released server/public once that
+// PR merges.
+replace github.com/mattermost/mattermost/server/public => github.com/mattermost/mattermost/server/public v0.6.1-0.20261101071008-e639400063e3
+
+// TEMPORARY, with the server/public replace above: that server/public needs
+// testcontainers-go v0.44, which github.com/mattermost/testcontainers-mattermost-go
+// v0.1.0 (used by mcpserver tests) does not build against. Keep the version the
+// plugin used before until testcontainers-mattermost-go supports v0.44.
+replace (
+	github.com/testcontainers/testcontainers-go => github.com/testcontainers/testcontainers-go v0.41.0
+	github.com/testcontainers/testcontainers-go/modules/postgres => github.com/testcontainers/testcontainers-go/modules/postgres v0.41.0
+)

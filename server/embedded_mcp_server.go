@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -75,13 +76,13 @@ func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogServi
 // CreateClientTransport creates a new in-memory transport for a client connection.
 // sessionToken is the session's token when the caller already holds it; it
 // covers lookups that miss a just-created session on a lagging DB read replica.
-func (e *EmbeddedMCPServer) CreateClientTransport(userID, sessionID, sessionToken string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error) {
+func (e *EmbeddedMCPServer) CreateClientTransport(connCtx context.Context, userID, sessionID, sessionToken string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error) {
 	// The resolver closes over pluginAPI so the mcpserver can get fresh
 	// tokens without storing raw tokens in context.
 	tokenResolver := newSessionTokenResolver(pluginAPI.Session.Get, e.logger, userID, sessionID, sessionToken)
 
 	// Create the connection through the server with resolver
-	clientTransport, err := e.server.CreateConnectionForUser(userID, sessionID, tokenResolver)
+	clientTransport, err := e.server.CreateConnectionForUser(connCtx, userID, sessionID, tokenResolver)
 	if err != nil {
 		return nil, err
 	}
