@@ -108,6 +108,17 @@ var errTurnLeaseLost = errors.New("streaming turn could not be persisted")
 // abandoned. That node owns the post now, so this run stops without touching it.
 var errTurnClaimed = errors.New("streaming turn was claimed by recovery")
 
+// ErrRunOwnershipLost cancels a run whose post reservation was lost (see
+// conversations' post run reservation): another run may own the post now, so
+// the stream must write nothing more, as with a claimed turn.
+var ErrRunOwnershipLost = errors.New("run lost its post reservation")
+
+// lostPost reports whether ctx was canceled because another run owns the post.
+func lostPost(ctx context.Context) bool {
+	cause := context.Cause(ctx)
+	return errors.Is(cause, errTurnClaimed) || errors.Is(cause, ErrRunOwnershipLost)
+}
+
 // turnLeaseMaxAge is how long a stream runs without a successful turn write
 // before it stops itself, kept well under StaleStreamThreshold so it stops
 // before peers can consider it abandoned.
@@ -774,7 +785,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 		// A claimed turn belongs to the node that claimed it: write nothing
 		// more, or a finalize could undo a released claim and events could
 		// cross that node's stream.
-		if errors.Is(context.Cause(ctx), errTurnClaimed) || !settle() {
+		if lostPost(ctx) || !settle() {
 			return
 		}
 		if awaitingDecision != nil && finalStatus == store.TurnStatusComplete {
@@ -803,7 +814,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 	// the user should be told about.
 	stopStream := func() {
 		outcome = telemetry.StreamOutcomeCancelled
-		if errors.Is(context.Cause(ctx), errTurnClaimed) {
+		if lostPost(ctx) {
 			return
 		}
 		switch {
@@ -837,12 +848,12 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 			if acc != nil {
 				p.heartbeatTurn(acc)
 			}
-			if errors.Is(context.Cause(ctx), errTurnClaimed) {
+			if lostPost(ctx) {
 				return
 			}
 			p.sendPostStreamingEvent(post, broadcast, map[string]any{"control": PostStreamingControlHeartbeat})
 		case event, ok := <-stream.Stream:
-			if errors.Is(context.Cause(ctx), errTurnClaimed) {
+			if lostPost(ctx) {
 				return
 			}
 			// When the upstream shares this context it ends, errors or closes

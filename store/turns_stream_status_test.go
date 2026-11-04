@@ -5,6 +5,7 @@ package store
 
 import (
 	"encoding/json"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -42,10 +43,18 @@ func createTurnWithStatus(t *testing.T, s *Store, convID, status string) *Turn {
 	return turn
 }
 
+// toolRoundOf is a tool_result turn written by the run of the response post.
+func toolRoundOf(postID string) func(*Turn) {
+	return func(tu *Turn) {
+		tu.Role = "tool_result"
+		tu.RunPostID = &postID
+	}
+}
+
 func getTurn(t *testing.T, s *Store, id string) Turn {
 	t.Helper()
 	var turn Turn
-	require.NoError(t, s.db.Get(&turn, `SELECT ID, ConversationID, PostID, Role, Content, TokensIn, TokensOut, Sequence, CreatedAt, Status, UpdatedAt FROM LLM_Turns WHERE ID = $1`, id))
+	require.NoError(t, s.db.Get(&turn, `SELECT ID, ConversationID, PostID, Role, Content, TokensIn, TokensOut, Sequence, CreatedAt, Status, UpdatedAt, RunPostID FROM LLM_Turns WHERE ID = $1`, id))
 	return turn
 }
 
@@ -223,7 +232,7 @@ func TestFinalizeStreamingTurn(t *testing.T) {
 			require.NoError(t, s.CreateTurnAutoSequence(makeTurn(convID, 0)))
 			turn := createTurnWithStatus(t, s, convID, TurnStatusStreaming)
 			for range tc.appendAfter {
-				require.NoError(t, s.CreateTurnAutoSequence(makeTurn(convID, 0, func(tu *Turn) { tu.Role = "tool_result" })))
+				require.NoError(t, s.CreateTurnAutoSequence(makeTurn(convID, 0, toolRoundOf("post-streaming"))))
 			}
 
 			content := json.RawMessage(`[{"type":"text","text":"done"}]`)
@@ -275,7 +284,7 @@ func TestClaimStaleStreamingTurnMovesAfterToolRounds(t *testing.T) {
 	turn := createTurnWithStatus(t, s, convID, TurnStatusStreaming)
 	// Tool rounds persisted while the response was still streaming.
 	for range 2 {
-		require.NoError(t, s.CreateTurnAutoSequence(makeTurn(convID, 0, func(tu *Turn) { tu.Role = "tool_result" })))
+		require.NoError(t, s.CreateTurnAutoSequence(makeTurn(convID, 0, toolRoundOf("post-streaming"))))
 	}
 	ageTurn(t, s, turn.ID, 2*testStaleMillis)
 
@@ -315,7 +324,9 @@ func TestSettlingStreamingTurnKeepsLaterUserTurnsInPlace(t *testing.T) {
 			}
 			first := appendTurn("user")
 			anchor := createTurnWithStatus(t, s, convID, TurnStatusStreaming)
-			toolRound := appendTurn("tool_result")
+			toolRoundTurn := makeTurn(convID, 0, toolRoundOf("post-streaming"))
+			require.NoError(t, s.CreateTurnAutoSequence(toolRoundTurn))
+			toolRound := toolRoundTurn.ID
 			followUp := appendTurn("user")
 			followUpReply := appendTurn("assistant")
 
@@ -337,9 +348,10 @@ func TestConcurrentSettlesInOneConversation(t *testing.T) {
 	const streams = 6
 	ids := make([]string, streams)
 	for i := range ids {
-		turn := makeTurn(convID, 0, func(tu *Turn) { tu.Role = "assistant"; tu.Status = TurnStatusStreaming })
+		postID := "post-" + strconv.Itoa(i)
+		turn := makeTurn(convID, 0, func(tu *Turn) { tu.Role = "assistant"; tu.Status = TurnStatusStreaming; tu.PostID = &postID })
 		require.NoError(t, s.CreateTurnAutoSequence(turn))
-		require.NoError(t, s.CreateTurnAutoSequence(makeTurn(convID, 0, func(tu *Turn) { tu.Role = "tool_result" })))
+		require.NoError(t, s.CreateTurnAutoSequence(makeTurn(convID, 0, toolRoundOf(postID))))
 		ids[i] = turn.ID
 	}
 
@@ -395,12 +407,15 @@ func TestRunSpanSkipsAnotherPostsToolResult(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s, convID := setupStreamStore(t)
-			add := func(role, postID, content, status string) string {
+			add := func(role, postID, content, status string, runPostID ...string) string {
 				turn := makeTurn(convID, 0, func(tu *Turn) {
 					tu.Role = role
 					tu.Content = json.RawMessage(content)
 					if postID != "" {
 						tu.PostID = &postID
+					}
+					if len(runPostID) > 0 {
+						tu.RunPostID = &runPostID[0]
 					}
 					if status != "" {
 						tu.Status = status
@@ -414,16 +429,16 @@ func TestRunSpanSkipsAnotherPostsToolResult(t *testing.T) {
 			add("user", "", `[]`, "")
 			var foreign string
 			if tt.foreignResultInSpan {
-				foreign = add("tool_result", "", block("tool_result", "tc-1"), "")
+				foreign = add("tool_result", "", block("tool_result", "tc-1"), "", "post-1")
 			}
 			anchor := add("assistant", "post-2", `[]`, TurnStatusStreaming)
 			if tt.foreignBeforeOwnRounds {
-				foreign = add("tool_result", "", block("tool_result", "tc-1"), "")
+				foreign = add("tool_result", "", block("tool_result", "tc-1"), "", "post-1")
 			}
-			add("assistant", "", block("tool_use", "tc-2"), "")
-			add("tool_result", "", block("tool_result", "tc-2"), "")
+			add("assistant", "", block("tool_use", "tc-2"), "", "post-2")
+			add("tool_result", "", block("tool_result", "tc-2"), "", "post-2")
 			if !tt.foreignResultInSpan && !tt.foreignBeforeOwnRounds {
-				foreign = add("tool_result", "", block("tool_result", "tc-1"), "")
+				foreign = add("tool_result", "", block("tool_result", "tc-1"), "", "post-1")
 			}
 
 			settled, err := s.FinalizeStreamingTurn(anchor, json.RawMessage(`[]`), 0, 0, TurnStatusComplete)
