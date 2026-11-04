@@ -536,13 +536,14 @@ func (b *LLM) DownloadProviderFile(ctx context.Context, ref llm.ProviderFileRefe
 
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(downloadCtx, FileDownloadTimeout)
 	defer cancel()
+	trackAttemptErrors(bifrostCtx)
 
 	meta, bifrostErr := b.client.FileRetrieveRequest(bifrostCtx, &schemas.BifrostFileRetrieveRequest{
 		Provider: providerRoute,
 		FileID:   ref.ID,
 	})
 	if bifrostErr != nil {
-		err := providerError(nil, "bifrost file retrieve error", bifrostErr, b.redactionKeys()...)
+		err := providerError(bifrostCtx, nil, "bifrost file retrieve error", bifrostErr, b.redactionKeys()...)
 		return fail(err)
 	}
 	if meta == nil {
@@ -557,7 +558,7 @@ func (b *LLM) DownloadProviderFile(ctx context.Context, ref llm.ProviderFileRefe
 		FileID:   ref.ID,
 	})
 	if bifrostErr != nil {
-		err := providerError(nil, "bifrost file content error", bifrostErr, b.redactionKeys()...)
+		err := providerError(bifrostCtx, nil, "bifrost file content error", bifrostErr, b.redactionKeys()...)
 		return fail(err)
 	}
 	if resp == nil {
