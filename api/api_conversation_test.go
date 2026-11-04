@@ -81,6 +81,14 @@ func TestHandleGetConversation(t *testing.T) {
 			validate: func(t *testing.T, resp *http.Response) {
 				body, err := io.ReadAll(resp.Body)
 				require.NoError(t, err)
+				var response ConversationResponse
+				require.NoError(t, json.Unmarshal(body, &response))
+				require.Len(t, response.Turns, 3)
+				var firstUserBlocks []conversation.ContentBlock
+				require.NoError(t, json.Unmarshal(response.Turns[0].Content, &firstUserBlocks))
+				require.Len(t, firstUserBlocks, 1, "only the file reference remains on the transcript turn")
+				assert.Equal(t, conversation.BlockTypeFile, firstUserBlocks[0].Type)
+				assert.Equal(t, "file01234567890123456789ab", firstUserBlocks[0].FileID)
 				assert.NotContains(t, string(body), "SECRET-TRANSCRIPT-LINE")
 				assert.Contains(t, string(body), "What is the weather in NYC?", "assistant turns are untouched")
 				assert.Contains(t, string(body), "FOLLOW-UP-QUESTION", "follow-up user turns are kept")
