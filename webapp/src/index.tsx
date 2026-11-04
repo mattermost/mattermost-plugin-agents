@@ -7,7 +7,7 @@ import styled from 'styled-components';
 import {FormattedMessage, IntlShape, createIntl} from 'react-intl';
 
 import {GlobalState} from '@mattermost/types/store';
-import {CodeTagsIcon} from '@mattermost/compass-icons/components';
+import {CodeTagsIcon, FileCodeOutlineIcon} from '@mattermost/compass-icons/components';
 
 // Compass design tokens. Hosts older than the compass-ui rollout don't load
 // them, so the plugin brings its own. Never import the standalone variant: it
@@ -27,6 +27,11 @@ import IconThreadSummarization from './components/assets/icon_thread_summarizati
 import IconReactForMe from './components/assets/icon_react_for_me';
 import RHS from './components/rhs/rhs';
 import RHSTitle from './components/rhs/rhs_title';
+import ChannelArtifactsRHS, {ChannelArtifactsRHSTitle} from './components/channel_artifacts/channel_artifacts_rhs';
+import ChannelArtifactsCountBadge from './components/channel_artifacts/channel_artifacts_count_badge';
+import ArtifactBookmarkPicker, {openArtifactBookmarkPicker} from './components/channel_artifacts/artifact_bookmark_picker';
+import LibraryArtifactDeepLink from './components/channel_artifacts/library_artifact_deep_link';
+import {getChannelArtifactsEnabled} from './selectors';
 import CustomPromptsDropdown from './components/custom_prompts/custom_prompts_dropdown';
 import CustomPromptsManagement, {PopoutCustomPromptsManagement} from './components/custom_prompts/custom_prompts_management';
 import Config from './components/system_console/config';
@@ -161,9 +166,14 @@ export default class Plugin {
         });
 
         let rhs: any = null;
+        let artifactsRhs: any = null;
         if (isRHSCompatable()) {
             rhs = registry.registerRightHandSidebarComponent(RHS, RHSTitle);
             setOpenRHSAction(rhs.showRHSPlugin);
+            artifactsRhs = registry.registerRightHandSidebarComponent(
+                ChannelArtifactsRHS,
+                ChannelArtifactsRHSTitle,
+            );
         }
 
         // The stored AI thread list follows the user's own agent chats: a finished turn, a rename
@@ -281,6 +291,42 @@ export default class Plugin {
             );
         }
 
+        if (artifactsRhs && registry.registerChannelHeaderMenuAction) {
+            registry.registerChannelHeaderMenuAction(
+                <FormattedMessage defaultMessage='Channel artifacts'/>,
+                () => {
+                    store.dispatch(artifactsRhs.showRHSPlugin);
+                },
+                (state: GlobalState) => Boolean(getChannelArtifactsEnabled(state as any)),
+            );
+        }
+
+        // Channel Info RHS menu (Mattermost builds that expose the hook).
+        if (artifactsRhs && typeof (registry as any).registerChannelInfoMenuAction === 'function') {
+            (registry as any).registerChannelInfoMenuAction(
+                <i className='icon icon-code-tags'/>,
+                <FormattedMessage defaultMessage='Channel artifacts'/>,
+                () => {
+                    store.dispatch(artifactsRhs.showRHSPlugin);
+                },
+                (state: GlobalState) => Boolean(getChannelArtifactsEnabled(state as any)),
+                <ChannelArtifactsCountBadge/>,
+                true,
+            );
+        }
+
+        // Bookmarks "+" / header Bookmarks Bar: pick a library artifact to pin.
+        if (typeof (registry as any).registerChannelBookmarksMenuAction === 'function') {
+            (registry as any).registerChannelBookmarksMenuAction(
+                <FileCodeOutlineIcon size={18}/>,
+                <FormattedMessage defaultMessage='Add channel artifact'/>,
+                (channelId: string) => {
+                    openArtifactBookmarkPicker(channelId);
+                },
+                (state: GlobalState) => Boolean(getChannelArtifactsEnabled(state as any)),
+            );
+        }
+
         if (registry.registerNewMessagesSeparatorActionComponent) {
             registry.registerNewMessagesSeparatorActionComponent(UnreadsSummarize);
         }
@@ -321,6 +367,8 @@ export default class Plugin {
         if (registry.registerRootComponent) {
             registry.registerRootComponent(AgentsTour);
             registry.registerRootComponent(PopoutCustomPromptsManagement);
+            registry.registerRootComponent(LibraryArtifactDeepLink);
+            registry.registerRootComponent(ArtifactBookmarkPicker);
         }
         registry.registerGlobalComponent(CustomPromptsManagement);
 

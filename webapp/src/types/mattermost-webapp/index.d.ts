@@ -23,6 +23,8 @@ declare global {
             }) => void;
             browserHistory?: {
                 push: (path: string) => void;
+                replace?: (path: string) => void;
+                listen?: (listener: (location: {pathname: string; search: string; hash: string}) => void) => () => void;
             };
 
             // Absent on servers that predate it.
