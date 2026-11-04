@@ -80,17 +80,17 @@ func TestNewClientCrossProtocolVersionCompat(t *testing.T) {
 		},
 		{
 			// The SSE handler rejects the streamable transport's bare POSTs,
-			// so NewClient must succeed through its SSE fallback. The go-sdk
-			// SSE server still answers server/discover over the SSE stream
-			// and does not filter protocol versions by transport, so the SDK
-			// negotiates the newest version even on this legacy transport.
+			// so NewClient must succeed through its SSE fallback. MCP
+			// 2026-07-28 drops the HTTP+SSE transport, so the go-sdk SSE
+			// server does not serve it and the newest version negotiated
+			// over SSE is 2025-11-25.
 			name: "http+sse server connects via SSE fallback",
 			handler: func(server *mcp.Server) http.Handler {
 				return mcp.NewSSEHandler(func(*http.Request) *mcp.Server {
 					return server
 				}, nil)
 			},
-			expectedVersion: "2026-07-28",
+			expectedVersion: "2025-11-25",
 		},
 		{
 			// A 2024-11-05 server that rejects server/discover at the
@@ -103,8 +103,8 @@ func TestNewClientCrossProtocolVersionCompat(t *testing.T) {
 			// TRANSPORT level (400), and go-sdk v1.7.0's SSE writer marks the
 			// connection unwritable on any non-2xx, so the initialize
 			// fallback cannot run on the same connection. This needs an
-			// upstream SDK fix (v1.7.0 is the latest release; there is no
-			// public knob to skip discover). Non-Go legacy SSE servers
+			// upstream SDK fix (there was no public knob to skip discover
+			// as of v1.7.0). Non-Go legacy SSE servers
 			// (TS/Python), which return application-level errors, are
 			// unaffected — see the docker compatibility matrix.
 			name:            "2024-11-05-only http+sse server negotiates 2024-11-05",

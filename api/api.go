@@ -146,7 +146,7 @@ type ConversationStore interface {
 	GetTurnsForConversation(conversationID string) ([]store.Turn, error)
 	GetTurnByPostID(postID string) (*store.Turn, error)
 	UpdateTurnContent(id string, content json.RawMessage) error
-	GetConversationSummariesForUser(userID string, limit, offset int) ([]store.ConversationSummary, error)
+	GetBotDMConversationSummariesForUser(userID string, limit, offset int) ([]store.ConversationSummary, error)
 	RenameConversation(id, title string) (bool, error)
 }
 
@@ -490,6 +490,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.PUT("/services/:serviceid/access_policy", a.handlePutServicePolicy)
 	adminRouter.DELETE("/services/:serviceid/access_policy", a.handleDeleteServicePolicy)
 	adminRouter.GET("/mcp/:serverid/suggested-description", a.handleGetMCPSuggestedDescription)
+	adminRouter.GET("/mcp/:serverid/tools", a.handleGetMCPServerTools)
 	adminRouter.GET("/mcp/:serverid/access_policy", a.handleGetMCPPolicy)
 	adminRouter.PUT("/mcp/:serverid/access_policy", a.handlePutMCPPolicy)
 	adminRouter.DELETE("/mcp/:serverid/access_policy", a.handleDeleteMCPPolicy)
@@ -694,7 +695,7 @@ type aiThreadResponse struct {
 func (a *API) handleGetAIThreads(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 
-	summaries, err := a.conversationStore.GetConversationSummariesForUser(userID, 60, 0)
+	summaries, err := a.conversationStore.GetBotDMConversationSummariesForUser(userID, 60, 0)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get conversation summaries: %w", err))
 		return
