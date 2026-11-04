@@ -326,6 +326,23 @@ describe('fetchAndStoreBots', () => {
         expect(stored).toEqual([fresh]);
     });
 
+    test('an older response is still stored when the newer request failed', async () => {
+        const older = [makeBot('older')];
+        let resolveOlder!: (v: unknown) => void;
+        mockGetAIBots.mockReturnValueOnce(new Promise((resolve) => {
+            resolveOlder = resolve;
+        }));
+        mockGetAIBots.mockRejectedValueOnce(new Error('network'));
+        const dispatch = jest.fn();
+
+        const first = fetchAndStoreBots(dispatch);
+        await expect(fetchAndStoreBots(dispatch)).rejects.toThrow('network');
+        resolveOlder({bots: older});
+
+        await expect(first).resolves.toBe(older);
+        expect(dispatch).toHaveBeenCalledWith({type: BotsHandler, bots: older});
+    });
+
     test('propagates fetch failures to the caller', async () => {
         const error = new Error('network');
         mockGetAIBots.mockRejectedValue(error);

@@ -75,24 +75,27 @@ export const resolveActiveBot = (bots: LLMBot[] | null, preferredId: string): LL
     resolvePreferredBot(bots, preferredId) ?? bots?.[0] ?? null
 );
 
+let lastRequestedBotsId = 0;
+let lastStoredBotsId = 0;
+
 // Fetches the bot list and stores it (plus the related feature flags) in the
 // plugin's redux slice. Shared by useBotlist, the channel-settings loadValues,
 // and the initialize() warm-up. Returns the fetched bots, or null when the
-// response is falsy. A response superseded by a newer request is returned
-// but not stored.
-let lastBotsRequestId = 0;
-
+// response is falsy. A response older than one already stored is returned but
+// not stored.
 export async function fetchAndStoreBots(dispatch: Dispatch): Promise<LLMBot[] | null> {
-    const requestId = ++lastBotsRequestId;
+    const requestId = ++lastRequestedBotsId;
     const response = await getAIBots();
     if (!response) {
         return null;
     }
 
-    // A newer request is in flight or done: its response is the current one.
-    if (requestId !== lastBotsRequestId) {
+    // A newer response is already stored; this one is older. A newer request that failed or is
+    // still in flight does not discard it.
+    if (requestId < lastStoredBotsId) {
         return response.bots;
     }
+    lastStoredBotsId = requestId;
 
     dispatch({
         type: BotsHandler,
