@@ -230,11 +230,12 @@ func isHTMLArtifactFile(info *model.FileInfo) bool {
 // literalChannelLabel keeps a title or file name from becoming a mention or
 // markdown when it is interpolated into the proposal post.
 func literalChannelLabel(s string) string {
+	s = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(s)
 	var b strings.Builder
 	b.Grow(len(s))
 	for _, r := range s {
 		switch r {
-		case '\\', '*', '_', '`', '[', ']', '~':
+		case '\\', '*', '_', '`', '[', ']', '~', '>':
 			b.WriteByte('\\')
 			b.WriteRune(r)
 		case '@':

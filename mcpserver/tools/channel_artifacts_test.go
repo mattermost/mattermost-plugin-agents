@@ -356,6 +356,10 @@ func TestToolProposeChannelArtifactUpdate(t *testing.T) {
 	}
 }
 
+func TestLiteralChannelLabelFlattensBreaksAndEscapesBlockquote(t *testing.T) {
+	assert.Equal(t, `Report \> note`, literalChannelLabel("Report\r\n> note"))
+}
+
 func TestGetChannelArtifactToolsRegistered(t *testing.T) {
 	p := &MattermostToolProvider{accessMode: AccessModeRemote, logger: &testLogger{t: t}}
 	names := map[string]bool{}

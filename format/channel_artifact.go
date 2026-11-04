@@ -11,6 +11,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 )
 
+var lineBreakReplacer = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ")
+
 // ChannelArtifactEntry holds data for formatting one channel library artifact.
 type ChannelArtifactEntry struct {
 	HeaderLabel string
@@ -28,9 +30,9 @@ func WriteChannelArtifact(w *strings.Builder, entry ChannelArtifactEntry) {
 		return
 	}
 	fmt.Fprintf(w, "ID: %s\n", e.ID)
-	fmt.Fprintf(w, "Title: %s\n", e.Title)
+	fmt.Fprintf(w, "Title: %s\n", lineBreakReplacer.Replace(e.Title))
 	if e.Description != "" {
-		fmt.Fprintf(w, "Description: %s\n", e.Description)
+		fmt.Fprintf(w, "Description: %s\n", lineBreakReplacer.Replace(e.Description))
 	}
 	fmt.Fprintf(w, "Channel ID: %s\n", e.ChannelID)
 	fmt.Fprintf(w, "Version: %d\n", e.Version)
