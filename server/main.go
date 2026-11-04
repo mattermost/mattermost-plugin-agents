@@ -659,6 +659,7 @@ func (p *Plugin) OnActivate() error {
 	p.mcpLifecycle = newPluginMCPLifecycle(mcpClientManager, rebuilder, &pluginAPI.Log)
 	p.licenseChangeListeners = append(p.licenseChangeListeners, p.mcpLifecycle.reconcileKnown)
 	p.mcpLifecycle.reconcileKnown()
+	p.mcpLifecycle.watchStoppedPlugins(stoppedPluginCheckInterval)
 
 	return nil
 }

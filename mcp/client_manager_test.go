@@ -1002,7 +1002,7 @@ func TestClientManagerGetToolRetrievalOverridesEmbedded(t *testing.T) {
 func TestClientManagerGetToolRetrievalOverridesPlugin(t *testing.T) {
 	manager := &ClientManager{
 		pluginServers:    make(map[string]PluginServerConfig),
-		pluginRegistered: make(map[string]bool),
+		pluginRegistered: make(map[string]uint64),
 	}
 	manager.pluginServers["com.example.mcp"] = PluginServerConfig{
 		PluginID: "com.example.mcp",
@@ -1011,7 +1011,7 @@ func TestClientManagerGetToolRetrievalOverridesPlugin(t *testing.T) {
 			{Name: "lookup", Policy: ToolPolicyAsk, Enabled: true, RetrievalDescriptionOverride: "Find plugin records"},
 		},
 	}
-	manager.pluginRegistered["com.example.mcp"] = true
+	manager.pluginRegistered["com.example.mcp"] = 1
 
 	overrides := manager.GetToolRetrievalOverrides()
 

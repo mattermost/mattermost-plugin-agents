@@ -6,19 +6,21 @@ package main
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
-	"github.com/mattermost/mattermost/server/public/model"
 )
 
+// stoppedPluginCheckInterval matches the server's plugin health check, which
+// notices crashed plugins on the same schedule.
+const stoppedPluginCheckInterval = 30 * time.Second
+
 // pluginMCPRegistry is the part of mcp.ClientManager that keeps plugin MCP
-// servers in step with their source plugins' lifecycle.
+// servers in step with their source plugins.
 type pluginMCPRegistry interface {
-	GetPluginServer(pluginID string) (mcp.PluginServerConfig, bool)
-	IsPluginRegistered(pluginID string) bool
-	UnregisterPluginServer(pluginID string)
 	KnownPluginServers() []mcp.PluginServerConfig
 	ReconcileKnownPluginServer(ctx context.Context, pluginID string) (bool, error)
+	DropStoppedPluginServers() []string
 }
 
 // externalMCPRebuilder rebuilds the external MCP server in the background.
@@ -31,8 +33,7 @@ type lifecycleLogger interface {
 	Warn(message string, keyValuePairs ...any)
 }
 
-// pluginMCPLifecycle reacts to source plugins starting and stopping, and to
-// this plugin starting, so plugin MCP servers are connected only while their
+// pluginMCPLifecycle keeps plugin MCP servers connected only while their
 // source plugin is running, whatever order the server activates plugins in.
 type pluginMCPLifecycle struct {
 	registry  pluginMCPRegistry
@@ -60,45 +61,38 @@ func newPluginMCPLifecycle(registry pluginMCPRegistry, rebuilder externalMCPRebu
 // their registration, or that stopped retrying, come back this way.
 func (l *pluginMCPLifecycle) reconcileKnown() {
 	for _, known := range l.registry.KnownPluginServers() {
-		l.goReconcile(known.PluginID)
-	}
-}
-
-// pluginActivated handles OnPluginActivated for any plugin on this server.
-func (l *pluginMCPLifecycle) pluginActivated(pluginID string) {
-	if l.registry.IsPluginRegistered(pluginID) {
-		// It registered while still in OnActivate, so discovery was skipped
-		// until now.
-		l.requestRebuild()
-		return
-	}
-	if _, known := l.registry.GetPluginServer(pluginID); known {
-		l.goReconcile(pluginID)
-	}
-}
-
-// pluginDeactivated handles OnPluginDeactivated for any plugin on this
-// server. A plugin that crashed or was disabled cannot unregister itself.
-func (l *pluginMCPLifecycle) pluginDeactivated(pluginID string) {
-	if !l.registry.IsPluginRegistered(pluginID) {
-		return
-	}
-	l.registry.UnregisterPluginServer(pluginID)
-	l.requestRebuild()
-}
-
-func (l *pluginMCPLifecycle) goReconcile(pluginID string) {
-	l.wg.Go(func() {
-		promoted, err := l.registry.ReconcileKnownPluginServer(l.ctx, pluginID)
-		if err != nil {
-			if l.ctx.Err() == nil {
-				l.log.Warn("Failed to bring plugin MCP server back into service", "plugin_id", pluginID, "error", err.Error())
+		l.wg.Go(func() {
+			promoted, err := l.registry.ReconcileKnownPluginServer(l.ctx, known.PluginID)
+			if err != nil {
+				if l.ctx.Err() == nil {
+					l.log.Warn("Failed to bring plugin MCP server back into service", "plugin_id", known.PluginID, "error", err.Error())
+				}
+				return
 			}
-			return
-		}
-		if promoted {
-			l.log.Info("Plugin MCP server is back in service", "plugin_id", pluginID)
-			l.requestRebuild()
+			if promoted {
+				l.log.Info("Plugin MCP server is back in service", "plugin_id", known.PluginID)
+				l.requestRebuild()
+			}
+		})
+	}
+}
+
+// watchStoppedPlugins periodically takes plugin servers out of service when
+// their source plugin stopped without unregistering, for example after a crash.
+func (l *pluginMCPLifecycle) watchStoppedPlugins(interval time.Duration) {
+	l.wg.Go(func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-l.ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			if dropped := l.registry.DropStoppedPluginServers(); len(dropped) > 0 {
+				l.log.Info("Took plugin MCP servers of stopped plugins out of service", "plugin_ids", dropped)
+				l.requestRebuild()
+			}
 		}
 	})
 }
@@ -109,29 +103,11 @@ func (l *pluginMCPLifecycle) requestRebuild() {
 	}
 }
 
-// close cancels in-flight reconciliation and waits for it to finish.
+// close stops the background work and waits for it to finish.
 func (l *pluginMCPLifecycle) close() {
 	if l == nil {
 		return
 	}
 	l.cancel()
 	l.wg.Wait()
-}
-
-// OnPluginActivated is invoked when another plugin on this server finishes
-// activating and can serve requests.
-func (p *Plugin) OnPluginActivated(manifest *model.Manifest) {
-	if p.mcpLifecycle == nil || manifest == nil {
-		return
-	}
-	p.mcpLifecycle.pluginActivated(manifest.Id)
-}
-
-// OnPluginDeactivated is invoked when another plugin on this server is
-// deactivated.
-func (p *Plugin) OnPluginDeactivated(manifest *model.Manifest) {
-	if p.mcpLifecycle == nil || manifest == nil {
-		return
-	}
-	p.mcpLifecycle.pluginDeactivated(manifest.Id)
 }

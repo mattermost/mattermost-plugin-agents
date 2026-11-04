@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -205,4 +206,59 @@ func TestReconcileKnownPluginServerIgnoresLiveEntries(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, promoted)
 	require.Zero(t, router.requestCount())
+}
+
+// statusSource reports a fixed plugin state, running onStatus first so a test
+// can act between the status read and what the caller does with it.
+type statusSource struct {
+	mmapi.Client
+	state    int
+	err      error
+	onStatus func()
+}
+
+func (s *statusSource) GetPluginStatus(pluginID string) (*model.PluginStatus, error) {
+	if s.onStatus != nil {
+		s.onStatus()
+	}
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &model.PluginStatus{PluginId: pluginID, State: s.state}, nil
+}
+
+func TestDropStoppedPluginServers(t *testing.T) {
+	live := PluginServerConfig{PluginID: reconcilePluginID, Name: "Source", Path: "/mcp", Enabled: true}
+	tests := []struct {
+		name        string
+		source      *statusSource
+		reregister  bool
+		wantDropped []string
+	}{
+		{name: "running plugin is kept", source: &statusSource{state: model.PluginStateRunning}},
+		{name: "starting plugin is kept", source: &statusSource{state: model.PluginStateStarting}},
+		{name: "stopped plugin is dropped", source: &statusSource{state: model.PluginStateNotRunning}, wantDropped: []string{reconcilePluginID}},
+		{name: "failed plugin is dropped", source: &statusSource{state: model.PluginStateFailedToStayRunning}, wantDropped: []string{reconcilePluginID}},
+		{name: "status lookup failure keeps the plugin", source: &statusSource{err: errors.New("rpc failed")}},
+		{name: "plugin that registered again after the status read is kept", source: &statusSource{state: model.PluginStateNotRunning}, reregister: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pluginTestAPI := &plugintest.API{}
+			setupClientManagerTestAPI(t, pluginTestAPI)
+			client := pluginapi.NewClient(pluginTestAPI, nil)
+			m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, tt.source, RemoteMCPAlwaysAllowed, nil)
+			t.Cleanup(m.Close)
+			m.RegisterPluginServer(live)
+			if tt.reregister {
+				tt.source.onStatus = func() { m.RegisterPluginServer(live) }
+			}
+
+			require.Equal(t, tt.wantDropped, m.DropStoppedPluginServers())
+			require.Equal(t, len(tt.wantDropped) == 0, m.IsPluginRegistered(reconcilePluginID))
+			if len(tt.wantDropped) > 0 {
+				require.Equal(t, []PluginServerConfig{live}, m.KnownPluginServers(), "a dropped server stays known")
+			}
+		})
+	}
 }

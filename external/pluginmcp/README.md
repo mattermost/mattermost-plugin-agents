@@ -230,11 +230,13 @@ registration. Plugins built with an older `pluginmcp` don't recognize the
 request; the Agents plugin then probes the MCP endpoint and restores the
 registration it saved earlier if the endpoint answers.
 
-**Activation order.** On Mattermost 12.2 and newer, the Agents plugin is
-notified when your plugin finishes activating and when it is deactivated,
-so it only calls your MCP endpoint while your plugin is running and drops
-your tools when your plugin stops, even if `Unregister` never runs (for
-example after a crash).
+**Activation order.** The Agents plugin only calls your MCP endpoint once
+the server reports your plugin as running, and retries until then. It
+checks every 30 seconds for plugins that stopped without `Unregister` (for
+example after a crash) and drops their tools until they register again. On
+servers older than 12.2, a plugin is reported as running while its
+`OnActivate` is still in progress, so the first calls may fail and be
+retried.
 
 **Tool-count budget.** Each tool costs ~20-200 schema tokens in every
 LLM request. Aim for ~10 tools per plugin, with union-typed args, over
