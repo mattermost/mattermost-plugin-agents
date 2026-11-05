@@ -14,7 +14,7 @@ import {getChannelArtifactsEnabled, getChannelArtifactsLoadFailed, getChannelArt
 
 import HTMLArtifactFullscreen from '../html_artifacts/html_artifact_fullscreen';
 
-import {libraryUrlAwaitingChannelSwitch, parseLibraryArtifactIdFromSearch, stripLibraryArtifactQuery} from './bookmark';
+import {historyPathWithoutBasename, libraryUrlAwaitingChannelSwitch, parseLibraryArtifactIdFromSearch, stripLibraryArtifactQuery} from './bookmark';
 
 type NoticeKind = 'disabled' | 'unavailable' | null;
 
@@ -68,7 +68,7 @@ const LibraryArtifactDeepLink = () => {
         }
         const history = window.WebappUtils?.browserHistory;
         if (history?.replace) {
-            history.replace(next);
+            history.replace(historyPathWithoutBasename(next));
         } else {
             window.history.replaceState(window.history.state, '', next);
         }
