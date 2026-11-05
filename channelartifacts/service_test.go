@@ -278,6 +278,37 @@ func TestRollbackRestoresVersionAndActor(t *testing.T) {
 	require.Equal(t, "<html>v1</html>", string(body))
 }
 
+func TestCreateReplacementPersistsTitleWhenTheHTMLChanges(t *testing.T) {
+	kv := newMemoryKV()
+	kv.permissionAll = true
+	store := NewStore(kv)
+	svc := NewService(store, kv, allowAllMembers{})
+	channelID := model.NewId()
+	userID := model.NewId()
+	kv.channels[channelID] = &model.Channel{Id: channelID, Type: model.ChannelTypeOpen}
+
+	entry, err := svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), Title: "Demo", Description: "first",
+	}, []byte("<html>v1</html>"), "v1.html", userID, "Author", "", model.NewId(), ContentLimits{MaxSize: 1024})
+	require.NoError(t, err)
+
+	updated, err := svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), ReplaceID: entry.ID, Title: "Renamed", Description: "second",
+	}, []byte("<html>v2</html>"), "v2.html", userID, "Author", "", model.NewId(), ContentLimits{MaxSize: 1024})
+	require.NoError(t, err)
+	require.Equal(t, "Renamed", updated.Title)
+	require.Equal(t, "second", updated.Description)
+
+	stored, err := store.Get(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, "Renamed", stored.Title)
+	require.Equal(t, 2, stored.Version)
+	versions, err := store.ListVersions(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, "Renamed", versions[len(versions)-1].Title)
+	require.Equal(t, "second", versions[len(versions)-1].Description)
+}
+
 func TestPurgeChannelRemovesEveryArtifact(t *testing.T) {
 	kv := newMemoryKV()
 	kv.permissionAll = true
