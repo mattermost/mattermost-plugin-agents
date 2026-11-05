@@ -373,12 +373,12 @@ func TestPatchReappliesTheTitleAfterAConflict(t *testing.T) {
 	kv.conflictNextMeta = true
 	kv.onFailNextMeta = func(data map[string][]byte) {
 		var stored Entry
-		if err := json.Unmarshal(data[metaKey(entry.ID)], &stored); err != nil {
+		if unmarshalErr := json.Unmarshal(data[metaKey(entry.ID)], &stored); unmarshalErr != nil {
 			return
 		}
 		stored.Description = "from the other write"
-		raw, err := json.Marshal(stored)
-		if err != nil {
+		raw, marshalErr := json.Marshal(stored)
+		if marshalErr != nil {
 			return
 		}
 		data[metaKey(entry.ID)] = raw

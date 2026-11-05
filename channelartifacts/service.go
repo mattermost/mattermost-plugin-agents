@@ -396,16 +396,16 @@ func (s *Service) PurgeChannel(channelID string) error {
 	for _, id := range idx.IDs {
 		entry, getErr := s.store.Get(id)
 		if errors.Is(getErr, ErrNotFound) {
-			if err := s.store.forgetIndexID(channelID, id); err != nil {
-				return err
+			if forgetErr := s.store.forgetIndexID(channelID, id); forgetErr != nil {
+				return forgetErr
 			}
 			continue
 		}
 		if getErr != nil {
 			return getErr
 		}
-		if err := s.store.Purge(entry); err != nil {
-			return err
+		if purgeErr := s.store.Purge(entry); purgeErr != nil {
+			return purgeErr
 		}
 	}
 	remaining, raw, err := s.store.getIndex(channelID)
