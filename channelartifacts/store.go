@@ -758,7 +758,7 @@ func (s *Store) pruneOldestVersions(entry *Entry, maxKeep int) error {
 		if len(failed) > 0 {
 			return first
 		}
-		if clearErr := s.clearPendingDelete(entry.ID, kept); clearErr != nil {
+		if clearErr := s.clearPendingDelete(entry.ID, toDelete); clearErr != nil {
 			return clearErr
 		}
 		return nil
@@ -766,9 +766,10 @@ func (s *Store) pruneOldestVersions(entry *Entry, maxKeep int) error {
 	return ErrConflict
 }
 
-// clearPendingDelete removes the pending-delete list once those blobs are gone.
-// A conflict leaves the list in place so the next prune drains it again.
-func (s *Store) clearPendingDelete(id string, live []VersionRecord) error {
+// clearPendingDelete drops the versions whose blobs were just deleted. A
+// record that is still pending stays, and a conflict leaves the list in place
+// so the next prune drains it again.
+func (s *Store) clearPendingDelete(id string, deleted []VersionRecord) error {
 	hist, raw, err := s.loadHistoryRaw(id)
 	if err != nil {
 		return err
@@ -776,10 +777,19 @@ func (s *Store) clearPendingDelete(id string, live []VersionRecord) error {
 	if len(hist.PendingDelete) == 0 {
 		return nil
 	}
-	hist.PendingDelete = pendingStillNeeded(hist.PendingDelete, live)
-	if len(hist.PendingDelete) == 0 {
-		hist.PendingDelete = nil
+	remaining := make([]VersionRecord, 0, len(hist.PendingDelete))
+	for _, rec := range hist.PendingDelete {
+		if !versionListed(deleted, rec.Version) {
+			remaining = append(remaining, rec)
+		}
 	}
+	if len(remaining) == len(hist.PendingDelete) {
+		return nil
+	}
+	if len(remaining) == 0 {
+		remaining = nil
+	}
+	hist.PendingDelete = remaining
 	if err := s.claimHistory(id, raw, hist); err != nil && !errors.Is(err, ErrConflict) {
 		return err
 	}
@@ -1015,6 +1025,42 @@ func (s *Store) casHead(expectedVersion int, expectedSHA string, entry *Entry) e
 	return ErrConflict
 }
 
+// matchVersionMeta copies the head's title and description onto the version
+// record. casContentHead can keep a title that landed during the upload, and
+// the record was written from the caller's copy before that.
+func (s *Store) matchVersionMeta(id string, version int, title, description string) error {
+	for range 8 {
+		hist, raw, err := s.loadHistoryRaw(id)
+		if err != nil {
+			return err
+		}
+		matched := false
+		for i := range hist.Versions {
+			if hist.Versions[i].Version != version {
+				continue
+			}
+			if hist.Versions[i].Title == title && hist.Versions[i].Description == description {
+				return nil
+			}
+			hist.Versions[i].Title = title
+			hist.Versions[i].Description = description
+			matched = true
+			break
+		}
+		if !matched {
+			return nil
+		}
+		if err := s.claimHistory(id, raw, hist); err != nil {
+			if errors.Is(err, ErrConflict) {
+				continue
+			}
+			return err
+		}
+		return nil
+	}
+	return ErrConflict
+}
+
 func (s *Store) UpdateMeta(entry *Entry) error {
 	if entry == nil || !model.IsValidId(entry.ID) {
 		return ErrInvalidInput
@@ -1128,6 +1174,9 @@ func (s *Store) ReplaceContent(entry *Entry, content []byte, maxSize int64, maxK
 				return errors.Join(metaErr, undoErr)
 			}
 			return metaErr
+		}
+		if alignErr := s.matchVersionMeta(entry.ID, entry.Version, entry.Title, entry.Description); alignErr != nil {
+			return fmt.Errorf("%w: %w", ErrCleanupDeferred, alignErr)
 		}
 		if original.SHA256 != "" && original.SHA256 != sha {
 			_ = s.deleteSHAIfOwner(entry.ChannelID, original.SHA256, entry.ID)

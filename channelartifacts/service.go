@@ -225,6 +225,13 @@ func (s *Service) replaceLocked(
 	entry.SourceRootPostID = sourceRootPostID
 	entry.UpdateAt = model.GetMillis()
 	entry.UpdatedBy = userID
+	// Persist the requested title and description before the content write.
+	// ReplaceContent keeps whatever title is stored when the new head lands, so
+	// a patch during the upload still wins, and an unchanged stored title does
+	// not drop the one this call just set.
+	if err := s.store.UpdateMeta(entry); err != nil {
+		return nil, err
+	}
 	if err := s.store.ReplaceContent(entry, content, limits.MaxSize, limits.VersionsToKeep); err != nil {
 		if errors.Is(err, ErrCleanupDeferred) {
 			return entry, err
