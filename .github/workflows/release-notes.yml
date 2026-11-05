@@ -1,0 +1,58 @@
+name: release-notes
+
+# Replaces the body of a published release with notes written from the PR
+# titles and descriptions (see build/releasenotes/README.md).
+#
+# Mattermost's release pipeline (delivery-platform) rebuilds the plugin from the
+# tag and creates the release with the plain commit list from plugin-ci/build.
+# It runs outside this repo and has no Anthropic key, so the notes are written
+# here once the release exists. The release is created by a GitHub App, so
+# `release: published` fires. If this job fails, the release keeps the commit
+# list. Run it by hand with a tag to regenerate an existing release's notes.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to rewrite the notes for, for example v2.12.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: release-notes-${{ inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  notes:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: build/releasenotes/go.mod
+
+      - name: Generate release notes
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_NOTES_MODEL: ${{ vars.RELEASE_NOTES_MODEL || vars.CLAUDE_MODEL || 'claude-sonnet-5-5' }}
+        run: |
+          # The tag ends up in a make command line, so only accept release tags.
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::not a release tag: $TAG"; exit 1; }
+          make release-notes HEAD="refs/tags/$TAG" TAG="$TAG" OUTPUT="$RUNNER_TEMP/release-notes.md"
+
+      - name: Update the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/release-notes.md"
+          cat "$RUNNER_TEMP/release-notes.md" >> "$GITHUB_STEP_SUMMARY"
