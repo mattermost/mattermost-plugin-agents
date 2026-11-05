@@ -242,6 +242,24 @@ describe('AgentNewChat', () => {
             expect(onCreated).not.toHaveBeenCalled();
         });
 
+        test('the composer is inert while a starter runs and usable again after a failure', async () => {
+            jest.spyOn(console, 'error').mockImplementation(() => 0);
+            const render1 = deferred<{rendered: string}>();
+            (renderCustomPrompt as jest.Mock).mockReturnValue(render1.promise);
+            store = makeStore([makePrompt('1')], ['1']);
+            render(ui());
+            const composer = screen.getByTestId('agent-chat-new-composer');
+            expect(composer.hasAttribute('inert')).toBe(false);
+
+            fireEvent.click(screen.getByRole('button', {name: 'Prompt 1'}));
+            expect(composer.hasAttribute('inert')).toBe(true);
+
+            await act(async () => {
+                render1.resolve(Promise.reject(new Error('nope')) as never);
+            });
+            await waitFor(() => expect(composer.hasAttribute('inert')).toBe(false));
+        });
+
         test('a starter does not post a second first message once the composer has sent one', async () => {
             const render1 = deferred<{rendered: string}>();
             (renderCustomPrompt as jest.Mock).mockReturnValue(render1.promise);

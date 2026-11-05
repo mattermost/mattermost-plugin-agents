@@ -197,6 +197,11 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
                 <Composer
                     className={HOST_COMPOSER_CONTAINER_CLASS}
                     data-testid='agent-chat-new-composer'
+
+                    // The host composer has no disabled prop. While a starter renders and posts, the
+                    // composer cannot be typed in or submitted, so the two cannot both create the first post.
+                    inert={runningId !== null}
+                    $busy={runningId !== null}
                 >
                     {/* In the RHS, RHS_COMMENT makes the host treat it as the RHS composer (focus, ids, suggestion list). */}
                     <AdvancedTextEditor
@@ -262,10 +267,13 @@ const EmptyChat = styled.div<{$layout: AgentNewChatLayout}>`
 
 // The host composer fills the column; the column's own padding is its inset, so the host's is
 // removed. The host wrapper's own background and radius stay.
-const Composer = styled.div`
+const Composer = styled.div<{$busy: boolean}>`
     && {
         width: 100%;
     }
+
+    opacity: ${({$busy}) => ($busy ? 0.56 : 1)};
+    transition: opacity var(--duration-quick) var(--ease-transition);
 
     ${hostComposerInset('0')}
 `;
