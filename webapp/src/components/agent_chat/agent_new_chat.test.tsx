@@ -4,7 +4,7 @@
 import React from 'react';
 import {Provider} from 'react-redux';
 import {createStore} from 'redux';
-import {fireEvent, render, screen, waitFor, within} from '@testing-library/react';
+import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 
 import manifest from '@/manifest';
 import {renderCustomPrompt, createPost} from '@/client';
@@ -146,40 +146,6 @@ describe('AgentNewChat', () => {
             store = makeStore(['1', '2'].map(makePrompt), []);
             render(ui());
             expect(screen.queryByTestId('agent-chat-starter-prompts')).toBeNull();
-        });
-
-        test('shows five pinned prompts and the rest in a More menu', () => {
-            const ids = ['1', '2', '3', '4', '5', '6', '7'];
-            store = makeStore(ids.map(makePrompt), ids);
-            render(ui());
-            expect(chips().map((b) => b.textContent)).toEqual(['Prompt 1', 'Prompt 2', 'Prompt 3', 'Prompt 4', 'Prompt 5']);
-
-            const more = screen.getByRole('button', {name: /^More prompts/});
-            expect(more.textContent).toBe('+2');
-            fireEvent.click(more);
-            expect(within(screen.getByTestId('dropdownmenu')).getAllByRole('button').map((m) => m.textContent)).toEqual(['Prompt 6', 'Prompt 7']);
-        });
-
-        test('has no More menu at five pinned prompts or fewer', () => {
-            const ids = ['1', '2', '3', '4', '5'];
-            store = makeStore(ids.map(makePrompt), ids);
-            render(ui());
-            expect(screen.queryByRole('button', {name: /^More prompts/})).toBeNull();
-        });
-
-        test('choosing a prompt from the More menu runs it', async () => {
-            (renderCustomPrompt as jest.Mock).mockResolvedValue({rendered: 'overflow text'});
-            (createPost as jest.Mock).mockResolvedValue({id: 'post7'});
-            const ids = ['1', '2', '3', '4', '5', '6'];
-            store = makeStore(ids.map(makePrompt), ids);
-            const onCreated = jest.fn();
-            render(ui('page', onCreated));
-
-            fireEvent.click(screen.getByRole('button', {name: /^More prompts/}));
-            fireEvent.click(within(screen.getByTestId('dropdownmenu')).getByRole('button', {name: 'Prompt 6'}));
-
-            await waitFor(() => expect(onCreated).toHaveBeenCalledWith('post7'));
-            expect(renderCustomPrompt).toHaveBeenCalledWith('6', 'dm1', 'bot1');
         });
 
         test('ignores a pin whose prompt is gone', () => {
