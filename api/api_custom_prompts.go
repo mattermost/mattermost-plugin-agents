@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
@@ -181,6 +182,17 @@ func (a *API) handleSetPromptPin(c *gin.Context) {
 			return
 		}
 		if prompt.CreatorID != userID && !a.requireCapability(c, enterprise.CapSharedPrompts) {
+			return
+		}
+
+		pinned, err := a.customPromptsStore.GetPinnedIDs(userID)
+		if err != nil {
+			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get pinned prompts: %w", err))
+			return
+		}
+		// Re-pinning an already pinned prompt stays a no-op at the limit.
+		if len(pinned) >= customprompts.MaxPinnedPrompts && !slices.Contains(pinned, req.PromptID) {
+			c.AbortWithError(http.StatusConflict, fmt.Errorf("you can pin up to %d prompts", customprompts.MaxPinnedPrompts))
 			return
 		}
 	}

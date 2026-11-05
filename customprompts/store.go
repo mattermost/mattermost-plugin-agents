@@ -15,6 +15,10 @@ import (
 
 const MaxPromptNameLength = 64
 
+// MaxPinnedPrompts is how many prompts a user can pin; pinned prompts are the
+// ones the agent empty state offers.
+const MaxPinnedPrompts = 5
+
 // CustomPrompt represents a user-created prompt template
 type CustomPrompt struct {
 	ID          string `json:"id" db:"id"`

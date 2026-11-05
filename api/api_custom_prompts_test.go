@@ -494,3 +494,46 @@ func TestAuditCustomPrompts(t *testing.T) {
 		})
 	}
 }
+
+func TestPinLimit(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e, cpStore := setupCustomPromptsTestEnvironment(t)
+	defer e.Cleanup(t)
+	e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+	put := func(promptID string, pinned bool) int {
+		body := fmt.Sprintf(`{"prompt_id":%q,"pinned":%t}`, promptID, pinned)
+		req := httptest.NewRequest(http.MethodPut, "/custom-prompts/pins", strings.NewReader(body))
+		req.Header.Set("Mattermost-User-Id", testUserID)
+		recorder := httptest.NewRecorder()
+		e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+		return recorder.Result().StatusCode
+	}
+
+	var pinned []customprompts.CustomPrompt
+	for range customprompts.MaxPinnedPrompts {
+		p := createTestPrompt(t, cpStore, testUserID, false)
+		require.Equal(t, http.StatusOK, put(p.ID, true))
+		pinned = append(pinned, p)
+	}
+	extra := createTestPrompt(t, cpStore, testUserID, false)
+
+	t.Run("pinning past the limit is rejected", func(t *testing.T) {
+		require.Equal(t, http.StatusConflict, put(extra.ID, true))
+		ids, err := cpStore.GetPinnedIDs(testUserID)
+		require.NoError(t, err)
+		require.Len(t, ids, customprompts.MaxPinnedPrompts)
+		require.NotContains(t, ids, extra.ID)
+	})
+
+	t.Run("re-pinning a pinned prompt at the limit is a no-op", func(t *testing.T) {
+		require.Equal(t, http.StatusOK, put(pinned[0].ID, true))
+	})
+
+	t.Run("unpinning frees a slot", func(t *testing.T) {
+		require.Equal(t, http.StatusOK, put(pinned[0].ID, false))
+		require.Equal(t, http.StatusOK, put(extra.ID, true))
+	})
+}

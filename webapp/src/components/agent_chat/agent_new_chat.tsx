@@ -1,16 +1,23 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {defineMessages, useIntl, type MessageDescriptor} from 'react-intl';
+import {useDispatch, useSelector} from 'react-redux';
 import styled, {css, keyframes} from 'styled-components';
 
+import {DotsHorizontalIcon} from '@mattermost/compass-icons/components';
+import {Button} from '@mattermost/compass-ui/components/button';
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
-import {getProfilePictureUrl} from '@/client';
+import {createPost, getProfilePictureUrl, renderCustomPrompt} from '@/client';
 import type {LLMBot} from '@/bots';
+import DotMenu, {DropdownMenuItem} from '@/components/dot_menu';
 import {AdvancedTextEditor} from '@/mm_webapp';
 import {noMotionWhenReduced} from '@/components/llmbot_post/motion';
+import {fetchCustomPrompts, fetchPinnedPromptIds} from '@/redux';
+import {getCustomPrompts, getPinnedPromptIds} from '@/selectors';
+import {MAX_PINNED_PROMPTS, type CustomPrompt} from '@/types';
 
 import {CHAT_CONTENT_MAX_WIDTH, HOST_COMPOSER_CONTAINER_CLASS, hostComposerInset} from './agent_chat_host_styles';
 
@@ -69,6 +76,46 @@ interface HostSubmitResult {
 // included), and its afterSubmit opens the new thread.
 const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) => {
     const intl = useIntl();
+    const dispatch = useDispatch();
+    const prompts = useSelector(getCustomPrompts);
+    const pinnedIds = useSelector(getPinnedPromptIds);
+    const [runningId, setRunningId] = useState<string | null>(null);
+
+    useEffect(() => {
+        dispatch(fetchCustomPrompts() as any);
+        dispatch(fetchPinnedPromptIds() as any);
+    }, [dispatch]);
+
+    // The server caps pins at MAX_PINNED_PROMPTS; any beyond it (pinned before the cap) go in the More menu.
+    const {starters, overflow} = useMemo(() => {
+        const pinned = pinnedIds.
+            map((id) => prompts.find((p) => p.id === id)).
+            filter((p): p is CustomPrompt => Boolean(p));
+        return {
+            starters: pinned.slice(0, MAX_PINNED_PROMPTS),
+            overflow: pinned.slice(MAX_PINNED_PROMPTS),
+        };
+    }, [prompts, pinnedIds]);
+
+    // The host composer has no way to take a draft from outside, so a starter runs the prompt:
+    // it posts the rendered text as the chat's first message.
+    const runStarter = useCallback(async (prompt: CustomPrompt) => {
+        if (runningId) {
+            return;
+        }
+        setRunningId(prompt.id);
+        try {
+            const {rendered} = await renderCustomPrompt(prompt.id, channelId, bot.id);
+            const created = await createPost({channel_id: channelId, message: rendered, root_id: ''});
+            if (created?.id) {
+                onCreated(created.id);
+                return;
+            }
+        } catch (e) {
+            console.error('Failed to run custom prompt:', e); // eslint-disable-line no-console
+        }
+        setRunningId(null);
+    }, [runningId, channelId, bot.id, onCreated]);
 
     const afterSubmit = useCallback((result: HostSubmitResult) => {
         if (result?.created?.id) {
@@ -97,6 +144,44 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
                     <EmptySubtitle>{intl.formatMessage(greeting.subtitle)}</EmptySubtitle>
                 </Greeting>
             </EmptyIntro>
+            {starters.length > 0 && (
+                <Starters
+                    role='group'
+                    aria-label={intl.formatMessage({defaultMessage: 'Custom prompts'})}
+                    data-testid='agent-chat-starter-prompts'
+                >
+                    {starters.map((prompt) => (
+                        <StarterButton
+                            key={prompt.id}
+                            emphasis='dim'
+                            size='small'
+                            compact={true}
+                            title={prompt.description}
+                            disabled={runningId !== null}
+                            onClick={() => runStarter(prompt)}
+                        >
+                            {prompt.name}
+                        </StarterButton>
+                    ))}
+                    {overflow.length > 0 && (
+                        <DotMenu
+                            icon={<DotsHorizontalIcon/>}
+                            title={intl.formatMessage({defaultMessage: 'More prompts'})}
+                            disabled={runningId !== null}
+                            placement='bottom-end'
+                        >
+                            {overflow.map((prompt) => (
+                                <DropdownMenuItem
+                                    key={prompt.id}
+                                    label={prompt.name}
+                                    role='menuitem'
+                                    onClick={() => runStarter(prompt)}
+                                />
+                            ))}
+                        </DotMenu>
+                    )}
+                </Starters>
+            )}
             {AdvancedTextEditor && (
                 <Composer
                     className={HOST_COMPOSER_CONTAINER_CLASS}
@@ -172,6 +257,20 @@ const Composer = styled.div`
     }
 
     ${hostComposerInset('0')}
+`;
+
+const Starters = styled.div`
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--spacing-xs);
+`;
+
+// A resting tint keeps the dim buttons readable as buttons; hover and focus keep compass's own states.
+const StarterButton = styled(Button)`
+    && {
+        background: rgba(var(--center-channel-color-rgb), 0.04);
+    }
 `;
 
 const EmptyIntro = styled.div`
