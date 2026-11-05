@@ -586,6 +586,9 @@ func TestStoreVersionsToKeepPrunesOldest(t *testing.T) {
 	require.Equal(t, 4, versions[1].Version)
 	_, err = store.ReadContentAt(entry, 1)
 	require.ErrorIs(t, err, ErrNotFound)
+	hist, err := store.loadHistory(entry.ID)
+	require.NoError(t, err)
+	require.Empty(t, hist.PendingDelete)
 }
 
 func TestPruneKeepsBlobsWhenHistorySaveFails(t *testing.T) {
@@ -1161,6 +1164,9 @@ func TestReplaceContentKeepsATitlePatchedWhileTheUploadRuns(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "Patched", got.Title)
 	require.Equal(t, 2, got.Version)
+	versions, err := store.ListVersions(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, "Patched", versions[len(versions)-1].Title)
 	body, err := store.ReadContent(got)
 	require.NoError(t, err)
 	require.Equal(t, "<html>2</html>", string(body))
@@ -1232,6 +1238,24 @@ func TestDeleteHeadLeavesTheLookupARollbackAlreadyUses(t *testing.T) {
 	owner, findErr := store.FindBySHA(entry.ChannelID, previousSHA)
 	require.NoError(t, findErr)
 	require.Equal(t, entry.ID, owner)
+}
+
+func TestPruneClearsAHeadThatWasAlreadyDeleted(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
+	require.NoError(t, store.ReplaceContent(entry, []byte("<html>2</html>"), 1024, 0))
+	require.NoError(t, store.DeleteHead(entry))
+
+	hist, err := store.loadHistory(entry.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, hist.PendingDelete)
+
+	require.NoError(t, store.pruneOldestVersions(entry, 10))
+	hist, err = store.loadHistory(entry.ID)
+	require.NoError(t, err)
+	require.Empty(t, hist.PendingDelete)
 }
 
 func sha256Hex(content []byte) string {
