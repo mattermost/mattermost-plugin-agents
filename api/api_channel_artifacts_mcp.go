@@ -230,6 +230,10 @@ func (a *API) handleMCPCanSaveChannelArtifact(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "file is not an HTML artifact"})
 		return
 	}
+	if info.PostId == "" || info.PostId != req.PostID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "file is not attached to the post"})
+		return
+	}
 	post, err := a.mmClient.GetPost(req.PostID)
 	if err != nil || post == nil || !slices.Contains(post.FileIds, req.FileID) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "file is not attached to the post"})

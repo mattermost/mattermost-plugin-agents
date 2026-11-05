@@ -361,7 +361,10 @@ func (a *API) handleDeleteChannelArtifact(c *gin.Context) {
 		return
 	}
 	if !errors.Is(getErr, channelartifacts.ErrNotFound) {
-		a.writeChannelArtifactError(c, getErr)
+		if a.pluginAPI != nil {
+			a.pluginAPI.Log.Warn("channel artifact delete committed but the follow-up read failed", "artifact_id", id, "error", getErr.Error())
+		}
+		c.Status(http.StatusNoContent)
 		return
 	}
 	a.channelArtifacts.Publish(WebsocketEventChannelArtifactDeleted, channelID, map[string]any{
@@ -523,12 +526,12 @@ func parseArtifactVersionQuery(c *gin.Context) (int, bool) {
 }
 
 func (a *API) handleGetChannelArtifactToken(c *gin.Context) {
-	if a.config.DisableChannelArtifactRendering() {
-		c.String(http.StatusForbidden, "channel artifact rendering is disabled")
-		return
-	}
 	entry, ok := a.authorizeLibraryArtifact(c)
 	if !ok {
+		return
+	}
+	if a.config.DisableChannelArtifactRendering() {
+		c.String(http.StatusForbidden, "channel artifact rendering is disabled")
 		return
 	}
 	nonce, ok := artifactNonceAllowing(c, "version")
@@ -667,9 +670,22 @@ func (a *API) handleDownloadChannelArtifact(c *gin.Context) {
 		name = entry.Title + ".html"
 	}
 	h := c.Writer.Header()
-	h.Set("Content-Disposition", "attachment; filename=\""+strings.ReplaceAll(name, "\"", "")+"\"")
+	h.Set("Content-Disposition", attachmentDisposition(name))
 	h.Set("X-Content-Type-Options", "nosniff")
 	c.Data(http.StatusOK, "text/html; charset=utf-8", body)
+}
+
+func attachmentDisposition(name string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || r == '"' || r == '\\' {
+			return -1
+		}
+		return r
+	}, name)
+	if cleaned == "" {
+		cleaned = "artifact.html"
+	}
+	return `attachment; filename="` + cleaned + `"`
 }
 
 // lookupPostArtifact runs the same authorization as authorizeArtifact but
