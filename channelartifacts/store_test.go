@@ -1144,6 +1144,96 @@ func TestPurgeDeletesAnEmptyChannelIndex(t *testing.T) {
 	require.ErrorIs(t, err, mmapi.ErrKVNotFound)
 }
 
+func TestReplaceContentKeepsATitlePatchedWhileTheUploadRuns(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
+	stale := *entry
+
+	stored, err := store.Get(entry.ID)
+	require.NoError(t, err)
+	stored.Title = "Patched"
+	require.NoError(t, store.UpdateMeta(stored))
+
+	require.NoError(t, store.ReplaceContent(&stale, []byte("<html>2</html>"), 1024, 0))
+	got, err := store.Get(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, "Patched", got.Title)
+	require.Equal(t, 2, got.Version)
+	body, err := store.ReadContent(got)
+	require.NoError(t, err)
+	require.Equal(t, "<html>2</html>", string(body))
+}
+
+func TestSaveAfterRollbackDoesNotReuseAPrunedVersion(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
+	require.NoError(t, store.ReplaceContent(entry, []byte("<html>2</html>"), 1024, 0))
+	require.NoError(t, store.ReplaceContent(entry, []byte("<html>3</html>"), 1024, 0))
+	require.NoError(t, store.Rollback(entry, 1))
+	require.NoError(t, store.ReplaceContent(entry, []byte("<html>1</html>"), 1024, 1))
+
+	require.NoError(t, store.ReplaceContent(entry, []byte("<html>4</html>"), 1024, 0))
+	require.Greater(t, entry.Version, 3)
+	body, err := store.ReadContentAt(entry, entry.Version)
+	require.NoError(t, err)
+	require.Equal(t, "<html>4</html>", string(body))
+	_, err = store.ReadContentAt(entry, 2)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestPruneKeepsTheVersionARollbackSelected(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
+	require.NoError(t, store.ReplaceContent(entry, []byte("<html>2</html>"), 1024, 0))
+	require.NoError(t, store.ReplaceContent(entry, []byte("<html>3</html>"), 1024, 0))
+	_, err := store.markHistoryHead(entry.ID, 1)
+	require.NoError(t, err)
+
+	require.NoError(t, store.pruneOldestVersions(entry, 1))
+	body, err := store.ReadContentAt(entry, 1)
+	require.NoError(t, err)
+	require.Equal(t, "<html>1</html>", string(body))
+	body, err = store.ReadContent(entry)
+	require.NoError(t, err)
+	require.Equal(t, "<html>3</html>", string(body))
+}
+
+func TestDeleteHeadLeavesTheLookupARollbackAlreadyUses(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
+	require.NoError(t, store.ReplaceContent(entry, []byte("<html>2</html>"), 1024, 0))
+	previousSHA := sha256Hex([]byte("<html>1</html>"))
+
+	kv.failNextMeta = true
+	kv.onFailNextMeta = func(data map[string][]byte) {
+		var stored Entry
+		if err := json.Unmarshal(data[metaKey(entry.ID)], &stored); err != nil {
+			return
+		}
+		stored.Version = 1
+		stored.SHA256 = previousSHA
+		raw, err := json.Marshal(stored)
+		if err != nil {
+			return
+		}
+		data[metaKey(entry.ID)] = raw
+	}
+
+	err := store.DeleteHead(entry)
+	require.Error(t, err)
+	owner, findErr := store.FindBySHA(entry.ChannelID, previousSHA)
+	require.NoError(t, findErr)
+	require.Equal(t, entry.ID, owner)
+}
+
 func sha256Hex(content []byte) string {
 	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])

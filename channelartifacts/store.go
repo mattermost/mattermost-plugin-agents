@@ -501,7 +501,16 @@ func (s *Store) restoreHistoryIfUnchanged(id string, shortened, previous []Versi
 	if !sameVersionContent(stored.Versions, shortened) {
 		return false, nil
 	}
-	restored := &VersionHistory{Versions: previous}
+	head := stored.HeadVersion
+	if head > 0 && !versionListed(previous, head) {
+		head = 0
+	}
+	restored := &VersionHistory{
+		Versions:      previous,
+		NextVersion:   stored.NextVersion,
+		HeadVersion:   head,
+		PendingDelete: pendingStillNeeded(stored.PendingDelete, previous),
+	}
 	slices.SortFunc(restored.Versions, func(a, b VersionRecord) int {
 		return cmp.Compare(a.Version, b.Version)
 	})
@@ -542,7 +551,9 @@ func (s *Store) ensureHistory(entry *Entry) (*VersionHistory, error) {
 		}
 	}
 	hist = &VersionHistory{
-		Versions: []VersionRecord{versionRecordFromEntry(entry, legacy)},
+		Versions:    []VersionRecord{versionRecordFromEntry(entry, legacy)},
+		NextVersion: entry.Version + 1,
+		HeadVersion: entry.Version,
 	}
 	if err := s.saveHistory(entry.ID, hist); err != nil {
 		return nil, err
@@ -561,12 +572,53 @@ func findVersion(hist *VersionHistory, version int) (VersionRecord, bool) {
 
 func maxVersion(hist *VersionHistory) int {
 	highest := 0
+	if hist == nil {
+		return 0
+	}
 	for _, rec := range hist.Versions {
 		if rec.Version > highest {
 			highest = rec.Version
 		}
 	}
 	return highest
+}
+
+// issueVersion is the next version number. It never goes backwards past
+// NextVersion, so a pruned number is not issued again.
+func issueVersion(hist *VersionHistory) int {
+	next := maxVersion(hist) + 1
+	if hist != nil && hist.NextVersion > next {
+		next = hist.NextVersion
+	}
+	return next
+}
+
+func noteIssued(hist *VersionHistory, version int) {
+	if hist != nil && version >= hist.NextVersion {
+		hist.NextVersion = version + 1
+	}
+}
+
+func versionListed(versions []VersionRecord, version int) bool {
+	for _, rec := range versions {
+		if rec.Version == version {
+			return true
+		}
+	}
+	return false
+}
+
+func pendingStillNeeded(pending, live []VersionRecord) []VersionRecord {
+	if len(pending) == 0 {
+		return nil
+	}
+	out := make([]VersionRecord, 0, len(pending))
+	for _, rec := range pending {
+		if !versionListed(live, rec.Version) {
+			out = append(out, rec)
+		}
+	}
+	return out
 }
 
 func (s *Store) writeVersionBlobs(id string, version int, chunks [][]byte) error {
@@ -599,7 +651,7 @@ func (s *Store) deleteAllVersionBlobs(hist *VersionHistory, id string) {
 
 func (s *Store) deleteAllVersionBlobKeys(hist *VersionHistory, id string) error {
 	var first error
-	for _, rec := range hist.Versions {
+	for _, rec := range append(append([]VersionRecord{}, hist.Versions...), hist.PendingDelete...) {
 		if err := s.deleteVersionBlobKeys(rec, id); err != nil && first == nil {
 			first = err
 		}
@@ -608,8 +660,15 @@ func (s *Store) deleteAllVersionBlobKeys(hist *VersionHistory, id string) error 
 }
 
 // versionsAfterPrune drops the oldest versions until maxKeep remain, and never
-// drops headVersion. The head stays even when a rollback made it the oldest.
-func versionsAfterPrune(versions []VersionRecord, headVersion, maxKeep int) (pruned, kept []VersionRecord) {
+// drops a protected version. The live head and a rollback's selected version
+// stay even when that makes the history longer than maxKeep.
+func versionsAfterPrune(versions []VersionRecord, protect []int, maxKeep int) (pruned, kept []VersionRecord) {
+	protected := make(map[int]bool, len(protect))
+	for _, version := range protect {
+		if version > 0 {
+			protected[version] = true
+		}
+	}
 	sorted := append([]VersionRecord(nil), versions...)
 	slices.SortFunc(sorted, func(a, b VersionRecord) int {
 		return cmp.Compare(a.Version, b.Version)
@@ -620,7 +679,7 @@ func versionsAfterPrune(versions []VersionRecord, headVersion, maxKeep int) (pru
 	excess := len(sorted) - maxKeep
 	kept = make([]VersionRecord, 0, len(sorted))
 	for _, rec := range sorted {
-		if excess > 0 && rec.Version != headVersion {
+		if excess > 0 && !protected[rec.Version] {
 			pruned = append(pruned, rec)
 			excess--
 			continue
@@ -652,25 +711,79 @@ func (s *Store) pruneOldestVersions(entry *Entry, maxKeep int) error {
 		if err != nil {
 			return err
 		}
-		pruned, kept := versionsAfterPrune(hist.Versions, stored.Version, maxKeep)
-		if len(pruned) == 0 {
+		pruned, kept := versionsAfterPrune(hist.Versions, []int{stored.Version, hist.HeadVersion}, maxKeep)
+		pending := pendingStillNeeded(hist.PendingDelete, kept)
+		toDelete := append(append([]VersionRecord{}, pruned...), pending...)
+		if len(toDelete) == 0 {
 			return nil
 		}
-		if err := s.claimHistory(entry.ID, raw, &VersionHistory{Versions: kept}); err != nil {
+		next := &VersionHistory{
+			Versions:      kept,
+			NextVersion:   hist.NextVersion,
+			HeadVersion:   hist.HeadVersion,
+			PendingDelete: toDelete,
+		}
+		if next.HeadVersion == 0 {
+			next.HeadVersion = stored.Version
+		}
+		if err := s.claimHistory(entry.ID, raw, next); err != nil {
 			if errors.Is(err, ErrConflict) {
 				continue
 			}
 			return err
 		}
+		fresh, _, freshErr := s.loadMetaRaw(entry.ID)
+		if freshErr != nil && !errors.Is(freshErr, ErrNotFound) {
+			return freshErr
+		}
+		if fresh != nil && versionListed(toDelete, fresh.Version) {
+			if _, restoreErr := s.restoreHistoryIfUnchanged(entry.ID, kept, hist.Versions); restoreErr != nil {
+				return restoreErr
+			}
+			continue
+		}
+		var failed []VersionRecord
 		var first error
-		for _, rec := range pruned {
-			if err := s.deleteVersionBlobKeys(rec, entry.ID); err != nil && first == nil {
-				first = err
+		for _, rec := range toDelete {
+			if fresh != nil && rec.Version == fresh.Version {
+				continue
+			}
+			if deleteErr := s.deleteVersionBlobKeys(rec, entry.ID); deleteErr != nil {
+				failed = append(failed, rec)
+				if first == nil {
+					first = deleteErr
+				}
 			}
 		}
-		return first
+		if len(failed) > 0 {
+			return first
+		}
+		if clearErr := s.clearPendingDelete(entry.ID, kept); clearErr != nil {
+			return clearErr
+		}
+		return nil
 	}
 	return ErrConflict
+}
+
+// clearPendingDelete removes the pending-delete list once those blobs are gone.
+// A conflict leaves the list in place so the next prune drains it again.
+func (s *Store) clearPendingDelete(id string, live []VersionRecord) error {
+	hist, raw, err := s.loadHistoryRaw(id)
+	if err != nil {
+		return err
+	}
+	if len(hist.PendingDelete) == 0 {
+		return nil
+	}
+	hist.PendingDelete = pendingStillNeeded(hist.PendingDelete, live)
+	if len(hist.PendingDelete) == 0 {
+		hist.PendingDelete = nil
+	}
+	if err := s.claimHistory(id, raw, hist); err != nil && !errors.Is(err, ErrConflict) {
+		return err
+	}
+	return nil
 }
 
 // Save writes a new artifact: blobs, meta, history, sha index, and channel index.
@@ -719,7 +832,9 @@ func (s *Store) Save(entry *Entry, content []byte, maxSize int64, maxPerChannel,
 		return err
 	}
 	hist := &VersionHistory{
-		Versions: []VersionRecord{versionRecordFromEntry(entry, false)},
+		Versions:    []VersionRecord{versionRecordFromEntry(entry, false)},
+		NextVersion: entry.Version + 1,
+		HeadVersion: entry.Version,
 	}
 	if err := s.saveHistory(entry.ID, hist); err != nil {
 		s.deleteVersionBlobs(hist.Versions[0], entry.ID)
@@ -841,6 +956,43 @@ func (s *Store) saveMetaCAS(id string, oldRaw []byte, entry *Entry) error {
 	return nil
 }
 
+// casContentHead writes content fields onto the stored head. Title and
+// description stay as stored, so a patch that landed during the upload is kept.
+func (s *Store) casContentHead(expectedVersion int, expectedSHA string, entry *Entry) error {
+	for range 8 {
+		stored, raw, err := s.loadMetaRaw(entry.ID)
+		if err != nil {
+			return err
+		}
+		if stored.Purging || stored.Version != expectedVersion || stored.SHA256 != expectedSHA {
+			return ErrConflict
+		}
+		stored.Version = entry.Version
+		stored.SHA256 = entry.SHA256
+		stored.Size = entry.Size
+		stored.Encoding = entry.Encoding
+		stored.ChunkCount = entry.ChunkCount
+		stored.SchemaVersion = entry.SchemaVersion
+		stored.SourcePostID = entry.SourcePostID
+		stored.SourceFileID = entry.SourceFileID
+		stored.SourceFileName = entry.SourceFileName
+		stored.SourceBotUserID = entry.SourceBotUserID
+		stored.SourceAgentDisplayName = entry.SourceAgentDisplayName
+		stored.SourceRootPostID = entry.SourceRootPostID
+		stored.UpdateAt = entry.UpdateAt
+		stored.UpdatedBy = entry.UpdatedBy
+		if err := s.saveMetaCAS(entry.ID, raw, stored); err != nil {
+			if errors.Is(err, ErrConflict) {
+				continue
+			}
+			return err
+		}
+		*entry = *stored
+		return nil
+	}
+	return ErrConflict
+}
+
 // casHead writes entry only while the stored head still has expectedVersion and
 // expectedSHA. A newer content write returns ErrConflict instead of being overwritten.
 func (s *Store) casHead(expectedVersion int, expectedSHA string, entry *Entry) error {
@@ -938,7 +1090,9 @@ func (s *Store) ReplaceContent(entry *Entry, content []byte, maxSize int64, maxK
 		entry.SHA256 = sha
 		entry.Encoding = "gzip"
 		entry.ChunkCount = len(chunks)
-		entry.Version = maxVersion(hist) + 1
+		entry.Version = issueVersion(hist)
+		noteIssued(hist, entry.Version)
+		hist.HeadVersion = entry.Version
 		entry.SchemaVersion = schemaVersion
 		rec := versionRecordFromEntry(entry, false)
 
@@ -967,7 +1121,7 @@ func (s *Store) ReplaceContent(entry *Entry, content []byte, maxSize int64, maxK
 			}
 			return writeErr
 		}
-		if metaErr := s.casHead(original.Version, original.SHA256, entry); metaErr != nil {
+		if metaErr := s.casContentHead(original.Version, original.SHA256, entry); metaErr != nil {
 			undoErr := s.undoClaimedVersion(entry.ChannelID, entry.ID, sha, entry.ID, previous, hist.Versions, rec, reserved)
 			*entry = original
 			if undoErr != nil {
@@ -1198,6 +1352,20 @@ func (s *Store) Rollback(entry *Entry, toVersion int) error {
 			return reserveErr
 		}
 	}
+	// Record the selected version in history before the metadata write, so a
+	// prune already in flight cannot delete the blobs this rollback is about to use.
+	marked, markErr := s.markHistoryHead(entry.ID, toVersion)
+	if markErr != nil {
+		if relErr := s.releaseReservedSHA(entry.ChannelID, entry.SHA256, entry.ID, reserved); relErr != nil {
+			*entry = original
+			return errors.Join(markErr, relErr)
+		}
+		*entry = original
+		return markErr
+	}
+	applyVersionToEntry(entry, marked)
+	entry.UpdatedBy = original.UpdatedBy
+	entry.UpdateAt = original.UpdateAt
 	if err := s.casHead(original.Version, original.SHA256, entry); err != nil {
 		if relErr := s.releaseReservedSHA(entry.ChannelID, entry.SHA256, entry.ID, reserved); relErr != nil {
 			*entry = original
@@ -1210,6 +1378,30 @@ func (s *Store) Rollback(entry *Entry, toVersion int) error {
 		_ = s.deleteSHAIfOwner(entry.ChannelID, oldSHA, entry.ID)
 	}
 	return s.ensureOwnSHA(entry.ChannelID, entry.SHA256, entry.ID)
+}
+
+// markHistoryHead records version as the selected head. A missing version is
+// ErrNotFound, which is what a prune that already dropped it must produce.
+func (s *Store) markHistoryHead(id string, version int) (VersionRecord, error) {
+	for range 8 {
+		hist, raw, err := s.loadHistoryRaw(id)
+		if err != nil {
+			return VersionRecord{}, err
+		}
+		rec, ok := findVersion(hist, version)
+		if !ok {
+			return VersionRecord{}, ErrNotFound
+		}
+		hist.HeadVersion = version
+		if err := s.claimHistory(id, raw, hist); err != nil {
+			if errors.Is(err, ErrConflict) {
+				continue
+			}
+			return VersionRecord{}, err
+		}
+		return rec, nil
+	}
+	return VersionRecord{}, ErrConflict
 }
 
 // DeleteHead removes the current head version. If it was the only version the
@@ -1257,7 +1449,11 @@ func (s *Store) DeleteHead(entry *Entry) error {
 			return reserveErr
 		}
 	}
-	if err := s.claimHistory(entry.ID, raw, &VersionHistory{Versions: remaining}); err != nil {
+	nextHist := *hist
+	nextHist.Versions = remaining
+	nextHist.HeadVersion = previous.Version
+	nextHist.PendingDelete = append(pendingStillNeeded(hist.PendingDelete, remaining), head)
+	if err := s.claimHistory(entry.ID, raw, &nextHist); err != nil {
 		if relErr := s.releaseReservedSHA(entry.ChannelID, previous.SHA256, entry.ID, reserved); relErr != nil {
 			return errors.Join(err, relErr)
 		}
@@ -1268,6 +1464,12 @@ func (s *Store) DeleteHead(entry *Entry) error {
 	applyVersionToEntry(entry, previous)
 	if err := s.casHead(oldVersion, oldSHA, entry); err != nil {
 		applyVersionToEntry(entry, head)
+		if reserved {
+			live, _, loadErr := s.loadMetaRaw(entry.ID)
+			if loadErr == nil && live.SHA256 == previous.SHA256 {
+				reserved = false
+			}
+		}
 		relErr := s.releaseReservedSHA(entry.ChannelID, previous.SHA256, entry.ID, reserved)
 		if _, restoreErr := s.restoreHistoryIfUnchanged(entry.ID, remaining, previousHistory); restoreErr != nil {
 			return errors.Join(err, relErr, restoreErr)

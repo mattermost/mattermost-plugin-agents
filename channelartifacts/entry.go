@@ -83,6 +83,14 @@ type VersionRecord struct {
 // VersionHistory is the ordered list of content versions for one artifact.
 type VersionHistory struct {
 	Versions []VersionRecord `json:"versions"`
+	// NextVersion is one past the highest number ever issued. Pruning does not
+	// lower it, so a later save cannot reuse a number whose blobs were deleted.
+	NextVersion int `json:"next_version,omitempty"`
+	// HeadVersion is the version a rollback has selected. Prune keeps it even
+	// when the metadata write has not landed yet.
+	HeadVersion int `json:"head_version,omitempty"`
+	// PendingDelete lists versions removed from Versions whose blobs may still exist.
+	PendingDelete []VersionRecord `json:"pending_delete,omitempty"`
 }
 
 // ChannelIndex is the ordered list of artifact IDs for one channel.
