@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {defineMessages, useIntl, type MessageDescriptor} from 'react-intl';
 import {useDispatch, useSelector} from 'react-redux';
 import styled, {css, keyframes} from 'styled-components';
@@ -13,7 +13,7 @@ import type {LLMBot} from '@/bots';
 import {AdvancedTextEditor} from '@/mm_webapp';
 import {noMotionWhenReduced} from '@/components/llmbot_post/motion';
 import {fetchCustomPrompts, fetchPinnedPromptIds} from '@/redux';
-import {getCustomPrompts, getPinnedPromptIds} from '@/selectors';
+import {getCustomPrompts, getPinnedPromptIds, isCustomPromptsLoaded, isPinnedPromptIdsLoaded} from '@/selectors';
 import type {CustomPrompt} from '@/types';
 
 import {CHAT_CONTENT_MAX_WIDTH, HOST_COMPOSER_CONTAINER_CLASS, hostComposerInset} from './agent_chat_host_styles';
@@ -77,12 +77,27 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
     const dispatch = useDispatch();
     const prompts = useSelector(getCustomPrompts);
     const pinnedIds = useSelector(getPinnedPromptIds);
+    const promptsLoaded = useSelector(isCustomPromptsLoaded);
+    const pinsLoaded = useSelector(isPinnedPromptIdsLoaded);
     const [runningId, setRunningId] = useState<string | null>(null);
 
+    // Set synchronously, so two clicks in the same tick (before a re-render disables the buttons)
+    // cannot both start a run. runningId is only for the disabled look.
+    const inFlight = useRef(false);
+
+    // The lists are fetched once and kept fresh by the prompts page and menu, so a new chat only
+    // fetches what has not loaded yet (a failed fetch leaves it unloaded, and is not retried here).
     useEffect(() => {
-        dispatch(fetchCustomPrompts() as any);
-        dispatch(fetchPinnedPromptIds() as any);
-    }, [dispatch]);
+        if (!promptsLoaded) {
+            dispatch(fetchCustomPrompts() as any);
+        }
+    }, [dispatch, promptsLoaded]);
+
+    useEffect(() => {
+        if (!pinsLoaded) {
+            dispatch(fetchPinnedPromptIds() as any);
+        }
+    }, [dispatch, pinsLoaded]);
 
     const pinned = useMemo(() => pinnedIds.
         map((id) => prompts.find((p) => p.id === id)).
@@ -91,9 +106,10 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
     // The host composer has no way to take a draft from outside, so a starter runs the prompt:
     // it posts the rendered text as the chat's first message.
     const runStarter = useCallback(async (prompt: CustomPrompt) => {
-        if (runningId) {
+        if (inFlight.current) {
             return;
         }
+        inFlight.current = true;
         setRunningId(prompt.id);
         try {
             const {rendered} = await renderCustomPrompt(prompt.id, channelId, bot.id);
@@ -105,8 +121,9 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
         } catch (e) {
             console.error('Failed to run custom prompt:', e); // eslint-disable-line no-console
         }
+        inFlight.current = false;
         setRunningId(null);
-    }, [runningId, channelId, bot.id, onCreated]);
+    }, [channelId, bot.id, onCreated]);
 
     const afterSubmit = useCallback((result: HostSubmitResult) => {
         if (result?.created?.id) {

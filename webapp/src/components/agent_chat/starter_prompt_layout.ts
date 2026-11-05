@@ -73,3 +73,12 @@ export function fitStarterLines({widths, chipWidth, gap, available, maxLines}: S
     }
     return {lines: [['more']], visibleCount: 0};
 }
+
+// Every prompt on one line and no chip: for when there is no layout to measure against (hidden, or
+// no layout engine), where showing everything beats showing nothing.
+export function singleLineFit(count: number): StarterFit {
+    if (count === 0) {
+        return {lines: [], visibleCount: 0};
+    }
+    return {lines: [Array.from({length: count}, (_, index) => index)], visibleCount: count};
+}

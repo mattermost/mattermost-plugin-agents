@@ -15,26 +15,18 @@ import {useFocusMenuOnOpen} from '@/components/menu/use_focus_menu_on_open';
 import {useMenuTransition} from '@/hooks/use_menu_transition';
 import type {CustomPrompt} from '@/types';
 
-import {fitStarterLines, type StarterFit} from './starter_prompt_layout';
+import {fitStarterLines, singleLineFit, type StarterFit, type StarterFitInput} from './starter_prompt_layout';
 
 // The starters take at most this many lines; whatever does not fit collapses into "+N".
 const MAX_STARTER_LINES = 2;
 
 const MEASURE_ATTRIBUTE = 'data-starter-measure';
 
-interface Metrics {
-    widths: number[];
-    chipWidth: number;
-    gap: number;
-    available: number;
-}
+// What measure() reads from the page; everything the fit needs except the line limit.
+type Metrics = Omit<StarterFitInput, 'maxLines'>;
 
-const sameMetrics = (a: Metrics | null, b: Metrics) => Boolean(a) &&
-    a!.chipWidth === b.chipWidth &&
-    a!.gap === b.gap &&
-    a!.available === b.available &&
-    a!.widths.length === b.widths.length &&
-    a!.widths.every((w, i) => w === b.widths[i]);
+// Plain numbers and one array of them, so a field added to Metrics is compared without editing this.
+const sameMetrics = (a: Metrics | null, b: Metrics) => a !== null && JSON.stringify(a) === JSON.stringify(b);
 
 interface StarterPromptsProps {
     prompts: CustomPrompt[];
@@ -89,13 +81,22 @@ const StarterPrompts = ({prompts, disabled, onPick}: StarterPromptsProps) => {
             return null;
         }
         if (metrics.available <= 0) {
-            // Not laid out (hidden, or no layout engine): show everything rather than nothing.
-            return {lines: [prompts.map((_, i) => i)], visibleCount: prompts.length};
+            return singleLineFit(prompts.length);
         }
         return fitStarterLines({...metrics, maxLines: MAX_STARTER_LINES});
     }, [metrics, prompts]);
 
     const hidden = fit ? prompts.slice(fit.visibleCount) : [];
+
+    // The menu's open state lives here, above the lines: a resize that moves the +N chip to another
+    // line remounts it, and the menu has to stay open through that.
+    const [moreOpen, setMoreOpen] = useState(false);
+    const nothingHidden = hidden.length === 0;
+    useEffect(() => {
+        if (nothingHidden) {
+            setMoreOpen(false);
+        }
+    }, [nothingHidden]);
 
     return (
         <Starters
@@ -134,6 +135,8 @@ const StarterPrompts = ({prompts, disabled, onPick}: StarterPromptsProps) => {
                             key='more'
                             prompts={hidden}
                             disabled={disabled}
+                            open={moreOpen}
+                            onOpenChange={setMoreOpen}
                             onPick={onPick}
                         />
                     ) : (
@@ -155,13 +158,14 @@ const StarterPrompts = ({prompts, disabled, onPick}: StarterPromptsProps) => {
 interface MorePromptsProps {
     prompts: CustomPrompt[];
     disabled: boolean;
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
     onPick: (prompt: CustomPrompt) => void;
 }
 
 // The "+N" after the starter buttons: the pinned prompts that did not fit, in a menu.
-const MorePrompts = ({prompts, disabled, onPick}: MorePromptsProps) => {
+const MorePrompts = ({prompts, disabled, open, onOpenChange, onPick}: MorePromptsProps) => {
     const intl = useIntl();
-    const [open, setOpen] = useState(false);
     const menu = useMenuTransition(open);
     const menuId = `starter-more-menu-${useId().replace(/:/g, '')}`;
     useFocusMenuOnOpen(open, menuId);
@@ -171,7 +175,7 @@ const MorePrompts = ({prompts, disabled, onPick}: MorePromptsProps) => {
     return (
         <Dropdown
             isOpen={menu.rendered}
-            onOpenChange={setOpen}
+            onOpenChange={onOpenChange}
             placement='bottom-end'
             target={(
                 <StarterButton
@@ -180,7 +184,7 @@ const MorePrompts = ({prompts, disabled, onPick}: MorePromptsProps) => {
                     aria-haspopup='menu'
                     aria-expanded={open}
                     title={label}
-                    onClick={() => setOpen(!open)}
+                    onClick={() => onOpenChange(!open)}
                 >
                     {`+${prompts.length}`}
                 </StarterButton>
@@ -194,7 +198,7 @@ const MorePrompts = ({prompts, disabled, onPick}: MorePromptsProps) => {
                 aria-label={label}
                 data-testid='dropdownmenu'
                 onKeyDown={handleMenuNavigation}
-                onClick={() => setOpen(false)}
+                onClick={() => onOpenChange(false)}
             >
                 {prompts.map((prompt) => (
                     <DropdownMenuItem

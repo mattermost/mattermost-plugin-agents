@@ -4,10 +4,11 @@
 import React from 'react';
 import {Provider} from 'react-redux';
 import {createStore} from 'redux';
-import {fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 
 import manifest from '@/manifest';
 import {renderCustomPrompt, createPost} from '@/client';
+import {fetchCustomPrompts, fetchPinnedPromptIds} from '@/redux';
 
 import {lastAdvancedTextEditorProps} from '../../../tests/fake_advanced_text_editor';
 
@@ -21,8 +22,8 @@ jest.mock('@/client', () => ({
 
 // The data fetches are covered elsewhere; the state the tests seed is what renders.
 jest.mock('@/redux', () => ({
-    fetchCustomPrompts: () => ({type: 'noop'}),
-    fetchPinnedPromptIds: () => ({type: 'noop'}),
+    fetchCustomPrompts: jest.fn(() => ({type: 'noop'})),
+    fetchPinnedPromptIds: jest.fn(() => ({type: 'noop'})),
 }));
 
 jest.mock('@/mm_webapp', () => ({
@@ -41,7 +42,8 @@ jest.mock('react-intl', () => {
 
 const makePrompt = (id: string) => ({id, name: `Prompt ${id}`, description: '', template: '', creator_id: 'me', is_shared: false, created_at: 0, updated_at: 0, deleted_at: 0});
 
-const makeStore = (prompts: ReturnType<typeof makePrompt>[] = [], pinnedPromptIds: string[] = []) => createStore(() => ({
+// null is the store's "not fetched yet".
+const makeStore = (prompts: ReturnType<typeof makePrompt>[] | null = [], pinnedPromptIds: string[] | null = []) => createStore(() => ({
     entities: {users: {currentUserId: 'me'}},
     [`plugins-${manifest.id}`]: {customPrompts: prompts, pinnedPromptIds},
 }));
@@ -152,6 +154,42 @@ describe('AgentNewChat', () => {
             store = makeStore(['1', '2'].map(makePrompt), ['gone', '2']);
             render(ui());
             expect(chips().map((b) => b.textContent)).toEqual(['Prompt 2']);
+        });
+
+        test('fetches the prompts and the pins when they have not loaded', () => {
+            (fetchCustomPrompts as jest.Mock).mockClear();
+            (fetchPinnedPromptIds as jest.Mock).mockClear();
+            store = makeStore(null, null);
+            render(ui());
+            expect(fetchCustomPrompts).toHaveBeenCalledTimes(1);
+            expect(fetchPinnedPromptIds).toHaveBeenCalledTimes(1);
+        });
+
+        test('does not refetch prompts and pins that have loaded', () => {
+            (fetchCustomPrompts as jest.Mock).mockClear();
+            (fetchPinnedPromptIds as jest.Mock).mockClear();
+            store = makeStore([makePrompt('1')], ['1']);
+            render(ui());
+            expect(fetchCustomPrompts).not.toHaveBeenCalled();
+            expect(fetchPinnedPromptIds).not.toHaveBeenCalled();
+        });
+
+        test('two clicks before React re-renders post the prompt once', async () => {
+            (renderCustomPrompt as jest.Mock).mockResolvedValue({rendered: 'rendered text'});
+            (createPost as jest.Mock).mockReset().mockResolvedValue({id: 'post1'});
+            store = makeStore([makePrompt('1')], ['1']);
+            const onCreated = jest.fn();
+            render(ui('page', onCreated));
+            const button = screen.getByRole('button', {name: 'Prompt 1'});
+
+            // Both land in one batch, so neither render has disabled the button for the other.
+            act(() => {
+                button.click();
+                button.click();
+            });
+
+            await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+            expect(createPost).toHaveBeenCalledTimes(1);
         });
 
         test('clicking a prompt posts its rendered text to the agent DM and opens the chat', async () => {

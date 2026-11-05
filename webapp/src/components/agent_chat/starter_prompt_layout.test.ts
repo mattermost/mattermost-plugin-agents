@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {fitStarterLines} from './starter_prompt_layout';
+import {fitStarterLines, singleLineFit} from './starter_prompt_layout';
 
 const base = {chipWidth: 20, gap: 6, maxLines: 2};
 
@@ -71,5 +71,15 @@ describe('fitStarterLines', () => {
                 expect(shown.includes('more')).toBe(visibleCount < count);
             }
         }
+    });
+});
+
+describe('singleLineFit', () => {
+    test.each([
+        {count: 3, expected: {lines: [[0, 1, 2]], visibleCount: 3}},
+        {count: 1, expected: {lines: [[0]], visibleCount: 1}},
+        {count: 0, expected: {lines: [], visibleCount: 0}},
+    ])('shows $count prompts on one line with no chip', ({count, expected}) => {
+        expect(singleLineFit(count)).toEqual(expected);
     });
 });

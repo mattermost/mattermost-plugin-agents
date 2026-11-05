@@ -31,12 +31,14 @@ const prompts = ['1', '2', '3', '4', '5'].map((n) => ({
 // jsdom has no layout, so give each measured piece a width of 10 per character (a prompt 80, a "+2"
 // chip 20, no gap) and the group the width a test sets.
 let groupWidth = 0;
-const observers: Array<() => void> = [];
+
+// Floating UI (the open menu) observes too, and reads the entries it is called with.
+const observers: Array<(entries: unknown[]) => void> = [];
 
 class FakeResizeObserver {
     observe = jest.fn();
     disconnect = jest.fn();
-    constructor(callback: () => void) {
+    constructor(callback: (entries: unknown[]) => void) {
         observers.push(callback);
     }
 }
@@ -58,9 +60,9 @@ afterEach(() => {
     delete (global as any).ResizeObserver;
 });
 
-const renderPrompts = (onPick = jest.fn()) => render(
+const renderPrompts = (onPick = jest.fn(), list = prompts) => render(
     <StarterPrompts
-        prompts={prompts}
+        prompts={list}
         disabled={false}
         onPick={onPick}
     />,
@@ -91,21 +93,46 @@ describe('StarterPrompts', () => {
         }
     });
 
-    test('every prompt button has the 4% resting background', () => {
-        groupWidth = 1000;
-        renderPrompts();
-        const button = screen.getByRole('button', {name: 'Prompt 1'});
-        expect(window.getComputedStyle(button).background).toContain('0.04');
-    });
-
     test('measures again when the width changes', () => {
         groupWidth = 1000;
         renderPrompts();
         expect(lines()).toHaveLength(1);
 
         groupWidth = 170;
-        act(() => observers.forEach((callback) => callback()));
+        act(() => observers.forEach((callback) => callback([])));
         expect(lines()).toEqual(['Prompt 1Prompt 2', 'Prompt 3+2']);
+    });
+
+    test('the +N menu stays open when a resize moves the chip to another line', () => {
+        // One short prompt and five that each take 300; the chip joins whichever line has room.
+        const list = ['Aaaa', ...[1, 2, 3, 4, 5].map((n) => `L${n}`.padEnd(30, '-'))].map((name, i) => ({...prompts[0], id: `w${i}`, name}));
+
+        // Room for the first five and the chip on the second line.
+        groupWidth = 700;
+        renderPrompts(jest.fn(), list);
+        expect(lines()).toHaveLength(2);
+        expect(lines()[1]).toMatch(/\+1$/);
+        fireEvent.click(screen.getByRole('button', {name: /^More prompts/}));
+        expect(within(screen.getByTestId('dropdownmenu')).getAllByRole('button')).toHaveLength(1);
+
+        // Narrow: the chip now sits on the first line, so it is rebuilt under a different line.
+        groupWidth = 300;
+        act(() => observers.forEach((callback) => callback([])));
+        expect(lines()).toHaveLength(1);
+        expect(lines()[0]).toMatch(/\+5$/);
+        expect(within(screen.getByTestId('dropdownmenu')).getAllByRole('button')).toHaveLength(5);
+    });
+
+    test('closes the menu when everything fits again', () => {
+        groupWidth = 170;
+        renderPrompts();
+        fireEvent.click(screen.getByRole('button', {name: /^More prompts/}));
+        expect(screen.queryByTestId('dropdownmenu')).not.toBeNull();
+
+        groupWidth = 1000;
+        act(() => observers.forEach((callback) => callback([])));
+        expect(screen.queryByRole('button', {name: /^More prompts/})).toBeNull();
+        expect(screen.queryByTestId('dropdownmenu')).toBeNull();
     });
 
     test('the chip opens a menu with the prompts that did not fit, and picking one runs it', () => {
