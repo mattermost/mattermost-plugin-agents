@@ -161,6 +161,8 @@ var expectedToolReadOnly = map[string]bool{
 	"get_channel_groups":          true,
 	"get_team_groups":             true,
 	"get_users_in_group_channels": true,
+	"create_group":                false,
+	"update_group":                false,
 
 	// roles
 	"get_role":                    true,
