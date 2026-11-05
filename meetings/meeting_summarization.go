@@ -66,11 +66,19 @@ func (s *Service) createTranscription(mm mmapi.Client, recordingFileID string) (
 		return nil, fmt.Errorf("unable to read calls file: %w", err)
 	}
 
+	inputArgs := []string{
+		"-protocol_whitelist", "pipe",
+		"-format_whitelist", "mov,matroska,ogg,mp3,wav,flac,aac",
+		"-i", "pipe:0",
+	}
+
 	var cmd *exec.Cmd
 	if recordingFileInfo.Size > WhisperAPILimit {
-		cmd = exec.Command(s.ffmpegPath, "-i", "pipe:0", "-ac", "1", "-map", "0:a:0", "-b:a", "32k", "-ar", "16000", "-f", "mp3", "pipe:1") //nolint:gosec
+		args := append(append([]string{}, inputArgs...), "-ac", "1", "-map", "0:a:0", "-b:a", "32k", "-ar", "16000", "-f", "mp3", "pipe:1")
+		cmd = exec.Command(s.ffmpegPath, args...) //nolint:gosec
 	} else {
-		cmd = exec.Command(s.ffmpegPath, "-i", "pipe:0", "-f", "mp3", "pipe:1") //nolint:gosec
+		args := append(append([]string{}, inputArgs...), "-f", "mp3", "pipe:1")
+		cmd = exec.Command(s.ffmpegPath, args...) //nolint:gosec
 	}
 
 	cmd.Stdin = fileReader
