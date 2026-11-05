@@ -294,7 +294,8 @@ func TestPurgeChannelRemovesEveryArtifact(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	require.NoError(t, svc.PurgeChannel(channelID))
+	_, err := svc.PurgeChannel(channelID)
+	require.NoError(t, err)
 	left, err := store.List(channelID)
 	require.NoError(t, err)
 	require.Empty(t, left)
@@ -320,7 +321,8 @@ func TestPurgeChannelFinishesAPurgingArtifact(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, listed)
 
-	require.NoError(t, svc.PurgeChannel(channelID))
+	_, err = svc.PurgeChannel(channelID)
+	require.NoError(t, err)
 	_, err = store.Get(entry.ID)
 	require.ErrorIs(t, err, ErrNotFound)
 	idx, _, err := store.getIndex(channelID)
@@ -409,7 +411,8 @@ func TestPurgeChannelDropsAnIndexIDWhoseMetaIsGone(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, kv.KVDelete(metaKey(gone.ID)))
 
-	require.NoError(t, svc.PurgeChannel(channelID))
+	_, err = svc.PurgeChannel(channelID)
+	require.NoError(t, err)
 	_, raw, err := store.getIndex(channelID)
 	require.NoError(t, err)
 	require.Nil(t, raw)
@@ -430,5 +433,6 @@ func TestPurgeChannelDropsAnIndexIDWhoseMetaIsGone(t *testing.T) {
 
 func TestPurgeChannelRejectsInvalidID(t *testing.T) {
 	svc := NewService(NewStore(newMemoryKV()), newMemoryKV(), allowAllMembers{})
-	require.ErrorIs(t, svc.PurgeChannel("not-an-id"), ErrInvalidInput)
+	_, err := svc.PurgeChannel("not-an-id")
+	require.ErrorIs(t, err, ErrInvalidInput)
 }

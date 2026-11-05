@@ -384,38 +384,43 @@ func (s *Service) ListByTeam(userID, teamID string) (*TeamListResponse, error) {
 
 // PurgeChannel removes every artifact in a channel (deleted-channel cleanup).
 // It reads the channel index. List hides an entry whose purge already started,
-// and this sweep is what finishes that purge.
-func (s *Service) PurgeChannel(channelID string) error {
+// and this sweep is what finishes that purge. The count is how many artifacts
+// this call purged. Deleting an empty index key is not counted.
+func (s *Service) PurgeChannel(channelID string) (int, error) {
 	if !model.IsValidId(channelID) {
-		return ErrInvalidInput
+		return 0, ErrInvalidInput
 	}
 	idx, _, err := s.store.getIndex(channelID)
 	if err != nil {
-		return err
+		return 0, err
 	}
+	removed := 0
 	for _, id := range idx.IDs {
 		entry, getErr := s.store.Get(id)
 		if errors.Is(getErr, ErrNotFound) {
 			if forgetErr := s.store.forgetIndexID(channelID, id); forgetErr != nil {
-				return forgetErr
+				return removed, forgetErr
 			}
 			continue
 		}
 		if getErr != nil {
-			return getErr
+			return removed, getErr
 		}
 		if purgeErr := s.store.Purge(entry); purgeErr != nil {
-			return purgeErr
+			return removed, purgeErr
 		}
+		removed++
 	}
 	remaining, raw, err := s.store.getIndex(channelID)
 	if err != nil {
-		return err
+		return removed, err
 	}
 	if len(remaining.IDs) == 0 && raw != nil {
-		return s.store.forgetIndexID(channelID, "")
+		if forgetErr := s.store.forgetIndexID(channelID, ""); forgetErr != nil {
+			return removed, forgetErr
+		}
 	}
-	return nil
+	return removed, nil
 }
 
 // FindLineageMatch prefers a source_file_id match, else the same SourceRootPostID.
