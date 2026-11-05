@@ -8,6 +8,7 @@ import {
     buildLibraryArtifactBookmarkUrl,
     canAddChannelBookmarks,
     findLibraryArtifactBookmark,
+    historyPathWithoutBasename,
     libraryUrlAwaitingChannelSwitch,
     parseLibraryArtifactIdFromSearch,
     pinLibraryArtifactBookmark,
@@ -266,7 +267,30 @@ describe('channel artifact bookmark helpers', () => {
             websocket: {connectionId: 'conn1'},
         } as any;
 
-        await expect(pinLibraryArtifactBookmark(state, 'ch1', 'art1', 'A', jest.fn())).rejects.toThrow('bookmarks unavailable');
+        const dispatch = jest.fn();
+        await expect(pinLibraryArtifactBookmark(state, 'ch1', 'art1', 'A', dispatch)).rejects.toThrow('bookmarks unavailable');
         expect(mockGetBookmarks).toHaveBeenCalledTimes(4);
+        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'RECEIVED_BOOKMARK',
+            data: expect.objectContaining({id: 'created'}),
+        }));
+    });
+});
+
+describe('historyPathWithoutBasename', () => {
+    const original = window.basename;
+
+    afterEach(() => {
+        window.basename = original;
+    });
+
+    test('drops a server subpath and keeps the search', () => {
+        window.basename = '/mattermost';
+        expect(historyPathWithoutBasename('/mattermost/team/channels/town?mm_ai_library_artifact=art1')).toBe('/team/channels/town?mm_ai_library_artifact=art1');
+    });
+
+    test('leaves a path that does not start with the subpath', () => {
+        window.basename = '/mattermost';
+        expect(historyPathWithoutBasename('/team/channels/town')).toBe('/team/channels/town');
     });
 });

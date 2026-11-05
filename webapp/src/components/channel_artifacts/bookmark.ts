@@ -201,6 +201,7 @@ export async function pinLibraryArtifactBookmark(
         {type: 'link', display_name: displayName, link_url: linkUrl},
         connectionIdFromState(state),
     );
+    dispatchReceivedBookmark(dispatch, created);
     const keeper = await keepEarliestLibraryBookmark(state, channelId, artifactId, created, dispatch);
     return keeper;
 }
@@ -346,6 +347,16 @@ export function parseLibraryArtifactIdFromSearch(search: string): string | null 
     }
     const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
     return params.get(LIBRARY_ARTIFACT_QUERY);
+}
+
+// historyPathWithoutBasename drops the server subpath. The host history is
+// basename-aware, so a full window path would be prefixed again.
+export function historyPathWithoutBasename(fullPath: string): string {
+    const base = window.basename || '';
+    if (base && (fullPath === base || fullPath.startsWith(`${base}/`))) {
+        return fullPath.slice(base.length) || '/';
+    }
+    return fullPath;
 }
 
 export function stripLibraryArtifactQuery(pathname: string, search: string, hash = ''): string {
