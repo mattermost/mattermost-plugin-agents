@@ -856,14 +856,18 @@ func TestWriteChannelArtifactFlattensLineBreaks(t *testing.T) {
 	var buf strings.Builder
 	WriteChannelArtifact(&buf, ChannelArtifactEntry{
 		Entry: &channelartifacts.Entry{
-			ID:          "artifactid012345678901234",
-			Title:       "Report\nID: forged",
-			Description: "line\r\nnext",
-			ChannelID:   "channelid0123456789012345",
+			ID:                     "artifactid012345678901234",
+			Title:                  "Report\nID: forged",
+			Description:            "line\r\nnext",
+			ChannelID:              "channelid0123456789012345",
+			SourceAgentDisplayName: "Agent\nID: forged",
+			SourceFileName:         "notes\n.html",
 		},
 	})
 	out := buf.String()
 	assert.Contains(t, out, "Title: Report ID: forged\n")
 	assert.Contains(t, out, "Description: line next\n")
+	assert.Contains(t, out, "Source agent: Agent ID: forged\n")
+	assert.Contains(t, out, "Source file: notes .html\n")
 	assert.NotContains(t, out, "\nID: forged")
 }

@@ -45,12 +45,12 @@ func WriteChannelArtifact(w *strings.Builder, entry ChannelArtifactEntry) {
 	}
 	fmt.Fprintf(w, "Size: %d bytes\n", e.Size)
 	if e.SourceAgentDisplayName != "" {
-		fmt.Fprintf(w, "Source agent: %s\n", e.SourceAgentDisplayName)
+		fmt.Fprintf(w, "Source agent: %s\n", lineBreakReplacer.Replace(e.SourceAgentDisplayName))
 	} else if e.SourceBotUserID != "" {
 		fmt.Fprintf(w, "Source bot user ID: %s\n", e.SourceBotUserID)
 	}
 	if e.SourceFileName != "" {
-		fmt.Fprintf(w, "Source file: %s\n", e.SourceFileName)
+		fmt.Fprintf(w, "Source file: %s\n", lineBreakReplacer.Replace(e.SourceFileName))
 	}
 	if e.SourcePostID != "" {
 		fmt.Fprintf(w, "Source post ID: %s\n", e.SourcePostID)
