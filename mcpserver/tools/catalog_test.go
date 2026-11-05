@@ -70,7 +70,7 @@ func TestToolCatalogContainsExpectedFamilies(t *testing.T) {
 		// integrations
 		"get_bot", "list_bots", "list_incoming_webhooks", "list_outgoing_webhooks",
 		// groups
-		"get_group_info", "list_groups", "get_users_in_group_channels",
+		"get_group_info", "list_groups", "get_users_in_group_channels", "create_group", "update_group",
 		// roles
 		"get_role", "get_channel_moderations", "update_channel_member_roles", "update_team_member_roles",
 	}

@@ -47,6 +47,23 @@ type GetUsersInGroupChannelsArgs struct {
 	ChannelIDs []string `json:"channel_ids" jsonschema:"The group-message (GM) channel IDs"`
 }
 
+// CreateGroupArgs represents arguments for the create_group tool.
+type CreateGroupArgs struct {
+	DisplayName    string `json:"display_name" jsonschema:"The group's display name,minLength=1,maxLength=128"`
+	Name           string `json:"name,omitempty" jsonschema:"Mention handle (lowercase letters, numbers, periods, dashes, underscores). Required when allow_reference is true,maxLength=64"`
+	Description    string `json:"description,omitempty" jsonschema:"Optional group description,maxLength=1024"`
+	AllowReference bool   `json:"allow_reference,omitempty" jsonschema:"Allow the group to be mentioned with @name. Requires name"`
+}
+
+// UpdateGroupArgs represents arguments for the update_group tool.
+type UpdateGroupArgs struct {
+	GroupID        string  `json:"group_id" jsonschema:"The group to update,minLength=26,maxLength=26"`
+	DisplayName    *string `json:"display_name,omitempty" jsonschema:"New display name"`
+	Name           *string `json:"name,omitempty" jsonschema:"New mention handle (lowercase letters, numbers, periods, dashes, underscores),maxLength=64"`
+	Description    *string `json:"description,omitempty" jsonschema:"New description. Pass an empty string to clear it,maxLength=1024"`
+	AllowReference *bool   `json:"allow_reference,omitempty" jsonschema:"Whether the group can be mentioned with @name. Turning this on requires the group to have a name"`
+}
+
 const (
 	getGroupInfoDescription            = "Get a group's metadata. Parameters: group_id (required)."
 	listGroupsDescription              = "List or search custom and LDAP-synced groups. Parameters: query (optional search term), page, per_page."
@@ -54,6 +71,8 @@ const (
 	getChannelGroupsDescription        = "Get the groups synced to a channel. Parameters: channel_id (required), page, per_page."
 	getTeamGroupsDescription           = "Get the groups synced to a team. Parameters: team_id (required), page, per_page."
 	getUsersInGroupChannelsDescription = "Get the members of given group-message (GM) channels. Parameters: channel_ids (required list)."
+	createGroupDescription             = "Create a custom user group. Parameters: display_name (required), name (mention handle; required when allow_reference is true), description (optional), allow_reference (optional). LDAP and plugin-synced groups cannot be created this way."
+	updateGroupDescription             = "Update a user group's display name, mention handle, description, or whether it can be @mentioned. Parameters: group_id (required), plus any of display_name, name, description, allow_reference. Does not add or remove members."
 )
 
 // getGroupTools returns the group tools.
@@ -65,6 +84,8 @@ func (p *MattermostToolProvider) getGroupTools() []MCPTool {
 		mcpReadTool(p, "get_channel_groups", getChannelGroupsDescription, p.toolGetChannelGroups),
 		mcpReadTool(p, "get_team_groups", getTeamGroupsDescription, p.toolGetTeamGroups),
 		mcpReadTool(p, "get_users_in_group_channels", getUsersInGroupChannelsDescription, p.toolGetUsersInGroupChannels),
+		mcpTool(p, "create_group", createGroupDescription, p.toolCreateGroup),
+		mcpTool(p, "update_group", updateGroupDescription, p.toolUpdateGroup),
 	}
 }
 
@@ -185,4 +206,101 @@ func formatGroupListWithSchemeAdmin(groups []*model.GroupWithSchemeAdmin) string
 		format.WriteGroup(&result, format.GroupEntry{HeaderLabel: fmt.Sprintf("Group %d", i+1), Group: &group.Group})
 	}
 	return result.String()
+}
+
+// toolCreateGroup implements the create_group tool.
+// Source is always custom: callers cannot create LDAP or plugin-synced groups.
+func (p *MattermostToolProvider) toolCreateGroup(mcpContext *MCPToolContext, args CreateGroupArgs) (string, error) {
+	if err := validateGroupDisplayName(args.DisplayName); err != nil {
+		return "", err
+	}
+	if err := validateGroupDescription(args.Description); err != nil {
+		return "", err
+	}
+	if args.Name != "" {
+		if err := validateGroupName(args.Name); err != nil {
+			return "", err
+		}
+	} else if args.AllowReference {
+		return "", fmt.Errorf("name is required when allow_reference is true")
+	}
+
+	group := &model.Group{
+		DisplayName:    args.DisplayName,
+		Description:    args.Description,
+		Source:         model.GroupSourceCustom,
+		AllowReference: args.AllowReference,
+	}
+	if args.Name != "" {
+		group.Name = &args.Name
+	}
+
+	created, _, err := mcpContext.Client.CreateGroup(mcpContext.Ctx, group)
+	if err != nil {
+		return "", fmt.Errorf("error creating group: %w", err)
+	}
+	return fmt.Sprintf("Successfully created custom group '%s' (ID: %s)", created.DisplayName, created.Id), nil
+}
+
+// toolUpdateGroup implements the update_group tool.
+func (p *MattermostToolProvider) toolUpdateGroup(mcpContext *MCPToolContext, args UpdateGroupArgs) (string, error) {
+	if err := requireID("group_id", args.GroupID); err != nil {
+		return "", err
+	}
+	if args.DisplayName == nil && args.Name == nil && args.Description == nil && args.AllowReference == nil {
+		return "", fmt.Errorf("provide at least one of display_name, name, description, allow_reference to update")
+	}
+	if args.DisplayName != nil {
+		if err := validateGroupDisplayName(*args.DisplayName); err != nil {
+			return "", err
+		}
+	}
+	if args.Name != nil {
+		if err := validateGroupName(*args.Name); err != nil {
+			return "", err
+		}
+	}
+	if args.Description != nil {
+		if err := validateGroupDescription(*args.Description); err != nil {
+			return "", err
+		}
+	}
+
+	patch := &model.GroupPatch{
+		Name:           args.Name,
+		DisplayName:    args.DisplayName,
+		Description:    args.Description,
+		AllowReference: args.AllowReference,
+	}
+	updated, _, err := mcpContext.Client.PatchGroup(mcpContext.Ctx, args.GroupID, patch)
+	if err != nil {
+		return "", fmt.Errorf("error updating group: %w", err)
+	}
+	return fmt.Sprintf("Successfully updated group '%s' (ID: %s)", updated.DisplayName, updated.Id), nil
+}
+
+func validateGroupDisplayName(displayName string) error {
+	if displayName == "" {
+		return fmt.Errorf("display_name cannot be empty")
+	}
+	if len(displayName) > model.GroupDisplayNameMaxLength {
+		return fmt.Errorf("display_name must be at most %d characters", model.GroupDisplayNameMaxLength)
+	}
+	return nil
+}
+
+func validateGroupDescription(description string) error {
+	if len(description) > model.GroupDescriptionMaxLength {
+		return fmt.Errorf("description must be at most %d characters", model.GroupDescriptionMaxLength)
+	}
+	return nil
+}
+
+// validateGroupName checks a mention handle with the same rules as model.Group.IsValidName.
+func validateGroupName(name string) error {
+	group := &model.Group{Name: &name}
+	if appErr := group.IsValidName(); appErr != nil {
+		return fmt.Errorf("name must be 1-%d characters of lowercase letters, numbers, periods, dashes, or underscores, and must not be all, here, or channel", model.GroupNameMaxLength)
+	}
+	return nil
 }
