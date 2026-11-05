@@ -201,11 +201,19 @@ function showCustomPromptsModal(state = false, action: any) {
     }
 }
 
+// Each loader keeps only its latest response: a request that finishes after a newer one was
+// started (a mount-time fetch against a fetch after a pin change) must not overwrite the newer state.
+let latestPromptsRequest = 0;
+let latestPinsRequest = 0;
+
 export function fetchCustomPrompts() {
     return async (dispatch: Dispatch) => {
+        const request = ++latestPromptsRequest;
         try {
             const prompts = await fetchCustomPromptsAPI();
-            dispatch({type: CustomPromptsHandler, customPrompts: prompts});
+            if (request === latestPromptsRequest) {
+                dispatch({type: CustomPromptsHandler, customPrompts: prompts});
+            }
         } catch (e) {
             console.error('Failed to fetch custom prompts:', e); // eslint-disable-line no-console
         }
@@ -214,9 +222,12 @@ export function fetchCustomPrompts() {
 
 export function fetchPinnedPromptIds() {
     return async (dispatch: Dispatch) => {
+        const request = ++latestPinsRequest;
         try {
             const ids = await getCustomPromptPins();
-            dispatch({type: PinnedPromptIdsHandler, pinnedPromptIds: ids});
+            if (request === latestPinsRequest) {
+                dispatch({type: PinnedPromptIdsHandler, pinnedPromptIds: ids});
+            }
         } catch (e) {
             console.error('Failed to fetch pinned prompt IDs:', e); // eslint-disable-line no-console
         }

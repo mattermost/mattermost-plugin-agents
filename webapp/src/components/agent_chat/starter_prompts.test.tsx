@@ -60,10 +60,11 @@ afterEach(() => {
     delete (global as any).ResizeObserver;
 });
 
-const renderPrompts = (onPick = jest.fn(), list = prompts) => render(
+const renderPrompts = (onPick = jest.fn(), list = prompts, error: string | null = null) => render(
     <StarterPrompts
         prompts={list}
         disabled={false}
+        error={error}
         onPick={onPick}
     />,
 );
@@ -91,6 +92,18 @@ describe('StarterPrompts', () => {
             expect(lines().length).toBeLessThanOrEqual(2);
             unmount();
         }
+    });
+
+    test('shows why the last run failed, under the buttons', () => {
+        groupWidth = 1000;
+        renderPrompts(jest.fn(), prompts, 'Could not run it');
+        expect(screen.getByRole('alert').textContent).toBe('Could not run it');
+    });
+
+    test('shows no alert when nothing failed', () => {
+        groupWidth = 1000;
+        renderPrompts();
+        expect(screen.queryByRole('alert')).toBeNull();
     });
 
     test('measures again when the width changes', () => {

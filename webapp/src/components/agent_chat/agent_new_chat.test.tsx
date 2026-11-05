@@ -76,6 +76,14 @@ const ui = (layout: 'page' | 'panel' = 'panel', onCreated = jest.fn()) => (
     </Provider>
 );
 
+const deferred = <T, >() => {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) => {
+        resolve = res;
+    });
+    return {promise, resolve};
+};
+
 const text = (d: {defaultMessage?: unknown}) => d.defaultMessage as string;
 const shown = () => ({
     title: screen.getByRole('heading', {level: 2}).textContent,
@@ -204,6 +212,91 @@ describe('AgentNewChat', () => {
             await waitFor(() => expect(onCreated).toHaveBeenCalledWith('post1'));
             expect(renderCustomPrompt).toHaveBeenCalledWith('1', 'dm1', 'bot1');
             expect(createPost).toHaveBeenCalledWith({channel_id: 'dm1', message: 'rendered text', root_id: ''});
+        });
+
+        test('a failed run says so, and the next attempt clears it', async () => {
+            jest.spyOn(console, 'error').mockImplementation(() => 0);
+            (renderCustomPrompt as jest.Mock).mockRejectedValueOnce(new Error('nope'));
+            store = makeStore([makePrompt('1')], ['1']);
+            render(ui());
+
+            fireEvent.click(screen.getByRole('button', {name: 'Prompt 1'}));
+            expect((await screen.findByRole('alert')).textContent).toBe('Couldn\'t run that prompt. Please try again.');
+
+            (renderCustomPrompt as jest.Mock).mockResolvedValue({rendered: 'rendered text'});
+            (createPost as jest.Mock).mockReset().mockResolvedValue({id: 'post1'});
+            fireEvent.click(screen.getByRole('button', {name: 'Prompt 1'}));
+            await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+        });
+
+        test('a post that comes back without an id is reported as a failure', async () => {
+            (renderCustomPrompt as jest.Mock).mockResolvedValue({rendered: 'rendered text'});
+            (createPost as jest.Mock).mockReset().mockResolvedValue({});
+            store = makeStore([makePrompt('1')], ['1']);
+            const onCreated = jest.fn();
+            render(ui('page', onCreated));
+
+            fireEvent.click(screen.getByRole('button', {name: 'Prompt 1'}));
+
+            expect(await screen.findByRole('alert')).toBeTruthy();
+            expect(onCreated).not.toHaveBeenCalled();
+        });
+
+        test('a starter does not post a second first message once the composer has sent one', async () => {
+            const render1 = deferred<{rendered: string}>();
+            (renderCustomPrompt as jest.Mock).mockReturnValue(render1.promise);
+            (createPost as jest.Mock).mockReset().mockResolvedValue({id: 'starter-post'});
+            store = makeStore([makePrompt('1')], ['1']);
+            const onCreated = jest.fn();
+            render(ui('page', onCreated));
+
+            fireEvent.click(screen.getByRole('button', {name: 'Prompt 1'}));
+
+            // The composer sends the chat's first message while the prompt is still rendering.
+            act(() => lastAdvancedTextEditorProps().afterSubmit!({created: {id: 'composer-post'}}));
+            await act(async () => {
+                render1.resolve({rendered: 'rendered text'});
+            });
+
+            expect(createPost).not.toHaveBeenCalled();
+            expect(onCreated).toHaveBeenCalledTimes(1);
+            expect(onCreated).toHaveBeenCalledWith('composer-post');
+        });
+
+        test('a starter does not post after the view is gone', async () => {
+            const render1 = deferred<{rendered: string}>();
+            (renderCustomPrompt as jest.Mock).mockReturnValue(render1.promise);
+            (createPost as jest.Mock).mockReset().mockResolvedValue({id: 'starter-post'});
+            store = makeStore([makePrompt('1')], ['1']);
+            const onCreated = jest.fn();
+            const {unmount} = render(ui('page', onCreated));
+
+            fireEvent.click(screen.getByRole('button', {name: 'Prompt 1'}));
+            unmount();
+            await act(async () => {
+                render1.resolve({rendered: 'rendered text'});
+            });
+
+            expect(createPost).not.toHaveBeenCalled();
+            expect(onCreated).not.toHaveBeenCalled();
+        });
+
+        test('a starter that posts after the view is gone does not navigate', async () => {
+            (renderCustomPrompt as jest.Mock).mockResolvedValue({rendered: 'rendered text'});
+            const post = deferred<{id: string}>();
+            (createPost as jest.Mock).mockReset().mockReturnValue(post.promise);
+            store = makeStore([makePrompt('1')], ['1']);
+            const onCreated = jest.fn();
+            const {unmount} = render(ui('page', onCreated));
+
+            fireEvent.click(screen.getByRole('button', {name: 'Prompt 1'}));
+            await waitFor(() => expect(createPost).toHaveBeenCalledTimes(1));
+            unmount();
+            await act(async () => {
+                post.resolve({id: 'starter-post'});
+            });
+
+            expect(onCreated).not.toHaveBeenCalled();
         });
 
         test('a failed run posts nothing and re-enables the prompts', async () => {

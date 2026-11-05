@@ -80,10 +80,23 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
     const promptsLoaded = useSelector(isCustomPromptsLoaded);
     const pinsLoaded = useSelector(isPinnedPromptIdsLoaded);
     const [runningId, setRunningId] = useState<string | null>(null);
+    const [starterError, setStarterError] = useState<string | null>(null);
 
     // Set synchronously, so two clicks in the same tick (before a re-render disables the buttons)
     // cannot both start a run. runningId is only for the disabled look.
     const inFlight = useRef(false);
+
+    // Whether this chat already has its first message (from the composer or a starter), and whether
+    // the view is still showing. A starter that finishes after either must not start a second chat
+    // or pull the user away from where they went.
+    const firstMessageCreated = useRef(false);
+    const mounted = useRef(true);
+    useEffect(() => {
+        mounted.current = true;
+        return () => {
+            mounted.current = false;
+        };
+    }, []);
 
     // The lists are fetched once and kept fresh by the prompts page and menu, so a new chat only
     // fetches what has not loaded yet (a failed fetch leaves it unloaded, and is not retried here).
@@ -111,22 +124,42 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
         }
         inFlight.current = true;
         setRunningId(prompt.id);
+        setStarterError(null);
+
+        const release = () => {
+            inFlight.current = false;
+            if (mounted.current) {
+                setRunningId(null);
+            }
+        };
+
         try {
             const {rendered} = await renderCustomPrompt(prompt.id, channelId, bot.id);
+            if (firstMessageCreated.current || !mounted.current) {
+                release();
+                return;
+            }
             const created = await createPost({channel_id: channelId, message: rendered, root_id: ''});
             if (created?.id) {
-                onCreated(created.id);
+                const chatAlreadyOpened = firstMessageCreated.current || !mounted.current;
+                firstMessageCreated.current = true;
+                if (!chatAlreadyOpened) {
+                    onCreated(created.id);
+                }
                 return;
             }
         } catch (e) {
             console.error('Failed to run custom prompt:', e); // eslint-disable-line no-console
         }
-        inFlight.current = false;
-        setRunningId(null);
-    }, [channelId, bot.id, onCreated]);
+        release();
+        if (mounted.current) {
+            setStarterError(intl.formatMessage({defaultMessage: 'Couldn\'t run that prompt. Please try again.'}));
+        }
+    }, [channelId, bot.id, onCreated, intl]);
 
     const afterSubmit = useCallback((result: HostSubmitResult) => {
         if (result?.created?.id) {
+            firstMessageCreated.current = true;
             onCreated(result.created.id);
         }
     }, [onCreated]);
@@ -156,6 +189,7 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
                 <StarterPrompts
                     prompts={pinned}
                     disabled={runningId !== null}
+                    error={starterError}
                     onPick={runStarter}
                 />
             )}

@@ -31,13 +31,16 @@ const sameMetrics = (a: Metrics | null, b: Metrics) => a !== null && JSON.string
 interface StarterPromptsProps {
     prompts: CustomPrompt[];
     disabled: boolean;
+
+    /** Why the last run failed, shown under the buttons until the next attempt. */
+    error: string | null;
     onPick: (prompt: CustomPrompt) => void;
 }
 
 // The pinned prompts as buttons on at most MAX_STARTER_LINES lines, with the ones that do not fit
 // behind a "+N" chip. The browser's own wrapping can't do this (it can't swap the last button for
 // a chip), so each button is measured in a hidden row and the lines are laid out here.
-const StarterPrompts = ({prompts, disabled, onPick}: StarterPromptsProps) => {
+const StarterPrompts = ({prompts, disabled, error, onPick}: StarterPromptsProps) => {
     const intl = useIntl();
     const groupRef = useRef<HTMLDivElement>(null);
     const measureRef = useRef<HTMLDivElement>(null);
@@ -151,6 +154,7 @@ const StarterPrompts = ({prompts, disabled, onPick}: StarterPromptsProps) => {
                     )))}
                 </StarterLine>
             ))}
+            {error && <StarterError role='alert'>{error}</StarterError>}
         </Starters>
     );
 };
@@ -257,6 +261,14 @@ const MeasureRow = styled.div`
     overflow: hidden;
     pointer-events: none;
     visibility: hidden;
+`;
+
+const StarterError = styled.p`
+    margin: 0;
+    font-size: var(--font-size-75);
+    line-height: var(--line-height-75);
+    color: var(--error-text);
+    text-align: center;
 `;
 
 const MeasureItem = styled.span`
