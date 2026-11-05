@@ -20,8 +20,6 @@ import {getCustomPrompts, getPinnedPromptIds} from '@/selectors';
 import {fetchCustomPrompts, fetchPinnedPromptIds} from '@/redux';
 import {createCustomPrompt, updateCustomPrompt, deleteCustomPrompt, setCustomPromptPin} from '@/client';
 
-import {MAX_PINNED_PROMPTS} from '@/types';
-
 import ConfirmationDialog from '../confirmation_dialog';
 import {TooltipAboveModals} from '@/components/dropdown';
 import {UnderlineTab, UnderlineTabs} from '@/components/underline_tabs';
@@ -241,10 +239,6 @@ const CustomPromptsContent = ({active, layout = 'modal', children}: CustomPrompt
             dispatch(fetchPinnedPromptIds() as any);
         } catch (e) {
             console.error('Failed to toggle pin:', e); // eslint-disable-line no-console
-            if ((e as {status_code?: number})?.status_code === 409) {
-                setError(intl.formatMessage({defaultMessage: 'You can pin up to {max} prompts. Unpin one to pin another.'}, {max: MAX_PINNED_PROMPTS}));
-                return;
-            }
             setError(intl.formatMessage({defaultMessage: 'Failed to update pin. Please try again.'}));
         }
     }, [pinnedIds, dispatch, intl]);

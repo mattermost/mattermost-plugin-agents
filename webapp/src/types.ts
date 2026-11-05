@@ -7,9 +7,6 @@ import {BaseWebSocketMessage} from '@mattermost/client';
 // events are described with the open-ended base shape instead.
 export type PluginWebSocketMessage<T> = BaseWebSocketMessage<string, T>;
 
-// Mirrors customprompts.MaxPinnedPrompts on the server, which enforces it.
-export const MAX_PINNED_PROMPTS = 5;
-
 export interface CustomPrompt {
     id: string;
     creator_id: string;

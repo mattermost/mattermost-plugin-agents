@@ -154,7 +154,9 @@ describe('AgentNewChat', () => {
             render(ui());
             expect(chips().map((b) => b.textContent)).toEqual(['Prompt 1', 'Prompt 2', 'Prompt 3', 'Prompt 4', 'Prompt 5']);
 
-            fireEvent.click(screen.getByRole('button', {name: 'More prompts'}));
+            const more = screen.getByRole('button', {name: /^More prompts/});
+            expect(more.textContent).toBe('+2');
+            fireEvent.click(more);
             expect(within(screen.getByTestId('dropdownmenu')).getAllByRole('button').map((m) => m.textContent)).toEqual(['Prompt 6', 'Prompt 7']);
         });
 
@@ -162,7 +164,7 @@ describe('AgentNewChat', () => {
             const ids = ['1', '2', '3', '4', '5'];
             store = makeStore(ids.map(makePrompt), ids);
             render(ui());
-            expect(screen.queryByRole('button', {name: 'More prompts'})).toBeNull();
+            expect(screen.queryByRole('button', {name: /^More prompts/})).toBeNull();
         });
 
         test('choosing a prompt from the More menu runs it', async () => {
@@ -173,7 +175,7 @@ describe('AgentNewChat', () => {
             const onCreated = jest.fn();
             render(ui('page', onCreated));
 
-            fireEvent.click(screen.getByRole('button', {name: 'More prompts'}));
+            fireEvent.click(screen.getByRole('button', {name: /^More prompts/}));
             fireEvent.click(within(screen.getByTestId('dropdownmenu')).getByRole('button', {name: 'Prompt 6'}));
 
             await waitFor(() => expect(onCreated).toHaveBeenCalledWith('post7'));

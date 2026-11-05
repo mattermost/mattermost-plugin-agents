@@ -1,23 +1,27 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useId, useMemo, useState} from 'react';
 import {defineMessages, useIntl, type MessageDescriptor} from 'react-intl';
 import {useDispatch, useSelector} from 'react-redux';
 import styled, {css, keyframes} from 'styled-components';
 
-import {DotsHorizontalIcon} from '@mattermost/compass-icons/components';
 import {Button} from '@mattermost/compass-ui/components/button';
+import {PopoverMenu} from '@mattermost/compass-ui/components/popover-menu';
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
 import {createPost, getProfilePictureUrl, renderCustomPrompt} from '@/client';
 import type {LLMBot} from '@/bots';
-import DotMenu, {DropdownMenuItem} from '@/components/dot_menu';
+import {DropdownMenuItem} from '@/components/dot_menu';
+import Dropdown from '@/components/dropdown';
+import {handleMenuNavigation} from '@/components/menu/menu_keyboard';
+import {useFocusMenuOnOpen} from '@/components/menu/use_focus_menu_on_open';
+import {useMenuTransition} from '@/hooks/use_menu_transition';
 import {AdvancedTextEditor} from '@/mm_webapp';
 import {noMotionWhenReduced} from '@/components/llmbot_post/motion';
 import {fetchCustomPrompts, fetchPinnedPromptIds} from '@/redux';
 import {getCustomPrompts, getPinnedPromptIds} from '@/selectors';
-import {MAX_PINNED_PROMPTS, type CustomPrompt} from '@/types';
+import type {CustomPrompt} from '@/types';
 
 import {CHAT_CONTENT_MAX_WIDTH, HOST_COMPOSER_CONTAINER_CLASS, hostComposerInset} from './agent_chat_host_styles';
 
@@ -63,6 +67,68 @@ interface AgentNewChatProps {
     layout: AgentNewChatLayout;
 }
 
+// Pinned prompts shown as buttons before the rest collapse into "+N".
+export const MAX_STARTER_BUTTONS = 5;
+
+interface MorePromptsProps {
+    prompts: CustomPrompt[];
+    disabled: boolean;
+    onPick: (prompt: CustomPrompt) => void;
+}
+
+// The "+N" after the starter buttons: the pinned prompts that did not fit, in a menu.
+const MorePrompts = ({prompts, disabled, onPick}: MorePromptsProps) => {
+    const intl = useIntl();
+    const [open, setOpen] = useState(false);
+    const menu = useMenuTransition(open);
+    const menuId = `starter-more-menu-${useId().replace(/:/g, '')}`;
+    useFocusMenuOnOpen(open, menuId);
+
+    const label = intl.formatMessage({defaultMessage: 'More prompts'});
+
+    return (
+        <Dropdown
+            isOpen={menu.rendered}
+            onOpenChange={setOpen}
+            placement='bottom-end'
+            target={(
+                <Button
+                    emphasis='dim'
+                    size='x-small'
+                    compact={true}
+                    disabled={disabled}
+                    aria-label={intl.formatMessage({defaultMessage: 'More prompts ({count})'}, {count: prompts.length})}
+                    aria-haspopup='menu'
+                    aria-expanded={open}
+                    title={label}
+                    onClick={() => setOpen(!open)}
+                >
+                    {`+${prompts.length}`}
+                </Button>
+            )}
+        >
+            <PopoverMenu
+                id={menuId}
+                open={open}
+                onExited={menu.onExited}
+                role='menu'
+                aria-label={label}
+                data-testid='dropdownmenu'
+                onKeyDown={handleMenuNavigation}
+                onClick={() => setOpen(false)}
+            >
+                {prompts.map((prompt) => (
+                    <DropdownMenuItem
+                        key={prompt.id}
+                        label={prompt.name}
+                        onClick={() => onPick(prompt)}
+                    />
+                ))}
+            </PopoverMenu>
+        </Dropdown>
+    );
+};
+
 // What the host composer's afterSubmit receives (actions/views/create_comment.tsx
 // SubmitPostReturnType): the created post for a message, nothing for a slash command.
 interface HostSubmitResult {
@@ -86,14 +152,14 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
         dispatch(fetchPinnedPromptIds() as any);
     }, [dispatch]);
 
-    // The server caps pins at MAX_PINNED_PROMPTS; any beyond it (pinned before the cap) go in the More menu.
+    // The first few pinned prompts are buttons; the rest go in the +N menu.
     const {starters, overflow} = useMemo(() => {
         const pinned = pinnedIds.
             map((id) => prompts.find((p) => p.id === id)).
             filter((p): p is CustomPrompt => Boolean(p));
         return {
-            starters: pinned.slice(0, MAX_PINNED_PROMPTS),
-            overflow: pinned.slice(MAX_PINNED_PROMPTS),
+            starters: pinned.slice(0, MAX_STARTER_BUTTONS),
+            overflow: pinned.slice(MAX_STARTER_BUTTONS),
         };
     }, [prompts, pinnedIds]);
 
@@ -150,34 +216,30 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
                     aria-label={intl.formatMessage({defaultMessage: 'Custom prompts'})}
                     data-testid='agent-chat-starter-prompts'
                 >
-                    {starters.map((prompt) => (
-                        <StarterButton
-                            key={prompt.id}
-                            emphasis='dim'
-                            size='x-small'
-                            compact={true}
-                            title={prompt.description}
-                            disabled={runningId !== null}
-                            onClick={() => runStarter(prompt)}
-                        >
-                            {prompt.name}
-                        </StarterButton>
+                    {starters.map((prompt, index) => (
+                        <React.Fragment key={prompt.id}>
+                            {index > 0 && <StarterSeparator aria-hidden={true}>{'·'}</StarterSeparator>}
+                            <Button
+                                emphasis='dim'
+                                size='x-small'
+                                compact={true}
+                                title={prompt.description}
+                                disabled={runningId !== null}
+                                onClick={() => runStarter(prompt)}
+                            >
+                                {prompt.name}
+                            </Button>
+                        </React.Fragment>
                     ))}
                     {overflow.length > 0 && (
-                        <DotMenu
-                            icon={<DotsHorizontalIcon/>}
-                            title={intl.formatMessage({defaultMessage: 'More prompts'})}
-                            disabled={runningId !== null}
-                            placement='bottom-end'
-                        >
-                            {overflow.map((prompt) => (
-                                <DropdownMenuItem
-                                    key={prompt.id}
-                                    label={prompt.name}
-                                    onClick={() => runStarter(prompt)}
-                                />
-                            ))}
-                        </DotMenu>
+                        <>
+                            <StarterSeparator aria-hidden={true}>{'·'}</StarterSeparator>
+                            <MorePrompts
+                                prompts={overflow}
+                                disabled={runningId !== null}
+                                onPick={runStarter}
+                            />
+                        </>
                     )}
                 </Starters>
             )}
@@ -261,15 +323,16 @@ const Composer = styled.div`
 const Starters = styled.div`
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     justify-content: center;
-    gap: var(--spacing-xs);
+    gap: var(--spacing-xxxxs);
 `;
 
-// A resting tint keeps the dim buttons readable as buttons; hover and focus keep compass's own states.
-const StarterButton = styled(Button)`
-    && {
-        background: rgba(var(--center-channel-color-rgb), 0.04);
-    }
+// A middle dot between the text-only buttons, so they read as separate actions at rest.
+const StarterSeparator = styled.span`
+    flex: none;
+    color: rgba(var(--center-channel-color-rgb), 0.48);
+    user-select: none;
 `;
 
 const EmptyIntro = styled.div`
