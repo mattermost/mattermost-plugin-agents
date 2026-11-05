@@ -158,9 +158,16 @@ func TestMCPCanSaveChannelArtifact(t *testing.T) {
 			wantStatus: http.StatusNotFound, wantError: "file is not an HTML artifact",
 		},
 		{
-			name: "human authored while restricted", enabled: true, humanOnly: true, client: true,
+			name: "file is not attached to a post", enabled: true, client: true,
 			setup: func(m *mocks.MockClient) {
 				m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, Name: "notes.html", Extension: "html"}, nil)
+			},
+			wantStatus: http.StatusNotFound, wantError: "file is not attached to the post",
+		},
+		{
+			name: "human authored while restricted", enabled: true, humanOnly: true, client: true,
+			setup: func(m *mocks.MockClient) {
+				m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, PostId: postID, Name: "notes.html", Extension: "html"}, nil)
 				m.EXPECT().GetPost(postID).Return(&model.Post{Id: postID, UserId: testUserID, ChannelId: channelID, FileIds: model.StringArray{fileID}}, nil)
 				m.EXPECT().HasPermissionToChannel(testUserID, channelID, model.PermissionReadChannel).Return(true)
 			},
@@ -169,7 +176,7 @@ func TestMCPCanSaveChannelArtifact(t *testing.T) {
 		{
 			name: "larger than the render limit", enabled: true, client: true,
 			setup: func(m *mocks.MockClient) {
-				m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, Name: "notes.html", Extension: "html", Size: 2 << 20}, nil)
+				m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, PostId: postID, Name: "notes.html", Extension: "html", Size: 2 << 20}, nil)
 				m.EXPECT().GetPost(postID).Return(&model.Post{Id: postID, UserId: testUserID, ChannelId: channelID, FileIds: model.StringArray{fileID}}, nil)
 				m.EXPECT().HasPermissionToChannel(testUserID, channelID, model.PermissionReadChannel).Return(true)
 				m.EXPECT().GetConfig().Return(&model.Config{})
@@ -179,7 +186,7 @@ func TestMCPCanSaveChannelArtifact(t *testing.T) {
 		{
 			name: "html file on the post", enabled: true, client: true,
 			setup: func(m *mocks.MockClient) {
-				m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, Name: "notes.html", Extension: "html"}, nil)
+				m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, PostId: postID, Name: "notes.html", Extension: "html"}, nil)
 				m.EXPECT().GetPost(postID).Return(&model.Post{Id: postID, UserId: testUserID, ChannelId: channelID, FileIds: model.StringArray{fileID}}, nil)
 				m.EXPECT().HasPermissionToChannel(testUserID, channelID, model.PermissionReadChannel).Return(true)
 				m.EXPECT().GetConfig().Return(&model.Config{})
@@ -346,6 +353,40 @@ func TestMCPListAndGetChannelArtifact(t *testing.T) {
 	assert.True(t, view.ContentIncluded)
 	assert.Equal(t, "<htm", view.Content)
 	assert.True(t, view.HasMore)
+}
+
+func TestChannelArtifactMutationRecordsNameTheArtifact(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	id := model.NewId()
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		event  string
+	}{
+		{name: "patch", method: http.MethodPatch, path: "/channel-artifacts/" + id, body: `{}`, event: AuditEventUpdateChannelArtifact},
+		{name: "replace", method: http.MethodPut, path: "/channel-artifacts/" + id + "/content", body: `{}`, event: AuditEventReplaceChannelArtifact},
+		{name: "rollback", method: http.MethodPost, path: "/channel-artifacts/" + id + "/rollback", body: `{"version":1}`, event: AuditEventRollbackChannelArtifact},
+		{name: "delete", method: http.MethodDelete, path: "/channel-artifacts/" + id, event: AuditEventDeleteChannelArtifact},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.config.enableHTMLArtifacts = true
+			e.config.enableChannelArtifacts = true
+			e.api.SetChannelArtifacts(libraryService(newArtifactTokenKV()))
+
+			records := e.CaptureAuditRecords()
+			serveLibrary(e, tt.method, tt.path, tt.body, "")
+			require.NotEmpty(t, *records)
+			assert.Equal(t, tt.event, (*records)[0].EventName)
+			assert.Equal(t, id, (*records)[0].EventData.Parameters[audit.KeyChannelArtifactID])
+		})
+	}
 }
 
 func TestChannelArtifactAuditRecordsNameTheObjects(t *testing.T) {

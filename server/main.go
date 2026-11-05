@@ -874,11 +874,12 @@ func (p *Plugin) purgeOrphanedChannelArtifacts(batchSize int64) (int64, error) {
 		} else if channel != nil && channel.DeleteAt == 0 {
 			continue
 		}
-		if err := p.channelArtifacts.PurgeChannel(channelID); err != nil {
+		n, err := p.channelArtifacts.PurgeChannel(channelID)
+		if err != nil {
 			p.pluginAPI.Log.Error("Failed to purge channel artifacts for deleted channel", "channel_id", channelID, "error", err)
 			return purged, err
 		}
-		purged++
+		purged += int64(n)
 	}
 	return purged, nil
 }
