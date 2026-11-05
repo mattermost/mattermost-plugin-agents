@@ -154,7 +154,7 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
                         <StarterButton
                             key={prompt.id}
                             emphasis='dim'
-                            size='small'
+                            size='x-small'
                             compact={true}
                             title={prompt.description}
                             disabled={runningId !== null}
@@ -174,7 +174,6 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
                                 <DropdownMenuItem
                                     key={prompt.id}
                                     label={prompt.name}
-                                    role='menuitem'
                                     onClick={() => runStarter(prompt)}
                                 />
                             ))}

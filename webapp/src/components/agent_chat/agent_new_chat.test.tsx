@@ -4,7 +4,7 @@
 import React from 'react';
 import {Provider} from 'react-redux';
 import {createStore} from 'redux';
-import {fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 
 import manifest from '@/manifest';
 import {renderCustomPrompt, createPost} from '@/client';
@@ -155,7 +155,7 @@ describe('AgentNewChat', () => {
             expect(chips().map((b) => b.textContent)).toEqual(['Prompt 1', 'Prompt 2', 'Prompt 3', 'Prompt 4', 'Prompt 5']);
 
             fireEvent.click(screen.getByRole('button', {name: 'More prompts'}));
-            expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['Prompt 6', 'Prompt 7']);
+            expect(within(screen.getByTestId('dropdownmenu')).getAllByRole('button').map((m) => m.textContent)).toEqual(['Prompt 6', 'Prompt 7']);
         });
 
         test('has no More menu at five pinned prompts or fewer', () => {
@@ -174,7 +174,7 @@ describe('AgentNewChat', () => {
             render(ui('page', onCreated));
 
             fireEvent.click(screen.getByRole('button', {name: 'More prompts'}));
-            fireEvent.click(screen.getByRole('menuitem', {name: 'Prompt 6'}));
+            fireEvent.click(within(screen.getByTestId('dropdownmenu')).getByRole('button', {name: 'Prompt 6'}));
 
             await waitFor(() => expect(onCreated).toHaveBeenCalledWith('post7'));
             expect(renderCustomPrompt).toHaveBeenCalledWith('6', 'dm1', 'bot1');
