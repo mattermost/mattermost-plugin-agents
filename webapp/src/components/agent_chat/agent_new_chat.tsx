@@ -17,7 +17,7 @@ import {getCustomPrompts, getPinnedPromptIds, isCustomPromptsLoaded, isPinnedPro
 import type {CustomPrompt} from '@/types';
 
 import {CHAT_CONTENT_MAX_WIDTH, HOST_COMPOSER_CONTAINER_CLASS, hostComposerInset} from './agent_chat_host_styles';
-import StarterPrompts from './starter_prompts';
+import PinnedSkills from './pinned_skills';
 
 // Greeting pairs for the new-chat state. The titles are the prototype's
 // EMPTY_CHAT_TITLES; each subtitle belongs to its title, so both are picked
@@ -80,14 +80,14 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
     const promptsLoaded = useSelector(isCustomPromptsLoaded);
     const pinsLoaded = useSelector(isPinnedPromptIdsLoaded);
     const [runningId, setRunningId] = useState<string | null>(null);
-    const [starterError, setStarterError] = useState<string | null>(null);
+    const [pinnedSkillError, setPinnedSkillError] = useState<string | null>(null);
 
     // Set synchronously, so two clicks in the same tick (before a re-render disables the buttons)
     // cannot both start a run. runningId is only for the disabled look.
     const inFlight = useRef(false);
 
-    // Whether this chat already has its first message (from the composer or a starter), and whether
-    // the view is still showing. A starter that finishes after either must not start a second chat
+    // Whether this chat already has its first message (from the composer or a pinned skill), and whether
+    // the view is still showing. A pinned skill that finishes after either must not start a second chat
     // or pull the user away from where they went.
     const firstMessageCreated = useRef(false);
     const mounted = useRef(true);
@@ -116,15 +116,15 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
         map((id) => prompts.find((p) => p.id === id)).
         filter((p): p is CustomPrompt => Boolean(p)), [prompts, pinnedIds]);
 
-    // The host composer has no way to take a draft from outside, so a starter runs the prompt:
+    // The host composer has no way to take a draft from outside, so a pinned skill runs the prompt:
     // it posts the rendered text as the chat's first message.
-    const runStarter = useCallback(async (prompt: CustomPrompt) => {
+    const runPinnedSkill = useCallback(async (prompt: CustomPrompt) => {
         if (inFlight.current) {
             return;
         }
         inFlight.current = true;
         setRunningId(prompt.id);
-        setStarterError(null);
+        setPinnedSkillError(null);
 
         const release = () => {
             inFlight.current = false;
@@ -153,7 +153,7 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
         }
         release();
         if (mounted.current) {
-            setStarterError(intl.formatMessage({defaultMessage: 'Couldn\'t run that prompt. Please try again.'}));
+            setPinnedSkillError(intl.formatMessage({defaultMessage: 'Couldn\'t run that skill. Please try again.'}));
         }
     }, [channelId, bot.id, onCreated, intl]);
 
@@ -186,11 +186,11 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
                 </Greeting>
             </EmptyIntro>
             {pinned.length > 0 && (
-                <StarterPrompts
+                <PinnedSkills
                     prompts={pinned}
                     disabled={runningId !== null}
-                    error={starterError}
-                    onPick={runStarter}
+                    error={pinnedSkillError}
+                    onPick={runPinnedSkill}
                 />
             )}
             {AdvancedTextEditor && (
@@ -198,7 +198,7 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
                     className={HOST_COMPOSER_CONTAINER_CLASS}
                     data-testid='agent-chat-new-composer'
 
-                    // The host composer has no disabled prop. While a starter renders and posts, the
+                    // The host composer has no disabled prop. While a pinned skill renders and posts, the
                     // composer cannot be typed in or submitted, so the two cannot both create the first post.
                     inert={runningId !== null}
                     $busy={runningId !== null}

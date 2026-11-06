@@ -459,7 +459,7 @@ test.describe('Custom Prompts in AI Actions Submenu', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. Pinned prompts are offered as starter buttons in the RHS empty state
+// 3. Pinned skills are offered as buttons in the RHS empty state
 // ---------------------------------------------------------------------------
 test.describe('Pinned prompts in the RHS empty state', () => {
     let userClient: any;
@@ -484,11 +484,11 @@ test.describe('Pinned prompts in the RHS empty state', () => {
         }
     });
 
-    test('a pinned prompt is a starter button in the RHS new chat and runs when clicked; an unpinned one is not offered', async ({ page }) => {
+    test('a pinned skill is a button in the RHS new chat and runs when clicked; an unpinned one is not offered', async ({ page }) => {
         const pinned = await createPromptViaAPI(userClient, {
-            name: 'RHS Starter Prompt',
+            name: 'RHS Pinned Skill',
             description: 'Pinned, so the new chat offers it',
-            template: 'Starter template content',
+            template: 'Pinned skill template content',
             is_shared: true,
         });
         createdPromptIds.push(pinned.id);
@@ -507,14 +507,14 @@ test.describe('Pinned prompts in the RHS empty state', () => {
         await expect(aiPlugin.rhsPostTextarea).toBeVisible({ timeout: 30000 });
 
         const rhs = aiPlugin.getRhsContainer();
-        const starter = rhs.getByRole('button', { name: 'RHS Starter Prompt' });
-        await expect(starter).toBeVisible({ timeout: 30000 });
+        const pinnedSkill = rhs.getByRole('button', { name: 'RHS Pinned Skill' });
+        await expect(pinnedSkill).toBeVisible({ timeout: 30000 });
         await expect(rhs.getByRole('button', { name: 'RHS Unpinned Prompt' })).toHaveCount(0);
 
         // Clicking it posts the rendered prompt as the chat's first message.
         await openAIMock.addCompletionMock(responseTest);
-        await starter.click();
-        await expect(rhs.getByTestId('post-message-text').getByText('Starter template content')).toBeVisible({ timeout: 30000 });
+        await pinnedSkill.click();
+        await expect(rhs.getByTestId('post-message-text').getByText('Pinned skill template content')).toBeVisible({ timeout: 30000 });
     });
 });
 
@@ -631,7 +631,7 @@ test.describe('Context Variables', () => {
         });
         createdPromptIds.push(prompt.id);
 
-        // Left unpinned: a pinned prompt is also a starter button in the new chat, and the prompt
+        // Left unpinned: a pinned prompt is also a button in the new chat, and the prompt
         // name must match only the AI actions menu item here.
         const { aiPlugin } = await setupTestPage(page);
         await aiPlugin.openRHS();

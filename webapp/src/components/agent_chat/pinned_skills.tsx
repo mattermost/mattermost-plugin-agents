@@ -15,20 +15,20 @@ import {useFocusMenuOnOpen} from '@/components/menu/use_focus_menu_on_open';
 import {useMenuTransition} from '@/hooks/use_menu_transition';
 import type {CustomPrompt} from '@/types';
 
-import {fitStarterLines, singleLineFit, type StarterFit, type StarterFitInput} from './starter_prompt_layout';
+import {fitPinnedSkillLines, type PinnedSkillFit, type PinnedSkillFitInput} from './pinned_skill_layout';
 
-// The starters take at most this many lines; whatever does not fit collapses into "+N".
-const MAX_STARTER_LINES = 2;
+// The pinned skills take at most this many lines; whatever does not fit collapses into "+N".
+const MAX_PINNED_SKILL_LINES = 2;
 
-const MEASURE_ATTRIBUTE = 'data-starter-measure';
+const MEASURE_ATTRIBUTE = 'data-pinned-skill-measure';
 
 // What measure() reads from the page; everything the fit needs except the line limit.
-type Metrics = Omit<StarterFitInput, 'maxLines'>;
+type Metrics = Omit<PinnedSkillFitInput, 'maxLines'>;
 
 // Plain numbers and one array of them, so a field added to Metrics is compared without editing this.
 const sameMetrics = (a: Metrics | null, b: Metrics) => a !== null && JSON.stringify(a) === JSON.stringify(b);
 
-interface StarterPromptsProps {
+interface PinnedSkillsProps {
     prompts: CustomPrompt[];
     disabled: boolean;
 
@@ -37,10 +37,10 @@ interface StarterPromptsProps {
     onPick: (prompt: CustomPrompt) => void;
 }
 
-// The pinned prompts as buttons on at most MAX_STARTER_LINES lines, with the ones that do not fit
+// The pinned prompts as buttons on at most MAX_PINNED_SKILL_LINES lines, with the ones that do not fit
 // behind a "+N" chip. The browser's own wrapping can't do this (it can't swap the last button for
 // a chip), so each button is measured in a hidden row and the lines are laid out here.
-const StarterPrompts = ({prompts, disabled, error, onPick}: StarterPromptsProps) => {
+const PinnedSkills = ({prompts, disabled, error, onPick}: PinnedSkillsProps) => {
     const intl = useIntl();
     const groupRef = useRef<HTMLDivElement>(null);
     const measureRef = useRef<HTMLDivElement>(null);
@@ -79,14 +79,13 @@ const StarterPrompts = ({prompts, disabled, error, onPick}: StarterPromptsProps)
         return () => observer?.disconnect();
     }, [measure]);
 
-    const fit = useMemo<StarterFit | null>(() => {
-        if (!metrics || metrics.widths.length !== prompts.length) {
+    // Nothing is shown until the group has been measured at a real width (a width of zero means it is
+    // hidden or still sliding in), so the buttons never flash in a layout that is about to change.
+    const fit = useMemo<PinnedSkillFit | null>(() => {
+        if (!metrics || metrics.widths.length !== prompts.length || metrics.available <= 0) {
             return null;
         }
-        if (metrics.available <= 0) {
-            return singleLineFit(prompts.length);
-        }
-        return fitStarterLines({...metrics, maxLines: MAX_STARTER_LINES});
+        return fitPinnedSkillLines({...metrics, maxLines: MAX_PINNED_SKILL_LINES});
     }, [metrics, prompts]);
 
     const hidden = fit ? prompts.slice(fit.visibleCount) : [];
@@ -102,11 +101,11 @@ const StarterPrompts = ({prompts, disabled, error, onPick}: StarterPromptsProps)
     }, [nothingHidden]);
 
     return (
-        <Starters
+        <PinnedSkillsGroup
             ref={groupRef}
             role='group'
-            aria-label={intl.formatMessage({defaultMessage: 'Custom prompts'})}
-            data-testid='agent-chat-starter-prompts'
+            aria-label={intl.formatMessage({defaultMessage: 'Pinned skills'})}
+            data-testid='agent-chat-pinned-skills'
         >
             <MeasureRow
                 ref={measureRef}
@@ -117,21 +116,21 @@ const StarterPrompts = ({prompts, disabled, error, onPick}: StarterPromptsProps)
                         key={prompt.id}
                         {...{[MEASURE_ATTRIBUTE]: 'item'}}
                     >
-                        <StarterButton tabIndex={-1}>
+                        <PinnedSkillButton tabIndex={-1}>
                             {prompt.name}
-                        </StarterButton>
+                        </PinnedSkillButton>
                     </MeasureItem>
                 ))}
                 <MeasureItem {...{[MEASURE_ATTRIBUTE]: 'chip'}}>
-                    <StarterButton tabIndex={-1}>
+                    <PinnedSkillButton tabIndex={-1}>
                         {`+${prompts.length}`}
-                    </StarterButton>
+                    </PinnedSkillButton>
                 </MeasureItem>
             </MeasureRow>
             {fit?.lines.map((line, lineIndex) => (
-                <StarterLine
+                <PinnedSkillLine
                     key={lineIndex} // eslint-disable-line react/no-array-index-key -- lines are positional and carry no state
-                    data-testid='agent-chat-starter-line'
+                    data-testid='agent-chat-pinned-skill-line'
                 >
                     {line.map((entry) => (entry === 'more' ? (
                         <MorePrompts
@@ -143,19 +142,19 @@ const StarterPrompts = ({prompts, disabled, error, onPick}: StarterPromptsProps)
                             onPick={onPick}
                         />
                     ) : (
-                        <StarterButton
+                        <PinnedSkillButton
                             key={prompts[entry].id}
                             title={prompts[entry].description}
                             disabled={disabled}
                             onClick={() => onPick(prompts[entry])}
                         >
                             {prompts[entry].name}
-                        </StarterButton>
+                        </PinnedSkillButton>
                     )))}
-                </StarterLine>
+                </PinnedSkillLine>
             ))}
-            {error && <StarterError role='alert'>{error}</StarterError>}
-        </Starters>
+            {error && <PinnedSkillError role='alert'>{error}</PinnedSkillError>}
+        </PinnedSkillsGroup>
     );
 };
 
@@ -167,14 +166,14 @@ interface MorePromptsProps {
     onPick: (prompt: CustomPrompt) => void;
 }
 
-// The "+N" after the starter buttons: the pinned prompts that did not fit, in a menu.
+// The "+N" after the pinned skill buttons: the pinned skills that did not fit, in a menu.
 const MorePrompts = ({prompts, disabled, open, onOpenChange, onPick}: MorePromptsProps) => {
     const intl = useIntl();
     const menu = useMenuTransition(open);
-    const menuId = `starter-more-menu-${useId().replace(/:/g, '')}`;
+    const menuId = `pinned-skills-more-menu-${useId().replace(/:/g, '')}`;
     useFocusMenuOnOpen(open, menuId);
 
-    const label = intl.formatMessage({defaultMessage: 'More prompts'});
+    const label = intl.formatMessage({defaultMessage: 'More skills'});
 
     return (
         <Dropdown
@@ -182,16 +181,16 @@ const MorePrompts = ({prompts, disabled, open, onOpenChange, onPick}: MorePrompt
             onOpenChange={onOpenChange}
             placement='bottom-end'
             target={(
-                <StarterButton
+                <PinnedSkillButton
                     disabled={disabled}
-                    aria-label={intl.formatMessage({defaultMessage: 'More prompts ({count})'}, {count: prompts.length})}
+                    aria-label={intl.formatMessage({defaultMessage: 'More skills ({count})'}, {count: prompts.length})}
                     aria-haspopup='menu'
                     aria-expanded={open}
                     title={label}
                     onClick={() => onOpenChange(!open)}
                 >
                     {`+${prompts.length}`}
-                </StarterButton>
+                </PinnedSkillButton>
             )}
         >
             <PopoverMenu
@@ -217,7 +216,7 @@ const MorePrompts = ({prompts, disabled, open, onOpenChange, onPick}: MorePrompt
 };
 
 // A resting tint so the text-only buttons read as buttons; hover and focus keep compass's own states.
-const StarterButton = styled(Button).attrs({emphasis: 'dim', size: 'x-small', compact: true})`
+const PinnedSkillButton = styled(Button).attrs({emphasis: 'dim', size: 'x-small', compact: true})`
     && {
         background: rgba(var(--center-channel-color-rgb), 0.04);
     }
@@ -228,19 +227,19 @@ const ITEM_GAP = 'var(--spacing-xs)';
 
 // No compass token for a content width. The lines measure against this width, so it also decides
 // how many prompts fit before "+N".
-const STARTERS_MAX_WIDTH = '520px';
+const PINNED_SKILLS_MAX_WIDTH = '520px';
 
-const Starters = styled.div`
+const PinnedSkillsGroup = styled.div`
     position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: ${ITEM_GAP};
     width: 100%;
-    max-width: ${STARTERS_MAX_WIDTH};
+    max-width: ${PINNED_SKILLS_MAX_WIDTH};
 `;
 
-const StarterLine = styled.div`
+const PinnedSkillLine = styled.div`
     display: flex;
     align-items: center;
     justify-content: center;
@@ -263,7 +262,7 @@ const MeasureRow = styled.div`
     visibility: hidden;
 `;
 
-const StarterError = styled.p`
+const PinnedSkillError = styled.p`
     margin: 0;
     font-size: var(--font-size-75);
     line-height: var(--line-height-75);
@@ -275,4 +274,4 @@ const MeasureItem = styled.span`
     display: inline-flex;
 `;
 
-export default StarterPrompts;
+export default PinnedSkills;

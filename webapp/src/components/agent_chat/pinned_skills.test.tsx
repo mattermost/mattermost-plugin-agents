@@ -2,9 +2,11 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {act, fireEvent, render, screen, within} from '@testing-library/react';
+import {fireEvent, render, screen, within} from '@testing-library/react';
 
-import StarterPrompts from './starter_prompts';
+import {usePinnedSkillsLayoutMock} from '../../../tests/pinned_skills_layout_mock';
+
+import PinnedSkills from './pinned_skills';
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
@@ -28,40 +30,8 @@ const prompts = ['1', '2', '3', '4', '5'].map((n) => ({
     deleted_at: 0,
 }));
 
-// jsdom has no layout, so give each measured piece a width of 10 per character (a prompt 80, a "+2"
-// chip 20, no gap) and the group the width a test sets.
-let groupWidth = 0;
-
-// Floating UI (the open menu) observes too, and reads the entries it is called with.
-const observers: Array<(entries: unknown[]) => void> = [];
-
-class FakeResizeObserver {
-    observe = jest.fn();
-    disconnect = jest.fn();
-    constructor(callback: (entries: unknown[]) => void) {
-        observers.push(callback);
-    }
-}
-
-beforeEach(() => {
-    groupWidth = 0;
-    observers.length = 0;
-    (global as any).ResizeObserver = FakeResizeObserver;
-    jest.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function measuredWidth(this: HTMLElement) {
-        return (this.textContent?.length ?? 0) * 10;
-    });
-    jest.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function groupClientWidth(this: HTMLElement) {
-        return this.dataset.testid === 'agent-chat-starter-prompts' ? groupWidth : 0;
-    });
-});
-
-afterEach(() => {
-    jest.restoreAllMocks();
-    delete (global as any).ResizeObserver;
-});
-
 const renderPrompts = (onPick = jest.fn(), list = prompts, error: string | null = null) => render(
-    <StarterPrompts
+    <PinnedSkills
         prompts={list}
         disabled={false}
         error={error}
@@ -69,25 +39,38 @@ const renderPrompts = (onPick = jest.fn(), list = prompts, error: string | null 
     />,
 );
 
-const lines = () => screen.queryAllByTestId('agent-chat-starter-line').map((line) => line.textContent);
+const lines = () => screen.queryAllByTestId('agent-chat-pinned-skill-line').map((line) => line.textContent);
 
-describe('StarterPrompts', () => {
+describe('PinnedSkills', () => {
+    const layout = usePinnedSkillsLayoutMock();
+
+    test('renders nothing while the group has no width, then the buttons once it does', () => {
+        layout.setWidth(0);
+        renderPrompts();
+        expect(lines()).toEqual([]);
+        expect(screen.queryByRole('button')).toBeNull();
+
+        layout.setWidth(1000);
+        layout.resize();
+        expect(lines()).toEqual(['Prompt 1Prompt 2Prompt 3Prompt 4Prompt 5']);
+    });
+
     test('shows every prompt on one line when they all fit', () => {
-        groupWidth = 1000;
+        layout.setWidth(1000);
         renderPrompts();
         expect(lines()).toEqual(['Prompt 1Prompt 2Prompt 3Prompt 4Prompt 5']);
-        expect(screen.queryByRole('button', {name: /^More prompts/})).toBeNull();
+        expect(screen.queryByRole('button', {name: /^More skills/})).toBeNull();
     });
 
     test('wraps to two lines and puts the rest behind the chip, closing the second line', () => {
-        groupWidth = 170;
+        layout.setWidth(170);
         renderPrompts();
         expect(lines()).toEqual(['Prompt 1Prompt 2', 'Prompt 3+2']);
     });
 
     test('never takes more than two lines at any width', () => {
         for (const width of [100, 130, 170, 190, 270, 400, 1000]) {
-            groupWidth = width;
+            layout.setWidth(width);
             const {unmount} = renderPrompts();
             expect(lines().length).toBeLessThanOrEqual(2);
             unmount();
@@ -98,18 +81,18 @@ describe('StarterPrompts', () => {
         {name: 'shows why the last run failed, under the buttons', error: 'Could not run it', alert: 'Could not run it'},
         {name: 'shows no alert when nothing failed', error: null, alert: null},
     ])('$name', ({error, alert}) => {
-        groupWidth = 1000;
+        layout.setWidth(1000);
         renderPrompts(jest.fn(), prompts, error);
         expect(screen.queryByRole('alert')?.textContent ?? null).toBe(alert);
     });
 
     test('measures again when the width changes', () => {
-        groupWidth = 1000;
+        layout.setWidth(1000);
         renderPrompts();
         expect(lines()).toHaveLength(1);
 
-        groupWidth = 170;
-        act(() => observers.forEach((callback) => callback([])));
+        layout.setWidth(170);
+        layout.resize();
         expect(lines()).toEqual(['Prompt 1Prompt 2', 'Prompt 3+2']);
     });
 
@@ -118,39 +101,39 @@ describe('StarterPrompts', () => {
         const list = ['Aaaa', ...[1, 2, 3, 4, 5].map((n) => `L${n}`.padEnd(30, '-'))].map((name, i) => ({...prompts[0], id: `w${i}`, name}));
 
         // Room for the first five and the chip on the second line.
-        groupWidth = 700;
+        layout.setWidth(700);
         renderPrompts(jest.fn(), list);
         expect(lines()).toHaveLength(2);
         expect(lines()[1]).toMatch(/\+1$/);
-        fireEvent.click(screen.getByRole('button', {name: /^More prompts/}));
+        fireEvent.click(screen.getByRole('button', {name: /^More skills/}));
         expect(within(screen.getByTestId('dropdownmenu')).getAllByRole('button')).toHaveLength(1);
 
         // Narrow: the chip now sits on the first line, so it is rebuilt under a different line.
-        groupWidth = 300;
-        act(() => observers.forEach((callback) => callback([])));
+        layout.setWidth(300);
+        layout.resize();
         expect(lines()).toHaveLength(1);
         expect(lines()[0]).toMatch(/\+5$/);
         expect(within(screen.getByTestId('dropdownmenu')).getAllByRole('button')).toHaveLength(5);
     });
 
     test('closes the menu when everything fits again', () => {
-        groupWidth = 170;
+        layout.setWidth(170);
         renderPrompts();
-        fireEvent.click(screen.getByRole('button', {name: /^More prompts/}));
+        fireEvent.click(screen.getByRole('button', {name: /^More skills/}));
         expect(screen.queryByTestId('dropdownmenu')).not.toBeNull();
 
-        groupWidth = 1000;
-        act(() => observers.forEach((callback) => callback([])));
-        expect(screen.queryByRole('button', {name: /^More prompts/})).toBeNull();
+        layout.setWidth(1000);
+        layout.resize();
+        expect(screen.queryByRole('button', {name: /^More skills/})).toBeNull();
         expect(screen.queryByTestId('dropdownmenu')).toBeNull();
     });
 
     test('the chip opens a menu with the prompts that did not fit, and picking one runs it', () => {
-        groupWidth = 170;
+        layout.setWidth(170);
         const onPick = jest.fn();
         renderPrompts(onPick);
 
-        const more = screen.getByRole('button', {name: /^More prompts/});
+        const more = screen.getByRole('button', {name: /^More skills/});
         expect(more.textContent).toBe('+2');
         fireEvent.click(more);
 
@@ -162,7 +145,7 @@ describe('StarterPrompts', () => {
     });
 
     test('the hidden measuring row is not exposed to assistive technology', () => {
-        groupWidth = 1000;
+        layout.setWidth(1000);
         renderPrompts();
         expect(screen.getAllByRole('button')).toHaveLength(5);
     });

@@ -1,11 +1,11 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {fitStarterLines, singleLineFit} from './starter_prompt_layout';
+import {fitPinnedSkillLines} from './pinned_skill_layout';
 
 const base = {chipWidth: 20, gap: 6, maxLines: 2};
 
-describe('fitStarterLines', () => {
+describe('fitPinnedSkillLines', () => {
     test.each([
         {
             name: 'everything fits on one line',
@@ -56,14 +56,14 @@ describe('fitStarterLines', () => {
             expected: {lines: [], visibleCount: 0},
         },
     ])('$name', ({widths, available, expected}) => {
-        expect(fitStarterLines({...base, widths, available})).toEqual(expected);
+        expect(fitPinnedSkillLines({...base, widths, available})).toEqual(expected);
     });
 
     test('never takes more than maxLines, whatever the widths', () => {
         for (let count = 0; count <= 12; count++) {
             for (const available of [40, 90, 130, 400]) {
                 const widths = Array.from({length: count}, (_, i) => 20 + ((i * 17) % 70));
-                const {lines, visibleCount} = fitStarterLines({...base, widths, available});
+                const {lines, visibleCount} = fitPinnedSkillLines({...base, widths, available});
                 expect(lines.length).toBeLessThanOrEqual(base.maxLines);
 
                 const shown = lines.flat();
@@ -71,15 +71,5 @@ describe('fitStarterLines', () => {
                 expect(shown.includes('more')).toBe(visibleCount < count);
             }
         }
-    });
-});
-
-describe('singleLineFit', () => {
-    test.each([
-        {count: 3, expected: {lines: [[0, 1, 2]], visibleCount: 3}},
-        {count: 1, expected: {lines: [[0]], visibleCount: 1}},
-        {count: 0, expected: {lines: [], visibleCount: 0}},
-    ])('shows $count prompts on one line with no chip', ({count, expected}) => {
-        expect(singleLineFit(count)).toEqual(expected);
     });
 });

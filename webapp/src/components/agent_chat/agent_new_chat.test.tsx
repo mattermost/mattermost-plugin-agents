@@ -11,6 +11,7 @@ import {renderCustomPrompt, createPost} from '@/client';
 import {fetchCustomPrompts, fetchPinnedPromptIds} from '@/redux';
 
 import {lastAdvancedTextEditorProps} from '../../../tests/fake_advanced_text_editor';
+import {usePinnedSkillsLayoutMock} from '../../../tests/pinned_skills_layout_mock';
 
 import AgentNewChat, {NEW_CHAT_GREETINGS} from './agent_new_chat';
 
@@ -91,6 +92,9 @@ const shown = () => ({
 });
 
 describe('AgentNewChat', () => {
+    // The pinned skills render nothing without a measured width; jsdom has no layout.
+    usePinnedSkillsLayoutMock();
+
     beforeEach(() => {
         store = makeStore();
     });
@@ -138,7 +142,7 @@ describe('AgentNewChat', () => {
         expect(lastAdvancedTextEditorProps()).toEqual(expect.objectContaining({location, channelId: 'dm1', rootId: '', placeholder: 'Message Matty'}));
     });
 
-    describe('starter prompts', () => {
+    describe('pinned skills', () => {
         const chips = () => screen.queryAllByRole('button').filter((b) => b.textContent?.startsWith('Prompt '));
 
         test('shows only pinned prompts, in pin order', () => {
@@ -153,7 +157,7 @@ describe('AgentNewChat', () => {
         ])('shows nothing when $name', ({prompts, pinned}) => {
             store = makeStore(prompts.map(makePrompt), pinned);
             render(ui());
-            expect(screen.queryByTestId('agent-chat-starter-prompts')).toBeNull();
+            expect(screen.queryByTestId('agent-chat-pinned-skills')).toBeNull();
         });
 
         test('ignores a pin whose prompt is gone', () => {
@@ -215,7 +219,7 @@ describe('AgentNewChat', () => {
             render(ui('page', onCreated));
 
             fireEvent.click(screen.getByRole('button', {name: 'Prompt 1'}));
-            expect((await screen.findByRole('alert')).textContent).toBe('Couldn\'t run that prompt. Please try again.');
+            expect((await screen.findByRole('alert')).textContent).toBe('Couldn\'t run that skill. Please try again.');
             expect((screen.getByRole('button', {name: 'Prompt 1'}) as HTMLButtonElement).disabled).toBe(false);
             expect(createPost).not.toHaveBeenCalled();
             expect(onCreated).not.toHaveBeenCalled();
@@ -239,7 +243,7 @@ describe('AgentNewChat', () => {
             expect(onCreated).not.toHaveBeenCalled();
         });
 
-        test('the composer is inert while a starter runs and usable again after a failure', async () => {
+        test('the composer is inert while a pinned skill runs and usable again after a failure', async () => {
             jest.spyOn(console, 'error').mockImplementation(() => 0);
             const render1 = deferred<{rendered: string}>();
             (renderCustomPrompt as jest.Mock).mockReturnValue(render1.promise);
@@ -257,10 +261,10 @@ describe('AgentNewChat', () => {
             await waitFor(() => expect(composer.hasAttribute('inert')).toBe(false));
         });
 
-        test('a starter does not post a second first message once the composer has sent one', async () => {
+        test('a pinned skill does not post a second first message once the composer has sent one', async () => {
             const render1 = deferred<{rendered: string}>();
             (renderCustomPrompt as jest.Mock).mockReturnValue(render1.promise);
-            (createPost as jest.Mock).mockReset().mockResolvedValue({id: 'starter-post'});
+            (createPost as jest.Mock).mockReset().mockResolvedValue({id: 'skill-post'});
             store = makeStore([makePrompt('1')], ['1']);
             const onCreated = jest.fn();
             render(ui('page', onCreated));
@@ -278,10 +282,10 @@ describe('AgentNewChat', () => {
             expect(onCreated).toHaveBeenCalledWith('composer-post');
         });
 
-        test('a starter does not post after the view is gone', async () => {
+        test('a pinned skill does not post after the view is gone', async () => {
             const render1 = deferred<{rendered: string}>();
             (renderCustomPrompt as jest.Mock).mockReturnValue(render1.promise);
-            (createPost as jest.Mock).mockReset().mockResolvedValue({id: 'starter-post'});
+            (createPost as jest.Mock).mockReset().mockResolvedValue({id: 'skill-post'});
             store = makeStore([makePrompt('1')], ['1']);
             const onCreated = jest.fn();
             const {unmount} = render(ui('page', onCreated));
@@ -296,7 +300,7 @@ describe('AgentNewChat', () => {
             expect(onCreated).not.toHaveBeenCalled();
         });
 
-        test('a starter that posts after the view is gone does not navigate', async () => {
+        test('a pinned skill that posts after the view is gone does not navigate', async () => {
             (renderCustomPrompt as jest.Mock).mockResolvedValue({rendered: 'rendered text'});
             const post = deferred<{id: string}>();
             (createPost as jest.Mock).mockReset().mockReturnValue(post.promise);
@@ -308,7 +312,7 @@ describe('AgentNewChat', () => {
             await waitFor(() => expect(createPost).toHaveBeenCalledTimes(1));
             unmount();
             await act(async () => {
-                post.resolve({id: 'starter-post'});
+                post.resolve({id: 'skill-post'});
             });
 
             expect(onCreated).not.toHaveBeenCalled();
