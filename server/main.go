@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/api"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
@@ -60,6 +61,7 @@ type Plugin struct {
 	bots                 *bots.MMBots
 	indexerService       *indexer.Indexer
 	conversationsService *conversations.Conversations
+	channelArtifacts     *channelartifacts.Service
 	mcpClientManager     *mcp.ClientManager
 	streamingService     streaming.Service
 	telemetryShutdown    telemetry.ShutdownFunc
@@ -485,7 +487,7 @@ func (p *Plugin) OnActivate() error {
 		defer embeddedMu.Unlock()
 
 		if embeddedServer == nil {
-			created, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService, func() bool {
+			created, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService, nil, func() bool {
 				return licenseChecker.Allows(enterprise.CapStateChangingTools)
 			})
 			if embeddedErr != nil {
@@ -583,7 +585,7 @@ func (p *Plugin) OnActivate() error {
 	mcpHandlerLogger := NewPluginAPILoggerAdapter(pluginAPI.Log)
 	internalServerURL := deriveInternalServerURL(pluginAPI, *siteURL)
 	pluginServers := licensedPluginServers{registry: mcpClientManager, allowed: remoteMCPAllowed}
-	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger, pluginServers, mmClient, searchService, fileContentService, func() bool {
+	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger, pluginServers, mmClient, searchService, fileContentService, nil, func() bool {
 		return licenseChecker.Allows(enterprise.CapStateChangingTools)
 	}, accessChecker, func() string {
 		return p.configuration.MCP().EmbeddedServer.ID
@@ -635,6 +637,12 @@ func (p *Plugin) OnActivate() error {
 	)
 
 	apiService.SetConversationService(convService)
+	channelArtifactsService := channelartifacts.NewService(
+		channelartifacts.NewStore(mmClient),
+		mmClient,
+		channelartifacts.MembersFromPluginAPI(pluginAPI),
+	)
+	apiService.SetChannelArtifacts(channelArtifactsService)
 
 	// Apply OpenTelemetry config now and re-apply on every config change so
 	// admins don't need to restart the plugin to switch modes.
@@ -646,6 +654,7 @@ func (p *Plugin) OnActivate() error {
 	p.bots = bots
 	p.indexerService = indexerService
 	p.conversationsService = conversationsService
+	p.channelArtifacts = channelArtifactsService
 	p.mcpClientManager = mcpClientManager
 	p.streamingService = streamingService
 
@@ -822,21 +831,57 @@ func (p *Plugin) MessageHasBeenDeleted(c *plugin.Context, post *model.Post) {
 }
 
 func (p *Plugin) RunDataRetention(nowTime, batchSize int64) (int64, error) {
-	if p.indexerService == nil {
-		return 0, nil
+	var count int64
+	if p.indexerService != nil {
+		n, err := p.indexerService.RunDataRetention(context.Background(), nowTime, batchSize)
+		if err != nil {
+			p.pluginAPI.Log.Error("Failed to run data retention for embeddings", "error", err)
+			return 0, err
+		}
+		count = n
+		if count > 0 {
+			p.pluginAPI.Log.Info("Data retention cleaned up orphaned embeddings", "deleted", count)
+		}
 	}
 
-	count, err := p.indexerService.RunDataRetention(context.Background(), nowTime, batchSize)
-	if err != nil {
-		p.pluginAPI.Log.Error("Failed to run data retention for embeddings", "error", err)
-		return 0, err
-	}
-
-	if count > 0 {
-		p.pluginAPI.Log.Info("Data retention cleaned up orphaned embeddings", "deleted", count)
+	if p.channelArtifacts != nil {
+		purged, err := p.purgeOrphanedChannelArtifacts(batchSize)
+		if err != nil {
+			p.pluginAPI.Log.Error("Failed to purge orphaned channel artifacts", "error", err)
+			return count + purged, err
+		}
+		if purged > 0 {
+			p.pluginAPI.Log.Info("Data retention cleaned up orphaned channel artifacts", "channels", purged)
+			count += purged
+		}
 	}
 
 	return count, nil
+}
+
+func (p *Plugin) purgeOrphanedChannelArtifacts(batchSize int64) (int64, error) {
+	ids, err := p.channelArtifacts.Store().RetentionChannelIDs(int(batchSize))
+	if err != nil {
+		return 0, err
+	}
+	var purged int64
+	for _, channelID := range ids {
+		channel, getErr := p.pluginAPI.Channel.Get(channelID)
+		if getErr != nil {
+			if !mmapi.IsNotFound(getErr) {
+				return purged, getErr
+			}
+		} else if channel != nil && channel.DeleteAt == 0 {
+			continue
+		}
+		n, err := p.channelArtifacts.PurgeChannel(channelID)
+		if err != nil {
+			p.pluginAPI.Log.Error("Failed to purge channel artifacts for deleted channel", "channel_id", channelID, "error", err)
+			return purged, err
+		}
+		purged += int64(n)
+	}
+	return purged, nil
 }
 
 func (p *Plugin) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Request) {

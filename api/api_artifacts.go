@@ -159,13 +159,32 @@ func artifactBridgeToken(secret []byte, userID, fileID, nonce string) string {
 // base64url without padding.
 var artifactNonceRe = regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)
 
-// artifactNonce returns the request's nonce, which must be the only query
-// parameter. On failure it writes a 400 and returns ok=false.
+// artifactNonce returns the request's nonce. By default `n` must be the only
+// query parameter. On failure it writes a 400 and returns ok=false.
 func artifactNonce(c *gin.Context) (string, bool) {
+	return artifactNonceAllowing(c)
+}
+
+// artifactNonceAllowing is artifactNonce plus an allow-list of extra query
+// keys (e.g. library render's optional `version`). Unknown keys still 400.
+func artifactNonceAllowing(c *gin.Context, allowedExtra ...string) (string, bool) {
 	query, err := url.ParseQuery(c.Request.URL.RawQuery)
-	if err != nil || len(query) != 1 || len(query["n"]) != 1 || !artifactNonceRe.MatchString(query["n"][0]) {
+	if err != nil || len(query["n"]) != 1 || !artifactNonceRe.MatchString(query["n"][0]) {
 		c.String(http.StatusBadRequest, "invalid request")
 		return "", false
+	}
+	allowed := make(map[string]struct{}, 1+len(allowedExtra))
+	allowed["n"] = struct{}{}
+	for _, key := range allowedExtra {
+		if key != "" {
+			allowed[key] = struct{}{}
+		}
+	}
+	for key, values := range query {
+		if _, ok := allowed[key]; !ok || len(values) != 1 {
+			c.String(http.StatusBadRequest, "invalid request")
+			return "", false
+		}
 	}
 	return query["n"][0], true
 }
