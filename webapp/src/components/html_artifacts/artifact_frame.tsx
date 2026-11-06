@@ -12,7 +12,7 @@ import {Icon} from '@mattermost/compass-ui/components/icon';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
 import {AlertCircleOutlineIcon, DownloadOutlineIcon, RefreshIcon} from '@mattermost/compass-icons/components';
 
-import {artifactPath, artifactURL, getArtifactToken} from '@/client';
+import {artifactPathFor, artifactURLFor, getArtifactTokenFor, type ArtifactKind} from '@/client';
 
 import {
     ArtifactBroker,
@@ -73,8 +73,8 @@ function escapeAttribute(value: string): string {
 // wrapper document whose policy lets its child frame load nothing but the
 // artifact: any other navigation is blocked before a request goes out. Only
 // host-controlled values may appear in this markup.
-function wrapperMarkup(fileId: string): string {
-    const url = new URL(artifactPath(fileId), window.location.href);
+function wrapperMarkup(kind: ArtifactKind, id: string): string {
+    const url = new URL(artifactPathFor({kind, id}), window.location.href);
     const csp = `default-src 'none'; style-src 'unsafe-inline'; frame-src ${url.origin}${url.pathname}`;
     return '<!doctype html>' +
         `<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(csp)}">` +
@@ -97,6 +97,15 @@ interface Props {
     fileName: string;
     displayMode: DisplayMode;
     onEscape?: () => void;
+
+    // Post-file artifacts are the default; library entries use channel-artifacts routes.
+    artifactKind?: ArtifactKind;
+
+    // Library-only: render a specific content version via ?version=N.
+    version?: number;
+
+    // Library downloads can be turned off. File artifacts keep the button.
+    downloadEnabled?: boolean;
 
     // True while the frame is covered (the inline card under the fullscreen
     // viewer): it must not show a consent prompt the viewer cannot see.
@@ -123,6 +132,9 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
     fileName,
     displayMode,
     onEscape,
+    artifactKind = 'file',
+    version,
+    downloadEnabled = true,
     obscured = false,
     startedByClick = false,
 }, ref) => {
@@ -226,7 +238,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
             return undefined; // eslint-disable-line no-undefined
         }
         const nonce = newArtifactNonce();
-        getArtifactToken(fileId, nonce).then((info) => {
+        getArtifactTokenFor({kind: artifactKind, id: fileId}, nonce, version).then((info) => {
             if (cancelled) {
                 return;
             }
@@ -243,7 +255,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
         return () => {
             cancelled = true;
         };
-    }, [fileId, currentUserId, loadKey]);
+    }, [fileId, artifactKind, currentUserId, loadKey, version]);
 
     // Every host load has its own FrameLoad, so a disposed broker is never reused.
     const broker = useMemo(() => (load ? new ArtifactBroker({
@@ -596,11 +608,11 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
         syncInnerFrame(inner, titleRef.current, engagedRef.current);
         inner.addEventListener('load', handleLoad);
         inner.addEventListener('error', handleInnerError);
-        inner.setAttribute('src', artifactURL(load.fileId, load.nonce));
+        inner.setAttribute('src', artifactURLFor({kind: artifactKind, id: load.fileId}, load.nonce, version));
         doc.addEventListener('keydown', handleWrapperKeyDown);
         innerRef.current = inner;
         doc.body.appendChild(inner);
-    }, [load, stopFrame, failLoad, handleLoad, handleInnerError, handleWrapperKeyDown]);
+    }, [load, artifactKind, version, stopFrame, failLoad, handleLoad, handleInnerError, handleWrapperKeyDown]);
 
     // Focusing the wrapper alone leaves keystrokes in the wrapper document,
     // and focus() on an inner frame that is still its document's focused
@@ -681,7 +693,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
                 <Frame
                     key={load.nonce}
                     ref={setWrapper}
-                    srcDoc={wrapperMarkup(load.fileId)}
+                    srcDoc={wrapperMarkup(artifactKind, load.fileId)}
                     title={title}
                     tabIndex={engaged ? undefined : -1} // eslint-disable-line no-undefined
                     onLoad={handleWrapperLoad}
@@ -768,15 +780,21 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
                             size='20'
                             glyph={<AlertCircleOutlineIcon/>}
                         />
-                        <FormattedMessage defaultMessage='This artifact is too large to preview. Download it instead.'/>
-                        <Button
-                            emphasis='tertiary'
-                            size='x-small'
-                            leadingIcon={<Icon glyph={<DownloadOutlineIcon/>}/>}
-                            onClick={() => downloadArtifact(fileId)}
-                        >
-                            <FormattedMessage defaultMessage='Download'/>
-                        </Button>
+                        {downloadEnabled ? (
+                            <FormattedMessage defaultMessage='This artifact is too large to preview. Download it instead.'/>
+                        ) : (
+                            <FormattedMessage defaultMessage='This artifact is too large to preview.'/>
+                        )}
+                        {downloadEnabled && (
+                            <Button
+                                emphasis='tertiary'
+                                size='x-small'
+                                leadingIcon={<Icon glyph={<DownloadOutlineIcon/>}/>}
+                                onClick={() => downloadArtifact(fileId, artifactKind, version)}
+                            >
+                                <FormattedMessage defaultMessage='Download'/>
+                            </Button>
+                        )}
                     </ErrorBox>
                 </Overlay>
             )}
