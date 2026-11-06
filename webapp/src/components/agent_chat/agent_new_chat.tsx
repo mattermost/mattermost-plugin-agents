@@ -116,8 +116,8 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
         map((id) => prompts.find((p) => p.id === id)).
         filter((p): p is CustomPrompt => Boolean(p)), [prompts, pinnedIds]);
 
-    // The host composer has no way to take a draft from outside, so a pinned skill runs the prompt:
-    // it posts the rendered text as the chat's first message.
+    // A pinned skill runs on click, as the old pinned buttons did: it posts the rendered prompt as the
+    // chat's first message instead of putting it in the composer to edit.
     const runPinnedSkill = useCallback(async (prompt: CustomPrompt) => {
         if (inFlight.current) {
             return;
