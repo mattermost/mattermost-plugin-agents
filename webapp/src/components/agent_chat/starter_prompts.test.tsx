@@ -94,16 +94,13 @@ describe('StarterPrompts', () => {
         }
     });
 
-    test('shows why the last run failed, under the buttons', () => {
+    test.each([
+        {name: 'shows why the last run failed, under the buttons', error: 'Could not run it', alert: 'Could not run it'},
+        {name: 'shows no alert when nothing failed', error: null, alert: null},
+    ])('$name', ({error, alert}) => {
         groupWidth = 1000;
-        renderPrompts(jest.fn(), prompts, 'Could not run it');
-        expect(screen.getByRole('alert').textContent).toBe('Could not run it');
-    });
-
-    test('shows no alert when nothing failed', () => {
-        groupWidth = 1000;
-        renderPrompts();
-        expect(screen.queryByRole('alert')).toBeNull();
+        renderPrompts(jest.fn(), prompts, error);
+        expect(screen.queryByRole('alert')?.textContent ?? null).toBe(alert);
     });
 
     test('measures again when the width changes', () => {

@@ -141,19 +141,17 @@ describe('AgentNewChat', () => {
     describe('starter prompts', () => {
         const chips = () => screen.queryAllByRole('button').filter((b) => b.textContent?.startsWith('Prompt '));
 
-        test('shows nothing without custom prompts', () => {
-            render(ui());
-            expect(screen.queryByTestId('agent-chat-starter-prompts')).toBeNull();
-        });
-
         test('shows only pinned prompts, in pin order', () => {
             store = makeStore(['1', '2', '3', '4'].map(makePrompt), ['3', '1']);
             render(ui());
             expect(chips().map((b) => b.textContent)).toEqual(['Prompt 3', 'Prompt 1']);
         });
 
-        test('shows nothing when no prompt is pinned', () => {
-            store = makeStore(['1', '2'].map(makePrompt), []);
+        test.each([
+            {name: 'there are no custom prompts', prompts: [] as string[], pinned: [] as string[]},
+            {name: 'no prompt is pinned', prompts: ['1', '2'], pinned: [] as string[]},
+        ])('shows nothing when $name', ({prompts, pinned}) => {
+            store = makeStore(prompts.map(makePrompt), pinned);
             render(ui());
             expect(screen.queryByTestId('agent-chat-starter-prompts')).toBeNull();
         });
@@ -164,22 +162,16 @@ describe('AgentNewChat', () => {
             expect(chips().map((b) => b.textContent)).toEqual(['Prompt 2']);
         });
 
-        test('fetches the prompts and the pins when they have not loaded', () => {
+        test.each([
+            {name: 'fetches the prompts and the pins when they have not loaded', loaded: false, calls: 1},
+            {name: 'does not refetch prompts and pins that have loaded', loaded: true, calls: 0},
+        ])('$name', ({loaded, calls}) => {
             (fetchCustomPrompts as jest.Mock).mockClear();
             (fetchPinnedPromptIds as jest.Mock).mockClear();
-            store = makeStore(null, null);
+            store = loaded ? makeStore([makePrompt('1')], ['1']) : makeStore(null, null);
             render(ui());
-            expect(fetchCustomPrompts).toHaveBeenCalledTimes(1);
-            expect(fetchPinnedPromptIds).toHaveBeenCalledTimes(1);
-        });
-
-        test('does not refetch prompts and pins that have loaded', () => {
-            (fetchCustomPrompts as jest.Mock).mockClear();
-            (fetchPinnedPromptIds as jest.Mock).mockClear();
-            store = makeStore([makePrompt('1')], ['1']);
-            render(ui());
-            expect(fetchCustomPrompts).not.toHaveBeenCalled();
-            expect(fetchPinnedPromptIds).not.toHaveBeenCalled();
+            expect(fetchCustomPrompts).toHaveBeenCalledTimes(calls);
+            expect(fetchPinnedPromptIds).toHaveBeenCalledTimes(calls);
         });
 
         test('two clicks before React re-renders post the prompt once', async () => {
@@ -214,19 +206,24 @@ describe('AgentNewChat', () => {
             expect(createPost).toHaveBeenCalledWith({channel_id: 'dm1', message: 'rendered text', root_id: ''});
         });
 
-        test('a failed run says so, and the next attempt clears it', async () => {
+        test('a failed run posts nothing, says so and re-enables the prompts; the next attempt clears the message', async () => {
             jest.spyOn(console, 'error').mockImplementation(() => 0);
             (renderCustomPrompt as jest.Mock).mockRejectedValueOnce(new Error('nope'));
+            (createPost as jest.Mock).mockReset().mockResolvedValue({id: 'post1'});
             store = makeStore([makePrompt('1')], ['1']);
-            render(ui());
+            const onCreated = jest.fn();
+            render(ui('page', onCreated));
 
             fireEvent.click(screen.getByRole('button', {name: 'Prompt 1'}));
             expect((await screen.findByRole('alert')).textContent).toBe('Couldn\'t run that prompt. Please try again.');
+            expect((screen.getByRole('button', {name: 'Prompt 1'}) as HTMLButtonElement).disabled).toBe(false);
+            expect(createPost).not.toHaveBeenCalled();
+            expect(onCreated).not.toHaveBeenCalled();
 
             (renderCustomPrompt as jest.Mock).mockResolvedValue({rendered: 'rendered text'});
-            (createPost as jest.Mock).mockReset().mockResolvedValue({id: 'post1'});
             fireEvent.click(screen.getByRole('button', {name: 'Prompt 1'}));
             await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+            await waitFor(() => expect(onCreated).toHaveBeenCalledWith('post1'));
         });
 
         test('a post that comes back without an id is reported as a failure', async () => {
@@ -314,21 +311,6 @@ describe('AgentNewChat', () => {
                 post.resolve({id: 'starter-post'});
             });
 
-            expect(onCreated).not.toHaveBeenCalled();
-        });
-
-        test('a failed run posts nothing and re-enables the prompts', async () => {
-            jest.spyOn(console, 'error').mockImplementation(() => 0);
-            (renderCustomPrompt as jest.Mock).mockRejectedValue(new Error('nope'));
-            (createPost as jest.Mock).mockClear();
-            store = makeStore([makePrompt('1')], ['1']);
-            const onCreated = jest.fn();
-            render(ui('page', onCreated));
-
-            fireEvent.click(screen.getByRole('button', {name: 'Prompt 1'}));
-
-            await waitFor(() => expect((screen.getByRole('button', {name: 'Prompt 1'}) as HTMLButtonElement).disabled).toBe(false));
-            expect(createPost).not.toHaveBeenCalled();
             expect(onCreated).not.toHaveBeenCalled();
         });
     });
