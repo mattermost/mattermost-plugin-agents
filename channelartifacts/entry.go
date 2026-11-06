@@ -24,13 +24,10 @@ const (
 	schemaVersion = 1
 )
 
-// Entry is the catalog metadata for one channel-saved HTML artifact.
-// Head fields (SHA256, Size, ChunkCount, Source*, Version, UpdateAt,
-// UpdatedBy) always describe the current head content version.
-type Entry struct {
-	ID                     string `json:"id"`
-	ChannelID              string `json:"channel_id"`
-	TeamID                 string `json:"team_id"`
+// VersionSnapshot is the content head shared by the catalog entry and a version
+// record: the bytes, where they came from, and the title captured with that write.
+// A later rename changes the entry only. Rollback copies the record's snapshot back.
+type VersionSnapshot struct {
 	Title                  string `json:"title"`
 	Description            string `json:"description,omitempty"`
 	SourcePostID           string `json:"source_post_id"`
@@ -41,40 +38,36 @@ type Entry struct {
 	// SourceRootPostID is the thread root (post.RootId, or post.Id when the
 	// source post is itself a root). Used for lineage matching across edits.
 	SourceRootPostID string `json:"source_root_post_id,omitempty"`
-	CreatedBy        string `json:"created_by"`
-	CreateAt         int64  `json:"create_at"`
 	UpdateAt         int64  `json:"update_at"`
 	UpdatedBy        string `json:"updated_by,omitempty"`
 	Size             int64  `json:"size"`
 	SHA256           string `json:"sha256"`
-	Encoding         string `json:"encoding"`
 	ChunkCount       int    `json:"chunk_count"`
-	// Version is the content version currently selected as head. It increments
-	// when the HTML body is replaced; rename/description patches leave it alone.
-	Version       int `json:"version"`
-	SchemaVersion int `json:"schema_version"`
+	// Version is the content version. It increments when the HTML body is
+	// replaced; rename and description patches leave it alone.
+	Version int `json:"version"`
+}
+
+// Entry is the catalog metadata for one channel-saved HTML artifact.
+// VersionSnapshot always describes the current head content version.
+type Entry struct {
+	ID            string `json:"id"`
+	ChannelID     string `json:"channel_id"`
+	TeamID        string `json:"team_id"`
+	CreatedBy     string `json:"created_by"`
+	CreateAt      int64  `json:"create_at"`
+	Encoding      string `json:"encoding"`
+	SchemaVersion int    `json:"schema_version"`
 	// Purging hides the entry from listings while a failed purge is retried.
 	// Content and the SHA lookup stay until that cleanup finishes.
 	Purging bool `json:"purging,omitempty"`
+	VersionSnapshot
 }
 
-// VersionRecord is one immutable content snapshot for an artifact.
+// VersionRecord is one content snapshot for an artifact.
 // Bodies are stored separately under versioned blob keys.
 type VersionRecord struct {
-	Version                int    `json:"version"`
-	SHA256                 string `json:"sha256"`
-	Size                   int64  `json:"size"`
-	ChunkCount             int    `json:"chunk_count"`
-	SourcePostID           string `json:"source_post_id,omitempty"`
-	SourceFileID           string `json:"source_file_id,omitempty"`
-	SourceFileName         string `json:"source_file_name,omitempty"`
-	SourceBotUserID        string `json:"source_bot_user_id,omitempty"`
-	SourceAgentDisplayName string `json:"source_agent_display_name,omitempty"`
-	SourceRootPostID       string `json:"source_root_post_id,omitempty"`
-	Title                  string `json:"title,omitempty"`
-	Description            string `json:"description,omitempty"`
-	UpdatedBy              string `json:"updated_by,omitempty"`
-	UpdateAt               int64  `json:"update_at"`
+	VersionSnapshot
 	// LegacyUnversionedBlobs means chunks live at cart_blob_{id}_{n} rather
 	// than cart_blob_{id}_v{version}_{n}. Set when migrating pre-versioned rows.
 	LegacyUnversionedBlobs bool `json:"legacy_unversioned_blobs,omitempty"`

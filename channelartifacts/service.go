@@ -277,16 +277,12 @@ func (s *Service) ReplaceContent(
 }
 
 func (s *Service) Patch(userID, id string, req PatchRequest) (*Entry, error) {
-	for range 8 {
-		entry, raw, err := s.store.loadMetaRaw(id)
-		if err != nil {
-			return nil, err
-		}
+	return s.store.Patch(id, func(entry *Entry) error {
 		if !s.CanManage(userID, entry.ChannelID) {
-			return nil, ErrNotFound
+			return ErrNotFound
 		}
 		if entry.Purging {
-			return nil, ErrConflict
+			return ErrConflict
 		}
 		if req.Title != nil {
 			entry.Title = strings.TrimSpace(*req.Title)
@@ -295,22 +291,15 @@ func (s *Service) Patch(userID, id string, req PatchRequest) (*Entry, error) {
 			entry.Description = strings.TrimSpace(*req.Description)
 		}
 		if err := validateTitle(entry.Title); err != nil {
-			return nil, err
+			return err
 		}
 		if err := validateDescription(entry.Description); err != nil {
-			return nil, err
+			return err
 		}
 		entry.UpdateAt = model.GetMillis()
 		entry.UpdatedBy = userID
-		if err := s.store.saveMetaCAS(id, raw, entry); err != nil {
-			if errors.Is(err, ErrConflict) {
-				continue
-			}
-			return nil, err
-		}
-		return entry, nil
-	}
-	return nil, ErrConflict
+		return nil
+	})
 }
 
 func (s *Service) Rollback(userID, id string, toVersion int) (*Entry, error) {
