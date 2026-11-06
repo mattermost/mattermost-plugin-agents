@@ -1,18 +1,23 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {defineMessages, useIntl, type MessageDescriptor} from 'react-intl';
+import {useDispatch, useSelector} from 'react-redux';
 import styled, {css, keyframes} from 'styled-components';
 
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
-import {getProfilePictureUrl} from '@/client';
+import {createPost, getProfilePictureUrl, renderCustomPrompt} from '@/client';
 import type {LLMBot} from '@/bots';
 import {AdvancedTextEditor} from '@/mm_webapp';
 import {noMotionWhenReduced} from '@/components/llmbot_post/motion';
+import {fetchCustomPrompts, fetchPinnedPromptIds} from '@/redux';
+import {getCustomPrompts, getPinnedPromptIds, isCustomPromptsLoaded, isPinnedPromptIdsLoaded} from '@/selectors';
+import type {CustomPrompt} from '@/types';
 
 import {CHAT_CONTENT_MAX_WIDTH, HOST_COMPOSER_CONTAINER_CLASS, hostComposerInset} from './agent_chat_host_styles';
+import PinnedSkills from './pinned_skills';
 
 // Greeting pairs for the new-chat state. The titles are the prototype's
 // EMPTY_CHAT_TITLES; each subtitle belongs to its title, so both are picked
@@ -69,9 +74,92 @@ interface HostSubmitResult {
 // included), and its afterSubmit opens the new thread.
 const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) => {
     const intl = useIntl();
+    const dispatch = useDispatch();
+    const prompts = useSelector(getCustomPrompts);
+    const pinnedIds = useSelector(getPinnedPromptIds);
+    const promptsLoaded = useSelector(isCustomPromptsLoaded);
+    const pinsLoaded = useSelector(isPinnedPromptIdsLoaded);
+    const [runningId, setRunningId] = useState<string | null>(null);
+    const [pinnedSkillError, setPinnedSkillError] = useState<string | null>(null);
+
+    // Set synchronously, so two clicks in the same tick (before a re-render disables the buttons)
+    // cannot both start a run. runningId is only for the disabled look.
+    const inFlight = useRef(false);
+
+    // Whether this chat already has its first message (from the composer or a pinned skill), and whether
+    // the view is still showing. A pinned skill that finishes after either must not start a second chat
+    // or pull the user away from where they went.
+    const firstMessageCreated = useRef(false);
+    const mounted = useRef(true);
+    useEffect(() => {
+        mounted.current = true;
+        return () => {
+            mounted.current = false;
+        };
+    }, []);
+
+    // The lists are fetched once and kept fresh by the prompts page and menu, so a new chat only
+    // fetches what has not loaded yet (a failed fetch leaves it unloaded, and is not retried here).
+    useEffect(() => {
+        if (!promptsLoaded) {
+            dispatch(fetchCustomPrompts() as any);
+        }
+    }, [dispatch, promptsLoaded]);
+
+    useEffect(() => {
+        if (!pinsLoaded) {
+            dispatch(fetchPinnedPromptIds() as any);
+        }
+    }, [dispatch, pinsLoaded]);
+
+    const pinned = useMemo(() => pinnedIds.
+        map((id) => prompts.find((p) => p.id === id)).
+        filter((p): p is CustomPrompt => Boolean(p)), [prompts, pinnedIds]);
+
+    // A pinned skill runs on click, as the old pinned buttons did: it posts the rendered prompt as the
+    // chat's first message instead of putting it in the composer to edit.
+    const runPinnedSkill = useCallback(async (prompt: CustomPrompt) => {
+        if (inFlight.current) {
+            return;
+        }
+        inFlight.current = true;
+        setRunningId(prompt.id);
+        setPinnedSkillError(null);
+
+        const release = () => {
+            inFlight.current = false;
+            if (mounted.current) {
+                setRunningId(null);
+            }
+        };
+
+        try {
+            const {rendered} = await renderCustomPrompt(prompt.id, channelId, bot.id);
+            if (firstMessageCreated.current || !mounted.current) {
+                release();
+                return;
+            }
+            const created = await createPost({channel_id: channelId, message: rendered, root_id: ''});
+            if (created?.id) {
+                const chatAlreadyOpened = firstMessageCreated.current || !mounted.current;
+                firstMessageCreated.current = true;
+                if (!chatAlreadyOpened) {
+                    onCreated(created.id);
+                }
+                return;
+            }
+        } catch (e) {
+            console.error('Failed to run custom prompt:', e); // eslint-disable-line no-console
+        }
+        release();
+        if (mounted.current) {
+            setPinnedSkillError(intl.formatMessage({defaultMessage: 'Couldn\'t run that skill. Please try again.'}));
+        }
+    }, [channelId, bot.id, onCreated, intl]);
 
     const afterSubmit = useCallback((result: HostSubmitResult) => {
         if (result?.created?.id) {
+            firstMessageCreated.current = true;
             onCreated(result.created.id);
         }
     }, [onCreated]);
@@ -97,10 +185,23 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
                     <EmptySubtitle>{intl.formatMessage(greeting.subtitle)}</EmptySubtitle>
                 </Greeting>
             </EmptyIntro>
+            {pinned.length > 0 && (
+                <PinnedSkills
+                    prompts={pinned}
+                    disabled={runningId !== null}
+                    error={pinnedSkillError}
+                    onPick={runPinnedSkill}
+                />
+            )}
             {AdvancedTextEditor && (
                 <Composer
                     className={HOST_COMPOSER_CONTAINER_CLASS}
                     data-testid='agent-chat-new-composer'
+
+                    // The host composer has no disabled prop. While a pinned skill renders and posts, the
+                    // composer cannot be typed in or submitted, so the two cannot both create the first post.
+                    inert={runningId !== null}
+                    $busy={runningId !== null}
                 >
                     {/* In the RHS, RHS_COMMENT makes the host treat it as the RHS composer (focus, ids, suggestion list). */}
                     <AdvancedTextEditor
@@ -166,10 +267,13 @@ const EmptyChat = styled.div<{$layout: AgentNewChatLayout}>`
 
 // The host composer fills the column; the column's own padding is its inset, so the host's is
 // removed. The host wrapper's own background and radius stay.
-const Composer = styled.div`
+const Composer = styled.div<{$busy: boolean}>`
     && {
         width: 100%;
     }
+
+    opacity: ${({$busy}) => ($busy ? 0.56 : 1)};
+    transition: opacity var(--duration-quick) var(--ease-transition);
 
     ${hostComposerInset('0')}
 `;
