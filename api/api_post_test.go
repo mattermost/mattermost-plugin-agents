@@ -637,6 +637,7 @@ func TestPostResumeRoutesUseThePostsAgent(t *testing.T) {
 		{endpoint: "stop"},
 		{endpoint: "tool_call", body: `{"accepted_tool_ids":["tool-use-1"],"tool_answers":{"tool-use-1":{"text":"` + sentinel + `"}}}`, event: AuditEventToolCallApproval, runsAgent: true},
 		{endpoint: "tool_result", body: `{"accepted_tool_ids":["tool-use-1"]}`, event: AuditEventToolResultApproval, runsAgent: true},
+		{endpoint: "ui_action", body: `{"block":0,"form":"f","label":"Go","fields":[{"name":"a","label":"A","value":"` + sentinel + `"}],"idempotency_key":"key-00000001"}`, event: AuditEventGenerativeUISubmit, runsAgent: true},
 	}
 
 	unrestricted := func(cfg *llm.BotConfig) {}
@@ -675,6 +676,7 @@ func TestPostResumeRoutesUseThePostsAgent(t *testing.T) {
 				records := e.CaptureAuditRecords()
 				e.api.streamingService = &recordingStreamingService{}
 				convStore := e.useConversations()
+				e.config.enableGenerativeUI = true
 
 				defaultCfg := llm.BotConfig{ID: testBotUserID, Name: "defaultbot", UserAccessLevel: llm.UserAccessLevelAll, ChannelAccessLevel: llm.ChannelAccessLevelAll}
 				test.defaultAgent(&defaultCfg)

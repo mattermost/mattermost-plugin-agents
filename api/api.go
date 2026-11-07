@@ -469,6 +469,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	agentPostRouter.POST("/regenerate", a.handleRegenerate)
 	agentPostRouter.POST("/tool_call", a.handleToolCall)
 	agentPostRouter.POST("/tool_result", a.handleToolResult)
+	agentPostRouter.POST("/ui_action", a.handleUIAction)
 	agentPostRouter.POST("/wait/check_now", a.handleWaitCheckNow)
 	agentPostRouter.POST("/wait/cancel", a.handleWaitCancel)
 
