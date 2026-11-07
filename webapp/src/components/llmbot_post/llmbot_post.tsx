@@ -15,6 +15,7 @@ import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 
 import {doPostbackSummary, doRegenerate, doStopGenerating, doWaitCancel, doWaitCheckNow} from '@/client';
 import {useIsLicensedFor} from '@/license';
+import {isGenerativeUIEnabledForBot} from '@/selectors';
 import {PluginWebSocketMessage} from '@/types';
 import {useSelectNotAIPost} from '@/hooks';
 import {useConversation, invalidateConversation} from '@/hooks/use_conversation';
@@ -110,6 +111,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         (state) => state.entities.channels.channels[props.post.channel_id],
     );
     const isDM = channel?.type === 'D';
+    const allowGenerativeUI = useSelector((state: GlobalState) => isGenerativeUIEnabledForBot(state, props.post.user_id));
     const rootPost = useSelector<GlobalState, any>((state) => state.entities.posts.posts[props.post.root_id]);
 
     const [message, setMessage] = useState(props.post.message);
@@ -810,10 +812,12 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 reasoningCollapsed={!expandedReasoning[round.id]}
                 onToggleReasoning={toggleReasoning}
                 reveal={isLiveRound && smoothReveal}
+                allowGenerativeUI={allowGenerativeUI}
             />
         );
     }, [
         smoothReveal,
+        allowGenerativeUI,
         props.post.id,
         props.post.channel_id,
         conversationId,

@@ -64,10 +64,6 @@ type Context struct {
 	BotServiceType     string
 	CustomInstructions string
 
-	// GenerativeUI lets the model answer with OpenUI Lang blocks that the
-	// webapp renders as native components.
-	GenerativeUI bool
-
 	// ToolAuthMode records the identity mode the tool catalog was built with
 	// (ToolAuthModeUser or ToolAuthModeServiceAccount); consumed by token usage attribution.
 	ToolAuthMode string

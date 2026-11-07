@@ -17,7 +17,7 @@ Besides running a skill yourself, an agent can load a skill on its own. When a c
 
 Which skills an agent may load is set on the agent's [Skills tab](managing_agents.md#skills-tab):
 
-- **Skills built into Agents** are always available while the tools they need are. For example, the agent can load channel and thread summary instructions, including citation links to the posts it used, whenever it can read channels.
+- **Skills built into Agents** are always available while the tools they need are. For example, the agent can load channel and thread summary instructions, including citation links to the posts it used, whenever it can read channels. The experimental generative UI skill, which lets the agent reply with tables, cards, metrics, and checklists, is available only when [generative UI](../admin_guide.md#generative-ui) is enabled on the server and for the agent.
 - **Your personal skills** are available in your direct messages with the agent when the agent allows personal skills. They are never used in channels.
 - **Shared skills** are available only after they are turned on for that agent.
 

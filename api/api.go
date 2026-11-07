@@ -66,6 +66,7 @@ type Config interface {
 	LinkPolicy() config.LinkPolicy
 	EnableHTMLArtifacts() bool
 	EnableGenerativeUI() bool
+	GenerativeUIEnabledForAgent(bot llm.BotConfig) bool
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
 	EnableAmbientAutoReply() bool
@@ -751,7 +752,10 @@ type AIBotInfo struct {
 	// UseServiceAccountAuth is the effective mode, not the raw agent flag: it is
 	// false when the server is not licensed for remote MCP.
 	UseServiceAccountAuth bool `json:"useServiceAccountAuth"`
-	IsDefault             bool `json:"isDefault,omitempty"`
+	// GenerativeUIEnabled is the effective setting: the server-wide switch and
+	// the agent's own opt-in, with its tools and skills on.
+	GenerativeUIEnabled bool `json:"generativeUIEnabled"`
+	IsDefault           bool `json:"isDefault,omitempty"`
 }
 
 type AIBotsResponse struct {
@@ -762,7 +766,9 @@ type AIBotsResponse struct {
 	// API compatibility.
 	LinkPolicy           config.LinkPolicy `json:"linkPolicy"`
 	HTMLArtifactsEnabled bool              `json:"htmlArtifactsEnabled"`
-	GenerativeUIEnabled  bool              `json:"generativeUIEnabled"`
+	// GenerativeUIEnabled is the server-wide switch only; each bot carries its
+	// effective setting.
+	GenerativeUIEnabled bool `json:"generativeUIEnabled"`
 }
 
 // usesServiceAccountAuth reports the effective service account mode for a bot:
@@ -832,6 +838,7 @@ func (a *API) getAIBotsForUser(ctx context.Context, userID string) []AIBotInfo {
 			EnabledMCPTools:       bot.GetConfig().EnabledMCPTools,
 			AutoEnableNewMCPTools: bot.GetConfig().AutoEnableNewMCPTools,
 			UseServiceAccountAuth: a.usesServiceAccountAuth(bot),
+			GenerativeUIEnabled:   a.config.GenerativeUIEnabledForAgent(bot.GetConfig()),
 			IsDefault:             isDefault,
 		})
 		if isDefault {

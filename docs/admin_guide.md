@@ -766,11 +766,17 @@ Artifact navigation is blocked in every supported browser, and in Chromium 152 o
 
 ### Generative UI
 
-When **Enable generative UI** is turned on (`enableGenerativeUI` in the plugin configuration, off by default), agents can answer direct messages and @mentions with structured UI, such as status cards, metric tiles, tables, comparisons, progress bars, and checklists, rendered with Mattermost components directly inside the reply. The agent writes the UI in [OpenUI Lang](https://github.com/thesysdev/openui), a compact format, inside an `openui-lang` code block, and the webapp renders it with a fixed library of display components that follow the user's theme. Generative UI is an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature.
+Generative UI lets agents reply with structured UI, such as status cards, metric tiles, tables, comparisons, progress bars, and checklists, rendered with Mattermost components directly inside the reply. The agent writes the UI in [OpenUI Lang](https://github.com/thesysdev/openui), a compact format, inside an `openui-lang` code block, and the webapp renders it with a fixed library of display components that follow the user's theme. Generative UI is an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature and is off by default.
+
+It takes two settings, and both must be on:
+
+- **Enable generative UI** in **System Console > Plugins > Agents** (`enableGenerativeUI` in the plugin configuration) is the server-wide switch.
+- **Generative UI** on the agent's [Skills tab](features/managing_agents.md#skills-tab) (`skills.generativeUI` on the agent) opts that agent in.
+
+The instructions ship as a [skill built into Agents](features/skills.md#how-agents-use-skills), so the agent also needs **Enable Tools** and **Enable skills** on. Only a one-line description is in the system prompt; the agent loads the full component reference (roughly 2,700 tokens) when it decides a reply should be visual, which takes one extra tool round. Like other skills, it is offered in direct messages, and in channels only when **Enable Channel Mention Tool Calling** is on. Replies render as UI only while generative UI is enabled for the agent that wrote them; otherwise the block shows as code.
 
 - Only the plugin's display components can render. Generated UI cannot run scripts, load images, call tools, or submit data.
-- Links inside generated UI follow **Allow unsafe links**: when that setting is off, the link destination is shown as plain text.
-- The component reference is added to the system prompt of new conversations while the setting is on, which adds roughly 2,700 input tokens per request.
+- Links inside generated UI follow the agent link policy (**Render AI-generated links** and **Allowed Link Domains**): a link the policy rejects shows its destination as plain text.
 - Clients that don't load the plugin webapp, such as the mobile apps, show the block as a code block. The agent is instructed to state the key takeaway in plain text before the block.
 
 ## Model Context Protocol (MCP) Integration

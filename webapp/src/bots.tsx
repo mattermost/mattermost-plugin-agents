@@ -37,6 +37,10 @@ export interface LLMBot {
     // Optional so the UI degrades to the non-SA UX when the server predates the field.
     useServiceAccountAuth?: boolean;
 
+    // Effective generative UI setting: the server-wide switch and the agent's
+    // opt-in. Absent from servers that predate it.
+    generativeUIEnabled?: boolean;
+
     // isDefault marks the system-wide default agent. Optional: older servers
     // omit it, in which case we fall back to list ordering.
     isDefault?: boolean;

@@ -67,7 +67,13 @@ const sharedSkill = prompt({id: sharedID, creator_id: 'someone_else', name: 'Rel
 const personalSkill = prompt({id: personalID, name: 'My drafts', description: '', template: 'Draft it'});
 const othersPrivateSkill = prompt({id: 'o'.repeat(26), creator_id: 'someone_else', name: 'Not mine'});
 
-function renderTab({initial = normalizeSkillsConfig(), sharingLicensed = true}: {initial?: SkillsConfig; sharingLicensed?: boolean} = {}) {
+type RenderOptions = {
+    initial?: SkillsConfig;
+    sharingLicensed?: boolean;
+    generativeUIServerEnabled?: boolean;
+};
+
+function renderTab({initial = normalizeSkillsConfig(), sharingLicensed = true, generativeUIServerEnabled = true}: RenderOptions = {}) {
     const changes: Array<Partial<SkillsConfig>> = [];
     let latest = initial;
     const Harness = () => {
@@ -84,6 +90,7 @@ function renderTab({initial = normalizeSkillsConfig(), sharingLicensed = true}: 
                 }}
                 currentUserId={ME}
                 sharingLicensed={sharingLicensed}
+                generativeUIServerEnabled={generativeUIServerEnabled}
             />
         );
     };
@@ -117,6 +124,33 @@ describe('SkillsTab', () => {
         expect(personal.getByText('Add a description so the agent can choose this skill')).not.toBeNull();
         expect(personal.getByText('Only you can use this skill. Share it to make it available to other users.')).not.toBeNull();
         expect(screen.queryByText('Not mine')).toBeNull();
+    });
+
+    test('generative UI is off by default and toggles the agent opt-in', async () => {
+        const {latest} = renderTab();
+        await screen.findByRole('region', {name: 'Shared skills'});
+
+        const toggle = screen.getByRole('switch', {name: 'Generative UI'});
+        expect(toggle.getAttribute('aria-checked')).toBe('false');
+        fireEvent.click(toggle);
+        expect(latest().generativeUI).toBe(true);
+        fireEvent.click(toggle);
+        expect(latest().generativeUI).toBe(false);
+    });
+
+    test.each([
+        {name: 'explains the opt-in has no effect while the server switch is off', generativeUIServerEnabled: false, shown: true},
+        {name: 'shows no warning while the server switch is on', generativeUIServerEnabled: true, shown: false},
+    ])('$name', async ({generativeUIServerEnabled, shown}) => {
+        renderTab({initial: {...normalizeSkillsConfig(), generativeUI: true}, generativeUIServerEnabled});
+        await screen.findByRole('region', {name: 'Shared skills'});
+        expect(screen.queryByTestId('generative-ui-server-off') !== null).toBe(shown);
+    });
+
+    test('hides the generative UI toggle when skills are disabled', async () => {
+        renderTab({initial: {...normalizeSkillsConfig(), disabled: true}});
+        await waitFor(() => expect(mockGetCustomPrompts).toHaveBeenCalled());
+        expect(screen.queryByRole('switch', {name: 'Generative UI'})).toBeNull();
     });
 
     test('toggling a shared skill keeps IDs of skills this editor cannot see', async () => {
