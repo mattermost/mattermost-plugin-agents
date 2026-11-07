@@ -1,0 +1,44 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Write a short title for the following request."
+      },
+      "response": {
+        "content": "Generative UI"
+      }
+    },
+    {
+      "match": {
+        "userMessage": "genui-status"
+      },
+      "response": {
+        "content": "The Q4 mobile release is on track: 3 of 5 milestones are done and QA has 4 open blockers.\n\n```openui-lang\nroot = Stack([notice, metrics, progressCard, plan])\nnotice = Notice(\"QA blockers\", \"4 open blockers must close before launch.\", \"warning\")\nmetrics = Stats([Stat(\"Crash-free rate\", \"99.2%\", \"+1.1 pts\", \"good\"), Stat(\"Beta users\", \"12k\"), Stat(\"Open blockers\", 4, \"+2\", \"bad\")])\nprogressCard = Card(\"Progress\", [p1, p2, p3])\np1 = Progress(\"Milestones\", 60, \"3 of 5 done\")\np2 = Progress(\"QA test pass\", 85)\np3 = Progress(\"Docs\", 12)\nplan = Card(\"Milestones\", [steps], \"Target: Dec 12\")\nsteps = Steps([Step(\"Design\", \"done\"), Step(\"API\", \"done\"), Step(\"Beta\", \"done\"), Step(\"QA\", \"current\", \"4 open blockers\"), Step(\"Launch\", \"todo\"), Step(\"Store review\", \"blocked\", \"Waiting on Apple\")])\n```"
+      }
+    },
+    {
+      "match": {
+        "userMessage": "genui-incident"
+      },
+      "response": {
+        "content": "Incident INC-102 is resolved; payments were the hardest hit at 130 minutes.\n\n```openui-lang\nroot = Stack([stats, table, chart, notice])\nstats = Stats([Stat(\"Duration\", \"2h 10m\"), Stat(\"Services hit\", 4), Stat(\"Error rate peak\", \"18%\", \"+17 pts\", \"bad\"), Stat(\"Customers\", \"1,204\")])\ntable = Table([\"Service\", \"Owner\", \"Impact\", \"Status\"], [[\"payments\", \"@alice\", \"130 min\", Tag(\"Resolved\", \"success\")], [\"search\", \"@bob\", \"90 min\", Tag(\"Monitoring\", \"info\")], [\"notifications\", \"@carol\", \"45 min\", Tag(\"Degraded\", \"warning\")], [\"auth\", \"@dan\", \"5 min\", Tag(\"Down\", \"danger\")]])\nchart = BarChart([\"payments\", \"search\", \"notifications\", \"auth\"], [130, 90, 45, 5], \"Minutes of impact\", \" min\")\nnotice = Notice(\"Root cause\", \"An expired TLS certificate on the internal load balancer.\", \"danger\")\n```"
+      }
+    },
+    {
+      "match": {
+        "userMessage": "genui-compare"
+      },
+      "response": {
+        "content": "Postgres is the better fit; Redis is degraded right now.\n\n```openui-lang\nroot = Stack([cmp, tags, link])\ncmp = Columns([a, b, c])\na = Card(\"Postgres\", [Fields([Field(\"Latency\", \"4 ms\"), Field(\"Status\", Tag(\"Healthy\", \"success\")), Field(\"Owner\", \"Platform team\")])], \"Primary store\")\nb = Card(\"Redis\", [Fields([Field(\"Latency\", \"38 ms\"), Field(\"Status\", Tag(\"Degraded\", \"warning\")), Field(\"Owner\", \"Cache team\")])], \"Cache\")\nc = Card(\"Elasticsearch\", [Fields([Field(\"Latency\", 112), Field(\"Status\", Tag(\"Down\", \"danger\"))])])\ntags = Tags([Tag(\"postgres\"), Tag(\"redis\", \"info\"), Tag(\"elasticsearch\", \"danger\")])\nlink = Link(\"Runbook\", \"https://docs.mattermost.com\")\n```"
+      }
+    },
+    {
+      "match": {
+        "userMessage": "genui-text"
+      },
+      "response": {
+        "content": "Here is every text-level component.\n\n```openui-lang\nroot = Stack([h1, h2, t1, t2, d, s1, s2, keys, n1, n2, n3, empty, card])\nh1 = Heading(\"Large heading\", \"large\")\nh2 = Heading(\"Small heading\", \"small\")\nt1 = Text(\"Default text with **bold**, _italic_ and `code`.\")\nt2 = Text(\"Muted secondary text.\", \"muted\")\nd = Divider()\ns1 = Status(\"Deployed to staging\", \"success\")\ns2 = Status(\"Two checks are still running\", \"warning\")\nkeys = Keys([\"Ctrl\", \"Shift\", \"K\"])\nn1 = Notice(\"Info notice\", \"Something you should know.\", \"info\")\nn2 = Notice(\"Tip\", \"Press the shortcut above to jump to a channel.\", \"hint\")\nn3 = Notice(\"Danger notice without description\", null, \"danger\")\nempty = Empty(\"No open incidents\", \"Nothing was opened in the last 7 days.\")\ncard = Card(\"Card with a divider\", [Text(\"Before\"), Divider(), Text(\"After\", \"muted\")], \"Subtitle\")\n```"
+      }
+    }
+  ]
+}

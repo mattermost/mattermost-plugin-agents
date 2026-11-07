@@ -92,6 +92,14 @@ const Block = styled.div`
     gap: var(--spacing-xxxs);
     margin: var(--spacing-xs) 0;
     max-width: 720px;
+
+    /* The RHS rule ".post-right__container hr {border: none}" outranks Compass
+       Divider's single-class rule. Drop once Compass raises its specificity. */
+    && hr {
+        border: none;
+        border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
+        margin: 0;
+    }
 `;
 
 const SourceToggle = styled.div`

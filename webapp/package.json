@@ -14,7 +14,10 @@
     "check-types": "tsc",
     "check-editor-contract": "node scripts/check_editor_contract.mjs",
     "update-editor-contract-snapshot": "node scripts/check_editor_contract.mjs --update-snapshot",
-    "generate-genui-prompt": "UPDATE_GENERATIVE_UI_PROMPT=1 jest --config jest.config.js src/components/generative_ui/prompt.test.ts"
+    "generate-genui-prompt": "UPDATE_GENERATIVE_UI_PROMPT=1 jest --config jest.config.js src/components/generative_ui/prompt.test.ts",
+    "update-genui-contract": "UPDATE_GENERATIVE_UI_CONTRACT=1 jest --config jest.config.js src/components/generative_ui/library_contract.test.ts",
+    "check-compass-manifest": "node scripts/check_compass_manifest.mjs",
+    "update-compass-manifest": "node scripts/check_compass_manifest.mjs --update"
   },
   "devDependencies": {
     "@babel/cli": "8.1.0",

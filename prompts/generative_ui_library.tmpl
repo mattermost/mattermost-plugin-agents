@@ -17,31 +17,36 @@ OpenUI Lang reference for the components available in Mattermost.
 Arguments marked with ? are optional. Sub-components can be inline or referenced; prefer references for better streaming.
 
 ### Layout
-Stack(children: (Heading | Text | Notice | Fields | Stats | Table | BarChart | Progress | Steps | Tags | Link | Divider | Card | Columns)[], gap?: "s" | "m" | "l") — Root vertical layout.
-Card(title: string, children: (Heading | Text | Notice | Fields | Stats | Table | BarChart | Progress | Steps | Tags | Link | Divider)[], subtitle?: string) — Bordered panel grouping related content under a title.
+Stack(children: (Heading | Text | Notice | Status | Keys | Empty | Fields | Stats | Table | BarChart | Progress | Steps | Tags | Link | Divider | Card | Columns)[], gap?: "s" | "m" | "l") — Root vertical layout.
+Card(title: string, children: (Heading | Text | Notice | Status | Keys | Empty | Fields | Stats | Table | BarChart | Progress | Steps | Tags | Link | Divider)[], subtitle?: string) — Bordered panel grouping related content under a title.
 Columns(children: Card[]) — Places Cards side by side; wraps to one column on narrow screens. Use for comparisons.
 Divider() — Thin horizontal rule between groups of content.
 
 ### Text
 Heading(text: string, size?: "large" | "medium" | "small") — Section heading. Use sparingly; Card already has a title.
 Text(text: string, tone?: "default" | "muted" | "small") — A paragraph. Supports inline Mattermost markdown (bold, italics, `code`, links). tone "muted" for secondary text, "small" for footnotes.
-Notice(title: string, text?: string, type?: "info" | "success" | "warning" | "danger") — Highlighted callout for a key takeaway, warning, or blocker.
+Notice(title: string, text?: string, type?: "info" | "success" | "warning" | "danger" | "hint") — Highlighted callout for a key takeaway, warning, or blocker. "hint" is for a tip.
+Status(text: string, tone?: "info" | "success" | "warning" | "danger") — One-line status with a tone icon; lighter than Notice. "info" has no icon.
+Keys(keys: string[]) — A keyboard shortcut, one key per item, e.g. Keys(["Ctrl", "Shift", "K"]).
 Link(label: string, url: string) — An external link (http, https, or mailto).
+Use at most one Notice per reply, for the key takeaway; use Status for a one-line result.
 
 ### Data
 Fields(items: Field[]) — Two-column label/value list for record details (owner, due date, status...).
 Field(label: string, value: string | number | Tag) — One label/value pair inside Fields.
 Stats(items: Stat[]) — A responsive grid of Stat tiles (2-4 is ideal).
-Stat(label: string, value: string | number, change?: string, trend?: "up" | "down" | "neutral") — A headline metric. change is a short delta like "+12%"; trend colors it.
+Stat(label: string, value: string | number, change?: string, trend?: "good" | "bad" | "neutral" | "up" | "down") — A headline metric. change is a short delta like "+12%"; its sign sets the arrow. trend says if the change is "good" (green) or "bad" (red); "up"/"down" are legacy aliases.
 Table(columns: string[], rows: (string | number | Tag)[][]) — Row-oriented table. Each row is an array of cells in column order; a cell is a string, number, or Tag.
 BarChart(labels: string[], values: number[], title?: string, unit?: string) — Horizontal bar chart comparing values across labels (same length arrays). unit is appended to values, e.g. "%" or " hrs".
 Progress(label: string, value: number, caption?: string) — Progress toward a goal. value is 0-100; caption replaces the default "NN%" text, e.g. "7 of 10 tasks".
+Empty(title: string, text?: string) — Placeholder when a search or list has no results.
 
 ### Status
 Steps(items: Step[]) — Ordered checklist, plan, or timeline with a status per step.
 Step(title: string, status?: "done" | "current" | "todo" | "blocked", description?: string) — One item in Steps.
 Tags(items: Tag[]) — A wrapping row of Tag pills.
 Tag(label: string, color?: "neutral" | "info" | "success" | "warning" | "danger") — Compact status pill, e.g. a state, owner, or priority.
+Pick the Tag color by meaning: info for context, warning for caution, success or danger for results, neutral only for plain metadata.
 
 ## Hoisting & Streaming (CRITICAL)
 
@@ -60,7 +65,7 @@ Always write the root = Stack(...) statement first so the UI shell appears immed
 
 root = Stack([summary, metrics, details])
 summary = Text("Release **v2.4** is on track for Friday.")
-metrics = Stats([Stat("Open PRs", 6, "-3 since Monday", "down"), Stat("Bugs fixed", 41, "+12", "up")])
+metrics = Stats([Stat("Open PRs", 6, "-3 since Monday", "good"), Stat("Bugs fixed", 41, "+12", "good")])
 details = Card("Remaining work", [plan])
 plan = Steps([Step("Code freeze", "done"), Step("QA sign-off", "current", "2 blockers left"), Step("Ship", "todo")])
 

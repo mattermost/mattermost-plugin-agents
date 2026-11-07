@@ -1,14 +1,9 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
-import {render, screen, within} from '@testing-library/react';
-import {Provider} from 'react-redux';
-import {IntlProvider} from 'react-intl';
+import {screen, within} from '@testing-library/react';
 
-import manifest from '@/manifest';
-
-import PostText from '../post_text';
+import {installPostUtils, renderAgentPost} from './test_helpers';
 
 const program = [
     'root = Stack([intro, stats, table, plan, link])',
@@ -21,37 +16,9 @@ const program = [
 
 const message = `Two services need attention.\n\n\`\`\`openui-lang\n${program}\n\`\`\`\n\nLet me know if you want details.`;
 
-const makeStore = (pluginState: Record<string, unknown>) => {
-    const state = {
-        entities: {
-            general: {config: {SiteURL: 'http://localhost:8065'}},
-            teams: {teams: {}},
-            channels: {channels: {chan1: {id: 'chan1', team_id: 'team1', type: 'D'}}},
-        },
-        [`plugins-${manifest.id}`]: pluginState,
-    };
-    return {getState: () => state, subscribe: () => jest.fn(), dispatch: jest.fn()} as any;
-};
+const renderPost = (pluginState: Record<string, unknown>, allowGenerativeUI = true) => renderAgentPost(message, {pluginState, allowGenerativeUI});
 
-const renderPost = (pluginState: Record<string, unknown>, allowGenerativeUI = true) => render(
-    <Provider store={makeStore(pluginState)}>
-        <IntlProvider locale='en'>
-            <PostText
-                message={message}
-                channelID='chan1'
-                postID='post1'
-                allowGenerativeUI={allowGenerativeUI}
-            />
-        </IntlProvider>
-    </Provider>,
-);
-
-beforeAll(() => {
-    (window as any).PostUtils = {
-        formatText: (text: string) => text,
-        messageHtmlToComponent: (html: string) => <span>{html}</span>,
-    };
-});
+beforeAll(installPostUtils);
 
 describe('generative UI in agent posts', () => {
     it('renders an OpenUI Lang block as Mattermost components between the prose', () => {

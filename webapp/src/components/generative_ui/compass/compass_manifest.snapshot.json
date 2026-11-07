@@ -1,0 +1,1200 @@
+{
+    "package": "@mattermost/compass-ui",
+    "version": "0.1.0-alpha.23",
+    "components": {
+        "AdminConsoleFooter": {
+            "subpath": "components/admin-console-footer",
+            "props": {
+                "cancelLabel": {"kind":"node","optional":true},
+                "className": {"kind":"data","optional":true},
+                "onCancel": {"kind":"callback","optional":true},
+                "onSave": {"kind":"callback","optional":true},
+                "saveDisabled": {"kind":"data","optional":true},
+                "saveLabel": {"kind":"node","optional":true},
+                "status": {"kind":"data","optional":true,"values":["error","none","warning"]},
+                "statusMessage": {"kind":"node","optional":true}
+            }
+        },
+        "AdminConsoleHeader": {
+            "subpath": "components/admin-console-header",
+            "props": {
+                "ariaLabelBack": {"kind":"data","optional":true},
+                "className": {"kind":"data","optional":true},
+                "enterpriseBadge": {"kind":"data","optional":true},
+                "enterpriseBadgeLabel": {"kind":"node","optional":true},
+                "onBackClick": {"kind":"callback","optional":true},
+                "showBack": {"kind":"data","optional":true},
+                "title": {"kind":"node","optional":false},
+                "trailing": {"kind":"node","optional":true}
+            }
+        },
+        "AdminPanel": {
+            "subpath": "components/admin-panel",
+            "props": {
+                "betaLabel": {"kind":"node","optional":true},
+                "buttonLabel": {"kind":"node","optional":true},
+                "children": {"kind":"node","optional":true},
+                "collapseLabel": {"kind":"data","optional":true},
+                "defaultExpandedState": {"kind":"data","optional":true,"values":["collapsed","expanded"]},
+                "defaultSwitchChecked": {"kind":"data","optional":true},
+                "enterpriseLabel": {"kind":"node","optional":true},
+                "expandable": {"kind":"data","optional":true},
+                "expandedState": {"kind":"data","optional":true,"values":["collapsed","expanded"]},
+                "expandLabel": {"kind":"data","optional":true},
+                "footer": {"kind":"node","optional":true},
+                "headerActions": {"kind":"node","optional":true},
+                "iconLeft": {"kind":"data","optional":true},
+                "leadingIcon": {"kind":"node","optional":true},
+                "onButtonClick": {"kind":"callback","optional":true},
+                "onExpandedStateChange": {"kind":"callback","optional":true},
+                "onSwitchChange": {"kind":"callback","optional":true},
+                "showBeta": {"kind":"data","optional":true},
+                "showButton": {"kind":"data","optional":true},
+                "showEnterpriseLabel": {"kind":"data","optional":true},
+                "showSwitch": {"kind":"data","optional":true},
+                "subtitle": {"kind":"node","optional":true},
+                "switchChecked": {"kind":"data","optional":true},
+                "switchDisabled": {"kind":"data","optional":true},
+                "switchLabel": {"kind":"node","optional":true},
+                "title": {"kind":"data","optional":false}
+            }
+        },
+        "AdminPanelFooter": {
+            "subpath": "components/admin-panel-footer",
+            "props": {
+                "leftActions": {"kind":"node","optional":true},
+                "rightActions": {"kind":"node","optional":true}
+            }
+        },
+        "AdminPanelHeader": {
+            "subpath": "components/admin-panel-header",
+            "props": {
+                "betaLabel": {"kind":"node","optional":true},
+                "buttonLabel": {"kind":"node","optional":true},
+                "className": {"kind":"data","optional":true},
+                "collapseLabel": {"kind":"data","optional":true},
+                "defaultSwitchChecked": {"kind":"data","optional":true},
+                "enterpriseLabel": {"kind":"node","optional":true},
+                "expandable": {"kind":"data","optional":true},
+                "expandLabel": {"kind":"data","optional":true},
+                "headerActions": {"kind":"node","optional":true},
+                "iconLeft": {"kind":"data","optional":true},
+                "isExpanded": {"kind":"data","optional":true},
+                "leadingIcon": {"kind":"node","optional":true},
+                "onButtonClick": {"kind":"callback","optional":true},
+                "onSwitchChange": {"kind":"callback","optional":true},
+                "onToggleExpand": {"kind":"callback","optional":true},
+                "showBeta": {"kind":"data","optional":true},
+                "showButton": {"kind":"data","optional":true},
+                "showDivider": {"kind":"data","optional":true},
+                "showEnterpriseLabel": {"kind":"data","optional":true},
+                "showSwitch": {"kind":"data","optional":true},
+                "subtitle": {"kind":"node","optional":true},
+                "switchChecked": {"kind":"data","optional":true},
+                "switchDisabled": {"kind":"data","optional":true},
+                "switchLabel": {"kind":"node","optional":true},
+                "title": {"kind":"node","optional":false},
+                "titleId": {"kind":"data","optional":false}
+            }
+        },
+        "AttachmentCard": {
+            "subpath": "components/attachment-card",
+            "props": {
+                "cancelUploadLabel": {"kind":"data","optional":true},
+                "channelTag": {"kind":"node","optional":true},
+                "className": {"kind":"data","optional":true},
+                "dateTimeStamp": {"kind":"node","optional":true},
+                "downloadLabel": {"kind":"data","optional":true},
+                "fileMeta": {"kind":"node","optional":true},
+                "fileName": {"kind":"data","optional":false},
+                "fileType": {"kind":"data","optional":true,"values":["audio","code","excel","generic","image-icon","image-thumbnail","patch","pdf","powerpoint","text","video","word","zip"]},
+                "formatOpenLabel": {"kind":"callback","optional":true},
+                "formatUploadingLabel": {"kind":"callback","optional":true},
+                "moreLabel": {"kind":"data","optional":true},
+                "onDownload": {"kind":"callback","optional":true},
+                "onMore": {"kind":"callback","optional":true},
+                "onOpen": {"kind":"callback","optional":true},
+                "onRemove": {"kind":"callback","optional":true},
+                "progress": {"kind":"data","optional":true},
+                "removeLabel": {"kind":"data","optional":true},
+                "state": {"kind":"data","optional":true,"values":["default","uploaded","uploading"]},
+                "thumbnailSrc": {"kind":"data","optional":true}
+            }
+        },
+        "Button": {
+            "subpath": "components/button",
+            "props": {
+                "appearance": {"kind":"data","optional":true,"values":["default","inverted"]},
+                "asChild": {"kind":"data","optional":false},
+                "children": {"kind":"node","optional":false},
+                "className": {"kind":"data","optional":true},
+                "compact": {"kind":"data","optional":true},
+                "destructive": {"kind":"data","optional":true},
+                "disabled": {"kind":"data","optional":true},
+                "emphasis": {"kind":"data","optional":true,"values":["dim","link","primary","quaternary","secondary","tertiary"]},
+                "leadingIcon": {"kind":"node","optional":true},
+                "loading": {"kind":"data","optional":true},
+                "size": {"kind":"data","optional":true,"values":["large","medium","small","x-small"]},
+                "trailingIcon": {"kind":"node","optional":true}
+            }
+        },
+        "CardButton": {
+            "subpath": "components/card-button",
+            "props": {
+                "className": {"kind":"data","optional":true},
+                "description": {"kind":"node","optional":true},
+                "icon": {"kind":"node","optional":false},
+                "selected": {"kind":"data","optional":true},
+                "title": {"kind":"node","optional":false}
+            }
+        },
+        "CardButtonGroup": {
+            "subpath": "components/card-button",
+            "props": {
+                "children": {"kind":"node","optional":false},
+                "className": {"kind":"data","optional":true}
+            }
+        },
+        "ChannelInfoMsgHeader": {
+            "subpath": "components/channel-info-msg-header",
+            "props": {
+                "channelName": {"kind":"node","optional":true},
+                "className": {"kind":"data","optional":true},
+                "onChannelClick": {"kind":"callback","optional":true},
+                "tabs": {"kind":"data","optional":true},
+                "teamName": {"kind":"node","optional":true}
+            }
+        },
+        "ChannelSidebarItem": {
+            "subpath": "components/channel-sidebar-item",
+            "props": {
+                "active": {"kind":"data","optional":true},
+                "avatarAlt": {"kind":"data","optional":true},
+                "avatarSrc": {"kind":"data","optional":true},
+                "callActive": {"kind":"data","optional":true},
+                "className": {"kind":"data","optional":true},
+                "customStatusEmoji": {"kind":"data","optional":true},
+                "formatMentionLabel": {"kind":"callback","optional":true},
+                "hideLeadingVisual": {"kind":"data","optional":true},
+                "leadingVisual": {"kind":"data","optional":true,"values":["dial-pad","direct-message","drafts","group-message","insights","private","public","threads"]},
+                "memberCount": {"kind":"data","optional":true},
+                "mentionCount": {"kind":"data","optional":true},
+                "menuLabel": {"kind":"data","optional":true},
+                "muted": {"kind":"data","optional":true},
+                "name": {"kind":"node","optional":false},
+                "onClick": {"kind":"callback","optional":true},
+                "onMenuClick": {"kind":"callback","optional":true},
+                "sharedChannel": {"kind":"data","optional":true},
+                "showAvatarStatus": {"kind":"data","optional":true},
+                "status": {"kind":"data","optional":true,"values":["mention","read","unread"]},
+                "unreadLabel": {"kind":"node","optional":true}
+            }
+        },
+        "Checkbox": {
+            "subpath": "components/checkbox",
+            "props": {
+                "children": {"kind":"node","optional":true},
+                "className": {"kind":"data","optional":true},
+                "indeterminate": {"kind":"data","optional":true},
+                "invalid": {"kind":"data","optional":true},
+                "size": {"kind":"data","optional":true,"values":["large","medium","small"]}
+            }
+        },
+        "Chip": {
+            "subpath": "components/chip",
+            "props": {
+                "children": {"kind":"node","optional":false},
+                "className": {"kind":"data","optional":true},
+                "colored": {"kind":"data","optional":true},
+                "compact": {"kind":"data","optional":true},
+                "error": {"kind":"data","optional":true},
+                "leadingAvatar": {"kind":"data","optional":true},
+                "leadingIcon": {"kind":"node","optional":true},
+                "onRemove": {"kind":"callback","optional":true},
+                "size": {"kind":"data","optional":true,"values":["large","medium","small"]}
+            }
+        },
+        "ChipGroup": {
+            "subpath": "components/chip",
+            "props": {
+                "children": {"kind":"node","optional":false},
+                "disabled": {"kind":"data","optional":true}
+            }
+        },
+        "Combobox": {
+            "subpath": "components/combobox",
+            "props": {
+                "aria-label": {"kind":"data","optional":true},
+                "className": {"kind":"data","optional":true},
+                "clearable": {"kind":"data","optional":true},
+                "clearButtonProps": {"kind":"data","optional":true},
+                "clearLabel": {"kind":"data","optional":true},
+                "creatable": {"kind":"data","optional":true},
+                "defaultInputValue": {"kind":"data","optional":true},
+                "defaultValue": {"kind":"data","optional":true},
+                "disabled": {"kind":"data","optional":true},
+                "emptyMessage": {"kind":"node","optional":true},
+                "filter": {"kind":"data","optional":true},
+                "formatCreateLabel": {"kind":"callback","optional":true},
+                "id": {"kind":"data","optional":true},
+                "inputValue": {"kind":"data","optional":true},
+                "invalid": {"kind":"data","optional":true},
+                "label": {"kind":"node","optional":true},
+                "leadingIcon": {"kind":"node","optional":true},
+                "listboxLabel": {"kind":"data","optional":true},
+                "loading": {"kind":"data","optional":true},
+                "loadingMessage": {"kind":"node","optional":true},
+                "menuItemProps": {"kind":"data","optional":true},
+                "multiple": {"kind":"data","optional":true},
+                "onBlur": {"kind":"callback","optional":true},
+                "onChange": {"kind":"callback","optional":true},
+                "onCreateOption": {"kind":"callback","optional":true},
+                "onFocus": {"kind":"callback","optional":true},
+                "onInputChange": {"kind":"callback","optional":true},
+                "onKeyDown": {"kind":"callback","optional":true},
+                "options": {"kind":"data","optional":false},
+                "placeholder": {"kind":"data","optional":true},
+                "portalContainer": {"kind":"data","optional":true},
+                "required": {"kind":"data","optional":true},
+                "selectedOptions": {"kind":"data","optional":true},
+                "selectionsLabel": {"kind":"data","optional":true},
+                "size": {"kind":"data","optional":true,"values":["large","medium","small"]},
+                "value": {"kind":"data","optional":true},
+                "zIndex": {"kind":"data","optional":true}
+            }
+        },
+        "DateRangePicker": {
+            "subpath": "components/date-range-picker",
+            "props": {
+                "className": {"kind":"data","optional":true},
+                "dialogLabel": {"kind":"data","optional":true},
+                "endDate": {"kind":"data","optional":true},
+                "formatDate": {"kind":"callback","optional":true},
+                "mode": {"kind":"data","optional":true,"values":["date","range"]},
+                "monthNames": {"kind":"data","optional":true},
+                "nextMonthLabel": {"kind":"data","optional":true},
+                "onChange": {"kind":"callback","optional":true},
+                "onRangeChange": {"kind":"callback","optional":true},
+                "placeholder": {"kind":"data","optional":true},
+                "portalContainer": {"kind":"data","optional":true},
+                "previousMonthLabel": {"kind":"data","optional":true},
+                "startDate": {"kind":"data","optional":true},
+                "todayLabel": {"kind":"node","optional":true},
+                "value": {"kind":"data","optional":true},
+                "weekdayNames": {"kind":"data","optional":true},
+                "zIndex": {"kind":"data","optional":true}
+            }
+        },
+        "Divider": {"subpath": "components/divider", "props": {}},
+        "Dropdown": {
+            "subpath": "components/dropdown",
+            "props": {
+                "appearance": {"kind":"data","optional":true,"values":["default","inverted"]},
+                "children": {"kind":"node","optional":false},
+                "className": {"kind":"data","optional":true},
+                "isOpen": {"kind":"data","optional":true},
+                "leadingIcon": {"kind":"node","optional":true},
+                "padding": {"kind":"data","optional":true,"values":["compact","tight"]},
+                "size": {"kind":"data","optional":true,"values":["large","medium","small","x-large","x-small"]}
+            }
+        },
+        "Emoji": {
+            "subpath": "components/emoji",
+            "props": {
+                "className": {"kind":"data","optional":true},
+                "emoji": {"kind":"data","optional":false},
+                "size": {"kind":"data","optional":true,"values":["10","104","12","16","20","24","28","32","40","52","64"]}
+            }
+        },
+        "EmojiButton": {
+            "subpath": "components/emoji-button",
+            "props": {
+                "active": {"kind":"data","optional":true},
+                "className": {"kind":"data","optional":true},
+                "emoji": {"kind":"data","optional":false},
+                "padding": {"kind":"data","optional":true,"values":["compact","default"]},
+                "size": {"kind":"data","optional":true,"values":["large","medium","small","x-small"]},
+                "toggled": {"kind":"data","optional":true}
+            }
+        },
+        "EmojiPopover": {
+            "subpath": "components/emoji-popover",
+            "props": {
+                "autoFocus": {"kind":"data","optional":true},
+                "categories": {"kind":"data","optional":false},
+                "className": {"kind":"data","optional":true},
+                "closeSkinTonePickerLabel": {"kind":"data","optional":true},
+                "customEmojiLabel": {"kind":"node","optional":true},
+                "defaultQuery": {"kind":"data","optional":true},
+                "emptyDescription": {"kind":"node","optional":true},
+                "emptyTitle": {"kind":"node","optional":true},
+                "formatSkinToneLabel": {"kind":"callback","optional":true},
+                "onCustomEmojiClick": {"kind":"callback","optional":true},
+                "onEmojiSelect": {"kind":"callback","optional":true},
+                "onSearch": {"kind":"callback","optional":true},
+                "previewHintLabel": {"kind":"node","optional":true},
+                "searchClearLabel": {"kind":"data","optional":true},
+                "searchPlaceholder": {"kind":"data","optional":true},
+                "searchResultsLabel": {"kind":"node","optional":true},
+                "shortcodes": {"kind":"data","optional":true},
+                "skinToneButtonLabel": {"kind":"data","optional":true},
+                "skinToneLabel": {"kind":"node","optional":true}
+            }
+        },
+        "EmptyState": {
+            "subpath": "components/empty-state",
+            "props": {
+                "action": {"kind":"data","optional":true},
+                "className": {"kind":"data","optional":true},
+                "description": {"kind":"node","optional":true},
+                "illustration": {"kind":"data","optional":true},
+                "title": {"kind":"node","optional":false}
+            }
+        },
+        "ErrorMessage": {
+            "subpath": "components/error-message",
+            "props": {
+                "className": {"kind":"data","optional":true},
+                "message": {"kind":"node","optional":false}
+            }
+        },
+        "FeatureDiscoveryPanel": {
+            "subpath": "components/feature-discovery-panel",
+            "props": {
+                "className": {"kind":"data","optional":true},
+                "description": {"kind":"node","optional":false},
+                "illustration": {"kind":"data","optional":true},
+                "primaryAction": {"kind":"data","optional":true},
+                "secondaryAction": {"kind":"data","optional":true},
+                "skuLabel": {"kind":"node","optional":true},
+                "title": {"kind":"node","optional":false}
+            }
+        },
+        "FieldMessage": {
+            "subpath": "components/field-message",
+            "props": {
+                "className": {"kind":"data","optional":true},
+                "message": {"kind":"node","optional":false},
+                "tone": {"kind":"data","optional":true,"values":["error","info","success","warning"]}
+            }
+        },
+        "GlobalBanner": {
+            "subpath": "components/global-banner",
+            "props": {
+                "actionLabel": {"kind":"node","optional":true},
+                "className": {"kind":"data","optional":true},
+                "dismissButtonProps": {"kind":"data","optional":true},
+                "dismissLabel": {"kind":"data","optional":true},
+                "leadingIcon": {"kind":"node","optional":true},
+                "message": {"kind":"node","optional":false},
+                "onAction": {"kind":"callback","optional":true},
+                "onDismiss": {"kind":"callback","optional":true},
+                "type": {"kind":"data","optional":true,"values":["danger","general","info","success","warning"]}
+            }
+        },
+        "Icon": {
+            "subpath": "components/icon",
+            "props": {
+                "className": {"kind":"data","optional":true},
+                "glyph": {"kind":"node","optional":true},
+                "size": {"kind":"data","optional":true,"values":["10","104","12","16","20","24","28","32","40","52","64"]}
+            }
+        },
+        "IconButton": {
+            "subpath": "components/icon-button",
+            "props": {
+                "active": {"kind":"data","optional":true},
+                "aria-label": {"kind":"data","optional":false},
+                "asChild": {"kind":"data","optional":false},
+                "children": {"kind":"node","optional":false},
+                "className": {"kind":"data","optional":true},
+                "count": {"kind":"data","optional":true},
+                "destructive": {"kind":"data","optional":true},
+                "disabled": {"kind":"data","optional":true},
+                "icon": {"kind":"node","optional":false},
+                "loading": {"kind":"data","optional":true},
+                "padding": {"kind":"data","optional":true,"values":["compact","default"]},
+                "rounded": {"kind":"data","optional":true},
+                "size": {"kind":"data","optional":true,"values":["large","medium","small","x-small"]},
+                "style": {"kind":"data","optional":true,"values":["default","inverted"]},
+                "unreadBadge": {"kind":"data","optional":true}
+            }
+        },
+        "IconSlotContext": {"subpath": "components/icon", "props": {}},
+        "Illustration": {
+            "subpath": "components/illustration",
+            "props": {
+                "aria-label": {"kind":"data","optional":true},
+                "children": {"kind":"node","optional":false},
+                "className": {"kind":"data","optional":true},
+                "height": {"kind":"data","optional":true},
+                "width": {"kind":"data","optional":true}
+            }
+        },
+        "ImagePreview": {
+            "subpath": "components/image-preview",
+            "props": {
+                "alt": {"kind":"data","optional":true},
+                "aspectRatio": {"kind":"data","optional":true,"values":["16:9","1:1","4:3"]},
+                "className": {"kind":"data","optional":true},
+                "collapsed": {"kind":"data","optional":true},
+                "collapseLabel": {"kind":"data","optional":true},
+                "copyLinkLabel": {"kind":"data","optional":true},
+                "downloadLabel": {"kind":"data","optional":true},
+                "onCopyLink": {"kind":"callback","optional":true},
+                "onDownload": {"kind":"callback","optional":true},
+                "onToggleCollapse": {"kind":"callback","optional":true},
+                "showAriaLabel": {"kind":"data","optional":true},
+                "showLabel": {"kind":"node","optional":true},
+                "src": {"kind":"data","optional":false}
+            }
+        },
+        "LinkPreview": {
+            "subpath": "components/link-preview",
+            "props": {
+                "className": {"kind":"data","optional":true},
+                "description": {"kind":"node","optional":true},
+                "dismissLabel": {"kind":"data","optional":true},
+                "imageAlt": {"kind":"data","optional":true},
+                "imageCollapsed": {"kind":"data","optional":true},
+                "imagePreviewLabels": {"kind":"data","optional":true},
+                "imageSize": {"kind":"data","optional":true,"values":["large","none","small"]},
+                "imageSrc": {"kind":"data","optional":true},
+                "onCopyImageLink": {"kind":"callback","optional":true},
+                "onDismiss": {"kind":"callback","optional":true},
+                "onDownloadImage": {"kind":"callback","optional":true},
+                "onToggleImageCollapse": {"kind":"callback","optional":true},
+                "siteName": {"kind":"node","optional":true},
+                "title": {"kind":"node","optional":true}
+            }
+        },
+        "MentionBadge": {
+            "subpath": "components/mention-badge",
+            "props": {
+                "className": {"kind":"data","optional":true},
+                "count": {"kind":"data","optional":false},
+                "formatLabel": {"kind":"callback","optional":true},
+                "location": {"kind":"data","optional":true,"values":["channel","icon-button","menu-item","sidebar"]},
+                "size": {"kind":"data","optional":true,"values":["large","medium","small"]}
+            }
+        },
+        "MenuGroupHeading": {
+            "subpath": "components/menu-group-heading",
+            "props": {
+                "label": {"kind":"node","optional":false}
+            }
+        },
+        "MenuItem": {
+            "subpath": "components/menu-item",
+            "props": {
+                "active": {"kind":"data","optional":true},
+                "customStatusEmoji": {"kind":"data","optional":true},
+                "destructive": {"kind":"data","optional":true},
+                "label": {"kind":"node","optional":false},
+                "leadingElement": {"kind":"data","optional":true},
+                "leadingVisual": {"kind":"node","optional":true},
+                "mentionCount": {"kind":"data","optional":true},
+                "secondaryLabel": {"kind":"node","optional":true},
+                "secondaryLabelPosition": {"kind":"data","optional":true,"values":["below","inline"]},
+                "tag": {"kind":"data","optional":true},
+                "tagLabel": {"kind":"node","optional":true},
+                "trailingElement": {"kind":"data","optional":true},
+                "trailingVisual": {"kind":"node","optional":true}
+            }
+        },
+        "MessageActions": {
+            "subpath": "components/message-actions",
+            "props": {
+                "addReactionLabel": {"kind":"data","optional":true},
+                "aiActionsLabel": {"kind":"data","optional":true},
+                "className": {"kind":"data","optional":true},
+                "collapsedReplyThreads": {"kind":"data","optional":true},
+                "jumpAriaLabel": {"kind":"data","optional":true},
+                "jumpLabel": {"kind":"node","optional":true},
+                "moreActionsLabel": {"kind":"data","optional":true},
+                "pluginActionsLabel": {"kind":"data","optional":true},
+                "quickReactions": {"kind":"data","optional":true},
+                "reactOkHandLabel": {"kind":"data","optional":true},
+                "reactRaisedHandsLabel": {"kind":"data","optional":true},
+                "reactThumbsUpLabel": {"kind":"data","optional":true},
+                "replyLabel": {"kind":"data","optional":true},
+                "saveLabel": {"kind":"data","optional":true},
+                "toolbarLabel": {"kind":"data","optional":true},
+                "type": {"kind":"data","optional":true,"values":["center-channel","rhs","search-results"]},
+                "visible": {"kind":"data","optional":true}
+            }
+        },
+        "MessageHeader": {
+            "subpath": "components/message-header",
+            "props": {
+                "botLabel": {"kind":"node","optional":true},
+                "isBot": {"kind":"data","optional":true},
+                "timestamp": {"kind":"node","optional":false},
+                "username": {"kind":"node","optional":false}
+            }
+        },
+        "MessageSeparator": {
+            "subpath": "components/message-separator",
+            "props": {
+                "className": {"kind":"data","optional":true},
+                "label": {"kind":"node","optional":true},
+                "onSummarize": {"kind":"callback","optional":true},
+                "showAiSummary": {"kind":"data","optional":true},
+                "summarizeAriaLabel": {"kind":"data","optional":true},
+                "summarizeLabel": {"kind":"node","optional":true},
+                "type": {"kind":"data","optional":true,"values":["date","new-messages","reply-count"]}
+            }
+        },
+        "Modal": {
+            "subpath": "components/modal",
+            "props": {
+                "backButtonProps": {"kind":"data","optional":true},
+                "backLabel": {"kind":"data","optional":true},
+                "bodyPadding": {"kind":"data","optional":true,"values":["default","menu","none"]},
+                "children": {"kind":"node","optional":false},
+                "className": {"kind":"data","optional":true},
+                "closeButtonProps": {"kind":"data","optional":true},
+                "closeLabel": {"kind":"data","optional":true},
+                "closeOnEscape": {"kind":"data","optional":true},
+                "footer": {"kind":"node","optional":true},
+                "footerDivider": {"kind":"data","optional":true},
+                "footerLeading": {"kind":"node","optional":true},
+                "footerType": {"kind":"data","optional":true,"values":["1-action","2-actions","2-actions-separated","pagination","spacer-large","spacer-small","stepped-progress"]},
+                "headerAction": {"kind":"node","optional":true},
+                "headerDivider": {"kind":"data","optional":true},
+                "headerSlot": {"kind":"node","optional":true},
+                "hideTitle": {"kind":"data","optional":true},
+                "initialFocusRef": {"kind":"data","optional":true},
+                "manageFocus": {"kind":"data","optional":true},
+                "onBack": {"kind":"callback","optional":true},
+                "onClose": {"kind":"callback","optional":true},
+                "onExited": {"kind":"callback","optional":true},
+                "open": {"kind":"data","optional":true},
+                "scrollable": {"kind":"data","optional":true},
+                "showBackButton": {"kind":"data","optional":true},
+                "size": {"kind":"data","optional":true,"values":["large","medium","small"]},
+                "style": {"kind":"data","optional":true},
+                "subtitle": {"kind":"node","optional":true},
+                "subtitlePlacement": {"kind":"data","optional":true,"values":["below","beside"]},
+                "title": {"kind":"node","optional":false}
+            }
+        },
+        "ModalFooter": {
+            "subpath": "components/modal-footer",
+            "props": {
+                "children": {"kind":"node","optional":true},
+                "className": {"kind":"data","optional":true},
+                "divider": {"kind":"data","optional":true},
+                "leading": {"kind":"node","optional":true},
+                "type": {"kind":"data","optional":true,"values":["1-action","2-actions","2-actions-separated","pagination","spacer-large","spacer-small","stepped-progress"]}
+            }
+        },
+        "ModalHeader": {
+            "subpath": "components/modal-header",
+            "props": {
+                "backButtonProps": {"kind":"data","optional":true},
+                "backLabel": {"kind":"data","optional":true},
+                "className": {"kind":"data","optional":true},
+                "closeButtonProps": {"kind":"data","optional":true},
+                "closeLabel": {"kind":"data","optional":true},
+                "divider": {"kind":"data","optional":true},
+                "headerAction": {"kind":"node","optional":true},
+                "headerSlot": {"kind":"node","optional":true},
+                "hideTitle": {"kind":"data","optional":true},
+                "onBack": {"kind":"callback","optional":true},
+                "onClose": {"kind":"callback","optional":true},
+                "showBackButton": {"kind":"data","optional":true},
+                "subtitle": {"kind":"node","optional":true},
+                "subtitlePlacement": {"kind":"data","optional":true,"values":["below","beside"]},
+                "title": {"kind":"node","optional":true},
+                "titleId": {"kind":"data","optional":true}
+            }
+        },
+        "ModalOverlay": {
+            "subpath": "components/modal",
+            "props": {
+                "children": {"kind":"node","optional":true},
+                "container": {"kind":"data","optional":true},
+                "lockScroll": {"kind":"data","optional":true},
+                "onClose": {"kind":"callback","optional":true},
+                "onExited": {"kind":"callback","optional":true},
+                "open": {"kind":"data","optional":false},
+                "zIndex": {"kind":"data","optional":true}
+            }
+        },
+        "MoreUnreadsBanner": {
+            "subpath": "components/more-unreads-banner",
+            "props": {
+                "className": {"kind":"data","optional":true},
+                "direction": {"kind":"data","optional":true,"values":["down","up"]},
+                "label": {"kind":"node","optional":true},
+                "onClick": {"kind":"callback","optional":true},
+                "size": {"kind":"data","optional":true,"values":["large","medium","small"]}
+            }
+        },
+        "NewMessageBanner": {
+            "subpath": "components/new-message-banner",
+            "props": {
+                "className": {"kind":"data","optional":true},
+                "countLabel": {"kind":"node","optional":true},
+                "dismissLabel": {"kind":"data","optional":true},
+                "jumpAriaLabel": {"kind":"data","optional":true},
+                "jumpLabel": {"kind":"node","optional":true},
+                "newRepliesLabel": {"kind":"node","optional":true},
+                "onClick": {"kind":"callback","optional":true},
+                "onDismiss": {"kind":"callback","optional":true},
+                "type": {"kind":"data","optional":true,"values":["jump-to-unreads","new-replies"]}
+            }
+        },
+        "PaginationDots": {
+            "subpath": "components/pagination-dots",
+            "props": {
+                "activePage": {"kind":"data","optional":false},
+                "className": {"kind":"data","optional":true},
+                "dotStyle": {"kind":"data","optional":true,"values":["default","inverted","on-primary"]},
+                "formatPageLabel": {"kind":"callback","optional":true},
+                "label": {"kind":"data","optional":true},
+                "onPageChange": {"kind":"callback","optional":true},
+                "orientation": {"kind":"data","optional":true,"values":["horizontal","vertical"]},
+                "pages": {"kind":"data","optional":false}
+            }
+        },
+        "PasswordInput": {
+            "subpath": "components/password-input",
+            "props": {
+                "className": {"kind":"data","optional":true},
+                "defaultRevealed": {"kind":"data","optional":true},
+                "hidePasswordLabel": {"kind":"data","optional":true},
+                "invalid": {"kind":"data","optional":true},
+                "label": {"kind":"node","optional":true},
+                "message": {"kind":"node","optional":true},
+                "messageTone": {"kind":"data","optional":true,"values":["error","info","success","warning"]},
+                "onRevealedChange": {"kind":"callback","optional":true},
+                "revealButtonProps": {"kind":"data","optional":true},
+                "revealed": {"kind":"data","optional":true},
+                "showPasswordLabel": {"kind":"data","optional":true},
+                "size": {"kind":"data","optional":true,"values":["large","medium","small"]}
+            }
+        },
+        "PermalinkPreview": {
+            "subpath": "components/permalink-preview",
+            "props": {
+                "authorName": {"kind":"data","optional":true},
+                "avatarSrc": {"kind":"data","optional":false},
+                "children": {"kind":"node","optional":true},
+                "className": {"kind":"data","optional":true},
+                "dismissLabel": {"kind":"data","optional":true},
+                "messageText": {"kind":"node","optional":true},
+                "onDismiss": {"kind":"callback","optional":true},
+                "originalChannel": {"kind":"node","optional":true},
+                "originalChannelLabel": {"kind":"node","optional":true},
+                "showLessLabel": {"kind":"node","optional":true},
+                "showMoreLabel": {"kind":"node","optional":true},
+                "timestamp": {"kind":"node","optional":true}
+            }
+        },
+        "PinnedSavedIndicators": {
+            "subpath": "components/pinned-saved-indicators",
+            "props": {
+                "aria-label": {"kind":"data","optional":true},
+                "className": {"kind":"data","optional":true},
+                "pinnedLabel": {"kind":"node","optional":true},
+                "savedLabel": {"kind":"node","optional":true}
+            }
+        },
+        "PopoverMenu": {
+            "subpath": "components/popover-menu",
+            "props": {
+                "children": {"kind":"node","optional":false},
+                "onExited": {"kind":"callback","optional":true},
+                "open": {"kind":"data","optional":true},
+                "variant": {"kind":"data","optional":true,"values":["child","parent"]}
+            }
+        },
+        "PopoverMenuDivider": {"subpath": "components/popover-menu", "props": {}},
+        "PopoverMenuGroup": {
+            "subpath": "components/popover-menu",
+            "props": {
+                "aria-label": {"kind":"data","optional":true},
+                "children": {"kind":"node","optional":false}
+            }
+        },
+        "PopoverMenuGroupTitle": {
+            "subpath": "components/popover-menu",
+            "props": {
+                "children": {"kind":"node","optional":false}
+            }
+        },
+        "PopoverMenuScroll": {
+            "subpath": "components/popover-menu",
+            "props": {
+                "children": {"kind":"node","optional":false},
+                "className": {"kind":"data","optional":true},
+                "maxHeight": {"kind":"data","optional":false}
+            }
+        },
+        "PopoverMenuTitle": {
+            "subpath": "components/popover-menu",
+            "props": {
+                "children": {"kind":"node","optional":false}
+            }
+        },
+        "PopoverNotice": {
+            "subpath": "components/popover-notice",
+            "props": {
+                "actions": {"kind":"data","optional":true},
+                "checkboxLabel": {"kind":"node","optional":true},
+                "children": {"kind":"node","optional":false},
+                "className": {"kind":"data","optional":true},
+                "closeButtonProps": {"kind":"data","optional":true},
+                "closeLabel": {"kind":"data","optional":true},
+                "icon": {"kind":"node","optional":true},
+                "onClose": {"kind":"callback","optional":true},
+                "showCheckbox": {"kind":"data","optional":true},
+                "title": {"kind":"node","optional":false},
+                "variant": {"kind":"data","optional":true,"values":["danger","info","success","warning"]}
+            }
+        },
+        "ProfilePopover": {
+            "subpath": "components/profile-popover",
+            "props": {
+                "addToChannelLabel": {"kind":"data","optional":true},
+                "avatarAlt": {"kind":"data","optional":false},
+                "avatarSrc": {"kind":"data","optional":false},
+                "callButton": {"kind":"node","optional":true},
+                "callLabel": {"kind":"data","optional":true},
+                "className": {"kind":"data","optional":true},
+                "closeLabel": {"kind":"data","optional":true},
+                "coreCommitter": {"kind":"data","optional":true},
+                "coreCommitterLabel": {"kind":"node","optional":true},
+                "customStatus": {"kind":"data","optional":true},
+                "editProfileLabel": {"kind":"node","optional":true},
+                "email": {"kind":"data","optional":true},
+                "formatLocalTimeLabel": {"kind":"callback","optional":true},
+                "formatStatusLabel": {"kind":"callback","optional":true},
+                "githubHandle": {"kind":"data","optional":true},
+                "jobRole": {"kind":"node","optional":true},
+                "lastOnline": {"kind":"node","optional":true},
+                "localTime": {"kind":"data","optional":true},
+                "mentionLabel": {"kind":"data","optional":true},
+                "messageLabel": {"kind":"node","optional":true},
+                "name": {"kind":"node","optional":false},
+                "onAddToChannel": {"kind":"callback","optional":true},
+                "onAnimationEnd": {"kind":"callback","optional":true},
+                "onCall": {"kind":"callback","optional":true},
+                "onClose": {"kind":"callback","optional":true},
+                "onMention": {"kind":"callback","optional":true},
+                "onPrimaryAction": {"kind":"callback","optional":true},
+                "onSend": {"kind":"callback","optional":true},
+                "phoneIcon": {"kind":"node","optional":true},
+                "phones": {"kind":"data","optional":true},
+                "sendMessageLabel": {"kind":"data","optional":true},
+                "sharedOrg": {"kind":"node","optional":true},
+                "staff": {"kind":"data","optional":true},
+                "staffLabel": {"kind":"node","optional":true},
+                "state": {"kind":"data","optional":true,"values":["closing","open"]},
+                "title": {"kind":"node","optional":true},
+                "user": {"kind":"data","optional":true,"values":["others","you"]},
+                "username": {"kind":"node","optional":false}
+            }
+        },
+        "ProgressBar": {
+            "subpath": "components/progress-bar",
+            "props": {
+                "aria-label": {"kind":"data","optional":true},
+                "className": {"kind":"data","optional":true},
+                "decorative": {"kind":"data","optional":true},
+                "indeterminate": {"kind":"data","optional":true},
+                "semanticColors": {"kind":"data","optional":true},
+                "size": {"kind":"data","optional":true,"values":["large","small"]},
+                "value": {"kind":"data","optional":true}
+            }
+        },
+        "Radio": {
+            "subpath": "components/radio",
+            "props": {
+                "children": {"kind":"node","optional":true},
+                "className": {"kind":"data","optional":true},
+                "invalid": {"kind":"data","optional":true},
+                "size": {"kind":"data","optional":true,"values":["large","medium","small"]}
+            }
+        },
+        "ReactionButton": {
+            "subpath": "components/reaction-button",
+            "props": {
+                "byCurrentUser": {"kind":"data","optional":true},
+                "count": {"kind":"data","optional":false},
+                "emoji": {"kind":"data","optional":false},
+                "formatLabel": {"kind":"callback","optional":true}
+            }
+        },
+        "ReactionsRow": {
+            "subpath": "components/reactions-row",
+            "props": {
+                "acknowledgeAriaLabel": {"kind":"data","optional":true},
+                "acknowledgeCount": {"kind":"data","optional":true},
+                "acknowledged": {"kind":"data","optional":true},
+                "acknowledgeLabel": {"kind":"node","optional":true},
+                "addReactionLabel": {"kind":"data","optional":true},
+                "className": {"kind":"data","optional":true},
+                "currentUserAcknowledged": {"kind":"data","optional":true},
+                "formatReactionLabel": {"kind":"callback","optional":true},
+                "onAcknowledge": {"kind":"callback","optional":true},
+                "onAddReaction": {"kind":"callback","optional":true},
+                "onReactionClick": {"kind":"callback","optional":true},
+                "reactions": {"kind":"data","optional":true},
+                "showAddReaction": {"kind":"data","optional":true}
+            }
+        },
+        "RightSidebarHeader": {
+            "subpath": "components/right-sidebar-header",
+            "props": {
+                "actionActive": {"kind":"data","optional":true},
+                "actionLabel": {"kind":"node","optional":true},
+                "backLabel": {"kind":"data","optional":true},
+                "className": {"kind":"data","optional":true},
+                "closeLabel": {"kind":"data","optional":true},
+                "collapseLabel": {"kind":"data","optional":true},
+                "expanded": {"kind":"data","optional":true},
+                "expandLabel": {"kind":"data","optional":true},
+                "leadingIcon": {"kind":"node","optional":true},
+                "onActionClick": {"kind":"callback","optional":true},
+                "onBack": {"kind":"callback","optional":true},
+                "onClose": {"kind":"callback","optional":true},
+                "onExpand": {"kind":"callback","optional":true},
+                "onPopout": {"kind":"callback","optional":true},
+                "popoutLabel": {"kind":"data","optional":true},
+                "secondaryTitle": {"kind":"node","optional":true},
+                "tag": {"kind":"node","optional":true},
+                "tagType": {"kind":"data","optional":true,"values":["danger","default","info","info-dim","success","warning"]},
+                "title": {"kind":"node","optional":false}
+            }
+        },
+        "Scrollbar": {
+            "subpath": "components/scrollbar",
+            "props": {
+                "alwaysVisible": {"kind":"data","optional":true},
+                "children": {"kind":"node","optional":false},
+                "className": {"kind":"data","optional":true},
+                "color": {"kind":"data","optional":true},
+                "onScroll": {"kind":"callback","optional":true},
+                "size": {"kind":"data","optional":true,"values":["default","wide"]},
+                "style": {"kind":"data","optional":true}
+            }
+        },
+        "SearchInput": {
+            "subpath": "components/search-input",
+            "props": {
+                "className": {"kind":"data","optional":true},
+                "clearButtonProps": {"kind":"data","optional":true},
+                "clearLabel": {"kind":"data","optional":true},
+                "invalid": {"kind":"data","optional":true},
+                "label": {"kind":"node","optional":true},
+                "message": {"kind":"node","optional":true},
+                "messageTone": {"kind":"data","optional":true,"values":["error","info","success","warning"]},
+                "onClear": {"kind":"callback","optional":true},
+                "size": {"kind":"data","optional":true,"values":["large","medium","small"]}
+            }
+        },
+        "SearchTipBanner": {
+            "subpath": "components/search-tip-banner",
+            "props": {
+                "children": {"kind":"node","optional":true},
+                "className": {"kind":"data","optional":true},
+                "dismissLabel": {"kind":"data","optional":true},
+                "onDismiss": {"kind":"callback","optional":true},
+                "prefix": {"kind":"node","optional":true},
+                "shortcutKeys": {"kind":"data","optional":true},
+                "suffix": {"kind":"node","optional":true}
+            }
+        },
+        "SectionNotice": {
+            "subpath": "components/section-notice",
+            "props": {
+                "className": {"kind":"data","optional":true},
+                "description": {"kind":"node","optional":true},
+                "dismissButtonProps": {"kind":"data","optional":true},
+                "dismissLabel": {"kind":"data","optional":true},
+                "icon": {"kind":"node","optional":true},
+                "onDismiss": {"kind":"callback","optional":true},
+                "onPrimaryAction": {"kind":"callback","optional":true},
+                "onSecondaryAction": {"kind":"callback","optional":true},
+                "primaryActionDisabled": {"kind":"data","optional":true},
+                "primaryActionLoading": {"kind":"data","optional":true},
+                "primaryButtonLabel": {"kind":"node","optional":true},
+                "secondaryActionDisabled": {"kind":"data","optional":true},
+                "secondaryActionLoading": {"kind":"data","optional":true},
+                "secondaryButtonLabel": {"kind":"node","optional":true},
+                "title": {"kind":"node","optional":false},
+                "type": {"kind":"data","optional":true,"values":["danger","hint","info","success","warning"]}
+            }
+        },
+        "Select": {
+            "subpath": "components/select",
+            "props": {
+                "aria-label": {"kind":"data","optional":true},
+                "className": {"kind":"data","optional":true},
+                "defaultValue": {"kind":"data","optional":true},
+                "disabled": {"kind":"data","optional":true},
+                "id": {"kind":"data","optional":true},
+                "invalid": {"kind":"data","optional":true},
+                "label": {"kind":"node","optional":true},
+                "leadingIcon": {"kind":"node","optional":true},
+                "listboxLabel": {"kind":"data","optional":true},
+                "menuItemProps": {"kind":"data","optional":true},
+                "name": {"kind":"data","optional":true},
+                "onChange": {"kind":"callback","optional":true},
+                "options": {"kind":"data","optional":false},
+                "placeholder": {"kind":"data","optional":true},
+                "portalContainer": {"kind":"data","optional":true},
+                "size": {"kind":"data","optional":true,"values":["large","medium","small"]},
+                "value": {"kind":"data","optional":true},
+                "zIndex": {"kind":"data","optional":true}
+            }
+        },
+        "ShortcutTag": {
+            "subpath": "components/shortcut-tag",
+            "props": {
+                "className": {"kind":"data","optional":true},
+                "label": {"kind":"data","optional":false},
+                "location": {"kind":"data","optional":true,"values":["default","tooltips"]},
+                "size": {"kind":"data","optional":true,"values":["large","medium","small"]}
+            }
+        },
+        "ShortcutTagGroup": {
+            "subpath": "components/shortcut-tag",
+            "props": {
+                "className": {"kind":"data","optional":true},
+                "labels": {"kind":"data","optional":false},
+                "location": {"kind":"data","optional":true,"values":["default","tooltips"]},
+                "size": {"kind":"data","optional":true,"values":["large","medium","small"]}
+            }
+        },
+        "Spinner": {
+            "subpath": "components/spinner",
+            "props": {
+                "aria-label": {"kind":"data","optional":true},
+                "inverted": {"kind":"data","optional":true},
+                "size": {"kind":"data","optional":true,"values":["10","12","16","20","24","28","32"]}
+            }
+        },
+        "StatusBadge": {
+            "subpath": "components/status-badge",
+            "props": {
+                "className": {"kind":"data","optional":true},
+                "size": {"kind":"data","optional":true,"values":["large","medium","small","x-small","xx-small"]},
+                "status": {"kind":"data","optional":true,"values":["away","do-not-disturb","offline","online"]}
+            }
+        },
+        "Switch": {
+            "subpath": "components/switch",
+            "props": {
+                "children": {"kind":"node","optional":true},
+                "className": {"kind":"data","optional":true},
+                "secondaryLabel": {"kind":"node","optional":true},
+                "semiBold": {"kind":"data","optional":true},
+                "size": {"kind":"data","optional":true,"values":["large","medium","small"]}
+            }
+        },
+        "Tabs": {
+            "subpath": "components/tabs",
+            "props": {
+                "activeKey": {"kind":"data","optional":false},
+                "appearance": {"kind":"data","optional":true,"values":["default","underlined"]},
+                "className": {"kind":"data","optional":true},
+                "controls": {"kind":"node","optional":true},
+                "onChange": {"kind":"callback","optional":false},
+                "tabs": {"kind":"data","optional":false},
+                "unreadLabel": {"kind":"node","optional":true}
+            }
+        },
+        "Tag": {
+            "subpath": "components/tag",
+            "props": {
+                "casing": {"kind":"data","optional":true,"values":["all-caps","title-case"]},
+                "label": {"kind":"node","optional":false},
+                "leadingIcon": {"kind":"node","optional":true},
+                "size": {"kind":"data","optional":true,"values":["small","x-small"]},
+                "type": {"kind":"data","optional":true,"values":["danger","default","info","info-dim","success","warning"]}
+            }
+        },
+        "TeamAvatar": {
+            "subpath": "components/team-avatar",
+            "props": {
+                "alt": {"kind":"data","optional":true},
+                "badge": {"kind":"data","optional":true},
+                "className": {"kind":"data","optional":true},
+                "initials": {"kind":"data","optional":true},
+                "size": {"kind":"data","optional":true,"values":["120","24","28","32","40","48","56","64","72","96"]},
+                "src": {"kind":"data","optional":true},
+                "state": {"kind":"data","optional":true,"values":["active","default"]},
+                "variant": {"kind":"data","optional":true,"values":["menu","sidebar"]}
+            }
+        },
+        "TextArea": {
+            "subpath": "components/text-area",
+            "props": {
+                "className": {"kind":"data","optional":true},
+                "invalid": {"kind":"data","optional":true},
+                "label": {"kind":"node","optional":true},
+                "maxLength": {"kind":"data","optional":true},
+                "message": {"kind":"node","optional":true},
+                "messageTone": {"kind":"data","optional":true,"values":["error","info","success","warning"]},
+                "showCharacterCount": {"kind":"data","optional":true},
+                "size": {"kind":"data","optional":true,"values":["large","medium","small"]}
+            }
+        },
+        "TextInput": {
+            "subpath": "components/text-input",
+            "props": {
+                "className": {"kind":"data","optional":true},
+                "clearable": {"kind":"data","optional":true},
+                "clearButtonProps": {"kind":"data","optional":true},
+                "clearLabel": {"kind":"data","optional":true},
+                "invalid": {"kind":"data","optional":true},
+                "label": {"kind":"node","optional":true},
+                "leadingIcon": {"kind":"node","optional":true},
+                "maxLength": {"kind":"data","optional":true},
+                "message": {"kind":"node","optional":true},
+                "messageTone": {"kind":"data","optional":true,"values":["error","info","success","warning"]},
+                "onClear": {"kind":"callback","optional":true},
+                "showCharacterCount": {"kind":"data","optional":true},
+                "size": {"kind":"data","optional":true,"values":["large","medium","small"]},
+                "trailingAction": {"kind":"node","optional":true},
+                "trailingIcon": {"kind":"node","optional":true},
+                "type": {"kind":"data","optional":true,"values":["button","checkbox","color","date","datetime-local","email","file","hidden","image","month","number","password","radio","range","reset","search","submit","tel","text","time","url","week"]}
+            }
+        },
+        "ThreadFooter": {
+            "subpath": "components/thread-footer",
+            "props": {
+                "avatars": {"kind":"data","optional":true},
+                "badge": {"kind":"data","optional":true,"values":["mention","none","unread"]},
+                "className": {"kind":"data","optional":true},
+                "followAriaLabel": {"kind":"data","optional":true},
+                "following": {"kind":"data","optional":true},
+                "followingLabel": {"kind":"node","optional":true},
+                "followLabel": {"kind":"node","optional":true},
+                "formatMentionLabel": {"kind":"callback","optional":true},
+                "formatReplyCount": {"kind":"callback","optional":true},
+                "formatReplyLabel": {"kind":"callback","optional":true},
+                "hovered": {"kind":"data","optional":true},
+                "lastReplyTime": {"kind":"node","optional":true},
+                "mentionCount": {"kind":"data","optional":true},
+                "onFollowToggle": {"kind":"callback","optional":true},
+                "onReply": {"kind":"callback","optional":true},
+                "replyCount": {"kind":"data","optional":true},
+                "unfollowAriaLabel": {"kind":"data","optional":true},
+                "unreadLabel": {"kind":"node","optional":true}
+            }
+        },
+        "ThreadListItem": {
+            "subpath": "components/thread-list-item",
+            "props": {
+                "active": {"kind":"data","optional":true},
+                "authorName": {"kind":"node","optional":true},
+                "badge": {"kind":"data","optional":true,"values":["mention","none","unread"]},
+                "channelLabel": {"kind":"node","optional":true},
+                "className": {"kind":"data","optional":true},
+                "formatMentionLabel": {"kind":"callback","optional":true},
+                "formatReplyCount": {"kind":"callback","optional":true},
+                "mentionCount": {"kind":"data","optional":true},
+                "menuLabel": {"kind":"data","optional":true},
+                "onClick": {"kind":"callback","optional":true},
+                "onMenuClick": {"kind":"callback","optional":true},
+                "participants": {"kind":"data","optional":true},
+                "previewText": {"kind":"node","optional":true},
+                "replyCount": {"kind":"data","optional":true},
+                "threadTitle": {"kind":"node","optional":true},
+                "timestamp": {"kind":"node","optional":true},
+                "unreadLabel": {"kind":"node","optional":true}
+            }
+        },
+        "TileButton": {
+            "subpath": "components/tile-button",
+            "props": {
+                "asChild": {"kind":"data","optional":false},
+                "children": {"kind":"node","optional":false},
+                "className": {"kind":"data","optional":true},
+                "destructive": {"kind":"data","optional":true},
+                "disabled": {"kind":"data","optional":true},
+                "icon": {"kind":"node","optional":false},
+                "label": {"kind":"node","optional":false}
+            }
+        },
+        "Toast": {
+            "subpath": "components/toast",
+            "props": {
+                "actionLabel": {"kind":"node","optional":true},
+                "className": {"kind":"data","optional":true},
+                "dismissButtonProps": {"kind":"data","optional":true},
+                "dismissLabel": {"kind":"data","optional":true},
+                "icon": {"kind":"node","optional":true},
+                "message": {"kind":"node","optional":false},
+                "onAction": {"kind":"callback","optional":true},
+                "onDismiss": {"kind":"callback","optional":true},
+                "type": {"kind":"data","optional":true,"values":["danger","general","info","success","warning"]}
+            }
+        },
+        "Tooltip": {
+            "subpath": "components/tooltip",
+            "props": {
+                "arrow": {"kind":"data","optional":true,"values":["bottom","left","right","top"]},
+                "className": {"kind":"data","optional":true},
+                "hint": {"kind":"node","optional":true},
+                "icon": {"kind":"node","optional":true},
+                "label": {"kind":"node","optional":false},
+                "shortcutKeys": {"kind":"data","optional":true}
+            }
+        },
+        "TourPoint": {
+            "subpath": "components/tour-point",
+            "props": {
+                "children": {"kind":"node","optional":false},
+                "className": {"kind":"data","optional":true},
+                "closeButtonProps": {"kind":"data","optional":true},
+                "closeLabel": {"kind":"data","optional":true},
+                "media": {"kind":"node","optional":true},
+                "onClose": {"kind":"callback","optional":true},
+                "pointerPosition": {"kind":"data","optional":true,"values":["bottom-center","bottom-left","bottom-right","left-center","none","right-center","top-center","top-left","top-right"]},
+                "primaryAction": {"kind":"data","optional":true},
+                "progress": {"kind":"data","optional":true},
+                "showPulsingDot": {"kind":"data","optional":true},
+                "title": {"kind":"node","optional":false}
+            }
+        },
+        "UnreadBadge": {
+            "subpath": "components/unread-badge",
+            "props": {
+                "aria-label": {"kind":"data","optional":true},
+                "className": {"kind":"data","optional":true},
+                "context": {"kind":"data","optional":true,"values":["icon-button","team-icon"]},
+                "size": {"kind":"data","optional":true,"values":["6","8"]}
+            }
+        },
+        "UserAvatar": {
+            "subpath": "components/user-avatar",
+            "props": {
+                "alt": {"kind":"data","optional":false},
+                "className": {"kind":"data","optional":true},
+                "fallbackColor": {"kind":"data","optional":true,"values":["blue","cyan","green","neutral","orange","purple","red","yellow"]},
+                "name": {"kind":"data","optional":true},
+                "size": {"kind":"data","optional":true,"values":["12","120","16","20","24","28","32","40","48","56","64","72","80","96"]},
+                "src": {"kind":"data","optional":true},
+                "status": {"kind":"data","optional":true}
+            }
+        },
+        "UserAvatarGroup": {
+            "subpath": "components/user-avatar-group",
+            "props": {
+                "avatars": {"kind":"data","optional":false},
+                "className": {"kind":"data","optional":true},
+                "formatGroupLabel": {"kind":"callback","optional":true},
+                "formatOverflowLabel": {"kind":"callback","optional":true},
+                "formatOverflowNames": {"kind":"callback","optional":true},
+                "max": {"kind":"data","optional":true},
+                "size": {"kind":"data","optional":true,"values":["20","24","28","32","40","48","56","64","72"]}
+            }
+        }
+    }
+}
