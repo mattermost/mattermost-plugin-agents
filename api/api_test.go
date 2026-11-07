@@ -71,6 +71,7 @@ type testConfigImpl struct {
 	allowUnsafeLinks                bool
 	allowedLinkDomains              string
 	enableHTMLArtifacts             bool
+	enableGenerativeUI              bool
 	enableChannelMentionToolCalling bool
 	enableAmbientAutoReply          bool
 	mcpConfig                       mcp.Config
@@ -101,6 +102,14 @@ func (tc *testConfigImpl) LinkPolicy() config.LinkPolicy {
 
 func (tc *testConfigImpl) EnableHTMLArtifacts() bool {
 	return tc.enableHTMLArtifacts
+}
+
+func (tc *testConfigImpl) EnableGenerativeUI() bool {
+	return tc.enableGenerativeUI
+}
+
+func (tc *testConfigImpl) GenerativeUIEnabledForAgent(bot llm.BotConfig) bool {
+	return config.GenerativeUIEnabledForAgent(tc.enableGenerativeUI, bot)
 }
 
 func (tc *testConfigImpl) EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig {
@@ -1621,6 +1630,7 @@ func TestHandleGetAIBots(t *testing.T) {
 		expectedLinkPolicyKind        config.LinkPolicyKind
 		expectedAllowedDomains        []config.LinkDomainRule
 		expectedHTMLArtifacts         bool
+		expectedGenerativeUI          bool
 		expectedStatus                int
 		envSetup                      func(e *TestEnvironment)
 	}{
@@ -1699,6 +1709,16 @@ func TestHandleGetAIBots(t *testing.T) {
 			},
 		},
 		{
+			name:                   "generative UI enabled via config",
+			expectedGenerativeUI:   true,
+			expectedLinkPolicyKind: config.LinkPolicyPlainText,
+			expectedStatus:         http.StatusOK,
+			envSetup: func(e *TestEnvironment) {
+				e.config.enableGenerativeUI = true
+				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
+			},
+		},
+		{
 			// Unlicensed servers run service account agents in per-user mode, so the
 			// response must report the effective mode instead of the raw agent flag.
 			name:                          "service account agent reports user mode when unlicensed",
@@ -1757,10 +1777,61 @@ func TestHandleGetAIBots(t *testing.T) {
 				require.Equal(t, test.expectedLinkPolicyKind, response.LinkPolicy.Kind, "LinkPolicy kind should match expected value")
 				require.ElementsMatch(t, test.expectedAllowedDomains, response.LinkPolicy.AllowedDomains, "LinkPolicy allowed domains should match expected value")
 				require.Equal(t, test.expectedHTMLArtifacts, response.HTMLArtifactsEnabled, "HTMLArtifactsEnabled field should match expected value")
+				require.Equal(t, test.expectedGenerativeUI, response.GenerativeUIEnabled, "GenerativeUIEnabled field should match expected value")
 				require.NotEmpty(t, response.Bots, "Should return at least one bot")
 				require.Equal(t, test.expectedUseServiceAccountAuth, response.Bots[0].UseServiceAccountAuth,
 					"UseServiceAccountAuth field should report the effective service account mode")
 			}
+		})
+	}
+}
+
+func TestHandleGetAIBotsGenerativeUIPerAgent(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	optedIn := llm.SkillsConfig{GenerativeUI: true}
+	tests := []struct {
+		name          string
+		serverEnabled bool
+		skills        llm.SkillsConfig
+		disableTools  bool
+		expected      bool
+	}{
+		{name: "server and agent on", serverEnabled: true, skills: optedIn, expected: true},
+		{name: "server off", serverEnabled: false, skills: optedIn},
+		{name: "agent not opted in", serverEnabled: true},
+		{name: "agent skills disabled", serverEnabled: true, skills: llm.SkillsConfig{GenerativeUI: true, Disabled: true}},
+		{name: "agent tools disabled", serverEnabled: true, skills: optedIn, disableTools: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.api.searchService = nil
+			e.config.enableGenerativeUI = test.serverEnabled
+			e.setupTestBot(llm.BotConfig{
+				Name:         "test-bot",
+				DisplayName:  "Test Bot",
+				Skills:       test.skills,
+				DisableTools: test.disableTools,
+			})
+			e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+			request := httptest.NewRequest(http.MethodGet, "/ai_bots", nil)
+			request.Header.Add("Mattermost-User-ID", testUserID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+
+			resp := recorder.Result()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			var response AIBotsResponse
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+			require.Len(t, response.Bots, 1)
+			require.Equal(t, test.serverEnabled, response.GenerativeUIEnabled)
+			require.Equal(t, test.expected, response.Bots[0].GenerativeUIEnabled)
 		})
 	}
 }

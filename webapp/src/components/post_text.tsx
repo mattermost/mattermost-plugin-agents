@@ -14,6 +14,9 @@ import {LinkRendering, linkRendering} from '@/utils/link_allowlist';
 
 import {insertAnnotationMarkers, replaceCitationMarkers} from './citations/citation_processor';
 import {Annotation} from './citations/types';
+import GenerativeUIBlock from './generative_ui/generative_ui_block';
+import {GenerativeUIPostContext} from './generative_ui/post_context';
+import {splitGenerativeUI} from './generative_ui/split_message';
 import {StreamingMarkdown} from './llmbot_post/streaming_markdown';
 
 export type ChannelNamesMap = {
@@ -32,6 +35,10 @@ interface Props {
 
     /** Streaming reveal: the message renders block by block as text is revealed. */
     reveal?: boolean;
+
+    // Render fenced OpenUI Lang blocks as components: only replies from an
+    // agent with generative UI enabled (isGenerativeUIEnabledForBot) opt in.
+    allowGenerativeUI?: boolean;
 }
 
 const blinkKeyframes = keyframes`
@@ -150,12 +157,45 @@ function buildHtmlOptions(postID: string) {
     };
 }
 
-const PostText = (props: Props) => {
-    const channel = useSelector<GlobalState, Channel>((state) => state.entities.channels.channels[props.channelID]);
+type PostRenderContext = {
+    team: Team;
+    siteURL?: string;
+    links: LinkRendering;
+};
+
+const usePostRenderContext = (channelID: string): PostRenderContext => {
+    const channel = useSelector<GlobalState, Channel>((state) => state.entities.channels.channels[channelID]);
     const team = useSelector<GlobalState, Team>((state) => state.entities.teams.teams[channel?.team_id]);
     const siteURL = useSelector<GlobalState, string | undefined>((state) => state.entities.general.config.SiteURL);
     const linkPolicy = useSelector(getLinkPolicy);
     const links = useMemo(() => linkRendering(linkPolicy, siteURL || window.location.origin), [linkPolicy, siteURL]);
+    return {team, siteURL, links};
+};
+
+export type MarkdownRenderer = (message: string) => React.ReactNode;
+
+/**
+ * Renders markdown through the host post pipeline and the link policy, so
+ * agent text (including text inside generative UI) gets the same mentions,
+ * link safety, and formatting as any other post.
+ */
+const usePostMarkdown = (postID: string, {team, siteURL, links}: PostRenderContext): MarkdownRenderer => {
+    return useCallback((message: string) => {
+        // @ts-ignore
+        const {formatText, messageHtmlToComponent} = window.PostUtils;
+
+        return messageHtmlToComponent(
+            links.restrictLinks(formatText(message, buildMarkdownOptions(team, links, siteURL))),
+            buildHtmlOptions(postID),
+        );
+    }, [team, siteURL, links, postID]);
+};
+
+const PostText = (props: Props) => {
+    const renderContext = usePostRenderContext(props.channelID);
+    const {team, siteURL, links} = renderContext;
+    const renderMarkdown = usePostMarkdown(props.postID, renderContext);
+    const generativeUIEnabled = Boolean(props.allowGenerativeUI);
 
     // A citation whose URL the policy rejects keeps its marker but loses the
     // URL, so the chip renders without a destination to open.
@@ -165,10 +205,62 @@ const PostText = (props: Props) => {
         )),
         [props.annotations, links],
     );
+    const hasAnnotations = Boolean(annotations && annotations.length > 0);
+
+    // Process message with annotations if they exist
+    let processedMessage = props.message;
+    if (annotations && hasAnnotations) {
+        processedMessage = insertAnnotationMarkers(props.message, annotations);
+    }
+
+    const renderText = (message: string) => {
+        const text = renderMarkdown(message);
+        if (!text) {
+            return null;
+        }
+
+        // Post-process the rendered JSX to replace citation markers with React components
+        return annotations && hasAnnotations ? replaceCitationMarkers(text, annotations) : text;
+    };
+
+    // Generative UI blocks take precedence over the streaming reveal, which
+    // would otherwise show the raw OpenUI Lang fence while it streams.
+    const segments = generativeUIEnabled ? splitGenerativeUI(processedMessage) : [];
+    if (segments.some((segment) => segment.type === 'ui')) {
+        const lastIndex = segments.length - 1;
+        return (
+            <GenerativeUIPostContext.Provider value={renderMarkdown}>
+                {segments.map((segment, index) => {
+                    const key = `${segment.type}-${index}`;
+                    if (segment.type === 'ui') {
+                        return (
+                            <GenerativeUIBlock
+                                key={key}
+                                source={segment.source}
+                                isStreaming={Boolean(props.showCursor) && !segment.closed}
+                            />
+                        );
+                    }
+
+                    return (
+                        // eslint-disable-next-line agents/click-events-have-key-events, agents/no-static-element-interactions -- delegates clicks from the links inside, which stay keyboard-operable
+                        <TextContainer
+                            key={key}
+                            data-testid='posttext'
+                            $showCursor={props.showCursor && index === lastIndex}
+                            onClick={handleInternalLinkClick}
+                        >
+                            {renderText(segment.text)}
+                        </TextContainer>
+                    );
+                })}
+            </GenerativeUIPostContext.Provider>
+        );
+    }
 
     // Citation markers index into the whole message, so annotated text keeps
     // the single-pass render.
-    if (props.reveal && !(annotations && annotations.length > 0)) {
+    if (props.reveal && !hasAnnotations) {
         return (
             <RevealText
                 message={props.message}
@@ -181,29 +273,10 @@ const PostText = (props: Props) => {
         );
     }
 
-    // @ts-ignore
-    const {formatText, messageHtmlToComponent} = window.PostUtils;
-
-    const markdownOptions = buildMarkdownOptions(team, links, siteURL);
-    const messageHtmlToComponentOptions = buildHtmlOptions(props.postID);
-
-    // Process message with annotations if they exist
-    let processedMessage = props.message;
-    if (annotations && annotations.length > 0) {
-        processedMessage = insertAnnotationMarkers(props.message, annotations);
-    }
-
-    const text = messageHtmlToComponent(
-        links.restrictLinks(formatText(processedMessage, markdownOptions)),
-        messageHtmlToComponentOptions,
-    );
-
-    if (!text) {
+    const processedText = renderText(processedMessage);
+    if (!processedText) {
         return <TextContainer $showCursor={props.showCursor}>{<p/>}</TextContainer>;
     }
-
-    // Post-process the rendered JSX to replace citation markers with React components
-    const processedText = annotations && annotations.length > 0 ? replaceCitationMarkers(text, annotations) : text;
 
     return (
         // eslint-disable-next-line agents/click-events-have-key-events, agents/no-static-element-interactions -- delegates clicks from the links inside, which stay keyboard-operable

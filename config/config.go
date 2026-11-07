@@ -38,6 +38,7 @@ type Config struct {
 	AllowUnsafeLinks                bool                             `json:"allowUnsafeLinks"`
 	AllowedLinkDomains              string                           `json:"allowedLinkDomains"`
 	EnableHTMLArtifacts             bool                             `json:"enableHTMLArtifacts"`
+	EnableGenerativeUI              bool                             `json:"enableGenerativeUI"`
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
 	EnableAmbientAutoReply          bool                             `json:"enableAmbientAutoReply"`
 	AllowNativeWebSearchInChannels  bool                             `json:"allowNativeWebSearchInChannels"`
@@ -202,6 +203,26 @@ func (c *Container) LinkPolicy() LinkPolicy {
 // as sandboxed interactive artifacts.
 func (c *Container) EnableHTMLArtifacts() bool {
 	return c.Config().EnableHTMLArtifacts
+}
+
+// EnableGenerativeUI is the experimental server-wide switch for generative UI:
+// agent replies with OpenUI Lang blocks that the webapp renders as native
+// components. Each agent must also opt in; see GenerativeUIEnabledForAgent.
+func (c *Container) EnableGenerativeUI() bool {
+	return c.Config().EnableGenerativeUI
+}
+
+// GenerativeUIEnabledForAgent is the single check for whether bot may reply
+// with generative UI, and whether its UI is rendered and interactive.
+func (c *Container) GenerativeUIEnabledForAgent(bot llm.BotConfig) bool {
+	return GenerativeUIEnabledForAgent(c.EnableGenerativeUI(), bot)
+}
+
+// GenerativeUIEnabledForAgent requires the server-wide switch and the agent's
+// own opt-in, with the agent's tools and skills on: the prompting ships as a
+// built-in skill, so without them the agent cannot use it.
+func GenerativeUIEnabledForAgent(serverEnabled bool, bot llm.BotConfig) bool {
+	return serverEnabled && bot.Skills.GenerativeUI && !bot.Skills.Disabled && !bot.DisableTools
 }
 
 func (c *Container) EnableChannelMentionToolCalling() bool {

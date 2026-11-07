@@ -1,0 +1,81 @@
+{{/* Generated from webapp/src/components/generative_ui/library.tsx by `npm run generate-genui-prompt`. DO NOT EDIT. */}}
+OpenUI Lang reference for the components available in Mattermost.
+
+## Syntax Rules
+
+1. Each statement is on its own line: `identifier = Expression`
+2. `root` is the entry point — every program must define `root = Stack(...)`
+3. Expressions are: strings ("..."), numbers, booleans (true/false), null, arrays ([...]), objects ({...}), or component calls TypeName(arg1, arg2, ...)
+4. Use references for readability: define `name = ...` on one line, then use `name` later
+5. EVERY variable (except root) MUST be referenced by at least one other variable. Unreferenced variables are silently dropped and will NOT render. Always include defined variables in their parent's children/items array.
+6. Arguments are POSITIONAL (order matters, not names). Write `SomeComp([children], "row", "l")` NOT `SomeComp([children], direction: "row", gap: "l")` — colon syntax is NOT supported and silently breaks
+7. Optional arguments can be omitted from the end
+- Strings use double quotes with backslash escaping
+
+## Component Signatures
+
+Arguments marked with ? are optional. Sub-components can be inline or referenced; prefer references for better streaming.
+
+### Layout
+Stack(children: (Heading | Text | Notice | Fields | Stats | Table | BarChart | Progress | Steps | Tags | Link | Divider | Card | Columns)[], gap?: "s" | "m" | "l") — Root vertical layout.
+Card(title: string, children: (Heading | Text | Notice | Fields | Stats | Table | BarChart | Progress | Steps | Tags | Link | Divider)[], subtitle?: string) — Bordered panel grouping related content under a title.
+Columns(children: Card[]) — Places Cards side by side; wraps to one column on narrow screens. Use for comparisons.
+Divider() — Thin horizontal rule between groups of content.
+
+### Text
+Heading(text: string, size?: "large" | "medium" | "small") — Section heading. Use sparingly; Card already has a title.
+Text(text: string, tone?: "default" | "muted" | "small") — A paragraph. Supports inline Mattermost markdown (bold, italics, `code`, links). tone "muted" for secondary text, "small" for footnotes.
+Notice(title: string, text?: string, type?: "info" | "success" | "warning" | "danger") — Highlighted callout for a key takeaway, warning, or blocker.
+Link(label: string, url: string) — An external link (http, https, or mailto).
+
+### Data
+Fields(items: Field[]) — Two-column label/value list for record details (owner, due date, status...).
+Field(label: string, value: string | number | Tag) — One label/value pair inside Fields.
+Stats(items: Stat[]) — A responsive grid of Stat tiles (2-4 is ideal).
+Stat(label: string, value: string | number, change?: string, trend?: "up" | "down" | "neutral") — A headline metric. change is a short delta like "+12%"; trend colors it.
+Table(columns: string[], rows: (string | number | Tag)[][]) — Row-oriented table. Each row is an array of cells in column order; a cell is a string, number, or Tag.
+BarChart(labels: string[], values: number[], title?: string, unit?: string) — Horizontal bar chart comparing values across labels (same length arrays). unit is appended to values, e.g. "%" or " hrs".
+Progress(label: string, value: number, caption?: string) — Progress toward a goal. value is 0-100; caption replaces the default "NN%" text, e.g. "7 of 10 tasks".
+
+### Status
+Steps(items: Step[]) — Ordered checklist, plan, or timeline with a status per step.
+Step(title: string, status?: "done" | "current" | "todo" | "blocked", description?: string) — One item in Steps.
+Tags(items: Tag[]) — A wrapping row of Tag pills.
+Tag(label: string, color?: "neutral" | "info" | "success" | "warning" | "danger") — Compact status pill, e.g. a state, owner, or priority.
+
+## Hoisting & Streaming (CRITICAL)
+
+openui-lang supports hoisting: a reference can be used BEFORE it is defined. The parser resolves all references after the full input is parsed.
+
+During streaming, the output is re-parsed on every chunk. Undefined references are temporarily unresolved and appear once their definitions stream in. This creates a progressive top-down reveal — structure first, then data fills in.
+
+**Recommended statement order for optimal streaming:**
+1. `root = Stack(...)` — UI shell appears immediately
+2. Component definitions — fill in as they stream
+3. Data values — leaf content last
+
+Always write the root = Stack(...) statement first so the UI shell appears immediately, even before child data has streamed in.
+
+## Examples
+
+root = Stack([summary, metrics, details])
+summary = Text("Release **v2.4** is on track for Friday.")
+metrics = Stats([Stat("Open PRs", 6, "-3 since Monday", "down"), Stat("Bugs fixed", 41, "+12", "up")])
+details = Card("Remaining work", [plan])
+plan = Steps([Step("Code freeze", "done"), Step("QA sign-off", "current", "2 blockers left"), Step("Ship", "todo")])
+
+root = Stack([cmp])
+cmp = Columns([a, b])
+a = Card("Postgres", [Fields([Field("Latency", "4 ms"), Field("Status", Tag("Healthy", "success"))])])
+b = Card("Redis", [Fields([Field("Latency", "38 ms"), Field("Status", Tag("Degraded", "warning"))])])
+
+## Important Rules
+- Choose components that best represent the content (tables for comparisons, charts for trends, forms for input, etc.)
+
+## Final Verification
+Before finishing, walk your output and verify:
+1. root = Stack(...) is the FIRST line (for optimal streaming).
+2. Every referenced name is defined. Every defined name (other than root) is reachable from root.
+
+- Only use the components listed above, with arguments in the documented order.
+- Keep text inside components short; prose belongs outside the code fence as normal markdown.

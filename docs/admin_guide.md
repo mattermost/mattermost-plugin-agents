@@ -764,6 +764,21 @@ Known limitations: artifacts are not fully isolated from the network in every br
 
 Artifact navigation is blocked in every supported browser, and in Chromium 152 or later all network connections are blocked. In Firefox and Safari, WebRTC remains a way out for the artifact's own content, any profile data the viewer allowed it to read through the `window.mattermost` API, and anything the viewer types into the artifact. An artifact can draw anything inside its frame, including a convincing imitation of a Mattermost sign-in or "session expired" dialog, so it could phish for a password. To counter this, the artifact is always shown inside a bordered frame below a header that the artifact cannot draw over, and that header permanently tells viewers the content is AI-generated and that they should never enter passwords or sensitive information into it. Because the model writes the artifact, its content may include conversation or channel content the model had access to, and a prompt injection could cause the model to write an artifact that tries to leak it. This is why an artifact runs only after the viewer clicks **Run** and why the feature is off by default; enable it only where this risk is acceptable.
 
+### Generative UI
+
+Generative UI lets agents reply with structured UI, such as status cards, metric tiles, tables, comparisons, progress bars, and checklists, rendered with Mattermost components directly inside the reply. The agent writes the UI in [OpenUI Lang](https://github.com/thesysdev/openui), a compact format, inside an `openui-lang` code block, and the webapp renders it with a fixed library of display components that follow the user's theme. Generative UI is an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature and is off by default.
+
+It takes two settings, and both must be on:
+
+- **Enable generative UI** in **System Console > Plugins > Agents** (`enableGenerativeUI` in the plugin configuration) is the server-wide switch.
+- **Generative UI** on the agent's [Skills tab](features/managing_agents.md#skills-tab) (`skills.generativeUI` on the agent) opts that agent in.
+
+The instructions ship as a [skill built into Agents](features/skills.md#how-agents-use-skills), so the agent also needs **Enable Tools** and **Enable skills** on. Only a one-line description is in the system prompt; the agent loads the full component reference (roughly 2,700 tokens) when it decides a reply should be visual, which takes one extra tool round. Like other skills, it is offered in direct messages, and in channels only when **Enable Channel Mention Tool Calling** is on. Replies render as UI only while generative UI is enabled for the agent that wrote them; otherwise the block shows as code.
+
+- Only the plugin's display components can render. Generated UI cannot run scripts, load images, call tools, or submit data.
+- Links inside generated UI follow the agent link policy (**Render AI-generated links** and **Allowed Link Domains**): a link the policy rejects shows its destination as plain text.
+- Clients that don't load the plugin webapp, such as the mobile apps, show the block as a code block. The agent is instructed to state the key takeaway in plain text before the block.
+
 ## Model Context Protocol (MCP) Integration
 
 The Model Context Protocol (MCP) integration lets Agents use tools exposed by MCP servers, including the embedded Mattermost tools, plugin-registered MCP servers from compatible Mattermost plugins, and optional remote servers.
