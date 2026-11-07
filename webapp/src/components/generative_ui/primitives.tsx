@@ -51,15 +51,20 @@ function gapToken(gap?: 's' | 'm' | 'l') {
     }
 }
 
+// Compass has no content surface yet; Card, Stat tiles and Table share this one.
+export const surface = css`
+    border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
+    border-radius: var(--radius-m);
+    background: var(--center-channel-bg);
+`;
+
 export const CardContainer = styled.section`
+    ${surface}
     display: flex;
     flex-direction: column;
     gap: var(--spacing-m);
     padding: var(--spacing-m) var(--spacing-l);
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-    border-radius: var(--radius-s);
-    background: var(--center-channel-bg);
-    box-shadow: 0 2px 3px rgba(0, 0, 0, 0.08);
+    box-shadow: var(--elevation-1);
     min-width: 0;
 `;
 
@@ -71,16 +76,16 @@ const CardHeader = styled.header`
 
 const CardTitle = styled.h4`
     margin: 0;
-    font-family: Metropolis, sans-serif;
-    font-size: 16px;
-    font-weight: 600;
-    line-height: 24px;
+    font-family: var(--font-family-heading);
+    font-size: var(--font-size-200);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-200);
     color: var(--center-channel-color);
 `;
 
 const CardSubtitle = styled.span`
-    font-size: 12px;
-    line-height: 16px;
+    font-size: var(--font-size-75);
+    line-height: var(--line-height-75);
     color: rgba(var(--center-channel-color-rgb), 0.64);
 `;
 
@@ -99,15 +104,15 @@ export const Card = ({title, subtitle, children}: {title?: string; subtitle?: st
 export type HeadingSize = 'large' | 'medium' | 'small';
 
 const headingStyles = {
-    large: css`font-size: 20px; line-height: 28px;`,
-    medium: css`font-size: 16px; line-height: 24px;`,
-    small: css`font-size: 14px; line-height: 20px;`,
+    large: css`font-size: var(--font-size-400); line-height: var(--line-height-400);`,
+    medium: css`font-size: var(--font-size-200); line-height: var(--line-height-200);`,
+    small: css`font-size: var(--font-size-100); line-height: var(--line-height-100);`,
 };
 
 const HeadingText = styled.h3<{$size: HeadingSize}>`
     margin: 0;
-    font-family: Metropolis, sans-serif;
-    font-weight: 600;
+    font-family: var(--font-family-heading);
+    font-weight: var(--font-weight-semibold);
     color: var(--center-channel-color);
     ${({$size}) => headingStyles[$size]}
 `;
@@ -119,8 +124,8 @@ export const Heading = ({text, size = 'medium'}: {text: string; size?: HeadingSi
 export type TextTone = 'default' | 'muted' | 'small';
 
 const TextBody = styled.div<{$tone: TextTone}>`
-    font-size: ${({$tone}) => ($tone === 'small' ? '12px' : '14px')};
-    line-height: ${({$tone}) => ($tone === 'small' ? '16px' : '20px')};
+    font-size: ${({$tone}) => ($tone === 'small' ? 'var(--font-size-75)' : 'var(--font-size-100)')};
+    line-height: ${({$tone}) => ($tone === 'small' ? 'var(--line-height-75)' : 'var(--line-height-100)')};
     color: ${({$tone}) => ($tone === 'default' ? 'var(--center-channel-color)' : 'rgba(var(--center-channel-color-rgb), 0.72)')};
     overflow-wrap: anywhere;
 
@@ -150,8 +155,8 @@ const FieldGrid = styled.dl`
     grid-template-columns: minmax(96px, max-content) 1fr;
     gap: var(--spacing-xs) var(--spacing-l);
     margin: 0;
-    font-size: 14px;
-    line-height: 20px;
+    font-size: var(--font-size-100);
+    line-height: var(--line-height-100);
 `;
 
 const FieldLabel = styled.dt`
@@ -194,10 +199,10 @@ const StepItem = styled.li`
 `;
 
 const stepColor: Record<StepStatus, string> = {
-    done: 'var(--online-indicator)',
-    current: 'var(--button-bg)',
+    done: 'var(--color-success)',
+    current: 'var(--color-info)',
     todo: 'rgba(var(--center-channel-color-rgb), 0.48)',
-    blocked: 'var(--error-text)',
+    blocked: 'var(--color-danger)',
 };
 
 const StepIconWrapper = styled.span<{$status: StepStatus}>`
@@ -208,16 +213,16 @@ const StepIconWrapper = styled.span<{$status: StepStatus}>`
 
 const StepTitle = styled.span<{$status: StepStatus}>`
     display: block;
-    font-size: 14px;
-    font-weight: ${({$status}) => ($status === 'current' ? 600 : 400)};
-    line-height: 20px;
+    font-size: var(--font-size-100);
+    font-weight: ${({$status}) => ($status === 'current' ? 'var(--font-weight-semibold)' : 'var(--font-weight-regular)')};
+    line-height: var(--line-height-100);
     color: var(--center-channel-color);
 `;
 
 const StepDescription = styled.span`
     display: block;
-    font-size: 12px;
-    line-height: 16px;
+    font-size: var(--font-size-75);
+    line-height: var(--line-height-75);
     color: rgba(var(--center-channel-color-rgb), 0.64);
 `;
 
@@ -258,9 +263,9 @@ const ExternalLink = styled.a`
     display: inline-flex;
     align-items: center;
     gap: var(--spacing-xxxs);
-    font-size: 14px;
-    font-weight: 600;
-    line-height: 20px;
+    font-size: var(--font-size-100);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-100);
     color: var(--link-color);
 
     &:hover {

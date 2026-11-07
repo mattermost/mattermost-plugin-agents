@@ -6,9 +6,14 @@ import {z} from 'zod/v4';
 import {createLibrary, defineComponent, type PromptOptions} from '@openuidev/react-lang';
 
 import {Divider as CompassDivider} from '@mattermost/compass-ui/components/divider';
+import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
+import {FieldMessage} from '@mattermost/compass-ui/components/field-message';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
-import {Tag as CompassTag, type TagType} from '@mattermost/compass-ui/components/tag';
+import {ShortcutTagGroup} from '@mattermost/compass-ui/components/shortcut-tag';
+import {Tag as CompassTag} from '@mattermost/compass-ui/components/tag';
 
+import {noticeType, statusTone, tagColor} from './compass/compass_coverage';
+import {compassLeaf} from './compass/compass_leaf';
 import * as D from './data_primitives';
 import * as P from './primitives';
 
@@ -22,28 +27,16 @@ const nodeProps = (nodes: unknown): Array<Record<string, unknown>> =>
 
 const asArray = <T, >(value: T[] | undefined | null): T[] => (Array.isArray(value) ? value : []);
 
-const tagTypes: Record<'neutral' | 'info' | 'success' | 'warning' | 'danger', TagType> = {
-    neutral: 'default',
-    info: 'info',
-    success: 'success',
-    warning: 'warning',
-    danger: 'danger',
-};
-
-export const Tag = defineComponent({
+export const Tag = compassLeaf({
     name: 'Tag',
     description: 'Compact status pill, e.g. a state, owner, or priority.',
-    props: z.object({
-        label: z.string(),
-        color: z.enum(['neutral', 'info', 'success', 'warning', 'danger']).optional(),
-    }),
-    component: ({props}) => (
-        <CompassTag
-            label={props.label}
-            type={tagTypes[props.color ?? 'neutral'] ?? 'default'}
-            size='small'
-        />
-    ),
+    compass: 'Tag',
+    component: CompassTag,
+    args: {
+        label: {prop: 'label', schema: z.string(), fallback: ''},
+        color: {prop: 'type', schema: tagColor.schema.optional(), values: tagColor, fallback: 'default'},
+    },
+    fixed: {size: 'small'},
 });
 
 const Tags = defineComponent({
@@ -85,21 +78,48 @@ const Text = defineComponent({
     ),
 });
 
-const Notice = defineComponent({
+const Notice = compassLeaf({
     name: 'Notice',
-    description: 'Highlighted callout for a key takeaway, warning, or blocker.',
-    props: z.object({
-        title: z.string(),
-        text: z.string().optional(),
-        type: z.enum(['info', 'success', 'warning', 'danger']).optional(),
-    }),
-    component: ({props}) => (
-        <SectionNotice
-            type={props.type ?? 'info'}
-            title={props.title ?? ''}
-            description={props.text}
-        />
-    ),
+    description: 'Highlighted callout for a key takeaway, warning, or blocker. "hint" is for a tip.',
+    compass: 'SectionNotice',
+    component: SectionNotice,
+    args: {
+        title: {prop: 'title', schema: z.string(), fallback: ''},
+        text: {prop: 'description', schema: z.string().optional()},
+        type: {prop: 'type', schema: noticeType.schema.optional(), values: noticeType, fallback: 'info'},
+    },
+});
+
+const Status = compassLeaf({
+    name: 'Status',
+    description: 'One-line status with a tone icon; lighter than Notice. "info" has no icon.',
+    compass: 'FieldMessage',
+    component: FieldMessage,
+    args: {
+        text: {prop: 'message', schema: z.string(), fallback: ''},
+        tone: {prop: 'tone', schema: statusTone.schema.optional(), values: statusTone, fallback: 'info'},
+    },
+});
+
+const Keys = compassLeaf({
+    name: 'Keys',
+    description: 'A keyboard shortcut, one key per item, e.g. Keys(["Ctrl", "Shift", "K"]).',
+    compass: 'ShortcutTagGroup',
+    component: ShortcutTagGroup,
+    args: {
+        keys: {prop: 'labels', schema: z.array(z.string()), fallback: []},
+    },
+});
+
+const Empty = compassLeaf({
+    name: 'Empty',
+    description: 'Placeholder when a search or list has no results.',
+    compass: 'EmptyState',
+    component: EmptyState,
+    args: {
+        title: {prop: 'title', schema: z.string(), fallback: ''},
+        text: {prop: 'description', schema: z.string().optional()},
+    },
 });
 
 const Field = defineComponent({
@@ -128,14 +148,17 @@ const Fields = defineComponent({
     ),
 });
 
+const TRENDS: readonly D.Trend[] = ['good', 'bad', 'neutral', 'up', 'down'];
+const asTrend = (value: unknown): D.Trend | undefined => TRENDS.find((trend) => trend === value);
+
 const Stat = defineComponent({
     name: 'Stat',
-    description: 'A headline metric. change is a short delta like "+12%"; trend colors it.',
+    description: 'A headline metric. change is a short delta like "+12%"; its sign sets the arrow. trend says if the change is "good" (green) or "bad" (red); "up"/"down" are legacy aliases.',
     props: z.object({
         label: z.string(),
         value: z.union([z.string(), z.number()]),
         change: z.string().optional(),
-        trend: z.enum(['up', 'down', 'neutral']).optional(),
+        trend: z.enum(TRENDS).optional(),
     }),
     component: () => null,
 });
@@ -147,14 +170,14 @@ const Stats = defineComponent({
         items: z.array(Stat.ref),
     }),
     component: ({props}) => (
-        <D.StatGrid>
+        <D.StatGrid count={nodeProps(props.items).length}>
             {nodeProps(props.items).map((item, index) => (
                 <D.Stat
                     key={`${String(item.label)}-${index}`}
                     label={String(item.label ?? '')}
                     value={(item.value as string | number | undefined) ?? ''}
                     change={item.change as string | undefined}
-                    trend={item.trend as D.Trend | undefined}
+                    trend={asTrend(item.trend)}
                 />
             ))}
         </D.StatGrid>
@@ -255,17 +278,21 @@ const Link = defineComponent({
     ),
 });
 
-const Divider = defineComponent({
+const Divider = compassLeaf({
     name: 'Divider',
     description: 'Thin horizontal rule between groups of content.',
-    props: z.object({}),
-    component: () => <CompassDivider/>,
+    compass: 'Divider',
+    component: CompassDivider,
+    args: {},
 });
 
 const ContentChild = z.union([
     Heading.ref,
     Text.ref,
     Notice.ref,
+    Status.ref,
+    Keys.ref,
+    Empty.ref,
     Fields.ref,
     Stats.ref,
     Table.ref,
@@ -323,6 +350,9 @@ export const mattermostLibrary = createLibrary({
         Heading,
         Text,
         Notice,
+        Status,
+        Keys,
+        Empty,
         Fields,
         Field,
         Stats,
@@ -339,9 +369,19 @@ export const mattermostLibrary = createLibrary({
     ],
     componentGroups: [
         {name: 'Layout', components: ['Stack', 'Card', 'Columns', 'Divider']},
-        {name: 'Text', components: ['Heading', 'Text', 'Notice', 'Link']},
-        {name: 'Data', components: ['Fields', 'Field', 'Stats', 'Stat', 'Table', 'BarChart', 'Progress']},
-        {name: 'Status', components: ['Steps', 'Step', 'Tags', 'Tag']},
+        {
+            name: 'Text',
+            components: ['Heading', 'Text', 'Notice', 'Status', 'Keys', 'Link'],
+            notes: ['Use at most one Notice per reply, for the key takeaway; use Status for a one-line result.'],
+        },
+        {name: 'Data', components: ['Fields', 'Field', 'Stats', 'Stat', 'Table', 'BarChart', 'Progress', 'Empty']},
+        {
+            name: 'Status',
+            components: ['Steps', 'Step', 'Tags', 'Tag'],
+
+            // From Compass's compass-build skill (references/components.md, "Label or status tag").
+            notes: ['Pick the Tag color by meaning: info for context, warning for caution, success or danger for results, neutral only for plain metadata.'],
+        },
     ],
 });
 
@@ -356,7 +396,7 @@ export const promptOptions: PromptOptions = {
         [
             'root = Stack([summary, metrics, details])',
             'summary = Text("Release **v2.4** is on track for Friday.")',
-            'metrics = Stats([Stat("Open PRs", 6, "-3 since Monday", "down"), Stat("Bugs fixed", 41, "+12", "up")])',
+            'metrics = Stats([Stat("Open PRs", 6, "-3 since Monday", "good"), Stat("Bugs fixed", 41, "+12", "good")])',
             'details = Card("Remaining work", [plan])',
             'plan = Steps([Step("Code freeze", "done"), Step("QA sign-off", "current", "2 blockers left"), Step("Ship", "todo")])',
         ].join('\n'),

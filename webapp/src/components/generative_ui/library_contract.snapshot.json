@@ -9,13 +9,17 @@
         ],
         "Card": [
             {"name":"title","required":true,"schema":{"type":"string"}},
-            {"name":"children","required":true,"schema":{"type":"array","items":{"anyOf":[{"$ref":"#/$defs/Heading"},{"$ref":"#/$defs/Text"},{"$ref":"#/$defs/Notice"},{"$ref":"#/$defs/Fields"},{"$ref":"#/$defs/Stats"},{"$ref":"#/$defs/Table"},{"$ref":"#/$defs/BarChart"},{"$ref":"#/$defs/Progress"},{"$ref":"#/$defs/Steps"},{"$ref":"#/$defs/Tags"},{"$ref":"#/$defs/Link"},{"$ref":"#/$defs/Divider"}]}}},
+            {"name":"children","required":true,"schema":{"type":"array","items":{"anyOf":[{"$ref":"#/$defs/Heading"},{"$ref":"#/$defs/Text"},{"$ref":"#/$defs/Notice"},{"$ref":"#/$defs/Status"},{"$ref":"#/$defs/Keys"},{"$ref":"#/$defs/Empty"},{"$ref":"#/$defs/Fields"},{"$ref":"#/$defs/Stats"},{"$ref":"#/$defs/Table"},{"$ref":"#/$defs/BarChart"},{"$ref":"#/$defs/Progress"},{"$ref":"#/$defs/Steps"},{"$ref":"#/$defs/Tags"},{"$ref":"#/$defs/Link"},{"$ref":"#/$defs/Divider"}]}}},
             {"name":"subtitle","required":false,"schema":{"type":"string"}}
         ],
         "Columns": [
             {"name":"children","required":true,"schema":{"type":"array","items":{"$ref":"#/$defs/Card"}}}
         ],
         "Divider": [],
+        "Empty": [
+            {"name":"title","required":true,"schema":{"type":"string"}},
+            {"name":"text","required":false,"schema":{"type":"string"}}
+        ],
         "Field": [
             {"name":"label","required":true,"schema":{"type":"string"}},
             {"name":"value","required":true,"schema":{"anyOf":[{"type":"string"},{"type":"number"},{"$ref":"#/$defs/Tag"}]}}
@@ -27,6 +31,9 @@
             {"name":"text","required":true,"schema":{"type":"string"}},
             {"name":"size","required":false,"schema":{"type":"string","enum":["large","medium","small"]}}
         ],
+        "Keys": [
+            {"name":"keys","required":true,"schema":{"type":"array","items":{"type":"string"}}}
+        ],
         "Link": [
             {"name":"label","required":true,"schema":{"type":"string"}},
             {"name":"url","required":true,"schema":{"type":"string"}}
@@ -34,7 +41,7 @@
         "Notice": [
             {"name":"title","required":true,"schema":{"type":"string"}},
             {"name":"text","required":false,"schema":{"type":"string"}},
-            {"name":"type","required":false,"schema":{"type":"string","enum":["info","success","warning","danger"]}}
+            {"name":"type","required":false,"schema":{"type":"string","enum":["info","success","warning","danger","hint"]}}
         ],
         "Progress": [
             {"name":"label","required":true,"schema":{"type":"string"}},
@@ -42,17 +49,21 @@
             {"name":"caption","required":false,"schema":{"type":"string"}}
         ],
         "Stack": [
-            {"name":"children","required":true,"schema":{"type":"array","items":{"anyOf":[{"$ref":"#/$defs/Heading"},{"$ref":"#/$defs/Text"},{"$ref":"#/$defs/Notice"},{"$ref":"#/$defs/Fields"},{"$ref":"#/$defs/Stats"},{"$ref":"#/$defs/Table"},{"$ref":"#/$defs/BarChart"},{"$ref":"#/$defs/Progress"},{"$ref":"#/$defs/Steps"},{"$ref":"#/$defs/Tags"},{"$ref":"#/$defs/Link"},{"$ref":"#/$defs/Divider"},{"$ref":"#/$defs/Card"},{"$ref":"#/$defs/Columns"}]}}},
+            {"name":"children","required":true,"schema":{"type":"array","items":{"anyOf":[{"$ref":"#/$defs/Heading"},{"$ref":"#/$defs/Text"},{"$ref":"#/$defs/Notice"},{"$ref":"#/$defs/Status"},{"$ref":"#/$defs/Keys"},{"$ref":"#/$defs/Empty"},{"$ref":"#/$defs/Fields"},{"$ref":"#/$defs/Stats"},{"$ref":"#/$defs/Table"},{"$ref":"#/$defs/BarChart"},{"$ref":"#/$defs/Progress"},{"$ref":"#/$defs/Steps"},{"$ref":"#/$defs/Tags"},{"$ref":"#/$defs/Link"},{"$ref":"#/$defs/Divider"},{"$ref":"#/$defs/Card"},{"$ref":"#/$defs/Columns"}]}}},
             {"name":"gap","required":false,"schema":{"type":"string","enum":["s","m","l"]}}
         ],
         "Stat": [
             {"name":"label","required":true,"schema":{"type":"string"}},
             {"name":"value","required":true,"schema":{"type":["string","number"]}},
             {"name":"change","required":false,"schema":{"type":"string"}},
-            {"name":"trend","required":false,"schema":{"type":"string","enum":["up","down","neutral"]}}
+            {"name":"trend","required":false,"schema":{"type":"string","enum":["good","bad","neutral","up","down"]}}
         ],
         "Stats": [
             {"name":"items","required":true,"schema":{"type":"array","items":{"$ref":"#/$defs/Stat"}}}
+        ],
+        "Status": [
+            {"name":"text","required":true,"schema":{"type":"string"}},
+            {"name":"tone","required":false,"schema":{"type":"string","enum":["info","success","warning","danger"]}}
         ],
         "Step": [
             {"name":"title","required":true,"schema":{"type":"string"}},

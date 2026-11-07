@@ -300,6 +300,9 @@ ifneq ($(HAS_WEBAPP),)
 # mirrors against the committed host snapshot; additionally probes a live
 # mattermost webapp checkout (and the snapshot's freshness) when one is found.
 	cd webapp && npm run check-editor-contract
+# Generative UI coverage is checked against this snapshot of the pinned
+# compass-ui; regenerate with `npm run update-compass-manifest` after a bump.
+	cd webapp && npm run check-compass-manifest
 endif
 
 # It's highly recommended to run go-vet first
