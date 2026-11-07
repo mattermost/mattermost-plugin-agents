@@ -130,8 +130,12 @@ func (c *Conversations) handleUIAction(ctx context.Context, userID string, post 
 	// A retry of an accepted submission finds the reply no longer latest, so
 	// it is recognized by its idempotency key before that check.
 	claimKey := uiActionClaimKey(conv.ID, post.Id)
-	if accepted, err := c.isAcceptedUIAction(claimKey, req.IdempotencyKey); err != nil || accepted {
-		return &UIActionResult{}, err
+	accepted, err := c.isAcceptedUIAction(claimKey, req.IdempotencyKey)
+	if err != nil {
+		return nil, err
+	}
+	if accepted {
+		return &UIActionResult{}, nil
 	}
 
 	turns, err := c.convService.GetTurns(convID)

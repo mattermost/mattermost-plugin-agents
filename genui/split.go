@@ -40,7 +40,7 @@ func ClosedBlocks(message string) []string {
 	insideOtherFence := false
 	fence := ""
 
-	for _, line := range strings.Split(message, "\n") {
+	for line := range strings.SplitSeq(message, "\n") {
 		if inUI {
 			if isFenceClose(line, fence) {
 				blocks = append(blocks, strings.Join(ui, "\n"))

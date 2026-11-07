@@ -322,6 +322,33 @@ export async function doToolCall(postid: string, toolIDs: string[], toolAnswers?
     });
 }
 
+export interface UIActionRequest {
+    block: number;
+    form: string;
+    label: string;
+    fields: Array<{name: string; label: string; value: string | number | boolean}>;
+    idempotency_key: string;
+}
+
+// doUIAction submits a form, or clicks a button, in an agent reply's generated UI.
+export async function doUIAction(postid: string, request: UIActionRequest): Promise<{post_id: string}> {
+    const url = `${postRoute(postid)}/ui_action`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify(request),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function doToolResult(postid: string, toolIDs: string[]): Promise<void> {
     const url = `${postRoute(postid)}/tool_result`;
     const response = await fetch(url, Client4.getOptions({

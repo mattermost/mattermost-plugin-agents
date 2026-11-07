@@ -39,6 +39,9 @@ interface Props {
     // Render fenced OpenUI Lang blocks as components: only replies from an
     // agent with generative UI enabled (isGenerativeUIEnabledForBot) opt in.
     allowGenerativeUI?: boolean;
+
+    /** How many UI blocks earlier rounds of the same reply hold, so block indexes span the reply. */
+    uiBlockOffset?: number;
 }
 
 const blinkKeyframes = keyframes`
@@ -228,6 +231,7 @@ const PostText = (props: Props) => {
     const segments = generativeUIEnabled ? splitGenerativeUI(processedMessage) : [];
     if (segments.some((segment) => segment.type === 'ui')) {
         const lastIndex = segments.length - 1;
+        let uiIndex = props.uiBlockOffset ?? 0;
         return (
             <GenerativeUIPostContext.Provider value={renderMarkdown}>
                 {segments.map((segment, index) => {
@@ -238,6 +242,7 @@ const PostText = (props: Props) => {
                                 key={key}
                                 source={segment.source}
                                 isStreaming={Boolean(props.showCursor) && !segment.closed}
+                                blockIndex={uiIndex++}
                             />
                         );
                     }
