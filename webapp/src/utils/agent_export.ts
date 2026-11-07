@@ -133,9 +133,10 @@ function parseSkills(value: unknown): SkillsConfig | null {
     }
     const disabled = readBoolean(value.disabled, false);
     const allowPersonal = readBoolean(value.allowPersonal, false);
+    const generativeUI = readBoolean(value.generativeUI, false);
     const rawIDs = value.enabledSharedIDs ?? [];
     const rawOverrides = value.descriptionOverrides ?? {};
-    if (disabled === null || allowPersonal === null || !Array.isArray(rawIDs) || !isRecord(rawOverrides)) {
+    if (disabled === null || allowPersonal === null || generativeUI === null || !Array.isArray(rawIDs) || !isRecord(rawOverrides)) {
         return null;
     }
 
@@ -159,7 +160,7 @@ function parseSkills(value: unknown): SkillsConfig | null {
         }
     }
 
-    return {disabled, allowPersonal, enabledSharedIDs, descriptionOverrides};
+    return {disabled, allowPersonal, enabledSharedIDs, descriptionOverrides, generativeUI};
 }
 
 function parseAgent(value: unknown): AgentExportAgent | null {

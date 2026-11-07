@@ -9,7 +9,7 @@ import {GlobalState} from '@mattermost/types/store';
 import {Channel} from '@mattermost/types/channels';
 import {Team} from '@mattermost/types/teams';
 
-import {getGenerativeUIEnabled, getLinkPolicy} from '@/selectors';
+import {getLinkPolicy} from '@/selectors';
 import {LinkRendering, linkRendering} from '@/utils/link_allowlist';
 
 import {insertAnnotationMarkers, replaceCitationMarkers} from './citations/citation_processor';
@@ -36,7 +36,8 @@ interface Props {
     /** Streaming reveal: the message renders block by block as text is revealed. */
     reveal?: boolean;
 
-    // Render fenced OpenUI Lang blocks as components; only agent replies opt in.
+    // Render fenced OpenUI Lang blocks as components: only replies from an
+    // agent with generative UI enabled (isGenerativeUIEnabledForBot) opt in.
     allowGenerativeUI?: boolean;
 }
 
@@ -194,7 +195,7 @@ const PostText = (props: Props) => {
     const renderContext = usePostRenderContext(props.channelID);
     const {team, siteURL, links} = renderContext;
     const renderMarkdown = usePostMarkdown(props.postID, renderContext);
-    const generativeUIEnabled = useSelector(getGenerativeUIEnabled) && Boolean(props.allowGenerativeUI);
+    const generativeUIEnabled = Boolean(props.allowGenerativeUI);
 
     // A citation whose URL the policy rejects keeps its marker but loses the
     // URL, so the chip renders without a destination to open.

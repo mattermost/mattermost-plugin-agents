@@ -43,7 +43,7 @@ const validDocument = {
         mcpDynamicToolLoading: false,
         autoEnableNewMCPTools: false,
         mcpTools: [{serverOrigin: 'https://jira.example.com/mcp', toolName: 'search'}],
-        skills: {disabled: false, allowPersonal: true, enabledSharedIDs: [skillID], descriptionOverrides: {[skillID]: 'Use for releases'}},
+        skills: {disabled: false, allowPersonal: true, enabledSharedIDs: [skillID], descriptionOverrides: {[skillID]: 'Use for releases'}, generativeUI: true},
     },
 };
 
@@ -62,7 +62,7 @@ describe('buildAgentExport', () => {
                 {server_origin: 'https://jira.example.com/mcp/', tool_name: 'search'},
                 {server_origin: 'https://jira.example.com/mcp', tool_name: ' search '},
             ],
-            skills: {disabled: false, allowPersonal: true, enabledSharedIDs: [skillID], descriptionOverrides: {[skillID]: 'Use for releases'}},
+            skills: {disabled: false, allowPersonal: true, enabledSharedIDs: [skillID], descriptionOverrides: {[skillID]: 'Use for releases'}, generativeUI: true},
         }, 3, 10);
 
         expect(doc).toEqual(validDocument);
@@ -71,7 +71,7 @@ describe('buildAgentExport', () => {
 
     test('exports default skill settings for snapshots saved before skills existed', () => {
         const doc = buildAgentExport({name: 'helper', skills: null}, 1, 10);
-        expect(doc.agent.skills).toEqual({disabled: false, allowPersonal: false, enabledSharedIDs: [], descriptionOverrides: {}});
+        expect(doc.agent.skills).toEqual({disabled: false, allowPersonal: false, enabledSharedIDs: [], descriptionOverrides: {}, generativeUI: false});
     });
 });
 
@@ -133,14 +133,14 @@ describe('readAgentExportFile', () => {
             mcpDynamicToolLoading: true,
             autoEnableNewMCPTools: false,
             mcpTools: [],
-            skills: {disabled: false, allowPersonal: false, enabledSharedIDs: [], descriptionOverrides: {}},
+            skills: {disabled: false, allowPersonal: false, enabledSharedIDs: [], descriptionOverrides: {}, generativeUI: false},
         });
     });
 
     test('drops duplicate skill IDs and blank overrides', async () => {
         const skills = {enabledSharedIDs: [skillID, skillID], descriptionOverrides: {[skillID]: '  '}};
         const doc = await readAgentExportFile(agentFile({...validDocument, agent: {...validDocument.agent, skills}}), intl);
-        expect(doc.agent.skills).toEqual({disabled: false, allowPersonal: false, enabledSharedIDs: [skillID], descriptionOverrides: {}});
+        expect(doc.agent.skills).toEqual({disabled: false, allowPersonal: false, enabledSharedIDs: [skillID], descriptionOverrides: {}, generativeUI: false});
     });
 
     test.each([
@@ -153,6 +153,7 @@ describe('readAgentExportFile', () => {
         {name: 'an override keyed by a malformed ID', content: {...validDocument, agent: {...validDocument.agent, skills: {descriptionOverrides: {bad: 'x'}}}}, message: 'not a valid Mattermost agent export'},
         {name: 'an override over the length limit', content: {...validDocument, agent: {...validDocument.agent, skills: {descriptionOverrides: {[skillID]: 'x'.repeat(1025)}}}}, message: 'not a valid Mattermost agent export'},
         {name: 'a wrongly typed skills flag', content: {...validDocument, agent: {...validDocument.agent, skills: {disabled: 'no'}}}, message: 'not a valid Mattermost agent export'},
+        {name: 'a wrongly typed generative UI flag', content: {...validDocument, agent: {...validDocument.agent, skills: {generativeUI: 'yes'}}}, message: 'not a valid Mattermost agent export'},
         {name: 'a tool without an origin', content: {...validDocument, agent: {...validDocument.agent, mcpTools: [{serverOrigin: ' ', toolName: 'x'}]}}, message: 'not a valid Mattermost agent export'},
     ])('rejects $name', async ({content, message}) => {
         await expect(readAgentExportFile(agentFile(content), intl)).rejects.toThrow(message);

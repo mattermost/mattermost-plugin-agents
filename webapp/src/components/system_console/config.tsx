@@ -544,7 +544,7 @@ const Config = (props: Props) => {
                         onChange={(to) => {
                             updateConfig({enableGenerativeUI: to});
                         }}
-                        helpText={intl.formatMessage({defaultMessage: 'When enabled, agents can answer direct messages and mentions with structured UI such as tables, cards, metrics, and checklists, rendered with Mattermost components inside the post. Only a fixed set of display components can render; generated UI cannot run scripts or call tools. Clients without the plugin, such as mobile, show the UI source as a code block. Takes effect for new conversations.'})}
+                        helpText={intl.formatMessage({defaultMessage: 'When enabled, agents that also turn on Generative UI in their Skills settings can reply with structured UI such as tables, cards, metrics, and checklists, rendered with Mattermost components inside the post. The agent loads it as a built-in skill when a reply suits it, so it needs the agent\'s tools and skills on. Only a fixed set of display components can render; generated UI cannot run scripts or call tools. Clients without the plugin, such as mobile, show the UI source as a code block.'})}
                     />
                     <BooleanItem
                         label={

@@ -27,6 +27,9 @@ interface RoundViewProps {
     /** Only on the live round in surfaces that smooth streaming text. */
     reveal?: boolean;
 
+    /** Whether the post's agent has generative UI enabled. */
+    allowGenerativeUI: boolean;
+
     /** Takes the round id so the post can pass one callback to every round. */
     onToggleReasoning: (roundId: string, collapsed: boolean) => void;
 }
@@ -58,7 +61,7 @@ export const RoundView = React.memo((props: RoundViewProps) => {
                     postID={props.postID}
                     showCursor={props.showCursor}
                     reveal={props.reveal}
-                    allowGenerativeUI={true}
+                    allowGenerativeUI={props.allowGenerativeUI}
                     annotations={round.annotations.length > 0 ? round.annotations : undefined} // eslint-disable-line no-undefined
                 />
             )}

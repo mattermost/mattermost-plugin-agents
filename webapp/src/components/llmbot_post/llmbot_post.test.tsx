@@ -7,6 +7,7 @@ import {IntlProvider} from 'react-intl';
 import {useSelector} from 'react-redux';
 
 import {useConversation} from '@/hooks/use_conversation';
+import manifest from '@/manifest';
 import {PluginWebSocketMessage} from '@/types';
 import type {ConversationResponse, Turn} from '@/types/conversation';
 
@@ -64,13 +65,15 @@ jest.mock('@/mm_webapp', () => ({
 }));
 
 const mockPostTextRender = jest.fn<void, [string]>();
+const mockPostTextAllowGenerativeUI = jest.fn<void, [boolean | undefined]>();
 jest.mock('../post_text', () => {
     const ReactLocal = jest.requireActual('react') as typeof React;
 
     return {
         __esModule: true,
-        default: ({message}: {message: string}) => {
+        default: ({message, allowGenerativeUI}: {message: string; allowGenerativeUI?: boolean}) => {
             mockPostTextRender(message);
+            mockPostTextAllowGenerativeUI(allowGenerativeUI);
             return ReactLocal.createElement('div', null, message);
         },
     };
@@ -234,6 +237,29 @@ beforeEach(() => {
     });
 
     mockPostTextRender.mockClear();
+});
+
+describe('LLMBotPost generative UI gate', () => {
+    test.each([
+        {name: 'renders generative UI for an agent that has it enabled', bots: [{id: 'bot_1', generativeUIEnabled: true}], expected: true},
+        {name: 'leaves it as markdown for an agent that has it disabled', bots: [{id: 'bot_1', generativeUIEnabled: false}], expected: false},
+        {name: 'leaves it as markdown for another agent\'s setting', bots: [{id: 'bot_2', generativeUIEnabled: true}], expected: false},
+        {name: 'leaves it as markdown before the agent list loads', bots: null, expected: false},
+    ])('$name', ({bots, expected}) => {
+        mockUseSelector.mockImplementation((selector) => selector({
+            entities: {
+                channels: {channels: {channel_1: {type: 'D'}}},
+                posts: {posts: {}},
+                users: {currentUserId: 'user_1'},
+            },
+            [`plugins-${manifest.id}`]: {bots},
+        }));
+        mockPostTextAllowGenerativeUI.mockClear();
+
+        renderPost({...makePost('Status report'), user_id: 'bot_1'} as ReturnType<typeof makePost>);
+
+        expect(mockPostTextAllowGenerativeUI).toHaveBeenLastCalledWith(expected);
+    });
 });
 
 describe('LLMBotPost streaming fallback rendering', () => {

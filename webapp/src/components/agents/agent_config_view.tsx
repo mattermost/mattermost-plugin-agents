@@ -34,6 +34,7 @@ import {defaultReasoningEffort} from '@/components/system_console/reasoning_conf
 import ConfirmationDialog from '@/components/confirmation_dialog';
 import {UnderlineTab, UnderlineTabs} from '@/components/underline_tabs';
 import {useIsLicensedFor} from '@/license';
+import {getGenerativeUIEnabled} from '@/selectors';
 import {useABACSupport} from '@/utils/access_control';
 import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
 import {downloadAgentExport, matchImportedMCPTools} from '@/utils/agent_export';
@@ -273,6 +274,7 @@ const AgentConfigView = (props: Props) => {
     const providerWebSearchLicensed = useIsLicensedFor('provider_web_search');
     const sharedSkillsLicensed = useIsLicensedFor('shared_prompts');
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
+    const generativeUIServerEnabled = useSelector(getGenerativeUIEnabled);
 
     const [activeTab, setActiveTab] = useState<Tab>('config');
     const initialDraft = useMemo(() => {
@@ -856,6 +858,7 @@ const AgentConfigView = (props: Props) => {
                         onChange={updateSkills}
                         currentUserId={currentUserId}
                         sharingLicensed={sharedSkillsLicensed}
+                        generativeUIServerEnabled={generativeUIServerEnabled}
                     />
                 </div>
             )}

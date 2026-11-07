@@ -691,7 +691,7 @@ describe('AgentConfigView', () => {
         const visibleID = 'b'.repeat(26);
         const agent: UserAgent = {
             ...savedAgent,
-            skills: {disabled: false, allowPersonal: true, enabledSharedIDs: [hiddenID], descriptionOverrides: {[hiddenID]: 'Hidden override'}},
+            skills: {disabled: false, allowPersonal: true, enabledSharedIDs: [hiddenID], descriptionOverrides: {[hiddenID]: 'Hidden override'}, generativeUI: false},
         };
         mockUpdateAgent.mockResolvedValue(agent);
         render(
@@ -716,6 +716,7 @@ describe('AgentConfigView', () => {
             allowPersonal: true,
             enabledSharedIDs: [hiddenID, visibleID],
             descriptionOverrides: {[hiddenID]: 'Hidden override'},
+            generativeUI: false,
         });
     });
 
@@ -742,6 +743,7 @@ describe('AgentConfigView', () => {
             allowPersonal: false,
             enabledSharedIDs: [],
             descriptionOverrides: {},
+            generativeUI: false,
         });
     });
 
@@ -1445,14 +1447,14 @@ describe('AgentConfigView history and export', () => {
             mockGetAgentVersion.mockImplementation(async () => ({
                 ...versionList.versions[0],
                 changedFields: ['skills'],
-                config: {...existingAgent, skills: {disabled: false, allowPersonal: true, enabledSharedIDs: ['a'.repeat(26), 'b'.repeat(26)], descriptionOverrides: null}},
+                config: {...existingAgent, skills: {disabled: false, allowPersonal: true, enabledSharedIDs: ['a'.repeat(26), 'b'.repeat(26)], descriptionOverrides: null, generativeUI: false}},
             }));
             renderEdit();
             await openHistory();
             await screen.findByTestId('version-snapshot');
 
             expect(within(labelOf('Skills')).getByText('Changed')).not.toBeNull();
-            expect(screen.getByText('Enabled, personal skills allowed, 2 shared skills')).not.toBeNull();
+            expect(screen.getByText('Enabled, personal skills allowed, 2 shared skills, generative UI off')).not.toBeNull();
             expect(screen.queryByTestId('version-other-changes')).toBeNull();
         });
 
@@ -1866,7 +1868,7 @@ describe('AgentConfigView import from file', () => {
                 {serverOrigin: 'https://jira.example.com/mcp', toolName: 'search'},
                 {serverOrigin: 'https://linear.example.com', toolName: 'issues'},
             ],
-            skills: {disabled: false, allowPersonal: true, enabledSharedIDs: ['aaaaaaaaaaaaaaaaaaaaaaaaaa'], descriptionOverrides: {}},
+            skills: {disabled: false, allowPersonal: true, enabledSharedIDs: ['aaaaaaaaaaaaaaaaaaaaaaaaaa'], descriptionOverrides: {}, generativeUI: false},
         },
     };
 
@@ -1921,7 +1923,7 @@ describe('AgentConfigView import from file', () => {
             mcpDynamicToolLoading: false,
             autoEnableNewMCPTools: false,
             enabledMCPTools: [{server_origin: 'https://jira.example.com/mcp/', tool_name: 'search'}],
-            skills: {disabled: false, allowPersonal: true, enabledSharedIDs: ['aaaaaaaaaaaaaaaaaaaaaaaaaa'], descriptionOverrides: {}},
+            skills: {disabled: false, allowPersonal: true, enabledSharedIDs: ['aaaaaaaaaaaaaaaaaaaaaaaaaa'], descriptionOverrides: {}, generativeUI: false},
         }));
     });
 

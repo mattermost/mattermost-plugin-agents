@@ -159,6 +159,7 @@ The Skills tab is available only when **Enable Tools** is on (Configuration tab)
 - **Allow personal skills** lets each user's own skills be used by this agent in that user's direct messages with it. Personal skills are never used in channels.
 - **Shared skills** lists skills shared with the workspace. Each one must be turned on for this agent; skills shared later are not added automatically. Shared skills require the same license as sharing skills.
 - **Description override** replaces a skill's description for this agent only (up to 1024 characters), for example to say when this agent should use it.
+- **Generative UI** (experimental, off by default) lets the agent reply with structured UI, such as tables, cards, metrics, and checklists, by loading a built-in skill when a reply suits it. It also needs **Enable generative UI** in the System Console; see [Generative UI](../admin_guide.md#generative-ui).
 - **Your personal skills** lists skills only you can use. Select **Share** to share one with the workspace and turn it on for this agent.
 
 Skills built into Agents are not listed; they are offered whenever the tools they need are available. A skill without a description is not offered to the agent automatically.
