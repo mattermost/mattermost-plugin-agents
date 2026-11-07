@@ -27,9 +27,12 @@ type Props = {
 
     /** Whether the license allows sharing skills (shared custom prompts). */
     sharingLicensed: boolean;
+
+    /** The server-wide generative UI switch, which the agent's opt-in also needs. */
+    generativeUIServerEnabled: boolean;
 }
 
-const SkillsTab = ({skills, onChange, currentUserId, sharingLicensed}: Props) => {
+const SkillsTab = ({skills, onChange, currentUserId, sharingLicensed, generativeUIServerEnabled}: Props) => {
     const intl = useIntl();
     const [prompts, setPrompts] = useState<CustomPrompt[]>([]);
     const [loading, setLoading] = useState(true);
@@ -295,6 +298,32 @@ const SkillsTab = ({skills, onChange, currentUserId, sharingLicensed}: Props) =>
                             onChange={(checked) => onChange({allowPersonal: checked})}
                         />
                     </ToggleRow>
+                    <ToggleRow>
+                        <ToggleText>
+                            <ToggleTitleRow>
+                                <ToggleTitle>
+                                    <FormattedMessage defaultMessage='Generative UI'/>
+                                </ToggleTitle>
+                                <Tag
+                                    type='info'
+                                    label={<FormattedMessage defaultMessage='EXPERIMENTAL'/>}
+                                />
+                            </ToggleTitleRow>
+                            <ToggleHint>
+                                <FormattedMessage defaultMessage='The agent can reply with structured UI, such as tables, cards, metrics, and checklists, when a reply is clearer that way.'/>
+                            </ToggleHint>
+                            {skills.generativeUI && !generativeUIServerEnabled && (
+                                <ToggleHint data-testid='generative-ui-server-off'>
+                                    <FormattedMessage defaultMessage='Has no effect until a system admin turns on Enable generative UI in the System Console.'/>
+                                </ToggleHint>
+                            )}
+                        </ToggleText>
+                        <ToggleSwitch
+                            ariaLabel={intl.formatMessage({defaultMessage: 'Generative UI'})}
+                            checked={skills.generativeUI}
+                            onChange={(checked) => onChange({generativeUI: checked})}
+                        />
+                    </ToggleRow>
                     {lists}
                 </>
             )}
@@ -322,6 +351,12 @@ const ToggleText = styled.div`
     flex: 1;
     min-width: 0;
     gap: var(--spacing-xxxs);
+`;
+
+const ToggleTitleRow = styled.div`
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
 `;
 
 const ToggleTitle = styled.span`

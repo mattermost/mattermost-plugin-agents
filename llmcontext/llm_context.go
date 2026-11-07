@@ -71,7 +71,6 @@ type Builder struct {
 	skillProvider   SkillProvider
 
 	mcpDynamicToolTelemetry llm.MCPDynamicToolTelemetry
-	generativeUIEnabled     func() bool
 }
 
 // NewLLMContextBuilder creates a new LLM context builder
@@ -98,12 +97,6 @@ func (b *Builder) SetSkillProvider(provider SkillProvider) {
 	b.skillProvider = provider
 }
 
-// SetGenerativeUIEnabled supplies the live config check for generative UI, so
-// toggling it takes effect on the next request without rebuilding the builder.
-func (b *Builder) SetGenerativeUIEnabled(enabled func() bool) {
-	b.generativeUIEnabled = enabled
-}
-
 // BuildLLMContextUserRequest is a helper function to collect the required context for a user request.
 func (b *Builder) BuildLLMContextUserRequest(bot *bots.Bot, requestingUser *model.User, channel *model.Channel, opts ...llm.ContextOption) *llm.Context {
 	allOpts := []llm.ContextOption{
@@ -111,19 +104,10 @@ func (b *Builder) BuildLLMContextUserRequest(bot *bots.Bot, requestingUser *mode
 		b.WithLLMContextRequestingUser(requestingUser),
 		b.WithLLMContextChannel(channel),
 		b.WithLLMContextBot(bot),
-		b.withLLMContextGenerativeUI(),
 	}
 	allOpts = append(allOpts, opts...)
 
 	return llm.NewContext(allOpts...)
-}
-
-// withLLMContextGenerativeUI is applied only to user requests, whose replies
-// land in agent posts the webapp renders; bridge completions never get it.
-func (b *Builder) withLLMContextGenerativeUI() llm.ContextOption {
-	return func(c *llm.Context) {
-		c.GenerativeUI = b.generativeUIEnabled != nil && b.generativeUIEnabled()
-	}
 }
 
 func (b *Builder) WithLLMContextServerInfo() llm.ContextOption {

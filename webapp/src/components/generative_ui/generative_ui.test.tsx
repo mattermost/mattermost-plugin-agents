@@ -55,7 +55,7 @@ beforeAll(() => {
 
 describe('generative UI in agent posts', () => {
     it('renders an OpenUI Lang block as Mattermost components between the prose', () => {
-        renderPost({generativeUIEnabled: true});
+        renderPost({});
 
         const block = screen.getByTestId('generative-ui-block');
         expect(screen.getByText('Two services need attention.')).toBeTruthy();
@@ -76,7 +76,7 @@ describe('generative UI in agent posts', () => {
         {name: 'allowlist containing the host', linkPolicy: {kind: 'allowlist', allowedDomains: [{host: 'example.com', wildcard: false}]}, clickable: true},
         {name: 'allowlist without the host', linkPolicy: {kind: 'allowlist', allowedDomains: [{host: 'other.com', wildcard: false}]}, clickable: false},
     ])('follows the $name link policy', ({linkPolicy, clickable}) => {
-        renderPost({generativeUIEnabled: true, linkPolicy});
+        renderPost({linkPolicy});
         if (clickable) {
             expect(screen.getByRole('link', {name: /Runbook/}).getAttribute('href')).toBe('https://example.com/runbook');
         } else {
@@ -85,11 +85,8 @@ describe('generative UI in agent posts', () => {
         }
     });
 
-    it.each([
-        {name: 'feature disabled', pluginState: {generativeUIEnabled: false}, allowGenerativeUI: true},
-        {name: 'post does not opt in', pluginState: {generativeUIEnabled: true}, allowGenerativeUI: false},
-    ])('leaves the block as markdown when $name', ({pluginState, allowGenerativeUI}) => {
-        renderPost(pluginState, allowGenerativeUI);
+    it('leaves the block as markdown when the post does not opt in', () => {
+        renderPost({}, false);
         expect(screen.queryByTestId('generative-ui-block')).toBeNull();
         expect(screen.getByText(/```openui-lang/)).toBeTruthy();
     });

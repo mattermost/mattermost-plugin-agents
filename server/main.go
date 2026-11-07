@@ -523,7 +523,6 @@ func (p *Plugin) OnActivate() error {
 		&p.configuration,
 	)
 	contextBuilder.SetMCPDynamicToolTelemetry(metricsService)
-	contextBuilder.SetGenerativeUIEnabled(p.configuration.EnableGenerativeUI)
 
 	policyChecker := mcp.NewConfigToolPolicyChecker(p.configuration.MCP, func() bool {
 		return licenseChecker.Allows(enterprise.CapToolApprovalPolicies)
@@ -598,9 +597,11 @@ func (p *Plugin) OnActivate() error {
 	}
 
 	customPromptsStore := customprompts.NewStore(dbClient)
-	contextBuilder.SetSkillProvider(skills.NewProvider(customPromptsStore, prompts, func() bool {
+	skillProvider := skills.NewProvider(customPromptsStore, prompts, func() bool {
 		return licenseChecker.Allows(enterprise.CapSharedPrompts)
-	}))
+	})
+	skillProvider.SetGenerativeUIEnabled(p.configuration.GenerativeUIEnabledForAgent)
+	contextBuilder.SetSkillProvider(skillProvider)
 
 	apiService := api.New(
 		bots,

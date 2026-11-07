@@ -35,6 +35,9 @@ export type SkillsConfig = {
     // Server sends nil Go slices and maps as JSON null.
     enabledSharedIDs: string[] | null;
     descriptionOverrides: Record<string, string> | null;
+
+    // Experimental generative UI opt-in; it also needs the server-wide switch.
+    generativeUI: boolean;
 }
 
 // normalizeSkillsConfig fills in what older servers and snapshots omit.
@@ -44,6 +47,7 @@ export function normalizeSkillsConfig(skills?: Partial<SkillsConfig> | null): Sk
         allowPersonal: skills?.allowPersonal ?? false,
         enabledSharedIDs: [...(skills?.enabledSharedIDs ?? [])],
         descriptionOverrides: {...(skills?.descriptionOverrides ?? {})},
+        generativeUI: skills?.generativeUI ?? false,
     };
 }
 
