@@ -1331,6 +1331,7 @@ func TestPostRouter(t *testing.T) {
 		"loop_in_agent":           "/post/postid/loop_in_agent",
 		"wait_check_now":          "/post/postid/wait/check_now",
 		"wait_cancel":             "/post/postid/wait/cancel",
+		"ui_action":               "/post/postid/ui_action",
 	} {
 		for name, test := range map[string]struct {
 			request        *http.Request
@@ -1369,7 +1370,7 @@ func TestPostRouter(t *testing.T) {
 		} {
 			// The agent-post routes check access to the post's agent in the
 			// service; TestPostResumeRoutesUseThePostsAgent covers them.
-			if name == "user not allowed" && (urlName == "stop" || urlName == "regenerate" || urlName == "wait_check_now" || urlName == "wait_cancel") {
+			if name == "user not allowed" && (urlName == "stop" || urlName == "regenerate" || urlName == "wait_check_now" || urlName == "wait_cancel" || urlName == "ui_action") {
 				continue
 			}
 			t.Run(urlName+" "+name, func(t *testing.T) {

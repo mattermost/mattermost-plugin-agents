@@ -10,6 +10,7 @@ import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 import {Tag as CompassTag, type TagType} from '@mattermost/compass-ui/components/tag';
 
 import * as D from './data_primitives';
+import {Button, Buttons, Checkbox, Form, RadioGroup, Select, TextArea, TextInput} from './form_library';
 import * as P from './primitives';
 
 type Node = {props?: Record<string, unknown>} | null | undefined;
@@ -275,6 +276,8 @@ const ContentChild = z.union([
     Tags.ref,
     Link.ref,
     Divider.ref,
+    Form.ref,
+    Buttons.ref,
 ]);
 
 const Card = defineComponent({
@@ -336,17 +339,27 @@ export const mattermostLibrary = createLibrary({
         Tag,
         Link,
         Divider,
+        Form,
+        TextInput,
+        TextArea,
+        Select,
+        RadioGroup,
+        Checkbox,
+        Button,
+        Buttons,
     ],
     componentGroups: [
         {name: 'Layout', components: ['Stack', 'Card', 'Columns', 'Divider']},
         {name: 'Text', components: ['Heading', 'Text', 'Notice', 'Link']},
         {name: 'Data', components: ['Fields', 'Field', 'Stats', 'Stat', 'Table', 'BarChart', 'Progress']},
         {name: 'Status', components: ['Steps', 'Step', 'Tags', 'Tag']},
+        {name: 'Input', components: ['Form', 'TextInput', 'TextArea', 'Select', 'RadioGroup', 'Checkbox', 'Button', 'Buttons']},
     ],
 });
 
-// Display-only: no Query/Mutation, $state bindings, or actions until they can
-// be routed through the server's tool policy.
+// No Query/Mutation, $state bindings, or OpenUI actions: generated UI cannot
+// call tools. A Button only sends its label and its form's values back as the
+// user's next message, through the server's ui_action route.
 export const promptOptions: PromptOptions = {
     preamble: 'OpenUI Lang reference for the components available in Mattermost.',
     toolCalls: false,
@@ -365,6 +378,13 @@ export const promptOptions: PromptOptions = {
             'cmp = Columns([a, b])',
             'a = Card("Postgres", [Fields([Field("Latency", "4 ms"), Field("Status", Tag("Healthy", "success"))])])',
             'b = Card("Redis", [Fields([Field("Latency", "38 ms"), Field("Status", Tag("Degraded", "warning"))])])',
+        ].join('\n'),
+        [
+            'root = Stack([intro, form])',
+            'intro = Text("Pick where to deploy **v2.4**.")',
+            'form = Form("deploy", [env, reason], [Button("Deploy"), Button("Cancel", "secondary")])',
+            'env = RadioGroup("env", "Environment", ["staging", "production"], "staging", true)',
+            'reason = TextArea("reason", "Reason")',
         ].join('\n'),
     ],
     additionalRules: [

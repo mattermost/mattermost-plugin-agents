@@ -25,10 +25,11 @@ func applyLanguageModelOptions(opts []llm.LanguageModelOption) llm.LanguageModel
 
 type nativeWebSearchChannelConfig struct{}
 
-func (nativeWebSearchChannelConfig) EnableChannelMentionToolCalling() bool { return true }
-func (nativeWebSearchChannelConfig) AllowNativeWebSearchInChannels() bool  { return true }
-func (nativeWebSearchChannelConfig) EnableAmbientAutoReply() bool          { return false }
-func (nativeWebSearchChannelConfig) MCP() mcp.Config                       { return mcp.Config{} }
+func (nativeWebSearchChannelConfig) EnableChannelMentionToolCalling() bool          { return true }
+func (nativeWebSearchChannelConfig) AllowNativeWebSearchInChannels() bool           { return true }
+func (nativeWebSearchChannelConfig) EnableAmbientAutoReply() bool                   { return false }
+func (nativeWebSearchChannelConfig) GenerativeUIEnabledForAgent(llm.BotConfig) bool { return false }
+func (nativeWebSearchChannelConfig) MCP() mcp.Config                                { return mcp.Config{} }
 
 func TestWithProviderWebSearchLicense(t *testing.T) {
 	for _, level := range enterprisetest.AllLevels {

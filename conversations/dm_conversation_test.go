@@ -491,6 +491,7 @@ type dmTestEnv struct {
 	channelID     string
 	channel       *model.Channel
 	user          *model.User
+	config        *testToolCallingConfig
 }
 
 func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTestEnv {
@@ -579,6 +580,7 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 		),
 	})
 
+	cfg := &testToolCallingConfig{}
 	convs := conversations.New(
 		promptsManager,
 		mmClient,
@@ -588,7 +590,7 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 		nil, // db
 		licenseChecker,
 		i18nBundle,
-		&testToolCallingConfig{},
+		cfg,
 		policyChecker,
 	)
 	convs.SetConversationService(convSvc)
@@ -609,6 +611,7 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 		channelID:     channelID,
 		channel:       channel,
 		user:          user,
+		config:        cfg,
 	}
 }
 

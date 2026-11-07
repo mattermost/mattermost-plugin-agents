@@ -17,8 +17,8 @@ OpenUI Lang reference for the components available in Mattermost.
 Arguments marked with ? are optional. Sub-components can be inline or referenced; prefer references for better streaming.
 
 ### Layout
-Stack(children: (Heading | Text | Notice | Fields | Stats | Table | BarChart | Progress | Steps | Tags | Link | Divider | Card | Columns)[], gap?: "s" | "m" | "l") — Root vertical layout.
-Card(title: string, children: (Heading | Text | Notice | Fields | Stats | Table | BarChart | Progress | Steps | Tags | Link | Divider)[], subtitle?: string) — Bordered panel grouping related content under a title.
+Stack(children: (Heading | Text | Notice | Fields | Stats | Table | BarChart | Progress | Steps | Tags | Link | Divider | Form | Buttons | Card | Columns)[], gap?: "s" | "m" | "l") — Root vertical layout.
+Card(title: string, children: (Heading | Text | Notice | Fields | Stats | Table | BarChart | Progress | Steps | Tags | Link | Divider | Form | Buttons)[], subtitle?: string) — Bordered panel grouping related content under a title.
 Columns(children: Card[]) — Places Cards side by side; wraps to one column on narrow screens. Use for comparisons.
 Divider() — Thin horizontal rule between groups of content.
 
@@ -42,6 +42,16 @@ Steps(items: Step[]) — Ordered checklist, plan, or timeline with a status per 
 Step(title: string, status?: "done" | "current" | "todo" | "blocked", description?: string) — One item in Steps.
 Tags(items: Tag[]) — A wrapping row of Tag pills.
 Tag(label: string, color?: "neutral" | "info" | "success" | "warning" | "danger") — Compact status pill, e.g. a state, owner, or priority.
+
+### Input
+Form(name: string, fields: (TextInput | TextArea | Select | RadioGroup | Checkbox)[], buttons: Button[]) — Collects input from the user. name is a unique form id; buttons submit the form.
+TextInput(name: string, label: string, placeholder?: string, defaultValue?: string, required?: boolean) — Single-line text field inside a Form.
+TextArea(name: string, label: string, placeholder?: string, defaultValue?: string, required?: boolean) — Multi-line text field inside a Form.
+Select(name: string, label: string, options: string[], defaultValue?: string, required?: boolean) — Dropdown to pick one of several options inside a Form.
+RadioGroup(name: string, label: string, options: string[], defaultValue?: string, required?: boolean) — Pick one of a few (2-5) options, all visible, inside a Form.
+Checkbox(name: string, label: string, defaultChecked?: boolean, required?: boolean) — Yes/no choice inside a Form.
+Button(label: string, variant?: "primary" | "secondary" | "danger") — Clicking sends its label back to you as the user's reply, with the values of its Form when inside one.
+Buttons(items: Button[]) — A row of Buttons outside a Form, e.g. suggested next steps.
 
 ## Hoisting & Streaming (CRITICAL)
 
@@ -68,6 +78,12 @@ root = Stack([cmp])
 cmp = Columns([a, b])
 a = Card("Postgres", [Fields([Field("Latency", "4 ms"), Field("Status", Tag("Healthy", "success"))])])
 b = Card("Redis", [Fields([Field("Latency", "38 ms"), Field("Status", Tag("Degraded", "warning"))])])
+
+root = Stack([intro, form])
+intro = Text("Pick where to deploy **v2.4**.")
+form = Form("deploy", [env, reason], [Button("Deploy"), Button("Cancel", "secondary")])
+env = RadioGroup("env", "Environment", ["staging", "production"], "staging", true)
+reason = TextArea("reason", "Reason")
 
 ## Important Rules
 - Choose components that best represent the content (tables for comparisons, charts for trends, forms for input, etc.)

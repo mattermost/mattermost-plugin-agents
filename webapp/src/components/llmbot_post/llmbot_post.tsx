@@ -26,6 +26,9 @@ import {displayNameFor, selectTeammateNameDisplay} from '@/utils/teammate_name';
 
 import {ServerToolUse} from '@/types/conversation';
 
+import {GenerativeUIActionsContext} from '../generative_ui/actions';
+import {splitGenerativeUI} from '../generative_ui/split_message';
+import {useGenerativeUIPostActions} from '../generative_ui/use_post_actions';
 import HTMLArtifacts from '../html_artifacts/html_artifacts';
 import {needsViewerDecision, selectDecisionToolCalls} from '../tool_decisions';
 import {ToolApprovalStage, ToolCall, ToolCallPhase, ToolCallStatus} from '../tool_types';
@@ -795,6 +798,27 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         return 'done';
     }, [anchorRoundId, anchorStage, onlookerWaitRoundId, onlookerWaitStage]);
 
+    const generativeUIActions = useGenerativeUIPostActions({
+        post: props.post,
+        conversation: knownConversation,
+        currentUserId,
+        generating: isGenerationInProgress || regenerating,
+    });
+
+    // Block indexes run across the reply's rounds, the way the server counts them.
+    const uiBlockOffsets = useMemo(() => {
+        const offsets = new Map<string, number>();
+        if (!allowGenerativeUI) {
+            return offsets;
+        }
+        let count = 0;
+        for (const round of renderedRounds) {
+            offsets.set(round.id, count);
+            count += splitGenerativeUI(round.text).filter((segment) => segment.type === 'ui').length;
+        }
+        return offsets;
+    }, [allowGenerativeUI, renderedRounds]);
+
     const renderRound = useCallback((round: Round) => {
         const isLiveRound = round.id === LIVE_ROUND_ID;
         return (
@@ -813,11 +837,13 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 onToggleReasoning={toggleReasoning}
                 reveal={isLiveRound && smoothReveal}
                 allowGenerativeUI={allowGenerativeUI}
+                uiBlockOffset={uiBlockOffsets.get(round.id) ?? 0}
             />
         );
     }, [
         smoothReveal,
         allowGenerativeUI,
+        uiBlockOffsets,
         props.post.id,
         props.post.channel_id,
         conversationId,
@@ -856,95 +882,97 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     }
 
     return (
-        <WaitToolContext.Provider value={waitToolState}>
-            <div
-                data-testid='llm-bot-post'
-                data-bubble-hug={isAgentChat ? '' : undefined} // eslint-disable-line no-undefined
-            >
-                {error && <ErrorMessage message={error}/>}
-                {conversationError && !generating && (
-                    <ErrorMessage message={<FormattedMessage defaultMessage='Failed to load conversation data'/>}/>
-                )}
-                {isThreadSummaryPost && permalinkView &&
-                <>
-                    {permalinkView}
-                </>
-                }
-                {(showWorking || awaitingRequester || activity.items.length > 0) && (
-                    <ToolActivityDisplay
-                        activity={activity}
-                        expanded={activityExpanded}
-                        onToggleExpanded={setActivityExpanded}
-                        inProgress={isGenerationInProgress || awaitingDecision || awaitingRequester}
-                        working={isGenerationInProgress || progressPhase !== null}
-                        statusMessage={statusMessage}
-                        statusWaiting={awaitingRequester}
-                        renderRound={renderRound}
-                    />
-                )}
-                {foldingText !== null && (
-                    <FoldingText
-                        text={foldingText}
-                        channelID={props.post.channel_id}
-                        postID={props.post.id}
-                    />
-                )}
-                {isAgentChat && (
-                    <ThinkingDots
-                        active={thinkingActive}
-                        agentName={agentName}
-                    />
-                )}
-                <AnswerArea $afterActivity={activity.items.length > 0}>
-                    {activity.answerRounds.map(renderRound)}
-                </AnswerArea>
-                {waitForThisPost && (
-                    <WaitStatusFooter
-                        resumeAt={waitForThisPost.resume_at}
-                        isOwner={waitIsOwner}
-                        requesterUsername={requesterUsername}
-                        botDisplayName={botDisplayName}
-                        resolution={waitCancelled ? 'cancelled' : 'pending'}
-                        busy={waitBusy}
-                        onCheckNow={handleWaitCheckNow}
-                        onCancel={handleWaitCancel}
-                    />
-                )}
-                {generationStopped && (
-                    <GenerationStoppedNotice data-testid='llm-bot-generation-stopped'>
-                        <GenerationStoppedIcon
-                            size={14}
-                            aria-hidden={true}
+        <GenerativeUIActionsContext.Provider value={allowGenerativeUI ? generativeUIActions : null}>
+            <WaitToolContext.Provider value={waitToolState}>
+                <div
+                    data-testid='llm-bot-post'
+                    data-bubble-hug={isAgentChat ? '' : undefined} // eslint-disable-line no-undefined
+                >
+                    {error && <ErrorMessage message={error}/>}
+                    {conversationError && !generating && (
+                        <ErrorMessage message={<FormattedMessage defaultMessage='Failed to load conversation data'/>}/>
+                    )}
+                    {isThreadSummaryPost && permalinkView &&
+                    <>
+                        {permalinkView}
+                    </>
+                    }
+                    {(showWorking || awaitingRequester || activity.items.length > 0) && (
+                        <ToolActivityDisplay
+                            activity={activity}
+                            expanded={activityExpanded}
+                            onToggleExpanded={setActivityExpanded}
+                            inProgress={isGenerationInProgress || awaitingDecision || awaitingRequester}
+                            working={isGenerationInProgress || progressPhase !== null}
+                            statusMessage={statusMessage}
+                            statusWaiting={awaitingRequester}
+                            renderRound={renderRound}
                         />
-                        {generationStoppedMessage}
-                    </GenerationStoppedNotice>
-                )}
-                <HTMLArtifacts
-                    postId={props.post.id}
-                    files={props.post.metadata?.files}
-                />
-                { showPostbackButton &&
-                <PostSummaryHelpMessage
-                    data-testid='llm-bot-post-summary-help'
-                    type='hint'
-                    title={<FormattedMessage defaultMessage='Would you like to post this summary to the original call thread? You can also ask Agents to make changes.'/>}
-                />
-                }
-                { showControlsBar &&
-                <ControlsBarComponent
-                    showStopGeneratingButton={showStopGeneratingButton}
-                    showPostbackButton={showPostbackButton}
-                    showRegenerate={showRegenerate}
-                    copyText={showCopy ? answerMarkdown : null}
-                    belowBubble={isAgentChat}
-                    createAt={props.post.create_at}
-                    onStopGenerating={stopGenerating}
-                    onPostSummary={postSummary}
-                    onRegenerate={regnerate}
-                />
-                }
-            </div>
-        </WaitToolContext.Provider>
+                    )}
+                    {foldingText !== null && (
+                        <FoldingText
+                            text={foldingText}
+                            channelID={props.post.channel_id}
+                            postID={props.post.id}
+                        />
+                    )}
+                    {isAgentChat && (
+                        <ThinkingDots
+                            active={thinkingActive}
+                            agentName={agentName}
+                        />
+                    )}
+                    <AnswerArea $afterActivity={activity.items.length > 0}>
+                        {activity.answerRounds.map(renderRound)}
+                    </AnswerArea>
+                    {waitForThisPost && (
+                        <WaitStatusFooter
+                            resumeAt={waitForThisPost.resume_at}
+                            isOwner={waitIsOwner}
+                            requesterUsername={requesterUsername}
+                            botDisplayName={botDisplayName}
+                            resolution={waitCancelled ? 'cancelled' : 'pending'}
+                            busy={waitBusy}
+                            onCheckNow={handleWaitCheckNow}
+                            onCancel={handleWaitCancel}
+                        />
+                    )}
+                    {generationStopped && (
+                        <GenerationStoppedNotice data-testid='llm-bot-generation-stopped'>
+                            <GenerationStoppedIcon
+                                size={14}
+                                aria-hidden={true}
+                            />
+                            {generationStoppedMessage}
+                        </GenerationStoppedNotice>
+                    )}
+                    <HTMLArtifacts
+                        postId={props.post.id}
+                        files={props.post.metadata?.files}
+                    />
+                    { showPostbackButton &&
+                    <PostSummaryHelpMessage
+                        data-testid='llm-bot-post-summary-help'
+                        type='hint'
+                        title={<FormattedMessage defaultMessage='Would you like to post this summary to the original call thread? You can also ask Agents to make changes.'/>}
+                    />
+                    }
+                    { showControlsBar &&
+                    <ControlsBarComponent
+                        showStopGeneratingButton={showStopGeneratingButton}
+                        showPostbackButton={showPostbackButton}
+                        showRegenerate={showRegenerate}
+                        copyText={showCopy ? answerMarkdown : null}
+                        belowBubble={isAgentChat}
+                        createAt={props.post.create_at}
+                        onStopGenerating={stopGenerating}
+                        onPostSummary={postSummary}
+                        onRegenerate={regnerate}
+                    />
+                    }
+                </div>
+            </WaitToolContext.Provider>
+        </GenerativeUIActionsContext.Provider>
     );
 };
 
