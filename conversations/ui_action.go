@@ -41,7 +41,8 @@ const GenerativeUISubmissionProp = "ai_genui_submission"
 var ErrStaleUIAction = errors.New("this generated form is no longer active")
 
 // ErrGenerativeUIDisabled is returned when a submission arrives while
-// generative UI is turned off. The HTTP layer maps it to 403.
+// generative UI is off for the reply's agent, server-wide or for that
+// agent. The HTTP layer maps it to 403.
 var ErrGenerativeUIDisabled = errors.New("generative UI is disabled")
 
 // uiActionClaimTTL only has to cover the window between claiming a reply and
@@ -94,7 +95,7 @@ func (c *Conversations) handleUIAction(ctx context.Context, userID string, post 
 	if bot == nil {
 		return nil, errors.New("unable to get bot")
 	}
-	if !c.generativeUIEnabled() {
+	if c.configProvider == nil || !c.configProvider.GenerativeUIEnabledForAgent(bot.GetConfig()) {
 		return nil, ErrGenerativeUIDisabled
 	}
 	if c.convService == nil {
@@ -330,8 +331,4 @@ func submissionRecordProp(sourcePostID string, submission genui.Submission) (map
 // created it; the user is present and acting, as for a typed message.
 func isGenerativeUISubmission(post *model.Post) bool {
 	return post != nil && post.GetProp(FromPluginProp) != nil && post.GetProp(GenerativeUISubmissionProp) != nil
-}
-
-func (c *Conversations) generativeUIEnabled() bool {
-	return c.configProvider != nil && c.configProvider.EnableGenerativeUI()
 }

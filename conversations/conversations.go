@@ -39,7 +39,7 @@ type ConfigProvider interface {
 	EnableChannelMentionToolCalling() bool
 	AllowNativeWebSearchInChannels() bool
 	EnableAmbientAutoReply() bool
-	EnableGenerativeUI() bool
+	GenerativeUIEnabledForAgent(bot llm.BotConfig) bool
 	MCP() mcp.Config
 }
 

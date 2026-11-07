@@ -69,7 +69,7 @@ func TestUIActionRoute(t *testing.T) {
 			convStore := e.useConversations()
 			e.config.enableGenerativeUI = !tc.disabled
 			e.setBots(bots.NewBot(
-				llm.BotConfig{ID: testBotUserID, Name: "bot", UserAccessLevel: llm.UserAccessLevelAll, ChannelAccessLevel: llm.ChannelAccessLevelAll},
+				llm.BotConfig{ID: testBotUserID, Name: "bot", UserAccessLevel: llm.UserAccessLevelAll, ChannelAccessLevel: llm.ChannelAccessLevelAll, Skills: llm.SkillsConfig{GenerativeUI: true}},
 				llm.ServiceConfig{},
 				&model.Bot{UserId: testBotUserID, Username: "bot"},
 				nil,

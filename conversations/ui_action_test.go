@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
@@ -44,9 +45,10 @@ func deploySubmission() genui.Submission {
 }
 
 type genUIReplyOptions struct {
-	replyBlocks []conversation.ContentBlock
-	laterTurn   bool
-	noReplyTurn bool
+	agentOptedOut bool
+	replyBlocks   []conversation.ContentBlock
+	laterTurn     bool
+	noReplyTurn   bool
 }
 
 // setupGenUIReply seeds a conversation whose latest turn is the agent reply
@@ -54,6 +56,15 @@ type genUIReplyOptions struct {
 func setupGenUIReply(t *testing.T, env *dmTestEnv, channel *model.Channel, opts genUIReplyOptions) (string, *model.Post) {
 	t.Helper()
 	env.config.enableGenerativeUI = true
+	env.botService.SetBotsForTesting([]*bots.Bot{bots.NewBot(
+		llm.BotConfig{
+			ID: env.botID, Name: "ai", DisplayName: "AI", AutoEnableNewMCPTools: true, MCPDynamicToolLoading: true,
+			Skills: llm.SkillsConfig{GenerativeUI: !opts.agentOptedOut},
+		},
+		llm.ServiceConfig{DefaultModel: "test-model", Type: llm.ServiceTypeOpenAI},
+		&model.Bot{UserId: env.botID, Username: "ai", DisplayName: "AI"},
+		env.fakeLLM,
+	)})
 	env.mmClient.assignPostIDs = true
 	env.mmClient.markPluginPosts = true
 	env.mmClient.channels[channel.Id] = channel
@@ -219,7 +230,8 @@ func TestHandleUIActionRefusals(t *testing.T) {
 		wantErr    error
 	}{
 		{name: "someone other than the requester", userID: genUIOtherID, wantErr: conversations.ErrNotRequester},
-		{name: "generative UI turned off", disabled: true, wantErr: conversations.ErrGenerativeUIDisabled},
+		{name: "generative UI turned off server-wide", disabled: true, wantErr: conversations.ErrGenerativeUIDisabled},
+		{name: "agent has not opted in to generative UI", opts: genUIReplyOptions{agentOptedOut: true}, wantErr: conversations.ErrGenerativeUIDisabled},
 		{name: "reply still streaming", opts: genUIReplyOptions{noReplyTurn: true}, wantErr: conversations.ErrStaleUIAction},
 		{name: "conversation moved on", opts: genUIReplyOptions{laterTurn: true}, wantErr: conversations.ErrStaleUIAction},
 		{name: "reply waiting on a tool decision", opts: genUIReplyOptions{replyBlocks: pendingTool}, wantErr: conversations.ErrStaleUIAction},

@@ -680,7 +680,7 @@ func TestPostResumeRoutesUseThePostsAgent(t *testing.T) {
 
 				defaultCfg := llm.BotConfig{ID: testBotUserID, Name: "defaultbot", UserAccessLevel: llm.UserAccessLevelAll, ChannelAccessLevel: llm.ChannelAccessLevelAll}
 				test.defaultAgent(&defaultCfg)
-				postCfg := llm.BotConfig{ID: postBotUserID, Name: "postbot", UserAccessLevel: llm.UserAccessLevelAll, ChannelAccessLevel: llm.ChannelAccessLevelAll}
+				postCfg := llm.BotConfig{ID: postBotUserID, Name: "postbot", UserAccessLevel: llm.UserAccessLevelAll, ChannelAccessLevel: llm.ChannelAccessLevelAll, Skills: llm.SkillsConfig{GenerativeUI: true}}
 				test.postAgent(&postCfg)
 				e.setBots(
 					bots.NewBot(defaultCfg, llm.ServiceConfig{}, &model.Bot{UserId: testBotUserID, Username: "defaultbot"}, nil),

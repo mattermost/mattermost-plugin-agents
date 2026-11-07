@@ -17,6 +17,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -39,18 +40,18 @@ type fakeWebSocketEvent struct {
 }
 
 type fakeMMClient struct {
-	users                map[string]*model.User
-	postThreads          map[string]*model.PostList
-	kv                   map[string]any
-	createdPosts         []*model.Post
-	allowCreatePost      bool
+	users           map[string]*model.User
+	postThreads     map[string]*model.PostList
+	kv              map[string]any
+	createdPosts    []*model.Post
+	allowCreatePost bool
 	// assignPostIDs and markPluginPosts make CreatePost behave like the
 	// plugin API: it assigns IDs and marks every post from_plugin.
 	assignPostIDs   bool
 	markPluginPosts bool
 	// createPostErr, when set, sees each post as created and can fail it
 	// before it is recorded.
-	createPostErr func(*model.Post) error
+	createPostErr        func(*model.Post) error
 	updatedPosts         []*model.Post
 	deletedPostIDs       []string
 	kvDeletes            []string
@@ -426,8 +427,8 @@ func (c *testToolCallingConfig) EnableAmbientAutoReply() bool {
 	return c.enableAmbientAutoReply
 }
 
-func (c *testToolCallingConfig) EnableGenerativeUI() bool {
-	return c.enableGenerativeUI
+func (c *testToolCallingConfig) GenerativeUIEnabledForAgent(bot llm.BotConfig) bool {
+	return config.GenerativeUIEnabledForAgent(c.enableGenerativeUI, bot)
 }
 
 func (c *testToolCallingConfig) AllowNativeWebSearchInChannels() bool {

@@ -81,7 +81,7 @@ func (c *channelFollowUpTestConfig) EnableAmbientAutoReply() bool {
 	return false
 }
 
-func (c *channelFollowUpTestConfig) EnableGenerativeUI() bool {
+func (c *channelFollowUpTestConfig) GenerativeUIEnabledForAgent(llm.BotConfig) bool {
 	return false
 }
 
