@@ -31,7 +31,7 @@ export const installPostUtils = () => {
 
 /** Renders an agent post through PostText, the production entry point for generative UI. */
 export const renderAgentPost = (message: string, {
-    pluginState = {generativeUIEnabled: true},
+    pluginState = {},
     allowGenerativeUI = true,
     streaming = false,
 }: {pluginState?: Record<string, unknown>; allowGenerativeUI?: boolean; streaming?: boolean} = {}) => render(
