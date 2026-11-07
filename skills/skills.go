@@ -26,18 +26,33 @@ const (
 	RefreshSkillsToolName = "refresh_skills"
 )
 
+// GenerativeUISkillID is the built-in skill that teaches the model to reply
+// with OpenUI Lang blocks.
+const GenerativeUISkillID = "mattermost/generative-ui"
+
 // builtinSkill is a skill shipped with the plugin. Its ID is namespaced so no
-// user skill ID can match it, and it is listed only when the embedded
-// Mattermost tool it needs is in the request's catalog, loaded or not.
+// user skill ID can match it. It is listed only when the embedded Mattermost
+// tool it needs, if any, is in the request's catalog, loaded or not, and
+// enabled, if set, allows it.
 type builtinSkill struct {
 	id           string
 	name         string
 	description  string
 	template     string
 	requiresTool string
+	enabled      func(p *Provider, bot llm.BotConfig) bool
 }
 
 var builtinSkills = []builtinSkill{
+	{
+		id:          GenerativeUISkillID,
+		name:        "Rich UI replies",
+		description: "Load BEFORE writing a reply that is clearer as a structured layout than as prose: status reports, metric dashboards, option comparisons, tables of records, plans or checklists, multi-part summaries. It holds the only syntax that renders cards, tables, stat tiles, charts and progress bars in a reply. Do not load for conversational answers, short facts, explanations or code.",
+		template:    prompts.PromptSkillGenerativeUI,
+		enabled: func(p *Provider, bot llm.BotConfig) bool {
+			return p.generativeUIEnabled != nil && p.generativeUIEnabled(bot)
+		},
+	},
 	{
 		id:           "mattermost/summarize-conversations",
 		name:         "Summarize channels and threads",
@@ -56,6 +71,15 @@ type Provider struct {
 	store         PromptStore
 	prompts       *llm.Prompts
 	sharedAllowed func() bool
+
+	generativeUIEnabled func(bot llm.BotConfig) bool
+}
+
+// SetGenerativeUIEnabled supplies the live check for whether an agent may use
+// generative UI; it is read on every request. Without it the generative UI
+// skill is never listed.
+func (p *Provider) SetGenerativeUIEnabled(enabled func(bot llm.BotConfig) bool) {
+	p.generativeUIEnabled = enabled
 }
 
 // NewProvider returns a skill provider. sharedAllowed reports whether the
@@ -92,7 +116,10 @@ func (p *Provider) available(bot llm.BotConfig, c *llm.Context) ([]skill, error)
 
 	var out []skill
 	for _, b := range builtinSkills {
-		if !hasEmbeddedTool(c.Tools, b.requiresTool) {
+		if b.requiresTool != "" && !hasEmbeddedTool(c.Tools, b.requiresTool) {
+			continue
+		}
+		if b.enabled != nil && !b.enabled(p, bot) {
 			continue
 		}
 		out = append(out, skill{
