@@ -775,7 +775,8 @@ It takes two settings, and both must be on:
 
 The instructions ship as a [skill built into Agents](features/skills.md#how-agents-use-skills), so the agent also needs **Enable Tools** and **Enable skills** on. Only a one-line description is in the system prompt; the agent loads the full component reference (roughly 2,700 tokens) when it decides a reply should be visual, which takes one extra tool round. Like other skills, it is offered in direct messages, and in channels only when **Enable Channel Mention Tool Calling** is on. Replies render as UI only while generative UI is enabled for the agent that wrote them; otherwise the block shows as code.
 
-- Only the plugin's display components can render. Generated UI cannot run scripts, load images, call tools, or submit data.
+- Only the plugin's components can render. Generated UI cannot run scripts, load images, or call tools.
+- Generated UI can include simple forms (text fields, dropdowns, radio buttons, checkboxes) and buttons. Clicking a button posts a reply in the thread as the user, with the button label and the form's values, and the agent answers it like a typed message, with the same tools and approvals. Only the user who asked can submit, only from the agent's latest reply, and only once; in channels everyone else sees the form read-only. Each submission is recorded in the audit log as `genUISubmit`, with the post, channel, agent, block, and form IDs but not the submitted values.
 - Links inside generated UI follow the agent link policy (**Render AI-generated links** and **Allowed Link Domains**): a link the policy rejects shows its destination as plain text.
 - Clients that don't load the plugin webapp, such as the mobile apps, show the block as a code block. The agent is instructed to state the key takeaway in plain text before the block.
 
