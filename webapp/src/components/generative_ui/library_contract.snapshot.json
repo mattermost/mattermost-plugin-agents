@@ -1,0 +1,81 @@
+{
+    "root": "Stack",
+    "components": {
+        "BarChart": [
+            {"name":"labels","required":true,"schema":{"type":"array","items":{"type":"string"}}},
+            {"name":"values","required":true,"schema":{"type":"array","items":{"type":"number"}}},
+            {"name":"title","required":false,"schema":{"type":"string"}},
+            {"name":"unit","required":false,"schema":{"type":"string"}}
+        ],
+        "Card": [
+            {"name":"title","required":true,"schema":{"type":"string"}},
+            {"name":"children","required":true,"schema":{"type":"array","items":{"anyOf":[{"$ref":"#/$defs/Heading"},{"$ref":"#/$defs/Text"},{"$ref":"#/$defs/Notice"},{"$ref":"#/$defs/Fields"},{"$ref":"#/$defs/Stats"},{"$ref":"#/$defs/Table"},{"$ref":"#/$defs/BarChart"},{"$ref":"#/$defs/Progress"},{"$ref":"#/$defs/Steps"},{"$ref":"#/$defs/Tags"},{"$ref":"#/$defs/Link"},{"$ref":"#/$defs/Divider"}]}}},
+            {"name":"subtitle","required":false,"schema":{"type":"string"}}
+        ],
+        "Columns": [
+            {"name":"children","required":true,"schema":{"type":"array","items":{"$ref":"#/$defs/Card"}}}
+        ],
+        "Divider": [],
+        "Field": [
+            {"name":"label","required":true,"schema":{"type":"string"}},
+            {"name":"value","required":true,"schema":{"anyOf":[{"type":"string"},{"type":"number"},{"$ref":"#/$defs/Tag"}]}}
+        ],
+        "Fields": [
+            {"name":"items","required":true,"schema":{"type":"array","items":{"$ref":"#/$defs/Field"}}}
+        ],
+        "Heading": [
+            {"name":"text","required":true,"schema":{"type":"string"}},
+            {"name":"size","required":false,"schema":{"type":"string","enum":["large","medium","small"]}}
+        ],
+        "Link": [
+            {"name":"label","required":true,"schema":{"type":"string"}},
+            {"name":"url","required":true,"schema":{"type":"string"}}
+        ],
+        "Notice": [
+            {"name":"title","required":true,"schema":{"type":"string"}},
+            {"name":"text","required":false,"schema":{"type":"string"}},
+            {"name":"type","required":false,"schema":{"type":"string","enum":["info","success","warning","danger"]}}
+        ],
+        "Progress": [
+            {"name":"label","required":true,"schema":{"type":"string"}},
+            {"name":"value","required":true,"schema":{"type":"number"}},
+            {"name":"caption","required":false,"schema":{"type":"string"}}
+        ],
+        "Stack": [
+            {"name":"children","required":true,"schema":{"type":"array","items":{"anyOf":[{"$ref":"#/$defs/Heading"},{"$ref":"#/$defs/Text"},{"$ref":"#/$defs/Notice"},{"$ref":"#/$defs/Fields"},{"$ref":"#/$defs/Stats"},{"$ref":"#/$defs/Table"},{"$ref":"#/$defs/BarChart"},{"$ref":"#/$defs/Progress"},{"$ref":"#/$defs/Steps"},{"$ref":"#/$defs/Tags"},{"$ref":"#/$defs/Link"},{"$ref":"#/$defs/Divider"},{"$ref":"#/$defs/Card"},{"$ref":"#/$defs/Columns"}]}}},
+            {"name":"gap","required":false,"schema":{"type":"string","enum":["s","m","l"]}}
+        ],
+        "Stat": [
+            {"name":"label","required":true,"schema":{"type":"string"}},
+            {"name":"value","required":true,"schema":{"type":["string","number"]}},
+            {"name":"change","required":false,"schema":{"type":"string"}},
+            {"name":"trend","required":false,"schema":{"type":"string","enum":["up","down","neutral"]}}
+        ],
+        "Stats": [
+            {"name":"items","required":true,"schema":{"type":"array","items":{"$ref":"#/$defs/Stat"}}}
+        ],
+        "Step": [
+            {"name":"title","required":true,"schema":{"type":"string"}},
+            {"name":"status","required":false,"schema":{"type":"string","enum":["done","current","todo","blocked"]}},
+            {"name":"description","required":false,"schema":{"type":"string"}}
+        ],
+        "Steps": [
+            {"name":"items","required":true,"schema":{"type":"array","items":{"$ref":"#/$defs/Step"}}}
+        ],
+        "Table": [
+            {"name":"columns","required":true,"schema":{"type":"array","items":{"type":"string"}}},
+            {"name":"rows","required":true,"schema":{"type":"array","items":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"number"},{"$ref":"#/$defs/Tag"}]}}}}
+        ],
+        "Tag": [
+            {"name":"label","required":true,"schema":{"type":"string"}},
+            {"name":"color","required":false,"schema":{"type":"string","enum":["neutral","info","success","warning","danger"]}}
+        ],
+        "Tags": [
+            {"name":"items","required":true,"schema":{"type":"array","items":{"$ref":"#/$defs/Tag"}}}
+        ],
+        "Text": [
+            {"name":"text","required":true,"schema":{"type":"string"}},
+            {"name":"tone","required":false,"schema":{"type":"string","enum":["default","muted","small"]}}
+        ]
+    }
+}
