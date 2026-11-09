@@ -54,8 +54,8 @@ const tokenEnvelopeVersion = 1
 // receive the refresh token nor the client secret.
 //
 // Version 0 (a bare oauth2.Token, written before the envelope existed) is
-// still readable: the access token remains usable until it expires, but it
-// cannot be refreshed (no pinned destination), forcing one re-authorization.
+// still readable, but it carries nothing that ties it to a server, so it is
+// never used: the user signs in again (see loadGrantForServer).
 type storedTokenEnvelope struct {
 	Version int           `json:"version"`
 	Token   *oauth2.Token `json:"token"`
@@ -79,6 +79,21 @@ type storedTokenEnvelope struct {
 	// for grants stored before this field existed (revocation is skipped) or
 	// when the AS advertises no revocation endpoint.
 	RevocationEndpoint string `json:"revocationEndpoint,omitempty"`
+	// ServerOrigin is the canonical origin of the configured MCP server URL
+	// the sign-in was started for (not the server-advertised resource). A
+	// grant is only used while the server under its name still has this
+	// origin, so a server moved to another host never receives grants issued
+	// for the old one, whatever order config saves, cleanup, and sign-ins
+	// complete in. Empty for grants stored before the field existed; see
+	// loadGrantForServer for how those are bound.
+	ServerOrigin string `json:"serverOrigin,omitempty"`
+	// ServerConfigID is the stable ID of the server configuration the
+	// sign-in was for. A grant is only used by the server with this ID, so a
+	// different server later given the same name at the same origin never
+	// receives it. Empty for grants stored before the field existed (bound to
+	// the current server's ID when first loaded) and for servers saved before
+	// server IDs existed.
+	ServerConfigID string `json:"serverConfigID,omitempty"`
 }
 
 // loadTokenEnvelope retrieves the stored OAuth grant for a user and server.
@@ -127,19 +142,6 @@ func (m *OAuthManager) loadTokenEnvelope(userID, serverID string) (*storedTokenE
 		return nil, raw, nil
 	}
 	return &storedTokenEnvelope{Version: 0, Token: &legacy}, raw, nil
-}
-
-// loadToken retrieves the OAuth token for a user and server from the KV store
-// If no token is found, it returns nil to indicate no token exists
-func (m *OAuthManager) loadToken(userID, serverID string) (*oauth2.Token, error) {
-	envelope, _, err := m.loadTokenEnvelope(userID, serverID)
-	if err != nil {
-		return nil, err
-	}
-	if envelope == nil {
-		return nil, nil
-	}
-	return envelope.Token, nil
 }
 
 // storeTokenEnvelope persists an OAuth grant with its authorization server
@@ -196,14 +198,75 @@ func (m *OAuthManager) releaseRefreshLease(userID, serverID, leaseID string) {
 	}
 }
 
-// HasStoredToken returns true when a non-expired OAuth token exists for the
-// given user and server. It does not refresh the token or contact upstream.
-func (m *OAuthManager) HasStoredToken(userID, serverID string) (bool, error) {
-	tok, err := m.loadToken(userID, serverID)
+// grantBindAttempts bounds how often loadGrantForServer retries binding a
+// legacy grant that a concurrent write keeps changing.
+const grantBindAttempts = 3
+
+// loadGrantForServer loads the user's grant for a server, but only one issued
+// for that server: the server's configured origin and, when both carry one,
+// its configuration ID must match the ones the grant was issued for. Any
+// other grant is treated as absent, so the user is asked to sign in again and
+// the grant is never sent to a server it was not issued for.
+//
+// Grants stored before the binding fields existed are bound with a
+// compare-and-set the first time they are loaded, so existing users stay
+// signed in across the upgrade: the origin comes from the grant's RFC 8707
+// resource when it has one (the configured server URL at sign-in, or the
+// protected-resource metadata resource, which must equal it), else from the
+// current configuration; the configuration ID comes from the current
+// configuration. A legacy grant whose resource names another origin is not
+// used. Pre-envelope (version 0) grants carry nothing that ties them to a
+// server and are never used.
+func (m *OAuthManager) loadGrantForServer(userID string, server ServerConfig) (*storedTokenEnvelope, []byte, error) {
+	for range grantBindAttempts {
+		envelope, raw, err := m.loadTokenEnvelope(userID, server.Name)
+		if err != nil {
+			return nil, nil, err
+		}
+		if envelope == nil || envelope.Version == 0 {
+			return nil, nil, nil
+		}
+
+		bound := *envelope
+		if bound.ServerOrigin == "" {
+			bound.ServerOrigin = canonicalOriginFromString(bound.Resource)
+			if bound.ServerOrigin == "" {
+				bound.ServerOrigin = canonicalOriginFromString(server.BaseURL)
+			}
+			if bound.ServerOrigin == "" {
+				return nil, nil, nil
+			}
+		}
+		if originChanged(bound.ServerOrigin, server.BaseURL) {
+			return nil, nil, nil
+		}
+		if bound.ServerConfigID == "" {
+			bound.ServerConfigID = server.ID
+		} else if server.ID != "" && bound.ServerConfigID != server.ID {
+			return nil, nil, nil
+		}
+
+		if bound.ServerOrigin == envelope.ServerOrigin && bound.ServerConfigID == envelope.ServerConfigID {
+			return envelope, raw, nil
+		}
+		if _, err := m.casTokenEnvelope(userID, server.Name, raw, &bound); err != nil {
+			return nil, nil, fmt.Errorf("failed to bind stored grant to its server: %w", err)
+		}
+		// Reload whether or not this write won, so the caller holds the
+		// stored bytes for its own compare-and-set.
+	}
+	return nil, nil, nil
+}
+
+// HasStoredToken returns true when an OAuth token exists for the user and
+// server that may be used with the server's current URL. It does not refresh
+// the token or contact upstream.
+func (m *OAuthManager) HasStoredToken(userID string, serverConfig ServerConfig) (bool, error) {
+	envelope, _, err := m.loadGrantForServer(userID, serverConfig)
 	if err != nil {
 		return false, err
 	}
-	if tok == nil {
+	if envelope == nil || envelope.Token == nil {
 		return false, nil
 	}
 	// Consider a token present even if it might be expired — the caller only
@@ -347,9 +410,12 @@ func (m *OAuthManager) storeClientCredentials(creds *ClientCredentials) error {
 }
 
 type OAuthSession struct {
-	UserID            string    `json:"userID"`
-	ServerID          string    `json:"serverID"`
-	ServerURL         string    `json:"serverURL"`
+	UserID    string `json:"userID"`
+	ServerID  string `json:"serverID"`
+	ServerURL string `json:"serverURL"`
+	// ServerConfigID is the stable ID of the server configuration the
+	// sign-in was started for (ServerID holds its name).
+	ServerConfigID    string    `json:"serverConfigID,omitempty"`
 	ServerMetadataURL string    `json:"serverMetadataURL"`
 	CodeVerifier      string    `json:"codeVerifier"`
 	State             string    `json:"state"`

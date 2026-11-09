@@ -17,10 +17,11 @@ type messageRules struct {
 	// provider signature and requires alternating roles (Anthropic, Bedrock,
 	// and Claude on Vertex or Azure).
 	strictMessages bool
-	// promptCaching requests Anthropic automatic prompt caching (top-level
+	// promptCaching requests automatic prompt caching (top-level
 	// cache_control); Anthropic caches nothing unless asked, so every turn
-	// would re-bill the whole prompt. It is set only for Anthropic hops:
-	// Bifrost forwards the marker unstripped, and other providers reject it.
+	// would re-bill the whole prompt. It is set for Anthropic hops and for
+	// Bedrock models with cache points, which Bifrost turns the marker into;
+	// other providers reject the marker.
 	promptCaching bool
 }
 
@@ -31,7 +32,7 @@ func (b *LLM) messageRulesFor(name schemas.ModelProvider, model string, imageCou
 	messagesAPI := messagesAPIProvider(base, model)
 	rules := messageRules{
 		imageDimensionLimit: maxImageDimension(messagesAPI, imageCount),
-		promptCaching:       base == schemas.Anthropic,
+		promptCaching:       base == schemas.Anthropic || (base == schemas.Bedrock && schemas.BedrockModelSupportsCachePoints(model)),
 	}
 	switch messagesAPI {
 	case schemas.Anthropic, schemas.Bedrock, schemas.BedrockMantle:
