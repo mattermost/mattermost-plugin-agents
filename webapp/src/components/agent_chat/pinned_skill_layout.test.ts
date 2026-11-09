@@ -59,6 +59,18 @@ describe('fitPinnedSkillLines', () => {
         expect(fitPinnedSkillLines({...base, widths, available})).toEqual(expected);
     });
 
+    test('maxVisible caps the buttons even when the row has room for more, and shows every prompt when there are no more than that', () => {
+        const widths = [30, 30, 30, 30, 30, 30];
+        expect(fitPinnedSkillLines({...base, widths, available: 400, maxLines: 1, maxVisible: 4})).toEqual({
+            lines: [[0, 1, 2, 3, 'more']],
+            visibleCount: 4,
+        });
+        expect(fitPinnedSkillLines({...base, widths: widths.slice(0, 4), available: 400, maxVisible: 4})).toEqual({
+            lines: [[0, 1, 2, 3]],
+            visibleCount: 4,
+        });
+    });
+
     test('never takes more than maxLines, whatever the widths', () => {
         for (let count = 0; count <= 12; count++) {
             for (const available of [40, 90, 130, 400]) {

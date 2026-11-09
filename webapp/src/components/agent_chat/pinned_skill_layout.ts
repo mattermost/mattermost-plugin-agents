@@ -18,6 +18,9 @@ export interface PinnedSkillFitInput {
     /** The width the lines can fill. */
     available: number;
     maxLines: number;
+
+    /** At most this many prompts are shown as buttons. Omit it for no count cap. */
+    maxVisible?: number;
 }
 
 export interface PinnedSkillFit {
@@ -52,12 +55,14 @@ function pack(entries: Array<{entry: PinnedSkillEntry; width: number}>, availabl
     return lines;
 }
 
-// Shows as many prompts as fit in maxLines lines. The ones that do not fit collapse into one "+N"
-// chip, which takes its own place on the last line, so the lines never run past maxLines.
-export function fitPinnedSkillLines({widths, chipWidth, gap, available, maxLines}: PinnedSkillFitInput): PinnedSkillFit {
+// Shows as many prompts as fit in maxLines lines, and at most maxVisible of them. The ones that do
+// not fit collapse into one "+N" chip, which takes its own place on the last line, so the lines
+// never run past maxLines.
+export function fitPinnedSkillLines({widths, chipWidth, gap, available, maxLines, maxVisible}: PinnedSkillFitInput): PinnedSkillFit {
     const items = widths.map((width, index) => ({entry: index as PinnedSkillEntry, width}));
+    const limit = Math.min(widths.length, maxVisible ?? widths.length);
 
-    for (let count = widths.length; count > 0; count--) {
+    for (let count = limit; count > 0; count--) {
         const entries = items.slice(0, count);
         if (count < widths.length) {
             entries.push({entry: 'more', width: chipWidth});

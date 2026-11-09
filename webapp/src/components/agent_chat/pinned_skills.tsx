@@ -17,8 +17,9 @@ import type {CustomPrompt} from '@/types';
 
 import {fitPinnedSkillLines, type PinnedSkillFit, type PinnedSkillFitInput} from './pinned_skill_layout';
 
-// The pinned skills take at most this many lines; whatever does not fit collapses into "+N".
-const MAX_PINNED_SKILL_LINES = 2;
+// One row above the composer, at most this many buttons. Whatever does not fit collapses into "+N".
+const MAX_PINNED_SKILL_LINES = 1;
+const MAX_VISIBLE_PINNED_SKILLS = 4;
 
 const MEASURE_ATTRIBUTE = 'data-pinned-skill-measure';
 
@@ -37,9 +38,9 @@ interface PinnedSkillsProps {
     onPick: (prompt: CustomPrompt) => void;
 }
 
-// The pinned prompts as buttons on at most MAX_PINNED_SKILL_LINES lines, with the ones that do not fit
-// behind a "+N" chip. The browser's own wrapping can't do this (it can't swap the last button for
-// a chip), so each button is measured in a hidden row and the lines are laid out here.
+// The pinned prompts as at most four buttons on one row, with the ones that do not fit behind a "+N"
+// chip. The browser's own wrapping can't do this (it can't swap the last button for a chip), so each
+// button is measured in a hidden row and the row is laid out here.
 const PinnedSkills = ({prompts, disabled, error, onPick}: PinnedSkillsProps) => {
     const intl = useIntl();
     const groupRef = useRef<HTMLDivElement>(null);
@@ -85,13 +86,13 @@ const PinnedSkills = ({prompts, disabled, error, onPick}: PinnedSkillsProps) => 
         if (!metrics || metrics.widths.length !== prompts.length || metrics.available <= 0) {
             return null;
         }
-        return fitPinnedSkillLines({...metrics, maxLines: MAX_PINNED_SKILL_LINES});
+        return fitPinnedSkillLines({...metrics, maxLines: MAX_PINNED_SKILL_LINES, maxVisible: MAX_VISIBLE_PINNED_SKILLS});
     }, [metrics, prompts]);
 
     const hidden = fit ? prompts.slice(fit.visibleCount) : [];
 
-    // The menu's open state lives here, above the lines: a resize that moves the +N chip to another
-    // line remounts it, and the menu has to stay open through that.
+    // The menu's open state lives here, above the row: a resize that changes what fits rebuilds the
+    // chip, and the menu has to stay open through that.
     const [moreOpen, setMoreOpen] = useState(false);
     const nothingHidden = hidden.length === 0;
     useEffect(() => {
@@ -166,7 +167,8 @@ interface MorePromptsProps {
     onPick: (prompt: CustomPrompt) => void;
 }
 
-// The "+N" after the pinned skill buttons: the pinned skills that did not fit, in a menu.
+// The "+N" after the pinned skill buttons: the pinned skills that did not fit, in a menu. The row
+// sits on the composer, so the menu opens upward.
 const MorePrompts = ({prompts, disabled, open, onOpenChange, onPick}: MorePromptsProps) => {
     const intl = useIntl();
     const menu = useMenuTransition(open);
@@ -179,7 +181,7 @@ const MorePrompts = ({prompts, disabled, open, onOpenChange, onPick}: MorePrompt
         <Dropdown
             isOpen={menu.rendered}
             onOpenChange={onOpenChange}
-            placement='bottom-end'
+            placement='top-end'
             target={(
                 <PinnedSkillButton
                     disabled={disabled}
@@ -222,21 +224,18 @@ const PinnedSkillButton = styled(Button).attrs({emphasis: 'dim', size: 'x-small'
     }
 `;
 
-// One gap between buttons and between lines; the measuring row reads it back as pixels.
+// One gap between buttons; the measuring row reads it back as pixels.
 const ITEM_GAP = 'var(--spacing-xs)';
 
-// No compass token for a content width. The lines measure against this width, so it also decides
-// how many prompts fit before "+N".
-const PINNED_SKILLS_MAX_WIDTH = '520px';
-
+// As wide as the composer column, centered over the message box. The row measures against
+// that width, which decides how many prompts fit before "+N".
 const PinnedSkillsGroup = styled.div`
     position: relative;
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: stretch;
     gap: ${ITEM_GAP};
     width: 100%;
-    max-width: ${PINNED_SKILLS_MAX_WIDTH};
 `;
 
 const PinnedSkillLine = styled.div`

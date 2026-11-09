@@ -67,11 +67,13 @@ interface HostSubmitResult {
     created?: {id?: string};
 }
 
-// The new-chat state: the agent's avatar, a greeting, and the host's message
-// composer (AdvancedTextEditor), centered until the first post creates the
-// thread. The composer posts a root post to the agent's DM, exactly as the
-// Channels DM composer does (drafts, uploads, slash commands, AI actions
-// included), and its afterSubmit opens the new thread.
+// The new-chat state: the agent's avatar, a greeting, the pinned skills, and the
+// host's message composer (AdvancedTextEditor), centered until the first post
+// creates the thread and the reply composer takes the bottom. The pinned skills
+// sit just above the field. The whole group fades in and rises. The composer
+// posts a root post to the agent's DM, exactly as the Channels DM composer does
+// (drafts, uploads, slash commands, AI actions included), and its afterSubmit
+// opens the new thread.
 const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) => {
     const intl = useIntl();
     const dispatch = useDispatch();
@@ -185,57 +187,61 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
                     <EmptySubtitle>{intl.formatMessage(greeting.subtitle)}</EmptySubtitle>
                 </Greeting>
             </EmptyIntro>
-            {pinned.length > 0 && (
-                <PinnedSkills
-                    prompts={pinned}
-                    disabled={runningId !== null}
-                    error={pinnedSkillError}
-                    onPick={runPinnedSkill}
-                />
-            )}
-            {AdvancedTextEditor && (
-                <Composer
-                    className={HOST_COMPOSER_CONTAINER_CLASS}
-                    data-testid='agent-chat-new-composer'
-
-                    // The host composer has no disabled prop. While a pinned skill renders and posts, the
-                    // composer cannot be typed in or submitted, so the two cannot both create the first post.
-                    inert={runningId !== null}
-                    $busy={runningId !== null}
-                >
-                    {/* In the RHS, RHS_COMMENT makes the host treat it as the RHS composer (focus, ids, suggestion list). */}
-                    <AdvancedTextEditor
-                        location={layout === 'page' ? 'CENTER' : 'RHS_COMMENT'}
-                        channelId={channelId}
-                        rootId=''
-                        placeholder={intl.formatMessage({defaultMessage: 'Message {name}'}, {name: bot.displayName})}
-                        afterSubmit={afterSubmit}
+            <ComposerGroup>
+                {pinned.length > 0 && (
+                    <PinnedSkills
+                        prompts={pinned}
+                        disabled={runningId !== null}
+                        error={pinnedSkillError}
+                        onPick={runPinnedSkill}
                     />
-                </Composer>
-            )}
+                )}
+                {AdvancedTextEditor && (
+                    <Composer
+                        className={HOST_COMPOSER_CONTAINER_CLASS}
+                        data-testid='agent-chat-new-composer'
+
+                        // The host composer has no disabled prop. While a pinned skill renders and posts, the
+                        // composer cannot be typed in or submitted, so the two cannot both create the first post.
+                        inert={runningId !== null}
+                        $busy={runningId !== null}
+                    >
+                        {/* In the RHS, RHS_COMMENT makes the host treat it as the RHS composer (focus, ids, suggestion list). */}
+                        <AdvancedTextEditor
+                            location={layout === 'page' ? 'CENTER' : 'RHS_COMMENT'}
+                            channelId={channelId}
+                            rootId=''
+                            placeholder={intl.formatMessage({defaultMessage: 'Message {name}'}, {name: bot.displayName})}
+                            afterSubmit={afterSubmit}
+                        />
+                    </Composer>
+                )}
+            </ComposerGroup>
         </EmptyChat>
     );
 };
 
 const pageLayout = css`
-    gap: var(--spacing-xxl);
     max-width: ${CHAT_CONTENT_MAX_WIDTH};
     margin-inline: auto;
     padding: var(--spacing-xxxxl);
 
     /* Sit slightly above true center, as in the prototype. */
     --empty-chat-lift: calc(var(--spacing-xxxxxl) + var(--spacing-l) + var(--spacing-xxl));
+
+    /* Room between the greeting and the prompts-plus-field, which stay close to each other. */
+    --intro-gap: var(--spacing-xxxxl);
 `;
 
-// The RHS is short as well as narrow: a smaller lift, and 24px padding on all
-// sides (the RHS thread composer uses the same side padding, so they line up).
+// The RHS is short as well as narrow, so the lift and the gap under the greeting are smaller.
+// 24px padding on all sides.
 const panelLayout = css`
-    gap: var(--spacing-xl);
     padding: var(--spacing-xxl);
     --empty-chat-lift: calc(2 * var(--spacing-xxl));
+    --intro-gap: var(--spacing-xxxl);
 `;
 
-// The content fades in and rises 24px into its lifted position. The element's own transform holds
+// The group fades in and rises 24px into its lifted position. The element's own transform holds
 // the end state, so the animation only fills backwards.
 const emptyChatEnter = keyframes`
     from {
@@ -265,25 +271,39 @@ const EmptyChat = styled.div<{$layout: AgentNewChatLayout}>`
     ${noMotionWhenReduced}
 `;
 
+const EmptyIntro = styled.div`
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--spacing-m);
+    width: 100%;
+    text-align: center;
+`;
+
+// The pinned skills and the field, close together, with the greeting's gap above them.
+const ComposerGroup = styled.div`
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+    width: 100%;
+    margin-top: var(--intro-gap);
+`;
+
 // The host composer fills the column; the column's own padding is its inset, so the host's is
-// removed. The host wrapper's own background and radius stay.
+// removed. The host adds 12px above an RHS composer, which would split the skills from the field.
 const Composer = styled.div<{$busy: boolean}>`
     && {
         width: 100%;
+    }
+
+    && .AdvancedTextEditor {
+        padding-top: 0;
     }
 
     opacity: ${({$busy}) => ($busy ? 0.56 : 1)};
     transition: opacity var(--duration-quick) var(--ease-transition);
 
     ${hostComposerInset('0')}
-`;
-
-const EmptyIntro = styled.div`
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--spacing-m);
-    text-align: center;
 `;
 
 const Greeting = styled.div`
@@ -310,7 +330,6 @@ const EmptySubtitle = styled.p`
     font-weight: var(--font-weight-regular);
     line-height: var(--line-height-200);
     color: color-mix(in srgb, var(--center-channel-color) ${SUBTITLE_EMPHASIS}, transparent);
-    text-wrap: balance;
 `;
 
 export default AgentNewChat;
