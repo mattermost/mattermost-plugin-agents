@@ -67,13 +67,12 @@ func NewEmbeddingProvider(cfg EmbeddingConfig) (*EmbeddingProvider, error) {
 // CreateEmbedding generates an embedding for the given text.
 func (p *EmbeddingProvider) CreateEmbedding(ctx context.Context, text string) ([]float32, error) {
 	bifrostCtx := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
+	trackAttemptErrors(bifrostCtx)
 
 	req := &schemas.BifrostEmbeddingRequest{
 		Provider: p.provider,
 		Model:    p.model,
-		Input: &schemas.EmbeddingInput{
-			Text: new(text),
-		},
+		Input:    textEmbeddingInput([]string{text}),
 	}
 	if p.dimensions > 0 {
 		req.Params = &schemas.EmbeddingParameters{
@@ -83,7 +82,7 @@ func (p *EmbeddingProvider) CreateEmbedding(ctx context.Context, text string) ([
 
 	resp, bifrostErr := p.client.EmbeddingRequest(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, providerError(nil, "bifrost embedding error", bifrostErr, p.apiKey)
+		return nil, providerError(bifrostCtx, nil, "bifrost embedding error", bifrostErr, p.apiKey)
 	}
 
 	if resp == nil || len(resp.Data) == 0 {
@@ -117,13 +116,12 @@ func (p *EmbeddingProvider) BatchCreateEmbeddings(ctx context.Context, texts []s
 // batchCreateEmbeddings issues a single embeddings request.
 func (p *EmbeddingProvider) batchCreateEmbeddings(ctx context.Context, texts []string) ([][]float32, error) {
 	bifrostCtx := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
+	trackAttemptErrors(bifrostCtx)
 
 	req := &schemas.BifrostEmbeddingRequest{
 		Provider: p.provider,
 		Model:    p.model,
-		Input: &schemas.EmbeddingInput{
-			Texts: texts,
-		},
+		Input:    textEmbeddingInput(texts),
 	}
 	if p.dimensions > 0 {
 		req.Params = &schemas.EmbeddingParameters{
@@ -133,7 +131,7 @@ func (p *EmbeddingProvider) batchCreateEmbeddings(ctx context.Context, texts []s
 
 	resp, bifrostErr := p.client.EmbeddingRequest(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, providerError(nil, "bifrost batch embedding error", bifrostErr, p.apiKey)
+		return nil, providerError(bifrostCtx, nil, "bifrost batch embedding error", bifrostErr, p.apiKey)
 	}
 
 	if resp == nil || len(resp.Data) == 0 {
@@ -171,6 +169,18 @@ func splitEmbeddingBatches(texts []string) [][]string {
 		batches = append(batches, texts[start:])
 	}
 	return batches
+}
+
+// textEmbeddingInput wraps each text as its own single-part input item, so the
+// response has one embedding per text in order.
+func textEmbeddingInput(texts []string) []schemas.EmbeddingInputItem {
+	items := make([]schemas.EmbeddingInputItem, len(texts))
+	for i, text := range texts {
+		items[i] = schemas.EmbeddingInputItem{
+			Content: schemas.EmbeddingContent{{Type: schemas.EmbeddingContentPartTypeText, Text: new(text)}},
+		}
+	}
+	return items
 }
 
 // float64SliceToFloat32 narrows an embedding array; bifrost v1.5+ returns
