@@ -773,6 +773,8 @@ func (p *Plugin) OnLicenseChanged(_, _ *model.License) {
 	for _, listener := range p.licenseChangeListeners {
 		listener()
 	}
+	// Search availability depends on the license, so connected clients refetch it.
+	mmapi.NewClient(p.pluginAPI).PublishWebSocketEvent(api.WebsocketEventBotsInvalidate, map[string]any{}, &model.WebsocketBroadcast{})
 }
 
 func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
