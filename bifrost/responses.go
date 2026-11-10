@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/maximhq/bifrost/core/schemas"
 
@@ -247,6 +249,52 @@ func convertToResponsesTools(request llm.CompletionRequest, cfg llm.LanguageMode
 	return result
 }
 
+// serverSideToolInvocationsFor returns the include-server-side-tool-invocations
+// flag for model on the provider registered as name. Gemini and Vertex reject
+// a request that mixes the built-in Google Search tool with function
+// declarations unless this flag is set; without it Bifrost silently drops one
+// kind. It is set only for models that support tool combination, since older
+// ones reject the mix outright, and left unset for every other provider.
+func (b *LLM) serverSideToolInvocationsFor(name schemas.ModelProvider, model string, tools []schemas.ResponsesTool) *bool {
+	switch b.baseProvider(name) {
+	case schemas.Gemini, schemas.Vertex:
+	default:
+		return nil
+	}
+	if !geminiSupportsToolCombination(model) {
+		return nil
+	}
+	hasWebSearch := slices.ContainsFunc(tools, func(t schemas.ResponsesTool) bool {
+		return t.Type == schemas.ResponsesToolTypeWebSearch
+	})
+	hasFunction := slices.ContainsFunc(tools, func(t schemas.ResponsesTool) bool {
+		return t.Type == schemas.ResponsesToolTypeFunction
+	})
+	if !hasWebSearch || !hasFunction {
+		return nil
+	}
+	return new(true)
+}
+
+// geminiToolCombinationMinMajor is the first Gemini generation that accepts
+// built-in and function tools in the same request.
+const geminiToolCombinationMinMajor = 3
+
+// geminiSupportsToolCombination reports whether model is a Gemini model of
+// generation 3 or newer. Unrecognized names (tuned endpoints, aliases) report
+// false, which keeps the previous behavior of Bifrost dropping a tool kind.
+func geminiSupportsToolCombination(model string) bool {
+	name := strings.ToLower(model)
+	name = name[strings.LastIndex(name, "/")+1:]
+	rest, ok := strings.CutPrefix(name, "gemini-")
+	if !ok {
+		return false
+	}
+	digits := rest[:len(rest)-len(strings.TrimLeft(rest, "0123456789"))]
+	major, err := strconv.Atoi(digits)
+	return err == nil && major >= geminiToolCombinationMinMajor
+}
+
 // responsesReasoningFor creates the ResponsesParametersReasoning configuration
 // for cfg.Model on the provider registered as name, or nil when no reasoning
 // block should be sent.
@@ -316,6 +364,7 @@ func (b *LLM) responsesRequestForHop(request llm.CompletionRequest, cfg llm.Lang
 	var params schemas.ResponsesParameters
 	if len(tools) > 0 {
 		params.Tools = tools
+		params.IncludeServerSideToolInvocations = b.serverSideToolInvocationsFor(name, model, tools)
 		if cfg.ToolsDisabled {
 			none := string(schemas.ResponsesToolChoiceTypeNone)
 			params.ToolChoice = &schemas.ResponsesToolChoice{ResponsesToolChoiceStr: &none}
