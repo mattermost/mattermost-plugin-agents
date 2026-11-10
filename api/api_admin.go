@@ -657,6 +657,11 @@ func (a *API) handleClearMCPToolsCache(c *gin.Context) {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to clear cache: %w", err))
 		return
 	}
+	a.mcpClientManager.InvalidateAllClients()
+	if err := a.clusterNotifier.PublishMCPToolsInvalidate(); err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to clear MCP client caches on peer nodes: %w", err))
+		return
+	}
 
 	audit.AddParam(auditRec(c), "cleared_servers", clearedCount)
 

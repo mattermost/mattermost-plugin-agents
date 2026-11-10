@@ -4,17 +4,20 @@
 package mcp
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
-	cacheKeyPrefix = "mcp_tools_cache_v1_"
-	cacheTTL       = 8 * 24 * time.Hour // 8 days
+	cacheKeyPrefix     = "mcp_tools_cache_v1_"
+	cacheGenerationKey = "mcp_tools_cache_generation"
+	cacheTTL           = 8 * 24 * time.Hour // 8 days
 
 	listKeysPageSize = 1000
 )
@@ -48,6 +51,9 @@ type Logger interface {
 type ToolsCache struct {
 	kvAPI KVStore
 	log   Logger
+	// generation binds a connection to the cache generation it discovered.
+	// Nil selects the current shared generation for standalone cache operations.
+	generation *string
 }
 
 // NewToolsCache creates a new ToolsCache instance
@@ -60,10 +66,14 @@ func NewToolsCache(kvAPI KVStore, log Logger) *ToolsCache {
 
 // GetTools retrieves cached tools for a server, returns nil if missing
 func (tc *ToolsCache) GetTools(serverID string) map[string]*mcp.Tool {
-	key := tc.buildCacheKey(serverID)
+	key, err := tc.cacheKey(serverID)
+	if err != nil {
+		tc.log.Error("Failed to read tools cache generation", "error", err)
+		return nil
+	}
 
 	var cached CachedTools
-	err := tc.kvAPI.Get(key, &cached)
+	err = tc.kvAPI.Get(key, &cached)
 	if err != nil {
 		tc.log.Error("Failed to retrieve tools cache from KV store", "serverID", serverID, "error", err)
 		return nil
@@ -93,7 +103,10 @@ func (tc *ToolsCache) SetTools(serverID string, serverName string, serverURL str
 	// Set returns (false, err) if DB error occurred
 	// Set returns (false, nil) if the value was not set
 	// Set returns (true, nil) if the value was set
-	key := tc.buildCacheKey(serverID)
+	key, err := tc.cacheKey(serverID)
+	if err != nil {
+		return err
+	}
 	success, err := tc.kvAPI.Set(key, cached, pluginapi.SetExpiry(cacheTTL))
 	if err != nil {
 		tc.log.Error("Failed to persist tools cache to KV store (DB error)", "serverID", serverID, "error", err)
@@ -111,8 +124,11 @@ func (tc *ToolsCache) SetTools(serverID string, serverName string, serverURL str
 // InvalidateServer removes a server's cache entry from KV store
 // Delete returns no error for non-existent keys, only errors on actual failures
 func (tc *ToolsCache) InvalidateServer(serverID string) error {
-	key := tc.buildCacheKey(serverID)
-	err := tc.kvAPI.Delete(key)
+	key, err := tc.cacheKey(serverID)
+	if err != nil {
+		return err
+	}
+	err = tc.kvAPI.Delete(key)
 	if err != nil {
 		tc.log.Error("Failed to delete tools cache from KV store", "serverID", serverID, "error", err)
 		return fmt.Errorf("failed to delete cache: %w", err)
@@ -122,9 +138,21 @@ func (tc *ToolsCache) InvalidateServer(serverID string) error {
 	return nil
 }
 
-// ClearAll removes all cached tools from KV store.
+// ClearAll invalidates cached tools and removes entries from older generations.
 func (tc *ToolsCache) ClearAll() (int, error) {
 	tc.log.Info("Clearing all MCP tools cache entries")
+
+	// Publish a new namespace before deleting old entries. A discovery already
+	// in flight retains its old namespace, including on another cluster node.
+	generation := model.NewId()
+	saved, err := tc.kvAPI.Set(cacheGenerationKey, generation)
+	if err != nil {
+		return 0, fmt.Errorf("failed to rotate tools cache generation: %w", err)
+	}
+	if !saved {
+		return 0, fmt.Errorf("tools cache generation was not persisted")
+	}
+	currentPrefix := cacheKeyPrefix + generation + "_"
 
 	// The KV store has no server-side prefix filter, so every page is listed.
 	// Keys are collected before deleting so deletions do not shift later pages.
@@ -136,7 +164,7 @@ func (tc *ToolsCache) ClearAll() (int, error) {
 			return 0, fmt.Errorf("failed to list cache keys: %w", err)
 		}
 		for _, key := range pageKeys {
-			if strings.HasPrefix(key, cacheKeyPrefix) {
+			if strings.HasPrefix(key, cacheKeyPrefix) && !strings.HasPrefix(key, currentPrefix) {
 				keys = append(keys, key)
 			}
 		}
@@ -146,19 +174,45 @@ func (tc *ToolsCache) ClearAll() (int, error) {
 	}
 
 	clearedCount := 0
+	var clearErr error
 	for _, key := range keys {
 		if err := tc.kvAPI.Delete(key); err != nil {
 			tc.log.Warn("Failed to delete cache key", "key", key, "error", err)
+			clearErr = errors.Join(clearErr, fmt.Errorf("failed to delete cache: %w", err))
 			continue
 		}
 		clearedCount++
 	}
 
 	tc.log.Info("Cleared MCP tools cache", "clearedCount", clearedCount)
-	return clearedCount, nil
+	return clearedCount, clearErr
 }
 
-// buildCacheKey constructs the KV store key for a server
+// snapshot binds cache reads and writes to one shared generation. Old
+// connections cannot repopulate the namespace selected by a later clear.
+func (tc *ToolsCache) snapshot() (*ToolsCache, error) {
+	if tc.generation != nil {
+		return tc, nil
+	}
+	var generation string
+	if err := tc.kvAPI.Get(cacheGenerationKey, &generation); err != nil && !errors.Is(err, pluginapi.ErrNotFound) {
+		return nil, fmt.Errorf("failed to read tools cache generation: %w", err)
+	}
+	return &ToolsCache{kvAPI: tc.kvAPI, log: tc.log, generation: &generation}, nil
+}
+
+func (tc *ToolsCache) cacheKey(serverID string) (string, error) {
+	snapshot, err := tc.snapshot()
+	if err != nil {
+		return "", err
+	}
+	if *snapshot.generation == "" {
+		return tc.buildCacheKey(serverID), nil
+	}
+	return cacheKeyPrefix + *snapshot.generation + "_" + serverID, nil
+}
+
+// buildCacheKey constructs the legacy KV key for a server.
 func (tc *ToolsCache) buildCacheKey(serverID string) string {
 	return cacheKeyPrefix + serverID
 }

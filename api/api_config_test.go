@@ -87,8 +87,14 @@ func (u *testConfigUpdater) Update(cfg *config.Config) {
 
 // testClusterNotifier tracks whether PublishConfigUpdate was called.
 type testClusterNotifier struct {
-	callCount int
-	err       error
+	callCount             int
+	err                   error
+	mcpToolsInvalidations int
+}
+
+func (n *testClusterNotifier) PublishMCPToolsInvalidate() error {
+	n.mcpToolsInvalidations++
+	return n.err
 }
 
 func (n *testClusterNotifier) PublishConfigUpdate() error {

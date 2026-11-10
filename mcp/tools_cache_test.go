@@ -338,7 +338,8 @@ func TestClearAllBeyondFirstKeyPage(t *testing.T) {
 			for _, serverID := range servers {
 				require.Nil(t, cache.GetTools(serverID))
 			}
-			require.Len(t, kvAPI.store, tc.unrelatedKeys)
+			require.Contains(t, kvAPI.store, cacheGenerationKey)
+			require.Len(t, kvAPI.store, tc.unrelatedKeys+1)
 		})
 	}
 }

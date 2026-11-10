@@ -15,6 +15,7 @@ import (
 const clusterEventConfigUpdate = "config_update"
 const clusterEventAgentUpdate = "agent_update"
 const clusterEventMCPOAuthUserInvalidate = "mcp_oauth_user_invalidate"
+const clusterEventMCPToolsInvalidate = "mcp_tools_invalidate"
 const clusterEventStreamStop = "stream_stop"
 const clusterEventChannelAutoReplyInvalidate = "channel_autoreply_invalidate"
 
@@ -66,6 +67,11 @@ func (p *Plugin) publishClusterEventWithPayload(eventID string, payload any) err
 // PublishConfigUpdate broadcasts a config update event to all other nodes in the cluster.
 func (p *Plugin) PublishConfigUpdate() error {
 	return p.publishClusterEvent(clusterEventConfigUpdate, nil)
+}
+
+// PublishMCPToolsInvalidate asks peer nodes to discard cached MCP catalogs.
+func (p *Plugin) PublishMCPToolsInvalidate() error {
+	return p.publishClusterEvent(clusterEventMCPToolsInvalidate, nil)
 }
 
 // PublishAgentUpdate broadcasts an agent update event to all other nodes in
@@ -156,6 +162,10 @@ func (p *Plugin) OnPluginClusterEvent(_ *plugin.Context, ev model.PluginClusterE
 		}
 		if p.mcpClientManager != nil {
 			p.mcpClientManager.InvalidateUserClients(payload.UserID)
+		}
+	case clusterEventMCPToolsInvalidate:
+		if p.mcpClientManager != nil {
+			p.mcpClientManager.InvalidateAllClients()
 		}
 
 	case clusterEventStreamStop:

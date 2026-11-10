@@ -428,6 +428,14 @@ func newClientWithTimeout(ctx context.Context, timeout time.Duration, userID str
 		serviceAccount: p.serviceAccount,
 	}
 
+	if c.toolsCache != nil && c.useSharedToolsCache() {
+		cache, err := c.toolsCache.snapshot()
+		if err != nil {
+			return nil, err
+		}
+		c.toolsCache = cache
+	}
+
 	needsAuthorization, err := c.staticOAuthTokenMissing()
 	if err != nil {
 		return nil, err

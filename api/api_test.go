@@ -207,6 +207,8 @@ type mockMCPClientManager struct {
 	discoverPluginToolsCallCount int
 }
 
+func (m *mockMCPClientManager) InvalidateAllClients() {}
+
 func newTestMCPClientManager(t *testing.T) *mockMCPClientManager {
 	t.Helper()
 	mockClient := mmapimocks.NewMockClient(t)

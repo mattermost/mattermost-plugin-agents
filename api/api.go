@@ -78,6 +78,7 @@ type Config interface {
 type MCPClientManager interface {
 	GetOAuthManager() *mcp.OAuthManager
 	GetToolsCache() *mcp.ToolsCache
+	InvalidateAllClients()
 	GetHTTPClient() *http.Client
 	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code, iss string) (*mcp.OAuthSession, error)
 	DisconnectUserOAuth(ctx context.Context, userID, serverName string) error
@@ -135,9 +136,10 @@ type ConfigUpdater interface {
 	Update(cfg *config.Config)
 }
 
-// ClusterNotifier broadcasts config update events to other cluster nodes.
+// ClusterNotifier broadcasts configuration and cache changes to peer nodes.
 type ClusterNotifier interface {
 	PublishConfigUpdate() error
+	PublishMCPToolsInvalidate() error
 }
 
 // ConversationStore provides read/write access to conversation and turn data.

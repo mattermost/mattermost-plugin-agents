@@ -1639,6 +1639,8 @@ func TestAuditClearMCPToolsCache(t *testing.T) {
 		{
 			name: "success records cleared_servers",
 			setup: func(e *TestEnvironment) {
+				e.mockAPI.On("KVSetWithOptions", "mcp_tools_cache_generation", mock.Anything, model.PluginKVSetOptions{}).Return(true, nil)
+
 				// ClearAll lists all KV keys and deletes the cache-prefixed
 				// ones; pluginapi implements Delete as KVSetWithOptions with
 				// a nil value.
@@ -1680,6 +1682,7 @@ func TestAuditClearMCPToolsCache(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e, records := setupAdminAuditTest(t)
+			e.api.clusterNotifier = &testClusterNotifier{}
 			defer e.Cleanup(t)
 
 			e.mockAPI.On("HasPermissionTo", "userid", model.PermissionManageSystem).Return(true)

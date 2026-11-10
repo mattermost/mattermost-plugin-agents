@@ -175,8 +175,8 @@ func (m *ClientManager) cleanupInactiveClients(closeChan <-chan struct{}, ticker
 }
 
 // ReInit applies a new configuration and embedded server without discarding
-// sessions whose connection identity is unchanged. Close is the only path that
-// tears down every user client.
+// sessions whose connection identity is unchanged. Global cache invalidation
+// discards those sessions without stopping the manager.
 func (m *ClientManager) ReInit(config Config, embeddedServer EmbeddedMCPServer) {
 	if config.IdleTimeoutMinutes <= 0 {
 		config.IdleTimeoutMinutes = 30
@@ -767,6 +767,20 @@ func (m *ClientManager) invalidateCatalogClients(req CatalogRequest) {
 
 	for _, userClients := range discarded {
 		userClients.Close()
+	}
+}
+
+// InvalidateAllClients removes cached catalogs for every user and auth mode.
+// The manager remains available for subsequent requests to reconnect.
+func (m *ClientManager) InvalidateAllClients() {
+	m.clientsMu.Lock()
+	discarded := m.clients
+	m.clients = make(map[clientKey]*UserClients)
+	m.activity = make(map[clientKey]time.Time)
+	m.clientsMu.Unlock()
+
+	for _, clients := range discarded {
+		clients.Close()
 	}
 }
 
