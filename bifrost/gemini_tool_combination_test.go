@@ -323,8 +323,8 @@ func TestServerSideToolInvocationsAcrossProviders(t *testing.T) {
 	}{
 		{name: "gemini 3", provider: schemas.Gemini, model: "gemini-3-flash-preview", wantFlag: true},
 		{name: "gemini 4", provider: schemas.Gemini, model: "gemini-4-argon", wantFlag: true},
-		{name: "vertex 3", provider: schemas.Vertex, model: "gemini-3.5-flash", wantFlag: true},
-		{name: "vertex with publisher path", provider: schemas.Vertex, model: "publishers/google/models/gemini-3.5-flash", wantFlag: true},
+		{name: "vertex 3", provider: schemas.Vertex, model: "gemini-3.5-flash"},
+		{name: "vertex with publisher path", provider: schemas.Vertex, model: "publishers/google/models/gemini-3.5-flash"},
 		{name: "gemini 2.5", provider: schemas.Gemini, model: "gemini-2.5-pro"},
 		{name: "vertex 2.5", provider: schemas.Vertex, model: "gemini-2.5-flash"},
 		{name: "vertex unrecognized model", provider: schemas.Vertex, model: "my-tuned-endpoint"},

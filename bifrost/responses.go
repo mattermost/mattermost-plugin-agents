@@ -250,15 +250,14 @@ func convertToResponsesTools(request llm.CompletionRequest, cfg llm.LanguageMode
 }
 
 // serverSideToolInvocationsFor returns the include-server-side-tool-invocations
-// flag for model on the provider registered as name. Gemini and Vertex reject
-// a request that mixes the built-in Google Search tool with function
+// flag for model on the provider registered as name. The Gemini Developer API
+// rejects a request that mixes the built-in Google Search tool with function
 // declarations unless this flag is set; without it Bifrost silently drops one
 // kind. It is set only for models that support tool combination, since older
-// ones reject the mix outright, and left unset for every other provider.
+// ones reject the mix outright, and left unset for every other provider,
+// including Vertex, which accepts the mix but rejects the field.
 func (b *LLM) serverSideToolInvocationsFor(name schemas.ModelProvider, model string, tools []schemas.ResponsesTool) *bool {
-	switch b.baseProvider(name) {
-	case schemas.Gemini, schemas.Vertex:
-	default:
+	if b.baseProvider(name) != schemas.Gemini {
 		return nil
 	}
 	if !geminiSupportsToolCombination(model) {
