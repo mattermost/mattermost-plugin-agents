@@ -116,6 +116,11 @@ func FetchModelsForServiceType(serviceType, apiKey, apiURL, orgID string) ([]llm
 // region, and service-account JSON) that cannot be expressed as a single API
 // key.
 func FetchModelsForService(svc llm.ServiceConfig) ([]llm.ModelInfo, error) {
+	if svc.Type == llm.ServiceTypeGDCGemini {
+		// GDC lists models only over gRPC; admins enter the model name.
+		return nil, fmt.Errorf("model fetching not supported for service type: %s", svc.Type)
+	}
+
 	provider, err := MapServiceTypeToProvider(svc.Type)
 	if err != nil {
 		return nil, fmt.Errorf("model fetching not supported for service type: %s", svc.Type)

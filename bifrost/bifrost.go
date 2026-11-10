@@ -96,11 +96,19 @@ type ProviderSettings struct {
 
 	DefaultModel     string
 	StreamingTimeout time.Duration
+
+	// GDC is set for Gemini on Google Distributed Cloud air-gapped, which
+	// authenticates with minted bearer tokens instead of APIKey.
+	GDC *GDCSettings
 }
 
 // Config holds the configuration for creating a LLM instance.
 type Config struct {
 	ProviderSettings
+
+	// ServiceID is the primary's source service ID, used to name its
+	// custom-provider slot when it needs one (GDC).
+	ServiceID string
 
 	InputTokenLimit  int
 	OutputTokenLimit int
@@ -146,6 +154,23 @@ type providerAccount struct {
 	name     schemas.ModelProvider
 	keyless  bool
 	chatOnly bool
+
+	// gdcTokens mints bearer tokens for a GDC service; nil otherwise.
+	gdcTokens *gdcTokenSource
+}
+
+// initGDCTokens builds the token source for a GDC service, so a bad key or CA
+// certificate fails client setup instead of the first request.
+func (a *providerAccount) initGDCTokens() error {
+	if a.GDC == nil {
+		return nil
+	}
+	tokens, err := newGDCTokenSource(*a.GDC)
+	if err != nil {
+		return err
+	}
+	a.gdcTokens = tokens
+	return nil
 }
 
 // registeredName returns the name this account is registered under with Bifrost,
@@ -239,6 +264,17 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 		}
 	}
 
+	if a.GDC != nil {
+		networkConfig.ExtraHeaders = map[string]string{
+			gdcUserProjectHeader: gdcUserProject(*a.GDC),
+		}
+		if a.GDC.CACertificatePEM != "" {
+			networkConfig.CACertPEM = &schemas.SecretVar{Val: a.GDC.CACertificatePEM}
+		}
+		// The gateway is an in-cluster service on a private network.
+		networkConfig.AllowPrivateNetwork = true
+	}
+
 	// Configure retry logic with sensible defaults
 	networkConfig.MaxRetries = 2
 	networkConfig.RetryBackoffInitial = 1 * time.Second
@@ -256,6 +292,13 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 		cpc := &schemas.CustomProviderConfig{
 			BaseProviderType: a.Provider,
 			IsKeyLess:        a.keyless,
+		}
+		if a.GDC != nil && a.GDC.ChatCompletions {
+			path := gdcChatCompletionsPath(*a.GDC)
+			cpc.RequestPathOverrides = map[schemas.RequestType]string{
+				schemas.ChatCompletionRequest:       path,
+				schemas.ChatCompletionStreamRequest: path,
+			}
 		}
 		if a.chatOnly {
 			// Chat-only AllowedRequests makes Bifrost transparently downgrade a
@@ -315,6 +358,16 @@ func (m *multiProviderAccount) addProvider(entry *providerAccount) {
 	m.order = append(m.order, name)
 }
 
+// hasGDC reports whether any registered service authenticates through GDC.
+func (m *multiProviderAccount) hasGDC() bool {
+	for _, entry := range m.entries {
+		if entry.gdcTokens != nil {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *multiProviderAccount) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
 	return m.order, nil
 }
@@ -360,6 +413,16 @@ func readFileData(file llm.File) ([]byte, error) {
 // setup instead of silently shrinking.
 func New(cfg Config) (*LLM, error) {
 	primaryEntry := &providerAccount{ProviderSettings: cfg.ProviderSettings}
+	if cfg.GDC != nil {
+		// GDC has no API key, and Bifrost only runs a keyless provider from a
+		// custom slot.
+		primaryEntry.name = customProviderName(cfg.Provider, cfg.ServiceID)
+		primaryEntry.keyless = true
+		primaryEntry.chatOnly = cfg.GDC.ChatCompletions
+	}
+	if err := primaryEntry.initGDCTokens(); err != nil {
+		return nil, err
+	}
 
 	account := newMultiProviderAccount()
 	account.addProvider(primaryEntry)
@@ -382,6 +445,9 @@ func New(cfg Config) (*LLM, error) {
 		entry := &providerAccount{
 			ProviderSettings: fb.ProviderSettings,
 			keyless:          fb.IsKeyLess,
+		}
+		if err := entry.initGDCTokens(); err != nil {
+			return nil, fmt.Errorf("fallback service %q: %w", fb.ID, err)
 		}
 
 		// A fallback needs its own custom-provider slot when it collides on an
@@ -423,7 +489,7 @@ func New(cfg Config) (*LLM, error) {
 
 	return &LLM{
 		client:             client,
-		provider:           cfg.Provider,
+		provider:           primaryEntry.registeredName(),
 		apiKey:             cfg.APIKey,
 		fallbackAPIKeys:    redactKeys[1:],
 		defaultModel:       cfg.DefaultModel,

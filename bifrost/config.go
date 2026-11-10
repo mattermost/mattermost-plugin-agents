@@ -35,9 +35,21 @@ func MapServiceTypeToProvider(serviceType string) (schemas.ModelProvider, error)
 		return schemas.Gemini, nil
 	case llm.ServiceTypeVertex:
 		return schemas.Vertex, nil
+	case llm.ServiceTypeGDCGemini:
+		return schemas.Gemini, nil // Chat Completions mode: see serviceProvider
 	default:
 		return "", fmt.Errorf("unsupported service type: %s", serviceType)
 	}
+}
+
+// serviceProvider returns the Bifrost base provider that serves svc. It
+// differs from MapServiceTypeToProvider only for GDC in Chat Completions mode,
+// which is served by the OpenAI provider.
+func serviceProvider(svc llm.ServiceConfig) (schemas.ModelProvider, error) {
+	if gdc := gdcSettingsFromService(svc); gdc != nil {
+		return gdcProvider(*gdc), nil
+	}
+	return MapServiceTypeToProvider(svc.Type)
 }
 
 // SupportsNativeTools reports whether the given service type can use provider
@@ -86,6 +98,9 @@ func SupportedNativeToolsForServiceType(serviceType string) []string {
 		return []string{llm.NativeToolWebSearch, llm.NativeToolCodeInterpreter}
 	case llm.ServiceTypeGemini, llm.ServiceTypeVertex:
 		return []string{llm.NativeToolWebSearch}
+	case llm.ServiceTypeGDCGemini:
+		// Air-gapped: no Google Search grounding or other provider tools.
+		return nil
 	default:
 		return nil
 	}
@@ -114,7 +129,7 @@ func filterNativeToolsForServiceType(serviceType string, tools []string) []strin
 // primary service's fallback chain (see llm.ResolveFallbackChain). Each fallback
 // service's DefaultModel is used as the fallback model.
 func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (*LLM, error) {
-	provider, err := MapServiceTypeToProvider(serviceConfig.Type)
+	provider, err := serviceProvider(serviceConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -129,14 +144,24 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		settings.DefaultModel = botConfig.Model
 	}
 
+	nativeTools := filterNativeToolsForServiceType(serviceConfig.Type, botConfig.EnabledNativeTools)
+	if len(nativeTools) > 0 {
+		for _, fbSvc := range fallbackServices {
+			if fbSvc.Type == llm.ServiceTypeGDCGemini {
+				return nil, fmt.Errorf("fallback service %q (Gemini on GDC) does not support provider-native tools; disable native tools on the agent or remove the fallback", fbSvc.ID)
+			}
+		}
+	}
+
 	cfg := Config{
 		ProviderSettings: settings,
+		ServiceID:        serviceConfig.ID,
 		InputTokenLimit:  serviceConfig.InputTokenLimit,
 		OutputTokenLimit: serviceConfig.OutputTokenLimit,
 		UseResponsesAPI:  llm.ServiceUsesResponsesAPI(serviceConfig),
 
 		// Bot-specific configuration
-		EnabledNativeTools: filterNativeToolsForServiceType(serviceConfig.Type, botConfig.EnabledNativeTools),
+		EnabledNativeTools: nativeTools,
 		ReasoningEnabled:   botConfig.ReasoningEnabled,
 		ReasoningEffort:    botConfig.ReasoningEffort,
 		ThinkingBudget:     botConfig.ThinkingBudget,
@@ -159,10 +184,15 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 // onto ProviderSettings. It does not fill in per-provider URL defaults; bifrost
 // has its own and they drift.
 func providerSettingsFromService(provider schemas.ModelProvider, svc llm.ServiceConfig) ProviderSettings {
+	apiURL := normalizeOpenAIBaseURL(provider, svc.APIURL)
+	gdc := gdcSettingsFromService(svc)
+	if gdc != nil {
+		apiURL = gdcBaseURL(*gdc)
+	}
 	return ProviderSettings{
 		Provider:              provider,
 		APIKey:                svc.APIKey,
-		APIURL:                normalizeOpenAIBaseURL(provider, svc.APIURL),
+		APIURL:                apiURL,
 		OrgID:                 svc.OrgID,
 		Region:                svc.Region,
 		AWSAccessKeyID:        svc.AWSAccessKeyID,
@@ -172,13 +202,14 @@ func providerSettingsFromService(provider schemas.ModelProvider, svc llm.Service
 		VertexAuthCredentials: svc.VertexAuthCredentials,
 		DefaultModel:          svc.DefaultModel,
 		StreamingTimeout:      time.Duration(svc.StreamingTimeoutSeconds) * time.Second,
+		GDC:                   gdc,
 	}
 }
 
 // serviceConfigToFallbackEntry converts a ServiceConfig into a FallbackEntry
 // for registration with the Bifrost client.
 func serviceConfigToFallbackEntry(svc llm.ServiceConfig) (FallbackEntry, error) {
-	provider, err := MapServiceTypeToProvider(svc.Type)
+	provider, err := serviceProvider(svc)
 	if err != nil {
 		return FallbackEntry{}, err
 	}
@@ -232,7 +263,8 @@ func IsSupported(serviceType string) bool {
 		llm.ServiceTypeCohere,
 		llm.ServiceTypeMistral,
 		llm.ServiceTypeGemini,
-		llm.ServiceTypeVertex:
+		llm.ServiceTypeVertex,
+		llm.ServiceTypeGDCGemini:
 		return true
 	default:
 		return false
