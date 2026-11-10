@@ -320,11 +320,13 @@ func TestServerSideToolInvocationsAcrossProviders(t *testing.T) {
 		provider schemas.ModelProvider
 		model    string
 		wantFlag bool
+		// wantBothTools is set where the wire request keeps both tool kinds.
+		wantBothTools bool
 	}{
-		{name: "gemini 3", provider: schemas.Gemini, model: "gemini-3-flash-preview", wantFlag: true},
-		{name: "gemini 4", provider: schemas.Gemini, model: "gemini-4-argon", wantFlag: true},
-		{name: "vertex 3", provider: schemas.Vertex, model: "gemini-3.5-flash"},
-		{name: "vertex with publisher path", provider: schemas.Vertex, model: "publishers/google/models/gemini-3.5-flash"},
+		{name: "gemini 3", provider: schemas.Gemini, model: "gemini-3-flash-preview", wantFlag: true, wantBothTools: true},
+		{name: "gemini 4", provider: schemas.Gemini, model: "gemini-4-argon", wantFlag: true, wantBothTools: true},
+		{name: "vertex 3", provider: schemas.Vertex, model: "gemini-3.5-flash", wantBothTools: true},
+		{name: "vertex with publisher path", provider: schemas.Vertex, model: "publishers/google/models/gemini-3.5-flash", wantBothTools: true},
 		{name: "gemini 2.5", provider: schemas.Gemini, model: "gemini-2.5-pro"},
 		{name: "vertex 2.5", provider: schemas.Vertex, model: "gemini-2.5-flash"},
 		{name: "vertex unrecognized model", provider: schemas.Vertex, model: "my-tuned-endpoint"},
@@ -367,11 +369,12 @@ func TestServerSideToolInvocationsAcrossProviders(t *testing.T) {
 			assert.Equal(t, tt.wantFlag, present && flag)
 			if !tt.wantFlag {
 				assert.False(t, present)
-				return
 			}
-			funcs, hasSearch := wireToolKinds(body)
-			assert.Equal(t, []string{"search_posts"}, funcs)
-			assert.True(t, hasSearch)
+			if tt.wantBothTools {
+				funcs, hasSearch := wireToolKinds(body)
+				assert.Equal(t, []string{"search_posts"}, funcs)
+				assert.True(t, hasSearch)
+			}
 		})
 	}
 }
