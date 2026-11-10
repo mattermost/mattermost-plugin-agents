@@ -25,6 +25,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestClearMCPToolsCacheRefreshesUserCatalogs checks catalog refresh through the admin route.
+// It covers user and service-account catalogs, failure responses, and unrelated KV data.
 func TestClearMCPToolsCacheRefreshesUserCatalogs(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

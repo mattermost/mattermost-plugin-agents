@@ -1629,6 +1629,7 @@ type toolsCacheMCPClientManager struct {
 
 func (m *toolsCacheMCPClientManager) GetToolsCache() *mcp.ToolsCache { return m.cache }
 
+// TestAuditClearMCPToolsCache checks audit records for a successful clear and a missing tools cache.
 func TestAuditClearMCPToolsCache(t *testing.T) {
 	tests := []struct {
 		name           string

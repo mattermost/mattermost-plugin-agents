@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestInvalidateAllClientsDuringDiscovery checks that late discovery cannot repopulate the current cache generation.
 func TestInvalidateAllClientsDuringDiscovery(t *testing.T) {
 	server := gomcp.NewServer(&gomcp.Implementation{Name: "catalog", Version: "1.0"}, nil)
 	addTestMCPTool(server, "original")

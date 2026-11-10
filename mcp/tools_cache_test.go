@@ -307,6 +307,8 @@ func TestClearAll(t *testing.T) {
 	}
 }
 
+// TestClearAllBeyondFirstKeyPage checks cache removal across KV pages
+// while preserving unrelated keys and the generation marker.
 func TestClearAllBeyondFirstKeyPage(t *testing.T) {
 	tests := []struct {
 		name          string

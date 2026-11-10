@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestMCPToolsCacheClusterRoundTrip checks that reliable cluster events refresh peer catalogs, including duplicate delivery.
 func TestMCPToolsCacheClusterRoundTrip(t *testing.T) {
 	server := gomcp.NewServer(&gomcp.Implementation{Name: "catalog", Version: "1.0"}, nil)
 	addTool := func(name string) {

@@ -139,6 +139,8 @@ func (tc *ToolsCache) InvalidateServer(serverID string) error {
 }
 
 // ClearAll invalidates cached tools and removes entries from older generations.
+// A listing or deletion error leaves the new generation in place.
+// It does not invalidate clients that already hold catalogs.
 func (tc *ToolsCache) ClearAll() (int, error) {
 	tc.log.Info("Clearing all MCP tools cache entries")
 
@@ -201,6 +203,8 @@ func (tc *ToolsCache) snapshot() (*ToolsCache, error) {
 	return &ToolsCache{kvAPI: tc.kvAPI, log: tc.log, generation: &generation}, nil
 }
 
+// cacheKey selects the server key in this cache's generation.
+// An empty generation uses the legacy key format.
 func (tc *ToolsCache) cacheKey(serverID string) (string, error) {
 	snapshot, err := tc.snapshot()
 	if err != nil {
