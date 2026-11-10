@@ -346,12 +346,16 @@ func TestServerSideToolInvocationsAcrossProviders(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, bifrostReq.Params)
 
-			if !tt.wantFlag {
+			if tt.wantFlag {
+				require.NotNil(t, bifrostReq.Params.IncludeServerSideToolInvocations)
+				assert.True(t, *bifrostReq.Params.IncludeServerSideToolInvocations)
+			} else {
 				assert.Nil(t, bifrostReq.Params.IncludeServerSideToolInvocations)
+			}
+
+			if tt.provider != schemas.Gemini && tt.provider != schemas.Vertex {
 				return
 			}
-			require.NotNil(t, bifrostReq.Params.IncludeServerSideToolInvocations)
-			assert.True(t, *bifrostReq.Params.IncludeServerSideToolInvocations)
 
 			wire, err := gemini.ToGeminiResponsesRequest(nil, bifrostReq)
 			require.NoError(t, err)
@@ -359,11 +363,15 @@ func TestServerSideToolInvocationsAcrossProviders(t *testing.T) {
 			require.NoError(t, err)
 			var body map[string]any
 			require.NoError(t, json.Unmarshal(encoded, &body))
+			flag, present := wireIncludeServerSideToolInvocations(body)
+			assert.Equal(t, tt.wantFlag, present && flag)
+			if !tt.wantFlag {
+				assert.False(t, present)
+				return
+			}
 			funcs, hasSearch := wireToolKinds(body)
 			assert.Equal(t, []string{"search_posts"}, funcs)
 			assert.True(t, hasSearch)
-			flag, present := wireIncludeServerSideToolInvocations(body)
-			assert.True(t, present && flag)
 		})
 	}
 }
