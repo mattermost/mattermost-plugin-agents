@@ -122,7 +122,9 @@ interface StateOptions {
 // Minimal reducer covering only the slices and host action types the page touches.
 const makeStore = ({bots, systemPermissions = [], loadedChannels = [], currentTeamId = 'team1', teamMembers = [], posts = {}}: StateOptions) => {
     const initial = {
-        [pluginKey]: {bots},
+
+        // The prompts and pins are loaded (none), so the new chat does not fetch them; this store has no thunk middleware.
+        [pluginKey]: {bots, customPrompts: [], pinnedPromptIds: []},
         entities: {
             users: {currentUserId: 'me', profiles: {me: {id: 'me', roles: 'system_user'}}},
             teams: {currentTeamId, myMembers: Object.fromEntries(teamMembers.map((t) => [t, {team_id: t}]))},
