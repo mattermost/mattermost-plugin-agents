@@ -265,6 +265,8 @@ jobs:
         run: make check-locks
       - name: Check editor contract against the pinned host snapshot
         run: cd webapp && npm run check-editor-contract
+      - name: Check the Compass manifest snapshot against the pinned compass-ui
+        run: cd webapp && npm run check-compass-manifest
 
   build:
     runs-on: ubuntu-latest
