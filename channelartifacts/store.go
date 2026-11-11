@@ -303,9 +303,26 @@ func (s *Store) Purge(entry *Entry) error {
 	if entry == nil {
 		return ErrInvalidInput
 	}
-	if err := s.markPurging(entry); err != nil {
+	if err := s.markPurging(entry, 0); err != nil {
 		return err
 	}
+	return s.finishPurge(entry)
+}
+
+// purgeIfHeadUnchanged purges only while the stored head is still entry.Version.
+// A replacement that committed after the caller counted one version returns
+// ErrConflict instead of deleting that replacement with the artifact.
+func (s *Store) purgeIfHeadUnchanged(entry *Entry) error {
+	if entry == nil {
+		return ErrInvalidInput
+	}
+	if err := s.markPurging(entry, entry.Version); err != nil {
+		return err
+	}
+	return s.finishPurge(entry)
+}
+
+func (s *Store) finishPurge(entry *Entry) error {
 	hist, histErr := s.ensureHistory(entry)
 	if histErr != nil && !errors.Is(histErr, ErrNotFound) {
 		return histErr
@@ -334,7 +351,10 @@ func (s *Store) Purge(entry *Entry) error {
 	return s.finishPurgeIndex(entry)
 }
 
-func (s *Store) markPurging(entry *Entry) error {
+// markPurging sets the purge flag. expectedVersion 0 accepts any head. Any
+// other value refuses a head that has since moved, so the caller can delete
+// that head instead of purging the artifact.
+func (s *Store) markPurging(entry *Entry, expectedVersion int) error {
 	for range 8 {
 		stored, raw, err := s.loadMetaRaw(entry.ID)
 		if errors.Is(err, ErrNotFound) {
@@ -342,6 +362,9 @@ func (s *Store) markPurging(entry *Entry) error {
 		}
 		if err != nil {
 			return err
+		}
+		if expectedVersion != 0 && stored.Version != expectedVersion {
+			return ErrConflict
 		}
 		if stored.Purging {
 			entry.Purging = true
