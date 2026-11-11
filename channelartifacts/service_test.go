@@ -293,12 +293,14 @@ func TestCreateReplacementPersistsTitleWhenTheHTMLChanges(t *testing.T) {
 	}, []byte("<html>v1</html>"), "v1.html", userID, "Author", "", model.NewId(), ContentLimits{MaxSize: 1024})
 	require.NoError(t, err)
 
+	nextFileID := model.NewId()
 	updated, err := svc.CreateFromHTML(userID, CreateRequest{
-		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), ReplaceID: entry.ID, Title: "Renamed", Description: "second",
+		ChannelID: channelID, PostID: model.NewId(), FileID: nextFileID, ReplaceID: entry.ID, Title: "Renamed", Description: "second",
 	}, []byte("<html>v2</html>"), "v2.html", userID, "Author", "", model.NewId(), ContentLimits{MaxSize: 1024})
 	require.NoError(t, err)
 	require.Equal(t, "Renamed", updated.Title)
 	require.Equal(t, "second", updated.Description)
+	require.Equal(t, nextFileID, updated.SourceFileID)
 
 	stored, err := store.Get(entry.ID)
 	require.NoError(t, err)
@@ -612,4 +614,87 @@ func TestCreateReplacementLeavesMetadataWhenTheContentIsRejected(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "Demo", stored.Title)
 	require.Equal(t, 1, stored.Version)
+}
+
+func TestCreateReplacementKeepsThePreviousFileWhenTheContentWriteFails(t *testing.T) {
+	kv := newMemoryKV()
+	kv.permissionAll = true
+	store := NewStore(kv)
+	svc := NewService(store, kv, allowAllMembers{})
+	channelID := model.NewId()
+	userID := model.NewId()
+	fileID := model.NewId()
+	kv.channels[channelID] = &model.Channel{Id: channelID, Type: model.ChannelTypeOpen}
+	limits := ContentLimits{MaxSize: 1024}
+
+	entry, err := svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: fileID, Title: "Demo",
+	}, []byte("<html>v1</html>"), "v1.html", userID, "Author", "", model.NewId(), limits)
+	require.NoError(t, err)
+
+	kv.failHistCASErrorAt = 1
+	nextFileID := model.NewId()
+	_, err = svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: nextFileID, ReplaceID: entry.ID, Title: "Renamed",
+	}, []byte("<html>v2</html>"), "v2.html", userID, "Author", "", model.NewId(), limits)
+	require.Error(t, err)
+
+	stored, err := store.Get(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, fileID, stored.SourceFileID)
+	require.Equal(t, 1, stored.Version)
+	require.Nil(t, svc.FindLineageMatch(channelID, "", nextFileID, ""))
+	match := svc.FindLineageMatch(channelID, "", fileID, "")
+	require.NotNil(t, match)
+	require.Equal(t, entry.ID, match.ID)
+	body, err := svc.ReadContent(stored)
+	require.NoError(t, err)
+	require.Equal(t, "<html>v1</html>", string(body))
+
+	updated, err := svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: nextFileID, ReplaceID: entry.ID, Title: "Renamed",
+	}, []byte("<html>v2</html>"), "v2.html", userID, "Author", "", model.NewId(), limits)
+	require.NoError(t, err)
+	require.Equal(t, nextFileID, updated.SourceFileID)
+	require.Equal(t, 2, updated.Version)
+}
+
+func TestPurgeRetryFinishesWhenTheSiteCountDecrementFails(t *testing.T) {
+	kv := newMemoryKV()
+	kv.permissionAll = true
+	store := NewStore(kv)
+	svc := NewService(store, kv, allowAllMembers{})
+	channelID := model.NewId()
+	userID := model.NewId()
+	kv.channels[channelID] = &model.Channel{Id: channelID, Type: model.ChannelTypeOpen}
+	limits := ContentLimits{MaxSize: 1024, MaxSitewide: 1}
+
+	entry, err := svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), Title: "Demo",
+	}, []byte("<html>v1</html>"), "v1.html", userID, "Author", "", model.NewId(), limits)
+	require.NoError(t, err)
+
+	kv.failSiteCountCAS = true
+	require.Error(t, svc.Delete(userID, entry.ID, true))
+	stored, err := store.Get(entry.ID)
+	require.NoError(t, err)
+	require.True(t, stored.Purging)
+	idx, _, err := store.getIndex(channelID)
+	require.NoError(t, err)
+	require.Contains(t, idx.IDs, entry.ID)
+	count, _, err := store.getSiteCount()
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+
+	require.NoError(t, svc.Delete(userID, entry.ID, true))
+	_, err = store.Get(entry.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	count, _, err = store.getSiteCount()
+	require.NoError(t, err)
+	require.Equal(t, 0, count)
+
+	_, err = svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), Title: "Next",
+	}, []byte("<html>v2</html>"), "v2.html", userID, "Author", "", model.NewId(), limits)
+	require.NoError(t, err)
 }

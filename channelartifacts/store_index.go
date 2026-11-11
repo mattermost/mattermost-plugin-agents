@@ -385,15 +385,15 @@ func (s *Store) deleteIndexCAS(channelID string, oldRaw []byte) error {
 
 // finishPurgeIndex drops id from the channel index and decrements the site
 // counter. An empty index key is deleted. A failed decrement puts the id back
-// so a retry can count it down.
-func (s *Store) finishPurgeIndex(entry *Entry) error {
+// so a retry can count it down. dropped is true only after that decrement.
+func (s *Store) finishPurgeIndex(entry *Entry) (bool, error) {
 	for range 8 {
 		idx, oldRaw, err := s.getIndex(entry.ChannelID)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if oldRaw == nil {
-			return nil
+			return false, nil
 		}
 		next := make([]string, 0, len(idx.IDs))
 		removed := false
@@ -409,7 +409,7 @@ func (s *Store) finishPurgeIndex(entry *Entry) error {
 				if errors.Is(err, ErrConflict) {
 					continue
 				}
-				return err
+				return false, err
 			}
 		} else {
 			idx.IDs = next
@@ -417,21 +417,21 @@ func (s *Store) finishPurgeIndex(entry *Entry) error {
 				if errors.Is(err, ErrConflict) {
 					continue
 				}
-				return err
+				return false, err
 			}
 		}
 		if !removed {
-			return nil
+			return false, nil
 		}
 		if err := s.adjustSiteCount(-1); err != nil {
 			if putErr := s.restorePurgedIndexID(entry.ChannelID, entry.ID); putErr != nil {
-				return errors.Join(err, putErr)
+				return false, errors.Join(err, putErr)
 			}
-			return err
+			return false, err
 		}
-		return nil
+		return true, nil
 	}
-	return ErrConflict
+	return false, ErrConflict
 }
 
 func (s *Store) restorePurgedIndexID(channelID, id string) error {
@@ -461,7 +461,8 @@ func (s *Store) restorePurgedIndexID(channelID, id string) error {
 // forgetIndexID removes an index id whose metadata is already gone, and deletes
 // the index key once nothing remains.
 func (s *Store) forgetIndexID(channelID, id string) error {
-	return s.finishPurgeIndex(&Entry{ID: id, ChannelID: channelID})
+	_, err := s.finishPurgeIndex(&Entry{ID: id, ChannelID: channelID})
+	return err
 }
 
 func (s *Store) Reorder(channelID string, ids []string) error {

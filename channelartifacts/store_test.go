@@ -44,6 +44,7 @@ type memoryKV struct {
 	failSHADeletes     int
 	failMetaDelete     bool
 	failBlobDeletes    int
+	failSiteCountCAS   bool
 }
 
 func newMemoryKV() *memoryKV {
@@ -156,6 +157,10 @@ func (kv *memoryKV) KVDelete(key string) error {
 func (kv *memoryKV) KVCompareAndSet(key string, oldValue, newValue any) (bool, error) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
+	if key == keySiteCount && newValue != nil && kv.failSiteCountCAS {
+		kv.failSiteCountCAS = false
+		return false, errors.New("kv set failed")
+	}
 	if strings.HasPrefix(key, keyPrefixMeta) && newValue != nil && (kv.failNextMeta || kv.conflictNextMeta) {
 		fail := kv.failNextMeta
 		kv.failNextMeta = false
@@ -892,6 +897,9 @@ func TestPurgeRetriesCleanupAfterAMetaDeleteFailure(t *testing.T) {
 	stored, err := store.Get(entry.ID)
 	require.NoError(t, err)
 	require.True(t, stored.Purging)
+	idx, _, err := store.getIndex(entry.ChannelID)
+	require.NoError(t, err)
+	require.Contains(t, idx.IDs, entry.ID)
 	listed, err := store.List(entry.ChannelID)
 	require.NoError(t, err)
 	require.Empty(t, listed)
