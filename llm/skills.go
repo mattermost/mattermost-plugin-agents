@@ -27,6 +27,9 @@ type SkillsConfig struct {
 	EnabledSharedIDs []string `json:"enabledSharedIDs"`
 	// DescriptionOverrides replaces a skill's description, by skill ID, for this agent.
 	DescriptionOverrides map[string]string `json:"descriptionOverrides"`
+	// GenerativeUI opts the agent into the experimental generative UI skill. It
+	// also needs the server-wide switch; see config.GenerativeUIEnabledForAgent.
+	GenerativeUI bool `json:"generativeUI"`
 }
 
 func (s SkillsConfig) Validate() error {

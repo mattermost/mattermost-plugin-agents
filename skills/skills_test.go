@@ -7,9 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/customprompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
@@ -345,4 +347,53 @@ func TestRefreshSkillsListsCurrentSkills(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, result, builtinSummarizeID)
 	assert.Contains(t, result, "- id: "+added.ID+" | New skill: Use for new things.")
+}
+
+func TestGenerativeUISkill(t *testing.T) {
+	optedIn := llm.BotConfig{Skills: llm.SkillsConfig{GenerativeUI: true}}
+	tests := []struct {
+		name        string
+		bot         llm.BotConfig
+		serverOn    bool
+		unset       bool
+		channelType model.ChannelType
+		listed      bool
+	}{
+		{name: "enabled for the agent in a DM", bot: optedIn, serverOn: true, channelType: model.ChannelTypeDirect, listed: true},
+		{name: "enabled for the agent in a channel", bot: optedIn, serverOn: true, channelType: model.ChannelTypeOpen, listed: true},
+		{name: "agent not opted in", serverOn: true, channelType: model.ChannelTypeDirect},
+		{name: "server switch off", bot: optedIn, channelType: model.ChannelTypeDirect},
+		{name: "check not wired", bot: optedIn, unset: true, channelType: model.ChannelTypeDirect},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newTestProvider(t, nil, false)
+			serverOn := tt.serverOn
+			if !tt.unset {
+				p.SetGenerativeUIEnabled(func(bot llm.BotConfig) bool {
+					return config.GenerativeUIEnabledForAgent(serverOn, bot)
+				})
+			}
+			c := newRequestContext(tt.channelType)
+
+			tools, infos, err := p.Tools(tt.bot, c)
+			require.NoError(t, err)
+			assert.Equal(t, tt.listed, slices.Contains(catalogIDs(infos), GenerativeUISkillID))
+			if !tt.listed {
+				return
+			}
+
+			load := toolByName(t, tools, LoadSkillToolName)
+			out, err := callTool(t, load, c, map[string]string{"id": GenerativeUISkillID})
+			require.NoError(t, err)
+			assert.Contains(t, out, "```openui-lang")
+			assert.Contains(t, out, "Stack(children:")
+			assert.NotContains(t, out, "{{")
+
+			serverOn = false
+			out, err = callTool(t, load, c, map[string]string{"id": GenerativeUISkillID})
+			require.NoError(t, err)
+			assert.Contains(t, out, "No skill with that id")
+		})
+	}
 }

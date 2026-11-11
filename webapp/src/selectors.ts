@@ -3,6 +3,7 @@
 
 import {GlobalState} from '@mattermost/types/store';
 
+import type {LLMBot} from './bots';
 import manifest from './manifest';
 import {CustomPrompt} from './types';
 import {LinkPolicy, PLAIN_TEXT_LINK_POLICY} from './utils/link_allowlist';
@@ -14,6 +15,8 @@ interface PluginState {
     showCustomPromptsModal: boolean;
     linkPolicy: LinkPolicy;
     htmlArtifactsEnabled?: boolean;
+    generativeUIEnabled?: boolean;
+    bots?: LLMBot[] | null;
 }
 
 type AppState = GlobalState & {
@@ -45,3 +48,20 @@ export const getLinkPolicy = (state: AppState): LinkPolicy =>
 
 export const getHTMLArtifactsEnabled = (state: AppState): boolean =>
     Boolean(state[`plugins-${manifest.id}`]?.htmlArtifactsEnabled);
+
+/** The server-wide generative UI switch only; see isGenerativeUIEnabledForBot. */
+export const getGenerativeUIEnabled = (state: AppState): boolean =>
+    Boolean(state[`plugins-${manifest.id}`]?.generativeUIEnabled);
+
+/**
+ * Whether the agent with this bot user ID may reply with generative UI, and
+ * whether its replies render it: the server-wide switch and the agent's own
+ * opt-in, as reported by the server. False for agents the user can't see.
+ */
+export const isGenerativeUIEnabledForBot = (state: GlobalState, botUserId: string | undefined): boolean => {
+    if (!botUserId) {
+        return false;
+    }
+    const bots = (state as AppState)[`plugins-${manifest.id}`]?.bots;
+    return Boolean(bots?.find((bot) => bot.id === botUserId)?.generativeUIEnabled);
+};

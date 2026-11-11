@@ -117,8 +117,8 @@ const VersionSnapshot = ({config, services, changedFields}: Props) => {
     let skillsValue = disabled;
     if (!skills.disabled) {
         skillsValue = intl.formatMessage(
-            {defaultMessage: 'Enabled, personal skills {personal, select, true {allowed} other {not allowed}}, {count, plural, one {# shared skill} other {# shared skills}}'},
-            {personal: String(skills.allowPersonal), count: skills.enabledSharedIDs?.length ?? 0},
+            {defaultMessage: 'Enabled, personal skills {personal, select, true {allowed} other {not allowed}}, {count, plural, one {# shared skill} other {# shared skills}}, generative UI {generativeUI, select, true {on} other {off}}'},
+            {personal: String(skills.allowPersonal), count: skills.enabledSharedIDs?.length ?? 0, generativeUI: String(skills.generativeUI)},
         );
     }
 
