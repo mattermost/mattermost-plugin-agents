@@ -168,12 +168,12 @@ func (s *Service) CreateFromHTML(
 		return nil, ErrNotFound
 	}
 	title := strings.TrimSpace(req.Title)
-	if title == "" {
-		title = defaultTitle(fileName)
-	}
 	now := model.GetMillis()
 	if req.ReplaceID != "" {
 		return s.replaceLocked(userID, req.ReplaceID, req.ChannelID, req.PostID, req.FileID, fileName, botUserID, agentDisplayName, sourceRootPostID, content, title, strings.TrimSpace(req.Description), limits)
+	}
+	if title == "" {
+		title = defaultTitle(fileName)
 	}
 	entry := &Entry{
 		ID:                     model.NewId(),
@@ -225,20 +225,50 @@ func (s *Service) replaceLocked(
 	entry.SourceRootPostID = sourceRootPostID
 	entry.UpdateAt = model.GetMillis()
 	entry.UpdatedBy = userID
-	// Persist the requested title and description before the content write.
-	// ReplaceContent keeps whatever title is stored when the new head lands, so
-	// a patch during the upload still wins, and an unchanged stored title does
-	// not drop the one this call just set.
-	if err := s.store.UpdateMeta(entry); err != nil {
-		return nil, err
+	// Reject content that cannot be stored before any metadata write. The
+	// metadata write then patches only these fields onto the current head, so
+	// a rename that landed after the load is kept when this call does not set
+	// a title. ReplaceContent still keeps a title patched while the upload runs.
+	if _, shaErr := s.store.replacementSHA(entry, content, limits.MaxSize); shaErr != nil {
+		return nil, shaErr
 	}
-	if err := s.store.ReplaceContent(entry, content, limits.MaxSize, limits.VersionsToKeep); err != nil {
-		if errors.Is(err, ErrCleanupDeferred) {
-			return entry, err
+	updated, err := s.store.Patch(entry.ID, func(current *Entry) error {
+		if current.Purging {
+			return ErrConflict
 		}
+		if current.ChannelID != channelID {
+			return ErrNotFound
+		}
+		if title != "" {
+			current.Title = title
+		}
+		current.Description = description
+		current.SourcePostID = postID
+		current.SourceFileID = fileID
+		current.SourceFileName = fileName
+		current.SourceBotUserID = botUserID
+		current.SourceAgentDisplayName = agentDisplayName
+		current.SourceRootPostID = sourceRootPostID
+		current.UpdateAt = entry.UpdateAt
+		current.UpdatedBy = userID
+		if titleErr := validateTitle(current.Title); titleErr != nil {
+			return titleErr
+		}
+		if descriptionErr := validateDescription(current.Description); descriptionErr != nil {
+			return descriptionErr
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	return entry, nil
+	if replaceErr := s.store.ReplaceContent(updated, content, limits.MaxSize, limits.VersionsToKeep); replaceErr != nil {
+		if errors.Is(replaceErr, ErrCleanupDeferred) {
+			return updated, replaceErr
+		}
+		return nil, replaceErr
+	}
+	return updated, nil
 }
 
 // ReplaceContent replaces the HTML of an existing library entry from a new file.
@@ -336,7 +366,18 @@ func (s *Service) Delete(userID, id string, purge bool) error {
 		return err
 	}
 	if len(versions) <= 1 {
-		return s.store.Purge(entry)
+		purgeErr := s.store.purgeIfHeadUnchanged(entry)
+		if errors.Is(purgeErr, ErrConflict) {
+			current, getErr := s.store.Get(entry.ID)
+			if getErr != nil {
+				return getErr
+			}
+			if current.Purging || current.Version == entry.Version {
+				return s.store.Purge(current)
+			}
+			return s.store.DeleteHead(current)
+		}
+		return purgeErr
 	}
 	return s.store.DeleteHead(entry)
 }

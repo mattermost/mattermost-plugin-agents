@@ -375,21 +375,10 @@ func (s *Store) ReplaceContent(entry *Entry, content []byte, maxSize int64, maxK
 	if entry == nil || !model.IsValidId(entry.ID) {
 		return ErrInvalidInput
 	}
-	if err := validateTitle(entry.Title); err != nil {
-		return err
+	sha, shaErr := s.replacementSHA(entry, content, maxSize)
+	if shaErr != nil {
+		return shaErr
 	}
-	if err := validateDescription(entry.Description); err != nil {
-		return err
-	}
-	if int64(len(content)) == 0 {
-		return ErrInvalidInput
-	}
-	if int64(len(content)) > maxSize {
-		return ErrTooLarge
-	}
-
-	sum := sha256.Sum256(content)
-	sha := hex.EncodeToString(sum[:])
 	if sha == entry.SHA256 {
 		if err := s.UpdateMeta(entry); err != nil {
 			return err
@@ -405,12 +394,6 @@ func (s *Store) ReplaceContent(entry *Entry, content []byte, maxSize int64, maxK
 		}
 		return nil
 	}
-	if existing, err := s.FindBySHA(entry.ChannelID, sha); err == nil && existing != "" && existing != entry.ID {
-		return fmt.Errorf("%w: %s", ErrDuplicate, existing)
-	} else if err != nil && !errors.Is(err, ErrNotFound) {
-		return err
-	}
-
 	chunks, chunkErr := gzipChunks(content)
 	if chunkErr != nil {
 		return chunkErr
@@ -470,22 +453,56 @@ func (s *Store) ReplaceContent(entry *Entry, content []byte, maxSize int64, maxK
 			}
 			return metaErr
 		}
-		if alignErr := s.matchVersionMeta(entry.ID, entry.Version, entry.Title, entry.Description); alignErr != nil {
-			return fmt.Errorf("%w: %w", ErrCleanupDeferred, alignErr)
-		}
+		alignErr := s.matchVersionMeta(entry.ID, entry.Version, entry.Title, entry.Description)
 		if original.SHA256 != "" && original.SHA256 != sha {
 			_ = s.deleteSHAIfOwner(entry.ChannelID, original.SHA256, entry.ID)
 		}
 		if ownErr := s.ensureOwnSHA(entry.ChannelID, sha, entry.ID); ownErr != nil {
+			if alignErr != nil {
+				return errors.Join(ownErr, alignErr)
+			}
 			return ownErr
 		}
 		if pruneErr := s.pruneOldestVersions(entry, maxKeep); pruneErr != nil {
-			return fmt.Errorf("%w: %w", ErrCleanupDeferred, pruneErr)
+			return fmt.Errorf("%w: %w", ErrCleanupDeferred, errors.Join(alignErr, pruneErr))
+		}
+		if alignErr != nil {
+			return fmt.Errorf("%w: %w", ErrCleanupDeferred, alignErr)
 		}
 		return nil
 	}
 	*entry = original
 	return ErrConflict
+}
+
+// replacementSHA checks the title, description, size, and channel duplicate
+// before a replacement writes metadata. The returned hash is the content hash.
+func (s *Store) replacementSHA(entry *Entry, content []byte, maxSize int64) (string, error) {
+	if err := validateTitle(entry.Title); err != nil {
+		return "", err
+	}
+	if err := validateDescription(entry.Description); err != nil {
+		return "", err
+	}
+	if int64(len(content)) == 0 {
+		return "", ErrInvalidInput
+	}
+	if int64(len(content)) > maxSize {
+		return "", ErrTooLarge
+	}
+	sum := sha256.Sum256(content)
+	sha := hex.EncodeToString(sum[:])
+	if sha == entry.SHA256 {
+		return sha, nil
+	}
+	existing, err := s.FindBySHA(entry.ChannelID, sha)
+	if err == nil && existing != "" && existing != entry.ID {
+		return "", fmt.Errorf("%w: %s", ErrDuplicate, existing)
+	}
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return "", err
+	}
+	return sha, nil
 }
 
 func (s *Store) loadHistoryRaw(id string) (*VersionHistory, []byte, error) {
