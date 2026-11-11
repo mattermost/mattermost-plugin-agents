@@ -6,7 +6,7 @@ import {act, fireEvent, render, screen} from '@testing-library/react';
 import {Provider} from 'react-redux';
 import {createStore} from 'redux';
 
-import {getArtifactToken} from '@/client';
+import {getArtifactTokenFor} from '@/client';
 
 import {getConsentDecision, isConsentPromptPending, resetConsentStore} from './artifact_broker';
 import ArtifactConsentPrompt, {CONSENT_ARM_DELAY_MS} from './artifact_consent_prompt';
@@ -18,11 +18,33 @@ import HTMLArtifactFullscreen from './html_artifact_fullscreen';
 jest.mock('@/client', () => ({
     artifactPath: (fileId: string) => `/plugins/mattermost-ai/artifacts/${fileId}`,
     artifactURL: (fileId: string, nonce: string) => `/plugins/mattermost-ai/artifacts/${fileId}?n=${nonce}`,
+    artifactPathFor: (ref: {kind: string; id: string}) => (
+        ref.kind === 'library' ?
+            `/plugins/mattermost-ai/channel-artifacts/${ref.id}` :
+            `/plugins/mattermost-ai/artifacts/${ref.id}`
+    ),
+    artifactURLFor: (ref: {kind: string; id: string}, nonce: string, version?: number) => {
+        const base = ref.kind === 'library' ?
+            `/plugins/mattermost-ai/channel-artifacts/${ref.id}` :
+            `/plugins/mattermost-ai/artifacts/${ref.id}`;
+        const params = new URLSearchParams({n: nonce});
+        if (version && version > 0) {
+            params.set('version', String(version));
+        }
+        return `${base}?${params.toString()}`;
+    },
     fileDownloadURL: (fileId: string) => `/api/v4/files/${fileId}?download=1`,
+    channelArtifactDownloadURL: (id: string, version?: number) => {
+        const base = `/plugins/mattermost-ai/channel-artifacts/${id}/download`;
+        return version && version > 0 ? `${base}?version=${version}` : base;
+    },
+    listChannelArtifactVersions: jest.fn().mockResolvedValue({versions: []}),
+    rollbackChannelArtifact: jest.fn(),
     getArtifactToken: jest.fn(),
+    getArtifactTokenFor: jest.fn(),
 }));
 
-const mockGetToken = getArtifactToken as jest.MockedFunction<typeof getArtifactToken>;
+const mockGetToken = getArtifactTokenFor as jest.MockedFunction<typeof getArtifactTokenFor>;
 const TOKEN = 'bridge-token';
 const FILE_ID = 'abcdefghijklmnopqrstuvwxyz';
 
@@ -180,8 +202,8 @@ describe('ArtifactFrame wrapper', () => {
         const inner = innerIframe()!;
 
         expect(mockGetToken).toHaveBeenCalledTimes(1);
-        const [fileId, nonce] = mockGetToken.mock.calls[0];
-        expect(fileId).toBe(FILE_ID);
+        const [ref, nonce] = mockGetToken.mock.calls[0];
+        expect(ref).toEqual({kind: 'file', id: FILE_ID});
         expect(nonce).toMatch(/^[A-Za-z0-9_-]{22}$/);
         expect(inner.getAttribute('sandbox')).toBe('allow-scripts');
         expect(inner.getAttribute('referrerpolicy')).toBe('no-referrer');
@@ -811,6 +833,22 @@ describe('ArtifactFrame bridge token', () => {
         expect(screen.getByRole('button', {name: 'Download'})).toBeTruthy();
     });
 
+    test('hides the too-large download button when library downloads are disabled', async () => {
+        mockGetToken.mockResolvedValueOnce({token: TOKEN, tooLarge: true});
+        render(withProviders(
+            <ArtifactFrame
+                fileId={FILE_ID}
+                fileName='tok.html'
+                displayMode='inline'
+                downloadEnabled={false}
+            />,
+        ));
+        await flushLoad();
+        expect(screen.getByRole('alert').textContent).toContain('too large to preview');
+        expect(screen.getByRole('alert').textContent).not.toContain('Download it instead');
+        expect(screen.queryByRole('button', {name: 'Download'})).toBeNull();
+    });
+
     test('shows the error state on token failure and retries with a new nonce', async () => {
         mockGetToken.mockRejectedValueOnce(new Error('nope'));
         renderFrame('tok.html');
@@ -997,6 +1035,8 @@ describe('artifact safety notice', () => {
             <HTMLArtifactCard
                 fileId={FILE_ID}
                 fileName={fileName}
+                postId={FILE_ID}
+                channelId={FILE_ID}
             />
         )));
         if (view === 'card') {
@@ -1018,6 +1058,8 @@ describe('HTMLArtifactCard run gate', () => {
             <HTMLArtifactCard
                 fileId={fileId}
                 fileName='run.html'
+                postId={FILE_ID}
+                channelId={FILE_ID}
             />,
         ));
     }

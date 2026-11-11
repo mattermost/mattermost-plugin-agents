@@ -23,6 +23,8 @@ declare global {
             }) => void;
             browserHistory?: {
                 push: (path: string) => void;
+                replace?: (path: string) => void;
+                listen?: (listener: (location: {pathname: string; search: string; hash: string}) => void) => () => void;
             };
 
             // Published host API; absent on older hosts. Returns the Redux action that opens the
