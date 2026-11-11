@@ -14,6 +14,7 @@ import {Tag} from '@mattermost/compass-ui/components/tag';
 import ConfirmationDialog from '../confirmation_dialog';
 
 import {MCPServerConfig, MCPToolsResponse} from './mcp_types';
+import {useSettingsReadOnly} from './settings_read_only';
 
 type Props = {
     servers: MCPServerConfig[];
@@ -39,6 +40,7 @@ const unreviewedCount = (server: MCPServerConfig, toolsData: MCPToolsResponse | 
 
 const MCPRemoteServerList = ({servers, toolsData, onEdit, onDelete}: Props) => {
     const intl = useIntl();
+    const readOnly = useSettingsReadOnly();
 
     // The row's URL and status describe its Edit button to screen readers.
     const detailsID = useId();
@@ -80,7 +82,7 @@ const MCPRemoteServerList = ({servers, toolsData, onEdit, onDelete}: Props) => {
                             <RowButton
                                 type='button'
                                 onClick={() => onEdit(server)}
-                                disabled={!server.id}
+                                disabled={!server.id || readOnly}
                                 aria-label={intl.formatMessage({defaultMessage: 'Edit {name}'}, {name})}
                                 aria-describedby={`${detailsID}-${index}-url ${detailsID}-${index}-tags`}
                             >
@@ -109,14 +111,16 @@ const MCPRemoteServerList = ({servers, toolsData, onEdit, onDelete}: Props) => {
                                     <ChevronRightIcon size={16}/>
                                 </Chevron>
                             </RowButton>
-                            <IconButton
-                                icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
-                                size='small'
-                                destructive={true}
-                                onClick={() => setPendingDelete(server)}
-                                disabled={!server.id}
-                                aria-label={intl.formatMessage({defaultMessage: 'Delete {name}'}, {name})}
-                            />
+                            {!readOnly && (
+                                <IconButton
+                                    icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
+                                    size='small'
+                                    destructive={true}
+                                    onClick={() => setPendingDelete(server)}
+                                    disabled={!server.id}
+                                    aria-label={intl.formatMessage({defaultMessage: 'Delete {name}'}, {name})}
+                                />
+                            )}
                         </Row>
                     );
                 })}

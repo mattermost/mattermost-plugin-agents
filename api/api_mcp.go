@@ -94,7 +94,7 @@ func (a *API) resolveMCPToolsCatalog(c *gin.Context, userID string) (mcp.Catalog
 	}
 
 	if agentID == "" {
-		if !isSystemAdmin(a.pluginAPI, userID) {
+		if !a.canManageServiceAccounts(userID) {
 			c.AbortWithError(http.StatusForbidden, errors.New("not authorized to view the service account catalog"))
 			return mcp.CatalogRequest{}, false
 		}
@@ -111,11 +111,11 @@ func (a *API) resolveMCPToolsCatalog(c *gin.Context, userID string) (mcp.Catalog
 		c.AbortWithStatus(http.StatusNotFound)
 		return mcp.CatalogRequest{}, false
 	}
-	if !canManageAgent(a.pluginAPI, cfg, userID) {
+	if !a.canManageAgent(cfg, userID) {
 		c.AbortWithError(http.StatusForbidden, errors.New("not authorized to view this agent's catalog"))
 		return mcp.CatalogRequest{}, false
 	}
-	if !cfg.UseServiceAccountAuth && !isSystemAdmin(a.pluginAPI, userID) {
+	if !cfg.UseServiceAccountAuth && !a.canManageServiceAccounts(userID) {
 		c.AbortWithError(http.StatusForbidden, errors.New("not authorized to view the service account catalog"))
 		return mcp.CatalogRequest{}, false
 	}

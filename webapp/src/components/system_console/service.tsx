@@ -19,6 +19,7 @@ import ConsolePolicySection from '../access_control/console_policy_section';
 
 import {BooleanItem, ItemList, SelectionItem, TextItem, ComboboxItem} from './item';
 import {LicenseChip} from './enterprise_chip';
+import {useSettingsReadOnly} from './settings_read_only';
 
 export type LLMService = {
     id: string
@@ -151,6 +152,9 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
         }
     }, [props.service.tokenLimit, props.service.outputTokenLimit]);
 
+    // Listing models sends the service's credentials upstream, which read-only
+    // viewers do not have.
+    const readOnly = useSettingsReadOnly();
     const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible' || type === 'gemini' || type === 'vertex' || type === 'north';
 
     useEffect(() => {
@@ -180,7 +184,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
             hasRequiredCredentials = Boolean(props.service.apiKey);
         }
 
-        if (!supportsModelFetching || !hasRequiredCredentials) {
+        if (readOnly || !supportsModelFetching || !hasRequiredCredentials) {
             setAvailableModels([]);
             setModelsFetchError('');
             return;
@@ -213,7 +217,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
         };
 
         loadModels();
-    }, [type, props.service.apiKey, props.service.apiURL, props.service.orgId, props.service.region, props.service.vertexProjectID, props.service.vertexProjectNumber, props.service.vertexAuthCredentials, supportsModelFetching, intl]);
+    }, [type, props.service.apiKey, props.service.apiURL, props.service.orgId, props.service.region, props.service.vertexProjectID, props.service.vertexProjectNumber, props.service.vertexAuthCredentials, supportsModelFetching, readOnly, intl]);
 
     const getDefaultOutputTokenLimit = () => {
         switch (type) {
@@ -515,6 +519,7 @@ type Props = {
 const Service = (props: Props) => {
     const [open, setOpen] = useState(false);
     const intl = useIntl();
+    const readOnly = useSettingsReadOnly();
 
     return (
         <ServiceContainer>
@@ -536,16 +541,18 @@ const Service = (props: Props) => {
                 </Title>
                 <Spacer/>
                 <HeaderActions>
-                    <IconButton
-                        icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
-                        aria-label={intl.formatMessage({defaultMessage: 'Delete service'})}
-                        size='small'
-                        destructive={true}
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            props.onDelete();
-                        }}
-                    />
+                    {!readOnly && (
+                        <IconButton
+                            icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
+                            aria-label={intl.formatMessage({defaultMessage: 'Delete service'})}
+                            size='small'
+                            destructive={true}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                props.onDelete();
+                            }}
+                        />
+                    )}
                     <IconButton
                         icon={<Icon glyph={open ? <ChevronUpIcon/> : <ChevronDownIcon/>}/>}
                         aria-label={open ? intl.formatMessage({defaultMessage: 'Collapse service'}) : intl.formatMessage({defaultMessage: 'Expand service'})}

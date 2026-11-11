@@ -136,7 +136,7 @@ test.describe('MCP servers limited to direct messages (Mocked LLM)', () => {
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
-        await systemConsole.navigateToPluginConfig(mattermost.url());
+        await systemConsole.navigateToAgentsSettings(mattermost.url(), 'mcp');
 
         const list = page.getByRole('list', { name: 'Remote MCP servers' });
         const expectations = [

@@ -77,6 +77,7 @@ type testConfigImpl struct {
 	services                        []llm.ServiceConfig
 	defaultBotUserID                string
 	defaultBotName                  string
+	settingsAccess                  config.SettingsAccess
 }
 
 func (tc *testConfigImpl) GetDefaultBotUserID() string {
@@ -117,6 +118,10 @@ func (tc *testConfigImpl) EnableAmbientAutoReply() bool {
 
 func (tc *testConfigImpl) AllowNativeWebSearchInChannels() bool {
 	return false
+}
+
+func (tc *testConfigImpl) SettingsAccess() config.SettingsAccess {
+	return tc.settingsAccess
 }
 
 func (tc *testConfigImpl) GetServices() []llm.ServiceConfig {

@@ -11,6 +11,7 @@ import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 import {Tag, type TagType} from '@mattermost/compass-ui/components/tag';
 
 import {HelpText, ItemLabel} from '../item';
+import {useSettingsReadOnly} from '../settings_read_only';
 
 import {JobStatusType, StatusMessageType, HealthCheckResultType} from './types';
 
@@ -179,6 +180,7 @@ export const ReindexSection = ({
     onResumeClick,
 }: ReindexSectionProps) => {
     const intl = useIntl();
+    const readOnly = useSettingsReadOnly();
 
     // cancel_requested is non-terminal: the worker is still running until it
     // observes the request and writes canceled.
@@ -256,8 +258,8 @@ export const ReindexSection = ({
                     )}
                     primaryButtonLabel={staleRecovery?.label ?? reindexFromScratchLabel}
                     onPrimaryAction={staleRecovery?.onClick ?? onReindexClick}
-                    primaryActionDisabled={staleRecovery?.disabled}
-                    secondaryButtonLabel={staleRecovery ? reindexFromScratchLabel : null}
+                    primaryActionDisabled={readOnly || staleRecovery?.disabled}
+                    secondaryButtonLabel={staleRecovery && !readOnly ? reindexFromScratchLabel : null}
                     onSecondaryAction={onReindexClick}
                 />
             )}
@@ -316,19 +318,21 @@ export const ReindexSection = ({
                     {/* Show running job UI */}
                     {isReindexing && (
                         <>
-                            <ButtonGroup>
-                                <Button
-                                    emphasis='secondary'
-                                    onClick={onCancelJob}
-                                    disabled={jobStatus?.status === 'cancel_requested'}
-                                >
-                                    {jobStatus?.status === 'cancel_requested' ? (
-                                        <FormattedMessage defaultMessage='Canceling…'/>
-                                    ) : (
-                                        <FormattedMessage defaultMessage='Cancel Reindexing'/>
-                                    )}
-                                </Button>
-                            </ButtonGroup>
+                            {!readOnly && (
+                                <ButtonGroup>
+                                    <Button
+                                        emphasis='secondary'
+                                        onClick={onCancelJob}
+                                        disabled={jobStatus?.status === 'cancel_requested'}
+                                    >
+                                        {jobStatus?.status === 'cancel_requested' ? (
+                                            <FormattedMessage defaultMessage='Canceling…'/>
+                                        ) : (
+                                            <FormattedMessage defaultMessage='Cancel Reindexing'/>
+                                        )}
+                                    </Button>
+                                </ButtonGroup>
+                            )}
 
                             {jobStatus && (
                                 <>
@@ -380,20 +384,22 @@ export const ReindexSection = ({
                     {/* Show resume UI when job failed or canceled with progress */}
                     {!isReindexing && canResume && jobStatus && (
                         <>
-                            <ButtonGroup>
-                                <Button
-                                    emphasis='primary'
-                                    onClick={onResumeClick}
-                                >
-                                    <FormattedMessage defaultMessage='Resume Reindex'/>
-                                </Button>
-                                <Button
-                                    emphasis='secondary'
-                                    onClick={onReindexClick}
-                                >
-                                    <FormattedMessage defaultMessage='Start Over'/>
-                                </Button>
-                            </ButtonGroup>
+                            {!readOnly && (
+                                <ButtonGroup>
+                                    <Button
+                                        emphasis='primary'
+                                        onClick={onResumeClick}
+                                    >
+                                        <FormattedMessage defaultMessage='Resume Reindex'/>
+                                    </Button>
+                                    <Button
+                                        emphasis='secondary'
+                                        onClick={onReindexClick}
+                                    >
+                                        <FormattedMessage defaultMessage='Start Over'/>
+                                    </Button>
+                                </ButtonGroup>
+                            )}
                             <ProgressText>
                                 <FormattedMessage
                                     defaultMessage='Previous progress: {processed} of {total} posts ({percent}%) - Resume to continue from checkpoint'
@@ -408,7 +414,7 @@ export const ReindexSection = ({
                     )}
 
                     {/* Show default buttons when no job is running and resume is not available */}
-                    {!isReindexing && !canResume && (
+                    {!isReindexing && !canResume && !readOnly && (
                         <ButtonGroup>
                             <Button
                                 emphasis='primary'
