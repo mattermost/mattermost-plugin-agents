@@ -72,29 +72,24 @@ const fullConfigTest = containerTest(async (own) => {
 });
 
 test.describe('Initial State and Navigation', () => {
-    noServicesTest('should display no services page when no services configured', async ({ page, containers: { mattermost } }) => {
+    noServicesTest('should open on AI services with a first service to fill in when none is configured', async ({ page, containers: { mattermost } }) => {
         test.setTimeout(60000);
 
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
 
-        // Login as admin
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
-
         await systemConsole.navigateToAgentsSettings(mattermost.url());
 
-        // Verify beta message is visible
-        const betaMessage = systemConsole.getBetaMessage();
-        await expect(betaMessage).toBeVisible();
+        await expect(systemConsole.getSectionTab('services')).toHaveAttribute('aria-selected', 'true');
+        await expect(systemConsole.getServicesPanel()).toBeVisible();
+        await expect(page.getByText('OpenAI Service').first()).toBeVisible();
 
-        // Verify no services message is displayed
-        const noServicesMessage = systemConsole.getNoServicesMessage();
-        await expect(noServicesMessage).toBeVisible();
+        // The first service is open, ready to fill in.
+        await expect(page.getByRole('button', { name: 'Collapse service' })).toBeVisible();
 
-        // Verify Add Service button is visible
-        const addServiceButton = systemConsole.getAddServiceButton();
-        await expect(addServiceButton).toBeVisible();
-        await expect(addServiceButton).toBeEnabled();
+        // Nothing is sent until the admin changes something.
+        await expect(systemConsole.getSaveButton()).toHaveCount(0);
     });
 
     serviceOnlyTest('should show the configured service and the general settings once a service exists', async ({ page, containers: { mattermost } }) => {
@@ -124,17 +119,17 @@ test.describe('Initial State and Navigation', () => {
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
         await systemConsole.navigateToAgentsSettings(mattermost.url(), 'debug');
 
-        // Settings is reachable from the Agents sidebar and opens on General.
+        // Settings is reachable from the Agents sidebar and opens on AI services.
         await page.getByRole('navigation', { name: 'Agents' }).getByRole('button', { name: 'Settings' }).click();
         await expect(page).toHaveURL(/\/agents\/settings$/);
+        await expect(systemConsole.getSectionTab('services')).toHaveAttribute('aria-selected', 'true');
+        await expect(systemConsole.getServicesPanel()).toBeVisible();
+        await expect(page.getByText('Test Service').first()).toBeVisible();
 
+        await systemConsole.openSection('general');
         await expect(systemConsole.getFunctionsPanel()).toBeVisible();
         const defaultBotDropdown = page.getByRole('combobox', { name: 'Default bot', exact: true });
         await expect(defaultBotDropdown).toContainText('Test Bot');
-
-        await systemConsole.openSection('services');
-        await expect(systemConsole.getServicesPanel()).toBeVisible();
-        await expect(page.getByText('Test Service').first()).toBeVisible();
 
         await systemConsole.openSection('debug');
         await expect(systemConsole.getDebugPanel()).toBeVisible();

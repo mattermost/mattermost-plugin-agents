@@ -7,7 +7,7 @@ export const SETTINGS_SECTIONS = ['general', 'services', 'mcp', 'search', 'web-s
 
 export type SettingsSection = typeof SETTINGS_SECTIONS[number];
 
-export const DEFAULT_SETTINGS_SECTION: SettingsSection = 'general';
+export const DEFAULT_SETTINGS_SECTION: SettingsSection = 'services';
 
 export const isSettingsSection = (value: string | undefined): value is SettingsSection => (
     (SETTINGS_SECTIONS as readonly string[]).includes(value ?? '')

@@ -58,7 +58,7 @@ export class ToolConfigUIHelper {
         }
 
         // Wait for plugin UI to render
-        await this.page.waitForSelector('text=To report a bug or to provide feedback', { timeout: 15000 });
+        await this.page.getByRole('heading', { name: 'Settings', exact: true }).waitFor({ state: 'visible', timeout: 15000 });
     }
 
     /** Get all tabs visible in the plugin config */

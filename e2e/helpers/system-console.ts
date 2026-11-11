@@ -57,14 +57,13 @@ export class SystemConsoleHelper {
      * Open a section of the Agents settings.
      * @param baseUrl - Mattermost base URL
      */
-    async navigateToAgentsSettings(baseUrl: string, section: SettingsSection = 'general'): Promise<void> {
+    async navigateToAgentsSettings(baseUrl: string, section?: SettingsSection): Promise<void> {
         await this.polyfillRandomUUID();
-        await this.page.goto(`${baseUrl}/plug/${MATTERMOST_AI_PLUGIN_ID}/agents/settings/${section}`);
+        await this.page.goto(`${baseUrl}/plug/${MATTERMOST_AI_PLUGIN_ID}/agents/settings${section ? `/${section}` : ''}`);
         await this.page.waitForLoadState('domcontentloaded');
         await this.dismissViewInBrowser();
 
-        // The beta message is always present and indicates the React components have loaded
-        await this.page.waitForSelector('text=To report a bug or to provide feedback', { timeout: 15000 });
+        await this.page.getByRole('heading', { name: 'Settings', exact: true }).waitFor({ state: 'visible', timeout: 15000 });
     }
 
     /** Switch the Agents settings to another section through its tab. */
@@ -98,13 +97,6 @@ export class SystemConsoleHelper {
      */
     getSaveButton(): Locator {
         return this.page.getByRole('button', { name: 'Save', exact: true });
-    }
-
-    /**
-     * Get the beta feedback message
-     */
-    getBetaMessage(): Locator {
-        return this.page.locator('text=To report a bug or to provide feedback');
     }
 
     /**

@@ -49,6 +49,9 @@ type Props = {
     services: LLMService[]
     bots: LLMBotConfig[]
     onChange: (services: LLMService[]) => void
+
+    // The service to show open when the list first renders.
+    openByDefault?: LLMService
 }
 
 const Services = (props: Props) => {
@@ -111,6 +114,7 @@ const Services = (props: Props) => {
                     <Service
                         key={service.id || `unsaved-${index}`}
                         service={service}
+                        defaultOpen={service === props.openByDefault}
                         services={props.services}
                         onChange={(updated) => onChange(index, updated)}
                         onDelete={() => onDelete(index)}

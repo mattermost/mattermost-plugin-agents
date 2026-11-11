@@ -104,7 +104,7 @@ test.describe.serial('Agents settings access', () => {
 
         await page.getByRole('button', { name: 'Open Agents settings' }).click();
         await expect(page).toHaveURL(/\/agents\/settings$/);
-        await expect(settings.getFunctionsPanel()).toBeVisible();
+        await expect(settings.getServicesPanel()).toBeVisible();
     });
 
     test('a read-only user sees the settings without credentials and cannot change them', async ({ page }) => {

@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
@@ -13,6 +13,7 @@ import {Tabs} from '@mattermost/compass-ui/components/tabs';
 
 import {getAIBots, getPluginConfig, savePluginConfig} from '@/client';
 
+import {LLMService} from '@/components/system_console/service';
 import {firstNewService} from '@/components/system_console/services';
 import NoServicesPage from '@/components/system_console/no_services_page';
 import {SettingsReadOnlyContext} from '@/components/system_console/settings_read_only';
@@ -24,7 +25,7 @@ import {SETTINGS_PATH, useNavigationGuard} from '../use_agents_route';
 
 import {DEFAULT_SETTINGS_SECTION, SETTINGS_SECTIONS, SettingsSection} from './sections';
 import {withSavedMCPServer, withoutMCPServer} from './mcp_server_persistence';
-import SettingsSectionContent, {BetaMessage, RuntimeBotOption, defaultConfig} from './settings_sections';
+import SettingsSectionContent, {RuntimeBotOption, defaultConfig} from './settings_sections';
 import {useSettingsAccess} from './use_settings_access';
 
 const isSettingsPath = (pathname: string) => pathname === SETTINGS_PATH || pathname.startsWith(`${SETTINGS_PATH}/`);
@@ -44,6 +45,11 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
     const access = useSettingsAccess();
     const canView = access.level === 'read' || access.level === 'write';
     const readOnly = access.level !== 'write';
+    const canEdit = !readOnly;
+
+    // The blank service offered to an editor on a workspace with none. Until
+    // they change it, it is not part of what Save sends.
+    const draftServiceRef = useRef<LLMService | null>(null);
 
     const [localConfig, setLocalConfig] = useState<PluginConfig>(defaultConfig);
     const [savedConfig, setSavedConfig] = useState<PluginConfig>(defaultConfig);
@@ -65,8 +71,14 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
             try {
                 const cfg = await getPluginConfig();
                 if (current) {
-                    setLocalConfig({...defaultConfig, ...cfg});
-                    setSavedConfig({...defaultConfig, ...cfg});
+                    const loaded = {...defaultConfig, ...cfg};
+                    setSavedConfig(loaded);
+                    if (canEdit && !loaded.services?.length) {
+                        draftServiceRef.current = {...firstNewService};
+                        setLocalConfig({...loaded, services: [draftServiceRef.current]});
+                    } else {
+                        setLocalConfig(loaded);
+                    }
                     setLoadError(null);
                 }
             } catch {
@@ -83,7 +95,7 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
         return () => {
             current = false;
         };
-    }, [canView, intl]);
+    }, [canView, canEdit, intl]);
 
     useEffect(() => {
         if (!canView || loading || loadError) {
@@ -205,7 +217,8 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
         setSaving(true);
         setSaveError(null);
         try {
-            const saved = await savePluginConfig(localConfig);
+            const draft = draftServiceRef.current;
+            const saved = await savePluginConfig({...localConfig, services: (localConfig.services ?? []).filter((svc) => svc !== draft)});
 
             // Adopt the normalized saved config so server-minted service/MCP
             // IDs (and the UI gated on them) appear without a reload.
@@ -294,6 +307,7 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
                     updateMCP={updateMCP}
                     persistMCPServer={persistMCPServer}
                     deleteMCPServer={deleteMCPServer}
+                    draftService={draftServiceRef.current}
                 />
             </>
         );
@@ -316,16 +330,15 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
                         <FormattedMessage defaultMessage='AI services, tools, search and other settings that apply to every agent in the workspace.'/>
                     </Subtitle>
                 </PageHeader>
-                <Notices>
-                    <BetaMessage/>
-                    {canView && readOnly && (
+                {canView && readOnly && (
+                    <Notices>
                         <SectionNotice
                             type='info'
                             title={<FormattedMessage defaultMessage='You have read-only access'/>}
                             description={<FormattedMessage defaultMessage='You can view these settings but not change them. Credentials such as API keys are hidden.'/>}
                         />
-                    )}
-                </Notices>
+                    </Notices>
+                )}
                 <PageBody>{body}</PageBody>
             </PageContainer>
             {canView && !readOnly && (dirty || saveError) && (

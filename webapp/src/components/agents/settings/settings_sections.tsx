@@ -129,28 +129,6 @@ export const defaultConfig: PluginConfig = {
     },
 };
 
-export const BetaMessage = () => (
-    <SectionNotice
-        type='info'
-        title={(
-            <FormattedMessage
-                defaultMessage='To report a bug or to provide feedback, <link>create a new issue in the plugin repository</link>.'
-                values={{
-                    link: (chunks: any) => (
-                        <a
-                            target={'_blank'}
-                            rel={'noopener noreferrer'}
-                            href='http://github.com/mattermost/mattermost-plugin-agents/issues'
-                        >
-                            {chunks}
-                        </a>
-                    ),
-                }}
-            />
-        )}
-    />
-);
-
 type Props = {
     section: SettingsSection;
     value: PluginConfig;
@@ -170,12 +148,14 @@ type Props = {
     updateMCP: (update: MCPConfig | ((current: MCPConfig) => MCPConfig)) => void;
 
     // Save or delete one MCP server on its own, leaving other unsaved edits unsaved.
+    // The blank first service offered on a workspace with none; shown open.
+    draftService: LLMService | null;
     persistMCPServer: (server: MCPServerConfig, scope?: PersistMCPServerScope) => Promise<MCPServerConfig>;
     deleteMCPServer: (serverID: string) => Promise<void>;
 };
 
 // The panels of one Settings section.
-const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runtimeBotsError, linkDomainsError, updateConfig, updateMCP, persistMCPServer, deleteMCPServer}: Props) => {
+const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runtimeBotsError, linkDomainsError, updateConfig, updateMCP, persistMCPServer, deleteMCPServer, draftService}: Props) => {
     const intl = useIntl();
     const tokenAccountingLicensed = useIsLicensedFor('token_accounting');
     const providerWebSearchLicensed = useIsLicensedFor('provider_web_search');
@@ -325,6 +305,7 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                 <Services
                     services={value.services ?? []}
                     bots={value.bots ?? []}
+                    openByDefault={draftService ?? undefined} // eslint-disable-line no-undefined
                     onChange={(services: LLMService[]) => {
                         updateConfig({services});
                     }}

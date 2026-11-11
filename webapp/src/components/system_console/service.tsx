@@ -514,10 +514,13 @@ type Props = {
     services: LLMService[]
     onChange: (service: LLMService) => void
     onDelete: () => void
+
+    // Starts with the settings shown, for a service the admin is about to fill in.
+    defaultOpen?: boolean
 }
 
 const Service = (props: Props) => {
-    const [open, setOpen] = useState(false);
+    const [open, setOpen] = useState(Boolean(props.defaultOpen));
     const intl = useIntl();
     const readOnly = useSettingsReadOnly();
 

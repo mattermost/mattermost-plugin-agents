@@ -208,18 +208,30 @@ describe('AgentsSettingsPage access', () => {
         expect(radioFor('Render AI-generated links', 'false').disabled).toBe(true);
     });
 
-    it('offers to add the first service only to users who can save it', async () => {
+    it('gives users who can save a first service to fill in, and users who cannot a notice', async () => {
         (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, services: []});
         (getMySettingsAccess as jest.Mock).mockResolvedValue({level: 'read', manageOthersAgents: false});
-        const {unmount} = renderPage();
+        const {unmount} = renderPage('services');
         await screen.findByText('no-services');
         expect(screen.queryByRole('button', {name: 'Add an AI Service'})).toBeNull();
         unmount();
 
         (getMySettingsAccess as jest.Mock).mockResolvedValue({level: 'write', manageOthersAgents: false});
-        const {onSelectSection} = renderPage();
-        fireEvent.click(await screen.findByRole('button', {name: 'Add an AI Service'}));
-        expect(onSelectSection).toHaveBeenCalledWith('services');
+        renderPage('services');
+        expect(await screen.findByText('service:OpenAI Service:unsaved')).toBeTruthy();
+        expect(screen.queryByText('no-services')).toBeNull();
+        expect(screen.queryByRole('button', {name: 'Save'})).toBeNull();
+    });
+
+    it('leaves the unchanged first service out of what a save sends', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, services: []});
+        renderPage('general');
+        await screen.findByText('Render AI-generated links');
+        fireEvent.click(radioFor('Render AI-generated links', 'true'));
+        fireEvent.click(radioFor('Render AI-generated links', 'false'));
+
+        const saved = await clickSave();
+        expect(saved.services).toEqual([]);
     });
 });
 
