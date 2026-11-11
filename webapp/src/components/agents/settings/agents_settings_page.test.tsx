@@ -92,16 +92,6 @@ jest.mock('@/components/system_console/web_search/web_search_panel', () => ({
     default: () => null,
 }));
 
-jest.mock('@/components/system_console/no_services_page', () => ({
-    __esModule: true,
-    default: ({onAddServicePressed}: {onAddServicePressed?: () => void}) => (
-        <div>
-            {'no-services'}
-            {onAddServicePressed && <button onClick={onAddServicePressed}>{'Add an AI Service'}</button>}
-        </div>
-    ),
-}));
-
 const loadedConfig = {
     services: [{id: '', name: 'My Service', type: 'openai'}],
     mcp: {
@@ -208,18 +198,22 @@ describe('AgentsSettingsPage access', () => {
         expect(radioFor('Render AI-generated links', 'false').disabled).toBe(true);
     });
 
-    it('gives users who can save a first service to fill in, and users who cannot a notice', async () => {
+    it('keeps every section reachable without services, offering users who can save a first one to fill in', async () => {
         (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, services: []});
         (getMySettingsAccess as jest.Mock).mockResolvedValue({level: 'read', manageOthersAgents: false});
-        const {unmount} = renderPage('services');
-        await screen.findByText('no-services');
-        expect(screen.queryByRole('button', {name: 'Add an AI Service'})).toBeNull();
+        const {unmount} = renderPage('general');
+        await screen.findByText('Render AI-generated links');
+        expect(screen.queryByText('service:OpenAI Service:unsaved')).toBeNull();
         unmount();
+
+        (getMySettingsAccess as jest.Mock).mockResolvedValue({level: 'read', manageOthersAgents: false});
+        const readOnlyServices = renderPage('services');
+        expect(await screen.findByText('No AI services are configured')).toBeTruthy();
+        readOnlyServices.unmount();
 
         (getMySettingsAccess as jest.Mock).mockResolvedValue({level: 'write', manageOthersAgents: false});
         renderPage('services');
         expect(await screen.findByText('service:OpenAI Service:unsaved')).toBeTruthy();
-        expect(screen.queryByText('no-services')).toBeNull();
         expect(screen.queryByRole('button', {name: 'Save'})).toBeNull();
     });
 

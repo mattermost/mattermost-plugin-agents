@@ -100,13 +100,6 @@ export class SystemConsoleHelper {
     }
 
     /**
-     * Get the no services message
-     */
-    getNoServicesMessage(): Locator {
-        return this.page.locator('text=/no.*ai.*services/i');
-    }
-
-    /**
      * Get AI Services panel
      */
     getServicesPanel(): Locator {

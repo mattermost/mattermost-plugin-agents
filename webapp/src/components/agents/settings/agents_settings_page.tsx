@@ -15,7 +15,6 @@ import {getAIBots, getPluginConfig, savePluginConfig} from '@/client';
 
 import {LLMService} from '@/components/system_console/service';
 import {firstNewService} from '@/components/system_console/services';
-import NoServicesPage from '@/components/system_console/no_services_page';
 import {SettingsReadOnlyContext} from '@/components/system_console/settings_read_only';
 import {MCPServerConfig} from '@/components/system_console/mcp_servers';
 import {PersistMCPServerScope} from '@/components/system_console/mcp_types';
@@ -243,11 +242,6 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
         setLinkDomainsError('');
     };
 
-    const addFirstService = () => {
-        updateConfig({services: [{...firstNewService}]});
-        onSelectSection('services');
-    };
-
     const tabLabels: Record<SettingsSection, React.ReactNode> = {
         general: <FormattedMessage defaultMessage='General'/>,
         services: <FormattedMessage defaultMessage='AI services'/>,
@@ -288,7 +282,7 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
                 title={loadError}
             />
         );
-    } else if (localConfig.services?.length) {
+    } else {
         body = (
             <>
                 <TabBar
@@ -310,10 +304,6 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
                     draftService={draftServiceRef.current}
                 />
             </>
-        );
-    } else {
-        body = (
-            <NoServicesPage onAddServicePressed={readOnly ? undefined : addFirstService}/> // eslint-disable-line no-undefined
         );
     }
 

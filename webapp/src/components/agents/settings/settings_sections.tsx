@@ -20,6 +20,7 @@ import {HNSW_DEFAULTS, REINDEX_DEFAULTS, REINDEX_INDEX_STRATEGY, VECTOR_ELEMENT_
 import MCPServers, {MCPServerConfig} from '@/components/system_console/mcp_servers';
 import {MCPConfig, PersistMCPServerScope} from '@/components/system_console/mcp_types';
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
+import {useSettingsReadOnly} from '@/components/system_console/settings_read_only';
 import WebSearchPanel from '@/components/system_console/web_search/web_search_panel';
 
 import {SettingsSection} from './sections';
@@ -157,6 +158,7 @@ type Props = {
 // The panels of one Settings section.
 const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runtimeBotsError, linkDomainsError, updateConfig, updateMCP, persistMCPServer, deleteMCPServer, draftService}: Props) => {
     const intl = useIntl();
+    const readOnly = useSettingsReadOnly();
     const tokenAccountingLicensed = useIsLicensedFor('token_accounting');
     const providerWebSearchLicensed = useIsLicensedFor('provider_web_search');
     const channelAutoReplyLicensed = useIsLicensedFor('channel_auto_reply');
@@ -302,6 +304,12 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                 title={intl.formatMessage({defaultMessage: 'AI Services'})}
                 subtitle={intl.formatMessage({defaultMessage: 'Configure AI services to power your bots.'})}
             >
+                {readOnly && !value.services?.length && (
+                    <SectionNotice
+                        type='info'
+                        title={<FormattedMessage defaultMessage='No AI services are configured'/>}
+                    />
+                )}
                 <Services
                     services={value.services ?? []}
                     bots={value.bots ?? []}
