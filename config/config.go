@@ -24,20 +24,34 @@ const (
 // are legacy username references, read only when the matching bot user ID
 // field is empty.
 type Config struct {
-	Services                        []llm.ServiceConfig              `json:"services"`
-	Bots                            []llm.BotConfig                  `json:"bots"`
-	DefaultBotUserID                string                           `json:"defaultBotUserID"`
-	TranscriptBotUserID             string                           `json:"transcriptBotUserID"`
-	DefaultBotName                  string                           `json:"defaultBotName"`
-	TranscriptGenerator             string                           `json:"transcriptBackend"`
-	EnableTokenUsageLogging         bool                             `json:"enableTokenUsageLogging"`
-	EnableCallSummary               bool                             `json:"enableCallSummary"`
-	EnableTokenUsageLogToPlugin     *bool                            `json:"enableTokenUsageLogToPlugin,omitempty"`
-	EnableTokenUsageLogToFile       *bool                            `json:"enableTokenUsageLogToFile,omitempty"`
-	AllowedUpstreamHostnames        string                           `json:"allowedUpstreamHostnames"`
-	AllowUnsafeLinks                bool                             `json:"allowUnsafeLinks"`
-	AllowedLinkDomains              string                           `json:"allowedLinkDomains"`
-	EnableHTMLArtifacts             bool                             `json:"enableHTMLArtifacts"`
+	Services                    []llm.ServiceConfig `json:"services"`
+	Bots                        []llm.BotConfig     `json:"bots"`
+	DefaultBotUserID            string              `json:"defaultBotUserID"`
+	TranscriptBotUserID         string              `json:"transcriptBotUserID"`
+	DefaultBotName              string              `json:"defaultBotName"`
+	TranscriptGenerator         string              `json:"transcriptBackend"`
+	EnableTokenUsageLogging     bool                `json:"enableTokenUsageLogging"`
+	EnableCallSummary           bool                `json:"enableCallSummary"`
+	EnableTokenUsageLogToPlugin *bool               `json:"enableTokenUsageLogToPlugin,omitempty"`
+	EnableTokenUsageLogToFile   *bool               `json:"enableTokenUsageLogToFile,omitempty"`
+	AllowedUpstreamHostnames    string              `json:"allowedUpstreamHostnames"`
+	AllowUnsafeLinks            bool                `json:"allowUnsafeLinks"`
+	AllowedLinkDomains          string              `json:"allowedLinkDomains"`
+	EnableHTMLArtifacts         bool                `json:"enableHTMLArtifacts"`
+	EnableChannelArtifacts      bool                `json:"enableChannelArtifacts"`
+	// ChannelArtifactsMaxPerChannel caps saved artifacts per channel. 0 → 50.
+	ChannelArtifactsMaxPerChannel int `json:"channelArtifactsMaxPerChannel"`
+	// ChannelArtifactsMaxSitewide caps saved artifacts across the site. 0 → unlimited.
+	ChannelArtifactsMaxSitewide int `json:"channelArtifactsMaxSitewide"`
+	// ChannelArtifactVersionsToKeep caps retained content versions per artifact.
+	// 0 keeps every version.
+	ChannelArtifactVersionsToKeep int `json:"channelArtifactVersionsToKeep"`
+	// DisableChannelArtifactDownload blocks the download route when true.
+	DisableChannelArtifactDownload bool `json:"disableChannelArtifactDownload"`
+	// DisableChannelArtifactRendering blocks iframe render/token routes when true.
+	DisableChannelArtifactRendering bool `json:"disableChannelArtifactRendering"`
+	// DisableHumanChannelArtifacts restricts saving to bot-authored posts when true.
+	DisableHumanChannelArtifacts    bool                             `json:"disableHumanChannelArtifacts"`
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
 	EnableAmbientAutoReply          bool                             `json:"enableAmbientAutoReply"`
 	AllowNativeWebSearchInChannels  bool                             `json:"allowNativeWebSearchInChannels"`
@@ -202,6 +216,56 @@ func (c *Container) LinkPolicy() LinkPolicy {
 // as sandboxed interactive artifacts.
 func (c *Container) EnableHTMLArtifacts() bool {
 	return c.Config().EnableHTMLArtifacts
+}
+
+// EnableChannelArtifacts reports whether channel admins may save HTML
+// artifacts into a long-lived per-channel library. Requires EnableHTMLArtifacts.
+func (c *Container) EnableChannelArtifacts() bool {
+	cfg := c.Config()
+	return cfg.EnableHTMLArtifacts && cfg.EnableChannelArtifacts
+}
+
+// ChannelArtifactsMaxPerChannel returns the per-channel save cap (default 50).
+func (c *Container) ChannelArtifactsMaxPerChannel() int {
+	n := c.Config().ChannelArtifactsMaxPerChannel
+	if n <= 0 {
+		return 50
+	}
+	return n
+}
+
+// ChannelArtifactsMaxSitewide returns the sitewide save cap (0 = unlimited).
+func (c *Container) ChannelArtifactsMaxSitewide() int {
+	n := c.Config().ChannelArtifactsMaxSitewide
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+// ChannelArtifactVersionsToKeep returns how many content versions to retain
+// per artifact (0 = keep all).
+func (c *Container) ChannelArtifactVersionsToKeep() int {
+	n := c.Config().ChannelArtifactVersionsToKeep
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+// DisableChannelArtifactDownload reports whether downloads are blocked.
+func (c *Container) DisableChannelArtifactDownload() bool {
+	return c.Config().DisableChannelArtifactDownload
+}
+
+// DisableChannelArtifactRendering reports whether iframe rendering is blocked.
+func (c *Container) DisableChannelArtifactRendering() bool {
+	return c.Config().DisableChannelArtifactRendering
+}
+
+// DisableHumanChannelArtifacts reports whether only bot-authored posts may be saved.
+func (c *Container) DisableHumanChannelArtifacts() bool {
+	return c.Config().DisableHumanChannelArtifacts
 }
 
 func (c *Container) EnableChannelMentionToolCalling() bool {
