@@ -345,10 +345,26 @@ func (s *Store) finishPurge(entry *Entry) error {
 	if err := s.kv.KVDelete(histKey(entry.ID)); err != nil {
 		return err
 	}
-	if err := s.kv.KVDelete(metaKey(entry.ID)); err != nil {
-		return err
+	// Drop the index id before the metadata row. A failed count puts the id
+	// back while the row still exists, so a retry can load it. A row delete
+	// that fails after the drop puts the id and the count back for the sweep.
+	dropped, indexErr := s.finishPurgeIndex(entry)
+	if indexErr != nil {
+		return indexErr
 	}
-	return s.finishPurgeIndex(entry)
+	if deleteErr := s.kv.KVDelete(metaKey(entry.ID)); deleteErr != nil {
+		if !dropped {
+			return deleteErr
+		}
+		if putErr := s.restorePurgedIndexID(entry.ChannelID, entry.ID); putErr != nil {
+			return errors.Join(deleteErr, putErr)
+		}
+		if countErr := s.adjustSiteCount(1); countErr != nil {
+			return errors.Join(deleteErr, countErr)
+		}
+		return deleteErr
+	}
+	return nil
 }
 
 // markPurging sets the purge flag. expectedVersion 0 accepts any head. Any

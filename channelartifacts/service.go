@@ -217,18 +217,13 @@ func (s *Service) replaceLocked(
 		entry.Title = title
 	}
 	entry.Description = description
-	entry.SourcePostID = postID
-	entry.SourceFileID = fileID
-	entry.SourceFileName = fileName
-	entry.SourceBotUserID = botUserID
-	entry.SourceAgentDisplayName = agentDisplayName
-	entry.SourceRootPostID = sourceRootPostID
 	entry.UpdateAt = model.GetMillis()
 	entry.UpdatedBy = userID
-	// Reject content that cannot be stored before any metadata write. The
-	// metadata write then patches only these fields onto the current head, so
-	// a rename that landed after the load is kept when this call does not set
-	// a title. ReplaceContent still keeps a title patched while the upload runs.
+	// Reject content that cannot be stored before any metadata write. That
+	// write patches only the title and description, so a rename that landed
+	// after the load is kept when this call does not set a title. Source
+	// pointers are applied to the patched head and stored with the content
+	// write: writing them first would make a failed upload look already saved.
 	if _, shaErr := s.store.replacementSHA(entry, content, limits.MaxSize); shaErr != nil {
 		return nil, shaErr
 	}
@@ -243,12 +238,6 @@ func (s *Service) replaceLocked(
 			current.Title = title
 		}
 		current.Description = description
-		current.SourcePostID = postID
-		current.SourceFileID = fileID
-		current.SourceFileName = fileName
-		current.SourceBotUserID = botUserID
-		current.SourceAgentDisplayName = agentDisplayName
-		current.SourceRootPostID = sourceRootPostID
 		current.UpdateAt = entry.UpdateAt
 		current.UpdatedBy = userID
 		if titleErr := validateTitle(current.Title); titleErr != nil {
@@ -262,6 +251,12 @@ func (s *Service) replaceLocked(
 	if err != nil {
 		return nil, err
 	}
+	updated.SourcePostID = postID
+	updated.SourceFileID = fileID
+	updated.SourceFileName = fileName
+	updated.SourceBotUserID = botUserID
+	updated.SourceAgentDisplayName = agentDisplayName
+	updated.SourceRootPostID = sourceRootPostID
 	if replaceErr := s.store.ReplaceContent(updated, content, limits.MaxSize, limits.VersionsToKeep); replaceErr != nil {
 		if errors.Is(replaceErr, ErrCleanupDeferred) {
 			return updated, replaceErr
