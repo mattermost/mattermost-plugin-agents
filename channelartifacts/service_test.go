@@ -5,6 +5,7 @@ package channelartifacts
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -466,4 +467,149 @@ func TestPurgeChannelRejectsInvalidID(t *testing.T) {
 	svc := NewService(NewStore(newMemoryKV()), newMemoryKV(), allowAllMembers{})
 	_, err := svc.PurgeChannel("not-an-id")
 	require.ErrorIs(t, err, ErrInvalidInput)
+}
+
+func TestDeleteOfTheOnlyVersionKeepsAReplacementThatLandsDuringTheDelete(t *testing.T) {
+	kv := newMemoryKV()
+	kv.permissionAll = true
+	store := NewStore(kv)
+	svc := NewService(store, kv, allowAllMembers{})
+	channelID := model.NewId()
+	userID := model.NewId()
+	kv.channels[channelID] = &model.Channel{Id: channelID, Type: model.ChannelTypeOpen}
+	limits := ContentLimits{MaxSize: 1024}
+
+	entry, err := svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), Title: "Demo",
+	}, []byte("<html>v1</html>"), "v1.html", userID, "Author", "", model.NewId(), limits)
+	require.NoError(t, err)
+	v1 := kv.snapshot()
+	_, err = svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), ReplaceID: entry.ID, Title: "Renamed",
+	}, []byte("<html>v2</html>"), "v2.html", userID, "Author", "", model.NewId(), limits)
+	require.NoError(t, err)
+	v2 := kv.snapshot()
+	kv.restore(v1)
+	kv.beforeMetaCAS = func(data map[string][]byte) {
+		restoreKVData(data, v2)
+	}
+
+	require.NoError(t, svc.Delete(userID, entry.ID, false))
+	stored, err := store.Get(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, 1, stored.Version)
+	body, err := store.ReadContent(stored)
+	require.NoError(t, err)
+	require.Equal(t, "<html>v1</html>", string(body))
+}
+
+func TestExplicitPurgeRemovesAReplacementThatLandsDuringTheDelete(t *testing.T) {
+	kv := newMemoryKV()
+	kv.permissionAll = true
+	store := NewStore(kv)
+	svc := NewService(store, kv, allowAllMembers{})
+	channelID := model.NewId()
+	userID := model.NewId()
+	kv.channels[channelID] = &model.Channel{Id: channelID, Type: model.ChannelTypeOpen}
+	limits := ContentLimits{MaxSize: 1024}
+
+	entry, err := svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), Title: "Demo",
+	}, []byte("<html>v1</html>"), "v1.html", userID, "Author", "", model.NewId(), limits)
+	require.NoError(t, err)
+	v1 := kv.snapshot()
+	_, err = svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), ReplaceID: entry.ID, Title: "Renamed",
+	}, []byte("<html>v2</html>"), "v2.html", userID, "Author", "", model.NewId(), limits)
+	require.NoError(t, err)
+	v2 := kv.snapshot()
+	kv.restore(v1)
+	kv.beforeMetaCAS = func(data map[string][]byte) {
+		restoreKVData(data, v2)
+	}
+
+	require.NoError(t, svc.Delete(userID, entry.ID, true))
+	_, err = store.Get(entry.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestCreateReplacementKeepsATitlePatchedAfterTheLoad(t *testing.T) {
+	kv := newMemoryKV()
+	kv.permissionAll = true
+	store := NewStore(kv)
+	svc := NewService(store, kv, allowAllMembers{})
+	channelID := model.NewId()
+	userID := model.NewId()
+	kv.channels[channelID] = &model.Channel{Id: channelID, Type: model.ChannelTypeOpen}
+
+	entry, err := svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), Title: "Demo", Description: "first",
+	}, []byte("<html>v1</html>"), "v1.html", userID, "Author", "", model.NewId(), ContentLimits{MaxSize: 1024})
+	require.NoError(t, err)
+
+	kv.conflictNextMeta = true
+	kv.onFailNextMeta = func(data map[string][]byte) {
+		var stored Entry
+		require.NoError(t, json.Unmarshal(data[metaKey(entry.ID)], &stored))
+		stored.Title = "Patched"
+		raw, marshalErr := json.Marshal(stored)
+		require.NoError(t, marshalErr)
+		data[metaKey(entry.ID)] = raw
+	}
+
+	updated, err := svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), ReplaceID: entry.ID, Description: "second",
+	}, []byte("<html>v2</html>"), "v2.html", userID, "Author", "", model.NewId(), ContentLimits{MaxSize: 1024})
+	require.NoError(t, err)
+	require.Equal(t, "Patched", updated.Title)
+	require.Equal(t, "second", updated.Description)
+	stored, err := store.Get(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, "Patched", stored.Title)
+	require.Equal(t, 2, stored.Version)
+}
+
+func TestCreateReplacementLeavesMetadataWhenTheContentIsRejected(t *testing.T) {
+	kv := newMemoryKV()
+	kv.permissionAll = true
+	store := NewStore(kv)
+	svc := NewService(store, kv, allowAllMembers{})
+	channelID := model.NewId()
+	userID := model.NewId()
+	kv.channels[channelID] = &model.Channel{Id: channelID, Type: model.ChannelTypeOpen}
+	limits := ContentLimits{MaxSize: 1024}
+
+	entry, err := svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), Title: "Demo",
+	}, []byte("<html>v1</html>"), "v1.html", userID, "Author", "", model.NewId(), limits)
+	require.NoError(t, err)
+
+	_, err = svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), ReplaceID: entry.ID, Title: "Renamed",
+	}, nil, "v2.html", userID, "Author", "", model.NewId(), limits)
+	require.ErrorIs(t, err, ErrInvalidInput)
+
+	_, err = svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), ReplaceID: entry.ID, Title: "Renamed",
+	}, []byte("<html>too-big</html>"), "v2.html", userID, "Author", "", model.NewId(), ContentLimits{MaxSize: 4})
+	require.ErrorIs(t, err, ErrTooLarge)
+
+	_, err = svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), ReplaceID: entry.ID, Title: strings.Repeat("a", MaxTitleRunes+1),
+	}, []byte("<html>v2</html>"), "v2.html", userID, "Author", "", model.NewId(), limits)
+	require.ErrorIs(t, err, ErrInvalidInput)
+
+	_, err = svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), Title: "Other",
+	}, []byte("<html>shared</html>"), "shared.html", userID, "Author", "", model.NewId(), limits)
+	require.NoError(t, err)
+	_, err = svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), ReplaceID: entry.ID, Title: "Renamed",
+	}, []byte("<html>shared</html>"), "shared.html", userID, "Author", "", model.NewId(), limits)
+	require.ErrorIs(t, err, ErrDuplicate)
+
+	stored, err := store.Get(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, "Demo", stored.Title)
+	require.Equal(t, 1, stored.Version)
 }

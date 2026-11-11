@@ -34,6 +34,7 @@ type memoryKV struct {
 	conflictNextMeta   bool
 	onFailNextMeta     func(data map[string][]byte)
 	beforeHistCAS      func(data map[string][]byte)
+	beforeMetaCAS      func(data map[string][]byte)
 	unreadable         map[string]bool
 	beforeSHAClaim     func(data map[string][]byte, key string)
 	rejectHistCAS      bool
@@ -47,6 +48,35 @@ type memoryKV struct {
 
 func newMemoryKV() *memoryKV {
 	return &memoryKV{data: map[string][]byte{}, channels: map[string]*model.Channel{}}
+}
+
+func (kv *memoryKV) snapshot() map[string][]byte {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	return copyKVData(kv.data)
+}
+
+func (kv *memoryKV) restore(src map[string][]byte) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	restoreKVData(kv.data, src)
+}
+
+func copyKVData(src map[string][]byte) map[string][]byte {
+	out := make(map[string][]byte, len(src))
+	for key, value := range src {
+		out[key] = append([]byte(nil), value...)
+	}
+	return out
+}
+
+func restoreKVData(dst, src map[string][]byte) {
+	for key := range dst {
+		delete(dst, key)
+	}
+	for key, value := range src {
+		dst[key] = append([]byte(nil), value...)
+	}
 }
 
 func encodeKV(value any) ([]byte, error) {
@@ -155,6 +185,11 @@ func (kv *memoryKV) KVCompareAndSet(key string, oldValue, newValue any) (bool, e
 	if newValue == nil && strings.HasPrefix(key, keyPrefixSHA) && kv.failSHADeletes > 0 {
 		kv.failSHADeletes--
 		return false, errors.New("sha delete failed")
+	}
+	if strings.HasPrefix(key, keyPrefixMeta) && newValue != nil && kv.beforeMetaCAS != nil {
+		hook := kv.beforeMetaCAS
+		kv.beforeMetaCAS = nil
+		hook(kv.data)
 	}
 	if strings.HasPrefix(key, keyPrefixHist) && kv.beforeHistCAS != nil {
 		hook := kv.beforeHistCAS
@@ -1099,7 +1134,7 @@ func TestCasHeadRejectsAPurgingEntry(t *testing.T) {
 	store := NewStore(kv)
 	entry := testEntry(model.NewId())
 	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
-	require.NoError(t, store.markPurging(entry))
+	require.NoError(t, store.markPurging(entry, 0))
 	entry.Title = "changed"
 
 	err := store.UpdateMeta(entry)
@@ -1256,6 +1291,36 @@ func TestPruneClearsAHeadThatWasAlreadyDeleted(t *testing.T) {
 	hist, err = store.loadHistory(entry.ID)
 	require.NoError(t, err)
 	require.Empty(t, hist.PendingDelete)
+}
+
+func TestReplaceContentStillCleansUpWhenVersionMetaCannotBeAligned(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	original := []byte("<html>1</html>")
+	require.NoError(t, store.Save(entry, original, 1024, 0, 0))
+	originalSHA := entry.SHA256
+	entry.Title = "Renamed"
+	replacement := []byte("<html>2</html>")
+
+	kv.histCASCount = 0
+	kv.failHistCASErrorAt = 2
+	err := store.ReplaceContent(entry, replacement, 1024, 1)
+	require.ErrorIs(t, err, ErrCleanupDeferred)
+
+	stored, err := store.Get(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, 2, stored.Version)
+	body, err := store.ReadContent(stored)
+	require.NoError(t, err)
+	require.Equal(t, "<html>2</html>", string(body))
+	_, err = store.ReadContentAt(stored, 1)
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = store.FindBySHA(entry.ChannelID, originalSHA)
+	require.ErrorIs(t, err, ErrNotFound)
+	owner, err := store.FindBySHA(entry.ChannelID, sha256Hex(replacement))
+	require.NoError(t, err)
+	require.Equal(t, entry.ID, owner)
 }
 
 func sha256Hex(content []byte) string {
