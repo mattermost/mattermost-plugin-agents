@@ -135,9 +135,10 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
     const [credentialsCleared, setCredentialsCleared] = useState(false);
 
     // Provider type and API URL the credentials currently in the fields belong to.
-    const credentialEndpointRef = useRef({type: props.service.type, apiURL: (props.service.apiURL ?? '').trim()});
+    const normalizeURL = (url: string | undefined) => (url ?? '').trim().replace(/\/+$/, '');
+    const credentialEndpointRef = useRef({type: props.service.type, apiURL: normalizeURL(props.service.apiURL)});
     const clearCredentialsIfMoved = (next: LLMService): LLMService => {
-        const endpoint = {type: next.type, apiURL: (next.apiURL ?? '').trim()};
+        const endpoint = {type: next.type, apiURL: normalizeURL(next.apiURL)};
         const moved = endpoint.type !== credentialEndpointRef.current.type || endpoint.apiURL !== credentialEndpointRef.current.apiURL;
         credentialEndpointRef.current = endpoint;
         if (!moved || !hasMaskedCredential(next)) {
@@ -221,9 +222,12 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
         if (!supportsModelFetching || !hasRequiredCredentials) {
             setAvailableModels([]);
             setModelsFetchError('');
-            return;
+            setLoadingModels(false);
+            return () => null;
         }
 
+        // A response for settings the admin has since changed must not replace newer state.
+        let superseded = false;
         const loadModels = async () => {
             setLoadingModels(true);
             setModelsFetchError('');
@@ -246,16 +250,25 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                         serviceID: props.service.id,
                     },
                 );
-                setAvailableModels(data);
+                if (!superseded) {
+                    setAvailableModels(data);
+                }
             } catch (error) {
-                setModelsFetchError(intl.formatMessage({defaultMessage: 'Failed to fetch models. Please check your API key and API URL.'}));
-                setAvailableModels([]);
+                if (!superseded) {
+                    setModelsFetchError(intl.formatMessage({defaultMessage: 'Failed to fetch models. Please check your API key and API URL.'}));
+                    setAvailableModels([]);
+                }
             } finally {
-                setLoadingModels(false);
+                if (!superseded) {
+                    setLoadingModels(false);
+                }
             }
         };
 
         loadModels();
+        return () => {
+            superseded = true;
+        };
     }, [type, props.service.id, props.service.apiKey, props.service.apiURL, props.service.orgId, props.service.region, props.service.vertexProjectID, props.service.vertexProjectNumber, props.service.vertexAuthCredentials, supportsModelFetching, intl]);
 
     const getDefaultOutputTokenLimit = () => {

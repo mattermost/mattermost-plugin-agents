@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React, {useState} from 'react';
-import {fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import {chooseOption, getSelect, optionLabels, selectedLabel} from '../../../tests/compass_select';
@@ -590,6 +590,16 @@ describe('ServiceFields credentials when the provider or endpoint changes', () =
         expect(screen.getByText(CLEARED_NOTE)).toBeTruthy();
     });
 
+    it('keeps the masked key when only a trailing slash is added', () => {
+        const service = renderEditable();
+
+        fireEvent.change(urlField(), {target: {value: `${savedService.apiURL}/`}});
+        fireEvent.blur(screen.getByDisplayValue(`${savedService.apiURL}/`));
+
+        expect(service().apiKey).toBe(SECRET_PLACEHOLDER);
+        expect(screen.queryByText(CLEARED_NOTE)).toBeNull();
+    });
+
     it('keeps the masked key when the URL is put back before leaving the field', () => {
         const service = renderEditable();
 
@@ -599,5 +609,35 @@ describe('ServiceFields credentials when the provider or endpoint changes', () =
 
         expect(service().apiKey).toBe(SECRET_PLACEHOLDER);
         expect(screen.queryByText(CLEARED_NOTE)).toBeNull();
+    });
+});
+
+describe('ServiceFields model list when settings change during a fetch', () => {
+    it('ignores a response for the previous endpoint', async () => {
+        const resolvers: Array<(models: unknown[]) => void> = [];
+        fetchModels.mockImplementation(() => new Promise((resolve) => {
+            resolvers.push(resolve);
+        }));
+        const first: LLMService = {...baseService, type: 'openaicompatible', apiURL: 'https://one.example.com/v1', apiKey: 'key'};
+
+        const {rerender} = renderFields(first);
+        rerender(
+            <IntlProvider locale='en'>
+                <ServiceFields
+                    service={{...first, apiURL: 'https://two.example.com/v1'}}
+                    onChange={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+        await waitFor(() => expect(resolvers).toHaveLength(2));
+
+        await act(async () => {
+            resolvers[1]([]);
+        });
+        await act(async () => {
+            resolvers[0]([{id: 'claude-sonnet-4-5', displayName: 'Claude Sonnet 4.5', inputTokenLimit: 200000, outputTokenLimit: 8192}]);
+        });
+
+        expect(screen.queryByDisplayValue('200000')).toBeNull();
     });
 });

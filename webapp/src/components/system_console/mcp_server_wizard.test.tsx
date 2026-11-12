@@ -717,6 +717,19 @@ describe('MCPServerWizard credentials when the server URL changes', () => {
         expect(server.headers).toEqual({Authorization: SECRET_PLACEHOLDER});
     });
 
+    test('putting the original URL back after leaving the field restores the masks and keeps typed values', async () => {
+        const server = await savedServerAfter(async () => {
+            await editURL(MOVED_URL);
+            fireEvent.change(await screen.findByLabelText('OAuth client secret'), {target: {value: 'entered-secret'}});
+            await editURL(STORED_URL);
+        });
+
+        expect(server.clientSecret).toBe('entered-secret');
+        expect(server.headers).toEqual({Authorization: SECRET_PLACEHOLDER});
+        expect(server.serviceAccountHeaders).toEqual({Authorization: SECRET_PLACEHOLDER});
+        expect(screen.queryByText(CLEARED_NOTE)).toBeNull();
+    });
+
     test('editing another field leaves the credential fields alone', async () => {
         const server = await savedServerAfter(async () => {
             fireEvent.change(await screen.findByDisplayValue('Issues'), {target: {value: 'Tickets'}});

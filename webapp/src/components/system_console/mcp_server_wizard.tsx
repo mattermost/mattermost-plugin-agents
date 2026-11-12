@@ -65,6 +65,21 @@ const withoutMaskedCredentials = (server: MCPServerConfig): MCPServerConfig => (
     clientSecret: server.clientSecret === SECRET_PLACEHOLDER ? '' : server.clientSecret,
 });
 
+// restoreMaskedCredentials puts back the masks the admin's edit emptied, leaving
+// anything typed in their place.
+const restoreMaskedCredentials = (server: MCPServerConfig, original: MCPServerConfig): MCPServerConfig => {
+    const restoreHeaders = (current: {[key: string]: string} | undefined, saved: {[key: string]: string} | undefined) => ({
+        ...current,
+        ...Object.fromEntries(Object.entries(saved || {}).filter(([key, value]) => value === SECRET_PLACEHOLDER && !current?.[key])),
+    });
+    return {
+        ...server,
+        headers: restoreHeaders(server.headers, original.headers),
+        serviceAccountHeaders: restoreHeaders(server.serviceAccountHeaders, original.serviceAccountHeaders),
+        clientSecret: !server.clientSecret && original.clientSecret === SECRET_PLACEHOLDER ? SECRET_PLACEHOLDER : server.clientSecret,
+    };
+};
+
 // serverOrigin returns a server URL's origin (scheme, host, and port), or ''
 // when the URL cannot be parsed.
 const serverOrigin = (url: string): string => {
@@ -268,7 +283,15 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
         return '';
     })();
     const clearCredentialsIfMoved = () => {
-        if (savedServer && trimmedURL !== savedServer.baseURL.trim() && hasMaskedCredential(details)) {
+        if (!savedServer) {
+            return;
+        }
+        if (trimmedURL === savedServer.baseURL.trim()) {
+            if (credentialsCleared) {
+                setCredentialsCleared(false);
+                setDetails(restoreMaskedCredentials(details, savedServer));
+            }
+        } else if (hasMaskedCredential(details)) {
             setCredentialsCleared(true);
             setDetails(withoutMaskedCredentials(details));
         }
