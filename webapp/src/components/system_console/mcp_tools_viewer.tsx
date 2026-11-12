@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useRef, useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {RefreshIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
@@ -12,8 +12,7 @@ import {Icon} from '@mattermost/compass-ui/components/icon';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
 
-import {getMCPTools, clearMCPToolsCache, getVettedToolSeed, updatePluginServer} from '../../client';
-import {useMCPConnectionEvents} from '../../hooks/use_mcp_connection_events';
+import {clearMCPToolsCache, getVettedToolSeed, updatePluginServer} from '../../client';
 import {pluginIDFromServerOrigin} from '../../utils/tool_names';
 
 import MCPServerToolRow from './mcp_server_tool_row';
@@ -32,43 +31,41 @@ type MCPToolsViewerProps = {
     // Like a React state setter: pass a function to apply the change to the
     // configuration as it is when the change is applied.
     onConfigChange: (update: MCPConfig | ((current: MCPConfig) => MCPConfig)) => void;
-    initialToolsData?: MCPToolsResponse | null;
+
+    // The tools list, owned by the parent (see useMCPToolsList): null until
+    // it first loads.
+    toolsData: MCPToolsResponse | null;
+
+    // Why the latest load of the list failed, if it did.
+    toolsError: string | null;
+
+    // Asks the parent to load the list again; resolves when it is done.
+    onRefreshTools: () => Promise<void>;
 };
 
 // Main component for MCP Tools viewer
-const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsViewerProps) => {
+const MCPToolsViewer = ({mcpConfig, onConfigChange, toolsData, toolsError, onRefreshTools}: MCPToolsViewerProps) => {
     const intl = useIntl();
-    const [toolsData, setToolsData] = useState<MCPToolsResponse | null>(initialToolsData || null);
     const [loading, setLoading] = useState(false);
     const [clearing, setClearing] = useState(false);
+
+    // A failed action (clearing the cache, saving a plugin server). Load
+    // failures come from the parent as toolsError.
     const [error, setError] = useState<string | null>(null);
     const [clearSuccess, setClearSuccess] = useState<string | null>(null);
     const seededRef = useRef(false);
 
-    const fetchTools = useCallback(async (opts: {showLoading?: boolean; propagateError?: boolean} = {}) => {
+    // An explicit reload starts over: an earlier action's failure no longer
+    // describes what is shown.
+    const refreshTools = async () => {
+        setError(null);
+        setLoading(true);
         try {
-            if (opts.showLoading) {
-                setLoading(true);
-            }
-            const response = await getMCPTools();
-            setToolsData(response);
-            setError(null);
-        } catch (err) {
-            if (opts.propagateError) {
-                throw err;
-            }
-            if (opts.showLoading) {
-                setError(err instanceof Error ? err.message : 'Failed to fetch MCP tools');
-            } else {
-                // eslint-disable-next-line no-console
-                console.error('Background refresh of MCP tools failed:', err);
-            }
+            await onRefreshTools();
         } finally {
-            if (opts.showLoading) {
-                setLoading(false);
-            }
+            setLoading(false);
         }
-    }, []);
+    };
 
     // Clear the MCP tools cache
     const handleClearCache = async () => {
@@ -81,25 +78,13 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             setClearSuccess(response.message);
 
             // Automatically refresh tools after clearing cache
-            await fetchTools({showLoading: true});
+            await refreshTools();
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to clear cache');
         } finally {
             setClearing(false);
         }
     };
-
-    useEffect(() => {
-        if (!initialToolsData) {
-            fetchTools({showLoading: true});
-        }
-    }, [initialToolsData, fetchTools]);
-
-    useMCPConnectionEvents(
-        useCallback(() => {
-            fetchTools();
-        }, [fetchTools]),
-    );
 
     // Retroactively seed vetted tool configs for existing servers.
     // This runs once after tools are first fetched, to fix servers configured before
@@ -229,13 +214,12 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
                 return;
             }
 
+            setError(null);
             updatePluginServer(pluginID, update).
-                then(() => fetchTools({propagateError: true})).
+                then(() => onRefreshTools()).
                 catch((err) => {
                     setError(
-                        err instanceof Error ?
-                            err.message :
-                            intl.formatMessage({id: 'mcp_tools.update_plugin_server_failed', defaultMessage: 'Failed to update plugin server'}),
+                        err instanceof Error ? err.message : intl.formatMessage({id: 'mcp_tools.update_plugin_server_failed', defaultMessage: 'Failed to update plugin server'}),
                     );
                 });
             return;
@@ -288,7 +272,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
                     </Button>
                     <Button
                         emphasis='tertiary'
-                        onClick={() => fetchTools({showLoading: true})}
+                        onClick={refreshTools}
                         loading={loading}
                         disabled={clearing}
                         leadingIcon={<Icon glyph={<RefreshIcon/>}/>}
@@ -306,7 +290,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
                     />
                 )}
 
-                {loading && !toolsData && (
+                {!toolsData && toolsError === null && (
                     <LoadingState>
                         <Spinner
                             size='24'
@@ -315,10 +299,18 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
                     </LoadingState>
                 )}
 
-                {error && (
+                {toolsError !== null && (
                     <SectionNotice
                         type='danger'
                         title={<FormattedMessage defaultMessage='Failed to load MCP tools'/>}
+                        description={toolsError || undefined} // eslint-disable-line no-undefined
+                    />
+                )}
+
+                {error && (
+                    <SectionNotice
+                        type='danger'
+                        title={<FormattedMessage defaultMessage='MCP tools action failed'/>}
                         description={error}
                     />
                 )}
@@ -329,16 +321,18 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
 
                 {toolsData && toolsData.servers.length > 0 && (
                     <ServersList>
-                        {toolsData.servers.map((server) => (
-                            <MCPServerToolRow
-                                key={server.url}
-                                server={server}
-                                serverConfig={findServerConfig(server)}
-                                onServerConfigChange={(updatedConfig) =>
-                                    handleServerConfigChange(server, updatedConfig)
-                                }
-                            />
-                        ))}
+                        {toolsData.servers.map((server) => {
+                            return (
+                                <MCPServerToolRow
+                                    key={server.url}
+                                    server={server}
+                                    serverConfig={findServerConfig(server)}
+                                    onServerConfigChange={(updatedConfig) =>
+                                        handleServerConfigChange(server, updatedConfig)
+                                    }
+                                />
+                            );
+                        })}
                     </ServersList>
                 )}
             </Content>

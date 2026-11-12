@@ -96,6 +96,8 @@ export function useMeasurePunchouts(
             width: `${(maxX - minX) + (offset?.width ?? 0)}px`,
             height: `${(maxY - minY) + (offset?.height ?? 0)}px`,
         };
+
+        // eslint-disable-next-line react-hooks/use-memo -- callers extend the dependency list; the plugin does not use the React Compiler
     }, [...elementIds, ...additionalDeps, rectsKey, elementsAvailable]);
 }
 

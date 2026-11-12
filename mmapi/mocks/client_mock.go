@@ -19,10 +19,19 @@ func NewMockClient(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockClient {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockClient{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -63,14 +72,20 @@ type MockClient_AddReaction_Call struct {
 }
 
 // AddReaction is a helper method to define mock.On call
-//   - reaction
-func (_e *MockClient_Expecter) AddReaction(reaction interface{}) *MockClient_AddReaction_Call {
+//   - reaction *model.Reaction
+func (_e *MockClient_Expecter) AddReaction(reaction any) *MockClient_AddReaction_Call {
 	return &MockClient_AddReaction_Call{Call: _e.mock.On("AddReaction", reaction)}
 }
 
 func (_c *MockClient_AddReaction_Call) Run(run func(reaction *model.Reaction)) *MockClient_AddReaction_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(*model.Reaction))
+		var arg0 *model.Reaction
+		if args[0] != nil {
+			arg0 = args[0].(*model.Reaction)
+		}
+		run(
+			arg0,
+		)
 	})
 	return _c
 }
@@ -108,14 +123,20 @@ type MockClient_CreatePost_Call struct {
 }
 
 // CreatePost is a helper method to define mock.On call
-//   - post
-func (_e *MockClient_Expecter) CreatePost(post interface{}) *MockClient_CreatePost_Call {
+//   - post *model.Post
+func (_e *MockClient_Expecter) CreatePost(post any) *MockClient_CreatePost_Call {
 	return &MockClient_CreatePost_Call{Call: _e.mock.On("CreatePost", post)}
 }
 
 func (_c *MockClient_CreatePost_Call) Run(run func(post *model.Post)) *MockClient_CreatePost_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(*model.Post))
+		var arg0 *model.Post
+		if args[0] != nil {
+			arg0 = args[0].(*model.Post)
+		}
+		run(
+			arg0,
+		)
 	})
 	return _c
 }
@@ -153,16 +174,32 @@ type MockClient_DM_Call struct {
 }
 
 // DM is a helper method to define mock.On call
-//   - senderID
-//   - receiverID
-//   - post
-func (_e *MockClient_Expecter) DM(senderID interface{}, receiverID interface{}, post interface{}) *MockClient_DM_Call {
+//   - senderID string
+//   - receiverID string
+//   - post *model.Post
+func (_e *MockClient_Expecter) DM(senderID any, receiverID any, post any) *MockClient_DM_Call {
 	return &MockClient_DM_Call{Call: _e.mock.On("DM", senderID, receiverID, post)}
 }
 
 func (_c *MockClient_DM_Call) Run(run func(senderID string, receiverID string, post *model.Post)) *MockClient_DM_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string), args[1].(string), args[2].(*model.Post))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 *model.Post
+		if args[2] != nil {
+			arg2 = args[2].(*model.Post)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
 	})
 	return _c
 }
@@ -211,14 +248,20 @@ type MockClient_GetChannel_Call struct {
 }
 
 // GetChannel is a helper method to define mock.On call
-//   - channelID
-func (_e *MockClient_Expecter) GetChannel(channelID interface{}) *MockClient_GetChannel_Call {
+//   - channelID string
+func (_e *MockClient_Expecter) GetChannel(channelID any) *MockClient_GetChannel_Call {
 	return &MockClient_GetChannel_Call{Call: _e.mock.On("GetChannel", channelID)}
 }
 
 func (_c *MockClient_GetChannel_Call) Run(run func(channelID string)) *MockClient_GetChannel_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		run(
+			arg0,
+		)
 	})
 	return _c
 }
@@ -267,16 +310,32 @@ type MockClient_GetChannelByName_Call struct {
 }
 
 // GetChannelByName is a helper method to define mock.On call
-//   - teamID
-//   - name
-//   - includeDeleted
-func (_e *MockClient_Expecter) GetChannelByName(teamID interface{}, name interface{}, includeDeleted interface{}) *MockClient_GetChannelByName_Call {
+//   - teamID string
+//   - name string
+//   - includeDeleted bool
+func (_e *MockClient_Expecter) GetChannelByName(teamID any, name any, includeDeleted any) *MockClient_GetChannelByName_Call {
 	return &MockClient_GetChannelByName_Call{Call: _e.mock.On("GetChannelByName", teamID, name, includeDeleted)}
 }
 
 func (_c *MockClient_GetChannelByName_Call) Run(run func(teamID string, name string, includeDeleted bool)) *MockClient_GetChannelByName_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string), args[1].(string), args[2].(bool))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 bool
+		if args[2] != nil {
+			arg2 = args[2].(bool)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
 	})
 	return _c
 }
@@ -371,15 +430,26 @@ type MockClient_GetDirectChannel_Call struct {
 }
 
 // GetDirectChannel is a helper method to define mock.On call
-//   - userID1
-//   - userID2
-func (_e *MockClient_Expecter) GetDirectChannel(userID1 interface{}, userID2 interface{}) *MockClient_GetDirectChannel_Call {
+//   - userID1 string
+//   - userID2 string
+func (_e *MockClient_Expecter) GetDirectChannel(userID1 any, userID2 any) *MockClient_GetDirectChannel_Call {
 	return &MockClient_GetDirectChannel_Call{Call: _e.mock.On("GetDirectChannel", userID1, userID2)}
 }
 
 func (_c *MockClient_GetDirectChannel_Call) Run(run func(userID1 string, userID2 string)) *MockClient_GetDirectChannel_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string), args[1].(string))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		run(
+			arg0,
+			arg1,
+		)
 	})
 	return _c
 }
@@ -428,14 +498,20 @@ type MockClient_GetFile_Call struct {
 }
 
 // GetFile is a helper method to define mock.On call
-//   - fileID
-func (_e *MockClient_Expecter) GetFile(fileID interface{}) *MockClient_GetFile_Call {
+//   - fileID string
+func (_e *MockClient_Expecter) GetFile(fileID any) *MockClient_GetFile_Call {
 	return &MockClient_GetFile_Call{Call: _e.mock.On("GetFile", fileID)}
 }
 
 func (_c *MockClient_GetFile_Call) Run(run func(fileID string)) *MockClient_GetFile_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		run(
+			arg0,
+		)
 	})
 	return _c
 }
@@ -446,53 +522,6 @@ func (_c *MockClient_GetFile_Call) Return(readCloser io.ReadCloser, err error) *
 }
 
 func (_c *MockClient_GetFile_Call) RunAndReturn(run func(fileID string) (io.ReadCloser, error)) *MockClient_GetFile_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// HasPermissionToFileAction provides a mock function for the type MockClient
-func (_mock *MockClient) HasPermissionToFileAction(sessionID string, fileID string, action string) bool {
-	ret := _mock.Called(sessionID, fileID, action)
-
-	if len(ret) == 0 {
-		panic("no return value specified for HasPermissionToFileAction")
-	}
-
-	var r0 bool
-	if returnFunc, ok := ret.Get(0).(func(string, string, string) bool); ok {
-		r0 = returnFunc(sessionID, fileID, action)
-	} else {
-		r0 = ret.Get(0).(bool)
-	}
-	return r0
-}
-
-// MockClient_HasPermissionToFileAction_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'HasPermissionToFileAction'
-type MockClient_HasPermissionToFileAction_Call struct {
-	*mock.Call
-}
-
-// HasPermissionToFileAction is a helper method to define mock.On call
-//   - sessionID
-//   - fileID
-//   - action
-func (_e *MockClient_Expecter) HasPermissionToFileAction(sessionID interface{}, fileID interface{}, action interface{}) *MockClient_HasPermissionToFileAction_Call {
-	return &MockClient_HasPermissionToFileAction_Call{Call: _e.mock.On("HasPermissionToFileAction", sessionID, fileID, action)}
-}
-
-func (_c *MockClient_HasPermissionToFileAction_Call) Run(run func(sessionID string, fileID string, action string)) *MockClient_HasPermissionToFileAction_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string), args[1].(string), args[2].(string))
-	})
-	return _c
-}
-
-func (_c *MockClient_HasPermissionToFileAction_Call) Return(b bool) *MockClient_HasPermissionToFileAction_Call {
-	_c.Call.Return(b)
-	return _c
-}
-
-func (_c *MockClient_HasPermissionToFileAction_Call) RunAndReturn(run func(sessionID string, fileID string, action string) bool) *MockClient_HasPermissionToFileAction_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -531,14 +560,20 @@ type MockClient_GetFileInfo_Call struct {
 }
 
 // GetFileInfo is a helper method to define mock.On call
-//   - fileID
-func (_e *MockClient_Expecter) GetFileInfo(fileID interface{}) *MockClient_GetFileInfo_Call {
+//   - fileID string
+func (_e *MockClient_Expecter) GetFileInfo(fileID any) *MockClient_GetFileInfo_Call {
 	return &MockClient_GetFileInfo_Call{Call: _e.mock.On("GetFileInfo", fileID)}
 }
 
 func (_c *MockClient_GetFileInfo_Call) Run(run func(fileID string)) *MockClient_GetFileInfo_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		run(
+			arg0,
+		)
 	})
 	return _c
 }
@@ -587,14 +622,20 @@ type MockClient_GetPluginStatus_Call struct {
 }
 
 // GetPluginStatus is a helper method to define mock.On call
-//   - pluginID
-func (_e *MockClient_Expecter) GetPluginStatus(pluginID interface{}) *MockClient_GetPluginStatus_Call {
+//   - pluginID string
+func (_e *MockClient_Expecter) GetPluginStatus(pluginID any) *MockClient_GetPluginStatus_Call {
 	return &MockClient_GetPluginStatus_Call{Call: _e.mock.On("GetPluginStatus", pluginID)}
 }
 
 func (_c *MockClient_GetPluginStatus_Call) Run(run func(pluginID string)) *MockClient_GetPluginStatus_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		run(
+			arg0,
+		)
 	})
 	return _c
 }
@@ -643,14 +684,20 @@ type MockClient_GetPost_Call struct {
 }
 
 // GetPost is a helper method to define mock.On call
-//   - postID
-func (_e *MockClient_Expecter) GetPost(postID interface{}) *MockClient_GetPost_Call {
+//   - postID string
+func (_e *MockClient_Expecter) GetPost(postID any) *MockClient_GetPost_Call {
 	return &MockClient_GetPost_Call{Call: _e.mock.On("GetPost", postID)}
 }
 
 func (_c *MockClient_GetPost_Call) Run(run func(postID string)) *MockClient_GetPost_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		run(
+			arg0,
+		)
 	})
 	return _c
 }
@@ -699,14 +746,20 @@ type MockClient_GetPostThread_Call struct {
 }
 
 // GetPostThread is a helper method to define mock.On call
-//   - postID
-func (_e *MockClient_Expecter) GetPostThread(postID interface{}) *MockClient_GetPostThread_Call {
+//   - postID string
+func (_e *MockClient_Expecter) GetPostThread(postID any) *MockClient_GetPostThread_Call {
 	return &MockClient_GetPostThread_Call{Call: _e.mock.On("GetPostThread", postID)}
 }
 
 func (_c *MockClient_GetPostThread_Call) Run(run func(postID string)) *MockClient_GetPostThread_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		run(
+			arg0,
+		)
 	})
 	return _c
 }
@@ -755,17 +808,38 @@ type MockClient_GetPostsBefore_Call struct {
 }
 
 // GetPostsBefore is a helper method to define mock.On call
-//   - channelID
-//   - postID
-//   - page
-//   - perPage
-func (_e *MockClient_Expecter) GetPostsBefore(channelID interface{}, postID interface{}, page interface{}, perPage interface{}) *MockClient_GetPostsBefore_Call {
+//   - channelID string
+//   - postID string
+//   - page int
+//   - perPage int
+func (_e *MockClient_Expecter) GetPostsBefore(channelID any, postID any, page any, perPage any) *MockClient_GetPostsBefore_Call {
 	return &MockClient_GetPostsBefore_Call{Call: _e.mock.On("GetPostsBefore", channelID, postID, page, perPage)}
 }
 
 func (_c *MockClient_GetPostsBefore_Call) Run(run func(channelID string, postID string, page int, perPage int)) *MockClient_GetPostsBefore_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string), args[1].(string), args[2].(int), args[3].(int))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 int
+		if args[2] != nil {
+			arg2 = args[2].(int)
+		}
+		var arg3 int
+		if args[3] != nil {
+			arg3 = args[3].(int)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+		)
 	})
 	return _c
 }
@@ -814,15 +888,26 @@ type MockClient_GetPostsSince_Call struct {
 }
 
 // GetPostsSince is a helper method to define mock.On call
-//   - channelID
-//   - since
-func (_e *MockClient_Expecter) GetPostsSince(channelID interface{}, since interface{}) *MockClient_GetPostsSince_Call {
+//   - channelID string
+//   - since int64
+func (_e *MockClient_Expecter) GetPostsSince(channelID any, since any) *MockClient_GetPostsSince_Call {
 	return &MockClient_GetPostsSince_Call{Call: _e.mock.On("GetPostsSince", channelID, since)}
 }
 
 func (_c *MockClient_GetPostsSince_Call) Run(run func(channelID string, since int64)) *MockClient_GetPostsSince_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string), args[1].(int64))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 int64
+		if args[1] != nil {
+			arg1 = args[1].(int64)
+		}
+		run(
+			arg0,
+			arg1,
+		)
 	})
 	return _c
 }
@@ -871,14 +956,20 @@ type MockClient_GetTeam_Call struct {
 }
 
 // GetTeam is a helper method to define mock.On call
-//   - teamID
-func (_e *MockClient_Expecter) GetTeam(teamID interface{}) *MockClient_GetTeam_Call {
+//   - teamID string
+func (_e *MockClient_Expecter) GetTeam(teamID any) *MockClient_GetTeam_Call {
 	return &MockClient_GetTeam_Call{Call: _e.mock.On("GetTeam", teamID)}
 }
 
 func (_c *MockClient_GetTeam_Call) Run(run func(teamID string)) *MockClient_GetTeam_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		run(
+			arg0,
+		)
 	})
 	return _c
 }
@@ -927,14 +1018,20 @@ type MockClient_GetUser_Call struct {
 }
 
 // GetUser is a helper method to define mock.On call
-//   - userID
-func (_e *MockClient_Expecter) GetUser(userID interface{}) *MockClient_GetUser_Call {
+//   - userID string
+func (_e *MockClient_Expecter) GetUser(userID any) *MockClient_GetUser_Call {
 	return &MockClient_GetUser_Call{Call: _e.mock.On("GetUser", userID)}
 }
 
 func (_c *MockClient_GetUser_Call) Run(run func(userID string)) *MockClient_GetUser_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		run(
+			arg0,
+		)
 	})
 	return _c
 }
@@ -983,14 +1080,20 @@ type MockClient_GetUserByUsername_Call struct {
 }
 
 // GetUserByUsername is a helper method to define mock.On call
-//   - username
-func (_e *MockClient_Expecter) GetUserByUsername(username interface{}) *MockClient_GetUserByUsername_Call {
+//   - username string
+func (_e *MockClient_Expecter) GetUserByUsername(username any) *MockClient_GetUserByUsername_Call {
 	return &MockClient_GetUserByUsername_Call{Call: _e.mock.On("GetUserByUsername", username)}
 }
 
 func (_c *MockClient_GetUserByUsername_Call) Run(run func(username string)) *MockClient_GetUserByUsername_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		run(
+			arg0,
+		)
 	})
 	return _c
 }
@@ -1039,14 +1142,20 @@ type MockClient_GetUserStatus_Call struct {
 }
 
 // GetUserStatus is a helper method to define mock.On call
-//   - userID
-func (_e *MockClient_Expecter) GetUserStatus(userID interface{}) *MockClient_GetUserStatus_Call {
+//   - userID string
+func (_e *MockClient_Expecter) GetUserStatus(userID any) *MockClient_GetUserStatus_Call {
 	return &MockClient_GetUserStatus_Call{Call: _e.mock.On("GetUserStatus", userID)}
 }
 
 func (_c *MockClient_GetUserStatus_Call) Run(run func(userID string)) *MockClient_GetUserStatus_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		run(
+			arg0,
+		)
 	})
 	return _c
 }
@@ -1084,15 +1193,26 @@ type MockClient_HasPermissionTo_Call struct {
 }
 
 // HasPermissionTo is a helper method to define mock.On call
-//   - userID
-//   - permission
-func (_e *MockClient_Expecter) HasPermissionTo(userID interface{}, permission interface{}) *MockClient_HasPermissionTo_Call {
+//   - userID string
+//   - permission *model.Permission
+func (_e *MockClient_Expecter) HasPermissionTo(userID any, permission any) *MockClient_HasPermissionTo_Call {
 	return &MockClient_HasPermissionTo_Call{Call: _e.mock.On("HasPermissionTo", userID, permission)}
 }
 
 func (_c *MockClient_HasPermissionTo_Call) Run(run func(userID string, permission *model.Permission)) *MockClient_HasPermissionTo_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string), args[1].(*model.Permission))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 *model.Permission
+		if args[1] != nil {
+			arg1 = args[1].(*model.Permission)
+		}
+		run(
+			arg0,
+			arg1,
+		)
 	})
 	return _c
 }
@@ -1130,16 +1250,32 @@ type MockClient_HasPermissionToChannel_Call struct {
 }
 
 // HasPermissionToChannel is a helper method to define mock.On call
-//   - userID
-//   - channelID
-//   - permission
-func (_e *MockClient_Expecter) HasPermissionToChannel(userID interface{}, channelID interface{}, permission interface{}) *MockClient_HasPermissionToChannel_Call {
+//   - userID string
+//   - channelID string
+//   - permission *model.Permission
+func (_e *MockClient_Expecter) HasPermissionToChannel(userID any, channelID any, permission any) *MockClient_HasPermissionToChannel_Call {
 	return &MockClient_HasPermissionToChannel_Call{Call: _e.mock.On("HasPermissionToChannel", userID, channelID, permission)}
 }
 
 func (_c *MockClient_HasPermissionToChannel_Call) Run(run func(userID string, channelID string, permission *model.Permission)) *MockClient_HasPermissionToChannel_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string), args[1].(string), args[2].(*model.Permission))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 *model.Permission
+		if args[2] != nil {
+			arg2 = args[2].(*model.Permission)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
 	})
 	return _c
 }
@@ -1154,8 +1290,71 @@ func (_c *MockClient_HasPermissionToChannel_Call) RunAndReturn(run func(userID s
 	return _c
 }
 
+// HasPermissionToFileAction provides a mock function for the type MockClient
+func (_mock *MockClient) HasPermissionToFileAction(sessionID string, fileID string, action string) bool {
+	ret := _mock.Called(sessionID, fileID, action)
+
+	if len(ret) == 0 {
+		panic("no return value specified for HasPermissionToFileAction")
+	}
+
+	var r0 bool
+	if returnFunc, ok := ret.Get(0).(func(string, string, string) bool); ok {
+		r0 = returnFunc(sessionID, fileID, action)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	return r0
+}
+
+// MockClient_HasPermissionToFileAction_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'HasPermissionToFileAction'
+type MockClient_HasPermissionToFileAction_Call struct {
+	*mock.Call
+}
+
+// HasPermissionToFileAction is a helper method to define mock.On call
+//   - sessionID string
+//   - fileID string
+//   - action string
+func (_e *MockClient_Expecter) HasPermissionToFileAction(sessionID any, fileID any, action any) *MockClient_HasPermissionToFileAction_Call {
+	return &MockClient_HasPermissionToFileAction_Call{Call: _e.mock.On("HasPermissionToFileAction", sessionID, fileID, action)}
+}
+
+func (_c *MockClient_HasPermissionToFileAction_Call) Run(run func(sessionID string, fileID string, action string)) *MockClient_HasPermissionToFileAction_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockClient_HasPermissionToFileAction_Call) Return(b bool) *MockClient_HasPermissionToFileAction_Call {
+	_c.Call.Return(b)
+	return _c
+}
+
+func (_c *MockClient_HasPermissionToFileAction_Call) RunAndReturn(run func(sessionID string, fileID string, action string) bool) *MockClient_HasPermissionToFileAction_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // KVCompareAndSet provides a mock function for the type MockClient
-func (_mock *MockClient) KVCompareAndSet(key string, oldValue interface{}, newValue interface{}) (bool, error) {
+func (_mock *MockClient) KVCompareAndSet(key string, oldValue any, newValue any) (bool, error) {
 	ret := _mock.Called(key, oldValue, newValue)
 
 	if len(ret) == 0 {
@@ -1164,15 +1363,15 @@ func (_mock *MockClient) KVCompareAndSet(key string, oldValue interface{}, newVa
 
 	var r0 bool
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(string, interface{}, interface{}) (bool, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(string, any, any) (bool, error)); ok {
 		return returnFunc(key, oldValue, newValue)
 	}
-	if returnFunc, ok := ret.Get(0).(func(string, interface{}, interface{}) bool); ok {
+	if returnFunc, ok := ret.Get(0).(func(string, any, any) bool); ok {
 		r0 = returnFunc(key, oldValue, newValue)
 	} else {
 		r0 = ret.Get(0).(bool)
 	}
-	if returnFunc, ok := ret.Get(1).(func(string, interface{}, interface{}) error); ok {
+	if returnFunc, ok := ret.Get(1).(func(string, any, any) error); ok {
 		r1 = returnFunc(key, oldValue, newValue)
 	} else {
 		r1 = ret.Error(1)
@@ -1186,16 +1385,32 @@ type MockClient_KVCompareAndSet_Call struct {
 }
 
 // KVCompareAndSet is a helper method to define mock.On call
-//   - key
-//   - oldValue
-//   - newValue
-func (_e *MockClient_Expecter) KVCompareAndSet(key interface{}, oldValue interface{}, newValue interface{}) *MockClient_KVCompareAndSet_Call {
+//   - key string
+//   - oldValue any
+//   - newValue any
+func (_e *MockClient_Expecter) KVCompareAndSet(key any, oldValue any, newValue any) *MockClient_KVCompareAndSet_Call {
 	return &MockClient_KVCompareAndSet_Call{Call: _e.mock.On("KVCompareAndSet", key, oldValue, newValue)}
 }
 
-func (_c *MockClient_KVCompareAndSet_Call) Run(run func(key string, oldValue interface{}, newValue interface{})) *MockClient_KVCompareAndSet_Call {
+func (_c *MockClient_KVCompareAndSet_Call) Run(run func(key string, oldValue any, newValue any)) *MockClient_KVCompareAndSet_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string), args[1].(interface{}), args[2].(interface{}))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 any
+		if args[1] != nil {
+			arg1 = args[1].(any)
+		}
+		var arg2 any
+		if args[2] != nil {
+			arg2 = args[2].(any)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
 	})
 	return _c
 }
@@ -1205,13 +1420,13 @@ func (_c *MockClient_KVCompareAndSet_Call) Return(b bool, err error) *MockClient
 	return _c
 }
 
-func (_c *MockClient_KVCompareAndSet_Call) RunAndReturn(run func(key string, oldValue interface{}, newValue interface{}) (bool, error)) *MockClient_KVCompareAndSet_Call {
+func (_c *MockClient_KVCompareAndSet_Call) RunAndReturn(run func(key string, oldValue any, newValue any) (bool, error)) *MockClient_KVCompareAndSet_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // KVCompareAndSetWithExpiry provides a mock function for the type MockClient
-func (_mock *MockClient) KVCompareAndSetWithExpiry(key string, oldValue interface{}, newValue interface{}, ttl time.Duration) (bool, error) {
+func (_mock *MockClient) KVCompareAndSetWithExpiry(key string, oldValue any, newValue any, ttl time.Duration) (bool, error) {
 	ret := _mock.Called(key, oldValue, newValue, ttl)
 
 	if len(ret) == 0 {
@@ -1220,15 +1435,15 @@ func (_mock *MockClient) KVCompareAndSetWithExpiry(key string, oldValue interfac
 
 	var r0 bool
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(string, interface{}, interface{}, time.Duration) (bool, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(string, any, any, time.Duration) (bool, error)); ok {
 		return returnFunc(key, oldValue, newValue, ttl)
 	}
-	if returnFunc, ok := ret.Get(0).(func(string, interface{}, interface{}, time.Duration) bool); ok {
+	if returnFunc, ok := ret.Get(0).(func(string, any, any, time.Duration) bool); ok {
 		r0 = returnFunc(key, oldValue, newValue, ttl)
 	} else {
 		r0 = ret.Get(0).(bool)
 	}
-	if returnFunc, ok := ret.Get(1).(func(string, interface{}, interface{}, time.Duration) error); ok {
+	if returnFunc, ok := ret.Get(1).(func(string, any, any, time.Duration) error); ok {
 		r1 = returnFunc(key, oldValue, newValue, ttl)
 	} else {
 		r1 = ret.Error(1)
@@ -1242,17 +1457,38 @@ type MockClient_KVCompareAndSetWithExpiry_Call struct {
 }
 
 // KVCompareAndSetWithExpiry is a helper method to define mock.On call
-//   - key
-//   - oldValue
-//   - newValue
-//   - ttl
-func (_e *MockClient_Expecter) KVCompareAndSetWithExpiry(key interface{}, oldValue interface{}, newValue interface{}, ttl interface{}) *MockClient_KVCompareAndSetWithExpiry_Call {
+//   - key string
+//   - oldValue any
+//   - newValue any
+//   - ttl time.Duration
+func (_e *MockClient_Expecter) KVCompareAndSetWithExpiry(key any, oldValue any, newValue any, ttl any) *MockClient_KVCompareAndSetWithExpiry_Call {
 	return &MockClient_KVCompareAndSetWithExpiry_Call{Call: _e.mock.On("KVCompareAndSetWithExpiry", key, oldValue, newValue, ttl)}
 }
 
-func (_c *MockClient_KVCompareAndSetWithExpiry_Call) Run(run func(key string, oldValue interface{}, newValue interface{}, ttl time.Duration)) *MockClient_KVCompareAndSetWithExpiry_Call {
+func (_c *MockClient_KVCompareAndSetWithExpiry_Call) Run(run func(key string, oldValue any, newValue any, ttl time.Duration)) *MockClient_KVCompareAndSetWithExpiry_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string), args[1].(interface{}), args[2].(interface{}), args[3].(time.Duration))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 any
+		if args[1] != nil {
+			arg1 = args[1].(any)
+		}
+		var arg2 any
+		if args[2] != nil {
+			arg2 = args[2].(any)
+		}
+		var arg3 time.Duration
+		if args[3] != nil {
+			arg3 = args[3].(time.Duration)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+		)
 	})
 	return _c
 }
@@ -1262,7 +1498,7 @@ func (_c *MockClient_KVCompareAndSetWithExpiry_Call) Return(b bool, err error) *
 	return _c
 }
 
-func (_c *MockClient_KVCompareAndSetWithExpiry_Call) RunAndReturn(run func(key string, oldValue interface{}, newValue interface{}, ttl time.Duration) (bool, error)) *MockClient_KVCompareAndSetWithExpiry_Call {
+func (_c *MockClient_KVCompareAndSetWithExpiry_Call) RunAndReturn(run func(key string, oldValue any, newValue any, ttl time.Duration) (bool, error)) *MockClient_KVCompareAndSetWithExpiry_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -1290,14 +1526,20 @@ type MockClient_KVDelete_Call struct {
 }
 
 // KVDelete is a helper method to define mock.On call
-//   - key
-func (_e *MockClient_Expecter) KVDelete(key interface{}) *MockClient_KVDelete_Call {
+//   - key string
+func (_e *MockClient_Expecter) KVDelete(key any) *MockClient_KVDelete_Call {
 	return &MockClient_KVDelete_Call{Call: _e.mock.On("KVDelete", key)}
 }
 
 func (_c *MockClient_KVDelete_Call) Run(run func(key string)) *MockClient_KVDelete_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		run(
+			arg0,
+		)
 	})
 	return _c
 }
@@ -1313,7 +1555,7 @@ func (_c *MockClient_KVDelete_Call) RunAndReturn(run func(key string) error) *Mo
 }
 
 // KVGet provides a mock function for the type MockClient
-func (_mock *MockClient) KVGet(key string, value interface{}) error {
+func (_mock *MockClient) KVGet(key string, value any) error {
 	ret := _mock.Called(key, value)
 
 	if len(ret) == 0 {
@@ -1321,7 +1563,7 @@ func (_mock *MockClient) KVGet(key string, value interface{}) error {
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(string, interface{}) error); ok {
+	if returnFunc, ok := ret.Get(0).(func(string, any) error); ok {
 		r0 = returnFunc(key, value)
 	} else {
 		r0 = ret.Error(0)
@@ -1335,15 +1577,26 @@ type MockClient_KVGet_Call struct {
 }
 
 // KVGet is a helper method to define mock.On call
-//   - key
-//   - value
-func (_e *MockClient_Expecter) KVGet(key interface{}, value interface{}) *MockClient_KVGet_Call {
+//   - key string
+//   - value any
+func (_e *MockClient_Expecter) KVGet(key any, value any) *MockClient_KVGet_Call {
 	return &MockClient_KVGet_Call{Call: _e.mock.On("KVGet", key, value)}
 }
 
-func (_c *MockClient_KVGet_Call) Run(run func(key string, value interface{})) *MockClient_KVGet_Call {
+func (_c *MockClient_KVGet_Call) Run(run func(key string, value any)) *MockClient_KVGet_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string), args[1].(interface{}))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 any
+		if args[1] != nil {
+			arg1 = args[1].(any)
+		}
+		run(
+			arg0,
+			arg1,
+		)
 	})
 	return _c
 }
@@ -1353,13 +1606,13 @@ func (_c *MockClient_KVGet_Call) Return(err error) *MockClient_KVGet_Call {
 	return _c
 }
 
-func (_c *MockClient_KVGet_Call) RunAndReturn(run func(key string, value interface{}) error) *MockClient_KVGet_Call {
+func (_c *MockClient_KVGet_Call) RunAndReturn(run func(key string, value any) error) *MockClient_KVGet_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // KVSet provides a mock function for the type MockClient
-func (_mock *MockClient) KVSet(key string, value interface{}) error {
+func (_mock *MockClient) KVSet(key string, value any) error {
 	ret := _mock.Called(key, value)
 
 	if len(ret) == 0 {
@@ -1367,7 +1620,7 @@ func (_mock *MockClient) KVSet(key string, value interface{}) error {
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(string, interface{}) error); ok {
+	if returnFunc, ok := ret.Get(0).(func(string, any) error); ok {
 		r0 = returnFunc(key, value)
 	} else {
 		r0 = ret.Error(0)
@@ -1381,15 +1634,26 @@ type MockClient_KVSet_Call struct {
 }
 
 // KVSet is a helper method to define mock.On call
-//   - key
-//   - value
-func (_e *MockClient_Expecter) KVSet(key interface{}, value interface{}) *MockClient_KVSet_Call {
+//   - key string
+//   - value any
+func (_e *MockClient_Expecter) KVSet(key any, value any) *MockClient_KVSet_Call {
 	return &MockClient_KVSet_Call{Call: _e.mock.On("KVSet", key, value)}
 }
 
-func (_c *MockClient_KVSet_Call) Run(run func(key string, value interface{})) *MockClient_KVSet_Call {
+func (_c *MockClient_KVSet_Call) Run(run func(key string, value any)) *MockClient_KVSet_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string), args[1].(interface{}))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 any
+		if args[1] != nil {
+			arg1 = args[1].(any)
+		}
+		run(
+			arg0,
+			arg1,
+		)
 	})
 	return _c
 }
@@ -1399,13 +1663,13 @@ func (_c *MockClient_KVSet_Call) Return(err error) *MockClient_KVSet_Call {
 	return _c
 }
 
-func (_c *MockClient_KVSet_Call) RunAndReturn(run func(key string, value interface{}) error) *MockClient_KVSet_Call {
+func (_c *MockClient_KVSet_Call) RunAndReturn(run func(key string, value any) error) *MockClient_KVSet_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // KVSetWithExpiry provides a mock function for the type MockClient
-func (_mock *MockClient) KVSetWithExpiry(key string, value interface{}, ttl time.Duration) error {
+func (_mock *MockClient) KVSetWithExpiry(key string, value any, ttl time.Duration) error {
 	ret := _mock.Called(key, value, ttl)
 
 	if len(ret) == 0 {
@@ -1413,7 +1677,7 @@ func (_mock *MockClient) KVSetWithExpiry(key string, value interface{}, ttl time
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(string, interface{}, time.Duration) error); ok {
+	if returnFunc, ok := ret.Get(0).(func(string, any, time.Duration) error); ok {
 		r0 = returnFunc(key, value, ttl)
 	} else {
 		r0 = ret.Error(0)
@@ -1427,16 +1691,32 @@ type MockClient_KVSetWithExpiry_Call struct {
 }
 
 // KVSetWithExpiry is a helper method to define mock.On call
-//   - key
-//   - value
-//   - ttl
-func (_e *MockClient_Expecter) KVSetWithExpiry(key interface{}, value interface{}, ttl interface{}) *MockClient_KVSetWithExpiry_Call {
+//   - key string
+//   - value any
+//   - ttl time.Duration
+func (_e *MockClient_Expecter) KVSetWithExpiry(key any, value any, ttl any) *MockClient_KVSetWithExpiry_Call {
 	return &MockClient_KVSetWithExpiry_Call{Call: _e.mock.On("KVSetWithExpiry", key, value, ttl)}
 }
 
-func (_c *MockClient_KVSetWithExpiry_Call) Run(run func(key string, value interface{}, ttl time.Duration)) *MockClient_KVSetWithExpiry_Call {
+func (_c *MockClient_KVSetWithExpiry_Call) Run(run func(key string, value any, ttl time.Duration)) *MockClient_KVSetWithExpiry_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string), args[1].(interface{}), args[2].(time.Duration))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 any
+		if args[1] != nil {
+			arg1 = args[1].(any)
+		}
+		var arg2 time.Duration
+		if args[2] != nil {
+			arg2 = args[2].(time.Duration)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
 	})
 	return _c
 }
@@ -1446,13 +1726,13 @@ func (_c *MockClient_KVSetWithExpiry_Call) Return(err error) *MockClient_KVSetWi
 	return _c
 }
 
-func (_c *MockClient_KVSetWithExpiry_Call) RunAndReturn(run func(key string, value interface{}, ttl time.Duration) error) *MockClient_KVSetWithExpiry_Call {
+func (_c *MockClient_KVSetWithExpiry_Call) RunAndReturn(run func(key string, value any, ttl time.Duration) error) *MockClient_KVSetWithExpiry_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // LogDebug provides a mock function for the type MockClient
-func (_mock *MockClient) LogDebug(msg string, keyValuePairs ...interface{}) {
+func (_mock *MockClient) LogDebug(msg string, keyValuePairs ...any) {
 	if len(keyValuePairs) > 0 {
 		_mock.Called(msg, keyValuePairs)
 	} else {
@@ -1468,17 +1748,29 @@ type MockClient_LogDebug_Call struct {
 }
 
 // LogDebug is a helper method to define mock.On call
-//   - msg
-//   - keyValuePairs
-func (_e *MockClient_Expecter) LogDebug(msg interface{}, keyValuePairs ...interface{}) *MockClient_LogDebug_Call {
+//   - msg string
+//   - keyValuePairs ...any
+func (_e *MockClient_Expecter) LogDebug(msg any, keyValuePairs ...any) *MockClient_LogDebug_Call {
 	return &MockClient_LogDebug_Call{Call: _e.mock.On("LogDebug",
-		append([]interface{}{msg}, keyValuePairs...)...)}
+		append([]any{msg}, keyValuePairs...)...)}
 }
 
-func (_c *MockClient_LogDebug_Call) Run(run func(msg string, keyValuePairs ...interface{})) *MockClient_LogDebug_Call {
+func (_c *MockClient_LogDebug_Call) Run(run func(msg string, keyValuePairs ...any)) *MockClient_LogDebug_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		variadicArgs := args[1].([]interface{})
-		run(args[0].(string), variadicArgs...)
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 []any
+		var variadicArgs []any
+		if len(args) > 1 {
+			variadicArgs = args[1].([]any)
+		}
+		arg1 = variadicArgs
+		run(
+			arg0,
+			arg1...,
+		)
 	})
 	return _c
 }
@@ -1488,13 +1780,13 @@ func (_c *MockClient_LogDebug_Call) Return() *MockClient_LogDebug_Call {
 	return _c
 }
 
-func (_c *MockClient_LogDebug_Call) RunAndReturn(run func(msg string, keyValuePairs ...interface{})) *MockClient_LogDebug_Call {
+func (_c *MockClient_LogDebug_Call) RunAndReturn(run func(msg string, keyValuePairs ...any)) *MockClient_LogDebug_Call {
 	_c.Run(run)
 	return _c
 }
 
 // LogError provides a mock function for the type MockClient
-func (_mock *MockClient) LogError(msg string, keyValuePairs ...interface{}) {
+func (_mock *MockClient) LogError(msg string, keyValuePairs ...any) {
 	if len(keyValuePairs) > 0 {
 		_mock.Called(msg, keyValuePairs)
 	} else {
@@ -1510,17 +1802,29 @@ type MockClient_LogError_Call struct {
 }
 
 // LogError is a helper method to define mock.On call
-//   - msg
-//   - keyValuePairs
-func (_e *MockClient_Expecter) LogError(msg interface{}, keyValuePairs ...interface{}) *MockClient_LogError_Call {
+//   - msg string
+//   - keyValuePairs ...any
+func (_e *MockClient_Expecter) LogError(msg any, keyValuePairs ...any) *MockClient_LogError_Call {
 	return &MockClient_LogError_Call{Call: _e.mock.On("LogError",
-		append([]interface{}{msg}, keyValuePairs...)...)}
+		append([]any{msg}, keyValuePairs...)...)}
 }
 
-func (_c *MockClient_LogError_Call) Run(run func(msg string, keyValuePairs ...interface{})) *MockClient_LogError_Call {
+func (_c *MockClient_LogError_Call) Run(run func(msg string, keyValuePairs ...any)) *MockClient_LogError_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		variadicArgs := args[1].([]interface{})
-		run(args[0].(string), variadicArgs...)
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 []any
+		var variadicArgs []any
+		if len(args) > 1 {
+			variadicArgs = args[1].([]any)
+		}
+		arg1 = variadicArgs
+		run(
+			arg0,
+			arg1...,
+		)
 	})
 	return _c
 }
@@ -1530,13 +1834,13 @@ func (_c *MockClient_LogError_Call) Return() *MockClient_LogError_Call {
 	return _c
 }
 
-func (_c *MockClient_LogError_Call) RunAndReturn(run func(msg string, keyValuePairs ...interface{})) *MockClient_LogError_Call {
+func (_c *MockClient_LogError_Call) RunAndReturn(run func(msg string, keyValuePairs ...any)) *MockClient_LogError_Call {
 	_c.Run(run)
 	return _c
 }
 
 // LogWarn provides a mock function for the type MockClient
-func (_mock *MockClient) LogWarn(msg string, keyValuePairs ...interface{}) {
+func (_mock *MockClient) LogWarn(msg string, keyValuePairs ...any) {
 	if len(keyValuePairs) > 0 {
 		_mock.Called(msg, keyValuePairs)
 	} else {
@@ -1552,17 +1856,29 @@ type MockClient_LogWarn_Call struct {
 }
 
 // LogWarn is a helper method to define mock.On call
-//   - msg
-//   - keyValuePairs
-func (_e *MockClient_Expecter) LogWarn(msg interface{}, keyValuePairs ...interface{}) *MockClient_LogWarn_Call {
+//   - msg string
+//   - keyValuePairs ...any
+func (_e *MockClient_Expecter) LogWarn(msg any, keyValuePairs ...any) *MockClient_LogWarn_Call {
 	return &MockClient_LogWarn_Call{Call: _e.mock.On("LogWarn",
-		append([]interface{}{msg}, keyValuePairs...)...)}
+		append([]any{msg}, keyValuePairs...)...)}
 }
 
-func (_c *MockClient_LogWarn_Call) Run(run func(msg string, keyValuePairs ...interface{})) *MockClient_LogWarn_Call {
+func (_c *MockClient_LogWarn_Call) Run(run func(msg string, keyValuePairs ...any)) *MockClient_LogWarn_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		variadicArgs := args[1].([]interface{})
-		run(args[0].(string), variadicArgs...)
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 []any
+		var variadicArgs []any
+		if len(args) > 1 {
+			variadicArgs = args[1].([]any)
+		}
+		arg1 = variadicArgs
+		run(
+			arg0,
+			arg1...,
+		)
 	})
 	return _c
 }
@@ -1572,7 +1888,7 @@ func (_c *MockClient_LogWarn_Call) Return() *MockClient_LogWarn_Call {
 	return _c
 }
 
-func (_c *MockClient_LogWarn_Call) RunAndReturn(run func(msg string, keyValuePairs ...interface{})) *MockClient_LogWarn_Call {
+func (_c *MockClient_LogWarn_Call) RunAndReturn(run func(msg string, keyValuePairs ...any)) *MockClient_LogWarn_Call {
 	_c.Run(run)
 	return _c
 }
@@ -1602,14 +1918,20 @@ type MockClient_PluginHTTP_Call struct {
 }
 
 // PluginHTTP is a helper method to define mock.On call
-//   - req
-func (_e *MockClient_Expecter) PluginHTTP(req interface{}) *MockClient_PluginHTTP_Call {
+//   - req *http.Request
+func (_e *MockClient_Expecter) PluginHTTP(req any) *MockClient_PluginHTTP_Call {
 	return &MockClient_PluginHTTP_Call{Call: _e.mock.On("PluginHTTP", req)}
 }
 
 func (_c *MockClient_PluginHTTP_Call) Run(run func(req *http.Request)) *MockClient_PluginHTTP_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(*http.Request))
+		var arg0 *http.Request
+		if args[0] != nil {
+			arg0 = args[0].(*http.Request)
+		}
+		run(
+			arg0,
+		)
 	})
 	return _c
 }
@@ -1625,7 +1947,7 @@ func (_c *MockClient_PluginHTTP_Call) RunAndReturn(run func(req *http.Request) *
 }
 
 // PublishWebSocketEvent provides a mock function for the type MockClient
-func (_mock *MockClient) PublishWebSocketEvent(event string, payload map[string]interface{}, broadcast *model.WebsocketBroadcast) {
+func (_mock *MockClient) PublishWebSocketEvent(event string, payload map[string]any, broadcast *model.WebsocketBroadcast) {
 	_mock.Called(event, payload, broadcast)
 	return
 }
@@ -1636,16 +1958,32 @@ type MockClient_PublishWebSocketEvent_Call struct {
 }
 
 // PublishWebSocketEvent is a helper method to define mock.On call
-//   - event
-//   - payload
-//   - broadcast
-func (_e *MockClient_Expecter) PublishWebSocketEvent(event interface{}, payload interface{}, broadcast interface{}) *MockClient_PublishWebSocketEvent_Call {
+//   - event string
+//   - payload map[string]any
+//   - broadcast *model.WebsocketBroadcast
+func (_e *MockClient_Expecter) PublishWebSocketEvent(event any, payload any, broadcast any) *MockClient_PublishWebSocketEvent_Call {
 	return &MockClient_PublishWebSocketEvent_Call{Call: _e.mock.On("PublishWebSocketEvent", event, payload, broadcast)}
 }
 
-func (_c *MockClient_PublishWebSocketEvent_Call) Run(run func(event string, payload map[string]interface{}, broadcast *model.WebsocketBroadcast)) *MockClient_PublishWebSocketEvent_Call {
+func (_c *MockClient_PublishWebSocketEvent_Call) Run(run func(event string, payload map[string]any, broadcast *model.WebsocketBroadcast)) *MockClient_PublishWebSocketEvent_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string), args[1].(map[string]interface{}), args[2].(*model.WebsocketBroadcast))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 map[string]any
+		if args[1] != nil {
+			arg1 = args[1].(map[string]any)
+		}
+		var arg2 *model.WebsocketBroadcast
+		if args[2] != nil {
+			arg2 = args[2].(*model.WebsocketBroadcast)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
 	})
 	return _c
 }
@@ -1655,7 +1993,7 @@ func (_c *MockClient_PublishWebSocketEvent_Call) Return() *MockClient_PublishWeb
 	return _c
 }
 
-func (_c *MockClient_PublishWebSocketEvent_Call) RunAndReturn(run func(event string, payload map[string]interface{}, broadcast *model.WebsocketBroadcast)) *MockClient_PublishWebSocketEvent_Call {
+func (_c *MockClient_PublishWebSocketEvent_Call) RunAndReturn(run func(event string, payload map[string]any, broadcast *model.WebsocketBroadcast)) *MockClient_PublishWebSocketEvent_Call {
 	_c.Run(run)
 	return _c
 }
@@ -1672,15 +2010,26 @@ type MockClient_SendEphemeralPost_Call struct {
 }
 
 // SendEphemeralPost is a helper method to define mock.On call
-//   - userID
-//   - post
-func (_e *MockClient_Expecter) SendEphemeralPost(userID interface{}, post interface{}) *MockClient_SendEphemeralPost_Call {
+//   - userID string
+//   - post *model.Post
+func (_e *MockClient_Expecter) SendEphemeralPost(userID any, post any) *MockClient_SendEphemeralPost_Call {
 	return &MockClient_SendEphemeralPost_Call{Call: _e.mock.On("SendEphemeralPost", userID, post)}
 }
 
 func (_c *MockClient_SendEphemeralPost_Call) Run(run func(userID string, post *model.Post)) *MockClient_SendEphemeralPost_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string), args[1].(*model.Post))
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 *model.Post
+		if args[1] != nil {
+			arg1 = args[1].(*model.Post)
+		}
+		run(
+			arg0,
+			arg1,
+		)
 	})
 	return _c
 }
@@ -1718,14 +2067,20 @@ type MockClient_UpdatePost_Call struct {
 }
 
 // UpdatePost is a helper method to define mock.On call
-//   - post
-func (_e *MockClient_Expecter) UpdatePost(post interface{}) *MockClient_UpdatePost_Call {
+//   - post *model.Post
+func (_e *MockClient_Expecter) UpdatePost(post any) *MockClient_UpdatePost_Call {
 	return &MockClient_UpdatePost_Call{Call: _e.mock.On("UpdatePost", post)}
 }
 
 func (_c *MockClient_UpdatePost_Call) Run(run func(post *model.Post)) *MockClient_UpdatePost_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(*model.Post))
+		var arg0 *model.Post
+		if args[0] != nil {
+			arg0 = args[0].(*model.Post)
+		}
+		run(
+			arg0,
+		)
 	})
 	return _c
 }
@@ -1774,16 +2129,32 @@ type MockClient_UploadFile_Call struct {
 }
 
 // UploadFile is a helper method to define mock.On call
-//   - content
-//   - fileName
-//   - channelID
-func (_e *MockClient_Expecter) UploadFile(content interface{}, fileName interface{}, channelID interface{}) *MockClient_UploadFile_Call {
+//   - content io.Reader
+//   - fileName string
+//   - channelID string
+func (_e *MockClient_Expecter) UploadFile(content any, fileName any, channelID any) *MockClient_UploadFile_Call {
 	return &MockClient_UploadFile_Call{Call: _e.mock.On("UploadFile", content, fileName, channelID)}
 }
 
 func (_c *MockClient_UploadFile_Call) Run(run func(content io.Reader, fileName string, channelID string)) *MockClient_UploadFile_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(io.Reader), args[1].(string), args[2].(string))
+		var arg0 io.Reader
+		if args[0] != nil {
+			arg0 = args[0].(io.Reader)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
 	})
 	return _c
 }

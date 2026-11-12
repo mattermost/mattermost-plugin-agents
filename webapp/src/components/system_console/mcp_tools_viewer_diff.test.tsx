@@ -108,7 +108,9 @@ function renderViewer(toolsData: MCPToolsResponse = makePluginToolsResponse()) {
             <MCPToolsViewer
                 mcpConfig={makeMCPConfig()}
                 onConfigChange={jest.fn()}
-                initialToolsData={toolsData}
+                toolsData={toolsData}
+                toolsError={null}
+                onRefreshTools={jest.fn(() => Promise.resolve())}
             />
         </IntlProvider>,
     );
