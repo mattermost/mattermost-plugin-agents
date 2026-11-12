@@ -73,10 +73,7 @@ async function requestAIThreads(dispatch: Dispatch<UnknownAction>): Promise<void
     try {
         const threads = await getAIThreads();
 
-        // A refetch is queued behind this one, so this response may predate what prompted it.
-        if (!refetchPending) {
-            dispatch({type: AIThreadsReceived, requestId, threads});
-        }
+        dispatch({type: AIThreadsReceived, requestId, threads});
     } catch (e) {
         console.error('Failed to load AI threads:', e); // eslint-disable-line no-console
         dispatch({type: AIThreadsFailed, requestId});
@@ -86,8 +83,7 @@ async function requestAIThreads(dispatch: Dispatch<UnknownAction>): Promise<void
 // The one fetch path for the thread list, one request at a time. A call while a request is in
 // flight is not started (its response would supersede the one on its way, and a busy stream would
 // keep discarding responses): it marks the list stale, and one refetch follows when the request
-// settles, whether it succeeded or failed. A response that settles with a refetch queued is
-// dropped, since the refetch replaces it.
+// settles, whether it succeeded or failed.
 export function fetchAIThreads(dispatch: Dispatch<UnknownAction>): Promise<void> {
     if (inFlight) {
         refetchPending = true;
@@ -120,13 +116,9 @@ export function refreshAIThreadsIfInUse(store: ThreadsStore): Promise<void> {
     return fetchAIThreads(store.dispatch);
 }
 
-// Shows a title the server already has. A fetch still in flight may predate it, so another
-// follows it.
+// Shows a title the server already has; a fetch in flight cannot revert it.
 function applyTitle(store: ThreadsStore, conversationId: string, title: string) {
     store.dispatch({type: AIThreadTitleSet, conversationId, title});
-    if (selectAIThreadsState(store.getState()).loading) {
-        fetchAIThreads(store.dispatch);
-    }
 }
 
 // Renames a chat; the list shows the new title once the server has it. A failed rename rejects.

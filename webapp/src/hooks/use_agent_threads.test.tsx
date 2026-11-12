@@ -203,7 +203,7 @@ describe('stored AI threads', () => {
 
     test('a title set while a fetch is in flight is not undone by its older response', async () => {
         const stale = deferred<AIThread[]>();
-        mockGetAIThreads.mockReturnValueOnce(stale.promise).mockResolvedValueOnce([makeThread({id: 'c1', title: 'Generated title'})]);
+        mockGetAIThreads.mockReturnValueOnce(stale.promise);
         const store = makeStore();
         const sync = createAgentThreadsSync(store as never);
 
@@ -211,30 +211,38 @@ describe('stored AI threads', () => {
         sync.handleConversationUpdated({conversation_id: 'c1', title: 'Generated title'});
         stale.resolve([makeThread({id: 'c1', title: ''})]);
         await fetching;
-        await waitFor(() => expect(mockGetAIThreads).toHaveBeenCalledTimes(2));
 
-        await waitFor(() => expect(titles(store)).toEqual(['c1:Generated title']));
+        expect(titles(store)).toEqual(['c1:Generated title']);
+        expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
     });
 
-    test('a response that lands after a title was set does not revert it', async () => {
-        mockGetAIThreads.mockResolvedValueOnce([makeThread({id: 'c1', title: 'Old'})]);
+    test.each([
+        {name: 'succeeds', refetch: 'resolve' as const},
+        {name: 'fails', refetch: 'reject' as const},
+    ])('a chat in a response is listed while a queued refetch $name', async ({refetch}) => {
+        jest.spyOn(console, 'error').mockImplementation(() => null);
+        const first = deferred<AIThread[]>();
+        const second = deferred<AIThread[]>();
+        mockGetAIThreads.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
         const store = makeStore();
-        await fetchAIThreads(store.dispatch);
 
-        const stale = deferred<AIThread[]>();
-        const fresh = deferred<AIThread[]>();
-        mockGetAIThreads.mockReturnValueOnce(stale.promise).mockReturnValueOnce(fresh.promise);
-        const reloading = fetchAIThreads(store.dispatch);
-        createAgentThreadsSync(store as never).handleConversationUpdated({conversation_id: 'c1', title: 'Generated'});
+        const firstFetch = fetchAIThreads(store.dispatch);
+        fetchAIThreads(store.dispatch);
         await act(async () => {
-            stale.resolve([makeThread({id: 'c1', title: 'Old'})]);
-            await reloading;
+            first.resolve([makeThread({id: 'new-chat'})]);
+            await firstFetch;
         });
+        expect(titles(store)).toEqual(['new-chat:']);
 
-        expect(titles(store)).toEqual(['c1:Generated']);
         await act(async () => {
-            fresh.resolve([makeThread({id: 'c1', title: 'Generated'})]);
+            if (refetch === 'resolve') {
+                second.resolve([makeThread({id: 'new-chat'})]);
+            } else {
+                second.reject(new Error('down'));
+            }
         });
+        expect(titles(store)).toEqual(['new-chat:']);
+        jest.restoreAllMocks();
     });
 
     describe('rename', () => {
@@ -270,9 +278,7 @@ describe('stored AI threads', () => {
         test('a rename while the list reloads is not undone by the reload\'s older response', async () => {
             const store = await loaded();
             const stale = deferred<AIThread[]>();
-            mockGetAIThreads.mockReset().
-                mockReturnValueOnce(stale.promise).
-                mockResolvedValueOnce([makeThread({id: 'c1', title: 'New'}), makeThread({id: 'c2', title: 'Other'})]);
+            mockGetAIThreads.mockReset().mockReturnValueOnce(stale.promise);
             mockRenameConversation.mockResolvedValue(undefined); // eslint-disable-line no-undefined
 
             const reloading = fetchAIThreads(store.dispatch);
@@ -280,8 +286,8 @@ describe('stored AI threads', () => {
             stale.resolve([makeThread({id: 'c1', title: 'Old'}), makeThread({id: 'c2', title: 'Other'})]);
             await reloading;
 
-            await waitFor(() => expect(titles(store)).toEqual(['c1:New', 'c2:Other']));
-            expect(mockGetAIThreads).toHaveBeenCalledTimes(2);
+            expect(titles(store)).toEqual(['c1:New', 'c2:Other']);
+            expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
         });
     });
 
