@@ -125,6 +125,7 @@ type scopedTestEnv struct {
 	minter        *scopedTestMinter
 	catalog       *scopedCatalogManager
 	builder       *llmcontext.Builder
+	mm            *fakeMMClient
 	botConfig     llm.BotConfig
 
 	toolRuns int
@@ -304,6 +305,7 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	}
 	policies := newDMPolicyChecker()
 	policies.policies[scopedRemote+":get_issue"] = cmp.Or(opts.toolPolicy, mcp.ToolPolicyAsk)
+	env.mm = mmClient
 	env.conversations = conversations.New(promptsManager, mmClient, env.streaming, contextBuilder, botService, nil, licenseChecker, i18n.Init(),
 		&testToolCallingConfig{enableChannelMentionToolCalling: true}, policies)
 	env.conversations.SetConversationService(conversation.NewService(env.convStore, promptsManager, mmClient, botService))
@@ -583,6 +585,7 @@ func TestScopedChannelTurnRefusesGuestRequester(t *testing.T) {
 				assert.Zero(t, env.catalog.unscoped, "no catalog is built for a refused turn")
 				assert.Zero(t, env.runs())
 				assert.Empty(t, allConversations(env.convStore), "the turn never started")
+				assert.Empty(t, env.mm.loggedErrors(), "a refusal is an expected outcome, not an error")
 				select {
 				case <-env.streaming.finished:
 					require.Fail(t, "a refused turn must not stream a response")

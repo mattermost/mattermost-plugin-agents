@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -253,6 +254,9 @@ func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post 
 	if policyErr != nil {
 		if _, ok := errors.AsType[*enterprise.LicenseError](policyErr); ok {
 			c.postMultiplayerChannelsUnavailable(bot, channel, post)
+			return fmt.Errorf("%w: %w", policyErr, ErrNoResponse)
+		}
+		if errors.Is(policyErr, llmcontext.ErrScopedRequesterCannotReadTeamChannels) {
 			return fmt.Errorf("%w: %w", policyErr, ErrNoResponse)
 		}
 		return policyErr
