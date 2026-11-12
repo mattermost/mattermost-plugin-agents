@@ -16,7 +16,7 @@ Mattermost writes one JSON object per LLM request to `logs/agents/token_usage.lo
 | `event`, `schema_version` | `llm_token_usage` and `1`. New optional fields don't change the version. |
 | `user_id`, `team_id`, `channel_id`, `channel_type` | Who and where. |
 | `agent_name`, `agent_username`, `bot_username`, `agent_user_id` | The agent. `bot_username` repeats `agent_username` for older queries. |
-| `acting_user_id`, `tool_auth_mode` | The identity that built the tool catalog, and `user` or `service_account`. For a service account agent, the acting identity is the agent's bot, so you can tie the request to the person in `user_id`. The log doesn't record which external action ran. |
+| `acting_user_id`, `tool_auth_mode` | The identity that built the tool catalog, and `user` or `service_account`. For a service account agent, the acting identity is the agent's bot, so you can tie the request to the person in `user_id`. `user_id` is `unknown` when a request has no requesting user, such as an LLM Bridge call without a `UserID`. The log doesn't record which external action ran. |
 | `model`, `service_type`, `service_id`, `service_name` | What served the request. |
 | `operation`, `operation_subtype` | The feature, such as `conversation`, `thread_analysis`, `channel_summary`, `meeting_summary`, `search`, `title_generation`, `bridge_agent`, `bridge_service`, or `ambient_classification`. |
 | `input_tokens`, `output_tokens`, `total_tokens` | Token counts. |

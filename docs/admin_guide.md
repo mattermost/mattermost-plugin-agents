@@ -112,7 +112,7 @@ The plugin distinguishes four license levels: Free (no license), Professional, E
 - **HTTP MCP endpoint.** What happens to an endpoint that is already on after a downgrade is in [External client endpoint](mcp_integrations.md#external-client-endpoint).
 - **Fallback chains.** Followed at Enterprise Advanced only. Below that, a stored fallback stays in the configuration but requests use the primary service.
 - **Write tools.** Tools that change something in Mattermost (post, react, edit, create channels, and similar) are absent from the tool list below Enterprise, and calls return a licensing message.
-- **Approval policies.** Below Enterprise, built-in Mattermost tools use the product defaults and every other tool asks first, except provider-native web search, which runs inside the provider and has no approval card. A stricter policy you set earlier still applies. A disabled tool stays disabled.
+- **Approval policies.** Below Enterprise, built-in Mattermost tools use the product defaults and every other tool that has a policy asks first. Tools without a policy are listed in [Approval policies](tool_approval.md#approval-policies). A stricter policy you set earlier still applies. A disabled tool stays disabled.
 
 ### At every level
 
