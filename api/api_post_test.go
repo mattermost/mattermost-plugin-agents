@@ -882,3 +882,58 @@ func TestRegenerateAnalysisRechecksTheAnalyzedSource(t *testing.T) {
 		})
 	}
 }
+
+// TestResumeRoutesAnswerNotFoundForDeletedRoot pins that the routes resuming
+// a run answer 404, like the conversation read routes, when the
+// conversation's root post was deleted.
+func TestResumeRoutesAnswerNotFoundForDeletedRoot(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	const (
+		postID    = "post12345678901234567890ab"
+		rootID    = "root12345678901234567890ab"
+		channelID = "chan12345678901234567890ab"
+		convID    = "conv12345678901234567890ab"
+	)
+
+	routes := []struct {
+		endpoint string
+		body     string
+	}{
+		{endpoint: "regenerate"},
+		{endpoint: "tool_call", body: `{"accepted_tool_ids":["tool-use-1"]}`},
+		{endpoint: "tool_result", body: `{"accepted_tool_ids":["tool-use-1"]}`},
+	}
+
+	for _, route := range routes {
+		t.Run(route.endpoint, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.api.streamingService = &recordingStreamingService{}
+			convStore := e.useConversations()
+			e.setupTestBot(llm.BotConfig{Name: "test-bot", DisplayName: "Test Bot"})
+
+			root := rootID
+			require.NoError(t, convStore.CreateConversation(&store.Conversation{ID: convID, UserID: testUserID, BotID: testBotUserID, RootPostID: &root, Operation: "conversation"}))
+			post := &model.Post{Id: postID, UserId: testBotUserID, ChannelId: channelID}
+			post.AddProp(streaming.ConversationIDProp, convID)
+			e.mockAPI.On("GetPost", postID).Return(post, nil)
+			e.mockAPI.On("GetPost", rootID).Return(&model.Post{Id: rootID, DeleteAt: model.GetMillis()}, nil)
+			e.mockAPI.On("GetChannel", channelID).Return(&model.Channel{Id: channelID, Name: testBotUserID + "__" + testUserID, Type: model.ChannelTypeDirect}, nil)
+			e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
+			e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Locale: "en"}, nil).Maybe()
+
+			var body io.Reader
+			if route.body != "" {
+				body = strings.NewReader(route.body)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/post/"+postID+"/"+route.endpoint, body)
+			req.Header.Add("Mattermost-User-Id", testUserID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			require.Equal(t, http.StatusNotFound, recorder.Result().StatusCode, recorder.Body.String())
+		})
+	}
+}

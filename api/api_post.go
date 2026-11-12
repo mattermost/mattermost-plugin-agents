@@ -353,6 +353,8 @@ func regenerateHTTPStatus(err error) int {
 	switch {
 	case errors.Is(err, conversations.ErrNotRegenerable):
 		return http.StatusBadRequest
+	case errors.Is(err, conversation.ErrRootPostDeleted):
+		return http.StatusNotFound
 	case errors.Is(err, conversation.ErrConversationArchived):
 		return http.StatusConflict
 	case errors.Is(err, conversations.ErrNotRequester),
@@ -406,6 +408,8 @@ func toolApprovalHTTPStatus(err error) int {
 		errors.Is(err, conversations.ErrPostMissingConversationID),
 		errors.Is(err, conversations.ErrInvalidToolAnswer):
 		return http.StatusBadRequest
+	case errors.Is(err, conversation.ErrRootPostDeleted):
+		return http.StatusNotFound
 	case errors.Is(err, conversation.ErrConversationArchived):
 		return http.StatusConflict
 	case errors.Is(err, conversations.ErrNotRequester),
