@@ -134,11 +134,12 @@ func serviceAccountConversations(t *testing.T, convStore *loadedStateFlowStore, 
 	mmClient.On("GetUser", testRequesterID).Return(&model.User{Id: testRequesterID, Username: "user"}, nil).Maybe()
 
 	return &Conversations{
-		configProvider: &channelFollowUpTestConfig{enableChannelMentionToolCalling: true},
-		mmClient:       mmClient,
-		contextBuilder: newSingleBuildLLMContextBuilder(t, provider),
-		bots:           botsService,
-		licenseChecker: licenseChecker,
-		convService:    conversation.NewService(convStore, nil, nil, nil),
+		streamingService: &noopStreamingService{},
+		configProvider:   &channelFollowUpTestConfig{enableChannelMentionToolCalling: true},
+		mmClient:         mmClient,
+		contextBuilder:   newSingleBuildLLMContextBuilder(t, provider),
+		bots:             botsService,
+		licenseChecker:   licenseChecker,
+		convService:      conversation.NewService(convStore, nil, nil, nil),
 	}
 }

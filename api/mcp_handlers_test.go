@@ -129,8 +129,8 @@ func TestDelegateToMCPHandler_ConcurrencyLimit(t *testing.T) {
 }
 
 // TestDelegateToMCPHandler_RequestLifetimeBounded verifies the delegated
-// request context carries a deadline (the plugin RPC layer cannot propagate
-// client-disconnect cancellation, so orphaned streams must expire).
+// request context carries a deadline, so streams whose client stays
+// connected still expire.
 func TestDelegateToMCPHandler_RequestLifetimeBounded(t *testing.T) {
 	e := SetupTestEnvironment(t)
 
