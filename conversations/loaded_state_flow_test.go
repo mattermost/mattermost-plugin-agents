@@ -412,7 +412,9 @@ func (s *loadedStateFlowStore) ReleaseStreamingTurnClaim(id string) error {
 		for i := range turns {
 			if turns[i].ID == id && turns[i].Status == store.TurnStatusInterrupted {
 				s.turns[convID][i].Status = store.TurnStatusStreaming
+				s.turns[convID][i].UpdatedAt = 0
 				s.allTurns[id].Status = store.TurnStatusStreaming
+				s.allTurns[id].UpdatedAt = 0
 			}
 		}
 	}

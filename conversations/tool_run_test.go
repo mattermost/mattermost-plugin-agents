@@ -6,6 +6,7 @@ package conversations
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -42,6 +43,9 @@ type toolRunFixture struct {
 	executions atomic.Int32
 	running    chan struct{}
 	release    chan struct{}
+
+	// failUpdates makes UpdatePost fail, as when the post cannot be marked.
+	failUpdates atomic.Bool
 
 	mu         sync.Mutex
 	heartbeats int
@@ -125,11 +129,15 @@ func newToolRunFixture(t *testing.T, dm bool, honorCancel bool, toolIDs ...strin
 		}
 		return f.post.Clone(), nil
 	}).Maybe()
-	f.mmClient.On("UpdatePost", mock.Anything).Maybe().Run(func(args mock.Arguments) {
+	f.mmClient.EXPECT().UpdatePost(mock.Anything).RunAndReturn(func(post *model.Post) error {
+		if f.failUpdates.Load() {
+			return errors.New("update failed")
+		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		f.updates = append(f.updates, args.Get(0).(*model.Post).Clone())
-	}).Return(nil)
+		f.updates = append(f.updates, post.Clone())
+		return nil
+	}).Maybe()
 	return f
 }
 
@@ -398,4 +406,23 @@ func TestHandleRegenerateDuringApprovalRun(t *testing.T) {
 	f.streaming.mu.Lock()
 	assert.Greater(t, f.streaming.contextAcquired, acquiredBefore, "regenerate takes over an interrupted approval post")
 	f.streaming.mu.Unlock()
+}
+
+// When shutdown cannot stamp the post, the run's turn goes back to streaming
+// for the recovery sweep, which must find it stale at once rather than after
+// a fresh heartbeat timeout.
+func TestHandleToolCallShutdownWithUnmarkablePostLeavesTurnForRecovery(t *testing.T) {
+	f := newToolRunFixture(t, true, true, "tool-use-1")
+	f.failUpdates.Store(true)
+
+	errCh := f.click("tool-use-1")
+	f.waitRunning(t)
+	f.cancelRoot(lifecycle.ErrShutdown)
+	require.True(t, f.c.WaitForToolRuns(5*time.Second))
+
+	require.ErrorIs(t, f.waitResult(t, errCh), ErrToolRunInterrupted)
+	assert.Equal(t, store.TurnStatusStreaming, f.anchor(t).Status, "the unmarked turn stays streaming for the sweep")
+	live, err := f.convStore.HasLiveStreamingTurn(toolRunPostID, streaming.StaleStreamThreshold.Milliseconds())
+	require.NoError(t, err)
+	assert.False(t, live, "recovery must see the turn as abandoned immediately")
 }

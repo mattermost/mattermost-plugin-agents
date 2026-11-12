@@ -191,7 +191,7 @@ func (c *Conversations) interruptToolRun(r *toolRun, turnID string, post *model.
 
 	if err := c.markPostInterrupted(post.Id, streaming.InterruptedReasonShutdown); err != nil {
 		c.mmClient.LogError("Failed to mark post of interrupted approved tool run; leaving it for stream recovery", "error", err, "post_id", post.Id, "turn_id", turnID)
-		if _, releaseErr := c.convService.TransitionTurnStatus(turnID, store.TurnStatusInterrupted, store.TurnStatusStreaming); releaseErr != nil {
+		if releaseErr := c.convService.ReleaseStreamingTurnClaim(turnID); releaseErr != nil {
 			c.mmClient.LogError("Failed to release interrupted approved tool run for stream recovery", "error", releaseErr, "post_id", post.Id, "turn_id", turnID)
 		}
 		return fmt.Errorf("failed to mark post %s interrupted: %w: %w", post.Id, err, ErrToolRunInterrupted)
