@@ -11,7 +11,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/lib/pq v1.12.3
-	github.com/mattermost/mattermost/server/public v0.6.1-0.20261025013445-80c85f72c5f4
+	github.com/mattermost/mattermost/server/public v0.6.1-0.20261026155022-35ea392a8933
 	github.com/mattermost/mattermost/tools/mattermost-govet v0.0.0-20261103132713-77a94b45a35b
 	github.com/mattermost/morph v1.1.0
 	github.com/maximhq/bifrost/core v1.14.1

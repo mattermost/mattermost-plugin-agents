@@ -7,6 +7,9 @@ import {useSelector} from 'react-redux';
 import {GlobalState} from '@mattermost/types/store';
 
 import {updateRead} from '@/client';
+import {subscribeToPosted} from '@/posted_events';
+import {getDeferredNotificationsMode} from '@/selectors';
+import {getViewingTracker} from '@/viewing';
 
 // Read state comes from the host: the chat views mark a thread read as any thread view does, and
 // the unread dot is the host's collapsed reply threads state for that thread.
@@ -79,11 +82,11 @@ export const useMarkAgentThreadRead = (rootId: string, enabled: boolean, knownRe
     const lastReplyAtRef = useRef(lastReplyAt);
     lastReplyAtRef.current = lastReplyAt;
 
-    const markRead = useCallback((id: string) => {
+    const markRead = useCallback((id: string, notBefore = 0) => {
         if (!teamId || !currentUserId) {
             return;
         }
-        const timestamp = Math.max(Date.now(), lastReplyAtRef.current + 1);
+        const timestamp = Math.max(Date.now(), lastReplyAtRef.current + 1, notBefore);
         updateRead(currentUserId, teamId, id, timestamp).catch((error: unknown) => {
             if (isMissingThreadMembershipError(error)) {
                 console.warn('Skipping AI thread read marker because thread membership is missing.', error); // eslint-disable-line no-console
@@ -99,6 +102,24 @@ export const useMarkAgentThreadRead = (rootId: string, enabled: boolean, knownRe
             markRead(rootId);
         }
     }, [canMarkRead, replyCount, markRead, rootId]);
+
+    // Releasing a deferred agent reply makes it unread for everyone who saw it while it streamed,
+    // including a user still watching, and arrives as a repeated `posted` event without a new
+    // reply. A delivered reply that is on screen here has been read.
+    const deferredNotifications = useSelector(getDeferredNotificationsMode);
+    useEffect(() => {
+        if (!deferredNotifications || !canMarkRead) {
+            return undefined; // eslint-disable-line no-undefined
+        }
+        return subscribeToPosted((post) => {
+            if (post.root_id !== rootId || !getViewingTracker().isViewed(post.id)) {
+                return;
+            }
+
+            // The server times the delivery by its own clock.
+            markRead(rootId, post.update_at ?? 0);
+        });
+    }, [deferredNotifications, canMarkRead, markRead, rootId]);
 
     // Set after the commit, so the cleanup below still sees the chat being left.
     const markOnLeave = useRef<(() => void) | null>(null);

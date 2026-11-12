@@ -18,6 +18,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
+	"github.com/mattermost/mattermost-plugin-agents/v2/notifications"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
@@ -452,6 +453,10 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	// rejected, a user-interaction answer, or otherwise terminal),
 	// HandleToolResult will never fire, so stream the follow-up now.
 	if !policy.isDM && needsShareDecision {
+		c.notifyRunEnd(ctx, post, userID, notifications.StreamEnd{
+			Outcome:            notifications.OutcomeCompleted,
+			PausedForRequester: true,
+		})
 		return nil
 	}
 
@@ -795,9 +800,14 @@ func (c *Conversations) streamToolFollowUp(
 	completionReq.Operation = llm.OperationConversationToolFollowup
 	completionReq.OperationSubType = llm.SubTypeToolCall
 
-	runResult, err := policy.runToolLoop(ctx, llmContext, conv.ID, *completionReq, "Failed to write tool turns on follow-up")
+	// The tool loop gets its own cancel so a stopped stream also stops the
+	// loop and the tools it would still run, instead of leaving it blocked on
+	// a send nobody will receive.
+	loopCtx, cancelLoop := context.WithCancel(ctx)
+	runResult, err := policy.runToolLoop(loopCtx, llmContext, conv.ID, *completionReq, "Failed to write tool turns on follow-up")
 
 	if err != nil {
+		cancelLoop()
 		return fmt.Errorf("tool runner failed on tool follow-up: %w", err)
 	}
 
@@ -814,7 +824,7 @@ func (c *Conversations) streamToolFollowUp(
 	// Stream onto the same post; finalize demotes the prior anchor so
 	// resolved tool cards remain visible alongside the new round.
 	followUp.handedOff = true
-	c.streamToExistingPostOnContext(ctx, stream, post, policy.user, policy.channel, true, nil)
+	c.streamToExistingPostOnContext(ctx, stream, post, policy.user, policy.channel, true, cancelLoop)
 	return nil
 }
 

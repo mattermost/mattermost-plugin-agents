@@ -307,6 +307,25 @@ describe('fetchAndStoreBots', () => {
         expect(dispatch).not.toHaveBeenCalled();
     });
 
+    test('a superseded response does not overwrite a newer one', async () => {
+        const older = [makeBot('older')];
+        const newer = [makeBot('newer')];
+        let resolveOlder: (value: unknown) => void = jest.fn();
+        mockGetAIBots.mockImplementationOnce(() => new Promise((resolve) => {
+            resolveOlder = resolve;
+        }));
+        mockGetAIBots.mockResolvedValueOnce({bots: newer, deferredNotifications: true});
+        const dispatch = jest.fn();
+
+        const olderFetch = fetchAndStoreBots(dispatch);
+        await fetchAndStoreBots(dispatch);
+        resolveOlder({bots: older, deferredNotifications: false});
+        await olderFetch;
+
+        expect(dispatch).toHaveBeenCalledWith({type: BotsHandler, bots: newer});
+        expect(dispatch).not.toHaveBeenCalledWith({type: BotsHandler, bots: older});
+    });
+
     test('propagates fetch failures to the caller', async () => {
         const error = new Error('network');
         mockGetAIBots.mockRejectedValue(error);
