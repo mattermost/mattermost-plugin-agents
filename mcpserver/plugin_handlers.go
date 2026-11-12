@@ -316,10 +316,33 @@ func (h *PluginMCPHandlers) addProxyTools(mcpServer *mcp.Server, toolOwners map[
 				continue
 			}
 			toolOwners[proxyTool.Name] = toolOwner{ownerKey: ps.PluginID, serverID: ps.ID}
-			mcpServer.AddTool(proxyTool, proxyHandlers[i])
+			mcpServer.AddTool(proxyTool, h.guardProxyHandler(ps.PluginID, proxyTool.Name, proxyHandlers[i]))
 		}
 	}
 	return failures
+}
+
+// guardProxyHandler rechecks the registry on every call, because an admin
+// change reaches the aggregate server only after the next rebuild.
+func (h *PluginMCPHandlers) guardProxyHandler(pluginID, toolName string, next mcp.ToolHandler) mcp.ToolHandler {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if !h.proxyToolExposed(pluginID, toolName) {
+			return nil, fmt.Errorf("tool %s is not available", toolName)
+		}
+		return next(ctx, req)
+	}
+}
+
+func (h *PluginMCPHandlers) proxyToolExposed(pluginID, toolName string) bool {
+	for _, ps := range h.registry.ListPluginServers() {
+		if ps.PluginID != pluginID {
+			continue
+		}
+		policyConfig := &mcppkg.ServerConfig{Enabled: true, ToolConfigs: ps.ToolConfigs}
+		_, enabled := policyConfig.GetToolPolicy(toolName)
+		return ps.Enabled && ps.ExposeExternal && enabled
+	}
+	return false
 }
 
 // logDiscoveryFailures logs discovery failures at Warn after a requested

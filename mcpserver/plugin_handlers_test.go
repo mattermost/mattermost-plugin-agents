@@ -531,6 +531,51 @@ func TestPluginMCPHandlers_CloseIsIdempotent(t *testing.T) {
 	}
 }
 
+// Admin changes reach the external server only after the background rebuild;
+// a call in that window must still be refused.
+func TestPluginMCPHandlers_RefusesToolCallsDisabledBeforeRebuild(t *testing.T) {
+	enabled := mcppkg.PluginServerConfig{PluginID: "com.example.plugin", Name: "Plugin", Path: "/mcp", Enabled: true, ExposeExternal: true}
+	tests := []struct {
+		name   string
+		change func(cfg *mcppkg.PluginServerConfig)
+		gone   bool
+	}{
+		{name: "plugin server disabled", change: func(cfg *mcppkg.PluginServerConfig) { cfg.Enabled = false }},
+		{name: "plugin server no longer exposed", change: func(cfg *mcppkg.PluginServerConfig) { cfg.ExposeExternal = false }},
+		{name: "tool disabled", change: func(cfg *mcppkg.PluginServerConfig) {
+			cfg.ToolConfigs = []mcppkg.ToolConfig{{Name: "test_tool_0", Enabled: false}}
+		}},
+		{name: "plugin server unregistered", gone: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target := newFakePluginMCPServer(t, 1, nil)
+			t.Cleanup(target.Close)
+			reg := &stubRegistry{servers: []mcppkg.PluginServerConfig{enabled}}
+			logger, err := loggerlib.CreateDefaultLogger()
+			require.NoError(t, err)
+			h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, newPluginHTTPForwarder(t, target), nil, nil, allowAllStateChangingTools, nil, nil)
+			require.NoError(t, err)
+			t.Cleanup(h.Close)
+
+			result, err := callToolAs(t, h, "user1", "test_tool_0", map[string]any{"message": "hi"})
+			require.NoError(t, err)
+			require.False(t, result.IsError)
+
+			changed := enabled
+			if tt.gone {
+				reg.set(nil)
+			} else {
+				tt.change(&changed)
+				reg.set([]mcppkg.PluginServerConfig{changed})
+			}
+
+			result, err = callToolAs(t, h, "user1", "test_tool_0", map[string]any{"message": "hi"})
+			require.True(t, err != nil || result.IsError, "a tool disabled by the admin must not run before the rebuild lands")
+		})
+	}
+}
+
 // A nil registry disables aggregation but keeps native tools available.
 func TestNewPluginMCPHandlers_NilRegistryIsNoOp(t *testing.T) {
 	logger, err := loggerlib.CreateDefaultLogger()
