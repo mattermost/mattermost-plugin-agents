@@ -9,7 +9,7 @@ An agent is a Mattermost bot backed by an LLM that you choose, including a model
 1. An **LLM service** holds the connection to a provider: type, credentials, default model, and optional fallback. You configure services in the System Console.
 2. An **agent** is a bot with a name, instructions, a model, access rules, and tool grants. Agents use a service. You create them on the **Agents** page.
 3. **Tools** give an agent abilities. Admins decide which tools exist, which need approval, and which users can reach each MCP server.
-4. **Users** talk to agents in direct messages, the Agents pane, and channels. Every tool call runs with the permissions of the person who asked, unless an agent uses a shared service account for external MCP servers.
+4. **Users** talk to agents in direct messages, the Agents pane, and channels. Every tool call runs with the permissions of the person who asked, unless an agent uses a shared service account for external MCP servers. Credentials in a remote server's regular **Headers** are also shared by every user. See [Tool approval and credentials](tool_approval.md).
 
 Custom instructions can't grant or restrict access. Use the agent's **Access** tab, MCP access policies, and tool approval policies.
 
@@ -109,9 +109,10 @@ The plugin distinguishes four license levels: Free (no license), Professional, E
 
 - **Agent cap.** Configuration-file bots and user-created agents share one pool. Over the cap, the plugin activates configuration-file bots first, then user-created agents oldest first. The rest stay stored but inactive, marked **Inactive** on the Agents page and named in the server log. Creating an agent over the cap fails with a message naming the level that raises it.
 - **One service below Enterprise.** Free and Professional use only the first service in the list. Agents that use another service are inactive and don't count toward the agent cap. LLM Bridge calls reach only the first service.
+- **HTTP MCP endpoint.** What happens to an endpoint that is already on after a downgrade is in [External client endpoint](mcp_integrations.md#external-client-endpoint).
 - **Fallback chains.** Followed at Enterprise Advanced only. Below that, a stored fallback stays in the configuration but requests use the primary service.
 - **Write tools.** Tools that change something in Mattermost (post, react, edit, create channels, and similar) are absent from the tool list below Enterprise, and calls return a licensing message.
-- **Approval policies.** Below Enterprise, built-in Mattermost tools use the product defaults and every other tool asks first. A stricter policy you set earlier still applies. A disabled tool stays disabled.
+- **Approval policies.** Below Enterprise, built-in Mattermost tools use the product defaults and every other tool asks first, except provider-native web search, which runs inside the provider and has no approval card. A stricter policy you set earlier still applies. A disabled tool stays disabled.
 
 ### At every level
 

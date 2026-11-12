@@ -78,10 +78,9 @@ GitHub's MCP server needs a pre-registered OAuth app. GitHub's interface changes
    - **Server name** to `GitHub`.
    - **Server URL** to the MCP endpoint in GitHub's documentation. Its host is `api.githubcopilot.com`.
    - **Description** to something like `Search code, read issues and pull requests, and create issues on GitHub.`
-   - **Client ID** and **Client Secret** under **OAuth Credentials (Optional)** to the values from step 1.
-3. Select **Save**.
-4. Open the **Tools** tab, expand **GitHub**, and select **Connect Account** to authorize your own account. This lets you see the tool list. Each user still connects their own account.
-5. Review the tools. Read-only tools are pre-filled, and tools that change something, such as creating an issue, ask every time. See [Enable and approve tools](#enable-and-approve-tools).
+   - **OAuth client ID** and **OAuth client secret** to the values from step 1.
+3. Select **Save and connect**, then **Sign in** to authorize your own account. Each user still connects their own account.
+4. In **Review tools**, check the policies and select **Accept and save**. Tools the server marks read-only are suggested as **Auto Run (DM)**, and tools that change something, such as creating an issue, start at **Ask Every Time**. See [Enable and approve tools](#enable-and-approve-tools).
 6. Check the agent's **MCPs** tab. With **Automatically enable all MCP tools** on, which is the default, the agent can use the GitHub tools. Otherwise, grant them there.
 
 A user who asks "Open an issue for the bug in this thread" now sees a **Connect** card the first time. After they connect, the agent finds the issue tool with dynamic tool loading, and the user accepts the call.
@@ -92,7 +91,7 @@ On the **Tools** tab, each server lists its tools. For each tool you set whether
 
 A tool with no saved setting is enabled and set to **Ask Every Time**, except for curated defaults on Mattermost's own tools, Atlassian, and Figma. That includes tools a server adds later. When you review a server's tools, a tool the server marks read-only (`readOnlyHint`) is suggested as **Auto Run (DM)**, but the suggestion applies only once you save it. Remote servers show how many tools are **Not reviewed**, meaning no administrator has chosen a policy. Open the server's tool list, select **Mark tools as reviewed**, and save to store the suggested policy for every unreviewed tool. Turning a tool on or off doesn't set its policy.
 
-When you add a server at a known host, Mattermost pre-fills policies for its read-only tools. Mattermost's own read-only tools default to **Auto Run (DM)**, except `get_file_link`, `list_incoming_webhooks`, `list_outgoing_webhooks`, `list_agents`, and `list_drafts`, which stay at **Ask Every Time**. The first three expose bypass links or webhook tokens. The same pre-fill covers read tools on Atlassian (`mcp.atlassian.com`) and Figma (`mcp.figma.com`). GitHub (`api.githubcopilot.com`) needs no pre-fill because it marks its read tools read-only. GitHub's code scanning, Dependabot, secret scanning, and security advisory reads stay at **Ask Every Time**. Tools that change something are never pre-filled.
+When you add a server at a known host, Mattermost pre-fills policies for its read-only tools. Mattermost's own read-only tools default to **Auto Run (DM)**, except `get_file_link`, `list_incoming_webhooks`, `list_outgoing_webhooks`, `list_agents`, and `list_drafts`, which stay at **Ask Every Time**. The first three expose bypass links or webhook tokens. The same pre-fill covers read tools on Atlassian (`mcp.atlassian.com`) and Figma (`mcp.figma.com`). GitHub (`api.githubcopilot.com`) has no pre-fill. Its read tools are suggested as **Auto Run (DM)** during review, including code scanning, Dependabot, secret scanning, and security advisory reads, so check them before you accept. Tools that change something are never pre-filled.
 
 Expand a tool row to add a **Retrieval description override**. It helps the agent find the tool through dynamic tool loading search, and doesn't change the schema sent after loading. **Refresh Tools** rediscovers tools. **Clear Cache** drops cached tool lists. The tab refreshes by itself after you connect or disconnect an OAuth server.
 
@@ -138,7 +137,7 @@ Set it up:
 - Users are never asked to connect, their per-user provider choices don't apply, and the **Tools** menu is hidden for that agent.
 - Those agents share one remote connection per agent, keyed to its bot account.
 
-Service account mode flattens permissions on external servers. Every user who can use the agent acts with the shared account's access, and the external system's audit log shows the service account, not the person. Restrict who can use the agent, use one minimally scoped account per integration, and don't reuse an admin's token. Header values are stored in the plugin configuration and visible to System Admins. To correlate actions with people, turn on the [token usage log](observability.md#token-usage-log). Each record has the requesting user, the acting identity, and the authentication mode.
+Service account mode flattens permissions on external servers. Every user who can use the agent acts with the shared account's access, and the external system's audit log shows the service account, not the person. Restrict who can use the agent, use one minimally scoped account per integration, and don't reuse an admin's token. Header values are stored in the plugin configuration and visible to System Admins. To trace LLM requests to the requesting user, turn on the [token usage log](observability.md#token-usage-log). Each record covers one LLM request and has the requesting user, the acting identity, and the authentication mode. It doesn't identify the tool or external action, so it can't attribute a specific external action to a person.
 
 ## Dynamic tool loading
 
