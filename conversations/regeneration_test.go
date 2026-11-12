@@ -850,14 +850,7 @@ func TestRegenerateChannelSummaryWaitsForRunningTool(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		require.FailNow(t, "the tool never started")
 	}
-	require.Never(t, func() bool {
-		select {
-		case <-done:
-			return true
-		default:
-			return false
-		}
-	}, 200*time.Millisecond, 10*time.Millisecond, "regenerate must wait for the running tool before releasing the post")
+	require.Never(t, func() bool { return len(done) > 0 }, 200*time.Millisecond, 10*time.Millisecond, "regenerate must wait for the running tool before releasing the post")
 	kvMu.Lock()
 	_, reserved := held[reservationKey]
 	kvMu.Unlock()
