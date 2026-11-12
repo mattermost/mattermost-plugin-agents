@@ -216,6 +216,27 @@ describe('stored AI threads', () => {
         await waitFor(() => expect(titles(store)).toEqual(['c1:Generated title']));
     });
 
+    test('a response that lands after a title was set does not revert it', async () => {
+        mockGetAIThreads.mockResolvedValueOnce([makeThread({id: 'c1', title: 'Old'})]);
+        const store = makeStore();
+        await fetchAIThreads(store.dispatch);
+
+        const stale = deferred<AIThread[]>();
+        const fresh = deferred<AIThread[]>();
+        mockGetAIThreads.mockReturnValueOnce(stale.promise).mockReturnValueOnce(fresh.promise);
+        const reloading = fetchAIThreads(store.dispatch);
+        createAgentThreadsSync(store as never).handleConversationUpdated({conversation_id: 'c1', title: 'Generated'});
+        await act(async () => {
+            stale.resolve([makeThread({id: 'c1', title: 'Old'})]);
+            await reloading;
+        });
+
+        expect(titles(store)).toEqual(['c1:Generated']);
+        await act(async () => {
+            fresh.resolve([makeThread({id: 'c1', title: 'Generated'})]);
+        });
+    });
+
     describe('rename', () => {
         const loaded = async () => {
             mockGetAIThreads.mockResolvedValue([makeThread({id: 'c1', title: 'Old'}), makeThread({id: 'c2', title: 'Other'})]);
