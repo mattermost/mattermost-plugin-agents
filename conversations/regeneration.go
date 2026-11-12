@@ -199,7 +199,7 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		result, err = c.meetingSummaries.RegenerateSummary(ctx, bot, llmContext, conv, post)
 
 	case regenerateChannelSummary:
-		result, err = c.regenerateChannelAnalysis(ctx, bot, user, conv, post)
+		result, runDone, err = c.regenerateChannelAnalysis(ctx, bot, user, conv, post)
 
 	default:
 		if _, ok := post.GetProp(streaming.RespondingToProp).(string); !ok {
@@ -375,20 +375,20 @@ func (c *Conversations) regenerateChannelAnalysis(
 	user *model.User,
 	conv *store.Conversation,
 	post *model.Post,
-) (*llm.TextStreamResult, error) {
+) (*llm.TextStreamResult, <-chan struct{}, error) {
 	analyzedChannelID, _ := post.GetProp(AnalyzedChannelIDProp).(string)
 	if analyzedChannelID == "" {
-		return nil, errors.New("post missing analyzed channel")
+		return nil, nil, errors.New("post missing analyzed channel")
 	}
 	if !c.mmClient.HasPermissionToChannel(user.Id, analyzedChannelID, model.PermissionReadChannel) {
-		return nil, errors.New("user doesn't have permission to read the analyzed channel")
+		return nil, nil, errors.New("user doesn't have permission to read the analyzed channel")
 	}
 	analyzedChannel, err := c.mmClient.GetChannel(analyzedChannelID)
 	if err != nil {
-		return nil, fmt.Errorf("could not get analyzed channel: %w", err)
+		return nil, nil, fmt.Errorf("could not get analyzed channel: %w", err)
 	}
 	if err = c.bots.CheckUsageRestrictionsForChannel(bot, analyzedChannel); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	toolBot := channels.ToolBot(bot)

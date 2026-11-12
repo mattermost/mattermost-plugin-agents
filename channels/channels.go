@@ -195,7 +195,7 @@ func (c *Channels) AnalyzeChannelWithRequest(
 	}
 	completionRequest.OperationSubType = operationSubType
 
-	stream, err := c.runAnalysis(ctx, *completionRequest, convResult.ConversationID, "")
+	stream, _, err := c.runAnalysis(ctx, *completionRequest, convResult.ConversationID, "")
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +209,8 @@ func (c *Channels) AnalyzeChannelWithRequest(
 // RegenerateAnalysis re-runs a channel analysis inside its existing
 // conversation: the stored system prompt and user turn are reused, the prior
 // response turns anchored to postID are scrubbed, and the tools are re-bound
-// to channelID. The context must carry the unscoped tool store.
+// to channelID. The context must carry the unscoped tool store. The returned
+// channel closes once the tool runner has exited.
 func (c *Channels) RegenerateAnalysis(
 	ctx stdcontext.Context,
 	context *llm.Context,
@@ -217,22 +218,23 @@ func (c *Channels) RegenerateAnalysis(
 	channelID string,
 	postID string,
 	sessionID string,
-) (*llm.TextStreamResult, error) {
+) (*llm.TextStreamResult, <-chan struct{}, error) {
 	if err := bindChannelTools(context, channelID); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	completionRequest, err := c.convSvc.BuildRegenerateRequest(conv, context, postID, conversation.BuildOptions{SessionID: sessionID})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return c.runAnalysis(ctx, *completionRequest, conv.ID, postID)
+	stream, done, err := c.runAnalysis(ctx, *completionRequest, conv.ID, postID)
+	return stream, done, err
 }
 
 // runAnalysis runs the ToolRunner loop, always approving the bound tools and
 // persisting tool turns to the conversation.
-func (c *Channels) runAnalysis(ctx stdcontext.Context, request llm.CompletionRequest, conversationID, runPostID string) (*llm.TextStreamResult, error) {
+func (c *Channels) runAnalysis(ctx stdcontext.Context, request llm.CompletionRequest, conversationID, runPostID string) (*llm.TextStreamResult, <-chan struct{}, error) {
 	runner := toolrunner.New(c.llm)
 	runResult, err := runner.Run(
 		ctx,
@@ -246,9 +248,9 @@ func (c *Channels) runAnalysis(ctx stdcontext.Context, request llm.CompletionReq
 		llm.WithReasoningDisabled(),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("tool runner failed: %w", err)
+		return nil, nil, fmt.Errorf("tool runner failed: %w", err)
 	}
-	return runResult.Stream, nil
+	return runResult.Stream, runResult.Done, nil
 }
 
 // Interval fetches posts for a time range and creates a conversation entity

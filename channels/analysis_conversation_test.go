@@ -883,7 +883,7 @@ func TestRegenerateAnalysisReusesConversation(t *testing.T) {
 	require.NoError(t, err)
 
 	readChannelID = ""
-	stream, err := ch.RegenerateAnalysis(context.Background(), newContext(), conv, "chanBound", postID, "")
+	stream, _, err := ch.RegenerateAnalysis(context.Background(), newContext(), conv, "chanBound", postID, "")
 	require.NoError(t, err)
 	text, err := stream.ReadAll()
 	require.NoError(t, err)

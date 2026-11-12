@@ -708,3 +708,165 @@ func TestHandleRegenerateRequiresConversation(t *testing.T) {
 	err := c.HandleRegenerate(t.Context(), userID, post, &model.Channel{Id: "dm-channel"})
 	require.ErrorContains(t, err, "missing conversation_id")
 }
+
+// stoppedStreaming ends the stream without reading it once stopAfter is
+// closed, as Stop does mid-run.
+type stoppedStreaming struct {
+	regenRecordingStreaming
+	stopAfter <-chan struct{}
+}
+
+func (s *stoppedStreaming) StreamToPost(_ context.Context, result *llm.TextStreamResult, _ *model.Post, _ string, _ string) {
+	go func() { _, _ = result.ReadAll() }()
+	<-s.stopAfter
+}
+
+// toolThenTextLLM answers its first request with a tool call and later ones
+// with text.
+type toolThenTextLLM struct {
+	loadedStateLLM
+	toolName string
+}
+
+func (l *toolThenTextLLM) ChatCompletion(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+	l.mu.Lock()
+	first := len(l.requests) == 0
+	l.mu.Unlock()
+	if first {
+		l.mu.Lock()
+		l.requests = append(l.requests, request)
+		l.mu.Unlock()
+		events := make(chan llm.TextStreamEvent, 2)
+		events <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{{ID: "tc-1", Name: l.toolName, Arguments: json.RawMessage(`{"channel_id":"analyzed-channel"}`)}}}
+		events <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(events)
+		return &llm.TextStreamResult{Stream: events}, nil
+	}
+	return l.loadedStateLLM.ChatCompletion(ctx, request, opts...)
+}
+
+// A channel summary regenerate runs the tool loop, so the post stays reserved
+// until a tool that is still executing has returned.
+func TestRegenerateChannelSummaryWaitsForRunningTool(t *testing.T) {
+	const (
+		userID          = testRequesterID
+		botID           = "bot-id"
+		regenPostID     = "regen-post-id"
+		analyzedChannel = "analyzed-channel"
+	)
+	toolStarted := make(chan struct{})
+	releaseTool := make(chan struct{})
+	blockingTool := llm.Tool{
+		Name:         "read_channel",
+		Description:  "channel tool",
+		ServerOrigin: mcp.EmbeddedClientKey,
+		Schema:       map[string]any{"type": "object"},
+		Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+			close(toolStarted)
+			<-releaseTool
+			return "ok", nil
+		},
+	}
+
+	convStore := newLoadedStateFlowStore()
+	rootPostID := regenPostID
+	conv := &store.Conversation{ID: "conv-id", UserID: userID, BotID: botID, SystemPrompt: "system", Operation: llm.OperationChannelSummary, RootPostID: &rootPostID}
+	require.NoError(t, convStore.CreateConversation(conv))
+	userContent, err := json.Marshal([]conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: "summarize"}})
+	require.NoError(t, err)
+	postID := regenPostID
+	require.NoError(t, convStore.CreateTurn(&store.Turn{ID: "user-turn", ConversationID: conv.ID, Role: "user", Content: userContent, Sequence: 1}))
+	require.NoError(t, convStore.CreateTurn(&store.Turn{ID: "old-anchor", ConversationID: conv.ID, PostID: &postID, Role: "assistant", Content: userContent, Sequence: 2}))
+
+	mm := mocks.NewMockClient(t)
+	mm.On("GetUser", userID).Return(&model.User{Id: userID, Locale: "en"}, nil).Maybe()
+	locale := "en"
+	mm.On("GetConfig").Return(&model.Config{LocalizationSettings: model.LocalizationSettings{DefaultServerLocale: &locale}}).Maybe()
+	mm.On("KVGet", mock.Anything, mock.Anything).Return(nil).Maybe()
+	for _, method := range []string{"LogDebug", "LogWarn", "LogError"} {
+		for args := []any{mock.Anything}; len(args) <= 11; args = append(args, mock.Anything) {
+			mm.On(method, args...).Maybe().Return()
+		}
+	}
+	var kvMu sync.Mutex
+	held := map[string]any{}
+	reservationKey := postRunReservationKeyPrefix + regenPostID
+	mm.On("KVCompareAndSetWithExpiry", reservationKey, mock.Anything, mock.Anything, mock.Anything).
+		Return(func(key string, oldValue, newValue any, _ time.Duration) (bool, error) {
+			kvMu.Lock()
+			defer kvMu.Unlock()
+			if current, ok := held[key]; (oldValue == nil && ok) || (oldValue != nil && current != oldValue) {
+				return false, nil
+			}
+			held[key] = newValue
+			return true, nil
+		}).Maybe()
+	mm.On("KVCompareAndSet", reservationKey, mock.Anything, nil).
+		Return(func(key string, oldValue, _ any) (bool, error) {
+			kvMu.Lock()
+			defer kvMu.Unlock()
+			if held[key] != oldValue {
+				return false, nil
+			}
+			delete(held, key)
+			return true, nil
+		}).Maybe()
+	mm.On("UpdatePost", mock.Anything).Return(nil).Maybe()
+	mm.On("GetPost", regenPostID).Return(&model.Post{Id: regenPostID, UserId: botID}, nil).Maybe()
+	mm.On("HasPermissionToChannel", userID, mock.Anything, model.PermissionReadChannel).Return(true).Maybe()
+	mm.On("GetChannel", analyzedChannel).Return(&model.Channel{Id: analyzedChannel, Type: model.ChannelTypeOpen, TeamId: "team-id"}, nil).Maybe()
+
+	lm := &toolThenTextLLM{toolName: "read_channel"}
+	bot := bots.NewBot(loadedStateBot(lm).GetConfig(), llm.ServiceConfig{DefaultModel: "test-model", Type: llm.ServiceTypeOpenAI}, &model.Bot{UserId: botID, Username: "matty"}, lm)
+	mockAPI := &plugintest.API{}
+	pluginAPI := pluginapi.NewClient(mockAPI, nil)
+	botsService := bots.New(mockAPI, pluginAPI, enterprise.NewLicenseChecker(pluginAPI), nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
+	botsService.SetBotsForTesting([]*bots.Bot{bot})
+
+	c := &Conversations{
+		mmClient:         mm,
+		bots:             botsService,
+		contextBuilder:   loadedStateBuilder(t, blockingTool, regenChannelTool("get_channel_info", new(string))),
+		convService:      conversation.NewService(convStore, nil, nil, nil),
+		streamingService: &stoppedStreaming{stopAfter: toolStarted},
+		licenseChecker:   enterprisetest.CheckerAt(enterprise.LevelEnterprise),
+		configProvider:   &channelFollowUpTestConfig{},
+	}
+
+	post := &model.Post{Id: regenPostID, UserId: botID, Message: "old response"}
+	post.AddProp(streaming.ConversationIDProp, conv.ID)
+	post.AddProp(AnalyzedChannelIDProp, analyzedChannel)
+	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: botID + "__" + userID}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- c.HandleRegenerate(auth.WithSessionID(t.Context(), "session-id"), userID, post, channel)
+	}()
+
+	select {
+	case <-toolStarted:
+	case err := <-done:
+		require.FailNow(t, "regenerate returned before the tool started", "%v", err)
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "the tool never started")
+	}
+	require.Never(t, func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}, 200*time.Millisecond, 10*time.Millisecond, "regenerate must wait for the running tool before releasing the post")
+	kvMu.Lock()
+	_, reserved := held[reservationKey]
+	kvMu.Unlock()
+	require.True(t, reserved, "the post stays reserved while a tool runs")
+
+	close(releaseTool)
+	require.NoError(t, <-done)
+	kvMu.Lock()
+	_, reserved = held[reservationKey]
+	kvMu.Unlock()
+	require.False(t, reserved)
+}
