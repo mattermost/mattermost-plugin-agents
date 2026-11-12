@@ -17,10 +17,19 @@ func NewMockLanguageModel(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockLanguageModel {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockLanguageModel{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -78,18 +87,35 @@ type MockLanguageModel_ChatCompletion_Call struct {
 }
 
 // ChatCompletion is a helper method to define mock.On call
-//   - ctx
-//   - conversation
-//   - opts
-func (_e *MockLanguageModel_Expecter) ChatCompletion(ctx interface{}, conversation interface{}, opts ...interface{}) *MockLanguageModel_ChatCompletion_Call {
+//   - ctx context.Context
+//   - conversation llm.CompletionRequest
+//   - opts ...llm.LanguageModelOption
+func (_e *MockLanguageModel_Expecter) ChatCompletion(ctx any, conversation any, opts ...any) *MockLanguageModel_ChatCompletion_Call {
 	return &MockLanguageModel_ChatCompletion_Call{Call: _e.mock.On("ChatCompletion",
-		append([]interface{}{ctx, conversation}, opts...)...)}
+		append([]any{ctx, conversation}, opts...)...)}
 }
 
 func (_c *MockLanguageModel_ChatCompletion_Call) Run(run func(ctx context.Context, conversation llm.CompletionRequest, opts ...llm.LanguageModelOption)) *MockLanguageModel_ChatCompletion_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		variadicArgs := args[2].([]llm.LanguageModelOption)
-		run(args[0].(context.Context), args[1].(llm.CompletionRequest), variadicArgs...)
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 llm.CompletionRequest
+		if args[1] != nil {
+			arg1 = args[1].(llm.CompletionRequest)
+		}
+		var arg2 []llm.LanguageModelOption
+		var variadicArgs []llm.LanguageModelOption
+		if len(args) > 2 {
+			variadicArgs = args[2].([]llm.LanguageModelOption)
+		}
+		arg2 = variadicArgs
+		run(
+			arg0,
+			arg1,
+			arg2...,
+		)
 	})
 	return _c
 }
@@ -142,18 +168,35 @@ type MockLanguageModel_ChatCompletionNoStream_Call struct {
 }
 
 // ChatCompletionNoStream is a helper method to define mock.On call
-//   - ctx
-//   - conversation
-//   - opts
-func (_e *MockLanguageModel_Expecter) ChatCompletionNoStream(ctx interface{}, conversation interface{}, opts ...interface{}) *MockLanguageModel_ChatCompletionNoStream_Call {
+//   - ctx context.Context
+//   - conversation llm.CompletionRequest
+//   - opts ...llm.LanguageModelOption
+func (_e *MockLanguageModel_Expecter) ChatCompletionNoStream(ctx any, conversation any, opts ...any) *MockLanguageModel_ChatCompletionNoStream_Call {
 	return &MockLanguageModel_ChatCompletionNoStream_Call{Call: _e.mock.On("ChatCompletionNoStream",
-		append([]interface{}{ctx, conversation}, opts...)...)}
+		append([]any{ctx, conversation}, opts...)...)}
 }
 
 func (_c *MockLanguageModel_ChatCompletionNoStream_Call) Run(run func(ctx context.Context, conversation llm.CompletionRequest, opts ...llm.LanguageModelOption)) *MockLanguageModel_ChatCompletionNoStream_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		variadicArgs := args[2].([]llm.LanguageModelOption)
-		run(args[0].(context.Context), args[1].(llm.CompletionRequest), variadicArgs...)
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 llm.CompletionRequest
+		if args[1] != nil {
+			arg1 = args[1].(llm.CompletionRequest)
+		}
+		var arg2 []llm.LanguageModelOption
+		var variadicArgs []llm.LanguageModelOption
+		if len(args) > 2 {
+			variadicArgs = args[2].([]llm.LanguageModelOption)
+		}
+		arg2 = variadicArgs
+		run(
+			arg0,
+			arg1,
+			arg2...,
+		)
 	})
 	return _c
 }
@@ -206,18 +249,35 @@ type MockLanguageModel_CountTokens_Call struct {
 }
 
 // CountTokens is a helper method to define mock.On call
-//   - ctx
-//   - request
-//   - opts
-func (_e *MockLanguageModel_Expecter) CountTokens(ctx interface{}, request interface{}, opts ...interface{}) *MockLanguageModel_CountTokens_Call {
+//   - ctx context.Context
+//   - request llm.CompletionRequest
+//   - opts ...llm.LanguageModelOption
+func (_e *MockLanguageModel_Expecter) CountTokens(ctx any, request any, opts ...any) *MockLanguageModel_CountTokens_Call {
 	return &MockLanguageModel_CountTokens_Call{Call: _e.mock.On("CountTokens",
-		append([]interface{}{ctx, request}, opts...)...)}
+		append([]any{ctx, request}, opts...)...)}
 }
 
 func (_c *MockLanguageModel_CountTokens_Call) Run(run func(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption)) *MockLanguageModel_CountTokens_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		variadicArgs := args[2].([]llm.LanguageModelOption)
-		run(args[0].(context.Context), args[1].(llm.CompletionRequest), variadicArgs...)
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 llm.CompletionRequest
+		if args[1] != nil {
+			arg1 = args[1].(llm.CompletionRequest)
+		}
+		var arg2 []llm.LanguageModelOption
+		var variadicArgs []llm.LanguageModelOption
+		if len(args) > 2 {
+			variadicArgs = args[2].([]llm.LanguageModelOption)
+		}
+		arg2 = variadicArgs
+		run(
+			arg0,
+			arg1,
+			arg2...,
+		)
 	})
 	return _c
 }

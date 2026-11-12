@@ -318,6 +318,11 @@ func (a *API) SetConversationService(svc *conversation.Service) {
 
 // ServeHTTP handles HTTP requests to the plugin
 func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Request) {
+	// Servers with context-aware plugin HTTP cancel the request context when
+	// the request ends, but handlers hand LLM streams and tool loops that
+	// outlive the request to goroutines on this context.
+	serverCtx := r.Context()
+	r = r.WithContext(context.WithoutCancel(serverCtx))
 	if c != nil {
 		r = r.WithContext(auth.WithSessionID(r.Context(), c.SessionId))
 	}
@@ -354,6 +359,19 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 		// Store plugin.Context in gin.Context for MCP endpoints
 		mcpServerGroup.Use(func(gc *gin.Context) {
 			gc.Set(pluginContextGinKey, c)
+			gc.Next()
+		})
+
+		// MCP requests do their work within the request, and a client that
+		// disconnects from a long-lived stream must release its slot.
+		mcpServerGroup.Use(func(gc *gin.Context) {
+			ctx, cancel := context.WithCancelCause(gc.Request.Context())
+			stop := context.AfterFunc(serverCtx, func() { cancel(context.Cause(serverCtx)) })
+			defer func() {
+				stop()
+				cancel(nil)
+			}()
+			gc.Request = gc.Request.WithContext(ctx)
 			gc.Next()
 		})
 

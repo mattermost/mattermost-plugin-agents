@@ -70,7 +70,9 @@ type Bot = ReturnType<typeof makeBot>;
 
 const makeStore = (bots: Bot[], loadedChannels: string[] = []) => {
     const initial = {
-        [pluginKey]: {bots},
+
+        // The prompts and pins are loaded (none), so the new chat does not fetch them; this store has no thunk middleware.
+        [pluginKey]: {bots, customPrompts: [], pinnedPromptIds: []},
         entities: {
             users: {currentUserId: 'me'},
             channels: {
