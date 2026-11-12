@@ -52,7 +52,7 @@ Agents connect over Streamable HTTP, and fall back to the older HTTP+SSE transpo
 
 Write a **Description** for any server whose name doesn't say what it does. The agent is told only your server name, your description, and the tools you've configured, not anything the server reports to other users' connections.
 
-To check a server that doesn't use OAuth, such as an internal server with an API key, finish the dialog, then open the **Tools** tab. The server's tools are listed there. If the list is empty or an error shows, check the **Server URL** and headers. For an internal server with an API key, put the key in **Service Account Authentication**, and turn on **Use service accounts for authentication** on the agent. A key in **Headers** is sent for every user.
+To check a server that doesn't use OAuth, such as an internal server with an API key, finish the dialog, then open the **Tools** tab. The server's tools are listed there. If the list is empty or an error shows, check the **Server URL** and headers. Tool discovery and review connect as you, and don't send **Service Account Authentication** headers, so a server whose API key is only there can't list its tools. A key in **Headers** is sent for every user, so keep a personal or admin credential out of it. For an agent to use the key as a shared credential, put it in **Service Account Authentication** and turn on **Use service accounts for authentication** on the agent.
 
 ### Sign in with OAuth
 
@@ -90,7 +90,7 @@ A user who asks "Open an issue for the bug in this thread" now sees a **Connect*
 
 On the **Tools** tab, each server lists its tools. For each tool you set whether it's enabled and how it's approved. The options are **Ask Every Time**, **Auto Run (DM)**, and **Auto Run (Everywhere)**. What they do in direct messages and channels is in [Approval policies](tool_approval.md#approval-policies).
 
-A tool with no saved setting is enabled and set to **Ask Every Time**, or **Auto Run (DM)** if the server marks it read-only. That includes tools a server adds later. Remote servers show how many tools are **Not reviewed**, meaning no administrator has chosen a policy. Open the server's tool list, select **Mark tools as reviewed**, and save to store the suggested policy for every unreviewed tool. Turning a tool on or off doesn't set its policy.
+A tool with no saved setting is enabled and set to **Ask Every Time**, except for curated defaults on Mattermost's own tools, Atlassian, and Figma. That includes tools a server adds later. When you review a server's tools, a tool the server marks read-only (`readOnlyHint`) is suggested as **Auto Run (DM)**, but the suggestion applies only once you save it. Remote servers show how many tools are **Not reviewed**, meaning no administrator has chosen a policy. Open the server's tool list, select **Mark tools as reviewed**, and save to store the suggested policy for every unreviewed tool. Turning a tool on or off doesn't set its policy.
 
 When you add a server at a known host, Mattermost pre-fills policies for its read-only tools. Mattermost's own read-only tools default to **Auto Run (DM)**, except `get_file_link`, `list_incoming_webhooks`, `list_outgoing_webhooks`, `list_agents`, and `list_drafts`, which stay at **Ask Every Time**. The first three expose bypass links or webhook tokens. The same pre-fill covers read tools on Atlassian (`mcp.atlassian.com`) and Figma (`mcp.figma.com`). GitHub (`api.githubcopilot.com`) needs no pre-fill because it marks its read tools read-only. GitHub's code scanning, Dependabot, secret scanning, and security advisory reads stay at **Ask Every Time**. Tools that change something are never pre-filled.
 
@@ -100,7 +100,7 @@ Approval policy details, including how they behave in channels and below Enterpr
 
 ## Limit a server to direct messages
 
-Some servers return data that not everyone in a channel may see, such as a CRM where each user's connection reaches different records. In a channel, the only safeguard is the requester reviewing each tool call and its results before approving or sharing them. Turn on **Direct Messages Only** on such a server to remove that decision from users.
+Some servers return data that not everyone in a channel may see, such as a CRM where each user's connection reaches different records. In a channel, the safeguard is the requester reviewing each tool call and its results before approving or sharing them. A tool set to **Auto Run (Everywhere)** skips that review and shares its results at once. Turn on **Direct Messages Only** on such a server when its results must never reach a channel.
 
 A server limited to direct messages:
 
