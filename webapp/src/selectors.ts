@@ -31,6 +31,13 @@ export const getCustomPrompts = (state: AppState): readonly CustomPrompt[] =>
 export const getPinnedPromptIds = (state: AppState): readonly string[] =>
     state[`plugins-${manifest.id}`]?.pinnedPromptIds ?? EMPTY_PINNED_PROMPT_IDS;
 
+// Whether the prompts and the pins have been fetched at least once (a failed fetch leaves them unloaded).
+export const isCustomPromptsLoaded = (state: AppState): boolean =>
+    Boolean(state[`plugins-${manifest.id}`]?.customPrompts);
+
+export const isPinnedPromptIdsLoaded = (state: AppState): boolean =>
+    Boolean(state[`plugins-${manifest.id}`]?.pinnedPromptIds);
+
 export const getShowCustomPromptsModal = (state: AppState): boolean =>
     state[`plugins-${manifest.id}`]?.showCustomPromptsModal ?? false;
 
