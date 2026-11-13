@@ -17,9 +17,11 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-// externalServerRebuilder rebuilds the external MCP aggregate after plugin changes.
+// externalServerRebuilder rebuilds the external MCP aggregate after plugin
+// changes. The rebuild runs in the background: it calls back into the source
+// plugin, which may still be in OnActivate when it registers.
 type externalServerRebuilder interface {
-	RebuildExternalServer()
+	RequestRebuild()
 }
 
 func (a *API) resolveExternalServerRebuilder() externalServerRebuilder {
@@ -141,7 +143,7 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 	newEffectiveExternal := cfg.Enabled && cfg.ExposeExternal
 	if prevEffectiveExternal || newEffectiveExternal {
 		if rb := a.resolveExternalServerRebuilder(); rb != nil {
-			rb.RebuildExternalServer()
+			rb.RequestRebuild()
 		}
 	}
 
@@ -240,7 +242,7 @@ func (a *API) handleMCPUnregister(c *gin.Context) {
 
 	// Always rebuild on unregister so stale proxy tools disappear.
 	if rb := a.resolveExternalServerRebuilder(); rb != nil {
-		rb.RebuildExternalServer()
+		rb.RequestRebuild()
 	}
 
 	c.Status(http.StatusOK)

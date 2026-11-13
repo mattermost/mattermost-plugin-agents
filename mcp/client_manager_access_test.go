@@ -80,13 +80,13 @@ func newAccessTestManager(t *testing.T, checker ServerAccessChecker) *ClientMana
 		config:           accessTestConfig(),
 		embeddedClient:   &EmbeddedServerClient{},
 		pluginServers:    make(map[string]PluginServerConfig),
-		pluginRegistered: make(map[string]bool),
+		pluginRegistered: make(map[string]uint64),
 		remoteAllowed:    func() bool { return true },
 	}
 	m.pluginServers[accessPluginID] = PluginServerConfig{
 		ID: accessPluginSrvID, PluginID: accessPluginID, Name: "Plugin MCP", Enabled: true, Path: "/mcp",
 	}
-	m.pluginRegistered[accessPluginID] = true
+	m.pluginRegistered[accessPluginID] = 1
 	if checker != nil {
 		m.accessChecker = checker
 	}
@@ -228,7 +228,7 @@ func TestGetCatalogAccessPinsPluginSnapshotAcrossABAC(t *testing.T) {
 		m.pluginServers[latePluginID] = PluginServerConfig{
 			ID: lateServerID, PluginID: latePluginID, Name: "Late", Path: "/mcp", Enabled: true,
 		}
-		m.pluginRegistered[latePluginID] = true
+		m.pluginRegistered[latePluginID] = 1
 		m.pluginServersMu.Unlock()
 	}
 

@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -74,9 +75,9 @@ func newJSONResponse(status int, body string) *http.Response {
 
 func fastRetry() retryPolicy {
 	return retryPolicy{
-		baseDelay:   1 * time.Millisecond,
-		maxDelay:    2 * time.Millisecond,
-		maxAttempts: 15,
+		baseDelay:         1 * time.Millisecond,
+		maxDelay:          2 * time.Millisecond,
+		warnAfterAttempts: 15,
 	}
 }
 
@@ -191,21 +192,25 @@ func TestRegisterWithBackoff_Succeeds(t *testing.T) {
 	assert.Len(t, api.requests(), 3, "expected 3 POST attempts (2 x 500 + 1 x 200)")
 }
 
-func TestRegisterWithBackoff_GivesUpAfterMaxAttempts(t *testing.T) {
-	api := &mockPluginAPI{responses: []*http.Response{
-		newJSONResponse(500, ""),
-		newJSONResponse(500, ""),
-		newJSONResponse(500, ""),
-	}}
+// TestRegisterWithBackoff_KeepsRetryingPastWarnThreshold: the Agents plugin
+// can take arbitrarily long to come up, so retries never give up on their own;
+// the loop warns once and keeps going until registration succeeds.
+func TestRegisterWithBackoff_KeepsRetryingPastWarnThreshold(t *testing.T) {
+	responses := make([]*http.Response, 0, 21)
+	for range 20 {
+		responses = append(responses, newJSONResponse(http.StatusNotFound, ""))
+	}
+	responses = append(responses, newJSONResponse(http.StatusOK, ""))
+	api := &mockPluginAPI{responses: responses}
 	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
-	s.retry = retryPolicy{baseDelay: 1 * time.Millisecond, maxDelay: 1 * time.Millisecond, maxAttempts: 3}
+	s.retry = retryPolicy{baseDelay: 1 * time.Millisecond, maxDelay: 1 * time.Millisecond, warnAfterAttempts: 3}
+	logs := captureLog(t)
 
-	start := time.Now()
 	s.registerWithBackoff(context.Background())
-	elapsed := time.Since(start)
 
-	assert.Len(t, api.requests(), 3, "should stop at maxAttempts (3)")
-	assert.Less(t, elapsed, 500*time.Millisecond, "total time should be bounded by the shrunken policy")
+	assert.Len(t, api.requests(), 21, "should keep retrying until the 200")
+	assert.Equal(t, 1, strings.Count(logs.String(), "still unable to register"), "the warning is logged once")
+	assert.Contains(t, logs.String(), "registered with Agents plugin after 21 attempts")
 }
 
 func TestRegisterWithBackoff_GivesUpOnPermanent4xx(t *testing.T) {
@@ -227,7 +232,7 @@ func TestRegisterWithBackoff_CancelStops(t *testing.T) {
 	}}
 	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 	// Delay big enough to guarantee the time.After() select is reached.
-	s.retry = retryPolicy{baseDelay: 50 * time.Millisecond, maxDelay: 50 * time.Millisecond, maxAttempts: 15}
+	s.retry = retryPolicy{baseDelay: 50 * time.Millisecond, maxDelay: 50 * time.Millisecond, warnAfterAttempts: 15}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -241,13 +246,13 @@ func TestRegisterWithBackoff_CancelStops(t *testing.T) {
 
 	assert.Less(t, elapsed, 500*time.Millisecond, "cancellation should short-circuit the loop")
 	attempts := len(api.requests())
-	assert.Less(t, attempts, 15, "should not complete all 15 attempts when canceled; got %d", attempts)
+	assert.Less(t, attempts, 15, "should stop retrying when canceled; got %d", attempts)
 }
 
 func TestRegister_IsAsync(t *testing.T) {
 	api := &mockPluginAPI{fn: func(_ *http.Request) *http.Response { return newJSONResponse(200, "") }}
 	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
-	s.retry = retryPolicy{baseDelay: 1 * time.Millisecond, maxDelay: 1 * time.Millisecond, maxAttempts: 1}
+	s.retry = retryPolicy{baseDelay: 1 * time.Millisecond, maxDelay: 1 * time.Millisecond, warnAfterAttempts: 1}
 
 	start := time.Now()
 	err := s.Register()
@@ -269,7 +274,7 @@ func TestUnregister_Sync_CancelsRetries(t *testing.T) {
 	}}
 	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 	// Slow enough that the retry loop is mid-wait when Unregister fires.
-	s.retry = retryPolicy{baseDelay: 1 * time.Second, maxDelay: 1 * time.Second, maxAttempts: 15}
+	s.retry = retryPolicy{baseDelay: 1 * time.Second, maxDelay: 1 * time.Second, warnAfterAttempts: 15}
 
 	require.NoError(t, s.Register())
 	time.Sleep(20 * time.Millisecond)
@@ -454,7 +459,7 @@ func TestUnregister_WaitsForInFlightRegister(t *testing.T) {
 		return newJSONResponse(200, "")
 	}}
 	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
-	s.retry = retryPolicy{baseDelay: 1 * time.Millisecond, maxDelay: 1 * time.Millisecond, maxAttempts: 1}
+	s.retry = retryPolicy{baseDelay: 1 * time.Millisecond, maxDelay: 1 * time.Millisecond, warnAfterAttempts: 1}
 
 	require.NoError(t, s.Register())
 	<-registerStarted
@@ -512,7 +517,7 @@ func TestUnregister_BoundedWaitForInFlightRegister(t *testing.T) {
 		return newJSONResponse(200, "")
 	}}
 	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
-	s.retry = retryPolicy{baseDelay: 1 * time.Millisecond, maxDelay: 1 * time.Millisecond, maxAttempts: 1}
+	s.retry = retryPolicy{baseDelay: 1 * time.Millisecond, maxDelay: 1 * time.Millisecond, warnAfterAttempts: 1}
 
 	require.NoError(t, s.Register())
 	<-registerStarted
@@ -568,15 +573,7 @@ func TestPostRegistration_BodyCloseErrorIsLoggedNotReturned(t *testing.T) {
 	}}
 	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 
-	var buf bytes.Buffer
-	prevOut := log.Writer()
-	prevFlags := log.Flags()
-	log.SetOutput(&buf)
-	log.SetFlags(0)
-	t.Cleanup(func() {
-		log.SetOutput(prevOut)
-		log.SetFlags(prevFlags)
-	})
+	buf := captureLog(t)
 
 	retriable, err := s.postRegistration(context.Background(), registerPath, s.config)
 	require.NoError(t, err, "Close() error must not break the OK path")
@@ -608,4 +605,107 @@ func TestUnregister_DeadlinePropagated(t *testing.T) {
 	require.True(t, gotDeadline, "Unregister must propagate a deadline-bound context to PluginHTTP")
 	assert.WithinDuration(t, start.Add(unregisterTimeout), deadline, 500*time.Millisecond,
 		"deadline should be ~unregisterTimeout from invocation")
+}
+
+// captureLog redirects the standard logger for the duration of the test.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prevOut := log.Writer()
+	prevFlags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+	return &buf
+}
+
+func newReregisterRequest(method string, fromAgents bool) *http.Request {
+	req := httptest.NewRequest(method, "/mcp", nil)
+	req.Header.Set(ReregisterHeader, "1")
+	if fromAgents {
+		req.Header.Set("Mattermost-Plugin-ID", agentsPluginID)
+	}
+	return req
+}
+
+func countRegisterPosts(api *mockPluginAPI) int {
+	n := 0
+	for _, r := range api.requests() {
+		if r.URL.Path == "/"+agentsPluginID+registerPath {
+			n++
+		}
+	}
+	return n
+}
+
+func TestServeHTTP_Reregister(t *testing.T) {
+	tests := []struct {
+		name          string
+		method        string
+		fromAgents    bool
+		unregistered  bool
+		wantStatus    int
+		wantAck       string
+		wantRegisters int
+	}{
+		{name: "accepted from Agents", method: http.MethodPost, fromAgents: true, wantStatus: http.StatusAccepted, wantAck: ReregisterAccepted, wantRegisters: 1},
+		{name: "rejected without the Agents plugin ID", method: http.MethodPost, wantStatus: http.StatusForbidden},
+		{name: "rejected for non-POST", method: http.MethodGet, fromAgents: true, wantStatus: http.StatusMethodNotAllowed},
+		{name: "stopped after Unregister", method: http.MethodPost, fromAgents: true, unregistered: true, wantStatus: http.StatusGone, wantAck: ReregisterStopped},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := &mockPluginAPI{fn: func(_ *http.Request) *http.Response { return newJSONResponse(http.StatusOK, "") }}
+			s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
+			s.retry = fastRetry()
+			if tt.unregistered {
+				require.NoError(t, s.Unregister())
+			}
+
+			rec := httptest.NewRecorder()
+			s.ServeHTTP(rec, newReregisterRequest(tt.method, tt.fromAgents))
+
+			assert.Equal(t, tt.wantStatus, rec.Code)
+			assert.Equal(t, tt.wantAck, rec.Header().Get(ReregisterHeader))
+			require.Eventually(t, func() bool {
+				return countRegisterPosts(api) == tt.wantRegisters
+			}, time.Second, 5*time.Millisecond)
+			s.regWG.Wait()
+			assert.Equal(t, tt.wantRegisters, countRegisterPosts(api))
+		})
+	}
+}
+
+// TestServeHTTP_ReregisterDuringRegistration: a request that arrives while a
+// registration is in flight must still produce a registration afterwards,
+// because the in-flight one may have reached a previous Agents instance.
+func TestServeHTTP_ReregisterDuringRegistration(t *testing.T) {
+	release := make(chan struct{})
+	firstStarted := make(chan struct{})
+	var once sync.Once
+	api := &mockPluginAPI{fn: func(_ *http.Request) *http.Response {
+		once.Do(func() {
+			close(firstStarted)
+			<-release
+		})
+		return newJSONResponse(http.StatusOK, "")
+	}}
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
+	s.retry = fastRetry()
+
+	require.NoError(t, s.Register())
+	<-firstStarted
+
+	for range 3 {
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, newReregisterRequest(http.MethodPost, true))
+		require.Equal(t, http.StatusAccepted, rec.Code)
+	}
+	close(release)
+	s.regWG.Wait()
+
+	assert.Equal(t, 2, countRegisterPosts(api), "requests during a registration coalesce into one more registration")
 }
