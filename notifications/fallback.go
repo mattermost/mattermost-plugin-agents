@@ -182,6 +182,17 @@ func (s *Service) buildFallbackPush(cfg *model.Config, post *model.Post, channel
 	}
 
 	T := i18n.LocalizerFunc(s.i18n, recipient.Locale)
+	if contents == model.IdLoadedNotification {
+		// The device loads the real content over the authenticated ack, so the
+		// push proxy gets only IDs and a content-free message, as the server's
+		// id_loaded builder sends.
+		msg.IsIdLoaded = true
+		msg.SenderId = recipient.Id
+		msg.SenderName = ""
+		msg.ChannelName = ""
+		msg.Message = T("agents.notifications.push_id_loaded", "You've received a new message.")
+		return msg
+	}
 	// A post with only files, or paused on tool calls, has no text to show.
 	text := strings.TrimSpace(truncateRunes(model.ClearMentionTags(post.Message), maxFallbackPushMessageRunes))
 	switch {

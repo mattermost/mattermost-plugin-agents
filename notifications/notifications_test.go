@@ -523,6 +523,8 @@ func TestFallbackPush(t *testing.T) {
 		wantMessage string
 		wantChannel string
 		wantPush    bool
+
+		wantIDLoaded bool
 	}{
 		{
 			name:        "final answer in a DM pushes the content to the requester",
@@ -550,6 +552,18 @@ func TestFallbackPush(t *testing.T) {
 			wantPush:    true,
 			wantMessage: "sent you a message.",
 			wantChannel: "ai",
+		},
+		{
+			name:        "id loaded sends only IDs and no names",
+			channelType: model.ChannelTypeOpen,
+			setup: func(c *fakeClient, _ *Service) {
+				c.config.EmailSettings.PushNotificationContents = new(model.IdLoadedNotification)
+			},
+			end:          StreamEnd{Outcome: OutcomeCompleted},
+			wantPush:     true,
+			wantMessage:  "You've received a new message.",
+			wantChannel:  "",
+			wantIDLoaded: true,
 		},
 		{
 			name:        "generic without channel hides the channel name",
@@ -730,9 +744,15 @@ func TestFallbackPush(t *testing.T) {
 			push := client.pushes[0]
 			assert.Equal(t, testRequesterID, push.userID)
 			assert.Equal(t, testPostID, push.msg.PostId)
-			assert.Equal(t, testBotID, push.msg.SenderId)
 			assert.Equal(t, tt.wantMessage, push.msg.Message)
 			assert.Equal(t, tt.wantChannel, push.msg.ChannelName)
+			assert.Equal(t, tt.wantIDLoaded, push.msg.IsIdLoaded)
+			if tt.wantIDLoaded {
+				assert.Empty(t, push.msg.SenderName)
+				assert.Equal(t, testRequesterID, push.msg.SenderId)
+			} else {
+				assert.Equal(t, testBotID, push.msg.SenderId)
+			}
 			assert.False(t, s.ConsumeFallbackPush(testPostID, testRequesterID), "the exemption is used once")
 		})
 	}
