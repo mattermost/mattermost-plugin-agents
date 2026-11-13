@@ -344,7 +344,7 @@ export const TextFieldContainer = styled.div`
 `;
 
 export const CredentialsClearedNote = styled.div`
-    margin-top: 4px;
+    margin-top: var(--spacing-xs);
     color: var(--error-text);
 `;
 

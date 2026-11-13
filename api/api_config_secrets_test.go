@@ -301,6 +301,7 @@ func TestGetConfigDoesNotReturnStoredCredentials(t *testing.T) {
 		{field: "webSearch.google.apiKey", sentinel: sentinelGoogleAPIKey},
 		{field: "webSearch.brave.apiKey", sentinel: sentinelBraveAPIKey},
 		{field: "embeddingSearchConfig.embeddingProvider.parameters.apiKey", sentinel: sentinelEmbeddingAPIKey},
+		{field: "openTelemetryHeaders", sentinel: sentinelOTelHeaders},
 	}
 
 	for _, tt := range tests {
@@ -665,11 +666,12 @@ func TestFetchModelsSendsStoredCredentialOnlyToStoredEndpoint(t *testing.T) {
 			assert.False(t, other.sawValue(sentinelServiceAPIKey),
 				"the credentials of a saved service must not be sent to an endpoint the service is not saved with")
 
+			assert.Equal(t, tt.wantAtSaved, saved.sawValue(sentinelServiceAPIKey),
+				"the saved endpoint must receive the stored credentials only for a request naming that provider type and endpoint")
+
 			if tt.wantAtSaved {
 				assert.Equal(t, http.StatusOK, recorder.Result().StatusCode,
 					"naming the endpoint a service is saved with must list its models")
-				assert.True(t, saved.sawValue(sentinelServiceAPIKey),
-					"the endpoint a service is saved with must receive that service's credentials")
 			}
 		})
 	}
