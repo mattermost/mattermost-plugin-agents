@@ -153,9 +153,10 @@ var figmaVettedToolConfigs = autoRunInDMToolConfigs([]string{
 //   - list_incoming_webhooks / list_outgoing_webhooks surface webhook IDs and
 //     tokens that are effectively posting credentials.
 //
-// GitHub's security read tools are not seeded here; like other readOnlyHint
-// tools they default to auto_run_in_dm, and the docs warn admins to check
-// before accepting that.
+// GitHub has no seed here. Its read tools, including code scanning, Dependabot,
+// secret scanning, and security advisory reads, are suggested as auto_run_in_dm
+// from their readOnlyHint during review, so admins must check them before
+// accepting.
 var mattermostVettedToolConfigs = autoRunInDMToolConfigs([]string{
 	// Posts & scheduled posts
 	"read_post",
