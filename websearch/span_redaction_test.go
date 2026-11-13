@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -89,6 +90,11 @@ func TestSearchTransportErrorsDoNotLeakIntoSpansOrLogs(t *testing.T) {
 			logger := &captureLogger{}
 			_, err := tc.search(logger)
 			require.Error(t, err)
+			for _, secret := range []string{sentinelQuery, sentinelKey} {
+				assert.NotContains(t, err.Error(), secret)
+			}
+			var urlErr *url.Error
+			require.ErrorAs(t, err, &urlErr)
 
 			spans := exporter.GetSpans()
 			require.Len(t, spans, 1)

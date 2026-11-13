@@ -91,7 +91,7 @@ func (b *BraveProvider) Search(ctx context.Context, query string, limit int) (*S
 			b.logger.Error("brave web search request failed", "error", redactTransportError(err))
 		}
 		failSpanFixed(span, "brave web search request failed")
-		return nil, fmt.Errorf("brave web search request failed: %w", err)
+		return nil, fmt.Errorf("brave web search request failed: %w", redactTransportError(err))
 	}
 	defer resp.Body.Close()
 
@@ -186,7 +186,7 @@ func (b *BraveProvider) pollSummarizer(ctx context.Context, client *http.Client,
 
 		resp, err := client.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("summarizer request failed: %w", err)
+			return nil, fmt.Errorf("summarizer request failed: %w", redactTransportError(err))
 		}
 
 		if resp.StatusCode != http.StatusOK {

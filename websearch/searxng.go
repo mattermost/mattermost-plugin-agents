@@ -90,7 +90,7 @@ func (s *SearXNGProvider) Search(ctx context.Context, query string, limit int) (
 		if s.logger != nil {
 			s.logger.Error("web search request failed", "error", redactTransportError(err))
 		}
-		err = fmt.Errorf("web search request failed: %w", err)
+		err = fmt.Errorf("web search request failed: %w", redactTransportError(err))
 		failSpan(span, "http_request", 0)
 		return nil, err
 	}

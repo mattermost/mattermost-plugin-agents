@@ -84,7 +84,7 @@ func (g *GoogleProvider) Search(ctx context.Context, query string, limit int) (*
 			g.logger.Error("web search request failed", "error", redactTransportError(err))
 		}
 		failSpanFixed(span, "google web search request failed")
-		return nil, fmt.Errorf("web search request failed: %w", err)
+		return nil, fmt.Errorf("web search request failed: %w", redactTransportError(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
