@@ -81,6 +81,9 @@ export interface ServerToolUse {
     command?: string;
     output?: string;
     error_code?: string;
+
+    // Reported after the text it informed (Gemini grounding); belongs above that text.
+    retroactive?: boolean;
 }
 
 export interface ContentBlock {
