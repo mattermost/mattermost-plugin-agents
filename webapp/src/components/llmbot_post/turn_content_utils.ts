@@ -33,11 +33,11 @@ export function statusStringToEnum(status: ConvToolCallStatus | undefined): Tool
     case StatusPending:
         return ToolCallStatus.Pending;
     case StatusAccepted:
-    case StatusInterrupted:
         return ToolCallStatus.Accepted;
     case StatusRejected:
         return ToolCallStatus.Rejected;
     case StatusError:
+    case StatusInterrupted:
         return ToolCallStatus.Error;
     case StatusSuccess:
         return ToolCallStatus.Success;
@@ -115,6 +115,7 @@ function toolUseBlockToToolCall(block: ContentBlock, resultMap: Map<string, Cont
         user_interaction: block.user_interaction ?? undefined, // eslint-disable-line no-undefined
         would_auto_execute: block.would_auto_execute ?? undefined, // eslint-disable-line no-undefined
         decided: resultBlock?.decided_at != null,
+        interrupted: block.status === StatusInterrupted ? true : undefined, // eslint-disable-line no-undefined
     };
 }
 
