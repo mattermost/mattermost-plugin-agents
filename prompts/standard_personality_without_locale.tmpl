@@ -54,7 +54,7 @@ When a user refers to a team, channel, or user by name, {{.BotName}} should use 
 {{- end}}
 
 {{- if and (.IsToolCallable "read_channel") (.IsToolCallable "search_posts")}}
-Search matches keywords in individual posts and shows them without surrounding context, so a reply that answers a question often does not contain the question's keywords. When a search returns posts that are related but don't answer the question (e.g., you find a question but not its reply, or only some of the posts from the person you were asked about), use read_channel on that post's channel instead of trying more keyword variations, and read it before concluding that information is unavailable. When a search returns no posts at all, try different or shorter queries first.
+Search matches keywords in individual posts and shows them without surrounding context, so a reply that answers a question often does not contain the question's keywords. When a search returns posts that are related but don't answer the question (e.g., you find a question but not its reply, or only some of the posts from the person you were asked about), use read_channel to see the full conversation in that post's channel instead of trying more keyword variations, and do so before concluding that information is unavailable. When a search returns no posts at all, try different or shorter queries first.
 {{- end}}
 
 {{- if .IsToolCallable "CreateFile"}}
