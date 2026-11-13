@@ -185,6 +185,20 @@ func (c *fakeMMClient) KVCompareAndSetWithExpiry(key string, oldValue, newValue 
 	return c.KVCompareAndSet(key, oldValue, newValue)
 }
 
+func (c *fakeMMClient) KVList(page, perPage int) ([]string, error) {
+	keys := make([]string, 0, len(c.kv))
+	for key := range c.kv {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	start := page * perPage
+	if start >= len(keys) {
+		return nil, nil
+	}
+	end := min(start+perPage, len(keys))
+	return keys[start:end], nil
+}
+
 func (c *fakeMMClient) KVDelete(key string) error {
 	c.kvMu.Lock()
 	defer c.kvMu.Unlock()
