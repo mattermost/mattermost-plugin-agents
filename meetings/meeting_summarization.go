@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/lifecycle"
+
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
@@ -177,7 +179,7 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 			return errors.New("strange configuration of calls transcription file")
 		}
 
-		ctx := stdcontext.Background()
+		ctx := lifecycle.Context()
 		requestContext := s.contextBuilder.BuildLLMContextUserRequest(
 			ctx,
 			bot,
@@ -261,7 +263,7 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 			return fmt.Errorf("unable to attach transcript: %w", err)
 		}
 
-		ctx := stdcontext.Background()
+		ctx := lifecycle.Context()
 		llmContext := s.contextBuilder.BuildLLMContextUserRequest(
 			ctx,
 			bot,

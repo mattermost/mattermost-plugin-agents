@@ -8,7 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
@@ -25,6 +28,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -33,6 +37,8 @@ import (
 type regenRecordingStreaming struct {
 	loadedStateStreamingService
 	streamed []*model.Post
+	// busy reports the post as streaming on this node.
+	busy bool
 }
 
 func (s *regenRecordingStreaming) StreamToPost(_ context.Context, result *llm.TextStreamResult, post *model.Post, _ string, _ string) {
@@ -41,17 +47,53 @@ func (s *regenRecordingStreaming) StreamToPost(_ context.Context, result *llm.Te
 }
 
 func (s *regenRecordingStreaming) GetStreamingContext(ctx context.Context, _ string) (context.Context, error) {
+	if s.busy {
+		return nil, streaming.ErrAlreadyStreamingToPost
+	}
 	return ctx, nil
+}
+
+// allowPostRunReservation backs the post run reservation with an in-memory
+// compare-and-set, for tests that drive regenerate or tool decisions through
+// a MockClient.
+func allowPostRunReservation(mm *mocks.MockClient) {
+	var mu sync.Mutex
+	held := map[string]any{}
+	isReservation := mock.MatchedBy(func(key string) bool { return strings.HasPrefix(key, postRunReservationKeyPrefix) })
+	mm.On("KVCompareAndSetWithExpiry", isReservation, mock.Anything, mock.Anything, mock.Anything).
+		Return(func(key string, oldValue, newValue any, _ time.Duration) (bool, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if current, ok := held[key]; (oldValue == nil && ok) || (oldValue != nil && current != oldValue) {
+				return false, nil
+			}
+			held[key] = newValue
+			return true, nil
+		}).Maybe()
+	mm.On("KVCompareAndSet", isReservation, mock.Anything, nil).
+		Return(func(key string, oldValue, _ any) (bool, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if held[key] != oldValue {
+				return false, nil
+			}
+			delete(held, key)
+			return true, nil
+		}).Maybe()
 }
 
 // fakeMeetingRegenerator records meeting summary regenerations.
 type fakeMeetingRegenerator struct {
 	postIDs []string
+	during  func(ctx context.Context)
 	err     error
 }
 
-func (f *fakeMeetingRegenerator) RegenerateSummary(_ context.Context, _ *bots.Bot, _ *llm.Context, _ *store.Conversation, post *model.Post) (*llm.TextStreamResult, error) {
+func (f *fakeMeetingRegenerator) RegenerateSummary(ctx context.Context, _ *bots.Bot, _ *llm.Context, _ *store.Conversation, post *model.Post) (*llm.TextStreamResult, error) {
 	f.postIDs = append(f.postIDs, post.Id)
+	if f.during != nil {
+		f.during(ctx)
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -133,6 +175,17 @@ func TestHandleRegenerate(t *testing.T) {
 		wantErr      string
 		wantErrIs    error
 		wantLicense  enterprise.Capability
+		// anchorStreamingAge, when set, leaves the post's turn streaming with a
+		// heartbeat that many milliseconds old.
+		anchorStreamingAge int64
+		reservedElsewhere  bool
+		waitForRenewal     bool
+		stolenMidRun       bool
+		// savedToolRounds leaves tool rounds the dead run saved after its anchor.
+		savedToolRounds bool
+		// wantPostInterrupted expects the post repaired as the recovery sweep would.
+		wantPostInterrupted bool
+		streamingHere       bool
 	}{
 		{
 			name:       "thread analysis post regenerates from its stored turn",
@@ -265,6 +318,75 @@ func TestHandleRegenerate(t *testing.T) {
 			wantErr:   "not supported",
 		},
 		{
+			name:               "post still streaming on another node is refused",
+			operation:          llm.OperationConversation,
+			postProps:          followUpProps,
+			anchorStreamingAge: 1_000,
+			wantErrIs:          streaming.ErrAlreadyStreamingToPost,
+		},
+		{
+			name:               "stale streaming turn from a dead node does not block",
+			operation:          llm.OperationConversation,
+			postProps:          followUpProps,
+			anchorStreamingAge: 2 * streaming.StaleStreamThreshold.Milliseconds(),
+			wantPath:           pathConversation,
+		},
+		{
+			name:           "a regenerate outlasting the reservation TTL renews it",
+			operation:      llm.OperationMeetingSummary,
+			postProps:      map[string]any{meetings.ReferencedTranscriptPostID: "transcript-post"},
+			waitForRenewal: true,
+			wantPath:       pathMeeting,
+		},
+		{
+			name:         "losing the reservation mid-run stops the run",
+			operation:    llm.OperationMeetingSummary,
+			postProps:    map[string]any{meetings.ReferencedTranscriptPostID: "transcript-post"},
+			stolenMidRun: true,
+			wantPath:     pathMeeting,
+		},
+		{
+			name:               "an abandoned run's saved tool rounds are scrubbed too",
+			operation:          llm.OperationConversation,
+			postProps:          followUpProps,
+			anchorStreamingAge: 2 * streaming.StaleStreamThreshold.Milliseconds(),
+			savedToolRounds:    true,
+			wantPath:           pathConversation,
+		},
+		{
+			name:                "a regenerate that fails after settling a dead run leaves the post interrupted",
+			operation:           llm.OperationMeetingSummary,
+			postProps:           map[string]any{meetings.ReferencedRecordingFileID: "recording-file"},
+			anchorStreamingAge:  2 * streaming.StaleStreamThreshold.Milliseconds(),
+			meetingErr:          mmapi.ErrFileActionForbidden,
+			wantErrIs:           mmapi.ErrFileActionForbidden,
+			wantPostInterrupted: true,
+		},
+		{
+			name:               "the node still running a stale-looking stream refuses without claiming it",
+			operation:          llm.OperationConversation,
+			postProps:          followUpProps,
+			anchorStreamingAge: 2 * streaming.StaleStreamThreshold.Milliseconds(),
+			streamingHere:      true,
+			wantErrIs:          streaming.ErrAlreadyStreamingToPost,
+		},
+		{
+			name:               "a regenerate refused by the license leaves a dead run's turn to the sweep",
+			operation:          llm.OperationThreadAnalysis,
+			rootIsPost:         true,
+			postProps:          threadProps,
+			licenseLevel:       enterprise.LevelUnlicensed,
+			wantLicense:        enterprise.CapThreadSummarization,
+			anchorStreamingAge: 2 * streaming.StaleStreamThreshold.Milliseconds(),
+		},
+		{
+			name:              "concurrent regenerate holding the reservation is refused",
+			operation:         llm.OperationConversation,
+			postProps:         followUpProps,
+			reservedElsewhere: true,
+			wantErrIs:         streaming.ErrAlreadyStreamingToPost,
+		},
+		{
 			name:         "thread analysis below Professional",
 			operation:    llm.OperationThreadAnalysis,
 			rootIsPost:   true,
@@ -333,7 +455,16 @@ func TestHandleRegenerate(t *testing.T) {
 			require.NoError(t, err)
 			postID := regenPostID
 			require.NoError(t, convStore.CreateTurn(&store.Turn{ID: "user-turn", ConversationID: conv.ID, Role: "user", Content: userContent, Sequence: 1}))
-			require.NoError(t, convStore.CreateTurn(&store.Turn{ID: "old-anchor", ConversationID: conv.ID, PostID: &postID, Role: "assistant", Content: oldContent, Sequence: 2}))
+			anchor := &store.Turn{ID: "old-anchor", ConversationID: conv.ID, PostID: &postID, Role: "assistant", Content: oldContent, Sequence: 2}
+			if tt.anchorStreamingAge != 0 {
+				anchor.Status = store.TurnStatusStreaming
+				anchor.UpdatedAt = model.GetMillis() - tt.anchorStreamingAge
+			}
+			require.NoError(t, convStore.CreateTurn(anchor))
+			if tt.savedToolRounds {
+				require.NoError(t, convStore.CreateTurn(&store.Turn{ID: "dead-run-tool-call", ConversationID: conv.ID, Role: "assistant", Content: oldContent, Sequence: 3}))
+				require.NoError(t, convStore.CreateTurn(&store.Turn{ID: "dead-run-tool-result", ConversationID: conv.ID, Role: "tool_result", Content: oldContent, Sequence: 4}))
+			}
 
 			mm := mocks.NewMockClient(t)
 			mm.On("GetUser", userID).Return(&model.User{Id: userID, Locale: "en"}, nil).Maybe()
@@ -342,6 +473,51 @@ func TestHandleRegenerate(t *testing.T) {
 			mm.On("KVGet", mock.Anything, mock.Anything).Return(nil).Maybe()
 			mm.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
 			mm.On("LogDebug", mock.Anything, mock.Anything, mock.Anything).Maybe()
+			var kvMu sync.Mutex
+			kv := map[string]any{}
+			renewals := make(chan struct{}, 1)
+			reservationKey := postRunReservationKeyPrefix + regenPostID
+			if tt.reservedElsewhere {
+				kv[reservationKey] = "other-node-token"
+			}
+			mm.On("KVCompareAndSetWithExpiry", reservationKey, mock.Anything, mock.Anything, streaming.StaleStreamThreshold).
+				Return(func(key string, oldValue, newValue any, _ time.Duration) (bool, error) {
+					kvMu.Lock()
+					defer kvMu.Unlock()
+					current, held := kv[key]
+					if oldValue == nil {
+						if held {
+							return false, nil
+						}
+						kv[key] = newValue
+						return true, nil
+					}
+					if current != oldValue {
+						return false, nil
+					}
+					kv[key] = newValue
+					select {
+					case renewals <- struct{}{}:
+					default:
+					}
+					return true, nil
+				}).Maybe()
+			mm.On("KVCompareAndSet", reservationKey, mock.Anything, nil).
+				Return(func(key string, oldValue, _ any) (bool, error) {
+					kvMu.Lock()
+					defer kvMu.Unlock()
+					if kv[key] != oldValue {
+						return false, nil
+					}
+					delete(kv, key)
+					return true, nil
+				}).Maybe()
+			mm.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+			var updatedPosts []*model.Post
+			mm.On("UpdatePost", mock.Anything).Run(func(args mock.Arguments) {
+				updated := args.Get(0).(*model.Post).Clone()
+				updatedPosts = append(updatedPosts, updated)
+			}).Return(nil).Maybe()
 			if tt.setupMM != nil {
 				tt.setupMM(mm)
 			}
@@ -380,7 +556,32 @@ func TestHandleRegenerate(t *testing.T) {
 				licenseLevel = tt.licenseLevel
 			}
 			meetingRegen := &fakeMeetingRegenerator{err: tt.meetingErr}
-			streamSvc := &regenRecordingStreaming{}
+			if tt.stolenMidRun {
+				postRunReservationRenewInterval = time.Millisecond
+				t.Cleanup(func() { postRunReservationRenewInterval = streaming.StaleStreamThreshold / 3 })
+				meetingRegen.during = func(ctx context.Context) {
+					kvMu.Lock()
+					kv[reservationKey] = "other-node-token"
+					kvMu.Unlock()
+					select {
+					case <-ctx.Done():
+					case <-time.After(5 * time.Second):
+						assert.Fail(t, "a run that lost its reservation must be canceled")
+					}
+				}
+			}
+			if tt.waitForRenewal {
+				postRunReservationRenewInterval = time.Millisecond
+				t.Cleanup(func() { postRunReservationRenewInterval = streaming.StaleStreamThreshold / 3 })
+				meetingRegen.during = func(context.Context) {
+					select {
+					case <-renewals:
+					case <-time.After(5 * time.Second):
+						assert.Fail(t, "a long regenerate must renew its reservation")
+					}
+				}
+			}
+			streamSvc := &regenRecordingStreaming{busy: tt.streamingHere}
 			c := &Conversations{
 				mmClient:         mm,
 				bots:             botsService,
@@ -407,6 +608,15 @@ func TestHandleRegenerate(t *testing.T) {
 
 			turns, turnsErr := convStore.GetTurnsForConversation(conv.ID)
 			require.NoError(t, turnsErr)
+			settlesDeadRun := tt.anchorStreamingAge >= streaming.StaleStreamThreshold.Milliseconds() &&
+				!tt.streamingHere && !tt.reservedElsewhere && tt.wantLicense == ""
+			if !settlesDeadRun {
+				require.Empty(t, updatedPosts, "a regenerate must not edit the post unless it settled a dead run")
+			}
+			if tt.wantPostInterrupted {
+				require.Len(t, updatedPosts, 1)
+				require.Equal(t, streaming.InterruptedReasonLost, updatedPosts[0].GetProp(streaming.InterruptedProp))
+			}
 			if tt.wantPath == "" {
 				require.Error(t, err)
 				switch {
@@ -422,9 +632,17 @@ func TestHandleRegenerate(t *testing.T) {
 				require.Empty(t, lm.requests, "no LLM request may be sent")
 				require.Empty(t, streamSvc.streamed)
 				require.Len(t, turns, 2, "a rejected regenerate must leave the conversation untouched")
+				if tt.streamingHere {
+					require.Equal(t, store.TurnStatusStreaming, turns[1].Status, "a live run's turn must not be claimed")
+				}
 				return
 			}
 			require.NoError(t, err)
+			if tt.stolenMidRun {
+				require.Equal(t, "other-node-token", kv[reservationKey], "a run must not release a reservation it lost")
+			} else {
+				require.NotContains(t, kv, reservationKey, "a finished regenerate must release its reservation")
+			}
 
 			require.Len(t, streamSvc.streamed, 1)
 			require.Same(t, post, streamSvc.streamed[0])
@@ -489,4 +707,159 @@ func TestHandleRegenerateRequiresConversation(t *testing.T) {
 
 	err := c.HandleRegenerate(t.Context(), userID, post, &model.Channel{Id: "dm-channel"})
 	require.ErrorContains(t, err, "missing conversation_id")
+}
+
+// stoppedStreaming ends the stream without reading it once stopAfter is
+// closed, as Stop does mid-run.
+type stoppedStreaming struct {
+	regenRecordingStreaming
+	stopAfter <-chan struct{}
+}
+
+func (s *stoppedStreaming) StreamToPost(_ context.Context, result *llm.TextStreamResult, _ *model.Post, _ string, _ string) {
+	go func() { _, _ = result.ReadAll() }()
+	<-s.stopAfter
+}
+
+// toolThenTextLLM answers its first request with a tool call and later ones
+// with text.
+type toolThenTextLLM struct {
+	loadedStateLLM
+	toolName string
+}
+
+func (l *toolThenTextLLM) ChatCompletion(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+	l.mu.Lock()
+	first := len(l.requests) == 0
+	l.mu.Unlock()
+	if first {
+		l.mu.Lock()
+		l.requests = append(l.requests, request)
+		l.mu.Unlock()
+		events := make(chan llm.TextStreamEvent, 2)
+		events <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{{ID: "tc-1", Name: l.toolName, Arguments: json.RawMessage(`{"channel_id":"analyzed-channel"}`)}}}
+		events <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(events)
+		return &llm.TextStreamResult{Stream: events}, nil
+	}
+	return l.loadedStateLLM.ChatCompletion(ctx, request, opts...)
+}
+
+// A channel summary regenerate runs the tool loop, so the post stays reserved
+// until a tool that is still executing has returned.
+func TestRegenerateChannelSummaryWaitsForRunningTool(t *testing.T) {
+	const (
+		userID          = testRequesterID
+		botID           = "bot-id"
+		regenPostID     = "regen-post-id"
+		analyzedChannel = "analyzed-channel"
+	)
+	toolStarted := make(chan struct{})
+	releaseTool := make(chan struct{})
+	blockingTool := llm.Tool{
+		Name:         "read_channel",
+		Description:  "channel tool",
+		ServerOrigin: mcp.EmbeddedClientKey,
+		Schema:       map[string]any{"type": "object"},
+		Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+			close(toolStarted)
+			<-releaseTool
+			return "ok", nil
+		},
+	}
+
+	convStore := newLoadedStateFlowStore()
+	rootPostID := regenPostID
+	conv := &store.Conversation{ID: "conv-id", UserID: userID, BotID: botID, SystemPrompt: "system", Operation: llm.OperationChannelSummary, RootPostID: &rootPostID}
+	require.NoError(t, convStore.CreateConversation(conv))
+	userContent, err := json.Marshal([]conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: "summarize"}})
+	require.NoError(t, err)
+	postID := regenPostID
+	require.NoError(t, convStore.CreateTurn(&store.Turn{ID: "user-turn", ConversationID: conv.ID, Role: "user", Content: userContent, Sequence: 1}))
+	require.NoError(t, convStore.CreateTurn(&store.Turn{ID: "old-anchor", ConversationID: conv.ID, PostID: &postID, Role: "assistant", Content: userContent, Sequence: 2}))
+
+	mm := mocks.NewMockClient(t)
+	mm.On("GetUser", userID).Return(&model.User{Id: userID, Locale: "en"}, nil).Maybe()
+	locale := "en"
+	mm.On("GetConfig").Return(&model.Config{LocalizationSettings: model.LocalizationSettings{DefaultServerLocale: &locale}}).Maybe()
+	mm.On("KVGet", mock.Anything, mock.Anything).Return(nil).Maybe()
+	for _, method := range []string{"LogDebug", "LogWarn", "LogError"} {
+		for args := []any{mock.Anything}; len(args) <= 11; args = append(args, mock.Anything) {
+			mm.On(method, args...).Maybe().Return()
+		}
+	}
+	var kvMu sync.Mutex
+	held := map[string]any{}
+	reservationKey := postRunReservationKeyPrefix + regenPostID
+	mm.On("KVCompareAndSetWithExpiry", reservationKey, mock.Anything, mock.Anything, mock.Anything).
+		Return(func(key string, oldValue, newValue any, _ time.Duration) (bool, error) {
+			kvMu.Lock()
+			defer kvMu.Unlock()
+			if current, ok := held[key]; (oldValue == nil && ok) || (oldValue != nil && current != oldValue) {
+				return false, nil
+			}
+			held[key] = newValue
+			return true, nil
+		}).Maybe()
+	mm.On("KVCompareAndSet", reservationKey, mock.Anything, nil).
+		Return(func(key string, oldValue, _ any) (bool, error) {
+			kvMu.Lock()
+			defer kvMu.Unlock()
+			if held[key] != oldValue {
+				return false, nil
+			}
+			delete(held, key)
+			return true, nil
+		}).Maybe()
+	mm.On("UpdatePost", mock.Anything).Return(nil).Maybe()
+	mm.On("GetPost", regenPostID).Return(&model.Post{Id: regenPostID, UserId: botID}, nil).Maybe()
+	mm.On("HasPermissionToChannel", userID, mock.Anything, model.PermissionReadChannel).Return(true).Maybe()
+	mm.On("GetChannel", analyzedChannel).Return(&model.Channel{Id: analyzedChannel, Type: model.ChannelTypeOpen, TeamId: "team-id"}, nil).Maybe()
+
+	lm := &toolThenTextLLM{toolName: "read_channel"}
+	bot := bots.NewBot(loadedStateBot(lm).GetConfig(), llm.ServiceConfig{DefaultModel: "test-model", Type: llm.ServiceTypeOpenAI}, &model.Bot{UserId: botID, Username: "matty"}, lm)
+	mockAPI := &plugintest.API{}
+	pluginAPI := pluginapi.NewClient(mockAPI, nil)
+	botsService := bots.New(mockAPI, pluginAPI, enterprise.NewLicenseChecker(pluginAPI), nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
+	botsService.SetBotsForTesting([]*bots.Bot{bot})
+
+	c := &Conversations{
+		mmClient:         mm,
+		bots:             botsService,
+		contextBuilder:   loadedStateBuilder(t, blockingTool, regenChannelTool("get_channel_info", new(string))),
+		convService:      conversation.NewService(convStore, nil, nil, nil),
+		streamingService: &stoppedStreaming{stopAfter: toolStarted},
+		licenseChecker:   enterprisetest.CheckerAt(enterprise.LevelEnterprise),
+		configProvider:   &channelFollowUpTestConfig{},
+	}
+
+	post := &model.Post{Id: regenPostID, UserId: botID, Message: "old response"}
+	post.AddProp(streaming.ConversationIDProp, conv.ID)
+	post.AddProp(AnalyzedChannelIDProp, analyzedChannel)
+	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: botID + "__" + userID}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- c.HandleRegenerate(auth.WithSessionID(t.Context(), "session-id"), userID, post, channel)
+	}()
+
+	select {
+	case <-toolStarted:
+	case err := <-done:
+		require.FailNow(t, "regenerate returned before the tool started", "%v", err)
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "the tool never started")
+	}
+	require.Never(t, func() bool { return len(done) > 0 }, 200*time.Millisecond, 10*time.Millisecond, "regenerate must wait for the running tool before releasing the post")
+	kvMu.Lock()
+	_, reserved := held[reservationKey]
+	kvMu.Unlock()
+	require.True(t, reserved, "the post stays reserved while a tool runs")
+
+	close(releaseTool)
+	require.NoError(t, <-done)
+	kvMu.Lock()
+	_, reserved = held[reservationKey]
+	kvMu.Unlock()
+	require.False(t, reserved)
 }

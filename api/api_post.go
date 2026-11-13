@@ -353,6 +353,8 @@ func regenerateHTTPStatus(err error) int {
 	switch {
 	case errors.Is(err, conversations.ErrNotRegenerable):
 		return http.StatusBadRequest
+	case errors.Is(err, streaming.ErrAlreadyStreamingToPost):
+		return http.StatusConflict
 	case errors.Is(err, conversations.ErrNotRequester),
 		errors.Is(err, mmapi.ErrFileActionForbidden),
 		errors.Is(err, bots.ErrUsageRestriction),
@@ -404,6 +406,8 @@ func toolApprovalHTTPStatus(err error) int {
 		errors.Is(err, conversations.ErrPostMissingConversationID),
 		errors.Is(err, conversations.ErrInvalidToolAnswer):
 		return http.StatusBadRequest
+	case errors.Is(err, streaming.ErrAlreadyStreamingToPost):
+		return http.StatusConflict
 	case errors.Is(err, conversations.ErrNotRequester),
 		errors.Is(err, conversations.ErrRemoteMCPNotLicensed),
 		errors.Is(err, conversations.ErrToolCallingDisabled),
