@@ -130,6 +130,10 @@ export interface AgentThreadsSync {
 export function createAgentThreadsSync(store: {dispatch: Dispatch<UnknownAction>; getState: () => GlobalState}): AgentThreadsSync {
     let timer: ReturnType<typeof setTimeout> | null = null;
 
+    // Threads already refetched for because a reply started in them while unlisted, so a
+    // stream's chunks, or a thread the list never returns, cost one request.
+    const fetchedForRoots = new Set<string>();
+
     const scheduleRefresh = () => {
         if (timer !== null) {
             clearTimeout(timer);
@@ -142,9 +146,32 @@ export function createAgentThreadsSync(store: {dispatch: Dispatch<UnknownAction>
 
     return {
         handlePostUpdate: (msg) => {
-            // A finished turn moves its chat to the top. postupdate events reach every member of
-            // the channel, so only the current user's own agent chats count.
-            if (msg.data?.control === 'end' && isInUse(store.getState()) && isCurrentUsersAgentPost(store.getState(), msg.data.post_id)) {
+            // postupdate events reach every member of the channel, so only the current user's
+            // own agent chats count.
+            const state = store.getState();
+            const postId = msg.data?.post_id;
+            if (!postId || !isInUse(state) || !isCurrentUsersAgentPost(state, postId)) {
+                return;
+            }
+
+            // A finished turn moves its chat to the top.
+            const control = msg.data.control;
+            if (control === 'end') {
+                scheduleRefresh();
+                return;
+            }
+            if (control === 'cancel') {
+                return;
+            }
+
+            // A reply streaming in a chat the list does not have yet: fetch it. The server creates
+            // a new chat's conversation while handling its first message, so the refetch made when
+            // the chat was sent can come back without it.
+            const post = state.entities.posts.posts[postId];
+            const rootId = post.root_id || post.id;
+            const threads = selectAIThreads(state);
+            if (threads && !threads.some((t) => t.root_post_id === rootId) && !fetchedForRoots.has(rootId)) {
+                fetchedForRoots.add(rootId);
                 scheduleRefresh();
             }
         },

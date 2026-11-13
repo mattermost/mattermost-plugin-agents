@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
@@ -98,6 +100,8 @@ type toolDecision struct {
 	conv     *store.Conversation
 	turns    []store.Turn
 	policy   *turnPolicy
+	// release frees the post's run reservation; idempotent.
+	release func()
 }
 
 // beginToolDecision performs the preamble shared by HandleToolCall and
@@ -145,7 +149,12 @@ func (c *Conversations) beginToolDecision(ctx context.Context, spanName, logMsg,
 		return fail(ErrNotRequester)
 	}
 
-	turns, err := c.convService.GetTurns(convID)
+	// The webapp shows Accept as soon as the live tool_call event arrives,
+	// which can be before the stream finalizes the clicked post's turn. Wait
+	// briefly for that turn to settle instead of rejecting the click as stale.
+	turns, err := awaitSettledPostTurns(ctx, func() ([]store.Turn, error) {
+		return c.convService.GetTurns(convID)
+	}, post.Id, settleStreamingTurnTimeout, settleStreamingTurnPollInterval)
 	if err != nil {
 		return fail(fmt.Errorf("failed to get turns: %w", err))
 	}
@@ -162,7 +171,19 @@ func (c *Conversations) beginToolDecision(ctx context.Context, spanName, logMsg,
 		return fail(ErrToolCallingDisabled)
 	}
 
+	// Held through the approved tools and the follow-up stream, so a
+	// regenerate on another node can't scrub and rerun the response meanwhile.
+	ctx, release, err := c.reservePostRun(ctx, post.Id)
+	if errors.Is(err, streaming.ErrAlreadyStreamingToPost) {
+		// A duplicate click, or a regenerate replacing this response.
+		return fail(fmt.Errorf("post already has a run in progress: %w", ErrStaleToolClick))
+	}
+	if err != nil {
+		return fail(err)
+	}
+
 	return &toolDecision{
+		release:  sync.OnceFunc(release),
 		ctx:      ctx,
 		span:     span,
 		auditRec: audit.RecordFromContext(ctx),
@@ -186,6 +207,12 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return err
 	}
 	defer d.span.End()
+	followUpStarted := false
+	defer func() {
+		if !followUpStarted {
+			d.release()
+		}
+	}()
 	ctx = d.ctx
 	auditRec, convID, conv, turns, policy := d.auditRec, d.convID, d.conv, d.turns, d.policy
 
@@ -232,6 +259,16 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	if err != nil {
 		return err
 	}
+
+	// Hold the post's streaming context before recording the decision: a
+	// click that arrives while the earlier stream is still finishing fails
+	// here, leaving the decision pending so the click can be retried.
+	followUp, err := c.acquireFollowUpStream(ctx, post.Id)
+	if err != nil {
+		return err
+	}
+	defer followUp.release()
+	ctx = followUp.ctx
 
 	claimedContent, err := c.claimToolDecision(pendingTurn, pendingBlocks)
 	if err != nil {
@@ -427,8 +464,9 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		Role:           "tool_result",
 		Content:        resultContent,
 		CreatedAt:      model.GetMillis(),
+		RunPostID:      &post.Id,
 	}
-	if err := c.convService.CreateTurnAutoSequence(resultTurn); err != nil {
+	if err = c.convService.CreateTurnAutoSequence(resultTurn); err != nil {
 		return fmt.Errorf("failed to create tool result turn: %w", err)
 	}
 
@@ -445,7 +483,9 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return nil
 	}
 
-	return c.streamToolFollowUp(ctx, policy, post, conv, followUpOptions{UserRejected: userRejected, ApprovalContext: llmContext})
+	err = c.streamToolFollowUp(ctx, policy, post, conv, followUpOptions{UserRejected: userRejected, ApprovalContext: llmContext, OnRunEnd: d.release, Stream: followUp})
+	followUpStarted = err == nil
+	return err
 }
 
 // resolveInteractionAnswers validates the user's answers for every accepted
@@ -502,6 +542,12 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 		return err
 	}
 	defer d.span.End()
+	followUpStarted := false
+	defer func() {
+		if !followUpStarted {
+			d.release()
+		}
+	}()
 	ctx = d.ctx
 	auditRec, conv, turns, policy := d.auditRec, d.conv, d.turns, d.policy
 
@@ -645,6 +691,18 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 		}
 	}
 
+	var followUp *followUpStream
+	if !policy.isDM && clickedPostHasExecutedTool {
+		// As in HandleToolCall, take the streaming context before the
+		// decision is written so a failed acquire leaves it retryable.
+		followUp, err = c.acquireFollowUpStream(ctx, post.Id)
+		if err != nil {
+			return err
+		}
+		defer followUp.release()
+		ctx = followUp.ctx
+	}
+
 	updates := slices.Concat(decisionUpdates, otherUpdates)
 	for i, update := range updates {
 		swapped, updateErr := c.convService.CompareAndSwapTurnContent(update.turn.ID, update.turn.Content, update.content)
@@ -678,7 +736,9 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 
 	// Channel second-stage follow-up rebuilds a fresh llmContext without in-request
 	// WebSearch data; citation decoration is DM-only via HandleToolCall's llmContext.
-	return c.streamToolFollowUp(ctx, policy, post, conv, followUpOptions{UserRejected: clickedPostUserRejected})
+	err = c.streamToolFollowUp(ctx, policy, post, conv, followUpOptions{UserRejected: clickedPostUserRejected, OnRunEnd: d.release, Stream: followUp})
+	followUpStarted = err == nil
+	return err
 }
 
 // followUpOptions are the per-caller knobs of streamToolFollowUp.
@@ -690,6 +750,34 @@ type followUpOptions struct {
 	// ApprovalContext is the in-request context whose created files and web
 	// search data decorate the stream; nil on the channel second-stage path.
 	ApprovalContext *llm.Context
+	// OnRunEnd, when set, runs once the follow-up stream ends.
+	OnRunEnd func()
+	// Stream is the post's streaming context when the caller already holds
+	// it; streamToolFollowUp acquires it otherwise.
+	Stream *followUpStream
+}
+
+// followUpStream is a held streaming context for a post. The holder releases
+// it unless a stream took it over.
+type followUpStream struct {
+	c         *Conversations
+	postID    string
+	ctx       context.Context
+	handedOff bool
+}
+
+func (c *Conversations) acquireFollowUpStream(ctx context.Context, postID string) (*followUpStream, error) {
+	streamCtx, err := c.streamingService.GetStreamingContext(ctx, postID)
+	if err != nil {
+		return nil, err
+	}
+	return &followUpStream{c: c, postID: postID, ctx: streamCtx}, nil
+}
+
+func (f *followUpStream) release() {
+	if !f.handedOff {
+		f.c.streamingService.FinishStreaming(f.postID)
+	}
 }
 
 // streamToolFollowUp rebuilds the completion request from the conversation and
@@ -707,6 +795,17 @@ func (c *Conversations) streamToolFollowUp(
 ) error {
 	ctx, span := telemetry.Tracer().Start(ctx, "tool followup completion")
 	defer span.End()
+
+	// Stop must reach the tool loop, not only the stream that follows it.
+	followUp := opts.Stream
+	if followUp == nil {
+		var err error
+		if followUp, err = c.acquireFollowUpStream(ctx, post.Id); err != nil {
+			return err
+		}
+		defer followUp.release()
+	}
+	ctx = followUp.ctx
 
 	if opts.Unattended {
 		unattended := *policy
@@ -736,9 +835,13 @@ func (c *Conversations) streamToolFollowUp(
 	completionReq.Operation = llm.OperationConversationToolFollowup
 	completionReq.OperationSubType = llm.SubTypeToolCall
 
-	runResult, err := policy.runToolLoop(ctx, llmContext, conv.ID, *completionReq, "Failed to write tool turns on follow-up")
+	// The tool loop ends with the stream, however the stream ends (Stop, a
+	// lost turn lease, shutdown), so no tool keeps running after it.
+	loopCtx, cancelLoop := context.WithCancel(ctx)
+	runResult, err := policy.runToolLoop(loopCtx, llmContext, conv.ID, *completionReq, "Failed to write tool turns on follow-up")
 
 	if err != nil {
+		cancelLoop()
 		return fmt.Errorf("tool runner failed on tool follow-up: %w", err)
 	}
 
@@ -754,10 +857,14 @@ func (c *Conversations) streamToolFollowUp(
 
 	// Stream onto the same post; finalize demotes the prior anchor so
 	// resolved tool cards remain visible alongside the new round.
-	if err := c.streamToExistingPost(ctx, stream, post, policy.user, policy.channel, true, nil); err != nil {
-		return fmt.Errorf("failed to stream tool follow-up: %w", err)
-	}
-
+	followUp.handedOff = true
+	c.streamToExistingPostOnContext(ctx, stream, post, policy.user, policy.channel, true, func() {
+		cancelLoop()
+		c.awaitToolRunner(runResult.Done, post.Id)
+		if opts.OnRunEnd != nil {
+			opts.OnRunEnd()
+		}
+	})
 	return nil
 }
 
@@ -815,6 +922,36 @@ func resolveApprovedToolUseBlock(ctx context.Context, llmContext *llm.Context, b
 		llmContext)
 }
 
+const (
+	settleStreamingTurnTimeout      = 10 * time.Second
+	settleStreamingTurnPollInterval = 50 * time.Millisecond
+)
+
+// awaitSettledPostTurns loads the conversation turns, reloading until no
+// assistant turn anchored to postID is still streaming or timeout elapses.
+// On timeout it returns the latest turns; callers treat a still-streaming
+// turn as not yet actionable.
+func awaitSettledPostTurns(ctx context.Context, load func() ([]store.Turn, error), postID string, timeout, interval time.Duration) ([]store.Turn, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		turns, err := load()
+		if err != nil {
+			return nil, err
+		}
+		stillStreaming := slices.ContainsFunc(turns, func(t store.Turn) bool {
+			return t.Role == "assistant" && t.PostID != nil && *t.PostID == postID && t.Status == store.TurnStatusStreaming
+		})
+		if !stillStreaming || !time.Now().Before(deadline) {
+			return turns, nil
+		}
+		select {
+		case <-ctx.Done():
+			return turns, nil
+		case <-time.After(interval):
+		}
+	}
+}
+
 // turnUpdate is a conditional rewrite of turn from its read content to content.
 type turnUpdate struct {
 	turn    *store.Turn
@@ -865,6 +1002,11 @@ func findPendingToolTurn(turns []store.Turn, clickedPostID string) (*store.Turn,
 			continue
 		}
 		if turns[i].PostID == nil || *turns[i].PostID != clickedPostID {
+			continue
+		}
+		// A turn still streaming (possibly on another node) or interrupted
+		// mid-generation is not a settled pending tool batch.
+		if turns[i].Status != "" && turns[i].Status != store.TurnStatusComplete {
 			continue
 		}
 

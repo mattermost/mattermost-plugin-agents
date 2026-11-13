@@ -4,6 +4,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -159,8 +160,47 @@ func (m *mockConvServiceStore) UpdateTurnContent(id string, content json.RawMess
 	return nil
 }
 
-func (m *mockConvServiceStore) CompareAndSwapTurnContent(_ string, _, _ json.RawMessage) (bool, error) {
-	return true, nil
+func (m *mockConvServiceStore) CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error) {
+	for convID, turns := range m.turns {
+		for i := range turns {
+			if turns[i].ID != id {
+				continue
+			}
+			if !bytes.Equal(turns[i].Content, expected) {
+				return false, nil
+			}
+			m.turns[convID][i].Content = content
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (m *mockConvServiceStore) HeartbeatStreamingTurn(id string, content json.RawMessage) (bool, error) {
+	for _, turns := range m.turns {
+		for i := range turns {
+			if turns[i].ID == id && turns[i].Status == store.TurnStatusStreaming {
+				turns[i].Content = content
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func (m *mockConvServiceStore) FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) (bool, error) {
+	for _, turns := range m.turns {
+		for i := range turns {
+			if turns[i].ID == id && turns[i].Status == store.TurnStatusStreaming {
+				turns[i].Content = content
+				turns[i].TokensIn = tokensIn
+				turns[i].TokensOut = tokensOut
+				turns[i].Status = status
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func (m *mockConvServiceStore) UpdateTurnTokens(_ string, _, _ int64) error {
@@ -468,6 +508,10 @@ func TestChannelAnalysisPostsRecordTheAnalyzedChannel(t *testing.T) {
 	}
 }
 
+func (*mockConvServiceStore) HasLiveStreamingTurn(string, int64) (bool, error) {
+	return false, nil
+}
+
 func TestAnalysisFixedTitlesAreSentToTheRequester(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -546,4 +590,12 @@ func TestAnalysisFixedTitlesAreSentToTheRequester(t *testing.T) {
 			assert.Equal(t, &model.WebsocketBroadcast{UserId: testUserID}, broadcasts[0])
 		})
 	}
+}
+
+func (*mockConvServiceStore) ClaimStaleStreamingTurn(string, int64) (bool, error) {
+	return false, nil
+}
+
+func (*mockConvServiceStore) ReleaseStreamingTurnClaim(string) error {
+	return nil
 }

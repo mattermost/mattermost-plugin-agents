@@ -1163,7 +1163,7 @@ func TestWriteToolTurns_SingleRound(t *testing.T) {
 		},
 	}
 
-	err = svc.WriteToolTurns(result.ConversationID, toolTurns, true)
+	err = svc.WriteToolTurns(result.ConversationID, toolTurns, true, "")
 	require.NoError(t, err)
 
 	turns, err := s.GetTurnsForConversation(result.ConversationID)
@@ -1239,7 +1239,7 @@ func TestWriteToolTurns_MultipleRounds(t *testing.T) {
 		},
 	}
 
-	err = svc.WriteToolTurns(result.ConversationID, toolTurns, true)
+	err = svc.WriteToolTurns(result.ConversationID, toolTurns, true, "")
 	require.NoError(t, err)
 
 	turns, err := s.GetTurnsForConversation(result.ConversationID)
@@ -1283,7 +1283,7 @@ func TestWriteToolTurns_SharedFlag(t *testing.T) {
 				},
 			}
 
-			err = svc.WriteToolTurns(result.ConversationID, toolTurns, tt.shared)
+			err = svc.WriteToolTurns(result.ConversationID, toolTurns, tt.shared, "")
 			require.NoError(t, err)
 
 			turns, err := s.GetTurnsForConversation(result.ConversationID)
@@ -1338,7 +1338,7 @@ func TestWriteToolTurns_ErroredTool(t *testing.T) {
 		},
 	}
 
-	err = svc.WriteToolTurns(result.ConversationID, toolTurns, true)
+	err = svc.WriteToolTurns(result.ConversationID, toolTurns, true, "")
 	require.NoError(t, err)
 
 	turns, err := s.GetTurnsForConversation(result.ConversationID)
@@ -2147,9 +2147,24 @@ func TestBuildRequests_UnexecutedToolCallsReplayAsNotExecuted(t *testing.T) {
 		name       string
 		status     string
 		result     *string
+		autoRun    bool
 		wantResult string
 		wantStatus llm.ToolCallStatus
 	}{
+		{
+			name:       "auto-run call interrupted mid-execution may have run",
+			status:     StatusPending,
+			autoRun:    true,
+			wantResult: InterruptedToolResult,
+			wantStatus: llm.ToolCallStatusError,
+		},
+		{
+			name:       "auto-run call stopped mid-execution keeps an unknown outcome",
+			status:     StatusError,
+			autoRun:    true,
+			wantResult: InterruptedToolResult,
+			wantStatus: llm.ToolCallStatusError,
+		},
 		{
 			name:       "pending without result",
 			status:     StatusPending,
@@ -2199,7 +2214,7 @@ func TestBuildRequests_UnexecutedToolCallsReplayAsNotExecuted(t *testing.T) {
 
 			blocks := []ContentBlock{
 				{Type: BlockTypeText, Text: "Let me check."},
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "get_weather", Input: json.RawMessage(`{}`), Status: tc.status, Shared: new(true)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "get_weather", Input: json.RawMessage(`{}`), Status: tc.status, Shared: new(true), WouldAutoExecute: tc.autoRun},
 			}
 			if tc.result != nil {
 				blocks = append(blocks, ContentBlock{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: *tc.result, Status: StatusSuccess, Shared: new(true)})
@@ -3110,6 +3125,62 @@ func TestGetInitiatingUserTurn(t *testing.T) {
 		require.NoError(t, err)
 		assert.Nil(t, got)
 	})
+
+	// Wakes resume user2's run: a wake post maps to user2, however many
+	// wakes deep, and so does a canceled-wake note recorded after a message.
+	addAssistant := func(conversationID, postID string) {
+		require.NoError(t, s.CreateTurnAutoSequence(&store.Turn{
+			ID: model.NewId(), ConversationID: conversationID, Role: "assistant",
+			PostID: &postID, Content: assistantContent, CreatedAt: model.GetMillis(),
+		}))
+	}
+	require.NoError(t, svc.AppendSyntheticUserTurn(convID, SyntheticKindWake, "wake"))
+	addAssistant(convID, "wake-post-1")
+	require.NoError(t, svc.AppendSyntheticUserTurn(convID, SyntheticKindWake, "wake"))
+	addAssistant(convID, "wake-post-2")
+
+	r3, steerErr := svc.GetOrCreateConversation(GetOrCreateParams{
+		UserID: userID, BotID: botID, ChannelID: "chan", RootPostID: rootPost,
+		Operation: "conversation", UserMessage: "msg3", UserPostID: new("post-u3"),
+	})
+	require.NoError(t, steerErr)
+	require.NoError(t, svc.AppendSyntheticUserTurn(convID, SyntheticKindWakeCanceled, "canceled"))
+	addAssistant(convID, "post-C")
+
+	// A conversation whose only user turn is synthetic has no initiator.
+	onlySynthetic, createErr := svc.CreateConversation(CreateConversationParams{
+		UserID: userID, BotID: botID, Operation: "conversation", SystemPrompt: "p",
+	})
+	require.NoError(t, createErr)
+	syntheticConv := onlySynthetic.ConversationID
+	wakeContent, marshalErr := marshalBlocks([]ContentBlock{{Type: BlockTypeText, Text: "wake", SyntheticKind: SyntheticKindWake}})
+	require.NoError(t, marshalErr)
+	require.NoError(t, s.UpdateTurnContent(onlySynthetic.UserTurnID, wakeContent))
+	addAssistant(syntheticConv, "orphan-wake-post")
+
+	tests := []struct {
+		name   string
+		convID string
+		postID string
+		wantID string
+	}{
+		{name: "first wake post maps to the waiting run's user turn", convID: convID, postID: "wake-post-1", wantID: user2ID},
+		{name: "consecutive wake post maps to the waiting run's user turn", convID: convID, postID: "wake-post-2", wantID: user2ID},
+		{name: "canceled-wake note does not hide the steering message", convID: convID, postID: "post-C", wantID: r3.UserTurnID},
+		{name: "no real user turn returns nil", convID: syntheticConv, postID: "orphan-wake-post"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := svc.GetInitiatingUserTurn(tt.convID, tt.postID)
+			require.NoError(t, err)
+			if tt.wantID == "" {
+				assert.Nil(t, got)
+				return
+			}
+			require.NotNil(t, got)
+			assert.Equal(t, tt.wantID, got.ID)
+		})
+	}
 }
 
 func TestGetPreviousUserTurn(t *testing.T) {
@@ -3150,4 +3221,234 @@ func TestGetPreviousUserTurn(t *testing.T) {
 		require.NoError(t, err)
 		assert.Nil(t, got)
 	})
+}
+
+func TestBuildCompletionRequest_TurnStatus(t *testing.T) {
+	tests := []struct {
+		name          string
+		status        string
+		wantAssistant bool
+	}{
+		{name: "complete turn is included", status: store.TurnStatusComplete, wantAssistant: true},
+		{name: "interrupted turn is included with its partial content", status: store.TurnStatusInterrupted, wantAssistant: true},
+		{name: "streaming turn is skipped", status: store.TurnStatusStreaming, wantAssistant: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, s := setupTestService(t)
+			result, err := svc.CreateConversation(CreateConversationParams{
+				UserID:       model.NewId(),
+				BotID:        model.NewId(),
+				Operation:    "conversation",
+				SystemPrompt: "system",
+				UserMessage:  "question",
+			})
+			require.NoError(t, err)
+
+			postID := model.NewId()
+			require.NoError(t, s.CreateTurnAutoSequence(&store.Turn{
+				ID:             model.NewId(),
+				ConversationID: result.ConversationID,
+				PostID:         &postID,
+				Role:           "assistant",
+				Content:        json.RawMessage(`[{"type":"text","text":"partial answer"}]`),
+				CreatedAt:      model.GetMillis(),
+				Status:         tc.status,
+			}))
+
+			conv, err := svc.GetConversation(result.ConversationID)
+			require.NoError(t, err)
+			req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+			require.NoError(t, err)
+
+			var assistant []string
+			for _, p := range req.Posts {
+				if p.Role == llm.PostRoleBot {
+					assistant = append(assistant, p.Message)
+				}
+			}
+			if tc.wantAssistant {
+				assert.Equal(t, []string{"partial answer"}, assistant)
+			} else {
+				assert.Empty(t, assistant)
+			}
+		})
+	}
+}
+
+func TestBuildChannelMentionRequest_SkipsStreamingReply(t *testing.T) {
+	svc, s := setupTestService(t)
+
+	botID := model.NewId()
+	rootPostID := "chan_root"
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       model.NewId(),
+		BotID:        botID,
+		RootPostID:   &rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "system prompt",
+		UserMessage:  "hello bot",
+		UserPostID:   new("post1"),
+	})
+	require.NoError(t, err)
+
+	content, _ := json.Marshal([]ContentBlock{{Type: BlockTypeText, Text: "partial reply"}})
+	require.NoError(t, s.CreateTurn(&store.Turn{
+		ID:             model.NewId(),
+		ConversationID: result.ConversationID,
+		PostID:         new("post2"),
+		Role:           "assistant",
+		Content:        content,
+		Sequence:       2,
+		CreatedAt:      model.GetMillis(),
+		Status:         store.TurnStatusStreaming,
+	}))
+	// A newer question in the same conversation, asked while the reply streams.
+	question, _ := json.Marshal([]ContentBlock{{Type: BlockTypeText, Text: "another question"}})
+	require.NoError(t, s.CreateTurn(&store.Turn{
+		ID:             model.NewId(),
+		ConversationID: result.ConversationID,
+		PostID:         new("post3"),
+		Role:           "user",
+		Content:        question,
+		Sequence:       3,
+		CreatedAt:      model.GetMillis(),
+	}))
+
+	conv, err := s.GetConversation(result.ConversationID)
+	require.NoError(t, err)
+	threadData := &mmapi.ThreadData{
+		Posts: []*model.Post{
+			{Id: "post1", UserId: "someuser", CreateAt: 1000, Message: "hello bot"},
+			{Id: "post2", UserId: botID, CreateAt: 2000, Message: "partial reply"},
+			{Id: "post3", UserId: "someuser", CreateAt: 3000, Message: "another question"},
+		},
+		UsersByID: map[string]*model.User{
+			"someuser": {Id: "someuser", Username: "alice"},
+			botID:      {Id: botID, Username: "aibot"},
+		},
+	}
+	svc.bots = &testBotLookup{botUserIDs: map[string]bool{botID: true}}
+
+	req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData)
+	require.NoError(t, err)
+	for _, p := range req.Posts {
+		assert.NotContains(t, p.Message, "partial reply", "a reply still streaming must not reach the LLM")
+	}
+}
+
+// TestOverlappingRunsKeepTheirOwnToolRounds covers two runs in one thread (a
+// second mention while the first post still streams): regenerating one post
+// must leave the other run's executed tool rounds in the ledger.
+func TestOverlappingRunsKeepTheirOwnToolRounds(t *testing.T) {
+	round := func(callID string) []toolrunner.ToolTurn {
+		return []toolrunner.ToolTurn{{
+			AssistantToolCalls: []llm.ToolCall{{ID: callID, Name: "tool", Arguments: json.RawMessage(`{}`), Status: llm.ToolCallStatusAutoApproved}},
+			ToolResults:        []toolrunner.ToolResult{{ToolCallID: callID, Name: "tool", Result: "ok"}},
+		}}
+	}
+	svc, s := setupTestService(t)
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID: model.NewId(), BotID: model.NewId(), Operation: "conversation", SystemPrompt: "prompt", UserMessage: "go",
+	})
+	require.NoError(t, err)
+	convID := result.ConversationID
+
+	anchorA := &store.Turn{
+		ID: model.NewId(), ConversationID: convID, PostID: new("post-a"), Role: "assistant",
+		Content: json.RawMessage(`[]`), Status: store.TurnStatusStreaming, CreatedAt: model.GetMillis(),
+	}
+	require.NoError(t, s.CreateTurnAutoSequence(anchorA))
+	require.NoError(t, svc.WriteToolTurns(convID, round("tc-b"), true, "post-b"))
+	require.NoError(t, svc.WriteToolTurns(convID, round("tc-a"), true, "post-a"))
+
+	settled, err := s.FinalizeStreamingTurn(anchorA.ID, json.RawMessage(`[]`), 0, 0, store.TurnStatusComplete)
+	require.NoError(t, err)
+	require.True(t, settled)
+	require.NoError(t, svc.DeleteResponseTurns(convID, "post-a"))
+
+	turns, err := s.GetTurnsForConversation(convID)
+	require.NoError(t, err)
+	var survivingCalls []string
+	for _, turn := range turns {
+		uses, results := toolCallIDs(t, turn)
+		survivingCalls = append(survivingCalls, uses...)
+		survivingCalls = append(survivingCalls, results...)
+	}
+	assert.Equal(t, []string{"tc-b", "tc-b"}, filterIDs(survivingCalls, "tc-b"), "the other run's tool_use and tool_result must survive")
+	assert.Empty(t, filterIDs(survivingCalls, "tc-a"), "the regenerated post's own rounds are scrubbed")
+}
+
+func toolCallIDs(t *testing.T, turn store.Turn) (uses, results []string) {
+	t.Helper()
+	blocks, err := UnmarshalBlocks(turn.Content)
+	require.NoError(t, err)
+	for _, b := range blocks {
+		switch b.Type {
+		case BlockTypeToolUse:
+			uses = append(uses, b.ID)
+		case BlockTypeToolResult:
+			results = append(results, b.ToolUseID)
+		}
+	}
+	return uses, results
+}
+
+func filterIDs(ids []string, want string) []string {
+	var out []string
+	for _, id := range ids {
+		if id == want {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// A second mention can append its user turn while the first run is still
+// executing tools, so the run's tool rounds land after that user turn. They
+// still belong to the first post and must go with it when it is regenerated.
+func TestRegenerateDeletesRoundsWrittenAfterALaterUserTurn(t *testing.T) {
+	svc, s := setupTestService(t)
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID: model.NewId(), BotID: model.NewId(), Operation: "conversation", SystemPrompt: "prompt", UserMessage: "go",
+	})
+	require.NoError(t, err)
+	convID := result.ConversationID
+
+	anchor := &store.Turn{
+		ID: model.NewId(), ConversationID: convID, PostID: new("post-a"), Role: "assistant",
+		Content: json.RawMessage(`[]`), Status: store.TurnStatusStreaming, CreatedAt: model.GetMillis(),
+	}
+	require.NoError(t, s.CreateTurnAutoSequence(anchor))
+	secondMention := &store.Turn{
+		ID: model.NewId(), ConversationID: convID, Role: "user",
+		Content: json.RawMessage(`[{"type":"text","text":"second mention"}]`), CreatedAt: model.GetMillis(),
+	}
+	require.NoError(t, s.CreateTurnAutoSequence(secondMention))
+	require.NoError(t, svc.WriteToolTurns(convID, []toolrunner.ToolTurn{{
+		AssistantToolCalls: []llm.ToolCall{{ID: "tc-a", Name: "tool", Arguments: json.RawMessage(`{"secret":"x"}`), Status: llm.ToolCallStatusAutoApproved}},
+		ToolResults:        []toolrunner.ToolResult{{ToolCallID: "tc-a", Name: "tool", Result: "private result"}},
+	}}, true, "post-a"))
+	settled, err := s.FinalizeStreamingTurn(anchor.ID, json.RawMessage(`[]`), 0, 0, store.TurnStatusComplete)
+	require.NoError(t, err)
+	require.True(t, settled)
+
+	require.NoError(t, svc.DeleteResponseTurns(convID, "post-a"))
+
+	turns, err := s.GetTurnsForConversation(convID)
+	require.NoError(t, err)
+	var ids []string
+	for _, turn := range turns {
+		uses, results := toolCallIDs(t, turn)
+		ids = append(ids, uses...)
+		ids = append(ids, results...)
+	}
+	assert.Empty(t, filterIDs(ids, "tc-a"), "the regenerated post's tool rounds must not outlive it")
+	var userTurns int
+	for _, turn := range turns {
+		if turn.Role == "user" {
+			userTurns++
+		}
+	}
+	assert.Equal(t, 2, userTurns, "both user turns stay")
 }

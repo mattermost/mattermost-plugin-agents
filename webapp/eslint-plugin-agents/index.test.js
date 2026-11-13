@@ -1,16 +1,16 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-/** @jest-environment node */
-/* eslint-env jest */
-
+const typescriptParser = require('@typescript-eslint/parser');
 const {RuleTester} = require('eslint');
 
 const plugin = require('.');
 
 const ruleTester = new RuleTester({
-    parser: require.resolve('@typescript-eslint/parser'),
-    parserOptions: {ecmaVersion: 'latest', sourceType: 'module', ecmaFeatures: {jsx: true}},
+    languageOptions: {
+        parser: typescriptParser,
+        parserOptions: {ecmaFeatures: {jsx: true}},
+    },
     settings: {'jsx-a11y': {polymorphicPropName: 'as'}},
 });
 
