@@ -5,9 +5,13 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"maps"
+	"strconv"
 	"strings"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
@@ -17,6 +21,13 @@ const SecretPlaceholder = "********************************"
 
 // embeddingProviderAPIKeyParam is the embedding provider parameter that holds a credential.
 const embeddingProviderAPIKeyParam = "apiKey"
+
+// embeddingProviderAPIURLParam and embeddingProviderProviderParam are the embedding
+// provider parameters holding the endpoint and the upstream the key is sent to.
+const (
+	embeddingProviderAPIURLParam   = "apiURL"
+	embeddingProviderProviderParam = "provider"
+)
 
 // IsSecretPlaceholder reports whether v is a mask rather than a credential.
 func IsSecretPlaceholder(v string) bool {
@@ -98,15 +109,18 @@ func RestoreSecrets(incoming Config, stored *Config) Config {
 		server.ServiceAccountHeaders = restoreHeaderSecrets(server.ServiceAccountHeaders, storedServiceAccountHeaders)
 	}
 
-	out.WebSearch.Google.APIKey = resolveSecret(out.WebSearch.Google.APIKey, stored.WebSearch.Google.APIKey)
-	out.WebSearch.Brave.APIKey = resolveSecret(out.WebSearch.Brave.APIKey, stored.WebSearch.Brave.APIKey)
-	out.OpenTelemetryHeaders = resolveSecret(out.OpenTelemetryHeaders, stored.OpenTelemetryHeaders)
+	out.WebSearch.Google.APIKey = resolveBoundSecret(
+		out.WebSearch.Google.APIKey, destination(out.WebSearch.Google.APIURL),
+		stored.WebSearch.Google.APIKey, destination(stored.WebSearch.Google.APIURL))
+	out.WebSearch.Brave.APIKey = resolveBoundSecret(
+		out.WebSearch.Brave.APIKey, destination(out.WebSearch.Brave.APIURL),
+		stored.WebSearch.Brave.APIKey, destination(stored.WebSearch.Brave.APIURL))
+	out.OpenTelemetryHeaders = resolveBoundSecret(
+		out.OpenTelemetryHeaders, destination(out.OpenTelemetryEndpoint, strconv.FormatBool(out.OpenTelemetryTLS)),
+		stored.OpenTelemetryHeaders, destination(stored.OpenTelemetryEndpoint, strconv.FormatBool(stored.OpenTelemetryTLS)))
 
 	provider := &out.EmbeddingSearchConfig.EmbeddingProvider
-	provider.Parameters = restoreEmbeddingProviderSecrets(
-		provider.Parameters,
-		stored.EmbeddingSearchConfig.EmbeddingProvider.Parameters,
-	)
+	provider.Parameters = restoreEmbeddingProviderSecrets(*provider, stored.EmbeddingSearchConfig.EmbeddingProvider)
 
 	return out
 }
@@ -122,6 +136,28 @@ func redactHeaderMap(headers map[string]string) {
 	for name, value := range headers {
 		headers[name] = maskSecret(value)
 	}
+}
+
+// destination identifies where a credential is sent: the parts (provider type,
+// URL) are compared as written, except that URLs ignore surrounding spaces and
+// trailing slashes. An empty URL is the provider's own fixed address.
+func destination(parts ...string) string {
+	normalized := make([]string, len(parts))
+	for i, part := range parts {
+		normalized[i] = strings.TrimRight(strings.TrimSpace(part), "/")
+	}
+	return strings.Join(normalized, "\x00")
+}
+
+// resolveBoundSecret is resolveSecret for a credential that belongs to the
+// destination it was saved with: a mask only resolves when the destination is
+// unchanged, otherwise it resolves to empty so the stored credential is never
+// sent somewhere the admin pointed it at later.
+func resolveBoundSecret(incoming, incomingDestination, stored, storedDestination string) string {
+	if IsSecretPlaceholder(incoming) && incomingDestination != storedDestination {
+		return ""
+	}
+	return resolveSecret(incoming, stored)
 }
 
 func resolveSecret(incoming, stored string) string {
@@ -144,10 +180,7 @@ func redactServiceSecrets(service *llm.ServiceConfig) {
 // URL may use the credentials stored on service. They belong to the provider
 // and endpoint they were saved with; an empty URL is the provider's own address.
 func BindsCredentials(service llm.ServiceConfig, serviceType, apiURL string) bool {
-	normalize := func(u string) string {
-		return strings.TrimRight(strings.TrimSpace(u), "/")
-	}
-	return service.Type == serviceType && normalize(service.APIURL) == normalize(apiURL)
+	return destination(service.Type, service.APIURL) == destination(serviceType, apiURL)
 }
 
 func restoreServiceSecrets(service *llm.ServiceConfig, stored *llm.ServiceConfig) {
@@ -265,35 +298,93 @@ func restoreHeaderSecrets(incoming, stored map[string]string) map[string]string 
 	return incoming
 }
 
+// ValidateEmbeddingProviderParameters rejects embedding provider parameters the
+// credential binding cannot reason about: the key, URL or provider repeated
+// under another capitalization (which spelling the client reads would depend on
+// key order), or values the provider's client could not decode.
+func ValidateEmbeddingProviderParameters(upstream embeddings.UpstreamConfig) error {
+	if len(upstream.Parameters) == 0 {
+		return nil
+	}
+	params, ok := decodeParameters(upstream.Parameters)
+	if !ok {
+		return errors.New("embedding provider parameters must be a JSON object")
+	}
+	for _, name := range []string{embeddingProviderAPIKeyParam, embeddingProviderAPIURLParam, embeddingProviderProviderParam} {
+		if len(parameterKeys(params, name)) > 1 {
+			return fmt.Errorf("embedding provider parameter %q is set more than once", name)
+		}
+	}
+	switch upstream.Type {
+	case embeddings.ProviderTypeBifrost, embeddings.ProviderTypeOpenAI, embeddings.ProviderTypeOpenAICompatible:
+		if _, _, err := upstream.Credential(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// parameterKeys returns every key of params that names the parameter, however capitalized.
+func parameterKeys(params map[string]json.RawMessage, name string) []string {
+	var keys []string
+	for key := range params {
+		if strings.EqualFold(key, name) {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
 func redactEmbeddingProviderSecrets(parameters json.RawMessage) json.RawMessage {
 	params, ok := decodeParameters(parameters)
 	if !ok {
 		return parameters
 	}
 
-	value, ok := parameterString(params, embeddingProviderAPIKeyParam)
-	if !ok || value == "" {
+	redacted := false
+	for _, key := range parameterKeys(params, embeddingProviderAPIKeyParam) {
+		if value, isString := parameterString(params, key); isString && value != "" {
+			params[key] = jsonString(SecretPlaceholder)
+			redacted = true
+		}
+	}
+	if !redacted {
 		return parameters
 	}
 
-	return encodeParameters(params, embeddingProviderAPIKeyParam, SecretPlaceholder, parameters)
+	return encodeParameters(params, parameters)
 }
 
-func restoreEmbeddingProviderSecrets(parameters, stored json.RawMessage) json.RawMessage {
-	params, ok := decodeParameters(parameters)
+func restoreEmbeddingProviderSecrets(provider, stored embeddings.UpstreamConfig) json.RawMessage {
+	params, ok := decodeParameters(provider.Parameters)
 	if !ok {
-		return parameters
+		return provider.Parameters
 	}
 
-	value, ok := parameterString(params, embeddingProviderAPIKeyParam)
-	if !ok || !IsSecretPlaceholder(value) {
-		return parameters
+	// Only a provider whose parameters decode the way its client decodes them,
+	// on both sides, has a destination to bind to; otherwise nothing is restored.
+	_, incomingDestination, incomingErr := provider.Credential()
+	storedKey, storedDestination, storedErr := stored.Credential()
+	bindable := incomingErr == nil && storedErr == nil
+
+	restored := false
+	for _, key := range parameterKeys(params, embeddingProviderAPIKeyParam) {
+		value, isString := parameterString(params, key)
+		if !isString || !IsSecretPlaceholder(value) {
+			continue
+		}
+		resolved := ""
+		if bindable {
+			resolved = resolveBoundSecret(value, destination(incomingDestination...), storedKey, destination(storedDestination...))
+		}
+		params[key] = jsonString(resolved)
+		restored = true
+	}
+	if !restored {
+		return provider.Parameters
 	}
 
-	storedParams, _ := decodeParameters(stored)
-	storedValue, _ := parameterString(storedParams, embeddingProviderAPIKeyParam)
-
-	return encodeParameters(params, embeddingProviderAPIKeyParam, resolveSecret(value, storedValue), parameters)
+	return encodeParameters(params, provider.Parameters)
 }
 
 // decodeParameters keeps unrelated entries as raw JSON so re-encoding preserves them verbatim.
@@ -324,15 +415,14 @@ func parameterString(params map[string]json.RawMessage, key string) (string, boo
 	return value, true
 }
 
-// encodeParameters returns params with key set to value, falling back to the
-// original JSON when it cannot be re-encoded.
-func encodeParameters(params map[string]json.RawMessage, key, value string, fallback json.RawMessage) json.RawMessage {
-	encodedValue, err := json.Marshal(value)
-	if err != nil {
-		return fallback
-	}
-	params[key] = encodedValue
+// jsonString encodes a string as a JSON value; marshaling a string cannot fail.
+func jsonString(value string) json.RawMessage {
+	encoded, _ := json.Marshal(value)
+	return encoded
+}
 
+// encodeParameters returns params as JSON, falling back to the original when it cannot be encoded.
+func encodeParameters(params map[string]json.RawMessage, fallback json.RawMessage) json.RawMessage {
 	encoded, err := json.Marshal(params)
 	if err != nil {
 		return fallback

@@ -37,20 +37,12 @@ func newVectorStore(db *sqlx.DB, config embeddings.UpstreamConfig, dimensions, h
 	return postgres.NewPGVector(db, pgVectorConfig)
 }
 
-// BifrostEmbeddingConfig holds configuration for Bifrost-based embeddings
-type BifrostEmbeddingConfig struct {
-	Provider string `json:"provider"` // e.g., "openai", "azure", "cohere", "bedrock"
-	APIKey   string `json:"apiKey"`
-	APIURL   string `json:"apiURL,omitempty"`
-	Model    string `json:"model"` // e.g., "text-embedding-3-small"
-}
-
-// OpenAIEmbeddingConfig holds configuration for OpenAI-based embeddings (via Bifrost)
-type OpenAIEmbeddingConfig struct {
-	APIKey string `json:"apiKey"`
-	APIURL string `json:"apiURL,omitempty"`
-	Model  string `json:"embeddingModel"` // e.g., "text-embedding-3-small"
-}
+// BifrostEmbeddingConfig and OpenAIEmbeddingConfig are the parameters the
+// embedding providers decode; the credential binding in config reads the same types.
+type (
+	BifrostEmbeddingConfig = embeddings.BifrostParameters
+	OpenAIEmbeddingConfig  = embeddings.OpenAIParameters
+)
 
 // newEmbeddingProvider creates a new embedding provider based on the provided configuration
 func newEmbeddingProvider(config embeddings.UpstreamConfig, dimensions int) (embeddings.EmbeddingProvider, error) {

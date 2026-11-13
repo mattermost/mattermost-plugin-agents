@@ -63,6 +63,7 @@ func TestRedactSecrets(t *testing.T) {
 		},
 		EmbeddingSearchConfig: embeddings.EmbeddingSearchConfig{
 			EmbeddingProvider: embeddings.UpstreamConfig{
+				Type:       embeddings.ProviderTypeOpenAI,
 				Parameters: json.RawMessage(`{"apiKey":"embedding-key","embeddingModel":"text-embedding-3-small"}`),
 			},
 		},
@@ -142,6 +143,7 @@ func TestRestoreSecrets(t *testing.T) {
 			},
 			EmbeddingSearchConfig: embeddings.EmbeddingSearchConfig{
 				EmbeddingProvider: embeddings.UpstreamConfig{
+					Type:       embeddings.ProviderTypeOpenAI,
 					Parameters: json.RawMessage(`{"apiKey":"embedding-key","embeddingModel":"text-embedding-3-small"}`),
 				},
 			},
@@ -176,6 +178,7 @@ func TestRestoreSecrets(t *testing.T) {
 			WebSearch: WebSearchConfig{Google: WebSearchGoogleConfig{APIKey: SecretPlaceholder}},
 			EmbeddingSearchConfig: embeddings.EmbeddingSearchConfig{
 				EmbeddingProvider: embeddings.UpstreamConfig{
+					Type:       embeddings.ProviderTypeOpenAI,
 					Parameters: json.RawMessage(`{"apiKey":"` + SecretPlaceholder + `"}`),
 				},
 			},

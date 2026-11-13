@@ -769,3 +769,290 @@ func TestSaveConfigResponseDoesNotReturnCredentials(t *testing.T) {
 		})
 	}
 }
+
+// Every credential belongs to the destination it was saved with. Whatever the
+// admin console sends back for a masked credential, the stored one is only
+// restored while that destination is unchanged.
+func TestSaveConfigBindsCredentialsToTheirDestination(t *testing.T) {
+	const (
+		googleURL    = "https://search.google.example.com"
+		braveURL     = "https://search.brave.example.com"
+		otelEndpoint = "otel.example.com:4317"
+	)
+
+	setEmbeddingType := func(cfg *config.Config, providerType string) {
+		cfg.EmbeddingSearchConfig.EmbeddingProvider.Type = providerType
+	}
+
+	fields := []struct {
+		name string
+		want string
+		get  func(cfg config.Config) string
+		// moves points the credential's destination somewhere else; keeps
+		// changes the destination only cosmetically.
+		moves map[string]func(cfg *config.Config)
+		keeps map[string]func(cfg *config.Config)
+	}{
+		{
+			name: "webSearch.google.apiKey",
+			want: sentinelGoogleAPIKey,
+			get:  func(cfg config.Config) string { return cfg.WebSearch.Google.APIKey },
+			moves: map[string]func(cfg *config.Config){
+				"another API URL": func(cfg *config.Config) { cfg.WebSearch.Google.APIURL = "https://attacker.example.com" },
+				"cleared API URL": func(cfg *config.Config) { cfg.WebSearch.Google.APIURL = "" },
+			},
+			keeps: map[string]func(cfg *config.Config){
+				"trailing slash": func(cfg *config.Config) { cfg.WebSearch.Google.APIURL = googleURL + "/" },
+			},
+		},
+		{
+			name: "webSearch.brave.apiKey",
+			want: sentinelBraveAPIKey,
+			get:  func(cfg config.Config) string { return cfg.WebSearch.Brave.APIKey },
+			moves: map[string]func(cfg *config.Config){
+				"another API URL": func(cfg *config.Config) { cfg.WebSearch.Brave.APIURL = "https://attacker.example.com" },
+				"cleared API URL": func(cfg *config.Config) { cfg.WebSearch.Brave.APIURL = "" },
+			},
+			keeps: map[string]func(cfg *config.Config){
+				"trailing slash": func(cfg *config.Config) { cfg.WebSearch.Brave.APIURL = braveURL + "/" },
+			},
+		},
+		{
+			name: "openTelemetryHeaders",
+			want: sentinelOTelHeaders,
+			get:  func(cfg config.Config) string { return cfg.OpenTelemetryHeaders },
+			moves: map[string]func(cfg *config.Config){
+				"another endpoint": func(cfg *config.Config) { cfg.OpenTelemetryEndpoint = "attacker.example.com:4317" },
+				"cleared endpoint": func(cfg *config.Config) { cfg.OpenTelemetryEndpoint = "" },
+				"TLS switched off": func(cfg *config.Config) { cfg.OpenTelemetryTLS = false },
+			},
+			keeps: map[string]func(cfg *config.Config){
+				"surrounding spaces": func(cfg *config.Config) { cfg.OpenTelemetryEndpoint = " " + otelEndpoint + " " },
+			},
+		},
+		{
+			name: "embeddingProvider apiKey",
+			want: sentinelEmbeddingAPIKey,
+			get:  func(cfg config.Config) string { return embeddingProviderParam(cfg, "apiKey") },
+			moves: map[string]func(cfg *config.Config){
+				"another API URL":       func(cfg *config.Config) { setEmbeddingProviderParam(cfg, "apiURL", "https://attacker.example.com/v1") },
+				"another provider type": func(cfg *config.Config) { setEmbeddingType(cfg, "cohere") },
+			},
+			keeps: map[string]func(cfg *config.Config){
+				"trailing slash": func(cfg *config.Config) {
+					setEmbeddingProviderParam(cfg, "apiURL", visibleEmbeddingAPIURL+"/")
+				},
+			},
+		},
+	}
+
+	type tc struct {
+		name  string
+		field int
+		edit  func(cfg *config.Config)
+		want  string
+	}
+	var cases []tc
+	for i, f := range fields {
+		cases = append(cases, tc{name: f.name + "/unchanged keeps the credential", field: i, edit: func(*config.Config) {}, want: f.want})
+		for name, edit := range f.keeps {
+			cases = append(cases, tc{name: f.name + "/" + name + " keeps the credential", field: i, edit: edit, want: f.want})
+		}
+		for name, edit := range f.moves {
+			cases = append(cases, tc{name: f.name + "/" + name + " drops the credential", field: i, edit: edit})
+		}
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			stored := storedCredentialConfig()
+			stored.WebSearch.Google.APIURL = googleURL
+			stored.WebSearch.Brave.APIURL = braveURL
+			stored.OpenTelemetryEndpoint = otelEndpoint
+			stored.OpenTelemetryTLS = true
+			store := &testConfigStore{cfg: stored}
+			router := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
+
+			var read config.Config
+			require.NoError(t, json.Unmarshal(getAdminConfig(t, store), &read))
+			tt.edit(&read)
+			body, err := json.Marshal(read)
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, http.StatusOK, w.Code)
+
+			assert.Equal(t, tt.want, fields[tt.field].get(*store.cfg))
+			for i, other := range fields {
+				if i != tt.field {
+					assert.Equal(t, other.want, other.get(*store.cfg), "%s must keep its stored value", other.name)
+				}
+			}
+		})
+	}
+}
+
+// The embedding client decodes the provider parameters case-insensitively and
+// keeps the last matching key, so a differently capitalized key is the same
+// parameter and cannot be used to sidestep the credential binding.
+func TestSaveConfigEmbeddingParametersCaseVariantKeys(t *testing.T) {
+	maskedKey := `"apiKey":"` + config.SecretPlaceholder + `"`
+	storedURL := `"apiURL":"` + visibleEmbeddingAPIURL + `"`
+	attacker := `"https://attacker.example.com/v1"`
+
+	tests := []struct {
+		name       string
+		parameters string
+		wantStatus int
+		wantKey    string
+	}{
+		{name: "canonical keys keep the credential", parameters: `{` + maskedKey + `,` + storedURL + `}`, wantStatus: http.StatusOK, wantKey: sentinelEmbeddingAPIKey},
+		{name: "alias URL next to the stored URL is rejected", parameters: `{` + maskedKey + `,` + storedURL + `,"apiUrl":` + attacker + `}`, wantStatus: http.StatusBadRequest},
+		{name: "alias URL alone moves the destination", parameters: `{` + maskedKey + `,"APIURL":` + attacker + `}`, wantStatus: http.StatusOK},
+		{name: "alias key next to the stored key is rejected", parameters: `{` + maskedKey + `,"APIKEY":"typed",` + storedURL + `}`, wantStatus: http.StatusBadRequest},
+		{name: "alias provider next to the stored provider is rejected", parameters: `{` + maskedKey + `,` + storedURL + `,"provider":"openai","Provider":"azure"}`, wantStatus: http.StatusBadRequest},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &testConfigStore{cfg: storedCredentialConfig()}
+			router := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
+
+			var read config.Config
+			require.NoError(t, json.Unmarshal(getAdminConfig(t, store), &read))
+			read.EmbeddingSearchConfig.EmbeddingProvider.Parameters = json.RawMessage(tt.parameters)
+			body, err := json.Marshal(read)
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, tt.wantStatus, w.Code)
+			assert.NotContains(t, w.Body.String(), sentinelEmbeddingAPIKey)
+			if tt.wantStatus == http.StatusOK {
+				assert.Equal(t, tt.wantKey, embeddingProviderParam(*store.cfg, "apiKey"))
+			} else {
+				assert.Equal(t, sentinelEmbeddingAPIKey, embeddingProviderParam(*store.cfg, "apiKey"), "a rejected save must not change the stored credential")
+			}
+		})
+	}
+}
+
+func TestGetConfigMasksCaseVariantEmbeddingKey(t *testing.T) {
+	stored := storedCredentialConfig()
+	stored.EmbeddingSearchConfig.EmbeddingProvider.Parameters = json.RawMessage(
+		`{"APIKey":"` + sentinelEmbeddingAPIKey + `","apiURL":"` + visibleEmbeddingAPIURL + `"}`)
+
+	body := string(getAdminConfig(t, &testConfigStore{cfg: stored}))
+
+	assert.NotContains(t, body, sentinelEmbeddingAPIKey)
+	assert.Contains(t, body, visibleEmbeddingAPIURL)
+}
+
+// The credential binding must see the provider parameters exactly as the
+// provider's runtime client does: which fields it reads, and what they decode
+// to. Anything the client could not decode, or a provider with no client,
+// restores nothing.
+func TestSaveConfigEmbeddingBindingMatchesTheClient(t *testing.T) {
+	masked := `"apiKey":"` + config.SecretPlaceholder + `"`
+	storedURL := `"apiURL":"` + visibleEmbeddingAPIURL + `"`
+	attacker := `"apiURL":"https://attacker.example.com/v1"`
+
+	tests := []struct {
+		name         string
+		storedType   string
+		storedParams string
+		sentType     string
+		sentParams   string
+		wantStatus   int
+		wantKey      string
+	}{
+		{
+			name: "openai client ignores the provider parameter, so changing it keeps the key", storedType: "openai",
+			storedParams: `{"apiKey":"` + sentinelEmbeddingAPIKey + `",` + storedURL + `}`,
+			sentType:     "openai", sentParams: `{` + masked + `,` + storedURL + `,"provider":"cohere"}`,
+			wantStatus: http.StatusOK, wantKey: sentinelEmbeddingAPIKey,
+		},
+		{
+			name: "non-string provider the openai client ignores still binds to the URL", storedType: "openai",
+			storedParams: `{"apiKey":"` + sentinelEmbeddingAPIKey + `",` + storedURL + `}`,
+			sentType:     "openai", sentParams: `{` + masked + `,"provider":123,` + attacker + `}`,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "non-string provider the bifrost client reads is rejected", storedType: "bifrost",
+			storedParams: `{"provider":"openai","apiKey":"` + sentinelEmbeddingAPIKey + `"}`,
+			sentType:     "bifrost", sentParams: `{"provider":123,` + masked + `}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "non-string apiURL is rejected", storedType: "openai",
+			storedParams: `{"apiKey":"` + sentinelEmbeddingAPIKey + `",` + storedURL + `}`,
+			sentType:     "openai", sentParams: `{` + masked + `,"apiURL":["https://attacker.example.com"]}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "non-string apiKey is rejected", storedType: "openai",
+			storedParams: `{"apiKey":"` + sentinelEmbeddingAPIKey + `",` + storedURL + `}`,
+			sentType:     "openai", sentParams: `{"apiKey":{"x":1},` + attacker + `}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "parameters that are not an object are rejected", storedType: "openai",
+			storedParams: `{"apiKey":"` + sentinelEmbeddingAPIKey + `",` + storedURL + `}`,
+			sentType:     "openai", sentParams: `"` + config.SecretPlaceholder + `"`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "bifrost keeps the key for the same nested provider", storedType: "bifrost",
+			storedParams: `{"provider":"openai","apiKey":"` + sentinelEmbeddingAPIKey + `"}`,
+			sentType:     "bifrost", sentParams: `{"provider":"openai",` + masked + `}`,
+			wantStatus: http.StatusOK, wantKey: sentinelEmbeddingAPIKey,
+		},
+		{
+			name: "bifrost drops the key for another nested provider", storedType: "bifrost",
+			storedParams: `{"provider":"openai","apiKey":"` + sentinelEmbeddingAPIKey + `"}`,
+			sentType:     "bifrost", sentParams: `{"provider":"cohere",` + masked + `}`,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "a provider type with no client never gets the key restored", storedType: "mock",
+			storedParams: `{"apiKey":"` + sentinelEmbeddingAPIKey + `"}`,
+			sentType:     "mock", sentParams: `{` + masked + `}`,
+			wantStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stored := storedCredentialConfig()
+			stored.EmbeddingSearchConfig.EmbeddingProvider = embeddings.UpstreamConfig{Type: tt.storedType, Parameters: json.RawMessage(tt.storedParams)}
+			store := &testConfigStore{cfg: stored}
+			router := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
+
+			var read config.Config
+			require.NoError(t, json.Unmarshal(getAdminConfig(t, store), &read))
+			read.EmbeddingSearchConfig.EmbeddingProvider = embeddings.UpstreamConfig{Type: tt.sentType, Parameters: json.RawMessage(tt.sentParams)}
+			body, err := json.Marshal(read)
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, tt.wantStatus, w.Code)
+			assert.NotContains(t, w.Body.String(), sentinelEmbeddingAPIKey)
+			if tt.wantStatus == http.StatusOK {
+				assert.Equal(t, tt.wantKey, embeddingProviderParam(*store.cfg, "apiKey"))
+			} else {
+				assert.Equal(t, sentinelEmbeddingAPIKey, embeddingProviderParam(*store.cfg, "apiKey"), "a rejected save must not change the stored credential")
+			}
+		})
+	}
+}
