@@ -5,10 +5,12 @@ import {useCallback, useEffect, useMemo, useState} from 'react';
 
 import manifest from '@/manifest';
 
+import {isSettingsSection, type SettingsSection} from './settings/sections';
+
 export const AGENTS_ROUTE = `/plug/${manifest.id}/agents`;
 
 // 'landing' is the product root, which hands over to a new chat with the user's agent (or All agents).
-export type AgentsView = 'landing' | 'all' | 'prompts' | 'chat';
+export type AgentsView = 'landing' | 'all' | 'prompts' | 'chat' | 'settings';
 
 export interface AgentsRoute {
     view: AgentsView;
@@ -17,6 +19,9 @@ export interface AgentsRoute {
 
     // 'all' only: the All agents view with the create-agent flow open.
     create?: boolean;
+
+    // 'settings' only: the section to show; unset for the first one.
+    section?: SettingsSection;
 }
 
 export interface AgentsNavigation {
@@ -37,6 +42,7 @@ export interface AgentsNavigation {
     closeNewAgent: () => void;
     toPrompts: () => void;
     toChat: (botId: string, rootId?: string) => void;
+    toSettings: (section?: SettingsSection) => void;
 }
 
 // Minimal slice of the host's history object. v4 passes (location, action) to
@@ -47,6 +53,9 @@ interface HostHistory {
     push: (path: string) => void;
     replace?: (path: string) => void;
     listen?: (listener: () => void) => (() => void) | void;
+
+    // history v4: a string asks the user to confirm the transition, undefined lets it through.
+    block?: (prompt: (location: {pathname: string}) => string | undefined) => (() => void) | void;
 }
 
 const getHistory = (): HostHistory | undefined => {
@@ -87,6 +96,12 @@ export const parseAgentsRoute = (pathname: string | undefined): AgentsRoute => {
     if (segments[0] === 'prompts' && segments.length === 1) {
         return {view: 'prompts'};
     }
+
+    // An unknown section shows the first one: it is a read of the settings,
+    // nothing happens as a side effect.
+    if (segments[0] === 'settings' && segments.length <= 2) {
+        return isSettingsSection(segments[1]) ? {view: 'settings', section: segments[1]} : {view: 'settings'};
+    }
     if (segments[0] === 'chat' && segments[1] && segments.length <= 3) {
         const route: AgentsRoute = {view: 'chat', botId: segments[1]};
         if (segments[2]) {
@@ -100,6 +115,11 @@ export const parseAgentsRoute = (pathname: string | undefined): AgentsRoute => {
 export const ALL_AGENTS_PATH = `${AGENTS_ROUTE}/all`;
 export const NEW_AGENT_PATH = `${AGENTS_ROUTE}/all/new`;
 export const PROMPTS_PATH = `${AGENTS_ROUTE}/prompts`;
+export const SETTINGS_PATH = `${AGENTS_ROUTE}/settings`;
+
+export const buildSettingsPath = (section?: SettingsSection): string => (
+    section ? `${SETTINGS_PATH}/${section}` : SETTINGS_PATH
+);
 
 export const buildChatPath = (botId: string, rootId?: string): string => {
     const base = `${AGENTS_ROUTE}/chat/${encodeURIComponent(botId)}`;
@@ -112,6 +132,22 @@ export const isAgentsPathActive = (): boolean => {
     return pathname === AGENTS_ROUTE || pathname.startsWith(`${AGENTS_ROUTE}/`);
 };
 
+// While active, the host router asks the user to confirm before leaving for a
+// path that allow rejects. Reloads and closing the tab are not covered.
+export const useNavigationGuard = (active: boolean, allow: (pathname: string) => boolean, message: string) => {
+    useEffect(() => {
+        if (!active) {
+            return () => {/* nothing to remove */};
+        }
+        const unblock = getHistory()?.block?.((location) => (allow(location.pathname) ? undefined : message)); // eslint-disable-line no-undefined
+        return () => {
+            if (typeof unblock === 'function') {
+                unblock();
+            }
+        };
+    }, [active, allow, message]);
+};
+
 const readRoute = (): AgentsRoute => parseAgentsRoute(getHistory()?.location?.pathname);
 
 export const useAgentsRoute = (): AgentsRoute & AgentsNavigation => {
@@ -122,7 +158,7 @@ export const useAgentsRoute = (): AgentsRoute & AgentsNavigation => {
         const sync = () => {
             const next = readRoute();
             setRoute((prev) => (
-                prev.view === next.view && prev.botId === next.botId && prev.rootId === next.rootId && prev.create === next.create ? prev : next
+                prev.view === next.view && prev.botId === next.botId && prev.rootId === next.rootId && prev.create === next.create && prev.section === next.section ? prev : next
             ));
         };
         sync();
@@ -155,6 +191,7 @@ export const useAgentsRoute = (): AgentsRoute & AgentsNavigation => {
         closeNewAgent: () => replace(ALL_AGENTS_PATH),
         toPrompts: () => push(PROMPTS_PATH),
         toChat: (botId, rootId) => push(buildChatPath(botId, rootId)),
+        toSettings: (section) => push(buildSettingsPath(section)),
     }), [push, replace]);
 
     return {...route, ...nav};

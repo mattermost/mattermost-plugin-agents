@@ -22,6 +22,7 @@ import {SelectField} from './item';
 import {MCPServerConfig, MCPServerInfo, MCPToolConfig, MCPToolInfo} from './mcp_types';
 import MCPToolConfigRow, {useToolPolicyOptions} from './mcp_tool_config_row';
 import {reviewToolConfigs} from './mcp_tool_review';
+import {useSettingsReadOnly} from './settings_read_only';
 
 type MCPServerToolRowProps = {
     server: MCPServerInfo;
@@ -34,6 +35,7 @@ type MCPServerToolRowProps = {
 };
 
 const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing = false}: MCPServerToolRowProps) => {
+    const readOnly = useSettingsReadOnly();
     const [expanded, setExpanded] = useState(reviewing);
     const intl = useIntl();
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
@@ -130,7 +132,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
         return policies.size === 1 ? [...policies][0] : '';
     };
 
-    const bulkDisabled = !serverConfig || !serverEnabled || !approvalPoliciesLicensed;
+    const bulkDisabled = readOnly || !serverConfig || !serverEnabled || !approvalPoliciesLicensed;
 
     const renderBulkPolicyControl = (tools: MCPToolInfo[], ariaLabel: string) => (
         <BulkPolicySelect>
@@ -254,7 +256,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
                         </StyledChevron>
                     </ExpandChevron>
                 </ServerRowExpandButton>
-                {unreviewedCount > 0 && serverConfig && (expanded ? markReviewedButton : (
+                {unreviewedCount > 0 && serverConfig && !readOnly && (expanded ? markReviewedButton : (
 
                     // Until the tool list is open the button only tells the
                     // admin there is something to review: tools are marked
@@ -273,7 +275,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
                                 }
                                 handleServerToggle(enabled);
                             }}
-                            disabled={enableRemoteBlocked && !serverEnabled}
+                            disabled={readOnly || (enableRemoteBlocked && !serverEnabled)}
                             size='medium'
                             ariaLabel={intl.formatMessage(
                                 {defaultMessage: 'Enable {serverName}'},

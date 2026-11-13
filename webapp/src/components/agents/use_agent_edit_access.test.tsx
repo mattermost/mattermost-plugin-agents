@@ -10,13 +10,16 @@ import {useAgentEditAccess} from './use_agent_edit_access';
 
 const mockGetAgents = jest.fn();
 const mockGetServices = jest.fn();
+const mockGetMySettingsAccess = jest.fn();
+const mockUserHasSystemPermission = jest.fn();
 
 jest.mock('@/client', () => ({
     getAgents: (...args: unknown[]) => mockGetAgents(...args),
     getServices: (...args: unknown[]) => mockGetServices(...args),
+    getMySettingsAccess: (...args: unknown[]) => mockGetMySettingsAccess(...args),
 }));
 
-jest.mock('@/utils/permissions', () => ({userHasSystemPermission: () => true}));
+jest.mock('@/utils/permissions', () => ({userHasSystemPermission: (...args: unknown[]) => mockUserHasSystemPermission(...args)}));
 
 const wrapper = ({children}: {children: React.ReactNode}) => (
     <Provider store={createStore(() => ({entities: {users: {currentUserId: 'me'}}}))}>{children}</Provider>
@@ -26,6 +29,29 @@ describe('useAgentEditAccess', () => {
     beforeEach(() => {
         mockGetAgents.mockReset();
         mockGetServices.mockReset().mockResolvedValue([]);
+        mockGetMySettingsAccess.mockReset().mockResolvedValue({level: 'none', manageOthersAgents: false});
+        mockUserHasSystemPermission.mockReset().mockReturnValue(true);
+    });
+
+    // The agent managers list grants manage_others_agent to people whose roles do not: the editor
+    // gets the service list for them as it does for the permission.
+    test.each([
+        {name: 'an agent manager from the System Console list', manageOthersAgents: true, getsServices: true},
+        {name: 'someone who manages only this agent', manageOthersAgents: false, getsServices: false},
+    ])('$name, without agent permissions from a role', async ({manageOthersAgents, getsServices}) => {
+        mockUserHasSystemPermission.mockReturnValue(false);
+        mockGetMySettingsAccess.mockResolvedValue({level: 'none', manageOthersAgents});
+        mockGetServices.mockResolvedValue([{id: 's1', name: 'Service', type: 'openai'}]);
+        mockGetAgents.mockResolvedValue({agents: [{id: 'a1', botUserID: 'bot1', canManage: true}]});
+
+        const {result} = renderHook(() => useAgentEditAccess('bot1'), {wrapper});
+        await waitFor(() => expect(mockGetMySettingsAccess).toHaveBeenCalled());
+        await waitFor(() => expect(result.current.access.status).toBe('allowed'));
+        await act(async () => {/* let a reload for the delegated access settle */});
+
+        const services = (result.current.access as {services: unknown[]}).services;
+        expect(services).toHaveLength(getsServices ? 1 : 0);
+        expect(mockGetServices).toHaveBeenCalledTimes(getsServices ? 1 : 0);
     });
 
     test('a reload keeps the resolved access until the new one arrives', async () => {

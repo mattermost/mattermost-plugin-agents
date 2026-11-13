@@ -54,6 +54,7 @@ jest.mock('@/client', () => ({
     restoreAgentVersion: jest.fn(),
     deleteAgentVersions: jest.fn(),
     getProfilesByIds: jest.fn(),
+    getMySettingsAccess: jest.fn(),
 }));
 
 jest.mock('@/utils/agent_export', () => ({
@@ -352,7 +353,7 @@ function renderView(onBack = jest.fn()) {
     };
 }
 
-const serviceAccountFieldsBanner = /Access and MCP tool grants require a system administrator/;
+const serviceAccountFieldsBanner = /Access and MCP tool grants require a system administrator or read and write access to the Agents settings/;
 
 describe('AgentConfigView', () => {
     beforeEach(() => {
@@ -1230,6 +1231,34 @@ describe('AgentConfigView', () => {
         fireEvent.click(screen.getByLabelText('Use service accounts'));
         expect(screen.queryByText(serviceAccountFieldsBanner)).toBeNull();
         expect((screen.getByRole('button', {name: 'Save'}) as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    // Read/write Agents settings delegates set the MCP servers' service account credentials, so the
+    // server lets them turn service account auth on and change grants while it is on, as admins do.
+    test.each([
+        {level: 'write', locked: false},
+        {level: 'read', locked: true},
+        {level: 'none', locked: true},
+    ])('a non-admin with $level settings access has the service account grants locked=$locked', async ({level, locked}) => {
+        mockedUseCurrentUserHasSystemPermission.mockReturnValue(false);
+        const {getMySettingsAccess} = jest.requireMock('@/client') as {getMySettingsAccess: jest.Mock};
+        getMySettingsAccess.mockResolvedValue({level, manageOthersAgents: false});
+
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='edit'
+                    agent={{...savedAgent, id: 'agent_sa', name: 'saagent', displayName: 'SA Agent', useServiceAccountAuth: true}}
+                    services={services}
+                    onBack={jest.fn()}
+                    onSaved={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        await waitFor(() => expect(getMySettingsAccess).toHaveBeenCalled());
+        await act(async () => {/* let the level arrive */});
+        expect(screen.queryByText(serviceAccountFieldsBanner) === null).toBe(!locked);
     });
 });
 

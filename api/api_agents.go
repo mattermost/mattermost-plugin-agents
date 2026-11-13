@@ -36,9 +36,10 @@ var errInvalidAgentUsername = errors.New("invalid username: must start with a lo
 // errNoAgentConfigReferences aborts the config update when no setting references the agent.
 var errNoAgentConfigReferences = errors.New("no setting references the agent")
 
-// errServiceAccountAuthRequiresAdmin is returned when a caller without
-// PermissionManageSystem tries to save an agent with the service account flag on.
-var errServiceAccountAuthRequiresAdmin = errors.New("only system administrators can save an agent with service account authentication enabled; turn the setting off to make other changes")
+// errServiceAccountAuthRequiresAdmin is returned when a caller who is neither a
+// system admin nor a read/write settings delegate (canManageServiceAccounts)
+// tries to save an agent with the service account flag on.
+var errServiceAccountAuthRequiresAdmin = errors.New("only system administrators and people with read and write access to the Agents settings can save an agent with service account authentication enabled; turn the setting off to make other changes")
 
 // WebsocketEventBotsInvalidate is the event name for PublishWebSocketEvent (webapp: custom_mattermost-ai_<name>).
 const WebsocketEventBotsInvalidate = "bots_invalidate"
@@ -550,7 +551,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
-	if req.UseServiceAccountAuth && !isSystemAdmin(a.pluginAPI, userID) {
+	if req.UseServiceAccountAuth && !a.canManageServiceAccounts(userID) {
 		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
 		return
 	}
@@ -689,7 +690,7 @@ func (a *API) handleListAgents(c *gin.Context) {
 	accessible := make([]agentListItem, 0, len(agents))
 	for _, cfg := range agents {
 		if a.canUserAccessAgent(c.Request.Context(), cfg, userID) {
-			canManage := canManageAgent(a.pluginAPI, cfg, userID)
+			canManage := a.canManageAgent(cfg, userID)
 			accessible = append(accessible, agentListItem{
 				BotConfig:      redactUnmanageableAgent(cfg, canManage),
 				InactiveReason: inactive[cfg.ID],
@@ -721,7 +722,7 @@ func (a *API) handleGetAgent(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, sanitizeAgentForUser(a.pluginAPI, cfg, userID))
+	c.JSON(http.StatusOK, a.sanitizeAgentForUser(cfg, userID))
 }
 
 // loadManageableAgent loads agentID and verifies userID may manage it, aborting
@@ -744,7 +745,7 @@ func (a *API) loadManageableAgent(c *gin.Context, agentID, userID, forbiddenMsg 
 		enrichAudit(cfg)
 	}
 
-	if !canManageAgent(a.pluginAPI, cfg, userID) {
+	if !a.canManageAgent(cfg, userID) {
 		abortAgentRequest(c, http.StatusForbidden, errors.New(forbiddenMsg))
 		return nil, false
 	}
@@ -789,7 +790,7 @@ func (a *API) updateAgent(c *gin.Context, userID string, cfg *llm.BotConfig, req
 		proposed.Name = req.Username
 	}
 
-	if serviceAccountChangeNeedsAdmin(*cfg, proposed) && !isSystemAdmin(a.pluginAPI, userID) {
+	if serviceAccountChangeNeedsAdmin(*cfg, proposed) && !a.canManageServiceAccounts(userID) {
 		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
 		return nil, false
 	}
@@ -1002,7 +1003,7 @@ func (a *API) canBypassServicePolicies(userID string) bool {
 // handleListServices handles GET /services (non-secret fields only).
 func (a *API) handleListServices(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
-	if !canConfigureAgentServices(a.pluginAPI, userID) {
+	if !a.canConfigureAgentServices(userID) {
 		abortAgentRequest(c, http.StatusForbidden, errors.New("user does not have permission to list services"))
 		return
 	}
@@ -1047,7 +1048,7 @@ type FetchModelsForServiceRequest struct {
 // handleFetchModelsForService handles POST /agents/models/fetch using stored service credentials.
 func (a *API) handleFetchModelsForService(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
-	if !canConfigureAgentServices(a.pluginAPI, userID) {
+	if !a.canConfigureAgentServices(userID) {
 		abortAgentRequest(c, http.StatusForbidden, errors.New("user does not have permission to fetch models"))
 		return
 	}
@@ -1152,14 +1153,14 @@ func (a *API) canUserAccessAgent(ctx context.Context, cfg *llm.BotConfig, userID
 }
 
 // sanitizeAgentForUser returns cfg unchanged for users who can manage the agent
-// (creator / agent admin / PermissionManageOthersAgent / legacy bot ManageSystem).
+// (creator / agent admin / canManageOthersAgents / legacy bot ManageSystem).
 // For everyone else, it returns a shallow copy with CustomInstructions stripped
 // since that field can contain sensitive organizational procedures.
-func sanitizeAgentForUser(client *pluginapi.Client, cfg *llm.BotConfig, userID string) *llm.BotConfig {
+func (a *API) sanitizeAgentForUser(cfg *llm.BotConfig, userID string) *llm.BotConfig {
 	if cfg == nil {
 		return nil
 	}
-	return redactUnmanageableAgent(cfg, canManageAgent(client, cfg, userID))
+	return redactUnmanageableAgent(cfg, a.canManageAgent(cfg, userID))
 }
 
 // redactUnmanageableAgent drops what only an agent's managers may read.

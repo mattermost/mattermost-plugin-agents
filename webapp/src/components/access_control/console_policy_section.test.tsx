@@ -7,6 +7,8 @@ import {IntlProvider} from 'react-intl';
 
 import {AccessControlPolicy} from '@/types/access_control';
 
+import {SettingsReadOnlyContext} from '../system_console/settings_read_only';
+
 import ConsolePolicySection from './console_policy_section';
 
 jest.mock('react-intl', () => {
@@ -109,6 +111,35 @@ afterEach(() => {
 });
 
 describe('ConsolePolicySection', () => {
+    test.each([
+        {name: 'a read-only settings viewer cannot remove or save the policy', readOnly: true, licensed: true, removable: false},
+        {name: 'below the license level the policy can still be removed', readOnly: false, licensed: false, removable: true},
+        {name: 'an editor can remove the policy', readOnly: false, licensed: true, removable: true},
+    ])('$name', async ({readOnly, licensed, removable}) => {
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockReturnValue(licensed);
+        try {
+            render(
+                <IntlProvider locale='en'>
+                    <SettingsReadOnlyContext.Provider value={readOnly}>
+                        <ConsolePolicySection
+                            resourceType='service'
+                            resourceId='serviceidaaaaaaaaaaaaaaaaa'
+                            resourceDisplayName='Service'
+                        />
+                    </SettingsReadOnlyContext.Provider>
+                </IntlProvider>,
+            );
+            fireEvent.click(screen.getByText('Access policy'));
+            await screen.findByTestId('table-editor');
+
+            const remove = screen.getByRole('button', {name: 'Remove policy'}) as HTMLButtonElement;
+            expect(remove.disabled).toBe(!removable);
+        } finally {
+            useIsLicensedFor.mockReturnValue(true);
+        }
+    });
+
     test('the editor mounts on first expand and stays mounted when collapsed', async () => {
         renderSection('serviceidaaaaaaaaaaaaaaaaa');
 

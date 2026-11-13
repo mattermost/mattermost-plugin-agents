@@ -5,6 +5,8 @@ import {useSelector} from 'react-redux';
 
 import {userHasSystemPermission} from '@/utils/permissions';
 
+import {useSettingsAccess} from './settings/use_settings_access';
+
 export interface AgentPermissions {
     currentUserId: string;
 
@@ -12,7 +14,8 @@ export interface AgentPermissions {
     canCreate: boolean;
 
     // Mirrors api.canConfigureAgentServices: without one of these, /services 403s, so users browse
-    // read-only and the editor gets no service list.
+    // read-only and the editor gets no service list. manage_others_agent also comes from the agent
+    // managers list in the System Console, which the server reports.
     canViewServices: boolean;
 }
 
@@ -24,9 +27,10 @@ export function useAgentPermissions(): AgentPermissions {
     const hasManageOwnAgent = useSelector(has('manage_own_agent'));
     const hasManageOthersAgent = useSelector(has('manage_others_agent'));
     const hasManageSystem = useSelector(has('manage_system'));
+    const {manageOthersAgents: delegatedManageOthersAgents} = useSettingsAccess();
     return {
         currentUserId,
         canCreate: hasManageOwnAgent || hasManageSystem,
-        canViewServices: hasManageOwnAgent || hasManageOthersAgent || hasManageSystem,
+        canViewServices: hasManageOwnAgent || hasManageOthersAgent || delegatedManageOthersAgents || hasManageSystem,
     };
 }

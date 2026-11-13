@@ -11,7 +11,7 @@ import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers
 /**
  * Test Suite: Debug Panel
  *
- * Tests configuration options in the Debug panel of the system console.
+ * Tests configuration options in the Debug section of the Agents settings.
  */
 
 /**
@@ -72,8 +72,8 @@ test.describe.serial('Debug Panel', () => {
         // Login as sysadmin user
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
 
-        // Navigate to system console AI plugin configuration page
-        await systemConsole.navigateToPluginConfig(mattermost.url());
+        // Open the Debug section of the Agents settings
+        await systemConsole.navigateToAgentsSettings(mattermost.url(), 'debug');
 
         // Scroll to the Debug panel
         const debugPanel = systemConsole.getDebugPanel();

@@ -102,7 +102,7 @@ func (a *API) loadManagedAgent(c *gin.Context) *llm.BotConfig {
 		c.AbortWithStatus(http.StatusNotFound)
 		return nil
 	}
-	if !canManageAgent(a.pluginAPI, cfg, userID) {
+	if !a.canManageAgent(cfg, userID) {
 		abortAgentRequest(c, http.StatusForbidden, errors.New("not authorized to manage this agent's access policy"))
 		return nil
 	}
@@ -140,7 +140,7 @@ func (a *API) handlePutAgentPolicy(c *gin.Context) {
 		return
 	}
 	auditPolicyMutation(c, accesscontrol.ResourceTypeAgent, cfg.ID)
-	if serviceAccountPolicyWriteNeedsAdmin(cfg) && !isSystemAdmin(a.pluginAPI, userID) {
+	if serviceAccountPolicyWriteNeedsAdmin(cfg) && !a.canManageServiceAccounts(userID) {
 		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
 		return
 	}
@@ -166,7 +166,7 @@ func (a *API) handleDeleteAgentPolicy(c *gin.Context) {
 		return
 	}
 	auditPolicyMutation(c, accesscontrol.ResourceTypeAgent, cfg.ID)
-	if serviceAccountPolicyWriteNeedsAdmin(cfg) && !isSystemAdmin(a.pluginAPI, userID) {
+	if serviceAccountPolicyWriteNeedsAdmin(cfg) && !a.canManageServiceAccounts(userID) {
 		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
 		return
 	}
@@ -352,12 +352,12 @@ func (a *API) handleDeleteMCPPolicy(c *gin.Context) {
 // manage_own_agent / manage_others_agent / manage_system, or ?agent_id= plus
 // canManageAgent. Mirrors "anyone can create a channel" for agents.
 func (a *API) canAuthorAgentCEL(c *gin.Context, userID string) bool {
-	if canConfigureAgentServices(a.pluginAPI, userID) {
+	if a.canConfigureAgentServices(userID) {
 		return true
 	}
 	if agentID := c.Query("agent_id"); agentID != "" {
 		cfg, err := a.agentStore.GetAgent(agentID)
-		if err == nil && cfg != nil && canManageAgent(a.pluginAPI, cfg, userID) {
+		if err == nil && cfg != nil && a.canManageAgent(cfg, userID) {
 			return true
 		}
 	}
@@ -365,10 +365,12 @@ func (a *API) canAuthorAgentCEL(c *gin.Context, userID string) bool {
 }
 
 // celRouteAuthzRequired: schema/lint editor routes (check, visual_ast,
-// autocomplete). /cel/test uses canAuthorCELTest instead.
+// autocomplete). /cel/test uses canAuthorCELTest instead. Users with access
+// to the plugin configuration view (read-only) or author (read/write) service
+// and MCP server policies there, and the editor renders through these routes.
 func (a *API) celRouteAuthzRequired(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
-	if a.canAuthorAgentCEL(c, userID) {
+	if a.canAuthorAgentCEL(c, userID) || a.settingsAccessLevel(userID) >= config.SettingsAccessRead {
 		c.Next()
 		return
 	}
@@ -377,13 +379,13 @@ func (a *API) celRouteAuthzRequired(c *gin.Context) {
 
 // canAuthorCELTest: people who could save that policy may Test it. Agent
 // policies are authorable by agent managers; service/MCP policies are /admin
-// CRUD, so only manage_system.
+// CRUD, so system admins and users with read/write settings access.
 func (a *API) canAuthorCELTest(c *gin.Context, userID, resourceType string) bool {
 	switch resourceType {
 	case accesscontrol.ResourceTypeAgent:
 		return a.canAuthorAgentCEL(c, userID)
 	case accesscontrol.ResourceTypeService, accesscontrol.ResourceTypeMCP:
-		return isSystemAdmin(a.pluginAPI, userID)
+		return a.settingsAccessLevel(userID) == config.SettingsAccessWrite
 	default:
 		return false
 	}

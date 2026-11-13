@@ -38,7 +38,7 @@ type Props = {
     /** Soft-lock auto-enable + tool grants while SA is on for non-admins; SA checkbox stays reachable. */
     serviceAccountFieldsLocked: boolean;
 
-    /** From parent: whether the current user may enable service account auth (manage_system). */
+    /** From parent: whether the current user may enable service account auth (system admin or read/write settings delegate). */
     canEditServiceAccountAuth: boolean;
     onChange: (updates: {
         enabledTools?: EnabledTool[];
@@ -102,7 +102,7 @@ function emptyToolsNotice(
     case 'no-sa-credentials':
         return (
             <EmptyToolsNotice>
-                <FormattedMessage defaultMessage='This agent cannot use this server until service account credentials are added in System Console MCP settings.'/>
+                <FormattedMessage defaultMessage='This agent cannot use this server until service account credentials are added in Agents Settings, under MCP servers.'/>
             </EmptyToolsNotice>
         );
     case 'sa-connect-failed':
@@ -377,7 +377,7 @@ const McpsTab = (props: Props) => {
             <Container>
                 {serviceAccountSection}
                 <EmptyState
-                    title={<FormattedMessage defaultMessage='No MCP servers are configured. Ask your system administrator to configure MCP servers in the system console.'/>}
+                    title={<FormattedMessage defaultMessage='No MCP servers are configured. Ask your system administrator to add MCP servers in the Agents settings.'/>}
                 />
             </Container>
         );
