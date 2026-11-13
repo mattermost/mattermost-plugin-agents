@@ -818,8 +818,8 @@ func TestSaveConfigBindsCredentialsToTheirDestination(t *testing.T) {
 			want: sentinelEmbeddingAPIKey,
 			get:  func(cfg config.Config) string { return embeddingProviderParam(cfg, "apiKey") },
 			moves: map[string]func(cfg *config.Config){
-				"another API URL":       func(cfg *config.Config) { setEmbeddingProviderParam(cfg, "apiURL", "https://attacker.example.com/v1") },
-				"another provider type": func(cfg *config.Config) { setEmbeddingType(cfg, "cohere") },
+				"another API URL":         func(cfg *config.Config) { setEmbeddingProviderParam(cfg, "apiURL", "https://attacker.example.com/v1") },
+				"another provider type":   func(cfg *config.Config) { setEmbeddingType(cfg, "cohere") },
 				"another nested provider": func(cfg *config.Config) { setEmbeddingProviderParam(cfg, "provider", "cohere") },
 			},
 			keeps: map[string]func(cfg *config.Config){
