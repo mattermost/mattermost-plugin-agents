@@ -702,7 +702,7 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 
 	// Sharing posts the held draft for the requester instead of asking the
 	// model for a new channel-visible paraphrase.
-	if acceptedAllPending && len(acceptedToolIDs) > 0 && c.publishHeldChannelAnswer(post, turns, decoded, clickedPostToolUseIDs) {
+	if acceptedAllPending && len(acceptedToolIDs) > 0 && c.publishHeldChannelAnswer(post, turns, decoded, clickedPostToolUseIDs, c.collectCreatedFileIDsFromTurns(conv.ID, post.Id)) {
 		return nil
 	}
 

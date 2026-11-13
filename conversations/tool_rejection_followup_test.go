@@ -17,6 +17,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -470,7 +471,7 @@ func TestHandleToolResultPublishesHeldAnswerOnlyWhenEveryPendingResultIsShared(t
 		accepted      []string
 		wantPublished bool
 	}{
-		{name: "every pending result shared", accepted: []string{"tool-use-a", "tool-use-b"}, wantPublished: true},
+		{name: "every pending result shared", accepted: []string{"tool-use-a", "tool-use-b", "tool-use-file"}, wantPublished: true},
 		{name: "only one of two pending results shared", accepted: []string{"tool-use-a"}, wantPublished: false},
 	}
 
@@ -478,15 +479,20 @@ func TestHandleToolResultPublishesHeldAnswerOnlyWhenEveryPendingResultIsShared(t
 		t.Run(tc.name, func(t *testing.T) {
 			convStore, conv := loadedStateConversationStore()
 			postID := "approval-post-id"
+			createdFileID := model.NewId()
+			fileResult, err := json.Marshal(mmtools.CreateFileResult{FileID: createdFileID, FileName: "report.md"})
+			require.NoError(t, err)
 			assistant, err := json.Marshal([]conversation.ContentBlock{
 				{Type: conversation.BlockTypeToolUse, ID: "tool-use-a", Name: "jira__get_issue", Status: conversation.StatusSuccess, Shared: new(false)},
 				{Type: conversation.BlockTypeToolUse, ID: "tool-use-b", Name: "jira__get_issue", Status: conversation.StatusSuccess, Shared: new(false)},
+				{Type: conversation.BlockTypeToolUse, ID: "tool-use-file", Name: mmtools.CreateFileToolName, Status: conversation.StatusAutoApproved},
 				{Type: conversation.BlockTypeText, Text: "held draft", RequesterOnly: true},
 			})
 			require.NoError(t, err)
 			results, err := json.Marshal([]conversation.ContentBlock{
 				{Type: conversation.BlockTypeToolResult, ToolUseID: "tool-use-a", Content: "result-a", Status: conversation.StatusSuccess, Shared: new(false)},
 				{Type: conversation.BlockTypeToolResult, ToolUseID: "tool-use-b", Content: "result-b", Status: conversation.StatusSuccess, Shared: new(false)},
+				{Type: conversation.BlockTypeToolResult, ToolUseID: "tool-use-file", Content: string(fileResult), Status: conversation.StatusAutoApproved},
 			})
 			require.NoError(t, err)
 			require.NoError(t, convStore.CreateTurn(&store.Turn{ID: "assistant-turn", ConversationID: conv.ID, PostID: &postID, Role: "assistant", Content: assistant, Sequence: 1}))
@@ -515,17 +521,19 @@ func TestHandleToolResultPublishesHeldAnswerOnlyWhenEveryPendingResultIsShared(t
 					require.NoError(t, json.Unmarshal(turn.Content, &blocks))
 				}
 			}
-			require.Len(t, blocks, 3)
+			require.Len(t, blocks, 4)
 			if tc.wantPublished {
 				assert.Equal(t, 1, updated)
 				assert.Equal(t, "held draft", post.Message)
-				assert.False(t, blocks[2].RequesterOnly)
+				assert.Equal(t, model.StringArray{createdFileID}, post.FileIds, "files created earlier in the run are attached on publish")
+				assert.False(t, blocks[3].RequesterOnly)
 				assert.Empty(t, lm.requests)
 				return
 			}
 			assert.Zero(t, updated)
 			assert.Empty(t, post.Message)
-			assert.True(t, blocks[2].RequesterOnly, "the draft stays with the requester")
+			assert.Empty(t, post.FileIds)
+			assert.True(t, blocks[3].RequesterOnly, "the draft stays with the requester")
 			assert.Len(t, lm.requests, 1, "the redacted follow-up path runs instead")
 		})
 	}

@@ -197,7 +197,7 @@ func TestPublishHeldChannelAnswerScopesToClickedRound(t *testing.T) {
 	turns := []store.Turn{clickedTurn, otherTurn}
 	post := &model.Post{Id: "post-a"}
 
-	require.True(t, c.publishHeldChannelAnswer(post, turns, decoded, map[string]struct{}{clickedID: {}}))
+	require.True(t, c.publishHeldChannelAnswer(post, turns, decoded, map[string]struct{}{clickedID: {}}, nil))
 	assert.Equal(t, "clicked draft", post.Message)
 
 	updated, err := convStore.GetTurnsForConversation(conv.ID)
@@ -235,7 +235,7 @@ func TestPublishHeldChannelAnswerKeepsDraftWhenSanitizedEmpty(t *testing.T) {
 	}
 	post := &model.Post{Id: "post-a"}
 
-	assert.False(t, c.publishHeldChannelAnswer(post, []store.Turn{turn}, [][]conversation.ContentBlock{blocks}, map[string]struct{}{"tool-a": {}}))
+	assert.False(t, c.publishHeldChannelAnswer(post, []store.Turn{turn}, [][]conversation.ContentBlock{blocks}, map[string]struct{}{"tool-a": {}}, nil))
 	assert.Empty(t, post.Message)
 	assert.True(t, blocks[1].RequesterOnly)
 }

@@ -156,8 +156,9 @@ func utf16Len(s string) int {
 
 // publishHeldChannelAnswer copies a requester-only draft onto the channel post
 // with private channel names and markers removed. Only drafts from the clicked
-// tool round are published. It returns false when there is no draft to publish.
-func (c *Conversations) publishHeldChannelAnswer(post *model.Post, turns []store.Turn, decoded [][]conversation.ContentBlock, clickedToolUseIDs map[string]struct{}) bool {
+// tool round are published, along with files that run created and the post
+// does not attach yet. It returns false when there is no draft to publish.
+func (c *Conversations) publishHeldChannelAnswer(post *model.Post, turns []store.Turn, decoded [][]conversation.ContentBlock, clickedToolUseIDs map[string]struct{}, createdFileIDs []string) bool {
 	if post == nil {
 		return false
 	}
@@ -206,6 +207,7 @@ func (c *Conversations) publishHeldChannelAnswer(post *model.Post, turns []store
 		return false
 	}
 	post.Message = message
+	post.FileIds = append(post.FileIds, c.collectAttachableFileIDs(post, createdFileIDs, nil)...)
 	if err := c.mmClient.UpdatePost(post); err != nil {
 		c.mmClient.LogError("Failed to update post with published answer", "error", err)
 		return false
