@@ -752,3 +752,126 @@ func TestSaveConfigResponseDoesNotReturnCredentials(t *testing.T) {
 		})
 	}
 }
+
+// Every credential belongs to the destination it was saved with. Whatever the
+// admin console sends back for a masked credential, the stored one is only
+// restored while that destination is unchanged.
+func TestSaveConfigBindsCredentialsToTheirDestination(t *testing.T) {
+	const (
+		googleURL    = "https://search.google.example.com"
+		braveURL     = "https://search.brave.example.com"
+		otelEndpoint = "otel.example.com:4317"
+	)
+
+	setEmbeddingType := func(cfg *config.Config, providerType string) {
+		cfg.EmbeddingSearchConfig.EmbeddingProvider.Type = providerType
+	}
+
+	fields := []struct {
+		name string
+		want string
+		get  func(cfg config.Config) string
+		// moves points the credential's destination somewhere else; keeps
+		// changes the destination only cosmetically.
+		moves map[string]func(cfg *config.Config)
+		keeps map[string]func(cfg *config.Config)
+	}{
+		{
+			name: "webSearch.google.apiKey",
+			want: sentinelGoogleAPIKey,
+			get:  func(cfg config.Config) string { return cfg.WebSearch.Google.APIKey },
+			moves: map[string]func(cfg *config.Config){
+				"another API URL": func(cfg *config.Config) { cfg.WebSearch.Google.APIURL = "https://attacker.example.com" },
+				"cleared API URL": func(cfg *config.Config) { cfg.WebSearch.Google.APIURL = "" },
+			},
+			keeps: map[string]func(cfg *config.Config){
+				"trailing slash": func(cfg *config.Config) { cfg.WebSearch.Google.APIURL = googleURL + "/" },
+			},
+		},
+		{
+			name: "webSearch.brave.apiKey",
+			want: sentinelBraveAPIKey,
+			get:  func(cfg config.Config) string { return cfg.WebSearch.Brave.APIKey },
+			moves: map[string]func(cfg *config.Config){
+				"another API URL": func(cfg *config.Config) { cfg.WebSearch.Brave.APIURL = "https://attacker.example.com" },
+				"cleared API URL": func(cfg *config.Config) { cfg.WebSearch.Brave.APIURL = "" },
+			},
+			keeps: map[string]func(cfg *config.Config){
+				"trailing slash": func(cfg *config.Config) { cfg.WebSearch.Brave.APIURL = braveURL + "/" },
+			},
+		},
+		{
+			name: "openTelemetryHeaders",
+			want: sentinelOTelHeaders,
+			get:  func(cfg config.Config) string { return cfg.OpenTelemetryHeaders },
+			moves: map[string]func(cfg *config.Config){
+				"another endpoint": func(cfg *config.Config) { cfg.OpenTelemetryEndpoint = "attacker.example.com:4317" },
+				"cleared endpoint": func(cfg *config.Config) { cfg.OpenTelemetryEndpoint = "" },
+			},
+			keeps: map[string]func(cfg *config.Config){
+				"surrounding spaces": func(cfg *config.Config) { cfg.OpenTelemetryEndpoint = " " + otelEndpoint + " " },
+			},
+		},
+		{
+			name: "embeddingProvider apiKey",
+			want: sentinelEmbeddingAPIKey,
+			get:  func(cfg config.Config) string { return embeddingProviderParam(cfg, "apiKey") },
+			moves: map[string]func(cfg *config.Config){
+				"another API URL":       func(cfg *config.Config) { setEmbeddingProviderParam(cfg, "apiURL", "https://attacker.example.com/v1") },
+				"another provider type": func(cfg *config.Config) { setEmbeddingType(cfg, "cohere") },
+			},
+			keeps: map[string]func(cfg *config.Config){
+				"trailing slash": func(cfg *config.Config) {
+					setEmbeddingProviderParam(cfg, "apiURL", visibleEmbeddingAPIURL+"/")
+				},
+			},
+		},
+	}
+
+	type tc struct {
+		name  string
+		field int
+		edit  func(cfg *config.Config)
+		want  string
+	}
+	var cases []tc
+	for i, f := range fields {
+		cases = append(cases, tc{name: f.name + "/unchanged keeps the credential", field: i, edit: func(*config.Config) {}, want: f.want})
+		for name, edit := range f.keeps {
+			cases = append(cases, tc{name: f.name + "/" + name + " keeps the credential", field: i, edit: edit, want: f.want})
+		}
+		for name, edit := range f.moves {
+			cases = append(cases, tc{name: f.name + "/" + name + " drops the credential", field: i, edit: edit})
+		}
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			stored := storedCredentialConfig()
+			stored.WebSearch.Google.APIURL = googleURL
+			stored.WebSearch.Brave.APIURL = braveURL
+			stored.OpenTelemetryEndpoint = otelEndpoint
+			store := &testConfigStore{cfg: stored}
+			router := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
+
+			var read config.Config
+			require.NoError(t, json.Unmarshal(getAdminConfig(t, store), &read))
+			tt.edit(&read)
+			body, err := json.Marshal(read)
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, http.StatusOK, w.Code)
+
+			assert.Equal(t, tt.want, fields[tt.field].get(*store.cfg))
+			for i, other := range fields {
+				if i != tt.field {
+					assert.Equal(t, other.want, other.get(*store.cfg), "%s must keep its stored value", other.name)
+				}
+			}
+		})
+	}
+}

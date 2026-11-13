@@ -8,6 +8,7 @@ import (
 	"maps"
 	"strings"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
@@ -17,6 +18,9 @@ const SecretPlaceholder = "********************************"
 
 // embeddingProviderAPIKeyParam is the embedding provider parameter that holds a credential.
 const embeddingProviderAPIKeyParam = "apiKey"
+
+// embeddingProviderAPIURLParam is the embedding provider parameter holding the endpoint the key is sent to.
+const embeddingProviderAPIURLParam = "apiURL"
 
 // IsSecretPlaceholder reports whether v is a mask rather than a credential.
 func IsSecretPlaceholder(v string) bool {
@@ -98,15 +102,18 @@ func RestoreSecrets(incoming Config, stored *Config) Config {
 		server.ServiceAccountHeaders = restoreHeaderSecrets(server.ServiceAccountHeaders, storedServiceAccountHeaders)
 	}
 
-	out.WebSearch.Google.APIKey = resolveSecret(out.WebSearch.Google.APIKey, stored.WebSearch.Google.APIKey)
-	out.WebSearch.Brave.APIKey = resolveSecret(out.WebSearch.Brave.APIKey, stored.WebSearch.Brave.APIKey)
-	out.OpenTelemetryHeaders = resolveSecret(out.OpenTelemetryHeaders, stored.OpenTelemetryHeaders)
+	out.WebSearch.Google.APIKey = resolveBoundSecret(
+		out.WebSearch.Google.APIKey, destination(out.WebSearch.Google.APIURL),
+		stored.WebSearch.Google.APIKey, destination(stored.WebSearch.Google.APIURL))
+	out.WebSearch.Brave.APIKey = resolveBoundSecret(
+		out.WebSearch.Brave.APIKey, destination(out.WebSearch.Brave.APIURL),
+		stored.WebSearch.Brave.APIKey, destination(stored.WebSearch.Brave.APIURL))
+	out.OpenTelemetryHeaders = resolveBoundSecret(
+		out.OpenTelemetryHeaders, destination(out.OpenTelemetryEndpoint),
+		stored.OpenTelemetryHeaders, destination(stored.OpenTelemetryEndpoint))
 
 	provider := &out.EmbeddingSearchConfig.EmbeddingProvider
-	provider.Parameters = restoreEmbeddingProviderSecrets(
-		provider.Parameters,
-		stored.EmbeddingSearchConfig.EmbeddingProvider.Parameters,
-	)
+	provider.Parameters = restoreEmbeddingProviderSecrets(*provider, stored.EmbeddingSearchConfig.EmbeddingProvider)
 
 	return out
 }
@@ -122,6 +129,28 @@ func redactHeaderMap(headers map[string]string) {
 	for name, value := range headers {
 		headers[name] = maskSecret(value)
 	}
+}
+
+// destination identifies where a credential is sent: the parts (provider type,
+// URL) are compared as written, except that URLs ignore surrounding spaces and
+// trailing slashes. An empty URL is the provider's own fixed address.
+func destination(parts ...string) string {
+	normalized := make([]string, len(parts))
+	for i, part := range parts {
+		normalized[i] = strings.TrimRight(strings.TrimSpace(part), "/")
+	}
+	return strings.Join(normalized, "\x00")
+}
+
+// resolveBoundSecret is resolveSecret for a credential that belongs to the
+// destination it was saved with: a mask only resolves when the destination is
+// unchanged, otherwise it resolves to empty so the stored credential is never
+// sent somewhere the admin pointed it at later.
+func resolveBoundSecret(incoming, incomingDestination, stored, storedDestination string) string {
+	if IsSecretPlaceholder(incoming) && incomingDestination != storedDestination {
+		return ""
+	}
+	return resolveSecret(incoming, stored)
 }
 
 func resolveSecret(incoming, stored string) string {
@@ -144,10 +173,7 @@ func redactServiceSecrets(service *llm.ServiceConfig) {
 // URL may use the credentials stored on service. They belong to the provider
 // and endpoint they were saved with; an empty URL is the provider's own address.
 func BindsCredentials(service llm.ServiceConfig, serviceType, apiURL string) bool {
-	normalize := func(u string) string {
-		return strings.TrimRight(strings.TrimSpace(u), "/")
-	}
-	return service.Type == serviceType && normalize(service.APIURL) == normalize(apiURL)
+	return destination(service.Type, service.APIURL) == destination(serviceType, apiURL)
 }
 
 func restoreServiceSecrets(service *llm.ServiceConfig, stored *llm.ServiceConfig) {
@@ -279,7 +305,8 @@ func redactEmbeddingProviderSecrets(parameters json.RawMessage) json.RawMessage 
 	return encodeParameters(params, embeddingProviderAPIKeyParam, SecretPlaceholder, parameters)
 }
 
-func restoreEmbeddingProviderSecrets(parameters, stored json.RawMessage) json.RawMessage {
+func restoreEmbeddingProviderSecrets(provider, stored embeddings.UpstreamConfig) json.RawMessage {
+	parameters := provider.Parameters
 	params, ok := decodeParameters(parameters)
 	if !ok {
 		return parameters
@@ -290,10 +317,13 @@ func restoreEmbeddingProviderSecrets(parameters, stored json.RawMessage) json.Ra
 		return parameters
 	}
 
-	storedParams, _ := decodeParameters(stored)
+	storedParams, _ := decodeParameters(stored.Parameters)
 	storedValue, _ := parameterString(storedParams, embeddingProviderAPIKeyParam)
+	apiURL, _ := parameterString(params, embeddingProviderAPIURLParam)
+	storedAPIURL, _ := parameterString(storedParams, embeddingProviderAPIURLParam)
 
-	return encodeParameters(params, embeddingProviderAPIKeyParam, resolveSecret(value, storedValue), parameters)
+	resolved := resolveBoundSecret(value, destination(provider.Type, apiURL), storedValue, destination(stored.Type, storedAPIURL))
+	return encodeParameters(params, embeddingProviderAPIKeyParam, resolved, parameters)
 }
 
 // decodeParameters keeps unrelated entries as raw JSON so re-encoding preserves them verbatim.
