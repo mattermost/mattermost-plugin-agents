@@ -13,6 +13,7 @@ import (
 	mcppkg "github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	"github.com/mattermost/mattermost/server/public/model"
 
 	gosdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/mock"
@@ -59,6 +60,9 @@ func newPluginHTTPForwarder(t *testing.T, target *httptest.Server) *mocks.MockCl
 		rec := httptest.NewRecorder()
 		target.Config.Handler.ServeHTTP(rec, req)
 		return rec.Result()
+	}).Maybe()
+	m.EXPECT().GetPluginStatus(mock.Anything).RunAndReturn(func(pluginID string) (*model.PluginStatus, error) {
+		return &model.PluginStatus{PluginId: pluginID, State: model.PluginStateRunning}, nil
 	}).Maybe()
 	return m
 }

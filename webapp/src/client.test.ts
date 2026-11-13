@@ -22,6 +22,7 @@ import {
     getArtifactToken,
     getChannelAutoReply,
     getChannelInterval,
+    getAIThreads,
     getConversation,
     getConversationContext,
     getUserMCPTools,
@@ -511,5 +512,21 @@ describe('getUserMCPTools', () => {
         const url = new URL(mockFetch.mock.calls[0][0]);
         expect(`${url.origin}${url.pathname}`).toBe(`${siteURL}/plugins/${manifest.id}/mcp/tools`);
         expect(Object.fromEntries(url.searchParams)).toEqual(params);
+    });
+});
+
+describe('getAIThreads', () => {
+    test('gives up on a request that never settles', async () => {
+        const timeout = new AbortController();
+        const timeoutSpy = jest.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal);
+        mockFetch.mockImplementation((_url, init) => new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        }));
+
+        const request = getAIThreads();
+        timeout.abort();
+
+        await expect(request).rejects.toThrow('aborted');
+        timeoutSpy.mockRestore();
     });
 });
