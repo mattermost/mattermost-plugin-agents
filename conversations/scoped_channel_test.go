@@ -180,6 +180,9 @@ type scopedEnvOpts struct {
 	// noScopedSessions leaves the server unable to mint scoped sessions, so
 	// scoped mode is configured but inactive.
 	noScopedSessions bool
+	// toolDisabled leaves the scoped test tool without an enabled policy, as
+	// when the admin disabled it.
+	toolDisabled bool
 	// noTeamRead withholds read_public_channel on the team from the requester.
 	noTeamRead bool
 	// skillErr fails skill loading, which happens after the session is minted.
@@ -305,6 +308,9 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	}
 	policies := newDMPolicyChecker()
 	policies.policies[scopedRemote+":get_issue"] = cmp.Or(opts.toolPolicy, mcp.ToolPolicyAsk)
+	if opts.toolDisabled {
+		delete(policies.policies, scopedRemote+":get_issue")
+	}
 	env.mm = mmClient
 	env.conversations = conversations.New(promptsManager, mmClient, env.streaming, contextBuilder, botService, nil, licenseChecker, i18n.Init(),
 		&testToolCallingConfig{enableChannelMentionToolCalling: true}, policies)
@@ -614,6 +620,29 @@ func TestScopedChannelTurnRefusesGuestRequester(t *testing.T) {
 		assert.Empty(t, minted)
 		assert.Len(t, allConversations(env.convStore), 1, "the turn ran")
 	})
+}
+
+// A tool the admin disabled never auto-runs on a scoped turn, even if the
+// catalog still holds it.
+func TestScopedChannelTurnDoesNotRunDisabledTool(t *testing.T) {
+	channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypeOpen, Name: "town-square"}
+	toolCall := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+
+	tests := []struct {
+		name     string
+		disabled bool
+		wantRuns int
+	}{
+		{name: "enabled tool runs", wantRuns: 1},
+		{name: "disabled tool does not run", disabled: true, wantRuns: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupScopedTestEnv(t, channel, scopedEnvOpts{toolDisabled: tt.disabled},
+				dmMakeToolCallStream(toolCall), dmMakeTextStream("done"))
+			assert.Equal(t, tt.wantRuns, env.runs())
+		})
+	}
 }
 
 // A bot-triggered mention has no human to approve a tool, so even on a scoped

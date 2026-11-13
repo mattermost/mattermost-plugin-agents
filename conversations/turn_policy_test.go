@@ -1099,6 +1099,8 @@ func TestTurnEntryPointPolicyInvariants(t *testing.T) {
 					dmMakeTextStream("It's sunny"),
 				)
 				scoped := env.enableScopedSessions(t)
+				// Scoped turns ignore the approval policy but not a disabled tool.
+				env.checker.setPolicy(policyToolOrigin, policyToolName, mcp.ToolPolicyAsk)
 				if entry.unattended {
 					env.checker.setPolicy(policyToolOrigin, policyToolName, mcp.ToolPolicyAutoRunEverywhere)
 				}
@@ -1124,6 +1126,25 @@ func TestTurnEntryPointPolicyInvariants(t *testing.T) {
 					require.NoError(t, err)
 					assert.NotContains(t, string(encoded), "NYC", "tool arguments never enter audit records")
 				}
+			})
+
+			t.Run("a scoped agent never auto-runs a disabled tool", func(t *testing.T) {
+				if entry.toolDecision {
+					t.Skip("an explicit approval is the requester's decision, not an auto-run")
+				}
+				env := setupInvariantEnv(t, scopedPolicyBotConfig(),
+					dmMakeToolCallStream([]llm.ToolCall{policyWeatherCall}),
+					dmMakeTextStream("It's sunny"),
+				)
+				scoped := env.enableScopedSessions(t)
+				env.checker.setPolicy(policyToolOrigin, policyToolName, mcp.ToolPolicyAutoRunEverywhere)
+				start := entry.seed(t, env)
+				env.checker.policies = map[string]string{}
+
+				_ = start()
+
+				assert.Never(t, func() bool { return scoped.toolRuns.Load() > 0 }, 500*time.Millisecond, 10*time.Millisecond,
+					"a tool the admin disabled does not run, however the turn started")
 			})
 		})
 	}

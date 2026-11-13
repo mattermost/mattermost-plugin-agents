@@ -390,7 +390,17 @@ func (p *turnPolicy) autoExecute(llmCtx *llm.Context) func(llm.ToolCall) bool {
 			}
 			// Everything a scoped catalog reads is within the scope, but an
 			// interaction tool needs the user's answer.
-			return lookup.Tool.UserInteraction == ""
+			if lookup.Tool.UserInteraction != "" {
+				return false
+			}
+			// A tool the admin has disabled never runs, whatever the catalog
+			// holds. Built-ins have no per-tool policy.
+			if lookup.ServerOrigin != "" {
+				if _, enabled := p.c.toolPolicyChecker.GetToolPolicy(lookup.ServerOrigin, lookup.BareName); !enabled {
+					return false
+				}
+			}
+			return true
 		}
 		// Only honored for built-ins: an MCP tool carrying the flag must
 		// still go through policy.
