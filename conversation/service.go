@@ -602,9 +602,9 @@ func AssembleRequest(
 						break
 					}
 				}
-				if hasClaimedUnresolvedToolCall(turns[anchorIdx]) {
-					// The run is about to be scrubbed, but calls it claimed may have
-					// taken effect: replay its turns so the new request knows.
+				if hasInterruptedToolCall(turns[anchorIdx]) {
+					// The scrub keeps the calls whose outcome is unknown; this request
+					// is built before it, so replay the run's turns here.
 					kept := turns[:truncateAt:truncateAt]
 					for _, turn := range turns[truncateAt : anchorIdx+1] {
 						if turn.RunPostID == nil || *turn.RunPostID == excludeID {
@@ -759,7 +759,7 @@ func pairToolResults(turns []store.Turn, blocksByTurn [][]ContentBlock) {
 				continue
 			}
 			// BlocksToPost replays these as NotExecutedToolResult.
-			if b.Status == StatusPending || b.Status == StatusAccepted {
+			if b.Status == StatusPending || b.Status == StatusAccepted || b.Status == StatusInterrupted {
 				continue
 			}
 			content := MissingToolResultContent
@@ -1277,17 +1277,14 @@ func isStreamingTurn(t store.Turn) bool {
 	return t.Status == store.TurnStatusStreaming
 }
 
-// hasClaimedUnresolvedToolCall reports whether an interrupted anchor holds
-// tool calls that were approved to run but never recorded a result.
-func hasClaimedUnresolvedToolCall(anchor store.Turn) bool {
-	if anchor.Status != store.TurnStatusInterrupted {
-		return false
-	}
+// hasInterruptedToolCall reports whether an anchor holds tool calls that were
+// approved to run but whose run ended without a result.
+func hasInterruptedToolCall(anchor store.Turn) bool {
 	blocks, err := UnmarshalBlocks(anchor.Content)
 	if err != nil {
 		return false
 	}
 	return slices.ContainsFunc(blocks, func(b ContentBlock) bool {
-		return b.Type == BlockTypeToolUse && b.Status == StatusAccepted
+		return b.Type == BlockTypeToolUse && b.Status == StatusInterrupted
 	})
 }

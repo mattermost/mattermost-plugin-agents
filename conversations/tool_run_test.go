@@ -312,7 +312,7 @@ func TestHandleToolCallInterruptedByShutdown(t *testing.T) {
 			err := f.waitResult(t, errCh)
 			require.ErrorIs(t, err, ErrToolRunInterrupted)
 			assert.Equal(t, int32(1), f.executions.Load(), "no further approved tool starts after shutdown")
-			assert.Equal(t, []string{conversation.StatusAccepted, conversation.StatusAccepted}, f.anchorStatuses(t),
+			assert.Equal(t, []string{conversation.StatusInterrupted, conversation.StatusInterrupted}, f.anchorStatuses(t),
 				"interrupted calls are never offered for approval again")
 			assert.Equal(t, 0, countToolResultTurns(t, f.convStore, f.conv.ID))
 			assert.False(t, f.streaming.streamStarted, "no follow-up is streamed")
@@ -368,7 +368,7 @@ func TestHandleToolCallKeepsSweepVerdict(t *testing.T) {
 			require.ErrorIs(t, f.waitResult(t, errCh), ErrToolRunInterrupted)
 			assert.Equal(t, store.TurnStatusInterrupted, f.anchor(t).Status)
 			for _, status := range f.anchorStatuses(t) {
-				assert.Equal(t, conversation.StatusAccepted, status, "results are not written over the sweep's verdict")
+				assert.Equal(t, conversation.StatusInterrupted, status, "results are not written over the sweep's verdict")
 			}
 			assert.Equal(t, int32(1), f.executions.Load())
 			assert.Equal(t, 0, countToolResultTurns(t, f.convStore, f.conv.ID))
@@ -425,4 +425,33 @@ func TestHandleToolCallShutdownWithUnmarkablePostLeavesTurnForRecovery(t *testin
 	live, err := f.convStore.HasLiveStreamingTurn(toolRunPostID, streaming.StaleStreamThreshold.Milliseconds())
 	require.NoError(t, err)
 	assert.False(t, live, "recovery must see the turn as abandoned immediately")
+}
+
+// A call the user rejected is decided when the decision is claimed, so a run
+// interrupted while the approved calls execute leaves it rejected (it never
+// started) and the approved one interrupted (its outcome is unknown).
+func TestHandleToolCallInterruptedRunKeepsRejectedCallsRejected(t *testing.T) {
+	f := newToolRunFixture(t, true, true, "tool-use-1", "tool-use-2")
+
+	errCh := f.click("tool-use-1")
+	f.waitRunning(t)
+	assert.Equal(t, []string{conversation.StatusAccepted, conversation.StatusRejected}, f.anchorStatuses(t), "the claim records each call's decision")
+
+	f.cancelRoot(lifecycle.ErrShutdown)
+	require.True(t, f.c.WaitForToolRuns(5*time.Second))
+	require.ErrorIs(t, f.waitResult(t, errCh), ErrToolRunInterrupted)
+
+	assert.Equal(t, store.TurnStatusInterrupted, f.anchor(t).Status)
+	assert.Equal(t, []string{conversation.StatusInterrupted, conversation.StatusRejected}, f.anchorStatuses(t))
+
+	req, err := f.c.convService.BuildCompletionRequest(f.conv, &llm.Context{}, conversation.BuildOptions{AllowUnsharedToolContent: true})
+	require.NoError(t, err)
+	results := map[string]string{}
+	for _, post := range req.Posts {
+		for _, call := range post.ToolUse {
+			results[call.ID] = call.Result
+		}
+	}
+	assert.Equal(t, conversation.InterruptedToolResult, results["tool-use-1"])
+	assert.Equal(t, conversation.MissingToolResultContent, results["tool-use-2"], "a rejected call is never replayed as possibly run")
 }

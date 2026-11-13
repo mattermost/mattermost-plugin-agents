@@ -57,6 +57,7 @@ describe('statusStringToEnum', () => {
     test.each([
         ['pending', ToolCallStatus.Pending],
         ['accepted', ToolCallStatus.Accepted],
+        ['interrupted', ToolCallStatus.Accepted],
         ['rejected', ToolCallStatus.Rejected],
         ['error', ToolCallStatus.Error],
         ['success', ToolCallStatus.Success],

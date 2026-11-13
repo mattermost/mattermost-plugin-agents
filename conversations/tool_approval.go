@@ -270,7 +270,11 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	defer followUp.release()
 	ctx = followUp.ctx
 
-	claimedContent, err := c.claimToolDecision(pendingTurn, pendingBlocks)
+	autoExec := policy.autoExecute(llmContext)
+	claimedContent, err := c.claimToolDecision(pendingTurn, pendingBlocks, func(block conversation.ContentBlock) bool {
+		return slices.Contains(acceptedToolIDs, block.ID) ||
+			(block.WouldAutoExecute && block.UserInteraction == "" && autoExec(llm.ToolCall{Name: block.Name, ServerOrigin: block.ServerOrigin}))
+	})
 	if err != nil {
 		return err
 	}
@@ -280,7 +284,6 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	// Execute approved tools and build results. Blocks resolved in a prior
 	// call keep their status and are not part of this decision, so they enter
 	// neither audit list; anything auto-executed this call counts as accepted.
-	autoExec := policy.autoExecute(llmContext)
 	autoExecutedNow := make(map[string]bool)
 	userRejected := false
 	acceptedToolNames := []string{}
@@ -986,17 +989,23 @@ func (c *Conversations) undoTurnUpdates(applied []turnUpdate) {
 	}
 }
 
-// claimToolDecision marks the turn's pending tool_use blocks accepted and moves
-// the turn to the streaming state, but only while the turn is unchanged since
+// claimToolDecision records the decision on the turn's pending tool_use blocks
+// (accepted for calls that will run, rejected for the rest, which never start)
+// and moves the turn to the streaming state, but only while the turn is unchanged since
 // it was read, so a double click, a retry, or an HA peer handling the same
 // click cannot execute the calls twice. Streaming makes the run visible to the
 // recovery sweep and to regenerate's live-run check. It returns the claimed
 // content for the final conditional write.
-func (c *Conversations) claimToolDecision(turn *store.Turn, blocks []conversation.ContentBlock) (json.RawMessage, error) {
+func (c *Conversations) claimToolDecision(turn *store.Turn, blocks []conversation.ContentBlock, willRun func(conversation.ContentBlock) bool) (json.RawMessage, error) {
 	claimed := slices.Clone(blocks)
 	for i := range claimed {
-		if claimed[i].Type == conversation.BlockTypeToolUse && claimed[i].Status == conversation.StatusPending {
+		if claimed[i].Type != conversation.BlockTypeToolUse || claimed[i].Status != conversation.StatusPending {
+			continue
+		}
+		if willRun(claimed[i]) {
 			claimed[i].Status = conversation.StatusAccepted
+		} else {
+			claimed[i].Status = conversation.StatusRejected
 		}
 	}
 	content, err := json.Marshal(claimed)

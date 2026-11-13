@@ -248,7 +248,7 @@ func TestApprovalRunOnDeadNodeIsRecovered(t *testing.T) {
 	blocks, err := conversation.UnmarshalBlocks(final.Content)
 	require.NoError(t, err)
 	require.Len(t, blocks, 2)
-	assert.Equal(t, conversation.StatusAccepted, blocks[1].Status, "the call is neither resolved nor offered for approval again")
+	assert.Equal(t, conversation.StatusInterrupted, blocks[1].Status, "the call is recorded as interrupted, neither resolved nor offered for approval again")
 	turns, err := s.GetTurnsForConversation(conv.ID)
 	require.NoError(t, err)
 	for _, turn := range turns {
@@ -267,4 +267,22 @@ func TestApprovalRunOnDeadNodeIsRecovered(t *testing.T) {
 	require.Len(t, requests, 1)
 	assert.Empty(t, llmtest.AnthropicRequestViolations(requests[0]), "Anthropic would reject the regenerate request:\n%s", requests[0])
 	assert.Nil(t, storedPost().GetProp(streaming.InterruptedProp), "the regenerated post is no longer interrupted")
+	assert.Contains(t, string(requests[0]), conversation.InterruptedToolResult, "the regenerate request must tell the model the call's outcome is unknown")
+
+	turns, err = s.GetTurnsForConversation(conv.ID)
+	require.NoError(t, err)
+	var historyCalls int
+	for _, turn := range turns {
+		if turn.PostID != nil {
+			continue
+		}
+		historyBlocks, blockErr := conversation.UnmarshalBlocks(turn.Content)
+		require.NoError(t, blockErr)
+		for _, b := range historyBlocks {
+			if b.Type == conversation.BlockTypeToolUse && b.Status == conversation.StatusInterrupted {
+				historyCalls++
+			}
+		}
+	}
+	assert.Equal(t, 1, historyCalls, "the scrub keeps the interrupted call as history")
 }

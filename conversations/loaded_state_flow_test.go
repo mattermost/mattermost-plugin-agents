@@ -212,6 +212,24 @@ func (s *loadedStateFlowStore) TouchStreamingTurn(id string) (bool, error) {
 	return s.TransitionTurnStatus(id, store.TurnStatusStreaming, store.TurnStatusStreaming)
 }
 
+// rewriteToolStatus mirrors the store's block rewrite on interrupt and release.
+func rewriteToolStatus(content json.RawMessage, from, to string) json.RawMessage {
+	var blocks []conversation.ContentBlock
+	if json.Unmarshal(content, &blocks) != nil {
+		return content
+	}
+	for i := range blocks {
+		if blocks[i].Type == conversation.BlockTypeToolUse && blocks[i].Status == from {
+			blocks[i].Status = to
+		}
+	}
+	out, err := json.Marshal(blocks)
+	if err != nil {
+		return content
+	}
+	return out
+}
+
 func (s *loadedStateFlowStore) TransitionTurnStatus(id, from, to string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -219,7 +237,12 @@ func (s *loadedStateFlowStore) TransitionTurnStatus(id, from, to string) (bool, 
 	if !ok || turn.Status != from {
 		return false, nil
 	}
-	s.updateTurnLocked(id, func(t *store.Turn) { t.Status = to })
+	s.updateTurnLocked(id, func(t *store.Turn) {
+		t.Status = to
+		if to == store.TurnStatusInterrupted {
+			t.Content = rewriteToolStatus(t.Content, conversation.StatusAccepted, conversation.StatusInterrupted)
+		}
+	})
 	return true, nil
 }
 
@@ -358,6 +381,7 @@ func (s *loadedStateFlowStore) ClaimStaleStreamingTurn(id string, staleAfterMill
 		}
 		turns[idx].Sequence = free
 		turns[idx].Status = store.TurnStatusInterrupted
+		turns[idx].Content = rewriteToolStatus(turns[idx].Content, conversation.StatusAccepted, conversation.StatusInterrupted)
 		slices.SortFunc(turns, func(a, b store.Turn) int { return a.Sequence - b.Sequence })
 		for i := range turns {
 			cp := turns[i]
@@ -413,8 +437,10 @@ func (s *loadedStateFlowStore) ReleaseStreamingTurnClaim(id string) error {
 			if turns[i].ID == id && turns[i].Status == store.TurnStatusInterrupted {
 				s.turns[convID][i].Status = store.TurnStatusStreaming
 				s.turns[convID][i].UpdatedAt = 0
+				s.turns[convID][i].Content = rewriteToolStatus(s.turns[convID][i].Content, conversation.StatusInterrupted, conversation.StatusAccepted)
 				s.allTurns[id].Status = store.TurnStatusStreaming
 				s.allTurns[id].UpdatedAt = 0
+				s.allTurns[id].Content = s.turns[convID][i].Content
 			}
 		}
 	}

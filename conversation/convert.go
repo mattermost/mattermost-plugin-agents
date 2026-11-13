@@ -372,7 +372,7 @@ func StatusFromString(s string) llm.ToolCallStatus {
 	switch s {
 	case StatusPending:
 		return llm.ToolCallStatusPending
-	case StatusAccepted:
+	case StatusAccepted, StatusInterrupted:
 		return llm.ToolCallStatusAccepted
 	case StatusRejected:
 		return llm.ToolCallStatusRejected

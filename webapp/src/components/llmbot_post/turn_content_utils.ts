@@ -12,6 +12,7 @@ import {
     ServerToolStatusInProgress,
     StatusPending,
     StatusAccepted,
+    StatusInterrupted,
     StatusRejected,
     StatusError,
     StatusSuccess,
@@ -32,6 +33,7 @@ export function statusStringToEnum(status: ConvToolCallStatus | undefined): Tool
     case StatusPending:
         return ToolCallStatus.Pending;
     case StatusAccepted:
+    case StatusInterrupted:
         return ToolCallStatus.Accepted;
     case StatusRejected:
         return ToolCallStatus.Rejected;

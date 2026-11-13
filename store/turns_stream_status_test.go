@@ -500,3 +500,96 @@ func TestSettleMovesPastRoundsWrittenAfterAnotherStreamingAnchor(t *testing.T) {
 	assert.Less(t, index[roundA.ID], index[anchorA.ID], "the first answer comes after its own tool rounds")
 	assert.Contains(t, index, anchorB.ID)
 }
+
+func toolStatuses(t *testing.T, turn Turn) map[string]string {
+	t.Helper()
+	var blocks []struct {
+		Type   string `json:"type"`
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	require.NoError(t, json.Unmarshal(turn.Content, &blocks))
+	out := map[string]string{}
+	for _, b := range blocks {
+		if b.Type == "tool_use" {
+			out[b.ID] = b.Status
+		}
+	}
+	return out
+}
+
+// An approval run's claimed calls have an unknown outcome once its turn is
+// interrupted, however it got there, and are claimed again when the claim is
+// released for a retry.
+func TestInterruptingATurnMarksItsClaimedToolCalls(t *testing.T) {
+	claimed := json.RawMessage(`[{"type":"text","text":"go"},
+{"type":"tool_use","id":"run","name":"a","status":"accepted"},
+{"type":"tool_use","id":"no","name":"b","status":"rejected"},
+{"type":"tool_use","id":"done","name":"c","status":"success"}]`)
+	want := map[string]string{"run": "interrupted", "no": "rejected", "done": "success"}
+	tests := []struct {
+		name      string
+		interrupt func(t *testing.T, s *Store, turn *Turn)
+	}{
+		{name: "transition", interrupt: func(t *testing.T, s *Store, turn *Turn) {
+			moved, err := s.TransitionTurnStatus(turn.ID, TurnStatusStreaming, TurnStatusInterrupted)
+			require.NoError(t, err)
+			require.True(t, moved)
+		}},
+		{name: "recovery sweep claim", interrupt: func(t *testing.T, s *Store, turn *Turn) {
+			ageTurn(t, s, turn.ID, 2*testStaleMillis)
+			ok, err := s.ClaimStaleStreamingTurn(turn.ID, testStaleMillis)
+			require.NoError(t, err)
+			require.True(t, ok)
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, convID := setupStreamStore(t)
+			turn := makeTurn(convID, 0, func(tu *Turn) {
+				tu.Role = "assistant"
+				tu.Status = TurnStatusStreaming
+				tu.Content = claimed
+				postID := "post-run"
+				tu.PostID = &postID
+			})
+			require.NoError(t, s.CreateTurnAutoSequence(turn))
+
+			tc.interrupt(t, s, turn)
+			assert.Equal(t, want, toolStatuses(t, getTurn(t, s, turn.ID)))
+
+			require.NoError(t, s.ReleaseStreamingTurnClaim(turn.ID))
+			released := getTurn(t, s, turn.ID)
+			assert.Equal(t, TurnStatusStreaming, released.Status)
+			assert.Equal(t, map[string]string{"run": "accepted", "no": "rejected", "done": "success"}, toolStatuses(t, released))
+		})
+	}
+}
+
+// Scrubbing a response keeps the calls whose outcome is unknown, detached from
+// the post, so a regenerate that fails after the scrub does not lose them.
+func TestDeleteResponseTurnsKeepsInterruptedToolCalls(t *testing.T) {
+	s, convID := setupStreamStore(t)
+	require.NoError(t, s.CreateTurnAutoSequence(makeTurn(convID, 0, func(tu *Turn) { tu.Role = "user" })))
+	postID := "post-run"
+	anchor := makeTurn(convID, 0, func(tu *Turn) {
+		tu.Role = "assistant"
+		tu.PostID = &postID
+		tu.Status = TurnStatusInterrupted
+		tu.Content = json.RawMessage(`[{"type":"text","text":"go"},
+{"type":"tool_use","id":"lost","name":"a","status":"interrupted"},
+{"type":"tool_use","id":"no","name":"b","status":"rejected"}]`)
+	})
+	require.NoError(t, s.CreateTurnAutoSequence(anchor))
+
+	require.NoError(t, s.DeleteResponseTurns(convID, postID))
+
+	turns, err := s.GetTurnsForConversation(convID)
+	require.NoError(t, err)
+	require.Len(t, turns, 2)
+	kept := turns[1]
+	assert.Equal(t, anchor.ID, kept.ID)
+	assert.Nil(t, kept.PostID)
+	assert.Equal(t, TurnStatusComplete, kept.Status)
+	assert.Equal(t, map[string]string{"lost": "interrupted"}, toolStatuses(t, kept))
+}
