@@ -591,6 +591,9 @@ func TestFetchModelsSendsStoredCredentialOnlyToStoredEndpoint(t *testing.T) {
 		storedURL func(savedURL string) string
 		// requestURL is the endpoint carried by the request.
 		requestURL func(savedURL, otherURL string) string
+		// clearedKey sends an empty API key, as for a field the admin emptied,
+		// instead of the mask the console sends for an untouched one.
+		clearedKey bool
 		// wantAtSaved is whether the saved endpoint must receive the credentials.
 		wantAtSaved bool
 	}{
@@ -606,6 +609,13 @@ func TestFetchModelsSendsStoredCredentialOnlyToStoredEndpoint(t *testing.T) {
 			serviceType: llm.ServiceTypeOpenAICompatible,
 			storedURL:   func(savedURL string) string { return savedURL },
 			requestURL:  func(_, otherURL string) string { return otherURL },
+		},
+		{
+			name:        "cleared key at the saved endpoint stays empty",
+			serviceType: llm.ServiceTypeOpenAICompatible,
+			storedURL:   func(savedURL string) string { return savedURL },
+			requestURL:  func(savedURL, _ string) string { return savedURL },
+			clearedKey:  true,
 		},
 		{
 			name:        "request naming another provider type at the saved endpoint",
@@ -649,9 +659,14 @@ func TestFetchModelsSendsStoredCredentialOnlyToStoredEndpoint(t *testing.T) {
 				}},
 			}
 
+			apiKey := config.SecretPlaceholder
+			if tt.clearedKey {
+				apiKey = ""
+			}
 			raw, err := json.Marshal(map[string]any{
 				"serviceType": cmp.Or(tt.requestType, tt.serviceType),
 				"serviceID":   storedServiceID,
+				"apiKey":      apiKey,
 				"apiURL":      tt.requestURL(saved.apiURL(), other.apiURL()),
 			})
 			require.NoError(t, err)

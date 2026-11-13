@@ -42,18 +42,25 @@ export const connectionSettings = (server: MCPServerConfig) => JSON.stringify([
     server.clientSecret || '',
 ]);
 
-const headerMapHasMask = (headers: {[key: string]: string} | undefined): boolean =>
-    Object.values(headers || {}).some((value) => value === SECRET_PLACEHOLDER);
+const maskedHeaderKeys = (headers: {[key: string]: string} | undefined): string[] =>
+    Object.entries(headers || {}).filter(([, value]) => value === SECRET_PLACEHOLDER).map(([key]) => key);
 
 const withoutMaskedHeaderValues = (headers: {[key: string]: string} | undefined): {[key: string]: string} =>
     Object.fromEntries(
         Object.entries(headers || {}).map(([key, value]) => [key, value === SECRET_PLACEHOLDER ? '' : value]),
     );
 
-const hasMaskedCredential = (server: MCPServerConfig): boolean =>
-    server.clientSecret === SECRET_PLACEHOLDER ||
-    headerMapHasMask(server.headers) ||
-    headerMapHasMask(server.serviceAccountHeaders);
+// MaskedCredentials names the credential fields of a server that still show the mask.
+type MaskedCredentials = {headers: string[]; serviceAccountHeaders: string[]; clientSecret: boolean};
+
+const maskedCredentials = (server: MCPServerConfig): MaskedCredentials | null => {
+    const masked = {
+        headers: maskedHeaderKeys(server.headers),
+        serviceAccountHeaders: maskedHeaderKeys(server.serviceAccountHeaders),
+        clientSecret: server.clientSecret === SECRET_PLACEHOLDER,
+    };
+    return masked.headers.length || masked.serviceAccountHeaders.length || masked.clientSecret ? masked : null;
+};
 
 // The server keeps a stored credential with the base URL it was saved against,
 // so a mask the admin never replaced means nothing once the URL points
@@ -65,18 +72,23 @@ const withoutMaskedCredentials = (server: MCPServerConfig): MCPServerConfig => (
     clientSecret: server.clientSecret === SECRET_PLACEHOLDER ? '' : server.clientSecret,
 });
 
-// restoreMaskedCredentials puts back the masks the admin's edit emptied, leaving
-// anything typed in their place.
-const restoreMaskedCredentials = (server: MCPServerConfig, original: MCPServerConfig): MCPServerConfig => {
-    const restoreHeaders = (current: {[key: string]: string} | undefined, saved: {[key: string]: string} | undefined) => ({
-        ...current,
-        ...Object.fromEntries(Object.entries(saved || {}).filter(([key, value]) => value === SECRET_PLACEHOLDER && !current?.[key])),
-    });
+// restoreMaskedCredentials puts back only the masks the URL change emptied. A
+// field the admin has since filled in, or a header they removed, is left as it is.
+const restoreMaskedCredentials = (server: MCPServerConfig, cleared: MaskedCredentials): MCPServerConfig => {
+    const restoreHeaders = (current: {[key: string]: string} | undefined, keys: string[]) => {
+        const restored = {...current};
+        for (const key of keys) {
+            if (restored[key] === '') {
+                restored[key] = SECRET_PLACEHOLDER;
+            }
+        }
+        return restored;
+    };
     return {
         ...server,
-        headers: restoreHeaders(server.headers, original.headers),
-        serviceAccountHeaders: restoreHeaders(server.serviceAccountHeaders, original.serviceAccountHeaders),
-        clientSecret: !server.clientSecret && original.clientSecret === SECRET_PLACEHOLDER ? SECRET_PLACEHOLDER : server.clientSecret,
+        headers: restoreHeaders(server.headers, cleared.headers),
+        serviceAccountHeaders: restoreHeaders(server.serviceAccountHeaders, cleared.serviceAccountHeaders),
+        clientSecret: cleared.clientSecret && !server.clientSecret ? SECRET_PLACEHOLDER : server.clientSecret,
     };
 };
 
@@ -172,7 +184,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
     const [discovered, setDiscovered] = useState<MCPServerInfo | null>(null);
     const [review, setReview] = useState<MCPServerConfig | null>(null);
     const [showErrors, setShowErrors] = useState(false);
-    const [credentialsCleared, setCredentialsCleared] = useState(false);
+    const [clearedCredentials, setClearedCredentials] = useState<MaskedCredentials | null>(null);
 
     // Set once an edit has ended sign-ins, until the admin reconnects.
     const [reconnecting, setReconnecting] = useState(false);
@@ -287,12 +299,15 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
             return;
         }
         if (trimmedURL === savedServer.baseURL.trim()) {
-            if (credentialsCleared) {
-                setCredentialsCleared(false);
-                setDetails(restoreMaskedCredentials(details, savedServer));
+            if (clearedCredentials) {
+                setClearedCredentials(null);
+                setDetails(restoreMaskedCredentials(details, clearedCredentials));
             }
-        } else if (hasMaskedCredential(details)) {
-            setCredentialsCleared(true);
+            return;
+        }
+        const masked = maskedCredentials(details);
+        if (masked) {
+            setClearedCredentials(masked);
             setDetails(withoutMaskedCredentials(details));
         }
     };
@@ -456,7 +471,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                 onChange={(e) => setDetails({...details, baseURL: e.target.value})}
                 onBlur={clearCredentialsIfMoved}
                 error={showErrors ? urlError : undefined} // eslint-disable-line no-undefined
-                helptext={credentialsCleared ? (
+                helptext={clearedCredentials ? (
                     <CredentialsClearedNote>
                         {intl.formatMessage({defaultMessage: 'Saved credentials do not carry over to a different URL. Re-enter them before saving.'})}
                     </CredentialsClearedNote>

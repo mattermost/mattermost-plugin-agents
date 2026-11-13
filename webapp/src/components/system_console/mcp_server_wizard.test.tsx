@@ -730,6 +730,26 @@ describe('MCPServerWizard credentials when the server URL changes', () => {
         expect(screen.queryByText(CLEARED_NOTE)).toBeNull();
     });
 
+    test('putting the URL back does not undo credentials the admin removed or emptied', async () => {
+        const withSecretAlreadyEmpty = {...saved, clientSecret: ''};
+        const {onPersist, onClose} = renderWizard({kind: 'edit', server: withSecretAlreadyEmpty}, ['Tracker'], [withSecretAlreadyEmpty]);
+
+        const field = await screen.findByDisplayValue(STORED_URL);
+        fireEvent.change(field, {target: {value: MOVED_URL}});
+        fireEvent.blur(field);
+        const removeButtons = screen.getAllByRole('button', {name: 'Remove header'});
+        fireEvent.click(removeButtons[0]);
+        fireEvent.change(screen.getByDisplayValue(MOVED_URL), {target: {value: STORED_URL}});
+        fireEvent.blur(screen.getByDisplayValue(STORED_URL));
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+        await waitFor(() => expect(onClose).toHaveBeenCalled());
+
+        const server = (onPersist.mock.calls[0] as unknown as [MCPServerConfig])[0];
+        expect(server.headers).toEqual({});
+        expect(server.clientSecret).toBe('');
+        expect(server.serviceAccountHeaders).toEqual({Authorization: SECRET_PLACEHOLDER});
+    });
+
     test('editing another field leaves the credential fields alone', async () => {
         const server = await savedServerAfter(async () => {
             fireEvent.change(await screen.findByDisplayValue('Issues'), {target: {value: 'Tickets'}});
