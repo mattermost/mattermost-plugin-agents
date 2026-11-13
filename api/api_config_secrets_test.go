@@ -807,6 +807,7 @@ func TestSaveConfigBindsCredentialsToTheirDestination(t *testing.T) {
 			moves: map[string]func(cfg *config.Config){
 				"another endpoint": func(cfg *config.Config) { cfg.OpenTelemetryEndpoint = "attacker.example.com:4317" },
 				"cleared endpoint": func(cfg *config.Config) { cfg.OpenTelemetryEndpoint = "" },
+				"TLS switched off": func(cfg *config.Config) { cfg.OpenTelemetryTLS = false },
 			},
 			keeps: map[string]func(cfg *config.Config){
 				"surrounding spaces": func(cfg *config.Config) { cfg.OpenTelemetryEndpoint = " " + otelEndpoint + " " },
@@ -819,6 +820,7 @@ func TestSaveConfigBindsCredentialsToTheirDestination(t *testing.T) {
 			moves: map[string]func(cfg *config.Config){
 				"another API URL":       func(cfg *config.Config) { setEmbeddingProviderParam(cfg, "apiURL", "https://attacker.example.com/v1") },
 				"another provider type": func(cfg *config.Config) { setEmbeddingType(cfg, "cohere") },
+				"another nested provider": func(cfg *config.Config) { setEmbeddingProviderParam(cfg, "provider", "cohere") },
 			},
 			keeps: map[string]func(cfg *config.Config){
 				"trailing slash": func(cfg *config.Config) {
@@ -851,6 +853,7 @@ func TestSaveConfigBindsCredentialsToTheirDestination(t *testing.T) {
 			stored.WebSearch.Google.APIURL = googleURL
 			stored.WebSearch.Brave.APIURL = braveURL
 			stored.OpenTelemetryEndpoint = otelEndpoint
+			stored.OpenTelemetryTLS = true
 			store := &testConfigStore{cfg: stored}
 			router := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
 

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"strconv"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
@@ -114,8 +115,8 @@ func RestoreSecrets(incoming Config, stored *Config) Config {
 		out.WebSearch.Brave.APIKey, destination(out.WebSearch.Brave.APIURL),
 		stored.WebSearch.Brave.APIKey, destination(stored.WebSearch.Brave.APIURL))
 	out.OpenTelemetryHeaders = resolveBoundSecret(
-		out.OpenTelemetryHeaders, destination(out.OpenTelemetryEndpoint),
-		stored.OpenTelemetryHeaders, destination(stored.OpenTelemetryEndpoint))
+		out.OpenTelemetryHeaders, destination(out.OpenTelemetryEndpoint, strconv.FormatBool(out.OpenTelemetryTLS)),
+		stored.OpenTelemetryHeaders, destination(stored.OpenTelemetryEndpoint, strconv.FormatBool(stored.OpenTelemetryTLS)))
 
 	provider := &out.EmbeddingSearchConfig.EmbeddingProvider
 	provider.Parameters = restoreEmbeddingProviderSecrets(*provider, stored.EmbeddingSearchConfig.EmbeddingProvider)
