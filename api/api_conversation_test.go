@@ -418,6 +418,36 @@ func TestHandleGetConversation(t *testing.T) {
 				assert.Equal(t, 2, response.Turns[1].Sequence)
 			},
 		},
+		{
+			name:           "tool rounds written during a stream expose their run post",
+			userID:         testUserID,
+			conversationID: "conv-run-post",
+			setup: func(e *TestEnvironment) {
+				postID := "streampost123456789012345"
+				e.conversationStore.conversations["conv-run-post"] = &store.Conversation{
+					ID:        "conv-run-post",
+					UserID:    testUserID,
+					BotID:     testBotUserID,
+					ChannelID: &channelID,
+					Operation: "conversation",
+				}
+				e.conversationStore.turns["conv-run-post"] = []store.Turn{
+					{ID: "turn-1", ConversationID: "conv-run-post", Role: "user", Content: textOnlyBlocks, Sequence: 1},
+					{ID: "turn-2", ConversationID: "conv-run-post", PostID: &postID, Role: "assistant", Content: textOnlyBlocks, Status: store.TurnStatusStreaming, Sequence: 2},
+					{ID: "turn-3", ConversationID: "conv-run-post", RunPostID: &postID, Role: "assistant", Content: textOnlyBlocks, Sequence: 3},
+				}
+				e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
+			},
+			expectedStatus: http.StatusOK,
+			validate: func(t *testing.T, resp *http.Response) {
+				var response ConversationResponse
+				require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+				require.Len(t, response.Turns, 3)
+				assert.Nil(t, response.Turns[1].RunPostID)
+				require.NotNil(t, response.Turns[2].RunPostID)
+				assert.Equal(t, "streampost123456789012345", *response.Turns[2].RunPostID)
+			},
+		},
 	}
 
 	for _, tt := range tests {

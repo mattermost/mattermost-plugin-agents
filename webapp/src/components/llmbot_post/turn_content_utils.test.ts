@@ -373,6 +373,41 @@ describe('extractToolCallsForPost', () => {
         expect(result[2]).toMatchObject({id: 'tc_c', result: 'result C'});
     });
 
+    // The anchor is inserted when the stream starts, so on a refresh mid-run
+    // it sits BEFORE the tool rounds already written for its run.
+    test('includes completed rounds written after a still-streaming anchor', () => {
+        const userTurn = makeTurn({id: 'u1', post_id: null, sequence: 1, role: 'user', content: [{type: 'text', text: 'go'}]});
+        const anchor = makeTurn({id: 'anchor', post_id: 'post-live', sequence: 2, status: 'streaming', content: []});
+        const roundAssistant = makeTurn({
+            id: 'r1a',
+            post_id: null,
+            run_post_id: 'post-live',
+            sequence: 3,
+            content: [{type: 'tool_use', id: 'tc_a', name: 'read_channel', input: {}, status: 'success', shared: true}],
+        });
+        const roundResult = makeTurn({
+            id: 'r1r',
+            post_id: null,
+            run_post_id: 'post-live',
+            sequence: 4,
+            role: 'tool_result',
+            content: [{type: 'tool_result', tool_use_id: 'tc_a', content: 'result A', status: 'success', shared: true}],
+        });
+        const otherRun = makeTurn({
+            id: 'other',
+            post_id: null,
+            run_post_id: 'post-other',
+            sequence: 5,
+            content: [{type: 'tool_use', id: 'tc_x', name: 'other', input: {}, status: 'success', shared: true}],
+        });
+        const conv = makeConversation([userTurn, anchor, roundAssistant, roundResult, otherRun]);
+
+        expect(extractToolCallsForPost(conv, 'post-live')).toEqual([
+            expect.objectContaining({id: 'tc_a', result: 'result A'}),
+        ]);
+        expect(buildRoundsFromTurns(conv, 'post-live').flatMap((r) => r.toolCalls.map((c) => c.id))).toEqual(['tc_a']);
+    });
+
     test('stops aggregation at the preceding user turn', () => {
         // An earlier response's tool_use should not leak into this post's
         // display. The walk backwards from the anchor must stop at the user
