@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -160,7 +161,41 @@ func (s Submission) MatchProgram(source string) error {
 			return invalid("%q does not appear in the generated block", value)
 		}
 	}
+	for _, f := range s.Fields {
+		options, isChoice := choiceOptions(source, f.Name)
+		if !isChoice || f.Value == nil || f.Value == "" {
+			continue
+		}
+		if value, ok := f.Value.(string); !ok || !slices.Contains(options, value) {
+			return invalid("the value of %q is not one of its options", f.Name)
+		}
+	}
 	return nil
+}
+
+var choiceCall = regexp.MustCompile(`\b(?:Select|RadioGroup)\(`)
+
+// choiceOptions returns the options of the Select or RadioGroup the source
+// declares under name, and false when it declares no such field. Arguments are
+// JSON-compatible literals: name, label, then the options array.
+func choiceOptions(source, name string) ([]string, bool) {
+	for _, loc := range choiceCall.FindAllStringIndex(source, -1) {
+		rest := source[loc[1]:]
+		var declared, label string
+		var options []string
+		for _, target := range []any{&declared, &label, &options} {
+			rest = strings.TrimLeft(rest, " \t\r\n,")
+			dec := json.NewDecoder(strings.NewReader(rest))
+			if err := dec.Decode(target); err != nil {
+				break
+			}
+			rest = rest[dec.InputOffset():]
+		}
+		if declared == name {
+			return options, true
+		}
+	}
+	return nil, false
 }
 
 // stringLiteral renders value the way OpenUI Lang writes a string argument.

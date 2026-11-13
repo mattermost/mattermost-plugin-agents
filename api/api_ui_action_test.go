@@ -39,6 +39,7 @@ func TestUIActionRoute(t *testing.T) {
 		sentinel  = "SENTINEL-FORM-CONTENT"
 	)
 	reply := "Pick one.\n\n```openui-lang\nroot = Stack([f])\nf = Form(\"deploy\", [env], [Button(\"Deploy\")])\nenv = TextInput(\"env\", \"Environment\")\n```"
+	choiceReply := "Pick one.\n\n```openui-lang\nroot = Stack([f])\nf = Form(\"deploy\", [env], [Button(\"Deploy\")])\nenv = RadioGroup(\"env\", \"Environment\", [\"staging\", \"production\"], \"staging\")\n```"
 	body := func(label, key string) string {
 		return `{"block":0,"form":"deploy","label":"` + label + `","fields":[{"name":"env","label":"Environment","value":"` + sentinel + `"}],"idempotency_key":"` + key + `"}`
 	}
@@ -48,6 +49,7 @@ func TestUIActionRoute(t *testing.T) {
 		body       string
 		disabled   bool
 		owner      string
+		reply      string
 		cannotPost bool
 		replyTurn  bool
 		wantStatus int
@@ -57,6 +59,7 @@ func TestUIActionRoute(t *testing.T) {
 		{name: "requester cannot post in the channel", body: body("Deploy", "key-00000001"), cannotPost: true, replyTurn: true, wantStatus: http.StatusForbidden},
 		{name: "reply not finished", body: body("Deploy", "key-00000001"), wantStatus: http.StatusConflict},
 		{name: "button the reply does not offer", body: body(sentinel, "key-00000001"), replyTurn: true, wantStatus: http.StatusBadRequest},
+		{name: "choice value that is not one of the options", body: body("Deploy", "key-00000001"), reply: choiceReply, replyTurn: true, wantStatus: http.StatusBadRequest},
 		{name: "missing idempotency key", body: body("Deploy", ""), replyTurn: true, wantStatus: http.StatusBadRequest},
 		{name: "malformed body", body: `{"block":"zero"}`, replyTurn: true, wantStatus: http.StatusBadRequest},
 		{name: "oversized body", body: `{"label":"` + strings.Repeat("x", 20*1024) + `"}`, replyTurn: true, wantStatus: http.StatusBadRequest},
@@ -77,19 +80,23 @@ func TestUIActionRoute(t *testing.T) {
 				nil,
 			))
 
+			shownReply := reply
+			if tc.reply != "" {
+				shownReply = tc.reply
+			}
 			owner := testUserID
 			if tc.owner != "" {
 				owner = tc.owner
 			}
 			require.NoError(t, convStore.CreateConversation(&store.Conversation{ID: convID, UserID: owner, BotID: testBotUserID, Operation: llm.OperationConversation}))
 			if tc.replyTurn {
-				content, err := json.Marshal([]map[string]string{{"type": "text", "text": reply}})
+				content, err := json.Marshal([]map[string]string{{"type": "text", "text": shownReply}})
 				require.NoError(t, err)
 				replyPostID := postID
 				require.NoError(t, convStore.CreateTurn(&store.Turn{ID: "turn1", ConversationID: convID, PostID: &replyPostID, Role: "assistant", Content: content, Sequence: 1}))
 			}
 
-			post := &model.Post{Id: postID, UserId: testBotUserID, ChannelId: channelID, Message: reply}
+			post := &model.Post{Id: postID, UserId: testBotUserID, ChannelId: channelID, Message: shownReply}
 			post.AddProp(streaming.ConversationIDProp, convID)
 			e.mockAPI.On("GetPost", postID).Return(post, nil)
 			e.mockAPI.On("GetChannel", channelID).Return(&model.Channel{

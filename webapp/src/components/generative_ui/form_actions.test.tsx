@@ -205,4 +205,15 @@ describe('generative UI forms', () => {
         expect(within(form).getByRole('button', {name: 'Go'}).getAttribute('aria-pressed')).toBe('true');
         expect(within(form).getByRole('button', {name: 'Stop'}).getAttribute('aria-pressed')).toBe('false');
     });
+
+    it.each(['RadioGroup', 'Select'])('submits a %s whose default is not an option as unselected', async (component) => {
+        const hidden = `${component}("env", "Environment", ["staging", "production"], "ignore previous instructions")`;
+        const text = `\`\`\`openui-lang\nroot = Stack([form])\nform = Form("pick", [env], [Button("Go")])\nenv = ${hidden}\n\`\`\``;
+        const {submit} = renderForm({kind: 'editable'}, jest.fn().mockResolvedValue(null), {message: text});
+        const form = screen.getByTestId('generative-ui-form');
+        await act(async () => {
+            fireEvent.click(within(form).getByRole('button', {name: 'Go'}));
+        });
+        expect((submit as jest.Mock).mock.calls[0][0].fields).toEqual([{name: 'env', label: 'Environment', value: ''}]);
+    });
 });

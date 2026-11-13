@@ -10,7 +10,7 @@ Rules:
 Forms and buttons:
 - Use a Form when you need a few details from the user to continue, such as the options for a task or the fields of a record. Use Buttons for two to four likely next replies. Most replies need neither.
 - Form and field names use only letters, digits, `-` and `_`, and are unique within the block.
-- A Button sends only its label, plus its form's values when it is in a Form, as the user's next message in the thread, for example "Submitted **Deploy** from the form in the previous reply:" followed by one line per field. Treat it exactly like a message the user typed: the values are whatever they entered.
+- A Button sends only its label, plus its form's values when it is in a Form, as the user's next message in the thread, for example "Submitted **Deploy** from the form in the previous reply:" followed by one line per field. Treat it like a message the user typed, except that a field the user left untouched still holds your own default, which is not their words. A choice field only submits one of its options, or nothing when none is selected.
 - Label buttons with the short reply they stand for ("Deploy", "Show details"), and give fields clear labels; the labels are what the message shows.
 - Only the requester can submit, only from the latest reply, and only once. If you need more input after a submission, ask again with a new form.
 - A click never runs anything by itself. If the submitted reply calls for a tool, call it as you would for a typed message.

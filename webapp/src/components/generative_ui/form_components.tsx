@@ -242,8 +242,12 @@ interface ChoiceProps {
     required?: boolean;
 }
 
+// A default that is not one of the options would be submitted without being
+// shown as selected, so a choice starts unselected instead.
+const shownDefault = (options: string[], defaultValue = '') => (options.includes(defaultValue) ? defaultValue : '');
+
 export const SelectView = ({name, label, options, defaultValue, required}: ChoiceProps) => {
-    const field = useFormField('Select', name, label, Boolean(required), defaultValue ?? '');
+    const field = useFormField('Select', name, label, Boolean(required), shownDefault(options, defaultValue));
     return (
         <FieldWithMessage>
             <Select
@@ -261,7 +265,7 @@ export const SelectView = ({name, label, options, defaultValue, required}: Choic
 };
 
 export const RadioGroupView = ({name, label, options, defaultValue, required}: ChoiceProps) => {
-    const field = useFormField('RadioGroup', name, label, Boolean(required), defaultValue ?? '');
+    const field = useFormField('RadioGroup', name, label, Boolean(required), shownDefault(options, defaultValue));
     const groupName = `${useId()}-${name}`;
     return (
         <Fieldset disabled={field.disabled}>
