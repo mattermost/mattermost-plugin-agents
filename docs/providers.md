@@ -295,7 +295,7 @@ Native Google tools are **off by default** for Gemini, matching the same posture
 
 | Tool | What it does | Notes |
 |------|--------------|-------|
-| **Web Search** | Grounds responses in Google Search results (web search + citations) via Bifrost's Responses API. | When enabled, Bifrost auto-switches the request to the Responses API path. The agent's other function tools and MCP tools continue to work. Grounding citations are normalized to the same `url_citation` annotation format used by OpenAI and Anthropic providers — the webapp renders them identically. |
+| **Web Search** | Grounds responses in Google Search results (web search + citations) via Bifrost's Responses API. | When enabled, Bifrost auto-switches the request to the Responses API path. The agent's other function tools and MCP tools continue to work alongside web search on Gemini 3 and newer models; on older models the function tools take priority and Google Search is omitted from requests that also carry function tools. Grounding citations are normalized to the same `url_citation` annotation format used by OpenAI and Anthropic providers — the webapp renders them identically. |
 
 Other native tools advertised by OpenAI (file search, code interpreter) are not available in the System Console for Google providers — only Web Search is offered.
 
@@ -385,7 +385,7 @@ Native Google tools are **off by default** for Vertex AI, matching the same post
 
 | Tool | What it does | Notes |
 |------|--------------|-------|
-| **Web Search** | Grounds responses with Google Search via the Vertex Responses API. | When enabled, Bifrost switches to the Responses API. Citations are returned alongside the response. If requests fail with grounding enabled, confirm the Vertex AI API is enabled, the selected model supports grounding, and your Google Cloud project satisfies Vertex AI grounding prerequisites. |
+| **Web Search** | Grounds responses with Google Search via the Vertex Responses API. | When enabled, Bifrost switches to the Responses API. The agent's function tools and MCP tools work alongside web search on Gemini 3 and newer models; on older models the function tools take priority and Google Search is omitted from requests that also carry function tools. Citations are returned alongside the response. If requests fail with grounding enabled, confirm the Vertex AI API is enabled, the selected model supports grounding, and your Google Cloud project satisfies Vertex AI grounding prerequisites. |
 
 OpenAI-style `file_search` and `code_interpreter` are not available in the System Console for Google providers — only Web Search is offered.
 

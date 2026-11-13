@@ -136,6 +136,7 @@ func TestHandleToolCallAnswersUserQuestion(t *testing.T) {
 			botsService.SetBotsForTesting([]*bots.Bot{bot})
 
 			mmClient := mocks.NewMockClient(t)
+			allowPostRunReservation(mmClient)
 			mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 			mmClient.On("GetUser", testRequesterID).Maybe().Return(&model.User{Id: testRequesterID, Username: "user"}, nil)
 			mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
@@ -265,6 +266,7 @@ func TestHandleToolCallMixedBatchInChannelAwaitsShareDecision(t *testing.T) {
 	botsService.SetBotsForTesting([]*bots.Bot{bot})
 
 	mmClient := mocks.NewMockClient(t)
+	allowPostRunReservation(mmClient)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 	seedRequesterInitiator(t, convStore, conv.ID, mmClient)
 
@@ -367,6 +369,7 @@ func TestStreamToolFollowUpInteractiveFlag(t *testing.T) {
 			}))
 
 			mmClient := mocks.NewMockClient(t)
+			allowPostRunReservation(mmClient)
 			mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 			mmClient.On("GetConfig").Maybe().Return(&model.Config{})
 			mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
@@ -423,6 +426,7 @@ func TestStreamToolFollowUpInteractiveFlag(t *testing.T) {
 		// the rebuilt request must carry it so the follow-up keeps its context.
 		threadReply := &model.Post{Id: "reply-id", RootId: "root-id", UserId: "human-user", Message: "non-turn thread reply"}
 		mmClient := mocks.NewMockClient(t)
+		allowPostRunReservation(mmClient)
 		mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 		mmClient.On("GetPost", "root-id").Return(rootPost, nil).Once()
 		mmClient.On("GetUser", "automation-bot").Return(&model.User{Id: "automation-bot", IsBot: true}, nil)
@@ -632,6 +636,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			botsService.SetBotsForTesting([]*bots.Bot{bot})
 
 			mmClient := mocks.NewMockClient(t)
+			allowPostRunReservation(mmClient)
 			mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 			mmClient.On("GetUser", testRequesterID).Maybe().Return(&model.User{Id: testRequesterID, Username: "user"}, nil)
 			mmClient.On("GetConfig").Maybe().Return(&model.Config{})

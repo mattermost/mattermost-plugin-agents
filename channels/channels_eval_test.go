@@ -281,3 +281,15 @@ func setupChannelMocksFromThreadData(mmClient *mocks.MockClient, threadData *eva
 		mmClient.On("GetFile", id).Return(io.NopCloser(bytes.NewReader(file)), nil).Maybe()
 	}
 }
+
+func (s *evalInMemoryStore) HasLiveStreamingTurn(string, int64) (bool, error) {
+	return false, nil
+}
+
+func (*evalInMemoryStore) ClaimStaleStreamingTurn(string, int64) (bool, error) {
+	return false, nil
+}
+
+func (*evalInMemoryStore) ReleaseStreamingTurnClaim(string) error {
+	return nil
+}
