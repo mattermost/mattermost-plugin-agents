@@ -17,6 +17,7 @@ import {
     ServiceInfo,
     AgentVersionList,
     AgentVersionDetail,
+    ScopedAccessReport,
 } from '@/types/agents';
 import {isValidId} from '@/utils/ids';
 
@@ -34,7 +35,7 @@ export type UserMCPToolInfo = {
     enabled: boolean;
     policy: MCPToolPolicy;
 };
-export type MCPServerKind = 'remote' | 'embedded' | 'plugin';
+export type MCPServerKind = 'remote' | 'embedded' | 'plugin' | 'builtin';
 
 export type UserMCPServerInfo = {
     name: string;
@@ -964,6 +965,23 @@ export async function getUserMCPTools(opts?: {
     }
     const query = params.toString();
     const url = `${baseRoute()}/mcp/tools${query ? `?${query}` : ''}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function getAgentScopedAccess(agentId: string): Promise<ScopedAccessReport> {
+    const url = `${baseRoute()}/admin/agents/${encodeURIComponent(agentId)}/scoped_access`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));

@@ -495,6 +495,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.POST("/reindex/catchup", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleCatchUpIndex)
 	adminRouter.POST("/reindex/rebuild-vector-index", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleRebuildVectorIndex)
 	adminRouter.GET("/reindex/health-check", a.handleIndexHealthCheck)
+	adminRouter.GET("/agents/:agentid/scoped_access", a.handleGetAgentScopedAccess)
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
 	adminRouter.GET("/mcp/vetted-tool-seed", a.handleGetVettedToolSeed)
 	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
@@ -767,6 +768,9 @@ type AIBotsResponse struct {
 	// API compatibility.
 	LinkPolicy           config.LinkPolicy `json:"linkPolicy"`
 	HTMLArtifactsEnabled bool              `json:"htmlArtifactsEnabled"`
+	// ScopedSessionsSupported reports whether this server can create the
+	// scoped sessions scoped channel mode runs on.
+	ScopedSessionsSupported bool `json:"scopedSessionsSupported"`
 }
 
 // usesServiceAccountAuth reports the effective service account mode for a bot:
@@ -871,11 +875,12 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 	searchEnabled := a.searchService.Enabled()
 
 	c.JSON(http.StatusOK, AIBotsResponse{
-		Bots:                 bots,
-		SearchEnabled:        searchEnabled,
-		AllowUnsafeLinks:     a.config.AllowUnsafeLinks(),
-		LinkPolicy:           a.config.LinkPolicy(),
-		HTMLArtifactsEnabled: a.config.EnableHTMLArtifacts(),
+		Bots:                    bots,
+		SearchEnabled:           searchEnabled,
+		AllowUnsafeLinks:        a.config.AllowUnsafeLinks(),
+		LinkPolicy:              a.config.LinkPolicy(),
+		HTMLArtifactsEnabled:    a.config.EnableHTMLArtifacts(),
+		ScopedSessionsSupported: a.contextBuilder.ServerSupportsScopedSessions(),
 	})
 }
 

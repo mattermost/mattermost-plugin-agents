@@ -9,6 +9,7 @@ import (
 	"reflect"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -91,25 +92,7 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 		if _, ok := byUsername[bc.Name]; ok {
 			continue
 		}
-		botUserID := mmByUsername[bc.Name]
-
-		ua := bc
-
-		// Reset identity/lifecycle so store.CreateAgent assigns a new ID & timestamps.
-		ua.ID = ""
-		ua.BotUserID = botUserID
-		ua.CreatorID = "" // migrated legacy bot has no owner
-		ua.AdminUserIDs = nil
-		ua.CreateAt = 0
-		ua.UpdateAt = 0
-		ua.DeleteAt = 0
-
-		// Config bots predate per-agent MCP tool gating — they had access to every
-		// MCP tool. Preserve that by auto-enabling new MCP tools for migrated agents.
-		ua.AutoEnableNewMCPTools = true
-		ua.EnabledMCPTools = nil
-		ua.MCPDynamicToolLoading = bc.MCPDynamicToolLoading
-
+		ua := legacyBotAsUserAgent(bc, mmByUsername[bc.Name])
 		if createErr := st.CreateAgent(&ua, store.SystemAgentVersionMeta()); createErr != nil {
 			return false, fmt.Errorf("failed to create user agent for legacy bot %q: %w", bc.Name, createErr)
 		}
@@ -154,4 +137,30 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 
 	pluginAPI.Log.Info("Migrated legacy config bots to self-service agents table")
 	return true, nil
+}
+
+// legacyBotAsUserAgent converts a config-file bot into the user agent that
+// replaces it.
+func legacyBotAsUserAgent(bc llm.BotConfig, botUserID string) llm.BotConfig {
+	ua := bc
+
+	// Reset identity/lifecycle so store.CreateAgent assigns a new ID & timestamps.
+	ua.ID = ""
+	ua.BotUserID = botUserID
+	ua.CreatorID = "" // migrated legacy bot has no owner
+	ua.AdminUserIDs = nil
+	ua.CreateAt = 0
+	ua.UpdateAt = 0
+	ua.DeleteAt = 0
+
+	// Config bots predate per-agent MCP tool gating — they had access to every
+	// MCP tool. Preserve that by auto-enabling new MCP tools for migrated agents.
+	ua.AutoEnableNewMCPTools = true
+	ua.EnabledMCPTools = nil
+
+	// Scoped channel mode needs an explicit allowlist, which a migrated agent no
+	// longer has; an admin can turn it on again on the agent.
+	ua.ScopedChannelMode = false
+	ua.ScopedExtraChannelIDs = nil
+	return ua
 }

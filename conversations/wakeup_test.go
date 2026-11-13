@@ -835,8 +835,9 @@ func TestRegenerationCancelsThreadWakeWithoutNote(t *testing.T) {
 		post:    post,
 	})
 	require.NoError(t, err)
-	streamResult, _, err := c.regenerateViaConversation(context.Background(), policy, post)
+	streamResult, _, release, err := c.regenerateViaConversation(context.Background(), policy, post)
 	require.NoError(t, err)
+	defer release()
 	_, err = streamResult.ReadAll()
 	require.NoError(t, err)
 

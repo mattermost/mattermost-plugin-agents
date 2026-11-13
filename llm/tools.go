@@ -50,6 +50,11 @@ type Tool struct {
 	// controls; other servers' read-only hints are not trusted.
 	ReadOnly bool
 
+	// ScopedUnsupported marks an embedded Mattermost MCP tool that cannot work
+	// under a scoped session, because the REST routes it needs are outside any
+	// read-only scope. Like ReadOnly, it is only set for the embedded server.
+	ScopedUnsupported bool
+
 	// UserInteraction marks a tool whose pending call is answered by the
 	// requesting user in the Mattermost UI instead of executed by the server;
 	// the Resolver is only an error backstop. Empty for normal tools.
@@ -774,6 +779,10 @@ func FilterScopedOptInTools(tools []Tool, allowlist []EnabledMCPTool) []Tool {
 		return tool.ScopedOptIn && !named[tool.Name]
 	})
 }
+
+// ScopedUnsupportedMetaKey is the MCP tool _meta key through which the embedded
+// Mattermost server marks a tool as ScopedUnsupported.
+const ScopedUnsupportedMetaKey = "mattermost-agents/scoped_unsupported"
 
 // MCPServerToolWildcard in EnabledMCPTool.ToolName means every tool from that ServerOrigin is allowed.
 const MCPServerToolWildcard = "*"

@@ -247,6 +247,9 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return err
 	}
 	llmContext.ResponsePostID = post.Id
+	// Approved tools run below, before this returns; the follow-up builds its
+	// own context and session.
+	defer llmContext.ReleaseScopedSession()
 	// The clicked post may already carry attachments from an earlier round.
 	llmContext.SetResponseAttachmentBudget(maxResponseAttachments - len(post.FileIds))
 
@@ -817,6 +820,12 @@ func (c *Conversations) streamToolFollowUp(
 		return err
 	}
 	llmContext.ResponsePostID = post.Id
+	scopedHandedOff := false
+	defer func() {
+		if !scopedHandedOff {
+			llmContext.ReleaseScopedSession()
+		}
+	}()
 	// The continuation post may already carry attachments from an earlier round.
 	llmContext.SetResponseAttachmentBudget(maxResponseAttachments - len(post.FileIds))
 
@@ -858,9 +867,11 @@ func (c *Conversations) streamToolFollowUp(
 	// Stream onto the same post; finalize demotes the prior anchor so
 	// resolved tool cards remain visible alongside the new round.
 	followUp.handedOff = true
+	scopedHandedOff = true
 	c.streamToExistingPostOnContext(ctx, stream, post, policy.user, policy.channel, true, func() {
 		cancelLoop()
 		c.awaitToolRunner(runResult.Done, post.Id)
+		llmContext.ReleaseScopedSession()
 		if opts.OnRunEnd != nil {
 			opts.OnRunEnd()
 		}

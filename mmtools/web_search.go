@@ -39,6 +39,11 @@ const (
 	// WebSearchCountKey is the key used to track the number of searches executed
 	WebSearchCountKey = "mm_web_search_count"
 
+	// WebSearchToolName and WebSearchSourceToolName are the built-in tool
+	// names an agent's allowlist names to opt a scoped channel turn in.
+	WebSearchToolName       = "WebSearch"
+	WebSearchSourceToolName = "WebSearchFetchSource"
+
 	minQueryLength       = 3
 	maxWebSearches       = 3
 	maxDownloadSize      = 30 * 1024 * 1024 // 30MB limit for source fetching
@@ -108,7 +113,7 @@ func NewWebSearchService(cfgGetter func() *config.Config, logger WebSearchLog, h
 	}
 
 	service.tool = &llm.Tool{
-		Name:        "WebSearch",
+		Name:        WebSearchToolName,
 		Description: WebSearchDescription,
 		Schema:      llm.NewJSONSchemaFromStruct[WebSearchToolArgs](),
 		Resolver:    service.resolve,
@@ -116,7 +121,7 @@ func NewWebSearchService(cfgGetter func() *config.Config, logger WebSearchLog, h
 	}
 
 	service.sourceTool = &llm.Tool{
-		Name:        "WebSearchFetchSource",
+		Name:        WebSearchSourceToolName,
 		Description: WebSearchSourceFetchDescription,
 		Schema:      llm.NewJSONSchemaFromStruct[WebSearchSourceArgs](),
 		Resolver:    nil,
@@ -510,21 +515,20 @@ func (s *webSearchService) resolveSource(ctx context.Context, bot *bots.Bot, llm
 		}
 	}
 
-	// Security check 1: Verify URL is in the whitelist (only URLs from search results are allowed)
-	if llmContext != nil && llmContext.Parameters != nil {
-		if raw, ok := llmContext.Parameters[WebSearchAllowedURLsKey]; ok {
-			if allowedURLs, ok := raw.([]string); ok {
-				isAllowed := slices.Contains(allowedURLs, pageURL)
-				if !isAllowed {
-					s.logWarn("source fetch rejected: URL not in whitelist", "url", pageURL)
-					return "you can only fetch URLs that were returned from web search results", errors.New("url not in whitelist")
-				}
-			}
-		} else {
-			// No whitelist exists - reject the request
-			s.logWarn("source fetch rejected: no whitelist found in context", "url", pageURL)
-			return "you can only fetch URLs that were returned from web search results", errors.New("no whitelist in context")
-		}
+	// Security check 1: only URLs from this conversation's search results may
+	// be fetched. A context without that list fetches nothing.
+	var allowedURLs []string
+	hasAllowlist := false
+	if llmContext != nil {
+		allowedURLs, hasAllowlist = llmContext.Parameters[WebSearchAllowedURLsKey].([]string)
+	}
+	if !hasAllowlist {
+		s.logWarn("source fetch rejected: no whitelist found in context", "url", pageURL)
+		return "you can only fetch URLs that were returned from web search results", errors.New("no whitelist in context")
+	}
+	if !slices.Contains(allowedURLs, pageURL) {
+		s.logWarn("source fetch rejected: URL not in whitelist", "url", pageURL)
+		return "you can only fetch URLs that were returned from web search results", errors.New("url not in whitelist")
 	}
 
 	// Security check 2: Check if the domain is denylisted

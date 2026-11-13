@@ -976,8 +976,9 @@ func TestRegenerateRestoresLoadsBeforeAnchorButDropsLoadsInScrubbedGeneration(t 
 	})
 	require.NoError(t, err)
 
-	streamResult, _, err := c.regenerateViaConversation(context.Background(), policy, post)
+	streamResult, _, release, err := c.regenerateViaConversation(context.Background(), policy, post)
 	require.NoError(t, err)
+	defer release()
 	_, readErr := streamResult.ReadAll()
 	require.NoError(t, readErr)
 

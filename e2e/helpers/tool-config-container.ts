@@ -84,6 +84,35 @@ export async function RunToolConfigContainer(): Promise<MattermostContainer> {
 }
 
 /**
+ * Container for scoped channel mode tests: the Smocker LLM, the embedded MCP
+ * server, and channel tool calling on. Specs create the scoped agent through
+ * the agents API, the way an admin would.
+ */
+export async function RunToolConfigContainerForScopedAgents(): Promise<MattermostContainer> {
+    return RunSystemConsoleContainer({
+        enableChannelMentionToolCalling: true,
+        services: [
+            {
+                id: 'mock-service',
+                name: 'Mock Service',
+                type: 'openaicompatible',
+                apiKey: 'mock',
+                apiURL: 'http://openai:8080',
+                defaultModel: 'gpt-mock',
+                useResponsesAPI: false,
+            },
+        ],
+        mcp: {
+            enabled: true,
+            enablePluginServer: true,
+            embeddedServer: {enabled: true},
+            idleTimeoutMinutes: 30,
+            servers: [],
+        },
+    });
+}
+
+/**
  * Container with MCP embedded server and explicit tool_configs
  * preset for testing policy changes. Uses same base config.
  */

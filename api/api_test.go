@@ -1408,6 +1408,7 @@ func TestAdminRouter(t *testing.T) {
 	for urlName, url := range map[string]string{
 		"reindex_status":            "/admin/reindex/status",
 		"mcp_tools":                 "/admin/mcp/tools",
+		"agent_scoped_access":       "/admin/agents/agent-1/scoped_access",
 		"mcp_vetted_seed":           "/admin/mcp/vetted-tool-seed",
 		"mcp_suggested_description": "/admin/mcp/server-id/suggested-description",
 		"mcp_server_tools":          "/admin/mcp/server-id/tools",

@@ -45,6 +45,7 @@ type fakeMMClient struct {
 	kv                   map[string]any
 	createdPosts         []*model.Post
 	allowCreatePost      bool
+	config               *model.Config
 	updatedPosts         []*model.Post
 	kvDeletes            []string
 	posts                map[string]*model.Post
@@ -269,6 +270,9 @@ func (c *fakeMMClient) publishedWebSocketEvents() []fakeWebSocketEvent {
 }
 
 func (c *fakeMMClient) GetConfig() *model.Config {
+	if c.config != nil {
+		return c.config
+	}
 	return &model.Config{LocalizationSettings: model.LocalizationSettings{DefaultServerLocale: model.NewPointer("en")}}
 }
 
@@ -364,6 +368,8 @@ func (c *fakeMMClient) SendEphemeralPost(userID string, post *model.Post) {
 
 type fakeStreamingService struct {
 	streamedPosts []*model.Post
+	// contextErr, when set, fails GetStreamingContext.
+	contextErr error
 	// finished, when set, receives the ID of each post whose stream ends.
 	finished chan string
 	// stopAtExecuting ends a stream once a tool batch starts executing, as a
@@ -411,6 +417,9 @@ func (s *fakeStreamingService) StopStreaming(string) {}
 // GetStreamingContext and FinishStreaming mirror the real service: finishing
 // a post's stream cancels its context.
 func (s *fakeStreamingService) GetStreamingContext(inCtx context.Context, postID string) (context.Context, error) {
+	if s.contextErr != nil {
+		return nil, s.contextErr
+	}
 	ctx, cancel := context.WithCancel(inCtx)
 	s.mu.Lock()
 	if s.cancels == nil {

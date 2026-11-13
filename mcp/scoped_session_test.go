@@ -90,6 +90,7 @@ func TestScopedCatalog(t *testing.T) {
 	botUserID := model.NewId()
 	requesterID := model.NewId()
 	channelID := model.NewId()
+	teamID := model.NewId()
 	extraChannelID := model.NewId()
 
 	embeddedMCP := newTestMCPServer(0, "create_post")
@@ -127,6 +128,7 @@ func TestScopedCatalog(t *testing.T) {
 		BotUserID:       botUserID,
 		RequesterID:     requesterID,
 		ChannelID:       channelID,
+		TeamID:          teamID,
 		ExtraChannelIDs: []string{extraChannelID, channelID, "not-an-id"},
 		EnabledTools:    []llm.EnabledMCPTool{{ServerOrigin: EmbeddedClientKey, ToolName: "read_channel"}},
 	})
@@ -140,6 +142,7 @@ func TestScopedCatalog(t *testing.T) {
 	assert.Equal(t, model.ScopeReadPermissions, minted.scope.Permissions)
 	assert.Equal(t, []string{channelID, extraChannelID}, minted.scope.Resources.ChannelIDs)
 	assert.True(t, minted.scope.Resources.OpenTeamPublicChannels)
+	assert.Equal(t, []string{teamID}, minted.scope.Resources.PublicChannelTeamIDs, "the run reads the public channels of its channel's team")
 	assert.Equal(t, requesterID, minted.scope.OnBehalfOfUserID)
 	assert.WithinDuration(t, time.Now().Add(scopedsession.RunTTL), time.UnixMilli(minted.expiresAt), time.Minute)
 
@@ -174,7 +177,7 @@ func TestScopedCatalog(t *testing.T) {
 }
 
 func TestMintScopedSessionFailsClosed(t *testing.T) {
-	valid := ScopedSessionRequest{BotUserID: model.NewId(), RequesterID: model.NewId(), ChannelID: model.NewId()}
+	valid := ScopedSessionRequest{BotUserID: model.NewId(), RequesterID: model.NewId(), ChannelID: model.NewId(), TeamID: model.NewId()}
 	tests := []struct {
 		name        string
 		minter      *fakeScopedMinter
@@ -185,7 +188,8 @@ func TestMintScopedSessionFailsClosed(t *testing.T) {
 		{name: "no minter configured", req: valid, wantErr: ErrScopedSessionsUnavailable},
 		{name: "server cannot mint", minter: &fakeScopedMinter{createErr: errServerRefused}, req: valid, wantErr: errServerRefused},
 		{name: "session for another user is revoked", minter: &fakeScopedMinter{wrongUser: true}, req: valid, wantRevokes: 1},
-		{name: "invalid channel", minter: &fakeScopedMinter{}, req: ScopedSessionRequest{BotUserID: valid.BotUserID, RequesterID: valid.RequesterID}},
+		{name: "invalid channel", minter: &fakeScopedMinter{}, req: ScopedSessionRequest{BotUserID: valid.BotUserID, RequesterID: valid.RequesterID, TeamID: valid.TeamID}},
+		{name: "invalid team", minter: &fakeScopedMinter{}, req: ScopedSessionRequest{BotUserID: valid.BotUserID, RequesterID: valid.RequesterID, ChannelID: valid.ChannelID}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -254,6 +258,7 @@ func TestMintScopedSessionWithDeletedExtraChannels(t *testing.T) {
 				BotUserID:       model.NewId(),
 				RequesterID:     model.NewId(),
 				ChannelID:       trigger,
+				TeamID:          model.NewId(),
 				ExtraChannelIDs: []string{kept, deleted, unreadable},
 			})
 			assert.Equal(t, tt.wantAttempts, minter.attempts)
@@ -277,7 +282,7 @@ func TestScopedRunsRevokedWithTheirAgent(t *testing.T) {
 	m.SetScopedSessions(minter)
 
 	mint := func(botUserID string) *ScopedRun {
-		run, err := m.MintScopedSession(context.Background(), ScopedSessionRequest{BotUserID: botUserID, RequesterID: model.NewId(), ChannelID: model.NewId()})
+		run, err := m.MintScopedSession(context.Background(), ScopedSessionRequest{BotUserID: botUserID, RequesterID: model.NewId(), ChannelID: model.NewId(), TeamID: model.NewId()})
 		require.NoError(t, err)
 		return run
 	}
@@ -292,7 +297,7 @@ func TestScopedRunsRevokedWithTheirAgent(t *testing.T) {
 	m.Close()
 	assert.ElementsMatch(t, []string{runA1.Session().Id, runA2.Session().Id, runB.Session().Id}, minter.revokedIDs(), "stopping the plugin revokes every live run")
 
-	_, err := m.MintScopedSession(context.Background(), ScopedSessionRequest{BotUserID: botA, RequesterID: model.NewId(), ChannelID: model.NewId()})
+	_, err := m.MintScopedSession(context.Background(), ScopedSessionRequest{BotUserID: botA, RequesterID: model.NewId(), ChannelID: model.NewId(), TeamID: model.NewId()})
 	require.True(t, errors.Is(err, ErrScopedSessionsUnavailable))
 }
 
@@ -311,6 +316,34 @@ func TestScopedCatalogAllows(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.allowed, ScopedCatalogAllows(tt.tool))
+		})
+	}
+}
+
+func TestScopedCatalogExclusion(t *testing.T) {
+	const remote = "https://jira.example.com"
+	named := func(origin, tool string) []llm.EnabledMCPTool {
+		return []llm.EnabledMCPTool{{ServerOrigin: origin, ToolName: tool}}
+	}
+	tests := []struct {
+		name      string
+		tool      llm.Tool
+		allowlist []llm.EnabledMCPTool
+		expected  ScopedToolExclusion
+	}{
+		{name: "named read-only embedded tool", tool: llm.Tool{Name: "read_channel", ServerOrigin: EmbeddedClientKey, ReadOnly: true}, allowlist: named(EmbeddedClientKey, "read_channel")},
+		{name: "named read-only tool that needs wider access", tool: llm.Tool{Name: "get_user_channels", ServerOrigin: EmbeddedClientKey, ReadOnly: true, ScopedUnsupported: true}, allowlist: named(EmbeddedClientKey, "get_user_channels"), expected: ScopedExcludedNeedsWiderAccess},
+		{name: "named write tool", tool: llm.Tool{Name: "create_post", ServerOrigin: EmbeddedClientKey}, allowlist: named(EmbeddedClientKey, "create_post"), expected: ScopedExcludedWriteTool},
+		{name: "named plugin tool", tool: llm.Tool{Name: "lookup", ServerOrigin: "plugin://com.example"}, allowlist: named("plugin://com.example", "lookup"), expected: ScopedExcludedPluginServer},
+		{name: "named remote tool", tool: llm.Tool{Name: "jira__get_issue", ServerOrigin: remote}, allowlist: named(remote, "get_issue")},
+		{name: "remote tool granted by wildcard", tool: llm.Tool{Name: "jira__get_issue", ServerOrigin: remote}, allowlist: named(remote, llm.MCPServerToolWildcard), expected: ScopedExcludedNotNamed},
+		{name: "remote tool not in the allowlist", tool: llm.Tool{Name: "jira__get_issue", ServerOrigin: remote}, expected: ScopedExcludedNotNamed},
+		{name: "built-in tool", tool: llm.Tool{Name: "WebSearch"}, expected: ScopedExcludedBuiltin},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, ScopedCatalogExclusion(tt.tool, tt.allowlist))
+			assert.Equal(t, tt.expected == ScopedIncluded, len(FilterScopedCatalog([]llm.Tool{tt.tool}, tt.allowlist)) == 1)
 		})
 	}
 }
