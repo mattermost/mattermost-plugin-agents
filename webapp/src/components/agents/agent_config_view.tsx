@@ -460,7 +460,7 @@ const AgentConfigView = (props: Props) => {
             let enabledTools: EnabledTool[] = [];
             let missingServerOrigins: string[] = [];
             if (!imported.autoEnableNewMCPTools && imported.mcpTools.length > 0) {
-                const {servers} = await getUserMCPTools({agentId: agent?.id, serviceAccount: draft.useServiceAccountAuth});
+                const {servers} = await getUserMCPTools({agentId: agent?.id, serviceAccount: draft.useServiceAccountAuth, agentConfig: true});
                 ({enabledTools, missingServerOrigins} = matchImportedMCPTools(imported.mcpTools, servers ?? []));
             }
             if (request !== importRequestRef.current) {

@@ -486,7 +486,10 @@ func (m *ClientManager) getCatalogAccess(ctx context.Context, req CatalogRequest
 	plugins := m.snapshotEnabledPluginServers()
 	// Service-account remotes are pooled by the bot identity, but authorization
 	// and local MCP connections belong to the human invoking this request.
-	deniedOrigins := m.deniedMCPServerOrigins(ctx, req.InvokingUserID, cfg, embeddedClient, plugins)
+	var deniedOrigins map[string]bool
+	if !req.IgnoreAccessPolicy {
+		deniedOrigins = m.deniedMCPServerOrigins(ctx, req.InvokingUserID, cfg, embeddedClient, plugins)
+	}
 	servers := m.resolveEligibleServers(cfg, embeddedClient, plugins, selection, deniedOrigins, req.ServiceAccount)
 
 	var localClients *UserClients

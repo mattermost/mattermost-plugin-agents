@@ -475,6 +475,7 @@ func TestValidateAgentWrite(t *testing.T) {
 
 	embeddedMCPServerID := model.NewId()
 	pluginMCPServerID := model.NewId()
+	isAdmin, notAdmin := true, false
 
 	resolver := func() map[string]string {
 		return map[string]string{
@@ -499,6 +500,7 @@ func TestValidateAgentWrite(t *testing.T) {
 		cfg           *llm.BotConfig
 		prev          *llm.BotConfig
 		probe         int
+		sysadmin      *bool // non-nil wires a plugin API answering ManageSystem
 		emptyResolver bool
 		wantErr       error
 		wantErrText   string
@@ -544,6 +546,28 @@ func TestValidateAgentWrite(t *testing.T) {
 		{
 			name:    "create with denied mcp origin names the origin",
 			perType: map[string]*model.AccessDecision{ResourceTypeService: allowDecision(), ResourceTypeMCP: denyDecision()},
+			cfg: &llm.BotConfig{
+				ID: model.NewId(), ServiceID: serviceID,
+				EnabledMCPTools: tools(deniedOrigin),
+			},
+			wantErr:     ErrAccessDenied,
+			wantErrText: deniedOrigin,
+			wantTypes:   []string{ResourceTypeService, ResourceTypeMCP},
+		},
+		{
+			name:     "system admin may assign a denied mcp origin",
+			perType:  map[string]*model.AccessDecision{ResourceTypeService: allowDecision(), ResourceTypeMCP: denyDecision()},
+			sysadmin: &isAdmin,
+			cfg: &llm.BotConfig{
+				ID: model.NewId(), ServiceID: serviceID,
+				EnabledMCPTools: tools(deniedOrigin, embeddedOrigin, pluginOrigin),
+			},
+			wantTypes: []string{ResourceTypeService},
+		},
+		{
+			name:     "non-admin with a plugin API is still denied the mcp origin",
+			perType:  map[string]*model.AccessDecision{ResourceTypeService: allowDecision(), ResourceTypeMCP: denyDecision()},
+			sysadmin: &notAdmin,
 			cfg: &llm.BotConfig{
 				ID: model.NewId(), ServiceID: serviceID,
 				EnabledMCPTools: tools(deniedOrigin),
@@ -639,9 +663,14 @@ func TestValidateAgentWrite(t *testing.T) {
 				idsByOrigin = NoMCPServerIDs
 			}
 
+			actingUserID := model.NewId()
 			var c *Checker
-			switch tt.probe {
-			case probeAvailable, probeUnavailable:
+			switch {
+			case tt.sysadmin != nil:
+				api := &plugintest.API{}
+				api.On("HasPermissionTo", actingUserID, model.PermissionManageSystem).Return(*tt.sysadmin).Maybe()
+				c = New(client, api, idsByOrigin, nil)
+			case tt.probe == probeAvailable, tt.probe == probeUnavailable:
 				api := &plugintest.API{}
 				defer api.AssertExpectations(t)
 				var probeAST *model.VisualExpression
@@ -657,7 +686,7 @@ func TestValidateAgentWrite(t *testing.T) {
 				c = New(client, nil, idsByOrigin, nil)
 			}
 
-			err := c.ValidateAgentWrite(context.Background(), model.NewId(), tt.cfg, tt.prev)
+			err := c.ValidateAgentWrite(context.Background(), actingUserID, tt.cfg, tt.prev)
 
 			if tt.wantErr != nil {
 				require.Error(t, err)

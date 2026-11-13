@@ -45,7 +45,10 @@ type UserMCPToolInfo struct {
 	Policy      string `json:"policy"`
 }
 
-const mcpToolsCatalogServiceAccount = "service_account"
+const (
+	mcpToolsCatalogServiceAccount = "service_account"
+	mcpToolsPurposeAgentConfig    = "agent_config"
+)
 
 // handleGetUserMCPTools returns MCP tools grouped by server.
 //
@@ -53,13 +56,21 @@ const mcpToolsCatalogServiceAccount = "service_account"
 // shows every admin-enabled server, including servers no agent has allowlisted.
 // Pass catalog=service_account to preview the service-account catalog an agent
 // actually uses at runtime. agent_id is required unless the caller is a system
-// admin creating an agent that does not exist yet.
+// admin creating an agent that does not exist yet. Pass purpose=agent_config
+// from the agent editor: system admins then also see servers whose access
+// policy denies them, as GET /services shows them every service.
 func (a *API) handleGetUserMCPTools(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
+	purpose := c.Query("purpose")
+	if purpose != "" && purpose != mcpToolsPurposeAgentConfig {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("purpose must be empty or %s", mcpToolsPurposeAgentConfig))
+		return
+	}
 	req, ok := a.resolveMCPToolsCatalog(c, userID)
 	if !ok {
 		return
 	}
+	req.IgnoreAccessPolicy = purpose == mcpToolsPurposeAgentConfig && a.canBypassServicePolicies(userID)
 
 	access := a.mcpClientManager.GetCatalogAccess(c.Request.Context(), req)
 	if !abortIfCatalogUnavailable(c, access) {
