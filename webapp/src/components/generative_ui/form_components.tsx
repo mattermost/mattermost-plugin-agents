@@ -315,6 +315,10 @@ interface ButtonProps {
     variant?: ButtonVariant;
 }
 
+// The server stores a submitted label without control characters or
+// surrounding whitespace (genui.Submission.Normalize); compare it that way.
+const storedLabel = (label: string) => label.replace(/\p{Cc}/gu, '').trim();
+
 /**
  * Sends its own label, plus the values of its form when it is in one. A
  * button carries no other message or action, so what is submitted is always
@@ -325,7 +329,7 @@ export const ButtonView = ({label, variant}: ButtonProps) => {
     const fields = useFormFields();
     const interaction = useBlockInteraction();
     const isStreaming = useIsStreaming();
-    const chosen = interaction.submitted !== null && interaction.submitted.form === formName && interaction.submitted.label === label;
+    const chosen = interaction.submitted !== null && interaction.submitted.form === formName && interaction.submitted.label === storedLabel(label);
 
     const onClick = () => {
         const values = fields ? fields.collect() : [];

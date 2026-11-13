@@ -39,13 +39,14 @@ const store = {
     dispatch: jest.fn(),
 } as any;
 
-const renderForm = (interaction: PostInteraction, submit: GenerativeUIActions['submit'] = jest.fn().mockResolvedValue(null), options: {showCursor?: boolean; offset?: number} = {}) => {
+const renderForm = (interaction: PostInteraction, submit: GenerativeUIActions['submit'] = jest.fn().mockResolvedValue(null), options: {showCursor?: boolean; offset?: number; message?: string} = {}) => {
+    const text = options.message ?? message;
     const view = render(
         <Provider store={store}>
             <IntlProvider locale='en'>
                 <GenerativeUIActionsContext.Provider value={{interaction, submit}}>
                     <PostText
-                        message={options.showCursor ? message.slice(0, -4) : message}
+                        message={options.showCursor ? text.slice(0, -4) : text}
                         channelID='chan1'
                         postID='post1'
                         allowGenerativeUI={true}
@@ -188,5 +189,17 @@ describe('generative UI forms', () => {
             expect((deploy as HTMLButtonElement).disabled).toBe(true);
         }
         expect(submit).not.toHaveBeenCalled();
+    });
+
+    it('marks a button chosen when its label has surrounding whitespace the server trimmed', () => {
+        const padded = '```openui-lang\nroot = Stack([form])\nform = Form("pick", [], [Button(" Go "), Button("Stop")])\n```';
+        renderForm(
+            {kind: 'submitted', submission: {source_post_id: 'post1', block: 0, form: 'pick', label: 'Go', fields: []}},
+            jest.fn(),
+            {message: padded},
+        );
+        const form = screen.getByTestId('generative-ui-form');
+        expect(within(form).getByRole('button', {name: 'Go'}).getAttribute('aria-pressed')).toBe('true');
+        expect(within(form).getByRole('button', {name: 'Stop'}).getAttribute('aria-pressed')).toBe('false');
     });
 });
