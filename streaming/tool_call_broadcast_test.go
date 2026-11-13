@@ -10,12 +10,13 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/require"
 )
 
 // TestToolCallBroadcastTiming pins when the requester receives each tool_call
-// batch: a batch awaiting a user decision only once its turn is stored, so a
+// batch: a batch awaiting a user decision only once its turn is settled, so a
 // click on the card can resolve, and an auto-run batch while the run is still
 // going, so the UI shows progress during execution.
 func TestToolCallBroadcastTiming(t *testing.T) {
@@ -103,7 +104,8 @@ func TestToolCallBroadcastTiming(t *testing.T) {
 				var calls []llm.ToolCall
 				require.NoError(t, json.Unmarshal([]byte(ev.payload["tool_call"].(string)), &calls))
 				ts.mu.Lock()
-				persisted := findStreamTurn(ts.turns, postID) != nil
+				turn := findStreamTurn(ts.turns, postID)
+				persisted := turn != nil && turn.Status == store.TurnStatusComplete
 				ts.mu.Unlock()
 				sent = append(sent, sentBatch{status: calls[0].Status, persisted: persisted})
 			}

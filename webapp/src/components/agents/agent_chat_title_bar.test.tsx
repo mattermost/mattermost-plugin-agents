@@ -54,13 +54,13 @@ const thread = (id: string, root: string, title: string, update: number, channel
 // The conversation id comes from the bot reply's props, as the plugin writes it.
 // The plugin's real thread-list reducer, so the name menu lists the fetched chats.
 const makeStore = (withBotReply: boolean) => createStore(combineReducers({
-    [`plugins-${manifest.id}`]: combineReducers({aiThreads}),
+    [`plugins-${manifest.id}`]: combineReducers({aiThreads, bots: (state: LLMBot[] = [bot]) => state}),
     entities: (state = {
         general: {config: {EnableTesting: 'true', EnableDeveloper: 'true'}, license: {}},
         posts: {
             posts: {
                 root1: {id: 'root1', props: {}},
-                ...(withBotReply ? {reply1: {id: 'reply1', props: {conversation_id: CONVERSATION_ID}}} : {}),
+                ...(withBotReply ? {reply1: {id: 'reply1', user_id: bot.id, props: {conversation_id: CONVERSATION_ID}}} : {}),
             },
             postsInThread: {root1: withBotReply ? ['reply1'] : []},
         },
