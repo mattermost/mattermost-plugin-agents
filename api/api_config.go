@@ -151,6 +151,11 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		}
 	}
 
+	if err := config.ValidateEmbeddingProviderParameters(cfg.EmbeddingSearchConfig.EmbeddingProvider); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
 	if err := cfg.ValidateAgentReferences(); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err)
 		return

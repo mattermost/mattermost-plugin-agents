@@ -5,6 +5,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"maps"
 	"strings"
 
@@ -19,8 +20,12 @@ const SecretPlaceholder = "********************************"
 // embeddingProviderAPIKeyParam is the embedding provider parameter that holds a credential.
 const embeddingProviderAPIKeyParam = "apiKey"
 
-// embeddingProviderAPIURLParam is the embedding provider parameter holding the endpoint the key is sent to.
-const embeddingProviderAPIURLParam = "apiURL"
+// embeddingProviderAPIURLParam and embeddingProviderProviderParam are the embedding
+// provider parameters holding the endpoint and the upstream the key is sent to.
+const (
+	embeddingProviderAPIURLParam   = "apiURL"
+	embeddingProviderProviderParam = "provider"
+)
 
 // IsSecretPlaceholder reports whether v is a mask rather than a credential.
 func IsSecretPlaceholder(v string) bool {
@@ -291,39 +296,103 @@ func restoreHeaderSecrets(incoming, stored map[string]string) map[string]string 
 	return incoming
 }
 
+// embeddingEndpointParams are the provider parameters that decide where an
+// embedding key is sent and with which key. The embedding client decodes the
+// parameters with encoding/json into a struct, which matches keys
+// case-insensitively and keeps the last one, so the rules here read them the
+// same way.
+type embeddingEndpointParams struct {
+	APIKey   string `json:"apiKey"`
+	APIURL   string `json:"apiURL"`
+	Provider string `json:"provider"`
+}
+
+func decodeEmbeddingEndpoint(parameters json.RawMessage) embeddingEndpointParams {
+	var decoded embeddingEndpointParams
+	if len(parameters) == 0 || json.Unmarshal(parameters, &decoded) != nil {
+		return embeddingEndpointParams{}
+	}
+	return decoded
+}
+
+func embeddingDestination(upstream embeddings.UpstreamConfig) string {
+	endpoint := decodeEmbeddingEndpoint(upstream.Parameters)
+	return destination(upstream.Type, endpoint.Provider, endpoint.APIURL)
+}
+
+// ValidateEmbeddingProviderParameters rejects parameters that repeat the key,
+// URL or provider under another capitalization: which spelling the client reads
+// would then depend on key order, so the credential binding could not be
+// enforced.
+func ValidateEmbeddingProviderParameters(upstream embeddings.UpstreamConfig) error {
+	params, ok := decodeParameters(upstream.Parameters)
+	if !ok {
+		return nil
+	}
+	for _, name := range []string{embeddingProviderAPIKeyParam, embeddingProviderAPIURLParam, embeddingProviderProviderParam} {
+		if len(parameterKeys(params, name)) > 1 {
+			return fmt.Errorf("embedding provider parameter %q is set more than once", name)
+		}
+	}
+	return nil
+}
+
+// parameterKeys returns every key of params that names the parameter, however capitalized.
+func parameterKeys(params map[string]json.RawMessage, name string) []string {
+	var keys []string
+	for key := range params {
+		if strings.EqualFold(key, name) {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
 func redactEmbeddingProviderSecrets(parameters json.RawMessage) json.RawMessage {
 	params, ok := decodeParameters(parameters)
 	if !ok {
 		return parameters
 	}
 
-	value, ok := parameterString(params, embeddingProviderAPIKeyParam)
-	if !ok || value == "" {
+	redacted := false
+	for _, key := range parameterKeys(params, embeddingProviderAPIKeyParam) {
+		if value, isString := parameterString(params, key); isString && value != "" {
+			params[key] = jsonString(SecretPlaceholder)
+			redacted = true
+		}
+	}
+	if !redacted {
 		return parameters
 	}
 
-	return encodeParameters(params, embeddingProviderAPIKeyParam, SecretPlaceholder, parameters)
+	return encodeParameters(params, parameters)
 }
 
 func restoreEmbeddingProviderSecrets(provider, stored embeddings.UpstreamConfig) json.RawMessage {
-	parameters := provider.Parameters
-	params, ok := decodeParameters(parameters)
+	params, ok := decodeParameters(provider.Parameters)
 	if !ok {
-		return parameters
+		return provider.Parameters
 	}
 
-	value, ok := parameterString(params, embeddingProviderAPIKeyParam)
-	if !ok || !IsSecretPlaceholder(value) {
-		return parameters
+	storedKey := decodeEmbeddingEndpoint(stored.Parameters).APIKey
+	incomingDestination := embeddingDestination(provider)
+	storedDestination := embeddingDestination(stored)
+
+	restored := false
+	for _, key := range parameterKeys(params, embeddingProviderAPIKeyParam) {
+		value, isString := parameterString(params, key)
+		if !isString || !IsSecretPlaceholder(value) {
+			continue
+		}
+		resolved := resolveBoundSecret(value, incomingDestination, storedKey, storedDestination)
+		params[key] = jsonString(resolved)
+		restored = true
+	}
+	if !restored {
+		return provider.Parameters
 	}
 
-	storedParams, _ := decodeParameters(stored.Parameters)
-	storedValue, _ := parameterString(storedParams, embeddingProviderAPIKeyParam)
-	apiURL, _ := parameterString(params, embeddingProviderAPIURLParam)
-	storedAPIURL, _ := parameterString(storedParams, embeddingProviderAPIURLParam)
-
-	resolved := resolveBoundSecret(value, destination(provider.Type, apiURL), storedValue, destination(stored.Type, storedAPIURL))
-	return encodeParameters(params, embeddingProviderAPIKeyParam, resolved, parameters)
+	return encodeParameters(params, provider.Parameters)
 }
 
 // decodeParameters keeps unrelated entries as raw JSON so re-encoding preserves them verbatim.
@@ -354,15 +423,14 @@ func parameterString(params map[string]json.RawMessage, key string) (string, boo
 	return value, true
 }
 
-// encodeParameters returns params with key set to value, falling back to the
-// original JSON when it cannot be re-encoded.
-func encodeParameters(params map[string]json.RawMessage, key, value string, fallback json.RawMessage) json.RawMessage {
-	encodedValue, err := json.Marshal(value)
-	if err != nil {
-		return fallback
-	}
-	params[key] = encodedValue
+// jsonString encodes a string as a JSON value; marshaling a string cannot fail.
+func jsonString(value string) json.RawMessage {
+	encoded, _ := json.Marshal(value)
+	return encoded
+}
 
+// encodeParameters returns params as JSON, falling back to the original when it cannot be encoded.
+func encodeParameters(params map[string]json.RawMessage, fallback json.RawMessage) json.RawMessage {
 	encoded, err := json.Marshal(params)
 	if err != nil {
 		return fallback

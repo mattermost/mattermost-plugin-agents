@@ -875,3 +875,62 @@ func TestSaveConfigBindsCredentialsToTheirDestination(t *testing.T) {
 		})
 	}
 }
+
+// The embedding client decodes the provider parameters case-insensitively and
+// keeps the last matching key, so a differently capitalized key is the same
+// parameter and cannot be used to sidestep the credential binding.
+func TestSaveConfigEmbeddingParametersCaseVariantKeys(t *testing.T) {
+	maskedKey := `"apiKey":"` + config.SecretPlaceholder + `"`
+	storedURL := `"apiURL":"` + visibleEmbeddingAPIURL + `"`
+	attacker := `"https://attacker.example.com/v1"`
+
+	tests := []struct {
+		name       string
+		parameters string
+		wantStatus int
+		wantKey    string
+	}{
+		{name: "canonical keys keep the credential", parameters: `{` + maskedKey + `,` + storedURL + `}`, wantStatus: http.StatusOK, wantKey: sentinelEmbeddingAPIKey},
+		{name: "alias URL next to the stored URL is rejected", parameters: `{` + maskedKey + `,` + storedURL + `,"apiUrl":` + attacker + `}`, wantStatus: http.StatusBadRequest},
+		{name: "alias URL alone moves the destination", parameters: `{` + maskedKey + `,"APIURL":` + attacker + `}`, wantStatus: http.StatusOK},
+		{name: "alias key next to the stored key is rejected", parameters: `{` + maskedKey + `,"APIKEY":"typed",` + storedURL + `}`, wantStatus: http.StatusBadRequest},
+		{name: "alias provider next to the stored provider is rejected", parameters: `{` + maskedKey + `,` + storedURL + `,"provider":"openai","Provider":"azure"}`, wantStatus: http.StatusBadRequest},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &testConfigStore{cfg: storedCredentialConfig()}
+			router := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
+
+			var read config.Config
+			require.NoError(t, json.Unmarshal(getAdminConfig(t, store), &read))
+			read.EmbeddingSearchConfig.EmbeddingProvider.Parameters = json.RawMessage(tt.parameters)
+			body, err := json.Marshal(read)
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, tt.wantStatus, w.Code)
+			assert.NotContains(t, w.Body.String(), sentinelEmbeddingAPIKey)
+			if tt.wantStatus == http.StatusOK {
+				assert.Equal(t, tt.wantKey, embeddingProviderParam(*store.cfg, "apiKey"))
+			} else {
+				assert.Equal(t, sentinelEmbeddingAPIKey, embeddingProviderParam(*store.cfg, "apiKey"), "a rejected save must not change the stored credential")
+			}
+		})
+	}
+}
+
+func TestGetConfigMasksCaseVariantEmbeddingKey(t *testing.T) {
+	stored := storedCredentialConfig()
+	stored.EmbeddingSearchConfig.EmbeddingProvider.Parameters = json.RawMessage(
+		`{"APIKey":"` + sentinelEmbeddingAPIKey + `","apiURL":"` + visibleEmbeddingAPIURL + `"}`)
+
+	body := string(getAdminConfig(t, &testConfigStore{cfg: stored}))
+
+	assert.NotContains(t, body, sentinelEmbeddingAPIKey)
+	assert.Contains(t, body, visibleEmbeddingAPIURL)
+}
