@@ -482,6 +482,44 @@ export const TOKEN_PROBE_HTML = `<!doctype html>
 </html>
 `;
 
+export const MESSAGE_PROBE_FILE_NAME = 'message-probe.html';
+
+/**
+ * Keeps posting a message shaped like the one that broke out of ChatGPT's
+ * sandbox (a MathLive keyboard layout carrying raw HTML) to the Mattermost
+ * window, both directly and from a child frame it creates, and counts what it
+ * sent. The child also tells the artifact it is running, so a test can tell a
+ * child that never ran from one whose messages were dropped.
+ */
+export const MESSAGE_PROBE_HTML = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Message probe</title></head>
+<body>
+<h1>Message probe</h1>
+<p>Sent: <span data-testid="probe-sent">0</span></p>
+<p>Child: <span data-testid="probe-child">waiting</span></p>
+<script>
+  var sent = 0;
+  var payload = {type: 'mathlive#virtual-keyboard-message', action: 'update-setting', layouts: [{markup: '<iframe srcdoc="<b>escaped</b>"></iframe>'}]};
+  window.addEventListener('message', function (e) {
+    if (e.data === 'child-ran') {
+      document.querySelector('[data-testid="probe-child"]').textContent = 'running';
+    }
+  });
+  var child = document.createElement('iframe');
+  child.srcdoc = '<script>setInterval(function () { top.postMessage({from: "child"}, "*"); parent.postMessage("child-ran", "*"); }, 100);<\\/script>';
+  document.body.appendChild(child);
+  setInterval(function () {
+    top.postMessage(payload, '*');
+    parent.parent.postMessage(payload, '*');
+    sent += 2;
+    document.querySelector('[data-testid="probe-sent"]').textContent = String(sent);
+  }, 100);
+</script>
+</body>
+</html>
+`;
+
 export const STANDUP_NOTES_FILE_NAME = 'standup-notes.html';
 
 /**
