@@ -605,6 +605,8 @@ func (e *TestEnvironment) useConversations() *mockConvServiceStore {
 	svc.SetConversationService(convService)
 	e.api.conversationsService = svc
 	e.api.SetConversationService(convService)
+	// Regenerate reserves the post in the KV store for the length of the run.
+	e.mockAPI.On("KVSetWithOptions", mock.Anything, mock.Anything, mock.Anything).Return(true, (*model.AppError)(nil)).Maybe()
 	return convStore
 }
 
@@ -833,4 +835,50 @@ func TestRegenerateAnalysisRechecksTheAnalyzedSource(t *testing.T) {
 			require.Equal(t, tc.wantStatus, recorder.Result().StatusCode, recorder.Body.String())
 		})
 	}
+}
+
+type busyStreamingService struct{ recordingStreamingService }
+
+func (s *busyStreamingService) GetStreamingContext(context.Context, string) (context.Context, error) {
+	return nil, streaming.ErrAlreadyStreamingToPost
+}
+
+// Regenerating a post that a stream still owns answers 409, which the webapp
+// reads as "still generating" and answers by offering Stop again.
+func TestRegenerateWhileStreamingIsConflict(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	const (
+		postID   = "analysis45678901234567890a"
+		threadID = "thread45678901234567890abc"
+		convID   = "conv12345678901234567890ab"
+	)
+	dmChannel := &model.Channel{Id: "dmchan345678901234567890ab", Type: model.ChannelTypeDirect, Name: testBotUserID + "__" + testUserID}
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+	e.api.streamingService = &busyStreamingService{}
+	convStore := e.useConversations()
+	e.setupTestBot(llm.BotConfig{Name: "test-bot", DisplayName: "Test Bot"})
+
+	post := &model.Post{Id: postID, UserId: testBotUserID, ChannelId: dmChannel.Id}
+	post.AddProp(streaming.ConversationIDProp, convID)
+	post.AddProp(conversations.ThreadIDProp, threadID)
+	post.AddProp(conversations.AnalysisTypeProp, "summarize_thread")
+	rootID := postID
+	require.NoError(t, convStore.CreateConversation(&store.Conversation{ID: convID, UserID: testUserID, BotID: testBotUserID, RootPostID: &rootID, Operation: llm.OperationThreadAnalysis}))
+
+	e.mockAPI.On("GetPost", postID).Return(post, nil)
+	e.mockAPI.On("GetChannel", dmChannel.Id).Return(dmChannel, nil)
+	e.mockAPI.On("HasPermissionToChannel", testUserID, dmChannel.Id, model.PermissionReadChannel).Return(true)
+	e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Locale: "en"}, nil).Maybe()
+	e.mockAPI.On("GetPost", threadID).Return(&model.Post{Id: threadID, ChannelId: dmChannel.Id}, nil).Maybe()
+
+	req := httptest.NewRequest(http.MethodPost, "/post/"+postID+"/regenerate", nil)
+	req.Header.Add("Mattermost-User-Id", testUserID)
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+	require.Equal(t, http.StatusConflict, recorder.Result().StatusCode, recorder.Body.String())
 }

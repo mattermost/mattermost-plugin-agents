@@ -72,4 +72,27 @@ describe('PostEventListener progress buffering', () => {
 
         expect(listener).not.toHaveBeenCalled();
     });
+
+    test('heartbeats reach live listeners without discarding buffered progress', () => {
+        const events = new PostEventListener();
+        const live = jest.fn();
+        const late = jest.fn();
+
+        events.handlePostUpdateWebsockets(message({
+            post_id: 'post-id',
+            control: 'progress',
+            progress_phase: 'connecting_provider',
+            progress_seq: 1,
+        }));
+        events.registerPostUpdateListener('post-id', 'live', live);
+        live.mockClear();
+
+        events.handlePostUpdateWebsockets(message({post_id: 'post-id', control: 'heartbeat'}));
+        expect(live).toHaveBeenCalledTimes(1);
+        expect(live.mock.calls[0][0].data.control).toBe('heartbeat');
+
+        events.registerPostUpdateListener('post-id', 'late', late);
+        expect(late).toHaveBeenCalledTimes(1);
+        expect(late.mock.calls[0][0].data.progress_phase).toBe('connecting_provider');
+    });
 });

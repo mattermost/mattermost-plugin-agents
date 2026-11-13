@@ -8,15 +8,18 @@
 
 import { expect, type Locator, type Page } from '@playwright/test';
 import { containerTest } from 'helpers/container-fixture';
+import { withDeadline } from 'helpers/deadline';
 
 import { AIMockHarness, RunAIMockHarness, setupAimockTestPage } from 'helpers/aimock-harness';
 
+const HARNESS_START_MS = 360000;
+
 const compassTest = containerTest(async (own) => {
-    const harness = own(await RunAIMockHarness({
+    const harness = own(await withDeadline('Starting the aimock harness', HARNESS_START_MS, () => RunAIMockHarness({
         fixtureFile: 'generative-ui-compass.json',
         bot: { skills: { generativeUI: true } },
         config: { enableGenerativeUI: true },
-    }));
+    })));
     return { harness };
 });
 

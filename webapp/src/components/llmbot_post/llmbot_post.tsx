@@ -20,6 +20,8 @@ import {PluginWebSocketMessage} from '@/types';
 import {useSelectNotAIPost} from '@/hooks';
 import {useConversation, invalidateConversation} from '@/hooks/use_conversation';
 import {PostMessagePreview} from '@/mm_webapp';
+import {LLMBot} from '@/bots';
+import manifest from '@/manifest';
 
 import {isValidId} from '@/utils/ids';
 import {displayNameFor, selectTeammateNameDisplay} from '@/utils/teammate_name';
@@ -85,15 +87,33 @@ interface LLMBotPostProps {
     websocketUnregister?: (postID: string, listenerID: string) => void;
 }
 
+// With no websocket event for this long, a generation the component believes
+// is running is treated as stalled (e.g. the server restarted mid-stream).
+export const STALE_STREAM_TIMEOUT_MS = 60000;
+
+type InterruptReason = 'shutdown' | 'lost';
+
+function parseInterruptReason(value: unknown): InterruptReason | null {
+    return value === 'shutdown' || value === 'lost' ? value : null;
+}
+
 export const LLMBotPost = (props: LLMBotPostProps) => {
     const intl = useIntl();
     const selectPost = useSelectNotAIPost();
+
+    // Anti-impersonation: plugin props are trusted only on posts authored by a
+    // known agent bot, since any user can set props on their own posts.
+    const authorIsAgentBot = useSelector<GlobalState & Record<string, unknown>, boolean>((state) => {
+        const pluginState = state['plugins-' + manifest.id] as {bots?: LLMBot[] | null} | undefined;
+        const bots = pluginState?.bots;
+        return Boolean(bots?.some((bot) => bot.id === props.post.user_id));
+    });
 
     // Post props are free-form JSON; a conversation_id that is not a
     // well-formed id is treated as absent so no request is built from it and
     // the component falls back to its no-conversation rendering path.
     const rawConversationId: unknown = props.post.props?.conversation_id;
-    const conversationId: string | undefined = isValidId(rawConversationId) ? rawConversationId : undefined; // eslint-disable-line no-undefined
+    const conversationId: string | undefined = authorIsAgentBot && isValidId(rawConversationId) ? rawConversationId : undefined; // eslint-disable-line no-undefined
     const {conversation, loading: conversationLoading, error: conversationError} = useConversation(conversationId);
 
     // Invalidation empties the cache until the refetch lands. Who the requester
@@ -114,8 +134,12 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const allowGenerativeUI = useSelector((state: GlobalState) => isGenerativeUIEnabledForBot(state, props.post.user_id));
     const rootPost = useSelector<GlobalState, any>((state) => state.entities.posts.posts[props.post.root_id]);
 
+    const interruptReason = authorIsAgentBot ? parseInterruptReason(props.post.props?.llm_interrupted) : null;
+
     const [message, setMessage] = useState(props.post.message);
-    const [generating, setGenerating] = useState(false);
+    const [generatingState, setGenerating] = useState(false);
+    const [streamEventCount, setStreamEventCount] = useState(0);
+    const [streamStale, setStreamStale] = useState(false);
     const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
     const [annotations, setAnnotations] = useState<Annotation[]>([]);
     const [serverTools, setServerTools] = useState<ServerToolUse[]>([]);
@@ -137,6 +161,32 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     const {isAgentChat} = useContext(AgentChatSurfaceContext);
 
+    const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
+
+    const [activityExpanded, setActivityExpanded] = useState(false);
+
+    // Rounds completed during this stream, before turns land via refetch.
+    const [liveRounds, setLiveRounds] = useState<Round[]>([]);
+
+    const [pendingRefetch, setPendingRefetch] = useState(false);
+
+    // Stop and cancel arrive before the server finalizes the turn and sends
+    // end; until then the live round is newer than any cached snapshot.
+    const [awaitingEnd, setAwaitingEnd] = useState(false);
+
+    // Suppresses persistedRounds while regenerating so the prior generation
+    // doesn't render alongside the new stream.
+    const [regenerating, setRegenerating] = useState(false);
+    const regeneratingRef = useRef(regenerating);
+    regeneratingRef.current = regenerating;
+
+    // The server cleared llm_interrupted only once a new generation starts, so
+    // a local regenerate hides the notice right away.
+    const interrupted = interruptReason !== null && !regenerating;
+
+    // An interrupted post is not generating, whatever the local stream state says.
+    const generating = generatingState && !interrupted;
+
     // Streamed text is revealed at a steady pace where the surface asks for
     // it. A stop, cancel or error shows what arrived at once.
     const [revealCut, setRevealCut] = useState(false);
@@ -148,20 +198,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     });
     const shownMessage = revealed.text;
 
-    const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
-
-    const [activityExpanded, setActivityExpanded] = useState(false);
-
-    // Rounds completed during this stream, before turns land via refetch.
-    const [liveRounds, setLiveRounds] = useState<Round[]>([]);
-
-    const [pendingRefetch, setPendingRefetch] = useState(false);
-
-    // Suppresses persistedRounds while regenerating so the prior generation
-    // doesn't render alongside the new stream.
-    const [regenerating, setRegenerating] = useState(false);
-    const regeneratingRef = useRef(regenerating);
-    regeneratingRef.current = regenerating;
+    // A settled turn means the end was missed (e.g. a dropped socket); the
+    // persisted turn is then authoritative.
+    const postTurns = conversation?.turns.filter((turn) => turn.post_id === props.post.id) ?? [];
+    const postTurnSettled = postTurns.length > 0 && postTurns.every((turn) => turn.status !== 'streaming');
+    const liveStreamOpen = generating || (awaitingEnd && !postTurnSettled);
 
     // Lets the WebSocket handler snapshot the live round without re-subscribing.
     const liveRef = useRef({message, toolCalls, reasoningSummary, annotations, serverTools});
@@ -182,8 +223,13 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         frozenTextLenRef.current = 0;
     };
 
-    // Sync message from post.message changes (e.g. after post update)
+    // Sync message from post.message changes (e.g. after post update). While a
+    // live stream is running, periodic heartbeat flushes edit the post with a
+    // snapshot that lags the websocket text, so don't let them rewind it.
     useEffect(() => {
+        if (generating) {
+            return;
+        }
         if (props.post.message !== '' && props.post.message !== message) {
             progressCompleteRef.current = true;
             setProgressPhase(null);
@@ -196,8 +242,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         if (!conversation) {
             return [];
         }
-        return buildRoundsFromTurns(conversation, props.post.id);
-    }, [conversation, props.post.id]);
+
+        // A still-streaming turn is shown from its persisted snapshot until live
+        // events resume; then the live round replaces it.
+        return buildRoundsFromTurns(conversation, props.post.id, {includeStreaming: !liveStreamOpen});
+    }, [conversation, props.post.id, liveStreamOpen]);
 
     // Keep prior rounds visible during the refetch window after invalidate.
     const lastPersistedRef = useRef<Round[]>([]);
@@ -241,6 +290,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             if (data.post_id !== props.post.id) {
                 return;
             }
+
+            setStreamEventCount((count) => count + 1);
 
             if (data.control === 'progress') {
                 const phase = data.progress_phase;
@@ -436,9 +487,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 progressCompleteRef.current = true;
                 setProgressPhase(null);
                 setGenerating(false);
+                setError('');
                 setPrecontent(false);
                 setStopped(false);
                 setIsReasoningLoading(false);
+                setAwaitingEnd(false);
                 setPendingRefetch(true);
                 regeneratingRef.current = false;
                 if (conversationId) {
@@ -455,8 +508,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 setPrecontent(false);
                 setStopped(false);
                 setIsReasoningLoading(false);
-                regeneratingRef.current = false;
-                setRegenerating(false);
+                setAwaitingEnd(true);
+
+                // A stopped regenerate keeps hiding the prior generation until
+                // the end refetch clears regenerating.
                 return;
             }
 
@@ -465,8 +520,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     return;
                 }
                 reasoningSeenRef.current = false;
+                setError('');
                 setRevealCut(false);
                 setGenerating(true);
+                setAwaitingEnd(false);
                 setPrecontent(true);
                 setStopped(false);
                 setReasoningSummary('');
@@ -490,6 +547,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 // persistedRounds, so reset all local state.
                 setRevealCut(false);
                 setGenerating(true);
+                setAwaitingEnd(false);
                 setPrecontent(true);
                 setStopped(false);
                 setMessage('');
@@ -542,18 +600,20 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         hasConversation: Boolean(conversationId),
         persistedRounds: stablePersisted,
         liveRounds,
-        generating,
+        generating: liveStreamOpen,
         pendingRefetch,
         currentRound,
-    }), [regenerating, conversationId, stablePersisted, liveRounds, generating, pendingRefetch, currentRound]);
+    }), [regenerating, conversationId, stablePersisted, liveRounds, liveStreamOpen, pendingRefetch, currentRound]);
 
     const regnerate = () => {
+        setStreamEventCount((count) => count + 1);
         progressCompleteRef.current = false;
         progressSequenceRef.current = 0;
         reasoningSeenRef.current = false;
         setRevealCut(false);
         setMessage('');
         setGenerating(false);
+        setAwaitingEnd(false);
         setPrecontent(true);
         setStopped(false);
         setReasoningSummary('');
@@ -563,14 +623,31 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setServerTools([]);
         setLiveRounds([]);
         resetActivityTracking();
+        setError('');
         regeneratingRef.current = true;
         setRegenerating(true);
-        doRegenerate(props.post.id);
+
+        // Restore the post instead of leaving it blank when the server
+        // refuses. A conflict means a stream still owns the post (e.g. this
+        // client stopped receiving its events), so offer Stop again.
+        doRegenerate(props.post.id).catch((e) => {
+            const stillGenerating = e?.status_code === 409;
+            regeneratingRef.current = false;
+            setRegenerating(false);
+            setPrecontent(false);
+            setMessage(props.post.message);
+            setGenerating(stillGenerating);
+            setError(stillGenerating ? intl.formatMessage({defaultMessage: 'This response is still being generated. Stop it before regenerating.'}) : intl.formatMessage({defaultMessage: 'Could not regenerate this response.'}));
+            if (conversationId) {
+                invalidateConversation(conversationId);
+            }
+        });
     };
 
     const stopGenerating = () => {
         setStopped(true);
         setGenerating(false);
+        setAwaitingEnd(true);
         setIsReasoningLoading(false);
         doStopGenerating(props.post.id).catch((e: unknown) => {
             console.error('Failed to stop generating:', e); // eslint-disable-line no-console
@@ -599,7 +676,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         }
     }
 
-    const isGenerationInProgress = generating || isReasoningLoading;
+    const isGenerationInProgress = generating || (isReasoningLoading && !interrupted);
 
     let precontentMessage = intl.formatMessage({defaultMessage: 'Working...'});
     switch (progressPhase) {
@@ -617,12 +694,23 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         break;
     }
 
-    const showRegenerate = isDM && !isGenerationInProgress && requesterIsCurrentUser && !isNoShowRegen;
+    // A persisted turn still marked streaming; see the staleness check below.
+    // While a refetch is in flight (or failed) the last loaded copy answers,
+    // so Stop and the stale timer keep tracking that turn.
+    const turnStillStreaming = Boolean(knownConversation?.turns.some((turn) => turn.post_id === props.post.id && turn.status === 'streaming'));
+
+    // A remounted post knows of a live stream only from its persisted turn
+    // once the cached start event is gone; Stop must still be offered then.
+    const liveStreamFromTurn = turnStillStreaming && !interrupted && !streamStale;
+
+    // The interrupted notice carries its own Regenerate action.
+    const showRegenerate = isDM && !isGenerationInProgress && !liveStreamFromTurn && !interrupted && requesterIsCurrentUser && !isNoShowRegen;
     const meetingsLicensed = useIsLicensedFor('meetings');
 
     // The server authorizes postback by DM membership, not conversation ownership.
     const showPostbackButton = meetingsLicensed && !isGenerationInProgress && isDM && isTranscriptionResult;
-    const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser;
+
+    const showStopGeneratingButton = (isGenerationInProgress || liveStreamFromTurn) && requesterIsCurrentUser;
     const hasContent = renderedRounds.length > 0;
 
     // Only the anchor round gets a real approval stage: the latest persisted
@@ -749,7 +837,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     // Only the requester can stop, so the requester is who stopped it.
     // A regenerate leaves the prior run's marker on the post until it finishes.
-    const generationStopped = (stopped || (props.post.props?.generation_stopped === true && !regenerating)) && !isGenerationInProgress;
+    const generationStopped = (stopped || (props.post.props?.generation_stopped === true && !regenerating)) && !isGenerationInProgress && !interrupted;
     const requesterDisplayName = useSelector<GlobalState, string | undefined>((state) => {
         const profile = requesterUserId ? state.entities.users.profiles?.[requesterUserId] : undefined; // eslint-disable-line no-undefined
         return profile ? displayNameFor(profile, selectTeammateNameDisplay(state)) : undefined; // eslint-disable-line no-undefined
@@ -833,10 +921,72 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // Tool-only posts leave post.message empty, so precontent stays true on
     // remount. Hide Working... once rounds exist, except while generation is
     // actually resuming (continue/start still set precontent on purpose).
-    const showWorkingStatus = !generationStopped && (
+    const showWorkingStatus = !interrupted && !generationStopped && (
         (precontent && (generating || renderedRounds.length === 0)) ||
         (conversationLoading && !generating && renderedRounds.length === 0)
     );
+
+    // Staleness: the component believes a generation is running but no stream
+    // event has arrived for a while. Every event (and the end of the
+    // generation) restarts or cancels the timer.
+    // An empty message with persisted rounds is a tool-only post (finished, or
+    // waiting on the requester's approval), not a stalled generation.
+    // A persisted turn still marked streaming means generation is unfinished
+    // even though the post may already show partial text. A refetch that
+    // lands with the turn complete clears this; the timer restarts whenever
+    // the conversation is refetched, so a failed refetch still ends in the
+    // stale notice.
+    const staleRefetchedRef = useRef(false);
+    useEffect(() => {
+        staleRefetchedRef.current = false;
+    }, [streamEventCount]);
+    const believesGenerating = !interrupted && (isGenerationInProgress || turnStillStreaming || (precontent && message === '' && renderedRounds.length === 0));
+    const awaitingUserDecision = awaitingDecision;
+    useEffect(() => {
+        setStreamStale(false);
+        if (!believesGenerating || awaitingUserDecision) {
+            return undefined; // eslint-disable-line no-undefined
+        }
+        const timer = setTimeout(() => {
+            // The cached conversation may predate the stream finishing while
+            // this post was unmounted; refetch once before calling it stalled.
+            if (turnStillStreaming && !isGenerationInProgress && !staleRefetchedRef.current && conversationId) {
+                staleRefetchedRef.current = true;
+                invalidateConversation(conversationId);
+                return;
+            }
+            setStreamStale(true);
+        }, STALE_STREAM_TIMEOUT_MS);
+        return () => clearTimeout(timer);
+    }, [believesGenerating, awaitingUserDecision, streamEventCount, turnStillStreaming, isGenerationInProgress, conversationId, conversation]);
+
+    const canRegenerateFromNotice = requesterIsCurrentUser && !isNoShowRegen;
+    let interruptedNotice: React.ReactNode = null;
+    if (interrupted) {
+        interruptedNotice = (
+            <InterruptedNotice
+                data-testid='llm-bot-post-interrupted'
+                type='warning'
+                title={interruptReason === 'lost' ? (
+                    <FormattedMessage defaultMessage='This response was interrupted because the server went down unexpectedly.'/>
+                ) : (
+                    <FormattedMessage defaultMessage='This response was interrupted because the Agents plugin was restarted or updated.'/>
+                )}
+                primaryButtonLabel={canRegenerateFromNotice ? <FormattedMessage defaultMessage='Regenerate'/> : undefined} // eslint-disable-line no-undefined
+                onPrimaryAction={canRegenerateFromNotice ? regnerate : undefined} // eslint-disable-line no-undefined
+            />
+        );
+    } else if (streamStale) {
+        interruptedNotice = (
+            <InterruptedNotice
+                data-testid='llm-bot-post-stale'
+                type='hint'
+                title={<FormattedMessage defaultMessage='This response seems to have stopped. The server may have restarted.'/>}
+                primaryButtonLabel={canRegenerateFromNotice ? <FormattedMessage defaultMessage='Regenerate'/> : undefined} // eslint-disable-line no-undefined
+                onPrimaryAction={canRegenerateFromNotice ? regnerate : undefined} // eslint-disable-line no-undefined
+            />
+        );
+    }
 
     // The dots stand in for the Working... status while nothing has arrived,
     // never alongside it (or any other activity UI).
@@ -923,6 +1073,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     postId={props.post.id}
                     files={props.post.metadata?.files}
                 />
+                {interruptedNotice}
                 { showPostbackButton &&
                 <PostSummaryHelpMessage
                     data-testid='llm-bot-post-summary-help'
@@ -974,4 +1125,8 @@ const GenerationStoppedIcon = styled(CancelIcon)`
 
 const PostSummaryHelpMessage = styled(SectionNotice)`
     margin-top: 16px;
+`;
+
+const InterruptedNotice = styled(SectionNotice)`
+    margin-top: var(--spacing-xs);
 `;

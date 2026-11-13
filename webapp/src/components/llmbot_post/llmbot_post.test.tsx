@@ -6,7 +6,8 @@ import {act, fireEvent, render, screen, waitFor, within} from '@testing-library/
 import {IntlProvider} from 'react-intl';
 import {useSelector} from 'react-redux';
 
-import {useConversation} from '@/hooks/use_conversation';
+import {doRegenerate} from '@/client';
+import {invalidateConversation, useConversation} from '@/hooks/use_conversation';
 import manifest from '@/manifest';
 import {PluginWebSocketMessage} from '@/types';
 import type {ConversationResponse, Turn} from '@/types/conversation';
@@ -43,7 +44,7 @@ jest.mock('react-intl', () => {
 
 jest.mock('@/client', () => ({
     doPostbackSummary: jest.fn(),
-    doRegenerate: jest.fn(),
+    doRegenerate: jest.fn(() => Promise.resolve()),
     doStopGenerating: jest.fn(() => Promise.resolve()),
 }));
 
@@ -99,9 +100,19 @@ type PostUpdateHandler = (msg: PluginWebSocketMessage<PostUpdateWebsocketMessage
 // Mattermost IDs are 26 characters of lowercase letters and digits.
 const WELL_FORMED_ID = 'c7f2m9xq4v1b8n3k6t5w0hzjd2';
 
+// The author of posts made with makePost; plugin props are only trusted on
+// posts by a known agent bot.
+const AGENT_BOT_USER_ID = 'bot_user_1';
+
+function withAgentBots(state: Record<string, unknown>) {
+    const pluginKey = 'plugins-' + manifest.id;
+    return pluginKey in state ? state : {...state, [pluginKey]: {bots: [{id: AGENT_BOT_USER_ID}]}};
+}
+
 function makePost(message = '', props: Record<string, unknown> = {}) {
     return {
         id: 'post_1',
+        user_id: AGENT_BOT_USER_ID,
         channel_id: 'channel_1',
         root_id: 'root_1',
         message,
@@ -214,7 +225,7 @@ function expandToolActivity() {
 }
 
 beforeEach(() => {
-    mockUseSelector.mockImplementation((selector) => selector({
+    mockUseSelector.mockImplementation((selector) => selector(withAgentBots({
         entities: {
             channels: {
                 channels: {
@@ -228,7 +239,7 @@ beforeEach(() => {
                 currentUserId: 'user_1',
             },
         },
-    }));
+    })));
 
     mockUseConversation.mockReturnValue({
         conversation: null,
@@ -773,7 +784,7 @@ describe('LLMBotPost streaming re-renders', () => {
 
 describe('LLMBotPost rounds awaiting a decision', () => {
     function withRequesterProfile() {
-        mockUseSelector.mockImplementation((selector) => selector({
+        mockUseSelector.mockImplementation((selector) => selector(withAgentBots({
             entities: {
                 channels: {channels: {channel_1: {type: 'O'}}},
                 general: {config: {}, license: {}},
@@ -781,7 +792,7 @@ describe('LLMBotPost rounds awaiting a decision', () => {
                 preferences: {myPreferences: {}},
                 users: {currentUserId: 'user_1', profiles: {requester_1: {username: 'alice'}}},
             },
-        }));
+        })));
     }
 
     // A response stopped on a tool call: the anchor round holds the text asking to run it and the call.
@@ -1419,11 +1430,20 @@ describe('LLMBotPost conversation_id prop handling', () => {
 
         expect(mockUseConversation).toHaveBeenCalledWith(void 0); // eslint-disable-line no-void
     });
+
+    // Any user can set props on their own posts, so a conversation_id on a
+    // post no agent bot wrote must not load that conversation into it.
+    test('ignores a conversation_id on a post not written by an agent bot', () => {
+        renderPost({...makePost(), user_id: 'someone_else'});
+
+        expect(mockUseConversation).not.toHaveBeenCalledWith(WELL_FORMED_ID);
+        expect(mockUseConversation).toHaveBeenCalledWith(void 0); // eslint-disable-line no-void
+    });
 });
 
 describe('LLMBotPost stopped generation notice', () => {
     function inChannelWithRequester(teammateNameDisplay = 'username') {
-        mockUseSelector.mockImplementation((selector) => selector({
+        mockUseSelector.mockImplementation((selector) => selector(withAgentBots({
             entities: {
                 channels: {channels: {channel_1: {type: 'O'}}},
                 general: {config: {TeammateNameDisplay: teammateNameDisplay}, license: {}},
@@ -1434,7 +1454,7 @@ describe('LLMBotPost stopped generation notice', () => {
                     profiles: {requester_1: {username: 'alice', nickname: '', first_name: 'Alice', last_name: 'Smith'}},
                 },
             },
-        }));
+        })));
     }
 
     function stoppedNotice() {
@@ -1570,7 +1590,7 @@ describe('LLMBotPost meetings license gating', () => {
             loading: false,
             error: null,
         });
-        mockUseSelector.mockImplementation((selector) => selector({
+        mockUseSelector.mockImplementation((selector) => selector(withAgentBots({
             entities: {
                 channels: {
                     channels: {
@@ -1586,7 +1606,7 @@ describe('LLMBotPost meetings license gating', () => {
                     currentUserId: 'user_1',
                 },
             },
-        }));
+        })));
     });
 
     test('shows Post summary for a transcription result at Enterprise', () => {
@@ -1610,13 +1630,13 @@ describe('LLMBotPost meetings license gating', () => {
     });
 
     test('hides Post summary outside a DM', () => {
-        mockUseSelector.mockImplementation((selector) => selector({
+        mockUseSelector.mockImplementation((selector) => selector(withAgentBots({
             entities: {
                 channels: {channels: {channel_1: {type: 'O'}}},
                 posts: {posts: {root_1: {props: {referenced_transcript_post_id: 'transcript_1'}}}},
                 users: {currentUserId: 'user_1'},
             },
-        }));
+        })));
         renderPost(makePost('Call summary'));
 
         expect(screen.queryByText('Post summary')).toBeNull();
@@ -1964,5 +1984,463 @@ describe('LLMBotPost Copy button', () => {
             fireEvent.click(screen.getByTestId('copy-button'));
         });
         expect(writeText).toHaveBeenCalledWith('Final answer');
+    });
+});
+
+describe('LLMBotPost interrupted and stale generation notices', () => {
+    const BOT_ID = 'bot_user_1';
+    const SHUTDOWN_TEXT = 'This response was interrupted because the Agents plugin was restarted or updated.';
+    const LOST_TEXT = 'This response was interrupted because the server went down unexpectedly.';
+    const STALE_TEXT = 'This response seems to have stopped. The server may have restarted.';
+
+    function interruptedPost(reason: string, userId = BOT_ID, message = 'Partial answer') {
+        return {...makePost(message, {llm_interrupted: reason, llm_interrupted_at: 1700000000000}), user_id: userId};
+    }
+
+    beforeEach(() => {
+        (doRegenerate as jest.Mock).mockClear();
+        mockUseConversation.mockReturnValue({
+            conversation: makeConversation([]),
+            loading: false,
+            error: null,
+        });
+        mockUseSelector.mockImplementation((selector) => selector(withAgentBots({
+            entities: {
+                channels: {channels: {channel_1: {type: 'D'}}},
+                posts: {posts: {}},
+                users: {currentUserId: 'user_1'},
+            },
+            ['plugins-' + manifest.id]: {bots: [{id: BOT_ID}]},
+        })));
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('shows only the interrupted notice when a regenerated post still carries the stop marker', () => {
+        renderPost({...makePost('Partial answer', {llm_interrupted: 'lost', llm_interrupted_at: 1700000000000, generation_stopped: true}), user_id: BOT_ID});
+
+        expect(screen.getByTestId('llm-bot-post-interrupted')).toBeTruthy();
+        expect(screen.queryByTestId('llm-bot-generation-stopped')).toBeNull();
+    });
+
+    test.each([
+        ['shutdown', SHUTDOWN_TEXT],
+        ['lost', LOST_TEXT],
+    ])('renders the %s notice below partial content for a bot-authored post', (reason, text) => {
+        renderPost(interruptedPost(reason));
+
+        expect(screen.getByText('Partial answer')).toBeTruthy();
+        expect(screen.getByText(text)).toBeTruthy();
+        expect(screen.queryByText('Working...')).toBeNull();
+    });
+
+    test('clears the Working state for an interrupted empty post', () => {
+        renderPost(interruptedPost('shutdown', BOT_ID, ''));
+
+        expect(screen.getByText(SHUTDOWN_TEXT)).toBeTruthy();
+        expect(screen.queryByText('Working...')).toBeNull();
+    });
+
+    test.each([
+        ['a non-bot author', 'someone_else'],
+        ['an unknown reason', BOT_ID],
+    ])('renders nothing special for %s', (label, userId) => {
+        const reason = label === 'an unknown reason' ? 'bogus' : 'shutdown';
+        renderPost(interruptedPost(reason, userId));
+
+        expect(screen.queryByTestId('llm-bot-post-interrupted')).toBeNull();
+        expect(screen.queryByText(SHUTDOWN_TEXT)).toBeNull();
+    });
+
+    test('shows Regenerate in the notice for the requester and calls regenerate', () => {
+        mockUseConversation.mockReturnValue({conversation: makeConversation([], 'user_1'), loading: false, error: null});
+        renderPost(interruptedPost('shutdown'));
+
+        const notice = screen.getByTestId('llm-bot-post-interrupted');
+        fireEvent.click(within(notice).getByText('Regenerate'));
+
+        expect(doRegenerate).toHaveBeenCalledWith('post_1');
+        expect(screen.queryByTestId('llm-bot-post-interrupted')).toBeNull();
+    });
+
+    test('restores the post when the server refuses to regenerate', async () => {
+        (doRegenerate as jest.Mock).mockImplementationOnce(() => Promise.reject(new Error('boom')));
+        mockUseConversation.mockReturnValue({conversation: makeConversation([], 'user_1'), loading: false, error: null});
+        renderPost(interruptedPost('shutdown'));
+
+        fireEvent.click(within(screen.getByTestId('llm-bot-post-interrupted')).getByText('Regenerate'));
+
+        expect(await screen.findByText('Could not regenerate this response.')).toBeTruthy();
+        expect(screen.getByText('Partial answer')).toBeTruthy();
+        expect(screen.getByTestId('llm-bot-post-interrupted')).toBeTruthy();
+    });
+
+    test('offers Stop again when regenerate is refused because the response is still streaming', async () => {
+        (doRegenerate as jest.Mock).mockImplementationOnce(() => Promise.reject(Object.assign(new Error('conflict'), {status_code: 409})));
+        let listener: PostUpdateHandler | undefined;
+        renderPost(makePost('Partial answer'), (postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        fireEvent.click(screen.getByTestId('regenerate-button'));
+
+        expect(await screen.findByText(/still being generated/)).toBeTruthy();
+        expect(screen.getByText('Stop Generating')).toBeTruthy();
+        expect(screen.getByText('Partial answer')).toBeTruthy();
+
+        // Once that stream ends, the stale "still being generated" error goes.
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'end'}));
+        });
+        expect(screen.queryByText(/still being generated/)).toBeNull();
+    });
+
+    test('hides Regenerate for someone who is not the requester', () => {
+        mockUseConversation.mockReturnValue({conversation: makeConversation([], 'other_user'), loading: false, error: null});
+        renderPost(interruptedPost('lost'));
+
+        expect(screen.getByText(LOST_TEXT)).toBeTruthy();
+        expect(screen.queryByText('Regenerate')).toBeNull();
+    });
+
+    test('shows the stale notice after 60s without events and hides it when events resume', () => {
+        jest.useFakeTimers();
+        let listener: PostUpdateHandler | undefined;
+        renderPost(makePost(''), (postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        act(() => {
+            jest.advanceTimersByTime(59000);
+        });
+        expect(screen.queryByText(STALE_TEXT)).toBeNull();
+
+        act(() => {
+            jest.advanceTimersByTime(1000);
+        });
+        expect(screen.getByText(STALE_TEXT)).toBeTruthy();
+        fireEvent.click(within(screen.getByTestId('llm-bot-post-stale')).getByText('Regenerate'));
+        expect(doRegenerate).toHaveBeenCalledWith('post_1');
+        expect(screen.queryByText(STALE_TEXT)).toBeNull();
+
+        act(() => {
+            jest.advanceTimersByTime(60000);
+        });
+        expect(screen.getByText(STALE_TEXT)).toBeTruthy();
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+        });
+        expect(screen.queryByText(STALE_TEXT)).toBeNull();
+
+        // Timer restarts from the last event.
+        act(() => {
+            jest.advanceTimersByTime(59000);
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'hello'}));
+            jest.advanceTimersByTime(59000);
+        });
+        expect(screen.queryByText(STALE_TEXT)).toBeNull();
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'end'}));
+            jest.advanceTimersByTime(120000);
+        });
+        expect(screen.queryByText(STALE_TEXT)).toBeNull();
+    });
+
+    test.each([
+        ['a finished tool-only post', 'done' as const, 'rejected' as const, 'user_1'],
+        ['a pending approval seen by an onlooker', 'call' as const, 'pending' as const, 'other_user'],
+    ])('does not show the stale notice for %s', (_label, approvalState, toolStatus, userId) => {
+        jest.useFakeTimers();
+        mockUseConversation.mockReturnValue({
+            conversation: makeToolOnlyConversation(approvalState, toolStatus, userId),
+            loading: false,
+            error: null,
+        });
+        renderPost(makePost(''));
+
+        act(() => {
+            jest.advanceTimersByTime(120000);
+        });
+        expect(screen.queryByText(STALE_TEXT)).toBeNull();
+    });
+
+    test.each([
+        ['still streaming', 'streaming', true],
+        ['finished while unmounted', 'complete', false],
+    ] as const)('remounted partial post whose turn is %s refetches once before the stale notice', (_label, refetchedStatus, expectStale) => {
+        jest.useFakeTimers();
+        (invalidateConversation as jest.Mock).mockClear();
+        const withStatus = (status: 'streaming' | 'complete') => ({
+            conversation: makeConversation([makeTurn({post_id: 'post_1', status, content: [{type: 'text', text: 'Partial'}]})]),
+            loading: false,
+            error: null,
+        });
+        const ui = () => (
+            <IntlProvider locale='en'>
+                <LLMBotPost
+                    post={makePost('Partial')}
+                    websocketUnregister={jest.fn()}
+                />
+            </IntlProvider>
+        );
+        mockUseConversation.mockReturnValue(withStatus('streaming'));
+        const {rerender} = render(ui());
+
+        act(() => {
+            jest.advanceTimersByTime(60000);
+        });
+        expect(invalidateConversation).toHaveBeenCalledTimes(1);
+        expect(screen.queryByText(STALE_TEXT)).toBeNull();
+
+        // The refetch empties the cache, then lands with the server's status.
+        mockUseConversation.mockReturnValue({conversation: null, loading: true, error: null});
+        rerender(ui());
+        mockUseConversation.mockReturnValue(withStatus(refetchedStatus));
+        rerender(ui());
+
+        act(() => {
+            jest.advanceTimersByTime(60000);
+        });
+        expect(Boolean(screen.queryByText(STALE_TEXT))).toBe(expectStale);
+        expect(invalidateConversation).toHaveBeenCalledTimes(1);
+    });
+
+    test('a heartbeat post flush does not rewind live streamed text', () => {
+        let listener: PostUpdateHandler | undefined;
+        const ui = (message: string) => (
+            <IntlProvider locale='en'>
+                <LLMBotPost
+                    post={makePost(message)}
+                    websocketRegister={(postID: string, listenerID: string, handler: PostUpdateHandler) => {
+                        listener = handler;
+                    }}
+                    websocketUnregister={jest.fn()}
+                />
+            </IntlProvider>
+        );
+        const {rerender} = render(ui(''));
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Hello there, live text'}));
+        });
+        expect(screen.getByText('Hello there, live text')).toBeTruthy();
+
+        // A heartbeat flush lands with an older snapshot of the post.
+        rerender(ui('Hello'));
+        expect(screen.getByText('Hello there, live text')).toBeTruthy();
+    });
+
+    test.each([
+        ['still streaming', null, true],
+        ['interrupted by a restart', 'shutdown', false],
+    ] as const)('a remounted post whose turn is %s offers Stop: %s', (_label, interruptedReason, wantStop) => {
+        mockUseConversation.mockReturnValue({
+            conversation: makeConversation([
+                makeTurn({id: 'turn_1', post_id: 'post_1', sequence: 2, status: 'streaming', content: [{type: 'text', text: 'Partial'}]}),
+            ]),
+            loading: false,
+            error: null,
+        });
+        const post = interruptedReason ? interruptedPost(interruptedReason, BOT_ID, 'Partial') : {...makePost('Partial'), user_id: BOT_ID};
+        renderPost(post);
+
+        expect(Boolean(screen.queryByText('Stop Generating'))).toBe(wantStop);
+        if (wantStop) {
+            expect(screen.queryByTestId('regenerate-button')).toBeNull();
+        }
+    });
+
+    test('a failed refetch keeps a remounted streaming turn stoppable and still ends in the stale notice', () => {
+        jest.useFakeTimers();
+        const streamingConversation = {
+            conversation: makeConversation([makeTurn({post_id: 'post_1', status: 'streaming', content: [{type: 'text', text: 'Partial'}]})]),
+            loading: false,
+            error: null,
+        };
+        const ui = () => (
+            <IntlProvider locale='en'>
+                <LLMBotPost
+                    post={{...makePost('Partial'), user_id: BOT_ID}}
+                    websocketUnregister={jest.fn()}
+                />
+            </IntlProvider>
+        );
+        mockUseConversation.mockReturnValue(streamingConversation);
+        const {rerender} = render(ui());
+        expect(screen.getByText('Stop Generating')).toBeTruthy();
+
+        act(() => {
+            jest.advanceTimersByTime(60000);
+        });
+
+        // The refetch fails: no conversation comes back.
+        mockUseConversation.mockReturnValue({conversation: null, loading: false, error: new Error('network')});
+        rerender(ui());
+        expect(screen.getByText('Stop Generating')).toBeTruthy();
+
+        act(() => {
+            jest.advanceTimersByTime(60000);
+        });
+        expect(screen.getByText(STALE_TEXT)).toBeTruthy();
+    });
+
+    test('a remounted post shows the partial text of its still-streaming turn', () => {
+        mockUseConversation.mockReturnValue({
+            conversation: makeConversation([
+                makeTurn({id: 'turn_0', post_id: null, sequence: 1, status: 'complete', content: [{type: 'text', text: 'Earlier round'}]}),
+                makeTurn({id: 'turn_1', post_id: 'post_1', sequence: 2, status: 'streaming', content: [{type: 'text', text: 'Partial answer so far'}]}),
+            ]),
+            loading: false,
+            error: null,
+        });
+        renderPost(makePost('Earlier round Partial answer so far'));
+
+        expect(screen.getByText('Partial answer so far')).toBeTruthy();
+    });
+
+    test.each([
+        ['the requester stops it', true],
+        ['the server cancels it', false],
+    ] as const)('keeps live text when %s before the stream ends', (_label, clickStop) => {
+        mockUseConversation.mockReturnValue({
+            conversation: makeConversation([
+                makeTurn({id: 'turn_0', post_id: null, sequence: 1, status: 'complete', content: [{type: 'text', text: 'Earlier round'}]}),
+                makeTurn({id: 'turn_1', post_id: 'post_1', sequence: 2, status: 'streaming', content: [{type: 'text', text: 'Stale snapshot'}]}),
+            ]),
+            loading: false,
+            error: null,
+        });
+        let listener: PostUpdateHandler | undefined;
+        renderPost(makePost(''), (postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Newer live text'}));
+        });
+        expect(screen.getByText('Newer live text')).toBeTruthy();
+
+        act(() => {
+            if (clickStop) {
+                fireEvent.click(screen.getByText('Stop Generating'));
+            } else {
+                listener?.(postUpdateMessage({post_id: 'post_1', control: 'cancel'}));
+            }
+        });
+        expect(screen.getByText('Newer live text')).toBeTruthy();
+        expect(screen.queryByText('Stale snapshot')).toBeNull();
+    });
+
+    test('keeps live text after stop while any turn on the post is still streaming', () => {
+        mockUseConversation.mockReturnValue({
+            conversation: makeConversation([
+                makeTurn({id: 'turn_0', post_id: 'post_1', sequence: 1, status: 'complete', content: [{type: 'text', text: 'Undemoted anchor'}]}),
+                makeTurn({id: 'turn_1', post_id: 'post_1', sequence: 2, status: 'streaming', content: [{type: 'text', text: 'Stale snapshot'}]}),
+            ]),
+            loading: false,
+            error: null,
+        });
+        let listener: PostUpdateHandler | undefined;
+        renderPost(makePost(''), (postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Newer live text'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'cancel'}));
+        });
+        expect(screen.getByText('Newer live text')).toBeTruthy();
+        expect(screen.queryByText('Stale snapshot')).toBeNull();
+    });
+
+    test('renders a stopped response once when its end event is missed', () => {
+        const conv = (status: 'streaming' | 'complete', text: string) => ({
+            conversation: makeConversation([
+                makeTurn({id: 'turn_0', post_id: null, sequence: 1, status: 'complete', content: [{type: 'text', text: 'Earlier round'}]}),
+                makeTurn({id: 'turn_1', post_id: 'post_1', sequence: 2, status, content: [{type: 'text', text}]}),
+            ]),
+            loading: false,
+            error: null,
+        });
+        let listener: PostUpdateHandler | undefined;
+        const ui = () => (
+            <IntlProvider locale='en'>
+                <LLMBotPost
+                    post={makePost('')}
+                    websocketRegister={(postID: string, listenerID: string, handler: PostUpdateHandler) => {
+                        listener = handler;
+                    }}
+                    websocketUnregister={jest.fn()}
+                />
+            </IntlProvider>
+        );
+        mockUseConversation.mockReturnValue(conv('streaming', 'Stale snapshot'));
+        const {rerender} = render(ui());
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Final text'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'cancel'}));
+        });
+
+        // No end event; a later refetch lands with the finalized turn.
+        mockUseConversation.mockReturnValue(conv('complete', 'Final text'));
+        rerender(ui());
+        expect(screen.getAllByText('Final text')).toHaveLength(1);
+    });
+
+    test('a stopped regenerate keeps its live text instead of the prior generation', () => {
+        const conv = (text: string) => ({
+            conversation: makeConversation([
+                makeTurn({id: 'turn_1', post_id: 'post_1', sequence: 2, status: 'complete', content: [{type: 'text', text}]}),
+            ], 'user_1'),
+            loading: false,
+            error: null,
+        });
+        let listener: PostUpdateHandler | undefined;
+        const ui = () => (
+            <IntlProvider locale='en'>
+                <LLMBotPost
+                    post={makePost('Old answer')}
+                    websocketRegister={(postID: string, listenerID: string, handler: PostUpdateHandler) => {
+                        listener = handler;
+                    }}
+                    websocketUnregister={jest.fn()}
+                />
+            </IntlProvider>
+        );
+        mockUseConversation.mockReturnValue(conv('Old answer'));
+        const {rerender} = render(ui());
+
+        fireEvent.click(screen.getByTestId('regenerate-button'));
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'New answer'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'cancel'}));
+        });
+        expect(screen.getByText('New answer')).toBeTruthy();
+        expect(screen.queryByText('Old answer')).toBeNull();
+
+        // No end event; a later refetch lands with the new finalized turn.
+        mockUseConversation.mockReturnValue(conv('New answer'));
+        rerender(ui());
+        expect(screen.getAllByText('New answer')).toHaveLength(1);
+    });
+
+    test('does not show the stale notice for a completed post', () => {
+        jest.useFakeTimers();
+        renderPost(makePost('Done'));
+
+        act(() => {
+            jest.advanceTimersByTime(120000);
+        });
+        expect(screen.queryByText(STALE_TEXT)).toBeNull();
     });
 });
