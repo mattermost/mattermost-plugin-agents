@@ -154,10 +154,11 @@ var figmaVettedToolConfigs = autoRunInDMToolConfigs([]string{
 //     tokens that are effectively posting credentials.
 //   - list_agents and list_drafts are likewise not seeded.
 //
-// GitHub has no seed here. Its read tools, including code scanning, Dependabot,
-// secret scanning, and security advisory reads, are suggested as auto_run_in_dm
-// from their readOnlyHint during review, so admins must check them before
-// accepting.
+// GitHub has no seed here, so its tools default to ask. Its read tools,
+// including code scanning, Dependabot, secret scanning, and security advisory
+// reads, are only suggested as auto_run_in_dm from their readOnlyHint during
+// review and take effect once an admin saves them, so admins must check them
+// before accepting.
 var mattermostVettedToolConfigs = autoRunInDMToolConfigs([]string{
 	// Posts & scheduled posts
 	"read_post",
