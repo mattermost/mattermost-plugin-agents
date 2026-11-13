@@ -33,6 +33,8 @@ import {
     ExternalServer,
     FOCUS_THIEF_FILE_NAME,
     FOCUS_THIEF_HTML,
+    MESSAGE_PROBE_FILE_NAME,
+    MESSAGE_PROBE_HTML,
     ONYX_THEME,
     SECOND_VIEWER_PASSWORD,
     SECOND_VIEWER_USERNAME,
@@ -102,18 +104,36 @@ async function hostSettled(page: Page): Promise<void> {
     });
 }
 
-/** Resolves once the host page has received `count` more bridge heartbeats from any artifact frame. */
-async function heartbeats(page: Page, count: number): Promise<void> {
-    await page.evaluate((n) => new Promise<void>((resolve) => {
-        let seen = 0;
-        const onMessage = (e: MessageEvent) => {
-            if (e.data?.mmArtifact && e.data.type === 'heartbeat' && ++seen >= n) {
-                window.removeEventListener('message', onMessage);
-                resolve();
+type ProbeWindow = Window & {
+    WebappUtils?: {isolatedFrames?: {register?: unknown}};
+    __artifactHeartbeats?: number;
+    __uncheckedMessages?: Array<{origin: string; data: unknown}>;
+};
+
+/**
+ * Counts the bridge heartbeats the Mattermost window receives from any
+ * artifact. The web app's isolated frame firewall hides every artifact message
+ * from listeners the page adds, so this listener is added by an init script,
+ * ahead of the web app's own scripts (where no artifact can reach). Call it
+ * before the page loads Mattermost.
+ */
+async function countHeartbeats(page: Page): Promise<void> {
+    await page.addInitScript(() => {
+        const w = window as ProbeWindow;
+        w.__artifactHeartbeats = 0;
+        window.addEventListener('message', (e) => {
+            if (e.data?.mmArtifact && e.data.type === 'heartbeat') {
+                w.__artifactHeartbeats = (w.__artifactHeartbeats ?? 0) + 1;
             }
-        };
-        window.addEventListener('message', onMessage);
-    }), count);
+        }, true);
+    });
+}
+
+/** Resolves once the host page has received `count` more bridge heartbeats; needs countHeartbeats. */
+async function heartbeats(page: Page, count: number): Promise<void> {
+    const read = () => page.evaluate(() => (window as ProbeWindow).__artifactHeartbeats ?? 0);
+    const start = await read();
+    await expect.poll(read, {timeout: 15000}).toBeGreaterThanOrEqual(start + count);
 }
 
 /**
@@ -564,6 +584,44 @@ test.describe('HTML artifacts', () => {
         expect(await page.content()).not.toContain(token);
     });
 
+    // An artifact's sandbox does not stop it posting messages to the
+    // Mattermost window, and every message listener there would see them: one
+    // that skips its sender checks (in the web app, a plugin, or a library)
+    // would let the artifact drive the page. The web app's isolated frame
+    // firewall delivers everything the artifact's frames post to its broker
+    // alone.
+    test('nothing an artifact or its child frames post reaches other message listeners on the Mattermost window', async ({page}) => {
+        test.setTimeout(300000);
+        const botPost = await postArtifact(page, mattermost, aimock, MESSAGE_PROBE_FILE_NAME, MESSAGE_PROBE_HTML, 'Here is the message probe.');
+        const hasFirewall = await page.evaluate(() => typeof (window as ProbeWindow).WebappUtils?.isolatedFrames?.register === 'function');
+        test.skip(!hasFirewall, 'The Mattermost server predates WebappUtils.isolatedFrames');
+
+        // A listener added after the web app loaded, as a plugin would, with no sender checks.
+        await page.evaluate(() => {
+            const w = window as ProbeWindow;
+            w.__uncheckedMessages = [];
+            window.addEventListener('message', (e) => w.__uncheckedMessages!.push({origin: e.origin, data: e.data}));
+        });
+
+        await runArtifact(botPost);
+        const frame = artifactFrame(artifactWrappers(botPost).first());
+
+        // The frame shows only once the broker has the bridge's ready message,
+        // so the artifact's own channel still works.
+        await expect(frame.getByRole('heading', {name: 'Message probe'})).toBeVisible({timeout: 60000});
+        await expect(frame.getByTestId('probe-child')).toHaveText('running', {timeout: 15000});
+        await expect.poll(async () => Number(await frame.getByTestId('probe-sent').textContent()), {timeout: 15000}).toBeGreaterThanOrEqual(20);
+
+        // The listener does receive messages: one the page posts to itself arrives.
+        await page.evaluate(() => window.postMessage('same-origin check', window.location.origin));
+        await expect.poll(() => page.evaluate(() => (window as ProbeWindow).__uncheckedMessages!.map((m) => m.data))).toContain('same-origin check');
+
+        // Sandboxed documents (the artifact, its child frame, the bridge) all post with origin 'null'.
+        const fromArtifact = await page.evaluate(() => (window as ProbeWindow).__uncheckedMessages!.filter((m) => m.origin === 'null'));
+        expect(fromArtifact).toEqual([]);
+        await expect(botPost.getByTestId('html-artifact-navigation-stopped')).toHaveCount(0);
+    });
+
     // A sandboxed frame can still call focus() on itself, and keystrokes then
     // go into the artifact. Running it gives it focus; once the viewer moves
     // on, one that takes focus back is unloaded at once, and focus goes back
@@ -576,6 +634,7 @@ test.describe('HTML artifacts', () => {
             return route.fulfill({contentType: 'text/plain', body: ''});
         });
 
+        await countHeartbeats(page);
         const botPost = await postArtifact(page, mattermost, aimock, FOCUS_THIEF_FILE_NAME, FOCUS_THIEF_HTML, 'Here is the quarterly dashboard.');
         await runArtifact(botPost);
         const stopped = botPost.getByTestId('html-artifact-navigation-stopped');

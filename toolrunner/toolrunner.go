@@ -76,6 +76,11 @@ func finalAssistantText(text string, toolsDisabled bool, droppedToolCalls int) s
 // ToolRunResult is the return value of Run(). It contains the final
 // stream (no more tool calls) and all intermediate tool rounds.
 type ToolRunResult struct {
+	// Done is closed once the runner goroutine has exited, so no tool it
+	// started can still be running. Owners of the run wait on it after
+	// canceling the run, before handing the post to another run.
+	Done <-chan struct{}
+
 	// Stream is the live LLM response stream. Events are forwarded
 	// in real-time from the LLM, enabling token-by-token streaming.
 	// The caller should consume this stream (e.g. via StreamToPost).
@@ -199,11 +204,14 @@ func (r *ToolRunner) Run(
 	}
 
 	output := make(chan llm.TextStreamEvent)
+	done := make(chan struct{})
 	result := &ToolRunResult{
+		Done:   done,
 		Stream: &llm.TextStreamResult{Stream: output},
 	}
 
 	go func() {
+		defer close(done)
 		defer close(output)
 		r.runLoop(ctx, firstStream, request, shouldExecute, onToolTurns, result, output, currentOpts)
 	}()
@@ -537,6 +545,9 @@ func (r *ToolRunner) executeTools(ctx context.Context, toolCalls []llm.ToolCall,
 		var result string
 		var resolveErr error
 		switch {
+		case ctx.Err() != nil:
+			// A stopped run starts no further tools.
+			resolveErr = fmt.Errorf("not executed: the run was stopped")
 		case request.Context == nil || request.Context.Tools == nil:
 			resolveErr = fmt.Errorf("no tool store available")
 		case request.Context.Tools.IsUnloadedMCPTool(tc.Name):

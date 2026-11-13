@@ -147,6 +147,7 @@ type ConversationStore interface {
 	GetTurnByPostID(postID string) (*store.Turn, error)
 	UpdateTurnContent(id string, content json.RawMessage) error
 	GetBotDMConversationSummariesForUser(userID string, limit, offset int) ([]store.ConversationSummary, error)
+	GetBotDMBotIDsForUser(userID string) ([]string, error)
 	RenameConversation(id, title string) (bool, error)
 }
 
@@ -751,6 +752,11 @@ type AIBotInfo struct {
 	// false when the server is not licensed for remote MCP.
 	UseServiceAccountAuth bool `json:"useServiceAccountAuth"`
 	IsDefault             bool `json:"isDefault,omitempty"`
+	// IsCreator reports whether the requesting user created the agent.
+	IsCreator bool `json:"isCreator"`
+	// HasChats reports whether the requesting user has a chat with the agent
+	// in their DM, regardless of how many other chats they have.
+	HasChats bool `json:"hasChats"`
 }
 
 type AIBotsResponse struct {
@@ -794,8 +800,17 @@ func (a *API) defaultBotUserID() string {
 }
 
 // getAIBotsForUser returns all AI bots available to a user
-func (a *API) getAIBotsForUser(ctx context.Context, userID string) []AIBotInfo {
+func (a *API) getAIBotsForUser(ctx context.Context, userID string) ([]AIBotInfo, error) {
 	allBots := a.bots.GetAllBots()
+
+	chattedBotIDs, err := a.conversationStore.GetBotDMBotIDsForUser(userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get the agents the user has chats with: %w", err)
+	}
+	chatted := make(map[string]bool, len(chattedBotIDs))
+	for _, id := range chattedBotIDs {
+		chatted[id] = true
+	}
 
 	// Get the info from all the bots.
 	// Put the default bot first.
@@ -817,20 +832,23 @@ func (a *API) getAIBotsForUser(ctx context.Context, userID string) []AIBotInfo {
 		}
 
 		isDefault := defaultBotID != "" && bot.BotUserID() == defaultBotID
+		botConfig := bot.GetConfig()
 		bots = append(bots, AIBotInfo{
 			ID:                    bot.GetMMBot().UserId,
 			DisplayName:           bot.GetMMBot().DisplayName,
 			Username:              bot.GetMMBot().Username,
 			LastIconUpdate:        bot.GetMMBot().LastIconUpdate,
 			DMChannelID:           dmChannelID,
-			ChannelAccessLevel:    bot.GetConfig().ChannelAccessLevel,
-			ChannelIDs:            bot.GetConfig().ChannelIDs,
-			UserAccessLevel:       bot.GetConfig().UserAccessLevel,
-			UserIDs:               bot.GetConfig().UserIDs,
-			EnabledMCPTools:       bot.GetConfig().EnabledMCPTools,
-			AutoEnableNewMCPTools: bot.GetConfig().AutoEnableNewMCPTools,
+			ChannelAccessLevel:    botConfig.ChannelAccessLevel,
+			ChannelIDs:            botConfig.ChannelIDs,
+			UserAccessLevel:       botConfig.UserAccessLevel,
+			UserIDs:               botConfig.UserIDs,
+			EnabledMCPTools:       botConfig.EnabledMCPTools,
+			AutoEnableNewMCPTools: botConfig.AutoEnableNewMCPTools,
 			UseServiceAccountAuth: a.usesServiceAccountAuth(bot),
 			IsDefault:             isDefault,
+			IsCreator:             botConfig.IsCreator(userID),
+			HasChats:              chatted[bot.GetMMBot().UserId],
 		})
 		if isDefault {
 			last := len(bots) - 1
@@ -838,12 +856,16 @@ func (a *API) getAIBotsForUser(ctx context.Context, userID string) []AIBotInfo {
 		}
 	}
 
-	return bots
+	return bots, nil
 }
 
 func (a *API) handleGetAIBots(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
-	bots := a.getAIBotsForUser(c.Request.Context(), userID)
+	bots, err := a.getAIBotsForUser(c.Request.Context(), userID)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
 
 	// Check if search is enabled
 	searchEnabled := a.searchService.Enabled()

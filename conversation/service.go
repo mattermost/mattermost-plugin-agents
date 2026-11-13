@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -53,6 +55,15 @@ type Store interface {
 	// completion request before calling this — ExcludeAfterPostID needs the anchor.
 	DeleteResponseTurns(conversationID, postID string) error
 	GetMaxSequenceForConversation(conversationID string) (int, error)
+	// HasLiveStreamingTurn reports whether postID has a streaming turn whose
+	// heartbeat is newer than staleAfterMillis by the DB clock.
+	HasLiveStreamingTurn(postID string, staleAfterMillis int64) (bool, error)
+	// ClaimStaleStreamingTurn moves a stale streaming turn to interrupted at
+	// the end of its run, and reports whether this caller did.
+	ClaimStaleStreamingTurn(id string, staleAfterMillis int64) (bool, error)
+	// ReleaseStreamingTurnClaim returns a claimed turn to streaming so a later
+	// recovery sweep retries it.
+	ReleaseStreamingTurnClaim(id string) error
 }
 
 // BotLookup answers bot-membership and per-bot config queries.
@@ -175,6 +186,36 @@ func (s *Service) GetConversationByThread(rootPostID, botID, userID string) (*st
 // GetTurns returns all turns for a conversation, ordered by sequence.
 func (s *Service) GetTurns(conversationID string) ([]store.Turn, error) {
 	return s.store.GetTurnsForConversation(conversationID)
+}
+
+// SettleAbandonedStreamingTurn prepares postID for a new run. It reports live
+// when the post's turn is still streaming with a heartbeat newer than
+// staleAfter (DB clock). A stale streaming turn belongs to a run whose node
+// died before settling it: it is claimed now, as the recovery sweep would, so
+// it sits after the tool rounds that run already saved and scrubbing its
+// response removes them too. The claimed turn is returned so the caller can
+// repair its post like the sweep does, or release the claim.
+func (s *Service) SettleAbandonedStreamingTurn(postID string, staleAfter time.Duration) (live bool, claimed *store.Turn, err error) {
+	turn, err := s.store.GetTurnByPostID(postID)
+	if err != nil {
+		return false, nil, fmt.Errorf("failed to get turn for post: %w", err)
+	}
+	if turn != nil && turn.Status == store.TurnStatusStreaming {
+		ok, claimErr := s.store.ClaimStaleStreamingTurn(turn.ID, staleAfter.Milliseconds())
+		if claimErr != nil {
+			return false, nil, fmt.Errorf("failed to settle abandoned streaming turn: %w", claimErr)
+		}
+		if ok {
+			claimed = turn
+		}
+	}
+	live, err = s.store.HasLiveStreamingTurn(postID, staleAfter.Milliseconds())
+	return live, claimed, err
+}
+
+// ReleaseStreamingTurnClaim undoes SettleAbandonedStreamingTurn's claim.
+func (s *Service) ReleaseStreamingTurnClaim(turnID string) error {
+	return s.store.ReleaseStreamingTurnClaim(turnID)
 }
 
 // GetInitiatingUserTurn returns the user turn that started the agent run
@@ -537,6 +578,7 @@ func AssembleRequest(
 			}
 		}
 	}
+	turns = ExcludeStreamingTurns(turns)
 
 	if context != nil {
 		RestoreLoadedMCPToolsFromTurns(context.Tools, turns)
@@ -680,10 +722,15 @@ func pairToolResults(turns []store.Turn, blocksByTurn [][]ContentBlock) {
 			if b.Status == StatusPending || b.Status == StatusAccepted {
 				continue
 			}
+			content := MissingToolResultContent
+			if b.Status == StatusError && b.WouldAutoExecute {
+				// An auto-run batch stopped mid-execution: it may have run.
+				content = InterruptedToolResult
+			}
 			blocksByTurn[i] = append(blocksByTurn[i], ContentBlock{
 				Type:      BlockTypeToolResult,
 				ToolUseID: b.ID,
-				Content:   MissingToolResultContent,
+				Content:   content,
 				Status:    StatusError,
 				Shared:    new(true),
 			})
@@ -767,6 +814,7 @@ func (s *Service) FinalizeAssistantTurn(
 }
 
 // WriteToolTurns persists tool execution rounds from the ToolRunner.
+// runPostID is the response post whose run wrote the rounds ("" for none).
 // The shared flag controls the `shared` field on tool content blocks:
 //   - true in DMs (everything visible to requester)
 //   - false in channels (non-requester sees redacted content until shared)
@@ -774,9 +822,10 @@ func (s *Service) WriteToolTurns(
 	conversationID string,
 	toolTurns []toolrunner.ToolTurn,
 	shared bool,
+	runPostID string,
 ) error {
 	for _, tt := range toolTurns {
-		if writeErr := s.writeToolRound(conversationID, tt, shared); writeErr != nil {
+		if writeErr := s.writeToolRound(conversationID, tt, shared, runPostID); writeErr != nil {
 			return writeErr
 		}
 	}
@@ -785,7 +834,11 @@ func (s *Service) WriteToolTurns(
 }
 
 // writeToolRound writes one assistant + tool_result turn pair for a single tool round.
-func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, shared bool) error {
+func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, shared bool, runPostID string) error {
+	var runPost *string
+	if runPostID != "" {
+		runPost = &runPostID
+	}
 	assistantBlocks := toolUseBlocks(
 		tt.AssistantMessage,
 		tt.AssistantReasoning,
@@ -810,6 +863,7 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 		TokensIn:       tt.TokensIn,
 		TokensOut:      tt.TokensOut,
 		CreatedAt:      model.GetMillis(),
+		RunPostID:      runPost,
 	}
 	err = s.store.CreateTurnAutoSequence(assistantTurn)
 	if err != nil {
@@ -834,6 +888,7 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 		Role:           "tool_result",
 		Content:        resultContent,
 		CreatedAt:      model.GetMillis(),
+		RunPostID:      runPost,
 	}
 	err = s.store.CreateTurnAutoSequence(resultTurn)
 	if err != nil {
@@ -959,6 +1014,15 @@ func (s *Service) BuildChannelMentionRequest(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get turns: %w", err)
 	}
+	// A reply still streaming in this thread is neither history nor user
+	// content: skip its turn and its thread post.
+	streamingPostIDs := map[string]bool{}
+	for _, t := range turns {
+		if isStreamingTurn(t) && t.PostID != nil {
+			streamingPostIDs[*t.PostID] = true
+		}
+	}
+	turns = ExcludeStreamingTurns(turns)
 
 	if context != nil {
 		RestoreLoadedMCPToolsFromTurns(context.Tools, turns)
@@ -1109,6 +1173,9 @@ func (s *Service) BuildChannelMentionRequest(
 
 	responsePostID := firstBuildOptions(opts).ResponsePostID
 	for _, threadPost := range threadData.Posts {
+		if streamingPostIDs[threadPost.Id] {
+			continue
+		}
 		if !turnPostIDs[threadPost.Id] {
 			if threadPost.Id == responsePostID {
 				continue
@@ -1156,4 +1223,25 @@ func (s *Service) BuildChannelMentionRequest(
 		Context:   context,
 		Operation: conv.Operation,
 	}, nil
+}
+
+// ExcludeStreamingTurns drops turns whose response is still being generated
+// (possibly on another node). Their content is partial and still changing,
+// so they must not be fed into a new LLM request. Interrupted turns are kept:
+// their partial content is real output the user saw.
+func ExcludeStreamingTurns(turns []store.Turn) []store.Turn {
+	if !slices.ContainsFunc(turns, isStreamingTurn) {
+		return turns
+	}
+	out := make([]store.Turn, 0, len(turns))
+	for _, t := range turns {
+		if !isStreamingTurn(t) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func isStreamingTurn(t store.Turn) bool {
+	return t.Status == store.TurnStatusStreaming
 }

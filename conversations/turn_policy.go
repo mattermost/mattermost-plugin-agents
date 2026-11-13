@@ -411,7 +411,7 @@ func (p *turnPolicy) runToolLoop(ctx context.Context, llmCtx *llm.Context, convI
 		if !shared {
 			annotateHeldAnswers(turns, req.Context)
 		}
-		if writeErr := p.c.convService.WriteToolTurns(convID, turns, shared); writeErr != nil {
+		if writeErr := p.c.convService.WriteToolTurns(convID, turns, shared, llmCtx.ResponsePostID); writeErr != nil {
 			p.c.mmClient.LogError(writeFailMsg, append([]any{"error", writeErr}, writeFailArgs...)...)
 		}
 	}, opts...)

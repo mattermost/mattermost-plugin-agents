@@ -248,6 +248,7 @@ func newConnectionTestConversations(t *testing.T, provider llmcontext.MCPToolPro
 	botsService.SetBotsForTesting([]*bots.Bot{bot})
 
 	mmClient := mocks.NewMockClient(t)
+	allowPostRunReservation(mmClient)
 	if initiator != nil {
 		initiatorPostID := "initiator-post-id"
 		require.NoError(t, convStore.CreateTurn(&store.Turn{
