@@ -217,6 +217,7 @@ func TestChannelApprovalsOutOfOrderKeepThreadReplayable(t *testing.T) {
 	}
 
 	mmClient := mocks.NewMockClient(t)
+	allowPostRunReservation(mmClient)
 	for _, method := range []string{"LogDebug", "LogWarn", "LogError"} {
 		mmClient.On(method, mock.Anything).Maybe().Return()
 		mmClient.On(method, mock.Anything, mock.Anything).Maybe().Return()

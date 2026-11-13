@@ -60,6 +60,10 @@ const YourAgentsSection = () => {
     const route = useAgentsRoute();
     const {bots} = useBotlist();
     const {threadsByBot, loading, error, refresh} = useAgentThreads(bots);
+
+    // Agents the user created or has chats with, plus the one whose chat is open. The thread list
+    // is a single page, so hasChats covers agents whose chats fall outside it.
+    const yourAgents = useMemo(() => (bots ?? []).filter((bot) => bot.isCreator || bot.hasChats || Boolean(threadsByBot[bot.id]?.length) || bot.id === route.botId), [bots, threadsByBot, route.botId]);
     const generatingRoots = useGeneratingThreadRoots();
     const listedRoots = useMemo(() => Object.values(threadsByBot).flat().map((t) => t.root_post_id).filter((id): id is string => Boolean(id)), [threadsByBot]);
     const unreadRoots = useUnreadThreadRoots(listedRoots, route.rootId ?? '');
@@ -68,7 +72,7 @@ const YourAgentsSection = () => {
     return (
         <>
             <AgentThreadsList
-                bots={bots ?? []}
+                bots={yourAgents}
                 threadsByBot={threadsByBot}
                 loading={loading && Object.keys(threadsByBot).length === 0}
                 error={error}

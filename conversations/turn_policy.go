@@ -450,7 +450,7 @@ func (p *turnPolicy) runToolLoop(ctx context.Context, llmCtx *llm.Context, convI
 	opts := p.c.withProviderWebSearchLicense(p.c.toolsDisabledLLMOptions(p.bot, !p.toolsEnabled))
 	runner := toolrunner.New(p.bot.LLM(), toolrunner.WithMaxRounds(p.bot.GetConfig().EffectiveMaxToolTurns()), toolrunner.WithToolErrorResult(llmcontext.MCPToolErrorResult))
 	return runner.Run(ctx, req, p.autoExecute(llmCtx), func(turns []toolrunner.ToolTurn) {
-		if writeErr := p.c.convService.WriteToolTurns(convID, turns, p.sharedForTurns(turns, llmCtx)); writeErr != nil {
+		if writeErr := p.c.convService.WriteToolTurns(convID, turns, p.sharedForTurns(turns, llmCtx), llmCtx.ResponsePostID); writeErr != nil {
 			p.c.mmClient.LogError(writeFailMsg, append([]any{"error", writeErr}, writeFailArgs...)...)
 		}
 	}, opts...)

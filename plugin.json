@@ -5,7 +5,7 @@
   "homepage_url": "https://github.com/mattermost/mattermost-plugin-agents",
   "support_url": "https://github.com/mattermost/mattermost-plugin-agents/issues",
   "release_notes_url": "https://github.com/mattermost/mattermost-plugin-agents/releases",
-  "icon_path": "assets/bot_icon.png",
+  "icon_path": "assets/plugin_icon.svg",
   "min_server_version": "12.0.0",
   "server": {
     "executables": {

@@ -9,7 +9,7 @@ import {GlobalState} from '@mattermost/types/store';
 
 import {isCurrentUsersAgentPost} from '@/agent_posts';
 import {getAIThreads, renameConversation} from '@/client';
-import type {LLMBot} from '@/bots';
+import {fetchAndStoreBots, type LLMBot} from '@/bots';
 import manifest from '@/manifest';
 import {
     AIThreadsFailed,
@@ -173,6 +173,9 @@ export function createAgentThreadsSync(store: {dispatch: Dispatch<UnknownAction>
             if (threads && !threads.some((t) => t.root_post_id === rootId) && !fetchedForRoots.has(rootId)) {
                 fetchedForRoots.add(rootId);
                 scheduleRefresh();
+
+                // The bot list's hasChats is a snapshot; a new chat has to reach it too.
+                fetchAndStoreBots(store.dispatch).catch(() => { /* best effort */ });
             }
         },
         handleConversationUpdated: (data) => {
