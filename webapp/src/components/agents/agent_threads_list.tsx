@@ -46,6 +46,12 @@ interface AgentThreadsListProps {
 
     // The chat rows' actions; the owner renders their dialogs.
     chatActions: ChatActions;
+
+    // The section's heading; defaults to "Your agents".
+    title?: string;
+
+    // Lists the chats without a row per agent (where the agent is already clear from the context).
+    hideAgentRows?: boolean;
 }
 
 // Threads shown per agent before "Show more", which reveals the rest at once ("Show less" folds back).
@@ -85,6 +91,8 @@ const AgentThreadsList = ({
     onNewChat,
     onRetry,
     chatActions,
+    title,
+    hideAgentRows = false,
 }: AgentThreadsListProps) => {
     const intl = useIntl();
     const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -142,7 +150,7 @@ const AgentThreadsList = ({
         setLimits((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => id !== botId)));
     };
 
-    const sectionTitle = intl.formatMessage({defaultMessage: 'Your agents'});
+    const sectionTitle = title ?? intl.formatMessage({defaultMessage: 'Your agents'});
 
     return (
         <Section aria-label={sectionTitle}>
@@ -200,48 +208,58 @@ const AgentThreadsList = ({
                 const toggleLabel = isCollapsed ? intl.formatMessage({defaultMessage: 'Expand {agent} chats'}, {agent: bot.displayName}) : intl.formatMessage({defaultMessage: 'Collapse {agent} chats'}, {agent: bot.displayName});
                 const newChatLabel = intl.formatMessage({defaultMessage: 'New chat with {agent}'}, {agent: bot.displayName});
 
+                if (hideAgentRows && threads.length === 0) {
+                    return loading || error ? null : (
+                        <StatusMessage key={bot.id}>
+                            {intl.formatMessage({defaultMessage: 'No chats yet'})}
+                        </StatusMessage>
+                    );
+                }
+
                 return (
                     <AgentBlock key={bot.id}>
-                        <AgentRow>
-                            <ChannelSidebarItem
-                                name={bot.displayName}
-                                leadingVisual='direct-message'
-                                avatarSrc={getProfilePictureUrl(bot.id, bot.lastIconUpdate)}
-                                avatarAlt=''
-                                active={isActiveAgent && (!activeRootId || isCollapsed)}
-                                onClick={openAgent}
-                            />
-                            {threads.length > 0 && (
-                                <ChevronSlot>
-                                    <ChevronToggle
-                                        type='button'
-                                        aria-label={toggleLabel}
-                                        aria-expanded={!isCollapsed}
-                                        aria-controls={listId}
-                                        onClick={() => toggle(bot.id)}
-                                    >
-                                        <Icon
-                                            glyph={isCollapsed ? <ChevronRightIcon/> : <ChevronDownIcon/>}
-                                            size='12'
-                                        />
-                                    </ChevronToggle>
-                                </ChevronSlot>
-                            )}
-                            <NewChatSlot>
-                                <WithTooltip title={newChatLabel}>
-                                    <TooltipTrigger>
-                                        <IconButton
-                                            size='x-small'
-                                            // eslint-disable-next-line react/style-prop-object -- compass IconButton `style` is a variant prop, not CSS
-                                            style='inverted'
-                                            icon={<Icon glyph={<PlusIcon/>}/>}
-                                            aria-label={newChatLabel}
-                                            onClick={() => onNewChat(bot.id)}
-                                        />
-                                    </TooltipTrigger>
-                                </WithTooltip>
-                            </NewChatSlot>
-                        </AgentRow>
+                        {!hideAgentRows && (
+                            <AgentRow>
+                                <ChannelSidebarItem
+                                    name={bot.displayName}
+                                    leadingVisual='direct-message'
+                                    avatarSrc={getProfilePictureUrl(bot.id, bot.lastIconUpdate)}
+                                    avatarAlt=''
+                                    active={isActiveAgent && (!activeRootId || isCollapsed)}
+                                    onClick={openAgent}
+                                />
+                                {threads.length > 0 && (
+                                    <ChevronSlot>
+                                        <ChevronToggle
+                                            type='button'
+                                            aria-label={toggleLabel}
+                                            aria-expanded={!isCollapsed}
+                                            aria-controls={listId}
+                                            onClick={() => toggle(bot.id)}
+                                        >
+                                            <Icon
+                                                glyph={isCollapsed ? <ChevronRightIcon/> : <ChevronDownIcon/>}
+                                                size='12'
+                                            />
+                                        </ChevronToggle>
+                                    </ChevronSlot>
+                                )}
+                                <NewChatSlot>
+                                    <WithTooltip title={newChatLabel}>
+                                        <TooltipTrigger>
+                                            <IconButton
+                                                size='x-small'
+                                                // eslint-disable-next-line react/style-prop-object -- compass IconButton `style` is a variant prop, not CSS
+                                                style='inverted'
+                                                icon={<Icon glyph={<PlusIcon/>}/>}
+                                                aria-label={newChatLabel}
+                                                onClick={() => onNewChat(bot.id)}
+                                            />
+                                        </TooltipTrigger>
+                                    </WithTooltip>
+                                </NewChatSlot>
+                            </AgentRow>
+                        )}
                         {threads.length > 0 && (
                             <ThreadCollapse $collapsed={isCollapsed}>
                                 <ThreadCollapseInner>

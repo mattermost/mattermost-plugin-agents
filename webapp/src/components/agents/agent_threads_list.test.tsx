@@ -92,6 +92,22 @@ describe('AgentThreadsList', () => {
         expect(screen.queryByRole('list', {name: 'Beta chats'})).toBeNull();
     });
 
+    test.each([
+        {name: 'with chats lists them under no agent row', botList: [bots[0]], listed: true, empty: false},
+        {name: 'without chats says so', botList: [bots[1]], listed: false, empty: true},
+    ])('hideAgentRows: an agent $name', ({botList, listed, empty}) => {
+        const h = renderList({bots: botList, hideAgentRows: true});
+        expect(screen.queryByRole('button', {name: /^(Alpha|Beta)$/})).toBeNull();
+        expect(screen.queryByRole('button', {name: /^New chat with/})).toBeNull();
+        expect(screen.queryByRole('button', {name: /^(Collapse|Expand) /})).toBeNull();
+        expect(Boolean(screen.queryByRole('list', {name: 'Alpha chats'}))).toBe(listed);
+        expect(Boolean(screen.queryByText('No chats yet'))).toBe(empty);
+        if (listed) {
+            fireEvent.click(screen.getByRole('button', {name: 'First chat'}));
+            expect(h.onSelectThread).toHaveBeenCalledWith('a', 'root_1');
+        }
+    });
+
     test('collapses and expands an agent group', () => {
         renderList();
         fireEvent.click(screen.getByRole('button', {name: 'Collapse Alpha chats'}));

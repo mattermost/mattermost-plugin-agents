@@ -37,17 +37,18 @@ export class AgentChatPage {
   }
 
   /**
-   * Presses Enter in the new-chat composer until the chat opens. The host composer ignores an Enter
-   * in the first half second after it mounts (its guard against sending into a channel just switched
-   * to), so the key is pressed again; an Enter on a draft already submitted (or cleared) sends nothing.
+   * Presses Enter in the new-chat composer until the chat opens (the URL matches `chatUrl`, by
+   * default the product's chat URL). The host composer ignores an Enter in the first half second
+   * after it mounts (its guard against sending into a channel just switched to), so the key is
+   * pressed again; an Enter on a draft already submitted (or cleared) sends nothing.
    */
-  async pressEnterUntilSent(botUserId: string): Promise<void> {
+  async pressEnterUntilSent(botUserId: string, chatUrl: RegExp = this.threadUrlPattern(botUserId)): Promise<void> {
     const textbox = this.newChatTextbox();
     await expect(async () => {
       if (await textbox.count() > 0) {
         await textbox.press('Enter');
       }
-      await expect(this.page).toHaveURL(this.threadUrlPattern(botUserId), { timeout: 2000 });
+      await expect(this.page).toHaveURL(chatUrl, { timeout: 2000 });
     }).toPass({ timeout: 30000 });
   }
 
