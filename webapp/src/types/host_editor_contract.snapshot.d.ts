@@ -16,7 +16,7 @@
  *   - webapp/platform/types/src/access_control.ts
  *   - webapp/platform/types/src/properties_user.ts
  *
- * Generated from mattermost commit 2412cad805805beaf794549f5a25ac8b14683104
+ * Generated from mattermost commit 902f228879b5382db15786465f1e669ce7e8885c
  *
  * Regenerate against a mattermost webapp checkout (and re-verify) with:
  *   MM_WEBAPP_PATH=/path/to/mattermost/webapp npm run update-editor-contract-snapshot
@@ -46,9 +46,9 @@ export type HostTableEditorProps = {
             object_type: string;
             linked_field_id?: undefined | string;
             protected?: undefined | false | true;
-            permission_field?: undefined | "" | "none" | "sysadmin" | "admin" | "member";
-            permission_values?: undefined | "" | "none" | "sysadmin" | "admin" | "member";
-            permission_options?: undefined | "" | "none" | "sysadmin" | "admin" | "member";
+            permission_field?: undefined | "" | "none" | "sysadmin" | "admin" | "member" | "creator";
+            permission_values?: undefined | "" | "none" | "sysadmin" | "admin" | "member" | "creator";
+            permission_options?: undefined | "" | "none" | "sysadmin" | "admin" | "member" | "creator";
             create_at: number;
             update_at: number;
             delete_at: number;
@@ -180,6 +180,9 @@ export type HostTableEditorProps = {
     testButtonTooltip?: undefined | string;
     testButtonLabel?: React.ReactNode;
     onMaskedStateChange?: undefined | ((hasMasked: boolean) => void);
+    hiddenPickerAttributeNames?: undefined | Array<string>;
+    helpText?: undefined | string;
+    emptyStateText?: undefined | string;
 };
 
 export type HostCELEditorProps = {
@@ -201,6 +204,8 @@ export type HostCELEditorProps = {
             attribute: string;
         }>;
     onTestClick?: undefined | (() => void);
+    testButtonDisabled?: undefined | false | true;
+    testButtonTooltip?: undefined | string;
     testButtonLabel?: React.ReactNode;
     hasMaskedRows?: undefined | false | true;
     actions?: undefined | ({
@@ -445,9 +450,9 @@ export type HostUserPropertyField = ({
     object_type: string;
     linked_field_id?: undefined | string;
     protected?: undefined | false | true;
-    permission_field?: undefined | "" | "none" | "sysadmin" | "admin" | "member";
-    permission_values?: undefined | "" | "none" | "sysadmin" | "admin" | "member";
-    permission_options?: undefined | "" | "none" | "sysadmin" | "admin" | "member";
+    permission_field?: undefined | "" | "none" | "sysadmin" | "admin" | "member" | "creator";
+    permission_values?: undefined | "" | "none" | "sysadmin" | "admin" | "member" | "creator";
+    permission_options?: undefined | "" | "none" | "sysadmin" | "admin" | "member" | "creator";
     create_at: number;
     update_at: number;
     delete_at: number;
