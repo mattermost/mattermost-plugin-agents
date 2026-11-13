@@ -152,6 +152,7 @@ var figmaVettedToolConfigs = autoRunInDMToolConfigs([]string{
 //   - get_file_link mints a public, unauthenticated bypass link for a file.
 //   - list_incoming_webhooks / list_outgoing_webhooks surface webhook IDs and
 //     tokens that are effectively posting credentials.
+//   - list_agents and list_drafts are likewise not seeded.
 //
 // GitHub has no seed here. Its read tools, including code scanning, Dependabot,
 // secret scanning, and security advisory reads, are suggested as auto_run_in_dm
