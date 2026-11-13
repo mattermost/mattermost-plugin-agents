@@ -23,6 +23,7 @@ import {
     userHasChannelPermission,
 } from '@/utils/permissions';
 import manifest from '@/manifest';
+import {createRequestGenerations} from '@/request_generation';
 import {licenseAllows} from '@/license';
 
 import {AutoReplyAgentPicker} from './autoreply_agent_picker';
@@ -108,40 +109,53 @@ export const shouldRenderChannelAgentsTab = (state: GlobalState, channel: Channe
 // back over a remote change. values is null until hydration succeeds.
 export type AgentsTabBaseline = {values: ChannelSettingsValues | null};
 
-export const makeLoadValues = (store: WebappStore, baseline: AgentsTabBaseline) => async (channel: Channel): Promise<ChannelSettingsValues> => {
-    let raw: ChannelAutoReplySettings;
-    let channelInstructions: string;
-    try {
-        [raw, {instructions: channelInstructions}] = await Promise.all([
-            getChannelAutoReply(channel.id),
-            getChannelInstructions(channel.id),
-        ]);
-    } catch (e) {
-        // A failed GET must not leave a previous channel's drafts visible:
-        // clear them so the custom settings render their load-failure
-        // messages, then let the host fall back to schema defaults.
-        baseline.values = null;
-        setChannelAutoReplyDraft(null);
-        setChannelInstructionsDraft(null);
-        throw e;
-    }
-    let bots = botsFromState(store.getState());
-    if (!bots) {
-        bots = await fetchAndStoreBots(store.dispatch).catch(() => null);
-    }
+export const makeLoadValues = (store: WebappStore, baseline: AgentsTabBaseline) => {
+    // Hydrations can overlap when the user switches channels while one is slow;
+    // only the latest may touch the shared drafts and baseline.
+    const generations = createRequestGenerations();
 
-    // bots stays null when the fetch failed; normalization then preserves the
-    // saved agent instead of clearing it like an empty agent list would.
-    const saved = normalizeChannelAutoReply(raw, bots, channel.id);
-    setChannelAutoReplyDraft({channelId: channel.id, saved, saveError: null});
-    setChannelInstructionsDraft({channelId: channel.id, saved: channelInstructions, saveError: null});
-    baseline.values = {
-        mode: saved.mode,
-        bot_id: saved.bot_id,
-        instructions: saved.instructions,
-        channel_instructions: channelInstructions,
+    return async (channel: Channel): Promise<ChannelSettingsValues> => {
+        const token = generations.begin('hydration');
+        const isCurrent = () => generations.isCurrent('hydration', token);
+        let raw: ChannelAutoReplySettings;
+        let channelInstructions: string;
+        try {
+            [raw, {instructions: channelInstructions}] = await Promise.all([
+                getChannelAutoReply(channel.id),
+                getChannelInstructions(channel.id),
+            ]);
+        } catch (e) {
+            // A failed GET must not leave a previous channel's drafts visible:
+            // clear them so the custom settings render their load-failure
+            // messages, then let the host fall back to schema defaults.
+            if (isCurrent()) {
+                baseline.values = null;
+                setChannelAutoReplyDraft(null);
+                setChannelInstructionsDraft(null);
+            }
+            throw e;
+        }
+        let bots = botsFromState(store.getState());
+        if (!bots) {
+            bots = await fetchAndStoreBots(store.dispatch).catch(() => null);
+        }
+
+        // bots stays null when the fetch failed; normalization then preserves the
+        // saved agent instead of clearing it like an empty agent list would.
+        const saved = normalizeChannelAutoReply(raw, bots, channel.id);
+        const values = {
+            mode: saved.mode,
+            bot_id: saved.bot_id,
+            instructions: saved.instructions,
+            channel_instructions: channelInstructions,
+        };
+        if (isCurrent()) {
+            setChannelAutoReplyDraft({channelId: channel.id, saved, saveError: null});
+            setChannelInstructionsDraft({channelId: channel.id, saved: channelInstructions, saveError: null});
+            baseline.values = values;
+        }
+        return values;
     };
-    return baseline.values;
 };
 
 function saveErrorStatus(e: unknown): number {

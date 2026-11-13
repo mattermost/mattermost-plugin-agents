@@ -57,7 +57,7 @@ import {botsFromState, makeChannelAgentsTabSchema} from './components/channel_se
 import {handleChannelAutoReplyUpdated, ChannelAutoReplyUpdatedEvent} from './components/channel_settings/autoreply_state';
 import {handleChannelInstructionsUpdated} from './components/channel_settings/channel_instructions_state';
 import ChannelContextBadge from './components/channel_context_badge';
-import {ChannelContextPostsCleared, ChannelContextUpdatedEvent, handleChannelContextUpdated} from './channel_context';
+import {ChannelContextPostsCleared, ChannelContextUpdatedEvent, handleChannelContextUpdated, resetChannelContextRequests} from './channel_context';
 import {shouldSuppressBotNotification} from './notifications';
 import AgentsTour from './components/tutorial/agents_tour';
 import AgentsHeaderSettings from './components/agents/agents_header_settings';
@@ -198,6 +198,7 @@ export default class Plugin {
             registry.registerReconnectHandler(() => {
                 clearGeneratingPosts();
                 agentThreadsSync.handleReconnect();
+                resetChannelContextRequests();
                 store.dispatch({type: ChannelContextPostsCleared});
             });
         }

@@ -12,7 +12,7 @@ import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {GlobalState} from '@mattermost/types/store';
 
 import {ChannelContextPost, unpinChannelContextPost} from '@/client';
-import {receivedChannelContextPosts, useChannelContextPosts} from '@/channel_context';
+import {applyChannelContextPosts, useChannelContextPosts} from '@/channel_context';
 
 import {useChannelInstructionsDraft} from './channel_instructions_state';
 
@@ -26,6 +26,7 @@ export const ChannelContextPostsSection = () => {
     const contextPosts = useChannelContextPosts(draft?.channelId ?? '');
     const dispatch = useDispatch();
     const [unpinFailed, setUnpinFailed] = useState(false);
+    const [unpinning, setUnpinning] = useState(false);
 
     if (!draft) {
         return null;
@@ -45,12 +46,17 @@ export const ChannelContextPostsSection = () => {
         );
     }
 
+    // One unpin at a time: each response replaces the whole list, so an
+    // earlier request finishing last would restore a post removed since.
     const unpin = async (postId: string) => {
+        setUnpinning(true);
+        setUnpinFailed(false);
         try {
-            setUnpinFailed(false);
-            dispatch(receivedChannelContextPosts(draft.channelId, await unpinChannelContextPost(draft.channelId, postId)));
+            applyChannelContextPosts(dispatch, draft.channelId, await unpinChannelContextPost(draft.channelId, postId));
         } catch {
             setUnpinFailed(true);
+        } finally {
+            setUnpinning(false);
         }
     };
 
@@ -72,6 +78,7 @@ export const ChannelContextPostsSection = () => {
                         <ContextPostItem
                             key={post.post_id}
                             post={post}
+                            disabled={unpinning}
                             onUnpin={() => unpin(post.post_id)}
                         />
                     ))}
@@ -86,7 +93,7 @@ export const ChannelContextPostsSection = () => {
     );
 };
 
-const ContextPostItem = ({post, onUnpin}: {post: ChannelContextPost; onUnpin: () => void}) => {
+const ContextPostItem = ({post, disabled, onUnpin}: {post: ChannelContextPost; disabled: boolean; onUnpin: () => void}) => {
     const intl = useIntl();
     const username = useSelector((state: GlobalState) => state.entities.users.profiles[post.user_id]?.username);
     const snippet = post.message.length > SNIPPET_LENGTH ? `${post.message.slice(0, SNIPPET_LENGTH)}…` : post.message;
@@ -101,6 +108,7 @@ const ContextPostItem = ({post, onUnpin}: {post: ChannelContextPost; onUnpin: ()
                 size='small'
                 icon={<Icon glyph={<CloseIcon/>}/>}
                 aria-label={intl.formatMessage({defaultMessage: 'Unpin from agent context'})}
+                disabled={disabled}
                 onClick={onUnpin}
             />
         </Item>

@@ -23,7 +23,7 @@ import {
     canManageChannelContext,
     fetchChannelContextPosts,
     isChannelContextPinned,
-    receivedChannelContextPosts,
+    applyChannelContextPosts,
     useChannelContextPosts,
 } from '@/channel_context';
 
@@ -62,7 +62,7 @@ const PostMenu = (props: Props) => {
     const toggleContextPin = async (pin: boolean) => {
         try {
             const updated = pin ? await pinChannelContextPost(post.channel_id, post.id) : await unpinChannelContextPost(post.channel_id, post.id);
-            dispatch(receivedChannelContextPosts(post.channel_id, updated));
+            applyChannelContextPosts(dispatch, post.channel_id, updated);
         } catch {
             // A failed toggle (for example, a concurrent pin filled the
             // channel) re-syncs so the menu reflects the server's state.

@@ -122,3 +122,38 @@ describe('ChannelInstructionsSetting', () => {
         expect(screen.queryByTestId('channel-instructions-textarea')).toBeNull();
     });
 });
+
+describe('handleChannelInstructionsUpdated ordering', () => {
+    test('an older refresh finishing last cannot replace a newer one', async () => {
+        seed('Before');
+        let resolveOlder!: (value: {instructions: string}) => void;
+        mockedGetChannelInstructions.
+            mockReturnValueOnce(new Promise((resolve) => {
+                resolveOlder = resolve;
+            })).
+            mockResolvedValueOnce({instructions: 'Newest'});
+
+        const older = handleChannelInstructionsUpdated({channel_id: CHANNEL_ID});
+        await handleChannelInstructionsUpdated({channel_id: CHANNEL_ID});
+        resolveOlder({instructions: 'Older'});
+        await older;
+
+        expect(getChannelInstructionsDraft()?.saved).toBe('Newest');
+    });
+
+    test('a refresh pending across a re-hydration cannot replace the new draft', async () => {
+        seed('Before');
+        let resolveRefresh!: (value: {instructions: string}) => void;
+        mockedGetChannelInstructions.mockReturnValueOnce(new Promise((resolve) => {
+            resolveRefresh = resolve;
+        }));
+
+        const refresh = handleChannelInstructionsUpdated({channel_id: CHANNEL_ID});
+        seed('Hydrated again');
+        resolveRefresh({instructions: 'Stale'});
+        await refresh;
+
+        expect(getChannelInstructionsDraft()?.saved).toBe('Hydrated again');
+    });
+});
+

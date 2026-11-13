@@ -11,6 +11,7 @@ import {GlobalState} from '@mattermost/types/store';
 import {ChannelContextPosts, getChannelContextPosts} from '@/client';
 import {licenseAllows} from '@/license';
 import manifest from '@/manifest';
+import {createRequestGenerations} from '@/request_generation';
 import {
     PERMISSION_MANAGE_PRIVATE_CHANNEL_PROPERTIES,
     PERMISSION_MANAGE_PUBLIC_CHANNEL_PROPERTIES,
@@ -49,26 +50,45 @@ export function channelContextPostsFromState(state: GlobalState, channelId: stri
 }
 
 const inFlight = new Map<string, Promise<void>>();
+const generations = createRequestGenerations();
+
+function startFetch(dispatch: Dispatch, channelId: string): Promise<void> {
+    const token = generations.begin(channelId);
+    const apply = (data: ChannelContextPosts | null) => {
+        if (generations.isCurrent(channelId, token)) {
+            dispatch(receivedChannelContextPosts(channelId, data));
+        }
+    };
+    const request: Promise<void> = getChannelContextPosts(channelId).
+        then(apply).
+        catch(() => apply(null)).
+        finally(() => {
+            if (inFlight.get(channelId) === request) {
+                inFlight.delete(channelId);
+            }
+        });
+    inFlight.set(channelId, request);
+    return request;
+}
 
 // Fetches a channel's pins into the store. Concurrent calls for the same
 // channel share one request: every visible post asks for its channel at once.
 export function fetchChannelContextPosts(dispatch: Dispatch, channelId: string): Promise<void> {
-    const pending = inFlight.get(channelId);
-    if (pending) {
-        return pending;
-    }
-    const request = getChannelContextPosts(channelId).
-        then((data) => {
-            dispatch(receivedChannelContextPosts(channelId, data));
-        }).
-        catch(() => {
-            dispatch(receivedChannelContextPosts(channelId, null));
-        }).
-        finally(() => {
-            inFlight.delete(channelId);
-        });
-    inFlight.set(channelId, request);
-    return request;
+    return inFlight.get(channelId) ?? startFetch(dispatch, channelId);
+}
+
+// Stores pins the server just returned from a write. A GET still in flight
+// read an older snapshot, so its response is dropped.
+export function applyChannelContextPosts(dispatch: Dispatch, channelId: string, data: ChannelContextPosts): void {
+    generations.invalidate(channelId);
+    inFlight.delete(channelId);
+    dispatch(receivedChannelContextPosts(channelId, data));
+}
+
+// Drops every pending fetch so none can repopulate state cleared by a reconnect.
+export function resetChannelContextRequests(): void {
+    generations.invalidateAll();
+    inFlight.clear();
 }
 
 // Agent context applies to public and private channels on a licensed server.
@@ -116,10 +136,18 @@ export function isChannelContextPinned(data: ChannelContextPosts | null | undefi
 export type ChannelContextUpdatedEvent = {channel_id?: string};
 
 // Re-fetches a channel's pins after a remote change, but only when this client
-// has already loaded that channel.
+// has loaded or is loading that channel. A fetch already in flight may have
+// read the pins before the change, so it is superseded by a fresh one.
 export function handleChannelContextUpdated(store: Store<GlobalState, UnknownAction>, event: ChannelContextUpdatedEvent): void {
-    if (!event.channel_id || typeof channelContextPostsFromState(store.getState(), event.channel_id) === 'undefined') {
+    const channelId = event.channel_id;
+    if (!channelId) {
         return;
     }
-    fetchChannelContextPosts(store.dispatch, event.channel_id);
+    if (inFlight.has(channelId)) {
+        startFetch(store.dispatch, channelId);
+        return;
+    }
+    if (typeof channelContextPostsFromState(store.getState(), channelId) !== 'undefined') {
+        startFetch(store.dispatch, channelId);
+    }
 }

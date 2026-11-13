@@ -308,6 +308,59 @@ describe('makeLoadValues', () => {
     });
 });
 
+describe('makeLoadValues overlapping hydrations', () => {
+    const other = makeBot('other');
+
+    function pending<T>() {
+        let resolve!: (value: T) => void;
+        let reject!: (reason: unknown) => void;
+        const promise = new Promise<T>((res, rej) => {
+            resolve = res;
+            reject = rej;
+        });
+        return {promise, resolve, reject};
+    }
+
+    test('a slow earlier load cannot replace the drafts or baseline of a later one', async () => {
+        const slowAutoReply = pending<ChannelAutoReplySettings>();
+        mockedGetChannelAutoReply.
+            mockReturnValueOnce(slowAutoReply.promise).
+            mockResolvedValueOnce({bot_id: 'other', mode: 'threads', ...emptyExtras});
+        mockedGetChannelInstructions.
+            mockResolvedValueOnce({instructions: 'channel A'}).
+            mockResolvedValueOnce({instructions: 'channel B'});
+        const baseline: AgentsTabBaseline = {values: null};
+        const load = makeLoadValues(makeTestStore(makeState({bots: [other]})), baseline);
+
+        const first = load(makeChannel('O', 'chanA'));
+        await load(makeChannel('O', 'chanB'));
+        slowAutoReply.resolve({bot_id: 'other', mode: 'off', ...emptyExtras});
+        await first;
+
+        expect(getChannelAutoReplyDraft()?.channelId).toBe('chanB');
+        expect(getChannelInstructionsDraft()).toEqual({channelId: 'chanB', saved: 'channel B', saveError: null});
+        expect(baseline.values?.channel_instructions).toBe('channel B');
+    });
+
+    test('a late failure of an earlier load does not clear the later load', async () => {
+        const slowAutoReply = pending<ChannelAutoReplySettings>();
+        mockedGetChannelAutoReply.
+            mockReturnValueOnce(slowAutoReply.promise).
+            mockResolvedValueOnce({bot_id: 'other', mode: 'threads', ...emptyExtras});
+        mockedGetChannelInstructions.mockResolvedValue({instructions: 'channel B'});
+        const baseline: AgentsTabBaseline = {values: null};
+        const load = makeLoadValues(makeTestStore(makeState({bots: [other]})), baseline);
+
+        const first = load(makeChannel('O', 'chanA'));
+        await load(makeChannel('O', 'chanB'));
+        slowAutoReply.reject(httpError(500));
+        await expect(first).rejects.toBeDefined();
+
+        expect(getChannelInstructionsDraft()?.channelId).toBe('chanB');
+        expect(baseline.values).not.toBeNull();
+    });
+});
+
 describe('makeOnSave', () => {
     const onSave = makeOnSave({values: null});
 

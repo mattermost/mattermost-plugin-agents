@@ -12,12 +12,14 @@ import {PERMISSION_MANAGE_PRIVATE_CHANNEL_PROPERTIES, PERMISSION_MANAGE_PUBLIC_C
 
 import {
     ChannelContextPostsCleared,
+    applyChannelContextPosts,
     canManageChannelContext,
     channelContextPostsFromState,
     channelContextPostsReducer,
     fetchChannelContextPosts,
     handleChannelContextUpdated,
     isChannelContextPinned,
+    resetChannelContextRequests,
 } from './channel_context';
 
 jest.mock('@/client', () => ({
@@ -55,6 +57,17 @@ function makeStore(opts: {sku?: string; channelPermissions?: string[]} = {}) {
 function channel(type: string): Channel {
     return {id: 'chan1', team_id: 'team1', type} as Channel;
 }
+
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) => {
+        resolve = res;
+    });
+    return {promise, resolve};
+}
+
+const stateOf = (store: ReturnType<typeof makeStore>) => channelContextPostsFromState(store.getState() as unknown as GlobalState, 'chan1');
+const empty: ChannelContextPosts = {posts: [], max_posts: 10};
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -119,6 +132,53 @@ describe('handleChannelContextUpdated', () => {
         handleChannelContextUpdated(store as never, event);
 
         expect(mockedGetChannelContextPosts).not.toHaveBeenCalled();
+    });
+});
+
+describe('superseded fetches', () => {
+    test('an update arriving during the initial load triggers a fresh fetch whose result wins', async () => {
+        const first = deferred<ChannelContextPosts>();
+        mockedGetChannelContextPosts.mockReturnValueOnce(first.promise).mockResolvedValueOnce(pins);
+        const store = makeStore();
+
+        fetchChannelContextPosts(store.dispatch, 'chan1');
+        handleChannelContextUpdated(store as never, {channel_id: 'chan1'});
+        await flush();
+        first.resolve(empty);
+        await flush();
+
+        expect(mockedGetChannelContextPosts).toHaveBeenCalledTimes(2);
+        expect(stateOf(store)).toEqual(pins);
+    });
+
+    test('a fetch pending across a reset cannot repopulate the cleared state', async () => {
+        const stale = deferred<ChannelContextPosts>();
+        mockedGetChannelContextPosts.mockReturnValueOnce(stale.promise).mockResolvedValueOnce(pins);
+        const store = makeStore();
+
+        fetchChannelContextPosts(store.dispatch, 'chan1');
+        resetChannelContextRequests();
+        store.dispatch({type: ChannelContextPostsCleared});
+        stale.resolve(empty);
+        await flush();
+        expect(stateOf(store)).toBeUndefined();
+
+        await fetchChannelContextPosts(store.dispatch, 'chan1');
+        expect(mockedGetChannelContextPosts).toHaveBeenCalledTimes(2);
+        expect(stateOf(store)).toEqual(pins);
+    });
+
+    test('a pending initial fetch cannot overwrite pins returned by a later write', async () => {
+        const initial = deferred<ChannelContextPosts>();
+        mockedGetChannelContextPosts.mockReturnValueOnce(initial.promise);
+        const store = makeStore();
+
+        fetchChannelContextPosts(store.dispatch, 'chan1');
+        applyChannelContextPosts(store.dispatch, 'chan1', pins);
+        initial.resolve(empty);
+        await flush();
+
+        expect(stateOf(store)).toEqual(pins);
     });
 });
 

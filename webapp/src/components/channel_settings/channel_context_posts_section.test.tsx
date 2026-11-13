@@ -100,6 +100,25 @@ describe('ChannelContextPostsSection', () => {
         expect(mockedUnpin).toHaveBeenCalledWith(CHANNEL_ID, 'p1');
     });
 
+    test('disables every unpin control while an unpin is pending', async () => {
+        let finish!: (value: ChannelContextPosts) => void;
+        mockedUnpin.mockReturnValue(new Promise((resolve) => {
+            finish = resolve;
+        }));
+        renderSection(pins([{id: 'p1'}, {id: 'p2'}]));
+
+        fireEvent.click(screen.getAllByLabelText('Unpin from agent context')[0]);
+
+        await waitFor(() => {
+            for (const button of screen.getAllByLabelText('Unpin from agent context')) {
+                expect((button as HTMLButtonElement).disabled).toBe(true);
+            }
+        });
+        finish(pins([{id: 'p2'}]));
+        await waitFor(() => expect((screen.getByLabelText('Unpin from agent context') as HTMLButtonElement).disabled).toBe(false));
+        expect(mockedUnpin).toHaveBeenCalledTimes(1);
+    });
+
     test('keeps the list and reports a failed unpin', async () => {
         mockedUnpin.mockRejectedValue(new Error('500'));
         renderSection(pins([{id: 'p1'}]));
