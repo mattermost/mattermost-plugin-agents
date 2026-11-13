@@ -37,6 +37,17 @@ interface RoundViewProps {
  */
 export const RoundView = React.memo((props: RoundViewProps) => {
     const {round} = props;
+
+    // Channel markers name sources the rest of the channel may not be able to
+    // read. Only the requester sees them.
+    const annotations = props.canApprove ?
+        round.annotations :
+        round.annotations.filter((annotation) => annotation.type !== 'mattermost_channel');
+    const privateChannelNames = Array.from(new Set(
+        annotations.
+            filter((annotation) => annotation.type === 'mattermost_channel' && annotation.private && annotation.channel_name).
+            map((annotation) => annotation.channel_name as string),
+    ));
     const wide = hasWideContent(round, props.reasoningCollapsed) ? true : undefined; // eslint-disable-line no-undefined
     return (
         <RoundContainer data-bubble-wide={wide}>
@@ -58,7 +69,7 @@ export const RoundView = React.memo((props: RoundViewProps) => {
                     postID={props.postID}
                     showCursor={props.showCursor}
                     reveal={props.reveal}
-                    annotations={round.annotations.length > 0 ? round.annotations : undefined} // eslint-disable-line no-undefined
+                    annotations={annotations.length > 0 ? annotations : undefined} // eslint-disable-line no-undefined
                 />
             )}
             {round.toolCalls.length > 0 && (
@@ -69,6 +80,7 @@ export const RoundView = React.memo((props: RoundViewProps) => {
                     approvalStage={props.approvalStage}
                     canApprove={props.canApprove}
                     canExpand={props.canExpand}
+                    privateChannelNames={props.canApprove ? privateChannelNames : []}
                 />
             )}
         </RoundContainer>

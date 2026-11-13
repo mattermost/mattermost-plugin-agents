@@ -156,6 +156,7 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, args R
 	}
 
 	if len(posts) == 0 {
+		mcpContext.recordSourceChannels()
 		return "no posts found", nil
 	}
 
@@ -164,6 +165,7 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, args R
 	if len(posts) > 0 {
 		channel, _, err := client.GetChannel(ctx, posts[0].ChannelId)
 		if err == nil {
+			mcpContext.recordSourceChannels(channel)
 			channelName = channel.DisplayName
 			// DM and group message channels have no team.
 			if channel.TeamId != "" {
@@ -172,6 +174,8 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, args R
 					teamName = team.DisplayName
 				}
 			}
+		} else {
+			mcpContext.recordSourceChannels(&model.Channel{Id: posts[0].ChannelId})
 		}
 	}
 

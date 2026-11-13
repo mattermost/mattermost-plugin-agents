@@ -48,6 +48,14 @@ const (
 	EventTypeToolCallBatch
 )
 
+// StreamEnd is the value of an EventTypeEnd event when the producer needs to
+// tell the post writer how to close. A nil value keeps the historical close.
+type StreamEnd struct {
+	// OmitEmptyFallback leaves an empty post message empty. Used when a
+	// channel answer is intentionally not produced yet.
+	OmitEmptyFallback bool
+}
+
 // ToolCallPhase is where a tool call batch is in its lifecycle.
 type ToolCallPhase string
 

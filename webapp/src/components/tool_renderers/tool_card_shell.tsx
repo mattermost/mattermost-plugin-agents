@@ -256,6 +256,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
     const isError = tool.status === ToolCallStatus.Error;
     const isRejected = tool.status === ToolCallStatus.Rejected;
     const isResultApprovalStage = approvalStage === 'result';
+    const keepPrivateDefault = isResultApprovalStage && Boolean(tool.audience_review);
     const showDecisionButtons = Boolean(onApprove && onReject) &&
         (isResultApprovalStage ||
             (approvalStage === 'call' && isPending && !tool.would_auto_execute));
@@ -316,7 +317,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                         >
                             <span>
                                 <Button
-                                    emphasis='primary'
+                                    emphasis={keepPrivateDefault ? 'tertiary' : 'primary'}
                                     size='x-small'
                                     leadingIcon={<Icon glyph={<GlobeIcon/>}/>}
                                     onClick={onApprove}
@@ -330,7 +331,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                             </span>
                         </WithTooltip>
                         <Button
-                            emphasis='tertiary'
+                            emphasis={keepPrivateDefault ? 'primary' : 'tertiary'}
                             size='x-small'
                             leadingIcon={<Icon glyph={<LockIcon/>}/>}
                             onClick={onReject}

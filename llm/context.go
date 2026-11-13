@@ -91,6 +91,17 @@ type Context struct {
 	// tools can run, so tools gated on that flag may rely on it.
 	ResponsePostID string
 
+	// DestinationHasNoGuests is true only when the destination channel is known
+	// to contain no guests. Other public channels of the destination team are
+	// readable by that audience only when this is set. Unknown fails closed.
+	DestinationHasNoGuests bool
+
+	// HoldChannelAnswer, when set, is consulted after a tool round has run.
+	// A true result stops the runner before the next completion, so that
+	// completion's text is not written to the channel. The caller keeps the
+	// draft for the requester until a share decision is recorded.
+	HoldChannelAnswer func(calls []ToolCall) bool
+
 	// ToolCatalog holds request-scoped inputs used while building the tool store.
 	ToolCatalog ToolCatalogContext
 	// ToolRuntime holds non-prompt tool execution state for this turn.

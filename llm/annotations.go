@@ -9,6 +9,8 @@ type AnnotationType string
 const (
 	// AnnotationTypeURLCitation represents a web search citation
 	AnnotationTypeURLCitation AnnotationType = "url_citation"
+	// AnnotationTypeChannel marks a passage drawn from a Mattermost channel.
+	AnnotationTypeChannel AnnotationType = "mattermost_channel"
 )
 
 // Annotation represents an inline annotation/citation in the response text.
@@ -22,4 +24,10 @@ type Annotation struct {
 	Title      string         `json:"title,omitempty"`      // Source title (for url_citation)
 	CitedText  string         `json:"cited_text,omitempty"` // Optional: text being cited (for context)
 	Index      int            `json:"index"`                // Display index (1-based for UI)
+
+	// ChannelID, ChannelName, and Private describe a mattermost_channel source.
+	// ChannelName is shown only to the requester.
+	ChannelID   string `json:"channel_id,omitempty"`
+	ChannelName string `json:"channel_name,omitempty"`
+	Private     bool   `json:"private,omitempty"`
 }
