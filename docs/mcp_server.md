@@ -195,7 +195,7 @@ The server exposes tools in these areas:
 
 - **Posts and threads:** read, search, create, reply, edit, delete, pin, save, thread and mention lookups
 - **Channels:** find, read, create, update, archive, members, bookmarks, unread state
-- **Teams, users, and groups:** look up and search people and teams, membership and roles
+- **Teams, users, and groups:** look up and search people, teams, and groups; create and update custom groups; membership and roles
 - **Direct and group messages:** send a DM or group message
 - **Scheduled posts and reminders:** create, update, and list scheduled posts, set post reminders
 - **Files:** file info, post attachments, file search, and reading file contents

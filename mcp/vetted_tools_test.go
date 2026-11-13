@@ -111,6 +111,8 @@ func TestSeedVettedToolConfigsSpotChecks(t *testing.T) {
 		// Write tools are never seeded.
 		requireNoToolConfig(t, configs, "create_post")
 		requireNoToolConfig(t, configs, "update_user")
+		requireNoToolConfig(t, configs, "create_group")
+		requireNoToolConfig(t, configs, "update_group")
 		// Credential-exposing reads stay at the runtime default (policy="ask").
 		requireNoToolConfig(t, configs, "get_file_link")
 		requireNoToolConfig(t, configs, "list_incoming_webhooks")
