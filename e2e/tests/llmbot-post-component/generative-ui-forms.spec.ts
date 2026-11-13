@@ -8,12 +8,15 @@
 
 import { expect, Locator, Page } from '@playwright/test';
 import { containerTest } from 'helpers/container-fixture';
+import { withDeadline } from 'helpers/deadline';
 
 import { AIMockHarness, RunAIMockHarness, setupAimockTestPage } from 'helpers/aimock-harness';
 import { buildTitleFixture } from 'helpers/aimock-fixtures';
 import { MattermostPage } from 'helpers/mm';
 import MattermostContainer from 'helpers/mmcontainer';
 import { AIMOCK_BOT_NAME } from 'helpers/plugincontainer';
+
+const HARNESS_START_MS = 300000;
 
 const REQUESTER_USERNAME = 'regularuser';
 const ONLOOKER_USERNAME = 'seconduser';
@@ -71,11 +74,11 @@ function formIn(scope: Locator): Locator {
 }
 
 const formTest = containerTest(async (own) => {
-    const harness = own(await RunAIMockHarness({
+    const harness = own(await withDeadline('Starting the aimock harness', HARNESS_START_MS, () => RunAIMockHarness({
         fixtures,
         bot: { skills: { generativeUI: true } },
         config: { enableGenerativeUI: true },
-    }));
+    })));
     return { harness };
 });
 

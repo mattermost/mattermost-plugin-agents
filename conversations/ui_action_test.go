@@ -360,3 +360,53 @@ func TestHandleUIActionRollsBackWhenTheTurnCannotStart(t *testing.T) {
 	assert.NotEmpty(t, result.PostID)
 	waitForStreams(t, env, 1)
 }
+
+func TestHandleUIActionMatchesTheReplyAsTheWebappRendersIt(t *testing.T) {
+	fenced := func(program string) string { return "```openui-lang\n" + program + "\n```" }
+	tests := []struct {
+		name       string
+		blocks     []conversation.ContentBlock
+		submission genui.Submission
+	}{
+		{
+			name: "text after a server tool starts a new round",
+			blocks: []conversation.ContentBlock{
+				{Type: conversation.BlockTypeText, Text: "Let me check."},
+				{Type: conversation.BlockTypeServerToolUse, ServerTool: &llm.ServerToolUse{ID: "s1", Tool: "web_search", Status: "completed"}},
+				{Type: conversation.BlockTypeText, Text: fenced("root = Stack([b])\nb = Buttons([Button(\"Go\")])")},
+			},
+			submission: genui.Submission{Label: "Go", Fields: []genui.Field{}},
+		},
+		{
+			name: "a fence split across text blocks of one round stays whole",
+			blocks: []conversation.ContentBlock{
+				{Type: conversation.BlockTypeText, Text: "Pick one.\n\n```openui-lang\nroot = Stack([b])\n"},
+				{Type: conversation.BlockTypeText, Text: "b = Buttons([Button(\"Go\")])\n```"},
+			},
+			submission: genui.Submission{Label: "Go", Fields: []genui.Field{}},
+		},
+		{
+			name: "button label with surrounding whitespace",
+			blocks: []conversation.ContentBlock{
+				{Type: conversation.BlockTypeText, Text: fenced("root = Stack([b])\nb = Buttons([Button(\" Go \")])")},
+			},
+			submission: genui.Submission{Label: " Go ", Fields: []genui.Field{}},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			env := setupDMTestEnv(t, dmMakeTextStream("Done."))
+			env.streamService.finished = make(chan string, 4)
+			_, reply := setupGenUIReply(t, env, env.channel, genUIReplyOptions{replyBlocks: tc.blocks})
+
+			result, err := env.conversations.HandleUIAction(context.Background(), env.userID, reply, env.channel, conversations.UIActionRequest{
+				Submission:     tc.submission,
+				IdempotencyKey: "key-00000001",
+			})
+			require.NoError(t, err)
+			assert.NotEmpty(t, result.PostID)
+			waitForStreams(t, env, 1)
+		})
+	}
+}

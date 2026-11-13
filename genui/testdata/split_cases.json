@@ -43,5 +43,10 @@
     "name": "a closing fence of the other character does not close the block",
     "message": "```openui-lang\nroot = Stack([a])\n~~~\n```",
     "blocks": ["root = Stack([a])\n~~~"]
+  },
+  {
+    "name": "opener ending in a non-breaking space is not a ui fence",
+    "message": "```openui\u00a0\nroot = Stack([a])\n```\n```openui\nroot = Stack([b])\n```",
+    "blocks": ["root = Stack([b])"]
   }
 ]

@@ -164,7 +164,7 @@ func (c *Conversations) handleUIAction(ctx context.Context, userID string, post 
 	if submission.Block >= len(blocks) {
 		return nil, fmt.Errorf("%w: the reply has no block %d", genui.ErrInvalidSubmission, submission.Block)
 	}
-	if err = submission.MatchProgram(blocks[submission.Block]); err != nil {
+	if err = req.Submission.MatchProgram(blocks[submission.Block]); err != nil {
 		return nil, err
 	}
 
@@ -218,7 +218,8 @@ func (c *Conversations) runUIActionTurn(ctx context.Context, bot *bots.Bot, post
 // reply is the conversation's latest turn and is finished: persisted (so not
 // streaming, on any node) and not waiting on tool decisions. Turns that
 // precede the anchor in the same response (tool rounds) are included, the way
-// the webapp renders them.
+// the webapp renders them: each rendered round starts on its own line, so
+// fences keep the indexes the webapp counts.
 func latestReplyText(turns []store.Turn, postID string) (string, error) {
 	sorted := slices.Clone(turns)
 	slices.SortFunc(sorted, func(a, b store.Turn) int { return a.Sequence - b.Sequence })
@@ -243,6 +244,11 @@ func latestReplyText(turns []store.Turn, postID string) (string, error) {
 	}
 
 	var text strings.Builder
+	roundBreak := func() {
+		if text.Len() > 0 && !strings.HasSuffix(text.String(), "\n") {
+			text.WriteString("\n")
+		}
+	}
 	for i := start; i <= anchor; i++ {
 		if sorted[i].Role != "assistant" {
 			continue
@@ -251,12 +257,27 @@ func latestReplyText(turns []store.Turn, postID string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("failed to unmarshal turn %s content: %w", sorted[i].ID, err)
 		}
+		roundBreak()
+		roundHasText, roundHasActivity := false, false
 		for _, b := range blocks {
 			if i == anchor && b.Type == conversation.BlockTypeToolUse && b.Status == conversation.StatusPending {
 				return "", fmt.Errorf("%w: the reply is waiting on tool calls", ErrStaleUIAction)
 			}
-			if b.Type == conversation.BlockTypeText {
+			switch {
+			case b.Type == conversation.BlockTypeThinking && b.Text != "":
+				if roundHasText || roundHasActivity {
+					roundBreak()
+					roundHasText, roundHasActivity = false, false
+				}
+			case b.Type == conversation.BlockTypeServerToolUse && b.ServerTool != nil:
+				if roundHasText {
+					roundBreak()
+					roundHasText = false
+				}
+				roundHasActivity = true
+			case b.Type == conversation.BlockTypeText:
 				text.WriteString(b.Text)
+				roundHasText = roundHasText || b.Text != ""
 			}
 		}
 	}
