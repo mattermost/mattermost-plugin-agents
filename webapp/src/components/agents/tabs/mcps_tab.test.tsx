@@ -302,6 +302,7 @@ describe('McpsTab', () => {
         expect(mockedGetUserMCPTools).toHaveBeenCalledWith({
             agentId: 'agent-1',
             serviceAccount: true,
+            agentConfig: true,
         });
         expect(screen.getByText('Connected')).not.toBeNull();
         expect(screen.queryByRole('button', {name: 'Connect'})).toBeNull();

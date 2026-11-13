@@ -954,10 +954,16 @@ export async function fetchModels(serviceType: string, apiKey: string, apiURL: s
 export async function getUserMCPTools(opts?: {
     agentId?: string;
     serviceAccount?: boolean;
+
+    // Agent editor catalog: system admins also see servers whose access policy denies them.
+    agentConfig?: boolean;
 }): Promise<UserMCPToolsResponse> {
     const params = new URLSearchParams();
     if (opts?.serviceAccount) {
         params.set('catalog', 'service_account');
+    }
+    if (opts?.agentConfig) {
+        params.set('purpose', 'agent_config');
     }
     if (opts?.agentId) {
         params.set('agent_id', opts.agentId);

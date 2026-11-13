@@ -260,10 +260,17 @@ func (c *Checker) IsAvailable(ctx context.Context, actingUserID string) bool {
 	return available
 }
 
+// isSystemAdmin fails closed (false) without a plugin API.
+func (c *Checker) isSystemAdmin(userID string) bool {
+	return c.papi != nil && c.papi.HasPermissionTo(userID, model.PermissionManageSystem)
+}
+
 // ValidateAgentWrite rejects attribute-based mode when ABAC is unavailable, and
 // newly-assigned service/MCP refs the acting user may not use. prev is nil on
 // create; only changed assignments are checked. AutoEnableNewMCPTools skips
-// write-time MCP checks — runtime per-user filtering is the gate.
+// write-time MCP checks — runtime per-user filtering is the gate. System admins
+// author MCP server policies, so they may assign servers they cannot use
+// themselves; runtime per-user filtering still applies.
 func (c *Checker) ValidateAgentWrite(ctx context.Context, actingUserID string, cfg, prev *llm.BotConfig) error {
 	if cfg.UserAccessLevel == llm.UserAccessLevelAttributeBased && !c.IsAvailable(ctx, actingUserID) {
 		return ErrABACUnavailable
@@ -283,7 +290,7 @@ func (c *Checker) ValidateAgentWrite(ctx context.Context, actingUserID string, c
 	}
 
 	newOrigins := newlyReferencedMCPOrigins(cfg, prev)
-	if len(newOrigins) == 0 {
+	if len(newOrigins) == 0 || c.isSystemAdmin(actingUserID) {
 		return nil
 	}
 
