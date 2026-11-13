@@ -316,7 +316,8 @@ interface ButtonProps {
 }
 
 // The server stores a submitted label without control characters or
-// surrounding whitespace (genui.Submission.Normalize); compare it that way.
+// surrounding whitespace (genui.Submission.Normalize), while a click not yet
+// echoed back still carries the rendered label; compare both that way.
 const storedLabel = (label: string) => label.replace(/\p{Cc}/gu, '').trim();
 
 /**
@@ -329,7 +330,7 @@ export const ButtonView = ({label, variant}: ButtonProps) => {
     const fields = useFormFields();
     const interaction = useBlockInteraction();
     const isStreaming = useIsStreaming();
-    const chosen = interaction.submitted !== null && interaction.submitted.form === formName && interaction.submitted.label === storedLabel(label);
+    const chosen = interaction.submitted !== null && interaction.submitted.form === formName && storedLabel(interaction.submitted.label) === storedLabel(label);
 
     const onClick = () => {
         const values = fields ? fields.collect() : [];

@@ -191,10 +191,13 @@ describe('generative UI forms', () => {
         expect(submit).not.toHaveBeenCalled();
     });
 
-    it('marks a button chosen when its label has surrounding whitespace the server trimmed', () => {
+    it.each([
+        {name: 'the label the server stored', submittedLabel: 'Go'},
+        {name: 'the label just clicked, not yet stored', submittedLabel: ' Go '},
+    ])('marks a padded button chosen from $name', ({submittedLabel}) => {
         const padded = '```openui-lang\nroot = Stack([form])\nform = Form("pick", [], [Button(" Go "), Button("Stop")])\n```';
         renderForm(
-            {kind: 'submitted', submission: {source_post_id: 'post1', block: 0, form: 'pick', label: 'Go', fields: []}},
+            {kind: 'submitted', submission: {source_post_id: 'post1', block: 0, form: 'pick', label: submittedLabel, fields: []}},
             jest.fn(),
             {message: padded},
         );
