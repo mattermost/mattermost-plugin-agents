@@ -23,13 +23,15 @@ import {
 } from './use_agent_threads';
 
 jest.mock('@/client', () => ({
+    getAIBots: jest.fn(),
     getAIThreads: jest.fn(),
     renameConversation: jest.fn(),
     archiveConversation: jest.fn(),
 }));
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const {getAIThreads, renameConversation, archiveConversation} = require('@/client');
+const {getAIBots, getAIThreads, renameConversation, archiveConversation} = require('@/client');
+const mockGetAIBots = getAIBots as jest.Mock;
 const mockGetAIThreads = getAIThreads as jest.Mock;
 const mockRenameConversation = renameConversation as jest.Mock;
 const mockArchiveConversation = archiveConversation as jest.Mock;
@@ -368,6 +370,7 @@ describe('stored AI threads', () => {
                 await fetchAIThreads(store.dispatch);
             });
             mockGetAIThreads.mockClear();
+            mockGetAIBots.mockReset().mockResolvedValue({bots: []});
             return {store, sync: createAgentThreadsSync(store as never)};
         };
         const end = (postId: string) => ({data: {post_id: postId, control: 'end'}} as never);
@@ -411,6 +414,17 @@ describe('stored AI threads', () => {
             }
             await settle();
             expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
+        });
+
+        test.each([
+            {name: 'a chat the list does not have yet', postId: 'unlisted', refetch: true},
+            {name: 'a listed chat', postId: 'listed', refetch: false},
+        ])('a streaming reply in $name refetches the bot list: $refetch', async ({postId, refetch}) => {
+            const {sync} = await setup();
+            sync.handlePostUpdate({data: {post_id: postId, control: 'start'}} as never);
+            sync.handlePostUpdate({data: {post_id: postId, next: 'chunk'}} as never);
+            await settle();
+            expect(mockGetAIBots).toHaveBeenCalledTimes(refetch ? 1 : 0);
         });
 
         test('a burst of finished turns costs one request', async () => {

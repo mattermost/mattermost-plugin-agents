@@ -454,6 +454,7 @@ type mockConversationStore struct {
 	err           error                   // if set, all methods return this error
 	renameErr     error                   // if set, RenameConversation returns this error
 	archiveWrites int                     // ArchiveConversation calls that changed a row
+	chattedBotIDs []string                // returned by GetBotDMBotIDsForUser
 }
 
 func newMockConversationStore() *mockConversationStore {
@@ -574,6 +575,13 @@ func (m *mockConversationStore) GetBotDMConversationSummariesForUser(_ string, _
 		return nil, m.err
 	}
 	return []store.ConversationSummary{}, nil
+}
+
+func (m *mockConversationStore) GetBotDMBotIDsForUser(_ string) ([]string, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.chattedBotIDs, nil
 }
 
 // mockAgentStore is a minimal in-memory implementation of AgentStore for testing.
@@ -1885,6 +1893,98 @@ func TestHandleGetAIBotsIsDefaultFlag(t *testing.T) {
 	}
 	require.True(t, byUsername["ai"].IsDefault, "configured default bot should have isDefault=true")
 	require.False(t, byUsername["other"].IsDefault, "non-default bot should have isDefault=false")
+}
+
+func TestHandleGetAIBotsUserRelationFlags(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	const (
+		mineID    = "minebotuserid1234567890123"
+		theirsID  = "theirsbotuserid12345678901"
+		configID  = "configbotuserid12345678901"
+		chattedID = "chattedbotuserid1234567890"
+	)
+	newBot := func(username, creatorID, botUserID string) *bots.Bot {
+		return bots.NewBot(
+			llm.BotConfig{Name: username, DisplayName: username, CreatorID: creatorID},
+			llm.ServiceConfig{},
+			&model.Bot{UserId: botUserID, Username: username, DisplayName: username},
+			nil,
+		)
+	}
+	e.setBots(
+		newBot("mine", testUserID, mineID),
+		newBot("theirs", "otheruserid123456789012345", theirsID),
+		newBot("config", "", configID),
+		newBot("chatted", "otheruserid123456789012345", chattedID),
+	)
+	e.conversationStore.chattedBotIDs = []string{chattedID}
+
+	e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
+	e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+	request := httptest.NewRequest(http.MethodGet, "/ai_bots", nil)
+	request.Header.Add("Mattermost-User-ID", testUserID)
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var raw struct {
+		Bots []map[string]any `json:"bots"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &raw))
+	byUsername := make(map[string]map[string]any, len(raw.Bots))
+	for _, b := range raw.Bots {
+		byUsername[b["username"].(string)] = b
+	}
+
+	tests := []struct {
+		username     string
+		wantIsCreate bool
+		wantHasChats bool
+	}{
+		{username: "mine", wantIsCreate: true},
+		{username: "theirs"},
+		{username: "config"},
+		{username: "chatted", wantHasChats: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.username, func(t *testing.T) {
+			bot := byUsername[tt.username]
+			require.NotNil(t, bot)
+			require.Equal(t, tt.wantIsCreate, bot["isCreator"])
+			require.Equal(t, tt.wantHasChats, bot["hasChats"])
+		})
+	}
+}
+
+func TestHandleGetAIBotsFailsWhenChatLookupFails(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	e.setBots(bots.NewBot(
+		llm.BotConfig{Name: "mine", DisplayName: "mine", CreatorID: testUserID},
+		llm.ServiceConfig{},
+		&model.Bot{UserId: "minebotuserid1234567890123", Username: "mine", DisplayName: "mine"},
+		nil,
+	))
+	e.conversationStore.err = fmt.Errorf("db down")
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+	e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+	request := httptest.NewRequest(http.MethodGet, "/ai_bots", nil)
+	request.Header.Add("Mattermost-User-ID", testUserID)
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
 }
 
 func TestToolCallDMAllowedWhenChannelToolCallingDisabled(t *testing.T) {

@@ -734,6 +734,7 @@ func TestGetBotDMConversationSummariesForUser(t *testing.T) {
 	type convSpec struct {
 		key       string
 		user      string // "self" or "other"
+		bot       string // "" for the main bot, "other" for the second one
 		root      string // "" for no root post, else a key of the channels map
 		channelID bool   // whether the conversation records the root's channel
 		updatedAt int64
@@ -744,6 +745,9 @@ func TestGetBotDMConversationSummariesForUser(t *testing.T) {
 		convs []convSpec
 		limit int
 		want  []string
+
+		// wantBots is "bot" and/or "other"; the bots with a chat in the user's DM.
+		wantBots []string
 	}{
 		{
 			name: "chats in the DM with the conversation's bot are listed",
@@ -751,16 +755,18 @@ func TestGetBotDMConversationSummariesForUser(t *testing.T) {
 				{key: "older", user: "self", root: "botDM", channelID: true, updatedAt: 1000},
 				{key: "newer", user: "self", root: "botDM", channelID: true, updatedAt: 2000},
 			},
-			limit: 60,
-			want:  []string{"newer", "older"},
+			limit:    60,
+			want:     []string{"newer", "older"},
+			wantBots: []string{"bot"},
 		},
 		{
 			name: "analysis delivered into the bot DM without a channel ID is listed",
 			convs: []convSpec{
 				{key: "summary", user: "self", root: "botDM", updatedAt: 1000},
 			},
-			limit: 60,
-			want:  []string{"summary"},
+			limit:    60,
+			want:     []string{"summary"},
+			wantBots: []string{"bot"},
 		},
 		{
 			name: "channel threads are excluded with or without a channel ID",
@@ -769,40 +775,66 @@ func TestGetBotDMConversationSummariesForUser(t *testing.T) {
 				{key: "meeting", user: "self", root: "channel", updatedAt: 2000},
 				{key: "chat", user: "self", root: "botDM", channelID: true, updatedAt: 1000},
 			},
-			limit: 60,
-			want:  []string{"chat"},
+			limit:    60,
+			want:     []string{"chat"},
+			wantBots: []string{"bot"},
 		},
 		{
 			name: "a bot mentioned in a DM between people is excluded",
 			convs: []convSpec{
 				{key: "peopleDM", user: "self", root: "peopleDM", channelID: true, updatedAt: 1000},
 			},
-			limit: 60,
-			want:  []string{},
+			limit:    60,
+			want:     []string{},
+			wantBots: []string{},
 		},
 		{
 			name: "a thread in another bot's DM is excluded",
 			convs: []convSpec{
 				{key: "otherBot", user: "self", root: "otherBotDM", channelID: true, updatedAt: 1000},
 			},
-			limit: 60,
-			want:  []string{},
+			limit:    60,
+			want:     []string{},
+			wantBots: []string{},
 		},
 		{
 			name: "conversations without a root post are excluded",
 			convs: []convSpec{
 				{key: "unrooted", user: "self", updatedAt: 1000},
 			},
-			limit: 60,
-			want:  []string{},
+			limit:    60,
+			want:     []string{},
+			wantBots: []string{},
 		},
 		{
 			name: "another user's chat with the bot is excluded",
 			convs: []convSpec{
 				{key: "theirs", user: "other", root: "otherUserBotDM", channelID: true, updatedAt: 1000},
 			},
-			limit: 60,
-			want:  []string{},
+			limit:    60,
+			want:     []string{},
+			wantBots: []string{},
+		},
+		{
+			name: "several chats with one bot",
+			convs: []convSpec{
+				{key: "a", user: "self", root: "botDM", channelID: true, updatedAt: 1000},
+				{key: "b", user: "self", root: "botDM", channelID: true, updatedAt: 2000},
+				{key: "c", user: "self", root: "botDM", channelID: true, updatedAt: 3000},
+			},
+			limit:    1,
+			want:     []string{"c"},
+			wantBots: []string{"bot"},
+		},
+		{
+			name: "bots with chats outside the summary page are still reported",
+			convs: []convSpec{
+				{key: "olderOther", user: "self", bot: "other", root: "otherBotDM", channelID: true, updatedAt: 1000},
+				{key: "newer", user: "self", root: "botDM", channelID: true, updatedAt: 2000},
+			},
+			limit:    1,
+			want:     []string{"newer"},
+			wantBots: []string{"bot", "other"},
 		},
 		{
 			name: "the limit applies after channel threads are filtered out",
@@ -811,8 +843,9 @@ func TestGetBotDMConversationSummariesForUser(t *testing.T) {
 				{key: "mention2", user: "self", root: "channel", channelID: true, updatedAt: 2000},
 				{key: "chat", user: "self", root: "botDM", channelID: true, updatedAt: 1000},
 			},
-			limit: 1,
-			want:  []string{"chat"},
+			limit:    1,
+			want:     []string{"chat"},
+			wantBots: []string{"bot"},
 		},
 	}
 
@@ -846,6 +879,9 @@ func TestGetBotDMConversationSummariesForUser(t *testing.T) {
 				conv := makeConversation(func(c *Conversation) {
 					c.UserID = users[spec.user]
 					c.BotID = botID
+					if spec.bot == "other" {
+						c.BotID = otherBotID
+					}
 					c.UpdatedAt = spec.updatedAt
 				})
 				if spec.root != "" {
@@ -871,6 +907,18 @@ func TestGetBotDMConversationSummariesForUser(t *testing.T) {
 				got[i] = keyByID[summary.ID]
 			}
 			assert.Equal(t, tt.want, got)
+
+			wantBotIDs := []string{}
+			for _, label := range tt.wantBots {
+				if label == "other" {
+					wantBotIDs = append(wantBotIDs, otherBotID)
+				} else {
+					wantBotIDs = append(wantBotIDs, botID)
+				}
+			}
+			botIDs, err := s.GetBotDMBotIDsForUser(users["self"])
+			require.NoError(t, err)
+			assert.ElementsMatch(t, wantBotIDs, botIDs, "each bot is reported once, whatever the summary limit")
 		})
 	}
 }
