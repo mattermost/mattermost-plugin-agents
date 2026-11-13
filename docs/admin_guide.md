@@ -9,7 +9,7 @@ An agent is a Mattermost bot backed by an LLM that you choose, including a model
 1. An **LLM service** holds the connection to a provider: type, credentials, default model, and optional fallback. You configure services in the System Console.
 2. An **agent** is a bot with a name, instructions, a model, access rules, and tool grants. Agents use a service. You create them on the **Agents** page.
 3. **Tools** give an agent abilities. Admins decide which tools exist, which need approval, and which users can reach each MCP server.
-4. **Users** talk to agents in direct messages, the Agents pane, and channels. Every tool call runs with the permissions of the person who asked, unless an agent uses a shared service account for external MCP servers. Credentials in a remote server's regular **Headers** are also shared by every user. See [Tool approval and credentials](tool_approval.md).
+4. **Users** talk to agents in direct messages, the Agents pane, and channels. Every tool call runs with the permissions of the person who asked, unless an agent uses a shared service account for external MCP servers. Tools from plugin-registered servers receive the requester's identity, and the source plugin enforces its own permissions. Credentials in a remote server's regular **Headers** are also shared by every user. See [Tool approval and credentials](tool_approval.md).
 
 Custom instructions can't grant or restrict access. Use the agent's **Access** tab, MCP access policies, and tool approval policies.
 

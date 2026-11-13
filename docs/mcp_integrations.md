@@ -30,7 +30,7 @@ Everything is under **System Console > Plugins > Agents > Model Context Protocol
    | **OAuth Credentials (Optional)** | **Client ID** and **Client Secret** for servers that need a pre-registered OAuth app, such as GitHub. Leave empty if the server supports automatic registration. |
 
 3. Select **Save and connect**. Mattermost saves the server and connects to it as you. For an OAuth server, select **Sign in** to complete the provider's sign-in, which connects only your account.
-4. In **Review tools**, check each tool's approval policy and select **Accept and save**. Tools are grouped as **Read-only tools** and **Write tools**, and each group and **All tools** has a control that sets every tool in it. Tools the server marks read-only (the `readOnlyHint` annotation) start at **Auto Run (DM)**. All others start at **Ask Every Time**. Annotations never change how a tool runs until you save a policy.
+4. In **Review tools**, check each tool's approval policy and select **Accept and save**. Tools are grouped as **Read-only tools** and **Write tools**, and each group and **All tools** has a control that sets every tool in it. Tools the server marks read-only (the `readOnlyHint` annotation) start at **Auto Run (DM)**. All others start at **Ask Every Time**, except tools with a curated default, such as read tools on Atlassian and Figma. Annotations never change how a tool runs until you save a policy.
 
 To save without connecting, select **Skip connecting**, then **Save without connecting**. The page's **Save** button doesn't add the server. Until you review them, the server's tools ask before every run, except for curated defaults for Atlassian, Figma, and the embedded Mattermost server.
 
@@ -119,7 +119,7 @@ The tools an agent sees for a request are the intersection of:
 4. The user's own provider choices in the **Tools** menu, except for service account agents.
 5. Context rules, such as no tools in channels unless **Enable Channel Mention Tool Calling** is on.
 
-Granting a server or tool to an agent never bypasses approval policy or the user's permissions on the target system. If a disconnected OAuth server exposes no tools yet, you can still turn it on for an agent. The agent gets every tool the server exposes once a user connects.
+Granting a server or tool to an agent never bypasses approval policy. For OAuth-backed servers it also never bypasses the user's permissions on the target system. With service account authentication or a shared credential in **Headers**, every user who can use the agent acts with that credential's access. See [Tool approval and credentials](tool_approval.md). If a disconnected OAuth server exposes no tools yet, you can still turn it on for an agent. The agent gets every tool the server exposes once a user connects.
 
 ## Service account authentication
 
