@@ -1076,3 +1076,17 @@ func TestGetConversationTurnTextReflectsAnchoredPost(t *testing.T) {
 		})
 	}
 }
+
+func TestTurnsToResponseIncludesStatus(t *testing.T) {
+	postID := "post-id"
+	turns := []store.Turn{
+		{ID: "streaming-turn", PostID: &postID, Role: "assistant", Content: json.RawMessage(`[]`), Status: store.TurnStatusStreaming},
+		{ID: "complete-turn", Role: "assistant", Content: json.RawMessage(`[]`), Status: store.TurnStatusComplete},
+	}
+
+	resp, err := turnsToResponse(turns, false, nil)
+	require.NoError(t, err)
+	require.Len(t, resp, 2)
+	require.Equal(t, store.TurnStatusStreaming, resp[0].Status)
+	require.Equal(t, store.TurnStatusComplete, resp[1].Status)
+}
