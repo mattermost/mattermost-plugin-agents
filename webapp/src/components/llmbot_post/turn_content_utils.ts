@@ -51,6 +51,10 @@ export function statusStringToEnum(status: ConvToolCallStatus | undefined): Tool
  * the response, so tool-round turns that WriteToolTurns persisted during the
  * stream sit BEFORE it. We walk backwards from the anchor, stopping at the
  * user turn that introduced this response, and include the anchor itself.
+ *
+ * While the response is still streaming the anchor exists from the start and
+ * sits BEFORE the rounds written so far; those are matched by run_post_id and
+ * placed ahead of the anchor.
  */
 function collectResponseTurns(
     conversation: ConversationResponse,
@@ -76,6 +80,11 @@ function collectResponseTurns(
             break;
         }
         out.unshift(t);
+    }
+    for (let i = anchorIdx + 1; i < sorted.length; i++) {
+        if (sorted[i].run_post_id === postId) {
+            out.push(sorted[i]);
+        }
     }
     out.push(sorted[anchorIdx]);
     return out;

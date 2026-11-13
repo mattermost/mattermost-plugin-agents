@@ -58,6 +58,10 @@ type TurnResponse struct {
 	// Status is the turn lifecycle state: "streaming" while a response is
 	// being generated, then "complete" or "interrupted".
 	Status string `json:"status"`
+	// RunPostID is the response post whose run wrote a tool-round turn. While
+	// that response streams, its anchor sits before these turns, so the
+	// webapp matches them by this ID.
+	RunPostID *string `json:"run_post_id,omitempty"`
 }
 
 // handleGetConversation returns a conversation and its turns with privacy filtering applied.
@@ -174,6 +178,7 @@ func turnsToResponse(turns []store.Turn, filterForNonRequester bool) ([]TurnResp
 			Sequence:      turn.Sequence,
 			ApprovalState: approvalStateForTurn(turn, turns),
 			Status:        turn.Status,
+			RunPostID:     turn.RunPostID,
 		}
 	}
 	return result, nil
