@@ -602,19 +602,21 @@ func AssembleRequest(
 						break
 					}
 				}
-				if hasInterruptedToolCall(turns[anchorIdx]) {
-					// The scrub keeps the calls whose outcome is unknown; this request
-					// is built before it, so replay the run's turns here.
-					kept := turns[:truncateAt:truncateAt]
-					for _, turn := range turns[truncateAt : anchorIdx+1] {
-						if turn.RunPostID == nil || *turn.RunPostID == excludeID {
-							kept = append(kept, turn)
-						}
+				// A scrub keeps calls whose outcome is unknown as history, so the
+				// request replays those, and the whole run when the anchor itself
+				// holds them (the scrub that follows this build keeps them too).
+				carryRun := hasInterruptedToolCall(turns[anchorIdx])
+				kept := turns[:truncateAt:truncateAt]
+				for _, turn := range turns[truncateAt : anchorIdx+1] {
+					isAnchor := turn.PostID != nil && *turn.PostID == excludeID
+					switch {
+					case carryRun && (turn.RunPostID == nil || *turn.RunPostID == excludeID):
+						kept = append(kept, turn)
+					case !isAnchor && turn.PostID == nil && hasInterruptedToolCall(turn):
+						kept = append(kept, turn)
 					}
-					turns = kept
-				} else {
-					turns = turns[:truncateAt]
 				}
+				turns = kept
 			}
 		}
 	}

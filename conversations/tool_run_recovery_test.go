@@ -285,4 +285,15 @@ func TestApprovalRunOnDeadNodeIsRecovered(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, historyCalls, "the scrub keeps the interrupted call as history")
+
+	regeneratedID := anchor().ID
+	require.NoError(t, c.HandleRegenerate(ctx, userID, storedPost(), channel), "the regenerated response can be regenerated again")
+	require.Eventually(t, func() bool {
+		current, lookupErr := s.GetTurnByPostID(botPostID)
+		return lookupErr == nil && current != nil && current.ID != regeneratedID && current.Status == store.TurnStatusComplete
+	}, 10*time.Second, 20*time.Millisecond, "the second regenerate must finalize")
+	requests = anthropic.requests()
+	require.Len(t, requests, 2)
+	assert.Contains(t, string(requests[1]), conversation.InterruptedToolResult, "a later regenerate still tells the model the call's outcome is unknown")
+	assert.Empty(t, llmtest.AnthropicRequestViolations(requests[1]), "Anthropic would reject the second regenerate request:\n%s", requests[1])
 }

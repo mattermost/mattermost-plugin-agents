@@ -414,6 +414,16 @@ ORDER BY Sequence ASC`, conversationID, postID); err != nil {
 				continue
 			}
 		}
+		if turn.PostID == nil {
+			// History a former scrub kept: still the only record of calls that
+			// may have run.
+			if kept, keepErr := interruptedToolCallsOnly(turn.Content); keepErr != nil {
+				err = keepErr
+				return err
+			} else if kept != "" {
+				continue
+			}
+		}
 		switch {
 		case turn.RunPostID != nil:
 			if *turn.RunPostID == postID {

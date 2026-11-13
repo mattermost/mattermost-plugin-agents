@@ -3469,6 +3469,32 @@ func TestRegenerateCarriesInterruptedApprovedCalls(t *testing.T) {
 	retry, err := svc.BuildRegenerateRequest(conv, &llm.Context{}, "post-a", BuildOptions{AllowUnsharedToolContent: true})
 	require.NoError(t, err)
 	assert.Equal(t, InterruptedToolResult, callResults(retry)["tc1"], "a retry after a failed regenerate still knows the call may have run")
+
+	// The regenerate succeeds, and the response is regenerated again later.
+	require.NoError(t, s.CreateTurnAutoSequence(&store.Turn{
+		ID: model.NewId(), ConversationID: convID, PostID: new("post-a"), Role: "assistant",
+		Content: json.RawMessage(`[{"type":"text","text":"New answer"}]`), CreatedAt: model.GetMillis(),
+	}))
+	later, err := svc.BuildRegenerateRequest(conv, &llm.Context{}, "post-a", BuildOptions{AllowUnsharedToolContent: true})
+	require.NoError(t, err)
+	assert.Equal(t, InterruptedToolResult, callResults(later)["tc1"], "a later regenerate still knows the call may have run")
+	turns, err = s.GetTurnsForConversation(convID)
+	require.NoError(t, err)
+	require.Len(t, turns, 2, "the later scrub removes the old answer but keeps the interrupted call")
+	assert.Equal(t, "tc1", mustToolUseIDs(t, turns[1])[0])
+}
+
+func mustToolUseIDs(t *testing.T, turn store.Turn) []string {
+	t.Helper()
+	blocks, err := UnmarshalBlocks(turn.Content)
+	require.NoError(t, err)
+	var ids []string
+	for _, b := range blocks {
+		if b.Type == BlockTypeToolUse {
+			ids = append(ids, b.ID)
+		}
+	}
+	return ids
 }
 
 // A second mention can append its user turn while the first run is still
