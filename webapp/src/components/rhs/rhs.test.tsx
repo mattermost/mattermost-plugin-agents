@@ -15,6 +15,7 @@ const mockGetUserMCPTools = jest.fn();
 const mockGetUserToolPreferences = jest.fn();
 const mockUpdateRead = jest.fn();
 const mockRenameConversation = jest.fn();
+const mockArchiveConversation = jest.fn();
 const mockGetPostsByIds = jest.fn();
 
 jest.mock('@/client', () => ({
@@ -24,6 +25,7 @@ jest.mock('@/client', () => ({
     getProfilesByIds: () => Promise.resolve([]),
     getPostsByIds: (ids: string[]) => mockGetPostsByIds(ids),
     renameConversation: (id: string, title: string) => mockRenameConversation(id, title),
+    archiveConversation: (id: string) => mockArchiveConversation(id),
     getProfilePictureUrl: (id: string) => `/users/${id}/image`,
     updateRead: (userId: string, teamId: string, postId: string, timestamp: number) => (
         mockUpdateRead(userId, teamId, postId, timestamp)
@@ -77,11 +79,12 @@ jest.mock('./thread_item', () => {
 
     return {
         __esModule: true,
-        default: (props: {conversationId: string; title: string; preview: string; replyCount?: number; chatActions: {startRename: (target: {conversationId: string; title: string}) => void}}) => ReactActual.createElement(
+        default: (props: {conversationId: string; title: string; preview: string; replyCount?: number; chatActions: {startRename: (target: {conversationId: string; title: string}) => void; startArchive: (target: {conversationId: string; title: string}) => void}}) => ReactActual.createElement(
             'div',
             {'data-testid': 'rhs-thread-item'},
             `${props.title}|${props.preview}|${props.replyCount ?? 'none'}`,
             ReactActual.createElement('button', {type: 'button', onClick: () => props.chatActions.startRename({conversationId: props.conversationId, title: props.title})}, `rename ${props.title}`),
+            ReactActual.createElement('button', {type: 'button', onClick: () => props.chatActions.startArchive({conversationId: props.conversationId, title: props.title})}, `archive ${props.title}`),
         ),
     };
 });
@@ -276,6 +279,30 @@ describe('RHS', () => {
 
             await waitFor(() => expect(mockRenameConversation).toHaveBeenCalledWith('c1', 'Renamed'));
             await waitFor(() => expect(screen.getAllByTestId('rhs-thread-item').map((el) => el.firstChild?.textContent)).toEqual(['Renamed||none', 'Title two||none']));
+        });
+
+        test('Archive chat confirms, archives that chat and removes it from the list', async () => {
+            mockArchiveConversation.mockResolvedValue(null);
+            await openHistory();
+
+            fireEvent.click(screen.getByRole('button', {name: 'archive Title two'}));
+            fireEvent.click(await screen.findByRole('button', {name: 'Archive'}));
+
+            await waitFor(() => expect(mockArchiveConversation).toHaveBeenCalledWith('c2'));
+            await waitFor(() => expect(screen.getAllByTestId('rhs-thread-item').map((el) => el.firstChild?.textContent)).toEqual(['Title one||none']));
+        });
+
+        test('a failed archive keeps the chat and shows an error', async () => {
+            const errorLog = jest.spyOn(console, 'error').mockImplementation(() => null);
+            mockArchiveConversation.mockRejectedValue(new Error('nope'));
+            await openHistory();
+
+            fireEvent.click(screen.getByRole('button', {name: 'archive Title one'}));
+            fireEvent.click(await screen.findByRole('button', {name: 'Archive'}));
+
+            expect((await screen.findByRole('alert')).textContent).toContain('Couldn\'t archive this chat');
+            expect(screen.getAllByTestId('rhs-thread-item').map((el) => el.firstChild?.textContent)).toEqual(['Title one||none', 'Title two||none']);
+            errorLog.mockRestore();
         });
     });
 

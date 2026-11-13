@@ -3223,6 +3223,104 @@ func TestGetPreviousUserTurn(t *testing.T) {
 	})
 }
 
+type livePostClient struct {
+	mmapi.Client
+}
+
+func (livePostClient) GetPost(postID string) (*model.Post, error) {
+	return &model.Post{Id: postID}, nil
+}
+
+func TestActivateConversation_StaleArchiveGeneration(t *testing.T) {
+	svc, s := setupTestService(t)
+	svc.mmClient = livePostClient{}
+
+	rootPostID := "regen_root"
+	created, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       model.NewId(),
+		BotID:        model.NewId(),
+		RootPostID:   &rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "prompt",
+		UserMessage:  "hello",
+		UserPostID:   new("post1"),
+	})
+	require.NoError(t, err)
+	id := created.ConversationID
+
+	require.NoError(t, s.ArchiveConversation(id, 1000))
+	stale, err := svc.GetConversationIncludingArchived(id)
+	require.NoError(t, err)
+
+	_, err = svc.ActivateConversation(stale)
+	require.NoError(t, err)
+	require.NoError(t, s.ArchiveConversation(id, 2000))
+
+	_, err = svc.ActivateConversation(stale)
+	require.ErrorIs(t, err, ErrConversationArchived)
+
+	got, err := svc.GetConversationIncludingArchived(id)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2000), got.DeleteAt, "the newer archive stays")
+}
+
+// archiveAgainStore simulates the owner restoring and archiving a conversation
+// again between a reply reading it and restoring it.
+type archiveAgainStore struct {
+	*store.Store
+	raced bool
+}
+
+func (a *archiveAgainStore) RestoreConversation(id string, archivedAt int64) (*store.Conversation, error) {
+	if !a.raced {
+		a.raced = true
+		if _, err := a.Store.RestoreConversation(id, archivedAt); err != nil {
+			return nil, err
+		}
+		if err := a.ArchiveConversation(id, archivedAt+1000); err != nil {
+			return nil, err
+		}
+	}
+	return a.Store.RestoreConversation(id, archivedAt)
+}
+
+func TestGetOrCreateConversation_ArchivedAgainDuringRestoreKeepsHistory(t *testing.T) {
+	svc, s := setupTestService(t)
+	svc.mmClient = livePostClient{}
+	svc.store = &archiveAgainStore{Store: s}
+
+	botID, userID, rootPostID := model.NewId(), model.NewId(), "race_root"
+	created, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       userID,
+		BotID:        botID,
+		RootPostID:   &rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "prompt",
+		UserMessage:  "first",
+		UserPostID:   new("post1"),
+	})
+	require.NoError(t, err)
+	require.NoError(t, s.ArchiveConversation(created.ConversationID, 1000))
+
+	result, err := svc.GetOrCreateConversation(GetOrCreateParams{
+		UserID:       userID,
+		BotID:        botID,
+		ChannelID:    "chan1",
+		RootPostID:   rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "prompt",
+		UserMessage:  "second",
+		UserPostID:   new("post2"),
+	})
+
+	require.NoError(t, err)
+	assert.False(t, result.IsNew, "the reply must continue the archived conversation, not start a new one")
+	assert.Equal(t, created.ConversationID, result.Conversation.ID)
+	turns, err := s.GetTurnsForConversation(created.ConversationID)
+	require.NoError(t, err)
+	assert.Len(t, turns, 2)
+}
+
 func TestBuildCompletionRequest_TurnStatus(t *testing.T) {
 	tests := []struct {
 		name          string

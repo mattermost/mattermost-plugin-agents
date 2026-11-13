@@ -19,11 +19,22 @@ jest.mock('react-intl', () => ({
 }));
 
 const renderItem = (props: Partial<React.ComponentProps<typeof ThreadItem>> = {}) => {
-    const handlers = {onClick: jest.fn(), startRename: jest.fn()};
+    const handlers = {onClick: jest.fn(), startRename: jest.fn(), startArchive: jest.fn()};
     render(
         <ThreadItem
             conversationId='c1'
-            chatActions={{startRename: handlers.startRename, renameTarget: null, submitRename: jest.fn(), closeRename: jest.fn()}}
+            chatActions={{
+                startRename: handlers.startRename,
+                renameTarget: null,
+                submitRename: jest.fn(),
+                closeRename: jest.fn(),
+                startArchive: handlers.startArchive,
+                archiveTarget: null,
+                archiving: false,
+                archiveFailed: false,
+                confirmArchive: jest.fn(),
+                closeArchive: jest.fn(),
+            }}
             onClick={handlers.onClick}
             title='Mattermost selling features overview'
             preview='Key selling points: self-hosted and air-gapped deployment'
@@ -95,6 +106,17 @@ describe('ThreadItem', () => {
         fireEvent.click(await screen.findByRole('menuitem', {name: 'Rename chat'}));
 
         expect(startRename).toHaveBeenCalledWith({conversationId: 'c1', title: 'Mattermost selling features overview'});
+        expect(onClick).not.toHaveBeenCalled();
+    });
+
+    test('Archive chat in the actions menu starts archiving the chat', async () => {
+        const {onClick, startArchive} = renderItem();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Chat actions'}));
+        fireEvent.click(await screen.findByRole('menuitem', {name: 'Archive chat'}));
+
+        expect(startArchive).toHaveBeenCalledTimes(1);
+        expect(startArchive.mock.calls[0][0]).toEqual({conversationId: 'c1', title: 'Mattermost selling features overview'});
         expect(onClick).not.toHaveBeenCalled();
     });
 });

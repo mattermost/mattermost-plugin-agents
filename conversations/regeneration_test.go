@@ -529,6 +529,7 @@ func TestHandleRegenerate(t *testing.T) {
 				analysisRoot.AddProp(AnalyzedChannelIDProp, analyzedChannel)
 			}
 			mm.On("GetPost", analysisRoot.Id).Return(analysisRoot, nil).Maybe()
+			mm.On("GetPost", regenPostID).Return(&model.Post{Id: regenPostID}, nil).Maybe()
 			mm.On("GetPost", threadID).Return(&model.Post{Id: threadID, ChannelId: threadChannel}, nil).Maybe()
 			mm.On("HasPermissionToChannel", userID, mock.Anything, model.PermissionReadChannel).Return(true).Maybe()
 

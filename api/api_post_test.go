@@ -102,6 +102,10 @@ func TestHandleStop(t *testing.T) {
 		omitNotifier       bool
 		notifierErr        error
 		omitConversationID bool
+		archived           bool
+		// rootPost, when set, roots the conversation at a post the plugin
+		// API answers for this way.
+		rootPost *rootPostState
 	}
 
 	tests := []struct {
@@ -147,6 +151,41 @@ func TestHandleStop(t *testing.T) {
 			expectPublished:  false,
 		},
 		{
+			name:             "owner can stop a stream on an archived conversation's post",
+			setup:            setup{postUserID: testBotUserID, conversationOwner: testUserID, archived: true},
+			expectedStatus:   http.StatusOK,
+			expectStopCalled: true,
+			expectPublished:  true,
+		},
+		{
+			name:             "non-owner cannot stop a stream on an archived conversation's post",
+			setup:            setup{postUserID: testBotUserID, conversationOwner: testOtherUserID, archived: true},
+			expectedStatus:   http.StatusForbidden,
+			expectStopCalled: false,
+			expectPublished:  false,
+		},
+		{
+			name:             "owner cannot stop a stream of a conversation whose root post was deleted",
+			setup:            setup{postUserID: testBotUserID, conversationOwner: testUserID, archived: true, rootPost: new(rootPostDeleted)},
+			expectedStatus:   http.StatusForbidden,
+			expectStopCalled: false,
+			expectPublished:  false,
+		},
+		{
+			name:             "a failed root post lookup denies ownership",
+			setup:            setup{postUserID: testBotUserID, conversationOwner: testUserID, rootPost: new(rootPostLookupFails)},
+			expectedStatus:   http.StatusForbidden,
+			expectStopCalled: false,
+			expectPublished:  false,
+		},
+		{
+			name:             "owner can stop a stream of a conversation whose root post is live",
+			setup:            setup{postUserID: testBotUserID, conversationOwner: testUserID, rootPost: new(rootPostLive)},
+			expectedStatus:   http.StatusOK,
+			expectStopCalled: true,
+			expectPublished:  true,
+		},
+		{
 			name:             "non-empty body is rejected before any side effect",
 			setup:            setup{postUserID: testBotUserID, conversationOwner: testUserID, body: `{"unexpected":"payload"}`},
 			expectedStatus:   http.StatusBadRequest,
@@ -179,11 +218,20 @@ func TestHandleStop(t *testing.T) {
 			}
 			if !test.setup.omitConversationID {
 				post.AddProp(streaming.ConversationIDProp, conversationID)
-				e.conversationStore.conversations[conversationID] = &store.Conversation{
+				conv := &store.Conversation{
 					ID:     conversationID,
 					UserID: test.setup.conversationOwner,
 					BotID:  testBotUserID,
 				}
+				if test.setup.archived {
+					conv.DeleteAt = 1700000000000
+				}
+				if test.setup.rootPost != nil {
+					rootPostID := "rootstop123456789012345678"
+					conv.RootPostID = &rootPostID
+					e.mockRootPost(rootPostID, *test.setup.rootPost)
+				}
+				e.conversationStore.conversations[conversationID] = conv
 			}
 
 			e.mockAPI.On("GetPost", postID).Return(post, nil)
@@ -881,4 +929,59 @@ func TestRegenerateWhileStreamingIsConflict(t *testing.T) {
 	e.api.ServeHTTP(&plugin.Context{}, recorder, req)
 
 	require.Equal(t, http.StatusConflict, recorder.Result().StatusCode, recorder.Body.String())
+}
+
+// TestResumeRoutesAnswerNotFoundForDeletedRoot pins that the routes resuming
+// a run answer 404, like the conversation read routes, when the
+// conversation's root post was deleted.
+func TestResumeRoutesAnswerNotFoundForDeletedRoot(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	const (
+		postID    = "post12345678901234567890ab"
+		rootID    = "root12345678901234567890ab"
+		channelID = "chan12345678901234567890ab"
+		convID    = "conv12345678901234567890ab"
+	)
+
+	routes := []struct {
+		endpoint string
+		body     string
+	}{
+		{endpoint: "regenerate"},
+		{endpoint: "tool_call", body: `{"accepted_tool_ids":["tool-use-1"]}`},
+		{endpoint: "tool_result", body: `{"accepted_tool_ids":["tool-use-1"]}`},
+	}
+
+	for _, route := range routes {
+		t.Run(route.endpoint, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.api.streamingService = &recordingStreamingService{}
+			convStore := e.useConversations()
+			e.setupTestBot(llm.BotConfig{Name: "test-bot", DisplayName: "Test Bot"})
+
+			root := rootID
+			require.NoError(t, convStore.CreateConversation(&store.Conversation{ID: convID, UserID: testUserID, BotID: testBotUserID, RootPostID: &root, Operation: "conversation"}))
+			post := &model.Post{Id: postID, UserId: testBotUserID, ChannelId: channelID}
+			post.AddProp(streaming.ConversationIDProp, convID)
+			e.mockAPI.On("GetPost", postID).Return(post, nil)
+			e.mockAPI.On("GetPost", rootID).Return(&model.Post{Id: rootID, DeleteAt: model.GetMillis()}, nil)
+			e.mockAPI.On("GetChannel", channelID).Return(&model.Channel{Id: channelID, Name: testBotUserID + "__" + testUserID, Type: model.ChannelTypeDirect}, nil)
+			e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
+			e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Locale: "en"}, nil).Maybe()
+
+			var body io.Reader
+			if route.body != "" {
+				body = strings.NewReader(route.body)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/post/"+postID+"/"+route.endpoint, body)
+			req.Header.Add("Mattermost-User-Id", testUserID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			require.Equal(t, http.StatusNotFound, recorder.Result().StatusCode, recorder.Body.String())
+		})
+	}
 }

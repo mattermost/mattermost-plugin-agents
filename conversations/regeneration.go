@@ -112,12 +112,18 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	if convIDProp == "" {
 		return errors.New("post missing conversation_id for ownership check")
 	}
-	conv, err := c.convService.GetConversation(convIDProp)
+	// Archiving keeps the posts, so a post of an archived conversation can
+	// still be regenerated; the conversation is restored below once the turn
+	// passes its gates.
+	conv, err := c.convService.GetConversationIncludingArchived(convIDProp)
 	if err != nil {
 		return fmt.Errorf("failed to get conversation for ownership check: %w", err)
 	}
 	if conv.UserID != userID {
 		return ErrNotRequester
+	}
+	if err = conversation.CheckRootPost(c.mmClient, conv); err != nil {
+		return err
 	}
 	// Props select the regenerate path and its sources, so they are only
 	// trusted on a post the conversation's own bot authored.
@@ -209,6 +215,10 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	}
 	if err != nil {
 		return fmt.Errorf("could not regenerate %s post: %w", conv.Operation, err)
+	}
+
+	if err = c.activateTurnConversation(policy); err != nil {
+		return err
 	}
 
 	post.Message = ""
