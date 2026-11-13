@@ -1,4 +1,4 @@
-# Schema Migration Review: 000015 — Create Agents_ChannelInstructions and Agents_ChannelContextPosts
+# Schema Migration Review: 000020 — Create Agents_ChannelInstructions and Agents_ChannelContextPosts
 
 > **Context:** Two new plugin tables storing member-authored context for agents working in a
 > channel. `Agents_ChannelInstructions` holds one row per channel that has instructions (no
