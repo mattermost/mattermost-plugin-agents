@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
-	"go.opentelemetry.io/otel/codes"
 )
 
 const defaultGoogleSearchEndpoint = "https://www.googleapis.com/customsearch/v1"
@@ -82,10 +81,9 @@ func (g *GoogleProvider) Search(ctx context.Context, query string, limit int) (*
 	resp, err := client.Do(req)
 	if err != nil {
 		if g.logger != nil {
-			g.logger.Error("web search request failed", "error", err)
+			g.logger.Error("web search request failed", "error", redactTransportError(err))
 		}
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
+		failSpanFixed(span, "google web search request failed")
 		return nil, fmt.Errorf("web search request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
-	"go.opentelemetry.io/otel/codes"
 )
 
 const defaultBraveSearchEndpoint = "https://api.search.brave.com"
@@ -89,10 +88,9 @@ func (b *BraveProvider) Search(ctx context.Context, query string, limit int) (*S
 	resp, err := client.Do(req)
 	if err != nil {
 		if b.logger != nil {
-			b.logger.Error("brave web search request failed", "error", err)
+			b.logger.Error("brave web search request failed", "error", redactTransportError(err))
 		}
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
+		failSpanFixed(span, "brave web search request failed")
 		return nil, fmt.Errorf("brave web search request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -126,7 +124,7 @@ func (b *BraveProvider) Search(ctx context.Context, query string, limit int) (*S
 	summaryReq, err := http.NewRequestWithContext(ctx, http.MethodGet, summarizerURL, nil)
 	if err != nil {
 		if b.logger != nil {
-			b.logger.Warn("failed to create summarizer request, using fallback", "error", err)
+			b.logger.Warn("failed to create summarizer request, using fallback", "error", redactTransportError(err))
 		}
 		return &SearchResponse{
 			Answer:  "",
@@ -145,7 +143,7 @@ func (b *BraveProvider) Search(ctx context.Context, query string, limit int) (*S
 	summary, err := b.pollSummarizer(ctx, client, summaryReq)
 	if err != nil {
 		if b.logger != nil {
-			b.logger.Warn("failed to get summary, using fallback", "error", err)
+			b.logger.Warn("failed to get summary, using fallback", "error", redactTransportError(err))
 		}
 		return &SearchResponse{
 			Answer:  "",

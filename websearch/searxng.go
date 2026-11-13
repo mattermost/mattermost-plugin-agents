@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -40,13 +39,12 @@ func NewSearXNGProvider(baseURL string, httpClient *http.Client, logger Logger) 
 // failSpan records an error on the span with a stage label so every early
 // return is visible in traces. Only safe metadata is attached: the failure
 // stage and HTTP status code, never the query.
-func failSpan(span trace.Span, stage string, statusCode int, err error) {
+func failSpan(span trace.Span, stage string, statusCode int) {
 	span.SetAttributes(telemetry.WebSearchFailStage.String(stage))
 	if statusCode > 0 {
 		span.SetAttributes(telemetry.WebSearchStatusCode.Int(statusCode))
 	}
-	span.RecordError(err)
-	span.SetStatus(codes.Error, err.Error())
+	failSpanFixed(span, "searxng web search failed: "+stage)
 }
 
 // Search performs a SearXNG search and returns the results.
@@ -67,7 +65,7 @@ func (s *SearXNGProvider) Search(ctx context.Context, query string, limit int) (
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		err = fmt.Errorf("failed to create web search request: %w", err)
-		failSpan(span, "create_request", 0, err)
+		failSpan(span, "create_request", 0)
 		return nil, err
 	}
 
@@ -83,17 +81,17 @@ func (s *SearXNGProvider) Search(ctx context.Context, query string, limit int) (
 			s.logger.Error("web search http client is not configured")
 		}
 		err = fmt.Errorf("web search http client is not configured")
-		failSpan(span, "nil_http_client", 0, err)
+		failSpan(span, "nil_http_client", 0)
 		return nil, err
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("web search request failed", "error", err)
+			s.logger.Error("web search request failed", "error", redactTransportError(err))
 		}
 		err = fmt.Errorf("web search request failed: %w", err)
-		failSpan(span, "http_request", 0, err)
+		failSpan(span, "http_request", 0)
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -102,19 +100,19 @@ func (s *SearXNGProvider) Search(ctx context.Context, query string, limit int) (
 		// SearXNG returns 403 for formats not listed in search.formats;
 		// json is not enabled by default, so give operators the pointer.
 		err = fmt.Errorf("web search request failed: status %s (is 'json' enabled under search.formats in the SearXNG settings?)", resp.Status)
-		failSpan(span, "http_status", resp.StatusCode, err)
+		failSpan(span, "http_status", resp.StatusCode)
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
 		err = fmt.Errorf("web search request failed: status %s", resp.Status)
-		failSpan(span, "http_status", resp.StatusCode, err)
+		failSpan(span, "http_status", resp.StatusCode)
 		return nil, err
 	}
 
 	var payload searxngSearchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		err = fmt.Errorf("failed to decode web search response: %w", err)
-		failSpan(span, "decode_response", resp.StatusCode, err)
+		failSpan(span, "decode_response", resp.StatusCode)
 		return nil, err
 	}
 
