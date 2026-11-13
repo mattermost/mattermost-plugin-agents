@@ -152,8 +152,13 @@ var figmaVettedToolConfigs = autoRunInDMToolConfigs([]string{
 //   - get_file_link mints a public, unauthenticated bypass link for a file.
 //   - list_incoming_webhooks / list_outgoing_webhooks surface webhook IDs and
 //     tokens that are effectively posting credentials.
+//   - list_agents and list_drafts are likewise not seeded.
 //
-// These mirror the credential-exposing GitHub reads in githubSecurityAskTools.
+// GitHub has no seed here, so its tools default to ask. Its read tools,
+// including code scanning, Dependabot, secret scanning, and security advisory
+// reads, are only suggested as auto_run_in_dm from their readOnlyHint during
+// review and take effect once an admin saves them, so admins must check them
+// before accepting.
 var mattermostVettedToolConfigs = autoRunInDMToolConfigs([]string{
 	// Posts & scheduled posts
 	"read_post",

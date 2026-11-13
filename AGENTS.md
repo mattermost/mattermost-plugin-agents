@@ -52,6 +52,7 @@ Repo-specific guards also run in `make check-style`: the `build/govet` vet tool 
 - File names: `snake_case.go` / `snake_case.ts(x)`.
 - TypeScript/React: PascalCase components, strict typing, **always styled-components**, never inline `style={{...}}`.
 - New user-facing strings must go through i18n (`make i18n-extract` picks them up).
+- A change that users, admins or integrators would need to know about (a feature, setting, default, tool, permission or license gate) updates the docs in `docs/` in the same PR. Follow `docs/AGENTS.md`.
 - Go tests must be table-driven when there is more than one case.
 - Never introduce a new test/mocking library; prefer to test against real implementations instead.
 - Test-only LLM helpers (mock stream generators, logging wrappers) live in `llm/llmtest`; never import `testing` from a production package.
@@ -92,7 +93,7 @@ The plugin emits OpenTelemetry traces. Agent-relevant rules:
 - Existing spans live in `bifrost/` (LLM calls), `llm/tools.go`, `conversations/tool_handling.go`, `mcp/`, `search/`, `websearch/`, and `streaming/`. The `otelgin` middleware adds HTTP spans automatically.
 - To add a span: `ctx, span := telemetry.Tracer().Start(ctx, "span name", trace.WithAttributes(...))`, then `defer span.End()`. Record errors with `span.RecordError(err)` and `span.SetStatus(codes.Error, msg)`. Reuse attribute keys from `telemetry/attributes.go` instead of inventing new ones.
 - When a `*llm.Context` parameter would shadow the `context` package in the same file, import `"context"` as `stdcontext`.
-- Config fields (`TelemetryOutput`, `OpenTelemetryEndpoint`) and local Tempo/Grafana setup live in `docs/admin_guide.md`.
+- Config fields (`TelemetryOutput`, `OpenTelemetryEndpoint`) and local Tempo/Grafana setup live in `docs/observability.md`.
 
 ## Never do
 
@@ -131,5 +132,6 @@ Read these only when the trigger applies:
 - Working inside `mcp/` (MCP client, OAuth, tool caches): `mcp/AGENTS.md`.
 - Working inside `webapp/`: `webapp/AGENTS.md`.
 - Writing or editing Playwright specs in `e2e/`: `e2e/AGENTS.md`.
-- Configuring providers, agents, or the admin UI: `docs/admin_guide.md`.
+- Writing or editing the user, admin and developer docs in `docs/`: `docs/AGENTS.md`.
+- Configuring providers, agents, or the admin UI: `docs/admin_guide.md` (settings map and links to the task pages).
 - When working on prompt evals or modifying the eval harness: `cmd/evalviewer/README.md`.
