@@ -140,6 +140,13 @@ export interface Turn {
     // conversation state: 'call' → pending Accept/Reject; 'result' → pending
     // Share/Keep private; 'done' → no user decision remains.
     approval_state?: 'call' | 'result' | 'done';
+
+    // Lifecycle state; 'streaming' while the response is still being generated.
+    status?: 'streaming' | 'complete' | 'interrupted';
+
+    // Post whose run wrote this tool-round turn. A streaming anchor sits
+    // before its run's tool rounds, so they are matched by this ID.
+    run_post_id?: string;
 }
 
 // ActiveWait describes a pending wait_for_async_work pause in the

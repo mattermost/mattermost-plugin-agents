@@ -383,6 +383,36 @@ func TestHandleGetConversation(t *testing.T) {
 				assert.Equal(t, 2, response.Turns[1].Sequence)
 			},
 		},
+		{
+			name:           "tool rounds written during a stream expose their run post",
+			userID:         testUserID,
+			conversationID: "conv-run-post",
+			setup: func(e *TestEnvironment) {
+				postID := "streampost123456789012345"
+				e.conversationStore.conversations["conv-run-post"] = &store.Conversation{
+					ID:        "conv-run-post",
+					UserID:    testUserID,
+					BotID:     testBotUserID,
+					ChannelID: &channelID,
+					Operation: "conversation",
+				}
+				e.conversationStore.turns["conv-run-post"] = []store.Turn{
+					{ID: "turn-1", ConversationID: "conv-run-post", Role: "user", Content: textOnlyBlocks, Sequence: 1},
+					{ID: "turn-2", ConversationID: "conv-run-post", PostID: &postID, Role: "assistant", Content: textOnlyBlocks, Status: store.TurnStatusStreaming, Sequence: 2},
+					{ID: "turn-3", ConversationID: "conv-run-post", RunPostID: &postID, Role: "assistant", Content: textOnlyBlocks, Sequence: 3},
+				}
+				e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
+			},
+			expectedStatus: http.StatusOK,
+			validate: func(t *testing.T, resp *http.Response) {
+				var response ConversationResponse
+				require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+				require.Len(t, response.Turns, 3)
+				assert.Nil(t, response.Turns[1].RunPostID)
+				require.NotNil(t, response.Turns[2].RunPostID)
+				assert.Equal(t, "streampost123456789012345", *response.Turns[2].RunPostID)
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -415,4 +445,18 @@ func mustMarshalBlocks(t *testing.T, blocks []conversation.ContentBlock) json.Ra
 	data, err := json.Marshal(blocks)
 	require.NoError(t, err)
 	return data
+}
+
+func TestTurnsToResponseIncludesStatus(t *testing.T) {
+	postID := "post-id"
+	turns := []store.Turn{
+		{ID: "streaming-turn", PostID: &postID, Role: "assistant", Content: json.RawMessage(`[]`), Status: store.TurnStatusStreaming},
+		{ID: "complete-turn", Role: "assistant", Content: json.RawMessage(`[]`), Status: store.TurnStatusComplete},
+	}
+
+	resp, err := turnsToResponse(turns, false)
+	require.NoError(t, err)
+	require.Len(t, resp, 2)
+	require.Equal(t, store.TurnStatusStreaming, resp[0].Status)
+	require.Equal(t, store.TurnStatusComplete, resp[1].Status)
 }

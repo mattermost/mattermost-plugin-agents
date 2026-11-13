@@ -49,6 +49,17 @@ func TestComputePostApprovalState(t *testing.T) {
 			want: ApprovalStageCall,
 		},
 		{
+			name:   "interrupted post with pending tool_use offers no decision",
+			postID: "p1",
+			turns: []store.Turn{
+				{Role: "user", Sequence: 1, Content: blockJSON(t, nil)},
+				{Role: "assistant", Sequence: 2, PostID: new("p1"), Status: store.TurnStatusInterrupted, Content: blockJSON(t, []ContentBlock{
+					{Type: BlockTypeToolUse, ID: "tc1", Name: "x", Status: StatusPending},
+				})},
+			},
+			want: ApprovalStageDone,
+		},
+		{
 			name:   "post with only pending auto-execute tool_use returns call",
 			postID: "p1",
 			turns: []store.Turn{

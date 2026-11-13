@@ -18,6 +18,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	loggerlib "github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost/server/public/model"
 
 	gosdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
@@ -45,14 +46,24 @@ func (s *stubRegistry) set(servers []mcppkg.PluginServerConfig) {
 
 var _ PluginServerRegistry = (*stubRegistry)(nil)
 
-// stubPluginAPI only overrides PluginHTTP for these tests.
+// stubPluginAPI only overrides PluginHTTP and GetPluginStatus for these
+// tests. Plugins are running unless pluginState says otherwise.
 type stubPluginAPI struct {
 	mmapi.Client
-	pluginHTTP func(req *http.Request) *http.Response
+	pluginHTTP  func(req *http.Request) *http.Response
+	pluginState func(pluginID string) int
 }
 
 func (s *stubPluginAPI) PluginHTTP(req *http.Request) *http.Response {
 	return s.pluginHTTP(req)
+}
+
+func (s *stubPluginAPI) GetPluginStatus(pluginID string) (*model.PluginStatus, error) {
+	state := model.PluginStateRunning
+	if s.pluginState != nil {
+		state = s.pluginState(pluginID)
+	}
+	return &model.PluginStatus{PluginId: pluginID, State: state}, nil
 }
 
 // listToolNamesNoRequire avoids require so it is safe from goroutines.
@@ -193,6 +204,7 @@ func TestNewPluginMCPHandlers_IteratesRegistry(t *testing.T) {
 
 	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
+	t.Cleanup(h.Close)
 	require.NotNil(t, h.MCPHandler)
 
 	toolNames := listToolNames(t, h)
@@ -222,6 +234,7 @@ func TestNewPluginMCPHandlers_SkipsPluginToolConflictingWithNativeTool(t *testin
 	require.NoError(t, err)
 	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
+	t.Cleanup(h.Close)
 
 	toolNames := listToolNames(t, h)
 	var nativeNameCount int
@@ -268,6 +281,7 @@ func TestNewPluginMCPHandlers_FiltersToolsByPolicy(t *testing.T) {
 	require.NoError(t, err)
 	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
+	t.Cleanup(h.Close)
 
 	toolNames := listToolNames(t, h)
 
@@ -314,6 +328,7 @@ func TestNewPluginMCPHandlers_PolicyIsPerPluginServer(t *testing.T) {
 	require.NoError(t, err)
 	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
+	t.Cleanup(h.Close)
 
 	toolNames := listToolNames(t, h)
 	count := 0
@@ -336,6 +351,7 @@ func TestRebuildExternalServer_PicksUpNewRegistrations(t *testing.T) {
 
 	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
+	t.Cleanup(h.Close)
 
 	initial := listToolNames(t, h)
 	for _, n := range initial {
@@ -343,14 +359,14 @@ func TestRebuildExternalServer_PicksUpNewRegistrations(t *testing.T) {
 	}
 
 	reg.set([]mcppkg.PluginServerConfig{{PluginID: "com.example.late", Name: "Late", Path: "/mcp", Enabled: true, ExposeExternal: true}})
-	h.RebuildExternalServer()
+	h.rebuild()
 
 	after := listToolNames(t, h)
 	var sawProxy bool
 	if slices.Contains(after, "test_tool_0") {
 		sawProxy = true
 	}
-	require.True(t, sawProxy, "RebuildExternalServer should have picked up the new registration")
+	require.True(t, sawProxy, "the rebuild should have picked up the new registration")
 }
 
 func TestRebuildExternalServer_RemovesUnregistered(t *testing.T) {
@@ -365,9 +381,10 @@ func TestRebuildExternalServer_RemovesUnregistered(t *testing.T) {
 	require.NoError(t, err)
 	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
+	t.Cleanup(h.Close)
 
 	reg.set(nil)
-	h.RebuildExternalServer()
+	h.rebuild()
 
 	after := listToolNames(t, h)
 	for _, n := range after {
@@ -385,13 +402,14 @@ func TestRebuildExternalServer_SkipsTimedOutPluginAndKeepsHealthyPlugins(t *test
 	require.NoError(t, err)
 	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
+	t.Cleanup(h.Close)
 	h.proxyDiscoveryTimeout = 25 * time.Millisecond
 
 	reg.set([]mcppkg.PluginServerConfig{
 		{PluginID: "com.example.hung", Name: "Hung", Path: "/mcp", Enabled: true, ExposeExternal: true},
 		{PluginID: "com.example.healthy", Name: "Healthy", Path: "/mcp", Enabled: true, ExposeExternal: true},
 	})
-	h.RebuildExternalServer()
+	h.rebuild()
 
 	after := listToolNames(t, h)
 	var sawHealthy bool
@@ -409,6 +427,7 @@ func TestRebuildExternalServer_DoesNotBlockExternalRequestsWhileDiscovering(t *t
 	require.NoError(t, err)
 	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
+	t.Cleanup(h.Close)
 	h.proxyDiscoveryTimeout = 100 * time.Millisecond
 
 	reg.set([]mcppkg.PluginServerConfig{
@@ -417,7 +436,7 @@ func TestRebuildExternalServer_DoesNotBlockExternalRequestsWhileDiscovering(t *t
 
 	rebuildDone := make(chan struct{})
 	go func() {
-		h.RebuildExternalServer()
+		h.rebuild()
 		close(rebuildDone)
 	}()
 
@@ -447,12 +466,123 @@ func TestRebuildExternalServer_DoesNotBlockExternalRequestsWhileDiscovering(t *t
 	}
 }
 
+func TestPluginMCPHandlers_CloseCancelsInFlightDiscovery(t *testing.T) {
+	startedHungRequest := make(chan struct{})
+	reg := &stubRegistry{servers: nil}
+	var hangOnce sync.Once
+	mockAPI := &stubPluginAPI{pluginHTTP: func(req *http.Request) *http.Response {
+		hang := false
+		hangOnce.Do(func() {
+			hang = true
+			close(startedHungRequest)
+		})
+		if hang {
+			<-req.Context().Done()
+		}
+		rec := httptest.NewRecorder()
+		rec.WriteHeader(http.StatusGatewayTimeout)
+		return rec.Result()
+	}}
+	logger, err := loggerlib.CreateDefaultLogger()
+	require.NoError(t, err)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, allowAllStateChangingTools, nil, nil)
+	require.NoError(t, err)
+	h.proxyDiscoveryTimeout = time.Minute
+
+	reg.set([]mcppkg.PluginServerConfig{
+		{PluginID: "com.example.hung", Name: "Hung", Path: "/mcp", Enabled: true, ExposeExternal: true},
+	})
+	h.RequestRebuild()
+
+	select {
+	case <-startedHungRequest:
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "timed out waiting for discovery to start")
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		h.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "Close should cancel in-flight discovery instead of waiting for its timeout")
+	}
+}
+
+func TestPluginMCPHandlers_CloseIsIdempotent(t *testing.T) {
+	logger, err := loggerlib.CreateDefaultLogger()
+	require.NoError(t, err)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, nil, nil, nil, nil, allowAllStateChangingTools, nil, nil)
+	require.NoError(t, err)
+
+	closed := make(chan struct{})
+	go func() {
+		h.Close()
+		h.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "second Close should not block")
+	}
+}
+
+// Admin changes reach the external server only after the background rebuild;
+// a call in that window must still be refused.
+func TestPluginMCPHandlers_RefusesToolCallsDisabledBeforeRebuild(t *testing.T) {
+	enabled := mcppkg.PluginServerConfig{PluginID: "com.example.plugin", Name: "Plugin", Path: "/mcp", Enabled: true, ExposeExternal: true}
+	tests := []struct {
+		name   string
+		change func(cfg *mcppkg.PluginServerConfig)
+		gone   bool
+	}{
+		{name: "plugin server disabled", change: func(cfg *mcppkg.PluginServerConfig) { cfg.Enabled = false }},
+		{name: "plugin server no longer exposed", change: func(cfg *mcppkg.PluginServerConfig) { cfg.ExposeExternal = false }},
+		{name: "tool disabled", change: func(cfg *mcppkg.PluginServerConfig) {
+			cfg.ToolConfigs = []mcppkg.ToolConfig{{Name: "test_tool_0", Enabled: false}}
+		}},
+		{name: "plugin server unregistered", gone: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target := newFakePluginMCPServer(t, 1, nil)
+			t.Cleanup(target.Close)
+			reg := &stubRegistry{servers: []mcppkg.PluginServerConfig{enabled}}
+			logger, err := loggerlib.CreateDefaultLogger()
+			require.NoError(t, err)
+			h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, newPluginHTTPForwarder(t, target), nil, nil, allowAllStateChangingTools, nil, nil)
+			require.NoError(t, err)
+			t.Cleanup(h.Close)
+
+			result, err := callToolAs(t, h, "user1", "test_tool_0", map[string]any{"message": "hi"})
+			require.NoError(t, err)
+			require.False(t, result.IsError)
+
+			changed := enabled
+			if tt.gone {
+				reg.set(nil)
+			} else {
+				tt.change(&changed)
+				reg.set([]mcppkg.PluginServerConfig{changed})
+			}
+
+			result, err = callToolAs(t, h, "user1", "test_tool_0", map[string]any{"message": "hi"})
+			require.True(t, err != nil || result.IsError, "a tool disabled by the admin must not run before the rebuild lands")
+		})
+	}
+}
+
 // A nil registry disables aggregation but keeps native tools available.
 func TestNewPluginMCPHandlers_NilRegistryIsNoOp(t *testing.T) {
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
 	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, nil, nil, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
+	t.Cleanup(h.Close)
 	require.NotNil(t, h.MCPHandler)
 	_ = listToolNames(t, h)
 }
@@ -563,6 +693,7 @@ func TestPluginMCPHandlers_AccessFilter(t *testing.T) {
 				return tc.embeddedID
 			})
 			require.NoError(t, err)
+			t.Cleanup(h.Close)
 
 			names := listToolNamesAs(t, h, tc.userID)
 			require.Equal(t, tc.wantNative, slices.Contains(names, nativeTool), "native tool listing")

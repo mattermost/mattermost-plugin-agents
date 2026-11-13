@@ -328,13 +328,21 @@ func TestClientManager_PluginRegistrationPersistence(t *testing.T) {
 		second.PluginID: second,
 	}, fixture.registrations(t))
 
+	// Plugins also unregister when the server shuts down, so the entry stays
+	// known: the next activation asks that plugin to register again.
 	m.UnregisterPluginServer(first.PluginID)
 	require.Equal(t, map[string]PluginServerConfig{
+		first.PluginID:  first,
 		second.PluginID: second,
 	}, fixture.registrations(t))
+	require.False(t, m.IsPluginRegistered(first.PluginID))
+	require.Equal(t, []PluginServerConfig{first}, m.KnownPluginServers())
 }
 
-func TestClientManager_HydratesLivePluginRegistrations(t *testing.T) {
+// Restored registrations are known, not live: the source plugin may not be
+// running yet, so nothing may connect to it until it registers again or is
+// promoted after a probe.
+func TestClientManager_RestoresPluginRegistrationsAsKnown(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
 
@@ -376,13 +384,22 @@ func TestClientManager_HydratesLivePluginRegistrations(t *testing.T) {
 	}, client.Log, client, nil, nil, nil, nil, RemoteMCPAlwaysAllowed, nil)
 	t.Cleanup(m.Close)
 
+	require.False(t, m.IsPluginRegistered(live.PluginID))
+	require.Empty(t, m.ListPluginServers())
+	require.Empty(t, m.snapshotEnabledPluginServers())
+	require.Equal(t, []PluginServerConfig{live}, m.KnownPluginServers())
+
+	require.True(t, m.PromoteKnownPluginServer(live.PluginID))
+	require.False(t, m.PromoteKnownPluginServer(live.PluginID), "a live entry is not promoted again")
 	got, ok := m.GetPluginServer(live.PluginID)
 	require.True(t, ok)
-	require.Equal(t, live.Name, got.Name)
+	require.True(t, m.IsPluginRegistered(live.PluginID))
+	require.Equal(t, live.Name, got.Name, "plugin-owned fields come from the registration")
 	require.Equal(t, live.Path, got.Path)
 	require.True(t, got.ExposeExternal)
-	require.True(t, got.Enabled)
+	require.True(t, got.Enabled, "admin-owned fields come from config")
 	require.Equal(t, []ToolConfig{adminToolConfig}, got.ToolConfigs)
+	require.Empty(t, m.KnownPluginServers())
 
 	_, ok = m.GetPluginServer(disabled.PluginID)
 	require.False(t, ok)
@@ -985,7 +1002,7 @@ func TestClientManagerGetToolRetrievalOverridesEmbedded(t *testing.T) {
 func TestClientManagerGetToolRetrievalOverridesPlugin(t *testing.T) {
 	manager := &ClientManager{
 		pluginServers:    make(map[string]PluginServerConfig),
-		pluginRegistered: make(map[string]bool),
+		pluginRegistered: make(map[string]uint64),
 	}
 	manager.pluginServers["com.example.mcp"] = PluginServerConfig{
 		PluginID: "com.example.mcp",
@@ -994,7 +1011,7 @@ func TestClientManagerGetToolRetrievalOverridesPlugin(t *testing.T) {
 			{Name: "lookup", Policy: ToolPolicyAsk, Enabled: true, RetrievalDescriptionOverride: "Find plugin records"},
 		},
 	}
-	manager.pluginRegistered["com.example.mcp"] = true
+	manager.pluginRegistered["com.example.mcp"] = 1
 
 	overrides := manager.GetToolRetrievalOverrides()
 

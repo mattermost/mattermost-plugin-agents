@@ -177,12 +177,32 @@ func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int
 // into that DM with a NULL ChannelID, while channel threads (mentions, meeting
 // summaries) carry other people's posts.
 func (s *Store) GetBotDMConversationSummariesForUser(userID string, limit, offset int) ([]ConversationSummary, error) {
-	query := s.conversationSummariesQuery(userID).
+	query := restrictToBotDMs(s.conversationSummariesQuery(userID))
+	return s.getConversationSummaries(query, limit, offset, "get bot DM conversation summaries")
+}
+
+// GetBotDMBotIDsForUser returns the IDs of the bots the user has a non-deleted
+// conversation with in their DM, however many conversations that takes.
+func (s *Store) GetBotDMBotIDsForUser(userID string) ([]string, error) {
+	query := restrictToBotDMs(s.builder.
+		Select("DISTINCT c.BotID").
+		From("LLM_Conversations c").
+		Where(sq.Eq{"c.UserID": userID}).
+		Where(sq.Eq{"c.DeleteAt": 0}))
+
+	botIDs := []string{}
+	if err := s.selectBuilder(&botIDs, query.OrderBy("c.BotID"), "get bot DM bot IDs"); err != nil {
+		return nil, err
+	}
+	return botIDs, nil
+}
+
+func restrictToBotDMs(query sq.SelectBuilder) sq.SelectBuilder {
+	return query.
 		Join("Posts p ON p.Id = c.RootPostID").
 		Join("Channels ch ON ch.Id = p.ChannelId").
 		Where(sq.Eq{"ch.Type": model.ChannelTypeDirect}).
 		Where("ch.Name IN (c.UserID || '__' || c.BotID, c.BotID || '__' || c.UserID)")
-	return s.getConversationSummaries(query, limit, offset, "get bot DM conversation summaries")
 }
 
 func (s *Store) conversationSummariesQuery(userID string) sq.SelectBuilder {
