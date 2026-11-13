@@ -110,13 +110,15 @@ func (a *API) handleGetConfig(c *gin.Context) {
 
 	// Clone before normalizeAdminConfig: it mutates Services (e.g. UseResponsesAPI); the store
 	// pointer may alias the in-memory cached config, and GET must not mutate shared state.
-	c.JSON(http.StatusOK, normalizeAdminConfig(*cfg.Clone()))
+	// Credentials are masked in the response; the admin console sends the mask back unchanged
+	// for the ones it does not edit.
+	c.JSON(http.StatusOK, config.RedactSecrets(normalizeAdminConfig(*cfg.Clone())))
 }
 
 // handleSaveConfig saves a new plugin configuration to the database,
 // updates the in-memory configuration, and notifies other cluster nodes.
-// It responds with the normalized saved config so clients can adopt
-// server-minted service/MCP server IDs without a refetch.
+// It responds with the normalized saved config, credentials masked as in GET,
+// so clients can adopt server-minted service/MCP server IDs without a refetch.
 // PUT /admin/config
 func (a *API) handleSaveConfig(c *gin.Context) {
 	var cfg config.Config
@@ -167,7 +169,9 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	var changedKeys []string
 	var prevServers []config.MCPServerConfig
 	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
-		next := config.ReconcileAgentReferences(prev, cfg)
+		// A masked credential means "keep the stored one"; any other value is what
+		// the admin typed, including an empty one that clears it.
+		next := config.ReconcileAgentReferences(prev, config.RestoreSecrets(cfg, prev))
 		next, _ = next.MigrateAgentReferences(resolvedAgentNames)
 		if err := config.ValidateServiceIDUniqueness(next.Services); err != nil {
 			return config.Config{}, err
@@ -235,7 +239,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, saved)
+	c.JSON(http.StatusOK, config.RedactSecrets(saved))
 }
 
 // clearMCPServerOAuthState deletes users' stored OAuth state for remote MCP

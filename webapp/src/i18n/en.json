@@ -857,6 +857,7 @@
   "nkLLHbC2": "Let the agent run code in Anthropic's managed sandbox. Enabling this also lets web search and web fetch filter results in the sandbox. Conversation content may be processed and retained in the sandbox; see Anthropic's code execution tool documentation for details and pricing.",
   "nmpevlUA": "Discard",
   "nmtfDhMS": "Embedding Search",
+  "nnWwrIoe": "Saved credentials do not carry over to a different URL. Re-enter them before saving.",
   "nnX903hx": "Selected channels only",
   "noZdV2GA": "Deleting...",
   "nscvoEh1": "MCP Configuration",

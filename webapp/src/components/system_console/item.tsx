@@ -343,6 +343,11 @@ export const TextFieldContainer = styled.div`
 	gap: var(--spacing-xs);
 `;
 
+export const CredentialsClearedNote = styled.div`
+    margin-top: var(--spacing-xs);
+    color: var(--error-text);
+`;
+
 export const HelpText = styled.div`
 	font-size: var(--font-size-75);
 	font-weight: var(--font-weight-regular);
