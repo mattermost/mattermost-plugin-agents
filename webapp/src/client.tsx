@@ -7,7 +7,7 @@ import {PreferenceType} from '@mattermost/types/preferences';
 
 import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 
-import {PluginConfig, SECRET_PLACEHOLDER} from '@/components/system_console/plugin_config_types';
+import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
 import {
@@ -929,10 +929,6 @@ export type FetchModelsOptions = {
     serviceID?: string;
 }
 
-// A masked value is not a credential, so it is dropped from the request: the
-// server resolves it from the saved service named by serviceID.
-const credentialValue = (value: string) => (value === SECRET_PLACEHOLDER ? '' : value);
-
 export async function fetchModels(serviceType: string, apiKey: string, apiURL: string, orgID: string, options: FetchModelsOptions = {}) {
     const url = `${baseRoute()}/admin/models/fetch`;
     const response = await fetch(url, Client4.getOptions({
@@ -940,13 +936,13 @@ export async function fetchModels(serviceType: string, apiKey: string, apiURL: s
         body: JSON.stringify({
             serviceType,
             serviceID: options.serviceID || '',
-            apiKey: credentialValue(apiKey),
+            apiKey,
             apiURL,
             orgID,
             region: options.region || '',
             vertexProjectID: options.vertexProjectID || '',
             vertexProjectNumber: options.vertexProjectNumber || '',
-            vertexAuthCredentials: credentialValue(options.vertexAuthCredentials || ''),
+            vertexAuthCredentials: options.vertexAuthCredentials || '',
         }),
     }));
 

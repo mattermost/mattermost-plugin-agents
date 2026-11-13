@@ -917,11 +917,13 @@ func (a *API) handleFetchModels(c *gin.Context) {
 		// A saved service's credentials belong to the endpoint it is saved with,
 		// so they are only read for a request addressing that same endpoint. A
 		// request addressing anywhere else carries its own credentials or none.
+		// Only a mask is replaced by the stored credential: an empty value is a
+		// credential the admin cleared and stays empty.
 		if stored != nil && config.BindsCredentials(*stored, req.ServiceType, req.APIURL) {
-			if req.APIKey == "" || config.IsSecretPlaceholder(req.APIKey) {
+			if config.IsSecretPlaceholder(req.APIKey) {
 				req.APIKey = stored.APIKey
 			}
-			if req.VertexAuthCredentials == "" || config.IsSecretPlaceholder(req.VertexAuthCredentials) {
+			if config.IsSecretPlaceholder(req.VertexAuthCredentials) {
 				req.VertexAuthCredentials = stored.VertexAuthCredentials
 			}
 		}
