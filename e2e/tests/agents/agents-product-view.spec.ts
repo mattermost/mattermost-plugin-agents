@@ -180,21 +180,22 @@ async function archiveFromSidebar(page: Page, rowTitle: string): Promise<void> {
 
     const dialog = page.getByRole('dialog', {name: 'Archive chat'});
     await expect(dialog).toBeVisible();
-    const box = (await dialog.boundingBox())!;
-    const onTop = await page.evaluate(({x, y}) => {
-        const hit = document.elementFromPoint(x, y);
-        const header = document.getElementById('global-header');
-        const headerBox = header?.getBoundingClientRect();
-        const overHeader = headerBox ? document.elementFromPoint(headerBox.left + (headerBox.width / 2), headerBox.top + (headerBox.height / 2)) : null;
-        return {
-            dialogHit: Boolean(hit?.closest('[role="dialog"]')),
-            headerCovered: header ? !header.contains(overHeader) : null,
-        };
-    }, {x: box.x + (box.width / 2), y: box.y + (box.height / 2)});
-    expect(onTop.dialogHit).toBe(true);
-    if (onTop.headerCovered !== null) {
-        expect(onTop.headerCovered).toBe(true);
-    }
+    // The dialog animates in, so sample the hit-test until it settles instead of once.
+    await expect.poll(async () => {
+        const box = await dialog.boundingBox();
+        if (!box) {
+            return false;
+        }
+        return page.evaluate(({x, y}) => {
+            const hit = document.elementFromPoint(x, y);
+            const header = document.getElementById('global-header');
+            const headerBox = header?.getBoundingClientRect();
+            const overHeader = headerBox ? document.elementFromPoint(headerBox.left + (headerBox.width / 2), headerBox.top + (headerBox.height / 2)) : null;
+            const dialogHit = Boolean(hit?.closest('[role="dialog"]'));
+            const headerCovered = header ? !header.contains(overHeader) : true;
+            return dialogHit && headerCovered;
+        }, {x: box.x + (box.width / 2), y: box.y + (box.height / 2)});
+    }, {message: 'the archive dialog covers the product chrome', timeout: 10000}).toBe(true);
 
     const archiveResponse = page.waitForResponse((r) => r.url().endsWith('/archive'));
     await dialog.getByRole('button', {name: 'Archive'}).click();
