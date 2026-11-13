@@ -656,6 +656,10 @@ export async function searchAllChannels(term: string): Promise<ChannelWithTeamDa
     }) as Promise<ChannelWithTeamData[]>; // With these paremeters we should always get ChannelWithTeamData[]
 }
 
+export function getChannel(channelId: string) {
+    return Client4.getChannel(channelId);
+}
+
 export async function getChannelById(channelId: string): Promise<ChannelWithTeamData> {
     const channel = await Client4.getChannel(channelId);
     const team = await Client4.getTeam(channel.team_id);
