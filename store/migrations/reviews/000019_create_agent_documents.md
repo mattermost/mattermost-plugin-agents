@@ -1,4 +1,4 @@
-# Schema Migration Review: 000017 — Create Agents_AgentDocuments, add Documents to Agents_UserAgents
+# Schema Migration Review: 000019 — Create Agents_AgentDocuments, add Documents to Agents_UserAgents
 
 > **Context:** Agents can carry reference documents (PDF and text files) whose extracted text
 > is added to the agent's system prompt. `Agents_AgentDocuments` is an append-only,
