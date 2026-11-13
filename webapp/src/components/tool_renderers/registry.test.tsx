@@ -604,9 +604,13 @@ describe('channel membership tool cards', () => {
             await Promise.resolve();
         });
 
-        for (const absent of notShown) {
+        // The generic list may carry a "@username" hint beside a raw user ID;
+        // what must be absent is the membership card's summary sentence.
+        const hinted = ['dana.holloway', 'omar.reyes'];
+        for (const absent of notShown.filter((name) => !hinted.includes(name))) {
             expect(container.textContent).not.toContain(absent);
         }
+        expect(container.textContent).not.toMatch(/(Add|Remove) .+ (to|from) /);
     });
 
     test('a pending membership call still renders a card that can be accepted', async () => {
