@@ -53,8 +53,11 @@ import {notifyMCPConnectionUpdated, MCPConnectionEvent} from './hooks/use_mcp_co
 import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands';
 import SearchHints from './components/search_hints';
 import {useBotlist, resolveActiveBot, getSelectedAgentId, fetchAndStoreBots} from './bots';
-import {botsFromState, makeChannelAutoReplySchema} from './components/channel_settings/autoreply_schema';
+import {botsFromState, makeChannelAgentsTabSchema} from './components/channel_settings/agents_tab_schema';
 import {handleChannelAutoReplyUpdated, ChannelAutoReplyUpdatedEvent} from './components/channel_settings/autoreply_state';
+import {handleChannelInstructionsUpdated} from './components/channel_settings/channel_instructions_state';
+import ChannelContextBadge from './components/channel_context_badge';
+import {ChannelContextPostsCleared, ChannelContextUpdatedEvent, handleChannelContextUpdated, resetChannelContextRequests} from './channel_context';
 import {shouldSuppressBotNotification} from './notifications';
 import AgentsTour from './components/tutorial/agents_tour';
 import AgentsHeaderSettings from './components/agents/agents_header_settings';
@@ -188,12 +191,15 @@ export default class Plugin {
             },
         );
 
-        // Events missed while disconnected: an `end` would leave a reply generating for good, and
-        // the thread list may be stale.
+        // Events missed while disconnected: an `end` would leave a reply generating for good, the
+        // thread list may be stale, and so may the cached agent-context pins. The host keeps one
+        // reconnect handler per plugin, so all of this must share a single registration.
         if (registry.registerReconnectHandler) {
             registry.registerReconnectHandler(() => {
                 clearGeneratingPosts();
                 agentThreadsSync.handleReconnect();
+                resetChannelContextRequests();
+                store.dispatch({type: ChannelContextPostsCleared});
             });
         }
 
@@ -232,6 +238,20 @@ export default class Plugin {
         registry.registerPostTypeComponent('custom_llmbot', LLMBotPostWithWebsockets);
         registry.registerPostTypeComponent('custom_llm_postback', PostbackPost);
         registry.registerPostTypeComponent('custom_agent_mention_reminder', AgentMentionReminderPost);
+
+        // Keep agent-context pins fresh: a remote pin or unpin re-fetches the
+        // affected channel.
+        registry.registerWebSocketEventHandler(
+            'custom_mattermost-ai_channel_context_updated',
+            (msg: PluginWebSocketMessage<ChannelContextUpdatedEvent>) => {
+                handleChannelContextUpdated(store, msg.data);
+                handleChannelInstructionsUpdated(msg.data);
+            },
+        );
+        if (registry.registerPostHeaderComponent) {
+            registry.registerPostHeaderComponent(ChannelContextBadge);
+        }
+
         if (registry.registerPostActionComponent) {
             registry.registerPostActionComponent(PostMenu);
         } else {
@@ -254,7 +274,7 @@ export default class Plugin {
         // exactly once: the host re-runs hydration whenever the schema object
         // reference changes, so it must stay stable for the plugin's lifetime.
         if (registry.registerChannelSettingsTab) {
-            registry.registerChannelSettingsTab(makeChannelAutoReplySchema(store, getStaticIntl(store)));
+            registry.registerChannelSettingsTab(makeChannelAgentsTabSchema(store, getStaticIntl(store)));
 
             // Re-sync an open settings modal when the setting changes remotely.
             registry.registerWebSocketEventHandler(

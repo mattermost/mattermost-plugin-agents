@@ -1,6 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import {ChannelContextPostsCleared} from './channel_context';
 import {BotsHandler} from './redux';
 import {LLMBot} from './bots';
 import {ChannelAccessLevel, UserAccessLevel} from './components/system_console/bot';
@@ -77,7 +78,7 @@ type WebSocketHandlers = Map<string, (msg: unknown) => void>;
 // Only the registry members initialize() calls unconditionally, plus the
 // channel-settings tab (its presence is what makes the bots cache load-bearing
 // for a synchronous shouldRender).
-function makeRegistry(websocketHandlers: WebSocketHandlers) {
+function makeRegistry(websocketHandlers: WebSocketHandlers, registerReconnectHandler = jest.fn()) {
     return {
         registerReducer: jest.fn(),
         registerDesktopNotificationHook: jest.fn(),
@@ -90,6 +91,7 @@ function makeRegistry(websocketHandlers: WebSocketHandlers) {
         registerWebSocketEventHandler: (event: string, handler: (msg: unknown) => void) => {
             websocketHandlers.set(event, handler);
         },
+        registerReconnectHandler,
     };
 }
 
@@ -111,15 +113,16 @@ function makeStore(dispatch: jest.Mock, siteURL = 'http://localhost:8065') {
 async function initializePlugin(siteURL?: string) {
     const websocketHandlers: WebSocketHandlers = new Map();
     const dispatch = jest.fn();
+    const registerReconnectHandler = jest.fn();
 
     // The entrypoint self-registers on import, so the host hook must exist first.
     window.registerPlugin = jest.fn();
 
     // eslint-disable-next-line global-require
     const Plugin = require('./index').default;
-    await new Plugin().initialize(makeRegistry(websocketHandlers), makeStore(dispatch, siteURL));
+    await new Plugin().initialize(makeRegistry(websocketHandlers, registerReconnectHandler), makeStore(dispatch, siteURL));
 
-    return {websocketHandlers, dispatch};
+    return {websocketHandlers, dispatch, registerReconnectHandler};
 }
 
 // Lets the floating fetch promises inside initialize()/the handlers settle.
@@ -192,5 +195,24 @@ describe('bots cache websocket handlers', () => {
         await flush();
 
         expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({type: BotsHandler}));
+    });
+});
+
+describe('reconnect handling', () => {
+    beforeEach(() => {
+        jest.resetModules();
+    });
+
+    test('registers one reconnect handler that also drops cached agent-context pins', async () => {
+        const {dispatch, registerReconnectHandler} = await initializePlugin();
+        await flush();
+        dispatch.mockClear();
+
+        // The host keeps one reconnect handler per plugin, so a second
+        // registration would silently replace the first.
+        expect(registerReconnectHandler).toHaveBeenCalledTimes(1);
+        registerReconnectHandler.mock.calls[0][0]();
+
+        expect(dispatch).toHaveBeenCalledWith({type: ChannelContextPostsCleared});
     });
 });

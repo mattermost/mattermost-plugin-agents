@@ -285,6 +285,66 @@ func TestAuthoredPost(t *testing.T) {
 	}
 }
 
+func TestContextPosts(t *testing.T) {
+	tests := []struct {
+		name         string
+		posts        []*model.Post
+		usernames    map[string]string
+		maxBodyRunes int
+		expected     string
+	}{
+		{
+			name:         "no posts",
+			maxBodyRunes: 100,
+			expected:     "",
+		},
+		{
+			name: "posts render in order with author, time, and ID",
+			posts: []*model.Post{
+				{Id: "post1", UserId: "u1", Message: "Deploys freeze on Fridays.", CreateAt: 1704067200000},
+				{Id: "post2", UserId: "u2", Message: "  On-call lives in #payments-oncall  "},
+			},
+			usernames:    map[string]string{"u1": "alice", "u2": "bob"},
+			maxBodyRunes: 100,
+			expected: "Post ID post1 by @alice at 2024-01-01T00:00:00Z:\nDeploys freeze on Fridays.\n\n" +
+				"Post ID post2 by @bob:\nOn-call lives in #payments-oncall",
+		},
+		{
+			name:         "unknown author",
+			posts:        []*model.Post{{Id: "post1", UserId: "gone", Message: "hello"}},
+			maxBodyRunes: 100,
+			expected:     "Post ID post1 by @unknown:\nhello",
+		},
+		{
+			name:         "long body is truncated by runes",
+			posts:        []*model.Post{{Id: "post1", UserId: "u1", Message: "界界界界界"}},
+			usernames:    map[string]string{"u1": "alice"},
+			maxBodyRunes: 3,
+			expected:     "Post ID post1 by @alice:\n界界界 … [truncated]",
+		},
+		{
+			name: "attachments are included in the body",
+			posts: []*model.Post{{
+				Id:      "post1",
+				UserId:  "u1",
+				Message: "See attached",
+				Props: map[string]any{
+					"attachments": []any{map[string]any{"title": "Runbook", "text": "Restart the worker"}},
+				},
+			}},
+			usernames:    map[string]string{"u1": "alice"},
+			maxBodyRunes: 100,
+			expected:     "Post ID post1 by @alice:\nSee attached\nRunbook\nRestart the worker",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, ContextPosts(tt.posts, tt.usernames, tt.maxBodyRunes))
+		})
+	}
+}
+
 func TestFormatPost(t *testing.T) {
 	tests := []struct {
 		name     string
