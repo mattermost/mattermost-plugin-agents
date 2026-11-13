@@ -5,6 +5,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"strconv"
@@ -297,42 +298,27 @@ func restoreHeaderSecrets(incoming, stored map[string]string) map[string]string 
 	return incoming
 }
 
-// embeddingEndpointParams are the provider parameters that decide where an
-// embedding key is sent and with which key. The embedding client decodes the
-// parameters with encoding/json into a struct, which matches keys
-// case-insensitively and keeps the last one, so the rules here read them the
-// same way.
-type embeddingEndpointParams struct {
-	APIKey   string `json:"apiKey"`
-	APIURL   string `json:"apiURL"`
-	Provider string `json:"provider"`
-}
-
-func decodeEmbeddingEndpoint(parameters json.RawMessage) embeddingEndpointParams {
-	var decoded embeddingEndpointParams
-	if len(parameters) == 0 || json.Unmarshal(parameters, &decoded) != nil {
-		return embeddingEndpointParams{}
-	}
-	return decoded
-}
-
-func embeddingDestination(upstream embeddings.UpstreamConfig) string {
-	endpoint := decodeEmbeddingEndpoint(upstream.Parameters)
-	return destination(upstream.Type, endpoint.Provider, endpoint.APIURL)
-}
-
-// ValidateEmbeddingProviderParameters rejects parameters that repeat the key,
-// URL or provider under another capitalization: which spelling the client reads
-// would then depend on key order, so the credential binding could not be
-// enforced.
+// ValidateEmbeddingProviderParameters rejects embedding provider parameters the
+// credential binding cannot reason about: the key, URL or provider repeated
+// under another capitalization (which spelling the client reads would depend on
+// key order), or values the provider's client could not decode.
 func ValidateEmbeddingProviderParameters(upstream embeddings.UpstreamConfig) error {
+	if len(upstream.Parameters) == 0 {
+		return nil
+	}
 	params, ok := decodeParameters(upstream.Parameters)
 	if !ok {
-		return nil
+		return errors.New("embedding provider parameters must be a JSON object")
 	}
 	for _, name := range []string{embeddingProviderAPIKeyParam, embeddingProviderAPIURLParam, embeddingProviderProviderParam} {
 		if len(parameterKeys(params, name)) > 1 {
 			return fmt.Errorf("embedding provider parameter %q is set more than once", name)
+		}
+	}
+	switch upstream.Type {
+	case embeddings.ProviderTypeBifrost, embeddings.ProviderTypeOpenAI, embeddings.ProviderTypeOpenAICompatible:
+		if _, _, err := upstream.Credential(); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -375,9 +361,11 @@ func restoreEmbeddingProviderSecrets(provider, stored embeddings.UpstreamConfig)
 		return provider.Parameters
 	}
 
-	storedKey := decodeEmbeddingEndpoint(stored.Parameters).APIKey
-	incomingDestination := embeddingDestination(provider)
-	storedDestination := embeddingDestination(stored)
+	// Only a provider whose parameters decode the way its client decodes them,
+	// on both sides, has a destination to bind to; otherwise nothing is restored.
+	_, incomingDestination, incomingErr := provider.Credential()
+	storedKey, storedDestination, storedErr := stored.Credential()
+	bindable := incomingErr == nil && storedErr == nil
 
 	restored := false
 	for _, key := range parameterKeys(params, embeddingProviderAPIKeyParam) {
@@ -385,7 +373,10 @@ func restoreEmbeddingProviderSecrets(provider, stored embeddings.UpstreamConfig)
 		if !isString || !IsSecretPlaceholder(value) {
 			continue
 		}
-		resolved := resolveBoundSecret(value, incomingDestination, storedKey, storedDestination)
+		resolved := ""
+		if bindable {
+			resolved = resolveBoundSecret(value, destination(incomingDestination...), storedKey, destination(storedDestination...))
+		}
 		params[key] = jsonString(resolved)
 		restored = true
 	}

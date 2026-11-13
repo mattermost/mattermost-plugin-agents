@@ -818,9 +818,8 @@ func TestSaveConfigBindsCredentialsToTheirDestination(t *testing.T) {
 			want: sentinelEmbeddingAPIKey,
 			get:  func(cfg config.Config) string { return embeddingProviderParam(cfg, "apiKey") },
 			moves: map[string]func(cfg *config.Config){
-				"another API URL":         func(cfg *config.Config) { setEmbeddingProviderParam(cfg, "apiURL", "https://attacker.example.com/v1") },
-				"another provider type":   func(cfg *config.Config) { setEmbeddingType(cfg, "cohere") },
-				"another nested provider": func(cfg *config.Config) { setEmbeddingProviderParam(cfg, "provider", "cohere") },
+				"another API URL":       func(cfg *config.Config) { setEmbeddingProviderParam(cfg, "apiURL", "https://attacker.example.com/v1") },
+				"another provider type": func(cfg *config.Config) { setEmbeddingType(cfg, "cohere") },
 			},
 			keeps: map[string]func(cfg *config.Config){
 				"trailing slash": func(cfg *config.Config) {
@@ -936,4 +935,107 @@ func TestGetConfigMasksCaseVariantEmbeddingKey(t *testing.T) {
 
 	assert.NotContains(t, body, sentinelEmbeddingAPIKey)
 	assert.Contains(t, body, visibleEmbeddingAPIURL)
+}
+
+// The credential binding must see the provider parameters exactly as the
+// provider's runtime client does: which fields it reads, and what they decode
+// to. Anything the client could not decode, or a provider with no client,
+// restores nothing.
+func TestSaveConfigEmbeddingBindingMatchesTheClient(t *testing.T) {
+	masked := `"apiKey":"` + config.SecretPlaceholder + `"`
+	storedURL := `"apiURL":"` + visibleEmbeddingAPIURL + `"`
+	attacker := `"apiURL":"https://attacker.example.com/v1"`
+
+	tests := []struct {
+		name         string
+		storedType   string
+		storedParams string
+		sentType     string
+		sentParams   string
+		wantStatus   int
+		wantKey      string
+	}{
+		{
+			name: "openai client ignores the provider parameter, so changing it keeps the key", storedType: "openai",
+			storedParams: `{"apiKey":"` + sentinelEmbeddingAPIKey + `",` + storedURL + `}`,
+			sentType:     "openai", sentParams: `{` + masked + `,` + storedURL + `,"provider":"cohere"}`,
+			wantStatus: http.StatusOK, wantKey: sentinelEmbeddingAPIKey,
+		},
+		{
+			name: "non-string provider the openai client ignores still binds to the URL", storedType: "openai",
+			storedParams: `{"apiKey":"` + sentinelEmbeddingAPIKey + `",` + storedURL + `}`,
+			sentType:     "openai", sentParams: `{` + masked + `,"provider":123,` + attacker + `}`,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "non-string provider the bifrost client reads is rejected", storedType: "bifrost",
+			storedParams: `{"provider":"openai","apiKey":"` + sentinelEmbeddingAPIKey + `"}`,
+			sentType:     "bifrost", sentParams: `{"provider":123,` + masked + `}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "non-string apiURL is rejected", storedType: "openai",
+			storedParams: `{"apiKey":"` + sentinelEmbeddingAPIKey + `",` + storedURL + `}`,
+			sentType:     "openai", sentParams: `{` + masked + `,"apiURL":["https://attacker.example.com"]}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "non-string apiKey is rejected", storedType: "openai",
+			storedParams: `{"apiKey":"` + sentinelEmbeddingAPIKey + `",` + storedURL + `}`,
+			sentType:     "openai", sentParams: `{"apiKey":{"x":1},` + attacker + `}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "parameters that are not an object are rejected", storedType: "openai",
+			storedParams: `{"apiKey":"` + sentinelEmbeddingAPIKey + `",` + storedURL + `}`,
+			sentType:     "openai", sentParams: `"` + config.SecretPlaceholder + `"`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "bifrost keeps the key for the same nested provider", storedType: "bifrost",
+			storedParams: `{"provider":"openai","apiKey":"` + sentinelEmbeddingAPIKey + `"}`,
+			sentType:     "bifrost", sentParams: `{"provider":"openai",` + masked + `}`,
+			wantStatus: http.StatusOK, wantKey: sentinelEmbeddingAPIKey,
+		},
+		{
+			name: "bifrost drops the key for another nested provider", storedType: "bifrost",
+			storedParams: `{"provider":"openai","apiKey":"` + sentinelEmbeddingAPIKey + `"}`,
+			sentType:     "bifrost", sentParams: `{"provider":"cohere",` + masked + `}`,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "a provider type with no client never gets the key restored", storedType: "mock",
+			storedParams: `{"apiKey":"` + sentinelEmbeddingAPIKey + `"}`,
+			sentType:     "mock", sentParams: `{` + masked + `}`,
+			wantStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stored := storedCredentialConfig()
+			stored.EmbeddingSearchConfig.EmbeddingProvider = embeddings.UpstreamConfig{Type: tt.storedType, Parameters: json.RawMessage(tt.storedParams)}
+			store := &testConfigStore{cfg: stored}
+			router := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
+
+			var read config.Config
+			require.NoError(t, json.Unmarshal(getAdminConfig(t, store), &read))
+			read.EmbeddingSearchConfig.EmbeddingProvider = embeddings.UpstreamConfig{Type: tt.sentType, Parameters: json.RawMessage(tt.sentParams)}
+			body, err := json.Marshal(read)
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, tt.wantStatus, w.Code)
+			assert.NotContains(t, w.Body.String(), sentinelEmbeddingAPIKey)
+			if tt.wantStatus == http.StatusOK {
+				assert.Equal(t, tt.wantKey, embeddingProviderParam(*store.cfg, "apiKey"))
+			} else {
+				assert.Equal(t, sentinelEmbeddingAPIKey, embeddingProviderParam(*store.cfg, "apiKey"), "a rejected save must not change the stored credential")
+			}
+		})
+	}
 }
