@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/lifecycle"
+
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
@@ -191,7 +193,7 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 			channel,
 			s.contextBuilder.WithLLMContextNoTools(),
 		)
-		summary, err := s.SummarizeTranscription(stdcontext.Background(), bot, text, requestContext, SummaryParams{
+		summary, err := s.SummarizeTranscription(lifecycle.Context(), bot, text, requestContext, SummaryParams{
 			UserID:           requestingUser.Id,
 			RootPostID:       surePost.Id,
 			TranscriptFileID: transcriptionFileID,
@@ -208,7 +210,7 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 		}
 		summaryPost.AddProp(ReferencedTranscriptPostID, transcriptionPost.Id)
 		summaryPost.AddProp(streaming.ConversationIDProp, summary.ConversationID)
-		if err := s.streamingService.StreamToNewPost(stdcontext.Background(), bot.GetMMBot().UserId, requestingUser.Id, summary.Stream, summaryPost, transcriptionPost.Id); err != nil {
+		if err := s.streamingService.StreamToNewPost(lifecycle.Context(), bot.GetMMBot().UserId, requestingUser.Id, summary.Stream, summaryPost, transcriptionPost.Id); err != nil {
 			return fmt.Errorf("unable to stream result to post: %w", err)
 		}
 
@@ -273,7 +275,7 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 			channel,
 			s.contextBuilder.WithLLMContextNoTools(),
 		)
-		summary, err := s.SummarizeTranscription(stdcontext.Background(), bot, transcription, llmContext, SummaryParams{
+		summary, err := s.SummarizeTranscription(lifecycle.Context(), bot, transcription, llmContext, SummaryParams{
 			UserID:           requestingUser.Id,
 			RootPostID:       rootID,
 			TranscriptFileID: transcriptFileInfo.Id,
@@ -291,7 +293,7 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 			return fmt.Errorf("unable to update transcript post: %w", err)
 		}
 
-		ctx, err := s.streamingService.GetStreamingContext(stdcontext.Background(), transcriptPost.Id)
+		ctx, err := s.streamingService.GetStreamingContext(lifecycle.Context(), transcriptPost.Id)
 		if err != nil {
 			return fmt.Errorf("unable to get post streaming context: %w", err)
 		}

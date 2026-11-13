@@ -459,7 +459,7 @@ test.describe('Custom Prompts in AI Actions Submenu', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. Pinned prompts are not shown as pills in the RHS empty state
+// 3. Pinned skills are offered as buttons in the RHS empty state
 // ---------------------------------------------------------------------------
 test.describe('Pinned prompts in the RHS empty state', () => {
     let userClient: any;
@@ -484,22 +484,37 @@ test.describe('Pinned prompts in the RHS empty state', () => {
         }
     });
 
-    test('a pinned prompt does not appear as a pill button in the RHS new chat', async ({ page }) => {
-        const prompt = await createPromptViaAPI(userClient, {
-            name: 'RHS Pill Prompt',
-            description: 'Pinned, but the RHS empty state shows no prompt pills',
-            template: 'Pill template content',
+    test('a pinned skill is a button in the RHS new chat and runs when clicked; an unpinned one is not offered', async ({ page }) => {
+        const pinned = await createPromptViaAPI(userClient, {
+            name: 'RHS Pinned Skill',
+            description: 'Pinned, so the new chat offers it',
+            template: 'Pinned skill template content',
             is_shared: true,
         });
-        createdPromptIds.push(prompt.id);
-        await setPinViaAPI(userClient, prompt.id, true);
+        createdPromptIds.push(pinned.id);
+        await setPinViaAPI(userClient, pinned.id, true);
+
+        const unpinned = await createPromptViaAPI(userClient, {
+            name: 'RHS Unpinned Prompt',
+            description: 'Not pinned, so the new chat does not offer it',
+            template: 'Unpinned template content',
+            is_shared: true,
+        });
+        createdPromptIds.push(unpinned.id);
 
         const { aiPlugin } = await setupTestPage(page);
         await aiPlugin.openRHS();
-
-        // The new chat is up (its composer is there) and no pill was rendered for the pinned prompt.
         await expect(aiPlugin.rhsPostTextarea).toBeVisible({ timeout: 30000 });
-        await expect(page.getByRole('button', { name: 'RHS Pill Prompt' })).toHaveCount(0);
+
+        const rhs = aiPlugin.getRhsContainer();
+        const pinnedSkill = rhs.getByRole('button', { name: 'RHS Pinned Skill' });
+        await expect(pinnedSkill).toBeVisible({ timeout: 30000 });
+        await expect(rhs.getByRole('button', { name: 'RHS Unpinned Prompt' })).toHaveCount(0);
+
+        // Clicking it posts the rendered prompt as the chat's first message.
+        await openAIMock.addCompletionMock(responseTest);
+        await pinnedSkill.click();
+        await expect(rhs.getByTestId('post-message-text').getByText('Pinned skill template content')).toBeVisible({ timeout: 30000 });
     });
 });
 
@@ -615,8 +630,9 @@ test.describe('Context Variables', () => {
             is_shared: false,
         });
         createdPromptIds.push(prompt.id);
-        await setPinViaAPI(userClient, prompt.id, true);
 
+        // Left unpinned: a pinned prompt is also a button in the new chat, and the prompt
+        // name must match only the AI actions menu item here.
         const { aiPlugin } = await setupTestPage(page);
         await aiPlugin.openRHS();
         await expect(aiPlugin.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
