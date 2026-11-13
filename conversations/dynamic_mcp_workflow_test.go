@@ -138,6 +138,7 @@ func TestDynamicMCPStrictSearchLoadCallDerivesLoadedTools(t *testing.T) {
 			lm := &dynamicWorkflowLLM{}
 			bot := loadedStateBot(lm)
 			llmContext := builder.BuildLLMContextUserRequest(
+				context.Background(),
 				bot,
 				&model.User{Id: testRequesterID, Username: "user", Locale: "en"},
 				&model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__" + testRequesterID},

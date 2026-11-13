@@ -137,9 +137,12 @@ type AgentRequestFields struct {
 	StructuredOutputEnabled bool             `json:"structuredOutputEnabled"`
 	MaxToolTurns            int              `json:"maxToolTurns"`
 	Skills                  llm.SkillsConfig `json:"skills"`
+	// Documents are resolved against the stored documents by
+	// resolveAgentDocuments, not by applyTo.
+	Documents []AgentDocumentRef `json:"documents"`
 }
 
-// applyTo overwrites the request-controlled fields on cfg.
+// applyTo overwrites the request-controlled fields on cfg except Documents.
 func (r AgentRequestFields) applyTo(cfg *llm.BotConfig) {
 	cfg.DisplayName = r.DisplayName
 	cfg.ServiceID = r.ServiceID
@@ -514,13 +517,20 @@ func requestFieldsFromConfig(cfg *llm.BotConfig) AgentRequestFields {
 		StructuredOutputEnabled: cfg.StructuredOutputEnabled, //nolint:staticcheck // deprecated field is still persisted verbatim
 		MaxToolTurns:            cfg.MaxToolTurns,
 		Skills:                  cfg.Skills,
+		Documents:               documentRefs(cfg.Documents),
 	}
 }
 
 // bindAgentRequestJSON binds the JSON body, capped at MaxAgentRequestBodyBytes,
 // into dst. It writes the abort response (413 or 400) and returns false on failure.
 func bindAgentRequestJSON(c *gin.Context, dst any) bool {
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxAgentRequestBodyBytes)
+	return bindAgentRequestJSONWithLimit(c, dst, MaxAgentRequestBodyBytes)
+}
+
+// bindAgentRequestJSONWithLimit is bindAgentRequestJSON with a body limit of
+// maxBytes.
+func bindAgentRequestJSONWithLimit(c *gin.Context, dst any, maxBytes int64) bool {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
 	if err := c.ShouldBindJSON(dst); err != nil {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			abortAgentRequest(c, http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
@@ -570,7 +580,13 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
+	documents, ok := a.resolveAgentDocuments(c, userID, "", req.Documents)
+	if !ok {
+		return
+	}
+
 	proposed := buildAgentConfigForCreate(req, userID, "")
+	proposed.Documents = documents
 	if !a.checkAgentLicenseGates(c, *proposed, nil) {
 		return
 	}
@@ -603,6 +619,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	}
 
 	agent := buildAgentConfigForCreate(req, userID, mmBot.UserId)
+	agent.Documents = documents
 
 	if err := a.agentStore.CreateAgent(agent, store.AgentVersionMeta{ActorID: userID, Source: store.AgentVersionSourceCreate}); err != nil {
 		a.discardUnusedBot(mmBot.UserId)
@@ -808,6 +825,12 @@ func (a *API) updateAgent(c *gin.Context, userID string, cfg *llm.BotConfig, req
 	if _, ok := a.validateAgentServiceID(c, req.ServiceID); !ok {
 		return nil, false
 	}
+
+	documents, ok := a.resolveAgentDocuments(c, userID, cfg.ID, req.Documents)
+	if !ok {
+		return nil, false
+	}
+	proposed.Documents = documents
 
 	if !a.checkAgentLicenseGates(c, proposed, cfg) {
 		return nil, false
@@ -1153,8 +1176,9 @@ func (a *API) canUserAccessAgent(ctx context.Context, cfg *llm.BotConfig, userID
 
 // sanitizeAgentForUser returns cfg unchanged for users who can manage the agent
 // (creator / agent admin / PermissionManageOthersAgent / legacy bot ManageSystem).
-// For everyone else, it returns a shallow copy with CustomInstructions stripped
-// since that field can contain sensitive organizational procedures.
+// For everyone else, it returns a shallow copy with CustomInstructions and
+// Documents stripped since they can contain sensitive organizational
+// procedures.
 func sanitizeAgentForUser(client *pluginapi.Client, cfg *llm.BotConfig, userID string) *llm.BotConfig {
 	if cfg == nil {
 		return nil
@@ -1170,5 +1194,6 @@ func redactUnmanageableAgent(cfg *llm.BotConfig, canManage bool) *llm.BotConfig 
 	redacted := *cfg
 	redacted.CustomInstructions = ""
 	redacted.Skills.DescriptionOverrides = nil
+	redacted.Documents = []llm.AgentDocument{}
 	return &redacted
 }

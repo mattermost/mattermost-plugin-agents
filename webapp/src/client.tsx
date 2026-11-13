@@ -11,6 +11,7 @@ import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
 import {
+    AgentDocument,
     UserAgent,
     CreateAgentRequest,
     UpdateAgentRequest,
@@ -1309,6 +1310,46 @@ export async function uploadAgentAvatar(agentId: string, file: File): Promise<vo
 
     if (response.ok) {
         return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readAgentErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function uploadAgentDocument(file: File): Promise<AgentDocument> {
+    const url = `${baseRoute()}/agents/documents`;
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const headers = {...(Client4.getOptions({method: 'POST'}).headers as Record<string, string>)};
+    delete headers['Content-Type'];
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: formData,
+    });
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readAgentErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function fetchAgentDocument(agentId: string, documentId: string): Promise<Blob> {
+    const url = `${agentRoute(agentId)}/documents/${encodeURIComponent(documentId)}`;
+    const response = await fetch(url, Client4.getOptions({method: 'GET'}));
+
+    if (response.ok) {
+        return response.blob();
     }
 
     throw new ClientError(Client4.url, {

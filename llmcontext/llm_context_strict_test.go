@@ -498,7 +498,7 @@ func TestContextSetsMCPDynamicToolLoadingCatalogFlag(t *testing.T) {
 				MCPDynamicToolLoading: tt.enabled,
 			})
 
-			context := builder.BuildLLMContextUserRequest(bot, testUser(), testChannel())
+			context := builder.BuildLLMContextUserRequest(stdcontext.Background(), bot, testUser(), testChannel())
 
 			require.Equal(t, tt.enabled, context.ToolCatalog.MCPDynamicToolLoading)
 		})

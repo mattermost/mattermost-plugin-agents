@@ -126,7 +126,7 @@ func (c *Conversations) buildConversationContextWithTools(
 	opts = append(opts, extraOpts...)
 	opts = append(opts, c.contextBuilder.WithLLMContextTools(ctx, bot))
 
-	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, opts...)
+	llmContext := c.contextBuilder.BuildLLMContextUserRequest(ctx, bot, user, channel, opts...)
 
 	if isDMOrGroup {
 		// Pre-build filtering protects strict registries; post-build removal preserves

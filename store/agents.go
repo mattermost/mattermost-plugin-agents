@@ -20,7 +20,7 @@ const agentSelectColumns = `ID, BotUserID, CreatorID, DisplayName, Username, Ser
 	EnabledTools, AutoEnableNewMCPTools, mcp_dynamic_tool_loading,
 	Model, EnableVision, DisableTools, EnabledNativeTools,
 	ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
-	MaxToolTurns, UseServiceAccountAuth, Skills,
+	MaxToolTurns, UseServiceAccountAuth, Skills, Documents,
 	CreateAt, UpdateAt, DeleteAt`
 
 // marshalJSONSlice serializes a slice for a JSON TEXT column.
@@ -94,6 +94,7 @@ type agentRow struct {
 	MaxToolTurns            int    `db:"maxtoolturns"`
 	UseServiceAccountAuth   bool   `db:"useserviceaccountauth"`
 	Skills                  string `db:"skills"`
+	Documents               string `db:"documents"`
 	CreateAt                int64  `db:"createat"`
 	UpdateAt                int64  `db:"updateat"`
 	DeleteAt                int64  `db:"deleteat"`
@@ -151,6 +152,14 @@ func (r *agentRow) toBotConfig() (*llm.BotConfig, error) {
 		}
 	}
 	cfg.Skills = normalizeSkills(cfg.Skills)
+	if err := unmarshalJSONSlice(r.Documents, &cfg.Documents); err != nil {
+		return nil, fmt.Errorf("failed to parse Documents: %w", err)
+	}
+	// Agents are served to the webapp as stored; an empty list keeps
+	// "documents" an array there.
+	if cfg.Documents == nil {
+		cfg.Documents = []llm.AgentDocument{}
+	}
 
 	return cfg, nil
 }
@@ -187,9 +196,9 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 			EnabledTools, AutoEnableNewMCPTools, mcp_dynamic_tool_loading,
 			Model, EnableVision, DisableTools, EnabledNativeTools,
 			ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
-			MaxToolTurns, UseServiceAccountAuth, Skills,
+			MaxToolTurns, UseServiceAccountAuth, Skills, Documents,
 			CreateAt, UpdateAt, DeleteAt
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)`,
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)`,
 		cfg.ID,
 		cfg.BotUserID,
 		cfg.CreatorID,
@@ -217,6 +226,7 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 		cfg.MaxToolTurns,
 		cfg.UseServiceAccountAuth,
 		marshalSkills(cfg.Skills),
+		marshalJSONSlice(cfg.Documents),
 		cfg.CreateAt,
 		cfg.UpdateAt,
 		cfg.DeleteAt,
@@ -382,8 +392,9 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 			MaxToolTurns = $22,
 			UseServiceAccountAuth = $23,
 			Skills = $24,
-			UpdateAt = $25
-		WHERE ID = $26 AND DeleteAt = 0`,
+			Documents = $25,
+			UpdateAt = $26
+		WHERE ID = $27 AND DeleteAt = 0`,
 		cfg.DisplayName,
 		cfg.Name,
 		cfg.ServiceID,
@@ -408,6 +419,7 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 		cfg.MaxToolTurns,
 		cfg.UseServiceAccountAuth,
 		marshalSkills(cfg.Skills),
+		marshalJSONSlice(cfg.Documents),
 		cfg.UpdateAt,
 		cfg.ID,
 	)

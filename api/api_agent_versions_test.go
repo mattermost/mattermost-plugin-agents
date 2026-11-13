@@ -432,6 +432,9 @@ func TestRequestFieldsFromConfigRoundTrip(t *testing.T) {
 	v := reflect.ValueOf(&want).Elem()
 	for i := range v.NumField() {
 		f := v.Field(i)
+		if v.Type().Field(i).Name == "Documents" {
+			continue
+		}
 		switch f.Kind() {
 		case reflect.String:
 			f.SetString("value-" + v.Type().Field(i).Name)
@@ -459,7 +462,13 @@ func TestRequestFieldsFromConfigRoundTrip(t *testing.T) {
 
 	var cfg llm.BotConfig
 	want.applyTo(&cfg)
-	assert.Equal(t, want, requestFieldsFromConfig(&cfg), "every request-controlled field must survive a restore")
+	got := requestFieldsFromConfig(&cfg)
+	assert.Empty(t, got.Documents, "documents are re-resolved from storage, not applied")
+	got.Documents = want.Documents
+	assert.Equal(t, want, got, "every request-controlled field must survive a restore")
+
+	cfg.Documents = []llm.AgentDocument{{ID: "doc-1", Name: "handbook.pdf"}}
+	assert.Equal(t, []AgentDocumentRef{{ID: "doc-1", Name: "handbook.pdf"}}, requestFieldsFromConfig(&cfg).Documents)
 }
 
 // seedAgentWithVersions stores an agent owned by testUserID and saves edits

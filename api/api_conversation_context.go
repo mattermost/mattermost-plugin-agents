@@ -100,6 +100,7 @@ func (a *API) buildContextForConversation(ctx context.Context, userID string, co
 	// adds DM-only servers only when channel is the viewer's DM with the
 	// agent, as a DM turn there would.
 	return a.contextBuilder.BuildLLMContextUserRequest(
+		ctx,
 		bot,
 		user,
 		channel,

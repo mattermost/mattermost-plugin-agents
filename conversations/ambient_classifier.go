@@ -115,7 +115,7 @@ func (c *Conversations) classifyAmbientReply(ctx context.Context, bot *bots.Bot,
 
 	// The posting user attributes the request so provider fallbacks are limited
 	// to services that user may use; thread content must not reach others.
-	llmCtx := c.contextBuilder.BuildLLMContextUserRequest(bot, postingUser, channel,
+	llmCtx := c.contextBuilder.BuildLLMContextUserRequest(ctx, bot, postingUser, channel,
 		c.contextBuilder.WithLLMContextParameters(map[string]any{
 			"Instructions": setting.Instructions,
 			"ThreadScoped": setting.Mode == autoreply.ModeAmbientThreads,
