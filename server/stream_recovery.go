@@ -87,9 +87,10 @@ func (p *Plugin) startStreamRecovery() {
 }
 
 // stopStreamsForShutdown cancels the follow-up sweep, interrupts all
-// in-flight streams on this node (they finalize as interrupted/"shutdown")
-// and waits up to shutdownStreamWait for them. Streams that do not finish are
-// left in the streaming state for the next activation's sweep.
+// in-flight streams and approved tool runs on this node (they finalize as
+// interrupted/"shutdown") and waits up to shutdownStreamWait in total for
+// them. Those that do not finish are left in the streaming state for the next
+// activation's sweep.
 func (p *Plugin) stopStreamsForShutdown() {
 	p.recoveryMu.Lock()
 	if p.recoveryTimer != nil {
@@ -100,8 +101,13 @@ func (p *Plugin) stopStreamsForShutdown() {
 
 	lifecycle.Shutdown()
 
-	if p.streamService != nil && !p.streamService.WaitForActiveStreams(shutdownStreamWait) && p.pluginAPI != nil {
+	deadline := time.Now().Add(shutdownStreamWait)
+	if p.streamService != nil && !p.streamService.WaitForActiveStreams(time.Until(deadline)) && p.pluginAPI != nil {
 		p.pluginAPI.Log.Warn("Some LLM streams did not finalize before shutdown; they will be recovered on next activation",
 			"remaining", p.streamService.ActiveStreams())
+	}
+	if p.conversationsService != nil && !p.conversationsService.WaitForToolRuns(time.Until(deadline)) && p.pluginAPI != nil {
+		p.pluginAPI.Log.Warn("Some approved tool runs did not finish before shutdown; they will be recovered on next activation",
+			"remaining", p.conversationsService.ActiveToolRuns())
 	}
 }

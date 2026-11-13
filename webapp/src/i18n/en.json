@@ -610,6 +610,7 @@
   "ai.tool_call.awaiting_answer": "Awaiting answer",
   "ai.tool_call.awaiting_approval": "Awaiting approval",
   "ai.tool_call.hide_raw": "Hide raw",
+  "ai.tool_call.interrupted": "Interrupted",
   "ai.tool_call.keep_private": "Keep private",
   "ai.tool_call.learn_more": "Learn more",
   "ai.tool_call.no_parameters_required": "No parameters required",

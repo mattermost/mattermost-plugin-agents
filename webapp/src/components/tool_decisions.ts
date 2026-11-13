@@ -26,8 +26,10 @@ export function selectDecisionToolCalls(
 
     // User-interaction results are decided at answer time and auto-executed
     // results at write time, so neither needs a share/keep-private decision.
+    // An interrupted call never produced a result to share.
     return toolCalls.filter((call) =>
         !call.user_interaction &&
+        !call.interrupted &&
         !call.decided &&
         (call.status === ToolCallStatus.Success ||
         call.status === ToolCallStatus.Error ||

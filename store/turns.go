@@ -48,6 +48,20 @@ const (
 // checks both use the DB clock so skew between HA nodes does not matter.
 const dbNowMillis = "(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT"
 
+// Tool calls an approval run claimed (status accepted) have an unknown
+// outcome once the run's turn is interrupted. These rewrite the turn's blocks
+// so that outcome is recorded explicitly instead of inferred from the turn.
+func rewriteToolStatusSQL(from, to string) string {
+	return `(CASE WHEN jsonb_typeof(Content) = 'array' THEN (SELECT COALESCE(jsonb_agg(
+  CASE WHEN b->>'type' = 'tool_use' AND b->>'status' = '` + from + `' THEN jsonb_set(b, '{status}', '"` + to + `"') ELSE b END
+  ORDER BY ord), '[]'::jsonb) FROM jsonb_array_elements(Content) WITH ORDINALITY AS t(b, ord)) ELSE Content END)`
+}
+
+var (
+	markClaimedCallsInterruptedSQL = rewriteToolStatusSQL("accepted", "interrupted")
+	markInterruptedCallsClaimedSQL = rewriteToolStatusSQL("interrupted", "accepted")
+)
+
 var turnColumns = []string{
 	"ID", "ConversationID", "PostID", "Role", "Content",
 	"TokensIn", "TokensOut", "Sequence", "CreatedAt", "Status", "UpdatedAt", "RunPostID",
@@ -130,6 +144,66 @@ func (s *Store) CompareAndSwapTurnContent(id string, expected, content json.RawM
 	rows, err := result.RowsAffected()
 	if err != nil {
 		return false, fmt.Errorf("failed to read compare-and-swap turn content result: %w", err)
+	}
+	return rows == 1, nil
+}
+
+// CompareAndSwapTurnContentAndStatus replaces a turn's Content and Status only
+// while both still equal the expected values (Content compared as JSONB),
+// bumps UpdatedAt to the DB clock, and reports whether it did. A missing turn
+// reports false.
+func (s *Store) CompareAndSwapTurnContentAndStatus(id string, expectedContent json.RawMessage, expectedStatus string, content json.RawMessage, status string) (bool, error) {
+	return s.execConditional(s.builder.
+		Update("LLM_Turns").
+		Set("Content", string(content)).
+		Set("Status", status).
+		Set("UpdatedAt", sq.Expr(dbNowMillis)).
+		Where(sq.Eq{"ID": id, "Status": expectedStatus}).
+		Where(sq.Expr("Content = ?::jsonb", string(expectedContent))),
+		"compare-and-swap turn content and status")
+}
+
+// TouchStreamingTurn bumps a streaming turn's UpdatedAt to the DB clock
+// without changing its content, and reports whether the turn is still
+// streaming (false once e.g. a recovery sweep marked it interrupted).
+func (s *Store) TouchStreamingTurn(id string) (bool, error) {
+	return s.execConditional(s.builder.
+		Update("LLM_Turns").
+		Set("UpdatedAt", sq.Expr(dbNowMillis)).
+		Where(sq.Eq{"ID": id, "Status": TurnStatusStreaming}),
+		"touch streaming turn")
+}
+
+// TransitionTurnStatus moves a turn from status from to status to, bumping
+// UpdatedAt to the DB clock, and reports whether it did. Moving a turn to
+// interrupted marks its claimed tool calls interrupted; other content is
+// unchanged.
+func (s *Store) TransitionTurnStatus(id, from, to string) (bool, error) {
+	update := s.builder.
+		Update("LLM_Turns").
+		Set("Status", to).
+		Set("UpdatedAt", sq.Expr(dbNowMillis)).
+		Where(sq.Eq{"ID": id, "Status": from})
+	if to == TurnStatusInterrupted {
+		update = update.Set("Content", sq.Expr(markClaimedCallsInterruptedSQL))
+	}
+	return s.execConditional(update, "transition turn status")
+}
+
+// execConditional runs a single-row conditional update and reports whether
+// it matched.
+func (s *Store) execConditional(builder sq.UpdateBuilder, op string) (bool, error) {
+	query, args, err := builder.ToSql()
+	if err != nil {
+		return false, fmt.Errorf("failed to build %s query: %w", op, err)
+	}
+	result, err := s.db.Exec(query, args...)
+	if err != nil {
+		return false, fmt.Errorf("failed to %s: %w", op, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to read %s result: %w", op, err)
 	}
 	return rows == 1, nil
 }
@@ -222,6 +296,7 @@ type turnSpanRow struct {
 	Role      string  `db:"role"`
 	PostID    *string `db:"postid"`
 	RunPostID *string `db:"runpostid"`
+	Content   string  `db:"content"`
 }
 
 // runSpanEnd returns how many of the turns after a streaming anchor the
@@ -245,12 +320,44 @@ func runSpanEnd(later []turnSpanRow, postID *string) int {
 	return end
 }
 
+// interruptedToolCallsOnly returns content reduced to its tool_use blocks whose
+// outcome is unknown, or "" when it has none.
+func interruptedToolCallsOnly(content string) (string, error) {
+	var blocks []json.RawMessage
+	if err := json.Unmarshal([]byte(content), &blocks); err != nil {
+		return "", fmt.Errorf("failed to read anchor content: %w", err)
+	}
+	var kept []json.RawMessage
+	for _, raw := range blocks {
+		var head struct {
+			Type   string `json:"type"`
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal(raw, &head); err != nil {
+			return "", fmt.Errorf("failed to read anchor block: %w", err)
+		}
+		if head.Type == "tool_use" && head.Status == "interrupted" {
+			kept = append(kept, raw)
+		}
+	}
+	if len(kept) == 0 {
+		return "", nil
+	}
+	out, err := json.Marshal(kept)
+	if err != nil {
+		return "", fmt.Errorf("failed to write kept tool calls: %w", err)
+	}
+	return string(out), nil
+}
+
 // DeleteResponseTurns removes the post's anchor turn and every turn its run
 // wrote (RunPostID), including rounds written after a later user turn arrived
 // while the run was still executing tools. Turns of other runs are kept. Turns
 // written before runs were recorded have no RunPostID and are treated as this
 // response's when they sit between its anchor and the originating user turn.
-// Callers must build any completion request before calling this.
+// An anchor holding tool calls whose outcome is unknown is kept, reduced to
+// those calls and detached from the post. Callers must build any completion
+// request before calling this.
 func (s *Store) DeleteResponseTurns(conversationID, postID string) (err error) {
 	tx, err := s.db.Beginx()
 	if err != nil {
@@ -264,7 +371,7 @@ func (s *Store) DeleteResponseTurns(conversationID, postID string) (err error) {
 
 	var span []turnSpanRow
 	if err = tx.Select(&span, `
-SELECT ID, Sequence, Role, PostID, RunPostID FROM LLM_Turns
+SELECT ID, Sequence, Role, PostID, RunPostID, Content FROM LLM_Turns
 WHERE ConversationID = $1
   AND Sequence > COALESCE((
     SELECT MAX(Sequence) FROM LLM_Turns
@@ -289,6 +396,33 @@ ORDER BY Sequence ASC`, conversationID, postID); err != nil {
 	for _, turn := range span {
 		if turn.Role == "user" {
 			continue
+		}
+		if turn.Role == "assistant" && turn.PostID != nil && *turn.PostID == postID {
+			kept, keepErr := interruptedToolCallsOnly(turn.Content)
+			if keepErr != nil {
+				err = keepErr
+				return err
+			}
+			if kept != "" {
+				// The scrub must not forget calls whose outcome is unknown:
+				// the anchor stays as history, detached from the post, holding
+				// only those calls.
+				if _, err = tx.Exec(`UPDATE LLM_Turns SET PostID = NULL, Status = $3, Content = $4 WHERE ConversationID = $1 AND ID = $2`,
+					conversationID, turn.ID, TurnStatusComplete, kept); err != nil {
+					return fmt.Errorf("failed to keep interrupted tool calls: %w", err)
+				}
+				continue
+			}
+		}
+		if turn.PostID == nil {
+			// History a former scrub kept: still the only record of calls that
+			// may have run.
+			if kept, keepErr := interruptedToolCallsOnly(turn.Content); keepErr != nil {
+				err = keepErr
+				return err
+			} else if kept != "" {
+				continue
+			}
 		}
 		switch {
 		case turn.RunPostID != nil:
@@ -414,7 +548,7 @@ func (s *Store) settleStreamingTurn(id string, staleAfterMillis int64, update st
 	}
 
 	var later []turnSpanRow
-	if err = tx.Select(&later, `SELECT ID, Sequence, Role, PostID, RunPostID FROM LLM_Turns WHERE ConversationID = $1 AND Sequence > $2 ORDER BY Sequence ASC`,
+	if err = tx.Select(&later, `SELECT ID, Sequence, Role, PostID, RunPostID, Content FROM LLM_Turns WHERE ConversationID = $1 AND Sequence > $2 ORDER BY Sequence ASC`,
 		anchor.ConversationID, anchor.Sequence); err != nil {
 		return false, fmt.Errorf("failed to read later turns: %w", err)
 	}
@@ -489,7 +623,7 @@ func (s *Store) HasLiveStreamingTurn(postID string, staleAfterMillis int64) (boo
 // heartbeated since it was read is not claimed.
 func (s *Store) ClaimStaleStreamingTurn(id string, staleAfterMillis int64) (bool, error) {
 	claimed, err := s.settleStreamingTurn(id, staleAfterMillis,
-		`UPDATE LLM_Turns SET Status = $2, UpdatedAt = `+dbNowMillis+` WHERE ID = $1`, id, TurnStatusInterrupted)
+		`UPDATE LLM_Turns SET Status = $2, Content = `+markClaimedCallsInterruptedSQL+`, UpdatedAt = `+dbNowMillis+` WHERE ID = $1`, id, TurnStatusInterrupted)
 	if err != nil {
 		return false, fmt.Errorf("failed to claim stale streaming turn: %w", err)
 	}
@@ -500,7 +634,7 @@ func (s *Store) ClaimStaleStreamingTurn(id string, staleAfterMillis int64) (bool
 // a stale heartbeat (the claim refreshed UpdatedAt), so a later sweep or
 // regenerate can retry the repair at once instead of seeing a live stream.
 func (s *Store) ReleaseStreamingTurnClaim(id string) error {
-	query := `UPDATE LLM_Turns SET Status = $2, UpdatedAt = 0 WHERE ID = $1 AND Status = $3`
+	query := `UPDATE LLM_Turns SET Status = $2, Content = ` + markInterruptedCallsClaimedSQL + `, UpdatedAt = 0 WHERE ID = $1 AND Status = $3`
 	if _, err := s.db.Exec(query, id, TurnStatusStreaming, TurnStatusInterrupted); err != nil {
 		return fmt.Errorf("failed to release streaming turn claim: %w", err)
 	}

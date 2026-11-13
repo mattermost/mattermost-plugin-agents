@@ -5,6 +5,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -117,6 +118,11 @@ func TestToolApprovalHTTPStatusMapsRemoteMCPLicenseError(t *testing.T) {
 			name: "wrapped remote MCP not licensed maps to forbidden",
 			err:  errors.Join(errors.New("context"), conversations.ErrRemoteMCPNotLicensed),
 			want: http.StatusForbidden,
+		},
+		{
+			name: "interrupted approval run maps to service unavailable",
+			err:  fmt.Errorf("tool calls on post p were interrupted by plugin shutdown: %w", conversations.ErrToolRunInterrupted),
+			want: http.StatusServiceUnavailable,
 		},
 		{
 			name: "unknown error maps to internal server error",

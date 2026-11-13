@@ -176,6 +176,18 @@ func (m *mockConvServiceStore) CompareAndSwapTurnContent(id string, expected, co
 	return false, nil
 }
 
+func (m *mockConvServiceStore) CompareAndSwapTurnContentAndStatus(_ string, _ json.RawMessage, _ string, _ json.RawMessage, _ string) (bool, error) {
+	return true, nil
+}
+
+func (m *mockConvServiceStore) TouchStreamingTurn(_ string) (bool, error) {
+	return true, nil
+}
+
+func (m *mockConvServiceStore) TransitionTurnStatus(_, _, _ string) (bool, error) {
+	return true, nil
+}
+
 func (m *mockConvServiceStore) HeartbeatStreamingTurn(id string, content json.RawMessage) (bool, error) {
 	for _, turns := range m.turns {
 		for i := range turns {

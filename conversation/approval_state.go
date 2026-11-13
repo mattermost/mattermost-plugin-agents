@@ -41,7 +41,6 @@ func ComputePostApprovalState(turns []store.Turn, postID string) string {
 	if anchorIdx == -1 {
 		return ApprovalStageDone
 	}
-
 	responseTurns := []store.Turn{turns[anchorIdx]}
 	for i := anchorIdx - 1; i >= 0; i-- {
 		t := turns[i]

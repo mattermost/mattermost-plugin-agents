@@ -420,6 +420,19 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                         )}
                     />
                 )}
+                {tool.interrupted && (
+                    <Tag
+                        type='danger'
+                        size='x-small'
+                        data-testid='llm-bot-tool-interrupted'
+                        label={
+                            <FormattedMessage
+                                id='ai.tool_call.interrupted'
+                                defaultMessage='Interrupted'
+                            />
+                        }
+                    />
+                )}
                 {(tool.status === ToolCallStatus.AutoApproved || isAutoApproved) && (
                     <Tag
                         type='success'

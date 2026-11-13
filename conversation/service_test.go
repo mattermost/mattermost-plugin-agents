@@ -2140,8 +2140,9 @@ func TestBuildChannelMentionRequest_ToolRoundsMerged(t *testing.T) {
 	assert.Equal(t, "Weather in NYC is 72F and sunny.", final.Message)
 }
 
-// A tool call left pending or accepted (the user replied instead of approving,
-// or stopped the response while it ran) must not replay as a call that ran.
+// A tool call left pending (the user replied instead of approving) replays as
+// not executed; one left accepted (approved, then interrupted) replays as an
+// unknown outcome. Neither may replay as a call that ran.
 func TestBuildRequests_UnexecutedToolCallsReplayAsNotExecuted(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -2172,10 +2173,22 @@ func TestBuildRequests_UnexecutedToolCallsReplayAsNotExecuted(t *testing.T) {
 			wantStatus: llm.ToolCallStatusRejected,
 		},
 		{
-			name:       "accepted without result",
-			status:     StatusAccepted,
-			wantResult: NotExecutedToolResult,
+			name:       "interrupted without result has an unknown outcome",
+			status:     StatusInterrupted,
+			wantResult: InterruptedToolResult,
+			wantStatus: llm.ToolCallStatusError,
+		},
+		{
+			name:       "rejected without result never started",
+			status:     StatusRejected,
+			wantResult: MissingToolResultContent,
 			wantStatus: llm.ToolCallStatusRejected,
+		},
+		{
+			name:       "accepted without result may have run",
+			status:     StatusAccepted,
+			wantResult: InterruptedToolResult,
+			wantStatus: llm.ToolCallStatusError,
 		},
 		{
 			name:       "executed call keeps its empty result",
@@ -3402,6 +3415,86 @@ func filterIDs(ids []string, want string) []string {
 		}
 	}
 	return out
+}
+
+// An interrupted approval run's calls may have taken effect, so regenerating
+// that response must tell the model about them, and a regenerate that fails
+// after the scrub must not lose them for the retry.
+func TestRegenerateCarriesInterruptedApprovedCalls(t *testing.T) {
+	svc, s := setupTestService(t)
+	botID := model.NewId()
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID: model.NewId(), BotID: botID, Operation: "conversation", SystemPrompt: "system", UserMessage: "do it",
+	})
+	require.NoError(t, err)
+	convID := result.ConversationID
+
+	content, err := json.Marshal([]ContentBlock{
+		{Type: BlockTypeText, Text: "Running it."},
+		{Type: BlockTypeToolUse, ID: "tc1", Name: "send", Input: json.RawMessage(`{}`), Status: StatusInterrupted, Shared: new(true)},
+		{Type: BlockTypeToolUse, ID: "tc2", Name: "other", Input: json.RawMessage(`{}`), Status: StatusRejected, Shared: new(true)},
+	})
+	require.NoError(t, err)
+	require.NoError(t, s.CreateTurnAutoSequence(&store.Turn{
+		ID: model.NewId(), ConversationID: convID, PostID: new("post-a"), Role: "assistant",
+		Content: content, Status: store.TurnStatusInterrupted, CreatedAt: model.GetMillis(),
+	}))
+	conv, err := s.GetConversation(convID)
+	require.NoError(t, err)
+
+	callResults := func(req *llm.CompletionRequest) map[string]string {
+		results := map[string]string{}
+		for _, post := range req.Posts {
+			for _, call := range post.ToolUse {
+				results[call.ID] = call.Result
+			}
+		}
+		return results
+	}
+
+	req, err := svc.BuildRegenerateRequest(conv, &llm.Context{}, "post-a", BuildOptions{AllowUnsharedToolContent: true})
+	require.NoError(t, err)
+	assert.Equal(t, InterruptedToolResult, callResults(req)["tc1"], "the interrupted call must reach the regenerated request")
+
+	turns, err := s.GetTurnsForConversation(convID)
+	require.NoError(t, err)
+	require.Len(t, turns, 2, "the scrub keeps the interrupted call as history")
+	assert.Nil(t, turns[1].PostID, "the kept turn is detached from the post")
+	assert.Equal(t, store.TurnStatusComplete, turns[1].Status)
+	kept, err := UnmarshalBlocks(turns[1].Content)
+	require.NoError(t, err)
+	require.Len(t, kept, 1, "only the interrupted call is kept, not the response text or the rejected call")
+	assert.Equal(t, "tc1", kept[0].ID)
+
+	retry, err := svc.BuildRegenerateRequest(conv, &llm.Context{}, "post-a", BuildOptions{AllowUnsharedToolContent: true})
+	require.NoError(t, err)
+	assert.Equal(t, InterruptedToolResult, callResults(retry)["tc1"], "a retry after a failed regenerate still knows the call may have run")
+
+	// The regenerate succeeds, and the response is regenerated again later.
+	require.NoError(t, s.CreateTurnAutoSequence(&store.Turn{
+		ID: model.NewId(), ConversationID: convID, PostID: new("post-a"), Role: "assistant",
+		Content: json.RawMessage(`[{"type":"text","text":"New answer"}]`), CreatedAt: model.GetMillis(),
+	}))
+	later, err := svc.BuildRegenerateRequest(conv, &llm.Context{}, "post-a", BuildOptions{AllowUnsharedToolContent: true})
+	require.NoError(t, err)
+	assert.Equal(t, InterruptedToolResult, callResults(later)["tc1"], "a later regenerate still knows the call may have run")
+	turns, err = s.GetTurnsForConversation(convID)
+	require.NoError(t, err)
+	require.Len(t, turns, 2, "the later scrub removes the old answer but keeps the interrupted call")
+	assert.Equal(t, "tc1", mustToolUseIDs(t, turns[1])[0])
+}
+
+func mustToolUseIDs(t *testing.T, turn store.Turn) []string {
+	t.Helper()
+	blocks, err := UnmarshalBlocks(turn.Content)
+	require.NoError(t, err)
+	var ids []string
+	for _, b := range blocks {
+		if b.Type == BlockTypeToolUse {
+			ids = append(ids, b.ID)
+		}
+	}
+	return ids
 }
 
 // A second mention can append its user turn while the first run is still

@@ -38,6 +38,7 @@ import {
     buildRoundsFromTurns,
     computeRenderedRounds,
     deriveApprovalStageForPost,
+    markUnfinishedToolsInterrupted,
 } from './turn_content_utils';
 import {deriveActivity} from './activity_items';
 import {ControlsBarComponent} from './controls_bar';
@@ -593,15 +594,18 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         };
     }, [shownMessage, toolCalls, reasoningSummary, shownAnnotations, serverTools]);
 
-    const renderedRounds = useMemo(() => computeRenderedRounds({
-        regenerating,
-        hasConversation: Boolean(conversationId),
-        persistedRounds: stablePersisted,
-        liveRounds,
-        generating: liveStreamOpen,
-        pendingRefetch,
-        currentRound,
-    }), [regenerating, conversationId, stablePersisted, liveRounds, liveStreamOpen, pendingRefetch, currentRound]);
+    const renderedRounds = useMemo(() => {
+        const rounds = computeRenderedRounds({
+            regenerating,
+            hasConversation: Boolean(conversationId),
+            persistedRounds: stablePersisted,
+            liveRounds,
+            generating: liveStreamOpen,
+            pendingRefetch,
+            currentRound,
+        });
+        return interrupted ? markUnfinishedToolsInterrupted(rounds) : rounds;
+    }, [regenerating, conversationId, stablePersisted, liveRounds, liveStreamOpen, pendingRefetch, currentRound, interrupted]);
 
     const regnerate = () => {
         setStreamEventCount((count) => count + 1);
@@ -708,7 +712,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // The server authorizes postback by DM membership, not conversation ownership.
     const showPostbackButton = meetingsLicensed && !isGenerationInProgress && isDM && isTranscriptionResult;
 
-    const showStopGeneratingButton = (isGenerationInProgress || liveStreamFromTurn) && requesterIsCurrentUser;
+    // Approved tool runs are not a stream the Stop endpoint can cancel.
+    const approvalRunActive = Boolean(knownConversation?.turns.some((turn) => turn.post_id === props.post.id && turn.status === 'streaming' && turn.content.some((block) => block.type === 'tool_use' && block.status === 'accepted')));
+    const showStopGeneratingButton = (isGenerationInProgress || (liveStreamFromTurn && !approvalRunActive)) && requesterIsCurrentUser;
     const hasContent = renderedRounds.length > 0;
 
     // Only the anchor round gets a real approval stage: the latest persisted

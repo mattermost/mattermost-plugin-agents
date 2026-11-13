@@ -57,6 +57,7 @@ describe('statusStringToEnum', () => {
     test.each([
         ['pending', ToolCallStatus.Pending],
         ['accepted', ToolCallStatus.Accepted],
+        ['interrupted', ToolCallStatus.Error],
         ['rejected', ToolCallStatus.Rejected],
         ['error', ToolCallStatus.Error],
         ['success', ToolCallStatus.Success],
@@ -72,6 +73,25 @@ describe('statusStringToEnum', () => {
     });
 });
 describe('extractToolCallsForPost', () => {
+    test('shows the interrupted calls a regenerate kept as finished, not running', () => {
+        const conv = makeConversation([
+            makeTurn({id: 'u1', post_id: null, role: 'user', sequence: 1, content: [{type: 'text', text: 'do it'}]}),
+            makeTurn({
+                id: 'kept',
+                post_id: null,
+                sequence: 2,
+                content: [{type: 'tool_use', id: 'tc_lost', name: 'send', status: 'interrupted'}],
+            }),
+            makeTurn({id: 'anchor', post_id: 'post_1', sequence: 3, content: [{type: 'text', text: 'New answer'}]}),
+        ]);
+
+        const calls = extractToolCallsForPost(conv, 'post_1');
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].status).toBe(ToolCallStatus.Error);
+        expect(calls[0].interrupted).toBe(true);
+    });
+
     test('returns empty array when the anchor turn has no tool_use blocks and no follow-ups', () => {
         const turn = makeTurn({post_id: 'post_1', content: [{type: 'text', text: 'hello'}]});
         const conv = makeConversation([turn]);

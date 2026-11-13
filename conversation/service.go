@@ -47,6 +47,16 @@ type Store interface {
 	// CompareAndSwapTurnContent replaces a turn's content only while it still
 	// equals expected, and reports whether it did.
 	CompareAndSwapTurnContent(id string, expected, content json.RawMessage) (bool, error)
+	// CompareAndSwapTurnContentAndStatus replaces a turn's content and status
+	// only while both still equal the expected values, bumps UpdatedAt, and
+	// reports whether it did.
+	CompareAndSwapTurnContentAndStatus(id string, expectedContent json.RawMessage, expectedStatus string, content json.RawMessage, status string) (bool, error)
+	// TouchStreamingTurn bumps a streaming turn's UpdatedAt without changing
+	// its content, and reports whether the turn is still streaming.
+	TouchStreamingTurn(id string) (bool, error)
+	// TransitionTurnStatus moves a turn from one status to another and
+	// reports whether it did.
+	TransitionTurnStatus(id, from, to string) (bool, error)
 	UpdateTurnTokens(id string, tokensIn, tokensOut int64) error
 	// UpdateTurnPostID sets or clears the PostID on a turn.
 	UpdateTurnPostID(id string, postID *string) error
@@ -298,6 +308,24 @@ func (s *Service) UpdateTurnContent(turnID string, content json.RawMessage) erro
 // equals expected, and reports whether it did.
 func (s *Service) CompareAndSwapTurnContent(turnID string, expected, content json.RawMessage) (bool, error) {
 	return s.store.CompareAndSwapTurnContent(turnID, expected, content)
+}
+
+// CompareAndSwapTurnContentAndStatus replaces a turn's content and status only
+// while both still equal the expected values, and reports whether it did.
+func (s *Service) CompareAndSwapTurnContentAndStatus(turnID string, expectedContent json.RawMessage, expectedStatus string, content json.RawMessage, status string) (bool, error) {
+	return s.store.CompareAndSwapTurnContentAndStatus(turnID, expectedContent, expectedStatus, content, status)
+}
+
+// TouchStreamingTurn bumps a streaming turn's heartbeat without changing its
+// content, and reports whether the turn is still streaming.
+func (s *Service) TouchStreamingTurn(turnID string) (bool, error) {
+	return s.store.TouchStreamingTurn(turnID)
+}
+
+// TransitionTurnStatus moves a turn from one status to another and reports
+// whether it did.
+func (s *Service) TransitionTurnStatus(turnID, from, to string) (bool, error) {
+	return s.store.TransitionTurnStatus(turnID, from, to)
 }
 
 // CreateTurnAutoSequence persists a new turn, atomically assigning the next sequence number.
@@ -574,7 +602,21 @@ func AssembleRequest(
 						break
 					}
 				}
-				turns = turns[:truncateAt]
+				// A scrub keeps calls whose outcome is unknown as history, so the
+				// request replays those, and the whole run when the anchor itself
+				// holds them (the scrub that follows this build keeps them too).
+				carryRun := hasInterruptedToolCall(turns[anchorIdx])
+				kept := turns[:truncateAt:truncateAt]
+				for _, turn := range turns[truncateAt : anchorIdx+1] {
+					isAnchor := turn.PostID != nil && *turn.PostID == excludeID
+					switch {
+					case carryRun && (turn.RunPostID == nil || *turn.RunPostID == excludeID):
+						kept = append(kept, turn)
+					case !isAnchor && turn.PostID == nil && hasInterruptedToolCall(turn):
+						kept = append(kept, turn)
+					}
+				}
+				turns = kept
 			}
 		}
 	}
@@ -719,7 +761,7 @@ func pairToolResults(turns []store.Turn, blocksByTurn [][]ContentBlock) {
 				continue
 			}
 			// BlocksToPost replays these as NotExecutedToolResult.
-			if b.Status == StatusPending || b.Status == StatusAccepted {
+			if b.Status == StatusPending || b.Status == StatusAccepted || b.Status == StatusInterrupted {
 				continue
 			}
 			content := MissingToolResultContent
@@ -1235,4 +1277,16 @@ func ExcludeStreamingTurns(turns []store.Turn) []store.Turn {
 
 func isStreamingTurn(t store.Turn) bool {
 	return t.Status == store.TurnStatusStreaming
+}
+
+// hasInterruptedToolCall reports whether an anchor holds tool calls that were
+// approved to run but whose run ended without a result.
+func hasInterruptedToolCall(anchor store.Turn) bool {
+	blocks, err := UnmarshalBlocks(anchor.Content)
+	if err != nil {
+		return false
+	}
+	return slices.ContainsFunc(blocks, func(b ContentBlock) bool {
+		return b.Type == BlockTypeToolUse && b.Status == StatusInterrupted
+	})
 }

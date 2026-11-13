@@ -7,6 +7,8 @@ import (
 	stdcontext "context"
 	"fmt"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
@@ -59,6 +61,11 @@ type Conversations struct {
 	autoReplySettings AutoReplySettings
 	meetingSummaries  MeetingSummaryRegenerator
 	ambientLimiter    *ambientLimiter
+
+	// rootCtx overrides lifecycle.Context() for approved tool runs. Tests only.
+	rootCtx                  stdcontext.Context
+	toolRunHeartbeatInterval time.Duration
+	activeToolRuns           atomic.Int64
 
 	// resumeWake runs a check-now resume. Production leaves it nil and uses
 	// runWake on a goroutine (a full turn must not block the request); tests
