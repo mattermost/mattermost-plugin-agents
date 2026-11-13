@@ -152,21 +152,26 @@ func (s *Service) PinPost(channel *model.Channel, postID, pinnedBy string) error
 		return fmt.Errorf("system messages cannot be pinned to agent context: %w", ErrValidation)
 	}
 
-	added, err := s.store.AddPin(Pin{
-		ChannelID: channel.Id,
-		PostID:    postID,
-		PinnedBy:  pinnedBy,
-		PinnedAt:  model.GetMillis(),
-	}, MaxPinnedPosts)
+	pin := Pin{ChannelID: channel.Id, PostID: postID, PinnedBy: pinnedBy, PinnedAt: model.GetMillis()}
+	added, err := s.store.AddPin(pin, MaxPinnedPosts)
 	if err != nil || added {
 		return err
 	}
 
 	alreadyPinned, err := s.store.HasPin(channel.Id, postID)
+	if err != nil || alreadyPinned {
+		return err
+	}
+
+	// Pins of deleted posts still count toward the cap until pruned.
+	if _, err = s.ListPinnedPosts(channel.Id); err != nil {
+		return err
+	}
+	added, err = s.store.AddPin(pin, MaxPinnedPosts)
 	if err != nil {
 		return err
 	}
-	if !alreadyPinned {
+	if !added {
 		return ErrPinLimitReached
 	}
 	return nil

@@ -99,13 +99,13 @@ export const ChannelInstructionsSetting = ({informChange}: Props) => {
 const Container = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--spacing-xs);
 `;
 
 const TextArea = styled.textarea`
     width: 100%;
     min-height: 120px;
-    padding: 8px 12px;
+    padding: var(--spacing-xs) var(--spacing-m);
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
     border-radius: 4px;
     background: var(--center-channel-bg);
@@ -124,7 +124,7 @@ const TextArea = styled.textarea`
 const Footer = styled.div`
     display: flex;
     justify-content: space-between;
-    gap: 16px;
+    gap: var(--spacing-l);
 `;
 
 const HelpText = styled.div`
@@ -141,8 +141,8 @@ const Counter = styled.div`
 const Hint = styled.div`
     display: flex;
     align-items: flex-start;
-    gap: 8px;
-    padding: 8px 12px;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-xs) var(--spacing-m);
     border-radius: 4px;
     background: rgba(var(--button-bg-rgb), 0.08);
     color: rgba(var(--center-channel-color-rgb), 0.88);

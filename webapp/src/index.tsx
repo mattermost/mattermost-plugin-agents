@@ -191,12 +191,14 @@ export default class Plugin {
             },
         );
 
-        // Events missed while disconnected: an `end` would leave a reply generating for good, and
-        // the thread list may be stale.
+        // Events missed while disconnected: an `end` would leave a reply generating for good, the
+        // thread list may be stale, and so may the cached agent-context pins. The host keeps one
+        // reconnect handler per plugin, so all of this must share a single registration.
         if (registry.registerReconnectHandler) {
             registry.registerReconnectHandler(() => {
                 clearGeneratingPosts();
                 agentThreadsSync.handleReconnect();
+                store.dispatch({type: ChannelContextPostsCleared});
             });
         }
 
@@ -237,8 +239,7 @@ export default class Plugin {
         registry.registerPostTypeComponent('custom_agent_mention_reminder', AgentMentionReminderPost);
 
         // Keep agent-context pins fresh: a remote pin or unpin re-fetches the
-        // affected channel, and a reconnect drops the cache since events may
-        // have been missed while offline.
+        // affected channel.
         registry.registerWebSocketEventHandler(
             'custom_mattermost-ai_channel_context_updated',
             (msg: PluginWebSocketMessage<ChannelContextUpdatedEvent>) => {
@@ -246,9 +247,6 @@ export default class Plugin {
                 handleChannelInstructionsUpdated(msg.data);
             },
         );
-        registry.registerReconnectHandler(() => {
-            store.dispatch({type: ChannelContextPostsCleared});
-        });
         if (registry.registerPostHeaderComponent) {
             registry.registerPostHeaderComponent(ChannelContextBadge);
         }

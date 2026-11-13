@@ -12,6 +12,7 @@ import type { Channel } from '@mattermost/types/channels';
 import type { UserProfile } from '@mattermost/types/users';
 
 import { containerTest } from 'helpers/container-fixture';
+import { withDeadline } from 'helpers/deadline';
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
@@ -30,9 +31,12 @@ const password = 'regularuser';
 
 type ContextPosts = { posts: Array<{ post_id: string }>; max_posts: number };
 
+const MATTERMOST_START_MS = 240_000;
+const OPENAI_MOCK_START_MS = 120_000;
+
 const test = containerTest(async (own) => {
-    const mattermost = own(await RunContainer());
-    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    const mattermost = own(await withDeadline('Starting Mattermost', MATTERMOST_START_MS, () => RunContainer()));
+    const openAIMock = own(await withDeadline('Starting OpenAI mock', OPENAI_MOCK_START_MS, () => RunOpenAIMocks(mattermost.network)));
     return { mattermost, openAIMock };
 });
 

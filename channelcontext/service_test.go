@@ -53,27 +53,34 @@ func TestServiceSetInstructionsRejectsInvalidInput(t *testing.T) {
 }
 
 func TestServiceSetInstructions(t *testing.T) {
-	svc := NewService(NewStore(testDB(t)), mocks.NewMockClient(t))
-	channel := &model.Channel{Id: model.NewId(), Type: model.ChannelTypePrivate}
-
-	saved, err := svc.SetInstructions(channel, "  Our deploys freeze on Fridays.\n", model.NewId())
-	require.NoError(t, err)
-	require.Equal(t, "Our deploys freeze on Fridays.", saved)
-	stored, err := svc.GetInstructions(channel.Id)
-	require.NoError(t, err)
-	require.Equal(t, saved, stored)
-
 	longest := strings.Repeat("界", MaxInstructionsRunes)
-	saved, err = svc.SetInstructions(channel, longest, model.NewId())
-	require.NoError(t, err)
-	require.Equal(t, longest, saved)
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "trims surrounding whitespace", input: "  Our deploys freeze on Fridays.\n", want: "Our deploys freeze on Fridays."},
+		{name: "accepts the maximum length", input: longest, want: longest},
+		{name: "blank input clears the instructions", input: " \n\t ", want: ""},
+	}
 
-	saved, err = svc.SetInstructions(channel, " \n\t ", model.NewId())
-	require.NoError(t, err)
-	require.Empty(t, saved)
-	stored, err = svc.GetInstructions(channel.Id)
-	require.NoError(t, err)
-	require.Empty(t, stored, "blank instructions clear the channel's instructions")
+	dbClient := testDB(t)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := NewService(NewStore(dbClient), mocks.NewMockClient(t))
+			channel := &model.Channel{Id: model.NewId(), Type: model.ChannelTypePrivate}
+			_, err := svc.SetInstructions(channel, "previous instructions", model.NewId())
+			require.NoError(t, err)
+
+			saved, err := svc.SetInstructions(channel, tc.input, model.NewId())
+			require.NoError(t, err)
+			require.Equal(t, tc.want, saved)
+
+			stored, err := svc.GetInstructions(channel.Id)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, stored)
+		})
+	}
 }
 
 func TestServicePinPostRejectsInvalidPosts(t *testing.T) {
@@ -150,6 +157,37 @@ func TestServicePinPost(t *testing.T) {
 	require.NoError(t, svc.PinPost(channel, model.NewId(), model.NewId()), "unpinning frees a slot")
 }
 
+func TestServicePinPostPrunesDeletedPinsWhenFull(t *testing.T) {
+	s := NewStore(testDB(t))
+	channel := openChannel()
+	deleted := make(map[string]bool)
+	mmClient := mocks.NewMockClient(t)
+	mmClient.EXPECT().GetPost(mock.Anything).RunAndReturn(func(id string) (*model.Post, error) {
+		post := &model.Post{Id: id, ChannelId: channel.Id, Message: "context"}
+		if deleted[id] {
+			post.DeleteAt = 1
+		}
+		return post, nil
+	})
+	svc := NewService(s, mmClient)
+
+	var firstPinned string
+	for i := range MaxPinnedPosts {
+		postID := model.NewId()
+		if i == 0 {
+			firstPinned = postID
+		}
+		require.NoError(t, svc.PinPost(channel, postID, model.NewId()))
+	}
+	require.ErrorIs(t, svc.PinPost(channel, model.NewId(), model.NewId()), ErrPinLimitReached)
+
+	deleted[firstPinned] = true
+	require.NoError(t, svc.PinPost(channel, model.NewId(), model.NewId()), "a deleted post's pin does not block a new pin")
+	pins, err := s.ListPins(channel.Id)
+	require.NoError(t, err)
+	require.Len(t, pins, MaxPinnedPosts)
+}
+
 func TestServiceListPinnedPostsHandlesStalePins(t *testing.T) {
 	s := NewStore(testDB(t))
 	channelID := model.NewId()
@@ -212,8 +250,10 @@ func TestServicePromptContext(t *testing.T) {
 	require.Equal(t, "Payments team channel.", instructionsOnly.Instructions)
 	require.Empty(t, instructionsOnly.PinnedPosts)
 
-	require.NoError(t, svc.PinPost(channel, first.Id, model.NewId()))
-	require.NoError(t, svc.PinPost(channel, second.Id, model.NewId()))
+	_, err = s.AddPin(Pin{ChannelID: channel.Id, PostID: first.Id, PinnedBy: model.NewId(), PinnedAt: 1}, MaxPinnedPosts)
+	require.NoError(t, err)
+	_, err = s.AddPin(Pin{ChannelID: channel.Id, PostID: second.Id, PinnedBy: model.NewId(), PinnedAt: 2}, MaxPinnedPosts)
+	require.NoError(t, err)
 	full, err := svc.PromptContext(channel.Id)
 	require.NoError(t, err)
 	require.Equal(t, "Payments team channel.", full.Instructions)

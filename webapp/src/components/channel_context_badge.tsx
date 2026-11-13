@@ -39,9 +39,9 @@ const ChannelContextBadge = ({post}: Props) => {
 const Badge = styled.span`
     display: inline-flex;
     align-items: center;
-    gap: 2px;
-    margin-left: 4px;
-    padding: 0 4px;
+    gap: var(--spacing-xxxxs);
+    margin-left: var(--spacing-xxxs);
+    padding: 0 var(--spacing-xxxs);
     border-radius: 4px;
     background: rgba(var(--button-bg-rgb), 0.08);
     color: var(--button-bg);

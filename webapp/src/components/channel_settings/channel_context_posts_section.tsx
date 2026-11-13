@@ -7,6 +7,8 @@ import {useDispatch, useSelector} from 'react-redux';
 import styled from 'styled-components';
 
 import {CloseIcon} from '@mattermost/compass-icons/components';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {GlobalState} from '@mattermost/types/store';
 
 import {ChannelContextPost, unpinChannelContextPost} from '@/client';
@@ -96,13 +98,11 @@ const ContextPostItem = ({post, onUnpin}: {post: ChannelContextPost; onUnpin: ()
                 <Snippet>{snippet}</Snippet>
             </ItemBody>
             <UnpinButton
-                type='button'
+                size='small'
+                icon={<Icon glyph={<CloseIcon/>}/>}
                 aria-label={intl.formatMessage({defaultMessage: 'Unpin from agent context'})}
-                title={intl.formatMessage({defaultMessage: 'Unpin from agent context'})}
                 onClick={onUnpin}
-            >
-                <CloseIcon size={16}/>
-            </UnpinButton>
+            />
         </Item>
     );
 };
@@ -110,7 +110,7 @@ const ContextPostItem = ({post, onUnpin}: {post: ChannelContextPost; onUnpin: ()
 const Container = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--spacing-xs);
 `;
 
 const Muted = styled.div`
@@ -131,8 +131,8 @@ const List = styled.ul`
 const Item = styled.li`
     display: flex;
     align-items: flex-start;
-    gap: 8px;
-    padding: 8px 12px;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-xs) var(--spacing-m);
 
     & + & {
         border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
@@ -157,24 +157,8 @@ const Snippet = styled.span`
     white-space: pre-wrap;
 `;
 
-const UnpinButton = styled.button`
-    display: inline-flex;
+const UnpinButton = styled(IconButton)`
     flex-shrink: 0;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    padding: 0;
-    border: none;
-    border-radius: 4px;
-    background: transparent;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    cursor: pointer;
-
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
-        color: rgba(var(--center-channel-color-rgb), 0.72);
-    }
 `;
 
 const ErrorText = styled.div`
