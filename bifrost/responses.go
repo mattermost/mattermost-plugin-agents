@@ -394,6 +394,11 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 	// snapshot so receivers can replace prior state.
 	serverTools := newServerToolTracker()
 	providerRoute := b.provider
+	routedModel := bifrostReq.Model
+	observeServerTool := func(item *schemas.ResponsesMessage) bool {
+		retroactive := reportsSearchAfterOutput(bifrostCtx, b.baseProvider(providerRoute), routedModel)
+		return serverTools.observeItem(item, providerRoute, retroactive)
+	}
 	emitServerTools := func() {
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeServerToolUse,
@@ -426,10 +431,15 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 		// Process Responses API stream response
 		if chunk.BifrostResponsesStreamResponse != nil {
 			resp := chunk.BifrostResponsesStreamResponse
-			if routed := resp.ExtraFields.RoutingInfo.Provider; routed != "" {
-				providerRoute = routed
-			} else if resp.Response != nil && resp.Response.ExtraFields.RoutingInfo.Provider != "" {
-				providerRoute = resp.Response.ExtraFields.RoutingInfo.Provider
+			routing := resp.ExtraFields.RoutingInfo
+			if routing.Provider == "" && resp.Response != nil {
+				routing = resp.Response.ExtraFields.RoutingInfo
+			}
+			if routing.Provider != "" {
+				providerRoute = routing.Provider
+				if routing.Model != "" {
+					routedModel = routing.Model
+				}
 			}
 
 			switch resp.Type {
@@ -578,7 +588,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 			case schemas.ResponsesStreamResponseTypeOutputItemAdded:
 				// Server tool started (web_search_call / web_fetch_call /
 				// code_interpreter_call) — track and surface the activity.
-				if serverTools.observeItem(resp.Item, providerRoute) {
+				if observeServerTool(resp.Item) {
 					emitServerTools()
 				}
 				// New output item added - register function calls so their
@@ -612,7 +622,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 				fallbackSources = appendFirstWebSearchFallbackSource(fallbackSources, resp.Item)
 				// Server tool finished — fold the final payload (query,
 				// resolved URL/title, stdout/stderr, error) into the activity.
-				if serverTools.observeItem(resp.Item, providerRoute) {
+				if observeServerTool(resp.Item) {
 					emitServerTools()
 				}
 				// Output item completed - finalize function call if any
