@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {BotsHandler} from './redux';
+import {BotsHandler, SearchEnabledHandler} from './redux';
 import {LLMBot} from './bots';
 import {ChannelAccessLevel, UserAccessLevel} from './components/system_console/bot';
 
@@ -74,6 +74,8 @@ function makeBot(id: string): LLMBot {
 
 type WebSocketHandlers = Map<string, (msg: unknown) => void>;
 
+const RECONNECT = 'reconnect';
+
 // Only the registry members initialize() calls unconditionally, plus the
 // channel-settings tab (its presence is what makes the bots cache load-bearing
 // for a synchronous shouldRender).
@@ -87,6 +89,9 @@ function makeRegistry(websocketHandlers: WebSocketHandlers) {
         registerAdminConsoleCustomSetting: jest.fn(),
         registerChannelSettingsTab: jest.fn(),
         registerGlobalComponent: jest.fn(),
+        registerReconnectHandler: (handler: (msg: unknown) => void) => {
+            websocketHandlers.set(RECONNECT, handler);
+        },
         registerWebSocketEventHandler: (event: string, handler: (msg: unknown) => void) => {
             websocketHandlers.set(event, handler);
         },
@@ -178,6 +183,22 @@ describe('bots cache websocket handlers', () => {
         // until some other surface refetched.
         expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({type: BotsHandler, bots: null}));
         expect(dispatch).toHaveBeenCalledWith({type: BotsHandler, bots: fresh});
+    });
+
+    test('a websocket reconnect refetches the bots and search availability', async () => {
+        mockGetAIBots.mockResolvedValue({bots: [makeBot('stale')], searchEnabled: false, allowUnsafeLinks: false});
+
+        const {websocketHandlers, dispatch} = await initializePlugin();
+        await flush();
+        dispatch.mockClear();
+
+        const fresh = [makeBot('fresh')];
+        mockGetAIBots.mockResolvedValue({bots: fresh, searchEnabled: true, allowUnsafeLinks: false});
+        fireWebSocketEvent(websocketHandlers, RECONNECT);
+        await flush();
+
+        expect(dispatch).toHaveBeenCalledWith({type: BotsHandler, bots: fresh});
+        expect(dispatch).toHaveBeenCalledWith({type: SearchEnabledHandler, searchEnabled: true});
     });
 
     test('a failed refetch leaves the previous bots in place', async () => {

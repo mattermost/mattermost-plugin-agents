@@ -102,10 +102,10 @@ export const makeLoadValues = (store: WebappStore) => async (channel: Channel): 
         setChannelAutoReplyDraft(null);
         throw e;
     }
-    let bots = botsFromState(store.getState());
-    if (!bots) {
-        bots = await fetchAndStoreBots(store.dispatch).catch(() => null);
+    if (!botsFromState(store.getState())) {
+        await fetchAndStoreBots(store.dispatch).catch(() => { /* bots stays null */ });
     }
+    const bots = botsFromState(store.getState());
 
     // bots stays null when the fetch failed; normalization then preserves the
     // saved agent instead of clearing it like an empty agent list would.
