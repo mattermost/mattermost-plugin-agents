@@ -19,6 +19,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -72,8 +73,19 @@ func (s *Service) GetContent(ctx context.Context, userID, fileID string, offset,
 		return Content{}, fmt.Errorf("invalid file id")
 	}
 
+	scope, err := scopedsession.ScopeFromContext(ctx)
+	if err != nil {
+		return Content{}, err
+	}
+
 	sessionID := auth.SessionIDFromContext(ctx)
-	fileInfo, err := mmapi.GetReadableFileInfo(s.mm, sessionID, userID, fileID)
+	mm := mmapi.WithFilePolicy(s.mm, sessionID)
+	var fileInfo *model.FileInfo
+	if scope != nil {
+		fileInfo, err = mm.GetFileInfo(fileID)
+	} else {
+		fileInfo, err = mmapi.GetReadableFileInfo(s.mm, sessionID, userID, fileID)
+	}
 	if err != nil {
 		if errors.Is(err, mmapi.ErrFileActionForbidden) || errors.Is(err, mmapi.ErrFileChannelForbidden) {
 			return Content{}, ErrForbidden
@@ -81,7 +93,20 @@ func (s *Service) GetContent(ctx context.Context, userID, fileID string, offset,
 		return Content{}, fmt.Errorf("failed to get file info: %w", err)
 	}
 
-	mm := mmapi.WithFilePolicy(s.mm, sessionID)
+	if scope != nil {
+		// The plugin API is admin-level, so the scope is checked explicitly.
+		if fileInfo.ChannelId == "" {
+			return Content{}, ErrForbidden
+		}
+		allowed, scopeErr := s.scopeAllowsChannel(scope, fileInfo.ChannelId)
+		if scopeErr != nil {
+			return Content{}, scopeErr
+		}
+		if !allowed {
+			return Content{}, ErrForbidden
+		}
+	}
+
 	text, err := s.extractText(mm, fileInfo)
 	if err != nil {
 		if errors.Is(err, mmapi.ErrFileActionForbidden) {
@@ -94,6 +119,21 @@ func (s *Service) GetContent(ctx context.Context, userID, fileID string, offset,
 	}
 
 	return Slice(fileInfo.Name, fileInfo.MimeType, text, offset, limit), nil
+}
+
+func (s *Service) scopeAllowsChannel(scope *model.SessionScope, channelID string) (bool, error) {
+	channel, err := s.mm.GetChannel(channelID)
+	if err != nil {
+		return false, fmt.Errorf("failed to get file channel: %w", err)
+	}
+	var team *model.Team
+	if channel.TeamId != "" {
+		team, err = s.mm.GetTeam(channel.TeamId)
+		if err != nil {
+			return false, fmt.Errorf("failed to get file team: %w", err)
+		}
+	}
+	return scopedsession.AllowsChannelContent(scope, channel, team, scopedsession.OpenTeamGrantDisabled(s.mm)), nil
 }
 
 // Slice returns the [offset, offset+limit) rune window of text as a Content,

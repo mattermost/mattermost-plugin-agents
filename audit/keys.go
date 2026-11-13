@@ -40,6 +40,12 @@ const (
 	// plugin-backed MCP server. Distinct from KeyCallerPluginID (the actor).
 	KeyMCPPluginID = "agents.mcp_plugin.id"
 
+	// KeyScopeExtraChannelCount is how many admin-picked extra channels a
+	// scoped session covers; KeyScopeOpenTeamPublicChannels is whether it
+	// covers every public channel on open teams.
+	KeyScopeExtraChannelCount      = "agents.scope.extra_channel_count"
+	KeyScopeOpenTeamPublicChannels = "agents.scope.open_team_public_channels"
+
 	// KeyMCPSignInsClearedServerIDs lists the remote MCP servers whose users'
 	// saved sign-ins a configuration change removed.
 	KeyMCPSignInsClearedServerIDs = "agents.mcp_server.signins_cleared.ids"

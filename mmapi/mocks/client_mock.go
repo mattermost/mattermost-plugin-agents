@@ -1998,6 +1998,63 @@ func (_c *MockClient_PublishWebSocketEvent_Call) RunAndReturn(run func(event str
 	return _c
 }
 
+// RolesGrantPermission provides a mock function for the type MockClient
+func (_mock *MockClient) RolesGrantPermission(roleNames []string, permissionID string) bool {
+	ret := _mock.Called(roleNames, permissionID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RolesGrantPermission")
+	}
+
+	var r0 bool
+	if returnFunc, ok := ret.Get(0).(func([]string, string) bool); ok {
+		r0 = returnFunc(roleNames, permissionID)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	return r0
+}
+
+// MockClient_RolesGrantPermission_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RolesGrantPermission'
+type MockClient_RolesGrantPermission_Call struct {
+	*mock.Call
+}
+
+// RolesGrantPermission is a helper method to define mock.On call
+//   - roleNames []string
+//   - permissionID string
+func (_e *MockClient_Expecter) RolesGrantPermission(roleNames any, permissionID any) *MockClient_RolesGrantPermission_Call {
+	return &MockClient_RolesGrantPermission_Call{Call: _e.mock.On("RolesGrantPermission", roleNames, permissionID)}
+}
+
+func (_c *MockClient_RolesGrantPermission_Call) Run(run func(roleNames []string, permissionID string)) *MockClient_RolesGrantPermission_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 []string
+		if args[0] != nil {
+			arg0 = args[0].([]string)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockClient_RolesGrantPermission_Call) Return(b bool) *MockClient_RolesGrantPermission_Call {
+	_c.Call.Return(b)
+	return _c
+}
+
+func (_c *MockClient_RolesGrantPermission_Call) RunAndReturn(run func(roleNames []string, permissionID string) bool) *MockClient_RolesGrantPermission_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // SendEphemeralPost provides a mock function for the type MockClient
 func (_mock *MockClient) SendEphemeralPost(userID string, post *model.Post) {
 	_mock.Called(userID, post)
