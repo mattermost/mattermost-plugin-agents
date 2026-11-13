@@ -73,11 +73,18 @@ export async function RunAIMockHarness(options: {
     fixtureFile: string;
     bot?: Partial<Record<string, unknown>>;
     service?: Partial<Record<string, unknown>>;
+    config?: Record<string, unknown>;
+} | {
+    fixtures: AIMockFixtureFile;
+    bot?: Partial<Record<string, unknown>>;
+    service?: Partial<Record<string, unknown>>;
+    config?: Record<string, unknown>;
 }): Promise<AIMockHarness> {
-    const fixtures = loadAimockFixtureFile(options.fixtureFile);
+    const fixtures = 'fixtures' in options ? options.fixtures : loadAimockFixtureFile(options.fixtureFile);
     const mattermost = await RunAIMockContainer({
         bot: options.bot,
         service: options.service,
+        config: options.config,
     });
     try {
         const aimock = await RunAIMockSidecar(mattermost.network, {

@@ -17,8 +17,10 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -38,12 +40,20 @@ type fakeWebSocketEvent struct {
 }
 
 type fakeMMClient struct {
-	users                map[string]*model.User
-	postThreads          map[string]*model.PostList
-	kv                   map[string]any
-	createdPosts         []*model.Post
-	allowCreatePost      bool
+	users           map[string]*model.User
+	postThreads     map[string]*model.PostList
+	kv              map[string]any
+	createdPosts    []*model.Post
+	allowCreatePost bool
+	// assignPostIDs and markPluginPosts make CreatePost behave like the
+	// plugin API: it assigns IDs and marks every post from_plugin.
+	assignPostIDs   bool
+	markPluginPosts bool
+	// createPostErr, when set, sees each post as created and can fail it
+	// before it is recorded.
+	createPostErr        func(*model.Post) error
 	updatedPosts         []*model.Post
+	deletedPostIDs       []string
 	kvDeletes            []string
 	posts                map[string]*model.Post
 	channels             map[string]*model.Channel
@@ -66,6 +76,9 @@ type fakeMMClient struct {
 	postErrors map[string]error
 	// unreadableChannels are channels HasPermissionToChannel denies.
 	unreadableChannels map[string]bool
+	// unpostableChannels are channels where HasPermissionToChannel denies
+	// PermissionCreatePost only.
+	unpostableChannels map[string]bool
 
 	// logMu guards logErrors and logWarns: background goroutines (e.g. title generation)
 	// may log while the test goroutine reads.
@@ -94,6 +107,17 @@ func (c *fakeMMClient) CreatePost(post *model.Post) error {
 	if !c.allowCreatePost {
 		return errors.New("not implemented")
 	}
+	if c.assignPostIDs && post.Id == "" {
+		post.Id = model.NewId()
+	}
+	if c.markPluginPosts {
+		post.AddProp("from_plugin", "true")
+	}
+	if c.createPostErr != nil {
+		if err := c.createPostErr(post); err != nil {
+			return err
+		}
+	}
 	c.createdPosts = append(c.createdPosts, post.Clone())
 	return nil
 }
@@ -106,10 +130,15 @@ func (c *fakeMMClient) UpdatePost(post *model.Post) error {
 	return nil
 }
 
+func (c *fakeMMClient) DeletePost(postID string) error {
+	c.deletedPostIDs = append(c.deletedPostIDs, postID)
+	return nil
+}
+
 func (c *fakeMMClient) KVGet(key string, value any) error {
 	stored, ok := c.kv[key]
 	if !ok {
-		return errors.New("not found")
+		return mmapi.ErrKVNotFound
 	}
 	data, err := json.Marshal(stored)
 	if err != nil {
@@ -155,6 +184,10 @@ func (c *fakeMMClient) KVCompareAndSet(key string, oldValue, newValue any) (bool
 	}
 	if string(currentJSON) != string(oldJSON) {
 		return false, nil
+	}
+	if newValue == nil {
+		delete(c.kv, key)
+		return true, nil
 	}
 	c.kv[key] = newValue
 	return true, nil
@@ -302,7 +335,10 @@ func (c *fakeMMClient) GetChannelByName(string, string, bool) (*model.Channel, e
 	return nil, errors.New("not implemented")
 }
 
-func (c *fakeMMClient) HasPermissionToChannel(_, channelID string, _ *model.Permission) bool {
+func (c *fakeMMClient) HasPermissionToChannel(_, channelID string, permission *model.Permission) bool {
+	if permission == model.PermissionCreatePost && c.unpostableChannels[channelID] {
+		return false
+	}
 	return !c.unreadableChannels[channelID]
 }
 
@@ -386,6 +422,7 @@ func (p *testToolProvider) GetTools(_ *bots.Bot, _ *llm.Context) []llm.Tool {
 type testToolCallingConfig struct {
 	enableChannelMentionToolCalling bool
 	enableAmbientAutoReply          bool
+	enableGenerativeUI              bool
 }
 
 func (c *testToolCallingConfig) EnableChannelMentionToolCalling() bool {
@@ -394,6 +431,10 @@ func (c *testToolCallingConfig) EnableChannelMentionToolCalling() bool {
 
 func (c *testToolCallingConfig) EnableAmbientAutoReply() bool {
 	return c.enableAmbientAutoReply
+}
+
+func (c *testToolCallingConfig) GenerativeUIEnabledForAgent(bot llm.BotConfig) bool {
+	return config.GenerativeUIEnabledForAgent(c.enableGenerativeUI, bot)
 }
 
 func (c *testToolCallingConfig) AllowNativeWebSearchInChannels() bool {

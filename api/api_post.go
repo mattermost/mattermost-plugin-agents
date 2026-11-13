@@ -4,9 +4,11 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/render"
@@ -14,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/genui"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/meetings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -436,6 +439,77 @@ func (a *API) handleToolResult(c *gin.Context) {
 	}
 
 	c.Status(http.StatusOK)
+}
+
+var idempotencyKeyPattern = regexp.MustCompile(`^[A-Za-z0-9-]{8,64}$`)
+
+// handleUIAction submits a form, or clicks a button, in the generative UI of
+// an agent reply. The submission is posted in the thread as the requester and
+// answered like a typed message.
+func (a *API) handleUIAction(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+	channel := c.MustGet(ContextChannelKey).(*model.Channel)
+	rec := auditRec(c)
+
+	var data struct {
+		genui.Submission
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, genui.MaxRequestBytes)
+	if err := json.NewDecoder(c.Request.Body).Decode(&data); err != nil {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+
+	// Identifiers only: never the label or the submitted values.
+	audit.AddParam(rec, "block", data.Block)
+	audit.AddParam(rec, "form", audit.TruncateID(data.Form))
+
+	if !idempotencyKeyPattern.MatchString(data.IdempotencyKey) {
+		c.AbortWithError(http.StatusBadRequest, errors.New("idempotency_key must be 8 to 64 letters, digits, or dashes"))
+		return
+	}
+
+	detachedCtx := auth.WithSessionID(
+		telemetry.DetachContext(c.Request.Context()),
+		auth.SessionIDFromContext(c.Request.Context()),
+	)
+	result, err := a.conversationsService.HandleUIAction(detachedCtx, userID, post, channel, conversations.UIActionRequest{
+		Submission:     data.Submission,
+		IdempotencyKey: data.IdempotencyKey,
+	})
+	if err != nil {
+		abortWithServiceError(c, err, uiActionHTTPStatus)
+		return
+	}
+	if result.PostID != "" {
+		audit.AddParam(rec, "submission_post_id", result.PostID)
+	}
+
+	c.JSON(http.StatusOK, map[string]string{"post_id": result.PostID})
+}
+
+// uiActionHTTPStatus maps errors from HandleUIAction to HTTP statuses: a
+// malformed submission is 400, a form that is no longer active is 409, and a
+// requester mismatch, lost agent, source, or posting access, or disabled feature is 403.
+func uiActionHTTPStatus(err error) int {
+	switch {
+	case errors.Is(err, genui.ErrInvalidSubmission),
+		errors.Is(err, conversations.ErrPostMissingConversationID):
+		return http.StatusBadRequest
+	case errors.Is(err, conversations.ErrStaleUIAction):
+		return http.StatusConflict
+	case errors.Is(err, conversations.ErrNotRequester),
+		errors.Is(err, conversations.ErrGenerativeUIDisabled),
+		errors.Is(err, conversations.ErrCannotPostInChannel),
+		errors.Is(err, conversations.ErrAnalysisSourceUnavailable),
+		errors.Is(err, mmapi.ErrFileActionForbidden),
+		errors.Is(err, bots.ErrUsageRestriction):
+		return http.StatusForbidden
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 func (a *API) handleWaitCheckNow(c *gin.Context) {

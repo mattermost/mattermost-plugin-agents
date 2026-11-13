@@ -1,7 +1,16 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import fs from 'fs';
+import path from 'path';
+
 import {splitGenerativeUI} from './split_message';
+
+// Shared with the server's genui.ClosedBlocks, which checks submissions
+// against the block index this splitter assigns.
+const sharedCases: Array<{name: string; message: string; blocks: string[]}> = JSON.parse(
+    fs.readFileSync(path.resolve(__dirname, '../../../../genui/testdata/split_cases.json'), 'utf8'),
+);
 
 describe('splitGenerativeUI', () => {
     const cases = [
@@ -49,5 +58,14 @@ describe('splitGenerativeUI', () => {
 
     test.each(cases)('$name', ({message, expected}) => {
         expect(splitGenerativeUI(message)).toEqual(expected);
+    });
+});
+
+describe('splitGenerativeUI agrees with the server on closed blocks', () => {
+    test.each(sharedCases)('$name', ({message, blocks}) => {
+        const closed = splitGenerativeUI(message).
+            filter((segment) => segment.type === 'ui' && segment.closed).
+            map((segment) => (segment.type === 'ui' ? segment.source : ''));
+        expect(closed).toEqual(blocks);
     });
 });

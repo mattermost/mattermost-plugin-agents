@@ -51,7 +51,10 @@ func isAutomatedInvoker(post *model.Post, postingUser *model.User) bool {
 	if post == nil {
 		return false
 	}
-	automationProps := []string{FromWebhookProp, FromPluginProp, FromBotProp, FromOAuthAppProp}
+	automationProps := []string{FromWebhookProp, FromBotProp, FromOAuthAppProp}
+	if !isGenerativeUISubmission(post) {
+		automationProps = append(automationProps, FromPluginProp)
+	}
 	for _, prop := range automationProps {
 		if post.GetProp(prop) != nil {
 			return true

@@ -1,0 +1,52 @@
+[
+  {
+    "name": "plain markdown has no blocks",
+    "message": "Hello **there**\n\n- a\n- b",
+    "blocks": []
+  },
+  {
+    "name": "prose around a closed block",
+    "message": "Lead-in.\n\n```openui-lang\nroot = Stack([t])\nt = Text(\"hi\")\n```\n\nAfter.",
+    "blocks": ["root = Stack([t])\nt = Text(\"hi\")"]
+  },
+  {
+    "name": "unterminated block is not a block",
+    "message": "Lead-in.\n```openui-lang\nroot = Stack([t])\nt = Text(\"hi",
+    "blocks": []
+  },
+  {
+    "name": "other code fences are skipped",
+    "message": "```go\nfmt.Println(\"x\")\n```",
+    "blocks": []
+  },
+  {
+    "name": "ui fence nested inside another fence is skipped",
+    "message": "````markdown\n```openui-lang\nroot = Stack([])\n```\n````",
+    "blocks": []
+  },
+  {
+    "name": "two blocks keep their order",
+    "message": "```openui-lang\nroot = Stack([a])\n```\n```openui\nroot = Stack([b])\n```",
+    "blocks": ["root = Stack([a])", "root = Stack([b])"]
+  },
+  {
+    "name": "a block after another language's fence keeps its index",
+    "message": "```sh\nls\n```\n\n```OpenUI-Lang\nroot = Stack([a])\n```",
+    "blocks": ["root = Stack([a])"]
+  },
+  {
+    "name": "a longer closing fence closes the block",
+    "message": "~~~openui-lang\nroot = Stack([a])\n~~~~",
+    "blocks": ["root = Stack([a])"]
+  },
+  {
+    "name": "a closing fence of the other character does not close the block",
+    "message": "```openui-lang\nroot = Stack([a])\n~~~\n```",
+    "blocks": ["root = Stack([a])\n~~~"]
+  },
+  {
+    "name": "opener ending in a non-breaking space is not a ui fence",
+    "message": "```openui\u00a0\nroot = Stack([a])\n```\n```openui\nroot = Stack([b])\n```",
+    "blocks": ["root = Stack([b])"]
+  }
+]

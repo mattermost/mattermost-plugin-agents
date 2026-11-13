@@ -5,7 +5,7 @@ export type MessageSegment =
     | {type: 'markdown'; text: string}
     | {type: 'ui'; source: string; closed: boolean};
 
-const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)\s*$/;
+const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})[\t\f\r ]*([^\t\f\r `]*)[\t\f\r ]*$/;
 const UI_LANGUAGES = new Set(['openui-lang', 'openui']);
 
 const isFenceClose = (line: string, fence: string) => {

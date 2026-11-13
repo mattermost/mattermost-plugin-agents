@@ -81,6 +81,10 @@ func (c *channelFollowUpTestConfig) EnableAmbientAutoReply() bool {
 	return false
 }
 
+func (c *channelFollowUpTestConfig) GenerativeUIEnabledForAgent(llm.BotConfig) bool {
+	return false
+}
+
 func (c *channelFollowUpTestConfig) AllowNativeWebSearchInChannels() bool {
 	return false
 }
