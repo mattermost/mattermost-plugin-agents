@@ -76,6 +76,9 @@ type fakeMMClient struct {
 	postErrors map[string]error
 	// unreadableChannels are channels HasPermissionToChannel denies.
 	unreadableChannels map[string]bool
+	// unpostableChannels are channels where HasPermissionToChannel denies
+	// PermissionCreatePost only.
+	unpostableChannels map[string]bool
 
 	// logMu guards logErrors and logWarns: background goroutines (e.g. title generation)
 	// may log while the test goroutine reads.
@@ -332,7 +335,10 @@ func (c *fakeMMClient) GetChannelByName(string, string, bool) (*model.Channel, e
 	return nil, errors.New("not implemented")
 }
 
-func (c *fakeMMClient) HasPermissionToChannel(_, channelID string, _ *model.Permission) bool {
+func (c *fakeMMClient) HasPermissionToChannel(_, channelID string, permission *model.Permission) bool {
+	if permission == model.PermissionCreatePost && c.unpostableChannels[channelID] {
+		return false
+	}
 	return !c.unreadableChannels[channelID]
 }
 

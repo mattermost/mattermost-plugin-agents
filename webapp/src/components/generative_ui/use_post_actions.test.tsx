@@ -96,4 +96,19 @@ describe('useGenerativeUIPostActions', () => {
         expect((doUIAction as jest.Mock).mock.calls[0][1].idempotency_key).toMatch(/^[A-Za-z0-9-]{8,64}$/);
         expect(result.current.interaction).toEqual({kind: 'submitted', submission: {block: 0, form: '', label: 'Show details', fields: [], source_post_id: POST}});
     });
+
+    it('retries a failed submission with the same idempotency key', async () => {
+        (doUIAction as jest.Mock).mockReset();
+        (doUIAction as jest.Mock).mockRejectedValueOnce(new Error('network')).mockResolvedValue({post_id: 'sub'});
+        const {result} = renderActions({conversation: latestReply});
+        const click = {block: 0, form: '', label: 'Show details', fields: []};
+        await act(async () => {
+            await expect(result.current.submit(click)).rejects.toThrow('network');
+        });
+        await act(async () => {
+            await result.current.submit(click);
+        });
+        const [first, second] = (doUIAction as jest.Mock).mock.calls.map((call) => call[1].idempotency_key);
+        expect(second).toBe(first);
+    });
 });

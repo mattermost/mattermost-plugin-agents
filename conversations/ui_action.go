@@ -45,6 +45,11 @@ var ErrStaleUIAction = errors.New("this generated form is no longer active")
 // agent. The HTTP layer maps it to 403.
 var ErrGenerativeUIDisabled = errors.New("generative UI is disabled")
 
+// ErrCannotPostInChannel is returned when the requester may not post in the
+// channel, so the submission post, which is created on their behalf, is not
+// allowed. The HTTP layer maps it to 403.
+var ErrCannotPostInChannel = errors.New("you do not have permission to post in this channel")
+
 // uiActionClaimTTL only has to cover the window between claiming a reply and
 // persisting the submission's user turn; after that, the latest-reply rule
 // rejects any further submission permanently.
@@ -115,6 +120,10 @@ func (c *Conversations) handleUIAction(ctx context.Context, userID string, post 
 	}
 	if post.UserId != conv.BotID {
 		return nil, errors.New("post was not authored by the conversation's bot")
+	}
+
+	if !c.mmClient.HasPermissionToChannel(userID, channel.Id, model.PermissionCreatePost) {
+		return nil, ErrCannotPostInChannel
 	}
 
 	user, err := c.mmClient.GetUser(userID)

@@ -48,11 +48,13 @@ func TestUIActionRoute(t *testing.T) {
 		body       string
 		disabled   bool
 		owner      string
+		cannotPost bool
 		replyTurn  bool
 		wantStatus int
 	}{
 		{name: "generative UI turned off", body: body("Deploy", "key-00000001"), disabled: true, replyTurn: true, wantStatus: http.StatusForbidden},
 		{name: "someone else's conversation", body: body("Deploy", "key-00000001"), owner: testOtherUserID, replyTurn: true, wantStatus: http.StatusForbidden},
+		{name: "requester cannot post in the channel", body: body("Deploy", "key-00000001"), cannotPost: true, replyTurn: true, wantStatus: http.StatusForbidden},
 		{name: "reply not finished", body: body("Deploy", "key-00000001"), wantStatus: http.StatusConflict},
 		{name: "button the reply does not offer", body: body(sentinel, "key-00000001"), replyTurn: true, wantStatus: http.StatusBadRequest},
 		{name: "missing idempotency key", body: body("Deploy", ""), replyTurn: true, wantStatus: http.StatusBadRequest},
@@ -96,6 +98,7 @@ func TestUIActionRoute(t *testing.T) {
 				Type: model.ChannelTypeDirect,
 			}, nil)
 			e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
+			e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionCreatePost).Return(!tc.cannotPost).Maybe()
 			e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Locale: "en"}, nil).Maybe()
 			e.mockAPI.On("KVGet", mock.Anything).Return(([]byte)(nil), (*model.AppError)(nil)).Maybe()
 

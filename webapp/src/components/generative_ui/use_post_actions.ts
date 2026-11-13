@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {useCallback, useMemo, useState} from 'react';
+import {useCallback, useMemo, useRef, useState} from 'react';
 import {useSelector} from 'react-redux';
 
 import {GlobalState} from '@mattermost/types/store';
@@ -109,8 +109,16 @@ export const useGenerativeUIPostActions = ({post, conversation, currentUserId, g
     }, [submission, conversation, generating, currentUserId, requesterUsername, post.id]);
 
     const conversationId = conversation?.id;
+    const pendingKey = useRef<{payload: string; key: string} | null>(null);
     const submit = useCallback(async (next: Submission) => {
-        await doUIAction(post.id, {...next, idempotency_key: newIdempotencyKey()});
+        // A retry of the same payload reuses its key, so a click the server
+        // accepted before the response was lost is answered as already done.
+        const payload = JSON.stringify(next);
+        if (pendingKey.current?.payload !== payload) {
+            pendingKey.current = {payload, key: newIdempotencyKey()};
+        }
+        await doUIAction(post.id, {...next, idempotency_key: pendingKey.current.key});
+        pendingKey.current = null;
         setLocalSubmission({...next, source_post_id: post.id});
         if (conversationId && isValidId(conversationId)) {
             invalidateConversation(conversationId);

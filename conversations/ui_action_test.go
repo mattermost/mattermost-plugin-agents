@@ -226,10 +226,12 @@ func TestHandleUIActionRefusals(t *testing.T) {
 		opts       genUIReplyOptions
 		userID     string
 		disabled   bool
+		cannotPost bool
 		submission func() genui.Submission
 		wantErr    error
 	}{
 		{name: "someone other than the requester", userID: genUIOtherID, wantErr: conversations.ErrNotRequester},
+		{name: "requester cannot post in the channel", cannotPost: true, wantErr: conversations.ErrCannotPostInChannel},
 		{name: "generative UI turned off server-wide", disabled: true, wantErr: conversations.ErrGenerativeUIDisabled},
 		{name: "agent has not opted in to generative UI", opts: genUIReplyOptions{agentOptedOut: true}, wantErr: conversations.ErrGenerativeUIDisabled},
 		{name: "reply still streaming", opts: genUIReplyOptions{noReplyTurn: true}, wantErr: conversations.ErrStaleUIAction},
@@ -257,6 +259,9 @@ func TestHandleUIActionRefusals(t *testing.T) {
 			env := setupDMTestEnv(t, dmMakeTextStream("unused"))
 			_, reply := setupGenUIReply(t, env, env.channel, tc.opts)
 			env.config.enableGenerativeUI = !tc.disabled
+			if tc.cannotPost {
+				env.mmClient.unpostableChannels = map[string]bool{env.channel.Id: true}
+			}
 			userID := env.userID
 			if tc.userID != "" {
 				userID = tc.userID

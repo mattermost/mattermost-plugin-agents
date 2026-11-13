@@ -701,6 +701,7 @@ func TestPostResumeRoutesUseThePostsAgent(t *testing.T) {
 					Type: model.ChannelTypeDirect,
 				}, nil)
 				e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
+				e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionCreatePost).Return(true).Maybe()
 				e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Locale: "en"}, nil).Maybe()
 
 				var body io.Reader

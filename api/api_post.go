@@ -492,7 +492,7 @@ func (a *API) handleUIAction(c *gin.Context) {
 
 // uiActionHTTPStatus maps errors from HandleUIAction to HTTP statuses: a
 // malformed submission is 400, a form that is no longer active is 409, and a
-// requester mismatch, lost agent or source access, or disabled feature is 403.
+// requester mismatch, lost agent, source, or posting access, or disabled feature is 403.
 func uiActionHTTPStatus(err error) int {
 	switch {
 	case errors.Is(err, genui.ErrInvalidSubmission),
@@ -502,6 +502,7 @@ func uiActionHTTPStatus(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, conversations.ErrNotRequester),
 		errors.Is(err, conversations.ErrGenerativeUIDisabled),
+		errors.Is(err, conversations.ErrCannotPostInChannel),
 		errors.Is(err, conversations.ErrAnalysisSourceUnavailable),
 		errors.Is(err, mmapi.ErrFileActionForbidden),
 		errors.Is(err, bots.ErrUsageRestriction):
