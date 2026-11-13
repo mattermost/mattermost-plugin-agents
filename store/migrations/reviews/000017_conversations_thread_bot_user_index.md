@@ -1,4 +1,4 @@
-# Schema Migration Review: 000015 — Index LLM_Conversations on (RootPostID, BotID, UserID)
+# Schema Migration Review: 000017 — Index LLM_Conversations on (RootPostID, BotID, UserID)
 
 > **Context:** Conversation archive keeps archived rows (`DeleteAt > 0`) and looks up a
 > thread's latest conversation, active or archived, with

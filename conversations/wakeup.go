@@ -536,17 +536,23 @@ func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) (er
 		ChannelId: post.ChannelId,
 		RootId:    threadRootID(post),
 	}
-	wakePost.AddProp(streaming.ConversationIDProp, conv.ID)
-	if err := c.createResponsePlaceholder(bot.GetMMBot().UserId, wakePost, post.Id); err != nil {
+	if err = c.createResponsePlaceholder(bot.GetMMBot().UserId, wakePost, post.Id); err != nil {
 		return fmt.Errorf("failed to create wake response post: %w", err)
 	}
-
-	if err := c.convService.AppendSyntheticUserTurn(conv.ID, conversation.SyntheticKindWake, mmtools.WakeUserMessage); err != nil {
+	ctx, releaseRun, err := c.claimResponsePost(ctx, wakePost, conv.ID)
+	if err != nil {
 		c.failResponsePlaceholder(wakePost, user.Locale)
 		return err
 	}
 
-	if err := c.streamToolFollowUp(ctx, policy, wakePost, conv, followUpOptions{Unattended: true}); err != nil {
+	if err = c.convService.AppendSyntheticUserTurn(conv.ID, conversation.SyntheticKindWake, mmtools.WakeUserMessage); err != nil {
+		releaseRun()
+		c.failResponsePlaceholder(wakePost, user.Locale)
+		return err
+	}
+
+	if err = c.streamToolFollowUp(ctx, policy, wakePost, conv, followUpOptions{Unattended: true, OnRunEnd: releaseRun}); err != nil {
+		releaseRun()
 		c.failResponsePlaceholder(wakePost, user.Locale)
 		return err
 	}

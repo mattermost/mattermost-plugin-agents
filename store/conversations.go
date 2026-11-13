@@ -152,7 +152,7 @@ func (s *Store) ArchiveConversation(id string, archivedAt int64) error {
 // when it exists, otherwise the most recently archived one. It never writes;
 // callers that continue the conversation restore it with RestoreConversation.
 // Returns ErrConversationNotFound when the tuple has no conversation at all.
-// idx_llm_conversations_thread_bot_user_all (migration 000015) serves it.
+// idx_llm_conversations_thread_bot_user_all (migration 000017) serves it.
 func (s *Store) GetLatestConversationByThreadBotUser(rootPostID, botID, userID string) (*Conversation, error) {
 	return s.getConversation("get latest conversation by thread/bot/user", func(b sq.SelectBuilder) sq.SelectBuilder {
 		return b.Where(sq.Eq{"RootPostID": rootPostID, "BotID": botID, "UserID": userID}).

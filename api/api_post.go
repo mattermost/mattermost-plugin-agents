@@ -355,7 +355,8 @@ func regenerateHTTPStatus(err error) int {
 		return http.StatusBadRequest
 	case errors.Is(err, conversation.ErrRootPostDeleted):
 		return http.StatusNotFound
-	case errors.Is(err, conversation.ErrConversationArchived):
+	case errors.Is(err, streaming.ErrAlreadyStreamingToPost),
+		errors.Is(err, conversation.ErrConversationArchived):
 		return http.StatusConflict
 	case errors.Is(err, conversations.ErrNotRequester),
 		errors.Is(err, mmapi.ErrFileActionForbidden),
@@ -410,7 +411,8 @@ func toolApprovalHTTPStatus(err error) int {
 		return http.StatusBadRequest
 	case errors.Is(err, conversation.ErrRootPostDeleted):
 		return http.StatusNotFound
-	case errors.Is(err, conversation.ErrConversationArchived):
+	case errors.Is(err, streaming.ErrAlreadyStreamingToPost),
+		errors.Is(err, conversation.ErrConversationArchived):
 		return http.StatusConflict
 	case errors.Is(err, conversations.ErrNotRequester),
 		errors.Is(err, conversations.ErrRemoteMCPNotLicensed),

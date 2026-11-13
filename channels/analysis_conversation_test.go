@@ -895,7 +895,7 @@ func TestRegenerateAnalysisReusesConversation(t *testing.T) {
 	require.NoError(t, err)
 
 	readChannelID = ""
-	stream, err := ch.RegenerateAnalysis(context.Background(), newContext(), conv, "chanBound", postID, "")
+	stream, _, err := ch.RegenerateAnalysis(context.Background(), newContext(), conv, "chanBound", postID, "")
 	require.NoError(t, err)
 	text, err := stream.ReadAll()
 	require.NoError(t, err)
@@ -918,4 +918,16 @@ func TestRegenerateAnalysisReusesConversation(t *testing.T) {
 	// User turn plus the regenerated tool round (assistant tool_use + tool_result).
 	require.Len(t, turns, 3)
 	require.Equal(t, "user", turns[0].Role)
+}
+
+func (s *inMemoryStore) HasLiveStreamingTurn(string, int64) (bool, error) {
+	return false, nil
+}
+
+func (*inMemoryStore) ClaimStaleStreamingTurn(string, int64) (bool, error) {
+	return false, nil
+}
+
+func (*inMemoryStore) ReleaseStreamingTurnClaim(string) error {
+	return nil
 }
