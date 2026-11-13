@@ -122,7 +122,7 @@ On the agent, enable **Reasoning** under **Advanced configuration**. Set either 
 
 Models older than Gemini 2.5 that aren't thinking models get no thinking settings.
 
-New agents have **Web Search** on under **Native Google Tools** when the license allows provider web search (Professional). Migrated agents keep their stored setting. **Web Search** under **Native Google Tools** grounds answers in Google Search with citations. If grounding fails on Vertex, check that the Vertex AI API is enabled, that the model supports grounding, and that your project meets Google's grounding prerequisites.
+New agents have **Web Search** on under **Native Google Tools** when the license allows provider web search (Professional). Migrated agents keep their stored setting. **Web Search** under **Native Google Tools** grounds answers in Google Search with citations. The agent's function tools and MCP tools work alongside it on Gemini 3 and newer models. On older models the function tools take priority, and Google Search is omitted from requests that also carry function tools. If grounding fails on Vertex, check that the Vertex AI API is enabled, that the model supports grounding, and that your project meets Google's grounding prerequisites.
 
 ## Cohere
 
