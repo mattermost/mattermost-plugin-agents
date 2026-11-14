@@ -37,6 +37,16 @@ func NewSerplyProvider(apiKey, apiURL string, httpClient *http.Client, logger Lo
 	}
 }
 
+// serplyFailSpan labels the span with the failure stage and HTTP status only;
+// the error text is left out because it can carry the query.
+func serplyFailSpan(span trace.Span, stage string, statusCode int) {
+	span.SetAttributes(telemetry.WebSearchFailStage.String(stage))
+	if statusCode > 0 {
+		span.SetAttributes(telemetry.WebSearchStatusCode.Int(statusCode))
+	}
+	failSpanFixed(span, "serply web search failed: "+stage)
+}
+
 // Search performs a Serply search and returns the results.
 func (s *SerplyProvider) Search(ctx context.Context, query string, limit int) (*SearchResponse, error) {
 	if limit <= 0 {
@@ -62,14 +72,14 @@ func (s *SerplyProvider) Search(ctx context.Context, query string, limit int) (*
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		err = fmt.Errorf("failed to create web search request: %w", err)
-		failSpan(span, "create_request", 0, err)
+		serplyFailSpan(span, "create_request", 0)
 		return nil, err
 	}
 	// The API key travels in a header, so refuse a plaintext endpoint before
 	// the header is ever set.
 	if req.URL.Scheme != "https" || req.URL.Host == "" {
 		err = fmt.Errorf("serply API URL must be an absolute https URL")
-		failSpan(span, "invalid_endpoint", 0, err)
+		serplyFailSpan(span, "invalid_endpoint", 0)
 		return nil, err
 	}
 
@@ -87,31 +97,31 @@ func (s *SerplyProvider) Search(ctx context.Context, query string, limit int) (*
 			s.logger.Error("web search http client is not configured")
 		}
 		err = fmt.Errorf("web search http client is not configured")
-		failSpan(span, "nil_http_client", 0, err)
+		serplyFailSpan(span, "nil_http_client", 0)
 		return nil, err
 	}
 
 	resp, err := serplyPinnedClient(client, req.URL).Do(req)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("web search request failed", "error", err)
+			s.logger.Error("web search request failed", "error", redactTransportError(err))
 		}
-		err = fmt.Errorf("web search request failed: %w", err)
-		failSpan(span, "http_request", 0, err)
+		err = fmt.Errorf("web search request failed: %w", redactTransportError(err))
+		serplyFailSpan(span, "http_request", 0)
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		err = fmt.Errorf("web search request failed: status %s", resp.Status)
-		failSpan(span, "http_status", resp.StatusCode, err)
+		serplyFailSpan(span, "http_status", resp.StatusCode)
 		return nil, err
 	}
 
 	var payload serplySearchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		err = fmt.Errorf("failed to decode web search response: %w", err)
-		failSpan(span, "decode_response", resp.StatusCode, err)
+		serplyFailSpan(span, "decode_response", resp.StatusCode)
 		return nil, err
 	}
 
