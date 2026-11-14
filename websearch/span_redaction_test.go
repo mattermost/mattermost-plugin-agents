@@ -74,6 +74,13 @@ func TestSearchTransportErrorsDoNotLeakIntoSpansOrLogs(t *testing.T) {
 					Search(context.Background(), sentinelQuery, 5)
 			},
 		},
+		{
+			name: "serply",
+			search: func(l Logger) (*SearchResponse, error) {
+				return NewSerplyProvider(sentinelKey, "https://example.invalid/v1/search", failingClient, l).
+					Search(context.Background(), sentinelQuery, 5)
+			},
+		},
 	}
 
 	for _, tc := range tests {

@@ -1,10 +1,10 @@
 # Web search
 
-Give agents web search through the provider's native tool (Professional) or Mattermost's built-in Brave, Google, or SearXNG search (Enterprise). If your provider has native web search, use that. Use built-in search for models that don't.
+Give agents web search through the provider's native tool (Professional) or Mattermost's built-in Brave, Google, SearXNG, or Serply search (Enterprise). If your provider has native web search, use that. Use built-in search for models that don't.
 
 | | Native web search | Built-in web search |
 |---|---|---|
-| Who runs the search | The model provider | Mattermost, through Brave, Google, or SearXNG |
+| Who runs the search | The model provider | Mattermost, through Brave, Google, SearXNG, or Serply |
 | Providers | Anthropic, OpenAI, Google Gemini, Google Vertex AI, and OpenAI Compatible or Azure with **Use Responses API** on | Any model that supports tool calling |
 | Where to turn it on | Per agent, under **Advanced configuration** | **System Console > Plugins > Agents > Web Search**. Applies to agents that don't use native search. |
 | License | Professional | Enterprise |
@@ -49,10 +49,11 @@ Mattermost's own search tool lets an agent retrieve current information when the
 | **Brave Search** | **Brave API Key**, **Brave Result Limit** (1 to 10, default 5), **Brave API URL (optional)** | Returns summaries with each result, which reduces page fetches. You must have Brave's **Pro AI plan**. Using another Brave plan for AI use violates Brave's terms and can get the account suspended. |
 | **Google Custom Search** | **Google API Key**, **Search Engine ID**, **Result Limit** (1 to 10, default 5), **API URL (optional)** | Uses Google's Custom Search API, which returns weaker results than google.com, and has strict daily quotas. Mattermost scrapes the pages it needs, and many sites block that. |
 | **SearXNG (self-hosted)** | **SearXNG Base URL**, **SearXNG Result Limit** | Good for air-gapped or sovereign setups. The instance must allow the `json` format (`search.formats` in its settings). If it's on a private or reserved address, add it to the Mattermost Server's `AllowedUntrustedInternalConnections` setting. |
+| **Serply** | **Serply API Key**, **Serply Result Limit** (1 to 10, default 5), **Serply API URL (optional)** | Returns Google web results with one API key, sent in the `X-Api-Key` header. There's no Programmable Search Engine to create. Results are titles, links, and snippets, so agents may still fetch pages for detail. |
 
 **Domain Denylist (optional)** takes a comma-separated list such as `example.com, spam-site.org`. It applies to every provider. Matching results are removed before the agent sees them, and the agent can't fetch pages from those domains.
 
-Brave API keys come from [brave.com/search/api](https://brave.com/search/api/). For Google, create an API key in the Google Cloud Console with the Custom Search API enabled, and create a search engine at [Programmable Search Engine](https://programmablesearchengine.google.com). Its ID is the **Search Engine ID**.
+Brave API keys come from [brave.com/search/api](https://brave.com/search/api/). For Google, create an API key in the Google Cloud Console with the Custom Search API enabled, and create a search engine at [Programmable Search Engine](https://programmablesearchengine.google.com). Its ID is the **Search Engine ID**. Serply API keys come from [serply.io](https://serply.io), and the request format is in the [Serply API documentation](https://serply.io/docs).
 
 ### Limits
 
