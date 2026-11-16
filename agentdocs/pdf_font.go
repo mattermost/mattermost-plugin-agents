@@ -108,15 +108,17 @@ func stripPDFComments(data []byte) []byte {
 			}
 		case '(':
 			start, depth := i, 0
+		scan:
 			for ; i < len(data); i++ {
-				if data[i] == '\\' {
+				switch data[i] {
+				case '\\':
 					i++
-				} else if data[i] == '(' {
+				case '(':
 					depth++
-				} else if data[i] == ')' {
+				case ')':
 					depth--
 					if depth == 0 {
-						break
+						break scan
 					}
 				}
 			}
