@@ -267,6 +267,61 @@ describe('a refresh that fails after superseding a mutation', () => {
     });
 });
 
+describe('mutation ownership across refreshes', () => {
+    const justB: ChannelContextPosts = {posts: [pins.posts[0]], max_posts: 10};
+
+    test('a confirmed mutation survives a replacement refresh when both refreshes fail', async () => {
+        const first = deferred<ChannelContextPosts>();
+        const second = deferred<ChannelContextPosts>();
+        mockedGetChannelContextPosts.mockResolvedValueOnce(pins).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+        const store = makeStore();
+        await fetchChannelContextPosts(store.dispatch, 'chan1');
+        const unpin = deferred<ChannelContextPosts>();
+
+        const mutation = mutateChannelContextPosts(store.dispatch, 'chan1', () => unpin.promise);
+        handleChannelContextUpdated(store as never, {channel_id: 'chan1'});
+        unpin.resolve(empty);
+        await mutation;
+        handleChannelContextUpdated(store as never, {channel_id: 'chan1'});
+        first.resolve(Promise.reject(new Error('500')) as never);
+        second.resolve(Promise.reject(new Error('500')) as never);
+        await flush();
+
+        expect(stateOf(store)).toEqual(empty);
+    });
+
+    test('an older mutation response cannot win after a newer one, even when a refresh fails', async () => {
+        mockedGetChannelContextPosts.mockResolvedValueOnce(pins).mockRejectedValueOnce(new Error('500'));
+        const store = makeStore();
+        await fetchChannelContextPosts(store.dispatch, 'chan1');
+        const olderUnpin = deferred<ChannelContextPosts>();
+
+        const older = mutateChannelContextPosts(store.dispatch, 'chan1', () => olderUnpin.promise);
+        await mutateChannelContextPosts(store.dispatch, 'chan1', () => Promise.resolve(empty));
+        handleChannelContextUpdated(store as never, {channel_id: 'chan1'});
+        await flush();
+        olderUnpin.resolve(justB);
+        await older;
+
+        expect(stateOf(store)).toEqual(empty);
+    });
+
+    test('a mutation response arriving after a successful refresh is dropped', async () => {
+        const pending = deferred<ChannelContextPosts>();
+        mockedGetChannelContextPosts.mockResolvedValueOnce(pins).mockResolvedValueOnce(justB);
+        const store = makeStore();
+        await fetchChannelContextPosts(store.dispatch, 'chan1');
+
+        const mutation = mutateChannelContextPosts(store.dispatch, 'chan1', () => pending.promise);
+        handleChannelContextUpdated(store as never, {channel_id: 'chan1'});
+        await flush();
+        pending.resolve(empty);
+        await mutation;
+
+        expect(stateOf(store)).toEqual(justB);
+    });
+});
+
 describe('canManageChannelContext', () => {
     test.each([
         {name: 'public channel with the public manage permission', type: 'O', perms: [PERMISSION_MANAGE_PUBLIC_CHANNEL_PROPERTIES], want: true},

@@ -50,45 +50,41 @@ export function channelContextPostsFromState(state: GlobalState, channelId: stri
 }
 
 const inFlight = new Map<string, Promise<void>>();
-const generations = createRequestGenerations();
 
-// A mutation's response that a refresh superseded before it landed. It is the
-// newest state the server confirmed, so it is shown if that refresh fails.
-const supersededMutations = new Map<string, ChannelContextPosts>();
+// Refreshes (GETs) and mutations (pin and unpin) are versioned separately. A
+// refresh is superseded by any newer request. A mutation is superseded only by
+// a newer mutation, a successful refresh (authoritative, so a response still
+// on its way is older than it), or a reset.
+const refreshes = createRequestGenerations();
+const mutations = createRequestGenerations();
 
-// Token of the refresh that last failed while keeping the old pins, so a
-// mutation response arriving after that failure is not lost either.
-const failedRefreshes = new Map<string, string>();
+// The latest owned mutation response while a refresh is pending. It is the
+// newest state the server confirmed, so it is shown if every refresh fails.
+const confirmedByMutation = new Map<string, ChannelContextPosts>();
 
 function startFetch(dispatch: Dispatch, channelId: string, keepOnFailure: boolean): Promise<void> {
-    const token = generations.begin(channelId);
-    supersededMutations.delete(channelId);
-    failedRefreshes.delete(channelId);
-    const apply = (data: ChannelContextPosts | null) => {
-        if (generations.isCurrent(channelId, token)) {
-            supersededMutations.delete(channelId);
-            dispatch(receivedChannelContextPosts(channelId, data));
-        }
-    };
+    const token = refreshes.begin(channelId);
     const request: Promise<void> = getChannelContextPosts(channelId).
-        then(apply).
+        then((data) => {
+            if (refreshes.isCurrent(channelId, token)) {
+                mutations.invalidate(channelId);
+                confirmedByMutation.delete(channelId);
+                dispatch(receivedChannelContextPosts(channelId, data));
+            }
+        }).
         catch(() => {
-            // A failed refresh keeps the pins already shown, or the newer
-            // pins from a mutation it superseded; only a failed first load
+            if (!refreshes.isCurrent(channelId, token)) {
+                return;
+            }
+
+            // A failed refresh keeps the pins already shown, or the newer pins
+            // a mutation confirmed meanwhile; only a failed first load
             // records the failure.
-            if (!keepOnFailure) {
-                apply(null);
-                return;
-            }
-            if (!generations.isCurrent(channelId, token)) {
-                return;
-            }
-            const mutated = supersededMutations.get(channelId);
-            if (mutated) {
-                supersededMutations.delete(channelId);
-                dispatch(receivedChannelContextPosts(channelId, mutated));
-            } else {
-                failedRefreshes.set(channelId, token);
+            const confirmed = confirmedByMutation.get(channelId);
+            if (confirmed) {
+                dispatch(receivedChannelContextPosts(channelId, confirmed));
+            } else if (!keepOnFailure) {
+                dispatch(receivedChannelContextPosts(channelId, null));
             }
         }).
         finally(() => {
@@ -107,38 +103,37 @@ export function fetchChannelContextPosts(dispatch: Dispatch, channelId: string, 
     return inFlight.get(channelId) ?? startFetch(dispatch, channelId, keepOnFailure);
 }
 
-// Runs a pin or unpin and stores the pins the server returns. If newer work
-// for the channel (another mutation, a refresh, or a reset) started meanwhile,
-// this response is stale and is dropped: that newer work owns the channel's
-// state. The exception is a refresh that fails, which has nothing newer to
-// show, so the mutation's response is used instead. A pending GET read an
-// older snapshot, so starting the mutation supersedes it too. Rejects when
-// the mutation fails.
+// Runs a pin or unpin and stores the pins the server returns. Only the newest
+// mutation's response is used: an older one, or one overtaken by a successful
+// refresh or a reset, is dropped. While a refresh is pending the response is
+// held instead, and shown if that refresh fails. Starting a mutation also
+// supersedes any pending GET, which read an older snapshot. Rejects when the
+// mutation fails.
 export async function mutateChannelContextPosts(
     dispatch: Dispatch,
     channelId: string,
     mutation: () => Promise<ChannelContextPosts>,
 ): Promise<void> {
-    const token = generations.begin(channelId);
+    const token = mutations.begin(channelId);
+    refreshes.invalidate(channelId);
     inFlight.delete(channelId);
-    supersededMutations.delete(channelId);
-    failedRefreshes.delete(channelId);
+    confirmedByMutation.delete(channelId);
     const data = await mutation();
-    const failedRefresh = failedRefreshes.get(channelId);
-    if (generations.isCurrent(channelId, token) || (failedRefresh && generations.isCurrent(channelId, failedRefresh))) {
-        failedRefreshes.delete(channelId);
+    if (!mutations.isCurrent(channelId, token)) {
+        return;
+    }
+    confirmedByMutation.set(channelId, data);
+    if (!inFlight.has(channelId)) {
         dispatch(receivedChannelContextPosts(channelId, data));
-    } else if (inFlight.has(channelId)) {
-        supersededMutations.set(channelId, data);
     }
 }
 
-// Drops every pending fetch so none can repopulate state cleared by a reconnect.
+// Drops every pending request so none can repopulate state cleared by a reconnect.
 export function resetChannelContextRequests(): void {
-    generations.invalidateAll();
+    refreshes.invalidateAll();
+    mutations.invalidateAll();
     inFlight.clear();
-    supersededMutations.clear();
-    failedRefreshes.clear();
+    confirmedByMutation.clear();
 }
 
 // Agent context applies to public and private channels on a licensed server.
