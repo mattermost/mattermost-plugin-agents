@@ -769,11 +769,13 @@ func (c *Conversations) notifyFailedFollowUp(notifyCtx, runCtx context.Context, 
 		c.failResponsePlaceholder(notifyCtx, post, failureUser)
 		return
 	}
-	outcome := notifications.OutcomeErrored
+	outcome := telemetry.StreamOutcomeErrored
 	if runCtx.Err() != nil {
-		outcome = notifications.OutcomeCancelled
+		outcome = telemetry.StreamOutcomeCancelled
 	}
-	c.notifyRunEnd(notifyCtx, post, requester.Id, notifications.StreamEnd{Outcome: outcome})
+	c.notifyRunEnd(notifyCtx, post, requester.Id, notifications.StreamEnd{
+		Outcome: streaming.NotificationOutcome(outcome, streaming.StoppedByUser(runCtx)),
+	})
 }
 
 // followUpOptions are the per-caller knobs of streamToolFollowUp.
@@ -839,24 +841,33 @@ func (c *Conversations) streamToolFollowUp(
 
 	// Stop must reach the tool loop, not only the stream that follows it.
 	followUp := opts.Stream
+	// A follow-up that fails before streaming ends the run here, so every
+	// entry point (approve, share decision, wake-up) notifies the requester
+	// through this one place. The streaming service notifies once it has the
+	// stream. Failing to acquire the stream means another run owns the post,
+	// which notifies for itself, unless the post is a placeholder this run
+	// created (FailureUser).
+	defer func() {
+		if err == nil || (followUp != nil && followUp.handedOff) {
+			return
+		}
+		if followUp == nil && opts.FailureUser == nil {
+			return
+		}
+		runCtx := ctx
+		if followUp != nil {
+			runCtx = followUp.ctx
+		}
+		c.notifyFailedFollowUp(telemetry.DetachContext(callerCtx), runCtx, post, policy.user, opts.FailureUser)
+	}()
 	if followUp == nil {
 		if followUp, err = c.acquireFollowUpStream(ctx, post.Id); err != nil {
+			followUp = nil
 			return err
 		}
 		defer followUp.release()
 	}
 	ctx = followUp.ctx
-
-	// A follow-up that fails before streaming ends the run here, so every
-	// entry point (approve, share decision, wake-up) notifies the requester
-	// through this one place. The streaming service notifies once it has the
-	// stream.
-	defer func() {
-		if err == nil || followUp.handedOff {
-			return
-		}
-		c.notifyFailedFollowUp(telemetry.DetachContext(callerCtx), ctx, post, policy.user, opts.FailureUser)
-	}()
 
 	if opts.Unattended {
 		unattended := *policy

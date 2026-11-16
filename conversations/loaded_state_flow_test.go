@@ -397,6 +397,9 @@ func (l *loadedStateLLM) OutputTokenLimit() int { return 8192 }
 type loadedStateStreamingService struct {
 	mu     sync.Mutex
 	active int
+	// contextErr, when set, fails GetStreamingContext, as when another run
+	// already streams to the post.
+	contextErr error
 }
 
 func (s *loadedStateStreamingService) StreamToNewPost(context.Context, string, string, *llm.TextStreamResult, *model.Post, string) error {
@@ -417,6 +420,10 @@ func (s *loadedStateStreamingService) StopStreaming(string) {}
 
 func (s *loadedStateStreamingService) GetStreamingContext(ctx context.Context, postID string) (context.Context, error) {
 	s.mu.Lock()
+	if s.contextErr != nil {
+		defer s.mu.Unlock()
+		return nil, s.contextErr
+	}
 	s.active++
 	s.mu.Unlock()
 	return ctx, nil

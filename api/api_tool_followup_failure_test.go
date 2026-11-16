@@ -13,12 +13,14 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/notifications"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
@@ -53,11 +55,12 @@ type toolFollowUpEnv struct {
 	convStore *mockConvServiceStore
 	notifier  *runEndRecorder
 	post      *model.Post
+	llm       *FakeLLM
 }
 
 // setupToolFollowUpEnv seeds a post with one tool batch and a bot whose LLM
 // fails before any stream starts.
-func setupToolFollowUpEnv(t *testing.T, channel *model.Channel, turns func(postID string) []store.Turn) *toolFollowUpEnv {
+func setupToolFollowUpEnv(t *testing.T, channel *model.Channel, realStreaming bool, turns func(postID string) []store.Turn) *toolFollowUpEnv {
 	t.Helper()
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -69,8 +72,17 @@ func setupToolFollowUpEnv(t *testing.T, channel *model.Channel, turns func(postI
 
 	e := SetupTestEnvironment(t)
 	t.Cleanup(func() { e.Cleanup(t) })
-	e.api.streamingService = &streamingContextRecorder{}
+	var streamService *streaming.MMPostStreamService
+	if realStreaming {
+		streamService = streaming.NewMMPostStreamService(mmapi.NewClient(e.client), nil)
+		e.api.streamingService = streamService
+	} else {
+		e.api.streamingService = &streamingContextRecorder{}
+	}
 	convStore := e.useConversations()
+	if streamService != nil {
+		streamService.SetTurnStore(convStore)
+	}
 	notifier := &runEndRecorder{}
 	e.api.conversationsService.SetNotifier(notifier)
 	e.config.enableChannelMentionToolCalling = true
@@ -106,7 +118,7 @@ func setupToolFollowUpEnv(t *testing.T, channel *model.Channel, turns func(postI
 	e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Username: "requester", Locale: "en"}, nil).Maybe()
 	e.mockAPI.On("KVGet", mock.Anything).Return([]byte(nil), (*model.AppError)(nil)).Maybe()
 
-	return &toolFollowUpEnv{e: e, convStore: convStore, notifier: notifier, post: post}
+	return &toolFollowUpEnv{e: e, convStore: convStore, notifier: notifier, post: post, llm: fakeLLM}
 }
 
 func (env *toolFollowUpEnv) click(endpoint, body string) int {
@@ -142,7 +154,7 @@ func TestToolFollowUpFailingBeforeStreamingNotifiesTheRequester(t *testing.T) {
 		Status:    conversation.StatusSuccess,
 		Shared:    new(true),
 	}}
-	env := setupToolFollowUpEnv(t, openChannel, func(postID string) []store.Turn {
+	env := setupToolFollowUpEnv(t, openChannel, false, func(postID string) []store.Turn {
 		return []store.Turn{
 			assistantToolTurn(t, postID, pendingToolBatch(t, conversation.StatusSuccess)),
 			toolResultTurn(t, toolResult),
@@ -165,7 +177,7 @@ func TestToolFollowUpFailingBeforeStreamingNotifiesTheRequester(t *testing.T) {
 // taken twice, so the requester must be told and a repeat click is stale.
 func TestApprovalFailingAfterTheDecisionIsClaimedNotifiesTheRequester(t *testing.T) {
 	dmChannel := &model.Channel{Id: "dmchan345678901234567890ab", Type: model.ChannelTypeDirect, Name: testBotUserID + "__" + testUserID}
-	env := setupToolFollowUpEnv(t, dmChannel, func(postID string) []store.Turn {
+	env := setupToolFollowUpEnv(t, dmChannel, false, func(postID string) []store.Turn {
 		return []store.Turn{assistantToolTurn(t, postID, pendingToolBatch(t, conversation.StatusPending))}
 	})
 	env.convStore.createTurnErr = func(turn *store.Turn) error {
@@ -188,4 +200,44 @@ func TestApprovalFailingAfterTheDecisionIsClaimedNotifiesTheRequester(t *testing
 	env.convStore.createTurnErr = nil
 	require.Equal(t, http.StatusBadRequest, env.click("tool_call", body), "a repeat click is stale: the decision was already claimed")
 	assert.Len(t, env.notifier.snapshot(), 1, "a stale click does not notify again")
+}
+
+// TestStopBeforeTheFollowUpStreamsNotifiesNobody stops the run through the
+// real stop route while the approval's follow-up is still waiting on the LLM,
+// before any stream took over. The requester stopped it, so nobody is
+// notified, as for a stop during streaming.
+func TestStopBeforeTheFollowUpStreamsNotifiesNobody(t *testing.T) {
+	dmChannel := &model.Channel{Id: "dmchan345678901234567890ab", Type: model.ChannelTypeDirect, Name: testBotUserID + "__" + testUserID}
+	env := setupToolFollowUpEnv(t, dmChannel, true, func(postID string) []store.Turn {
+		return []store.Turn{assistantToolTurn(t, postID, pendingToolBatch(t, conversation.StatusPending))}
+	})
+	inLLM := make(chan struct{})
+	var once sync.Once
+	env.llm.OnContext = func(ctx context.Context) {
+		once.Do(func() { close(inLLM) })
+		<-ctx.Done()
+	}
+
+	approved := make(chan int, 1)
+	go func() {
+		approved <- env.click("tool_call", `{"accepted_tool_ids":["not-a-pending-tool"]}`)
+	}()
+	select {
+	case <-inLLM:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the follow-up never reached the LLM")
+	}
+
+	require.Equal(t, http.StatusOK, env.click("stop", ""))
+	select {
+	case status := <-approved:
+		require.Equal(t, http.StatusInternalServerError, status)
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the approval kept running after the stop")
+	}
+
+	ends := env.notifier.snapshot()
+	require.Len(t, ends, 1)
+	assert.Equal(t, notifications.OutcomeStoppedByUser, ends[0].Outcome)
+	assert.Equal(t, notifications.DeliveryNone, notifications.Decide(ends[0]))
 }

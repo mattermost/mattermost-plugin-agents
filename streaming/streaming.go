@@ -690,7 +690,16 @@ func redactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
 	return redacted
 }
 
-func notificationOutcome(outcome string, stoppedByUser bool) notifications.Outcome {
+// StoppedByUser reports whether ctx was canceled because the requester
+// stopped the generation, as opposed to shutdown or a superseded run.
+func StoppedByUser(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), errStoppedByUser)
+}
+
+// NotificationOutcome maps how a run ended (a telemetry stream outcome) to the
+// outcome that decides who is notified. Every run that ends, whether it
+// streamed or failed before streaming, maps its outcome here.
+func NotificationOutcome(outcome string, stoppedByUser bool) notifications.Outcome {
 	switch outcome {
 	case telemetry.StreamOutcomeCompleted:
 		return notifications.OutcomeCompleted
@@ -859,7 +868,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 				PostID:             post.Id,
 				ChannelID:          post.ChannelId,
 				RequesterID:        requesterUserID,
-				Outcome:            notificationOutcome(outcome, stoppedByUser),
+				Outcome:            NotificationOutcome(outcome, stoppedByUser),
 				PausedForRequester: pausedForRequester,
 				UpdateFailed:       updateFailed,
 				PostDeferred:       post.HasDeferredNotification(),
@@ -897,7 +906,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 		case errors.Is(context.Cause(ctx), errTurnLeaseLost):
 			finalStatus = store.TurnStatusInterrupted
 			MarkInterrupted(post, InterruptedReasonLost, model.GetMillis())
-		case errors.Is(context.Cause(ctx), errStoppedByUser):
+		case StoppedByUser(ctx):
 			stoppedByUser = true
 			post.AddProp(GenerationStoppedProp, true)
 		}
