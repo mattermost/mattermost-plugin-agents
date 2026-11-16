@@ -35,6 +35,13 @@ type FakeLLM struct {
 	LastConversation llm.CompletionRequest
 	// LastConfig holds the resolved config from the last call's options.
 	LastConfig llm.LanguageModelConfig
+	// LastContextErr is ctx.Err() as the last streaming call saw it.
+	LastContextErr error
+	// OnContext, when set, receives the context of every streaming call.
+	OnContext func(context.Context)
+	// HoldUntilCancel makes a streaming call produce nothing until its
+	// context is canceled.
+	HoldUntilCancel bool
 
 	// StreamEventSequence, when non-empty, supplies a different set of stream
 	// events for each successive call. The first call returns the first group,
@@ -54,12 +61,13 @@ type FakeLLM struct {
 }
 
 // ChatCompletion implements streaming completion
-func (f *FakeLLM) ChatCompletion(_ context.Context, conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (f *FakeLLM) ChatCompletion(ctx context.Context, conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	var cfg llm.LanguageModelConfig
 	for _, opt := range opts {
 		opt(&cfg)
 	}
 	f.mu.Lock()
+	f.LastContextErr = ctx.Err()
 	f.lastRequest = conversation
 	f.LastConversation = conversation
 	f.LastConfig = cfg
@@ -67,6 +75,9 @@ func (f *FakeLLM) ChatCompletion(_ context.Context, conversation llm.CompletionR
 	callIdx := f.callCount
 	f.callCount++
 	f.mu.Unlock()
+	if f.OnContext != nil {
+		f.OnContext(ctx)
+	}
 
 	if f.Error != nil {
 		return nil, f.Error
@@ -84,6 +95,11 @@ func (f *FakeLLM) ChatCompletion(_ context.Context, conversation llm.CompletionR
 
 	go func() {
 		defer close(stream)
+
+		if f.HoldUntilCancel {
+			<-ctx.Done()
+			return
+		}
 
 		switch {
 		case len(sequencedEvents) > 0:

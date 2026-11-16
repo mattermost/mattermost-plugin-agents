@@ -95,13 +95,16 @@ function recommendedSeverity(name) {
     return Array.isArray(entry) ? ['error', ...entry.slice(1)] : 'error';
 }
 
-module.exports = {
+const plugin = {
     rules: Object.fromEntries(A11Y_RULES.map((name) => [name, withStyledComponents(jsxA11y.rules[name])])),
-    configs: {
-        recommended: {
-            plugins: ['agents'],
-            settings: {'jsx-a11y': {polymorphicPropName: 'as'}},
-            rules: Object.fromEntries(A11Y_RULES.map((name) => [`agents/${name}`, recommendedSeverity(name)])),
-        },
+};
+
+plugin.configs = {
+    recommended: {
+        plugins: {agents: plugin},
+        settings: {'jsx-a11y': {polymorphicPropName: 'as'}},
+        rules: Object.fromEntries(A11Y_RULES.map((name) => [`agents/${name}`, recommendedSeverity(name)])),
     },
 };
+
+module.exports = plugin;

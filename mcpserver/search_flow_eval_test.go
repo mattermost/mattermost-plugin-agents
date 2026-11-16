@@ -134,7 +134,7 @@ func TestSearchBarFlowEval(t *testing.T) {
 			query: "Q3 feature freeze migration timeline",
 			rubrics: []string{
 				"Says the schema migration is targeted for next sprint",
-				"Mentions two weeks of testing before the cutover",
+				"Mentions two weeks of testing, with the cutover coming after it",
 			},
 			requireCitation: true,
 		},

@@ -62,6 +62,7 @@ func FetchModels(ctx context.Context, cfg FetchModelsConfig) ([]llm.ModelInfo, e
 	defer client.Shutdown()
 
 	bifrostCtx := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
+	trackAttemptErrors(bifrostCtx)
 
 	req := &schemas.BifrostListModelsRequest{
 		Provider: cfg.Provider,
@@ -69,7 +70,7 @@ func FetchModels(ctx context.Context, cfg FetchModelsConfig) ([]llm.ModelInfo, e
 
 	resp, bifrostErr := client.ListAllModels(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, providerError(nil, "bifrost list models error", bifrostErr, cfg.APIKey)
+		return nil, providerError(bifrostCtx, nil, "bifrost list models error", bifrostErr, cfg.APIKey)
 	}
 
 	if resp == nil {

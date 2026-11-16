@@ -158,3 +158,177 @@ func TestToolApprovalClickOnFirstVisiblePendingCard(t *testing.T) {
 		})
 	}
 }
+
+// TestStopCancelsTheToolFollowUpLoop pins that Stop reaches the tool loop of a
+// tool-approval follow-up, not only the stream that comes after it.
+func TestStopCancelsTheToolFollowUpLoop(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	const (
+		postID    = "post12345678901234567890ab"
+		channelID = "chan12345678901234567890ab"
+		convID    = "conv12345678901234567890ab"
+	)
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	streamService := streaming.NewMMPostStreamService(mmapi.NewClient(e.client), nil)
+	e.api.streamingService = streamService
+	convStore := e.useConversations()
+	streamService.SetTurnStore(convStore)
+
+	followUpCtx := make(chan context.Context, 1)
+	followUpLLM := &FakeLLM{HoldUntilCancel: true, OnContext: func(ctx context.Context) {
+		select {
+		case followUpCtx <- ctx:
+		default:
+		}
+	}}
+	e.setBots(bots.NewBot(
+		llm.BotConfig{ID: testBotUserID, Name: "bot", UserAccessLevel: llm.UserAccessLevelAll, ChannelAccessLevel: llm.ChannelAccessLevelAll},
+		llm.ServiceConfig{},
+		&model.Bot{UserId: testBotUserID, Username: "bot"},
+		followUpLLM,
+	))
+	require.NoError(t, convStore.CreateConversation(&store.Conversation{ID: convID, UserID: testUserID, BotID: testBotUserID, Operation: "conversation"}))
+
+	post := &model.Post{Id: postID, UserId: testBotUserID, ChannelId: channelID}
+	post.AddProp(streaming.ConversationIDProp, convID)
+	e.mockAPI.On("GetPost", postID).Return(func(string) (*model.Post, *model.AppError) { return post.Clone(), nil }).Maybe()
+	e.mockAPI.On("GetChannel", channelID).Return(&model.Channel{
+		Id:   channelID,
+		Name: testBotUserID + "__" + testUserID,
+		Type: model.ChannelTypeDirect,
+	}, nil).Maybe()
+	e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true).Maybe()
+	e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Locale: "en"}, nil).Maybe()
+	e.mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
+	e.mockAPI.On("UpdatePost", mock.Anything).Return(func(p *model.Post) (*model.Post, *model.AppError) { return p.Clone(), nil }).Maybe()
+
+	var clicked atomic.Bool
+	clickStatus := 0
+	e.mockAPI.On("PublishWebSocketEvent", "postupdate", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		payload, _ := args.Get(1).(map[string]any)
+		broadcast, _ := args.Get(2).(*model.WebsocketBroadcast)
+		if payload["control"] != "tool_call" || broadcast == nil || broadcast.UserId != testUserID || !clicked.CompareAndSwap(false, true) {
+			return
+		}
+		req := httptest.NewRequest(http.MethodPost, "/post/"+postID+"/tool_call", strings.NewReader(`{"accepted_tool_ids":["tool-use-1"]}`))
+		req.Header.Add("Mattermost-User-Id", testUserID)
+		rec := httptest.NewRecorder()
+		e.api.ServeHTTP(&plugin.Context{}, rec, req)
+		clickStatus = rec.Code
+	}).Maybe()
+
+	events := make(chan llm.TextStreamEvent, 2)
+	events <- llm.TextStreamEvent{Type: llm.EventTypeToolCallBatch, Value: llm.ToolCallBatch{
+		Phase: llm.ToolCallPhaseAwaitingDecision,
+		Calls: []llm.ToolCall{{ID: "tool-use-1", Name: "create_post", Arguments: []byte(`{}`), Status: llm.ToolCallStatusPending}},
+	}}
+	events <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+	close(events)
+	streamService.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: events}, post, "en", testUserID)
+	require.Equal(t, http.StatusOK, clickStatus)
+
+	var loopCtx context.Context
+	select {
+	case loopCtx = <-followUpCtx:
+	case <-time.After(10 * time.Second):
+		require.Fail(t, "the follow-up never called the LLM")
+	}
+
+	stop := httptest.NewRequest(http.MethodPost, "/post/"+postID+"/stop", nil)
+	stop.Header.Add("Mattermost-User-Id", testUserID)
+	rec := httptest.NewRecorder()
+	e.api.ServeHTTP(&plugin.Context{}, rec, stop)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	select {
+	case <-loopCtx.Done():
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "Stop did not cancel the follow-up's tool loop")
+	}
+}
+
+// TestToolApprovalClickDuringEarlierStreamIsRetryable pins that a click that
+// arrives while the post's first stream is still finishing is refused without
+// recording the decision, so repeating the click resumes the run.
+func TestToolApprovalClickDuringEarlierStreamIsRetryable(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	const (
+		postID    = "post12345678901234567890ab"
+		channelID = "chan12345678901234567890ab"
+		convID    = "conv12345678901234567890ab"
+	)
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	streamService := streaming.NewMMPostStreamService(mmapi.NewClient(e.client), nil)
+	e.api.streamingService = streamService
+	convStore := e.useConversations()
+	streamService.SetTurnStore(convStore)
+
+	followUps := make(chan struct{}, 4)
+	followUpLLM := &FakeLLM{Response: "done", OnContext: func(context.Context) { followUps <- struct{}{} }}
+	e.setBots(bots.NewBot(
+		llm.BotConfig{ID: testBotUserID, Name: "bot", UserAccessLevel: llm.UserAccessLevelAll, ChannelAccessLevel: llm.ChannelAccessLevelAll},
+		llm.ServiceConfig{},
+		&model.Bot{UserId: testBotUserID, Username: "bot"},
+		followUpLLM,
+	))
+	require.NoError(t, convStore.CreateConversation(&store.Conversation{ID: convID, UserID: testUserID, BotID: testBotUserID, Operation: "conversation"}))
+
+	post := &model.Post{Id: postID, UserId: testBotUserID, ChannelId: channelID}
+	post.AddProp(streaming.ConversationIDProp, convID)
+	e.mockAPI.On("GetPost", postID).Return(func(string) (*model.Post, *model.AppError) { return post.Clone(), nil }).Maybe()
+	e.mockAPI.On("GetChannel", channelID).Return(&model.Channel{
+		Id:   channelID,
+		Name: testBotUserID + "__" + testUserID,
+		Type: model.ChannelTypeDirect,
+	}, nil).Maybe()
+	e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true).Maybe()
+	e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Locale: "en"}, nil).Maybe()
+	e.mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
+	e.mockAPI.On("UpdatePost", mock.Anything).Return(func(p *model.Post) (*model.Post, *model.AppError) { return p.Clone(), nil }).Maybe()
+
+	click := func() int {
+		req := httptest.NewRequest(http.MethodPost, "/post/"+postID+"/tool_call", strings.NewReader(`{"accepted_tool_ids":["tool-use-1"]}`))
+		req.Header.Add("Mattermost-User-Id", testUserID)
+		rec := httptest.NewRecorder()
+		e.api.ServeHTTP(&plugin.Context{}, rec, req)
+		return rec.Code
+	}
+
+	e.mockAPI.On("PublishWebSocketEvent", "postupdate", mock.Anything, mock.Anything).Maybe()
+
+	events := make(chan llm.TextStreamEvent, 2)
+	events <- llm.TextStreamEvent{Type: llm.EventTypeToolCallBatch, Value: llm.ToolCallBatch{
+		Phase: llm.ToolCallPhaseAwaitingDecision,
+		Calls: []llm.ToolCall{{ID: "tool-use-1", Name: "create_post", Arguments: []byte(`{}`), Status: llm.ToolCallStatusPending}},
+	}}
+	events <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+	close(events)
+
+	_, err := streamService.GetStreamingContext(context.Background(), postID)
+	require.NoError(t, err)
+	streamService.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: events}, post, "en", testUserID)
+
+	// The stream has persisted its turn but its owner has not yet released the post.
+	earlyStatus := click()
+	streamService.FinishStreaming(postID)
+
+	require.NotEqual(t, http.StatusOK, earlyStatus, "a click while the earlier stream is running must be refused")
+	require.Empty(t, followUps)
+
+	require.Equal(t, http.StatusOK, click(), "the repeated click resumes the run")
+	select {
+	case <-followUps:
+	case <-time.After(10 * time.Second):
+		require.Fail(t, "the retried click never streamed the follow-up")
+	}
+}

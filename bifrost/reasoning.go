@@ -76,11 +76,11 @@ func standardEffort(effort string) string {
 // uncapped) get a budget from anthropicEffortBudgets.
 func (b *LLM) anthropicReasoning(cfg llm.LanguageModelConfig) (reasoningParams, bool) {
 	level := anthropicEffort(b.reasoningEffort)
-	if anthropic.SupportsAdaptiveThinking(cfg.Model) {
+	if anthropic.DefaultSupportsAdaptiveThinking(cfg.Model) {
 		if level != "" {
 			return reasoningParams{effort: new(clampAnthropicEffort(cfg.Model, level))}, true
 		}
-		if !anthropic.IsAdaptiveOnlyThinkingModel(cfg.Model) {
+		if !anthropic.DefaultAdaptiveOnlyThinking(cfg.Model) {
 			// Opus/Sonnet 4.6 need an effort to select adaptive over the
 			// deprecated budget mode; high is their documented default.
 			return reasoningParams{effort: new("high")}, true
@@ -167,7 +167,7 @@ func anthropicEffort(effort string) string {
 // offer it (Opus/Sonnet 4.6 and Mythos Preview). Every adaptive model accepts
 // max.
 func clampAnthropicEffort(model, effort string) string {
-	if effort == "xhigh" && (!anthropic.IsAdaptiveOnlyThinkingModel(model) || anthropic.IsMythosPreview(model)) {
+	if effort == "xhigh" && (!anthropic.DefaultAdaptiveOnlyThinking(model) || anthropic.IsMythosPreview(model)) {
 		return "high"
 	}
 	return effort

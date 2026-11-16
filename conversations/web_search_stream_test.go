@@ -111,7 +111,6 @@ type streamCaptureStreamingService struct {
 }
 
 func (s *streamCaptureStreamingService) StreamContinuationToPost(_ context.Context, stream *llm.TextStreamResult, _ *model.Post, _, _ string) {
-	defer s.wg.Done()
 	for event := range stream.Stream {
 		s.mu.Lock()
 		s.events = append(s.events, event)

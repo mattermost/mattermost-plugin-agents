@@ -15,8 +15,9 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
-// TestProviderErrorDetailReachesCaller drives in-band stream errors through
-// Bifrost and checks the caller sees the provider's message and code.
+// TestProviderErrorDetailReachesCaller drives provider errors through Bifrost
+// and checks the caller sees the provider's message and code, including when
+// Bifrost reports the service's only key as exhausted.
 func TestProviderErrorDetailReachesCaller(t *testing.T) {
 	const quotaMessage = "You exceeded your current quota, please check your plan and billing details."
 
@@ -35,7 +36,7 @@ func TestProviderErrorDetailReachesCaller(t *testing.T) {
 				fmt.Fprint(w, "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\n\n")
 				fmt.Fprintf(w, "event: error\ndata: {\"type\":\"error\",\"sequence_number\":1,\"error\":{\"type\":\"insufficient_quota\",\"code\":\"insufficient_quota\",\"message\":%q,\"param\":null}}\n\n", quotaMessage)
 			},
-			wantSubstrings: []string{"bifrost stream error", quotaMessage, "code=insufficient_quota", "provider=openai"},
+			wantSubstrings: []string{quotaMessage, "code=insufficient_quota", "provider=openai"},
 		},
 		{
 			name:            "Responses API in-band SSE error event without a message still reports its type",
@@ -44,7 +45,7 @@ func TestProviderErrorDetailReachesCaller(t *testing.T) {
 				w.Header().Set("Content-Type", "text/event-stream")
 				fmt.Fprint(w, "event: error\ndata: {\"type\":\"error\",\"sequence_number\":0,\"details\":\"upstream exploded\"}\n\n")
 			},
-			wantSubstrings: []string{"bifrost stream error", "type=error"},
+			wantSubstrings: []string{"type=error"},
 			wantAbsent:     []string{"upstream exploded"},
 		},
 		{
@@ -55,6 +56,16 @@ func TestProviderErrorDetailReachesCaller(t *testing.T) {
 				fmt.Fprintf(w, "data: {\"error\":{\"message\":%q,\"type\":\"insufficient_quota\",\"param\":null,\"code\":\"insufficient_quota\"}}\n\n", quotaMessage)
 			},
 			wantSubstrings: []string{quotaMessage, "code=insufficient_quota"},
+		},
+		{
+			name:            "rejected API key keeps the provider's message",
+			useResponsesAPI: true,
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				fmt.Fprint(w, `{"error":{"message":"The API credential for this project was revoked.","type":"invalid_request_error","param":null,"code":"invalid_api_key"}}`)
+			},
+			wantSubstrings: []string{"The API credential for this project was revoked.", "status=401", "code=invalid_api_key"},
 		},
 	}
 
@@ -97,4 +108,41 @@ func TestProviderErrorDetailReachesCaller(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestExhaustedPrimaryKeepsItsOwnErrorAfterFallbackFails checks that when
+// every hop fails, the caller sees the primary's provider error, which Bifrost
+// returns, and not the error of the fallback that ran last.
+func TestExhaustedPrimaryKeepsItsOwnErrorAfterFallbackFails(t *testing.T) {
+	const quotaMessage = "You exceeded your current quota, please check your plan and billing details."
+
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprintf(w, `{"error":{"message":%q,"type":"insufficient_quota","param":null,"code":"insufficient_quota"}}`, quotaMessage)
+	}))
+	defer primary.Close()
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"error":{"message":"The fallback credential was revoked.","type":"invalid_request_error","param":null,"code":"invalid_api_key"}}`)
+	}))
+	defer fallback.Close()
+
+	service := llm.ServiceConfig{ID: "svc", Type: llm.ServiceTypeOpenAICompatible, APIKey: "key", APIURL: primary.URL, DefaultModel: "gpt-test", FallbackServiceID: "svc2"}
+	fallbackService := llm.ServiceConfig{ID: "svc2", Type: llm.ServiceTypeOpenAICompatible, APIKey: "key2", APIURL: fallback.URL, DefaultModel: "gpt-fallback"}
+	bot := llm.BotConfig{ID: "bot-1", ServiceID: service.ID, DisableTools: true}
+
+	llmInstance, err := NewFromServiceConfig(service, bot, []llm.ServiceConfig{fallbackService})
+	require.NoError(t, err)
+	defer llmInstance.Shutdown()
+
+	_, err = llmInstance.ChatCompletionNoStream(
+		context.Background(),
+		llm.CompletionRequest{Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}}},
+		llm.WithToolsDisabled(),
+	)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), quotaMessage)
+	require.NotContains(t, err.Error(), "fallback credential")
 }

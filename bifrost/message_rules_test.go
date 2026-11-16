@@ -59,8 +59,13 @@ func TestMessageRulesFor(t *testing.T) {
 			want: messageRules{imageDimensionLimit: openaiMaxImageDimension},
 		},
 		{
-			name:     "Bedrock is strict without prompt caching",
+			name:     "Claude on Bedrock is strict with prompt caching",
 			provider: schemas.Bedrock, model: "anthropic.claude-sonnet-4-6",
+			want: messageRules{imageDimensionLimit: anthropicMaxImageDimension, strictMessages: true, promptCaching: true},
+		},
+		{
+			name:     "Bedrock models without cache points get no prompt caching",
+			provider: schemas.Bedrock, model: "meta.llama3-70b-instruct-v1:0",
 			want: messageRules{imageDimensionLimit: anthropicMaxImageDimension, strictMessages: true},
 		},
 	}

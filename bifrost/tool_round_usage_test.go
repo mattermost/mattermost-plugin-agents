@@ -187,3 +187,68 @@ func TestToolCallRoundReportsUsage(t *testing.T) {
 		})
 	}
 }
+
+// TestTruncatedResponsesTurnReportsUsage checks a Responses turn cut short at
+// the output limit, which ends with response.incomplete, still reports its
+// usage and finish reason.
+func TestTruncatedResponsesTurnReportsUsage(t *testing.T) {
+	previous := otel.GetTracerProvider()
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+		otel.SetTracerProvider(previous)
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: response.output_text.delta\ndata: "+`{"type":"response.output_text.delta","sequence_number":1,"output_index":0,"content_index":0,"item_id":"msg_1","delta":"partial answer"}`+"\n\n")
+		fmt.Fprint(w, "event: response.incomplete\ndata: "+`{"type":"response.incomplete","sequence_number":2,"response":{"id":"resp_1","object":"response","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[],"usage":{"input_tokens":120,"output_tokens":30,"total_tokens":150}}}`+"\n\n")
+	}))
+	defer server.Close()
+
+	service := llm.ServiceConfig{
+		ID:              "svc",
+		Type:            llm.ServiceTypeOpenAICompatible,
+		APIKey:          "key",
+		APIURL:          server.URL,
+		DefaultModel:    "model",
+		UseResponsesAPI: true,
+	}
+	lm, err := NewFromServiceConfig(service, llm.BotConfig{ID: "bot", ServiceID: service.ID}, nil)
+	require.NoError(t, err)
+	defer lm.Shutdown()
+
+	stream, err := lm.ChatCompletion(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}},
+	})
+	require.NoError(t, err)
+
+	var text string
+	var usage *llm.TokenUsage
+	for event := range stream.Stream {
+		switch event.Type {
+		case llm.EventTypeText:
+			text += event.Value.(string)
+		case llm.EventTypeUsage:
+			u := event.Value.(llm.TokenUsage)
+			usage = &u
+		case llm.EventTypeError:
+			t.Fatalf("stream error: %v", event.Value)
+		}
+	}
+	require.Equal(t, "partial answer", text)
+	require.NotNil(t, usage, "a truncated turn must still report usage")
+	require.Equal(t, int64(30), usage.OutputTokens)
+
+	var reason any
+	for _, s := range exporter.GetSpans() {
+		for _, a := range s.Attributes {
+			if a.Key == telemetry.LLMFinishReason {
+				reason = a.Value.AsInterface()
+			}
+		}
+	}
+	require.Equal(t, "max_output_tokens", reason)
+}

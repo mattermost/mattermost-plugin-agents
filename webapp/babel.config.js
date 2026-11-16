@@ -1,35 +1,40 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+const coreJSVersion = require('core-js/package.json').version;
+
 const config = {
+
+    // Minimum supported browsers, per
+    // https://docs.mattermost.com/deployment-guide/software-hardware-requirements.html
+    // Strings, not numbers: a numeric target loses trailing zeroes, so
+    // a version like 16.10 would be read as 16.1.
+    targets: {
+        chrome: '146',
+        firefox: '140',
+        edge: '146',
+        safari: '26.2',
+    },
     presets: [
         ['@babel/preset-env', {
-
-            // Minimum supported browsers, per
-            // https://docs.mattermost.com/deployment-guide/software-hardware-requirements.html
-            // Strings, not numbers: a numeric target loses trailing zeroes, so
-            // a version like 16.10 would be read as 16.1.
-            targets: {
-                chrome: '146',
-                firefox: '140',
-                edge: '146',
-                safari: '26.2',
-            },
             modules: false,
-            corejs: 3,
             debug: false,
-            useBuiltIns: 'usage',
             shippedProposals: true,
         }],
         ['@babel/preset-react', {
             runtime: 'automatic',
         }],
-        ['@babel/typescript', {
-            allExtensions: true,
-            isTSX: true,
+
+        // Babel 8 otherwise keeps value imports that are only used as types.
+        ['@babel/preset-typescript', {
+            onlyRemoveTypeImports: false,
         }],
     ],
     plugins: [
+        ['babel-plugin-polyfill-corejs3', {
+            method: 'usage-global',
+            version: coreJSVersion,
+        }],
         [
             'babel-plugin-styled-components',
             {

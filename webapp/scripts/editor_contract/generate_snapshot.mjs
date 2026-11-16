@@ -190,7 +190,7 @@ function signatureToText(checker, signature, depth, seen) {
 // parseCompilerOptions loads the compiler options from a tsconfig file
 // (following `extends`), for building the generator program.
 export function parseCompilerOptions(tsconfigPath) {
-    const parsed = ts.getParsedCommandLineOfConfigFile(tsconfigPath, undefined, {
+    const parsed = ts.getParsedCommandLineOfConfigFile(tsconfigPath, {}, {
         ...ts.sys,
         onUnRecoverableConfigFileDiagnostic: (diagnostic) => {
             throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));

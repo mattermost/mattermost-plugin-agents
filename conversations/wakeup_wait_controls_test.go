@@ -354,7 +354,8 @@ func TestEarlyResumeCancelsScheduledTrigger(t *testing.T) {
 	require.NoError(t, env.c.ResumeConversation(context.Background(), queued))
 	env.streaming.waitForStreaming()
 
-	require.Empty(t, env.kv.data, "the early resume must consume the marker")
+	require.Eventually(t, func() bool { return env.kv.len() == 0 }, 2*time.Second, 5*time.Millisecond,
+		"the early resume must consume the marker and release its run reservation")
 	require.Equal(t, []string{WakeJobKeyPrefix + env.conv.ID}, sched.canceled)
 	require.NotNil(t, env.wakePost, "the early resume must reach the LLM")
 }

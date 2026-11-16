@@ -8,6 +8,7 @@ import {FormattedMessage} from 'react-intl';
 import {Button} from '@mattermost/compass-ui/components/button';
 
 import {JSONValue, ToolCall} from './tool_types';
+import {useResolvedIds} from './use_resolved_ids';
 
 // Values longer than this (characters) are clamped behind the card-level
 // "Show more" toggle. Applies to string values and inline JSON blocks.
@@ -189,11 +190,37 @@ function isLongValue(value: JSONValue): boolean {
 interface FieldValueProps {
     value: JSONValue;
     clamped: boolean;
+    resolveId: (id: string) => string | undefined;
 }
 
-const FieldValue: React.FC<FieldValueProps> = ({value, clamped}) => {
+const IdGroup = styled.span`
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--spacing-xs);
+    max-width: 100%;
+`;
+
+const IdHint = styled.span`
+    font-size: 12px;
+    line-height: 20px;
+    color: rgba(var(--center-channel-color-rgb), 0.56);
+    overflow-wrap: anywhere;
+`;
+
+// The raw ID is always the primary value; a resolved name is secondary text.
+const FieldValue: React.FC<FieldValueProps> = ({value, clamped, resolveId}) => {
     if (typeof value === 'string') {
-        return <StringValue $clamped={clamped}>{value}</StringValue>;
+        const hint = resolveId(value);
+        if (!hint) {
+            return <StringValue $clamped={clamped}>{value}</StringValue>;
+        }
+        return (
+            <IdGroup>
+                <StringValue $clamped={clamped}>{value}</StringValue>
+                <IdHint>{hint}</IdHint>
+            </IdGroup>
+        );
     }
     if (isPrimitive(value)) {
         return <ValuePill>{scalarText(value)}</ValuePill>;
@@ -204,9 +231,18 @@ const FieldValue: React.FC<FieldValueProps> = ({value, clamped}) => {
         }
         return (
             <PillRow>
-                {value.map((item, idx) => (
-                    <ValuePill key={idx}>{scalarText(item)}</ValuePill>
-                ))}
+                {value.map((item, idx) => {
+                    const hint = typeof item === 'string' ? resolveId(item) : undefined; // eslint-disable-line no-undefined
+                    if (!hint) {
+                        return <ValuePill key={idx}>{scalarText(item)}</ValuePill>;
+                    }
+                    return (
+                        <IdGroup key={idx}>
+                            <ValuePill>{scalarText(item)}</ValuePill>
+                            <IdHint>{hint}</IdHint>
+                        </IdGroup>
+                    );
+                })}
             </PillRow>
         );
     }
@@ -233,6 +269,7 @@ export const ToolArgumentsRaw: React.FC<{arguments: ToolCall['arguments']}> = ({
 const JsonFieldList: React.FC<{entries: Array<[string, JSONValue]>}> = ({entries}) => {
     const [expanded, setExpanded] = useState(false);
     const hasClampable = entries.some(([, value]) => isLongValue(value));
+    const resolveEntryId = useResolvedIds(entries);
 
     return (
         <Container>
@@ -244,6 +281,7 @@ const JsonFieldList: React.FC<{entries: Array<[string, JSONValue]>}> = ({entries
                             <FieldValue
                                 value={value}
                                 clamped={!expanded && isLongValue(value)}
+                                resolveId={(id) => resolveEntryId(key, id)}
                             />
                         </ValueCell>
                     </Field>

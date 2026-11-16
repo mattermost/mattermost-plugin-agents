@@ -17,10 +17,19 @@ func NewMockEmbeddingSearch(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockEmbeddingSearch {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockEmbeddingSearch{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -61,14 +70,20 @@ type MockEmbeddingSearch_Clear_Call struct {
 }
 
 // Clear is a helper method to define mock.On call
-//   - ctx
-func (_e *MockEmbeddingSearch_Expecter) Clear(ctx interface{}) *MockEmbeddingSearch_Clear_Call {
+//   - ctx context.Context
+func (_e *MockEmbeddingSearch_Expecter) Clear(ctx any) *MockEmbeddingSearch_Clear_Call {
 	return &MockEmbeddingSearch_Clear_Call{Call: _e.mock.On("Clear", ctx)}
 }
 
 func (_c *MockEmbeddingSearch_Clear_Call) Run(run func(ctx context.Context)) *MockEmbeddingSearch_Clear_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context))
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		run(
+			arg0,
+		)
 	})
 	return _c
 }
@@ -106,15 +121,26 @@ type MockEmbeddingSearch_Delete_Call struct {
 }
 
 // Delete is a helper method to define mock.On call
-//   - ctx
-//   - postIDs
-func (_e *MockEmbeddingSearch_Expecter) Delete(ctx interface{}, postIDs interface{}) *MockEmbeddingSearch_Delete_Call {
+//   - ctx context.Context
+//   - postIDs []string
+func (_e *MockEmbeddingSearch_Expecter) Delete(ctx any, postIDs any) *MockEmbeddingSearch_Delete_Call {
 	return &MockEmbeddingSearch_Delete_Call{Call: _e.mock.On("Delete", ctx, postIDs)}
 }
 
 func (_c *MockEmbeddingSearch_Delete_Call) Run(run func(ctx context.Context, postIDs []string)) *MockEmbeddingSearch_Delete_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].([]string))
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 []string
+		if args[1] != nil {
+			arg1 = args[1].([]string)
+		}
+		run(
+			arg0,
+			arg1,
+		)
 	})
 	return _c
 }
@@ -161,16 +187,32 @@ type MockEmbeddingSearch_DeleteOrphaned_Call struct {
 }
 
 // DeleteOrphaned is a helper method to define mock.On call
-//   - ctx
-//   - nowTime
-//   - batchSize
-func (_e *MockEmbeddingSearch_Expecter) DeleteOrphaned(ctx interface{}, nowTime interface{}, batchSize interface{}) *MockEmbeddingSearch_DeleteOrphaned_Call {
+//   - ctx context.Context
+//   - nowTime int64
+//   - batchSize int64
+func (_e *MockEmbeddingSearch_Expecter) DeleteOrphaned(ctx any, nowTime any, batchSize any) *MockEmbeddingSearch_DeleteOrphaned_Call {
 	return &MockEmbeddingSearch_DeleteOrphaned_Call{Call: _e.mock.On("DeleteOrphaned", ctx, nowTime, batchSize)}
 }
 
 func (_c *MockEmbeddingSearch_DeleteOrphaned_Call) Run(run func(ctx context.Context, nowTime int64, batchSize int64)) *MockEmbeddingSearch_DeleteOrphaned_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(int64), args[2].(int64))
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 int64
+		if args[1] != nil {
+			arg1 = args[1].(int64)
+		}
+		var arg2 int64
+		if args[2] != nil {
+			arg2 = args[2].(int64)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
 	})
 	return _c
 }
@@ -219,16 +261,32 @@ type MockEmbeddingSearch_Search_Call struct {
 }
 
 // Search is a helper method to define mock.On call
-//   - ctx
-//   - query
-//   - opts
-func (_e *MockEmbeddingSearch_Expecter) Search(ctx interface{}, query interface{}, opts interface{}) *MockEmbeddingSearch_Search_Call {
+//   - ctx context.Context
+//   - query string
+//   - opts embeddings.SearchOptions
+func (_e *MockEmbeddingSearch_Expecter) Search(ctx any, query any, opts any) *MockEmbeddingSearch_Search_Call {
 	return &MockEmbeddingSearch_Search_Call{Call: _e.mock.On("Search", ctx, query, opts)}
 }
 
 func (_c *MockEmbeddingSearch_Search_Call) Run(run func(ctx context.Context, query string, opts embeddings.SearchOptions)) *MockEmbeddingSearch_Search_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(embeddings.SearchOptions))
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 embeddings.SearchOptions
+		if args[2] != nil {
+			arg2 = args[2].(embeddings.SearchOptions)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
 	})
 	return _c
 }
@@ -266,15 +324,26 @@ type MockEmbeddingSearch_Store_Call struct {
 }
 
 // Store is a helper method to define mock.On call
-//   - ctx
-//   - docs
-func (_e *MockEmbeddingSearch_Expecter) Store(ctx interface{}, docs interface{}) *MockEmbeddingSearch_Store_Call {
+//   - ctx context.Context
+//   - docs []embeddings.PostDocument
+func (_e *MockEmbeddingSearch_Expecter) Store(ctx any, docs any) *MockEmbeddingSearch_Store_Call {
 	return &MockEmbeddingSearch_Store_Call{Call: _e.mock.On("Store", ctx, docs)}
 }
 
 func (_c *MockEmbeddingSearch_Store_Call) Run(run func(ctx context.Context, docs []embeddings.PostDocument)) *MockEmbeddingSearch_Store_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].([]embeddings.PostDocument))
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 []embeddings.PostDocument
+		if args[1] != nil {
+			arg1 = args[1].([]embeddings.PostDocument)
+		}
+		run(
+			arg0,
+			arg1,
+		)
 	})
 	return _c
 }

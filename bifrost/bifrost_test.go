@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/maximhq/bifrost/core/providers/anthropic"
+	"github.com/maximhq/bifrost/core/providers/bedrock"
 	"github.com/maximhq/bifrost/core/providers/openai"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/stretchr/testify/assert"
@@ -950,6 +952,38 @@ func TestAnthropicSchemaKeepsThinkingWireRequest(t *testing.T) {
 	}
 }
 
+// TestBedrockPromptCachingReachesWire checks Bedrock models with cache points
+// get a Converse cache point from the plugin's request and other Bedrock
+// models get none.
+func TestBedrockPromptCachingReachesWire(t *testing.T) {
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{model: "us.anthropic.claude-sonnet-4-6-20260101-v1:0", want: true},
+		{model: "amazon.nova-pro-v1:0", want: true},
+		{model: "meta.llama3-70b-instruct-v1:0", want: false},
+	}
+	request := llm.CompletionRequest{Posts: []llm.Post{
+		{Role: llm.PostRoleSystem, Message: "system prompt"},
+		{Role: llm.PostRoleUser, Message: "hello"},
+	}}
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			b := &LLM{provider: schemas.Bedrock, account: testAccount(&providerAccount{Provider: schemas.Bedrock})}
+			chatReq := b.convertToBifrostRequest(request, llm.LanguageModelConfig{Model: tt.model, MaxGeneratedTokens: 100})
+
+			ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+			defer cancel()
+			wire, err := bedrock.ToBedrockChatCompletionRequest(ctx, chatReq)
+			require.NoError(t, err)
+			raw, err := json.Marshal(wire)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, strings.Contains(string(raw), "cachePoint"), string(raw))
+		})
+	}
+}
+
 // TestPromptCaching verifies that automatic prompt caching (top-level
 // cache_control) is requested for Anthropic and reaches the Anthropic wire
 // request, but is never attached for other providers. A non-Anthropic
@@ -985,7 +1019,7 @@ func TestPromptCaching(t *testing.T) {
 			want:     false,
 		},
 		{
-			name:     "bedrock",
+			name:     "bedrock model without cache points",
 			provider: schemas.Bedrock,
 			want:     false,
 		},
@@ -3676,6 +3710,55 @@ func TestChatCompletionNoStreamReturnsErrorForUnsupportedResponsesSchema(t *test
 	assert.ErrorContains(t, err, "enum[0] must be a string")
 }
 
+// TestPrivateNetworkServiceReachable checks that a service the admin points at
+// a private address (a self-hosted model on the LAN) is reachable without a
+// proxy.
+func TestPrivateNetworkServiceReachable(t *testing.T) {
+	var privateIP net.IP
+	addrs, err := net.InterfaceAddrs()
+	require.NoError(t, err)
+	for _, addr := range addrs {
+		if ipNet, ok := addr.(*net.IPNet); ok && ipNet.IP.To4() != nil && ipNet.IP.IsPrivate() {
+			privateIP = ipNet.IP
+			break
+		}
+	}
+	if privateIP == nil {
+		t.Skip("host has no private IPv4 address")
+	}
+
+	listener, err := net.Listen("tcp", net.JoinHostPort(privateIP.String(), "0"))
+	require.NoError(t, err)
+	backend := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"id\":\"test\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hello\"},\"finish_reason\":\"stop\"}]}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	backend.Listener = listener
+	backend.Start()
+	defer backend.Close()
+
+	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+		t.Setenv(name, "")
+	}
+
+	llmClient, err := New(Config{
+		Provider:         schemas.OpenAI,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "gpt-4",
+		StreamingTimeout: 10 * time.Second,
+	})
+	require.NoError(t, err)
+	defer llmClient.client.Shutdown()
+
+	result, err := llmClient.ChatCompletionNoStream(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "hello", result)
+}
+
 func TestEnvProxyRouting(t *testing.T) {
 	// Backend: fake OpenAI API that returns a valid SSE streaming response.
 	var backendHit atomic.Bool
@@ -3688,16 +3771,20 @@ func TestEnvProxyRouting(t *testing.T) {
 	}))
 	defer backend.Close()
 
+	// Loopback targets are never proxied, so the backend is addressed by a
+	// name that only the test proxy resolves.
+	backendHost := net.JoinHostPort("llm-backend.test", strconv.Itoa(backend.Listener.Addr().(*net.TCPAddr).Port))
+
 	// Proxy: minimal HTTP CONNECT proxy that tunnels TCP to the backend.
 	var proxyHit atomic.Bool
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodConnect {
-			http.Error(w, "expected CONNECT", http.StatusMethodNotAllowed)
+		if r.Method != http.MethodConnect || r.Host != backendHost {
+			http.Error(w, "expected CONNECT to "+backendHost, http.StatusBadRequest)
 			return
 		}
 		proxyHit.Store(true)
 
-		targetConn, err := net.DialTimeout("tcp", r.Host, 5*time.Second)
+		targetConn, err := net.DialTimeout("tcp", backend.Listener.Addr().String(), 5*time.Second)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
@@ -3727,16 +3814,16 @@ func TestEnvProxyRouting(t *testing.T) {
 	}))
 	defer proxy.Close()
 
-	// Point HTTP_PROXY and HTTPS_PROXY at our test proxy before Bifrost
-	// initializes its dialer. Both are needed so fasthttpproxy's fast path
-	// activates (it only proxies unconditionally when the two values match).
-	t.Setenv("HTTP_PROXY", proxy.URL)
-	t.Setenv("HTTPS_PROXY", proxy.URL)
+	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+		t.Setenv(name, proxy.URL)
+	}
+	t.Setenv("NO_PROXY", "")
+	t.Setenv("no_proxy", "")
 
 	llmClient, err := New(Config{
 		Provider:         schemas.OpenAI,
 		APIKey:           "test-key",
-		APIURL:           backend.URL,
+		APIURL:           "http://" + backendHost,
 		DefaultModel:     "gpt-4",
 		StreamingTimeout: 10 * time.Second,
 	})

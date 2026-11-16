@@ -40,6 +40,13 @@ export interface LLMBot {
     // isDefault marks the system-wide default agent. Optional: older servers
     // omit it, in which case we fall back to list ordering.
     isDefault?: boolean;
+
+    // Whether the current user created the agent. Optional: older servers omit it.
+    isCreator?: boolean;
+
+    // Whether the current user has a chat with the agent, however many other chats they have.
+    // Optional: older servers omit it.
+    hasChats?: boolean;
 }
 
 // Shared core preference identifying the user's selected agent across every
@@ -68,15 +75,27 @@ export const resolveActiveBot = (bots: LLMBot[] | null, preferredId: string): LL
     resolvePreferredBot(bots, preferredId) ?? bots?.[0] ?? null
 );
 
+let lastRequestedBotsId = 0;
+let lastStoredBotsId = 0;
+
 // Fetches the bot list and stores it (plus the related feature flags) in the
 // plugin's redux slice. Shared by useBotlist, the channel-settings loadValues,
 // and the initialize() warm-up. Returns the fetched bots, or null when the
-// response is falsy.
+// response is falsy. A response older than one already stored is returned but
+// not stored.
 export async function fetchAndStoreBots(dispatch: Dispatch): Promise<LLMBot[] | null> {
+    const requestId = ++lastRequestedBotsId;
     const response = await getAIBots();
     if (!response) {
         return null;
     }
+
+    // A newer response is already stored; this one is older. A newer request that failed or is
+    // still in flight does not discard it.
+    if (requestId < lastStoredBotsId) {
+        return response.bots;
+    }
+    lastStoredBotsId = requestId;
 
     dispatch({
         type: BotsHandler,

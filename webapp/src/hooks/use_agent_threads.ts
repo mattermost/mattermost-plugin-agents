@@ -9,7 +9,7 @@ import {GlobalState} from '@mattermost/types/store';
 
 import {isCurrentUsersAgentPost} from '@/agent_posts';
 import {getAIThreads, renameConversation} from '@/client';
-import type {LLMBot} from '@/bots';
+import {fetchAndStoreBots, type LLMBot} from '@/bots';
 import manifest from '@/manifest';
 import {
     AIThreadsFailed,
@@ -64,18 +64,39 @@ const isInUse = (state: unknown) => {
 };
 
 let lastRequestId = 0;
+let inFlight: Promise<void> | null = null;
+let refetchPending = false;
 
-// The one fetch path for the thread list. A newer request supersedes an older one in flight.
-export async function fetchAIThreads(dispatch: Dispatch<UnknownAction>): Promise<void> {
+async function requestAIThreads(dispatch: Dispatch<UnknownAction>): Promise<void> {
     const requestId = ++lastRequestId;
     dispatch({type: AIThreadsRequested, requestId});
     try {
         const threads = await getAIThreads();
+
         dispatch({type: AIThreadsReceived, requestId, threads});
     } catch (e) {
         console.error('Failed to load AI threads:', e); // eslint-disable-line no-console
         dispatch({type: AIThreadsFailed, requestId});
     }
+}
+
+// The one fetch path for the thread list, one request at a time. A call while a request is in
+// flight is not started (its response would supersede the one on its way, and a busy stream would
+// keep discarding responses): it marks the list stale, and one refetch follows when the request
+// settles, whether it succeeded or failed.
+export function fetchAIThreads(dispatch: Dispatch<UnknownAction>): Promise<void> {
+    if (inFlight) {
+        refetchPending = true;
+        return inFlight;
+    }
+    inFlight = requestAIThreads(dispatch).finally(() => {
+        inFlight = null;
+        if (refetchPending) {
+            refetchPending = false;
+            fetchAIThreads(dispatch);
+        }
+    });
+    return inFlight;
 }
 
 // Fetches unless the list is loaded or loading: views that mount together share one request.
@@ -95,13 +116,9 @@ export function refreshAIThreadsIfInUse(store: ThreadsStore): Promise<void> {
     return fetchAIThreads(store.dispatch);
 }
 
-// Shows a title the server already has. A fetch still in flight may predate it, so a fresh one
-// supersedes it.
+// Shows a title the server already has; a fetch in flight cannot revert it.
 function applyTitle(store: ThreadsStore, conversationId: string, title: string) {
     store.dispatch({type: AIThreadTitleSet, conversationId, title});
-    if (selectAIThreadsState(store.getState()).loading) {
-        fetchAIThreads(store.dispatch);
-    }
 }
 
 // Renames a chat; the list shows the new title once the server has it. A failed rename rejects.
@@ -130,6 +147,10 @@ export interface AgentThreadsSync {
 export function createAgentThreadsSync(store: {dispatch: Dispatch<UnknownAction>; getState: () => GlobalState}): AgentThreadsSync {
     let timer: ReturnType<typeof setTimeout> | null = null;
 
+    // Threads already refetched for because a reply started in them while unlisted, so a
+    // stream's chunks, or a thread the list never returns, cost one request.
+    const fetchedForRoots = new Set<string>();
+
     const scheduleRefresh = () => {
         if (timer !== null) {
             clearTimeout(timer);
@@ -142,10 +163,36 @@ export function createAgentThreadsSync(store: {dispatch: Dispatch<UnknownAction>
 
     return {
         handlePostUpdate: (msg) => {
-            // A finished turn moves its chat to the top. postupdate events reach every member of
-            // the channel, so only the current user's own agent chats count.
-            if (msg.data?.control === 'end' && isInUse(store.getState()) && isCurrentUsersAgentPost(store.getState(), msg.data.post_id)) {
+            // postupdate events reach every member of the channel, so only the current user's
+            // own agent chats count.
+            const state = store.getState();
+            const postId = msg.data?.post_id;
+            if (!postId || !isInUse(state) || !isCurrentUsersAgentPost(state, postId)) {
+                return;
+            }
+
+            // A finished turn moves its chat to the top.
+            const control = msg.data.control;
+            if (control === 'end') {
                 scheduleRefresh();
+                return;
+            }
+            if (control === 'cancel') {
+                return;
+            }
+
+            // A reply streaming in a chat the list does not have yet: fetch it. The server creates
+            // a new chat's conversation while handling its first message, so the refetch made when
+            // the chat was sent can come back without it. A list still loading counts as not having it.
+            const post = state.entities.posts.posts[postId];
+            const rootId = post.root_id || post.id;
+            const threads = selectAIThreads(state);
+            if (!threads?.some((t) => t.root_post_id === rootId) && !fetchedForRoots.has(rootId)) {
+                fetchedForRoots.add(rootId);
+                scheduleRefresh();
+
+                // The bot list's hasChats is a snapshot; a new chat has to reach it too.
+                fetchAndStoreBots(store.dispatch).catch(() => { /* best effort */ });
             }
         },
         handleConversationUpdated: (data) => {

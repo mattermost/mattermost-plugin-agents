@@ -5,6 +5,9 @@ package bifrost
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -12,8 +15,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 )
 
 func setupTracerProvider(t *testing.T) *tracetest.InMemoryExporter {
@@ -241,4 +247,43 @@ func TestOTelTracer_NilHandleIsSafe(t *testing.T) {
 	tracer.EndSpan(nil, bschemas.SpanStatusOk, "")
 	tracer.PopulateLLMRequestAttributes(nil, &bschemas.BifrostRequest{})
 	tracer.PopulateLLMResponseAttributes(nil, nil, nil, nil)
+}
+
+// TestProviderCallEmitsSpan drives a request through Bifrost and checks its
+// provider call and plugin hooks reach the exporter.
+func TestProviderCallEmitsSpan(t *testing.T) {
+	exporter := setupTracerProvider(t)
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"object":"list","model":"text-embedding-3-small","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2]}],"usage":{"prompt_tokens":1,"total_tokens":1}}`)
+	}))
+	defer backend.Close()
+
+	provider, err := NewEmbeddingProvider(EmbeddingConfig{
+		Provider: bschemas.OpenAI,
+		APIKey:   "test-key",
+		APIURL:   backend.URL,
+		Model:    "text-embedding-3-small",
+	})
+	require.NoError(t, err)
+	defer provider.Shutdown()
+
+	_, err = provider.CreateEmbedding(context.Background(), "hi")
+	require.NoError(t, err)
+
+	kinds := map[string][]tracetest.SpanStub{}
+	for _, span := range exporter.GetSpans() {
+		attrs := attribute.NewSet(span.Attributes...)
+		kind, _ := attrs.Value("bifrost.span.kind")
+		kinds[kind.AsString()] = append(kinds[kind.AsString()], span)
+	}
+	require.Len(t, kinds[string(bschemas.SpanKindLLMCall)], 1)
+	callAttrs := attribute.NewSet(kinds[string(bschemas.SpanKindLLMCall)][0].Attributes...)
+	model, _ := callAttrs.Value(telemetry.LLMModel)
+	assert.Equal(t, "text-embedding-3-small", model.AsString())
+	assert.NotEmpty(t, kinds[string(bschemas.SpanKindPlugin)], "plugin hook spans")
+	for _, span := range kinds[string(bschemas.SpanKindInternal)] {
+		assert.NotEqual(t, "attribute-population", span.Name)
+	}
 }

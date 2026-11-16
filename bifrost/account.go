@@ -115,10 +115,14 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 
 	// Pass OrgID via ExtraHeaders for OpenAI
 	if a.OrgID != "" && a.Provider == schemas.OpenAI {
-		networkConfig.ExtraHeaders = map[string]string{
-			"OpenAI-Organization": a.OrgID,
+		networkConfig.ExtraHeaders = map[string]schemas.SecretVar{
+			"OpenAI-Organization": {Val: a.OrgID},
 		}
 	}
+
+	// Service URLs are set by admins and commonly point at self-hosted models
+	// on private networks. Link-local addresses (cloud metadata) stay blocked.
+	networkConfig.AllowPrivateNetwork = true
 
 	// Configure retry logic with sensible defaults
 	networkConfig.MaxRetries = 2
