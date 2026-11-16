@@ -117,11 +117,32 @@ export function pendingFromExport(files: AgentExportDocumentFile[]): PendingAgen
     }));
 }
 
+const MimeTypeExtensions: Record<string, string> = {
+    'application/pdf': '.pdf',
+    'text/plain': '.txt',
+    'text/markdown': '.md',
+    'text/csv': '.csv',
+    'application/json': '.json',
+};
+
+// The server picks a document's type from the upload's file name, but an
+// imported document's name is a display name that may be renamed freely, so
+// the file name is made to carry the document's recorded type.
+export function uploadFileName(name: string, mimeType: string): string {
+    const extension = MimeTypeExtensions[mimeType];
+    if (!extension) {
+        return name;
+    }
+    const current = fileExtension(name);
+    const keeps = MimeTypeExtensions[mimeType] === current || (mimeType === 'text/markdown' && current === '.markdown');
+    return keeps ? name : `${name}${extension}`;
+}
+
 export function base64ToFile(doc: PendingAgentDocument): File {
     const binary = atob(doc.content);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) {
         bytes[i] = binary.charCodeAt(i);
     }
-    return new File([bytes], doc.name, {type: doc.mimeType});
+    return new File([bytes], uploadFileName(doc.name, doc.mimeType), {type: doc.mimeType});
 }

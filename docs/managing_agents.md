@@ -148,7 +148,7 @@ Manage them in the **Reference documents** section of the **Configuration** tab,
 | All documents of an agent | 25 MiB |
 | Extracted text per agent | 100,000 characters in total |
 
-The server extracts text on upload and shows how many characters each document adds. A PDF without a text layer, such as a scan, is rejected. A save over the text budget is rejected with the total.
+The server extracts text on upload and shows how many characters each document adds. A PDF without a text layer, such as a scan, is rejected. PDFs are read in a short-lived helper process of the plugin binary with a time and memory limit, so a damaged or hostile file is rejected instead of affecting the server. A save over the text budget is rejected with the total.
 
 Only people who can manage an agent can list, download, or read the text of its documents; everyone else sees the agent without them. Each version records its documents, the history window lists them with download links, and a restore brings them back, subject to the same limits. Stored files are immutable and never deleted. Uploads are audited as `uploadAgentDocument` with the document ID, type, and size only.
 

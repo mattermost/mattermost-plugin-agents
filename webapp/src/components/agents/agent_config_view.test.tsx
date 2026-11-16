@@ -1252,6 +1252,23 @@ describe('AgentConfigView', () => {
             expect(mockUpdateAgent).toHaveBeenCalledWith('agent_1', expect.objectContaining({documents: [{id: 'doc_new', name: 'guide.md'}]}));
         });
 
+        test.each([
+            {name: 'Handbook', mimeType: 'application/pdf', uploadName: 'Handbook.pdf'},
+            {name: 'handbook.txt', mimeType: 'application/pdf', uploadName: 'handbook.txt.pdf'},
+            {name: 'Notes.MD', mimeType: 'text/markdown', uploadName: 'Notes.MD'},
+        ])('uploads \'$name\' as \'$uploadName\' so the server picks the type from its content type', async ({name, mimeType, uploadName}) => {
+            mockUploadAgentDocument.mockResolvedValue({...storedGuide, name});
+            mockUpdateAgent.mockResolvedValue(savedAgent);
+            renderImport(exportFile(2, [{...guideFile, name, mimeType}]));
+
+            await waitFor(() => expect(screen.getByLabelText('Custom instructions')).toHaveProperty('value', 'Imported instructions'));
+            fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+            await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+            expect(mockUploadAgentDocument.mock.calls[0][0].name).toBe(uploadName);
+            expect(mockUpdateAgent).toHaveBeenCalledWith('agent_1', expect.objectContaining({documents: [{id: 'doc_new', name}]}));
+        });
+
         test('a version 1 file leaves the agent\'s documents alone', async () => {
             mockUpdateAgent.mockResolvedValue(savedAgent);
             renderImport(exportFile(1, []));

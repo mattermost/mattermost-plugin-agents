@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -63,8 +62,6 @@ func TestExtractPDF(t *testing.T) {
 		data      func(t *testing.T) []byte
 		want      string
 		wantErrIn string
-		// maxAlloc bounds the bytes allocated while reading the document.
-		maxAlloc uint64
 	}{
 		{
 			name: "pages of a nested page tree are read in order with inherited resources",
@@ -84,6 +81,18 @@ func TestExtractPDF(t *testing.T) {
 				)
 			},
 			want: "Page one\n\nPage two, continued’s\n\nPage three",
+		},
+		{
+			name: "text positioning separates lines and words",
+			data: func(*testing.T) []byte {
+				return assemblePDF(
+					"<< /Type /Catalog /Pages 2 0 R >>",
+					"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+					textPage(2, 4),
+					pdfStream("", "BT (Refund) Tj 0 -14 Td (policy) Tj 40 0 Td (applies) Tj 0 -14 TD (here) Tj 1 0 0 1 10 100 Tm (and) Tj 1 0 0 1 60 100 Tm (there) Tj 1 0 0 1 10 80 Tm (end) Tj ET"),
+				)
+			},
+			want: "Refund\npolicy applies\nhere\nand there\nend",
 		},
 		{
 			name: "compressed content",
@@ -162,7 +171,6 @@ func TestExtractPDF(t *testing.T) {
 				)
 			},
 			wantErrIn: `page 1 of "doc.pdf" is too complex to read`,
-			maxAlloc:  32 << 20,
 		},
 		{
 			name: "pages that together expand to too much content",
@@ -176,7 +184,6 @@ func TestExtractPDF(t *testing.T) {
 				)
 			},
 			wantErrIn: `the pages of "doc.pdf" are too complex to read`,
-			maxAlloc:  32 << 20,
 		},
 		{
 			name: "font character map that expands every character",
@@ -193,7 +200,6 @@ func TestExtractPDF(t *testing.T) {
 				)
 			},
 			wantErrIn: "more than 100000 characters",
-			maxAlloc:  64 << 20,
 		},
 		{
 			name: "many text operators over the text budget",
@@ -206,22 +212,14 @@ func TestExtractPDF(t *testing.T) {
 				)
 			},
 			wantErrIn: "more than 100000 characters",
-			maxAlloc:  32 << 20,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			data := tt.data(t)
-			runtime.GC()
-			var before, after runtime.MemStats
-			runtime.ReadMemStats(&before)
 
-			got, err := extractWithin(t, 5*time.Second, data)
+			got, err := extractWithin(t, 10*time.Second, data)
 
-			runtime.ReadMemStats(&after)
-			if tt.maxAlloc > 0 {
-				assert.Less(t, after.TotalAlloc-before.TotalAlloc, tt.maxAlloc, "bytes allocated while reading")
-			}
 			if tt.wantErrIn != "" {
 				require.ErrorIs(t, err, ErrInvalidDocument)
 				assert.Contains(t, err.Error(), tt.wantErrIn)
@@ -237,10 +235,14 @@ func TestExtractPDF(t *testing.T) {
 // longer than limit.
 func extractWithin(t *testing.T, limit time.Duration, data []byte) (string, error) {
 	t.Helper()
-	done := make(chan pdfResult, 1)
+	type result struct {
+		text string
+		err  error
+	}
+	done := make(chan result, 1)
 	go func() {
 		text, err := Extract(t.Context(), "doc.pdf", MimeTypePDF, data)
-		done <- pdfResult{text, err}
+		done <- result{text, err}
 	}()
 	select {
 	case res := <-done:
@@ -258,47 +260,58 @@ func usePDFLimits(t *testing.T, slots int, timeout time.Duration) {
 	t.Cleanup(func() { pdfSlots, pdfExtractTimeout = oldSlots, oldTimeout })
 }
 
-func TestRunPDFExtractionBoundsStuckReads(t *testing.T) {
-	usePDFLimits(t, 1, 100*time.Millisecond)
-
-	release := make(chan struct{})
-	stopped := make(chan struct{})
-	finished := make(chan struct{})
-	t.Cleanup(func() {
-		close(release)
-		<-finished
-	})
-	stuck := func(stop <-chan struct{}) (string, error) {
-		defer close(finished)
-		<-stop
-		close(stopped)
-		<-release
-		return "ignored", nil
-	}
-	quick := func(<-chan struct{}) (string, error) { return "text", nil }
-
-	_, err := runPDFExtraction(t.Context(), "stuck.pdf", stuck)
-	require.ErrorIs(t, err, ErrInvalidDocument)
-	assert.Contains(t, err.Error(), "took too long")
-	select {
-	case <-stopped:
-	case <-time.After(time.Second):
-		require.FailNow(t, "the abandoned read was not told to stop")
-	}
-
-	// The stuck read still holds the only slot.
-	_, err = runPDFExtraction(t.Context(), "next.pdf", quick)
-	require.ErrorIs(t, err, ErrInvalidDocument)
-	assert.Contains(t, err.Error(), "busy")
-
-	release <- struct{}{}
-	<-finished
-	text, err := runPDFExtraction(t.Context(), "next.pdf", quick)
-	require.NoError(t, err)
-	assert.Equal(t, "text", text)
+// pdfWithCyclicXrefChain returns a PDF whose cross-reference section names
+// itself as its previous section, which the PDF library follows forever.
+func pdfWithCyclicXrefChain() []byte {
+	var b bytes.Buffer
+	b.WriteString("%PDF-1.4\n%" + strings.Repeat("-", 100) + "\n")
+	xref := b.Len()
+	fmt.Fprintf(&b, "xref\n0 1\n0000000000 65535 f \ntrailer\n<< /Size 1 /Root 1 0 R /Prev %d >>\nstartxref\n%d\n%%%%EOF\n", xref, xref)
+	return b.Bytes()
 }
 
-func TestRunPDFExtractionStopsWhenContextIsDone(t *testing.T) {
+// pdfWithHugeXrefStream returns a PDF whose cross-reference stream declares
+// two billion entries, which the PDF library allocates before reading any.
+func pdfWithHugeXrefStream() []byte {
+	var b bytes.Buffer
+	b.WriteString("%PDF-1.5\n")
+	xref := b.Len()
+	fmt.Fprintf(&b, "1 0 obj\n<< /Type /XRef /Size 2000000000 /W [1 1 1] /Root 1 0 R /Length 0 >>\nstream\n\nendstream\nendobj\nstartxref\n%d\n%%%%EOF\n", xref)
+	return b.Bytes()
+}
+
+func TestExtractPDFContainsLibraryHazards(t *testing.T) {
+	tests := []struct {
+		name      string
+		data      []byte
+		wantErrIn string
+	}{
+		{name: "cross-reference sections that loop", data: pdfWithCyclicXrefChain(), wantErrIn: "took too long"},
+		{name: "cross-reference stream declaring billions of entries", data: pdfWithHugeXrefStream(), wantErrIn: "could not read"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			usePDFLimits(t, 2, time.Second)
+
+			_, err := extractWithin(t, 10*time.Second, tt.data)
+			require.ErrorIs(t, err, ErrInvalidDocument)
+			assert.Contains(t, err.Error(), tt.wantErrIn)
+
+			// The slot is free again and the next PDF is read normally.
+			assert.Empty(t, pdfSlots)
+			text, err := extractWithin(t, 10*time.Second, assemblePDF(
+				"<< /Type /Catalog /Pages 2 0 R >>",
+				"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+				textPage(2, 4),
+				pdfStream("", "BT (Still works) Tj ET"),
+			))
+			require.NoError(t, err)
+			assert.Equal(t, "Still works", text)
+		})
+	}
+}
+
+func TestExtractPDFStopsWhenContextIsDone(t *testing.T) {
 	tests := []struct {
 		name      string
 		busySlots int
@@ -313,14 +326,20 @@ func TestRunPDFExtractionStopsWhenContextIsDone(t *testing.T) {
 				pdfSlots <- struct{}{}
 			}
 			ctx, cancel := context.WithCancel(t.Context())
-			time.AfterFunc(50*time.Millisecond, cancel)
+			time.AfterFunc(200*time.Millisecond, cancel)
 
-			_, err := runPDFExtraction(ctx, "doc.pdf", func(stop <-chan struct{}) (string, error) {
-				<-stop
-				return "", nil
-			})
+			_, err := Extract(ctx, "doc.pdf", MimeTypePDF, pdfWithCyclicXrefChain())
 			require.ErrorIs(t, err, context.Canceled)
 			assert.False(t, errors.Is(err, ErrInvalidDocument))
 		})
 	}
+}
+
+func TestExtractPDFReportsBusyServer(t *testing.T) {
+	usePDFLimits(t, 1, 100*time.Millisecond)
+	pdfSlots <- struct{}{}
+
+	_, err := Extract(t.Context(), "doc.pdf", MimeTypePDF, pdfWithCyclicXrefChain())
+	require.ErrorIs(t, err, ErrInvalidDocument)
+	assert.Contains(t, err.Error(), "busy")
 }

@@ -6,7 +6,6 @@ package agentdocs
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -17,7 +16,9 @@ import (
 
 // Limits on the work spent reading one PDF. The PDF library has no limits of
 // its own, so a small crafted file could otherwise loop forever or expand to
-// gigabytes of text.
+// gigabytes of memory. Reading happens in a worker process (see pdf_worker.go)
+// that is killed on timeout and runs under a memory limit, because the library
+// can loop or allocate before any of the checks below can run.
 const (
 	// maxConcurrentPDFExtractions caps the PDFs read at the same time.
 	maxConcurrentPDFExtractions = 2
@@ -48,64 +49,12 @@ var (
 	pdfSlots = make(chan struct{}, maxConcurrentPDFExtractions)
 )
 
-type pdfResult struct {
-	text string
-	err  error
-}
-
-// extractPDF reads the text of every page of a PDF.
+// extractPDF reads the text of every page of a PDF in a worker process.
 func extractPDF(ctx context.Context, name string, data []byte) (string, error) {
 	if !bytes.Contains(data[:min(len(data), 1024)], []byte("%PDF-")) {
 		return "", invalidf("%q is not a PDF file", name)
 	}
-	return runPDFExtraction(ctx, name, func(stop <-chan struct{}) (string, error) {
-		return readPDFText(name, data, stop)
-	})
-}
-
-// runPDFExtraction runs extract on its own goroutine while holding a slot of
-// pdfSlots, and gives up on it after pdfExtractTimeout or when ctx is done;
-// stop is then closed so extract can return at its next check.
-//
-// An abandoned goroutine cannot be killed: the PDF library has no
-// cancellation and some malformed files make it loop forever without
-// reaching a check (for example a cyclic cross-reference /Prev chain). The
-// goroutine releases its slot only when it actually returns, so pdfSlots
-// bounds the CPU spent on PDFs even when parses get stuck; once every slot is
-// stuck, new PDFs fail with a "busy" error instead of piling up.
-func runPDFExtraction(ctx context.Context, name string, extract func(stop <-chan struct{}) (string, error)) (string, error) {
-	slots, timeout := pdfSlots, pdfExtractTimeout
-
-	wait := time.NewTimer(timeout)
-	defer wait.Stop()
-	select {
-	case slots <- struct{}{}:
-	case <-wait.C:
-		return "", invalidf("the server is busy reading other PDF documents and could not read %q; try again in a moment", name)
-	case <-ctx.Done():
-		return "", fmt.Errorf("reading %q was canceled: %w", name, context.Cause(ctx))
-	}
-
-	stop := make(chan struct{})
-	done := make(chan pdfResult, 1)
-	go func() {
-		defer func() { <-slots }()
-		text, err := extract(stop)
-		done <- pdfResult{text, err}
-	}()
-
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
-	select {
-	case res := <-done:
-		return res.text, res.err
-	case <-deadline.C:
-		close(stop)
-		return "", invalidf("reading %q took too long; the PDF may be damaged or too complex", name)
-	case <-ctx.Done():
-		close(stop)
-		return "", fmt.Errorf("reading %q was canceled: %w", name, context.Cause(ctx))
-	}
+	return runPDFWorker(ctx, name, data)
 }
 
 // pdfAbort is panicked to unwind out of the PDF library's callbacks with err.
@@ -114,13 +63,13 @@ type pdfAbort struct{ err error }
 // pdfTextReader accumulates the text of a PDF's pages within the limits.
 type pdfTextReader struct {
 	name        string
-	stop        <-chan struct{}
 	page        int
 	pageBytes   int64
 	totalBytes  int64
 	runes       int
 	text        strings.Builder
 	treeVisited int
+	baseline    float64
 }
 
 // readPDFText walks the page tree from the document catalog itself rather
@@ -128,8 +77,8 @@ type pdfTextReader struct {
 // cycle or depth limit, and checks every stream's decompressed size before
 // interpreting it. The library panics on malformed input, which is reported
 // as an invalid document.
-func readPDFText(name string, data []byte, stop <-chan struct{}) (text string, err error) {
-	x := &pdfTextReader{name: name, stop: stop}
+func readPDFText(name string, data []byte) (text string, err error) {
+	x := &pdfTextReader{name: name}
 	defer func() {
 		r := recover()
 		if r == nil {
@@ -159,21 +108,10 @@ func (x *pdfTextReader) abort(err error) {
 	panic(pdfAbort{err})
 }
 
-// checkStop aborts once runPDFExtraction has given up on this read; the
-// error is never seen by anyone.
-func (x *pdfTextReader) checkStop() {
-	select {
-	case <-x.stop:
-		x.abort(invalidf("reading %q was abandoned", x.name))
-	default:
-	}
-}
-
 // walkPageTree reads the pages under node in document order. The library
 // does not expose object identities, so cycles are caught by capping the
 // depth and the number of nodes visited.
 func (x *pdfTextReader) walkPageTree(node pdf.Value, depth int) {
-	x.checkStop()
 	x.treeVisited++
 	if x.treeVisited > maxPDFPageTreeNodes || depth > maxPDFPageTreeDepth {
 		x.abort(invalidf("%q has too many pages or a damaged page tree", x.name))
@@ -215,7 +153,6 @@ func (x *pdfTextReader) readPage(page pdf.Value) {
 	fonts := make(map[string]*pdf.Font)
 	var enc pdf.TextEncoding
 	pdf.Interpret(contents, func(stk *pdf.Stack, op string) {
-		x.checkStop()
 		args := make([]pdf.Value, stk.Len())
 		for i := len(args) - 1; i >= 0; i-- {
 			args[i] = stk.Pop()
@@ -223,6 +160,14 @@ func (x *pdfTextReader) readPage(page pdf.Value) {
 		switch op {
 		case "BT", "T*":
 			x.write("\n")
+		case "Td", "TD":
+			if len(args) == 2 {
+				x.moveText(args[1].Float64())
+			}
+		case "Tm":
+			if len(args) == 6 {
+				x.setTextMatrix(args[5].Float64())
+			}
 		case "Tf":
 			if len(args) != 2 {
 				return
@@ -288,7 +233,6 @@ func (x *pdfTextReader) fontEncoding(fontDict pdf.Value, fonts map[string]*pdf.F
 // chargeStream decompresses stream to count its size against the page and
 // document limits, so the library never interprets an oversized stream.
 func (x *pdfTextReader) chargeStream(stream pdf.Value) {
-	x.checkStop()
 	limit := min(maxPDFPageStreamBytes-x.pageBytes, maxPDFStreamBytes-x.totalBytes)
 	n, err := io.Copy(io.Discard, io.LimitReader(stream.Reader(), limit+1))
 	if err != nil {
@@ -302,6 +246,27 @@ func (x *pdfTextReader) chargeStream(stream pdf.Value) {
 	if x.totalBytes > maxPDFStreamBytes {
 		x.abort(invalidf("the pages of %q are too complex to read", x.name))
 	}
+}
+
+// moveText separates the text before and after a Td or TD move: a vertical
+// move starts a new line, a horizontal one separates words.
+func (x *pdfTextReader) moveText(dy float64) {
+	if dy != 0 {
+		x.write("\n")
+		return
+	}
+	x.write(" ")
+}
+
+// setTextMatrix separates the text before and after a Tm, which positions
+// text absolutely, by comparing the new baseline with the last one.
+func (x *pdfTextReader) setTextMatrix(y float64) {
+	if y != x.baseline {
+		x.write("\n")
+	} else {
+		x.write(" ")
+	}
+	x.baseline = y
 }
 
 func (x *pdfTextReader) showText(enc pdf.TextEncoding, raw string) {
