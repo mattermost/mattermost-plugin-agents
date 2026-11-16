@@ -250,10 +250,13 @@ func searchTools(t *testing.T, store *llm.ToolStore, query string) mcp.SearchToo
 	return result
 }
 
-func buildToolsContext(builder *Builder, bot *bots.Bot, opts ...llm.ContextOption) *llm.Context {
+func buildToolsContext(t *testing.T, builder *Builder, bot *bots.Bot, opts ...llm.ContextOption) *llm.Context {
+	t.Helper()
 	allOpts := append([]llm.ContextOption{}, opts...)
 	allOpts = append(allOpts, builder.WithLLMContextTools(stdcontext.Background(), bot))
-	return builder.BuildLLMContextUserRequest(stdcontext.Background(), bot, testUser(), testChannel(), allOpts...)
+	c, err := builder.BuildLLMContextUserRequest(stdcontext.Background(), bot, testUser(), testChannel(), allOpts...)
+	require.NoError(t, err)
+	return c
 }
 
 func TestWithLLMContextToolsCallsMCPProvider(t *testing.T) {
@@ -274,13 +277,14 @@ func TestWithLLMContextToolsCallsMCPProvider(t *testing.T) {
 	user := &model.User{Id: "user-id", Username: "test-user", Locale: "en"}
 	channel := &model.Channel{Id: "channel-id", Type: model.ChannelTypeDirect}
 
-	context := builder.BuildLLMContextUserRequest(
+	context, err := builder.BuildLLMContextUserRequest(
 		stdcontext.Background(),
 		newTestBot(),
 		user,
 		channel,
 		builder.WithLLMContextTools(stdcontext.Background(), newTestBot()),
 	)
+	require.NoError(t, err)
 
 	require.Equal(t, 1, mcpProvider.calls)
 	require.Equal(t, 0, mcpProvider.saCalls, "a normal agent must never use the service account catalog")
@@ -305,13 +309,14 @@ func TestWithLLMContextNoToolsSkipsMCPProvider(t *testing.T) {
 	user := &model.User{Id: "user-id", Username: "test-user", Locale: "en"}
 	channel := &model.Channel{Id: "channel-id", Type: model.ChannelTypeDirect}
 
-	context := builder.BuildLLMContextUserRequest(
+	context, err := builder.BuildLLMContextUserRequest(
 		stdcontext.Background(),
 		newTestBot(),
 		user,
 		channel,
 		builder.WithLLMContextNoTools(),
 	)
+	require.NoError(t, err)
 
 	require.Equal(t, 0, mcpProvider.calls)
 	require.Empty(t, context.Tools.GetTools())
@@ -354,13 +359,14 @@ func TestWithLLMContextToolsRetainsAuthErrorsForWildcardAllowlist(t *testing.T) 
 	user := &model.User{Id: "user-id", Username: "test-user", Locale: "en"}
 	channel := &model.Channel{Id: "channel-id", Type: model.ChannelTypeDirect}
 
-	context := builder.BuildLLMContextUserRequest(
+	context, err := builder.BuildLLMContextUserRequest(
 		stdcontext.Background(),
 		bot,
 		user,
 		channel,
 		builder.WithLLMContextTools(stdcontext.Background(), bot),
 	)
+	require.NoError(t, err)
 
 	require.Empty(t, context.Tools.GetTools())
 	authErrors := context.Tools.GetAuthErrors()
@@ -393,13 +399,14 @@ func TestGetToolsStoreServiceAccountSelection(t *testing.T) {
 		&model.Bot{UserId: serviceAccountBotUserID, Username: "matty", DisplayName: "Matty"},
 	)
 
-	context := builder.BuildLLMContextUserRequest(
+	context, err := builder.BuildLLMContextUserRequest(
 		stdcontext.Background(),
 		bot,
 		&model.User{Id: requestingUserID, Username: "test-user", Locale: "en"},
 		testChannel(),
 		builder.WithLLMContextTools(stdcontext.Background(), bot),
 	)
+	require.NoError(t, err)
 
 	require.Equal(t, []saCatalogCall{{
 		remoteOwnerID:  serviceAccountBotUserID,
@@ -429,13 +436,14 @@ func TestGetToolsStoreServiceAccountEmptyBotUserSkipsMCP(t *testing.T) {
 		&model.Bot{UserId: "", Username: "matty", DisplayName: "Matty"},
 	)
 
-	context := builder.BuildLLMContextUserRequest(
+	context, err := builder.BuildLLMContextUserRequest(
 		stdcontext.Background(),
 		bot,
 		&model.User{Id: "user-id", Username: "test-user", Locale: "en"},
 		testChannel(),
 		builder.WithLLMContextTools(stdcontext.Background(), bot),
 	)
+	require.NoError(t, err)
 
 	// The catalog build fails closed downstream; no MCP tools reach the store.
 	require.Empty(t, provider.userCalls)
@@ -615,7 +623,7 @@ func TestWithLLMContextToolsPromisesSandboxFilesOnlyWhenThePrimaryServesThem(t *
 			)
 			bot.SetProviderServicesForTest(&llm.ProviderServices{FileDownloader: sandboxFileDownloader{}})
 
-			context := buildToolsContext(builder, bot, builder.WithLLMContextResponseFiles())
+			context := buildToolsContext(t, builder, bot, builder.WithLLMContextResponseFiles())
 
 			assert.Equal(t, tt.wantAttached, context.ToolCatalog.SandboxFilesAttached)
 		})

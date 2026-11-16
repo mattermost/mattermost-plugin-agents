@@ -5,6 +5,7 @@ package llmcontext
 
 import (
 	stdcontext "context"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -116,17 +117,24 @@ func (b *Builder) SetAgentDocumentSource(source AgentDocumentTextSource) {
 }
 
 // BuildLLMContextUserRequest is a helper function to collect the required context for a user request.
-func (b *Builder) BuildLLMContextUserRequest(ctx stdcontext.Context, bot *bots.Bot, requestingUser *model.User, channel *model.Channel, opts ...llm.ContextOption) *llm.Context {
+// It fails when the bot's reference documents cannot be loaded, so a request
+// is never answered without documents the agent is configured with.
+func (b *Builder) BuildLLMContextUserRequest(ctx stdcontext.Context, bot *bots.Bot, requestingUser *model.User, channel *model.Channel, opts ...llm.ContextOption) (*llm.Context, error) {
+	referenceDocuments, err := b.agentReferenceDocuments(ctx, bot)
+	if err != nil {
+		return nil, err
+	}
+
 	allOpts := []llm.ContextOption{
 		b.WithLLMContextServerInfo(),
 		b.WithLLMContextRequestingUser(requestingUser),
 		b.WithLLMContextChannel(channel),
 		b.WithLLMContextBot(bot),
-		b.WithLLMContextAgentDocuments(ctx, bot),
+		func(c *llm.Context) { c.ReferenceDocuments = referenceDocuments },
 	}
 	allOpts = append(allOpts, opts...)
 
-	return llm.NewContext(allOpts...)
+	return llm.NewContext(allOpts...), nil
 }
 
 func (b *Builder) WithLLMContextServerInfo() llm.ContextOption {
@@ -592,12 +600,6 @@ func (b *Builder) logWarn(message string, keyValuePairs ...any) {
 	}
 }
 
-func (b *Builder) logError(message string, keyValuePairs ...any) {
-	if b != nil && b.pluginAPI != nil {
-		b.pluginAPI.Log.Error(message, keyValuePairs...)
-	}
-}
-
 func (b *Builder) logDebug(message string, keyValuePairs ...any) {
 	if b != nil && b.pluginAPI != nil {
 		b.pluginAPI.Log.Debug(message, keyValuePairs...)
@@ -706,47 +708,43 @@ func (b *Builder) WithLLMContextBot(bot *bots.Bot) llm.ContextOption {
 	}
 }
 
-// WithLLMContextAgentDocuments adds the text of bot's reference documents,
-// which prompts render after the custom instructions. A document whose text
-// cannot be loaded, or would take the total text over
-// agentdocs.MaxTotalTextRunes, is logged and left out rather than failing
-// the request.
-func (b *Builder) WithLLMContextAgentDocuments(ctx stdcontext.Context, bot *bots.Bot) llm.ContextOption {
-	return func(c *llm.Context) {
-		if bot == nil || b.agentDocuments == nil {
-			return
-		}
-		cfg := bot.GetConfig()
-		if len(cfg.Documents) == 0 {
-			return
-		}
-
-		ids := make([]string, 0, len(cfg.Documents))
-		for _, doc := range cfg.Documents {
-			ids = append(ids, doc.ID)
-		}
-		texts, err := b.agentDocuments.AgentDocumentTexts(ctx, ids)
-		if err != nil {
-			b.logError("Failed to load agent reference documents", "agent_id", cfg.ID, "error", err.Error())
-			return
-		}
-
-		entries := make([]format.AgentDocumentEntry, 0, len(cfg.Documents))
-		remaining := agentdocs.MaxTotalTextRunes
-		for _, doc := range cfg.Documents {
-			text, ok := texts[doc.ID]
-			if !ok {
-				b.logWarn("Skipping missing agent reference document", "agent_id", cfg.ID, "document_id", doc.ID)
-				continue
-			}
-			runes := utf8.RuneCountInString(text)
-			if runes > remaining {
-				b.logWarn("Skipping agent reference document over the extracted text budget", "agent_id", cfg.ID, "document_id", doc.ID, "text_runes", runes, "remaining_runes", remaining)
-				continue
-			}
-			remaining -= runes
-			entries = append(entries, format.AgentDocumentEntry{Name: doc.Name, Text: text})
-		}
-		c.ReferenceDocuments = format.AgentReferenceDocuments(entries)
+// agentReferenceDocuments returns the formatted text of bot's reference
+// documents, which prompts render after the custom instructions. It fails when
+// the texts cannot be loaded or a referenced document does not exist. A
+// document that would take the total text over agentdocs.MaxTotalTextRunes is
+// logged and left out.
+func (b *Builder) agentReferenceDocuments(ctx stdcontext.Context, bot *bots.Bot) (string, error) {
+	if bot == nil || b.agentDocuments == nil {
+		return "", nil
 	}
+	cfg := bot.GetConfig()
+	if len(cfg.Documents) == 0 {
+		return "", nil
+	}
+
+	ids := make([]string, 0, len(cfg.Documents))
+	for _, doc := range cfg.Documents {
+		ids = append(ids, doc.ID)
+	}
+	texts, err := b.agentDocuments.AgentDocumentTexts(ctx, ids)
+	if err != nil {
+		return "", fmt.Errorf("failed to load the reference documents of agent %q: %w", cfg.ID, err)
+	}
+
+	entries := make([]format.AgentDocumentEntry, 0, len(cfg.Documents))
+	remaining := agentdocs.MaxTotalTextRunes
+	for _, doc := range cfg.Documents {
+		text, ok := texts[doc.ID]
+		if !ok {
+			return "", fmt.Errorf("reference document %q of agent %q does not exist", doc.ID, cfg.ID)
+		}
+		runes := utf8.RuneCountInString(text)
+		if runes > remaining {
+			b.logWarn("Skipping agent reference document over the extracted text budget", "agent_id", cfg.ID, "document_id", doc.ID, "text_runes", runes, "remaining_runes", remaining)
+			continue
+		}
+		remaining -= runes
+		entries = append(entries, format.AgentDocumentEntry{Name: doc.Name, Text: text})
+	}
+	return format.AgentReferenceDocuments(entries), nil
 }

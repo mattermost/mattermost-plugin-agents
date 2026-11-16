@@ -67,6 +67,70 @@ describe('useAgentDocumentUploads', () => {
         expect(result.current.uploading).toBe(false);
     });
 
+    test('selections made while an upload is running are uploaded after it, in order', async () => {
+        let finishA: (doc: AgentDocument) => void = jest.fn();
+        mockUpload.mockImplementation((file) => {
+            if (file.name === 'a.txt') {
+                return new Promise<AgentDocument>((resolve) => {
+                    finishA = resolve;
+                });
+            }
+            return Promise.resolve(makeDocument(`id-${file.name}`, file.name));
+        });
+        const {result, onUploaded} = renderUploads();
+
+        act(() => {
+            result.current.upload([new File(['a'], 'a.txt')]);
+        });
+        act(() => {
+            result.current.upload([new File(['b'], 'b.txt')]);
+        });
+        await act(async () => {
+            await Promise.resolve();
+        });
+        expect(mockUpload).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            finishA(makeDocument('id-a.txt', 'a.txt'));
+        });
+        await waitFor(() => expect(onUploaded).toHaveBeenCalledTimes(2));
+        expect(onUploaded.mock.calls.map(([doc]) => doc.name)).toEqual(['a.txt', 'b.txt']);
+    });
+
+    test('an upload that finishes after reset is dropped, and later uploads still work', async () => {
+        let finishA: (doc: AgentDocument) => void = jest.fn();
+        mockUpload.mockImplementation((file) => {
+            if (file.name === 'a.txt') {
+                return new Promise<AgentDocument>((resolve) => {
+                    finishA = resolve;
+                });
+            }
+            return Promise.resolve(makeDocument(`id-${file.name}`, file.name));
+        });
+        const {result, onUploaded} = renderUploads();
+
+        act(() => {
+            result.current.upload([new File(['a'], 'a.txt')]);
+        });
+        act(() => {
+            result.current.reset();
+        });
+        expect(result.current.uploads).toEqual([]);
+        expect(result.current.uploading).toBe(false);
+
+        await act(async () => {
+            finishA(makeDocument('id-a.txt', 'a.txt'));
+        });
+        expect(onUploaded).not.toHaveBeenCalled();
+        expect(result.current.uploads).toEqual([]);
+
+        act(() => {
+            result.current.upload([new File(['b'], 'b.txt')]);
+        });
+        await waitFor(() => expect(onUploaded).toHaveBeenCalledTimes(1));
+        expect(onUploaded.mock.calls[0][0].name).toBe('b.txt');
+    });
+
     test.each([
         {
             name: 'an unsupported extension',

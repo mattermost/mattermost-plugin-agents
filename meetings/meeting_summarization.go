@@ -180,13 +180,16 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 		}
 
 		ctx := lifecycle.Context()
-		requestContext := s.contextBuilder.BuildLLMContextUserRequest(
+		requestContext, err := s.contextBuilder.BuildLLMContextUserRequest(
 			ctx,
 			bot,
 			requestingUser,
 			channel,
 			s.contextBuilder.WithLLMContextNoTools(),
 		)
+		if err != nil {
+			return fmt.Errorf("unable to build the summary context: %w", err)
+		}
 		summary, err := s.SummarizeTranscription(ctx, bot, text, requestContext, SummaryParams{
 			UserID:           requestingUser.Id,
 			RootPostID:       surePost.Id,
@@ -264,13 +267,16 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 		}
 
 		ctx := lifecycle.Context()
-		llmContext := s.contextBuilder.BuildLLMContextUserRequest(
+		llmContext, err := s.contextBuilder.BuildLLMContextUserRequest(
 			ctx,
 			bot,
 			requestingUser,
 			channel,
 			s.contextBuilder.WithLLMContextNoTools(),
 		)
+		if err != nil {
+			return fmt.Errorf("unable to build the summary context: %w", err)
+		}
 		summary, err := s.SummarizeTranscription(ctx, bot, transcription, llmContext, SummaryParams{
 			UserID:           requestingUser.Id,
 			RootPostID:       rootID,

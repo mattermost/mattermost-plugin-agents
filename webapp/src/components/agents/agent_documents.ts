@@ -127,7 +127,8 @@ const MimeTypeExtensions: Record<string, string> = {
 
 // The server picks a document's type from the upload's file name, but an
 // imported document's name is a display name that may be renamed freely, so
-// the file name is made to carry the document's recorded type.
+// the file name is made to carry the document's recorded type. A name that
+// lacks it is replaced, since appending could pass the server's name limit.
 export function uploadFileName(name: string, mimeType: string): string {
     const extension = MimeTypeExtensions[mimeType];
     if (!extension) {
@@ -135,7 +136,7 @@ export function uploadFileName(name: string, mimeType: string): string {
     }
     const current = fileExtension(name);
     const keeps = MimeTypeExtensions[mimeType] === current || (mimeType === 'text/markdown' && current === '.markdown');
-    return keeps ? name : `${name}${extension}`;
+    return keeps ? name : `document${extension}`;
 }
 
 export function base64ToFile(doc: PendingAgentDocument): File {

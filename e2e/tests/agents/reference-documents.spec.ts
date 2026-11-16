@@ -3,6 +3,7 @@ import fs from 'fs';
 
 import { expect, Page } from '@playwright/test';
 import { containerTest } from 'helpers/container-fixture';
+import { withDeadline } from 'helpers/deadline';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import {
@@ -147,9 +148,12 @@ function systemPrompt(body: string): string {
     return typeof system.content === 'string' ? system.content : system.content.map((part) => part.text ?? '').join('');
 }
 
+const MATTERMOST_START_MS = 240000;
+const OPENAI_MOCK_START_MS = 120000;
+
 const test = containerTest(async (own) => {
-    const mattermost = own(await RunAgentContainer());
-    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    const mattermost = own(await withDeadline('Starting Mattermost', MATTERMOST_START_MS, () => RunAgentContainer()));
+    const openAIMock = own(await withDeadline('Starting the OpenAI mock', OPENAI_MOCK_START_MS, () => RunOpenAIMocks(mattermost.network)));
     return { mattermost, openAIMock };
 });
 

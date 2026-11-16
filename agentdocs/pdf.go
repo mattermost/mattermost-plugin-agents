@@ -39,6 +39,12 @@ const (
 	// whole operand at once has no useful memory bound. 4 bytes keeps 1, 2
 	// and 4-byte character codes whole.
 	pdfDecodeChunkBytes = 4
+	// maxPDFFormDepth caps the nesting of Form XObjects.
+	maxPDFFormDepth = 8
+	// maxPDFForms caps the Form XObject invocations in one document.
+	maxPDFForms = 1000
+	// maxPDFGraphicsStateDepth caps the nesting of q ... Q.
+	maxPDFGraphicsStateDepth = 256
 )
 
 var (
@@ -69,6 +75,7 @@ type pdfTextReader struct {
 	runes       int
 	text        strings.Builder
 	treeVisited int
+	forms       int
 	baseline    float64
 }
 
@@ -149,15 +156,36 @@ func (x *pdfTextReader) readPage(page pdf.Value) {
 		return
 	}
 
-	fontDict := x.inheritedResources(page).Key("Font")
-	fonts := make(map[string]*pdf.Font)
-	var enc pdf.TextEncoding
+	x.interpret(contents, x.inheritedResources(page), 0)
+	x.write("\n")
+}
+
+// interpret reads the text shown by a content stream, or a Form XObject's
+// stream, using resources for its fonts and nested forms. Font changes made
+// inside q ... Q, and by a form, do not outlive them.
+func (x *pdfTextReader) interpret(contents, resources pdf.Value, depth int) {
+	fontDict := resources.Key("Font")
+	fonts := make(map[string]*pdfFontEncoding)
+	var enc *pdfFontEncoding
+	var saved []*pdfFontEncoding
 	pdf.Interpret(contents, func(stk *pdf.Stack, op string) {
 		args := make([]pdf.Value, stk.Len())
 		for i := len(args) - 1; i >= 0; i-- {
 			args[i] = stk.Pop()
 		}
 		switch op {
+		case "q":
+			if len(saved) < maxPDFGraphicsStateDepth {
+				saved = append(saved, enc)
+			}
+		case "Q":
+			if n := len(saved); n > 0 {
+				enc, saved = saved[n-1], saved[:n-1]
+			}
+		case "Do":
+			if len(args) == 1 {
+				x.drawForm(resources.Key("XObject").Key(args[0].Name()), resources, depth)
+			}
 		case "BT", "T*":
 			x.write("\n")
 		case "Td", "TD":
@@ -193,7 +221,26 @@ func (x *pdfTextReader) readPage(page pdf.Value) {
 			}
 		}
 	})
-	x.write("\n")
+}
+
+// drawForm reads the text of a Form XObject invoked by Do. A form without
+// resources of its own uses those of the content that invoked it. Every
+// invocation is charged to the stream limits, and nesting and the number of
+// invocations are capped, so forms that invoke themselves are rejected.
+func (x *pdfTextReader) drawForm(form, parentResources pdf.Value, depth int) {
+	if form.Kind() != pdf.Stream || form.Key("Subtype").Name() != "Form" {
+		return
+	}
+	x.forms++
+	if depth >= maxPDFFormDepth || x.forms > maxPDFForms {
+		x.abort(invalidf("page %d of %q is too complex to read", x.page, x.name))
+	}
+	x.chargeStream(form)
+	resources := form.Key("Resources")
+	if resources.IsNull() {
+		resources = parentResources
+	}
+	x.interpret(form, resources, depth+1)
 }
 
 // inheritedResources returns the /Resources of page or of its nearest
@@ -214,20 +261,25 @@ func (x *pdfTextReader) inheritedResources(page pdf.Value) pdf.Value {
 
 // fontEncoding returns the encoding of the page font called name, charging
 // its character map to the page's limits the first time the font is used.
-func (x *pdfTextReader) fontEncoding(fontDict pdf.Value, fonts map[string]*pdf.Font, name string) pdf.TextEncoding {
-	font, ok := fonts[name]
-	if !ok {
-		v := fontDict.Key(name)
-		if v.IsNull() {
-			return nil
-		}
-		if toUnicode := v.Key("ToUnicode"); toUnicode.Kind() == pdf.Stream {
-			x.chargeStream(toUnicode)
-		}
-		font = &pdf.Font{V: v}
-		fonts[name] = font
+func (x *pdfTextReader) fontEncoding(fontDict pdf.Value, fonts map[string]*pdfFontEncoding, name string) *pdfFontEncoding {
+	if enc, ok := fonts[name]; ok {
+		return enc
 	}
-	return font.Encoder()
+	v := fontDict.Key(name)
+	if v.IsNull() {
+		return nil
+	}
+	toUnicode := v.Key("ToUnicode")
+	if toUnicode.Kind() == pdf.Stream {
+		x.chargeStream(toUnicode)
+	}
+	font := &pdf.Font{V: v}
+	enc := &pdfFontEncoding{enc: font.Encoder()}
+	if toUnicode.Kind() == pdf.Stream && usesCharacterMap(v) {
+		enc.codespace = readCodespace(toUnicode)
+	}
+	fonts[name] = enc
+	return enc
 }
 
 // chargeStream decompresses stream to count its size against the page and
@@ -269,14 +321,16 @@ func (x *pdfTextReader) setTextMatrix(y float64) {
 	x.baseline = y
 }
 
-func (x *pdfTextReader) showText(enc pdf.TextEncoding, raw string) {
+// showText decodes the text operand raw with enc, a few character codes at a
+// time so the output of one decode is bounded.
+func (x *pdfTextReader) showText(enc *pdfFontEncoding, raw string) {
 	if enc == nil {
 		x.write(raw)
 		return
 	}
 	for raw != "" {
-		n := min(len(raw), pdfDecodeChunkBytes)
-		x.write(enc.Decode(raw[:n]))
+		n := enc.chunkLen(raw)
+		x.write(enc.enc.Decode(raw[:n]))
 		raw = raw[n:]
 	}
 }

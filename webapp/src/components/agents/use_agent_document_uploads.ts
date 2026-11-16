@@ -24,7 +24,8 @@ function uploadErrorMessage(e: unknown, fallback: string): string {
 /**
  * Tracks in-flight document uploads for the agent editor. Lives in the editor (not the
  * Configuration tab) so uploads that finish after switching tabs still land in the draft.
- * Files upload one at a time so documents are appended in the order they were chosen.
+ * Files upload one at a time, across selections, so documents are appended in the order they were chosen.
+ * reset() discards uploads in flight when the editor replaces the document list.
  */
 export function useAgentDocumentUploads(
     documents: AgentDocument[],
@@ -41,6 +42,42 @@ export function useAgentDocumentUploads(
     const [uploads, setUploads] = useState<DocumentUploadItem[]>([]);
     const pendingRef = useRef(0);
     const nextKeyRef = useRef(0);
+
+    const generationRef = useRef(0);
+
+    // One queue for every selection, so documents are appended in the order they were chosen.
+    const queueRef = useRef<Promise<void>>(Promise.resolve());
+
+    const uploadOne = useCallback(async (key: string, file: File, generation: number) => {
+        const isStale = () => generation !== generationRef.current;
+        if (isStale()) {
+            return;
+        }
+        try {
+            const doc = await uploadAgentDocument(file);
+            if (isStale()) {
+                return;
+            }
+
+            // The server may reuse a blob for identical bytes; an agent cannot reference one twice.
+            if (documentsRef.current.some((existing) => existing.id === doc.id)) {
+                const error = intlRef.current.formatMessage({defaultMessage: 'This file is already attached to the agent.'});
+                setUploads((prev) => prev.map((item) => (item.key === key ? {...item, status: 'error', error} : item)));
+            } else {
+                onUploadedRef.current(doc);
+                setUploads((prev) => prev.filter((item) => item.key !== key));
+            }
+        } catch (e) {
+            if (!isStale()) {
+                const error = uploadErrorMessage(e, intlRef.current.formatMessage({defaultMessage: 'Failed to upload this file. Please try again.'}));
+                setUploads((prev) => prev.map((item) => (item.key === key ? {...item, status: 'error', error} : item)));
+            }
+        } finally {
+            if (!isStale()) {
+                pendingRef.current -= 1;
+            }
+        }
+    }, []);
 
     const upload = useCallback((files: File[]) => {
         const currentIntl = intlRef.current;
@@ -77,28 +114,17 @@ export function useAgentDocumentUploads(
         pendingRef.current += accepted.length;
         setUploads((prev) => [...prev, ...items]);
 
-        (async () => {
-            for (const {key, file} of accepted) {
-                try {
-                    // eslint-disable-next-line no-await-in-loop
-                    const doc = await uploadAgentDocument(file);
+        const generation = generationRef.current;
+        for (const {key, file} of accepted) {
+            queueRef.current = queueRef.current.then(() => uploadOne(key, file, generation));
+        }
+    }, [uploadOne]);
 
-                    // The server may reuse a blob for identical bytes; an agent cannot reference one twice.
-                    if (documentsRef.current.some((existing) => existing.id === doc.id)) {
-                        const error = intlRef.current.formatMessage({defaultMessage: 'This file is already attached to the agent.'});
-                        setUploads((prev) => prev.map((item) => (item.key === key ? {...item, status: 'error', error} : item)));
-                    } else {
-                        onUploadedRef.current(doc);
-                        setUploads((prev) => prev.filter((item) => item.key !== key));
-                    }
-                } catch (e) {
-                    const error = uploadErrorMessage(e, intlRef.current.formatMessage({defaultMessage: 'Failed to upload this file. Please try again.'}));
-                    setUploads((prev) => prev.map((item) => (item.key === key ? {...item, status: 'error', error} : item)));
-                } finally {
-                    pendingRef.current -= 1;
-                }
-            }
-        })();
+    // Drops uploads in flight or queued, for when the editor replaces the document list.
+    const reset = useCallback(() => {
+        generationRef.current += 1;
+        pendingRef.current = 0;
+        setUploads([]);
     }, []);
 
     const dismiss = useCallback((key: string) => {
@@ -107,5 +133,5 @@ export function useAgentDocumentUploads(
 
     const uploading = useMemo(() => uploads.some((item) => item.status === 'uploading'), [uploads]);
 
-    return {uploads, uploading, upload, dismiss};
+    return {uploads, uploading, upload, dismiss, reset};
 }

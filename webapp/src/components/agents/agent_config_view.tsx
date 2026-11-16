@@ -360,9 +360,22 @@ const AgentConfigView = (props: Props) => {
         }
     }, [mcpsTabDisabled, skillsTabDisabled, activeTab]);
 
+    const handleDocumentUploaded = useCallback((document: AgentDocument) => {
+        setDraft((prev) => (prev.documents.some((doc) => doc.id === document.id) ? prev : {...prev, documents: [...prev.documents, document]}));
+        setErrors((prev) => {
+            const next = {...prev};
+            delete next.documents;
+            delete next.general;
+            return next;
+        });
+    }, []);
+    const documentUploads = useAgentDocumentUploads(draft.documents, handleDocumentUploaded);
+    const resetDocumentUploads = documentUploads.reset;
+    const savedDocumentIds = useMemo(() => baselineDraft.documents.map((doc) => doc.id), [baselineDraft.documents]);
+
     const isDirty = useMemo(
-        () => avatarFile !== null || !draftsEqual(draft, baselineDraft),
-        [draft, baselineDraft, avatarFile],
+        () => avatarFile !== null || documentUploads.uploading || !draftsEqual(draft, baselineDraft),
+        [draft, baselineDraft, avatarFile, documentUploads.uploading],
     );
 
     const requestBack = useCallback(() => {
@@ -440,18 +453,6 @@ const AgentConfigView = (props: Props) => {
         });
     }, []);
 
-    const handleDocumentUploaded = useCallback((document: AgentDocument) => {
-        setDraft((prev) => (prev.documents.some((doc) => doc.id === document.id) ? prev : {...prev, documents: [...prev.documents, document]}));
-        setErrors((prev) => {
-            const next = {...prev};
-            delete next.documents;
-            delete next.general;
-            return next;
-        });
-    }, []);
-    const documentUploads = useAgentDocumentUploads(draft.documents, handleDocumentUploaded);
-    const savedDocumentIds = useMemo(() => baselineDraft.documents.map((doc) => doc.id), [baselineDraft.documents]);
-
     // Server-state reconciliation: applied to both the editable draft and the
     // baseline used for dirty detection. Used when a child tab (e.g. MCPs) drops
     // entries that no longer exist server-side. This must not mark the form as
@@ -470,6 +471,7 @@ const AgentConfigView = (props: Props) => {
         // is created on the Access tab.
         const needsAccessPolicy = restoredDraft.userAccessLevel === UserAccessLevel.AttributeBased &&
             baselineDraft.userAccessLevel !== UserAccessLevel.AttributeBased;
+        resetDocumentUploads();
         setDraft(restoredDraft);
         setBaselineDraft(cloneDraft(restoredDraft));
         setAvatarFile(null);
@@ -480,7 +482,7 @@ const AgentConfigView = (props: Props) => {
             setActiveTab('access');
         }
         onRestored?.(restored);
-    }, [baselineDraft.userAccessLevel, onRestored, services]);
+    }, [baselineDraft.userAccessLevel, onRestored, resetDocumentUploads, services]);
 
     useEffect(() => {
         return () => {
@@ -505,6 +507,9 @@ const AgentConfigView = (props: Props) => {
             }
             if (request !== importRequestRef.current) {
                 return;
+            }
+            if (doc.schemaVersion >= 2) {
+                resetDocumentUploads();
             }
             updateDraft({
                 ...(mode === 'create' && imported.name ? {username: imported.name} : {}),
@@ -531,7 +536,7 @@ const AgentConfigView = (props: Props) => {
                 setImporting(false);
             }
         }
-    }, [agent?.id, draft.useServiceAccountAuth, intl, mode, updateDraft]);
+    }, [agent?.id, draft.useServiceAccountAuth, intl, mode, resetDocumentUploads, updateDraft]);
 
     const filePicker = useAgentFilePicker(applyImport, (message) => setErrors({general: message}));
 

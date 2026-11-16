@@ -34,56 +34,75 @@ func (l *countingLoader) GetAgentDocumentTexts(ids []string) (map[string]string,
 }
 
 func TestTextCache(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("loads only uncached documents and skips missing ones", func(t *testing.T) {
-		loader := &countingLoader{texts: map[string]string{"a": "alpha", "b": "beta"}}
-		cache := NewTextCache(loader, 100)
-
-		texts, err := cache.AgentDocumentTexts(ctx, []string{"a", "missing"})
-		require.NoError(t, err)
-		assert.Equal(t, map[string]string{"a": "alpha"}, texts)
-
-		texts, err = cache.AgentDocumentTexts(ctx, []string{"a", "b"})
-		require.NoError(t, err)
-		assert.Equal(t, map[string]string{"a": "alpha", "b": "beta"}, texts)
-		assert.Equal(t, [][]string{{"a", "missing"}, {"b"}}, loader.calls)
-	})
-
-	t.Run("evicts the least recently used text beyond the bound", func(t *testing.T) {
-		loader := &countingLoader{texts: map[string]string{"a": "aaaa", "b": "bbbb", "c": "cccc"}}
-		cache := NewTextCache(loader, 8)
-
-		_, err := cache.AgentDocumentTexts(ctx, []string{"a"})
-		require.NoError(t, err)
-		_, err = cache.AgentDocumentTexts(ctx, []string{"b"})
-		require.NoError(t, err)
-		_, err = cache.AgentDocumentTexts(ctx, []string{"a"}) // a is now most recent
-		require.NoError(t, err)
-		_, err = cache.AgentDocumentTexts(ctx, []string{"c"}) // evicts b
-		require.NoError(t, err)
-
-		loader.calls = nil
-		texts, err := cache.AgentDocumentTexts(ctx, []string{"a", "b", "c"})
-		require.NoError(t, err)
-		assert.Len(t, texts, 3)
-		assert.Equal(t, [][]string{{"b"}}, loader.calls)
-	})
-
-	t.Run("texts larger than the cache are returned but not cached", func(t *testing.T) {
-		loader := &countingLoader{texts: map[string]string{"big": "0123456789"}}
-		cache := NewTextCache(loader, 5)
-		for range 2 {
-			texts, err := cache.AgentDocumentTexts(ctx, []string{"big"})
-			require.NoError(t, err)
-			assert.Equal(t, "0123456789", texts["big"])
-		}
-		assert.Len(t, loader.calls, 2)
-	})
-
-	t.Run("loader errors are returned", func(t *testing.T) {
-		cache := NewTextCache(&countingLoader{err: errors.New("db down")}, 5)
-		_, err := cache.AgentDocumentTexts(ctx, []string{"a"})
-		require.Error(t, err)
-	})
+	type request struct {
+		ids  []string
+		want map[string]string
+	}
+	tests := []struct {
+		name      string
+		texts     map[string]string
+		loadErr   error
+		limit     int
+		requests  []request
+		wantCalls [][]string
+		wantErr   bool
+	}{
+		{
+			name:  "loads only uncached documents and skips missing ones",
+			texts: map[string]string{"a": "alpha", "b": "beta"},
+			limit: 100,
+			requests: []request{
+				{ids: []string{"a", "missing"}, want: map[string]string{"a": "alpha"}},
+				{ids: []string{"a", "b"}, want: map[string]string{"a": "alpha", "b": "beta"}},
+			},
+			wantCalls: [][]string{{"a", "missing"}, {"b"}},
+		},
+		{
+			name:  "evicts the least recently used text beyond the bound",
+			texts: map[string]string{"a": "aaaa", "b": "bbbb", "c": "cccc"},
+			limit: 8,
+			requests: []request{
+				{ids: []string{"a"}, want: map[string]string{"a": "aaaa"}},
+				{ids: []string{"b"}, want: map[string]string{"b": "bbbb"}},
+				{ids: []string{"a"}, want: map[string]string{"a": "aaaa"}},
+				{ids: []string{"c"}, want: map[string]string{"c": "cccc"}},
+				{ids: []string{"a", "b", "c"}, want: map[string]string{"a": "aaaa", "b": "bbbb", "c": "cccc"}},
+			},
+			wantCalls: [][]string{{"a"}, {"b"}, {"c"}, {"b"}},
+		},
+		{
+			name:  "texts larger than the cache are returned but not cached",
+			texts: map[string]string{"big": "0123456789"},
+			limit: 5,
+			requests: []request{
+				{ids: []string{"big"}, want: map[string]string{"big": "0123456789"}},
+				{ids: []string{"big"}, want: map[string]string{"big": "0123456789"}},
+			},
+			wantCalls: [][]string{{"big"}, {"big"}},
+		},
+		{
+			name:      "loader errors are returned",
+			loadErr:   errors.New("db down"),
+			limit:     5,
+			requests:  []request{{ids: []string{"a"}}},
+			wantCalls: [][]string{{"a"}},
+			wantErr:   true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			loader := &countingLoader{texts: tt.texts, err: tt.loadErr}
+			cache := NewTextCache(loader, tt.limit)
+			for _, req := range tt.requests {
+				texts, err := cache.AgentDocumentTexts(context.Background(), req.ids)
+				if tt.wantErr {
+					require.Error(t, err)
+					continue
+				}
+				require.NoError(t, err)
+				assert.Equal(t, req.want, texts)
+			}
+			assert.Equal(t, tt.wantCalls, loader.calls)
+		})
+	}
 }

@@ -108,6 +108,7 @@ func removePreFilteredMCPServersFromVisibleStore(llmContext *llm.Context) {
 // DM/group channels).
 //
 // Pass prefsLogMessage == "" to skip the user MCP preferences lookup.
+// It fails when the bot's reference documents cannot be loaded.
 func (c *Conversations) buildConversationContextWithTools(
 	ctx context.Context,
 	bot *bots.Bot,
@@ -115,7 +116,7 @@ func (c *Conversations) buildConversationContextWithTools(
 	channel *model.Channel,
 	prefsLogMessage string,
 	extraOpts ...llm.ContextOption,
-) *llm.Context {
+) (*llm.Context, error) {
 	isDMOrGroup := channel != nil && (channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup)
 
 	opts := make([]llm.ContextOption, 0, len(extraOpts)+4)
@@ -126,7 +127,10 @@ func (c *Conversations) buildConversationContextWithTools(
 	opts = append(opts, extraOpts...)
 	opts = append(opts, c.contextBuilder.WithLLMContextTools(ctx, bot))
 
-	llmContext := c.contextBuilder.BuildLLMContextUserRequest(ctx, bot, user, channel, opts...)
+	llmContext, err := c.contextBuilder.BuildLLMContextUserRequest(ctx, bot, user, channel, opts...)
+	if err != nil {
+		return nil, err
+	}
 
 	if isDMOrGroup {
 		// Pre-build filtering protects strict registries; post-build removal preserves
@@ -134,7 +138,7 @@ func (c *Conversations) buildConversationContextWithTools(
 		removePreFilteredMCPServersFromVisibleStore(llmContext)
 	}
 
-	return llmContext
+	return llmContext, nil
 }
 
 func (c *Conversations) MessageHasBeenPosted(pluginContext *plugin.Context, post *model.Post) {

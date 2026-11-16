@@ -195,7 +195,10 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		if c.meetingSummaries == nil {
 			return errors.New("meeting summary regeneration not available")
 		}
-		llmContext := c.contextBuilder.BuildLLMContextUserRequest(ctx, bot, user, channel, c.contextBuilder.WithLLMContextNoTools())
+		llmContext, ctxErr := c.contextBuilder.BuildLLMContextUserRequest(ctx, bot, user, channel, c.contextBuilder.WithLLMContextNoTools())
+		if ctxErr != nil {
+			return fmt.Errorf("could not build the regeneration context: %w", ctxErr)
+		}
 		result, err = c.meetingSummaries.RegenerateSummary(ctx, bot, llmContext, conv, post)
 
 	case regenerateChannelSummary:
@@ -350,13 +353,16 @@ func (c *Conversations) regenerateSingleShot(
 	conv *store.Conversation,
 	post *model.Post,
 ) (*llm.TextStreamResult, error) {
-	llmContext := c.contextBuilder.BuildLLMContextUserRequest(
+	llmContext, err := c.contextBuilder.BuildLLMContextUserRequest(
 		ctx,
 		bot,
 		user,
 		channel,
 		c.contextBuilder.WithLLMContextNoTools(),
 	)
+	if err != nil {
+		return nil, err
+	}
 
 	completionReq, err := c.convService.BuildRegenerateRequest(conv, llmContext, post.Id, conversation.BuildOptions{
 		SessionID: auth.SessionIDFromContext(ctx),
@@ -393,7 +399,7 @@ func (c *Conversations) regenerateChannelAnalysis(
 	}
 
 	toolBot := channels.ToolBot(bot)
-	llmContext := c.contextBuilder.BuildLLMContextUserRequest(
+	llmContext, err := c.contextBuilder.BuildLLMContextUserRequest(
 		ctx,
 		bot,
 		user,
@@ -401,6 +407,9 @@ func (c *Conversations) regenerateChannelAnalysis(
 		c.contextBuilder.WithLLMContextPreloadedMCPTools(channels.RequiredMCPTools),
 		c.contextBuilder.WithLLMContextTools(ctx, toolBot),
 	)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	analyzer := channels.New(bot.LLM(), c.prompts, c.mmClient, c.db, c.convService)
 	return analyzer.RegenerateAnalysis(ctx, llmContext, conv, analyzedChannelID, post.Id, auth.SessionIDFromContext(ctx))

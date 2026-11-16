@@ -329,15 +329,15 @@ const DocumentList = styled.ul`
     list-style: none;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--spacing-xs);
 `;
 
 const DocumentRow = styled.li`
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    padding: 8px 12px;
+    gap: var(--spacing-m);
+    padding: var(--spacing-xs) var(--spacing-m);
     border-radius: 4px;
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
     background: var(--center-channel-bg);
@@ -346,7 +346,7 @@ const DocumentRow = styled.li`
 const DocumentMain = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--spacing-xxxxs);
     min-width: 0;
     flex: 1;
 `;
@@ -370,18 +370,18 @@ const DocumentMeta = styled.span`
 const DocumentActions = styled.div`
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--spacing-xxxs);
     flex-shrink: 0;
 `;
 
 const RenameRow = styled.div`
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--spacing-xs);
 `;
 
 const RowButton = styled.button`
-    padding: 4px 8px;
+    padding: var(--spacing-xxxs) var(--spacing-xs);
     border: none;
     border-radius: 4px;
     background: none;
@@ -404,7 +404,7 @@ const UploadRow = styled.div`
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 12px;
+    gap: var(--spacing-m);
 `;
 
 const HiddenFileInput = styled.input`

@@ -132,7 +132,7 @@ func TestBuilderPassesServerEligibilityToMCPProvider(t *testing.T) {
 			if len(tc.disabledOrigins) > 0 {
 				opts = append(opts, builder.WithLLMContextDisabledMCPServers(tc.disabledOrigins))
 			}
-			context := buildToolsContext(builder, bot, opts...)
+			context := buildToolsContext(t, builder, bot, opts...)
 
 			require.Equal(t, 1, mcpProvider.calls)
 			require.Equal(t, tc.wantAllowed, mcpProvider.selection.AllowedOrigins)
@@ -203,7 +203,8 @@ func TestBuilderSelectsDMOnlyServersOnlyInDirectMessage(t *testing.T) {
 				opts = append(opts, builder.WithLLMContextInteractive())
 			}
 			opts = append(opts, builder.WithLLMContextTools(stdcontext.Background(), bot))
-			context := builder.BuildLLMContextUserRequest(stdcontext.Background(), bot, testUser(), tc.channel, opts...)
+			context, err := builder.BuildLLMContextUserRequest(stdcontext.Background(), bot, testUser(), tc.channel, opts...)
+			require.NoError(t, err)
 
 			require.Equal(t, tc.wantExclude, mcpProvider.selection.ExcludeDMOnlyServers)
 			require.Equal(t, tc.interactive, mcpProvider.described)

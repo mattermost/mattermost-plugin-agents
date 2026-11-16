@@ -78,6 +78,7 @@ func TestWithLLMContextAgentDocuments(t *testing.T) {
 		documents []llm.AgentDocument
 		source    *fakeAgentDocumentSource
 		want      []format.AgentDocumentEntry
+		wantErr   string
 		wantLoads int
 	}{
 		{
@@ -88,10 +89,10 @@ func TestWithLLMContextAgentDocuments(t *testing.T) {
 			wantLoads: 1,
 		},
 		{
-			name:      "a missing document is skipped",
+			name:      "a missing document fails the request",
 			documents: []llm.AgentDocument{handbook, missing},
 			source:    &fakeAgentDocumentSource{texts: texts},
-			want:      []format.AgentDocumentEntry{{Name: "handbook.pdf", Text: "Handbook text"}},
+			wantErr:   `reference document "doc-missing" of agent "bot-id" does not exist`,
 			wantLoads: 1,
 		},
 		{
@@ -116,9 +117,10 @@ func TestWithLLMContextAgentDocuments(t *testing.T) {
 			wantLoads: 1,
 		},
 		{
-			name:      "a load failure leaves the documents out",
+			name:      "a load failure fails the request",
 			documents: []llm.AgentDocument{handbook},
 			source:    &fakeAgentDocumentSource{err: errors.New("database unavailable")},
+			wantErr:   "database unavailable",
 			wantLoads: 1,
 		},
 		{
@@ -132,10 +134,16 @@ func TestWithLLMContextAgentDocuments(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			builder := newDocumentsTestBuilder(t, tt.source)
 			bot := newTestBotWithConfig(llm.BotConfig{ID: "bot-id", Name: "matty", Documents: tt.documents})
-			c := builder.BuildLLMContextUserRequest(stdcontext.Background(), bot, testUser(), testChannel())
+			c, err := builder.BuildLLMContextUserRequest(stdcontext.Background(), bot, testUser(), testChannel())
 
-			assert.Equal(t, format.AgentReferenceDocuments(tt.want), c.ReferenceDocuments)
 			assert.Equal(t, tt.wantLoads, tt.source.calls)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				assert.Nil(t, c)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, format.AgentReferenceDocuments(tt.want), c.ReferenceDocuments)
 		})
 	}
 }
@@ -149,7 +157,8 @@ func TestReferenceDocumentsRenderedAfterCustomInstructions(t *testing.T) {
 		CustomInstructions: "Always answer politely.",
 		Documents:          []llm.AgentDocument{{ID: "doc-handbook", Name: "handbook.pdf"}},
 	})
-	c := builder.BuildLLMContextUserRequest(stdcontext.Background(), bot, testUser(), testChannel())
+	c, err := builder.BuildLLMContextUserRequest(stdcontext.Background(), bot, testUser(), testChannel())
+	require.NoError(t, err)
 
 	promptsEngine, err := llm.NewPrompts(prompts.PromptsFolder)
 	require.NoError(t, err)

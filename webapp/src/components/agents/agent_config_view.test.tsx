@@ -6,7 +6,7 @@ import {act, fireEvent, render, screen, waitFor, waitForElementToBeRemoved, with
 import {IntlProvider} from 'react-intl';
 
 import {createAgent, deleteAgentVersions, getAgentVersion, getAgentVersions, getProfilesByIds, getUserMCPTools, restoreAgentVersion, updateAgent, uploadAgentDocument} from '@/client';
-import {AgentExportDocument, AgentExportDocumentFile, AgentVersionDetail, AgentVersionList, EnabledTool, MaxCustomInstructionsRunes, ServiceInfo, SkillsConfig, UserAgent, normalizeSkillsConfig} from '@/types/agents';
+import {AgentDocument, AgentExportDocument, AgentExportDocumentFile, AgentVersionDetail, AgentVersionList, EnabledTool, MaxCustomInstructionsRunes, ServiceInfo, SkillsConfig, UserAgent, normalizeSkillsConfig} from '@/types/agents';
 import {downloadAgentExport} from '@/utils/agent_export';
 import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
 
@@ -110,14 +110,23 @@ jest.mock('./tabs/config_tab', () => ({
         onAvatarChange,
         avatarFile,
         errors = {},
+        onUploadDocuments,
     }: {
         draft: AgentDraft;
         onChange: (updates: Partial<AgentDraft>) => void;
         onAvatarChange: (file: File | null) => void;
         avatarFile?: File | null;
         errors?: Record<string, string>;
+        onUploadDocuments: (files: File[]) => void;
     }) => (
         <>
+            <button
+                type='button'
+                onClick={() => onUploadDocuments([new File(['x'], 'notes.txt')])}
+            >
+                {'Upload mock document'}
+            </button>
+            <div data-testid='draft-documents'>{draft.documents.map((doc) => doc.name).join(',')}</div>
             <input
                 aria-label='Bot avatar'
                 type='file'
@@ -379,6 +388,23 @@ describe('AgentConfigView', () => {
         fireEvent.click(screen.getByRole('button', {name: 'Discard'}));
 
         expect(onBack).toHaveBeenCalledTimes(1);
+    });
+
+    test('an upload in progress counts as unsaved work', async () => {
+        let finish: (doc: AgentDocument) => void = jest.fn();
+        mockUploadAgentDocument.mockReturnValue(new Promise<AgentDocument>((resolve) => {
+            finish = resolve;
+        }));
+        const {onBack} = renderView();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Upload mock document'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Back to agents'}));
+
+        expect(screen.getByRole('dialog', {name: 'Discard changes?'})).not.toBeNull();
+        expect(onBack).not.toHaveBeenCalled();
+        await act(async () => {
+            finish({id: 'doc_up', name: 'notes.txt', mimeType: 'text/plain', size: 1, sha256: 'c', textRunes: 1});
+        });
     });
 
     test('navigates back immediately when there are no unsaved changes', () => {
@@ -1253,8 +1279,9 @@ describe('AgentConfigView', () => {
         });
 
         test.each([
-            {name: 'Handbook', mimeType: 'application/pdf', uploadName: 'Handbook.pdf'},
-            {name: 'handbook.txt', mimeType: 'application/pdf', uploadName: 'handbook.txt.pdf'},
+            {name: 'Handbook', mimeType: 'application/pdf', uploadName: 'document.pdf'},
+            {name: 'handbook.txt', mimeType: 'application/pdf', uploadName: 'document.pdf'},
+            {name: 'x'.repeat(256), mimeType: 'application/pdf', uploadName: 'document.pdf'},
             {name: 'Notes.MD', mimeType: 'text/markdown', uploadName: 'Notes.MD'},
         ])('uploads \'$name\' as \'$uploadName\' so the server picks the type from its content type', async ({name, mimeType, uploadName}) => {
             mockUploadAgentDocument.mockResolvedValue({...storedGuide, name});
@@ -1267,6 +1294,34 @@ describe('AgentConfigView', () => {
             await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
             expect(mockUploadAgentDocument.mock.calls[0][0].name).toBe(uploadName);
             expect(mockUpdateAgent).toHaveBeenCalledWith('agent_1', expect.objectContaining({documents: [{id: 'doc_new', name}]}));
+        });
+
+        test('an upload that finishes after the import does not join the imported documents', async () => {
+            let finish: (doc: AgentDocument) => void = jest.fn();
+            mockUploadAgentDocument.mockReturnValue(new Promise<AgentDocument>((resolve) => {
+                finish = resolve;
+            }));
+            render(
+                <IntlProvider locale='en'>
+                    <AgentConfigView
+                        mode='edit'
+                        agent={{...savedAgent, documents: [existingDoc]}}
+                        services={services}
+                        onBack={jest.fn()}
+                        onSaved={jest.fn()}
+                    />
+                </IntlProvider>,
+            );
+
+            fireEvent.click(screen.getByRole('button', {name: 'Upload mock document'}));
+            const file = new File([JSON.stringify(exportFile(2, []))], 'agent.json', {type: 'application/json'});
+            fireEvent.change(screen.getByTestId('agent-import-file-input'), {target: {files: [file]}});
+            await waitFor(() => expect(screen.getByLabelText('Custom instructions')).toHaveProperty('value', 'Imported instructions'));
+            await act(async () => {
+                finish({id: 'doc_stale', name: 'notes.txt', mimeType: 'text/plain', size: 1, sha256: 'c', textRunes: 1});
+            });
+
+            expect(screen.getByTestId('draft-documents').textContent).toBe('');
         });
 
         test('a version 1 file leaves the agent\'s documents alone', async () => {

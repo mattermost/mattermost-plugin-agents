@@ -122,12 +122,16 @@ func (a *API) handleReact(c *gin.Context) {
 		return
 	}
 
-	context := a.contextBuilder.BuildLLMContextUserRequest(
+	context, err := a.contextBuilder.BuildLLMContextUserRequest(
 		c.Request.Context(),
 		bot,
 		requestingUser,
 		channel,
 	)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
 
 	emojiName, err := react.New(
 		bot.LLM(),
@@ -188,13 +192,17 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 	}
 
 	// Thread analysis disables tools, so skip MCP/tool initialization entirely.
-	llmContext := a.contextBuilder.BuildLLMContextUserRequest(
+	llmContext, err := a.contextBuilder.BuildLLMContextUserRequest(
 		c.Request.Context(),
 		bot,
 		user,
 		channel,
 		a.contextBuilder.WithLLMContextNoTools(),
 	)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
 
 	// Create thread analyzer with conversation service
 	botUserID := bot.GetMMBot().UserId

@@ -56,6 +56,34 @@ func nestedPagesPDF(depth int) []byte {
 	return assemblePDF(objects...)
 }
 
+// toUnicodeFont returns a font whose text is decoded by the character map
+// in object cmap.
+func toUnicodeFont(cmap int) string {
+	return fmt.Sprintf("<< /Type /Font /Subtype /Type0 /BaseFont /Test /ToUnicode %d 0 R >>", cmap)
+}
+
+// bfchars returns a ToUnicode character map with the given code space ranges
+// ("<lo> <hi>" pairs) and one-code mappings from hex code to letter.
+func bfchars(codespace string, mappings ...[2]string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d begincodespacerange %s endcodespacerange\n%d beginbfchar\n", strings.Count(codespace, "<")/2, codespace, len(mappings))
+	for _, m := range mappings {
+		fmt.Fprintf(&b, "<%s> <%04X>\n", m[0], []rune(m[1])[0])
+	}
+	b.WriteString("endbfchar")
+	return b.String()
+}
+
+// pageWithResources returns a page object under parent with contents in
+// object contents and the given /Resources entries.
+func pageWithResources(parent, contents int, resources string) string {
+	return fmt.Sprintf("<< /Type /Page /Parent %d 0 R /Contents %d 0 R /Resources << %s >> >>", parent, contents, resources)
+}
+
+func formXObject(resources, content string) string {
+	return pdfStream("/Type /XObject /Subtype /Form /BBox [0 0 100 100] "+resources, content)
+}
+
 func TestExtractPDF(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -93,6 +121,93 @@ func TestExtractPDF(t *testing.T) {
 				)
 			},
 			want: "Refund\npolicy applies\nhere\nand there\nend",
+		},
+		{
+			name: "text in a form XObject is read where the form is drawn",
+			data: func(*testing.T) []byte {
+				return assemblePDF(
+					"<< /Type /Catalog /Pages 2 0 R >>",
+					"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+					pageWithResources(2, 4, "/Font << /F1 5 0 R >> /XObject << /Fm1 6 0 R >>"),
+					pdfStream("", "BT /F1 12 Tf (Before) Tj ET q /Fm1 Do Q BT /F1 12 Tf (After) Tj ET"),
+					helveticaFont,
+					formXObject("/Resources << /Font << /F1 5 0 R /F2 8 0 R >> /XObject << /Inner 7 0 R >> >>", "BT /F1 12 Tf (Refund policy) Tj ET /Inner Do"),
+					formXObject("", "BT /F1 12 Tf (Nested form) Tj ET"),
+					helveticaFont,
+				)
+			},
+			want: "Before\nRefund policy\nNested form\nAfter",
+		},
+		{
+			name: "form XObject that draws itself",
+			data: func(*testing.T) []byte {
+				return assemblePDF(
+					"<< /Type /Catalog /Pages 2 0 R >>",
+					"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+					pageWithResources(2, 4, "/XObject << /Fm1 5 0 R >>"),
+					pdfStream("", "/Fm1 Do"),
+					formXObject("/Resources << /XObject << /Fm1 5 0 R >> >>", "BT (Again) Tj ET /Fm1 Do"),
+				)
+			},
+			wantErrIn: `page 1 of "doc.pdf" is too complex to read`,
+		},
+		{
+			name: "form XObject drawn many times",
+			data: func(*testing.T) []byte {
+				return assemblePDF(
+					"<< /Type /Catalog /Pages 2 0 R >>",
+					"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+					pageWithResources(2, 4, "/XObject << /Fm1 5 0 R >>"),
+					pdfStream("", strings.Repeat("/Fm1 Do\n", maxPDFForms+1)),
+					formXObject("", "BT (x) Tj ET"),
+				)
+			},
+			wantErrIn: `page 1 of "doc.pdf" is too complex to read`,
+		},
+		{
+			name: "font restored by Q",
+			data: func(t *testing.T) []byte {
+				return assemblePDF(
+					"<< /Type /Catalog /Pages 2 0 R >>",
+					"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+					pageWithResources(2, 4, "/Font << /F1 5 0 R /F2 6 0 R >>"),
+					pdfStream("", "BT /F1 12 Tf (\x01) Tj ET q BT /F2 12 Tf (\x01) Tj ET Q BT (\x01) Tj ET"),
+					toUnicodeFont(7),
+					toUnicodeFont(8),
+					pdfStream("", bfchars("<00> <FF>", [2]string{"01", "A"})),
+					pdfStream("", bfchars("<00> <FF>", [2]string{"01", "B"})),
+				)
+			},
+			want: "A\nB\nA",
+		},
+		{
+			name: "three-byte font codes across decoding chunks",
+			data: func(t *testing.T) []byte {
+				return assemblePDF(
+					"<< /Type /Catalog /Pages 2 0 R >>",
+					"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+					pageWithResources(2, 4, "/Font << /F1 5 0 R >>"),
+					pdfStream("", "BT /F1 12 Tf ("+strings.Repeat("\x01\x02\x03\x04\x05\x06", 5)+") Tj ET"),
+					toUnicodeFont(6),
+					pdfStream("", bfchars("<000000> <FFFFFF>", [2]string{"010203", "A"}, [2]string{"040506", "B"})),
+				)
+			},
+			want: "ABABABABAB",
+		},
+		{
+			name: "font codes of mixed widths across decoding chunks",
+			data: func(t *testing.T) []byte {
+				return assemblePDF(
+					"<< /Type /Catalog /Pages 2 0 R >>",
+					"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+					pageWithResources(2, 4, "/Font << /F1 5 0 R >>"),
+					pdfStream("", "BT /F1 12 Tf ("+strings.Repeat("A\x80\x01\x80\x02B", 6)+") Tj ET"),
+					toUnicodeFont(6),
+					pdfStream("", bfchars("<00> <7F>\n<8000> <FFFF>",
+						[2]string{"41", "A"}, [2]string{"42", "B"}, [2]string{"8001", "C"}, [2]string{"8002", "D"})),
+				)
+			},
+			want: "ACDBACDBACDBACDBACDBACDB",
 		},
 		{
 			name: "compressed content",
@@ -299,6 +414,7 @@ func TestExtractPDFContainsLibraryHazards(t *testing.T) {
 
 			// The slot is free again and the next PDF is read normally.
 			assert.Empty(t, pdfSlots)
+			pdfExtractTimeout = 30 * time.Second
 			text, err := extractWithin(t, 10*time.Second, assemblePDF(
 				"<< /Type /Catalog /Pages 2 0 R >>",
 				"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",

@@ -120,13 +120,17 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 	}
 
 	// Build LLM context with default tools enabled
-	llmContext := a.contextBuilder.BuildLLMContextUserRequest(
+	llmContext, err := a.contextBuilder.BuildLLMContextUserRequest(
 		c.Request.Context(),
 		bot,
 		user,
 		channel,
 		opts...,
 	)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
 
 	// Validate that required tools are available for channel analysis.
 	availableTools, missingTools := channelAnalysisToolAvailability(llmContext.Tools)
@@ -241,13 +245,17 @@ func (a *API) handleInterval(c *gin.Context) {
 	}
 
 	// Interval summaries disable tools, so skip MCP/tool initialization entirely.
-	context := a.contextBuilder.BuildLLMContextUserRequest(
+	context, err := a.contextBuilder.BuildLLMContextUserRequest(
 		c.Request.Context(),
 		bot,
 		user,
 		channel,
 		a.contextBuilder.WithLLMContextNoTools(),
 	)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
 
 	// Map preset prompt to prompt type and title
 	promptPreset := ""
