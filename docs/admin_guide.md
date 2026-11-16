@@ -69,7 +69,7 @@ People with read-only or read and write access see **Settings** in the Agents si
 
 ## Plugin settings
 
-Everything is under **Agents > Settings**, in the **General**, **AI services**, **MCP servers**, **Embedding search**, **Web search**, and **Debug** sections. Changes take effect when you select **Save**. **System Console > Plugins > Agents** has an **Open Agents settings** button and the **Settings access** lists below. The plugin stores its configuration, and agents, in its own database tables. See [Back up and automate](backup_and_automation.md).
+Everything is under **Agents > Settings**, in the **General**, **AI services**, **MCP servers**, **Embedding search**, **Web search**, and **Debug** sections. **System Console > Plugins > Agents** has an **Open Agents settings** button and the **Settings access** lists below. The plugin stores its configuration, and agents, in its own database tables. See [Back up and automate](backup_and_automation.md).
 
 | Panel | Setting | Config key | Default | Details |
 |---|---|---|---|---|
