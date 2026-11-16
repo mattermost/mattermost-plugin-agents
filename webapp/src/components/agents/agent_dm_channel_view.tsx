@@ -79,12 +79,17 @@ const AgentDMChannelViewForChannel = ({channel, focusedPostId}: AgentDMChannelVi
     // Bumped by every selection, so a permalink lookup that resolves after a newer one is dropped.
     const selectionSeq = useRef(0);
 
+    // Picking a chat puts its root in the URL, which the host hands back as focusedPostId: that is
+    // not a permalink to look up.
+    const openRootId = useRef<string | undefined>(undefined);
+    openRootId.current = selection.resolving ? undefined : selection.rootId;
+
     const invalidate = useCallback(() => {
         selectionSeq.current++;
     }, []);
 
     useEffect(() => {
-        if (!focusedPostId) {
+        if (!focusedPostId || focusedPostId === openRootId.current) {
             return invalidate;
         }
         const seq = ++selectionSeq.current;

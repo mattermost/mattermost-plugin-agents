@@ -200,6 +200,19 @@ describe('AgentDMChannelView', () => {
         expect(screen.getByTestId('chat-page').textContent).toBe('new chat');
     });
 
+    test('the host handing a picked chat back as focusedPostId neither looks it up nor remounts the chat', () => {
+        const {setFocusedPost} = renderView();
+
+        act(() => lastSection().onSelectThread('agent1', 'rootX'));
+        const chatPage = screen.getByTestId('chat-page');
+
+        setFocusedPost('rootX');
+
+        expect(mockGetPost).not.toHaveBeenCalled();
+        expect(screen.getByTestId('chat-page')).toBe(chatPage);
+        expect(chatPage.textContent).toBe('rootX');
+    });
+
     test('a later permalink in the same DM opens its chat', () => {
         const {setFocusedPost} = renderView();
         act(() => lastSection().onNewChat('agent1'));
