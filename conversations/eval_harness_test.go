@@ -139,6 +139,7 @@ func respondAsAgent(t *evals.EvalT, scenario evalScenario, post *model.Post) str
 		files:           scenario.files,
 		kv:              map[string]any{},
 		allowCreatePost: true,
+		liveRoots:       true,
 	}
 
 	promptsManager, err := llm.NewPrompts(prompts.PromptsFolder)

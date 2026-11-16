@@ -466,6 +466,7 @@ func TestMeetingSummaryFollowUpReferencesTranscriptFile(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			file := &transcriptFile{id: model.NewId(), content: tt.content, allowed: map[string]bool{initialSession: true, regenSession: true}}
 			mm := mocks.NewMockClient(t)
+			mm.On("GetPost", mock.Anything).Return(&model.Post{}, nil).Maybe()
 			file.register(mm)
 			lm := &summaryLLM{}
 			s := newSummaryService(t, convStore, mm)

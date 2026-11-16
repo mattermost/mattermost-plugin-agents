@@ -138,7 +138,7 @@ func setupTestService(t *testing.T) (*Service, *store.Store) {
 	require.NoError(t, err)
 
 	bots := &testBotLookup{botUserIDs: map[string]bool{}}
-	svc := NewService(s, nil, nil, bots)
+	svc := NewService(s, nil, livePostClient{}, bots)
 	return svc, s
 }
 
@@ -2470,6 +2470,7 @@ func TestCreateConversation_FileIDsPersistsAsContentBlocks(t *testing.T) {
 // when appending a new user turn to an existing conversation.
 func TestGetOrCreateConversation_AppendsFileIDs(t *testing.T) {
 	mmClient := mmapimocks.NewMockClient(t)
+	mmClient.On("GetPost", mock.Anything).Return(&model.Post{}, nil).Maybe()
 	// No .Maybe(): GetFileInfo for the appended attachment MUST run so
 	// MIME comes from the server, not the filename extension.
 	mmClient.On("GetFileInfo", "doc2").Return(&model.FileInfo{
@@ -3549,4 +3550,47 @@ func TestRegenerateDeletesRoundsWrittenAfterALaterUserTurn(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 2, userTurns, "both user turns stay")
+}
+
+type deletedRootClient struct {
+	mmapi.Client
+}
+
+func (deletedRootClient) GetPost(postID string) (*model.Post, error) {
+	return &model.Post{Id: postID, DeleteAt: model.GetMillis()}, nil
+}
+
+func TestActivateConversation_ActiveConversationWithDeletedRoot(t *testing.T) {
+	svc, _ := setupTestService(t)
+	rootPostID := "deleted_root"
+	created, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       model.NewId(),
+		BotID:        model.NewId(),
+		RootPostID:   &rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "prompt",
+		UserMessage:  "hello",
+		UserPostID:   new("post1"),
+	})
+	require.NoError(t, err)
+	conv, err := svc.GetConversation(created.ConversationID)
+	require.NoError(t, err)
+
+	svc.mmClient = deletedRootClient{}
+	_, err = svc.ActivateConversation(conv)
+	require.ErrorIs(t, err, ErrRootPostDeleted)
+
+	_, err = svc.GetOrCreateConversation(GetOrCreateParams{
+		UserID:      conv.UserID,
+		BotID:       conv.BotID,
+		ChannelID:   "chan1",
+		RootPostID:  rootPostID,
+		Operation:   "conversation",
+		UserMessage: "second",
+		UserPostID:  new("post2"),
+	})
+	require.ErrorIs(t, err, ErrRootPostDeleted)
+	turns, err := svc.GetTurns(created.ConversationID)
+	require.NoError(t, err)
+	assert.Len(t, turns, 1, "no user turn is recorded on a deleted thread")
 }

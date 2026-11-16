@@ -144,7 +144,7 @@ func TestDynamicMCPStrictSearchLoadCallDerivesLoadedTools(t *testing.T) {
 				builder.WithLLMContextTools(context.Background(), bot),
 			)
 			c := &Conversations{
-				convService:    conversation.NewService(convStore, nil, nil, nil),
+				convService:    conversation.NewService(convStore, nil, livePostClient{}, nil),
 				licenseChecker: enterprisetest.CheckerAt(enterprise.LevelEnterprise),
 				toolPolicyChecker: mapPolicyChecker{
 					origin: {

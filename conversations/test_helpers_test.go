@@ -19,6 +19,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -41,13 +42,18 @@ type fakeMMClient struct {
 	users       map[string]*model.User
 	postThreads map[string]*model.PostList
 	// kvMu guards kv: run reservations are released from stream goroutines.
-	kvMu                 sync.Mutex
-	kv                   map[string]any
-	createdPosts         []*model.Post
-	allowCreatePost      bool
-	updatedPosts         []*model.Post
-	kvDeletes            []string
-	posts                map[string]*model.Post
+	kvMu            sync.Mutex
+	kv              map[string]any
+	createdPosts    []*model.Post
+	allowCreatePost bool
+	updatedPosts    []*model.Post
+	kvDeletes       []string
+	posts           map[string]*model.Post
+	// liveRoots makes GetPost return a live post for ids it does not know, so
+	// conversations rooted at posts the test never registered keep running.
+	liveRoots bool
+	// gonePosts are never found, even with liveRoots.
+	gonePosts            map[string]bool
 	channels             map[string]*model.Channel
 	ephemeralPosts       []*model.Post
 	ephemeralPostUserIDs []string
@@ -205,6 +211,9 @@ func (c *fakeMMClient) GetPost(postID string) (*model.Post, error) {
 		if post, ok := c.posts[postID]; ok {
 			return post, nil
 		}
+	}
+	if c.liveRoots && !c.gonePosts[postID] {
+		return &model.Post{Id: postID}, nil
 	}
 	return nil, pluginapi.ErrNotFound
 }
@@ -470,4 +479,14 @@ func overrideMockLicense(mockAPI *plugintest.API, license *model.License) {
 	}
 	mockAPI.ExpectedCalls = filtered
 	mockAPI.On("GetLicense").Return(license).Maybe()
+}
+
+// livePostClient backs a conversation service whose conversations' root posts
+// all still exist.
+type livePostClient struct {
+	mmapi.Client
+}
+
+func (livePostClient) GetPost(postID string) (*model.Post, error) {
+	return &model.Post{Id: postID}, nil
 }

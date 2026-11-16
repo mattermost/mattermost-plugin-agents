@@ -260,11 +260,11 @@ func (s *Service) GetConversationByThread(rootPostID, botID, userID string) (*st
 // A conversation whose root post was deleted is never restored: it returns
 // ErrRootPostDeleted (see CheckRootPost).
 func (s *Service) ActivateConversation(conv *store.Conversation) (*store.Conversation, error) {
-	if conv.DeleteAt == 0 {
-		return conv, nil
-	}
 	if err := CheckRootPost(s.mmClient, conv); err != nil {
 		return nil, err
+	}
+	if conv.DeleteAt == 0 {
+		return conv, nil
 	}
 	restored, err := s.store.RestoreConversation(conv.ID, conv.DeleteAt)
 	switch {

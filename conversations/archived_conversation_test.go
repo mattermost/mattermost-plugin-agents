@@ -264,3 +264,52 @@ func TestRefusedResumeLeavesConversationArchived(t *testing.T) {
 		})
 	}
 }
+
+// TestDMTurnRefusesDeletedRoot pins that a DM turn on an active conversation
+// whose root post was deleted runs nothing, whether the deletion came before
+// the reply or after the turn was accepted.
+func TestDMTurnRefusesDeletedRoot(t *testing.T) {
+	tests := []struct {
+		name string
+		// deleteMidTurn deletes the root once the turn is accepted, before
+		// the completion request is built.
+		deleteMidTurn bool
+	}{
+		{name: "root deleted before the reply"},
+		{name: "root deleted after the turn was accepted", deleteMidTurn: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupPolicyEnv(t, []llm.BotConfig{policyBotConfig()}, dmMakeTextStream("first answer"), dmMakeTextStream("second answer"))
+			first := dmMessage(env, "what is the weather")
+			env.conversations.MessageHasBeenPosted(nil, first)
+			env.waitForStream(t)
+			requestsBefore := len(env.llmRequests())
+			convs := allConversations(env.convStore)
+			require.Len(t, convs, 1)
+			turnsBefore := len(env.convStore.turnsFor(convs[0].ID))
+
+			reply := &model.Post{Id: model.NewId(), UserId: autoReplyUserID, ChannelId: env.dm.Id, RootId: first.Id, Message: "and tomorrow?"}
+			env.setThread(first.Id, first, reply)
+			if tt.deleteMidTurn {
+				deleted := false
+				env.mmClient.onUpdatePost = func(post *model.Post) {
+					if convID, _ := post.GetProp(streaming.ConversationIDProp).(string); convID != "" && !deleted {
+						deleted = true
+						env.mmClient.gonePosts = map[string]bool{first.Id: true}
+					}
+				}
+			} else {
+				env.mmClient.gonePosts = map[string]bool{first.Id: true}
+			}
+
+			env.conversations.MessageHasBeenPosted(nil, reply)
+
+			assert.Len(t, env.llmRequests(), requestsBefore, "a deleted thread must not reach the provider")
+			if !tt.deleteMidTurn {
+				assert.Len(t, env.convStore.turnsFor(convs[0].ID), turnsBefore, "no user turn is recorded")
+			}
+		})
+	}
+}
