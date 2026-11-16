@@ -6,7 +6,6 @@ package config
 import (
 	"encoding/json"
 	"maps"
-	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
@@ -18,9 +17,10 @@ const SecretPlaceholder = "********************************"
 // embeddingProviderAPIKeyParam is the embedding provider parameter that holds a credential.
 const embeddingProviderAPIKeyParam = "apiKey"
 
-// IsSecretPlaceholder reports whether v is a mask rather than a credential.
+// IsSecretPlaceholder reports whether v is the mask itself. Any other value,
+// including a shorter run of asterisks, is a real value the admin entered.
 func IsSecretPlaceholder(v string) bool {
-	return v != "" && strings.Count(v, "*") == len(v)
+	return v == SecretPlaceholder
 }
 
 // RedactSecrets returns a copy of cfg in which every configured credential is
@@ -140,18 +140,8 @@ func redactServiceSecrets(service *llm.ServiceConfig) {
 	service.VertexAuthCredentials = maskSecret(service.VertexAuthCredentials)
 }
 
-// BindsCredentials reports whether a request for the given service type and API
-// URL may use the credentials stored on service. They belong to the provider
-// and endpoint they were saved with; an empty URL is the provider's own address.
-func BindsCredentials(service llm.ServiceConfig, serviceType, apiURL string) bool {
-	normalize := func(u string) string {
-		return strings.TrimRight(strings.TrimSpace(u), "/")
-	}
-	return service.Type == serviceType && normalize(service.APIURL) == normalize(apiURL)
-}
-
 func restoreServiceSecrets(service *llm.ServiceConfig, stored *llm.ServiceConfig) {
-	if stored == nil || !BindsCredentials(*stored, service.Type, service.APIURL) {
+	if stored == nil {
 		stored = &llm.ServiceConfig{}
 	}
 	service.APIKey = resolveSecret(service.APIKey, stored.APIKey)
@@ -183,19 +173,26 @@ func findBotByID(bots []llm.BotConfig, id string) *llm.BotConfig {
 	return nil
 }
 
-// mcpServerIdentifiers recognize an incoming MCP server as a stored one, most specific first.
+// mcpServerIdentifiers recognize an incoming MCP server as a stored one, most
+// specific first. A server keeps its credentials when its URL or name is edited:
+// the ID names it, and servers saved before IDs existed fall back to name and URL.
 var mcpServerIdentifiers = []func(incoming, stored MCPServerConfig) bool{
+	func(incoming, stored MCPServerConfig) bool {
+		return incoming.ID != "" && incoming.ID == stored.ID
+	},
 	func(incoming, stored MCPServerConfig) bool {
 		return incoming.Name == stored.Name && incoming.BaseURL == stored.BaseURL
 	},
 	func(incoming, stored MCPServerConfig) bool {
 		return incoming.BaseURL == stored.BaseURL
 	},
+	func(incoming, stored MCPServerConfig) bool {
+		return incoming.Name == stored.Name
+	},
 }
 
 // matchStoredMCPServers pairs each incoming MCP server with the stored entry it
-// identifies, or nil. Credentials stay with the base URL they were stored
-// against, and each stored entry is claimed at most once.
+// identifies, or nil. Each stored entry is claimed at most once.
 func matchStoredMCPServers(incoming, stored []MCPServerConfig) []*MCPServerConfig {
 	matched := make([]*MCPServerConfig, len(incoming))
 	claimed := make([]bool, len(stored))

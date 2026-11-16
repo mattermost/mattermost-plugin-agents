@@ -5,7 +5,6 @@ package api
 
 import (
 	"bytes"
-	"cmp"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -489,8 +488,6 @@ func TestSaveConfigCredentialRoundTrip(t *testing.T) {
 // reference the request carries nothing that could be resolved to a stored
 // credential, so it must be rejected.
 func TestFetchModelsRejectsPlaceholderAsCredential(t *testing.T) {
-	const maskedCredential = "**********"
-
 	var upstreamCalls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		upstreamCalls.Add(1)
@@ -512,7 +509,7 @@ func TestFetchModelsRejectsPlaceholderAsCredential(t *testing.T) {
 
 	raw, err := json.Marshal(map[string]any{
 		"serviceType": llm.ServiceTypeOpenAICompatible,
-		"apiKey":      maskedCredential,
+		"apiKey":      config.SecretPlaceholder,
 		"apiURL":      upstream.URL + "/v1",
 	})
 	require.NoError(t, err)
@@ -573,63 +570,28 @@ func (u *recordingUpstream) sawValue(value string) bool {
 	return false
 }
 
-// TestFetchModelsSendsStoredCredentialOnlyToStoredEndpoint asserts that the
-// credentials of a saved service reach the endpoint that service is saved with,
-// and no other. The admin console names a saved service instead of repeating its
-// credentials, so the endpoint the request carries is what decides whether the
-// stored credentials apply to it.
-func TestFetchModelsSendsStoredCredentialOnlyToStoredEndpoint(t *testing.T) {
+// TestFetchModelsResolvesMaskFromSavedService asserts how the model fetch
+// treats a saved service's credential: a mask resolves to the stored credential
+// wherever the admin points the request (a mistyped URL can be corrected without
+// retyping the key), while an empty value is a credential the admin cleared and
+// is never replaced.
+func TestFetchModelsResolvesMaskFromSavedService(t *testing.T) {
 	const storedServiceID = "svc-saved"
 
 	tests := []struct {
-		name        string
-		serviceType string
-		// requestType is the provider type the request names; empty means serviceType.
-		requestType string
-		// storedURL is the endpoint held by the saved service. A provider reached
-		// at a fixed address holds none.
-		storedURL func(savedURL string) string
-		// requestURL is the endpoint carried by the request.
-		requestURL func(savedURL, otherURL string) string
-		// clearedKey sends an empty API key, as for a field the admin emptied,
-		// instead of the mask the console sends for an untouched one.
-		clearedKey bool
-		// wantAtSaved is whether the saved endpoint must receive the credentials.
-		wantAtSaved bool
+		name string
+		// apiKey is what the console sends: the mask for an untouched field,
+		// empty for a cleared one.
+		apiKey string
+		// requestSaved is whether the request names the endpoint the service is saved with.
+		requestSaved bool
+		// wantStoredKey is whether the endpoint the request names must receive the stored key.
+		wantStoredKey bool
 	}{
-		{
-			name:        "request naming the endpoint the service is saved with",
-			serviceType: llm.ServiceTypeOpenAICompatible,
-			storedURL:   func(savedURL string) string { return savedURL },
-			requestURL:  func(savedURL, _ string) string { return savedURL },
-			wantAtSaved: true,
-		},
-		{
-			name:        "request naming an unrelated endpoint",
-			serviceType: llm.ServiceTypeOpenAICompatible,
-			storedURL:   func(savedURL string) string { return savedURL },
-			requestURL:  func(_, otherURL string) string { return otherURL },
-		},
-		{
-			name:        "cleared key at the saved endpoint stays empty",
-			serviceType: llm.ServiceTypeOpenAICompatible,
-			storedURL:   func(savedURL string) string { return savedURL },
-			requestURL:  func(savedURL, _ string) string { return savedURL },
-			clearedKey:  true,
-		},
-		{
-			name:        "request naming another provider type at the saved endpoint",
-			serviceType: llm.ServiceTypeOpenAICompatible,
-			requestType: llm.ServiceTypeOpenAI,
-			storedURL:   func(savedURL string) string { return savedURL },
-			requestURL:  func(savedURL, _ string) string { return savedURL },
-		},
-		{
-			name:        "request naming an endpoint for a service saved without one",
-			serviceType: llm.ServiceTypeOpenAI,
-			storedURL:   func(string) string { return "" },
-			requestURL:  func(_, otherURL string) string { return otherURL },
-		},
+		{name: "mask at the saved endpoint", apiKey: config.SecretPlaceholder, requestSaved: true, wantStoredKey: true},
+		{name: "mask at a corrected endpoint", apiKey: config.SecretPlaceholder, wantStoredKey: true},
+		{name: "cleared key at the saved endpoint", apiKey: "", requestSaved: true},
+		{name: "cleared key at another endpoint", apiKey: ""},
 	}
 
 	for _, tt := range tests {
@@ -653,21 +615,21 @@ func TestFetchModelsSendsStoredCredentialOnlyToStoredEndpoint(t *testing.T) {
 			stores.configStore.cfg = &config.Config{
 				Services: []llm.ServiceConfig{{
 					ID:     storedServiceID,
-					Type:   tt.serviceType,
+					Type:   llm.ServiceTypeOpenAICompatible,
 					APIKey: sentinelServiceAPIKey,
-					APIURL: tt.storedURL(saved.apiURL()),
+					APIURL: saved.apiURL(),
 				}},
 			}
 
-			apiKey := config.SecretPlaceholder
-			if tt.clearedKey {
-				apiKey = ""
+			requested, notRequested := other, saved
+			if tt.requestSaved {
+				requested, notRequested = saved, other
 			}
 			raw, err := json.Marshal(map[string]any{
-				"serviceType": cmp.Or(tt.requestType, tt.serviceType),
+				"serviceType": llm.ServiceTypeOpenAICompatible,
 				"serviceID":   storedServiceID,
-				"apiKey":      apiKey,
-				"apiURL":      tt.requestURL(saved.apiURL(), other.apiURL()),
+				"apiKey":      tt.apiKey,
+				"apiURL":      requested.apiURL(),
 			})
 			require.NoError(t, err)
 
@@ -678,35 +640,26 @@ func TestFetchModelsSendsStoredCredentialOnlyToStoredEndpoint(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			api.ServeHTTP(&plugin.Context{}, recorder, req)
 
-			assert.False(t, other.sawValue(sentinelServiceAPIKey),
-				"the credentials of a saved service must not be sent to an endpoint the service is not saved with")
-
-			assert.Equal(t, tt.wantAtSaved, saved.sawValue(sentinelServiceAPIKey),
-				"the saved endpoint must receive the stored credentials only for a request naming that provider type and endpoint")
-
-			if tt.wantAtSaved {
-				assert.Equal(t, http.StatusOK, recorder.Result().StatusCode,
-					"naming the endpoint a service is saved with must list its models")
+			if tt.wantStoredKey {
+				require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 			}
+			assert.Equal(t, tt.wantStoredKey, requested.sawValue(sentinelServiceAPIKey))
+			assert.False(t, notRequested.sawValue(sentinelServiceAPIKey), "an endpoint the request does not name must receive nothing")
 		})
 	}
 }
 
-// A saved service's credentials belong to the provider and endpoint they were
-// saved with, so a masked key does not follow the service to another one.
-func TestSaveConfigKeepsServiceCredentialOnlyForSavedEndpoint(t *testing.T) {
-	savedURL := storedCredentialConfig().Services[0].APIURL
-	savedType := storedCredentialConfig().Services[0].Type
-
+// Saving a service with a masked key keeps the stored key whatever else changed
+// about the service, including its provider type and API URL.
+func TestSaveConfigKeepsServiceCredentialWhenEndpointChanges(t *testing.T) {
 	tests := []struct {
-		name    string
-		apply   func(svc *llm.ServiceConfig)
-		wantKey string
+		name  string
+		apply func(svc *llm.ServiceConfig)
 	}{
-		{name: "unchanged endpoint keeps the key", apply: func(*llm.ServiceConfig) {}, wantKey: sentinelServiceAPIKey},
-		{name: "trailing slash keeps the key", apply: func(svc *llm.ServiceConfig) { svc.APIURL = savedURL + "/" }, wantKey: sentinelServiceAPIKey},
-		{name: "another endpoint drops the key", apply: func(svc *llm.ServiceConfig) { svc.APIURL = "https://attacker.example.com/v1" }},
-		{name: "another provider type drops the key", apply: func(svc *llm.ServiceConfig) { svc.Type = savedType + "-other" }},
+		{name: "unchanged", apply: func(*llm.ServiceConfig) {}},
+		{name: "another API URL", apply: func(svc *llm.ServiceConfig) { svc.APIURL = "https://corrected.example.com/v1" }},
+		{name: "cleared API URL", apply: func(svc *llm.ServiceConfig) { svc.APIURL = "" }},
+		{name: "another provider type", apply: func(svc *llm.ServiceConfig) { svc.Type += "-other" }},
 	}
 
 	for _, tt := range tests {
@@ -726,8 +679,66 @@ func TestSaveConfigKeepsServiceCredentialOnlyForSavedEndpoint(t *testing.T) {
 			router.ServeHTTP(w, req)
 			require.Equal(t, http.StatusOK, w.Code)
 
-			assert.Equal(t, tt.wantKey, store.cfg.Services[0].APIKey)
+			assert.Equal(t, sentinelServiceAPIKey, store.cfg.Services[0].APIKey)
 		})
+	}
+}
+
+// A value made only of asterisks that is not the mask itself is something the
+// admin entered, and a save must keep it.
+func TestSaveConfigKeepsAsteriskValues(t *testing.T) {
+	const (
+		storedHeader = "*"
+		typedHeader  = "***"
+	)
+
+	stored := storedCredentialConfig()
+	stored.MCP.Servers[0].Headers["X-Scope"] = storedHeader
+	stored.MCP.Servers[0].ServiceAccountHeaders["X-Scope"] = storedHeader
+	store := &testConfigStore{cfg: stored}
+	router := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
+
+	var read config.Config
+	require.NoError(t, json.Unmarshal(getAdminConfig(t, store), &read))
+	assert.Equal(t, config.SecretPlaceholder, read.MCP.Servers[0].Headers["X-Scope"], "the read response masks the stored value")
+	read.MCP.Servers[0].Headers["X-Typed"] = typedHeader
+	read.Services[0].APIKey = typedHeader
+	body, err := json.Marshal(read)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	assert.Equal(t, storedHeader, store.cfg.MCP.Servers[0].Headers["X-Scope"], "an untouched asterisk header survives a save")
+	assert.Equal(t, storedHeader, store.cfg.MCP.Servers[0].ServiceAccountHeaders["X-Scope"])
+	assert.Equal(t, typedHeader, store.cfg.MCP.Servers[0].Headers["X-Typed"], "an asterisk value the admin typed is saved as typed")
+	assert.Equal(t, typedHeader, store.cfg.Services[0].APIKey)
+}
+
+// The running configuration, which is also what other cluster nodes load, holds
+// the real credentials; only the response to the browser is masked.
+func TestSaveConfigAppliesRealCredentialsToLiveConfig(t *testing.T) {
+	store := &testConfigStore{cfg: storedCredentialConfig()}
+	updater := &testConfigUpdater{}
+	router := setupTestRouter(store, updater, &testClusterNotifier{})
+
+	var read config.Config
+	require.NoError(t, json.Unmarshal(getAdminConfig(t, store), &read))
+	body, err := json.Marshal(read)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	require.NotNil(t, updater.lastUpdate)
+	for _, field := range credentialFields() {
+		assert.Equal(t, field.get(*storedCredentialConfig()), field.get(*updater.lastUpdate), "%s in the live config", field.name)
 	}
 }
 

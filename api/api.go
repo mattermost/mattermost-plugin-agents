@@ -936,12 +936,9 @@ func (a *API) handleFetchModels(c *gin.Context) {
 			c.AbortWithError(http.StatusInternalServerError, err)
 			return
 		}
-		// A saved service's credentials belong to the endpoint it is saved with,
-		// so they are only read for a request addressing that same endpoint. A
-		// request addressing anywhere else carries its own credentials or none.
 		// Only a mask is replaced by the stored credential: an empty value is a
 		// credential the admin cleared and stays empty.
-		if stored != nil && config.BindsCredentials(*stored, req.ServiceType, req.APIURL) {
+		if stored != nil {
 			if config.IsSecretPlaceholder(req.APIKey) {
 				req.APIKey = stored.APIKey
 			}

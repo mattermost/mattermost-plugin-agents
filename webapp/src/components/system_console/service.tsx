@@ -17,8 +17,7 @@ import {useIsLicensedFor} from '@/license';
 
 import ConsolePolicySection from '../access_control/console_policy_section';
 
-import {BooleanItem, CredentialsClearedNote, ItemList, SelectionItem, TextItem, ComboboxItem} from './item';
-import {SECRET_PLACEHOLDER} from './plugin_config_types';
+import {BooleanItem, ItemList, SelectionItem, TextItem, ComboboxItem} from './item';
 import {LicenseChip} from './enterprise_chip';
 
 export type LLMService = {
@@ -100,21 +99,6 @@ type ModelInfo = {
     contextLength?: number
 }
 
-const hasMaskedCredential = (service: LLMService): boolean =>
-    [service.apiKey, service.awsSecretAccessKey, service.vertexAuthCredentials].includes(SECRET_PLACEHOLDER);
-
-// The server keeps a stored credential with the provider type and API URL it was
-// saved against, so a mask the admin never replaced means nothing once either changes.
-const withoutMaskedCredentials = (service: LLMService): LLMService => {
-    const unmasked = (value: string) => (value === SECRET_PLACEHOLDER ? '' : value);
-    return {
-        ...service,
-        apiKey: unmasked(service.apiKey),
-        awsSecretAccessKey: unmasked(service.awsSecretAccessKey),
-        vertexAuthCredentials: unmasked(service.vertexAuthCredentials),
-    };
-};
-
 type ServiceFieldsProps = {
     service: LLMService
     services?: LLMService[]
@@ -131,29 +115,6 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
     const isMistral = type === 'mistral';
     const isScale = type === 'scale';
     const isNorth = type === 'north';
-
-    const [credentialsCleared, setCredentialsCleared] = useState(false);
-
-    // Provider type and API URL the credentials currently in the fields belong to.
-    const normalizeURL = (url: string | undefined) => (url ?? '').trim().replace(/\/+$/, '');
-    const credentialEndpointRef = useRef({type: props.service.type, apiURL: normalizeURL(props.service.apiURL)});
-    const clearCredentialsIfMoved = (next: LLMService): LLMService => {
-        const endpoint = {type: next.type, apiURL: normalizeURL(next.apiURL)};
-        const moved = endpoint.type !== credentialEndpointRef.current.type || endpoint.apiURL !== credentialEndpointRef.current.apiURL;
-        credentialEndpointRef.current = endpoint;
-        if (!moved || !hasMaskedCredential(next)) {
-            return next;
-        }
-        setCredentialsCleared(true);
-        return withoutMaskedCredentials(next);
-    };
-
-    const clearCredentialsOnBlur = () => {
-        const next = clearCredentialsIfMoved(props.service);
-        if (next !== props.service) {
-            props.onChange(next);
-        }
-    };
 
     const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
     const [loadingModels, setLoadingModels] = useState(false);
@@ -348,12 +309,12 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                 label={intl.formatMessage({defaultMessage: 'Service type'})}
                 value={props.service.type}
                 onChange={(nextType) => {
-                    props.onChange(clearCredentialsIfMoved({
+                    props.onChange({
                         ...props.service,
                         type: nextType,
                         apiKey: nextType === 'vertex' ? '' : props.service.apiKey,
                         useResponsesAPI: (nextType === 'openai' || nextType === 'north') ? true : props.service.useResponsesAPI,
-                    }));
+                    });
                 }}
                 options={[
                     {value: 'openai', label: 'OpenAI'},
@@ -370,17 +331,11 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                     {value: 'asage', label: 'asksage (Experimental)'},
                 ]}
             />
-            {credentialsCleared && (
-                <CredentialsClearedNote>
-                    {intl.formatMessage({defaultMessage: 'Saved credentials do not carry over to a different URL. Re-enter them before saving.'})}
-                </CredentialsClearedNote>
-            )}
             {(type === 'openaicompatible' || type === 'azure' || type === 'asage' || type === 'scale' || type === 'north') && (
                 <TextItem
                     label={apiURLLabel}
                     value={props.service.apiURL}
                     onChange={(e) => props.onChange({...props.service, apiURL: e.target.value})}
-                    onBlur={clearCredentialsOnBlur}
                     helptext={apiURLHelpText}
                 />
             )}
@@ -396,7 +351,6 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                         label={intl.formatMessage({defaultMessage: 'Custom Endpoint URL (Optional)'})}
                         value={props.service.apiURL}
                         onChange={(e) => props.onChange({...props.service, apiURL: e.target.value})}
-                        onBlur={clearCredentialsOnBlur}
                         helptext={intl.formatMessage({defaultMessage: 'Optional custom endpoint for VPC endpoints or proxies (e.g., https://bedrock-runtime.vpce-xxx.us-east-1.vpce.amazonaws.com)'})}
                     />
                     <TextItem
