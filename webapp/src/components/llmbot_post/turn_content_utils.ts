@@ -51,6 +51,10 @@ export function statusStringToEnum(status: ConvToolCallStatus | undefined): Tool
  * the response, so tool-round turns that WriteToolTurns persisted during the
  * stream sit BEFORE it. We walk backwards from the anchor, stopping at the
  * user turn that introduced this response, and include the anchor itself.
+ *
+ * While the response is still streaming the anchor exists from the start and
+ * sits BEFORE the rounds written so far; those are matched by run_post_id and
+ * placed ahead of the anchor.
  */
 function collectResponseTurns(
     conversation: ConversationResponse,
@@ -76,6 +80,11 @@ function collectResponseTurns(
             break;
         }
         out.unshift(t);
+    }
+    for (let i = anchorIdx + 1; i < sorted.length; i++) {
+        if (sorted[i].run_post_id === postId) {
+            out.push(sorted[i]);
+        }
     }
     out.push(sorted[anchorIdx]);
     return out;
@@ -407,6 +416,7 @@ function distributeAnnotations(drafts: RoundDraft[], annotations: Annotation[]):
 export function buildRoundsFromTurns(
     conversation: ConversationResponse,
     postId: string,
+    options: {includeStreaming?: boolean} = {},
 ): Round[] {
     const turns = collectResponseTurns(conversation, postId);
     if (turns.length === 0) {
@@ -416,7 +426,9 @@ export function buildRoundsFromTurns(
     const resultMap = buildToolResultMap(conversation);
     const rounds: Round[] = [];
     for (const turn of turns) {
-        if (turn.role !== 'assistant') {
+        // A still-streaming turn duplicates the live round while events flow;
+        // callers include it only when no live stream is rendering it.
+        if (turn.role !== 'assistant' || (turn.status === 'streaming' && !options.includeStreaming)) {
             continue;
         }
         rounds.push(...splitTurnIntoRounds(turn, resultMap));

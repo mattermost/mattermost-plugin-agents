@@ -38,6 +38,20 @@ type streamingContextRecorder struct {
 
 	mu   sync.Mutex
 	ctxs []context.Context
+
+	// beforeStream runs where a synchronous route streams the response, to
+	// cancel the request mid-run as core does when a client disconnects.
+	beforeStream func()
+	streamErrs   []error
+}
+
+func (s *streamingContextRecorder) StreamToPost(ctx context.Context, _ *llm.TextStreamResult, _ *model.Post, _, _ string) {
+	if s.beforeStream != nil {
+		s.beforeStream()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.streamErrs = append(s.streamErrs, ctx.Err())
 }
 
 func (s *streamingContextRecorder) GetStreamingContext(ctx context.Context, _ string) (context.Context, error) {
@@ -201,6 +215,7 @@ func TestResumeRoutesSurviveRequestCancellation(t *testing.T) {
 
 			reqCtx, cancelRequest := context.WithCancel(context.Background())
 			defer cancelRequest()
+			streamingService.beforeStream = cancelRequest
 			req := httptest.NewRequestWithContext(reqCtx, http.MethodPost, "/post/"+postID+"/"+tc.endpoint, strings.NewReader(tc.body))
 			req.Header.Add("Mattermost-User-Id", testUserID)
 			recorder := httptest.NewRecorder()
@@ -213,7 +228,13 @@ func TestResumeRoutesSurviveRequestCancellation(t *testing.T) {
 			runCtxs := streamingService.recorded()
 			require.Len(t, runCtxs, 1, "the route must start exactly one run")
 			runCtx := runCtxs[0]
-			require.NoError(t, runCtx.Err(), "canceling the request must not cancel the run it started")
+			if tc.endpoint == "regenerate" {
+				// The route streams synchronously and cancels the run when it
+				// returns, so the run is checked where it streams instead.
+				require.Equal(t, []error{nil}, streamingService.streamErrs, "canceling the request must not cancel the run it started")
+			} else {
+				require.NoError(t, runCtx.Err(), "canceling the request must not cancel the run it started")
+			}
 			assert.Equal(t, sessionID, auth.SessionIDFromContext(runCtx), "the run must keep the requester's session for file policy checks")
 
 			if len(tc.wantAuditKeys) > 0 {

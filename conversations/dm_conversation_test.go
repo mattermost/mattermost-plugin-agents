@@ -1340,6 +1340,10 @@ func TestDMCompletionRequest_BuiltFromTurns(t *testing.T) {
 	assert.Contains(t, req.Posts[2].Message, "And what is 3+3?")
 }
 
+func (s *fakeConvStore) HasLiveStreamingTurn(string, int64) (bool, error) {
+	return false, nil
+}
+
 // --- Test: generated titles never replace a user's rename -------------------
 
 // The title is generated asynchronously after the first reply, so in the
@@ -1419,4 +1423,37 @@ func TestDMTitleGenerationKeepsUserRename(t *testing.T) {
 			assert.Equal(t, &model.WebsocketBroadcast{UserId: env.userID}, ev.broadcast)
 		})
 	}
+}
+
+func (*fakeConvStore) ClaimStaleStreamingTurn(string, int64) (bool, error) {
+	return false, nil
+}
+
+func (*fakeConvStore) ReleaseStreamingTurnClaim(string) error {
+	return nil
+}
+
+func (s *fakeConvStore) FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	turn, ok := s.allTurns[id]
+	if !ok || turn.Status != store.TurnStatusStreaming {
+		return false, nil
+	}
+	turn.Content = content
+	turn.TokensIn = tokensIn
+	turn.TokensOut = tokensOut
+	turn.Status = status
+	return true, nil
+}
+
+func (s *fakeConvStore) HeartbeatStreamingTurn(id string, content json.RawMessage) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	turn, ok := s.allTurns[id]
+	if !ok || turn.Status != store.TurnStatusStreaming {
+		return false, nil
+	}
+	turn.Content = content
+	return true, nil
 }

@@ -466,7 +466,7 @@ func TestChannelMentionToolPrivacy(t *testing.T) {
 		},
 	}
 
-	err = svc.WriteToolTurns(result.Conversation.ID, toolTurns, false)
+	err = svc.WriteToolTurns(result.Conversation.ID, toolTurns, false, "")
 	require.NoError(t, err)
 
 	// Verify turns were written
@@ -560,7 +560,7 @@ func TestChannelMentionToolSharingFlip(t *testing.T) {
 				},
 			},
 		},
-	}, false)
+	}, false, "")
 	require.NoError(t, err)
 
 	// Verify shared=false initially

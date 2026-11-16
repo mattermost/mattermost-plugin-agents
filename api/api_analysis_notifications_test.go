@@ -154,7 +154,7 @@ func TestChannelAnalysisStopEndsTheAnalysis(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		require.FailNow(t, "the analysis kept running after the requester stopped it")
 	}
-	require.True(t, streamingService.Shutdown(5*time.Second), "the stopped run finished")
+	require.True(t, streamingService.WaitForActiveStreams(5*time.Second), "the stopped run finished")
 }
 
 // TestChannelAnalysisReleasesItsDMWhenTheAnalysisEnds runs the channel

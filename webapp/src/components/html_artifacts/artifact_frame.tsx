@@ -26,6 +26,7 @@ import {
 import ArtifactConsentPrompt from './artifact_consent_prompt';
 import ArtifactInteractOverlay from './artifact_interact_overlay';
 import {newArtifactNonce} from './artifact_token';
+import {isolatedFrameRegistry} from './isolated_frames';
 import {downloadArtifact} from './download';
 
 export const MIN_INLINE_HEIGHT = 120;
@@ -277,9 +278,17 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
         if (!broker) {
             return undefined; // eslint-disable-line no-undefined
         }
-        window.addEventListener('message', broker.handleMessage);
+
+        // With the server's isolated frame registry, the artifact's messages
+        // reach the broker through the wrapper's registration (see setWrapper).
+        const listen = !isolatedFrameRegistry();
+        if (listen) {
+            window.addEventListener('message', broker.handleMessage);
+        }
         return () => {
-            window.removeEventListener('message', broker.handleMessage);
+            if (listen) {
+                window.removeEventListener('message', broker.handleMessage);
+            }
             broker.dispose();
 
             // Unanswered prompts are dropped without recording a decision.
@@ -535,11 +544,23 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
     useImperativeHandle(ref, () => ({reload}), [reload]);
 
     // A new wrapper element is a new host load: count its loads from zero.
+    // The wrapper is registered as an isolated frame, so that nothing the
+    // artifact (or any frame it creates) posts to this window reaches any
+    // listener but this load's broker.
+    const unregisterWrapperRef = useRef<(() => void) | null>(null);
     const setWrapper = useCallback((el: HTMLIFrameElement | null) => {
+        unregisterWrapperRef.current?.();
+        unregisterWrapperRef.current = null;
         iframeRef.current = el;
         innerRef.current = null;
         wrapperLoadCountRef.current = 0;
         loadCountRef.current = 0;
+        const registry = isolatedFrameRegistry();
+        if (el && registry) {
+            unregisterWrapperRef.current = registry.register(el, (event) => {
+                brokerRef.current?.handleMessage(event);
+            });
+        }
     }, []);
 
     // The artifact navigated its own frame (reload, meta refresh, link):

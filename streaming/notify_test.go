@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
+	"github.com/mattermost/mattermost-plugin-agents/v2/lifecycle"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/notifications"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -231,6 +232,17 @@ func TestStreamToPostNotifiesOnceAtRunEnd(t *testing.T) {
 	}
 }
 
+// shutdownRoot gives service a plugin root context and returns a function that
+// shuts it down as OnDeactivate does, then waits for the runs to finish.
+func shutdownRoot(service *MMPostStreamService) func() bool {
+	root, cancel := context.WithCancelCause(context.Background())
+	service.rootCtx = root
+	return func() bool {
+		cancel(lifecycle.ErrShutdown)
+		return service.WaitForActiveStreams(5 * time.Second)
+	}
+}
+
 func TestShutdownCancelsStreamsAndNotifiesRequesters(t *testing.T) {
 	const channelID = "channel-id"
 	tests := []struct {
@@ -257,6 +269,7 @@ func TestShutdownCancelsStreamsAndNotifiesRequesters(t *testing.T) {
 			notifier := newRecordingNotifier(client, true)
 			service := NewMMPostStreamService(client, i18n.Init())
 			service.SetNotifier(notifier)
+			shutdown := shutdownRoot(service)
 
 			post := &model.Post{Id: model.NewId(), ChannelId: channelID}
 			stream := make(chan llm.TextStreamEvent)
@@ -265,15 +278,12 @@ func TestShutdownCancelsStreamsAndNotifiesRequesters(t *testing.T) {
 				service.StopStreaming(post.Id)
 			}
 
-			require.True(t, service.Shutdown(5*time.Second), "the run finished before the timeout")
+			require.True(t, shutdown(), "the run finished before the timeout")
 
 			calls := notifier.snapshot()
 			require.Len(t, calls, 1, "the run notified once before shutdown returned")
 			assert.Equal(t, tc.wantOutcome, calls[0].end.Outcome)
 			assert.Equal(t, tc.wantDelivery, notifications.Decide(calls[0].end))
-
-			_, err := service.GetStreamingContext(context.Background(), model.NewId())
-			assert.ErrorIs(t, err, ErrShuttingDown, "no new streams start during shutdown")
 		})
 	}
 }
@@ -294,7 +304,7 @@ func TestNewPostDuringShutdownNotifiesRequester(t *testing.T) {
 			notifier := newRecordingNotifier(client, true)
 			service := NewMMPostStreamService(client, i18n.Init())
 			service.SetNotifier(notifier)
-			require.True(t, service.Shutdown(time.Second))
+			require.True(t, shutdownRoot(service)())
 
 			post := &model.Post{Id: model.NewId(), ChannelId: channelID}
 			stream := &llm.TextStreamResult{Stream: make(chan llm.TextStreamEvent)}
@@ -304,7 +314,8 @@ func TestNewPostDuringShutdownNotifiesRequester(t *testing.T) {
 			} else {
 				err = service.StreamToNewPost(context.Background(), "bot-id", userID, stream, post, "")
 			}
-			require.ErrorIs(t, err, ErrShuttingDown)
+			require.NoError(t, err)
+			require.True(t, service.WaitForActiveStreams(5*time.Second))
 
 			require.Len(t, client.createdPosts, 1)
 			require.True(t, client.createdPosts[0].HasDeferredNotification())
@@ -315,33 +326,6 @@ func TestNewPostDuringShutdownNotifiesRequester(t *testing.T) {
 			assert.Equal(t, notifications.OutcomeCancelled, calls[0].end.Outcome)
 			assert.True(t, calls[0].end.PostDeferred)
 			assert.Equal(t, notifications.DeliveryRequesterOnly, notifications.Decide(calls[0].end))
-		})
-	}
-}
-
-func TestShutdownTimesOut(t *testing.T) {
-	tests := []struct {
-		name     string
-		inFlight bool
-		want     bool
-	}{
-		{name: "nothing in flight", want: true},
-		{name: "a run that never finishes", inFlight: true, want: false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			service := NewMMPostStreamService(&fakeStreamingClient{}, i18n.Init())
-			var ctx context.Context
-			if tc.inFlight {
-				var err error
-				ctx, err = service.GetStreamingContext(context.Background(), "post-id")
-				require.NoError(t, err)
-			}
-
-			assert.Equal(t, tc.want, service.Shutdown(50*time.Millisecond))
-			if ctx != nil {
-				assert.ErrorIs(t, context.Cause(ctx), errPluginShutdown)
-			}
 		})
 	}
 }
@@ -402,7 +386,7 @@ func TestStreamToNewPostMarksDeferred(t *testing.T) {
 
 			// The run's span ends after Notify; a run left in flight would leak
 			// its span into the next test's tracer provider.
-			require.True(t, service.Shutdown(5*time.Second), "the run finished")
+			require.True(t, service.WaitForActiveStreams(5*time.Second), "the run finished")
 		})
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
+	"github.com/mattermost/mattermost-plugin-agents/v2/lifecycle"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/notifications"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
@@ -59,10 +60,12 @@ func (n *recordingNotifier) Notify(_ context.Context, end notifications.StreamEn
 // mid-response still ends the run: the requester is notified about the
 // unfinished response instead of it staying deferred forever.
 func TestOnDeactivateEndsInFlightResponses(t *testing.T) {
+	lifecycle.Start()
+	t.Cleanup(lifecycle.Shutdown)
 	notifier := &recordingNotifier{}
 	streams := streaming.NewMMPostStreamService(deactivateStreamClient{}, i18n.Init())
 	streams.SetNotifier(notifier)
-	p := &Plugin{streamingService: streams}
+	p := &Plugin{streamingService: streams, streamService: streams}
 
 	post := &model.Post{Id: model.NewId(), ChannelId: model.NewId()}
 	never := make(chan llm.TextStreamEvent)

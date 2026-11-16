@@ -35,7 +35,7 @@ type spyRebuilder struct {
 	callCount int
 }
 
-func (s *spyRebuilder) RebuildExternalServer() { s.callCount++ }
+func (s *spyRebuilder) RequestRebuild() { s.callCount++ }
 
 func mcpRegisterRequest(t *testing.T, body any) *http.Request {
 	t.Helper()

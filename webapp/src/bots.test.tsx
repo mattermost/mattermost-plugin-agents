@@ -307,23 +307,40 @@ describe('fetchAndStoreBots', () => {
         expect(dispatch).not.toHaveBeenCalled();
     });
 
-    test('a superseded response does not overwrite a newer one', async () => {
-        const older = [makeBot('older')];
-        const newer = [makeBot('newer')];
-        let resolveOlder: (value: unknown) => void = jest.fn();
-        mockGetAIBots.mockImplementationOnce(() => new Promise((resolve) => {
-            resolveOlder = resolve;
+    test('a superseded response is returned but never overwrites the newer one', async () => {
+        const stale = [makeBot('stale')];
+        const fresh = [makeBot('fresh')];
+        let resolveStale!: (v: unknown) => void;
+        mockGetAIBots.mockReturnValueOnce(new Promise((resolve) => {
+            resolveStale = resolve;
         }));
-        mockGetAIBots.mockResolvedValueOnce({bots: newer, deferredNotifications: true});
+        mockGetAIBots.mockResolvedValueOnce({bots: fresh});
         const dispatch = jest.fn();
 
-        const olderFetch = fetchAndStoreBots(dispatch);
-        await fetchAndStoreBots(dispatch);
-        resolveOlder({bots: older, deferredNotifications: false});
-        await olderFetch;
+        const first = fetchAndStoreBots(dispatch);
+        await expect(fetchAndStoreBots(dispatch)).resolves.toBe(fresh);
+        resolveStale({bots: stale});
 
-        expect(dispatch).toHaveBeenCalledWith({type: BotsHandler, bots: newer});
-        expect(dispatch).not.toHaveBeenCalledWith({type: BotsHandler, bots: older});
+        await expect(first).resolves.toBe(stale);
+        const stored = dispatch.mock.calls.filter(([action]) => action.type === BotsHandler).map(([action]) => action.bots);
+        expect(stored).toEqual([fresh]);
+    });
+
+    test('an older response is still stored when the newer request failed', async () => {
+        const older = [makeBot('older')];
+        let resolveOlder!: (v: unknown) => void;
+        mockGetAIBots.mockReturnValueOnce(new Promise((resolve) => {
+            resolveOlder = resolve;
+        }));
+        mockGetAIBots.mockRejectedValueOnce(new Error('network'));
+        const dispatch = jest.fn();
+
+        const first = fetchAndStoreBots(dispatch);
+        await expect(fetchAndStoreBots(dispatch)).rejects.toThrow('network');
+        resolveOlder({bots: older});
+
+        await expect(first).resolves.toBe(older);
+        expect(dispatch).toHaveBeenCalledWith({type: BotsHandler, bots: older});
     });
 
     test('propagates fetch failures to the caller', async () => {

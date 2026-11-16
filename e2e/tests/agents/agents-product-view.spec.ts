@@ -11,14 +11,16 @@ import path from 'path';
 
 import {expect, type Page} from '@playwright/test';
 
+import {AgentAPIHelper} from 'helpers/agent-api';
 import {AgentChatPage} from 'helpers/agent-chat-page';
+import {AgentPageHelper} from 'helpers/agent-page';
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {containerTest} from 'helpers/container-fixture';
 import {withDeadline} from 'helpers/deadline';
 import {buildTextResponse, TITLE_GENERATION_PROMPT_PREFIX} from 'helpers/aimock-fixtures';
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
-import {AIMOCK_BOT_NAME, RunAIMockContainer} from 'helpers/plugincontainer';
+import {AIMOCK_BOT_NAME, AIMOCK_SERVICE_ID, RunAIMockContainer} from 'helpers/plugincontainer';
 
 const username = 'regularuser';
 const password = 'regularuser';
@@ -42,6 +44,7 @@ const DM_CHAT: Chat = {prompt: 'product-view-dm-011', reply: 'Channels DM reply 
 const ENTER_REPLY_CHAT: Chat = {prompt: 'product-view-reply-enter-012', reply: 'Reply composer enter marker.'};
 const COMPLETE_CHAT: Chat = {prompt: 'product-view-autocomplete-013', reply: 'Autocomplete chat reply marker.'};
 const STOP_CHAT: Chat = {prompt: 'product-view-stop-seed-014', reply: 'Stop chat reply marker.'};
+const YOUR_AGENTS_CHAT: Chat = {prompt: 'product-view-your-agents-015', reply: 'Your agents chat reply marker.'};
 const ATTACH_PROMPT = 'product-view-attach-004';
 const ATTACH_FILE = 'product-view-attachment.txt';
 const STOP_PROMPT = 'product-view-stop-005';
@@ -60,7 +63,7 @@ const chatFixtures = (...chats: Chat[]) => chats.flatMap(({prompt, reply, title}
     ...buildTextResponse({userMessage: prompt, content: reply}).fixtures,
 ]);
 const baseFixtures = () => [
-    ...chatFixtures({prompt: FIRST_PROMPT, reply: FIRST_REPLY, title: THREAD_TITLE}, SIDEBAR_CHAT, HEADER_CHAT, VIEW_CHAT, DM_CHAT, ENTER_REPLY_CHAT, COMPLETE_CHAT, STOP_CHAT),
+    ...chatFixtures({prompt: FIRST_PROMPT, reply: FIRST_REPLY, title: THREAD_TITLE}, SIDEBAR_CHAT, HEADER_CHAT, VIEW_CHAT, DM_CHAT, ENTER_REPLY_CHAT, COMPLETE_CHAT, STOP_CHAT, YOUR_AGENTS_CHAT),
     ...replyFixtures([ENTER_PROMPT, ATTACH_PROMPT]),
 
     // Streams slowly enough to be stopped mid-way.
@@ -141,12 +144,12 @@ async function startChatViaUi(page: Page, chat: Chat): Promise<string> {
 }
 
 // Creates a finished conversation through the API (a DM to the agent) and returns its root post id.
-async function seedThread(chat: Chat): Promise<string> {
+async function seedThread(chat: Chat, agent = {channelId: dmChannelId, botId: botUserId}): Promise<string> {
     const client = await mattermost.getClient(username, password);
-    const root = await client.createPost({channel_id: dmChannelId, message: chat.prompt} as any);
+    const root = await client.createPost({channel_id: agent.channelId, message: chat.prompt} as any);
     await expect.poll(async () => {
         const thread = await client.getPostThread(root.id);
-        return Object.values(thread.posts).some((p) => p.user_id === botUserId && p.message.includes(chat.reply));
+        return Object.values(thread.posts).some((p) => p.user_id === agent.botId && p.message.includes(chat.reply));
     }, {timeout: 60000}).toBe(true);
     return root.id;
 }
@@ -321,6 +324,47 @@ test.describe('Agents product view', () => {
         await nav.getByRole('button', {name: `New chat with ${botDisplayName}`}).focus();
         await page.keyboard.press('Space');
         await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}$`));
+    });
+
+    test('sidebar "Your agents" lists only agents the user created or chats with, and the open one', async ({page}) => {
+        const suffix = Date.now().toString(36);
+        const agentApi = new AgentAPIHelper(mattermost.url());
+        const adminToken = (await mattermost.getAdminClient()).getToken();
+        const userClient = await mattermost.getClient(username, password);
+        const createAgent = (token: string, displayName: string) => agentApi.createTestAgent(token, {
+            displayName: `${displayName} ${suffix}`,
+            username: `${displayName.toLowerCase().replace(/ /g, '')}${suffix}`,
+            serviceID: AIMOCK_SERVICE_ID,
+        });
+        const unrelated = await createAgent(adminToken, 'Unrelated Agent');
+        const chatted = await createAgent(adminToken, 'Chatted Agent');
+        const own = await createAgent(userClient.getToken(), 'Own Agent');
+
+        const me = await userClient.getMe();
+        const chattedDm = await userClient.createDirectChannel([me.id, chatted.botUserID!]);
+        await seedThread(YOUR_AGENTS_CHAT, {channelId: chattedDm.id, botId: chatted.botUserID!});
+
+        await login(page);
+        const agentPage = new AgentPageHelper(page);
+        await agentPage.navigateToAgents(mattermost.url());
+        await expect(agentPage.getAgentRowButton(unrelated.displayName)).toBeVisible();
+        const yourAgents = sidebar(page).getByRole('region', {name: 'Your agents'});
+        const agentRow = (agent: {displayName: string}) => yourAgents.getByRole('button', {name: agent.displayName, exact: true});
+
+        await expect(agentRow(chatted)).toBeVisible({timeout: 30000});
+        await expect(agentRow(own)).toBeVisible();
+        await expect(agentRow(unrelated)).toHaveCount(0);
+
+        // Starting a chat from All agents lists that agent while its chat is open.
+        await agentPage.clickAgentRow(unrelated.displayName);
+        await expect(page).toHaveURL(new RegExp(`/agents/chat/${unrelated.botUserID}$`));
+        await expect(agentRow(unrelated)).toBeVisible();
+
+        await sidebar(page).getByRole('button', {name: 'All agents'}).click();
+        await expect(page).toHaveURL(/\/agents\/all$/);
+        await expect(agentRow(chatted)).toBeVisible();
+        await expect(agentRow(unrelated)).toHaveCount(0);
+        await shot(page, '05_your_agents');
     });
 
     test('thread shows your message and the reply, with its time in the controls and the host reply box in the column', async ({page}) => {

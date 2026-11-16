@@ -34,17 +34,31 @@ type PluginAPI interface {
 	PluginHTTP(*http.Request) *http.Response
 }
 
-// retryPolicy controls the Register() backoff loop. Tests override fields.
+// ReregisterHeader marks a POST from the Agents plugin to the server's Path
+// asking the source plugin to register again, for example after the Agents
+// plugin restarted. ServeHTTP answers with the same header set, which tells the
+// Agents plugin that this library handled the request.
+const ReregisterHeader = "X-Mattermost-Mcp-Reregister"
+
+// Values of ReregisterHeader on the response.
+const (
+	ReregisterAccepted = "accepted"
+	ReregisterStopped  = "stopped"
+)
+
+// retryPolicy controls the Register() backoff loop. Retries continue until
+// registration succeeds, fails permanently, or Unregister is called; a warning
+// is logged once after warnAfterAttempts failures. Tests override fields.
 type retryPolicy struct {
-	baseDelay   time.Duration
-	maxDelay    time.Duration
-	maxAttempts int
+	baseDelay         time.Duration
+	maxDelay          time.Duration
+	warnAfterAttempts int
 }
 
 var defaultRetryPolicy = retryPolicy{
-	baseDelay:   1 * time.Second,
-	maxDelay:    8 * time.Second,
-	maxAttempts: 15,
+	baseDelay:         1 * time.Second,
+	maxDelay:          30 * time.Second,
+	warnAfterAttempts: 15,
 }
 
 // Server is a cross-plugin MCP server owned by a source plugin. Safe for
@@ -64,6 +78,17 @@ type Server struct {
 	regCtx    context.Context
 	regCancel context.CancelFunc
 	regWG     sync.WaitGroup
+
+	// regMu guards registering and registerAgain, and orders regCancel
+	// against starting a new register goroutine so regWG.Go never races
+	// Unregister's regWG.Wait.
+	regMu sync.Mutex
+	// registering is true while the register goroutine runs.
+	registering bool
+	// registerAgain asks the running goroutine for one more registration
+	// after the current one finishes, so a request that arrives just as a
+	// registration completes is not lost.
+	registerAgain bool
 
 	retry retryPolicy
 }
