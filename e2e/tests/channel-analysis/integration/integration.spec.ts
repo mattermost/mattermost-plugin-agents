@@ -187,7 +187,7 @@ data: [DONE]
 
         // 7. Verify first response is visible
         const firstPostText = llmBotHelper.getPostText();
-        await expect(firstPostText).toBeVisible();
+        await expect(firstPostText).toContainText('nice to meet you');
         const firstContent = await firstPostText.textContent();
         expect(firstContent).toBeTruthy();
         expect(firstContent!.length).toBeGreaterThan(10);
