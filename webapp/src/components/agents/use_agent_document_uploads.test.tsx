@@ -97,7 +97,7 @@ describe('useAgentDocumentUploads', () => {
         expect(onUploaded.mock.calls.map(([doc]) => doc.name)).toEqual(['a.txt', 'b.txt']);
     });
 
-    test('an upload that finishes after reset is dropped, and later uploads still work', async () => {
+    test('an upload that finishes after reset is dropped, and replacement uploads do not wait for it', async () => {
         let finishA: (doc: AgentDocument) => void = jest.fn();
         mockUpload.mockImplementation((file) => {
             if (file.name === 'a.txt') {
@@ -112,23 +112,24 @@ describe('useAgentDocumentUploads', () => {
         act(() => {
             result.current.upload([new File(['a'], 'a.txt')]);
         });
+        await waitFor(() => expect(mockUpload).toHaveBeenCalledTimes(1));
         act(() => {
             result.current.reset();
         });
         expect(result.current.uploads).toEqual([]);
         expect(result.current.uploading).toBe(false);
 
-        await act(async () => {
-            finishA(makeDocument('id-a.txt', 'a.txt'));
-        });
-        expect(onUploaded).not.toHaveBeenCalled();
-        expect(result.current.uploads).toEqual([]);
-
         act(() => {
             result.current.upload([new File(['b'], 'b.txt')]);
         });
         await waitFor(() => expect(onUploaded).toHaveBeenCalledTimes(1));
         expect(onUploaded.mock.calls[0][0].name).toBe('b.txt');
+
+        await act(async () => {
+            finishA(makeDocument('id-a.txt', 'a.txt'));
+        });
+        expect(onUploaded).toHaveBeenCalledTimes(1);
+        expect(result.current.uploads).toEqual([]);
     });
 
     test.each([

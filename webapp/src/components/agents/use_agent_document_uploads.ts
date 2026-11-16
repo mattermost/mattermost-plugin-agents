@@ -124,6 +124,9 @@ export function useAgentDocumentUploads(
     const reset = useCallback(() => {
         generationRef.current += 1;
         pendingRef.current = 0;
+
+        // Replacement uploads must not wait for a discarded one that may never settle.
+        queueRef.current = Promise.resolve();
         setUploads([]);
     }, []);
 

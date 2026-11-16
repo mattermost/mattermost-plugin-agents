@@ -156,17 +156,17 @@ func (x *pdfTextReader) readPage(page pdf.Value) {
 		return
 	}
 
-	x.interpret(contents, x.inheritedResources(page), 0)
+	x.interpret(contents, x.inheritedResources(page), nil, 0)
 	x.write("\n")
 }
 
 // interpret reads the text shown by a content stream, or a Form XObject's
-// stream, using resources for its fonts and nested forms. Font changes made
-// inside q ... Q, and by a form, do not outlive them.
-func (x *pdfTextReader) interpret(contents, resources pdf.Value, depth int) {
+// stream, using resources for its fonts and nested forms. enc is the font
+// selected when the stream starts, which a form inherits from where it is
+// drawn. Font changes made inside q ... Q, and by a form, do not outlive them.
+func (x *pdfTextReader) interpret(contents, resources pdf.Value, enc *pdfFontEncoding, depth int) {
 	fontDict := resources.Key("Font")
 	fonts := make(map[string]*pdfFontEncoding)
-	var enc *pdfFontEncoding
 	var saved []*pdfFontEncoding
 	pdf.Interpret(contents, func(stk *pdf.Stack, op string) {
 		args := make([]pdf.Value, stk.Len())
@@ -184,7 +184,7 @@ func (x *pdfTextReader) interpret(contents, resources pdf.Value, depth int) {
 			}
 		case "Do":
 			if len(args) == 1 {
-				x.drawForm(resources.Key("XObject").Key(args[0].Name()), resources, depth)
+				x.drawForm(resources.Key("XObject").Key(args[0].Name()), resources, enc, depth)
 			}
 		case "BT", "T*":
 			x.write("\n")
@@ -224,10 +224,11 @@ func (x *pdfTextReader) interpret(contents, resources pdf.Value, depth int) {
 }
 
 // drawForm reads the text of a Form XObject invoked by Do. A form without
-// resources of its own uses those of the content that invoked it. Every
+// resources of its own uses those of the content that invoked it, and the
+// font selected at the Do is its initial font. Every
 // invocation is charged to the stream limits, and nesting and the number of
 // invocations are capped, so forms that invoke themselves are rejected.
-func (x *pdfTextReader) drawForm(form, parentResources pdf.Value, depth int) {
+func (x *pdfTextReader) drawForm(form, parentResources pdf.Value, enc *pdfFontEncoding, depth int) {
 	if form.Kind() != pdf.Stream || form.Key("Subtype").Name() != "Form" {
 		return
 	}
@@ -240,7 +241,7 @@ func (x *pdfTextReader) drawForm(form, parentResources pdf.Value, depth int) {
 	if resources.IsNull() {
 		resources = parentResources
 	}
-	x.interpret(form, resources, depth+1)
+	x.interpret(form, resources, enc, depth+1)
 }
 
 // inheritedResources returns the /Resources of page or of its nearest

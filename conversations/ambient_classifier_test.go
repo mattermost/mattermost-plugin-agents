@@ -219,6 +219,49 @@ func TestClassifyAmbientTimeout(t *testing.T) {
 	})
 }
 
+type blockingDocumentSource struct{}
+
+func (blockingDocumentSource) AgentDocumentTexts(ctx context.Context, _ []string) (map[string]string, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// Loading the agent's reference documents is part of the classification, so a
+// stalled load must end at the classifier's deadline.
+func TestClassifyAmbientTimeoutCoversDocumentLoading(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		post := &model.Post{Id: "p1", UserId: "u1", Message: "hi", CreateAt: 1}
+		mmClient := mmapimocks.NewMockClient(t)
+		mmClient.EXPECT().GetUser("u1").Return(&model.User{Id: "u1", Username: "alice"}, nil)
+		mmClient.EXPECT().LogWarn(mock.Anything, mock.Anything).Once()
+
+		promptsManager, err := llm.NewPrompts(prompts.PromptsFolder)
+		require.NoError(t, err)
+
+		bot := bots.NewBot(
+			llm.BotConfig{ID: "b1", Name: "bot", Documents: []llm.AgentDocument{{ID: "doc-1", Name: "handbook.pdf"}}},
+			llm.ServiceConfig{},
+			&model.Bot{UserId: "b1", Username: "bot"},
+			&blockingNoStreamLLM{},
+		)
+		mockAPI := &plugintest.API{}
+		mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+		mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+		mockAPI.On("GetTeam", "t1").Return(&model.Team{Id: "t1"}, nil).Maybe()
+		contextBuilder := llmcontext.NewLLMContextBuilder(pluginapi.NewClient(mockAPI, nil), nil, nil, nil)
+		contextBuilder.SetAgentDocumentSource(blockingDocumentSource{})
+		c := &Conversations{prompts: promptsManager, mmClient: mmClient, contextBuilder: contextBuilder}
+
+		user := &model.User{Id: "u1", Username: "alice"}
+		channel := &model.Channel{Id: "c1", TeamId: "t1", Type: model.ChannelTypeOpen}
+		start := time.Now()
+		err = c.classifyAmbientReply(context.Background(), bot, &autoreply.Setting{Mode: autoreply.ModeAmbient}, post, user, channel, []*model.Post{post})
+		require.ErrorIs(t, err, ErrNoResponse)
+		require.ErrorContains(t, err, context.DeadlineExceeded.Error())
+		require.Equal(t, ambientClassifierTimeout, time.Since(start))
+	})
+}
+
 type blockingNoStreamLLM struct{}
 
 func (l *blockingNoStreamLLM) ChatCompletion(context.Context, llm.CompletionRequest, ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {

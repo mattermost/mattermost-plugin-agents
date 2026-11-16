@@ -57,17 +57,20 @@ func usesCharacterMap(font pdf.Value) bool {
 }
 
 var (
+	pdfComment     = regexp.MustCompile(`%[^\r\n]*`)
 	codespaceBlock = regexp.MustCompile(`(?s)begincodespacerange(.*?)endcodespacerange`)
 	codespacePair  = regexp.MustCompile(`<([0-9A-Fa-f\s]*)>\s*<([0-9A-Fa-f\s]*)>`)
 )
 
 // readCodespace reads the code ranges of a ToUnicode character map stream.
-// The stream has already been charged to the page limits.
+// Comments, which the library's tokenizer allows between operands, are
+// dropped first. The stream has already been charged to the page limits.
 func readCodespace(toUnicode pdf.Value) (codespace [4][]pdfCodeRange) {
 	data, err := io.ReadAll(io.LimitReader(toUnicode.Reader(), maxPDFPageStreamBytes))
 	if err != nil {
 		return codespace
 	}
+	data = pdfComment.ReplaceAll(data, nil)
 	for _, block := range codespaceBlock.FindAllSubmatch(data, -1) {
 		for _, pair := range codespacePair.FindAllSubmatch(block[1], -1) {
 			low, lowOK := decodeHexString(pair[1])

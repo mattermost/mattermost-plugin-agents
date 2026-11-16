@@ -139,6 +139,23 @@ func TestExtractPDF(t *testing.T) {
 			want: "Before\nRefund policy\nNested form\nAfter",
 		},
 		{
+			name: "form XObject uses the font selected where it is drawn, and its own font changes stay inside it",
+			data: func(t *testing.T) []byte {
+				return assemblePDF(
+					"<< /Type /Catalog /Pages 2 0 R >>",
+					"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+					pageWithResources(2, 4, "/Font << /F1 5 0 R >> /XObject << /Fm1 7 0 R >>"),
+					pdfStream("", "BT /F1 12 Tf ET /Fm1 Do BT (\x01) Tj ET"),
+					toUnicodeFont(6),
+					pdfStream("", bfchars("<00> <FF>", [2]string{"01", "A"})),
+					formXObject("/Resources << /Font << /F2 8 0 R >> >>", "BT (\x01) Tj /F2 12 Tf (\x01) Tj ET"),
+					toUnicodeFont(9),
+					pdfStream("", bfchars("<00> <FF>", [2]string{"01", "B"})),
+				)
+			},
+			want: "AB\nA",
+		},
+		{
 			name: "form XObject that draws itself",
 			data: func(*testing.T) []byte {
 				return assemblePDF(
@@ -189,7 +206,7 @@ func TestExtractPDF(t *testing.T) {
 					pageWithResources(2, 4, "/Font << /F1 5 0 R >>"),
 					pdfStream("", "BT /F1 12 Tf ("+strings.Repeat("\x01\x02\x03\x04\x05\x06", 5)+") Tj ET"),
 					toUnicodeFont(6),
-					pdfStream("", bfchars("<000000> <FFFFFF>", [2]string{"010203", "A"}, [2]string{"040506", "B"})),
+					pdfStream("", bfchars("<000000> % lower bound\n<FFFFFF>", [2]string{"010203", "A"}, [2]string{"040506", "B"})),
 				)
 			},
 			want: "ABABABABAB",
