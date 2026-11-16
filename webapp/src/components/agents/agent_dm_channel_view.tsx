@@ -81,8 +81,8 @@ const AgentDMChannelViewForChannel = ({channel, focusedPostId}: AgentDMChannelVi
 
     // Picking a chat puts its root in the URL, which the host hands back as focusedPostId: that is
     // not a permalink to look up.
-    const openRootId = useRef<string | undefined>(undefined);
-    openRootId.current = selection.resolving ? undefined : selection.rootId;
+    const openRootId = useRef('');
+    openRootId.current = selection.resolving ? '' : selection.rootId ?? '';
 
     const invalidate = useCallback(() => {
         selectionSeq.current++;
