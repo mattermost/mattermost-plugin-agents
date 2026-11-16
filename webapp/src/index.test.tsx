@@ -108,7 +108,7 @@ function makeStore(dispatch: jest.Mock, siteURL = 'http://localhost:8065', state
     };
 }
 
-async function initializePlugin(siteURL?: string, state?: Record<string, unknown>, extraRegistry: Record<string, unknown> = {}) {
+async function initializePlugin(siteURL?: string, extraRegistry: Record<string, unknown> = {}, state?: Record<string, unknown>) {
     const websocketHandlers: WebSocketHandlers = new Map();
     const dispatch = jest.fn();
 
@@ -204,14 +204,14 @@ describe('agent DM channel view', () => {
 
     test('is not registered on a server without registerChannelHeaderIcon, which is the way back', async () => {
         const registerChannelViewComponent = jest.fn();
-        await initializePlugin('http://localhost:8065', undefined, {registerChannelViewComponent});
+        await initializePlugin('http://localhost:8065', {registerChannelViewComponent});
 
         expect(registerChannelViewComponent).not.toHaveBeenCalled();
     });
 
     test('is not registered on a server without registerChannelViewComponent', async () => {
         const registerChannelHeaderIcon = jest.fn();
-        await initializePlugin('http://localhost:8065', undefined, {registerChannelHeaderIcon});
+        await initializePlugin('http://localhost:8065', {registerChannelHeaderIcon});
 
         // eslint-disable-next-line global-require
         const AgentDMViewToggle = require('./components/agents/agent_dm_view_toggle').default;
@@ -221,7 +221,7 @@ describe('agent DM channel view', () => {
     test('registers the agent DM matcher, the view and the header switch back to it', async () => {
         const registerChannelViewComponent = jest.fn();
         const registerChannelHeaderIcon = jest.fn();
-        await initializePlugin('http://localhost:8065', undefined, {registerChannelViewComponent, registerChannelHeaderIcon});
+        await initializePlugin('http://localhost:8065', {registerChannelViewComponent, registerChannelHeaderIcon});
 
         // eslint-disable-next-line global-require
         const {isAgentDMChannel} = require('./agent_dm_view');
@@ -256,7 +256,7 @@ describe('agent thread list websocket handlers', () => {
             },
             'plugins-mattermost-ai': {aiThreads: {threads: [], loading: false, error: false, requestId: 0}, bots: []},
         };
-        const {websocketHandlers} = await initializePlugin('http://localhost:8065', state);
+        const {websocketHandlers} = await initializePlugin('http://localhost:8065', {}, state);
         await flush();
 
         jest.useFakeTimers();
