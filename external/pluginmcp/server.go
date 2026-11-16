@@ -18,11 +18,33 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.Header.Get(ReregisterHeader) != "" {
+		s.serveReregister(w, r)
+		return
+	}
+
 	userID := r.Header.Get("X-Mattermost-UserID")
 	ctx := withUserID(r.Context(), userID)
 	r = r.WithContext(ctx)
 
 	s.streamableHandler().ServeHTTP(w, r)
+}
+
+// serveReregister answers the Agents plugin's request to register again. The
+// registration itself is posted asynchronously, because the Agents plugin may
+// send this request before it can serve /register.
+func (s *Server) serveReregister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.startRegistration() {
+		w.Header().Set(ReregisterHeader, ReregisterStopped)
+		w.WriteHeader(http.StatusGone)
+		return
+	}
+	w.Header().Set(ReregisterHeader, ReregisterAccepted)
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // buildStreamableHandler constructs the go-sdk HTTP handler. JSON responses

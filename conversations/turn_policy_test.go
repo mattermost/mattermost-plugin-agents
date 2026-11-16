@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -638,6 +639,9 @@ type turnEntryPoint struct {
 	// autoReply is set for channel auto-reply, which needs Enterprise
 	// Advanced and so never runs without the remote MCP license.
 	autoReply bool
+	// preStreamTool is set when the entry point itself runs the weather tool
+	// before its response stream starts (an auto-resumed marked call).
+	preStreamTool bool
 	// seed prepares what the entry point acts on and returns the call that
 	// starts the turn.
 	seed func(t *testing.T, env *policyEnv) func() error
@@ -804,9 +808,10 @@ var turnEntryPoints = []turnEntryPoint{
 		},
 	},
 	{
-		name:         "WouldAutoExecute auto-resume",
-		returnsErr:   true,
-		toolDecision: true,
+		name:          "WouldAutoExecute auto-resume",
+		returnsErr:    true,
+		toolDecision:  true,
+		preStreamTool: true,
 		seed: func(t *testing.T, env *policyEnv) func() error {
 			marked := pendingWeatherBlock()
 			marked[0].WouldAutoExecute = true
@@ -977,6 +982,198 @@ func TestTurnEntryPointPolicyInvariants(t *testing.T) {
 				env.waitForStream(t)
 				assert.Zero(t, env.executions.Load())
 			})
+		})
+	}
+}
+
+// TestTurnEntryPointStreamEndStopsTools pins that every entry point ties its
+// tool loop to the response stream: when the stream ends early (Stop, a lost
+// turn lease, shutdown), a tool already running is canceled rather than left
+// to finish its side effects after another run may own the post.
+func TestTurnEntryPointStreamEndStopsTools(t *testing.T) {
+	for _, entry := range turnEntryPoints {
+		t.Run(entry.name, func(t *testing.T) {
+			env := setupInvariantEnv(t, policyBotConfig(),
+				dmMakeToolCallStream([]llm.ToolCall{policyWeatherCall}),
+				dmMakeTextStream("It's sunny"),
+			)
+			env.checker.setPolicy(policyToolOrigin, policyToolName, mcp.ToolPolicyAutoRunEverywhere)
+			env.streaming.stopAtExecuting = true
+			started := make(chan struct{}, 1)
+			canceled := make(chan struct{}, 1)
+			var calls atomic.Int32
+			env.mcpMgr.tools[0].Resolver = func(ctx context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+				if calls.Add(1) == 1 && entry.preStreamTool {
+					return "72F and sunny", nil
+				}
+				started <- struct{}{}
+				select {
+				case <-ctx.Done():
+					canceled <- struct{}{}
+				case <-time.After(5 * time.Second):
+				}
+				return "72F and sunny", nil
+			}
+
+			_ = entry.seed(t, env)()
+
+			select {
+			case <-started:
+			case <-time.After(2 * time.Second):
+				t.Skip("this entry point does not auto-run the tool")
+			}
+			select {
+			case <-canceled:
+			case <-time.After(3 * time.Second):
+				assert.Fail(t, "the running tool must be canceled when its stream ends")
+			}
+		})
+	}
+}
+
+// TestToolDecisionHoldsThePostRunReservation pins that a tool decision and a
+// regenerate on the same post exclude each other across nodes: the decision
+// runs the approved tools and its follow-up under the post's run reservation,
+// and is refused as stale while another run holds it.
+func TestToolDecisionHoldsThePostRunReservation(t *testing.T) {
+	tests := []struct {
+		name       string
+		heldByPeer bool
+	}{
+		{name: "runs and releases the reservation when its follow-up ends"},
+		{name: "is refused while another run holds the post", heldByPeer: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupInvariantEnv(t, policyBotConfig(), dmMakeTextStream("It is noon"))
+			botPost := env.seedRun(t, env.dm, nil, humanPost("what time is it"), pendingTimeBlock(), nil)
+			reservationKey := "post_run_reservation_" + botPost.Id
+			if tt.heldByPeer {
+				require.NoError(t, env.mmClient.KVSet(reservationKey, "peer-node-token"))
+			}
+			before := env.state()
+
+			err := env.conversations.HandleToolCall(context.Background(), autoReplyUserID, botPost, env.dm, []string{"tc-time"}, nil)
+
+			if tt.heldByPeer {
+				require.ErrorIs(t, err, conversations.ErrStaleToolClick)
+				requireNothingRan(t, env, before)
+				held, _ := env.mmClient.kvValue(reservationKey)
+				assert.Equal(t, "peer-node-token", held)
+				return
+			}
+			require.NoError(t, err)
+			env.waitForStream(t)
+			require.Eventually(t, func() bool {
+				_, held := env.mmClient.kvValue(reservationKey)
+				return !held
+			}, 2*time.Second, 5*time.Millisecond, "the reservation is released once the follow-up ends")
+		})
+	}
+}
+
+// TestTurnEntryPointHoldsThePostRunReservation pins that every entry point
+// reserves the post it writes to for its whole run, from before the first
+// model call until its stream ends, so a regenerate or tool decision on
+// another node can't start a second run on that post meanwhile.
+func TestTurnEntryPointHoldsThePostRunReservation(t *testing.T) {
+	for _, entry := range turnEntryPoints {
+		t.Run(entry.name, func(t *testing.T) {
+			events := make(chan llm.TextStreamEvent)
+			env := setupInvariantEnv(t, policyBotConfig(), &llm.TextStreamResult{Stream: events})
+			start := entry.seed(t, env)
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_ = start()
+			}()
+
+			reserved := func() bool {
+				env.mmClient.kvMu.Lock()
+				defer env.mmClient.kvMu.Unlock()
+				for key := range env.mmClient.kv {
+					if strings.HasPrefix(key, "post_run_reservation_") {
+						return true
+					}
+				}
+				return false
+			}
+			deadline := time.Now().Add(2 * time.Second)
+			for len(env.llmRequests()) == 0 && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+			}
+			if len(env.llmRequests()) == 0 {
+				close(events)
+				<-done
+				t.Skip("this entry point sends no model request")
+			}
+			assert.True(t, reserved(), "the post must be reserved while the first model call is pending")
+
+			events <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "answer"}
+			events <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+			close(events)
+			<-done
+			assert.Eventually(t, func() bool { return !reserved() }, 2*time.Second, 5*time.Millisecond, "the reservation is released when the run ends")
+		})
+	}
+}
+
+// TestTurnEntryPointKeepsThePostUntilItsToolsExit pins that an ended run keeps
+// its post reserved until its tool runner has exited: a tool that ignores
+// cancellation may still take effect, and no other run may start on the post
+// before it has.
+func TestTurnEntryPointKeepsThePostUntilItsToolsExit(t *testing.T) {
+	for _, entry := range turnEntryPoints {
+		t.Run(entry.name, func(t *testing.T) {
+			env := setupInvariantEnv(t, policyBotConfig(),
+				dmMakeToolCallStream([]llm.ToolCall{policyWeatherCall}),
+				dmMakeTextStream("It's sunny"),
+			)
+			env.checker.setPolicy(policyToolOrigin, policyToolName, mcp.ToolPolicyAutoRunEverywhere)
+			env.streaming.stopAtExecuting = true
+			started := make(chan struct{}, 1)
+			finishTool := make(chan struct{})
+			env.mcpMgr.tools[0].Resolver = func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+				started <- struct{}{}
+				<-finishTool
+				return "72F and sunny", nil
+			}
+			reserved := func() bool {
+				env.mmClient.kvMu.Lock()
+				defer env.mmClient.kvMu.Unlock()
+				for key := range env.mmClient.kv {
+					if strings.HasPrefix(key, "post_run_reservation_") {
+						return true
+					}
+				}
+				return false
+			}
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_ = entry.seed(t, env)()
+			}()
+
+			select {
+			case <-started:
+			case <-time.After(2 * time.Second):
+				close(finishTool)
+				<-done
+				t.Skip("this entry point does not auto-run the tool")
+			}
+			// Most entry points end their stream with the tool still running;
+			// an auto-resume runs the tool before its stream starts.
+			select {
+			case <-env.streaming.finished:
+			case <-time.After(500 * time.Millisecond):
+			}
+			assert.True(t, reserved(), "the post stays reserved while the run's tool is still running")
+
+			close(finishTool)
+			<-done
+			assert.Eventually(t, func() bool { return !reserved() }, 3*time.Second, 5*time.Millisecond)
 		})
 	}
 }

@@ -40,6 +40,13 @@ export interface LLMBot {
     // isDefault marks the system-wide default agent. Optional: older servers
     // omit it, in which case we fall back to list ordering.
     isDefault?: boolean;
+
+    // Whether the current user created the agent. Optional: older servers omit it.
+    isCreator?: boolean;
+
+    // Whether the current user has a chat with the agent, however many other chats they have.
+    // Optional: older servers omit it.
+    hasChats?: boolean;
 }
 
 // Shared core preference identifying the user's selected agent across every

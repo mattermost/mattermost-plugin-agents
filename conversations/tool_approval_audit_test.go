@@ -120,6 +120,7 @@ func TestHandleToolCallAuditRecordsDecision(t *testing.T) {
 			botsService.SetBotsForTesting([]*bots.Bot{loadedStateBot(lm)})
 
 			mmClient := mocks.NewMockClient(t)
+			allowPostRunReservation(mmClient)
 			mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 			mmClient.On("GetUser", testRequesterID).Maybe().Return(&model.User{Id: testRequesterID, Username: "user"}, nil)
 			mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
@@ -196,6 +197,7 @@ func TestHandleToolResultAuditRecordsDecision(t *testing.T) {
 	botsService.SetBotsForTesting([]*bots.Bot{loadedStateBot(&loadedStateLLM{})})
 
 	mmClient := mocks.NewMockClient(t)
+	allowPostRunReservation(mmClient)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 	mmClient.On("GetUser", testRequesterID).Return(&model.User{Id: testRequesterID, Username: "user"}, nil)
 

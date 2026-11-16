@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/lifecycle"
+
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/api"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
@@ -61,7 +63,12 @@ type Plugin struct {
 	indexerService       *indexer.Indexer
 	conversationsService *conversations.Conversations
 	mcpClientManager     *mcp.ClientManager
+	mcpHandlers          *mcpserver.PluginMCPHandlers
+	mcpLifecycle         *pluginMCPLifecycle
 	streamingService     streaming.Service
+	streamService        *streaming.MMPostStreamService
+	recoveryMu           sync.Mutex
+	recoveryTimer        *time.Timer
 	telemetryShutdown    telemetry.ShutdownFunc
 	telemetryMu          sync.Mutex
 	telemetryMode        telemetry.OutputMode
@@ -112,6 +119,7 @@ func (l *pluginLogger) Error(message string, keyValuePairs ...any) {
 
 func (p *Plugin) OnActivate() error {
 	p.licenseChangeListeners = nil
+	lifecycle.Start()
 	pluginAPI := pluginapi.NewClient(p.API, p.Driver)
 	p.pluginAPI = pluginAPI
 	mmClient := mmapi.NewClient(pluginAPI, p.API)
@@ -593,7 +601,7 @@ func (p *Plugin) OnActivate() error {
 	} else {
 		mcpHandlers = handlers
 		pluginAPI.Log.Info("Embedded MCP server handlers initialized successfully")
-		p.licenseChangeListeners = append(p.licenseChangeListeners, handlers.RebuildExternalServer)
+		p.licenseChangeListeners = append(p.licenseChangeListeners, handlers.RequestRebuild)
 	}
 
 	customPromptsStore := customprompts.NewStore(dbClient)
@@ -647,12 +655,28 @@ func (p *Plugin) OnActivate() error {
 	p.indexerService = indexerService
 	p.conversationsService = conversationsService
 	p.mcpClientManager = mcpClientManager
+	p.mcpHandlers = mcpHandlers
 	p.streamingService = streamingService
+	p.streamService = streamingService
+
+	p.startStreamRecovery()
+
+	var rebuilder externalMCPRebuilder
+	if mcpHandlers != nil {
+		rebuilder = mcpHandlers
+	}
+	p.mcpLifecycle = newPluginMCPLifecycle(mcpClientManager, rebuilder, &pluginAPI.Log)
+	p.licenseChangeListeners = append(p.licenseChangeListeners, p.mcpLifecycle.reconcileKnown)
+	p.mcpLifecycle.reconcileKnown()
+	p.mcpLifecycle.watchStoppedPlugins(stoppedPluginCheckInterval)
 
 	return nil
 }
 
 func (p *Plugin) OnDeactivate() error {
+	// Must run before bifrost/MCP shutdown so in-flight streams can finalize.
+	p.stopStreamsForShutdown()
+
 	// Flush pending telemetry spans
 	p.telemetryMu.Lock()
 	if p.telemetryShutdown != nil {
@@ -669,7 +693,10 @@ func (p *Plugin) OnDeactivate() error {
 		p.bots.ShutdownServiceLLMs()
 	}
 
-	// Clean up MCP client manager if it exists
+	p.mcpLifecycle.close()
+	if p.mcpHandlers != nil {
+		p.mcpHandlers.Close()
+	}
 	p.mcpClientManager.Close()
 
 	return nil
