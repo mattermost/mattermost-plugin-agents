@@ -535,9 +535,8 @@ func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) (er
 		return err
 	}
 
-	if err = c.streamToolFollowUp(ctx, policy, wakePost, conv, followUpOptions{Unattended: true, OnRunEnd: releaseRun}); err != nil {
+	if err = c.streamToolFollowUp(ctx, policy, wakePost, conv, followUpOptions{Unattended: true, OnRunEnd: releaseRun, FailureUser: user}); err != nil {
 		releaseRun()
-		c.failResponsePlaceholder(ctx, wakePost, user)
 		return err
 	}
 	return nil

@@ -760,6 +760,11 @@ type followUpOptions struct {
 	// Stream is the post's streaming context when the caller already holds
 	// it; streamToolFollowUp acquires it otherwise.
 	Stream *followUpStream
+	// FailureUser, when set, has the post's text replaced with an error
+	// message if the follow-up fails before streaming. Callers whose post has
+	// no content yet (a wake-up placeholder) set it; the others keep the
+	// post's existing answer.
+	FailureUser *model.User
 }
 
 // followUpStream is a held streaming context for a post. The holder releases
@@ -797,20 +802,40 @@ func (c *Conversations) streamToolFollowUp(
 	post *model.Post,
 	conv *store.Conversation,
 	opts followUpOptions,
-) error {
+) (err error) {
+	callerCtx := ctx
 	ctx, span := telemetry.Tracer().Start(ctx, "tool followup completion")
 	defer span.End()
 
 	// Stop must reach the tool loop, not only the stream that follows it.
 	followUp := opts.Stream
 	if followUp == nil {
-		var err error
 		if followUp, err = c.acquireFollowUpStream(ctx, post.Id); err != nil {
 			return err
 		}
 		defer followUp.release()
 	}
 	ctx = followUp.ctx
+
+	// A follow-up that fails before streaming ends the run here, so every
+	// entry point (approve, share decision, wake-up) notifies the requester
+	// through this one place. The streaming service notifies once it has the
+	// stream.
+	defer func() {
+		if err == nil || followUp.handedOff {
+			return
+		}
+		notifyCtx := telemetry.DetachContext(callerCtx)
+		if opts.FailureUser != nil {
+			c.failResponsePlaceholder(notifyCtx, post, opts.FailureUser)
+			return
+		}
+		outcome := notifications.OutcomeErrored
+		if ctx.Err() != nil {
+			outcome = notifications.OutcomeCancelled
+		}
+		c.notifyRunEnd(notifyCtx, post, policy.user.Id, notifications.StreamEnd{Outcome: outcome})
+	}()
 
 	if opts.Unattended {
 		unattended := *policy
