@@ -23,7 +23,8 @@ import {
     canManageChannelContext,
     fetchChannelContextPosts,
     isChannelContextPinned,
-    applyChannelContextPosts,
+    canManageChannelContextPins,
+    mutateChannelContextPosts,
     useChannelContextPosts,
 } from '@/channel_context';
 
@@ -48,9 +49,10 @@ const PostMenu = (props: Props) => {
     const post = props.post;
     const threadSummarizationLicensed = useIsLicensedFor('thread_summarization');
     const dispatch = useDispatch();
-    const canPinToContext = useSelector((state: GlobalState) => canManageChannelContext(state, state.entities.channels.channels[post.channel_id])) &&
-        !post.type?.startsWith('system_');
-    const contextPosts = useChannelContextPosts(post.channel_id);
+    const isUserPost = !post.type?.startsWith('system_');
+    const canPinToContext = useSelector((state: GlobalState) => canManageChannelContext(state, state.entities.channels.channels[post.channel_id])) && isUserPost;
+    const canManagePins = useSelector((state: GlobalState) => canManageChannelContextPins(state, state.entities.channels.channels[post.channel_id])) && isUserPost;
+    const contextPosts = useChannelContextPosts(post.channel_id, canManagePins);
     const contextPinned = isChannelContextPinned(contextPosts, post.id);
     const contextFull = Boolean(contextPosts && contextPosts.posts.length >= contextPosts.max_posts);
 
@@ -61,17 +63,18 @@ const PostMenu = (props: Props) => {
 
     const toggleContextPin = async (pin: boolean) => {
         try {
-            const updated = pin ? await pinChannelContextPost(post.channel_id, post.id) : await unpinChannelContextPost(post.channel_id, post.id);
-            applyChannelContextPosts(dispatch, post.channel_id, updated);
+            await mutateChannelContextPosts(dispatch, post.channel_id, () => (
+                pin ? pinChannelContextPost(post.channel_id, post.id) : unpinChannelContextPost(post.channel_id, post.id)
+            ));
         } catch {
             // A failed toggle (for example, a concurrent pin filled the
             // channel) re-syncs so the menu reflects the server's state.
-            fetchChannelContextPosts(dispatch, post.channel_id);
+            fetchChannelContextPosts(dispatch, post.channel_id, Boolean(contextPosts));
         }
     };
 
     let contextPinItem = null;
-    if (canPinToContext && contextPinned) {
+    if (canManagePins && contextPinned) {
         contextPinItem = (
             <DropdownMenuItem
                 icon={<PinOutlineIcon size={18}/>}

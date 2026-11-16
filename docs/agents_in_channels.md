@@ -53,7 +53,7 @@ There are two kinds of channel context:
 
 Pinning to agent context is separate from [pinning a message](https://docs.mattermost.com/collaborate/pin-messages.html) to the channel: agent context pins don't appear in the channel's pinned messages, and regular pinned messages aren't sent to agents. Edits to a pinned post are picked up automatically, and deleting the post removes it from agent context.
 
-Channel context is captured when a conversation starts, so changes apply to new threads and mentions, not to follow-up replies in an existing conversation. It's available in public and private channels (not direct or group messages) at Enterprise Advanced, and writes need the same permission as auto-reply. The routes are `GET`/`PUT /plugins/mattermost-ai/channel/{channelid}/instructions`, `GET`/`POST /plugins/mattermost-ai/channel/{channelid}/context_posts`, and `DELETE /plugins/mattermost-ai/channel/{channelid}/context_posts/{postid}`. Below Enterprise Advanced the context isn't sent to agents, but clearing instructions and unpinning posts never need a license.
+Channel context is captured when a conversation starts, so changes apply to new threads and mentions, not to follow-up replies in an existing conversation. It's available in public and private channels (not direct or group messages) at Enterprise Advanced. Below Enterprise Advanced the context isn't sent to agents, but you can still clear instructions and unpin posts. Admins and integrators: see [Channel instructions and pinned context](channel_settings.md#channel-instructions-and-pinned-context).
 
 ## Related
 

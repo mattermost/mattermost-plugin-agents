@@ -247,6 +247,24 @@ describe('PostMenu agent context pinning', () => {
         expect(screen.queryByText('Pin to agent context')).toBeNull();
         expect(client.getChannelContextPosts).not.toHaveBeenCalled();
     });
+
+    test('a manager can still unpin after the license drops below Enterprise Advanced', async () => {
+        licenseAllows.mockReturnValue(false);
+        client.unpinChannelContextPost.mockResolvedValue(contextPosts([]));
+        renderMenu({pins: contextPosts(['post1'])});
+
+        fireEvent.click(screen.getByText('Unpin from agent context'));
+
+        await waitFor(() => expect(client.unpinChannelContextPost).toHaveBeenCalledWith(CHANNEL_ID, 'post1'));
+        expect(screen.queryByText('Pin to agent context')).toBeNull();
+    });
+
+    test('a non-manager never sees unpin, licensed or not', () => {
+        licenseAllows.mockReturnValue(false);
+        renderMenu({pins: contextPosts(['post1']), canManage: false});
+
+        expect(screen.queryByText('Unpin from agent context')).toBeNull();
+    });
 });
 
 describe('PostMenu sizing', () => {

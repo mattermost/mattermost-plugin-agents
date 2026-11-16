@@ -136,6 +136,16 @@ describe('ChannelContextPostsSection', () => {
         expect(screen.queryAllByTestId('channel-context-post')).toHaveLength(0);
     });
 
+    test('retries a failed load once when the section opens', async () => {
+        const client = jest.requireMock('@/client') as {getChannelContextPosts: jest.Mock};
+        client.getChannelContextPosts.mockReset();
+        client.getChannelContextPosts.mockResolvedValue(pins([{id: 'p1'}]));
+        renderSection(null);
+
+        await waitFor(() => expect(screen.getAllByTestId('channel-context-post')).toHaveLength(1));
+        expect(client.getChannelContextPosts).toHaveBeenCalledTimes(1);
+    });
+
     test('shows a load failure', () => {
         renderSection(null);
 

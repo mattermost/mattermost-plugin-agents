@@ -12,7 +12,7 @@ import {PERMISSION_MANAGE_PRIVATE_CHANNEL_PROPERTIES, PERMISSION_MANAGE_PUBLIC_C
 
 import {
     ChannelContextPostsCleared,
-    applyChannelContextPosts,
+    mutateChannelContextPosts,
     canManageChannelContext,
     channelContextPostsFromState,
     channelContextPostsReducer,
@@ -174,11 +174,60 @@ describe('superseded fetches', () => {
         const store = makeStore();
 
         fetchChannelContextPosts(store.dispatch, 'chan1');
-        applyChannelContextPosts(store.dispatch, 'chan1', pins);
+        await mutateChannelContextPosts(store.dispatch, 'chan1', () => Promise.resolve(pins));
         initial.resolve(empty);
         await flush();
 
         expect(stateOf(store)).toEqual(pins);
+    });
+});
+
+describe('failed and overlapping requests', () => {
+    test('a failed websocket refresh keeps the pins already loaded', async () => {
+        mockedGetChannelContextPosts.mockResolvedValueOnce(pins).mockRejectedValueOnce(new Error('500'));
+        const store = makeStore();
+        await fetchChannelContextPosts(store.dispatch, 'chan1');
+
+        handleChannelContextUpdated(store as never, {channel_id: 'chan1'});
+        await flush();
+
+        expect(stateOf(store)).toEqual(pins);
+    });
+
+    test('a failed first load is still recorded as null', async () => {
+        mockedGetChannelContextPosts.mockRejectedValueOnce(new Error('500'));
+        const store = makeStore();
+
+        await fetchChannelContextPosts(store.dispatch, 'chan1');
+
+        expect(stateOf(store)).toBeNull();
+    });
+
+    test('a mutation response superseded by a newer mutation is dropped', async () => {
+        const store = makeStore();
+        const older = deferred<ChannelContextPosts>();
+
+        const first = mutateChannelContextPosts(store.dispatch, 'chan1', () => older.promise);
+        await mutateChannelContextPosts(store.dispatch, 'chan1', () => Promise.resolve(empty));
+        older.resolve(pins);
+        await first;
+
+        expect(stateOf(store)).toEqual(empty);
+    });
+
+    test('a mutation response superseded by a websocket refresh is dropped', async () => {
+        mockedGetChannelContextPosts.mockResolvedValueOnce(empty).mockResolvedValueOnce(empty);
+        const store = makeStore();
+        await fetchChannelContextPosts(store.dispatch, 'chan1');
+        const slow = deferred<ChannelContextPosts>();
+
+        const mutation = mutateChannelContextPosts(store.dispatch, 'chan1', () => slow.promise);
+        handleChannelContextUpdated(store as never, {channel_id: 'chan1'});
+        await flush();
+        slow.resolve(pins);
+        await mutation;
+
+        expect(stateOf(store)).toEqual(empty);
     });
 });
 

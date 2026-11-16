@@ -52,7 +52,7 @@ export function channelContextPostsFromState(state: GlobalState, channelId: stri
 const inFlight = new Map<string, Promise<void>>();
 const generations = createRequestGenerations();
 
-function startFetch(dispatch: Dispatch, channelId: string): Promise<void> {
+function startFetch(dispatch: Dispatch, channelId: string, keepOnFailure: boolean): Promise<void> {
     const token = generations.begin(channelId);
     const apply = (data: ChannelContextPosts | null) => {
         if (generations.isCurrent(channelId, token)) {
@@ -61,7 +61,13 @@ function startFetch(dispatch: Dispatch, channelId: string): Promise<void> {
     };
     const request: Promise<void> = getChannelContextPosts(channelId).
         then(apply).
-        catch(() => apply(null)).
+        catch(() => {
+            // A failed refresh keeps the pins already shown; only a failed
+            // first load records the failure.
+            if (!keepOnFailure) {
+                apply(null);
+            }
+        }).
         finally(() => {
             if (inFlight.get(channelId) === request) {
                 inFlight.delete(channelId);
@@ -73,16 +79,27 @@ function startFetch(dispatch: Dispatch, channelId: string): Promise<void> {
 
 // Fetches a channel's pins into the store. Concurrent calls for the same
 // channel share one request: every visible post asks for its channel at once.
-export function fetchChannelContextPosts(dispatch: Dispatch, channelId: string): Promise<void> {
-    return inFlight.get(channelId) ?? startFetch(dispatch, channelId);
+// keepOnFailure preserves the stored pins when the fetch fails.
+export function fetchChannelContextPosts(dispatch: Dispatch, channelId: string, keepOnFailure = false): Promise<void> {
+    return inFlight.get(channelId) ?? startFetch(dispatch, channelId, keepOnFailure);
 }
 
-// Stores pins the server just returned from a write. A GET still in flight
-// read an older snapshot, so its response is dropped.
-export function applyChannelContextPosts(dispatch: Dispatch, channelId: string, data: ChannelContextPosts): void {
-    generations.invalidate(channelId);
+// Runs a pin or unpin and stores the pins the server returns. If newer work
+// for the channel (another mutation, a refresh, or a reset) started meanwhile,
+// this response is stale and is dropped: that newer work owns the channel's
+// state. A pending GET read an older snapshot, so starting the mutation
+// supersedes it too. Rejects when the mutation fails.
+export async function mutateChannelContextPosts(
+    dispatch: Dispatch,
+    channelId: string,
+    mutation: () => Promise<ChannelContextPosts>,
+): Promise<void> {
+    const token = generations.begin(channelId);
     inFlight.delete(channelId);
-    dispatch(receivedChannelContextPosts(channelId, data));
+    const data = await mutation();
+    if (generations.isCurrent(channelId, token)) {
+        dispatch(receivedChannelContextPosts(channelId, data));
+    }
 }
 
 // Drops every pending fetch so none can repopulate state cleared by a reconnect.
@@ -102,7 +119,13 @@ export function channelContextAvailable(state: GlobalState, channel: Channel | u
 // Mirrors the server's write check: the channel-management permission for the
 // channel's type.
 export function canManageChannelContext(state: GlobalState, channel: Channel | undefined): boolean {
-    if (!channel || !channelContextAvailable(state, channel)) {
+    return channelContextAvailable(state, channel) && canManageChannelContextPins(state, channel);
+}
+
+// Removing pins is never license-gated server-side, so managers can still
+// unpin after a downgrade: only the channel type and permission matter.
+export function canManageChannelContextPins(state: GlobalState, channel: Channel | undefined): boolean {
+    if (!channel || (channel.type !== 'O' && channel.type !== 'P')) {
         return false;
     }
     const permission = channel.type === 'P' ? PERMISSION_MANAGE_PRIVATE_CHANNEL_PROPERTIES : PERMISSION_MANAGE_PUBLIC_CHANNEL_PROPERTIES;
@@ -111,10 +134,14 @@ export function canManageChannelContext(state: GlobalState, channel: Channel | u
 
 // Returns the channel's agent-context pins, fetching them the first time any
 // component asks. undefined while loading; null when the fetch failed or
-// agent context does not apply to the channel.
-export function useChannelContextPosts(channelId: string): ChannelContextPosts | null | undefined {
+// agent context does not apply to the channel. Managing surfaces pass
+// forManagement so managers still see pins that a license downgrade left behind.
+export function useChannelContextPosts(channelId: string, forManagement = false): ChannelContextPosts | null | undefined {
     const dispatch = useDispatch();
-    const available = useSelector((state: GlobalState) => channelContextAvailable(state, state.entities.channels.channels[channelId]));
+    const available = useSelector((state: GlobalState) => {
+        const channel = state.entities.channels.channels[channelId];
+        return channelContextAvailable(state, channel) || (forManagement && canManageChannelContextPins(state, channel));
+    });
     const data = useSelector((state: GlobalState) => channelContextPostsFromState(state, channelId));
     const needsFetch = available && typeof data === 'undefined';
 
@@ -143,11 +170,8 @@ export function handleChannelContextUpdated(store: Store<GlobalState, UnknownAct
     if (!channelId) {
         return;
     }
-    if (inFlight.has(channelId)) {
-        startFetch(store.dispatch, channelId);
-        return;
-    }
-    if (typeof channelContextPostsFromState(store.getState(), channelId) !== 'undefined') {
-        startFetch(store.dispatch, channelId);
+    const current = channelContextPostsFromState(store.getState(), channelId);
+    if (inFlight.has(channelId) || typeof current !== 'undefined') {
+        startFetch(store.dispatch, channelId, Boolean(current));
     }
 }

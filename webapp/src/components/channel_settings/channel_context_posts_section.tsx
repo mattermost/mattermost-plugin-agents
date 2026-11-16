@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useDispatch, useSelector} from 'react-redux';
 import styled from 'styled-components';
@@ -12,7 +12,7 @@ import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {GlobalState} from '@mattermost/types/store';
 
 import {ChannelContextPost, unpinChannelContextPost} from '@/client';
-import {applyChannelContextPosts, useChannelContextPosts} from '@/channel_context';
+import {fetchChannelContextPosts, mutateChannelContextPosts, useChannelContextPosts} from '@/channel_context';
 
 import {useChannelInstructionsDraft} from './channel_instructions_state';
 
@@ -23,10 +23,24 @@ const SNIPPET_LENGTH = 160;
 // than waiting for the tab's Save.
 export const ChannelContextPostsSection = () => {
     const draft = useChannelInstructionsDraft();
-    const contextPosts = useChannelContextPosts(draft?.channelId ?? '');
+    const channelId = draft?.channelId ?? '';
+    const contextPosts = useChannelContextPosts(channelId, true);
     const dispatch = useDispatch();
     const [unpinFailed, setUnpinFailed] = useState(false);
     const [unpinning, setUnpinning] = useState(false);
+
+    const loadFailed = contextPosts === null;
+
+    // A failed load is not retried automatically (every post badge would
+    // retry too); opening this section is the explicit request to try again.
+    useEffect(() => {
+        if (loadFailed && channelId) {
+            fetchChannelContextPosts(dispatch, channelId);
+        }
+
+        // Once per mount or channel, not on every state change, so a persistent failure cannot loop.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [channelId]);
 
     if (!draft) {
         return null;
@@ -52,7 +66,7 @@ export const ChannelContextPostsSection = () => {
         setUnpinning(true);
         setUnpinFailed(false);
         try {
-            applyChannelContextPosts(dispatch, draft.channelId, await unpinChannelContextPost(draft.channelId, postId));
+            await mutateChannelContextPosts(dispatch, draft.channelId, () => unpinChannelContextPost(draft.channelId, postId));
         } catch {
             setUnpinFailed(true);
         } finally {

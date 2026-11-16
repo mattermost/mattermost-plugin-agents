@@ -25,7 +25,7 @@ Each request also carries the definitions (name, description, and parameters) of
 | @mention in a channel, not in a thread | The mentioning message, its attachments, and the channel and team names. |
 | @mention in a thread | The thread's messages up to the mention, with each author's username and attachment file names. Replies after the mention aren't included. |
 | Channel auto-reply | The same as an @mention. |
-| Any request in a public or private channel at Enterprise Advanced | The channel's instructions and the current text of its pinned agent-context posts, in the system prompt. |
+| Any request in a public or private channel at Enterprise Advanced | The channel's instructions and the text of its pinned agent-context posts (the first 4,000 characters of each), in the system prompt. This context is captured when a conversation starts. Changes apply to new conversations, not to follow-ups in an existing one. |
 | Ambient auto-reply | Each new message and its thread go to a classification request on the agent's model, with the channel's ambient instructions. If it decides to reply, the reply is an ordinary mention. |
 | Summarize Thread, Find action items, Find open questions | The thread's messages with their authors. |
 | Ask Agents about this channel, Ask AI, `/summarize-channel` | The channel's posts for the range you chose, with their authors. |
