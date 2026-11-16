@@ -202,7 +202,8 @@ func (c *Conversations) beginToolDecision(ctx context.Context, spanName, logMsg,
 // toolAnswers carries the user's answers for accepted user-interaction tool
 // calls (e.g. AskUserQuestion), keyed by tool_use block ID. Those blocks are
 // not executed; the validated answer becomes the tool result.
-func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string, toolAnswers map[string]mmtools.UserInteractionAnswer) error {
+func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string, toolAnswers map[string]mmtools.UserInteractionAnswer) (err error) {
+	callerCtx := ctx
 	d, err := c.beginToolDecision(ctx, "handle tool call", "HandleToolCall", userID, post, channel, len(acceptedToolIDs))
 	if err != nil {
 		return err
@@ -275,6 +276,17 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	if err != nil {
 		return err
 	}
+
+	// The tools run from here on and the claim cannot be retried (a repeat
+	// click is stale), so a failure before the follow-up takes over ends the
+	// run for the requester instead of leaving the post silent. The follow-up
+	// reports its own failures.
+	followUpAttempted := false
+	defer func() {
+		if err != nil && !followUpAttempted {
+			c.notifyFailedFollowUp(telemetry.DetachContext(callerCtx), ctx, post, policy.user, nil)
+		}
+	}()
 
 	// Execute approved tools and build results. Blocks resolved in a prior
 	// call keep their status and are not part of this decision, so they enter
@@ -488,6 +500,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return nil
 	}
 
+	followUpAttempted = true
 	err = c.streamToolFollowUp(ctx, policy, post, conv, followUpOptions{UserRejected: userRejected, ApprovalContext: llmContext, OnRunEnd: d.release, Stream: followUp})
 	followUpStarted = err == nil
 	return err
@@ -746,6 +759,23 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 	return err
 }
 
+// notifyFailedFollowUp ends a tool-approval run that failed before any stream
+// took it over. With failureUser the post's text is replaced by an error
+// message (a wake-up placeholder has no content); otherwise the post keeps its
+// answer. runCtx is the run's context, whose cancellation marks the end as a
+// cancel instead of an error.
+func (c *Conversations) notifyFailedFollowUp(notifyCtx, runCtx context.Context, post *model.Post, requester, failureUser *model.User) {
+	if failureUser != nil {
+		c.failResponsePlaceholder(notifyCtx, post, failureUser)
+		return
+	}
+	outcome := notifications.OutcomeErrored
+	if runCtx.Err() != nil {
+		outcome = notifications.OutcomeCancelled
+	}
+	c.notifyRunEnd(notifyCtx, post, requester.Id, notifications.StreamEnd{Outcome: outcome})
+}
+
 // followUpOptions are the per-caller knobs of streamToolFollowUp.
 type followUpOptions struct {
 	// Unattended marks a scheduler resume: no interactive user is present.
@@ -825,16 +855,7 @@ func (c *Conversations) streamToolFollowUp(
 		if err == nil || followUp.handedOff {
 			return
 		}
-		notifyCtx := telemetry.DetachContext(callerCtx)
-		if opts.FailureUser != nil {
-			c.failResponsePlaceholder(notifyCtx, post, opts.FailureUser)
-			return
-		}
-		outcome := notifications.OutcomeErrored
-		if ctx.Err() != nil {
-			outcome = notifications.OutcomeCancelled
-		}
-		c.notifyRunEnd(notifyCtx, post, policy.user.Id, notifications.StreamEnd{Outcome: outcome})
+		c.notifyFailedFollowUp(telemetry.DetachContext(callerCtx), ctx, post, policy.user, opts.FailureUser)
 	}()
 
 	if opts.Unattended {

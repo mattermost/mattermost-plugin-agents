@@ -48,11 +48,17 @@ func (r *runEndRecorder) snapshot() []notifications.StreamEnd {
 	return append([]notifications.StreamEnd(nil), r.ends...)
 }
 
-// TestToolFollowUpFailingBeforeStreamingNotifiesTheRequester drives the share
-// decision route with an LLM that fails before any stream starts. The run
-// never reaches the streaming service, which notifies for runs it streams, so
-// the follow-up itself must end the run for the requester.
-func TestToolFollowUpFailingBeforeStreamingNotifiesTheRequester(t *testing.T) {
+type toolFollowUpEnv struct {
+	e         *TestEnvironment
+	convStore *mockConvServiceStore
+	notifier  *runEndRecorder
+	post      *model.Post
+}
+
+// setupToolFollowUpEnv seeds a post with one tool batch and a bot whose LLM
+// fails before any stream starts.
+func setupToolFollowUpEnv(t *testing.T, channel *model.Channel, turns func(postID string) []store.Turn) *toolFollowUpEnv {
+	t.Helper()
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
@@ -60,10 +66,9 @@ func TestToolFollowUpFailingBeforeStreamingNotifiesTheRequester(t *testing.T) {
 		postID = "post12345678901234567890ab"
 		convID = "conv12345678901234567890ab"
 	)
-	openChannel := &model.Channel{Id: testChannelID, Type: model.ChannelTypeOpen, TeamId: "teamid"}
 
 	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
+	t.Cleanup(func() { e.Cleanup(t) })
 	e.api.streamingService = &streamingContextRecorder{}
 	convStore := e.useConversations()
 	notifier := &runEndRecorder{}
@@ -85,14 +90,51 @@ func TestToolFollowUpFailingBeforeStreamingNotifiesTheRequester(t *testing.T) {
 	userContent, err := json.Marshal([]conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: "look up MM-1"}})
 	require.NoError(t, err)
 	require.NoError(t, convStore.CreateTurnAutoSequence(&store.Turn{ID: "user-turn", ConversationID: convID, Role: "user", Content: userContent}))
-	toolUse := []conversation.ContentBlock{{
+	for _, turn := range turns(postID) {
+		turn.ConversationID = convID
+		require.NoError(t, convStore.CreateTurnAutoSequence(&turn))
+	}
+
+	post := &model.Post{Id: postID, UserId: testBotUserID, ChannelId: channel.Id}
+	post.AddProp(streaming.ConversationIDProp, convID)
+	post.AddProp(model.PostPropsDeferredNotification, true)
+
+	e.mockAPI.On("GetPost", postID).Return(post, nil)
+	e.mockAPI.On("GetChannel", channel.Id).Return(channel, nil)
+	e.mockAPI.On("GetTeam", "teamid").Return(&model.Team{Id: "teamid", Name: "team"}, nil).Maybe()
+	e.mockAPI.On("HasPermissionToChannel", testUserID, channel.Id, model.PermissionReadChannel).Return(true)
+	e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Username: "requester", Locale: "en"}, nil).Maybe()
+	e.mockAPI.On("KVGet", mock.Anything).Return([]byte(nil), (*model.AppError)(nil)).Maybe()
+
+	return &toolFollowUpEnv{e: e, convStore: convStore, notifier: notifier, post: post}
+}
+
+func (env *toolFollowUpEnv) click(endpoint, body string) int {
+	req := httptest.NewRequest(http.MethodPost, "/post/"+env.post.Id+"/"+endpoint, strings.NewReader(body))
+	req.Header.Add("Mattermost-User-Id", testUserID)
+	recorder := httptest.NewRecorder()
+	env.e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+	return recorder.Result().StatusCode
+}
+
+func pendingToolBatch(t *testing.T, status string) []conversation.ContentBlock {
+	t.Helper()
+	return []conversation.ContentBlock{{
 		Type:   conversation.BlockTypeToolUse,
 		ID:     "tool-use-1",
 		Name:   "jira__get_issue",
 		Input:  []byte(`{"issue_key":"MM-1"}`),
-		Status: conversation.StatusSuccess,
+		Status: status,
 		Shared: new(true),
 	}}
+}
+
+// TestToolFollowUpFailingBeforeStreamingNotifiesTheRequester drives the share
+// decision route with an LLM that fails before any stream starts. The run
+// never reaches the streaming service, which notifies for runs it streams, so
+// the follow-up itself must end the run for the requester.
+func TestToolFollowUpFailingBeforeStreamingNotifiesTheRequester(t *testing.T) {
+	openChannel := &model.Channel{Id: testChannelID, Type: model.ChannelTypeOpen, TeamId: "teamid"}
 	toolResult := []conversation.ContentBlock{{
 		Type:      conversation.BlockTypeToolResult,
 		ToolUseID: "tool-use-1",
@@ -100,35 +142,50 @@ func TestToolFollowUpFailingBeforeStreamingNotifiesTheRequester(t *testing.T) {
 		Status:    conversation.StatusSuccess,
 		Shared:    new(true),
 	}}
-	for _, turn := range []store.Turn{
-		assistantToolTurn(t, postID, toolUse),
-		toolResultTurn(t, toolResult),
-	} {
-		turn.ConversationID = convID
-		require.NoError(t, convStore.CreateTurnAutoSequence(&turn))
-	}
+	env := setupToolFollowUpEnv(t, openChannel, func(postID string) []store.Turn {
+		return []store.Turn{
+			assistantToolTurn(t, postID, pendingToolBatch(t, conversation.StatusSuccess)),
+			toolResultTurn(t, toolResult),
+		}
+	})
 
-	post := &model.Post{Id: postID, UserId: testBotUserID, ChannelId: openChannel.Id}
-	post.AddProp(streaming.ConversationIDProp, convID)
-	post.AddProp(model.PostPropsDeferredNotification, true)
+	require.NotEqual(t, http.StatusOK, env.click("tool_result", `{"accepted_tool_ids":["tool-use-1"]}`), "the failed follow-up is reported to the requester")
 
-	e.mockAPI.On("GetPost", postID).Return(post, nil)
-	e.mockAPI.On("GetChannel", openChannel.Id).Return(openChannel, nil)
-	e.mockAPI.On("GetTeam", "teamid").Return(&model.Team{Id: "teamid", Name: "team"}, nil).Maybe()
-	e.mockAPI.On("HasPermissionToChannel", testUserID, openChannel.Id, model.PermissionReadChannel).Return(true)
-	e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Username: "requester", Locale: "en"}, nil).Maybe()
-	e.mockAPI.On("KVGet", mock.Anything).Return([]byte(nil), (*model.AppError)(nil)).Maybe()
-
-	req := httptest.NewRequest(http.MethodPost, "/post/"+postID+"/tool_result", strings.NewReader(`{"accepted_tool_ids":["tool-use-1"]}`))
-	req.Header.Add("Mattermost-User-Id", testUserID)
-	recorder := httptest.NewRecorder()
-	e.api.ServeHTTP(&plugin.Context{}, recorder, req)
-	require.NotEqual(t, http.StatusOK, recorder.Result().StatusCode, "the failed follow-up is reported to the requester")
-
-	ends := notifier.snapshot()
+	ends := env.notifier.snapshot()
 	require.Len(t, ends, 1, "the failed follow-up notifies exactly once")
-	assert.Equal(t, postID, ends[0].PostID)
+	assert.Equal(t, env.post.Id, ends[0].PostID)
 	assert.Equal(t, testUserID, ends[0].RequesterID)
 	assert.Equal(t, notifications.OutcomeErrored, ends[0].Outcome)
 	assert.True(t, ends[0].PostDeferred)
+}
+
+// TestApprovalFailingAfterTheDecisionIsClaimedNotifiesTheRequester fails the
+// store write for the tool result turn, which happens after the click claimed
+// the pending tool calls and before the follow-up starts. The claim cannot be
+// taken twice, so the requester must be told and a repeat click is stale.
+func TestApprovalFailingAfterTheDecisionIsClaimedNotifiesTheRequester(t *testing.T) {
+	dmChannel := &model.Channel{Id: "dmchan345678901234567890ab", Type: model.ChannelTypeDirect, Name: testBotUserID + "__" + testUserID}
+	env := setupToolFollowUpEnv(t, dmChannel, func(postID string) []store.Turn {
+		return []store.Turn{assistantToolTurn(t, postID, pendingToolBatch(t, conversation.StatusPending))}
+	})
+	env.convStore.createTurnErr = func(turn *store.Turn) error {
+		if turn.Role == "tool_result" {
+			return errors.New("store unavailable")
+		}
+		return nil
+	}
+
+	body := `{"accepted_tool_ids":["not-a-pending-tool"]}`
+	require.Equal(t, http.StatusInternalServerError, env.click("tool_call", body))
+
+	ends := env.notifier.snapshot()
+	require.Len(t, ends, 1, "the failed approval notifies exactly once")
+	assert.Equal(t, env.post.Id, ends[0].PostID)
+	assert.Equal(t, testUserID, ends[0].RequesterID)
+	assert.Equal(t, notifications.OutcomeErrored, ends[0].Outcome)
+	assert.True(t, ends[0].PostDeferred)
+
+	env.convStore.createTurnErr = nil
+	require.Equal(t, http.StatusBadRequest, env.click("tool_call", body), "a repeat click is stale: the decision was already claimed")
+	assert.Len(t, env.notifier.snapshot(), 1, "a stale click does not notify again")
 }
