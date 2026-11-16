@@ -235,14 +235,13 @@ func (s *Store) GetBotDMConversationSummariesForUser(userID string, limit, offse
 	return s.getConversationSummaries(query, limit, offset, "get bot DM conversation summaries")
 }
 
-// GetBotDMBotIDsForUser returns the IDs of the bots the user has a non-deleted
-// conversation with in their DM, however many conversations that takes.
+// GetBotDMBotIDsForUser returns the IDs of the bots the user has a listed
+// conversation with in their DM (see visibleConversationsOf), however many
+// conversations that takes.
 func (s *Store) GetBotDMBotIDsForUser(userID string) ([]string, error) {
-	query := restrictToBotDMs(s.builder.
+	query := restrictToBotDMs(visibleConversationsOf(userID, s.builder.
 		Select("DISTINCT c.BotID").
-		From("LLM_Conversations c").
-		Where(sq.Eq{"c.UserID": userID}).
-		Where(sq.Eq{"c.DeleteAt": 0}))
+		From("LLM_Conversations c")))
 
 	botIDs := []string{}
 	if err := s.selectBuilder(&botIDs, query.OrderBy("c.BotID"), "get bot DM bot IDs"); err != nil {
@@ -260,7 +259,7 @@ func restrictToBotDMs(query sq.SelectBuilder) sq.SelectBuilder {
 }
 
 func (s *Store) conversationSummariesQuery(userID string) sq.SelectBuilder {
-	return s.builder.
+	query := s.builder.
 		Select(
 			"c.ID",
 			"c.UserID",
@@ -271,7 +270,16 @@ func (s *Store) conversationSummariesQuery(userID string) sq.SelectBuilder {
 			"(SELECT COUNT(*) FROM LLM_Turns t WHERE t.ConversationID = c.ID) AS TurnCount",
 			"c.UpdatedAt",
 		).
-		From("LLM_Conversations c").
+		From("LLM_Conversations c")
+	return visibleConversationsOf(userID, query)
+}
+
+// visibleConversationsOf limits a query over LLM_Conversations c to the user's
+// conversations that users may see listed: not archived, and whose root post,
+// if any, still exists and is not deleted (see conversation.CheckRootPost).
+// Every listing of conversations goes through it so they agree.
+func visibleConversationsOf(userID string, query sq.SelectBuilder) sq.SelectBuilder {
+	return query.
 		Where(sq.Eq{"c.UserID": userID}).
 		Where(sq.Eq{"c.DeleteAt": 0}).
 		Where(sq.Or{

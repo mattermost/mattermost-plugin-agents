@@ -732,12 +732,14 @@ func createMattermostPostTables(t *testing.T, s *Store) {
 
 func TestGetBotDMConversationSummariesForUser(t *testing.T) {
 	type convSpec struct {
-		key       string
-		user      string // "self" or "other"
-		bot       string // "" for the main bot, "other" for the second one
-		root      string // "" for no root post, else a key of the channels map
-		channelID bool   // whether the conversation records the root's channel
-		updatedAt int64
+		key  string
+		user string // "self" or "other"
+		bot  string // "" for the main bot, "other" for the second one
+		// rootDeleted marks the root post as deleted in Mattermost.
+		rootDeleted bool
+		root        string // "" for no root post, else a key of the channels map
+		channelID   bool   // whether the conversation records the root's channel
+		updatedAt   int64
 	}
 
 	tests := []struct {
@@ -847,6 +849,17 @@ func TestGetBotDMConversationSummariesForUser(t *testing.T) {
 			want:     []string{"chat"},
 			wantBots: []string{"bot"},
 		},
+		{
+			name: "chats whose root post was deleted are not listed and do not count as chatted",
+			convs: []convSpec{
+				{key: "gone", user: "self", root: "botDM", channelID: true, updatedAt: 2000, rootDeleted: true},
+				{key: "otherGone", user: "self", bot: "other", root: "otherBotDM", channelID: true, updatedAt: 1500, rootDeleted: true},
+				{key: "kept", user: "self", root: "botDM", channelID: true, updatedAt: 1000},
+			},
+			limit:    60,
+			want:     []string{"kept"},
+			wantBots: []string{"bot"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -887,7 +900,11 @@ func TestGetBotDMConversationSummariesForUser(t *testing.T) {
 				if spec.root != "" {
 					rootPostID := model.NewId()
 					channelID := channels[spec.root].id
-					_, err := s.db.Exec("INSERT INTO Posts (Id, ChannelId) VALUES ($1, $2)", rootPostID, channelID)
+					deleteAt := int64(0)
+					if spec.rootDeleted {
+						deleteAt = 5000
+					}
+					_, err := s.db.Exec("INSERT INTO Posts (Id, ChannelId, DeleteAt) VALUES ($1, $2, $3)", rootPostID, channelID, deleteAt)
 					require.NoError(t, err)
 					conv.RootPostID = &rootPostID
 					if spec.channelID {
