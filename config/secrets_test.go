@@ -163,7 +163,7 @@ func TestRestoreSecrets(t *testing.T) {
 		assert.Equal(t, "text-embedding-3-large", params["embeddingModel"])
 	})
 
-	t.Run("placeholder without a counterpart resolves to empty", func(t *testing.T) {
+	t.Run("placeholder without a counterpart stays a mask", func(t *testing.T) {
 		incoming := Config{
 			Services: []llm.ServiceConfig{{ID: "svc-new", APIKey: SecretPlaceholder}},
 			MCP: MCPConfig{Servers: []MCPServerConfig{{
@@ -184,15 +184,24 @@ func TestRestoreSecrets(t *testing.T) {
 
 		restored := RestoreSecrets(incoming, nil)
 
-		assert.Empty(t, restored.Services[0].APIKey)
-		assert.Empty(t, restored.MCP.Servers[0].ClientSecret)
-		assert.Empty(t, restored.MCP.Servers[0].Headers["Authorization"])
-		assert.Empty(t, restored.MCP.Servers[0].ServiceAccountHeaders["Authorization"])
-		assert.Empty(t, restored.WebSearch.Google.APIKey)
+		assert.Equal(t, SecretPlaceholder, restored.Services[0].APIKey)
+		assert.Equal(t, SecretPlaceholder, restored.MCP.Servers[0].ClientSecret)
+		assert.Equal(t, SecretPlaceholder, restored.MCP.Servers[0].Headers["Authorization"])
+		assert.Equal(t, SecretPlaceholder, restored.MCP.Servers[0].ServiceAccountHeaders["Authorization"])
+		assert.Equal(t, SecretPlaceholder, restored.WebSearch.Google.APIKey)
 
 		params := map[string]string{}
 		require.NoError(t, json.Unmarshal(restored.EmbeddingSearchConfig.EmbeddingProvider.Parameters, &params))
-		assert.Empty(t, params["apiKey"])
+		assert.Equal(t, SecretPlaceholder, params["apiKey"])
+
+		assert.ElementsMatch(t, []string{
+			"services[svc-new].apiKey",
+			"mcp.servers[Confluence].clientSecret",
+			"mcp.servers[Confluence].headers[Authorization]",
+			"mcp.servers[Confluence].serviceAccountHeaders[Authorization]",
+			"webSearch.google.apiKey",
+			"embeddingSearchConfig.embeddingProvider.parameters.apiKey",
+		}, MaskedCredentialFields(restored))
 	})
 
 	t.Run("incoming configuration is untouched", func(t *testing.T) {
@@ -296,22 +305,22 @@ func TestRestoreSecretsFollowsMCPServerEdits(t *testing.T) {
 			wantHeaders:       []map[string]string{{headerKey: secondHeader}},
 		},
 		{
-			name:              "added server starts without credentials",
+			name:              "added server keeps the mask",
 			incoming:          []MCPServerConfig{masked("Jira", firstURL, headerKey), masked("Confluence", secondURL, headerKey), masked("GitHub", thirdURL, headerKey)},
-			wantClientSecrets: []string{firstSecret, secondSecret, ""},
-			wantHeaders:       []map[string]string{{headerKey: firstHeader}, {headerKey: secondHeader}, {headerKey: ""}},
+			wantClientSecrets: []string{firstSecret, secondSecret, SecretPlaceholder},
+			wantHeaders:       []map[string]string{{headerKey: firstHeader}, {headerKey: secondHeader}, {headerKey: SecretPlaceholder}},
 		},
 		{
-			name:              "second server sharing a name resolves nothing",
+			name:              "second server sharing a name keeps the mask",
 			incoming:          []MCPServerConfig{masked("Jira", firstURL, headerKey), masked("Jira", thirdURL, headerKey)},
-			wantClientSecrets: []string{firstSecret, ""},
-			wantHeaders:       []map[string]string{{headerKey: firstHeader}, {headerKey: ""}},
+			wantClientSecrets: []string{firstSecret, SecretPlaceholder},
+			wantHeaders:       []map[string]string{{headerKey: firstHeader}, {headerKey: SecretPlaceholder}},
 		},
 		{
-			name:              "server renamed and pointed elsewhere at once resolves nothing",
+			name:              "server renamed and pointed elsewhere at once keeps the mask",
 			incoming:          []MCPServerConfig{masked("Something Else", thirdURL, headerKey), masked("Confluence", secondURL, headerKey)},
-			wantClientSecrets: []string{"", secondSecret},
-			wantHeaders:       []map[string]string{{headerKey: ""}, {headerKey: secondHeader}},
+			wantClientSecrets: []string{SecretPlaceholder, secondSecret},
+			wantHeaders:       []map[string]string{{headerKey: SecretPlaceholder}, {headerKey: secondHeader}},
 		},
 	}
 
@@ -352,7 +361,7 @@ func TestRestoreSecretsFollowsMCPServerID(t *testing.T) {
 		{name: "unchanged", incoming: MCPServerConfig{ID: "srv-1", Name: "Jira", BaseURL: "https://mcp.example.com"}, want: storedSecret},
 		{name: "url changed", incoming: MCPServerConfig{ID: "srv-1", Name: "Jira", BaseURL: "https://elsewhere.example.com"}, want: storedSecret},
 		{name: "renamed and url changed", incoming: MCPServerConfig{ID: "srv-1", Name: "Other", BaseURL: "https://elsewhere.example.com"}, want: storedSecret},
-		{name: "unknown id and nothing else in common", incoming: MCPServerConfig{ID: "srv-9", Name: "Other", BaseURL: "https://elsewhere.example.com"}, want: ""},
+		{name: "unknown id and nothing else in common", incoming: MCPServerConfig{ID: "srv-9", Name: "Other", BaseURL: "https://elsewhere.example.com"}, want: SecretPlaceholder},
 	}
 
 	for _, tt := range tests {
@@ -372,8 +381,8 @@ func TestRestoreSecretsFollowsMCPServerID(t *testing.T) {
 			require.Len(t, restored.MCP.Servers, 1)
 			assert.Equal(t, tt.want, restored.MCP.Servers[0].ClientSecret, "client secret")
 			wantHeader := storedHeader
-			if tt.want == "" {
-				wantHeader = ""
+			if tt.want == SecretPlaceholder {
+				wantHeader = SecretPlaceholder
 			}
 			assert.Equal(t, wantHeader, restored.MCP.Servers[0].Headers[headerKey], "header %q", headerKey)
 		})

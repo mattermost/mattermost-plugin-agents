@@ -55,7 +55,7 @@ On `PUT`, each credential field is read like this:
 - The exact mask means keep the stored credential. It's restored whatever else changed in the same save, including the service type, an API URL or an MCP server's URL, so a mistyped URL can be fixed without re-entering the key. Services are matched by `id`, MCP servers by `id` (or by name and URL for servers saved before IDs existed), and header values by header name.
 - Any other value replaces the stored credential, including a value made only of asterisks that isn't the full mask.
 - An empty value clears the credential.
-- A mask with no stored credential to match, such as a new service or server, is saved as empty. The mask is never stored.
+- A mask with no stored credential to restore, such as on a new service or server, or in a System Console page left open across an upgrade or another admin's change, is rejected with `400` and the names of the fields. The mask is never stored. Reload the System Console, or read the configuration again, and re-enter those credentials.
 
 That makes the read-modify-write flow above safe to run without handling secrets: leave the credentials you don't want to change exactly as `GET` returned them. A script can't read a credential back through this API.
 

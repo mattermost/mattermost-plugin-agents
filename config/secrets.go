@@ -5,7 +5,9 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"maps"
+	"slices"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
@@ -58,7 +60,8 @@ func RedactSecrets(cfg Config) Config {
 
 // RestoreSecrets returns a copy of incoming with every masked credential
 // replaced by its stored counterpart. Other values pass through, so an empty
-// value clears the credential; a mask with no counterpart resolves to empty.
+// value clears the credential. A mask with no counterpart is left in place; check
+// the result with MaskedCredentialFields before saving it.
 func RestoreSecrets(incoming Config, stored *Config) Config {
 	out := *incoming.Clone()
 	if stored == nil {
@@ -124,12 +127,12 @@ func redactHeaderMap(headers map[string]string) {
 	}
 }
 
+// resolveSecret returns incoming unless it is the mask, which is replaced by
+// stored. A mask with no stored secret to resolve it stays a mask, so that
+// MaskedCredentialFields can refuse the save instead of persisting it.
 func resolveSecret(incoming, stored string) string {
-	if !IsSecretPlaceholder(incoming) {
+	if !IsSecretPlaceholder(incoming) || stored == "" || IsSecretPlaceholder(stored) {
 		return incoming
-	}
-	if IsSecretPlaceholder(stored) {
-		return ""
 	}
 	return stored
 }
@@ -227,7 +230,7 @@ func matchStoredMCPServers(incoming, stored []MCPServerConfig) []*MCPServerConfi
 
 // restoreHeaderSecrets resolves masked header values against the stored headers
 // of the same server. A mask under a new key takes the one stored header left
-// unclaimed (a renamed header); anything less clear-cut resolves to empty.
+// unclaimed (a renamed header); anything less clear-cut stays a mask.
 func restoreHeaderSecrets(incoming, stored map[string]string) map[string]string {
 	if len(incoming) == 0 {
 		return incoming
@@ -253,10 +256,6 @@ func restoreHeaderSecrets(incoming, stored map[string]string) map[string]string 
 			incoming[unmatched[0]] = storedValue
 		}
 		return incoming
-	}
-
-	for _, key := range unmatched {
-		incoming[key] = ""
 	}
 
 	return incoming
@@ -336,4 +335,55 @@ func encodeParameters(params map[string]json.RawMessage, key, value string, fall
 	}
 
 	return encoded
+}
+
+// ErrUnresolvedSecret is returned when a configuration to be saved still holds
+// the mask in a credential field.
+var ErrUnresolvedSecret = errors.New("masked credential has no stored value")
+
+// MaskedCredentialFields lists the credential fields of cfg that still hold the
+// exact mask, by path. It never includes a credential value. A saved
+// configuration must have none: the mask is not a credential.
+func MaskedCredentialFields(cfg Config) []string {
+	var fields []string
+	add := func(path, value string) {
+		if IsSecretPlaceholder(value) {
+			fields = append(fields, path)
+		}
+	}
+	service := func(prefix string, svc *llm.ServiceConfig) {
+		add(prefix+".apiKey", svc.APIKey)
+		add(prefix+".awsSecretAccessKey", svc.AWSSecretAccessKey)
+		add(prefix+".vertexAuthCredentials", svc.VertexAuthCredentials)
+	}
+
+	for _, svc := range cfg.Services {
+		service("services["+svc.ID+"]", &svc)
+	}
+	for _, bot := range cfg.Bots {
+		if bot.Service != nil {
+			service("bots["+bot.ID+"].service", bot.Service)
+		}
+	}
+	for _, server := range cfg.MCP.Servers {
+		prefix := "mcp.servers[" + server.Name + "]"
+		add(prefix+".clientSecret", server.ClientSecret)
+		for name, value := range server.Headers {
+			add(prefix+".headers["+name+"]", value)
+		}
+		for name, value := range server.ServiceAccountHeaders {
+			add(prefix+".serviceAccountHeaders["+name+"]", value)
+		}
+	}
+	add("webSearch.google.apiKey", cfg.WebSearch.Google.APIKey)
+	add("webSearch.brave.apiKey", cfg.WebSearch.Brave.APIKey)
+	add("openTelemetryHeaders", cfg.OpenTelemetryHeaders)
+	if params, ok := decodeParameters(cfg.EmbeddingSearchConfig.EmbeddingProvider.Parameters); ok {
+		if value, isString := parameterString(params, embeddingProviderAPIKeyParam); isString {
+			add("embeddingSearchConfig.embeddingProvider.parameters."+embeddingProviderAPIKeyParam, value)
+		}
+	}
+
+	slices.Sort(fields)
+	return fields
 }

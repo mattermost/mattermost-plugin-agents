@@ -780,3 +780,35 @@ func TestSaveConfigResponseDoesNotReturnCredentials(t *testing.T) {
 		})
 	}
 }
+
+// A mask is never a credential. When one reaches the save with nothing stored to
+// resolve it, as from a System Console page left open across an upgrade or an
+// edit by another admin, the save is refused and the mask is not persisted.
+func TestSaveConfigRejectsMaskWithNoStoredValue(t *testing.T) {
+	for _, field := range credentialFields() {
+		t.Run(field.name, func(t *testing.T) {
+			stored := storedCredentialConfig()
+			field.set(stored, "")
+			store := &testConfigStore{cfg: stored}
+			updater := &testConfigUpdater{}
+			router := setupTestRouter(store, updater, &testClusterNotifier{})
+
+			var read config.Config
+			require.NoError(t, json.Unmarshal(getAdminConfig(t, store), &read))
+			field.set(&read, config.SecretPlaceholder)
+			body, err := json.Marshal(read)
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), "Reload the System Console")
+			assert.Contains(t, w.Body.String(), string(configErrorUnresolvedCredentials))
+			assert.Empty(t, field.get(*store.cfg), "the mask must not be persisted")
+			assert.Zero(t, updater.callCount, "the live configuration must not change")
+		})
+	}
+}
