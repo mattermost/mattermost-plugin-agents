@@ -130,6 +130,9 @@ export interface AIThreadsState {
 
     // The latest request: the response of a superseded one is dropped.
     requestId: number;
+
+    // Titles set while that request was in flight, which its response may predate.
+    titles: Record<string, string>;
 }
 
 export const initialAIThreadsState: AIThreadsState = {
@@ -137,26 +140,34 @@ export const initialAIThreadsState: AIThreadsState = {
     loading: false,
     error: false,
     requestId: 0,
+    titles: {},
 };
 
 export function aiThreads(state: AIThreadsState = initialAIThreadsState, action: any): AIThreadsState {
     switch (action.type) {
     case AIThreadsRequested:
-        return {...state, loading: true, requestId: action.requestId};
+        return {...state, loading: true, requestId: action.requestId, titles: {}};
     case AIThreadsReceived:
         if (action.requestId !== state.requestId) {
             return state;
         }
-        return {...state, threads: Array.isArray(action.threads) ? action.threads : [], loading: false, error: false};
+        return {
+            ...state,
+            threads: (Array.isArray(action.threads) ? action.threads as AIThread[] : []).map((t) => (t.id in state.titles ? {...t, title: state.titles[t.id]} : t)),
+            loading: false,
+            error: false,
+            titles: {},
+        };
     case AIThreadsFailed:
         if (action.requestId !== state.requestId) {
             return state;
         }
-        return {...state, loading: false, error: true};
+        return {...state, loading: false, error: true, titles: {}};
     case AIThreadTitleSet:
         return {
             ...state,
             threads: state.threads?.map((t) => (t.id === action.conversationId ? {...t, title: action.title} : t)) ?? null,
+            titles: state.loading ? {...state.titles, [action.conversationId]: action.title} : state.titles,
         };
     default:
         return state;

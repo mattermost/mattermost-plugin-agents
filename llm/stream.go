@@ -105,6 +105,10 @@ type ServerToolUse struct {
 	ErrorCode string `json:"error_code,omitempty"`
 	// FileIDs are provider-side ids of files left in the sandbox output directory.
 	FileIDs []string `json:"file_ids,omitempty"`
+	// Retroactive marks an invocation the provider reports only after the
+	// output it informed (Gemini attaches search grounding to the final
+	// chunk). It belongs before the round's text, not after it.
+	Retroactive bool `json:"retroactive,omitempty"`
 
 	// ProviderRoute is the Bifrost route that produced FileIDs. Runtime-only:
 	// needed for fallback downloads, never broadcast or persisted for display.

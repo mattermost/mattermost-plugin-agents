@@ -25,6 +25,11 @@ declare global {
                 push: (path: string) => void;
             };
 
+            // Absent on servers that predate it.
+            isolatedFrames?: {
+                register: (frame: HTMLIFrameElement, handler: (event: MessageEvent) => void) => () => void;
+            };
+
             // Published host API; absent on older hosts. Returns the Redux action that opens the
             // modal: the caller must dispatch it.
             openUserSettings?: (dialogProps: {isContentProductSettings: boolean}) => UnknownAction;

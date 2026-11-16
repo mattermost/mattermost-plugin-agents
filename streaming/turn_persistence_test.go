@@ -27,6 +27,12 @@ type fakeTurnStore struct {
 	createErr error
 	lookupErr error
 	demoteErr error
+
+	heartbeats   int
+	heartbeatErr error
+	finalizes    int
+	// finalizeFailures makes that many finalize calls fail first.
+	finalizeFailures int
 }
 
 // eventCountingTurnStore records how many websocket events had been published
@@ -87,6 +93,55 @@ func (f *fakeTurnStore) UpdateTurnPostID(id string, postID *string) error {
 		}
 	}
 	return nil
+}
+
+func (f *fakeTurnStore) HeartbeatStreamingTurn(id string, content json.RawMessage) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.heartbeats++
+	if f.heartbeatErr != nil {
+		return false, f.heartbeatErr
+	}
+	for _, t := range f.turns {
+		if t.ID == id && t.Status == store.TurnStatusStreaming {
+			t.Content = content
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// FinalizeStreamingTurn mirrors the store: writes final state and moves the
+// turn after any turns appended since it was created.
+func (f *fakeTurnStore) FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.finalizes++
+	if f.finalizeFailures > 0 {
+		f.finalizeFailures--
+		return false, fmt.Errorf("db unavailable")
+	}
+	settled := false
+	for _, t := range f.turns {
+		if t.ID != id || t.Status != store.TurnStatusStreaming {
+			continue
+		}
+		settled = true
+		maxSeq := 0
+		for _, o := range f.turns {
+			if o.ConversationID == t.ConversationID && o.Sequence > maxSeq {
+				maxSeq = o.Sequence
+			}
+		}
+		if t.Sequence < maxSeq {
+			t.Sequence = maxSeq + 1
+		}
+		t.Content = content
+		t.TokensIn = tokensIn
+		t.TokensOut = tokensOut
+		t.Status = status
+	}
+	return settled, nil
 }
 
 func batchEvent(phase llm.ToolCallPhase, calls []llm.ToolCall) llm.TextStreamEvent {
@@ -495,6 +550,50 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.Equal(t, llm.ServerToolStatusSuccess, broadcastUses[0].Status)
 		require.NotContains(t, broadcastUses[0].Output, "\u202E")
 		require.Empty(t, broadcastUses[0].ProviderRoute)
+	})
+
+	t.Run("persists a search reported after its answer above that answer", func(t *testing.T) {
+		ts := &fakeTurnStore{}
+		client := &fakeStreamingClient{
+			channels: map[string]*model.Channel{
+				channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+			},
+		}
+		service := NewMMPostStreamService(client, i18n.Init())
+		service.SetTurnStore(ts)
+
+		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
+		post.AddProp(ConversationIDProp, conversationID)
+
+		search := func(status string) []llm.ServerToolUse {
+			return []llm.ServerToolUse{{ID: "ws1", Tool: llm.NativeToolWebSearch, Status: status, Query: "latest f1 winner", Retroactive: true}}
+		}
+		streamChannel := make(chan llm.TextStreamEvent, 6)
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeReasoningEnd, Value: llm.ReasoningData{Text: "Looking it up", Signature: "sig"}}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Norris won the race."}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeServerToolUse, Value: search(llm.ServerToolStatusInProgress)}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeServerToolUse, Value: search(llm.ServerToolStatusSuccess)}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(streamChannel)
+
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
+
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+		streamTurn := findStreamTurn(ts.turns, postID)
+		require.NotNil(t, streamTurn)
+		blocks := parseContentBlocks(t, streamTurn.Content)
+		types := make([]string, 0, len(blocks))
+		for _, block := range blocks {
+			types = append(types, block.Type)
+		}
+		require.Equal(t, []string{
+			conversation.BlockTypeThinking,
+			conversation.BlockTypeServerToolUse,
+			conversation.BlockTypeText,
+		}, types)
+		require.Equal(t, llm.ServerToolStatusSuccess, blocks[1].ServerTool.Status)
+		require.Equal(t, "Norris won the race.", blocks[2].Text)
 	})
 
 	t.Run("finalizes with token usage", func(t *testing.T) {
@@ -1354,6 +1453,37 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 			}
 		}
 		require.True(t, sawStart)
+		assert.Empty(t, ts.turns, "a continuation that can't see the post's anchor must not add one")
+	})
+
+	t.Run("demote failure leaves the prior anchor as the post's only anchor", func(t *testing.T) {
+		prior := &store.Turn{ID: "prior-anchor", ConversationID: conversationID, PostID: new(postID), Role: "assistant", Status: store.TurnStatusComplete, Sequence: 1}
+		ts := &fakeTurnStore{turns: []*store.Turn{prior}, demoteErr: fmt.Errorf("transient db error")}
+		client := &fakeStreamingClient{
+			channels: map[string]*model.Channel{
+				channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+			},
+		}
+		service := NewMMPostStreamService(client, i18n.Init())
+		service.SetTurnStore(ts)
+
+		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
+		post.AddProp(ConversationIDProp, conversationID)
+
+		streamChannel := make(chan llm.TextStreamEvent, 2)
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Hi"}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(streamChannel)
+
+		service.StreamContinuationToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
+
+		anchors := 0
+		for _, turn := range ts.turns {
+			if turn.PostID != nil && *turn.PostID == postID {
+				anchors++
+			}
+		}
+		assert.Equal(t, 1, anchors)
 	})
 
 	// The webapp snapshots the round's text when the resolved tool_call

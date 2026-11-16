@@ -258,6 +258,89 @@ describe('ArtifactFrame wrapper', () => {
     });
 });
 
+describe('ArtifactFrame with the server\'s isolated frame registry', () => {
+    type Registration = {frame: HTMLIFrameElement; handler: (event: MessageEvent) => void};
+    let registrations: Registration[];
+    let otherListener: jest.Mock;
+
+    // Stands in for the web app's firewall: the first message listener on the
+    // window, routing messages from a registered frame or any frame inside it
+    // to that frame's handler alone.
+    const firewall = (event: MessageEvent) => {
+        for (let w = event.source as Window | null; w && w !== window; w = w.parent === w ? null : w.parent) {
+            const registration = registrations.find((r) => r.frame.contentWindow === w);
+            if (registration) {
+                event.stopImmediatePropagation();
+                registration.handler(event);
+                return;
+            }
+        }
+    };
+
+    beforeEach(() => {
+        registrations = [];
+        window.addEventListener('message', firewall, true);
+        otherListener = jest.fn();
+        window.addEventListener('message', otherListener);
+        window.WebappUtils = {
+            isolatedFrames: {
+                register: (frame: HTMLIFrameElement, handler: (event: MessageEvent) => void) => {
+                    const registration = {frame, handler};
+                    registrations.push(registration);
+                    return () => {
+                        registrations = registrations.filter((r) => r !== registration);
+                    };
+                },
+            },
+        } as unknown as Window['WebappUtils'];
+    });
+
+    afterEach(() => {
+        window.removeEventListener('message', firewall, true);
+        window.removeEventListener('message', otherListener);
+        delete window.WebappUtils;
+    });
+
+    test('the artifact still reaches its broker, and no other listener on the window sees anything it or its child frames post', async () => {
+        const {frame, inner, win, send} = await renderReadyFrame();
+        expect(registrations.map((r) => r.frame)).toEqual([frame]);
+
+        const posted = jest.spyOn(win, 'postMessage');
+        send({mmArtifact: 1, type: 'request', id: 'r1', method: 'getCurrentUser'});
+        expect(posted).toHaveBeenCalledWith(expect.objectContaining({type: 'response', id: 'r1'}), '*');
+
+        // jsdom leaves the artifact's document empty; give the child frame a root to live in.
+        const artifactDoc = inner.contentDocument!;
+        const root = artifactDoc.documentElement ?? artifactDoc.appendChild(artifactDoc.createElement('html'));
+        const child = root.appendChild(artifactDoc.createElement('iframe'));
+        expect(child.contentWindow?.parent).toBe(win);
+        postFrom(child.contentWindow, {type: 'update-setting', markup: '<iframe srcdoc="...">'});
+        postFrom(win, {type: 'update-setting', markup: '<iframe srcdoc="...">'});
+
+        expect(otherListener).not.toHaveBeenCalled();
+    });
+
+    test('a reload registers only the new wrapper, and unmounting removes the registration', async () => {
+        const {unmount} = renderFrame();
+        await flushLoad();
+        const firstWrapper = wrapperIframe()!;
+        const firstInner = innerIframe(firstWrapper)!;
+        fireEvent.load(firstInner);
+        fireEvent.load(firstInner);
+        expect(stopped()).not.toBeNull();
+        expect(registrations).toEqual([]);
+
+        fireEvent.click(screen.getByRole('button', {name: 'Reload'}));
+        await flushLoad();
+        const wrapper = wrapperIframe()!;
+        expect(wrapper).not.toBe(firstWrapper);
+        expect(registrations.map((r) => r.frame)).toEqual([wrapper]);
+
+        unmount();
+        expect(registrations).toEqual([]);
+    });
+});
+
 describe('ArtifactFrame navigation guard', () => {
     test('unloads a self-navigating artifact without remounting until the viewer reloads', async () => {
         renderFrame('nav.html');

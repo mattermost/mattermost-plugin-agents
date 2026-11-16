@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/maximhq/bifrost/core/schemas"
 
@@ -247,6 +249,51 @@ func convertToResponsesTools(request llm.CompletionRequest, cfg llm.LanguageMode
 	return result
 }
 
+// serverSideToolInvocationsFor returns the include-server-side-tool-invocations
+// flag for model on the provider registered as name. The Gemini Developer API
+// rejects a request that mixes the built-in Google Search tool with function
+// declarations unless this flag is set; without it Bifrost silently drops one
+// kind. It is set only for models that support tool combination, since older
+// ones reject the mix outright, and left unset for every other provider,
+// including Vertex, which accepts the mix but rejects the field.
+func (b *LLM) serverSideToolInvocationsFor(name schemas.ModelProvider, model string, tools []schemas.ResponsesTool) *bool {
+	if b.baseProvider(name) != schemas.Gemini {
+		return nil
+	}
+	if !geminiSupportsToolCombination(model) {
+		return nil
+	}
+	hasWebSearch := slices.ContainsFunc(tools, func(t schemas.ResponsesTool) bool {
+		return t.Type == schemas.ResponsesToolTypeWebSearch
+	})
+	hasFunction := slices.ContainsFunc(tools, func(t schemas.ResponsesTool) bool {
+		return t.Type == schemas.ResponsesToolTypeFunction
+	})
+	if !hasWebSearch || !hasFunction {
+		return nil
+	}
+	return new(true)
+}
+
+// geminiToolCombinationMinMajor is the first Gemini generation that accepts
+// built-in and function tools in the same request.
+const geminiToolCombinationMinMajor = 3
+
+// geminiSupportsToolCombination reports whether model is a Gemini model of
+// generation 3 or newer. Unrecognized names (tuned endpoints, aliases) report
+// false, which keeps the previous behavior of Bifrost dropping a tool kind.
+func geminiSupportsToolCombination(model string) bool {
+	name := strings.ToLower(model)
+	name = name[strings.LastIndex(name, "/")+1:]
+	rest, ok := strings.CutPrefix(name, "gemini-")
+	if !ok {
+		return false
+	}
+	digits := rest[:len(rest)-len(strings.TrimLeft(rest, "0123456789"))]
+	major, err := strconv.Atoi(digits)
+	return err == nil && major >= geminiToolCombinationMinMajor
+}
+
 // responsesReasoningFor creates the ResponsesParametersReasoning configuration
 // for cfg.Model on the provider registered as name, or nil when no reasoning
 // block should be sent.
@@ -316,6 +363,7 @@ func (b *LLM) responsesRequestForHop(request llm.CompletionRequest, cfg llm.Lang
 	var params schemas.ResponsesParameters
 	if len(tools) > 0 {
 		params.Tools = tools
+		params.IncludeServerSideToolInvocations = b.serverSideToolInvocationsFor(name, model, tools)
 		if cfg.ToolsDisabled {
 			none := string(schemas.ResponsesToolChoiceTypeNone)
 			params.ToolChoice = &schemas.ResponsesToolChoice{ResponsesToolChoiceStr: &none}
@@ -394,6 +442,11 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 	// snapshot so receivers can replace prior state.
 	serverTools := newServerToolTracker()
 	providerRoute := b.provider
+	routedModel := bifrostReq.Model
+	observeServerTool := func(item *schemas.ResponsesMessage) bool {
+		retroactive := reportsSearchAfterOutput(bifrostCtx, b.baseProvider(providerRoute), routedModel)
+		return serverTools.observeItem(item, providerRoute, retroactive)
+	}
 	emitServerTools := func() {
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeServerToolUse,
@@ -426,10 +479,15 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 		// Process Responses API stream response
 		if chunk.BifrostResponsesStreamResponse != nil {
 			resp := chunk.BifrostResponsesStreamResponse
-			if routed := resp.ExtraFields.RoutingInfo.Provider; routed != "" {
-				providerRoute = routed
-			} else if resp.Response != nil && resp.Response.ExtraFields.RoutingInfo.Provider != "" {
-				providerRoute = resp.Response.ExtraFields.RoutingInfo.Provider
+			routing := resp.ExtraFields.RoutingInfo
+			if routing.Provider == "" && resp.Response != nil {
+				routing = resp.Response.ExtraFields.RoutingInfo
+			}
+			if routing.Provider != "" {
+				providerRoute = routing.Provider
+				if routing.Model != "" {
+					routedModel = routing.Model
+				}
 			}
 
 			switch resp.Type {
@@ -578,7 +636,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 			case schemas.ResponsesStreamResponseTypeOutputItemAdded:
 				// Server tool started (web_search_call / web_fetch_call /
 				// code_interpreter_call) — track and surface the activity.
-				if serverTools.observeItem(resp.Item, providerRoute) {
+				if observeServerTool(resp.Item) {
 					emitServerTools()
 				}
 				// New output item added - register function calls so their
@@ -612,7 +670,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 				fallbackSources = appendFirstWebSearchFallbackSource(fallbackSources, resp.Item)
 				// Server tool finished — fold the final payload (query,
 				// resolved URL/title, stdout/stderr, error) into the activity.
-				if serverTools.observeItem(resp.Item, providerRoute) {
+				if observeServerTool(resp.Item) {
 					emitServerTools()
 				}
 				// Output item completed - finalize function call if any

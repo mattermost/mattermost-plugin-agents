@@ -129,6 +129,7 @@ func serviceAccountConversations(t *testing.T, convStore *loadedStateFlowStore, 
 	botsService.SetBotsForTesting([]*bots.Bot{serviceAccountTestBot(true)})
 
 	mmClient := mocks.NewMockClient(t)
+	allowPostRunReservation(mmClient)
 	seedRequesterInitiator(t, convStore, "conv-id", mmClient)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 	mmClient.On("GetUser", testRequesterID).Return(&model.User{Id: testRequesterID, Username: "user"}, nil).Maybe()
