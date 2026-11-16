@@ -65,21 +65,42 @@ const isInUse = (state: unknown) => {
 };
 
 let lastRequestId = 0;
+let inFlight: Promise<void> | null = null;
+let refetchPending = false;
 
 // Chats being archived stay out of fetched lists until the request settles.
 const pendingArchives = new Set<string>();
 
-// The one fetch path for the thread list. A newer request supersedes an older one in flight.
-export async function fetchAIThreads(dispatch: Dispatch<UnknownAction>): Promise<void> {
+async function requestAIThreads(dispatch: Dispatch<UnknownAction>): Promise<void> {
     const requestId = ++lastRequestId;
     dispatch({type: AIThreadsRequested, requestId});
     try {
         const threads = await getAIThreads();
+
         dispatch({type: AIThreadsReceived, requestId, threads: threads.filter((t: AIThread) => !pendingArchives.has(t.id))});
     } catch (e) {
         console.error('Failed to load AI threads:', e); // eslint-disable-line no-console
         dispatch({type: AIThreadsFailed, requestId});
     }
+}
+
+// The one fetch path for the thread list, one request at a time. A call while a request is in
+// flight is not started (its response would supersede the one on its way, and a busy stream would
+// keep discarding responses): it marks the list stale, and one refetch follows when the request
+// settles, whether it succeeded or failed.
+export function fetchAIThreads(dispatch: Dispatch<UnknownAction>): Promise<void> {
+    if (inFlight) {
+        refetchPending = true;
+        return inFlight;
+    }
+    inFlight = requestAIThreads(dispatch).finally(() => {
+        inFlight = null;
+        if (refetchPending) {
+            refetchPending = false;
+            fetchAIThreads(dispatch);
+        }
+    });
+    return inFlight;
 }
 
 // Fetches unless the list is loaded or loading: views that mount together share one request.
@@ -99,17 +120,17 @@ export function refreshAIThreadsIfInUse(store: ThreadsStore): Promise<void> {
     return fetchAIThreads(store.dispatch);
 }
 
-// After a change the server already has (a title, an archive), a fetch still in flight may
-// predate it, so a fresh one supersedes it.
+// After an archive the server already has, a fetch still in flight may predate it, so a refetch
+// follows once that request settles.
 function supersedeInFlightFetch(store: ThreadsStore) {
     if (selectAIThreadsState(store.getState()).loading) {
         fetchAIThreads(store.dispatch);
     }
 }
 
+// Shows a title the server already has; a fetch in flight cannot revert it.
 function applyTitle(store: ThreadsStore, conversationId: string, title: string) {
     store.dispatch({type: AIThreadTitleSet, conversationId, title});
-    supersedeInFlightFetch(store);
 }
 
 function applyRemoval(store: ThreadsStore, conversationId: string) {
@@ -195,11 +216,11 @@ export function createAgentThreadsSync(store: {dispatch: Dispatch<UnknownAction>
 
             // A reply streaming in a chat the list does not have yet: fetch it. The server creates
             // a new chat's conversation while handling its first message, so the refetch made when
-            // the chat was sent can come back without it.
+            // the chat was sent can come back without it. A list still loading counts as not having it.
             const post = state.entities.posts.posts[postId];
             const rootId = post.root_id || post.id;
             const threads = selectAIThreads(state);
-            if (threads && !threads.some((t) => t.root_post_id === rootId) && !fetchedForRoots.has(rootId)) {
+            if (!threads?.some((t) => t.root_post_id === rootId) && !fetchedForRoots.has(rootId)) {
                 fetchedForRoots.add(rootId);
                 scheduleRefresh();
 

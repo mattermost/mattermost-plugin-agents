@@ -22,6 +22,7 @@ import {
     getArtifactToken,
     getChannelAutoReply,
     getChannelInterval,
+    getAIThreads,
     getConversation,
     getConversationContext,
     normalizeConversationResponse,
@@ -494,5 +495,21 @@ describe('agent versioning client', () => {
             status_code: 400,
             message: 'the current version of an agent cannot be deleted',
         });
+    });
+});
+
+describe('getAIThreads', () => {
+    test('gives up on a request that never settles', async () => {
+        const timeout = new AbortController();
+        const timeoutSpy = jest.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal);
+        mockFetch.mockImplementation((_url, init) => new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        }));
+
+        const request = getAIThreads();
+        timeout.abort();
+
+        await expect(request).rejects.toThrow('aborted');
+        timeoutSpy.mockRestore();
     });
 });
