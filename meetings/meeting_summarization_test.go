@@ -18,40 +18,38 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
-	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
-	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
-	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
-	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
-	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 )
 
 const (
-	createTranscriptionFileID = "recording-file"
-	createTranscriptionText   = "Noted the meeting."
+	createTranscriptionFileID  = "recording-file"
+	createTranscriptionSession = "session-id"
+	createTranscriptionText    = "Noted the meeting."
 	// createTranscriptionFormats is the input format list passed to ffmpeg.
 	createTranscriptionFormats = "mov,matroska,ogg,mp3,wav,flac,aac"
 	createTranscriptionVTT     = "WEBVTT\n\n1\n00:00:00.000 --> 00:00:02.000\nNoted the meeting.\n"
 )
 
-// transcriptionBotsConfig resolves the transcript bot by user id.
+// transcriptionBotsConfig resolves the transcript bot by name.
 type transcriptionBotsConfig struct {
-	userID string
+	botName string
 }
 
 func (c transcriptionBotsConfig) GetBots() []llm.BotConfig { return nil }
 func (c transcriptionBotsConfig) GetServiceByID(string) (llm.ServiceConfig, bool) {
 	return llm.ServiceConfig{}, false
 }
-func (c transcriptionBotsConfig) GetServices() []llm.ServiceConfig { return nil }
-func (c transcriptionBotsConfig) GetDefaultBotName() string        { return "" }
-func (c transcriptionBotsConfig) EnableTokenUsageLogging() bool    { return false }
+func (c transcriptionBotsConfig) GetDefaultBotName() string     { return "" }
+func (c transcriptionBotsConfig) EnableLLMLogging() bool        { return false }
+func (c transcriptionBotsConfig) EnableTokenUsageLogging() bool { return false }
 func (c transcriptionBotsConfig) EnableTokenUsageLogToPlugin() bool {
 	return false
 }
 func (c transcriptionBotsConfig) EnableTokenUsageLogToFile() bool { return false }
-func (c transcriptionBotsConfig) GetTranscriptGenerator() string  { return "" }
-func (c transcriptionBotsConfig) GetTranscriptBotUserID() string  { return c.userID }
+func (c transcriptionBotsConfig) GetTranscriptGenerator() string  { return c.botName }
 
 func allowPluginLogs(api *plugintest.API) {
 	for _, method := range []string{"LogDebug", "LogInfo", "LogWarn", "LogError"} {
@@ -76,7 +74,7 @@ func ffmpegArgvRecorder(t *testing.T) (argvPath, ffmpegPath string) {
 	ffmpegPath = filepath.Join(dir, "ffmpeg")
 	quoted := "'" + strings.ReplaceAll(argvPath, "'", `'\''`) + "'"
 	script := "#!/bin/sh\ncat >/dev/null || exit 1\nprintf '%s\\n' \"$@\" > " + quoted + "\nprintf 'audio'\nexit 0\n"
-	require.NoError(t, os.WriteFile(ffmpegPath, []byte(script), 0o755))
+	require.NoError(t, os.WriteFile(ffmpegPath, []byte(script), 0o755)) //nolint:gosec // test helper must be executable
 	return argvPath, ffmpegPath
 }
 
@@ -106,6 +104,7 @@ func expectedCreateTranscriptionArgs(recompress bool) []string {
 func newRecordingClient(t *testing.T, size int64, body string) *mocks.MockClient {
 	t.Helper()
 	mm := mocks.NewMockClient(t)
+	mm.On("HasPermissionToFileAction", createTranscriptionSession, createTranscriptionFileID, model.AccessControlPolicyActionDownloadFileAttachment).Return(true).Once()
 	mm.On("GetFileInfo", createTranscriptionFileID).Return(&model.FileInfo{Size: size}, nil).Once()
 	mm.On("GetFile", createTranscriptionFileID).Return(io.NopCloser(strings.NewReader(body)), nil).Once()
 	return mm
@@ -113,19 +112,18 @@ func newRecordingClient(t *testing.T, size int64, body string) *mocks.MockClient
 
 // newCreateTranscriptionService builds a service whose transcription call reaches
 // the configured executable and returns the fixed subtitle text.
-func newCreateTranscriptionService(t *testing.T, ffmpegPath, apiURL string) *Service {
+func newCreateTranscriptionService(t *testing.T, ffmpegPath, apiURL string, mm *mocks.MockClient) *Service {
 	t.Helper()
 	mockAPI := &plugintest.API{}
 	allowPluginLogs(mockAPI)
 	client := pluginapi.NewClient(mockAPI, nil)
-	cfg := transcriptionBotsConfig{userID: "transcriber-bot-user"}
+	cfg := transcriptionBotsConfig{botName: "transcriber"}
 	mmBots := bots.New(
 		mockAPI,
 		client,
-		enterprisetest.CheckerAt(enterprise.LevelEnterprise),
+		enterprise.NewLicenseChecker(client),
 		cfg,
 		nil,
-		accesscontrol.New(accesscontrol.PassthroughClient{}, nil, accesscontrol.NoMCPServerIDs, nil),
 		&http.Client{},
 		nil,
 	)
@@ -137,11 +135,13 @@ func newCreateTranscriptionService(t *testing.T, ffmpegPath, apiURL string) *Ser
 				APIKey: "test-key",
 				APIURL: apiURL,
 			},
-			&model.Bot{UserId: cfg.userID, Username: "transcriber"},
+			&model.Bot{UserId: "transcriber-bot-user", Username: "transcriber"},
 			nil,
 		),
 	})
 	return &Service{
+		pluginAPI:  client,
+		mmClient:   mm,
 		bots:       mmBots,
 		ffmpegPath: ffmpegPath,
 	}
@@ -177,9 +177,10 @@ func TestCreateTranscriptionInputOptions(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			argvPath, ffmpegPath := ffmpegArgvRecorder(t)
-			s := newCreateTranscriptionService(t, ffmpegPath, srv.URL)
+			mm := newRecordingClient(t, tc.size, tc.body)
+			s := newCreateTranscriptionService(t, ffmpegPath, srv.URL, mm)
 			// The argument check stands on its own if transcription returns an error.
-			_, _ = s.createTranscription(newRecordingClient(t, tc.size, tc.body), createTranscriptionFileID)
+			_, _ = s.createTranscription(createTranscriptionSession, createTranscriptionFileID)
 			got := readFFmpegArgs(t, argvPath)
 			require.Equal(t, expectedCreateTranscriptionArgs(tc.size > WhisperAPILimit), got)
 		})
@@ -200,8 +201,9 @@ func TestCreateTranscriptionReturnsResult(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			argvPath, ffmpegPath := ffmpegArgvRecorder(t)
-			s := newCreateTranscriptionService(t, ffmpegPath, srv.URL)
-			got, err := s.createTranscription(newRecordingClient(t, tc.size, "recording"), createTranscriptionFileID)
+			mm := newRecordingClient(t, tc.size, "recording")
+			s := newCreateTranscriptionService(t, ffmpegPath, srv.URL, mm)
+			got, err := s.createTranscription(createTranscriptionSession, createTranscriptionFileID)
 			require.NoError(t, err)
 			require.NotNil(t, got)
 			require.Equal(t, createTranscriptionText, got.FormatTextOnly())
