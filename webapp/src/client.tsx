@@ -433,8 +433,11 @@ export async function getBotDirectChannel(currentUserId: string, botUserID: stri
 
 export async function getAIThreads() {
     const url = `${baseRoute()}/ai_threads`;
+
+    // The list refresh queues behind a request in flight, so a stalled one must give up.
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
+        signal: AbortSignal.timeout(30000),
     }));
 
     if (response.ok) {
@@ -651,6 +654,10 @@ export async function searchAllChannels(term: string): Promise<ChannelWithTeamDa
         include_deleted: false,
         deleted: false,
     }) as Promise<ChannelWithTeamData[]>; // With these paremeters we should always get ChannelWithTeamData[]
+}
+
+export function getChannel(channelId: string) {
+    return Client4.getChannel(channelId);
 }
 
 export async function getChannelById(channelId: string): Promise<ChannelWithTeamData> {
