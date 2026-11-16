@@ -8,14 +8,17 @@ the plugin build. `make nested-modules-lint nested-modules-test` checks it.
 
 ## How it runs
 
-`mattermost/actions/plugin-ci/build` writes `dist/release-notes.md` on every
-build: the line `Supported Mattermost Server Versions: **X+**` followed by every
-commit subject. Mattermost's release pipeline publishes that file as the body of
-the GitHub release, taken from the `all-plugin-artifacts` artifact of the
-`build` job in `.github/workflows/ci.yml`.
+Mattermost's release pipeline (`release-mattermost-plugins.yaml` in
+mattermost/delivery-platform) rebuilds the plugin from the tag and creates the
+GitHub release. Its body is `dist/release-notes.md` from
+`mattermost/actions/plugin-ci/build`: the line
+`Supported Mattermost Server Versions: **X+**` followed by every commit subject.
+That pipeline runs outside this repo and has no Anthropic key.
 
-On tag builds (`v*`) the `build/release-notes` step of that job then runs
-`go run ./build/releasenotes --output dist/release-notes.md`, which:
+When the release is published, `.github/workflows/release-notes.yml` runs
+`make release-notes` for the tag and replaces the release body with the result
+(`gh release edit`). The release is created by a GitHub App, so the
+`release: published` event fires. The tool:
 
 1. Finds the previous release with `git describe`: the previous full release
    for a full release `vX.Y.Z`, otherwise the previous tag of any kind.
@@ -37,8 +40,11 @@ On tag builds (`v*`) the `build/release-notes` step of that job then runs
 The output is not checked. To change the notes, change the prompt.
 
 On any error (no `ANTHROPIC_API_KEY`, a `git`, `gh` or API failure) the tool
-exits non-zero without touching `dist/release-notes.md`. The step has
-`continue-on-error: true`, so the plain commit list is released as before.
+exits non-zero, the workflow fails, and the release keeps the commit list.
+
+To rewrite the notes of an existing release, run the **release-notes** workflow
+(Actions tab, "Run workflow") with its tag. It uses the code and prompt from the
+default branch.
 
 ## Previewing notes without releasing
 

@@ -49,9 +49,11 @@ jest.mock('react-router-dom', () => ({
 // @/client is the real HTTP boundary; stub the calls initialize() makes.
 const mockGetAIBots = jest.fn();
 const mockSetSiteURL = jest.fn();
+const mockGetAIThreads = jest.fn();
 jest.mock('@/client', () => ({
     getAIBots: (...args: unknown[]) => mockGetAIBots(...args),
     setSiteURL: (...args: unknown[]) => mockSetSiteURL(...args),
+    getAIThreads: (...args: unknown[]) => mockGetAIThreads(...args),
     doReaction: jest.fn(),
     doRunSearch: jest.fn(),
     doThreadAnalysis: jest.fn(),
@@ -95,14 +97,11 @@ function makeRegistry(websocketHandlers: WebSocketHandlers, registerReconnectHan
     };
 }
 
-function makeStore(dispatch: jest.Mock, siteURL = 'http://localhost:8065') {
-    const state = {
-        entities: {
-            general: {config: {SiteURL: siteURL}},
-            users: {currentUserId: ''},
-            i18n: {locale: 'en'},
-        },
-    };
+function makeStore(dispatch: jest.Mock, siteURL = 'http://localhost:8065', state: Record<string, unknown> = {entities: {
+    general: {config: {SiteURL: siteURL}},
+    users: {currentUserId: ''},
+    i18n: {locale: 'en'},
+}}) {
     return {
         getState: () => state,
         dispatch,
@@ -110,7 +109,7 @@ function makeStore(dispatch: jest.Mock, siteURL = 'http://localhost:8065') {
     };
 }
 
-async function initializePlugin(siteURL?: string) {
+async function initializePlugin(siteURL?: string, state?: Record<string, unknown>) {
     const websocketHandlers: WebSocketHandlers = new Map();
     const dispatch = jest.fn();
     const registerReconnectHandler = jest.fn();
@@ -120,7 +119,7 @@ async function initializePlugin(siteURL?: string) {
 
     // eslint-disable-next-line global-require
     const Plugin = require('./index').default;
-    await new Plugin().initialize(makeRegistry(websocketHandlers, registerReconnectHandler), makeStore(dispatch, siteURL));
+    await new Plugin().initialize(makeRegistry(websocketHandlers, registerReconnectHandler), makeStore(dispatch, siteURL, state));
 
     return {websocketHandlers, dispatch, registerReconnectHandler};
 }
@@ -128,12 +127,12 @@ async function initializePlugin(siteURL?: string) {
 // Lets the floating fetch promises inside initialize()/the handlers settle.
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-function fireWebSocketEvent(websocketHandlers: WebSocketHandlers, event: string) {
+function fireWebSocketEvent(websocketHandlers: WebSocketHandlers, event: string, msg: unknown = {}) {
     const handler = websocketHandlers.get(event);
     if (!handler) {
         throw new Error(`no websocket handler registered for ${event}`);
     }
-    handler({});
+    handler(msg);
 }
 
 describe('client base URL', () => {
@@ -214,5 +213,38 @@ describe('reconnect handling', () => {
         registerReconnectHandler.mock.calls[0][0]();
 
         expect(dispatch).toHaveBeenCalledWith({type: ChannelContextPostsCleared});
+    });
+});
+
+describe('agent thread list websocket handlers', () => {
+    beforeEach(() => {
+        jest.resetModules();
+        mockGetAIThreads.mockReset();
+        mockGetAIThreads.mockResolvedValue([]);
+        mockGetAIBots.mockResolvedValue({bots: [], searchEnabled: false, allowUnsafeLinks: false});
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('a chunk of a reply streaming into an unlisted chat refetches the list', async () => {
+        const state = {
+            entities: {
+                general: {config: {SiteURL: 'http://localhost:8065'}},
+                users: {currentUserId: 'me'},
+                i18n: {locale: 'en'},
+                posts: {posts: {reply: {id: 'reply', root_id: 'root', channel_id: 'dm', user_id: 'bot', props: {llm_requester_user_id: 'me'}}}},
+            },
+            'plugins-mattermost-ai': {aiThreads: {threads: [], loading: false, error: false, requestId: 0}, bots: []},
+        };
+        const {websocketHandlers} = await initializePlugin('http://localhost:8065', state);
+        await flush();
+
+        jest.useFakeTimers();
+        fireWebSocketEvent(websocketHandlers, 'custom_mattermost-ai_postupdate', {data: {post_id: 'reply', control: 'continue', next: 'x'}});
+        await jest.advanceTimersByTimeAsync(1000);
+
+        expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
     });
 });

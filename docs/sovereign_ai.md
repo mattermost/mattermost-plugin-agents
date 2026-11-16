@@ -1,103 +1,36 @@
-# Implementing Sovereign AI
+# Sovereign AI deployments
 
-Run AI agents in Mattermost under your own control: self-hosted or customer-chosen LLMs, data that stays in your environment when the LLM runs there, and access governed by Mattermost permissions. This guide explains how the Mattermost Agents plugin supports sovereign AI deployments.
+Run Mattermost Agents on self-hosted or private-cloud models, including air-gapped networks, so message content and tool results never reach an outside vendor.
 
-## Overview
+## What you control
 
-Sovereign AI is an approach to artificial intelligence implementation that prioritizes organizational control over data, processing, and infrastructure. In the context of Mattermost, this is realized through the Agents plugin, which enables organizations to leverage advanced AI capabilities through LLMs while maintaining complete control of their sensitive communications and information.
+Agents contacts only services you configure: the LLM, an embedding provider, a web search provider, and MCP servers. The plugin has no built-in calls to any other external service. Message content leaves Mattermost only toward those endpoints, so choosing where they run decides where your data goes. The full list is in [Data handling](data_handling.md).
 
-Sovereign AI has become increasingly critical as organizations seek to balance AI-enhanced productivity with stringent data sovereignty requirements. Mattermost's implementation through the Agents plugin enables organizations to maintain control over their data location, processing methods, and access controls throughout the AI interaction lifecycle.
+## Deployment patterns
 
-## Understanding Sovereign AI in Mattermost
+### Fully self-hosted
 
-Sovereign AI in Mattermost encompasses several key principles:
+Use this for air-gapped and disconnected networks.
 
-### Data Sovereignty
+| Piece | Choice |
+|---|---|
+| LLM | An **OpenAI Compatible** service that points at a model you run, such as Ollama or vLLM. See [Provider configuration](providers.md#openai-compatible-ollama-vllm-and-others). |
+| Embeddings | **OpenAI-compatible API** pointing at a self-hosted embedding model. Vectors live in your PostgreSQL with pgvector. See [Set up semantic search](embedding_search.md). |
+| Web search | **SearXNG (self-hosted)**, or leave web search off. See [Web search](web_search.md). |
+| Tools | The built-in Mattermost MCP server, plus MCP servers you host. See [Connect agents to MCP servers](mcp_integrations.md). |
+| Plugin install | Upload the plugin `.tar.gz` in the System Console. No outbound access to the plugin releases page is needed once you have the file. |
 
-Organizations maintain complete control over their data, including where it resides, how it's processed, and who can access it.
+Check that your model supports the features you'll use. Tool calling, vision, and structured output differ across servers. If your server's capabilities can't be detected, set **Structured output** on the service. See [Configure LLM services](llm_services.md#structured-output).
 
-### Infrastructure Control
+### Private cloud endpoints
 
-Through the Agents plugin, organizations can choose their preferred LLM backend implementation, whether it's cloud-based services like OpenAI, AWS Bedrock, and Azure AI, or self-hosted models running on their infrastructure.
+Run models in your own cloud account, with private networking and your identity and access management. Supported options are AWS Bedrock, Azure OpenAI, and Google Vertex AI. See [AWS Bedrock](aws_bedrock_setup.md) and [Provider configuration](providers.md). Bedrock supports VPC endpoints through **Custom Endpoint URL**. An Enterprise Advanced license lets you chain services so a request tries your private endpoint first and falls back to another, such as a local model, only when the first fails.
 
-### Extensible Architecture
+## Checklist
 
-The plugin ecosystem supports integration with various data sources and services through MCP (Model Context Protocol), allowing organizations to incorporate their existing tools and data repositories into the AI workflow.
-
-## Mattermost Agents Plugin Architecture
-
-### Core Components
-
-The Mattermost Agents plugin serves as the foundation for Sovereign AI implementation, offering:
-
-#### LLM Backend Flexibility
-- Self-hosted LLM deployment options
-- Integration with managed cloud provider LLMs (AWS Bedrock, Azure AI)
-- Support for cloud-based API services (OpenAI, Anthropic)
-- Custom LLM integration capabilities through OpenAI-compatible APIs
-
-#### Multi-Bot Architecture
-- Support for multiple concurrent AI bots
-- Different LLM backends per bot (e.g., OpenAI and self-hosted LLM simultaneously)
-- Customizable bot configurations, instructions, and capabilities
-- Independent access controls per bot
-
-#### Vector Search Capabilities
-- Self-hosted vector database options using PostgreSQL with pgvector
-- Semantic search across organizational content
-- Respects existing permission structures
-
-#### Data Integration Framework
-- Integration with external tools through MCP servers and other configured integrations
-- MCP server support for custom integrations
-- Tool approval system for security
-
-### Security and Compliance Features
-
-#### Fine-grained Access Controls
-- Team-level, channel-level, and user-level permissions for each bot
-- Role-based access to specific AI features
-- Granular control over tool usage and integrations
-
-#### Private Environment Deployment
-- Support for air-gapped environments
-- Government cloud compatibility
-- On-premises deployment options
-- Network isolation capabilities
-
-#### Data Privacy Controls
-- Optional user ID transmission to LLM providers
-- Conversation data stays within your infrastructure when the LLM provider runs there; a cloud provider receives the content of each request
-- Audit trails for AI interactions
-- Configurable data retention policies
-
-## Deployment Patterns
-
-### Full Self-Hosted Implementation
-
-For organizations requiring complete data sovereignty, the Agents plugin supports fully self-hosted deployments:
-
-- Deploy models like Llama, Mistral, or other open-source models on your infrastructure
-- Use PostgreSQL with pgvector extension for semantic search capabilities
-- Support for completely disconnected and air-gapped environments
-- MCP servers for connecting to internal systems and custom integrations
-
-### Hybrid Cloud Infrastructure Deployment
-
-Organizations can leverage cloud infrastructure while maintaining control by deploying on platforms like AWS Bedrock, Azure OpenAI Service, or Oracle Cloud Infrastructure. These deployments can use managed LLM services while maintaining private network connectivity, custom compute instances for self-hosted models, and integration with existing cloud identity and access management systems. Admins can configure service-level fallback chains, such as cloud to regional or on-premises to local OpenAI-compatible models, so each request starts with the primary service and automatically fails over only when earlier services are unavailable.
-
-### Public LLM Integration with Data Controls
-
-For organizations comfortable with cloud LLM services but requiring data controls:
-
-- API-only interactions with no data storage at external providers
-- Configurable data transmission to control what information is sent to LLMs
-- Session isolation ensuring each conversation is independent
-- Comprehensive audit logging to track all AI interactions
-
-## Additional Resources
-
-- [Admin Guide](admin_guide.md): Comprehensive setup and configuration guide
-- [Provider Guide](providers.md): Detailed LLM provider configuration
-- [User Guide](user_guide.md): End-user documentation for AI features
-- [Usage Tips](usage_tips.md): Best practices for AI interaction
+1. Add a service that points at your model, and confirm tool calling works. See [Verify a self-hosted model](providers.md#verify-a-self-hosted-model).
+2. Create an agent and test it in a direct message.
+3. If you use semantic search, run an embedding model you host and run a **Full Reindex**.
+4. Set web search to SearXNG or off.
+5. Remove tool access you don't need, and review approval policies.
+6. Turn on audit logging on the server, and the token usage log if you track usage.
