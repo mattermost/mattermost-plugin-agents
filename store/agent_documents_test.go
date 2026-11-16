@@ -38,54 +38,76 @@ func TestAgentDocumentBlobs(t *testing.T) {
 	content := "Refunds within 30 days. Ünïcode."
 	doc := saveTestDocument(t, s, "user-1", "policy.txt", content)
 	sum := sha256.Sum256([]byte(content))
+	const unknownID = "missingmissingmissingmiss1"
 
-	t.Run("save computes metadata", func(t *testing.T) {
-		assert.Len(t, doc.ID, 26)
-		assert.Equal(t, hex.EncodeToString(sum[:]), doc.SHA256)
-		assert.Equal(t, int64(len(content)), doc.Size)
-		assert.Equal(t, 32, doc.TextRunes)
-		assert.NotZero(t, doc.CreateAt)
-	})
+	assert.Len(t, doc.ID, 26)
+	assert.Equal(t, hex.EncodeToString(sum[:]), doc.SHA256, "save computes the checksum")
+	assert.Equal(t, int64(len(content)), doc.Size)
+	assert.Equal(t, 32, doc.TextRunes)
+	assert.NotZero(t, doc.CreateAt)
 
-	t.Run("get returns content and text", func(t *testing.T) {
-		got, err := s.GetAgentDocument(doc.ID)
-		require.NoError(t, err)
-		require.NotNil(t, got)
-		assert.Equal(t, doc, got)
-	})
+	getTests := []struct {
+		name string
+		id   string
+		want *AgentDocument
+	}{
+		{name: "get returns content and text", id: doc.ID, want: doc},
+		{name: "get of an unknown document returns nil", id: unknownID},
+	}
+	for _, tt := range getTests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := s.GetAgentDocument(tt.id)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 
-	t.Run("get of an unknown document returns nil", func(t *testing.T) {
-		got, err := s.GetAgentDocument("missingmissingmissingmiss1")
-		require.NoError(t, err)
-		assert.Nil(t, got)
-	})
+	lookupTests := []struct {
+		name      string
+		ids       []string
+		canceled  bool
+		wantTexts map[string]string
+		wantInfos []string
+	}{
+		{
+			name:      "known ids are returned and unknown ones skipped",
+			ids:       []string{doc.ID, unknownID},
+			wantTexts: map[string]string{doc.ID: content},
+			wantInfos: []string{doc.ID},
+		},
+		{name: "texts are not read once the context is done", ids: []string{doc.ID}, canceled: true},
+	}
+	for _, tt := range lookupTests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tt.canceled {
+				cancel()
+			}
 
-	t.Run("infos omit content and skip unknown ids", func(t *testing.T) {
-		infos, err := s.GetAgentDocumentInfos([]string{doc.ID, "missingmissingmissingmiss1"})
-		require.NoError(t, err)
-		require.Len(t, infos, 1)
-		info := infos[doc.ID]
-		assert.Nil(t, info.Content)
-		assert.Empty(t, info.ExtractedText)
-		assert.Equal(t, doc.SHA256, info.SHA256)
-		assert.Equal(t, "user-1", info.CreatedBy)
-		assert.Equal(t, doc.TextRunes, info.TextRunes)
-	})
+			texts, err := s.GetAgentDocumentTexts(ctx, tt.ids)
+			if tt.canceled {
+				require.ErrorIs(t, err, context.Canceled)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantTexts, texts)
 
-	t.Run("texts skip unknown ids", func(t *testing.T) {
-		texts, err := s.GetAgentDocumentTexts(t.Context(), []string{doc.ID, "missingmissingmissingmiss1"})
-		require.NoError(t, err)
-		assert.Equal(t, map[string]string{doc.ID: content}, texts)
-	})
+			infos, err := s.GetAgentDocumentInfos(tt.ids)
+			require.NoError(t, err)
+			require.Len(t, infos, len(tt.wantInfos))
+			for _, id := range tt.wantInfos {
+				info := infos[id]
+				assert.Nil(t, info.Content, "infos omit content")
+				assert.Empty(t, info.ExtractedText, "infos omit text")
+				assert.Equal(t, doc.SHA256, info.SHA256)
+				assert.Equal(t, "user-1", info.CreatedBy)
+				assert.Equal(t, doc.TextRunes, info.TextRunes)
+			}
+		})
+	}
 
-	t.Run("texts are not read once the context is done", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
-		_, err := s.GetAgentDocumentTexts(ctx, []string{doc.ID})
-		require.ErrorIs(t, err, context.Canceled)
-	})
-
-	tests := []struct {
+	saveTests := []struct {
 		name      string
 		createdBy string
 		mimeType  string
@@ -97,7 +119,7 @@ func TestAgentDocumentBlobs(t *testing.T) {
 		{name: "another type gets a new document", createdBy: "user-1", mimeType: "text/markdown", content: content},
 		{name: "other content gets a new document", createdBy: "user-1", mimeType: "text/plain", content: content + "!"},
 	}
-	for _, tt := range tests {
+	for _, tt := range saveTests {
 		t.Run(tt.name, func(t *testing.T) {
 			again := &AgentDocument{Name: "renamed.txt", MimeType: tt.mimeType, Content: []byte(tt.content), ExtractedText: tt.content, CreatedBy: tt.createdBy}
 			require.NoError(t, s.SaveAgentDocument(again))
@@ -122,79 +144,69 @@ func TestAgentDocumentReferences(t *testing.T) {
 	agent.Documents = []llm.AgentDocument{documentRef(handbook, "Handbook")}
 	require.NoError(t, s.CreateAgent(agent, AgentVersionMeta{ActorID: "creator-1", Source: AgentVersionSourceCreate}))
 
-	t.Run("documents round trip through the agent row", func(t *testing.T) {
-		fetched, err := s.GetAgent(agent.ID)
-		require.NoError(t, err)
-		assert.Equal(t, agent.Documents, fetched.Documents)
-	})
+	v1Docs := []llm.AgentDocument{documentRef(handbook, "Handbook")}
+	v2Docs := []llm.AgentDocument{documentRef(faq, "FAQ"), documentRef(handbook, "Employee handbook")}
 
-	fetched, err := s.GetAgent(agent.ID)
-	require.NoError(t, err)
-	fetched.Documents = []llm.AgentDocument{documentRef(faq, "FAQ"), documentRef(handbook, "Employee handbook")}
-	require.NoError(t, s.UpdateAgent(fetched, AgentVersionMeta{ActorID: "creator-1", Source: AgentVersionSourceUpdate}))
-
-	fetched, err = s.GetAgent(agent.ID)
-	require.NoError(t, err)
-	fetched.Documents = nil
-	require.NoError(t, s.UpdateAgent(fetched, AgentVersionMeta{ActorID: "creator-1", Source: AgentVersionSourceUpdate}))
-
-	t.Run("an agent without documents lists an empty array", func(t *testing.T) {
-		got, getErr := s.GetAgent(agent.ID)
-		require.NoError(t, getErr)
-		assert.NotNil(t, got.Documents)
-		assert.Empty(t, got.Documents)
-	})
-
-	versionTests := []struct {
+	// Each step follows the previous one: version N is the Nth step.
+	steps := []struct {
 		name          string
-		version       int
-		documents     []llm.AgentDocument
-		changedFields []string
+		documents     func() []llm.AgentDocument // nil leaves the created agent as it is
+		source        AgentVersionSource
+		restoredFrom  int
+		wantDocuments []llm.AgentDocument
+		wantChanged   []string
 	}{
-		{name: "create snapshot", version: 1, documents: []llm.AgentDocument{documentRef(handbook, "Handbook")}, changedFields: []string{}},
-		{name: "update adds, renames and reorders", version: 2, documents: []llm.AgentDocument{documentRef(faq, "FAQ"), documentRef(handbook, "Employee handbook")}, changedFields: []string{"documents"}},
-		{name: "update removes all", version: 3, documents: []llm.AgentDocument{}, changedFields: []string{"documents"}},
+		{name: "create stores the references", wantDocuments: v1Docs, wantChanged: []string{}},
+		{name: "update adds, renames and reorders", documents: func() []llm.AgentDocument { return v2Docs }, source: AgentVersionSourceUpdate, wantDocuments: v2Docs, wantChanged: []string{"documents"}},
+		{name: "update removes all", documents: func() []llm.AgentDocument { return nil }, source: AgentVersionSourceUpdate, wantDocuments: []llm.AgentDocument{}, wantChanged: []string{"documents"}},
+		{name: "restoring version 2 brings its documents back", documents: func() []llm.AgentDocument { return v2Docs }, source: AgentVersionSourceRestore, restoredFrom: 2, wantDocuments: v2Docs, wantChanged: []string{"documents"}},
 	}
-	for _, tt := range versionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			detail, getErr := s.GetAgentVersion(agent.ID, tt.version)
-			require.NoError(t, getErr)
+	for i, step := range steps {
+		t.Run(step.name, func(t *testing.T) {
+			if step.documents != nil {
+				current, err := s.GetAgent(agent.ID)
+				require.NoError(t, err)
+				current.Documents = step.documents()
+				require.NoError(t, s.UpdateAgent(current, AgentVersionMeta{ActorID: "creator-1", Source: step.source, RestoredFromVersion: step.restoredFrom}))
+			}
+
+			got, err := s.GetAgent(agent.ID)
+			require.NoError(t, err)
+			assert.NotNil(t, got.Documents, "an agent without documents lists an empty array")
+			assert.Equal(t, step.wantDocuments, got.Documents)
+
+			detail, err := s.GetAgentVersion(agent.ID, i+1)
+			require.NoError(t, err)
 			require.NotNil(t, detail)
-			assert.Equal(t, tt.documents, detail.Config.Documents)
-			assert.Equal(t, tt.changedFields, detail.ChangedFields)
+			assert.Equal(t, step.wantDocuments, detail.Config.Documents)
+			assert.Equal(t, step.wantChanged, detail.ChangedFields)
 		})
 	}
 
-	t.Run("references list the current row, then versions newest first", func(t *testing.T) {
-		refs, listErr := s.ListAgentDocumentReferences(agent.ID)
-		require.NoError(t, listErr)
-		assert.Equal(t, []llm.AgentDocument{
-			documentRef(faq, "FAQ"), documentRef(handbook, "Employee handbook"), // version 2
-			documentRef(handbook, "Handbook"), // version 1
-		}, refs)
-	})
-
-	t.Run("restoring a version brings its documents back", func(t *testing.T) {
-		v2, getErr := s.GetAgentVersion(agent.ID, 2)
-		require.NoError(t, getErr)
-		current, getErr := s.GetAgent(agent.ID)
-		require.NoError(t, getErr)
-		current.Documents = v2.Config.Documents
-		require.NoError(t, s.UpdateAgent(current, AgentVersionMeta{ActorID: "creator-1", Source: AgentVersionSourceRestore, RestoredFromVersion: 2}))
-
-		restored, getErr := s.GetAgent(agent.ID)
-		require.NoError(t, getErr)
-		assert.Equal(t, v2.Config.Documents, restored.Documents)
-		v4, getErr := s.GetAgentVersion(agent.ID, 4)
-		require.NoError(t, getErr)
-		assert.Equal(t, []string{"documents"}, v4.ChangedFields)
-	})
-
-	t.Run("an unknown agent has no references", func(t *testing.T) {
-		refs, listErr := s.ListAgentDocumentReferences("missingmissingmissingmiss1")
-		require.NoError(t, listErr)
-		assert.Empty(t, refs)
-	})
+	referenceTests := []struct {
+		name    string
+		agentID string
+		want    []llm.AgentDocument
+	}{
+		{
+			name:    "references list the current row, then versions newest first",
+			agentID: agent.ID,
+			want: []llm.AgentDocument{
+				documentRef(faq, "FAQ"), documentRef(handbook, "Employee handbook"), // current row, restored from version 2
+				documentRef(faq, "FAQ"), documentRef(handbook, "Employee handbook"), // version 4
+				documentRef(faq, "FAQ"), documentRef(handbook, "Employee handbook"), // version 2
+				documentRef(handbook, "Handbook"), // version 1
+			},
+		},
+		{name: "an unknown agent has no references", agentID: "missingmissingmissingmiss1"},
+	}
+	for _, tt := range referenceTests {
+		t.Run(tt.name, func(t *testing.T) {
+			refs, err := s.ListAgentDocumentReferences(tt.agentID)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, refs)
+		})
+	}
 }
 
 // Version snapshots are immutable, so one holding a value Postgres jsonb

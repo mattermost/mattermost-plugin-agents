@@ -4,10 +4,7 @@
 package agentdocs
 
 import (
-	"encoding/hex"
 	"io"
-	"regexp"
-	"strings"
 
 	"github.com/ledongthuc/pdf"
 )
@@ -56,76 +53,214 @@ func usesCharacterMap(font pdf.Value) bool {
 	return enc.IsNull() || (enc.Kind() == pdf.Name && enc.Name() == "Identity-H")
 }
 
-var (
-	codespaceBlock = regexp.MustCompile(`(?s)begincodespacerange(.*?)endcodespacerange`)
-	codespacePair  = regexp.MustCompile(`<([0-9A-Fa-f\s]*)>\s*<([0-9A-Fa-f\s]*)>`)
-)
-
 // readCodespace reads the code ranges of a ToUnicode character map stream.
-// Comments, which the library's tokenizer allows between operands, are
-// dropped first; a % inside a string is not a comment. The stream has already been charged to the page limits.
-func readCodespace(toUnicode pdf.Value) (codespace [4][]pdfCodeRange) {
+// The stream has already been charged to the page limits.
+func readCodespace(toUnicode pdf.Value) [4][]pdfCodeRange {
 	data, err := io.ReadAll(io.LimitReader(toUnicode.Reader(), maxPDFPageStreamBytes))
 	if err != nil {
-		return codespace
+		return [4][]pdfCodeRange{}
 	}
-	data = stripPDFComments(data)
-	for _, block := range codespaceBlock.FindAllSubmatch(data, -1) {
-		for _, pair := range codespacePair.FindAllSubmatch(block[1], -1) {
-			low, lowOK := decodeHexString(pair[1])
-			high, highOK := decodeHexString(pair[2])
-			if !lowOK || !highOK || len(low) != len(high) || len(low) < 1 || len(low) > 4 {
-				continue
-			}
-			codespace[len(low)-1] = append(codespace[len(low)-1], pdfCodeRange{low: low, high: high})
+	return parseCodespace(data)
+}
+
+// parseCodespace returns the ranges of every begincodespacerange section of a
+// character map, by code length-1. A range is a pair of equally long strings of
+// 1 to 4 bytes. A section with anything but strings in it is malformed and
+// ignored; the library's reader rejects the whole map then.
+func parseCodespace(data []byte) (codespace [4][]pdfCodeRange) {
+	lex := pdfLexer{data: data}
+	var operands []string
+	inSection, malformed := false, false
+	for {
+		tok, ok := lex.next()
+		if !ok {
+			return codespace
 		}
-	}
-	return codespace
-}
-
-func decodeHexString(s []byte) (string, bool) {
-	clean := strings.Join(strings.Fields(string(s)), "")
-	if len(clean)%2 != 0 {
-		return "", false
-	}
-	decoded, err := hex.DecodeString(clean)
-	return string(decoded), err == nil
-}
-
-// stripPDFComments removes the comments from PDF or PostScript text: a %
-// outside a string, up to the end of its line. Literal strings, which nest
-// parentheses and escape with a backslash, and hex strings are kept whole.
-func stripPDFComments(data []byte) []byte {
-	out := make([]byte, 0, len(data))
-	for i := 0; i < len(data); i++ {
-		switch c := data[i]; c {
-		case '%':
-			for i < len(data) && data[i] != '\r' && data[i] != '\n' {
-				i++
-			}
-			if i < len(data) {
-				out = append(out, data[i])
-			}
-		case '(':
-			start, depth := i, 0
-		scan:
-			for ; i < len(data); i++ {
-				switch data[i] {
-				case '\\':
-					i++
-				case '(':
-					depth++
-				case ')':
-					depth--
-					if depth == 0 {
-						break scan
+		switch {
+		case tok.kind == pdfTokenString && inSection:
+			operands = append(operands, tok.text)
+		case tok.kind == pdfTokenWord && tok.text == "begincodespacerange":
+			inSection, malformed, operands = true, false, nil
+		case tok.kind == pdfTokenWord && tok.text == "endcodespacerange":
+			if inSection && !malformed {
+				for i := 0; i+1 < len(operands); i += 2 {
+					low, high := operands[i], operands[i+1]
+					if len(low) == len(high) && len(low) >= 1 && len(low) <= 4 {
+						codespace[len(low)-1] = append(codespace[len(low)-1], pdfCodeRange{low: low, high: high})
 					}
 				}
 			}
-			out = append(out, data[start:min(i+1, len(data))]...)
-		default:
-			out = append(out, c)
+			inSection = false
+		case inSection:
+			malformed = true
 		}
 	}
-	return out
+}
+
+type pdfTokenKind int
+
+const (
+	pdfTokenWord   pdfTokenKind = iota // keyword, number, name or delimiter
+	pdfTokenString                     // hex or literal string, decoded in text
+)
+
+type pdfToken struct {
+	kind pdfTokenKind
+	text string
+}
+
+// pdfLexer splits PDF or PostScript text into the tokens parseCodespace needs:
+// strings decoded to their bytes, and everything else as words. Comments and
+// whitespace are skipped; a % inside a string is not a comment.
+type pdfLexer struct {
+	data []byte
+	pos  int
+}
+
+func isPDFSpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == 0
+}
+
+func isPDFDelimiter(c byte) bool {
+	switch c {
+	case '(', ')', '<', '>', '[', ']', '{', '}', '/', '%':
+		return true
+	}
+	return false
+}
+
+func (l *pdfLexer) next() (pdfToken, bool) {
+	for l.pos < len(l.data) {
+		c := l.data[l.pos]
+		switch {
+		case isPDFSpace(c):
+			l.pos++
+		case c == '%':
+			for l.pos < len(l.data) && l.data[l.pos] != '\r' && l.data[l.pos] != '\n' {
+				l.pos++
+			}
+		case c == '(':
+			l.pos++
+			return pdfToken{pdfTokenString, l.literalString()}, true
+		case c == '<' && l.pos+1 < len(l.data) && l.data[l.pos+1] == '<':
+			l.pos += 2
+			return pdfToken{pdfTokenWord, "<<"}, true
+		case c == '<':
+			l.pos++
+			return pdfToken{pdfTokenString, l.hexString()}, true
+		case c == '>' && l.pos+1 < len(l.data) && l.data[l.pos+1] == '>':
+			l.pos += 2
+			return pdfToken{pdfTokenWord, ">>"}, true
+		case isPDFDelimiter(c) && c != '/':
+			l.pos++
+			return pdfToken{pdfTokenWord, string(c)}, true
+		default:
+			start := l.pos
+			l.pos++
+			for l.pos < len(l.data) && !isPDFSpace(l.data[l.pos]) && !isPDFDelimiter(l.data[l.pos]) {
+				l.pos++
+			}
+			return pdfToken{pdfTokenWord, string(l.data[start:l.pos])}, true
+		}
+	}
+	return pdfToken{}, false
+}
+
+// hexString reads a hex string after its opening <. Whitespace is ignored and
+// a final odd digit counts as followed by 0.
+func (l *pdfLexer) hexString() string {
+	var out []byte
+	var high, have = byte(0), false
+	for l.pos < len(l.data) {
+		c := l.data[l.pos]
+		l.pos++
+		if c == '>' {
+			break
+		}
+		v, ok := hexDigit(c)
+		if !ok {
+			continue
+		}
+		if have {
+			out = append(out, high<<4|v)
+			have = false
+		} else {
+			high, have = v, true
+		}
+	}
+	if have {
+		out = append(out, high<<4)
+	}
+	return string(out)
+}
+
+func hexDigit(c byte) (byte, bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0', true
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10, true
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10, true
+	}
+	return 0, false
+}
+
+// literalString reads a literal string after its opening (. Parentheses nest,
+// and a backslash starts an escape: a letter escape, up to three octal digits,
+// a line continuation, or the escaped character itself.
+func (l *pdfLexer) literalString() string {
+	var out []byte
+	depth := 1
+	for l.pos < len(l.data) {
+		c := l.data[l.pos]
+		l.pos++
+		switch c {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return string(out)
+			}
+		case '\\':
+			if l.pos >= len(l.data) {
+				return string(out)
+			}
+			e := l.data[l.pos]
+			l.pos++
+			switch {
+			case e >= '0' && e <= '7':
+				v := int(e - '0')
+				for range 2 {
+					if l.pos < len(l.data) && l.data[l.pos] >= '0' && l.data[l.pos] <= '7' {
+						v = v*8 + int(l.data[l.pos]-'0')
+						l.pos++
+					}
+				}
+				out = append(out, byte(v))
+				continue
+			case e == 'n':
+				out = append(out, '\n')
+			case e == 'r':
+				out = append(out, '\r')
+			case e == 't':
+				out = append(out, '\t')
+			case e == 'b':
+				out = append(out, '\b')
+			case e == 'f':
+				out = append(out, '\f')
+			case e == '\r':
+				if l.pos < len(l.data) && l.data[l.pos] == '\n' {
+					l.pos++
+				}
+			case e == '\n':
+			default:
+				out = append(out, e)
+			}
+			continue
+		}
+		out = append(out, c)
+	}
+	return string(out)
 }

@@ -226,6 +226,20 @@ func TestExtractPDF(t *testing.T) {
 			want: "ABABABABAB",
 		},
 		{
+			name: "three-byte font codes with literal string bounds across decoding chunks",
+			data: func(t *testing.T) []byte {
+				return assemblePDF(
+					"<< /Type /Catalog /Pages 2 0 R >>",
+					"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+					pageWithResources(2, 4, "/Font << /F1 5 0 R >>"),
+					pdfStream("", "BT /F1 12 Tf ("+strings.Repeat("\x01\x02\x03\x04\x05\x06", 5)+") Tj ET"),
+					toUnicodeFont(6),
+					pdfStream("", "1 begincodespacerange (\\000\\000\\000) (\\377\\377\\377) endcodespacerange\n2 beginbfchar\n<010203> <0041>\n<040506> <0042>\nendbfchar"),
+				)
+			},
+			want: "ABABABABAB",
+		},
+		{
 			name: "font codes of mixed widths across decoding chunks",
 			data: func(t *testing.T) []byte {
 				return assemblePDF(
