@@ -4,6 +4,7 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -72,9 +73,16 @@ func TestAgentDocumentBlobs(t *testing.T) {
 	})
 
 	t.Run("texts skip unknown ids", func(t *testing.T) {
-		texts, err := s.GetAgentDocumentTexts([]string{doc.ID, "missingmissingmissingmiss1"})
+		texts, err := s.GetAgentDocumentTexts(t.Context(), []string{doc.ID, "missingmissingmissingmiss1"})
 		require.NoError(t, err)
 		assert.Equal(t, map[string]string{doc.ID: content}, texts)
+	})
+
+	t.Run("texts are not read once the context is done", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		_, err := s.GetAgentDocumentTexts(ctx, []string{doc.ID})
+		require.ErrorIs(t, err, context.Canceled)
 	})
 
 	tests := []struct {

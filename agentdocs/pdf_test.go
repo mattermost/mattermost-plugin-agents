@@ -212,6 +212,20 @@ func TestExtractPDF(t *testing.T) {
 			want: "ABABABABAB",
 		},
 		{
+			name: "percent sign inside a character map string is not a comment",
+			data: func(t *testing.T) []byte {
+				return assemblePDF(
+					"<< /Type /Catalog /Pages 2 0 R >>",
+					"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+					pageWithResources(2, 4, "/Font << /F1 5 0 R >>"),
+					pdfStream("", "BT /F1 12 Tf ("+strings.Repeat("\x01\x02\x03\x04\x05\x06", 5)+") Tj ET"),
+					toUnicodeFont(6),
+					pdfStream("", "/CMapName (100% complete) def "+bfchars("<000000> <FFFFFF>", [2]string{"010203", "A"}, [2]string{"040506", "B"})),
+				)
+			},
+			want: "ABABABABAB",
+		},
+		{
 			name: "font codes of mixed widths across decoding chunks",
 			data: func(t *testing.T) []byte {
 				return assemblePDF(

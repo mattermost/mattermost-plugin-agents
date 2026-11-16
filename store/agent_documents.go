@@ -4,6 +4,7 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -148,8 +149,8 @@ func (s *Store) GetAgentDocumentInfos(ids []string) (map[string]*AgentDocument, 
 }
 
 // GetAgentDocumentTexts returns the extracted text of the documents in ids
-// that exist, keyed by ID.
-func (s *Store) GetAgentDocumentTexts(ids []string) (map[string]string, error) {
+// that exist, keyed by ID. The read stops when ctx is done.
+func (s *Store) GetAgentDocumentTexts(ctx context.Context, ids []string) (map[string]string, error) {
 	texts := make(map[string]string, len(ids))
 	if len(ids) == 0 {
 		return texts, nil
@@ -162,7 +163,7 @@ func (s *Store) GetAgentDocumentTexts(ids []string) (map[string]string, error) {
 		ID            string `db:"id"`
 		ExtractedText string `db:"extractedtext"`
 	}
-	if err := s.db.Select(&rows, s.db.Rebind(query), args...); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, s.db.Rebind(query), args...); err != nil {
 		return nil, fmt.Errorf("failed to get agent document texts: %w", err)
 	}
 	for _, row := range rows {

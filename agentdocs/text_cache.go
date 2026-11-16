@@ -21,7 +21,7 @@ const DefaultTextCacheRunes = 20 * MaxTotalTextRunes
 type TextLoader interface {
 	// GetAgentDocumentTexts returns the text of every document in ids that
 	// exists, keyed by ID. Missing documents are absent from the result.
-	GetAgentDocumentTexts(ids []string) (map[string]string, error)
+	GetAgentDocumentTexts(ctx context.Context, ids []string) (map[string]string, error)
 }
 
 // TextCache is a least-recently-used cache of document texts in front of a
@@ -74,9 +74,9 @@ func (c *TextCache) AgentDocumentTexts(ctx context.Context, ids []string) (map[s
 		return texts, nil
 	}
 
-	_, span := telemetry.Tracer().Start(ctx, "load agent document texts")
+	ctx, span := telemetry.Tracer().Start(ctx, "load agent document texts")
 	defer span.End()
-	loaded, err := c.loader.GetAgentDocumentTexts(missing)
+	loaded, err := c.loader.GetAgentDocumentTexts(ctx, missing)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "failed to load agent document texts")

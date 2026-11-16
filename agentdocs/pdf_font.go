@@ -57,20 +57,19 @@ func usesCharacterMap(font pdf.Value) bool {
 }
 
 var (
-	pdfComment     = regexp.MustCompile(`%[^\r\n]*`)
 	codespaceBlock = regexp.MustCompile(`(?s)begincodespacerange(.*?)endcodespacerange`)
 	codespacePair  = regexp.MustCompile(`<([0-9A-Fa-f\s]*)>\s*<([0-9A-Fa-f\s]*)>`)
 )
 
 // readCodespace reads the code ranges of a ToUnicode character map stream.
 // Comments, which the library's tokenizer allows between operands, are
-// dropped first. The stream has already been charged to the page limits.
+// dropped first; a % inside a string is not a comment. The stream has already been charged to the page limits.
 func readCodespace(toUnicode pdf.Value) (codespace [4][]pdfCodeRange) {
 	data, err := io.ReadAll(io.LimitReader(toUnicode.Reader(), maxPDFPageStreamBytes))
 	if err != nil {
 		return codespace
 	}
-	data = pdfComment.ReplaceAll(data, nil)
+	data = stripPDFComments(data)
 	for _, block := range codespaceBlock.FindAllSubmatch(data, -1) {
 		for _, pair := range codespacePair.FindAllSubmatch(block[1], -1) {
 			low, lowOK := decodeHexString(pair[1])
@@ -91,4 +90,40 @@ func decodeHexString(s []byte) (string, bool) {
 	}
 	decoded, err := hex.DecodeString(clean)
 	return string(decoded), err == nil
+}
+
+// stripPDFComments removes the comments from PDF or PostScript text: a %
+// outside a string, up to the end of its line. Literal strings, which nest
+// parentheses and escape with a backslash, and hex strings are kept whole.
+func stripPDFComments(data []byte) []byte {
+	out := make([]byte, 0, len(data))
+	for i := 0; i < len(data); i++ {
+		switch c := data[i]; c {
+		case '%':
+			for i < len(data) && data[i] != '\r' && data[i] != '\n' {
+				i++
+			}
+			if i < len(data) {
+				out = append(out, data[i])
+			}
+		case '(':
+			start, depth := i, 0
+			for ; i < len(data); i++ {
+				if data[i] == '\\' {
+					i++
+				} else if data[i] == '(' {
+					depth++
+				} else if data[i] == ')' {
+					depth--
+					if depth == 0 {
+						break
+					}
+				}
+			}
+			out = append(out, data[start:min(i+1, len(data))]...)
+		default:
+			out = append(out, c)
+		}
+	}
+	return out
 }

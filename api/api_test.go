@@ -635,7 +635,7 @@ func (m *mockAgentStore) GetAgentDocumentInfos(ids []string) (map[string]*store.
 	return out, nil
 }
 
-func (m *mockAgentStore) GetAgentDocumentTexts(ids []string) (map[string]string, error) {
+func (m *mockAgentStore) GetAgentDocumentTexts(_ context.Context, ids []string) (map[string]string, error) {
 	out := make(map[string]string, len(ids))
 	for _, id := range ids {
 		if doc, ok := m.documents[id]; ok {

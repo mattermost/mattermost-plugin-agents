@@ -19,7 +19,10 @@ type countingLoader struct {
 	calls [][]string
 }
 
-func (l *countingLoader) GetAgentDocumentTexts(ids []string) (map[string]string, error) {
+func (l *countingLoader) GetAgentDocumentTexts(ctx context.Context, ids []string) (map[string]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	l.calls = append(l.calls, slices.Clone(ids))
 	if l.err != nil {
 		return nil, l.err
@@ -45,6 +48,7 @@ func TestTextCache(t *testing.T) {
 		limit     int
 		requests  []request
 		wantCalls [][]string
+		canceled  bool
 		wantErr   bool
 	}{
 		{
@@ -81,6 +85,14 @@ func TestTextCache(t *testing.T) {
 			wantCalls: [][]string{{"big"}, {"big"}},
 		},
 		{
+			name:     "a canceled context reaches the loader",
+			texts:    map[string]string{"a": "alpha"},
+			limit:    100,
+			canceled: true,
+			requests: []request{{ids: []string{"a"}}},
+			wantErr:  true,
+		},
+		{
 			name:      "loader errors are returned",
 			loadErr:   errors.New("db down"),
 			limit:     5,
@@ -93,8 +105,13 @@ func TestTextCache(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			loader := &countingLoader{texts: tt.texts, err: tt.loadErr}
 			cache := NewTextCache(loader, tt.limit)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tt.canceled {
+				cancel()
+			}
 			for _, req := range tt.requests {
-				texts, err := cache.AgentDocumentTexts(context.Background(), req.ids)
+				texts, err := cache.AgentDocumentTexts(ctx, req.ids)
 				if tt.wantErr {
 					require.Error(t, err)
 					continue
