@@ -231,6 +231,42 @@ describe('failed and overlapping requests', () => {
     });
 });
 
+describe('a refresh that fails after superseding a mutation', () => {
+    test('keeps the mutation response that landed while the refresh was pending', async () => {
+        const refresh = deferred<ChannelContextPosts>();
+        mockedGetChannelContextPosts.mockResolvedValueOnce(pins).mockReturnValueOnce(refresh.promise);
+        const store = makeStore();
+        await fetchChannelContextPosts(store.dispatch, 'chan1');
+        const unpin = deferred<ChannelContextPosts>();
+
+        const mutation = mutateChannelContextPosts(store.dispatch, 'chan1', () => unpin.promise);
+        handleChannelContextUpdated(store as never, {channel_id: 'chan1'});
+        unpin.resolve(empty);
+        await mutation;
+        expect(stateOf(store)).toEqual(pins);
+
+        refresh.resolve(Promise.reject(new Error('500')) as never);
+        await flush();
+
+        expect(stateOf(store)).toEqual(empty);
+    });
+
+    test('keeps the mutation response that lands after the refresh failed', async () => {
+        mockedGetChannelContextPosts.mockResolvedValueOnce(pins).mockRejectedValueOnce(new Error('500'));
+        const store = makeStore();
+        await fetchChannelContextPosts(store.dispatch, 'chan1');
+        const unpin = deferred<ChannelContextPosts>();
+
+        const mutation = mutateChannelContextPosts(store.dispatch, 'chan1', () => unpin.promise);
+        handleChannelContextUpdated(store as never, {channel_id: 'chan1'});
+        await flush();
+        unpin.resolve(empty);
+        await mutation;
+
+        expect(stateOf(store)).toEqual(empty);
+    });
+});
+
 describe('canManageChannelContext', () => {
     test.each([
         {name: 'public channel with the public manage permission', type: 'O', perms: [PERMISSION_MANAGE_PUBLIC_CHANNEL_PROPERTIES], want: true},

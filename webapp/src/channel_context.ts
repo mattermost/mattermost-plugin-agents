@@ -52,20 +52,43 @@ export function channelContextPostsFromState(state: GlobalState, channelId: stri
 const inFlight = new Map<string, Promise<void>>();
 const generations = createRequestGenerations();
 
+// A mutation's response that a refresh superseded before it landed. It is the
+// newest state the server confirmed, so it is shown if that refresh fails.
+const supersededMutations = new Map<string, ChannelContextPosts>();
+
+// Token of the refresh that last failed while keeping the old pins, so a
+// mutation response arriving after that failure is not lost either.
+const failedRefreshes = new Map<string, string>();
+
 function startFetch(dispatch: Dispatch, channelId: string, keepOnFailure: boolean): Promise<void> {
     const token = generations.begin(channelId);
+    supersededMutations.delete(channelId);
+    failedRefreshes.delete(channelId);
     const apply = (data: ChannelContextPosts | null) => {
         if (generations.isCurrent(channelId, token)) {
+            supersededMutations.delete(channelId);
             dispatch(receivedChannelContextPosts(channelId, data));
         }
     };
     const request: Promise<void> = getChannelContextPosts(channelId).
         then(apply).
         catch(() => {
-            // A failed refresh keeps the pins already shown; only a failed
-            // first load records the failure.
+            // A failed refresh keeps the pins already shown, or the newer
+            // pins from a mutation it superseded; only a failed first load
+            // records the failure.
             if (!keepOnFailure) {
                 apply(null);
+                return;
+            }
+            if (!generations.isCurrent(channelId, token)) {
+                return;
+            }
+            const mutated = supersededMutations.get(channelId);
+            if (mutated) {
+                supersededMutations.delete(channelId);
+                dispatch(receivedChannelContextPosts(channelId, mutated));
+            } else {
+                failedRefreshes.set(channelId, token);
             }
         }).
         finally(() => {
@@ -87,8 +110,10 @@ export function fetchChannelContextPosts(dispatch: Dispatch, channelId: string, 
 // Runs a pin or unpin and stores the pins the server returns. If newer work
 // for the channel (another mutation, a refresh, or a reset) started meanwhile,
 // this response is stale and is dropped: that newer work owns the channel's
-// state. A pending GET read an older snapshot, so starting the mutation
-// supersedes it too. Rejects when the mutation fails.
+// state. The exception is a refresh that fails, which has nothing newer to
+// show, so the mutation's response is used instead. A pending GET read an
+// older snapshot, so starting the mutation supersedes it too. Rejects when
+// the mutation fails.
 export async function mutateChannelContextPosts(
     dispatch: Dispatch,
     channelId: string,
@@ -96,9 +121,15 @@ export async function mutateChannelContextPosts(
 ): Promise<void> {
     const token = generations.begin(channelId);
     inFlight.delete(channelId);
+    supersededMutations.delete(channelId);
+    failedRefreshes.delete(channelId);
     const data = await mutation();
-    if (generations.isCurrent(channelId, token)) {
+    const failedRefresh = failedRefreshes.get(channelId);
+    if (generations.isCurrent(channelId, token) || (failedRefresh && generations.isCurrent(channelId, failedRefresh))) {
+        failedRefreshes.delete(channelId);
         dispatch(receivedChannelContextPosts(channelId, data));
+    } else if (inFlight.has(channelId)) {
+        supersededMutations.set(channelId, data);
     }
 }
 
@@ -106,6 +137,8 @@ export async function mutateChannelContextPosts(
 export function resetChannelContextRequests(): void {
     generations.invalidateAll();
     inFlight.clear();
+    supersededMutations.clear();
+    failedRefreshes.clear();
 }
 
 // Agent context applies to public and private channels on a licensed server.
