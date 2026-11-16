@@ -279,6 +279,9 @@ func (m *mockMCPClientManager) catalogAccess(req mcp.CatalogRequest) mcp.Catalog
 		access.Tools = m.serviceAccountTools
 		access.Errors = m.serviceAccountErrors
 	}
+	if req.IgnoreAccessPolicy {
+		access.DeniedOrigins = nil
+	}
 	return access
 }
 
