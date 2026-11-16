@@ -51,23 +51,30 @@ export function channelContextPostsFromState(state: GlobalState, channelId: stri
 
 const inFlight = new Map<string, Promise<void>>();
 
-// Refreshes (GETs) and mutations (pin and unpin) are versioned separately. A
-// refresh is superseded by any newer request. A mutation is superseded only by
-// a newer mutation, a successful refresh (authoritative, so a response still
-// on its way is older than it), or a reset.
+// Refreshes (GETs) are versioned per channel: any newer request supersedes
+// them. Mutations (pin and unpin) are ordered by start. A response is used
+// unless a newer mutation's response already landed, or a successful refresh
+// or a reset came after the mutation started (both are authoritative and
+// include it). An older response still counts when a newer mutation fails.
 const refreshes = createRequestGenerations();
-const mutations = createRequestGenerations();
+let mutationSeq = 0;
+let resetFloor = 0;
+const landedMutation = new Map<string, number>();
+const refreshedFloor = new Map<string, number>();
 
 // The latest owned mutation response while a refresh is pending. It is the
 // newest state the server confirmed, so it is shown if every refresh fails.
 const confirmedByMutation = new Map<string, ChannelContextPosts>();
+
+const mutationUsable = (channelId: string, seq: number) =>
+    seq > Math.max(resetFloor, landedMutation.get(channelId) ?? 0, refreshedFloor.get(channelId) ?? 0);
 
 function startFetch(dispatch: Dispatch, channelId: string, keepOnFailure: boolean): Promise<void> {
     const token = refreshes.begin(channelId);
     const request: Promise<void> = getChannelContextPosts(channelId).
         then((data) => {
             if (refreshes.isCurrent(channelId, token)) {
-                mutations.invalidate(channelId);
+                refreshedFloor.set(channelId, mutationSeq);
                 confirmedByMutation.delete(channelId);
                 dispatch(receivedChannelContextPosts(channelId, data));
             }
@@ -103,25 +110,30 @@ export function fetchChannelContextPosts(dispatch: Dispatch, channelId: string, 
     return inFlight.get(channelId) ?? startFetch(dispatch, channelId, keepOnFailure);
 }
 
-// Runs a pin or unpin and stores the pins the server returns. Only the newest
-// mutation's response is used: an older one, or one overtaken by a successful
-// refresh or a reset, is dropped. While a refresh is pending the response is
-// held instead, and shown if that refresh fails. Starting a mutation also
-// supersedes any pending GET, which read an older snapshot. Rejects when the
-// mutation fails.
+// Runs a pin or unpin and stores the pins the server returns, subject to the
+// ordering rules above. While a refresh is pending the response is held and
+// shown if that refresh fails. Starting a mutation supersedes any pending GET,
+// which read an older snapshot, so a held response is shown first: nothing
+// else could show it. Rejects when the mutation fails.
 export async function mutateChannelContextPosts(
     dispatch: Dispatch,
     channelId: string,
     mutation: () => Promise<ChannelContextPosts>,
 ): Promise<void> {
-    const token = mutations.begin(channelId);
+    const held = confirmedByMutation.get(channelId);
+    if (held) {
+        confirmedByMutation.delete(channelId);
+        dispatch(receivedChannelContextPosts(channelId, held));
+    }
+    mutationSeq++;
+    const seq = mutationSeq;
     refreshes.invalidate(channelId);
     inFlight.delete(channelId);
-    confirmedByMutation.delete(channelId);
     const data = await mutation();
-    if (!mutations.isCurrent(channelId, token)) {
+    if (!mutationUsable(channelId, seq)) {
         return;
     }
+    landedMutation.set(channelId, seq);
     confirmedByMutation.set(channelId, data);
     if (!inFlight.has(channelId)) {
         dispatch(receivedChannelContextPosts(channelId, data));
@@ -131,7 +143,7 @@ export async function mutateChannelContextPosts(
 // Drops every pending request so none can repopulate state cleared by a reconnect.
 export function resetChannelContextRequests(): void {
     refreshes.invalidateAll();
-    mutations.invalidateAll();
+    resetFloor = mutationSeq;
     inFlight.clear();
     confirmedByMutation.clear();
 }

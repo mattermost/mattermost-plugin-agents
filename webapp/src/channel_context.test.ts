@@ -322,6 +322,45 @@ describe('mutation ownership across refreshes', () => {
     });
 });
 
+describe('a held mutation response and the next mutation', () => {
+    test('is shown when the next mutation fails and no refresh owns the update', async () => {
+        const both: ChannelContextPosts = {posts: [pins.posts[0], {...pins.posts[0], post_id: 'p2'}], max_posts: 10};
+        const justP2: ChannelContextPosts = {posts: [both.posts[1]], max_posts: 10};
+        const refresh = deferred<ChannelContextPosts>();
+        mockedGetChannelContextPosts.mockResolvedValueOnce(both).mockReturnValueOnce(refresh.promise);
+        const store = makeStore();
+        await fetchChannelContextPosts(store.dispatch, 'chan1');
+
+        await mutateChannelContextPosts(store.dispatch, 'chan1', () => Promise.resolve(justP2));
+        handleChannelContextUpdated(store as never, {channel_id: 'chan1'});
+        await expect(mutateChannelContextPosts(store.dispatch, 'chan1', () => Promise.reject(new Error('500')))).rejects.toThrow('500');
+
+        expect(stateOf(store)).toEqual(justP2);
+    });
+
+    test('is shown when the next mutation starts while the refresh holding it is pending', async () => {
+        const both: ChannelContextPosts = {posts: [pins.posts[0], {...pins.posts[0], post_id: 'p2'}], max_posts: 10};
+        const justP2: ChannelContextPosts = {posts: [both.posts[1]], max_posts: 10};
+        const refresh = deferred<ChannelContextPosts>();
+        mockedGetChannelContextPosts.mockResolvedValueOnce(both).mockReturnValueOnce(refresh.promise);
+        const store = makeStore();
+        await fetchChannelContextPosts(store.dispatch, 'chan1');
+        const first = deferred<ChannelContextPosts>();
+
+        const unpinA = mutateChannelContextPosts(store.dispatch, 'chan1', () => first.promise);
+        handleChannelContextUpdated(store as never, {channel_id: 'chan1'});
+        first.resolve(justP2);
+        await unpinA;
+        expect(stateOf(store)).toEqual(both);
+
+        await expect(mutateChannelContextPosts(store.dispatch, 'chan1', () => Promise.reject(new Error('500')))).rejects.toThrow('500');
+        refresh.resolve(empty);
+        await flush();
+
+        expect(stateOf(store)).toEqual(justP2);
+    });
+});
+
 describe('canManageChannelContext', () => {
     test.each([
         {name: 'public channel with the public manage permission', type: 'O', perms: [PERMISSION_MANAGE_PUBLIC_CHANNEL_PROPERTIES], want: true},
