@@ -148,7 +148,7 @@ const SettingsAccessConfig = (props: Props) => {
                             placeholder={intl.formatMessage({defaultMessage: 'Search for people to give read and write access'})}
                         />
                         <HelpText>
-                            <FormattedMessage defaultMessage='Can view and change every Agents setting, including API keys, and so can send agent conversations, including private messages, to any service they set up. Give this only to people you would trust as a system admin for Agents.'/>
+                            <FormattedMessage defaultMessage='Can view and change every Agents setting, including API keys, and choose the services that receive agent conversations, including private messages. Give this only to people you trust as an Agents system admin.'/>
                         </HelpText>
                     </TextFieldContainer>
                 </FormRow>
