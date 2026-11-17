@@ -309,6 +309,29 @@ describe('AgentChatTitleBar', () => {
         expect(mockArchive).not.toHaveBeenCalled();
     });
 
+    test.each([
+        {name: 'the product chat', props: {rootId: 'root1', onShowAllChats: jest.fn()}, trigger: 'agent-chat-menu-button'},
+        {name: 'a new RHS chat', props: {surface: 'rhs' as const, onShowAllChats: jest.fn()}, trigger: 'bot-selector-rhs'},
+    ])('$name does not list All agent chats', async ({props, trigger}) => {
+        renderHeader(props);
+        await waitFor(() => expect(mockGetThreads).toHaveBeenCalled());
+        fireEvent.click(screen.getByTestId(trigger));
+        await waitFor(() => expect(menuItems()).toContain('Recent chats'));
+        expect(screen.queryByRole('menuitem', {name: 'All agent chats'})).toBeNull();
+    });
+
+    test('an established RHS chat lists All agent chats under Recent chats and runs the history handler', async () => {
+        const onShowAllChats = jest.fn();
+        renderHeader({surface: 'rhs', rootId: 'root1', onShowAllChats});
+        await waitFor(() => expect(mockGetThreads).toHaveBeenCalled());
+        fireEvent.click(screen.getByTestId('bot-selector-rhs'));
+        await waitFor(() => expect(menuItems()).toContain('All agent chats'));
+        const items = menuItems();
+        expect(items.indexOf('All agent chats')).toBe(items.indexOf('Recent chats') + 1);
+        await clickItem('All agent chats');
+        expect(onShowAllChats).toHaveBeenCalledTimes(1);
+    });
+
     test('name menu View all agents navigates to the all-agents view', async () => {
         const {onViewAll} = renderHeader();
         openMenu();

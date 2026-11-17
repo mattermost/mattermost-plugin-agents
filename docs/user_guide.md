@@ -39,6 +39,8 @@ Some features depend on your Mattermost license level. If a feature described he
 | Channel or thread | @mention the agent by its username, for example `@assistant`. | Visible to everyone in the channel. See [Use agents in channels](agents_in_channels.md). |
 | Mobile | Open a direct message with the agent. | Mobile can't start MCP OAuth. Use web or desktop to connect tools that need your account. |
 
+In an open chat in the Agents pane, select the chat name and then **All agent chats** to open every agent's chats. **Back to chat history** does the same.
+
 To see which agents exist, select the product switcher (grid icon) and choose **Agents**. The page lists every agent you can use. Agents you can't edit are marked **Read only**.
 
 If your workspace has several agents, pick one from any agent picker, such as the Agents pane, the **Skills** menu, or the search bar. Your choice is saved to your account and applies on web, desktop, and mobile. Until you choose, Mattermost uses the default agent your admin set. You can also @mention a specific agent.
