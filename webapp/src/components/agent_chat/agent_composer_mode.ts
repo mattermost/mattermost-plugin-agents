@@ -35,9 +35,9 @@ import {
 // agent_composer_host.ts.
 export const agentComposerHostStyles = css`
     .AdvancedTextEditor__body {
-        /* Half of one line: the 32px control, the inset under it, and the host's 2px border.
-           A one-line box reads as a capsule; a taller box keeps the same corner. */
-        border-radius: calc(var(--spacing-xxxl) / 2 + var(--spacing-xs) + 2px);
+        /* Half of one line: the 32px control, the inset under it, and the host's 2px border
+           (the smallest space token). A one-line box reads as a capsule; a taller box keeps the same corner. */
+        border-radius: calc(var(--spacing-xxxl) / 2 + var(--spacing-xs) + var(--spacing-xxxxs));
         box-shadow: var(--elevation-4);
         transition: box-shadow var(--duration-quick) var(--ease-transition);
 
