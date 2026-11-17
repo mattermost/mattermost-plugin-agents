@@ -263,7 +263,7 @@ func TestBuildProxyTools_HandlerForwardsNonSessionMeta(t *testing.T) {
 			} else {
 				require.Equal(t, tt.wantMeta, gotMeta)
 			}
-			require.Equal(t, map[string]any(tt.meta), map[string]any(callerMeta), "the caller's _meta must not be modified")
+			require.Equal(t, tt.meta, callerMeta, "the caller's _meta must not be modified")
 		})
 	}
 }
