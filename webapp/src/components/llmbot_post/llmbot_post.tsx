@@ -421,7 +421,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     );
 
                     // RoundView renders activity above text, so a new invocation after text starts a new round.
-                    if (fresh.length > 0 && liveRef.current.message !== '') {
+                    // A retroactive one ran before that text and joins its round instead.
+                    if (fresh.some((use) => !use.retroactive) && liveRef.current.message !== '') {
                         const live = liveRef.current;
                         setLiveRounds((prev) => [
                             ...prev,

@@ -168,6 +168,7 @@ const McpsTab = (props: Props) => {
             const response = await getUserMCPTools({
                 agentId,
                 serviceAccount: useServiceAccountAuth,
+                agentConfig: true,
             });
             setServers(response.servers || []);
             setError(null);

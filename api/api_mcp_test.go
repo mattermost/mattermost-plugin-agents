@@ -529,12 +529,11 @@ func TestHandleGetUserMCPToolsIncludesEmbeddedZeroToolServer(t *testing.T) {
 	require.Empty(t, response.Servers[0].AuthURL)
 }
 
+// Denied servers stay hidden except from a system admin configuring an agent:
+// admins author the policies, as GET /services shows them every service.
 func TestHandleGetUserMCPToolsHidesDeniedOrigins(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
 
 	const (
 		allowedOrigin = "https://allowed.example.com"
@@ -543,31 +542,63 @@ func TestHandleGetUserMCPToolsHidesDeniedOrigins(t *testing.T) {
 		pluginOrigin  = "plugin://" + pluginID
 	)
 
-	e.config.mcpConfig = mcp.Config{
-		Enabled: true,
-		Servers: []mcp.ServerConfig{
-			{Name: "Allowed", Enabled: true, BaseURL: allowedOrigin},
-			{Name: "Denied", Enabled: true, BaseURL: deniedOrigin},
-		},
-		EmbeddedServer: mcp.EmbeddedServerConfig{Enabled: true},
-	}
-	e.api.mcpClientManager = &mockMCPClientManager{
-		embeddedServer: &stubEmbeddedServer{},
-		pluginServers: []mcp.PluginServerConfig{{
-			PluginID: pluginID, Name: "Denied Plugin", Path: "/mcp", Enabled: true,
-		}},
-		deniedOrigins: map[string]bool{
-			deniedOrigin:          true,
-			mcp.EmbeddedClientKey: true,
-			pluginOrigin:          true,
-		},
-		tools: []llm.Tool{{Name: "ok", ServerOrigin: allowedOrigin}},
+	allowedOnly := []string{allowedOrigin}
+	everyServer := []string{allowedOrigin, deniedOrigin, mcp.EmbeddedClientKey, pluginOrigin}
+
+	tests := []struct {
+		name        string
+		query       string
+		isAdmin     bool
+		wantStatus  int
+		wantOrigins []string
+	}{
+		{name: "user catalog hides denied servers", wantStatus: http.StatusOK, wantOrigins: allowedOnly},
+		{name: "system admin outside the agent editor still has them hidden", isAdmin: true, wantStatus: http.StatusOK, wantOrigins: allowedOnly},
+		{name: "non-admin agent editor hides denied servers", query: "purpose=agent_config", wantStatus: http.StatusOK, wantOrigins: allowedOnly},
+		{name: "system admin agent editor lists denied servers", query: "purpose=agent_config", isAdmin: true, wantStatus: http.StatusOK, wantOrigins: everyServer},
+		{name: "system admin service account agent editor lists denied servers", query: "catalog=service_account&purpose=agent_config", isAdmin: true, wantStatus: http.StatusOK, wantOrigins: everyServer},
+		{name: "unknown purpose is rejected", query: "purpose=chat", isAdmin: true, wantStatus: http.StatusBadRequest},
 	}
 
-	response := getUserMCPToolsResponse(t, e.api)
-	require.Len(t, response.Servers, 1)
-	require.Equal(t, "Allowed", response.Servers[0].Name)
-	require.Equal(t, allowedOrigin, response.Servers[0].ServerOrigin)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(tt.isAdmin).Maybe()
+			e.config.mcpConfig = mcp.Config{
+				Enabled: true,
+				Servers: []mcp.ServerConfig{
+					{Name: "Allowed", Enabled: true, BaseURL: allowedOrigin},
+					{Name: "Denied", Enabled: true, BaseURL: deniedOrigin},
+				},
+				EmbeddedServer: mcp.EmbeddedServerConfig{Enabled: true},
+			}
+			e.api.mcpClientManager = &mockMCPClientManager{
+				embeddedServer: &stubEmbeddedServer{},
+				pluginServers: []mcp.PluginServerConfig{{
+					PluginID: pluginID, Name: "Denied Plugin", Path: "/mcp", Enabled: true,
+				}},
+				deniedOrigins: map[string]bool{
+					deniedOrigin:          true,
+					mcp.EmbeddedClientKey: true,
+					pluginOrigin:          true,
+				},
+				tools: []llm.Tool{{Name: "ok", ServerOrigin: allowedOrigin}},
+			}
+
+			response, status := requestUserMCPTools(t, e.api, tt.query)
+			require.Equal(t, tt.wantStatus, status)
+			if tt.wantStatus != http.StatusOK {
+				return
+			}
+			gotOrigins := make([]string, 0, len(response.Servers))
+			for _, server := range response.Servers {
+				gotOrigins = append(gotOrigins, server.ServerOrigin)
+			}
+			assert.ElementsMatch(t, tt.wantOrigins, gotOrigins)
+		})
+	}
 }
 
 func TestHandleGetUserMCPToolsIncludesPluginServers(t *testing.T) {
