@@ -89,6 +89,25 @@ describe('ThreadItem', () => {
         texts.forEach((text) => expect(screen.getAllByText(text)).toHaveLength(1));
     });
 
+    test('the list preview drops markdown syntax and the title stays as stored', () => {
+        renderItem({
+            title: '**Keep title**',
+            preview: '**Bold** idea. See [the docs](https://example.com/docs).\n\n```ts\nconst n = 1;\n```',
+        });
+
+        expect(screen.getByText('**Keep title**')).toBeTruthy();
+        expect(screen.getByText('Bold idea. See the docs. const n = 1;')).toBeTruthy();
+        expect(screen.queryByText(/https:\/\/example\.com/)).toBeNull();
+        expect(screen.queryByText(/```/)).toBeNull();
+    });
+
+    test('an untitled chat is headed by the preview once, without markdown', () => {
+        renderItem({title: '  ', preview: '## **Status**\n\nAll [clear](https://example.com)'});
+
+        expect(screen.getAllByText('Status All clear')).toHaveLength(1);
+        expect(screen.getByRole('button', {name: 'Status All clear, Matty'})).toBeTruthy();
+    });
+
     test('opens the chat on click and from the keyboard', () => {
         const {onClick} = renderItem();
 

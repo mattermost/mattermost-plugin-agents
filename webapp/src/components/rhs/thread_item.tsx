@@ -16,6 +16,8 @@ import {Timestamp} from '@/mm_webapp';
 import {VisuallyHidden} from '@/components/visually_hidden';
 import {noMotionWhenReduced} from '@/components/llmbot_post/motion';
 
+import {stripMarkdownPreview} from './preview_text';
+
 // No compass token for the translucent hover fill (the Agents chat header's name button uses the same).
 const HOVER_PERCENT = '8%';
 
@@ -29,7 +31,8 @@ type Props = {
     // The chat's title; the item's heading. Falls back to the first message, then a generic label.
     title: string;
 
-    // The chat's first message; empty while it loads or if it is unavailable.
+    // The chat's first message. Markdown syntax is dropped for this list preview.
+    // Empty while it loads or if it is unavailable.
     preview: string;
     agentName: string;
     agentAvatarUrl: string;
@@ -50,7 +53,7 @@ export default function ThreadItem(props: Props) {
     const intl = useIntl();
     const [menuOpen, setMenuOpen] = useState(false);
     const title = props.title.trim();
-    const preview = props.preview.trim();
+    const preview = stripMarkdownPreview(props.preview);
     const heading = title || preview || chatTitle(intl, '');
 
     // The first message is the heading when there is no title, so it is not repeated below.
