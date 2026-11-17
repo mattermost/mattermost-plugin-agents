@@ -36,6 +36,9 @@ import {
     MESSAGE_PROBE_FILE_NAME,
     MESSAGE_PROBE_HTML,
     ONYX_THEME,
+    REPORT_EXPORTER_CSV,
+    REPORT_EXPORTER_FILE_NAME,
+    REPORT_EXPORTER_HTML,
     SECOND_VIEWER_PASSWORD,
     SECOND_VIEWER_USERNAME,
     SPRINT_DASHBOARD_FILE_NAME,
@@ -469,6 +472,87 @@ test.describe('HTML artifacts', () => {
         // The probe is visually hidden; its text content is still asserted.
         await expect(netResult).toContainText('network: blocked', {timeout: 30000});
         await expect(netResult).not.toContainText('LEAKED');
+    });
+
+    // The artifact's sandbox has no allow-downloads; window.mattermost.download
+    // hands the bytes to the host page, which saves them once the viewer
+    // confirms in a host-drawn prompt.
+    test('window.mattermost.download saves the file from the host page after the viewer confirms', async ({page}) => {
+        test.setTimeout(300000);
+        const botPost = await postArtifact(page, mattermost, aimock, REPORT_EXPORTER_FILE_NAME, REPORT_EXPORTER_HTML, 'Here is the report exporter.');
+        await runArtifact(botPost);
+        const card = botPost.getByTestId('html-artifact-card');
+        const frame = artifactFrame(artifactWrappers(card).first());
+        await expect(frame.getByRole('heading', {name: 'Sprint report exporter'})).toBeVisible({timeout: 60000});
+        expect((await artifactContentIframe(artifactWrappers(card).first()).getAttribute('sandbox'))?.split(/\s+/)).toEqual(['allow-scripts']);
+        const result = frame.getByTestId('download-result');
+
+        await frame.getByRole('button', {name: 'Download CSV'}).click();
+        const consent = card.getByTestId('html-artifact-consent');
+        await expect(consent).toBeVisible({timeout: 15000});
+        await expect(consent.getByRole('heading', {name: 'Download a file?'})).toBeVisible();
+        await expect(consent).toContainText(`${REPORT_EXPORTER_FILE_NAME} wants to save sprint-report.csv (text/csv, 25 bytes)`);
+        await expect(consent.locator('[data-armed="true"]')).toHaveCount(1, {timeout: 5000});
+        await scrollToTop(card);
+        await shot(page, '08-download-prompt');
+
+        const csvDownload = page.waitForEvent('download');
+        await consent.getByRole('button', {name: 'Download'}).click();
+        const csv = await csvDownload;
+        expect(csv.suggestedFilename()).toBe('sprint-report.csv');
+        expect(fs.readFileSync(await csv.path())).toEqual(Buffer.from(REPORT_EXPORTER_CSV, 'utf8'));
+        await expect(result).toHaveText('saved sprint-report.csv', {timeout: 15000});
+        await expect(consent).toHaveCount(0);
+
+        // A canvas.toDataURL() image, named without an extension.
+        await frame.getByRole('button', {name: 'Download chart'}).click();
+        await expect(consent).toBeVisible({timeout: 15000});
+        await expect(consent).toContainText('velocity chart.png (image/png,');
+        await expect(consent.locator('[data-armed="true"]')).toHaveCount(1, {timeout: 5000});
+        const pngDownload = page.waitForEvent('download');
+        await consent.getByRole('button', {name: 'Download'}).click();
+        const png = await pngDownload;
+        expect(png.suggestedFilename()).toBe('velocity chart.png');
+        const dataURL = await frame.getByTestId('chart-data').textContent();
+        expect(dataURL).toMatch(/^data:image\/png;base64,/);
+        const pngBytes = fs.readFileSync(await png.path());
+        expect(pngBytes).toEqual(Buffer.from(dataURL!.split(',')[1], 'base64'));
+        expect(pngBytes.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+        await expect(result).toHaveText('saved velocity chart.png', {timeout: 15000});
+    });
+
+    test('a cancelled download saves nothing, and an artifact cannot save files by itself', async ({page}) => {
+        test.setTimeout(300000);
+        const downloads: string[] = [];
+        page.on('download', (d) => downloads.push(d.suggestedFilename()));
+        const botPost = await postArtifact(page, mattermost, aimock, REPORT_EXPORTER_FILE_NAME, REPORT_EXPORTER_HTML, 'Here is the report exporter again.');
+        await runArtifact(botPost);
+        const card = botPost.getByTestId('html-artifact-card');
+        const frame = artifactFrame(artifactWrappers(card).first());
+        await expect(frame.getByRole('heading', {name: 'Sprint report exporter'})).toBeVisible({timeout: 60000});
+
+        // The artifact's own <a download> on a blob: URL: the sandbox blocks
+        // it, and the artifact keeps running.
+        await frame.getByRole('button', {name: 'Save with a download link'}).click();
+        await expect(frame.getByTestId('native-result')).toHaveText('clicked');
+
+        await frame.getByRole('button', {name: 'Download CSV'}).click();
+        const consent = card.getByTestId('html-artifact-consent');
+        await expect(consent).toBeVisible({timeout: 15000});
+        await expect(consent.locator('[data-armed="true"]')).toHaveCount(1, {timeout: 5000});
+        await consent.getByRole('button', {name: 'Cancel'}).click();
+        await expect(consent).toHaveCount(0);
+        await expect(frame.getByTestId('download-result')).toHaveText('error: permission_denied', {timeout: 15000});
+
+        // Downloads are never remembered, so the artifact must be clicked
+        // again before it can ask again.
+        await expect(card.getByTestId('html-artifact-frame')).toHaveAttribute('data-engaged', 'false');
+        await expect(interactOverlay(card)).toBeVisible();
+        await expect(card.getByTestId('html-artifact-navigation-stopped')).toHaveCount(0);
+
+        // Both attempts are long past any time a download would take to start.
+        await hostSettled(page);
+        expect(downloads).toEqual([]);
     });
 
     // A sandboxed frame may navigate itself, carrying data away in the URL.
