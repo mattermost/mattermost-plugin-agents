@@ -80,13 +80,13 @@ func newAccessTestManager(t *testing.T, checker ServerAccessChecker) *ClientMana
 		config:           accessTestConfig(),
 		embeddedClient:   &EmbeddedServerClient{},
 		pluginServers:    make(map[string]PluginServerConfig),
-		pluginRegistered: make(map[string]bool),
+		pluginRegistered: make(map[string]uint64),
 		remoteAllowed:    func() bool { return true },
 	}
 	m.pluginServers[accessPluginID] = PluginServerConfig{
 		ID: accessPluginSrvID, PluginID: accessPluginID, Name: "Plugin MCP", Enabled: true, Path: "/mcp",
 	}
-	m.pluginRegistered[accessPluginID] = true
+	m.pluginRegistered[accessPluginID] = 1
 	if checker != nil {
 		m.accessChecker = checker
 	}
@@ -228,7 +228,7 @@ func TestGetCatalogAccessPinsPluginSnapshotAcrossABAC(t *testing.T) {
 		m.pluginServers[latePluginID] = PluginServerConfig{
 			ID: lateServerID, PluginID: latePluginID, Name: "Late", Path: "/mcp", Enabled: true,
 		}
-		m.pluginRegistered[latePluginID] = true
+		m.pluginRegistered[latePluginID] = 1
 		m.pluginServersMu.Unlock()
 	}
 
@@ -285,6 +285,41 @@ func TestGetCatalogAccessSkipsDeniedServers(t *testing.T) {
 	assert.True(t, access.DeniedOrigins[httpServer.URL])
 	assert.Nil(t, access.Errors, "a denied server must never be connected to, so it can produce no error artifacts")
 	assert.Zero(t, requests.Load())
+}
+
+func TestGetCatalogAccessIgnoreAccessPolicy(t *testing.T) {
+	tests := []struct {
+		name       string
+		ignore     bool
+		wantTool   bool
+		wantDenied bool
+	}{
+		{name: "default request hides the denied server", wantDenied: true},
+		{name: "ignoring the policy lists the denied server's tools", ignore: true, wantTool: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			httpServer := startStreamableMCPServer(t, newTestMCPServer(0, "remote_tool"))
+			checker := &stubServerAccessChecker{denied: map[string]bool{accessDeniedID: true}}
+			m := newRemoteAccessTestManager(t, []ServerConfig{{
+				ID: accessDeniedID, Name: "Denied", Enabled: true, BaseURL: httpServer.URL,
+			}}, checker, httpServer.Client())
+
+			req := UserCatalogRequest("admin-1")
+			req.IgnoreAccessPolicy = tt.ignore
+			t.Cleanup(func() {
+				if uc := m.clients[req.remoteKey()]; uc != nil {
+					uc.Close()
+				}
+			})
+
+			access := m.GetCatalogAccess(context.Background(), req)
+			require.Nil(t, access.Errors)
+			assert.Equal(t, tt.wantTool, hasToolFromOrigin(access.Tools, httpServer.URL))
+			assert.Equal(t, tt.wantDenied, access.DeniedOrigins[httpServer.URL])
+		})
+	}
 }
 
 func newRemoteAccessTestManager(t *testing.T, servers []ServerConfig, checker ServerAccessChecker, httpClient *http.Client) *ClientManager {

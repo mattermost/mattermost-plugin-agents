@@ -86,7 +86,8 @@ func (s *TurnSequence) FinishReasoning(data ReasoningData) {
 	})
 }
 
-// RecordServerTools positions each new invocation at first appearance.
+// RecordServerTools positions each new invocation at first appearance, or
+// before the trailing text when the invocation is retroactive.
 // Snapshots are cumulative; later updates must not move an already-placed id.
 func (s *TurnSequence) RecordServerTools(uses []ServerToolUse) {
 	for i := range uses {
@@ -94,7 +95,12 @@ func (s *TurnSequence) RecordServerTools(uses []ServerToolUse) {
 		if id == "" || s.hasServerTool(id) {
 			continue
 		}
-		s.segments = append(s.segments, TurnSegment{Kind: TurnSegmentServerTool, ServerToolID: id})
+		segment := TurnSegment{Kind: TurnSegmentServerTool, ServerToolID: id}
+		if last := s.last(); uses[i].Retroactive && last != nil && last.Kind == TurnSegmentText {
+			s.segments = slices.Insert(s.segments, len(s.segments)-1, segment)
+			continue
+		}
+		s.segments = append(s.segments, segment)
 	}
 }
 

@@ -973,8 +973,8 @@ func TestStoredTurnTextFollowsAnchoredPost(t *testing.T) {
 			validate: func(t *testing.T, f *deletedPostFixture, _ string) {
 				assert.NotContains(t, f.turnContents(t), rootTurnText,
 					"turn content anchored to the deleted root should not remain")
-				assert.False(t, f.conversationIsRetrievable(t),
-					"conversation keyed to the deleted root post should be soft-deleted")
+				assert.True(t, f.conversationIsRetrievable(t),
+					"deleting a root post leaves its conversation as it is")
 			},
 		},
 		{
@@ -1192,7 +1192,7 @@ func TestStoredTurnTextFollowsAnchoredPost(t *testing.T) {
 
 			switch tt.action {
 			case anchoredPostDeleted:
-				require.NoError(t, f.service.DeleteConversationsForDeletedPost(tt.post(f)))
+				require.NoError(t, f.service.ClearTurnTextForDeletedPost(tt.post(f)))
 			case anchoredPostEdited:
 				require.NoError(t, f.service.UpdateTurnForEditedPost(tt.post(f), previous))
 			default:
@@ -1227,13 +1227,13 @@ func TestAnchoredPostHooksDoNotRestoreStaleTurnText(t *testing.T) {
 				return f.service.UpdateTurnForEditedPost(edited, nil)
 			},
 			race: func(f *deletedPostFixture, _, deleted *model.Post) error {
-				return f.service.DeleteConversationsForDeletedPost(deleted)
+				return f.service.ClearTurnTextForDeletedPost(deleted)
 			},
 		},
 		{
 			name: "delete racing an edit still clears the text",
 			run: func(f *deletedPostFixture, _, deleted *model.Post) error {
-				return f.service.DeleteConversationsForDeletedPost(deleted)
+				return f.service.ClearTurnTextForDeletedPost(deleted)
 			},
 			race: func(f *deletedPostFixture, edited, _ *model.Post) error {
 				return f.service.UpdateTurnForEditedPost(edited, nil)

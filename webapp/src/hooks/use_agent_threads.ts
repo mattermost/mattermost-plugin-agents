@@ -8,13 +8,14 @@ import type {Dispatch, UnknownAction} from 'redux';
 import {GlobalState} from '@mattermost/types/store';
 
 import {isCurrentUsersAgentPost} from '@/agent_posts';
-import {getAIThreads, renameConversation} from '@/client';
+import {archiveConversation, getAIThreads, renameConversation} from '@/client';
 import {fetchAndStoreBots, type LLMBot} from '@/bots';
 import manifest from '@/manifest';
 import {
     AIThreadsFailed,
     AIThreadsReceived,
     AIThreadsRequested,
+    AIThreadRemoved,
     AIThreadTitleSet,
     initialAIThreadsState,
     type AIThreadsState,
@@ -64,18 +65,42 @@ const isInUse = (state: unknown) => {
 };
 
 let lastRequestId = 0;
+let inFlight: Promise<void> | null = null;
+let refetchPending = false;
 
-// The one fetch path for the thread list. A newer request supersedes an older one in flight.
-export async function fetchAIThreads(dispatch: Dispatch<UnknownAction>): Promise<void> {
+// Chats being archived stay out of fetched lists until the request settles.
+const pendingArchives = new Set<string>();
+
+async function requestAIThreads(dispatch: Dispatch<UnknownAction>): Promise<void> {
     const requestId = ++lastRequestId;
     dispatch({type: AIThreadsRequested, requestId});
     try {
         const threads = await getAIThreads();
-        dispatch({type: AIThreadsReceived, requestId, threads});
+
+        dispatch({type: AIThreadsReceived, requestId, threads: threads.filter((t: AIThread) => !pendingArchives.has(t.id))});
     } catch (e) {
         console.error('Failed to load AI threads:', e); // eslint-disable-line no-console
         dispatch({type: AIThreadsFailed, requestId});
     }
+}
+
+// The one fetch path for the thread list, one request at a time. A call while a request is in
+// flight is not started (its response would supersede the one on its way, and a busy stream would
+// keep discarding responses): it marks the list stale, and one refetch follows when the request
+// settles, whether it succeeded or failed.
+export function fetchAIThreads(dispatch: Dispatch<UnknownAction>): Promise<void> {
+    if (inFlight) {
+        refetchPending = true;
+        return inFlight;
+    }
+    inFlight = requestAIThreads(dispatch).finally(() => {
+        inFlight = null;
+        if (refetchPending) {
+            refetchPending = false;
+            fetchAIThreads(dispatch);
+        }
+    });
+    return inFlight;
 }
 
 // Fetches unless the list is loaded or loading: views that mount together share one request.
@@ -95,19 +120,44 @@ export function refreshAIThreadsIfInUse(store: ThreadsStore): Promise<void> {
     return fetchAIThreads(store.dispatch);
 }
 
-// Shows a title the server already has. A fetch still in flight may predate it, so a fresh one
-// supersedes it.
-function applyTitle(store: ThreadsStore, conversationId: string, title: string) {
-    store.dispatch({type: AIThreadTitleSet, conversationId, title});
+// After an archive the server already has, a fetch still in flight may predate it, so a refetch
+// follows once that request settles.
+function supersedeInFlightFetch(store: ThreadsStore) {
     if (selectAIThreadsState(store.getState()).loading) {
         fetchAIThreads(store.dispatch);
     }
+}
+
+// Shows a title the server already has; a fetch in flight cannot revert it.
+function applyTitle(store: ThreadsStore, conversationId: string, title: string) {
+    store.dispatch({type: AIThreadTitleSet, conversationId, title});
+}
+
+function applyRemoval(store: ThreadsStore, conversationId: string) {
+    store.dispatch({type: AIThreadRemoved, conversationId});
+    supersedeInFlightFetch(store);
 }
 
 // Renames a chat; the list shows the new title once the server has it. A failed rename rejects.
 export async function renameAIThread(store: ThreadsStore, conversationId: string, title: string): Promise<void> {
     await renameConversation(conversationId, title);
     applyTitle(store, conversationId, title);
+}
+
+// Archives a chat, taking it out of the list right away. A failed archive rejects after reloading
+// the list, since the server may have archived it before the request failed.
+export async function archiveAIThread(store: ThreadsStore, conversationId: string): Promise<void> {
+    pendingArchives.add(conversationId);
+    store.dispatch({type: AIThreadRemoved, conversationId});
+    try {
+        await archiveConversation(conversationId);
+    } catch (e) {
+        pendingArchives.delete(conversationId);
+        fetchAIThreads(store.dispatch);
+        throw e;
+    }
+    pendingArchives.delete(conversationId);
+    applyRemoval(store, conversationId);
 }
 
 // Refetches after a burst of events settles, so a busy stream of replies costs one request.
@@ -118,8 +168,8 @@ export interface AgentThreadsSync {
     // custom_mattermost-ai_postupdate.
     handlePostUpdate: (msg: PluginWebSocketMessage<PostUpdateWebsocketMessage>) => void;
 
-    // custom_mattermost-ai_conversation_updated: a rename or a generated title.
-    handleConversationUpdated: (data: {conversation_id?: string; title?: string}) => void;
+    // custom_mattermost-ai_conversation_updated: a rename, a generated title, or an archive.
+    handleConversationUpdated: (data: {conversation_id?: string; title?: string; archived?: boolean}) => void;
 
     // The websocket reconnected, so events may have been missed.
     handleReconnect: () => void;
@@ -166,11 +216,11 @@ export function createAgentThreadsSync(store: {dispatch: Dispatch<UnknownAction>
 
             // A reply streaming in a chat the list does not have yet: fetch it. The server creates
             // a new chat's conversation while handling its first message, so the refetch made when
-            // the chat was sent can come back without it.
+            // the chat was sent can come back without it. A list still loading counts as not having it.
             const post = state.entities.posts.posts[postId];
             const rootId = post.root_id || post.id;
             const threads = selectAIThreads(state);
-            if (threads && !threads.some((t) => t.root_post_id === rootId) && !fetchedForRoots.has(rootId)) {
+            if (!threads?.some((t) => t.root_post_id === rootId) && !fetchedForRoots.has(rootId)) {
                 fetchedForRoots.add(rootId);
                 scheduleRefresh();
 
@@ -180,7 +230,17 @@ export function createAgentThreadsSync(store: {dispatch: Dispatch<UnknownAction>
         },
         handleConversationUpdated: (data) => {
             const conversationId = data?.conversation_id;
-            if (!conversationId || typeof data.title !== 'string') {
+            if (!conversationId) {
+                return;
+            }
+
+            // Archived here or in another window: a reply in it restores it, and the finished
+            // turn's refetch brings it back.
+            if (data.archived === true) {
+                applyRemoval(store, conversationId);
+                return;
+            }
+            if (typeof data.title !== 'string') {
                 return;
             }
             applyTitle(store, conversationId, data.title);

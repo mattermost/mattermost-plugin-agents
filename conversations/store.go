@@ -5,7 +5,6 @@ package conversations
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	sq "github.com/Masterminds/squirrel"
@@ -44,15 +43,15 @@ func (c *Conversations) SaveTitle(threadID, title string) error {
 // after losing a swap to a concurrent writer.
 const clearTurnTextAttempts = 3
 
-// DeleteConversationsForDeletedPost drops the text of the turn anchored to the
-// given post and soft-deletes conversations associated with it. If the post is
-// a root post, conversations keyed by that RootPostID are marked as deleted.
-// Both run on every call and both outcomes are reported.
-func (c *Conversations) DeleteConversationsForDeletedPost(post *model.Post) error {
+// ClearTurnTextForDeletedPost drops the text of the turn anchored to the given
+// post. The conversation itself is left as it is: DeleteAt on LLM_Conversations
+// means archived by its owner, and reads already treat a conversation whose
+// root post is deleted as missing.
+func (c *Conversations) ClearTurnTextForDeletedPost(post *model.Post) error {
 	if post == nil || post.Id == "" {
 		return nil
 	}
-	return errors.Join(c.clearTurnTextForPost(post.Id), c.softDeleteConversationsForRootPost(post.Id))
+	return c.clearTurnTextForPost(post.Id)
 }
 
 // clearTurnTextForPost empties the text of the turn anchored to postID.
@@ -68,24 +67,6 @@ func (c *Conversations) clearTurnTextForPost(postID string) error {
 		}
 	}
 	return fmt.Errorf("turn text for post %s kept changing while it was cleared", postID)
-}
-
-// softDeleteConversationsForRootPost marks every live conversation keyed by
-// the given root post ID as deleted.
-func (c *Conversations) softDeleteConversationsForRootPost(rootPostID string) error {
-	if c.db == nil {
-		return nil
-	}
-	now := model.GetMillis()
-	_, err := c.db.ExecBuilder(c.db.Builder().
-		Update("LLM_Conversations").
-		Set("DeleteAt", now).
-		Set("UpdatedAt", now).
-		Where(sq.And{
-			sq.Eq{"RootPostID": rootPostID},
-			sq.Eq{"DeleteAt": 0},
-		}))
-	return err
 }
 
 // UpdateTurnForEditedPost keeps the text of the user turn anchored to the
