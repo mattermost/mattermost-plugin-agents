@@ -646,6 +646,9 @@ type turnEntryPoint struct {
 	// autoReply is set for channel auto-reply, which needs Enterprise
 	// Advanced and so never runs without the remote MCP license.
 	autoReply bool
+	// dropsWhenArchived is set for entry points no one is waiting on: when the
+	// conversation was archived they do nothing instead of restoring it.
+	dropsWhenArchived bool
 	// unattended is set for entry points no human started, whose tools may
 	// only run when the admin lets them auto-run everywhere.
 	unattended bool
@@ -849,7 +852,8 @@ var turnEntryPoints = []turnEntryPoint{
 		},
 	},
 	{
-		name: "async wake",
+		name:              "async wake",
+		dropsWhenArchived: true,
 		seed: func(t *testing.T, env *policyEnv) func() error {
 			botPost := env.seedRun(t, env.channel, nil, humanPost("what is the weather"), earlierAnswer(), nil)
 			scheduler := &capturingWakeScheduler{}
