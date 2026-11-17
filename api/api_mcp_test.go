@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -544,6 +545,7 @@ func TestHandleGetUserMCPToolsHidesDeniedOrigins(t *testing.T) {
 
 	allowedOnly := []string{allowedOrigin}
 	everyServer := []string{allowedOrigin, deniedOrigin, mcp.EmbeddedClientKey, pluginOrigin}
+	everyServerWithBuiltins := append(slices.Clone(everyServer), llm.BuiltinToolsOrigin)
 
 	tests := []struct {
 		name        string
@@ -556,7 +558,7 @@ func TestHandleGetUserMCPToolsHidesDeniedOrigins(t *testing.T) {
 		{name: "system admin outside the agent editor still has them hidden", isAdmin: true, wantStatus: http.StatusOK, wantOrigins: allowedOnly},
 		{name: "non-admin agent editor hides denied servers", query: "purpose=agent_config", wantStatus: http.StatusOK, wantOrigins: allowedOnly},
 		{name: "system admin agent editor lists denied servers", query: "purpose=agent_config", isAdmin: true, wantStatus: http.StatusOK, wantOrigins: everyServer},
-		{name: "system admin service account agent editor lists denied servers", query: "catalog=service_account&purpose=agent_config", isAdmin: true, wantStatus: http.StatusOK, wantOrigins: everyServer},
+		{name: "system admin service account agent editor lists denied servers", query: "catalog=service_account&purpose=agent_config", isAdmin: true, wantStatus: http.StatusOK, wantOrigins: everyServerWithBuiltins},
 		{name: "unknown purpose is rejected", query: "purpose=chat", isAdmin: true, wantStatus: http.StatusBadRequest},
 	}
 
