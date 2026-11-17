@@ -119,6 +119,7 @@ describe('RHSTitle', () => {
         renderTitle(bots, '');
 
         expect(screen.getByText('Agents')).not.toBeNull();
+        expect(screen.getByTestId('rhs-title').querySelector('img')).not.toBeNull();
         expect(screen.queryByRole('button', {name: /options$/})).toBeNull();
     });
 
@@ -253,13 +254,23 @@ describe('RHSTitle', () => {
             expect(screen.queryByTestId('context-usage') !== null).toBe(ring);
         });
 
-        test('the chat history has the generic Agents title: no agent menu, no Back, no tools', () => {
+        test('the chat history is titled Agent chats, with no avatar, agent menu, Back, or tools', () => {
             renderTitle(two, 'a', {rhsTab: 'threads'});
 
-            expect(screen.getByText('Agents')).not.toBeNull();
+            expect(screen.getByText('Agent chats')).not.toBeNull();
+            expect(screen.queryByText('Agents')).toBeNull();
+            expect(screen.getByTestId('rhs-title').querySelector('img')).toBeNull();
             expect(screen.queryByRole('button', {name: /options$/})).toBeNull();
             expect(screen.queryByText('Alpha')).toBeNull();
-            expect(screen.queryByText('Chat history')).toBeNull();
+        });
+
+        test.each([
+            {name: 'a new chat', rhs: {}},
+            {name: 'an open thread', rhs: {selectedPostId: 'root1'}},
+        ])('$name keeps the agent avatar', ({rhs}) => {
+            renderTitle(two, 'a', rhs);
+
+            expect(screen.getByTestId('rhs-title').querySelector('img[src="/users/a/image"]')).not.toBeNull();
         });
 
         test('Back leaves the open chat and shows the chat history', () => {
