@@ -329,4 +329,3 @@ func TestRestoreSecretsFollowsMCPServerEdits(t *testing.T) {
 		})
 	}
 }
-
