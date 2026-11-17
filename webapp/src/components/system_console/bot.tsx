@@ -259,6 +259,7 @@ const Bot = (props: Props) => {
                         vertexProjectID: selectedService.vertexProjectID || '',
                         vertexProjectNumber: selectedService.vertexProjectNumber || '',
                         vertexAuthCredentials: selectedService.vertexAuthCredentials || '',
+                        serviceID: selectedService.id,
                     },
                 );
                 setAvailableModels(data);

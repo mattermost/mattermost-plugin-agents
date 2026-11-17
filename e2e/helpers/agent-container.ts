@@ -10,6 +10,7 @@ export const agentUnprivilegedPassword = 'unprivileged';
 
 export const mockServiceId = 'mock-service';
 export const secondServiceId = 'second-service';
+export const secondServiceApiKey = 'mock2';
 
 /**
  * Run a Mattermost container configured for agent E2E tests.
@@ -33,7 +34,7 @@ export async function RunAgentContainer(): Promise<MattermostContainer> {
                 id: secondServiceId,
                 name: 'Second Service',
                 type: 'openaicompatible',
-                apiKey: 'mock2',
+                apiKey: secondServiceApiKey,
                 apiURL: 'http://openai:8080/second',
                 defaultModel: 'gpt-mock-2',
                 useResponsesAPI: false,
