@@ -180,6 +180,36 @@ describe('stripMarkdownPreview', () => {
             source: '```\n```',
             expected: '',
         },
+        {
+            name: 'a longer closing fence still keeps the code',
+            source: '```html\n<b>value</b>\n````',
+            expected: '<b>value</b>',
+        },
+        {
+            name: 'an unclosed fence keeps its code',
+            source: '```html\n<b>value</b>',
+            expected: '<b>value</b>',
+        },
+        {
+            name: 'an unclosed fence with no body is empty',
+            source: '```',
+            expected: '',
+        },
+        {
+            name: 'a blank line keeps a pipe out of a table',
+            source: 'a | b\n\n---|---',
+            expected: 'a | b ---|---',
+        },
+        {
+            name: 'escaped backticks stay around the word',
+            source: '\\`**bold**\\`',
+            expected: '`bold`',
+        },
+        {
+            name: 'a backslash inside code stays',
+            source: '`a\\*b`',
+            expected: 'a\\*b',
+        },
     ])('$name', ({source, expected}) => {
         expect(stripMarkdownPreview(source)).toBe(expected);
     });

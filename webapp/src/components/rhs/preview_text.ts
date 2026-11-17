@@ -50,22 +50,111 @@ function restoreSlots(text: string, slots: string[]): string {
 
 // Fenced and inline code keep their text. The fence, language tag, and backticks do not.
 function protectCode(text: string, slots: string[]): string {
-    let next = text;
-    for (let i = 0; i < 10; i++) {
-        const replaced = next.replace(/^[ \t]*(`{3,}|~{3,})[^\n]*\n([\s\S]*?)^[ \t]*\1[ \t]*$/gm, (_match, _fence, body: string) => hold(slots, body));
-        if (replaced === next) {
-            break;
-        }
-        next = replaced;
-    }
+    let next = protectFencedBlocks(text, slots);
     next = next.replace(/(`{3,}|~{3,})([^\n]*?)\1/g, (_match, _fence, body: string) => hold(slots, body));
-    next = next.replace(/``([^`\n]+)``/g, (_match, body: string) => hold(slots, body));
-    next = next.replace(/`([^`\n]+)`/g, (_match, body: string) => hold(slots, body));
-
-    // An opening fence that never closes, then any marker still left.
-    next = next.replace(/^[ \t]*(`{3,}|~{3,})[^\n]*$/gm, '');
+    next = protectInlineCode(next, slots);
     next = next.replace(/`{3,}|~{3,}/g, '');
     return next;
+}
+
+// A closing fence is the same character and at least as long as the opening one.
+// An opening fence with no close keeps the rest of the text as code.
+function protectFencedBlocks(text: string, slots: string[]): string {
+    const lines = text.split('\n');
+    const out: string[] = [];
+    for (let i = 0; i < lines.length; i++) {
+        const open = (/^[ \t]*(`{3,}|~{3,})(.*)$/).exec(lines[i]);
+        if (!open || hasRun(open[2], open[1])) {
+            out.push(lines[i]);
+            continue;
+        }
+        const fence = open[1];
+        let closeAt = -1;
+        for (let j = i + 1; j < lines.length; j++) {
+            const close = (/^[ \t]*(`{3,}|~{3,})[ \t]*$/).exec(lines[j]);
+            if (close && close[1][0] === fence[0] && close[1].length >= fence.length) {
+                closeAt = j;
+                break;
+            }
+        }
+        const end = closeAt === -1 ? lines.length : closeAt;
+        const body = lines.slice(i + 1, end).join('\n');
+        if (body !== '') {
+            out.push(hold(slots, body));
+        }
+        if (closeAt === -1) {
+            break;
+        }
+        i = closeAt;
+    }
+    return out.join('\n');
+}
+
+// True when rest holds a run of fence's character at least as long as fence.
+function hasRun(rest: string, fence: string): boolean {
+    const mark = fence[0];
+    let run = 0;
+    for (let i = 0; i < rest.length; i++) {
+        run = rest[i] === mark ? run + 1 : 0;
+        if (run >= fence.length) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// A backtick run preceded by an odd number of backslashes is literal punctuation.
+function protectInlineCode(text: string, slots: string[]): string {
+    let out = '';
+    for (let i = 0; i < text.length; i++) {
+        if (text[i] !== '`' || escaped(text, i)) {
+            out += text[i];
+            continue;
+        }
+        let len = 0;
+        while (text[i + len] === '`') {
+            len += 1;
+        }
+        const close = closingRun(text, i + len, len);
+        if (close === -1) {
+            out += text.slice(i, i + len);
+            i += (len - 1);
+            continue;
+        }
+        const body = text.slice(i + len, close);
+        out += body === '' ? text.slice(i, close + len) : hold(slots, body);
+        i = close + (len - 1);
+    }
+    return out;
+}
+
+function escaped(text: string, index: number): boolean {
+    let slashes = 0;
+    for (let i = index - 1; i >= 0 && text[i] === '\\'; i--) {
+        slashes += 1;
+    }
+    return slashes % 2 === 1;
+}
+
+// The start of a same-length backtick run on this line, or -1.
+function closingRun(text: string, from: number, len: number): number {
+    for (let j = from; j < text.length; j++) {
+        if (text[j] === '\n') {
+            return -1;
+        }
+        if (text[j] !== '`') {
+            continue;
+        }
+        let run = 0;
+        while (text[j + run] === '`') {
+            run += 1;
+        }
+        if (run === len) {
+            return j;
+        }
+        j += (run - 1);
+    }
+    return -1;
 }
 
 function protectEscapes(text: string, slots: string[]): string {
@@ -143,7 +232,7 @@ function stripHeadings(text: string): string {
     return next;
 }
 
-// Pipes flatten only for a header row followed by a delimiter row. `a || b` is not a table.
+// Pipes flatten only for a header row directly above a delimiter row. `a || b` is not a table.
 function stripTables(text: string): string {
     const lines = text.split('\n');
     const drop = new Set<number>();
@@ -157,11 +246,8 @@ function stripTables(text: string): string {
         if (drop.has(i) || !isDelimiter(lines[i])) {
             continue;
         }
-        let header = i - 1;
-        while (header >= 0 && lines[header].trim() === '') {
-            header -= 1;
-        }
-        if (header < 0 || drop.has(header) || !lines[header].includes('|')) {
+        const header = i - 1;
+        if (header < 0 || lines[header].trim() === '' || drop.has(header) || !lines[header].includes('|')) {
             continue;
         }
         lines[header] = flatten(lines[header]);
