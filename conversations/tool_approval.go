@@ -283,19 +283,24 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	defer followUp.release()
 	ctx = followUp.ctx
 
-	claimedContent, err := c.claimToolDecision(pendingTurn, pendingBlocks)
+	autoExec := policy.autoExecute(llmContext)
+	claimedContent, err := c.claimToolDecision(pendingTurn, pendingBlocks, func(block conversation.ContentBlock) bool {
+		return slices.Contains(acceptedToolIDs, block.ID) ||
+			(block.WouldAutoExecute && block.UserInteraction == "" && autoExec(llm.ToolCall{Name: block.Name, ServerOrigin: block.ServerOrigin}))
+	})
 	if err != nil {
 		return err
 	}
 	if err = d.activate(c); err != nil {
-		c.undoTurnUpdates([]turnUpdate{{turn: pendingTurn, content: claimedContent}})
+		c.undoToolDecisionClaim(pendingTurn, claimedContent)
 		return err
 	}
+	run := c.startToolRun(ctx, pendingTurn.ID, post)
+	defer c.endToolRun(run)
 
 	// Execute approved tools and build results. Blocks resolved in a prior
 	// call keep their status and are not part of this decision, so they enter
 	// neither audit list; anything auto-executed this call counts as accepted.
-	autoExec := policy.autoExecute(llmContext)
 	autoExecutedNow := make(map[string]bool)
 	var executedCalls []llm.ToolCall
 	userRejected := false
@@ -303,6 +308,11 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	rejectedToolNames := []string{}
 	var toolResults []toolrunner.ToolResult
 	for i := range pendingBlocks {
+		// No further tool may start once shutdown or recovery has halted the
+		// run; its turn is recorded as interrupted below.
+		if run.halted() {
+			break
+		}
 		block := &pendingBlocks[i]
 		if block.Type != conversation.BlockTypeToolUse {
 			continue
@@ -327,7 +337,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		case slices.Contains(acceptedToolIDs, block.ID):
 			acceptedToolNames = append(acceptedToolNames, block.Name)
 			executedCalls = append(executedCalls, llm.ToolCall{Name: block.Name, ServerOrigin: block.ServerOrigin})
-			result, resolveErr := resolveApprovedToolUseBlock(ctx, llmContext, *block, telemetry.ToolExecutionApproved)
+			result, resolveErr := resolveApprovedToolUseBlock(run.ctx, llmContext, *block, telemetry.ToolExecutionApproved)
 			if resolveErr != nil {
 				block.Status = conversation.StatusError
 				toolResults = append(toolResults, toolrunner.ToolResult{
@@ -368,7 +378,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			// run one whose policy was since revoked. Shared and terminal, like
 			// any auto-run round, unless the share review below holds it.
 			executedCalls = append(executedCalls, llm.ToolCall{Name: block.Name, ServerOrigin: block.ServerOrigin})
-			result, resolveErr := resolveApprovedToolUseBlock(ctx, llmContext, *block, telemetry.ToolExecutionAuto)
+			result, resolveErr := resolveApprovedToolUseBlock(run.ctx, llmContext, *block, telemetry.ToolExecutionAuto)
 			autoExecutedNow[block.ID] = true
 			block.Shared = new(true)
 			if resolveErr != nil {
@@ -421,6 +431,11 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	audit.AddParam(auditRec, "accepted_tools", acceptedToolNames)
 	audit.AddParam(auditRec, "rejected_tools", rejectedToolNames)
 
+	if run.halted() {
+		return c.interruptToolRun(run, pendingTurn.ID, post)
+	}
+	run.stopHeartbeat()
+
 	// As in a run, results the channel's members may not be able to read
 	// wait for the requester's share decision, auto-executed ones included.
 	var review *llm.ShareReview
@@ -435,17 +450,21 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		}
 	}
 
-	// Update the assistant turn with resolved statuses.
+	// Record the resolved statuses and end the run in one write, only while
+	// the turn is still the claimed, streaming one: a sweep that declared the
+	// run lost keeps its interrupted verdict. The tool_result turn follows the
+	// write so a sweep never moves the anchor after its own results.
 	updatedContent, err := json.Marshal(pendingBlocks)
 	if err != nil {
 		return fmt.Errorf("failed to marshal updated blocks: %w", err)
 	}
-	swapped, err := c.convService.CompareAndSwapTurnContent(pendingTurn.ID, claimedContent, updatedContent)
+	swapped, err := c.convService.CompareAndSwapTurnContentAndStatus(pendingTurn.ID, claimedContent, store.TurnStatusStreaming, updatedContent, store.TurnStatusComplete)
 	if err != nil {
 		return fmt.Errorf("failed to update turn with resolved statuses: %w", err)
 	}
 	if !swapped {
-		return fmt.Errorf("turn %s changed while its tool calls ran", pendingTurn.ID)
+		c.mmClient.LogError("Approved tool run ended after its turn changed or was marked interrupted; results discarded", "post_id", post.Id, "turn_id", pendingTurn.ID)
+		return fmt.Errorf("turn %s changed or was interrupted while its tool calls ran: %w", pendingTurn.ID, ErrToolRunInterrupted)
 	}
 
 	// Write tool results as a tool_result turn. DecidedAt is set when no
@@ -991,7 +1010,8 @@ const (
 )
 
 // awaitSettledPostTurns loads the conversation turns, reloading until no
-// assistant turn anchored to postID is still streaming or timeout elapses.
+// assistant turn anchored to postID is still streaming (other than an approval
+// run, which never settles back to pending) or timeout elapses.
 // On timeout it returns the latest turns; callers treat a still-streaming
 // turn as not yet actionable.
 func awaitSettledPostTurns(ctx context.Context, load func() ([]store.Turn, error), postID string, timeout, interval time.Duration) ([]store.Turn, error) {
@@ -1002,7 +1022,7 @@ func awaitSettledPostTurns(ctx context.Context, load func() ([]store.Turn, error
 			return nil, err
 		}
 		stillStreaming := slices.ContainsFunc(turns, func(t store.Turn) bool {
-			return t.Role == "assistant" && t.PostID != nil && *t.PostID == postID && t.Status == store.TurnStatusStreaming
+			return t.Role == "assistant" && t.PostID != nil && *t.PostID == postID && t.Status == store.TurnStatusStreaming && !isClaimedToolRunTurn(t)
 		})
 		if !stillStreaming || !time.Now().Before(deadline) {
 			return turns, nil
@@ -1032,22 +1052,40 @@ func (c *Conversations) undoTurnUpdates(applied []turnUpdate) {
 	}
 }
 
-// claimToolDecision marks the turn's pending tool_use blocks accepted, but only
-// while the turn is unchanged since it was read, so a double click, a retry, or
-// an HA peer handling the same click cannot execute the calls twice. It returns
-// the claimed content for the final conditional write.
-func (c *Conversations) claimToolDecision(turn *store.Turn, blocks []conversation.ContentBlock) (json.RawMessage, error) {
+// undoToolDecisionClaim returns a claimed turn to its pre-claim content and
+// status after a failure before any tool started. It is best effort, like
+// undoTurnUpdates.
+func (c *Conversations) undoToolDecisionClaim(turn *store.Turn, claimedContent json.RawMessage) {
+	swapped, err := c.convService.CompareAndSwapTurnContentAndStatus(turn.ID, claimedContent, store.TurnStatusStreaming, turn.Content, turn.Status)
+	if err != nil || !swapped {
+		c.mmClient.LogError("Failed to undo a tool decision claim", "turn_id", turn.ID, "error", err)
+	}
+}
+
+// claimToolDecision records the decision on the turn's pending tool_use blocks
+// (accepted for calls that will run, rejected for the rest, which never start)
+// and moves the turn to the streaming state, but only while the turn is unchanged since
+// it was read, so a double click, a retry, or an HA peer handling the same
+// click cannot execute the calls twice. Streaming makes the run visible to the
+// recovery sweep and to regenerate's live-run check. It returns the claimed
+// content for the final conditional write.
+func (c *Conversations) claimToolDecision(turn *store.Turn, blocks []conversation.ContentBlock, willRun func(conversation.ContentBlock) bool) (json.RawMessage, error) {
 	claimed := slices.Clone(blocks)
 	for i := range claimed {
-		if claimed[i].Type == conversation.BlockTypeToolUse && claimed[i].Status == conversation.StatusPending {
+		if claimed[i].Type != conversation.BlockTypeToolUse || claimed[i].Status != conversation.StatusPending {
+			continue
+		}
+		if willRun(claimed[i]) {
 			claimed[i].Status = conversation.StatusAccepted
+		} else {
+			claimed[i].Status = conversation.StatusRejected
 		}
 	}
 	content, err := json.Marshal(claimed)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal claimed blocks: %w", err)
 	}
-	swapped, err := c.convService.CompareAndSwapTurnContent(turn.ID, turn.Content, content)
+	swapped, err := c.convService.CompareAndSwapTurnContentAndStatus(turn.ID, turn.Content, turn.Status, content, store.TurnStatusStreaming)
 	if err != nil {
 		return nil, fmt.Errorf("failed to claim tool decision: %w", err)
 	}

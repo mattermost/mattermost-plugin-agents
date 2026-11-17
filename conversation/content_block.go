@@ -31,6 +31,9 @@ const (
 	StatusError        = "error"
 	StatusSuccess      = "success"
 	StatusAutoApproved = "auto_approved"
+	// StatusInterrupted marks a call that was approved to run but whose run
+	// ended before recording a result: its outcome is unknown.
+	StatusInterrupted = "interrupted"
 )
 
 // Synthetic user turn kinds, persisted in ContentBlock.SyntheticKind.

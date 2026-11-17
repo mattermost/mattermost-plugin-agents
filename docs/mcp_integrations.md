@@ -25,7 +25,7 @@ Everything is under **System Console > Plugins > Agents > Model Context Protocol
    | **Server URL** | The server's final address. Redirects to a different origin, including an `http` to `https` upgrade, are refused so credentials can't reach another host. |
       | **Direct Messages Only** | Config key `dmOnly`. Off by default. Limits the server to a user's direct message with an agent. See [Limit a server to direct messages](#limit-a-server-to-direct-messages). |
    | **Description** | Up to 500 characters. Tells agents what the integration is for, so they can offer it to people who haven't connected yet. Once the server is saved, **Auto-fill from server** copies the server's own description or instructions, connecting as you with the saved settings. You may need to connect your account first. Review the text and save. |
-   | **Headers** | Extra HTTP headers the server needs. They're sent for every user in both authentication modes, so don't put a personal or admin credential here. |
+   | **Headers** | Extra HTTP headers the server needs. They're sent for every user in both authentication modes, so don't put a personal or admin credential here. Saved values show as a mask in the System Console; leave one untouched to keep it, or type a new value to replace it. |
    | **Service Account Authentication** | Static headers, such as an API key, for agents that use service accounts. See [Service account authentication](#service-account-authentication). |
    | **OAuth Credentials (Optional)** | **Client ID** and **Client Secret** for servers that need a pre-registered OAuth app, such as GitHub. Leave empty if the server supports automatic registration. |
 
