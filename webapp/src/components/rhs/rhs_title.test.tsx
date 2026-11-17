@@ -153,7 +153,7 @@ describe('RHSTitle', () => {
         fireEvent.click(screen.getByTestId('bot-selector-rhs'));
 
         // An open chat belongs to its agent: no Switch agent, as in the product's chat header.
-        expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Recent chats', 'New chat', 'Rename chat', 'View all agents']);
+        expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Recent chats', 'New chat', 'Rename chat', 'Archive chat', 'View all agents']);
     });
 
     test('choosing a recent chat opens it in the RHS', () => {
