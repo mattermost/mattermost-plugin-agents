@@ -28,6 +28,7 @@ export const StatusRejected = 'rejected' as const;
 export const StatusError = 'error' as const;
 export const StatusSuccess = 'success' as const;
 export const StatusAutoApproved = 'auto_approved' as const;
+export const StatusInterrupted = 'interrupted' as const;
 
 export type ToolCallStatus =
     | typeof StatusPending
@@ -35,7 +36,8 @@ export type ToolCallStatus =
     | typeof StatusRejected
     | typeof StatusError
     | typeof StatusSuccess
-    | typeof StatusAutoApproved;
+    | typeof StatusAutoApproved
+    | typeof StatusInterrupted;
 
 export interface Citation {
     type: string;

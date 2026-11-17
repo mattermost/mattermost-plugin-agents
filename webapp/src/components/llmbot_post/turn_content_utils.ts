@@ -8,8 +8,11 @@ import {
     BlockTypeAnnotations,
     BlockTypeText,
     BlockTypeServerToolUse,
+    ServerToolStatusError,
+    ServerToolStatusInProgress,
     StatusPending,
     StatusAccepted,
+    StatusInterrupted,
     StatusRejected,
     StatusError,
     StatusSuccess,
@@ -34,6 +37,7 @@ export function statusStringToEnum(status: ConvToolCallStatus | undefined): Tool
     case StatusRejected:
         return ToolCallStatus.Rejected;
     case StatusError:
+    case StatusInterrupted:
         return ToolCallStatus.Error;
     case StatusSuccess:
         return ToolCallStatus.Success;
@@ -120,6 +124,7 @@ function toolUseBlockToToolCall(block: ContentBlock, resultMap: Map<string, Cont
         user_interaction: block.user_interaction ?? undefined, // eslint-disable-line no-undefined
         would_auto_execute: block.would_auto_execute ?? undefined, // eslint-disable-line no-undefined
         decided: resultBlock?.decided_at != null,
+        interrupted: block.status === StatusInterrupted ? true : undefined, // eslint-disable-line no-undefined
     };
 }
 
@@ -279,6 +284,27 @@ export function computeRenderedRounds(params: {
         out.push(currentRound);
     }
     return out;
+}
+
+/**
+ * Tool calls on an interrupted post that never reached a final status will
+ * not finish: an approved call may or may not have run, and is never offered
+ * for approval again. Show them as interrupted errors instead of running or
+ * awaiting a decision.
+ */
+export function markUnfinishedToolsInterrupted(rounds: Round[]): Round[] {
+    const unfinishedCall = (call: ToolCall) => call.status === ToolCallStatus.Pending || call.status === ToolCallStatus.Accepted;
+    const unfinishedServerTool = (tool: ServerToolUse) => tool.status === ServerToolStatusInProgress;
+    return rounds.map((round) => {
+        if (!round.toolCalls.some(unfinishedCall) && !round.serverTools.some(unfinishedServerTool)) {
+            return round;
+        }
+        return {
+            ...round,
+            toolCalls: round.toolCalls.map((call) => (unfinishedCall(call) ? {...call, status: ToolCallStatus.Error, interrupted: true} : call)),
+            serverTools: round.serverTools.map((tool) => (unfinishedServerTool(tool) ? {...tool, status: ServerToolStatusError} : tool)),
+        };
+    });
 }
 
 /** Round draft plus textStart, used to rebase citation indices onto this round's slice. */

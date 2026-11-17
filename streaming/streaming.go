@@ -764,8 +764,10 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 
 	finalStatus := store.TurnStatusComplete
 	// A batch awaiting a decision is broadcast only after finalizeTurn
-	// persists it, so an approval click can never reach the server before its
-	// turn exists.
+	// settles its turn as complete (the turn exists from stream start, but
+	// approval only acts on a complete turn), so an approval click can never
+	// reach the server before its turn is actionable. An interrupted stream
+	// never offers a decision.
 	var awaitingDecision *llm.ToolCallBatch
 	// settle finalizes the turn once, before the final post update, and
 	// reports whether this run still owns the post.

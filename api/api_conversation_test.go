@@ -55,6 +55,41 @@ func TestHandleGetConversation(t *testing.T) {
 		validate       func(t *testing.T, resp *http.Response)
 	}{
 		{
+			name:           "interrupted channel response keeps the share decision of results that already ran",
+			userID:         testUserID,
+			conversationID: "conv-interrupted",
+			setup: func(e *TestEnvironment) {
+				e.conversationStore.conversations["conv-interrupted"] = &store.Conversation{
+					ID:        "conv-interrupted",
+					UserID:    testUserID,
+					BotID:     testBotUserID,
+					ChannelID: &channelID,
+					Operation: "conversation",
+				}
+				postID := "post01234567890123456789"
+				e.conversationStore.turns["conv-interrupted"] = []store.Turn{
+					{ID: "turn-1", ConversationID: "conv-interrupted", Role: "user", Content: textOnlyBlocks, Sequence: 1},
+					{ID: "turn-2", ConversationID: "conv-interrupted", Role: "assistant", Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+						{Type: conversation.BlockTypeToolUse, ID: "tc_ran", Name: "get_weather", Input: toolUseInput, Status: conversation.StatusSuccess, Shared: new(false)},
+					}), Sequence: 2},
+					{ID: "turn-3", ConversationID: "conv-interrupted", Role: "tool_result", Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+						{Type: conversation.BlockTypeToolResult, ToolUseID: "tc_ran", Content: "72F", Status: conversation.StatusSuccess, Shared: new(false)},
+					}), Sequence: 3},
+					{ID: "turn-4", ConversationID: "conv-interrupted", PostID: &postID, Role: "assistant", Status: store.TurnStatusInterrupted, Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+						{Type: conversation.BlockTypeToolUse, ID: "tc_lost", Name: "get_weather", Input: toolUseInput, Status: conversation.StatusInterrupted, Shared: new(false)},
+					}), Sequence: 4},
+				}
+				e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
+			},
+			expectedStatus: http.StatusOK,
+			validate: func(t *testing.T, resp *http.Response) {
+				var response ConversationResponse
+				require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+				require.Len(t, response.Turns, 4)
+				assert.Equal(t, conversation.ApprovalStageResult, response.Turns[3].ApprovalState)
+			},
+		},
+		{
 			name:           "owner in DM gets full unredacted content",
 			userID:         testUserID,
 			conversationID: "conv-dm-owner",
