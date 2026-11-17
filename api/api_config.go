@@ -75,10 +75,12 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 
 	cfg = normalizeAdminConfig(cfg)
 
-	prev, err := a.configStore.GetConfig()
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get config: %w", err))
-		return
+	// Best effort: a failed read of the prior config must not block the save.
+	// Without a prior config, masked credentials cannot be restored and are
+	// rejected below; typed values still save.
+	prev, prevErr := a.configStore.GetConfig()
+	if prevErr != nil {
+		prev = nil
 	}
 
 	// A masked credential means "keep the stored one"; any other value is what
@@ -92,10 +94,9 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	}
 
 	// Audit which top-level config sections change — never their values,
-	// since services/webSearch/mcp carry credentials. Best effort: a failed
-	// read of the prior config must not block the save, so the record then
-	// simply omits changed_keys.
-	if rec := auditRec(c); rec != nil {
+	// since services/webSearch/mcp carry credentials. When the prior config
+	// was unreadable the diff is omitted, not fabricated.
+	if rec := auditRec(c); rec != nil && prevErr == nil {
 		audit.AddParam(rec, "changed_keys", audit.ChangedJSONKeys(prev, cfg))
 	}
 

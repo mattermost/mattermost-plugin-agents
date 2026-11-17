@@ -63,7 +63,7 @@ const (
 // recognizable value.
 func storedCredentialConfig() *config.Config {
 	return &config.Config{
-		DefaultBotName:       "ai",
+		DefaultBotName: "ai",
 		Services: []llm.ServiceConfig{
 			{
 				ID:                    "svc-1",
