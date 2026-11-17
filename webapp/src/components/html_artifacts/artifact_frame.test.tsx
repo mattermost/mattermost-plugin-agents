@@ -11,7 +11,7 @@ import {getArtifactToken} from '@/client';
 import {getConsentDecision, isConsentPromptPending, resetConsentStore} from './artifact_broker';
 import ArtifactConsentPrompt, {CONSENT_ARM_DELAY_MS} from './artifact_consent_prompt';
 import {REVOKE_DOWNLOAD_URL_MS} from './download';
-import ArtifactFrame, {HEARTBEAT_HIDE_MS, HEARTBEAT_STOP_MS} from './artifact_frame';
+import ArtifactFrame, {ArtifactFrameHandle, HEARTBEAT_HIDE_MS, HEARTBEAT_STOP_MS} from './artifact_frame';
 import {NUDGE_MS} from './artifact_interact_overlay';
 import HTMLArtifactCard, {resetArtifactRunDecisions} from './html_artifact_card';
 import HTMLArtifactFullscreen from './html_artifact_fullscreen';
@@ -789,6 +789,59 @@ describe('ArtifactFrame focus guard', () => {
             expect(screen.getByRole('alertdialog', {name: 'Download a file?'})).toBeTruthy();
         });
 
+        test('a frame that stops before its prompt renders does not leave the page-wide prompt lock held', async () => {
+            const {inner, win} = await renderReadyFrame({startedByClick: true});
+
+            // One act() batches the request and the artifact's blocked
+            // self-navigation, so the load runs before React renders the prompt.
+            act(() => {
+                window.dispatchEvent(new MessageEvent('message', {
+                    data: {...request('d1', {mimeType: 'text/plain', data: 'hi'}), token: TOKEN},
+                    origin: 'null',
+                    source: win,
+                }));
+                fireEvent.load(inner);
+            });
+            await flushLoad();
+
+            expect(stopped()).not.toBeNull();
+            expect(screen.queryByTestId('html-artifact-consent')).toBeNull();
+            expect(isConsentPromptPending()).toBe(false);
+        });
+
+        test('reloading while a download prompt is open removes it, and the next download gets a fresh, unarmed prompt', async () => {
+            const handle = React.createRef<ArtifactFrameHandle>();
+            const {send} = await renderReadyFrame({startedByClick: true, ref: handle} as Partial<React.ComponentProps<typeof ArtifactFrame>>);
+            send(request('d1', {mimeType: 'text/plain', data: 'x'}));
+            advance(CONSENT_ARM_DELAY_MS);
+            expect(screen.getByTestId('html-artifact-consent-allow').getAttribute('aria-disabled')).toBe('false');
+
+            act(() => handle.current!.reload(true));
+            await flushLoad();
+            expect(screen.queryByTestId('html-artifact-consent')).toBeNull();
+            expect(isConsentPromptPending()).toBe(false);
+
+            const reloaded = innerIframe()!;
+            fireEvent.load(reloaded);
+            postFrom(reloaded.contentWindow, {mmArtifact: 1, type: 'ready', token: TOKEN});
+            postFrom(reloaded.contentWindow, {...request('d2', {mimeType: 'text/plain', data: 'y'}), token: TOKEN});
+            expect(screen.getByTestId('html-artifact-consent-allow').getAttribute('aria-disabled')).toBe('true');
+        });
+
+        test('a download the host rejects disengages the artifact, so it cannot retry until the viewer clicks it again', async () => {
+            const {frame, win, send} = await renderReadyFrame({startedByClick: true});
+            focusArtifact(frame);
+            const posted = jest.spyOn(win, 'postMessage');
+            send(request('d1', {mimeType: 'text/html', data: '<b>x</b>'}));
+            expect(posted).toHaveBeenCalledWith(expect.objectContaining({id: 'd1', error: expect.objectContaining({code: 'unsupported_type'})}), '*');
+            expect(screen.getByTestId('html-artifact-frame').getAttribute('data-engaged')).toBe('false');
+            expect(stopped()).toBeNull();
+
+            send(request('d2', {mimeType: 'text/plain', data: 'x'}));
+            expect(posted).toHaveBeenCalledWith(expect.objectContaining({id: 'd2', error: expect.objectContaining({code: 'busy'})}), '*');
+            expect(screen.queryByTestId('html-artifact-consent')).toBeNull();
+        });
+
         test('the viewer sees the sanitized name, type and size, and the host page saves the file only once they confirm', async () => {
             const {frame, win, send} = await renderReadyFrame({startedByClick: true});
             focusArtifact(frame);
@@ -797,8 +850,7 @@ describe('ArtifactFrame focus guard', () => {
 
             const prompt = screen.getByRole('alertdialog', {name: 'Download a file?'});
             expect(prompt.textContent).toContain('guard.html');
-            expect(prompt.textContent).toContain('chart.svg.png');
-            expect(prompt.textContent).toContain('(image/png, 1 byte)');
+            expect(screen.getByTestId('html-artifact-consent-file').textContent).toBe('File namechart.svg.pngTypeimage/pngSize1 byte');
             expect(screen.getByTestId('html-artifact-consent-allow').textContent).toBe('Download');
             expect(screen.getByTestId('html-artifact-consent-deny').textContent).toBe('Cancel');
             expect(saved).toHaveLength(0);

@@ -106,7 +106,7 @@ export type ConsentDecision = 'allow' | 'deny';
 const consentDecisions = new Map<string, ConsentDecision>();
 
 // At most one prompt is shown at a time, across all artifact frames.
-let pendingPrompt: {fileId: string; cancel: () => void} | null = null;
+let pendingPrompt: {fileId: string; owner: ArtifactBroker; cancel: () => void} | null = null;
 
 export function getConsentDecision(viewerId: string, fileId: string): ConsentDecision | undefined {
     return consentDecisions.get(`${viewerId}:${fileId}`);
@@ -254,6 +254,10 @@ export interface ArtifactBrokerOptions {
     // Hides a prompt shown by requestConsent after it was cancelled.
     dismissConsent?: () => void;
 
+    // A download request failed validation. Decoding the payload is not free,
+    // so the viewer must engage the artifact again before it can retry.
+    onDownloadRejected?: () => void;
+
     // False while this frame's prompt would not be visible to the viewer
     // (e.g. the inline card is covered by the fullscreen viewer) or the
     // viewer is not interacting with the artifact.
@@ -293,6 +297,11 @@ export class ArtifactBroker {
     dispose() {
         this.disposed = true;
         this.heldReplies = [];
+
+        // A prompt nobody can answer any more must not hold the page-wide lock.
+        if (pendingPrompt?.owner === this) {
+            pendingPrompt.cancel();
+        }
     }
 
     isReady() {
@@ -449,6 +458,7 @@ export class ArtifactBroker {
         this.opts.onHostBusy?.();
         if (!prepared.ok) {
             this.respondError(id, prepared.code, prepared.message);
+            this.opts.onDownloadRejected?.();
             return;
         }
         const {blob, filename, mimeType} = prepared.download;
@@ -487,7 +497,7 @@ export class ArtifactBroker {
     // ask shows the consent prompt, the only one pending across all frames
     // until it is answered or dismissed.
     private ask(request: ConsentRequest): Promise<ConsentAnswer> {
-        const prompt = {fileId: this.opts.fileId, cancel: () => {}}; // eslint-disable-line no-empty-function
+        const prompt = {fileId: this.opts.fileId, owner: this, cancel: () => {}}; // eslint-disable-line no-empty-function
         pendingPrompt = prompt;
         return new Promise<boolean>((resolve, reject) => {
             prompt.cancel = () => {

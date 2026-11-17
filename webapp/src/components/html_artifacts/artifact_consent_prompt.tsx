@@ -23,6 +23,19 @@ interface Props {
     onDeny: () => void;
 }
 
+const MAX_SHOWN_FILENAME_LENGTH = 48;
+const KEPT_FILENAME_TAIL_LENGTH = 16;
+
+// Shortens a long name in the middle, so its extension always shows.
+export function truncateMiddle(name: string, max: number): string {
+    const chars = Array.from(name);
+    if (chars.length <= max) {
+        return name;
+    }
+    const tail = chars.slice(-KEPT_FILENAME_TAIL_LENGTH).join('');
+    return `${chars.slice(0, max - KEPT_FILENAME_TAIL_LENGTH - 1).join('')}\u2026${tail}`;
+}
+
 export function formatByteSize(bytes: number, locale: string): string {
     const units = ['byte', 'kilobyte', 'megabyte'];
     let value = bytes;
@@ -142,7 +155,7 @@ const ArtifactConsentPrompt = ({fileName, request, onAllow, onDeny}: Props) => {
                 role='alertdialog'
                 aria-modal='true'
                 aria-labelledby='html-artifact-consent-heading'
-                aria-describedby='html-artifact-consent-text'
+                aria-describedby={request.kind === 'download' ? 'html-artifact-consent-text html-artifact-consent-file' : 'html-artifact-consent-text'}
                 data-testid='html-artifact-consent'
             >
                 <Heading id='html-artifact-consent-heading'>
@@ -159,12 +172,9 @@ const ArtifactConsentPrompt = ({fileName, request, onAllow, onDeny}: Props) => {
                 <Text id='html-artifact-consent-text'>
                     {request.kind === 'download' ? (
                         <FormattedMessage
-                            defaultMessage='<b>{fileName}</b> wants to save <b>{downloadName}</b> ({mimeType}, {size}) to your device. Open it only if you trust its content.'
+                            defaultMessage='<b>{fileName}</b> wants to save a file to your device. Open it only if you trust its content.'
                             values={{
                                 fileName,
-                                downloadName: request.filename,
-                                mimeType: request.mimeType,
-                                size: formatByteSize(request.size, intl.locale),
                                 b: (chunks: React.ReactNode) => <strong>{chunks}</strong>,
                             }}
                         />
@@ -178,6 +188,25 @@ const ArtifactConsentPrompt = ({fileName, request, onAllow, onDeny}: Props) => {
                         />
                     )}
                 </Text>
+                {request.kind === 'download' && (
+                    <FileDetails
+                        id='html-artifact-consent-file'
+                        data-testid='html-artifact-consent-file'
+                    >
+                        <dt>
+                            <FormattedMessage defaultMessage='File name'/>
+                        </dt>
+                        <FileName>{truncateMiddle(request.filename, MAX_SHOWN_FILENAME_LENGTH)}</FileName>
+                        <dt>
+                            <FormattedMessage defaultMessage='Type'/>
+                        </dt>
+                        <dd>{request.mimeType}</dd>
+                        <dt>
+                            <FormattedMessage defaultMessage='Size'/>
+                        </dt>
+                        <dd>{formatByteSize(request.size, intl.locale)}</dd>
+                    </FileDetails>
+                )}
                 <Actions
                     $armed={armed}
                     data-armed={armed}
@@ -268,6 +297,32 @@ const Text = styled.p`
     font-size: 14px;
     line-height: 20px;
     overflow-wrap: anywhere;
+`;
+
+const FileDetails = styled.dl`
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 12px;
+    margin: 0 0 16px;
+    padding: 8px 12px;
+    border-radius: 4px;
+    background: rgba(var(--center-channel-color-rgb), 0.04);
+    font-size: 12px;
+    line-height: 16px;
+
+    dt {
+        color: rgba(var(--center-channel-color-rgb), 0.64);
+    }
+
+    dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+    }
+`;
+
+const FileName = styled.dd`
+    font-family: monospace;
+    font-weight: 600;
 `;
 
 const Actions = styled.div<{$armed: boolean}>`

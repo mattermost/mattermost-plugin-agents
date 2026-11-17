@@ -50,6 +50,11 @@
     function getterOf(proto, name) {
         return Object.getOwnPropertyDescriptor(proto, name).get;
     }
+    // Transient user activation of this frame: a click or key press inside the
+    // artifact, which artifact code cannot fake. Browsers without the API
+    // cannot be checked.
+    const userActivation = navigator.userActivation;
+    const userActivationIsActive = userActivation ? getterOf(Object.getPrototypeOf(userActivation), 'isActive') : null;
     const blobSize = getterOf(Blob.prototype, 'size');
     const arrayBufferByteLength = getterOf(ArrayBuffer.prototype, 'byteLength');
     const arrayBufferSlice = ArrayBuffer.prototype.slice;
@@ -297,6 +302,9 @@
         download: function (options) {
             var params;
             try {
+                if (userActivationIsActive && !reflectApply(userActivationIsActive, userActivation, [])) {
+                    throw bridgeError('permission_denied', 'download() must be called from a user action, such as a click');
+                }
                 params = downloadParams(options);
             } catch (err) {
                 return new PromiseCtor(function (resolve, reject) {

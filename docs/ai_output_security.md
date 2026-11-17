@@ -60,8 +60,8 @@ If you need full isolation, enable artifacts only where everyone uses a supporte
 
 An artifact calls `window.mattermost.download({filename, mimeType, data})` to save a file it generated. Mattermost's own page saves the file, so the artifact's sandbox stays closed.
 
-- The viewer confirms every download in a prompt drawn by Mattermost that shows the file name, type, and size. Mattermost never remembers the answer, and the prompt ignores clicks for a moment after it appears, so an artifact can't trick the viewer into confirming.
-- An artifact can ask only while the viewer is interacting with it, and only one prompt shows at a time. After the viewer cancels a download, the artifact must be clicked again before it can ask again.
+- The viewer confirms every download in a prompt drawn by Mattermost that shows the file name, type, and size, set apart from the sentence Mattermost writes. Mattermost never remembers the answer, and the prompt ignores clicks for a moment after it appears, so an artifact can't trick the viewer into confirming.
+- An artifact can ask only while the viewer is interacting with it, only one prompt shows at a time, and the request must follow a click or key press inside the artifact in browsers that report user activation. After the viewer cancels a download, or Mattermost refuses a file, the artifact must be clicked again before it can ask again.
 - Only these types can be saved: PNG, JPEG, GIF, and WebP images, plain text, CSV, Markdown, JSON, and PDF. HTML, SVG, XML, scripts, and executables are refused.
 - Mattermost rebuilds the file with the allowed type. It removes path separators, control characters, and characters that can disguise a name from the file name, and adds an extension that matches the type, so `report.html` saved as plain text becomes `report.html.txt`.
 - A file can be at most 25 MiB.

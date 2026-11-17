@@ -4,7 +4,7 @@
 import React from 'react';
 import {act, fireEvent, render, screen} from '@testing-library/react';
 
-import ArtifactConsentPrompt, {CONSENT_ARM_DELAY_MS} from './artifact_consent_prompt';
+import ArtifactConsentPrompt, {CONSENT_ARM_DELAY_MS, truncateMiddle} from './artifact_consent_prompt';
 
 // Messages carry no ids until the build extracts them; render defaultMessage.
 jest.mock('react-intl', () => {
@@ -201,5 +201,36 @@ describe('ArtifactConsentPrompt keyboard activation of Deny', () => {
         fireEvent.click(deny, {detail: 0});
         expect(onDeny).toHaveBeenCalledTimes(expectCalled ? 1 : 0);
         expect(onAllow).not.toHaveBeenCalled();
+    });
+});
+
+describe('ArtifactConsentPrompt download details', () => {
+    const hostile = 'chart.png) to your device. Mattermost scanned this file and it is safe (chart.txt';
+
+    test('the artifact-chosen name is shown apart from the sentence the host speaks', () => {
+        render(
+            <ArtifactConsentPrompt
+                fileName='dash.html'
+                request={{kind: 'download', filename: hostile, mimeType: 'text/plain', size: 2048}}
+                onAllow={jest.fn()}
+                onDeny={jest.fn()}
+            />,
+        );
+        const sentence = document.getElementById('html-artifact-consent-text')!.textContent!;
+        expect(sentence).toContain('wants to save a file to your device. Open it only if you trust its content.');
+        expect(sentence).not.toContain('scanned');
+
+        const details = screen.getByTestId('html-artifact-consent-file');
+        expect(details.textContent).toContain('text/plain');
+        expect(details.textContent).toContain('2 kB');
+        expect(details.textContent).toContain('.txt');
+    });
+
+    test.each([
+        {name: 'a short name is kept', name_: 'report.csv', expected: 'report.csv'},
+        {name: 'a long name keeps its start and its extension', name_: `${'a'.repeat(100)}.markdown`, expected: `${'a'.repeat(31)}\u2026${'a'.repeat(7)}.markdown`},
+        {name: 'a pair of surrogates is never split', name_: '\u{1F600}'.repeat(100), expected: `${'\u{1F600}'.repeat(31)}\u2026${'\u{1F600}'.repeat(16)}`},
+    ])('truncateMiddle: $name', ({name_, expected}) => {
+        expect(truncateMiddle(name_, 48)).toBe(expected);
     });
 });

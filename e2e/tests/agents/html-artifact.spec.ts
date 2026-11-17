@@ -491,7 +491,11 @@ test.describe('HTML artifacts', () => {
         const consent = card.getByTestId('html-artifact-consent');
         await expect(consent).toBeVisible({timeout: 15000});
         await expect(consent.getByRole('heading', {name: 'Download a file?'})).toBeVisible();
-        await expect(consent).toContainText(`${REPORT_EXPORTER_FILE_NAME} wants to save sprint-report.csv (text/csv, 25 bytes)`);
+        await expect(consent).toContainText(`${REPORT_EXPORTER_FILE_NAME} wants to save a file to your device`);
+        const details = consent.getByTestId('html-artifact-consent-file');
+        await expect(details).toContainText('sprint-report.csv');
+        await expect(details).toContainText('text/csv');
+        await expect(details).toContainText('25 bytes');
         await expect(consent.locator('[data-armed="true"]')).toHaveCount(1, {timeout: 5000});
         await scrollToTop(card);
         await shot(page, '08-download-prompt');
@@ -507,7 +511,8 @@ test.describe('HTML artifacts', () => {
         // A canvas.toDataURL() image, named without an extension.
         await frame.getByRole('button', {name: 'Download chart'}).click();
         await expect(consent).toBeVisible({timeout: 15000});
-        await expect(consent).toContainText('velocity chart.png (image/png,');
+        await expect(consent.getByTestId('html-artifact-consent-file')).toContainText('velocity chart.png');
+        await expect(consent.getByTestId('html-artifact-consent-file')).toContainText('image/png');
         await expect(consent.locator('[data-armed="true"]')).toHaveCount(1, {timeout: 5000});
         const pngDownload = page.waitForEvent('download');
         await consent.getByRole('button', {name: 'Download'}).click();

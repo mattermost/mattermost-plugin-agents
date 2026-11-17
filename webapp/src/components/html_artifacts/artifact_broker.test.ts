@@ -56,6 +56,7 @@ function setup(opts: {
     const onResize = jest.fn();
     const onEscape = jest.fn();
     const dismissConsent = jest.fn();
+    const onDownloadRejected = jest.fn();
     const broker = new ArtifactBroker({
         fileId: opts.fileId ?? 'file1',
         viewerId: opts.viewerId ?? 'u1',
@@ -65,6 +66,7 @@ function setup(opts: {
         getCurrentUser: () => (typeof opts.currentUser === 'undefined' ? user : opts.currentUser),
         requestConsent,
         dismissConsent,
+        onDownloadRejected,
         saveDownload,
         canPrompt: opts.canPrompt,
         onReady,
@@ -78,7 +80,7 @@ function setup(opts: {
         const payload = withToken && typeof data === 'object' && data !== null ? {token: TOKEN, ...data} : data;
         return broker.handleMessage({data: payload, source: target, origin: 'null', ...overrides} as unknown as MessageEvent);
     };
-    return {broker, target, requestConsent, dismissConsent, saveDownload, onReady, onHeartbeat, onResize, onEscape, send};
+    return {broker, target, requestConsent, dismissConsent, onDownloadRejected, saveDownload, onReady, onHeartbeat, onResize, onEscape, send};
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -611,6 +613,31 @@ describe('ArtifactBroker download', () => {
         }), '*');
         expect(requestConsent).not.toHaveBeenCalled();
         expect(saveDownload).not.toHaveBeenCalled();
+    });
+
+    test('a rejected download asks the host to disengage the artifact, and a valid one does not', async () => {
+        const {send, onDownloadRejected} = setup();
+        send(download({mimeType: 'text/html', data: 'x'}));
+        expect(onDownloadRejected).toHaveBeenCalledTimes(1);
+        await flush();
+        send(download({mimeType: 'text/plain', data: 'x'}, 'd2'));
+        await flush();
+        expect(onDownloadRejected).toHaveBeenCalledTimes(1);
+    });
+
+    test('disposing the broker releases the page-wide prompt lock its unanswered prompt holds', async () => {
+        const first = setup({fileId: 'file1', consent: () => new Promise<boolean>(() => undefined)}); // eslint-disable-line no-undefined
+        const second = setup({fileId: 'file2'});
+        first.send(download({mimeType: 'text/plain', data: 'x'}));
+        expect(isConsentPromptPending()).toBe(true);
+
+        first.broker.dispose();
+        await flush();
+        expect(isConsentPromptPending()).toBe(false);
+        expect(first.dismissConsent).toHaveBeenCalledTimes(1);
+        second.send(download({mimeType: 'text/plain', data: 'y'}));
+        await flush();
+        expect(second.saveDownload).toHaveBeenCalledTimes(1);
     });
 
     test('a second download while one is pending gets busy, and only the first is saved', async () => {
