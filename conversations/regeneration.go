@@ -441,6 +441,9 @@ func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy
 	if err != nil {
 		return nil, nil, err
 	}
+	if err = conversation.CheckRootPost(c.mmClient, conv); err != nil {
+		return nil, nil, err
+	}
 
 	// Clear prior attachments so the regenerated response starts clean.
 	// Safe: conversation-flow bot posts only ever carry CreateFile

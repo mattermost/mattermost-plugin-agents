@@ -307,7 +307,13 @@ func (s *Service) findThreadConversation(rootPostID, botID, userID string) (*sto
 			if errors.Is(err, store.ErrConversationNotFound) {
 				continue
 			}
-			return active, err
+			if err != nil {
+				return nil, err
+			}
+			if err = CheckRootPost(s.mmClient, active); err != nil {
+				return nil, err
+			}
+			return active, nil
 		}
 		if err != nil {
 			return nil, err

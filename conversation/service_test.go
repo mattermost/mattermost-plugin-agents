@@ -3594,3 +3594,64 @@ func TestActivateConversation_ActiveConversationWithDeletedRoot(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, turns, 1, "no user turn is recorded on a deleted thread")
 }
+
+// restoredByRivalStore simulates a concurrent reply restoring the conversation
+// between this reply reading it and restoring it, so the restore conflicts.
+type restoredByRivalStore struct {
+	*store.Store
+}
+
+func (r *restoredByRivalStore) RestoreConversation(id string, archivedAt int64) (*store.Conversation, error) {
+	if _, err := r.Store.RestoreConversation(id, archivedAt); err != nil {
+		return nil, err
+	}
+	return nil, store.ErrConversationConflict
+}
+
+// rootDeletedAfterFirstReadClient reports the root live once, then deleted.
+type rootDeletedAfterFirstReadClient struct {
+	mmapi.Client
+	calls int
+}
+
+func (c *rootDeletedAfterFirstReadClient) GetPost(postID string) (*model.Post, error) {
+	c.calls++
+	if c.calls == 1 {
+		return &model.Post{Id: postID}, nil
+	}
+	return &model.Post{Id: postID, DeleteAt: model.GetMillis()}, nil
+}
+
+func TestGetOrCreateConversation_RetryPathRefusesDeletedRoot(t *testing.T) {
+	svc, s := setupTestService(t)
+	botID, userID, rootPostID := model.NewId(), model.NewId(), "retry_root"
+	created, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       userID,
+		BotID:        botID,
+		RootPostID:   &rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "prompt",
+		UserMessage:  "first",
+		UserPostID:   new("post1"),
+	})
+	require.NoError(t, err)
+	require.NoError(t, s.ArchiveConversation(created.ConversationID, 1000))
+	svc.store = &restoredByRivalStore{Store: s}
+	svc.mmClient = &rootDeletedAfterFirstReadClient{}
+
+	_, err = svc.GetOrCreateConversation(GetOrCreateParams{
+		UserID:       userID,
+		BotID:        botID,
+		ChannelID:    "chan1",
+		RootPostID:   rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "prompt",
+		UserMessage:  "second",
+		UserPostID:   new("post2"),
+	})
+
+	require.ErrorIs(t, err, ErrRootPostDeleted)
+	turns, err := s.GetTurnsForConversation(created.ConversationID)
+	require.NoError(t, err)
+	assert.Len(t, turns, 1, "no user turn is appended to a deleted-root conversation")
+}

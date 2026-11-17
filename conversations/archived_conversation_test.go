@@ -200,6 +200,37 @@ func TestRegenerateAndToolDecisionRefuseDeletedRoot(t *testing.T) {
 	}
 }
 
+// TestRegenerateRechecksRootAfterBuildingRequest pins that a root post deleted
+// while the regenerate request is being built stops the turn before any
+// provider call, even though the entry check passed.
+func TestRegenerateRechecksRootAfterBuildingRequest(t *testing.T) {
+	env := setupInvariantEnv(t, policyBotConfig(), dmMakeTextStream("answer"))
+	botPost := env.seedRun(t, env.dm, nil, humanPost("what is the weather"), earlierAnswer(), nil)
+	convs := allConversations(env.convStore)
+	require.Len(t, convs, 1)
+	require.NotNil(t, convs[0].RootPostID)
+	rootID := *convs[0].RootPostID
+	// The root is read at the entry gates and again at the recheck; it is
+	// deleted just before the recheck read.
+	const rootReadsBeforeToolLoop = 4
+	reads := 0
+	env.mmClient.onGetPost = func(id string) {
+		if id != rootID {
+			return
+		}
+		reads++
+		if reads >= rootReadsBeforeToolLoop {
+			env.mmClient.posts[rootID] = &model.Post{Id: rootID, DeleteAt: model.GetMillis()}
+		}
+	}
+
+	err := env.conversations.HandleRegenerate(context.Background(), autoReplyUserID, botPost, env.dm)
+
+	require.ErrorIs(t, err, conversation.ErrRootPostDeleted)
+	assert.Empty(t, env.llmRequests(), "the provider must not be called for a deleted root")
+	assert.Zero(t, env.executions.Load(), "no tool may run for a deleted root")
+}
+
 // TestRefusedResumeLeavesConversationArchived pins that a stale tool click, a
 // repeated share click, or a regenerate that fails after its gates passed
 // leaves an archived conversation archived, so a pending wait is never

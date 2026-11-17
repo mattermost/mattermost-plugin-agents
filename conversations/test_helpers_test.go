@@ -60,6 +60,7 @@ type fakeMMClient struct {
 	fileInfos            map[string]*model.FileInfo
 	files                map[string][]byte
 	onUpdatePost         func(*model.Post)
+	onGetPost            func(string)
 	// wsMu guards websocketEvents: title generation publishes from a
 	// background goroutine.
 	wsMu            sync.Mutex
@@ -204,6 +205,9 @@ func (c *fakeMMClient) AddReaction(*model.Reaction) error {
 }
 
 func (c *fakeMMClient) GetPost(postID string) (*model.Post, error) {
+	if c.onGetPost != nil {
+		c.onGetPost(postID)
+	}
 	if err := c.postErrors[postID]; err != nil {
 		return nil, err
 	}
