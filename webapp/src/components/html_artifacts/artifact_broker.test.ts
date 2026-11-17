@@ -488,6 +488,15 @@ describe('ArtifactBroker download', () => {
         expect(Array.from(await readBytes(blob))).toEqual(bytes);
     });
 
+    test('a percent-encoded data: URL whose file is under the size cap is saved even though its text is longer than the cap', async () => {
+        const bytes = 12 * 1024 * 1024;
+        const {send, saveDownload, requestConsent} = setup();
+        send(download({data: `data:image/png,${'%00'.repeat(bytes)}`}));
+        await flush();
+        expect(requestConsent).toHaveBeenCalledWith(expect.objectContaining({kind: 'download', mimeType: 'image/png', size: bytes}));
+        expect(saveDownload).toHaveBeenCalledTimes(1);
+    });
+
     const nameCases: Array<{name: string; filename: unknown; mimeType: string; expected: string}> = [
         {name: 'a matching extension is kept', filename: 'chart.png', mimeType: 'image/png', expected: 'chart.png'},
         {name: 'an alternate extension of the type is kept', filename: 'photo.jpeg', mimeType: 'image/jpeg', expected: 'photo.jpeg'},

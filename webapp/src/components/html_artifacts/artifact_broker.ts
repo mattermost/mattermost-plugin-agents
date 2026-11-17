@@ -263,6 +263,10 @@ export interface ArtifactBrokerOptions {
     // The genuine bridge's periodic liveness signal (sent from before the
     // artifact's own code runs); it stops when the document is replaced.
     onHeartbeat?: () => void;
+
+    // Called after the host spent time on the artifact's request, which may
+    // have delayed the heartbeats it was waiting for.
+    onHostBusy?: () => void;
     onResize?: (height: number) => void;
 
     // Escape pressed inside the artifact (focus there never reaches the host).
@@ -441,6 +445,8 @@ export class ArtifactBroker {
             return;
         }
         const prepared = prepareArtifactDownload(params);
+
+        this.opts.onHostBusy?.();
         if (!prepared.ok) {
             this.respondError(id, prepared.code, prepared.message);
             return;

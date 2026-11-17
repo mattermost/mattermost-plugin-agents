@@ -9,9 +9,11 @@
 // the size before the data is cloned to the host.
 export const MAX_ARTIFACT_DOWNLOAD_BYTES = 25 * 1024 * 1024;
 
-// A data: URL carries base64, a third larger than its bytes. Longer strings are
-// rejected before they are decoded or encoded.
-export const MAX_ARTIFACT_DOWNLOAD_STRING_LENGTH = (Math.ceil(MAX_ARTIFACT_DOWNLOAD_BYTES / 3) * 4) + 4096;
+// A data: URL carries base64 (a third larger than its bytes) or %XX escapes
+// (three times larger). Longer strings are rejected before they are decoded or
+// encoded.
+export const MAX_ARTIFACT_DOWNLOAD_BASE64_LENGTH = (Math.ceil(MAX_ARTIFACT_DOWNLOAD_BYTES / 3) * 4) + 4096;
+export const MAX_ARTIFACT_DOWNLOAD_STRING_LENGTH = (MAX_ARTIFACT_DOWNLOAD_BYTES * 3) + 4096;
 
 const MAX_FILENAME_INPUT_LENGTH = 4096;
 const MAX_MIME_TYPE_LENGTH = 255;
@@ -174,6 +176,9 @@ function decodeData(data: unknown): DecodedData {
             return {part: text, size: text.size, declaredType: ''};
         }
         const body = data.slice(match[0].length);
+        if (match[3] && body.length > MAX_ARTIFACT_DOWNLOAD_BASE64_LENGTH) {
+            return tooLarge();
+        }
         const bytes = match[3] ? base64Decode(body) : percentDecode(body);
         if (!bytes) {
             return fail('invalid_params', 'data is not a valid data: URL');

@@ -271,6 +271,11 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
                 setUnresponsive(false);
             }
         },
+        onHostBusy: () => {
+            if (lastHeartbeatRef.current !== null) {
+                lastHeartbeatRef.current = performance.now();
+            }
+        },
         onResize: (h) => setHeight(clampInlineHeight(h)),
         onEscape: () => onEscapeRef.current?.(),
     }) : null), [load, currentUserId]);

@@ -770,6 +770,24 @@ describe('ArtifactFrame focus guard', () => {
             delete (URL as Partial<typeof URL>).revokeObjectURL;
         });
 
+        test('a slow decode does not count as the artifact going silent', async () => {
+            let t = 1000;
+            jest.spyOn(performance, 'now').mockImplementation(() => t);
+            const realAtob = window.atob;
+            jest.spyOn(window, 'atob').mockImplementation((text: string) => {
+                t += HEARTBEAT_HIDE_MS + 1000;
+                return realAtob(text);
+            });
+            const {frame, send} = await renderReadyFrame({startedByClick: true});
+            focusArtifact(frame);
+            send({mmArtifact: 1, type: 'heartbeat'});
+            send(request('d1', {mimeType: 'text/plain', data: 'data:text/plain;base64,eA=='}));
+            advance(250);
+
+            expect(screen.queryByTestId('html-artifact-unresponsive')).toBeNull();
+            expect(screen.getByRole('alertdialog', {name: 'Download a file?'})).toBeTruthy();
+        });
+
         test('the viewer sees the sanitized name, type and size, and the host page saves the file only once they confirm', async () => {
             const {frame, win, send} = await renderReadyFrame({startedByClick: true});
             focusArtifact(frame);

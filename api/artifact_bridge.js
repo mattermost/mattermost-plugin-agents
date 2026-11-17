@@ -117,8 +117,9 @@
     // artifact_download.ts, which enforces the limit again on the host.
     var MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
 
-    // A data: URL is base64, a third larger than its bytes.
-    var MAX_DOWNLOAD_STRING_LENGTH = (ceilFn(MAX_DOWNLOAD_BYTES / 3) * 4) + 4096;
+    // A data: URL is base64 (a third larger than its bytes) or %XX escapes
+    // (three times larger); the host applies the tighter base64 limit.
+    var MAX_DOWNLOAD_STRING_LENGTH = (MAX_DOWNLOAD_BYTES * 3) + 4096;
     var MAX_DOWNLOAD_NAME_LENGTH = 4096;
     var MAX_DOWNLOAD_TYPE_LENGTH = 255;
 
