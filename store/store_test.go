@@ -79,7 +79,19 @@ func setupTestStore(t *testing.T) *Store {
 		db.Close()
 	})
 
+	// The plugin store shares Mattermost's database; queries that check a
+	// conversation's root post read its Posts table.
+	_, err = db.Exec(`CREATE TABLE Posts (Id VARCHAR(26) PRIMARY KEY, ChannelId VARCHAR(26), DeleteAt BIGINT NOT NULL DEFAULT 0)`)
+	require.NoError(t, err)
+
 	return New(db)
+}
+
+// insertPost adds a Mattermost post row with the given DeleteAt.
+func insertPost(t *testing.T, s *Store, id string, deleteAt int64) {
+	t.Helper()
+	_, err := s.db.Exec(`INSERT INTO Posts (Id, DeleteAt) VALUES ($1, $2)`, id, deleteAt)
+	require.NoError(t, err)
 }
 
 func TestRunMigrations(t *testing.T) {
@@ -206,7 +218,7 @@ func TestRunMigrations(t *testing.T) {
 				err := s.db.Get(&count, `
 					SELECT COUNT(*) FROM Agents_DB_Migrations`)
 				require.NoError(t, err)
-				assert.Equal(t, 17, count, "Should have 17 migration records")
+				assert.Equal(t, 18, count, "Should have 18 migration records")
 			},
 		},
 		{

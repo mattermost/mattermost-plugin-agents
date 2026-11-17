@@ -53,7 +53,8 @@ const (
 	AuditEventUpdateChannelAutoReply = "updateChannelAutoReply"
 
 	// Conversation management by its owner.
-	AuditEventRenameConversation = "renameConversation"
+	AuditEventRenameConversation  = "renameConversation"
+	AuditEventArchiveConversation = "archiveConversation"
 
 	// Credentials: third-party MCP OAuth grant/revocation and per-user tool
 	// provider preferences.
@@ -140,7 +141,8 @@ func buildAuditEventRegistry(a *API) map[string]string {
 		handlerFuncName(a.handlePutChannelAutoReply): AuditEventUpdateChannelAutoReply,
 
 		// Conversation management.
-		handlerFuncName(a.handleRenameConversation): AuditEventRenameConversation,
+		handlerFuncName(a.handleRenameConversation):  AuditEventRenameConversation,
+		handlerFuncName(a.handleArchiveConversation): AuditEventArchiveConversation,
 
 		// Credentials.
 		handlerFuncName(a.handleOAuthStart):         AuditEventMCPOAuthStart,
