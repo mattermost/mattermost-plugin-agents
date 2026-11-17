@@ -12,7 +12,10 @@ import {
     clearGeneratingPosts,
     recordPostUpdate,
     useGeneratingThreadRoots,
+    useGeneratingPostId,
     useIsThreadGenerating,
+    noteLivePost,
+    markGenerationStopped,
 } from './use_thread_generating';
 
 const post = (id: string, rootId: string, requester: string) => ({
@@ -133,5 +136,36 @@ describe('useIsThreadGenerating', () => {
         const {result} = renderHook(() => useIsThreadGenerating(rootId), {wrapper});
         act(() => update('reply1', 'start'));
         expect(result.current).toBe(expected);
+    });
+});
+
+describe('useGeneratingPostId', () => {
+    beforeEach(() => {
+        act(() => clearGeneratingPosts());
+    });
+
+    test.each([
+        {name: 'the generating reply in this thread', rootId: 'rootA', expected: 'reply1'},
+        {name: 'another thread', rootId: 'rootB', expected: null},
+        {name: 'a new chat with no root', rootId: '', expected: null},
+    ])('$name', ({rootId, expected}) => {
+        const {result} = renderHook(() => useGeneratingPostId(rootId), {wrapper});
+        act(() => update('reply1', 'start'));
+        expect(result.current).toBe(expected);
+    });
+
+    test('a rendered streaming post is noted, and Stop drops it until the request fails', () => {
+        const {result} = renderHook(() => useGeneratingPostId('rootA'), {wrapper});
+        act(() => noteLivePost('reply1'));
+        expect(result.current).toBe('reply1');
+
+        act(() => noteLivePost('reply1'));
+        expect(result.current).toBe('reply1');
+
+        act(() => markGenerationStopped('reply1'));
+        expect(result.current).toBeNull();
+
+        act(() => noteLivePost('reply1'));
+        expect(result.current).toBe('reply1');
     });
 });

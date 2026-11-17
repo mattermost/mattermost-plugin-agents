@@ -1514,3 +1514,43 @@ export async function renderCustomPrompt(id: string, channelId?: string, botId?:
         url,
     });
 }
+
+export type RewriteAction = 'shorten' | 'elaborate' | 'improve_writing' | 'fix_spelling' | 'simplify' | 'summarize';
+
+// The core server's rewrite route (Client4.getAIRewrittenMessage). The message
+// stays in the request; failures carry a status code, not the response body.
+export async function rewriteMessage(message: string, action: RewriteAction, agentId: string, signal?: AbortSignal): Promise<string> {
+    const url = `${Client4.getPostsRoute()}/rewrite`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify({agent_id: agentId, message, action}),
+        signal,
+    }));
+    if (!response.ok) {
+        throw new ClientError(Client4.url, {
+            message: 'rewrite failed',
+            status_code: response.status,
+            url,
+        });
+    }
+    const data = await response.json() as {message?: unknown};
+    return typeof data.message === 'string' ? data.message : '';
+}
+
+// Whether the server can rewrite. A missing route means it cannot.
+export async function getAgentsBridgeStatus(signal?: AbortSignal): Promise<{available: boolean}> {
+    const url = `${Client4.getAgentsRoute()}/status`;
+    const response = await fetch(url, Client4.getOptions({method: 'GET', signal}));
+    if (response.status === 404 || response.status === 501) {
+        return {available: false};
+    }
+    if (!response.ok) {
+        throw new ClientError(Client4.url, {
+            message: 'agents status failed',
+            status_code: response.status,
+            url,
+        });
+    }
+    const data = await response.json() as {available?: boolean};
+    return {available: data.available === true};
+}

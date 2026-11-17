@@ -17,6 +17,7 @@ import {getCustomPrompts, getPinnedPromptIds, isCustomPromptsLoaded, isPinnedPro
 import type {CustomPrompt} from '@/types';
 
 import {CHAT_CONTENT_MAX_WIDTH, HOST_COMPOSER_CONTAINER_CLASS, hostComposerInset} from './agent_chat_host_styles';
+import AgentComposerChrome from './agent_composer_chrome';
 import PinnedSkills from './pinned_skills';
 
 // Greeting pairs for the new-chat state. The titles are the prototype's
@@ -206,14 +207,20 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
                         inert={runningId !== null}
                         $busy={runningId !== null}
                     >
-                        {/* In the RHS, RHS_COMMENT makes the host treat it as the RHS composer (focus, ids, suggestion list). */}
-                        <AdvancedTextEditor
-                            location={layout === 'page' ? 'CENTER' : 'RHS_COMMENT'}
-                            channelId={channelId}
+                        <AgentComposerChrome
                             rootId=''
-                            placeholder={intl.formatMessage({defaultMessage: 'Message {name}'}, {name: bot.displayName})}
-                            afterSubmit={afterSubmit}
-                        />
+                            channelId={channelId}
+                            botId={bot.id}
+                        >
+                            {/* In the RHS, RHS_COMMENT makes the host treat it as the RHS composer (focus, ids, suggestion list). */}
+                            <AdvancedTextEditor
+                                location={layout === 'page' ? 'CENTER' : 'RHS_COMMENT'}
+                                channelId={channelId}
+                                rootId=''
+                                placeholder={intl.formatMessage({defaultMessage: 'Message {name}'}, {name: bot.displayName})}
+                                afterSubmit={afterSubmit}
+                            />
+                        </AgentComposerChrome>
                     </Composer>
                 )}
             </ComposerGroup>

@@ -130,8 +130,8 @@ const Overlay = styled.div`
 const OverlayLabel = styled.p`
     margin: 0;
     padding: var(--spacing-s) var(--spacing-l);
-    border: var(--border-default);
-    border-radius: var(--radius-s);
+    border-radius: var(--radius-pill);
+    box-shadow: var(--elevation-3);
     background: var(--center-channel-bg);
     font-family: var(--font-family-body);
     font-size: var(--font-size-100);

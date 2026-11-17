@@ -6,7 +6,7 @@ Skills were called custom prompts before. Existing custom prompts are now skills
 
 ## Create a skill
 
-1. In any message composer, open **AI Actions** and select **Skills**, then **Manage skills**. You can also open **Skills** in the sidebar of the Agents page.
+1. In a channel or a direct message, open **AI Actions** and select **Skills**, then **Manage skills**. In an agent chat, open **+** and select **Skills**, then **Manage skills**. You can also open **Skills** in the sidebar of the Agents page.
 2. Select **Create new**.
 3. Fill in the fields:
 
@@ -45,7 +45,7 @@ Variables that include `{{.Channel}}` or `{{.ChannelName}}` tell the agent which
 
 ## Run a skill
 
-Open **AI Actions** in the composer, select **Skills**, choose an agent at the top of the menu if you have several, and select the skill. Mattermost renders the instructions with your current context and puts the result in your draft. If you aren't in a direct message with an agent, it adds the agent's @mention first. Edit the draft if you want, then send it. Files already attached to the draft stay attached.
+In a channel or a direct message, open **AI Actions**, select **Skills**, choose an agent at the top of the menu if you have several, and select the skill. In an agent chat, open **+** and select **Skills**, then the skill. Mattermost renders the instructions with your current context and puts the result in your draft. If you aren't in a direct message with an agent, it adds the agent's @mention first. Edit the draft if you want, then send it. Files already attached to the draft stay attached.
 
 The agent responds as it would to any message, with the same tool approval and connection prompts. Running a skill this way doesn't change how the agent behaves.
 

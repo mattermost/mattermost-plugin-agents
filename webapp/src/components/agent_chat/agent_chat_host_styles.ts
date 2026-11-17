@@ -193,9 +193,9 @@ const paddedRows = css`
 // --- The host message composer (components/advanced_text_editor) -------------------------------
 //
 // The agent chat uses the host's own composer everywhere: the ThreadViewer's reply composer under a
-// thread, and AdvancedTextEditor (window.Components) for a new chat. The plugin only places it: its
-// width, its side inset and the space under it. Everything inside the message box (frame, text,
-// buttons, formatting bar, attachments, suggestions) is the host's, unstyled here.
+// thread, and AdvancedTextEditor (window.Components) for a new chat. The plugin places it (width,
+// side inset, space under it). Agent chat's box treatment and the controls that moved into the +
+// menu live in agent_composer_mode.ts. The editor itself stays the host's, so WYSIWYG keeps working.
 //
 // Host dependencies (webapp/channels/src in mattermost/mattermost):
 // - components/threading/virtualized_thread_viewer/create_comment.tsx: the reply composer's wrapper,

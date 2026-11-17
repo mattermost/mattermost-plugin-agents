@@ -21,6 +21,7 @@ import {useConversation, invalidateConversation} from '@/hooks/use_conversation'
 import {PostMessagePreview} from '@/mm_webapp';
 import {LLMBot} from '@/bots';
 import manifest from '@/manifest';
+import {noteLivePost} from '@/components/agent_chat/use_thread_generating';
 
 import {isValidId} from '@/utils/ids';
 import {displayNameFor, selectTeammateNameDisplay} from '@/utils/teammate_name';
@@ -710,6 +711,17 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const showPostbackButton = meetingsLicensed && !isGenerationInProgress && isDM && isTranscriptionResult;
 
     const showStopGeneratingButton = (isGenerationInProgress || liveStreamFromTurn) && requesterIsCurrentUser;
+
+    // The agent chat composer has the one Stop. This post still records the
+    // generation so that button can find it. A virtualized unmount must not
+    // clear the entry: the composer outlives the post row.
+    useEffect(() => {
+        if (showStopGeneratingButton) {
+            noteLivePost(props.post.id);
+        }
+    }, [showStopGeneratingButton, props.post.id]);
+
+    const showStopOnPost = showStopGeneratingButton && !isAgentChat;
     const hasContent = renderedRounds.length > 0;
 
     // Only the anchor round gets a real approval stage: the latest persisted
@@ -866,7 +878,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // Copy needs a finished answer with text; a tool-only post has nothing to copy.
     const answerMarkdown = useMemo(() => getCopyableText(activity.answerRounds), [activity.answerRounds]);
     const showCopy = isAgentChat && hasContent && !isGenerationInProgress && answerMarkdown !== '';
-    const showControlsBar = ((showRegenerate || showPostbackButton || showCopy) && hasContent) || showStopGeneratingButton;
+    const showControlsBar = ((showRegenerate || showPostbackButton || showCopy) && hasContent) || showStopOnPost;
     const foldingText = useFoldingText(answerText, activity.items.length > 0 && !activityExpanded);
 
     // An onlooker's waiting round keeps its real stage so its cards can show
@@ -1080,7 +1092,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 }
                 { showControlsBar &&
                 <ControlsBarComponent
-                    showStopGeneratingButton={showStopGeneratingButton}
+                    showStopGeneratingButton={showStopOnPost}
                     showPostbackButton={showPostbackButton}
                     showRegenerate={showRegenerate}
                     copyText={showCopy ? answerMarkdown : null}

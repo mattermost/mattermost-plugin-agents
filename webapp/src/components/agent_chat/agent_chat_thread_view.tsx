@@ -14,6 +14,7 @@ import {useThreadProfiles} from './use_thread_profiles';
 import {useThreadScroll} from './use_thread_scroll';
 import {AGENT_CHAT_SURFACE, AgentChatSurfaceContext} from './agent_chat_surface_context';
 import {CHAT_CONTENT_MAX_WIDTH, hostThreadChatStyles} from './agent_chat_host_styles';
+import AgentComposerChrome from './agent_composer_chrome';
 import type {AgentNewChatLayout} from './agent_new_chat';
 
 interface AgentChatThreadViewProps {
@@ -67,13 +68,18 @@ const AgentChatThreadView = ({rootId, agentName, layout, isThreadView, testId, v
                     ref={viewerRef}
                     onClickCapture={blockTimePermalink}
                 >
-                    <ThreadViewer
-                        data-testid={viewerTestId}
-                        rootPostId={rootId}
-                        isThreadView={isThreadView}
-                        useRelativeTimestamp={false}
-                        inputPlaceholder={agentName ? intl.formatMessage({defaultMessage: 'Reply to {name}'}, {name: agentName}) : intl.formatMessage({defaultMessage: 'Reply…'})}
-                    />
+                    <AgentComposerChrome
+                        rootId={rootId}
+                        fill={true}
+                    >
+                        <ThreadViewer
+                            data-testid={viewerTestId}
+                            rootPostId={rootId}
+                            isThreadView={isThreadView}
+                            useRelativeTimestamp={false}
+                            inputPlaceholder={agentName ? intl.formatMessage({defaultMessage: 'Reply to {name}'}, {name: agentName}) : intl.formatMessage({defaultMessage: 'Reply…'})}
+                        />
+                    </AgentComposerChrome>
                     <JumpToLatest
                         visible={scrolledUp}
                         responding={generating}

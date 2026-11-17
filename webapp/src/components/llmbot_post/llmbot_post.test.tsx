@@ -1549,9 +1549,9 @@ describe('LLMBotPost stopped generation notice', () => {
 
 describe('LLMBotPost Stop in agent chat surfaces', () => {
     test.each([
-        {name: 'no surface (Channels DM, host RHS)', wrap: false},
-        {name: 'an agent chat view (the host composer has no Stop)', wrap: true},
-    ])('while generating, $name shows the post\'s Stop', ({wrap}) => {
+        {name: 'no surface (Channels DM, host RHS)', wrap: false, showsStop: true},
+        {name: 'an agent chat view (Stop is on the composer)', wrap: true, showsStop: false},
+    ])('while generating, $name', ({wrap, showsStop}) => {
         mockUseConversation.mockReturnValue({conversation: makeConversation([]), loading: false, error: null});
         let listener: PostUpdateHandler | undefined;
         const post = (
@@ -1572,7 +1572,11 @@ describe('LLMBotPost Stop in agent chat surfaces', () => {
             listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
             listener?.(postUpdateMessage({post_id: 'post_1', next: 'Partial'}));
         });
-        expect(screen.queryByTestId('stop-generating-button')).not.toBeNull();
+        if (showsStop) {
+            expect(screen.queryByTestId('stop-generating-button')).not.toBeNull();
+        } else {
+            expect(screen.queryByTestId('stop-generating-button')).toBeNull();
+        }
     });
 });
 

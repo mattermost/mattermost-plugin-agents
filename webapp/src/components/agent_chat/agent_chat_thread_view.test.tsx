@@ -27,6 +27,7 @@ jest.mock('@/mm_webapp', () => {
 let mockGenerating = false;
 jest.mock('./use_thread_generating', () => ({
     useIsThreadGenerating: () => mockGenerating,
+    useGeneratingPostId: () => null,
 }));
 
 jest.mock('react-intl', () => {

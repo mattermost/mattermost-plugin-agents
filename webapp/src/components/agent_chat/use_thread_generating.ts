@@ -81,6 +81,32 @@ export const clearGeneratingPosts = () => {
     }
 };
 
+// A rendered agent post whose controls already show Stop: a persisted turn still
+// streaming, or a page loaded mid-stream before the next chunk. Refreshes the
+// timestamp so the stale prune does not drop it, and notifies only when it is new.
+export const noteLivePost = (postId: string) => {
+    if (!postId) {
+        return;
+    }
+    const added = !generating.has(postId);
+    generating.delete(postId);
+    generating.set(postId, Date.now());
+    if (generating.size > MAX_TRACKED_POSTS) {
+        generating.delete(generating.keys().next().value as string);
+    }
+    if (added) {
+        notify();
+    }
+};
+
+// The composer Stop was pressed. The post leaves the set immediately; a failed
+// stop request puts it back with noteLivePost.
+export const markGenerationStopped = (postId: string) => {
+    if (generating.delete(postId)) {
+        notify();
+    }
+};
+
 const subscribe = (listener: () => void) => {
     listeners.add(listener);
     return () => {
@@ -130,4 +156,30 @@ export const useGeneratingThreadRoots = (): ReadonlySet<string> => {
 export const useIsThreadGenerating = (rootId: string): boolean => {
     const roots = useGeneratingThreadRoots();
     return Boolean(rootId) && roots.has(rootId);
+};
+
+// The post the composer should stop: the current user's newest generating post in this thread.
+const postIdForRoot = (state: GlobalState, rootId: string): string | null => {
+    if (!rootId || generating.size === 0) {
+        return null;
+    }
+    const posts = (state.entities?.posts?.posts ?? {}) as Record<string, PostLike | undefined>;
+    let bestId: string | null = null;
+    let bestSeen = -1;
+    for (const [postId, seen] of generating) {
+        const post = posts[postId];
+        if (!post || !isRequestedByCurrentUser(state, post) || (post.root_id || post.id) !== rootId) {
+            continue;
+        }
+        if (seen >= bestSeen) {
+            bestId = postId;
+            bestSeen = seen;
+        }
+    }
+    return bestId;
+};
+
+export const useGeneratingPostId = (rootId: string): string | null => {
+    useSyncExternalStore(subscribe, getVersion);
+    return useSelector((state: GlobalState) => postIdForRoot(state, rootId));
 };
