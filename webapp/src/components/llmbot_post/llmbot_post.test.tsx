@@ -276,6 +276,34 @@ describe('LLMBotPost streaming fallback rendering', () => {
         expect(screen.queryByText('Working...')).toBeNull();
     });
 
+    test('shows the answer once when the persisted turn lands before the end event', () => {
+        const answer = 'Posting the release notes now.';
+        mockUseConversation.mockReturnValue({
+            conversation: makeConversation([
+                makeTurn({id: 'turn_1', post_id: 'post_1', sequence: 2, status: 'complete', content: [{type: 'text', text: answer}]}),
+            ]),
+            loading: false,
+            error: null,
+        });
+        let listener: PostUpdateHandler | undefined;
+        renderPost(makePost(), (postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: answer}));
+        });
+
+        // The end empties the conversation cache until the refetch lands.
+        mockUseConversation.mockReturnValue({conversation: null, loading: true, error: null});
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'end'}));
+        });
+
+        expect(screen.getAllByText(answer)).toHaveLength(1);
+    });
+
     test('renders updated post message when the streaming text websocket was missed', async () => {
         const errorText = 'Sorry! An error occurred while accessing the LLM.';
         const {rerender} = renderPost(makePost());

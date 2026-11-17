@@ -658,6 +658,20 @@ describe('computeRenderedRounds', () => {
         expect(result).toEqual([persisted, liveRound]);
     });
 
+    test('does not repeat live text the persisted rounds already hold while a refetch is pending', () => {
+        const persisted = makeRound('turn_1', liveRound.text);
+        const result = computeRenderedRounds({
+            regenerating: false,
+            hasConversation: true,
+            persistedRounds: [persisted],
+            liveRounds: [],
+            generating: false,
+            pendingRefetch: true,
+            currentRound: liveRound,
+        });
+        expect(result).toEqual([persisted]);
+    });
+
     test('keeps the live round for a conversation post while a refetch is pending', () => {
         const persisted = makeRound('turn_1', 'persisted answer');
         const result = computeRenderedRounds({
