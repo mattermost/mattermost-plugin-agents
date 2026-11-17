@@ -14,8 +14,8 @@ export function downloadArtifact(fileId: string) {
     link.remove();
 }
 
-// Long enough for the browser to start reading the blob, however slowly.
-const REVOKE_DOWNLOAD_URL_MS = 60000;
+// Long enough for a Save As picker left open while the viewer chooses a folder.
+export const REVOKE_DOWNLOAD_URL_MS = 10 * 60 * 1000;
 
 // Saves blob as filename from the host page. Call it while the viewer's
 // activation (e.g. a click) is still current, or the browser may block it.

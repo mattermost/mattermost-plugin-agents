@@ -10,6 +10,7 @@ import {getArtifactToken} from '@/client';
 
 import {getConsentDecision, isConsentPromptPending, resetConsentStore} from './artifact_broker';
 import ArtifactConsentPrompt, {CONSENT_ARM_DELAY_MS} from './artifact_consent_prompt';
+import {REVOKE_DOWNLOAD_URL_MS} from './download';
 import ArtifactFrame, {HEARTBEAT_HIDE_MS, HEARTBEAT_STOP_MS} from './artifact_frame';
 import {NUDGE_MS} from './artifact_interact_overlay';
 import HTMLArtifactCard, {resetArtifactRunDecisions} from './html_artifact_card';
@@ -813,7 +814,9 @@ describe('ArtifactFrame focus guard', () => {
 
             // The artifact keeps the keyboard, and the object URL is revoked.
             expect(screen.getByTestId('html-artifact-frame').getAttribute('data-engaged')).toBe('true');
-            advance(60000);
+            advance(REVOKE_DOWNLOAD_URL_MS - 1);
+            expect(revokeObjectURL).not.toHaveBeenCalled();
+            advance(1);
             expect(revokeObjectURL).toHaveBeenCalledWith('blob:http://localhost/saved');
             expect(stopped()).toBeNull();
         });
