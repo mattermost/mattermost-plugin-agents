@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -198,6 +199,73 @@ func proxyToolCallObserver(t *testing.T, onToolCall func(*http.Request)) *stubPl
 		legacy.ServeHTTP(rec, fwd)
 		return rec.Result()
 	}}
+}
+
+// The caller's session-describing _meta stays with the caller; everything
+// else in _meta reaches the source plugin.
+func TestBuildProxyTools_HandlerForwardsNonSessionMeta(t *testing.T) {
+	sessionMeta := map[string]any{
+		gosdkmcp.MetaKeyProtocolVersion:    modernProtocolVersion,
+		gosdkmcp.MetaKeyClientInfo:         map[string]any{"name": "claude-ai", "version": "1.0"},
+		gosdkmcp.MetaKeyClientCapabilities: map[string]any{},
+	}
+	tests := []struct {
+		name     string
+		meta     map[string]any
+		wantMeta map[string]any
+	}{
+		{
+			name: "session keys with progress token and custom key",
+			meta: map[string]any{
+				gosdkmcp.MetaKeyProtocolVersion:    modernProtocolVersion,
+				gosdkmcp.MetaKeyClientInfo:         sessionMeta[gosdkmcp.MetaKeyClientInfo],
+				gosdkmcp.MetaKeyClientCapabilities: sessionMeta[gosdkmcp.MetaKeyClientCapabilities],
+				"progressToken":                    "tok-1",
+				"com.example/trace":                "abc",
+			},
+			wantMeta: map[string]any{"progressToken": "tok-1", "com.example/trace": "abc"},
+		},
+		{name: "session keys only", meta: sessionMeta},
+		{name: "no meta"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotMeta map[string]any
+			sourceAPI := proxyToolCallObserver(t, func(req *http.Request) {
+				body, err := io.ReadAll(req.Body)
+				assert.NoError(t, err)
+				req.Body = io.NopCloser(bytes.NewReader(body))
+				var msg struct {
+					Params struct {
+						Meta map[string]any `json:"_meta"`
+					} `json:"params"`
+				}
+				assert.NoError(t, json.Unmarshal(body, &msg))
+				gotMeta = msg.Params.Meta
+			})
+			cfg := mcppkg.PluginServerConfig{PluginID: legacyPluginID, Name: "Cloud", Path: "/mcp", Enabled: true, ExposeExternal: true}
+			_, handlers, err := BuildProxyTools(context.Background(), cfg, sourceAPI)
+			require.NoError(t, err)
+			require.Len(t, handlers, 1)
+
+			callerMeta := maps.Clone(tt.meta)
+			ctx := context.WithValue(context.Background(), auth.UserIDContextKey, "user1")
+			result, err := handlers[0](ctx, &gosdkmcp.CallToolRequest{Params: &gosdkmcp.CallToolParamsRaw{
+				Meta:      callerMeta,
+				Name:      legacyEchoToolName,
+				Arguments: json.RawMessage(`{"message":"hi"}`),
+			}})
+			require.NoError(t, err)
+			require.False(t, result.IsError)
+
+			if tt.wantMeta == nil {
+				require.Empty(t, gotMeta)
+			} else {
+				require.Equal(t, tt.wantMeta, gotMeta)
+			}
+			require.Equal(t, map[string]any(tt.meta), map[string]any(callerMeta), "the caller's _meta must not be modified")
+		})
+	}
 }
 
 type unrelatedContextKey struct{}
