@@ -455,3 +455,37 @@ func TestHandleToolCallInterruptedRunKeepsRejectedCallsRejected(t *testing.T) {
 	assert.Equal(t, conversation.InterruptedToolResult, results["tool-use-1"])
 	assert.Equal(t, conversation.MissingToolResultContent, results["tool-use-2"], "a rejected call is never replayed as possibly run")
 }
+
+// A click whose archived conversation cannot be restored fails after its
+// decision was claimed but before any tool starts, and the claim is undone so
+// the turn is decidable again.
+func TestHandleToolCallRestoreFailureUndoesTheClaim(t *testing.T) {
+	f := newToolRunFixture(t, true, true, "tool-use-1")
+	f.c.convService = conversation.NewService(f.convStore, nil, f.mmClient, nil)
+	before := f.anchor(t)
+	rootID := "root-post"
+	archivedAt := model.GetMillis()
+	f.convStore.mu.Lock()
+	f.convStore.conversations[f.conv.ID].RootPostID = &rootID
+	f.convStore.conversations[f.conv.ID].DeleteAt = archivedAt
+	f.convStore.mu.Unlock()
+	var rootLookups atomic.Int32
+	f.mmClient.EXPECT().GetPost(rootID).RunAndReturn(func(string) (*model.Post, error) {
+		// The second lookup is the restore's: someone else re-archives the
+		// conversation meanwhile, so restoring the version we saw fails.
+		if rootLookups.Add(1) == 2 {
+			f.convStore.mu.Lock()
+			f.convStore.conversations[f.conv.ID].DeleteAt = archivedAt + 1
+			f.convStore.mu.Unlock()
+		}
+		return &model.Post{Id: rootID}, nil
+	}).Maybe()
+
+	err := f.c.HandleToolCall(context.Background(), testRequesterID, f.post, f.channel, []string{"tool-use-1"}, nil)
+
+	require.ErrorIs(t, err, conversation.ErrConversationArchived)
+	assert.Equal(t, int32(0), f.executions.Load(), "no tool starts")
+	after := f.anchor(t)
+	assert.Equal(t, before.Status, after.Status, "the turn is no longer claimed")
+	assert.JSONEq(t, string(before.Content), string(after.Content), "the calls are pending again")
+}
