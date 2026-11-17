@@ -94,7 +94,7 @@ const AgentChatTitleBar = ({surface, bot, rootId, inThread = Boolean(rootId), bo
                 {...(inThread ? {} : {agents: {bots, onSwitch: onSwitchAgent}})}
 
                 // All agent chats is the RHS Back action, and only once a chat is open.
-                onShowAllChats={surface === 'rhs' && rootId ? onShowAllChats : undefined}
+                {...(surface === 'rhs' && rootId && onShowAllChats ? {onShowAllChats} : {})}
 
                 renderTrigger={({ariaLabel, label, expanded, onClick}) => (
                     <ChatTitleDropdown
