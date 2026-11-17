@@ -46,6 +46,11 @@ describe('stripMarkdownPreview', () => {
             expected: 'Status',
         },
         {
+            name: 'a heading that ends in a hash keeps it',
+            source: '## C#',
+            expected: 'C#',
+        },
+        {
             name: 'a hash without a space is not a heading',
             source: 'See #release',
             expected: 'See #release',
@@ -124,6 +129,41 @@ describe('stripMarkdownPreview', () => {
             name: 'escaped asterisk stays literal',
             source: 'use \\*pointer',
             expected: 'use *pointer',
+        },
+        {
+            name: 'escaped emphasis stays literal',
+            source: '\\*literal\\*',
+            expected: '*literal*',
+        },
+        {
+            name: 'ordinary pipes stay',
+            source: 'Choose a || b',
+            expected: 'Choose a || b',
+        },
+        {
+            name: 'fenced code keeps a type argument',
+            source: '```ts\nArray<string>\n```',
+            expected: 'Array<string>',
+        },
+        {
+            name: 'inline code keeps a type argument',
+            source: 'Use `Array<string>` here',
+            expected: 'Use Array<string> here',
+        },
+        {
+            name: 'a generic in prose stays',
+            source: 'Array<string> values',
+            expected: 'Array<string> values',
+        },
+        {
+            name: 'an email autolink stays',
+            source: 'Mail <dev@example.com> today',
+            expected: 'Mail <dev@example.com> today',
+        },
+        {
+            name: 'prose up to a later angle bracket stays',
+            source: 'see <b the note> then > next',
+            expected: 'see <b the note> then > next',
         },
         {
             name: 'html tags',
