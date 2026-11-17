@@ -63,17 +63,14 @@ interface AgentThreadsSectionProps {
     onSelectThread: (botId: string, rootId: string) => void;
     onNewChat: (botId: string) => void;
 
-    // The section's heading; defaults to "Your agents".
-    title?: string;
-
-    // Lists the chats without a row per agent (where the agent is already clear from the context).
+    // Lists the chats without a heading or a row per agent (where the agent is already clear from the context).
     hideAgentRows?: boolean;
 }
 
 // Data wiring for an agent chats list: DM threads (the shared stored list, kept current over the
 // websocket), the generating and unread markers, and the chat actions' dialogs. The product sidebar
 // lists every agent; an agent's DM in the Channels app lists only that agent.
-export const AgentThreadsSection = ({bots, activeBotId, activeRootId, onSelectThread, onNewChat, title, hideAgentRows}: AgentThreadsSectionProps) => {
+export const AgentThreadsSection = ({bots, activeBotId, activeRootId, onSelectThread, onNewChat, hideAgentRows}: AgentThreadsSectionProps) => {
     const {threadsByBot, loading, error, refresh} = useAgentThreads(bots);
 
     // Agents the user created or has chats with, plus the one whose chat is open. The thread list
@@ -99,7 +96,6 @@ export const AgentThreadsSection = ({bots, activeBotId, activeRootId, onSelectTh
                 onNewChat={onNewChat}
                 onRetry={refresh}
                 chatActions={chatActions}
-                title={title}
                 hideAgentRows={hideAgentRows}
             />
             <ChatActionsDialogs actions={chatActions}/>

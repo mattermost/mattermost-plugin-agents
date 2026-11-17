@@ -114,6 +114,7 @@ describe('AgentThreadsList', () => {
         expect(screen.queryByRole('button', {name: /^(Collapse|Expand) /})).toBeNull();
         expect(Boolean(screen.queryByRole('list', {name: 'Alpha chats'}))).toBe(listed);
         expect(Boolean(screen.queryByText('No chats yet'))).toBe(empty);
+        expect(screen.queryByRole('heading', {name: 'Your agents'})).toBeNull();
         if (listed) {
             fireEvent.click(screen.getByRole('button', {name: 'First chat'}));
             expect(h.onSelectThread).toHaveBeenCalledWith('a', 'root_1');

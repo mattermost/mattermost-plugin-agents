@@ -202,35 +202,28 @@ describe('agent DM channel view', () => {
         mockGetAIBots.mockResolvedValue({bots: [], searchEnabled: false, allowUnsafeLinks: false});
     });
 
-    test('is not registered on a server without registerChannelHeaderIcon, which is the way back', async () => {
-        const registerChannelViewComponent = jest.fn();
-        await initializePlugin('http://localhost:8065', {registerChannelViewComponent});
+    test.each([
+        ['registerSidebarChannelChildrenComponent, where its chats are listed', {registerChannelViewComponent: jest.fn()}],
+        ['registerChannelViewComponent', {registerSidebarChannelChildrenComponent: jest.fn()}],
+    ])('is not registered on a server without %s', async (_name, registry) => {
+        await initializePlugin('http://localhost:8065', registry);
 
-        expect(registerChannelViewComponent).not.toHaveBeenCalled();
+        expect(Object.values(registry).every((fn) => !fn.mock.calls.length)).toBe(true);
     });
 
-    test('is not registered on a server without registerChannelViewComponent', async () => {
-        const registerChannelHeaderIcon = jest.fn();
-        await initializePlugin('http://localhost:8065', {registerChannelHeaderIcon});
-
-        // eslint-disable-next-line global-require
-        const AgentDMViewToggle = require('./components/agents/agent_dm_view_toggle').default;
-        expect(registerChannelHeaderIcon).not.toHaveBeenCalledWith(AgentDMViewToggle);
-    });
-
-    test('registers the agent DM matcher, the view and the header switch back to it', async () => {
+    test('registers the agent DM view and its chats under the agent in the sidebar', async () => {
         const registerChannelViewComponent = jest.fn();
-        const registerChannelHeaderIcon = jest.fn();
-        await initializePlugin('http://localhost:8065', {registerChannelViewComponent, registerChannelHeaderIcon});
+        const registerSidebarChannelChildrenComponent = jest.fn();
+        await initializePlugin('http://localhost:8065', {registerChannelViewComponent, registerSidebarChannelChildrenComponent});
 
         // eslint-disable-next-line global-require
         const {isAgentDMChannel} = require('./agent_dm_view');
         // eslint-disable-next-line global-require
         const AgentDMChannelView = require('./components/agents/agent_dm_channel_view').default;
         // eslint-disable-next-line global-require
-        const AgentDMViewToggle = require('./components/agents/agent_dm_view_toggle').default;
+        const AgentDMSidebarChats = require('./components/agents/agent_dm_sidebar_chats').default;
         expect(registerChannelViewComponent).toHaveBeenCalledWith({matcher: isAgentDMChannel, component: AgentDMChannelView});
-        expect(registerChannelHeaderIcon).toHaveBeenCalledWith(AgentDMViewToggle);
+        expect(registerSidebarChannelChildrenComponent).toHaveBeenCalledWith({matcher: isAgentDMChannel, component: AgentDMSidebarChats});
     });
 });
 

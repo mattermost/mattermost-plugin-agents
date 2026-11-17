@@ -47,10 +47,8 @@ interface AgentThreadsListProps {
     // The chat rows' actions; the owner renders their dialogs.
     chatActions: ChatActions;
 
-    // The section's heading; defaults to "Your agents".
-    title?: string;
-
-    // Lists the chats without a row per agent (where the agent is already clear from the context).
+    // Lists the chats without a heading or a row per agent (where the agent is already clear from the
+    // context, such as under its own item in the Channels sidebar).
     hideAgentRows?: boolean;
 }
 
@@ -91,7 +89,6 @@ const AgentThreadsList = ({
     onNewChat,
     onRetry,
     chatActions,
-    title,
     hideAgentRows = false,
 }: AgentThreadsListProps) => {
     const intl = useIntl();
@@ -150,13 +147,15 @@ const AgentThreadsList = ({
         setLimits((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => id !== botId)));
     };
 
-    const sectionTitle = title ?? intl.formatMessage({defaultMessage: 'Your agents'});
+    const sectionTitle = intl.formatMessage({defaultMessage: 'Your agents'});
 
     return (
         <Section aria-label={sectionTitle}>
-            <SectionHeader>
-                <SectionLabel>{sectionTitle}</SectionLabel>
-            </SectionHeader>
+            {!hideAgentRows && (
+                <SectionHeader>
+                    <SectionLabel>{sectionTitle}</SectionLabel>
+                </SectionHeader>
+            )}
             {error && (
                 <StatusMessage role='alert'>
                     <span>{intl.formatMessage({defaultMessage: 'Couldn\'t load your chats.'})}</span>

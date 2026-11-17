@@ -9,7 +9,7 @@ import {expect, type Page} from '@playwright/test';
 
 const PLUGIN_STATE_KEY = 'plugins-mattermost-ai';
 
-// The action the agent view's "View as messages" and the header's "View as agent chat" dispatch (webapp/src/agent_dm_view.ts).
+// The action that switches one agent DM to its plain messages (webapp/src/agent_dm_view.ts); no UI dispatches it.
 const RAW_VIEW_ACTION = 'AI_AGENT_DM_RAW_VIEW_SET';
 
 const DECISION_TIMEOUT_MS = 30000;
@@ -40,7 +40,7 @@ export async function hostShowsAgentDMView(page: Page, channelId: string): Promi
 
 /**
  * Shows the agent DM `channelId` (default: the DM being opened, once it is the current channel) as
- * plain messages for this page session, as the agent view's "View as messages" does. A no-op on
+ * plain messages for this page session, through that action. A no-op on
  * hosts that keep agent DMs as plain messages anyway. Call it after the page has loaded (it waits
  * for the plugin's store).
  */

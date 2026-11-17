@@ -7,7 +7,6 @@ import {
     agentDMRawView,
     dmOtherUserId,
     isAgentDMChannel,
-    isCurrentAgentDMShownAs,
     setAgentDMRawView,
 } from './agent_dm_view';
 import manifest from './manifest';
@@ -69,20 +68,6 @@ describe('isAgentDMChannel', () => {
         expect(isAgentDMChannel(makeState() as any, ch)).toBe(false);
         expect(isAgentDMChannel(makeState({botList: [...bots, {id: 'agent3'}]}) as any, ch)).toBe(true);
         expect(isAgentDMChannel(makeState() as any, ch)).toBe(false);
-    });
-});
-
-describe('isCurrentAgentDMShownAs', () => {
-    test.each([
-        ['agent DM as chat: offers plain messages', makeState({currentChannelId: 'dmAgent'}), false, true],
-        ['agent DM as chat: no way back needed', makeState({currentChannelId: 'dmAgent'}), true, false],
-        ['agent DM as messages: offers the chat', makeState({currentChannelId: 'dmAgent', raw: {dmAgent: true}}), true, true],
-        ['agent DM as messages: already plain', makeState({currentChannelId: 'dmAgent', raw: {dmAgent: true}}), false, false],
-        ['DM with a person', makeState({currentChannelId: 'dmHuman'}), false, false],
-        ['DM with a person, as messages', makeState({currentChannelId: 'dmHuman'}), true, false],
-        ['no current channel', makeState(), false, false],
-    ])('%s', (_name, state, raw, expected) => {
-        expect(isCurrentAgentDMShownAs(state as any, raw)).toBe(expected);
     });
 });
 

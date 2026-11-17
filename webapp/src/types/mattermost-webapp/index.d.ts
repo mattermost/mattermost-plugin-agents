@@ -13,6 +13,13 @@ export interface ChannelViewComponentProps {
     focusedPostId?: string;
 }
 
+// Props the host passes a registerSidebarChannelChildrenComponent component.
+export interface SidebarChannelChildrenProps {
+    channel: Channel;
+    currentTeamName: string;
+    isCurrentChannel: boolean;
+}
+
 export interface PluginRegistry {
     registerPostTypeComponent(typeName: string, component: React.ElementType)
 
@@ -22,6 +29,13 @@ export interface PluginRegistry {
     registerChannelViewComponent?(registration: {
         matcher: (state: any, channel: Channel) => boolean;
         component: React.ComponentType<ChannelViewComponentProps>;
+    }): string;
+
+    // Renders a component under the sidebar item of the channels whose matcher returns true (in any
+    // category), such as an agent's chats under its DM. Absent on servers before it shipped.
+    registerSidebarChannelChildrenComponent?(registration: {
+        matcher: (state: any, channel: Channel) => boolean;
+        component: React.ComponentType<SidebarChannelChildrenProps>;
     }): string;
 
     // Add more if needed from https://developers.mattermost.com/extend/plugins/webapp/reference

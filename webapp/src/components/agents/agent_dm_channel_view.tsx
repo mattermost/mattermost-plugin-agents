@@ -1,25 +1,21 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {useIntl} from 'react-intl';
-import {useDispatch, useSelector, useStore} from 'react-redux';
+import {useSelector, useStore} from 'react-redux';
 import styled, {createGlobalStyle} from 'styled-components';
 
 import type {Channel} from '@mattermost/types/channels';
 import {GlobalState} from '@mattermost/types/store';
-import MessageTextOutlineIcon from '@mattermost/compass-icons/components/message-text-outline';
-import {Button} from '@mattermost/compass-ui/components/button';
-import {Icon} from '@mattermost/compass-ui/components/icon';
-import {Scrollbar} from '@mattermost/compass-ui/components/scrollbar';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
 
-import {dmOtherUserId, setAgentDMRawView} from '@/agent_dm_view';
+import {dmOtherUserId} from '@/agent_dm_view';
 import {useBotlist} from '@/bots';
 import {getPost} from '@/client';
 
 import AgentChatPage from './agent_chat_page';
-import {AgentThreadsSection} from './product_sidebar';
+import {dmChannelPath, useDMPostId} from './agent_dm_route';
 import {ALL_AGENTS_PATH, buildChatPath, getHistory} from './use_agents_route';
 
 // The props the host passes a registerChannelViewComponent component.
@@ -29,21 +25,11 @@ export interface AgentDMChannelViewProps {
     teamId: string;
 
     // A permalinked post in this DM (`/:team/messages/@agent/:postid`). The host keeps it after the
-    // id leaves the URL, until the channel changes.
+    // id leaves the URL, until the channel changes; the view follows the URL itself where it can.
     focusedPostId?: string;
 }
 
-// The Channels route of a DM, with an optional post id: `/:team/messages/:identifier(/:postid)`.
-// Anything else (the channel popout's `/_popout/channel/...`) is not rewritten.
-const DM_PATH = /^(\/[^/]+\/messages\/[^/]+)(?:\/[^/]+)?\/?$/;
-
-// This DM's Channels URL without a post id, or '' when the current location is not one.
-export const dmChannelPath = (pathname: string | undefined): string => {
-    if (!pathname || pathname.startsWith('/_popout/')) {
-        return '';
-    }
-    return DM_PATH.exec(pathname)?.[1] ?? '';
-};
+export {dmChannelPath};
 
 // The DM URL for another agent (its username), on the same team as `dmPath`.
 const otherAgentDMPath = (dmPath: string, username: string): string => {
@@ -55,26 +41,25 @@ const otherAgentDMPath = (dmPath: string, username: string): string => {
 // permalinked post is being looked up, nothing yet.
 type Selection = {resolving: true} | {resolving: false; rootId?: string};
 
-// An agent's DM in the Channels app, shown as the Agents product's chat: the agent's chats in a
-// column, the open chat (or a new one) beside it, under the chat's own title bar in place of the host's
-// channel header. The host keeps its LHS and RHS around it, and marks the DM read when this mounts. "View as messages" under the chats switches this
-// DM back to the host's post list for the session (the channel header then offers the way back).
+// An agent's DM in the Channels app, shown as the Agents product's chat under the chat's own title bar
+// in place of the host's channel header. The host keeps its LHS and RHS around it, and marks the DM
+// read when this mounts. The agent's chats are listed under its item in the host's sidebar.
 //
-// The open chat is this component's state. A permalink (focusedPostId) opens that post's chat; a
-// later pick by the user wins over it. Picking a chat also puts its root in the URL
-// (`/:team/messages/@agent/:rootId`), which the host's channel route accepts without reloading the
-// channel, so the chat survives a reload and can be linked; a new chat drops it.
+// The open chat follows the DM URL (`/:team/messages/@agent/:postId`), which the host's channel route
+// accepts without reloading the channel: the sidebar's chats and permalinks navigate to it, picking a
+// chat here puts its root in it, and a new chat drops it, so the chat survives a reload and can be
+// linked. A permalink may name a reply, whose chat is its thread. Where the location is not a Channels
+// DM route (the channel popout) the view uses the host's focusedPostId and keeps the pick locally.
 const AgentDMChannelViewForChannel = ({channel, focusedPostId}: AgentDMChannelViewProps) => {
     const intl = useIntl();
-    const dispatch = useDispatch();
     const store = useStore<GlobalState>();
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const {bots} = useBotlist();
     const botId = dmOtherUserId(channel.name, currentUserId);
-    const bot = useMemo(() => bots?.find((b) => b.id === botId) ?? null, [bots, botId]);
-    const listBots = useMemo(() => (bot ? [bot] : null), [bot]);
+    const urlPostId = useDMPostId();
+    const postId = urlPostId ?? focusedPostId ?? '';
 
-    const [selection, setSelection] = useState<Selection>(focusedPostId ? {resolving: true} : {resolving: false});
+    const [selection, setSelection] = useState<Selection>(postId ? {resolving: true} : {resolving: false});
 
     // Bumped by every selection, so a permalink lookup that resolves after a newer one is dropped.
     const selectionSeq = useRef(0);
@@ -89,7 +74,14 @@ const AgentDMChannelViewForChannel = ({channel, focusedPostId}: AgentDMChannelVi
     }, []);
 
     useEffect(() => {
-        if (!focusedPostId || focusedPostId === openRootId.current) {
+        if (!postId) {
+            // A DM URL without a post is a new chat, wherever the navigation came from.
+            if (urlPostId !== null) {
+                setSelection((prev) => (prev.resolving || prev.rootId ? {resolving: false} : prev));
+            }
+            return invalidate;
+        }
+        if (postId === openRootId.current) {
             return invalidate;
         }
         const seq = ++selectionSeq.current;
@@ -101,19 +93,19 @@ const AgentDMChannelViewForChannel = ({channel, focusedPostId}: AgentDMChannelVi
 
         // The chat is the post's thread. Whether it belongs to this agent's DM is checked by the chat
         // pane, which fails closed.
-        const cached = store.getState().entities.posts.posts[focusedPostId];
+        const cached = store.getState().entities.posts.posts[postId];
         if (cached) {
             select(cached.root_id || cached.id);
             return invalidate;
         }
         setSelection({resolving: true});
-        getPost(focusedPostId).then((post) => select(post.root_id || post.id)).catch((error: unknown) => {
+        getPost(postId).then((post) => select(post.root_id || post.id)).catch((error: unknown) => {
             console.error('Failed to load the linked agent chat post:', error); // eslint-disable-line no-console
-            select(focusedPostId);
+            select(postId);
         });
 
         return invalidate;
-    }, [focusedPostId, store, invalidate]);
+    }, [postId, urlPostId, store, invalidate]);
 
     const toChat = useCallback((targetBotId: string, rootId?: string) => {
         const history = getHistory();
@@ -137,35 +129,10 @@ const AgentDMChannelViewForChannel = ({channel, focusedPostId}: AgentDMChannelVi
     const toAll = useCallback(() => getHistory()?.push(ALL_AGENTS_PATH), []);
 
     const rootId = selection.resolving ? '' : selection.rootId ?? '';
-    const listLabel = intl.formatMessage({defaultMessage: 'Chats'});
 
     return (
         <Layout data-testid='agent-dm-channel-view'>
             <HideHostChannelHeader/>
-            <ListColumn aria-label={intl.formatMessage({defaultMessage: 'Your chats with {name}'}, {name: bot?.displayName ?? ''})}>
-                <ListScroll>
-                    <AgentThreadsSection
-                        bots={listBots}
-                        activeBotId={botId}
-                        activeRootId={rootId}
-                        onSelectThread={toChat}
-                        onNewChat={toChat}
-                        title={listLabel}
-                        hideAgentRows={true}
-                    />
-                </ListScroll>
-                <ListFooter>
-                    <Button
-                        emphasis='tertiary'
-                        size='x-small'
-                        leadingIcon={<Icon glyph={<MessageTextOutlineIcon/>}/>}
-                        data-testid='agent-dm-view-as-messages'
-                        onClick={() => dispatch(setAgentDMRawView(channel.id, true))}
-                    >
-                        {intl.formatMessage({defaultMessage: 'View as messages'})}
-                    </Button>
-                </ListFooter>
-            </ListColumn>
             <ChatColumn>
                 {selection.resolving ? (
                     <Centered>
@@ -202,37 +169,6 @@ const HideHostChannelHeader = createGlobalStyle`
     #app-content > #channel-header {
         display: none;
     }
-`;
-
-// The product sidebar's width (264px: 48px * 5.5). The chat list is drawn in the sidebar's colors, so
-// they are remapped to the center channel's here: this column is part of the channel, not the host LHS.
-const ListColumn = styled.nav`
-    --sidebar-bg: var(--center-channel-bg);
-    --sidebar-header-bg: var(--center-channel-bg);
-    --sidebar-text: var(--center-channel-color);
-    --sidebar-text-rgb: var(--center-channel-color-rgb);
-    --sidebar-text-active-border: var(--button-bg);
-
-    display: flex;
-    flex: 0 0 calc(var(--spacing-xxxxxl) * 5.5);
-    flex-direction: column;
-    width: calc(var(--spacing-xxxxxl) * 5.5);
-    min-height: 0;
-    padding-top: var(--spacing-s);
-    border-right: var(--border-light);
-    background: var(--center-channel-bg);
-    color: var(--center-channel-color);
-`;
-
-const ListScroll = styled(Scrollbar)`
-    flex: 1 1 auto;
-    min-height: 0;
-`;
-
-const ListFooter = styled.div`
-    display: flex;
-    flex: 0 0 auto;
-    padding: var(--spacing-s) var(--spacing-l);
 `;
 
 const ChatColumn = styled.div`

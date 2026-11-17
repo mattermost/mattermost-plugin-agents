@@ -7,9 +7,9 @@ import type {LLMBot} from './bots';
 import manifest from './manifest';
 
 // An agent's DM in the Channels app shows the agent chat view (registerChannelViewComponent)
-// instead of the message list. The user can switch one DM back to the plain messages for the rest
-// of the session; that choice lives in the plugin's redux slice (not persisted), so the host's
-// matcher, which runs on every store update, sees it.
+// instead of the message list. A DM can be switched back to the plain messages for the rest of the
+// session through this redux slice (not persisted, so the host's matcher, which runs on every store
+// update, sees it). No UI does that: the e2e helpers dispatch it to drive the stock DM.
 
 export const AgentDMRawViewSet = 'AI_AGENT_DM_RAW_VIEW_SET';
 
@@ -97,12 +97,4 @@ export const isCurrentChannelAgentDM = (state: MatcherState): boolean => {
     const channelId = state.entities.channels?.currentChannelId ?? '';
     const channel = (channelId && state.entities.channels?.channels?.[channelId]) || null;
     return agentIdForDMChannel(state, channel) !== '';
-};
-
-// Channel header menu: whether the current channel is an agent DM shown as `raw` (plain messages)
-// or not, i.e. whether the switch to the other view applies.
-export const isCurrentAgentDMShownAs = (state: MatcherState, raw: boolean): boolean => {
-    const channelId = state.entities.channels?.currentChannelId ?? '';
-    const channel = (channelId && state.entities.channels?.channels?.[channelId]) || null;
-    return Boolean(channel) && isRawView(state, channelId) === raw && agentIdForDMChannel(state, channel) !== '';
 };

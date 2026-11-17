@@ -4,14 +4,14 @@
 import React from 'react';
 import {Provider} from 'react-redux';
 import {createStore} from 'redux';
-import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {act, render, screen, waitFor} from '@testing-library/react';
 
 import type {Channel} from '@mattermost/types/channels';
 
-import {setAgentDMRawView} from '@/agent_dm_view';
 import manifest from '@/manifest';
 
-import AgentDMChannelView, {dmChannelPath} from './agent_dm_channel_view';
+import AgentDMChannelView from './agent_dm_channel_view';
+import {dmChannelPath} from './agent_dm_route';
 import {ALL_AGENTS_PATH, buildChatPath} from './use_agents_route';
 
 const mockGetPost = jest.fn();
@@ -21,7 +21,7 @@ jest.mock('@/client', () => ({
     savePreferences: jest.fn(),
 }));
 
-// The chat pane and the chats list have their own tests; here only what the view hands them.
+// The chat pane has its own tests; here only what the view hands it.
 interface ChatPageProps {
     botId: string;
     rootId?: string;
@@ -34,22 +34,6 @@ jest.mock('./agent_chat_page', () => ({
     default: (props: ChatPageProps) => {
         mockChatPageProps(props);
         return <div data-testid='chat-page'>{props.rootId || 'new chat'}</div>;
-    },
-}));
-
-interface SectionProps {
-    bots: Array<{id: string}> | null;
-    activeBotId?: string;
-    activeRootId?: string;
-    onSelectThread: (botId: string, rootId: string) => void;
-    onNewChat: (botId: string) => void;
-    hideAgentRows?: boolean;
-}
-const mockSectionProps = jest.fn();
-jest.mock('./product_sidebar', () => ({
-    AgentThreadsSection: (props: SectionProps) => {
-        mockSectionProps(props);
-        return <div data-testid='chat-list'/>;
     },
 }));
 
@@ -72,13 +56,7 @@ const posts: Record<string, {id: string; root_id: string; channel_id: string}> =
     reply1: {id: 'reply1', root_id: 'root1', channel_id: 'dm1'},
 };
 
-// Every action the view dispatches.
-const dispatched: unknown[] = [];
-
-const makeStore = () => createStore((state: any, action: unknown) => {
-    dispatched.push(action);
-    return state;
-}, {
+const makeStore = () => createStore((state: any) => state, {
     [pluginKey]: {bots: [makeBot('agent1'), makeBot('agent2')]},
     entities: {
         users: {currentUserId: 'me'},
@@ -89,14 +67,27 @@ const makeStore = () => createStore((state: any, action: unknown) => {
 
 const channel = {id: 'dm1', type: 'D', name: 'agent1__me'} as Channel;
 
+const listeners = new Set<() => void>();
 const history = {
     location: {pathname: '/team1/messages/@agent1-name'},
     push: jest.fn((path: string) => {
         history.location.pathname = path;
+        listeners.forEach((listener) => listener());
     }),
+    listen: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+    },
 };
 
-const renderView = (focusedPostId?: string) => {
+// A navigation the host makes itself (the sidebar's chats, a permalink).
+const navigate = (path: string) => act(() => history.push(path));
+
+const DM = '/team1/messages/@agent1-name';
+
+// The host opens a permalinked DM with the post in the URL and as focusedPostId.
+const renderView = (focusedPostId?: string, pathname = focusedPostId ? `${DM}/${focusedPostId}` : DM) => {
+    history.location.pathname = pathname;
     const store = makeStore();
     const view = (id?: string) => (
         <Provider store={store}>
@@ -108,16 +99,14 @@ const renderView = (focusedPostId?: string) => {
             />
         </Provider>
     );
-    const result = render(view(focusedPostId));
-    return {...result, setFocusedPost: (id?: string) => result.rerender(view(id))};
+    return render(view(focusedPostId));
 };
 
 const lastChatPage = (): ChatPageProps => mockChatPageProps.mock.calls[mockChatPageProps.mock.calls.length - 1][0];
-const lastSection = (): SectionProps => mockSectionProps.mock.calls[mockSectionProps.mock.calls.length - 1][0];
 
 beforeEach(() => {
     jest.clearAllMocks();
-    dispatched.length = 0;
+    listeners.clear();
     history.location.pathname = '/team1/messages/@agent1-name';
     window.WebappUtils = {browserHistory: history} as unknown as typeof window.WebappUtils;
 });
@@ -128,12 +117,11 @@ afterEach(() => {
 });
 
 describe('AgentDMChannelView', () => {
-    test('opens a new chat with the DM agent, its chats beside it', () => {
+    test('opens a new chat with the DM agent', () => {
         renderView();
 
         expect(screen.getByTestId('chat-page').textContent).toBe('new chat');
         expect(lastChatPage()).toMatchObject({botId: 'agent1'});
-        expect(lastSection()).toMatchObject({bots: [expect.objectContaining({id: 'agent1'})], activeBotId: 'agent1', activeRootId: '', hideAgentRows: true});
     });
 
     test.each([
@@ -143,7 +131,6 @@ describe('AgentDMChannelView', () => {
         renderView(focusedPostId);
 
         expect(screen.getByTestId('chat-page').textContent).toBe(expectedRoot);
-        expect(lastSection().activeRootId).toBe(expectedRoot);
         expect(mockGetPost).not.toHaveBeenCalled();
     });
 
@@ -164,14 +151,14 @@ describe('AgentDMChannelView', () => {
         expect(await screen.findByText('gone1')).toBeTruthy();
     });
 
-    test('a chat the user picks wins over a permalink lookup that resolves later', async () => {
+    test('a chat opened meanwhile wins over a permalink lookup that resolves later', async () => {
         let resolve: (post: unknown) => void = () => null;
         mockGetPost.mockReturnValue(new Promise((r) => {
             resolve = r;
         }));
         renderView('reply9');
 
-        act(() => lastSection().onSelectThread('agent1', 'root1'));
+        navigate(`${DM}/root1`);
         expect(screen.getByTestId('chat-page').textContent).toBe('root1');
 
         await act(async () => resolve({id: 'reply9', root_id: 'root9', channel_id: 'dm1'}));
@@ -185,6 +172,8 @@ describe('AgentDMChannelView', () => {
         }));
         const {rerender} = renderView('reply9');
 
+        // The host leaves the permalink's URL along with the channel.
+        history.location.pathname = '/team1/messages/@agent1-name';
         rerender(
             <Provider store={makeStore()}>
                 <AgentDMChannelView
@@ -200,31 +189,56 @@ describe('AgentDMChannelView', () => {
         expect(screen.getByTestId('chat-page').textContent).toBe('new chat');
     });
 
-    test('the host handing a picked chat back as focusedPostId neither looks it up nor remounts the chat', () => {
-        const {setFocusedPost} = renderView();
+    test('a picked chat that is in the URL is neither looked up nor remounted', () => {
+        renderView();
 
-        act(() => lastSection().onSelectThread('agent1', 'rootX'));
+        act(() => lastChatPage().toChat('agent1', 'rootX'));
         const chatPage = screen.getByTestId('chat-page');
 
-        setFocusedPost('rootX');
-
+        expect(history.location.pathname).toBe(`${DM}/rootX`);
         expect(mockGetPost).not.toHaveBeenCalled();
         expect(screen.getByTestId('chat-page')).toBe(chatPage);
         expect(chatPage.textContent).toBe('rootX');
     });
 
-    test('a later permalink in the same DM opens its chat', () => {
-        const {setFocusedPost} = renderView();
-        act(() => lastSection().onNewChat('agent1'));
+    test.each([
+        ['a chat', 'root1', 'root1'],
+        ['a reply, which opens its thread', 'reply1', 'root1'],
+    ])('the host navigating the DM URL to %s opens it', (_name, postId, expectedRoot) => {
+        renderView();
 
-        setFocusedPost('reply1');
+        navigate(`${DM}/${postId}`);
+        expect(screen.getByTestId('chat-page').textContent).toBe(expectedRoot);
+    });
+
+    test('the host navigating to the bare DM URL starts a new chat', () => {
+        renderView('root1');
+        expect(screen.getByTestId('chat-page').textContent).toBe('root1');
+
+        navigate(DM);
+        expect(screen.getByTestId('chat-page').textContent).toBe('new chat');
+    });
+
+    test('the same chat can be opened again after a new chat, from outside the view', () => {
+        renderView('root1');
+
+        act(() => lastChatPage().toChat('agent1'));
+        expect(screen.getByTestId('chat-page').textContent).toBe('new chat');
+
+        navigate(`${DM}/root1`);
+        expect(screen.getByTestId('chat-page').textContent).toBe('root1');
+    });
+
+    test('outside the Channels route (a popout) the host\'s focusedPostId opens its chat', () => {
+        renderView('reply1', '/_popout/channel/team1/messages/@agent1-name');
+
         expect(screen.getByTestId('chat-page').textContent).toBe('root1');
     });
 
     test('picking a chat puts it in the DM URL, and a new chat takes it out', () => {
         renderView();
 
-        act(() => lastSection().onSelectThread('agent1', 'root1'));
+        act(() => lastChatPage().toChat('agent1', 'root1'));
         expect(history.push).toHaveBeenLastCalledWith('/team1/messages/@agent1-name/root1');
         expect(screen.getByTestId('chat-page').textContent).toBe('root1');
 
@@ -238,10 +252,9 @@ describe('AgentDMChannelView', () => {
     });
 
     test('outside the Channels route (a popout) the chat changes without touching the URL', () => {
-        history.location.pathname = '/_popout/channel/team1/messages/@agent1-name';
-        renderView();
+        renderView(undefined, '/_popout/channel/team1/messages/@agent1-name'); // eslint-disable-line no-undefined
 
-        act(() => lastSection().onSelectThread('agent1', 'root1'));
+        act(() => lastChatPage().toChat('agent1', 'root1'));
         expect(screen.getByTestId('chat-page').textContent).toBe('root1');
         expect(history.push).not.toHaveBeenCalled();
     });
@@ -250,19 +263,11 @@ describe('AgentDMChannelView', () => {
         ['in the Channels app: that agent\'s DM', '/team1/messages/@agent1-name/root1', '/team1/messages/@agent2-name'],
         ['in a popout: the Agents product', '/_popout/channel/team1/messages/@agent1-name', buildChatPath('agent2')],
     ])('switching to another agent goes to %s', (_name, pathname, expected) => {
-        history.location.pathname = pathname;
-        renderView();
+        renderView(undefined, pathname); // eslint-disable-line no-undefined
 
         act(() => lastChatPage().toChat('agent2'));
         expect(history.push).toHaveBeenCalledWith(expected);
         expect(screen.getByTestId('chat-page').textContent).toBe('new chat');
-    });
-
-    test('View as messages switches this DM to the plain messages', () => {
-        renderView();
-
-        fireEvent.click(screen.getByRole('button', {name: 'View as messages'}));
-        expect(dispatched).toContainEqual(setAgentDMRawView('dm1', true));
     });
 
     test('View all agents goes to the Agents product', async () => {
