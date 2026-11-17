@@ -1,6 +1,8 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import type {SourceChannel} from '@/types/conversation';
+
 export enum ToolCallStatus {
     Pending = 0,
     Accepted = 1,
@@ -65,9 +67,11 @@ export interface ToolCall {
     // the conversation API; absent on live websocket payloads.
     decided?: boolean;
 
-    // True when this executed result is waiting on one answer-level share
-    // decision because a source is not covered by the channel audience.
+    // True when the result's sources may not be readable by the channel's
+    // members, so Keep private is the default. source_channels names the
+    // channels when the server knows them. Requester only.
     audience_review?: boolean;
+    source_channels?: SourceChannel[];
 }
 
 // ToolCallPhase mirrors llm.ToolCallPhase on live tool_call websocket events.

@@ -5,10 +5,7 @@ import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
-import {GlobeIcon, LockIcon} from '@mattermost/compass-icons/components';
-
 import {Button} from '@mattermost/compass-ui/components/button';
-import {Icon} from '@mattermost/compass-ui/components/icon';
 import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
 
 import {doToolCall, doToolResult} from '@/client';
@@ -43,6 +40,15 @@ const BatchButtonContainer = styled.div`
     gap: 8px;
 `;
 
+const ShareReviewNotice = styled.div`
+    padding: 8px 12px;
+    border-radius: 4px;
+    background: rgba(var(--away-indicator-rgb), 0.08);
+    border: 1px solid rgba(var(--away-indicator-rgb), 0.24);
+    font-size: 12px;
+    line-height: 16px;
+`;
+
 // Tool call interfaces
 interface ToolApprovalSetProps {
     postID: string;
@@ -51,7 +57,6 @@ interface ToolApprovalSetProps {
     approvalStage: ToolApprovalStage;
     canApprove: boolean;
     canExpand: boolean;
-    privateChannelNames?: string[];
 }
 
 // Define a type for tool decisions
@@ -87,7 +92,6 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
     const isCallStage = props.approvalStage === 'call';
     const isResultStage = props.approvalStage === 'result';
-    const answerLevel = isResultStage && props.canApprove && props.toolCalls.some((call) => call.audience_review);
     const isInterruptedAutoRound = isInterruptedAutoApprovalRound(props.toolCalls, props.approvalStage);
 
     // Onlookers get redacted calls without arguments or results.
@@ -118,6 +122,20 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
     const decisionToolIDSet = useMemo(() => {
         return new Set(decisionToolCalls.map((call) => call.id));
     }, [decisionToolCalls]);
+
+    const shareReview = useMemo(() => {
+        const reviewed = isResultStage ? decisionToolCalls.filter((call) => call.audience_review) : [];
+        const names = new Map<string, string>();
+        for (const call of reviewed) {
+            for (const channel of call.source_channels ?? []) {
+                const name = channel.display_name || channel.name;
+                if (name) {
+                    names.set(channel.id, name);
+                }
+            }
+        }
+        return {active: reviewed.length > 0, channelNames: [...names.values()]};
+    }, [isResultStage, decisionToolCalls]);
 
     useEffect(() => {
         setToolDecisions({});
@@ -288,6 +306,22 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
     return (
         <ToolCallsContainer>
+            {shareReview.active && (
+                <ShareReviewNotice data-testid='share-review-notice'>
+                    {shareReview.channelNames.length > 0 ? (
+                        <FormattedMessage
+                            id='ai.tool_call.share_review_named'
+                            defaultMessage='These results include content from {channels}. Members of this channel may not have access. Review them before you share.'
+                            values={{channels: shareReview.channelNames.join(', ')}}
+                        />
+                    ) : (
+                        <FormattedMessage
+                            id='ai.tool_call.share_review_unnamed'
+                            defaultMessage='The agent could not confirm that members of this channel can read every source of these results. Review them before you share.'
+                        />
+                    )}
+                </ShareReviewNotice>
+            )}
             {props.toolCalls.map((tool) => {
                 const isDecisionCall = decisionToolIDSet.has(tool.id);
 
@@ -311,8 +345,8 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                             isProcessing: (isDecisionCall || isInterruptedAutoRound) && isSubmitting,
                             localDecision: isDecisionCall ? toolDecisions[tool.id] : undefined, // eslint-disable-line no-undefined
                             onToggleCollapse: () => toggleCollapse(tool.id),
-                            onApprove: isDecisionCall && !answerLevel ? () => handleToolDecision(tool.id, true) : undefined, // eslint-disable-line no-undefined
-                            onReject: isDecisionCall && !answerLevel ? () => handleToolDecision(tool.id, false) : undefined, // eslint-disable-line no-undefined
+                            onApprove: isDecisionCall ? () => handleToolDecision(tool.id, true) : undefined, // eslint-disable-line no-undefined
+                            onReject: isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined, // eslint-disable-line no-undefined
                             canExpand: props.canExpand,
                             showArguments,
                             showResults,
@@ -327,66 +361,8 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                 );
             })}
 
-            {answerLevel && (
-                <AnswerReview>
-                    <WarningTitle>
-                        {(props.privateChannelNames ?? []).length > 0 ? (
-                            <FormattedMessage
-                                id='ai.tool_call.private_source_warning_title'
-                                defaultMessage='This answer uses content from private channels'
-                            />
-                        ) : (
-                            <FormattedMessage
-                                id='ai.tool_call.private_source_warning_title_unconfirmed'
-                                defaultMessage='This answer needs review before sharing'
-                            />
-                        )}
-                    </WarningTitle>
-                    <WarningText>
-                        {(props.privateChannelNames ?? []).length > 0 ? (
-                            <FormattedMessage
-                                id='ai.tool_call.private_source_warning'
-                                defaultMessage='To answer, the agent read {channels}. Members of this channel may not have access. The marked passages came from there. Review them before sharing.'
-                                values={{channels: (props.privateChannelNames ?? []).join(', ')}}
-                            />
-                        ) : (
-                            <FormattedMessage
-                                id='ai.tool_call.private_source_warning_unnamed'
-                                defaultMessage='The agent could not confirm that members of this channel can read every source it used. Review the answer before sharing.'
-                            />
-                        )}
-                    </WarningText>
-                    <AnswerButtons>
-                        <Button
-                            emphasis='primary'
-                            size='x-small'
-                            leadingIcon={<Icon glyph={<LockIcon/>}/>}
-                            disabled={isSubmitting}
-                            onClick={() => handleBatchDecision(false)}
-                        >
-                            <FormattedMessage
-                                id='ai.tool_call.keep_private'
-                                defaultMessage='Keep private'
-                            />
-                        </Button>
-                        <Button
-                            emphasis='tertiary'
-                            size='x-small'
-                            leadingIcon={<Icon glyph={<GlobeIcon/>}/>}
-                            disabled={isSubmitting}
-                            onClick={() => handleBatchDecision(true)}
-                        >
-                            <FormattedMessage
-                                id='ai.tool_call.share_with_channel'
-                                defaultMessage='Share with channel'
-                            />
-                        </Button>
-                    </AnswerButtons>
-                </AnswerReview>
-            )}
-
             {/* Only show status bar for multiple approval decisions */}
-            {!answerLevel && approvalDecisionCalls.length > 1 && isSubmitting && (
+            {approvalDecisionCalls.length > 1 && isSubmitting && (
                 <StatusBar>
                     <div>
                         <FormattedMessage
@@ -397,7 +373,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                 </StatusBar>
             )}
 
-            {!answerLevel && approvalDecisionCalls.length > 1 && undecidedApprovalCount > 0 && !isSubmitting && (
+            {approvalDecisionCalls.length > 1 && undecidedApprovalCount > 0 && !isSubmitting && (
                 <StatusBar>
                     <div>
                         <FormattedMessage
@@ -459,33 +435,3 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 };
 
 export default ToolApprovalSet;
-
-const AnswerReview = styled.div`
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-xs);
-    margin-top: var(--spacing-xxxs);
-    padding: var(--spacing-m);
-    border-radius: 4px;
-    background: rgba(var(--center-channel-color-rgb), 0.04);
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-`;
-
-const WarningTitle = styled.div`
-    font-size: 14px;
-    font-weight: 600;
-    line-height: 20px;
-`;
-
-const WarningText = styled.p`
-    margin: 0;
-    font-size: 13px;
-    line-height: 18px;
-    color: rgba(var(--center-channel-color-rgb), 0.8);
-`;
-
-const AnswerButtons = styled.div`
-    display: flex;
-    gap: var(--spacing-xs);
-`;
-
