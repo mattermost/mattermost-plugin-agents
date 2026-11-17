@@ -47,7 +47,7 @@ interface AgentChatTitleBarProps {
     onViewAll: () => void;
 
     // Opens every agent's chats. The RHS passes the header Back handler; the title bar offers it
-    // only for an established RHS chat.
+    // on the RHS surface (new chat and open chat).
     onShowAllChats?: () => void;
 
     // Present only when the current user may edit this agent.
@@ -93,8 +93,8 @@ const AgentChatTitleBar = ({surface, bot, rootId, inThread = Boolean(rootId), bo
                 // An open chat belongs to its agent: switching starts from a new chat.
                 {...(inThread ? {} : {agents: {bots, onSwitch: onSwitchAgent}})}
 
-                // All agent chats is the RHS Back action, and only once a chat is open.
-                {...(surface === 'rhs' && rootId && onShowAllChats ? {onShowAllChats} : {})}
+                // All agent chats is the RHS Back action (new chat and open chat).
+                {...(surface === 'rhs' && onShowAllChats ? {onShowAllChats} : {})}
 
                 renderTrigger={({ariaLabel, label, expanded, onClick}) => (
                     <ChatTitleDropdown

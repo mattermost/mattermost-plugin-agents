@@ -53,7 +53,7 @@ interface AgentChatNameMenuProps {
     onNewChat: () => void;
     onViewAll: () => void;
 
-    // Opens every agent's chats. Omitted outside an established RHS chat.
+    // Opens every agent's chats. Omitted outside the RHS title menu.
     onShowAllChats?: () => void;
 
     // Offers a "Switch agent" submenu, which starts a new chat with the agent picked. Passed in a new

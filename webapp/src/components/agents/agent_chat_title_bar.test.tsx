@@ -309,20 +309,20 @@ describe('AgentChatTitleBar', () => {
         expect(mockArchive).not.toHaveBeenCalled();
     });
 
-    test.each([
-        {name: 'the product chat', props: {rootId: 'root1', onShowAllChats: jest.fn()}, trigger: 'agent-chat-menu-button'},
-        {name: 'a new RHS chat', props: {surface: 'rhs' as const, onShowAllChats: jest.fn()}, trigger: 'bot-selector-rhs'},
-    ])('$name does not list All agent chats', async ({props, trigger}) => {
-        renderHeader(props);
+    test('the product chat does not list All agent chats even when a handler is passed', async () => {
+        renderHeader({rootId: 'root1', onShowAllChats: jest.fn()});
         await waitFor(() => expect(mockGetThreads).toHaveBeenCalled());
-        fireEvent.click(screen.getByTestId(trigger));
+        fireEvent.click(screen.getByTestId('agent-chat-menu-button'));
         await waitFor(() => expect(menuItems()).toContain('Recent chats'));
         expect(screen.queryByRole('menuitem', {name: 'All agent chats'})).toBeNull();
     });
 
-    test('an established RHS chat lists All agent chats under Recent chats and runs the history handler', async () => {
+    test.each([
+        {name: 'a new RHS chat', props: {surface: 'rhs' as const}},
+        {name: 'an established RHS chat', props: {surface: 'rhs' as const, rootId: 'root1'}},
+    ])('$name lists All agent chats under Recent chats and runs the history handler', async ({props}) => {
         const onShowAllChats = jest.fn();
-        renderHeader({surface: 'rhs', rootId: 'root1', onShowAllChats});
+        renderHeader({...props, onShowAllChats});
         await waitFor(() => expect(mockGetThreads).toHaveBeenCalled());
         fireEvent.click(screen.getByTestId('bot-selector-rhs'));
         await waitFor(() => expect(menuItems()).toContain('All agent chats'));
