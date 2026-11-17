@@ -41,7 +41,7 @@ const BatchButtonContainer = styled.div`
 `;
 
 const ShareReviewNotice = styled.div`
-    padding: 8px 12px;
+    padding: var(--spacing-xs) var(--spacing-m);
     border-radius: 4px;
     background: rgba(var(--away-indicator-rgb), 0.08);
     border: 1px solid rgba(var(--away-indicator-rgb), 0.24);
