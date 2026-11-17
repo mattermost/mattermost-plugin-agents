@@ -166,6 +166,15 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
     switch (section) {
     case 'general': {
         const defaultBotID = effectiveDefaultBotID(value.defaultBotUserID, value.defaultBotName, runtimeBots);
+
+        // The list only holds agents this user can use, so a configured default
+        // outside it still has to stay selected: an unrelated save keeps it, and
+        // only choosing another agent replaces it.
+        const hiddenDefaultID = !defaultBotID && value.defaultBotUserID ? value.defaultBotUserID : '';
+        const defaultBotOptions = runtimeBots.map((bot) => ({value: bot.id, label: bot.displayName}));
+        if (hiddenDefaultID) {
+            defaultBotOptions.push({value: hiddenDefaultID, label: intl.formatMessage({defaultMessage: 'Current default agent (not available to you)'})});
+        }
         return (
             <AdminPanel
                 title={intl.formatMessage({defaultMessage: 'AI Functions'})}
@@ -180,12 +189,12 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                     )}
                     <SelectionItem
                         label={intl.formatMessage({defaultMessage: 'Default bot'})}
-                        value={defaultBotID}
-                        error={runtimeBots.length > 0 && !defaultBotID ? intl.formatMessage({defaultMessage: 'The configured default agent is not available. Requests that do not choose an agent will fail until you select another one.'}) : ''}
+                        value={defaultBotID || hiddenDefaultID}
+                        error={runtimeBots.length > 0 && !defaultBotID ? intl.formatMessage({defaultMessage: 'The configured default agent is not available to you, and may not be available to anyone. If so, requests that do not choose an agent will fail until you select another one.'}) : ''}
                         onChange={(defaultBotUserID) => {
                             updateConfig({defaultBotUserID, defaultBotName: ''});
                         }}
-                        options={runtimeBots.map((bot) => ({value: bot.id, label: bot.displayName}))}
+                        options={defaultBotOptions}
                     />
                     <TextItem
                         label={intl.formatMessage({defaultMessage: 'Allowed Upstream Hostnames (csv)'})}

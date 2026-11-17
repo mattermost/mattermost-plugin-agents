@@ -474,12 +474,16 @@ describe('AgentsSettingsPage default agent selector', () => {
         expect(saved.transcriptBackend).toBe('scribe');
     });
 
-    it('flags a configured default agent that is not available', async () => {
+    it('keeps a configured default agent the user cannot use selected, and saved when something else changes', async () => {
         (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, defaultBotUserID: 'gone0000000000000000000000'});
         renderPage();
 
-        await screen.findByText(/The configured default agent is not available/);
-        expect(screen.queryByText('First')).toBeNull();
+        await screen.findByText(/The configured default agent is not available to you/);
+        expect(screen.getByText('Current default agent (not available to you)')).toBeTruthy();
+
+        changeSomethingElse();
+        const saved = await clickSave();
+        expect(saved.defaultBotUserID).toBe('gone0000000000000000000000');
     });
 
     it('sends empty ID and legacy fields when nothing is configured', async () => {
