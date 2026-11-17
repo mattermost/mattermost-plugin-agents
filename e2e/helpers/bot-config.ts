@@ -22,6 +22,9 @@ export interface BotConfig {
     thinkingBudget?: number;
 }
 
+/** Mirrors config.SecretPlaceholder: GET /admin/config replaces stored credentials with this. */
+export const SECRET_PLACEHOLDER = '********************************';
+
 export interface ServiceConfig {
     id: string;
     name: string;
