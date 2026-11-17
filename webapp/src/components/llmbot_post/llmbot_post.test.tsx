@@ -603,6 +603,27 @@ describe('LLMBotPost mid-stream text routing', () => {
         expect(mainAreaText()).not.toContain('I will search the web');
     });
 
+    // Gemini reports its search with the final chunk, after the answer it grounded.
+    test('keeps the answer in the main area when its search is reported after it', () => {
+        const send = streamingPost();
+        send({control: 'start'});
+        send({next: 'Norris won the race.'});
+        send({
+            control: 'server_tool',
+            server_tool: JSON.stringify([{id: 'srv1', tool: 'web_search', status: 'success', query: 'latest f1 winner', retroactive: true}]),
+        });
+        send({control: 'end'});
+        advanceAnimation();
+
+        expect(screen.queryByTestId('llm-bot-folding-text')).toBeNull();
+        expect(mainAreaText()).toContain('Norris won the race.');
+
+        expandToolActivity();
+        const stackText = screen.getByTestId('llm-bot-tool-activity-rounds').textContent ?? '';
+        expect(stackText).toContain('Searched the web for "latest f1 winner"');
+        expect(stackText).not.toContain('Norris won the race.');
+    });
+
     test('keeps text after provider tools in the main area until another invocation follows', () => {
         const send = streamingPost();
         send({control: 'start'});

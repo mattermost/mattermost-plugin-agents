@@ -33,21 +33,3 @@ func (c *Conversations) SaveTitle(threadID, title string) error {
 		Where(sq.Eq{"DeleteAt": 0}))
 	return err
 }
-
-// DeleteConversationsForDeletedPost soft-deletes conversations associated with the given post.
-// If the post is a root post, conversations keyed by that RootPostID are marked as deleted.
-func (c *Conversations) DeleteConversationsForDeletedPost(post *model.Post) error {
-	if c.db == nil || post == nil || post.Id == "" {
-		return nil
-	}
-	now := model.GetMillis()
-	_, err := c.db.ExecBuilder(c.db.Builder().
-		Update("LLM_Conversations").
-		Set("DeleteAt", now).
-		Set("UpdatedAt", now).
-		Where(sq.And{
-			sq.Eq{"RootPostID": post.Id},
-			sq.Eq{"DeleteAt": 0},
-		}))
-	return err
-}
