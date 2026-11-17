@@ -85,6 +85,9 @@ func (t *serverToolTracker) upsert(use llm.ServerToolUse) {
 	if use.ProviderRoute != "" {
 		existing.ProviderRoute = use.ProviderRoute
 	}
+	if use.Retroactive {
+		existing.Retroactive = true
+	}
 }
 
 // setCommand records the sandbox code/command for an already-tracked
@@ -101,14 +104,31 @@ func (t *serverToolTracker) setCommand(itemID, command string) bool {
 
 // observeItem converts a Responses output item into tracked server-tool
 // activity. Returns true when the item was server-tool related (i.e. callers
-// should emit a fresh snapshot).
-func (t *serverToolTracker) observeItem(item *schemas.ResponsesMessage, providerRoute schemas.ModelProvider) bool {
+// should emit a fresh snapshot). retroactiveSearch marks web searches the
+// route only reports once generation has finished.
+func (t *serverToolTracker) observeItem(item *schemas.ResponsesMessage, providerRoute schemas.ModelProvider, retroactiveSearch bool) bool {
 	use := serverToolUseFromItem(item, providerRoute)
 	if use == nil {
 		return false
 	}
+	use.Retroactive = retroactiveSearch && use.Tool == llm.NativeToolWebSearch
 	t.upsert(*use)
 	return true
+}
+
+// reportsSearchAfterOutput reports whether Bifrost's stream handler for this
+// route emits web searches only at finish, after the text they grounded. The
+// Gemini handler builds them from grounding metadata on the final chunk;
+// Vertex uses it for every model family except Anthropic.
+func reportsSearchAfterOutput(ctx *schemas.BifrostContext, provider schemas.ModelProvider, model string) bool {
+	switch provider {
+	case schemas.Gemini:
+		return true
+	case schemas.Vertex:
+		return !schemas.IsAnthropicModelFamily(ctx, model)
+	default:
+		return false
+	}
 }
 
 // serverToolUseFromItem maps a web_search_call / web_fetch_call /

@@ -40,6 +40,9 @@ type CatalogRequest struct {
 	// catalog to ScopedCatalogAllows. InvokingUserID is still the subject of
 	// access policy.
 	Scoped *ScopedRun
+	// IgnoreAccessPolicy lists servers the invoker's access policy denies. Only
+	// for a system admin configuring an agent; never for a runtime catalog.
+	IgnoreAccessPolicy bool
 }
 
 // CatalogAccess is one request-scoped catalog result. PluginServers and

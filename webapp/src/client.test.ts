@@ -22,8 +22,10 @@ import {
     getArtifactToken,
     getChannelAutoReply,
     getChannelInterval,
+    getAIThreads,
     getConversation,
     getConversationContext,
+    getUserMCPTools,
     normalizeConversationResponse,
     renderCustomPrompt,
     searchAllChannels,
@@ -494,5 +496,37 @@ describe('agent versioning client', () => {
             status_code: 400,
             message: 'the current version of an agent cannot be deleted',
         });
+    });
+});
+
+describe('getUserMCPTools', () => {
+    test.each([
+        {name: 'the user catalog sends no query', opts: {}, params: {}},
+        {name: 'the agent editor asks for the agent config catalog', opts: {agentConfig: true}, params: {purpose: 'agent_config'}},
+        {name: 'the service account agent editor sends both', opts: {agentId: 'a1', serviceAccount: true, agentConfig: true}, params: {catalog: 'service_account', purpose: 'agent_config', agent_id: 'a1'}},
+    ])('$name', async ({opts, params}) => {
+        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve({servers: []})} as unknown as Response);
+
+        await getUserMCPTools(opts);
+
+        const url = new URL(mockFetch.mock.calls[0][0]);
+        expect(`${url.origin}${url.pathname}`).toBe(`${siteURL}/plugins/${manifest.id}/mcp/tools`);
+        expect(Object.fromEntries(url.searchParams)).toEqual(params);
+    });
+});
+
+describe('getAIThreads', () => {
+    test('gives up on a request that never settles', async () => {
+        const timeout = new AbortController();
+        const timeoutSpy = jest.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal);
+        mockFetch.mockImplementation((_url, init) => new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        }));
+
+        const request = getAIThreads();
+        timeout.abort();
+
+        await expect(request).rejects.toThrow('aborted');
+        timeoutSpy.mockRestore();
     });
 });

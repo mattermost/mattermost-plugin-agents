@@ -102,6 +102,78 @@ func TestTurnSequenceRecordServerToolsIsIdempotent(t *testing.T) {
 	}, s.Segments())
 }
 
+// Gemini reports a search only after the text it grounded. Placed by arrival,
+// it would trail the answer and the webapp would fold the answer away.
+func TestTurnSequenceRetroactiveServerToolPrecedesText(t *testing.T) {
+	webSearch := func(id string, retroactive bool) ServerToolUse {
+		return ServerToolUse{ID: id, Tool: NativeToolWebSearch, Retroactive: retroactive}
+	}
+
+	tests := []struct {
+		name   string
+		record func(s *TurnSequence)
+		want   []TurnSegment
+	}{
+		{
+			name: "retroactive search moves above the answer",
+			record: func(s *TurnSequence) {
+				s.AppendText("Norris won.")
+				s.RecordServerTools([]ServerToolUse{webSearch("ws1", true)})
+				s.RecordServerTools([]ServerToolUse{webSearch("ws1", true)})
+			},
+			want: []TurnSegment{
+				{Kind: TurnSegmentServerTool, ServerToolID: "ws1"},
+				{Kind: TurnSegmentText, Text: "Norris won."},
+			},
+		},
+		{
+			name: "retroactive search sits between reasoning and the answer",
+			record: func(s *TurnSequence) {
+				s.FinishReasoning(ReasoningData{Text: "thinking", Signature: "sig"})
+				s.AppendText("Norris won.")
+				s.RecordServerTools([]ServerToolUse{webSearch("ws1", true)})
+				s.RecordServerTools([]ServerToolUse{webSearch("ws1", true), webSearch("ws2", true)})
+			},
+			want: []TurnSegment{
+				{Kind: TurnSegmentThinking, Text: "thinking", Signature: "sig", finalized: true},
+				{Kind: TurnSegmentServerTool, ServerToolID: "ws1"},
+				{Kind: TurnSegmentServerTool, ServerToolID: "ws2"},
+				{Kind: TurnSegmentText, Text: "Norris won."},
+			},
+		},
+		{
+			name: "retroactive search without text is appended",
+			record: func(s *TurnSequence) {
+				s.AppendReasoning("thinking")
+				s.RecordServerTools([]ServerToolUse{webSearch("ws1", true)})
+			},
+			want: []TurnSegment{
+				{Kind: TurnSegmentThinking, Text: "thinking"},
+				{Kind: TurnSegmentServerTool, ServerToolID: "ws1"},
+			},
+		},
+		{
+			name: "search reported as it runs stays after the narration",
+			record: func(s *TurnSequence) {
+				s.AppendText("Let me search.")
+				s.RecordServerTools([]ServerToolUse{webSearch("ws1", false)})
+			},
+			want: []TurnSegment{
+				{Kind: TurnSegmentText, Text: "Let me search."},
+				{Kind: TurnSegmentServerTool, ServerToolID: "ws1"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var s TurnSequence
+			tt.record(&s)
+			require.Equal(t, tt.want, s.Segments())
+		})
+	}
+}
+
 // Citation cleanup must not slide later text ahead of intervening activity.
 func TestTurnSequenceRemoveTextRangesPreservesInterleaving(t *testing.T) {
 	var s TurnSequence
