@@ -840,7 +840,10 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) llm.To
 		}
 
 		c.clearOAuthNeededForServer(client)
-		applySourceChannelsMeta(llmContext, toolName, meta)
+		// Only the embedded server's source records are trusted.
+		if client.config.Name == EmbeddedClientKey {
+			applySourceChannelsMeta(llmContext, toolName, meta)
+		}
 		return result, nil
 	}
 }

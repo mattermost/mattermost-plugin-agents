@@ -9,13 +9,14 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// sourceChannelsParam is the llm.Context.Parameters and MCP result Meta key
-// listing the Mattermost channels a tool result drew from.
-const sourceChannelsParam = "source_channels"
+// SourceChannelsParam is the llm.Context.Parameters and MCP result Meta key
+// listing the Mattermost channels ([]*model.Channel) tool results drew from.
+const SourceChannelsParam = "source_channels"
 
-// reportedSourceToolsParam lists bare tool names that included source-channel
-// metadata. The key must match conversations.reportedSourceToolsParam.
-const reportedSourceToolsParam = "source_channels_reported_tools"
+// ReportedSourceToolsParam is the llm.Context.Parameters key of the bare
+// names (map[string]bool) of tools whose results reported their source
+// channels. A tool missing from it has unknown sources.
+const ReportedSourceToolsParam = "source_channels_reported_tools"
 
 func applySourceChannelsMeta(llmContext *llm.Context, toolName string, meta sdkmcp.Meta) {
 	channels, ok := sourceChannelsFromMeta(meta)
@@ -25,25 +26,25 @@ func applySourceChannelsMeta(llmContext *llm.Context, toolName string, meta sdkm
 	if llmContext.Parameters == nil {
 		llmContext.Parameters = make(map[string]any)
 	}
-	existing, _ := llmContext.Parameters[sourceChannelsParam].([]*model.Channel)
-	llmContext.Parameters[sourceChannelsParam] = mergeSourceChannels(existing, channels)
+	existing, _ := llmContext.Parameters[SourceChannelsParam].([]*model.Channel)
+	llmContext.Parameters[SourceChannelsParam] = mergeSourceChannels(existing, channels)
 	bareName := llm.BareMCPToolName(toolName)
 	if bareName == "" {
 		return
 	}
-	reported, _ := llmContext.Parameters[reportedSourceToolsParam].(map[string]bool)
+	reported, _ := llmContext.Parameters[ReportedSourceToolsParam].(map[string]bool)
 	if reported == nil {
 		reported = map[string]bool{}
 	}
 	reported[bareName] = true
-	llmContext.Parameters[reportedSourceToolsParam] = reported
+	llmContext.Parameters[ReportedSourceToolsParam] = reported
 }
 
 func sourceChannelsFromMeta(meta sdkmcp.Meta) ([]*model.Channel, bool) {
 	if meta == nil {
 		return nil, false
 	}
-	raw, ok := meta[sourceChannelsParam]
+	raw, ok := meta[SourceChannelsParam]
 	if !ok {
 		return nil, false
 	}

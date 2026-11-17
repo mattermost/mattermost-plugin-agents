@@ -51,8 +51,8 @@ const (
 // StreamEnd is the value of an EventTypeEnd event when the producer needs to
 // tell the post writer how to close. A nil value keeps the historical close.
 type StreamEnd struct {
-	// OmitEmptyFallback leaves an empty post message empty. Used when a
-	// channel answer is intentionally not produced yet.
+	// OmitEmptyFallback leaves an empty post message empty. Used when a run
+	// pauses after a tool round for the requester's share decision.
 	OmitEmptyFallback bool
 }
 

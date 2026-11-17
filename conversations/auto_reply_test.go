@@ -74,6 +74,7 @@ type autoReplyTestEnv struct {
 	config        *testToolCallingConfig
 	checker       *dmPolicyChecker
 	streaming     *fakeStreamingService
+	builder       *llmcontext.Builder
 }
 
 // autoReplyBotConfig is the default unrestricted agent configuration used by
@@ -204,6 +205,7 @@ func setupAutoReplyTestEnvWithTools(
 		config:        config,
 		checker:       checker,
 		streaming:     streamingService,
+		builder:       contextBuilder,
 	}
 }
 

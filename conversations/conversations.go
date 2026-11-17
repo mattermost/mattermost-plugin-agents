@@ -29,20 +29,9 @@ import (
 const ThreadIDProp = "referenced_thread"
 const AnalysisTypeProp = "prompt_type"
 
-// sourceChannelsParam lists the Mattermost channels a tool result drew from.
-// The channel answer is posted only when every executed tool reported
-// provenance and every listed source is covered by the destination audience.
-// A missing list means provenance was not determined.
-const sourceChannelsParam = "source_channels"
-
-// reportedSourceToolsParam is the set of bare tool names that included
-// source-channel metadata on their result. A tool that ran without this
-// record does not have determined provenance.
-const reportedSourceToolsParam = "source_channels_reported_tools"
-
 // provenanceReportingTools are the embedded read tools that record the
-// channels they drew from. Any other executed tool leaves provenance
-// undetermined.
+// channels they drew from (see mcp.SourceChannelsParam). Results of any other
+// tool have unknown sources.
 var provenanceReportingTools = map[string]struct{}{
 	"read_channel":        {},
 	"read_post":           {},

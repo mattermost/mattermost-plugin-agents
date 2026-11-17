@@ -96,11 +96,12 @@ type Context struct {
 	// readable by that audience only when this is set. Unknown fails closed.
 	DestinationHasNoGuests bool
 
-	// HoldChannelAnswer, when set, is consulted after a tool round has run.
-	// A true result stops the runner before the next completion, so that
-	// completion's text is not written to the channel. The caller keeps the
-	// draft for the requester until a share decision is recorded.
-	HoldChannelAnswer func(calls []ToolCall) bool
+	// ReviewToolRound, when set, is consulted after an auto-executed tool
+	// round has run, with that round's calls. A non-nil review ends the run
+	// after the round, as a batch awaiting approval does: no further
+	// completion uses the results until the requester decides whether to
+	// share them.
+	ReviewToolRound func(calls []ToolCall) *ShareReview
 
 	// ToolCatalog holds request-scoped inputs used while building the tool store.
 	ToolCatalog ToolCatalogContext

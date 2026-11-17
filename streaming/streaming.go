@@ -910,8 +910,8 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 				// Stream has closed cleanly. The "empty" fallback message only
 				// applies when the LLM truly produced nothing; a stream that
 				// stopped after emitting tool_use blocks (e.g. awaiting user
-				// approval) or attached files is a valid response. A held
-				// channel answer is also intentionally empty.
+				// approval) or attached files is a valid response. So is a
+				// run paused for a share decision, whose round was resolved.
 				hasToolCalls := acc != nil && len(acc.toolCalls) > 0
 				omitEmpty := false
 				if end, ok := event.Value.(llm.StreamEnd); ok {

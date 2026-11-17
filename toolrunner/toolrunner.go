@@ -134,28 +134,10 @@ type ToolTurn struct {
 	TokensIn  int64
 	TokensOut int64
 
-	// HeldAnswer is assistant text produced after this round's tools ran, when
-	// the caller asked not to post it to the channel yet. It is not forwarded
-	// on Stream.
-	HeldAnswer string
-
-	// HeldAnnotations mark passages of HeldAnswer. They stay with the
-	// requester until a share decision.
-	HeldAnnotations []llm.Annotation
-
-	// HeldSources are the channels the draft drew from. Shown only to the
-	// requester.
-	HeldSources []HeldSource
-}
-
-// HeldSource is a channel a held answer drew from.
-type HeldSource struct {
-	ID          string
-	Name        string
-	DisplayName string
-	Type        string
-	TeamID      string
-	Private     bool
+	// ShareReview is set on the round the run paused after because its
+	// results wait for the requester's share decision (see
+	// llm.Context.ReviewToolRound).
+	ShareReview *llm.ShareReview
 }
 
 // ToolResult holds the result of executing a single tool call.
@@ -386,10 +368,10 @@ func (r *ToolRunner) runLoop(
 			return
 		}
 
-		// Provenance is only known after the tools run, so the channel answer
-		// is withheld here, before the next completion is streamed.
-		if holdChannelAnswer(request, result) {
-			r.captureHeldAnswer(ctx, request, currentOpts, result)
+		// Sources are only known once the tools have run, so the review
+		// happens here, before any completion can use the results.
+		if review := reviewToolRound(request, resolvedToolCalls); review != nil {
+			result.ToolTurns[len(result.ToolTurns)-1].ShareReview = review
 			r.deliverToolTurns(result, onToolTurns)
 			send(llm.TextStreamEvent{Type: llm.EventTypeEnd, Value: llm.StreamEnd{OmitEmptyFallback: true}})
 			return
@@ -503,32 +485,11 @@ func drainStream(stream *llm.TextStreamResult, send func(llm.TextStreamEvent) bo
 	return resp
 }
 
-func holdChannelAnswer(request llm.CompletionRequest, result *ToolRunResult) bool {
-	if request.Context == nil || request.Context.HoldChannelAnswer == nil || result == nil {
-		return false
+func reviewToolRound(request llm.CompletionRequest, calls []llm.ToolCall) *llm.ShareReview {
+	if request.Context == nil || request.Context.ReviewToolRound == nil {
+		return nil
 	}
-	var calls []llm.ToolCall
-	for _, turn := range result.ToolTurns {
-		calls = append(calls, turn.AssistantToolCalls...)
-	}
-	return request.Context.HoldChannelAnswer(calls)
-}
-
-// captureHeldAnswer runs one tools-disabled completion and keeps its text off
-// the channel stream. The caller shows that text only to the requester.
-func (r *ToolRunner) captureHeldAnswer(ctx context.Context, request llm.CompletionRequest, opts []llm.LanguageModelOption, result *ToolRunResult) {
-	if len(result.ToolTurns) == 0 {
-		return
-	}
-	stream, err := r.llm.ChatCompletion(ctx, request, append(opts, llm.WithToolsDisabled())...)
-	if err != nil || stream == nil {
-		return
-	}
-	resp := drainStream(stream, func(llm.TextStreamEvent) bool { return true }, request.Context)
-	if resp.err != nil {
-		return
-	}
-	result.ToolTurns[len(result.ToolTurns)-1].HeldAnswer = resp.text
+	return request.Context.ReviewToolRound(calls)
 }
 
 // deliverToolTurns calls the onToolTurns callback if there are accumulated turns.

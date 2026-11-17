@@ -8,10 +8,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -647,6 +649,58 @@ func mustMarshalBlocks(t *testing.T, blocks []conversation.ContentBlock) json.Ra
 	data, err := json.Marshal(blocks)
 	require.NoError(t, err)
 	return data
+}
+
+func TestGetConversationShareReviewReachesOnlyRequester(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	const privateName = "Sales Leadership"
+	channelID := testChannelID
+	runPostID := "post01234567890123456789"
+	assistantBlocks := mustMarshalBlocks(t, []conversation.ContentBlock{
+		{Type: conversation.BlockTypeToolUse, ID: "tc_01", Name: "mattermost__read_channel", Input: json.RawMessage(`{}`), Status: conversation.StatusAutoApproved, Shared: new(false)},
+	})
+	resultBlocks := mustMarshalBlocks(t, []conversation.ContentBlock{{
+		Type: conversation.BlockTypeToolResult, ToolUseID: "tc_01", Content: "quarterly numbers", Status: conversation.StatusSuccess, Shared: new(false),
+		AudienceReview: true,
+		SourceChannels: []llm.SourceChannel{{ID: "salesch1234567890123456789", Name: "sales-leadership", DisplayName: privateName}},
+	}})
+
+	tests := []struct {
+		name       string
+		userID     string
+		wantReview bool
+	}{
+		{name: "requester", userID: testUserID, wantReview: true},
+		{name: "another channel member", userID: testOtherUserID, wantReview: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.conversationStore.conversations["conv-review"] = &store.Conversation{
+				ID: "conv-review", UserID: testUserID, BotID: testBotUserID, ChannelID: &channelID, Operation: "conversation",
+			}
+			e.conversationStore.turns["conv-review"] = []store.Turn{
+				{ID: "turn-1", ConversationID: "conv-review", Role: "user", Content: mustMarshalBlocks(t, []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: "summarize"}}), Sequence: 1},
+				{ID: "turn-2", ConversationID: "conv-review", Role: "assistant", Content: assistantBlocks, Sequence: 2, RunPostID: &runPostID},
+				{ID: "turn-3", ConversationID: "conv-review", Role: "tool_result", Content: resultBlocks, Sequence: 3, RunPostID: &runPostID},
+			}
+			e.mockAPI.On("HasPermissionToChannel", tt.userID, channelID, model.PermissionReadChannel).Return(true)
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+			request := httptest.NewRequest(http.MethodGet, "/conversations/conv-review", nil)
+			request.Header.Add("Mattermost-User-ID", tt.userID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+			require.Equal(t, http.StatusOK, recorder.Code)
+
+			body := recorder.Body.String()
+			assert.Equal(t, tt.wantReview, strings.Contains(body, privateName))
+			assert.Equal(t, tt.wantReview, strings.Contains(body, "audience_review"))
+		})
+	}
 }
 
 func TestTurnsToResponseIncludesStatus(t *testing.T) {

@@ -96,6 +96,9 @@ func (c *fakeMMClient) CreatePost(post *model.Post) error {
 	if !c.allowCreatePost {
 		return errors.New("not implemented")
 	}
+	if post.Id == "" {
+		post.Id = model.NewId()
+	}
 	c.createdPosts = append(c.createdPosts, post.Clone())
 	return nil
 }
@@ -368,6 +371,15 @@ type fakeStreamingService struct {
 
 	mu      sync.Mutex
 	cancels map[string]context.CancelFunc
+	// texts is the text of each fully read stream, in order.
+	texts []string
+}
+
+// streamedTexts returns the text of each fully read stream so far.
+func (s *fakeStreamingService) streamedTexts() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.texts)
 }
 
 func (s *fakeStreamingService) StreamToNewPost(_ context.Context, _ string, _ string, _ *llm.TextStreamResult, post *model.Post, _ string) error {
@@ -384,7 +396,10 @@ func (s *fakeStreamingService) consume(stream *llm.TextStreamResult) {
 		return
 	}
 	if !s.stopAtExecuting {
-		_, _ = stream.ReadAll()
+		text, _ := stream.ReadAll()
+		s.mu.Lock()
+		s.texts = append(s.texts, text)
+		s.mu.Unlock()
 		return
 	}
 	for event := range stream.Stream {

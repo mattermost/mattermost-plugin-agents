@@ -120,7 +120,6 @@ function toolUseBlockToToolCall(block: ContentBlock, resultMap: Map<string, Cont
         user_interaction: block.user_interaction ?? undefined, // eslint-disable-line no-undefined
         would_auto_execute: block.would_auto_execute ?? undefined, // eslint-disable-line no-undefined
         decided: resultBlock?.decided_at != null,
-        audience_review: resultBlock?.audience_review,
     };
 }
 
@@ -188,16 +187,12 @@ export function extractAnnotationsFromTurn(turn: Turn): Annotation[] {
         if (block.type === BlockTypeText && block.citations) {
             for (let i = 0; i < block.citations.length; i++) {
                 const c = block.citations[i];
-                const isChannel = c.type === 'mattermost_channel';
                 annotations.push({
-                    type: isChannel ? 'mattermost_channel' : 'url_citation',
+                    type: 'url_citation',
                     start_index: c.start_index,
                     end_index: c.end_index,
                     url: c.url,
                     title: c.title,
-                    channel_id: c.channel_id,
-                    channel_name: c.channel_name,
-                    private: c.private,
                     index: runningIndex,
                 });
                 runningIndex++;
