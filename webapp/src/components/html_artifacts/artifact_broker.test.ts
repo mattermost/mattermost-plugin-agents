@@ -17,7 +17,7 @@ import {
     resetConsentStore,
     toArtifactUser,
 } from './artifact_broker';
-import {MAX_ARTIFACT_DOWNLOAD_BYTES, MAX_DOWNLOAD_FILENAME_LENGTH} from './artifact_download';
+import {DOWNLOAD_MIME_TYPES, MAX_ARTIFACT_DOWNLOAD_BYTES, MAX_DOWNLOAD_FILENAME_LENGTH} from './artifact_download';
 
 const context: ArtifactContext = {
     theme: {centerChannelBg: '#ffffff', centerChannelColor: '#3f4350'},
@@ -665,6 +665,14 @@ describe('ArtifactBroker download', () => {
         const match = (/var MAX_DOWNLOAD_BYTES = ([\d\s*]+);/).exec(bridge);
         expect(match).not.toBeNull();
         expect(match![1].split('*').reduce((product, n) => product * Number(n), 1)).toBe(MAX_ARTIFACT_DOWNLOAD_BYTES);
+    });
+
+    test('the CreateFile tool tells the model exactly the allowed types and the size cap', () => {
+        const tool = fs.readFileSync(path.resolve(__dirname, '../../../../mmtools/create_file.go'), 'utf8');
+        const listed = (/Allowed types: (.+?)\. /).exec(tool);
+        expect(listed).not.toBeNull();
+        expect(listed![1].split(/,\s*/).sort()).toEqual(Array.from(DOWNLOAD_MIME_TYPES.keys()).sort());
+        expect(tool).toContain(`up to ${MAX_ARTIFACT_DOWNLOAD_BYTES / (1024 * 1024)} MiB`);
     });
 });
 
