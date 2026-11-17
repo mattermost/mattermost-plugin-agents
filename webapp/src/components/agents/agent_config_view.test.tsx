@@ -1907,7 +1907,7 @@ describe('AgentConfigView import from file', () => {
         expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe('releasehelper');
         expect((screen.getByLabelText('Display Name') as HTMLInputElement).value).toBe('Release Helper');
         expect((screen.getByLabelText('Custom instructions') as HTMLTextAreaElement).value).toBe('Imported instructions');
-        expect(mockGetUserMCPTools).toHaveBeenCalledWith({serviceAccount: false});
+        expect(mockGetUserMCPTools).toHaveBeenCalledWith({serviceAccount: false, agentConfig: true});
 
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));
 
@@ -1934,7 +1934,7 @@ describe('AgentConfigView import from file', () => {
         await waitFor(() => expect((screen.getByLabelText('Custom instructions') as HTMLTextAreaElement).value).toBe('Imported instructions'));
         expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe('existingagent');
         expect((screen.getByLabelText('Display Name') as HTMLInputElement).value).toBe('Existing Agent');
-        expect(mockGetUserMCPTools).toHaveBeenCalledWith({agentId: 'agent_1', serviceAccount: false});
+        expect(mockGetUserMCPTools).toHaveBeenCalledWith({agentId: 'agent_1', serviceAccount: false, agentConfig: true});
         expect(mockUpdateAgent).not.toHaveBeenCalled();
 
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));

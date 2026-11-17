@@ -63,6 +63,8 @@ type Plugin struct {
 	indexerService       *indexer.Indexer
 	conversationsService *conversations.Conversations
 	mcpClientManager     *mcp.ClientManager
+	mcpHandlers          *mcpserver.PluginMCPHandlers
+	mcpLifecycle         *pluginMCPLifecycle
 	streamingService     streaming.Service
 	streamService        *streaming.MMPostStreamService
 	recoveryMu           sync.Mutex
@@ -609,7 +611,7 @@ func (p *Plugin) OnActivate() error {
 	} else {
 		mcpHandlers = handlers
 		pluginAPI.Log.Info("Embedded MCP server handlers initialized successfully")
-		p.licenseChangeListeners = append(p.licenseChangeListeners, handlers.RebuildExternalServer)
+		p.licenseChangeListeners = append(p.licenseChangeListeners, handlers.RequestRebuild)
 	}
 
 	customPromptsStore := customprompts.NewStore(dbClient)
@@ -663,10 +665,20 @@ func (p *Plugin) OnActivate() error {
 	p.indexerService = indexerService
 	p.conversationsService = conversationsService
 	p.mcpClientManager = mcpClientManager
+	p.mcpHandlers = mcpHandlers
 	p.streamingService = streamingService
 	p.streamService = streamingService
 
 	p.startStreamRecovery()
+
+	var rebuilder externalMCPRebuilder
+	if mcpHandlers != nil {
+		rebuilder = mcpHandlers
+	}
+	p.mcpLifecycle = newPluginMCPLifecycle(mcpClientManager, rebuilder, &pluginAPI.Log)
+	p.licenseChangeListeners = append(p.licenseChangeListeners, p.mcpLifecycle.reconcileKnown)
+	p.mcpLifecycle.reconcileKnown()
+	p.mcpLifecycle.watchStoppedPlugins(stoppedPluginCheckInterval)
 
 	return nil
 }
@@ -691,7 +703,10 @@ func (p *Plugin) OnDeactivate() error {
 		p.bots.ShutdownServiceLLMs()
 	}
 
-	// Clean up MCP client manager if it exists
+	p.mcpLifecycle.close()
+	if p.mcpHandlers != nil {
+		p.mcpHandlers.Close()
+	}
 	p.mcpClientManager.Close()
 
 	return nil
@@ -836,11 +851,12 @@ func (p *Plugin) MessageHasBeenDeleted(c *plugin.Context, post *model.Post) {
 			p.pluginAPI.Log.Error("Failed to delete post from vector database", "error", err)
 		}
 	}
-	if p.conversationsService != nil {
-		if err := p.conversationsService.DeleteConversationsForDeletedPost(post); err != nil {
-			p.pluginAPI.Log.Error("Failed to soft-delete conversations for deleted post", "error", err, "post_id", post.Id)
-		}
-	}
+	// Conversations of a deleted root post are left as they are: DeleteAt on
+	// LLM_Conversations means "archived by its owner", and every read, restore
+	// and list path hides a conversation whose root post is deleted
+	// (conversation.CheckRootPost). Keeping the rows mirrors Mattermost's own
+	// soft delete of posts, which keeps their content for compliance export
+	// and data retention to remove.
 }
 
 func (p *Plugin) RunDataRetention(nowTime, batchSize int64) (int64, error) {

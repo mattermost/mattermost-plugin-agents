@@ -433,8 +433,11 @@ export async function getBotDirectChannel(currentUserId: string, botUserID: stri
 
 export async function getAIThreads() {
     const url = `${baseRoute()}/ai_threads`;
+
+    // The list refresh queues behind a request in flight, so a stalled one must give up.
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
+        signal: AbortSignal.timeout(30000),
     }));
 
     if (response.ok) {
@@ -466,6 +469,28 @@ export async function renameConversation(conversationId: string, title: string):
     const response = await fetch(url, Client4.getOptions({
         method: 'PUT',
         body: JSON.stringify({title}),
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+// archiveConversation hides one of the caller's conversations from their thread lists.
+export async function archiveConversation(conversationId: string): Promise<void> {
+    if (!isValidId(conversationId)) {
+        throw invalidConversationIdError();
+    }
+
+    const url = `${conversationRoute(conversationId)}/archive`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
     }));
 
     if (response.ok) {
@@ -651,6 +676,10 @@ export async function searchAllChannels(term: string): Promise<ChannelWithTeamDa
         include_deleted: false,
         deleted: false,
     }) as Promise<ChannelWithTeamData[]>; // With these paremeters we should always get ChannelWithTeamData[]
+}
+
+export function getChannel(channelId: string) {
+    return Client4.getChannel(channelId);
 }
 
 export async function getChannelById(channelId: string): Promise<ChannelWithTeamData> {
@@ -954,10 +983,16 @@ export async function fetchModels(serviceType: string, apiKey: string, apiURL: s
 export async function getUserMCPTools(opts?: {
     agentId?: string;
     serviceAccount?: boolean;
+
+    // Agent editor catalog: system admins also see servers whose access policy denies them.
+    agentConfig?: boolean;
 }): Promise<UserMCPToolsResponse> {
     const params = new URLSearchParams();
     if (opts?.serviceAccount) {
         params.set('catalog', 'service_account');
+    }
+    if (opts?.agentConfig) {
+        params.set('purpose', 'agent_config');
     }
     if (opts?.agentId) {
         params.set('agent_id', opts.agentId);

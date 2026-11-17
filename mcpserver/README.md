@@ -2,13 +2,13 @@
 
 A Model Context Protocol (MCP) server that provides AI agents and automation tools with secure access to Mattermost channels, users, and content.
 
-**Standalone binary:** The `mattermost-mcp-server` process (for example, stdio transport for local clients) is intended for **development and local tooling only** and is **not** supported for production deployments. For production, use the Agents plugin’s embedded MCP and the in-server integration described in the [admin guide](../docs/admin_guide.md#mattermost-mcp-server).
+**Standalone binary:** The `mattermost-mcp-server` process (for example, stdio transport for local clients) is intended for **development and local tooling only** and is **not** supported for production deployments. For production, use the Agents plugin’s embedded MCP and the in-server integration described in the [admin guide](../docs/mcp_integrations.md#external-client-endpoint).
 
 ## Features
 
 - **MCP Protocol Support**: Implements the Model Context Protocol for standardized AI agent communication
 - **Authentication**: Personal Access Token (PAT) authentication
-- **Transport** (development use): Configurable transport layer (stdio JSON-RPC for desktop clients, HTTP with SSE for web applications). The standalone binary note at the top of this file also applies. For production, use the Agents plugin’s embedded MCP and the [admin guide](../docs/admin_guide.md#mattermost-mcp-server).
+- **Transport** (development use): Configurable transport layer (stdio JSON-RPC for desktop clients, HTTP with SSE for web applications). The standalone binary note at the top of this file also applies. For production, use the Agents plugin’s embedded MCP and the [admin guide](../docs/mcp_integrations.md#external-client-endpoint).
 - **Comprehensive Mattermost Integration**: Read posts, channels, search, create content
 - **Dual Mode Operation**: Runs standalone or embedded in the AI plugin
 
@@ -216,7 +216,7 @@ To use with Claude Desktop, add the server to your MCP configuration:
 
 #### HTTP Transport Integration (development and local use)
 
-For HTTP-based MCP clients and web applications, the server supports HTTP transport with OAuth authentication. The standalone binary is for development; for production, use the Agents plugin’s embedded MCP and the [admin guide](../docs/admin_guide.md#mattermost-mcp-server) integration.
+For HTTP-based MCP clients and web applications, the server supports HTTP transport with OAuth authentication. The standalone binary is for development; for production, use the Agents plugin’s embedded MCP and the [admin guide](../docs/mcp_integrations.md#external-client-endpoint) integration.
 
 **Basic HTTP server setup:**
 ```bash

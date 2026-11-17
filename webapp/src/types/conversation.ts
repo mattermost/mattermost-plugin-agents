@@ -93,6 +93,9 @@ export interface ServerToolUse {
     command?: string;
     output?: string;
     error_code?: string;
+
+    // Reported after the text it informed (Gemini grounding); belongs above that text.
+    retroactive?: boolean;
 }
 
 export interface ContentBlock {
@@ -158,6 +161,10 @@ export interface Turn {
 
     // Lifecycle state; 'streaming' while the response is still being generated.
     status?: 'streaming' | 'complete' | 'interrupted';
+
+    // Post whose run wrote this tool-round turn. A streaming anchor sits
+    // before its run's tool rounds, so they are matched by this ID.
+    run_post_id?: string;
 }
 
 // ActiveWait describes a pending wait_for_async_work pause in the

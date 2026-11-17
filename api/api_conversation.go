@@ -58,6 +58,10 @@ type TurnResponse struct {
 	// Status is the turn lifecycle state: "streaming" while a response is
 	// being generated, then "complete" or "interrupted".
 	Status string `json:"status"`
+	// RunPostID is the response post whose run wrote a tool-round turn. While
+	// that response streams, its anchor sits before these turns, so the
+	// webapp matches them by this ID.
+	RunPostID *string `json:"run_post_id,omitempty"`
 }
 
 // handleGetConversation returns a conversation and its turns with privacy filtering applied.
@@ -65,8 +69,10 @@ func (a *API) handleGetConversation(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	conversationID := c.Param("conversationid")
 
-	// 1. Load conversation
-	conv, err := a.conversationStore.GetConversation(conversationID)
+	// 1. Load conversation. Archiving keeps the Mattermost posts, which
+	// render from their conversation, so archived conversations are served
+	// under the same authorization as active ones.
+	conv, err := a.getReadableConversation(conversationID)
 	if err != nil {
 		if errors.Is(err, store.ErrConversationNotFound) {
 			c.AbortWithError(http.StatusNotFound, fmt.Errorf("conversation not found"))
@@ -137,6 +143,32 @@ func (a *API) handleGetConversation(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// getReadableConversation loads a conversation by ID, archived or not, for a
+// route that serves or acts on it. A conversation whose root post was deleted
+// answers store.ErrConversationNotFound (see conversation.CheckRootPost); a
+// failed post lookup is returned as an error, never treated as readable.
+// Callers still authorize the requesting user.
+func (a *API) getReadableConversation(id string) (*store.Conversation, error) {
+	conv, err := a.conversationStore.GetConversationIncludingArchived(id)
+	if err != nil {
+		return nil, err
+	}
+	if err := a.checkRootPost(conv); err != nil {
+		return nil, err
+	}
+	return conv, nil
+}
+
+// checkRootPost maps a deleted root post to store.ErrConversationNotFound so
+// routes answer it exactly like a missing conversation.
+func (a *API) checkRootPost(conv *store.Conversation) error {
+	err := conversation.CheckRootPost(&a.pluginAPI.Post, conv)
+	if errors.Is(err, conversation.ErrRootPostDeleted) {
+		return fmt.Errorf("%w: %w", store.ErrConversationNotFound, err)
+	}
+	return err
+}
+
 // approvalStateForTurn computes the approval-stage string for a post-anchor
 // assistant turn, or "" for any turn that is not a post anchor.
 func approvalStateForTurn(turn store.Turn, allTurns []store.Turn) string {
@@ -174,6 +206,7 @@ func turnsToResponse(turns []store.Turn, filterForNonRequester bool) ([]TurnResp
 			Sequence:      turn.Sequence,
 			ApprovalState: approvalStateForTurn(turn, turns),
 			Status:        turn.Status,
+			RunPostID:     turn.RunPostID,
 		}
 	}
 	return result, nil
