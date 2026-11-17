@@ -1,10 +1,14 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import fs from 'fs';
+import path from 'path';
+
 import {
     ArtifactBroker,
     ArtifactContext,
     ArtifactUser,
+    ConsentRequest,
     cancelPendingConsent,
     colorSchemeFor,
     getConsentDecision,
@@ -13,6 +17,7 @@ import {
     resetConsentStore,
     toArtifactUser,
 } from './artifact_broker';
+import {MAX_ARTIFACT_DOWNLOAD_BYTES, MAX_DOWNLOAD_FILENAME_LENGTH} from './artifact_download';
 
 const context: ArtifactContext = {
     theme: {centerChannelBg: '#ffffff', centerChannelColor: '#3f4350'},
@@ -35,9 +40,17 @@ function makeTarget() {
 
 const TOKEN = 'bridge-token-1';
 
-function setup(opts: {consent?: () => Promise<boolean>; fileId?: string; viewerId?: string; currentUser?: ArtifactUser | null; canPrompt?: () => boolean} = {}) {
+function setup(opts: {
+    consent?: (request: ConsentRequest) => Promise<boolean>;
+    fileId?: string;
+    viewerId?: string;
+    currentUser?: ArtifactUser | null;
+    canPrompt?: () => boolean;
+    saveDownload?: (blob: Blob, filename: string) => void;
+} = {}) {
     const target = makeTarget();
     const requestConsent = jest.fn(opts.consent ?? (() => Promise.resolve(true)));
+    const saveDownload = jest.fn(opts.saveDownload ?? (() => undefined)); // eslint-disable-line no-undefined
     const onReady = jest.fn();
     const onHeartbeat = jest.fn();
     const onResize = jest.fn();
@@ -52,6 +65,7 @@ function setup(opts: {consent?: () => Promise<boolean>; fileId?: string; viewerI
         getCurrentUser: () => (typeof opts.currentUser === 'undefined' ? user : opts.currentUser),
         requestConsent,
         dismissConsent,
+        saveDownload,
         canPrompt: opts.canPrompt,
         onReady,
         onHeartbeat,
@@ -64,7 +78,7 @@ function setup(opts: {consent?: () => Promise<boolean>; fileId?: string; viewerI
         const payload = withToken && typeof data === 'object' && data !== null ? {token: TOKEN, ...data} : data;
         return broker.handleMessage({data: payload, source: target, origin: 'null', ...overrides} as unknown as MessageEvent);
     };
-    return {broker, target, requestConsent, dismissConsent, onReady, onHeartbeat, onResize, onEscape, send};
+    return {broker, target, requestConsent, dismissConsent, saveDownload, onReady, onHeartbeat, onResize, onEscape, send};
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -409,6 +423,248 @@ describe('ArtifactBroker getCurrentUser', () => {
         expect(target.postMessage).toHaveBeenCalledWith(expect.objectContaining({
             error: expect.objectContaining({code: 'unavailable'}),
         }), '*');
+    });
+});
+
+describe('ArtifactBroker download', () => {
+    const download = (params?: Record<string, unknown>, id = 'd1') => ({mmArtifact: 1, type: 'request', id, method: 'download', ...(params ? {params} : {})});
+
+    const readBytes = (blob: Blob) => new Promise<Uint8Array>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsArrayBuffer(blob);
+    });
+
+    const errorCode = (target: {postMessage: jest.Mock}, id = 'd1') => {
+        const call = target.postMessage.mock.calls.find(([msg]) => msg.type === 'response' && msg.id === id);
+        return call?.[0].error?.code;
+    };
+
+    test('allow saves the file and resolves with its name, without remembering a decision', async () => {
+        const {send, target, requestConsent, saveDownload} = setup();
+        send(download({filename: 'report.csv', mimeType: 'text/csv', data: 'name,total\nAda,3\n'}));
+        await flush();
+
+        expect(requestConsent).toHaveBeenCalledWith({kind: 'download', filename: 'report.csv', mimeType: 'text/csv', size: 17});
+        expect(saveDownload).toHaveBeenCalledTimes(1);
+        const [blob, filename] = saveDownload.mock.calls[0];
+        expect(filename).toBe('report.csv');
+        expect(blob.type).toBe('text/csv');
+        expect(String.fromCharCode(...await readBytes(blob))).toBe('name,total\nAda,3\n');
+        expect(target.postMessage).toHaveBeenCalledWith({mmArtifact: 1, type: 'response', id: 'd1', result: {filename: 'report.csv'}}, '*');
+
+        // Every download asks again, and a download grants no profile access.
+        expect(getConsentDecision('u1', 'file1')).toBeUndefined();
+        send(download({filename: 'again.csv', mimeType: 'text/csv', data: 'x'}, 'd2'));
+        await flush();
+        expect(requestConsent).toHaveBeenCalledTimes(2);
+        expect(saveDownload).toHaveBeenCalledTimes(2);
+    });
+
+    const png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    const dataCases: Array<{name: string; params: () => Record<string, unknown>; mimeType: string; bytes: number[]}> = [
+        {name: 'a UTF-8 string', params: () => ({mimeType: 'text/plain', data: 'h\u00e9'}), mimeType: 'text/plain', bytes: [0x68, 0xc3, 0xa9]},
+        {name: 'a base64 data: URL from canvas.toDataURL()', params: () => ({data: `data:image/png;base64,${btoa(String.fromCharCode(...png))}`}), mimeType: 'image/png', bytes: png},
+        {name: 'a percent-encoded data: URL', params: () => ({data: 'data:text/csv;charset=utf-8,a%2Cb%0A'}), mimeType: 'text/csv', bytes: [0x61, 0x2c, 0x62, 0x0a]},
+        {name: 'a data: URL without a type, as text/plain', params: () => ({data: 'data:,hi'}), mimeType: 'text/plain', bytes: [0x68, 0x69]},
+        {name: 'a string that only starts like a data: URL, as content', params: () => ({mimeType: 'text/plain', data: 'data: 1'}), mimeType: 'text/plain', bytes: [...'data: 1'].map((c) => c.charCodeAt(0))},
+        {name: 'an ArrayBuffer', params: () => ({mimeType: 'application/pdf', data: new Uint8Array([0x25, 0x50, 0x44, 0x46]).buffer}), mimeType: 'application/pdf', bytes: [0x25, 0x50, 0x44, 0x46]},
+        {name: 'only the bytes of a typed array view', params: () => ({mimeType: 'image/gif', data: new Uint8Array([9, 1, 2, 9]).subarray(1, 3)}), mimeType: 'image/gif', bytes: [1, 2]},
+        {name: 'a Blob, typed by the Blob', params: () => ({data: new Blob(['{}'], {type: 'application/json'})}), mimeType: 'application/json', bytes: [0x7b, 0x7d]},
+        {name: 'a Blob with an explicit mimeType, which wins', params: () => ({mimeType: 'text/plain', data: new Blob(['<b>x</b>'], {type: 'text/html'})}), mimeType: 'text/plain', bytes: [...'<b>x</b>'].map((c) => c.charCodeAt(0))},
+        {name: 'a type with parameters and odd case', params: () => ({mimeType: 'Text/Markdown; charset=UTF-8', data: '#'}), mimeType: 'text/markdown', bytes: [0x23]},
+        {name: 'the image/jpg alias', params: () => ({mimeType: 'image/jpg', data: 'x'}), mimeType: 'image/jpeg', bytes: [0x78]},
+        {name: 'webp', params: () => ({mimeType: 'image/webp', data: 'x'}), mimeType: 'image/webp', bytes: [0x78]},
+    ];
+
+    test.each(dataCases)('saves $name with the allowlisted type', async ({params, mimeType, bytes}) => {
+        const {send, saveDownload, requestConsent} = setup();
+        send(download(params()));
+        await flush();
+        expect(requestConsent).toHaveBeenCalledWith(expect.objectContaining({kind: 'download', mimeType, size: bytes.length}));
+        const [blob] = saveDownload.mock.calls[0];
+        expect(blob.type).toBe(mimeType);
+        expect(Array.from(await readBytes(blob))).toEqual(bytes);
+    });
+
+    const nameCases: Array<{name: string; filename: unknown; mimeType: string; expected: string}> = [
+        {name: 'a matching extension is kept', filename: 'chart.png', mimeType: 'image/png', expected: 'chart.png'},
+        {name: 'an alternate extension of the type is kept', filename: 'photo.jpeg', mimeType: 'image/jpeg', expected: 'photo.jpeg'},
+        {name: 'the extension is lowercased', filename: 'Report.CSV', mimeType: 'text/csv', expected: 'Report.csv'},
+        {name: 'a missing extension is added', filename: 'chart', mimeType: 'image/png', expected: 'chart.png'},
+        {name: 'a mismatched extension gets the type\'s appended', filename: 'page.html', mimeType: 'text/plain', expected: 'page.html.txt'},
+        {name: 'an executable extension gets the type\'s appended', filename: 'setup.exe', mimeType: 'application/pdf', expected: 'setup.exe.pdf'},
+        {name: 'POSIX path separators are replaced', filename: '../../etc/passwd', mimeType: 'text/plain', expected: '_.._etc_passwd.txt'},
+        {name: 'Windows path separators and reserved characters are replaced', filename: 'C:\\Users\\a<b>?.csv', mimeType: 'text/csv', expected: 'C__Users_a_b__.csv'},
+        {name: 'control characters are removed', filename: 'a\u0000b\nc\u007f.txt', mimeType: 'text/plain', expected: 'abc.txt'},
+        {name: 'bidi overrides and zero-width characters are removed', filename: 'invoice\u202Efdp.exe\u200B', mimeType: 'image/png', expected: 'invoicefdp.exe.png'},
+        {name: 'leading dots are removed', filename: '.bashrc', mimeType: 'text/plain', expected: 'bashrc.txt'},
+        {name: 'a missing name gets the default', filename: undefined, mimeType: 'image/png', expected: 'download.png'}, // eslint-disable-line no-undefined
+        {name: 'a blank name gets the default', filename: '  ..  ', mimeType: 'application/json', expected: 'download.json'},
+        {name: 'a name of only removed characters gets the default', filename: '\u0000\u202E', mimeType: 'text/csv', expected: 'download.csv'},
+    ];
+
+    test.each(nameCases)('filename: $name', async ({filename, mimeType, expected}) => {
+        const {send, saveDownload, requestConsent} = setup();
+        send(download({filename, mimeType, data: 'x'}));
+        await flush();
+        expect(requestConsent).toHaveBeenCalledWith(expect.objectContaining({filename: expected}));
+        expect(saveDownload.mock.calls[0][1]).toBe(expected);
+    });
+
+    test('a long filename is capped and keeps its extension', async () => {
+        const {send, saveDownload} = setup();
+        send(download({filename: `${'\u{1F600}'.repeat(300)}.md`, mimeType: 'text/markdown', data: 'x'}));
+        await flush();
+        const filename: string = saveDownload.mock.calls[0][1];
+        expect(Array.from(filename)).toHaveLength(MAX_DOWNLOAD_FILENAME_LENGTH);
+        expect(filename.endsWith('\u{1F600}.md')).toBe(true);
+    });
+
+    const rejectCases: Array<{name: string; params?: () => Record<string, unknown>; code: string}> = [
+        {name: 'no params', code: 'invalid_params'},
+        {name: 'no data', params: () => ({filename: 'a.txt', mimeType: 'text/plain'}), code: 'invalid_params'},
+        {name: 'numeric data', params: () => ({mimeType: 'text/plain', data: 42}), code: 'invalid_params'},
+        {name: 'a plain object as data', params: () => ({mimeType: 'text/plain', data: {length: 1}}), code: 'invalid_params'},
+        {name: 'a non-string filename', params: () => ({filename: ['a.txt'], mimeType: 'text/plain', data: 'x'}), code: 'invalid_params'},
+        {name: 'a non-string mimeType', params: () => ({mimeType: {toString: () => 'text/plain'}, data: 'x'}), code: 'invalid_params'},
+        {name: 'no type at all', params: () => ({data: 'x'}), code: 'invalid_params'},
+        {name: 'a malformed base64 data: URL', params: () => ({data: 'data:image/png;base64,***'}), code: 'invalid_params'},
+        {name: 'text/html', params: () => ({mimeType: 'text/html', data: '<script>1</script>'}), code: 'unsupported_type'},
+        {name: 'application/xhtml+xml', params: () => ({mimeType: 'application/xhtml+xml', data: 'x'}), code: 'unsupported_type'},
+        {name: 'image/svg+xml', params: () => ({mimeType: 'image/svg+xml', data: '<svg/>'}), code: 'unsupported_type'},
+        {name: 'application/xml', params: () => ({mimeType: 'application/xml', data: 'x'}), code: 'unsupported_type'},
+        {name: 'text/javascript', params: () => ({mimeType: 'text/javascript', data: 'x'}), code: 'unsupported_type'},
+        {name: 'application/octet-stream', params: () => ({mimeType: 'application/octet-stream', data: 'x'}), code: 'unsupported_type'},
+        {name: 'application/x-msdownload', params: () => ({mimeType: 'application/x-msdownload', data: 'x'}), code: 'unsupported_type'},
+        {name: 'an HTML data: URL with no mimeType', params: () => ({data: 'data:text/html,<script>1</script>'}), code: 'unsupported_type'},
+        {name: 'an SVG Blob with no mimeType', params: () => ({data: new Blob(['<svg/>'], {type: 'image/svg+xml'})}), code: 'unsupported_type'},
+        {name: 'an allowed type with a smuggled suffix', params: () => ({mimeType: 'text/plain+html', data: 'x'}), code: 'unsupported_type'},
+        {name: 'an ArrayBuffer over the size cap', params: () => ({mimeType: 'image/png', data: new ArrayBuffer(MAX_ARTIFACT_DOWNLOAD_BYTES + 1)}), code: 'too_large'},
+        {name: 'a Blob over the size cap', params: () => ({mimeType: 'image/png', data: new Blob([new Uint8Array(MAX_ARTIFACT_DOWNLOAD_BYTES + 1)])}), code: 'too_large'},
+        {name: 'a string that encodes to more than the size cap', params: () => ({mimeType: 'text/plain', data: '\u00e9'.repeat((MAX_ARTIFACT_DOWNLOAD_BYTES / 2) + 1)}), code: 'too_large'},
+        {name: 'a string too long to decode', params: () => ({mimeType: 'text/plain', data: 'a'.repeat(MAX_ARTIFACT_DOWNLOAD_BYTES * 2)}), code: 'too_large'},
+    ];
+
+    test.each(rejectCases)('rejects $name with $code, without prompting or saving', async ({params, code}) => {
+        const {send, target, requestConsent, saveDownload} = setup();
+        send(download(params?.()));
+        await flush();
+        expect(errorCode(target)).toBe(code);
+        expect(requestConsent).not.toHaveBeenCalled();
+        expect(saveDownload).not.toHaveBeenCalled();
+        expect(isConsentPromptPending()).toBe(false);
+    });
+
+    test('a file of exactly the size cap is allowed', async () => {
+        const {send, saveDownload} = setup();
+        send(download({mimeType: 'image/png', data: new ArrayBuffer(MAX_ARTIFACT_DOWNLOAD_BYTES)}));
+        await flush();
+        expect(saveDownload.mock.calls[0][0].size).toBe(MAX_ARTIFACT_DOWNLOAD_BYTES);
+    });
+
+    test('cancelling rejects with permission_denied and saves nothing, and the next download asks again', async () => {
+        const {send, target, requestConsent, saveDownload} = setup({consent: () => Promise.resolve(false)});
+        send(download({mimeType: 'text/plain', data: 'x'}));
+        await flush();
+        expect(errorCode(target)).toBe('permission_denied');
+        expect(saveDownload).not.toHaveBeenCalled();
+        expect(target.postMessage.mock.calls[0][0]).not.toHaveProperty('result');
+
+        send(download({mimeType: 'text/plain', data: 'x'}, 'd2'));
+        await flush();
+        expect(requestConsent).toHaveBeenCalledTimes(2);
+        expect(errorCode(target, 'd2')).toBe('permission_denied');
+    });
+
+    test('a prompt dismissed without an answer rejects with permission_denied and saves nothing', async () => {
+        const never = () => new Promise<boolean>(() => undefined); // eslint-disable-line no-undefined
+        const {send, target, saveDownload, dismissConsent} = setup({consent: never});
+        send(download({mimeType: 'text/plain', data: 'x'}));
+        expect(isConsentPromptPending()).toBe(true);
+        cancelPendingConsent('file1');
+        await flush();
+        expect(dismissConsent).toHaveBeenCalledTimes(1);
+        expect(errorCode(target)).toBe('permission_denied');
+        expect(saveDownload).not.toHaveBeenCalled();
+        expect(isConsentPromptPending()).toBe(false);
+    });
+
+    test('a frame the viewer is not interacting with gets busy, and its data is never decoded', async () => {
+        const {send, target, requestConsent, saveDownload} = setup({canPrompt: () => false});
+        send(download({data: 'data:image/png;base64,***'}));
+        await flush();
+        expect(target.postMessage).toHaveBeenCalledTimes(1);
+        expect(target.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+            id: 'd1',
+            error: expect.objectContaining({code: 'busy', message: expect.stringContaining('interact with the artifact')}),
+        }), '*');
+        expect(requestConsent).not.toHaveBeenCalled();
+        expect(saveDownload).not.toHaveBeenCalled();
+    });
+
+    test('a second download while one is pending gets busy, and only the first is saved', async () => {
+        let resolve: (v: boolean) => void = () => undefined; // eslint-disable-line no-undefined
+        const {send, target, saveDownload} = setup({consent: () => new Promise<boolean>((r) => {
+            resolve = r;
+        })});
+        send(download({filename: 'first.txt', mimeType: 'text/plain', data: '1'}));
+        send(download({filename: 'second.txt', mimeType: 'text/plain', data: '2'}, 'd2'));
+        expect(errorCode(target, 'd2')).toBe('busy');
+
+        resolve(true);
+        await flush();
+        expect(saveDownload).toHaveBeenCalledTimes(1);
+        expect(saveDownload.mock.calls[0][1]).toBe('first.txt');
+    });
+
+    test('a pending profile prompt in another artifact makes a download busy', () => {
+        const first = setup({fileId: 'file1', consent: () => new Promise<boolean>(() => undefined)}); // eslint-disable-line no-undefined
+        const second = setup({fileId: 'file2'});
+        first.send({mmArtifact: 1, type: 'request', id: 'r1', method: 'getCurrentUser'});
+        second.send(download({mimeType: 'text/plain', data: 'x'}));
+        expect(second.requestConsent).not.toHaveBeenCalled();
+        expect(errorCode(second.target)).toBe('busy');
+    });
+
+    test('a remembered profile decision does not skip the download prompt', async () => {
+        const {send, requestConsent} = setup();
+        send({mmArtifact: 1, type: 'request', id: 'r1', method: 'getCurrentUser'});
+        await flush();
+        expect(getConsentDecision('u1', 'file1')).toBe('allow');
+        send(download({mimeType: 'text/plain', data: 'x'}));
+        await flush();
+        expect(requestConsent).toHaveBeenLastCalledWith(expect.objectContaining({kind: 'download'}));
+        expect(requestConsent).toHaveBeenCalledTimes(2);
+    });
+
+    test('nothing is saved when the broker is disposed before the viewer answers', async () => {
+        let resolve: (v: boolean) => void = () => undefined; // eslint-disable-line no-undefined
+        const {broker, send, saveDownload} = setup({consent: () => new Promise<boolean>((r) => {
+            resolve = r;
+        })});
+        send(download({mimeType: 'text/plain', data: 'x'}));
+        broker.dispose();
+        resolve(true);
+        await flush();
+        expect(saveDownload).not.toHaveBeenCalled();
+    });
+
+    test('a save that throws rejects with unavailable', async () => {
+        const {send, target} = setup({saveDownload: () => {
+            throw new Error('blocked');
+        }});
+        send(download({mimeType: 'text/plain', data: 'x'}));
+        await flush();
+        expect(errorCode(target)).toBe('unavailable');
+    });
+
+    test('the bridge checks the same size cap before cloning', () => {
+        const bridge = fs.readFileSync(path.resolve(__dirname, '../../../../api/artifact_bridge.js'), 'utf8');
+        const match = (/var MAX_DOWNLOAD_BYTES = ([\d\s*]+);/).exec(bridge);
+        expect(match).not.toBeNull();
+        expect(match![1].split('*').reduce((product, n) => product * Number(n), 1)).toBe(MAX_ARTIFACT_DOWNLOAD_BYTES);
     });
 });
 

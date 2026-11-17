@@ -4,7 +4,9 @@
 // Host side of the HTML artifact postMessage protocol v1. The artifact runs in
 // an opaque-origin sandboxed iframe; everything it sends is untrusted. This
 // module validates every message and answers only the v1 methods, gating any
-// user data behind the viewer's explicit consent.
+// user data and every download behind the viewer's explicit consent.
+
+import {ArtifactDownloadErrorCode, prepareArtifactDownload} from './artifact_download';
 
 export const ARTIFACT_PROTOCOL_VERSION = 1;
 
@@ -28,7 +30,15 @@ export interface ArtifactUser {
     displayName: string;
 }
 
-export type ArtifactErrorCode = 'permission_denied' | 'unknown_method' | 'busy' | 'unavailable';
+export type ArtifactErrorCode = 'permission_denied' | 'unknown_method' | 'busy' | 'unavailable' | ArtifactDownloadErrorCode;
+
+// What the consent prompt asks the viewer. A download shows the sanitized
+// name, allowlisted type and size of the file the host will save.
+export type ConsentRequest =
+    {kind: 'profile'} |
+    {kind: 'download'; filename: string; mimeType: string; size: number};
+
+type ConsentAnswer = 'allow' | 'deny' | 'dismissed';
 
 export type ArtifactInboundMessage =
     {mmArtifact: 1; type: 'ready'} |
@@ -235,7 +245,11 @@ export interface ArtifactBrokerOptions {
     getCurrentUser: () => ArtifactUser | null;
 
     // Shows the consent prompt; resolves true when the viewer allows.
-    requestConsent: () => Promise<boolean>;
+    requestConsent: (request: ConsentRequest) => Promise<boolean>;
+
+    // Saves a file the viewer agreed to download. Called right after they
+    // allowed it, while their click still counts as user activation.
+    saveDownload: (blob: Blob, filename: string) => void;
 
     // Hides a prompt shown by requestConsent after it was cancelled.
     dismissConsent?: () => void;
@@ -327,7 +341,7 @@ export class ArtifactBroker {
             this.opts.onEscape?.();
             break;
         case 'request':
-            this.handleRequest(msg.id, msg.method);
+            this.handleRequest(msg.id, msg.method, msg.params);
             break;
         }
         return true;
@@ -354,10 +368,13 @@ export class ArtifactBroker {
         this.post({mmArtifact: 1, type: 'response', id, error: {code, message}});
     }
 
-    private handleRequest(id: string, method: string) {
+    private handleRequest(id: string, method: string, params: Record<string, unknown> | undefined) {
         switch (method) {
         case 'getCurrentUser':
             this.handleGetCurrentUser(id);
+            return;
+        case 'download':
+            this.handleDownload(id, params);
             return;
         default:
             this.respondError(id, 'unknown_method', `Unknown method: ${method}`);
@@ -393,34 +410,16 @@ export class ArtifactBroker {
             this.respondError(id, 'permission_denied', 'The viewer declined access to their profile');
             return;
         }
-        if (pendingPrompt) {
-            this.respondError(id, 'busy', 'Another permission prompt is pending');
-            return;
-        }
-        if (this.opts.canPrompt && !this.opts.canPrompt()) {
-            this.respondError(id, 'busy', 'The viewer must interact with the artifact before it can ask for permission');
+        if (!this.canAsk(id)) {
             return;
         }
 
-        const prompt = {fileId, cancel: () => {}}; // eslint-disable-line no-empty-function
-        pendingPrompt = prompt;
-        new Promise<boolean>((resolve, reject) => {
-            prompt.cancel = () => {
-                this.opts.dismissConsent?.();
-                reject(new Error('cancelled'));
-            };
-            this.opts.requestConsent().then(resolve, reject);
-        }).then((allowed) => {
-            setConsentDecision(viewerId, fileId, allowed ? 'allow' : 'deny');
-            return allowed;
-        }, () => {
+        this.ask({kind: 'profile'}).then((answer) => {
             // Dismissed without an answer: no decision is recorded.
-            return false;
-        }).then((allowed) => {
-            if (pendingPrompt === prompt) {
-                pendingPrompt = null;
+            if (answer !== 'dismissed') {
+                setConsentDecision(viewerId, fileId, answer);
             }
-            if (allowed) {
+            if (answer === 'allow') {
                 // While the viewer was deciding, the artifact may have navigated
                 // its frame to a document that never fires load and listens for
                 // our reply. Only the bridge knows the token, so answer after
@@ -431,6 +430,73 @@ export class ArtifactBroker {
             } else {
                 this.respondError(id, 'permission_denied', 'The viewer declined access to their profile');
             }
+        });
+    }
+
+    // Every download is confirmed on its own: no decision is remembered.
+    private handleDownload(id: string, params: Record<string, unknown> | undefined) {
+        // Checked before the data is decoded, so an artifact cannot keep the
+        // host busy decoding files the viewer is never asked about.
+        if (!this.canAsk(id)) {
+            return;
+        }
+        const prepared = prepareArtifactDownload(params);
+        if (!prepared.ok) {
+            this.respondError(id, prepared.code, prepared.message);
+            return;
+        }
+        const {blob, filename, mimeType} = prepared.download;
+
+        this.ask({kind: 'download', filename, mimeType, size: blob.size}).then((answer) => {
+            if (this.disposed) {
+                return;
+            }
+            if (answer !== 'allow') {
+                this.respondError(id, 'permission_denied', 'The viewer cancelled the download');
+                return;
+            }
+            try {
+                this.opts.saveDownload(blob, filename);
+            } catch {
+                this.respondError(id, 'unavailable', 'The download could not be started');
+                return;
+            }
+            this.post({mmArtifact: 1, type: 'response', id, result: {filename}});
+        });
+    }
+
+    // canAsk answers busy and returns false when no prompt can be shown now.
+    private canAsk(id: string): boolean {
+        if (pendingPrompt) {
+            this.respondError(id, 'busy', 'Another permission prompt is pending');
+            return false;
+        }
+        if (this.opts.canPrompt && !this.opts.canPrompt()) {
+            this.respondError(id, 'busy', 'The viewer must interact with the artifact before it can ask for permission');
+            return false;
+        }
+        return true;
+    }
+
+    // ask shows the consent prompt, the only one pending across all frames
+    // until it is answered or dismissed.
+    private ask(request: ConsentRequest): Promise<ConsentAnswer> {
+        const prompt = {fileId: this.opts.fileId, cancel: () => {}}; // eslint-disable-line no-empty-function
+        pendingPrompt = prompt;
+        return new Promise<boolean>((resolve, reject) => {
+            prompt.cancel = () => {
+                this.opts.dismissConsent?.();
+                reject(new Error('cancelled'));
+            };
+            this.opts.requestConsent(request).then(resolve, reject);
+        }).then(
+            (allowed): ConsentAnswer => (allowed ? 'allow' : 'deny'),
+            (): ConsentAnswer => 'dismissed',
+        ).then((answer) => {
+            if (pendingPrompt === prompt) {
+                pendingPrompt = null;
+            }
+            return answer;
         });
     }
 }

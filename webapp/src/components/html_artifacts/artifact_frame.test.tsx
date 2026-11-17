@@ -750,6 +750,90 @@ describe('ArtifactFrame focus guard', () => {
         expect(posted).not.toHaveBeenCalledWith(expect.objectContaining({result: expect.anything()}), '*');
     });
 
+    describe('download', () => {
+        const request = (id: string, params: Record<string, unknown>) => ({mmArtifact: 1, type: 'request', id, method: 'download', params});
+        let createObjectURL: jest.Mock;
+        let revokeObjectURL: jest.Mock;
+        let saved: HTMLAnchorElement[];
+        beforeEach(() => {
+            createObjectURL = jest.fn(() => 'blob:http://localhost/saved');
+            revokeObjectURL = jest.fn();
+            Object.assign(URL, {createObjectURL, revokeObjectURL});
+            saved = [];
+            jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function recordSave(this: HTMLAnchorElement) {
+                saved.push(this);
+            });
+        });
+        afterEach(() => {
+            jest.restoreAllMocks();
+            delete (URL as Partial<typeof URL>).createObjectURL;
+            delete (URL as Partial<typeof URL>).revokeObjectURL;
+        });
+
+        test('the viewer sees the sanitized name, type and size, and the host page saves the file only once they confirm', async () => {
+            const {frame, win, send} = await renderReadyFrame({startedByClick: true});
+            focusArtifact(frame);
+            const posted = jest.spyOn(win, 'postMessage');
+            send(request('d1', {filename: 'chart.svg', mimeType: 'image/png', data: 'x'}));
+
+            const prompt = screen.getByRole('alertdialog', {name: 'Download a file?'});
+            expect(prompt.textContent).toContain('guard.html');
+            expect(prompt.textContent).toContain('chart.svg.png');
+            expect(prompt.textContent).toContain('(image/png, 1 byte)');
+            expect(screen.getByTestId('html-artifact-consent-allow').textContent).toBe('Download');
+            expect(screen.getByTestId('html-artifact-consent-deny').textContent).toBe('Cancel');
+            expect(saved).toHaveLength(0);
+
+            answerPrompt();
+            await flushLoad();
+            expect(saved).toHaveLength(1);
+            expect(saved[0].download).toBe('chart.svg.png');
+            expect(saved[0].href).toBe('blob:http://localhost/saved');
+            expect(saved[0].isConnected).toBe(false);
+            expect(createObjectURL.mock.calls[0][0].type).toBe('image/png');
+            expect(posted).toHaveBeenCalledWith({mmArtifact: 1, type: 'response', id: 'd1', result: {filename: 'chart.svg.png'}}, '*');
+
+            // The artifact keeps the keyboard, and the object URL is revoked.
+            expect(screen.getByTestId('html-artifact-frame').getAttribute('data-engaged')).toBe('true');
+            advance(60000);
+            expect(revokeObjectURL).toHaveBeenCalledWith('blob:http://localhost/saved');
+            expect(stopped()).toBeNull();
+        });
+
+        test('cancelling saves nothing and leaves the artifact disengaged, not stopped, until the viewer clicks it again', async () => {
+            const {frame, win, send} = await renderReadyFrame();
+            act(() => composer.focus());
+            trustedClick(interact()!);
+            expect(document.activeElement).toBe(frame);
+            const posted = jest.spyOn(win, 'postMessage');
+            send(request('d1', {mimeType: 'text/plain', data: 'x'}));
+            expect(screen.getByTestId('html-artifact-consent')).toBeTruthy();
+
+            act(() => {
+                jest.advanceTimersByTime(CONSENT_ARM_DELAY_MS);
+            });
+            fireEvent.click(screen.getByTestId('html-artifact-consent-deny'));
+            await flushLoad();
+            expect(screen.queryByTestId('html-artifact-consent')).toBeNull();
+            expect(posted).toHaveBeenCalledWith(expect.objectContaining({id: 'd1', error: expect.objectContaining({code: 'permission_denied'})}), '*');
+            expect(saved).toHaveLength(0);
+
+            expect(interact()).not.toBeNull();
+            expect(document.activeElement).toBe(composer);
+            advance(1000);
+            expect(stopped()).toBeNull();
+
+            // Asking again right away gets no prompt.
+            send(request('d2', {mimeType: 'text/plain', data: 'x'}));
+            expect(screen.queryByTestId('html-artifact-consent')).toBeNull();
+            expect(posted).toHaveBeenCalledWith(expect.objectContaining({id: 'd2', error: expect.objectContaining({code: 'busy'})}), '*');
+
+            trustedClick(interact()!);
+            send(request('d3', {mimeType: 'text/plain', data: 'x'}));
+            expect(screen.getByTestId('html-artifact-consent')).toBeTruthy();
+        });
+    });
+
     test('an artifact that takes focus and opens a prompt at once gets no prompt and is stopped', async () => {
         const {frame, inner} = await renderReadyFrame();
         act(() => composer.focus());
@@ -929,6 +1013,7 @@ describe('ArtifactConsentPrompt focus handling', () => {
         const {unmount} = render(withProviders(
             <ArtifactConsentPrompt
                 fileName='dash.html'
+                request={{kind: 'profile'}}
                 onAllow={jest.fn()}
                 onDeny={jest.fn()}
             />,
@@ -947,6 +1032,7 @@ describe('ArtifactConsentPrompt focus handling', () => {
         const {unmount} = render(withProviders(
             <ArtifactConsentPrompt
                 fileName='dash.html'
+                request={{kind: 'profile'}}
                 onAllow={jest.fn()}
                 onDeny={jest.fn()}
             />,
@@ -963,6 +1049,7 @@ describe('ArtifactConsentPrompt focus handling', () => {
         render(withProviders(
             <ArtifactConsentPrompt
                 fileName='dash.html'
+                request={{kind: 'profile'}}
                 onAllow={jest.fn()}
                 onDeny={jest.fn()}
             />,
@@ -975,6 +1062,7 @@ describe('ArtifactConsentPrompt focus handling', () => {
         render(withProviders(
             <ArtifactConsentPrompt
                 fileName='dash.html'
+                request={{kind: 'profile'}}
                 onAllow={jest.fn()}
                 onDeny={jest.fn()}
             />,

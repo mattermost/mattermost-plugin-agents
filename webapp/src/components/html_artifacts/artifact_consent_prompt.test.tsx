@@ -36,6 +36,7 @@ function renderPrompt() {
     render(
         <ArtifactConsentPrompt
             fileName='dash.html'
+            request={{kind: 'profile'}}
             onAllow={onAllow}
             onDeny={onDeny}
         />,

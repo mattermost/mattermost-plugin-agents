@@ -2,12 +2,14 @@
 // See LICENSE.txt for license information.
 
 import React, {useCallback, useEffect, useRef, useState} from 'react';
-import {FormattedMessage} from 'react-intl';
+import {FormattedMessage, useIntl} from 'react-intl';
 import styled from 'styled-components';
 
 import {Button} from '@mattermost/compass-ui/components/button';
 import {Icon} from '@mattermost/compass-ui/components/icon';
-import {ShieldLockOutlineIcon} from '@mattermost/compass-icons/components';
+import {DownloadOutlineIcon, ShieldLockOutlineIcon} from '@mattermost/compass-icons/components';
+
+import {ConsentRequest} from './artifact_broker';
 
 // The artifact decides when this prompt appears, so it could time it under
 // the viewer's cursor while they click quickly. Answers are ignored until the
@@ -16,11 +18,29 @@ export const CONSENT_ARM_DELAY_MS = 600;
 
 interface Props {
     fileName: string;
+    request: ConsentRequest;
     onAllow: () => void;
     onDeny: () => void;
 }
 
-const ArtifactConsentPrompt = ({fileName, onAllow, onDeny}: Props) => {
+export function formatByteSize(bytes: number, locale: string): string {
+    const units = ['byte', 'kilobyte', 'megabyte'];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit++;
+    }
+    return new Intl.NumberFormat(locale, {
+        style: 'unit',
+        unit: units[unit],
+        unitDisplay: unit === 0 ? 'long' : 'short',
+        maximumFractionDigits: unit === 0 ? 0 : 1,
+    }).format(value);
+}
+
+const ArtifactConsentPrompt = ({fileName, request, onAllow, onDeny}: Props) => {
+    const intl = useIntl();
     const denyRef = useRef<HTMLButtonElement>(null);
     const dialogRef = useRef<HTMLDivElement>(null);
     const [armed, setArmed] = useState(false);
@@ -128,18 +148,35 @@ const ArtifactConsentPrompt = ({fileName, onAllow, onDeny}: Props) => {
                 <Heading id='html-artifact-consent-heading'>
                     <Icon
                         size='20'
-                        glyph={<ShieldLockOutlineIcon/>}
+                        glyph={request.kind === 'download' ? <DownloadOutlineIcon/> : <ShieldLockOutlineIcon/>}
                     />
-                    <FormattedMessage defaultMessage='Allow access to your profile?'/>
+                    {request.kind === 'download' ? (
+                        <FormattedMessage defaultMessage='Download a file?'/>
+                    ) : (
+                        <FormattedMessage defaultMessage='Allow access to your profile?'/>
+                    )}
                 </Heading>
                 <Text id='html-artifact-consent-text'>
-                    <FormattedMessage
-                        defaultMessage='<b>{fileName}</b> wants to read your name (first name, last name, nickname and display name) and username.'
-                        values={{
-                            fileName,
-                            b: (chunks: React.ReactNode) => <strong>{chunks}</strong>,
-                        }}
-                    />
+                    {request.kind === 'download' ? (
+                        <FormattedMessage
+                            defaultMessage='<b>{fileName}</b> wants to save <b>{downloadName}</b> ({mimeType}, {size}) to your device. Open it only if you trust its content.'
+                            values={{
+                                fileName,
+                                downloadName: request.filename,
+                                mimeType: request.mimeType,
+                                size: formatByteSize(request.size, intl.locale),
+                                b: (chunks: React.ReactNode) => <strong>{chunks}</strong>,
+                            }}
+                        />
+                    ) : (
+                        <FormattedMessage
+                            defaultMessage='<b>{fileName}</b> wants to read your name (first name, last name, nickname and display name) and username.'
+                            values={{
+                                fileName,
+                                b: (chunks: React.ReactNode) => <strong>{chunks}</strong>,
+                            }}
+                        />
+                    )}
                 </Text>
                 <Actions
                     $armed={armed}
@@ -155,7 +192,11 @@ const ArtifactConsentPrompt = ({fileName, onAllow, onDeny}: Props) => {
                         onClick={guarded('deny', onDeny)}
                         data-testid='html-artifact-consent-deny'
                     >
-                        <FormattedMessage defaultMessage='Deny'/>
+                        {request.kind === 'download' ? (
+                            <FormattedMessage defaultMessage='Cancel'/>
+                        ) : (
+                            <FormattedMessage defaultMessage='Deny'/>
+                        )}
                     </Button>
                     <Button
                         emphasis='primary'
@@ -169,7 +210,11 @@ const ArtifactConsentPrompt = ({fileName, onAllow, onDeny}: Props) => {
                         onClick={guarded('allow', onAllow)}
                         data-testid='html-artifact-consent-allow'
                     >
-                        <FormattedMessage defaultMessage='Allow'/>
+                        {request.kind === 'download' ? (
+                            <FormattedMessage defaultMessage='Download'/>
+                        ) : (
+                            <FormattedMessage defaultMessage='Allow'/>
+                        )}
                     </Button>
                 </Actions>
             </Dialog>

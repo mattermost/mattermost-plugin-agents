@@ -18,6 +18,7 @@ import {
     ArtifactBroker,
     ArtifactContext,
     ArtifactUser,
+    ConsentRequest,
     DisplayMode,
     colorSchemeFor,
     readThemeFromCSS,
@@ -27,7 +28,7 @@ import ArtifactConsentPrompt from './artifact_consent_prompt';
 import ArtifactInteractOverlay from './artifact_interact_overlay';
 import {newArtifactNonce} from './artifact_token';
 import {isolatedFrameRegistry} from './isolated_frames';
-import {downloadArtifact} from './download';
+import {downloadArtifact, saveBlob} from './download';
 
 export const MIN_INLINE_HEIGHT = 120;
 export const MAX_INLINE_HEIGHT = 600;
@@ -115,6 +116,7 @@ type Status = 'loading' | 'ready' | 'error';
 type StopReason = 'navigation' | 'focus' | 'unresponsive';
 
 interface PendingConsent {
+    request: ConsentRequest;
     resolve: (allowed: boolean) => void;
     reject: () => void;
 }
@@ -254,11 +256,12 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
         getTargetWindow: () => innerRef.current?.contentWindow,
         getContext: () => contextRef.current,
         getCurrentUser: () => userRef.current,
-        requestConsent: () => new Promise<boolean>((resolve, reject) => {
+        requestConsent: (request) => new Promise<boolean>((resolve, reject) => {
             consentReturnsToFrameRef.current = engagedRef.current && Boolean(iframeRef.current) && document.activeElement === iframeRef.current;
-            setPendingConsent({resolve, reject});
+            setPendingConsent({request, resolve, reject});
         }),
         dismissConsent: () => setPendingConsent(null),
+        saveDownload: saveBlob,
         canPrompt: () => !obscuredRef.current && engagedRef.current,
         onReady: () => setStatus('ready'),
         onHeartbeat: () => {
@@ -644,28 +647,42 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
     }, [setEngaged, focusArtifact]);
 
     const refocusAfterConsentRef = useRef(false);
+    const releaseAfterConsentRef = useRef(false);
     const answerConsent = useCallback((allowed: boolean) => {
-        // The prompt is about to hand focus back to this artifact, which had
-        // it when the prompt opened; the viewer answering it is returning there.
-        if (consentReturnsToFrameRef.current && !unresponsiveRef.current) {
+        const pending = pendingConsentRef.current;
+        if (pending?.request.kind === 'download' && !allowed) {
+            // Downloads are never remembered, so an artifact could ask again
+            // the moment one is cancelled: it must be clicked first.
+            setEngaged(false);
+            releaseAfterConsentRef.current = true;
+        } else if (consentReturnsToFrameRef.current && !unresponsiveRef.current) {
+            // The prompt is about to hand focus back to this artifact, which had
+            // it when the prompt opened; the viewer answering it is returning there.
             setEngaged(true);
             refocusAfterConsentRef.current = true;
         }
-        pendingConsentRef.current?.resolve(allowed);
+        pending?.resolve(allowed);
         setPendingConsent(null);
     }, [setEngaged]);
 
     // The prompt gives focus back to the wrapper element as it unmounts,
-    // which leaves keystrokes in the wrapper document; pass them on to the artifact.
+    // which leaves keystrokes in the wrapper document; pass them on to the
+    // artifact, or, when it was disengaged, back to the page.
     useEffect(() => {
-        if (pendingConsent || !refocusAfterConsentRef.current) {
+        if (pendingConsent) {
             return;
         }
-        refocusAfterConsentRef.current = false;
-        if (document.activeElement === iframeRef.current) {
-            focusArtifact();
+        if (releaseAfterConsentRef.current) {
+            releaseAfterConsentRef.current = false;
+            releaseFocus();
         }
-    }, [pendingConsent, focusArtifact]);
+        if (refocusAfterConsentRef.current) {
+            refocusAfterConsentRef.current = false;
+            if (document.activeElement === iframeRef.current) {
+                focusArtifact();
+            }
+        }
+    }, [pendingConsent, focusArtifact, releaseFocus]);
 
     useEffect(() => {
         if (innerRef.current) {
@@ -804,6 +821,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
             {pendingConsent && (
                 <ArtifactConsentPrompt
                     fileName={fileName}
+                    request={pendingConsent.request}
                     onAllow={() => answerConsent(true)}
                     onDeny={() => answerConsent(false)}
                 />
