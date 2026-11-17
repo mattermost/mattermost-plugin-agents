@@ -12,7 +12,7 @@ import {
     agentAdminUsername, agentAdminPassword,
     agentRegularUsername, agentRegularPassword,
     agentUnprivilegedUsername, agentUnprivilegedPassword,
-    mockServiceId, secondServiceId,
+    mockServiceId, secondServiceId, secondServiceApiKey,
 } from 'helpers/agent-container';
 import { AgentAPIHelper, AgentExportDocument, AgentResponse, EnabledTool } from 'helpers/agent-api';
 import { AgentPageHelper } from 'helpers/agent-page';
@@ -313,7 +313,12 @@ test.describe('Agent versioning, export and import', () => {
             const current = await agentApi.getAgent(token, agent.id);
             expect(current).toMatchObject({ serviceID: mockServiceId, customInstructions: 'Moved to the mock service.' });
         } finally {
-            await configApi.put(originalConfig);
+            // The read returns the mask for stored keys, and the removed service
+            // has no stored key left to restore it from, so supply its key again.
+            const restoredServices = (originalConfig.services ?? []).map((s: {id: string}) => (
+                s.id === secondServiceId ? {...s, apiKey: secondServiceApiKey} : s
+            ));
+            await configApi.put({ ...originalConfig, services: restoredServices });
         }
     });
 
