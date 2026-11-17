@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
@@ -106,10 +107,17 @@ func (a *API) handleGetConversation(c *gin.Context) {
 
 	// 4. Privacy filtering and display sanitization
 	anchoredPostText := a.anchoredPostTextLookup(conv.ChannelID)
-	turnResponses, err := turnsToResponse(turns, userID != conv.UserID, anchoredPostText)
+	turnResponses, openingTextChanged, err := turnsToResponse(turns, userID != conv.UserID, anchoredPostText)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to sanitize turns: %w", err))
 		return
+	}
+
+	// The title is generated from the opening turn's text, so it goes with
+	// that text when the post no longer reads as the turn stored it.
+	title := conv.Title
+	if openingTextChanged {
+		title = ""
 	}
 
 	// 5. Build response
@@ -119,7 +127,7 @@ func (a *API) handleGetConversation(c *gin.Context) {
 		BotID:      conv.BotID,
 		ChannelID:  conv.ChannelID,
 		RootPostID: conv.RootPostID,
-		Title:      conv.Title,
+		Title:      title,
 		Operation:  conv.Operation,
 		Turns:      turnResponses,
 	}
@@ -223,12 +231,13 @@ func turnsToResponse(
 	turns []store.Turn,
 	filterForNonRequester bool,
 	anchoredPostText func(postID string) (string, bool),
-) ([]TurnResponse, error) {
+) ([]TurnResponse, bool, error) {
 	result := make([]TurnResponse, len(turns))
+	openingTextChanged := false
 	for i, turn := range turns {
 		var blocks []conversation.ContentBlock
 		if err := json.Unmarshal(turn.Content, &blocks); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal turn content: %w", err)
+			return nil, false, fmt.Errorf("failed to unmarshal turn content: %w", err)
 		}
 		if filterForNonRequester {
 			blocks = conversation.FilterForNonRequester(blocks)
@@ -239,13 +248,16 @@ func turnsToResponse(
 				}
 				if message != stored {
 					blocks = conversation.WithTextContent(blocks, message)
+					if i == 0 && message != withoutLeadingMention(stored) {
+						openingTextChanged = true
+					}
 				}
 			}
 		}
 		sanitized := conversation.SanitizeForDisplay(blocks)
 		sanitizedJSON, err := json.Marshal(sanitized)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal sanitized content: %w", err)
+			return nil, false, fmt.Errorf("failed to marshal sanitized content: %w", err)
 		}
 		result[i] = TurnResponse{
 			ID:            turn.ID,
@@ -260,5 +272,19 @@ func turnsToResponse(
 			RunPostID:     turn.RunPostID,
 		}
 	}
-	return result, nil
+	return result, openingTextChanged, nil
+}
+
+// withoutLeadingMention drops the "@agent " the plugin puts in front of the
+// text of a turn it answers on its own (auto-reply, loop-in), which the post
+// itself never carried.
+func withoutLeadingMention(text string) string {
+	if !strings.HasPrefix(text, "@") {
+		return text
+	}
+	_, rest, found := strings.Cut(text, " ")
+	if !found {
+		return text
+	}
+	return rest
 }

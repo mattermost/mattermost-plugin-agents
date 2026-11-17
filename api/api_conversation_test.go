@@ -1317,7 +1317,7 @@ func TestTurnsToResponseIncludesStatus(t *testing.T) {
 		{ID: "complete-turn", Role: "assistant", Content: json.RawMessage(`[]`), Status: store.TurnStatusComplete},
 	}
 
-	resp, err := turnsToResponse(turns, false, nil)
+	resp, _, err := turnsToResponse(turns, false, nil)
 	require.NoError(t, err)
 	require.Len(t, resp, 2)
 	require.Equal(t, store.TurnStatusStreaming, resp[0].Status)
@@ -1407,6 +1407,8 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 		absent []string
 		// texts are the expected turn texts, in order, when the request succeeds.
 		texts []string
+		// wantTitle is the conversation title expected when the request succeeds.
+		wantTitle string
 	}{
 		{
 			name:           "text edited out of the root post is absent from the whole body",
@@ -1414,12 +1416,13 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 			userID:         testOtherUserID,
 			member:         true,
 			setup: func(t *testing.T, e *TestEnvironment) {
-				anchoredThread(t, e, "conv-edited", "Edited", map[string]string{anchoredUserPostID: secretEditedAway},
+				anchoredThread(t, e, "conv-edited", "Question about "+secretEditedAway, map[string]string{anchoredUserPostID: secretEditedAway},
 					[]*model.Post{livePost(anchoredUserPostID, "", editedReplacement)})
 			},
-			status: http.StatusOK,
-			absent: []string{secretEditedAway},
-			texts:  []string{editedReplacement},
+			status:    http.StatusOK,
+			absent:    []string{secretEditedAway},
+			texts:     []string{editedReplacement},
+			wantTitle: "",
 		},
 		{
 			name:           "deleted mid-thread reply is absent while the root stays readable",
@@ -1427,7 +1430,7 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 			userID:         testOtherUserID,
 			member:         true,
 			setup: func(t *testing.T, e *TestEnvironment) {
-				anchoredThread(t, e, "conv-reply-deleted", "Thread", map[string]string{
+				anchoredThread(t, e, "conv-reply-deleted", "Thread title", map[string]string{
 					anchoredUserPostID: threadRootMessage,
 					secretReplyPostID:  secretDeletedReply,
 				}, []*model.Post{
@@ -1435,9 +1438,10 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 					deletedPost(secretReplyPostID, anchoredUserPostID, secretDeletedReply),
 				})
 			},
-			status: http.StatusOK,
-			absent: []string{secretDeletedReply},
-			texts:  []string{threadRootMessage, ""},
+			status:    http.StatusOK,
+			absent:    []string{secretDeletedReply},
+			texts:     []string{threadRootMessage, ""},
+			wantTitle: "Thread title",
 		},
 		{
 			name:           "reply that no longer exists is absent from the whole body",
@@ -1445,7 +1449,7 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 			userID:         testOtherUserID,
 			member:         true,
 			setup: func(t *testing.T, e *TestEnvironment) {
-				anchoredThread(t, e, "conv-reply-gone", "Thread", map[string]string{
+				anchoredThread(t, e, "conv-reply-gone", "Thread title", map[string]string{
 					anchoredUserPostID: threadRootMessage,
 					secretReplyPostID:  secretDeletedReply,
 				}, []*model.Post{livePost(anchoredUserPostID, "", threadRootMessage)})
@@ -1455,9 +1459,10 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 					Content: mustMarshalBlocks(t, []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: secretDeletedReply}}),
 				})
 			},
-			status: http.StatusOK,
-			absent: []string{secretDeletedReply},
-			texts:  []string{threadRootMessage, ""},
+			status:    http.StatusOK,
+			absent:    []string{secretDeletedReply},
+			texts:     []string{threadRootMessage, ""},
+			wantTitle: "Thread title",
 		},
 		{
 			name:           "auto-reply thread keeps the post text, not a blank turn",
@@ -1465,11 +1470,12 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 			userID:         testOtherUserID,
 			member:         true,
 			setup: func(t *testing.T, e *TestEnvironment) {
-				anchoredThread(t, e, "conv-auto-reply", "Auto reply", map[string]string{anchoredUserPostID: "@agent " + threadRootMessage},
+				anchoredThread(t, e, "conv-auto-reply", "Auto reply title", map[string]string{anchoredUserPostID: "@agent " + threadRootMessage},
 					[]*model.Post{livePost(anchoredUserPostID, "", threadRootMessage)})
 			},
-			status: http.StatusOK,
-			texts:  []string{threadRootMessage},
+			status:    http.StatusOK,
+			texts:     []string{threadRootMessage},
+			wantTitle: "Auto reply title",
 		},
 		{
 			name:           "loop-in thread keeps the post text, not a blank turn",
@@ -1477,11 +1483,49 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 			userID:         testOtherUserID,
 			member:         true,
 			setup: func(t *testing.T, e *TestEnvironment) {
-				anchoredThread(t, e, "conv-loop-in", "Loop in", map[string]string{anchoredUserPostID: "@other-agent " + threadRootMessage},
+				anchoredThread(t, e, "conv-loop-in", "Loop in title", map[string]string{anchoredUserPostID: "@other-agent " + threadRootMessage},
 					[]*model.Post{livePost(anchoredUserPostID, "", threadRootMessage)})
 			},
-			status: http.StatusOK,
-			texts:  []string{threadRootMessage},
+			status:    http.StatusOK,
+			texts:     []string{threadRootMessage},
+			wantTitle: "Loop in title",
+		},
+		{
+			conversationID: "conv-opening-deleted",
+			name:           "title written from a deleted opening post is blanked from the whole body",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-opening-deleted", "Question about "+secretEditedAway, map[string]string{
+					anchoredUserPostID: secretEditedAway,
+					secretReplyPostID:  threadRootMessage,
+				}, []*model.Post{
+					deletedPost(anchoredUserPostID, "", secretEditedAway),
+					livePost(secretReplyPostID, anchoredUserPostID, threadRootMessage),
+				})
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretEditedAway},
+			texts:     []string{"", threadRootMessage},
+			wantTitle: "",
+		},
+		{
+			conversationID: "conv-opening-missing",
+			name:           "title written from a missing opening post is blanked from the whole body",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-opening-missing", "Question about "+secretEditedAway, nil, nil)
+				postID := anchoredUserPostID
+				e.conversationStore.turns["conv-opening-missing"] = []store.Turn{{
+					ID: "turn-missing", ConversationID: "conv-opening-missing", PostID: &postID, Role: "user", Sequence: 1,
+					Content: mustMarshalBlocks(t, []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: secretEditedAway}}),
+				}}
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretEditedAway},
+			texts:     []string{""},
+			wantTitle: "",
 		},
 		{
 			name:           "non-member gets 403 and no turn text",
@@ -1489,7 +1533,7 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 			userID:         testOtherUserID,
 			member:         false,
 			setup: func(t *testing.T, e *TestEnvironment) {
-				anchoredThread(t, e, "conv-nonmember", "Edited", map[string]string{anchoredUserPostID: secretEditedAway},
+				anchoredThread(t, e, "conv-nonmember", "Question about "+secretEditedAway, map[string]string{anchoredUserPostID: secretEditedAway},
 					[]*model.Post{livePost(anchoredUserPostID, "", editedReplacement)})
 			},
 			status: http.StatusForbidden,
@@ -1501,7 +1545,7 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 			userID:         testUserID,
 			member:         true,
 			setup: func(t *testing.T, e *TestEnvironment) {
-				anchoredThread(t, e, "conv-owner", "Owner", map[string]string{
+				anchoredThread(t, e, "conv-owner", "Question about "+secretEditedAway, map[string]string{
 					anchoredUserPostID: secretEditedAway,
 					secretReplyPostID:  secretDeletedReply,
 				}, []*model.Post{
@@ -1509,8 +1553,9 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 					deletedPost(secretReplyPostID, anchoredUserPostID, secretDeletedReply),
 				})
 			},
-			status: http.StatusOK,
-			texts:  []string{secretEditedAway, secretDeletedReply},
+			status:    http.StatusOK,
+			texts:     []string{secretEditedAway, secretDeletedReply},
+			wantTitle: "Question about " + secretEditedAway,
 		},
 	}
 
@@ -1537,6 +1582,7 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 			for i, want := range tt.texts {
 				assert.Equal(t, want, textOfTurn(t, response.Turns[i]))
 			}
+			assert.Equal(t, tt.wantTitle, response.Title)
 		})
 	}
 }
