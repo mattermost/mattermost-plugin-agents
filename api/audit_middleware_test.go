@@ -256,6 +256,7 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		{event: AuditEventPinChannelContextPost, method: http.MethodPost, path: "/channel/channelid/context_posts"},
 		{event: AuditEventUnpinChannelContextPost, method: http.MethodDelete, path: "/channel/channelid/context_posts/postid"},
 		{event: AuditEventRenameConversation, method: http.MethodPut, path: "/conversations/conversationid/title"},
+		{event: AuditEventArchiveConversation, method: http.MethodPost, path: "/conversations/conversationid/archive"},
 		{event: AuditEventMCPOAuthCallback, method: http.MethodGet, path: "/oauth/callback"},
 		{event: AuditEventMCPOAuthStart, method: http.MethodGet, path: "/mcp/oauth/someserver/start"},
 		{event: AuditEventMCPOAuthDisconnect, method: http.MethodDelete, path: "/mcp/oauth/someserver"},

@@ -257,6 +257,81 @@ func TestStreamResponsesEmitsServerToolActivity(t *testing.T) {
 	}
 }
 
+// Gemini sends grounding metadata only on the finish chunk, so Bifrost reports
+// the search after every text delta it grounded.
+func TestStreamResponsesMarksGeminiSearchRetroactive(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, data := range []string{
+			`{"candidates":[{"content":{"parts":[{"text":"Norris won"}],"role":"model"},"index":0}],"modelVersion":"gemini-3.8-flash","responseId":"resp_1"}`,
+			`{"candidates":[{"content":{"parts":[{"text":" the race."}],"role":"model"},"index":0}],"modelVersion":"gemini-3.8-flash","responseId":"resp_1"}`,
+			`{"candidates":[{"content":{"parts":[{"text":""}],"role":"model"},"finishReason":"STOP","index":0,"groundingMetadata":{"webSearchQueries":["latest f1 winner"],"groundingChunks":[{"web":{"uri":"https://example.com/f1","title":"example.com"}}],"groundingSupports":[{"segment":{"startIndex":0,"endIndex":10,"text":"Norris won"},"groundingChunkIndices":[0]}]}}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"totalTokenCount":15},"modelVersion":"gemini-3.8-flash","responseId":"resp_1"}`,
+		} {
+			fmt.Fprintf(w, "data: %s\n\n", data)
+		}
+	}))
+	defer backend.Close()
+
+	llmClient, err := New(Config{
+		Provider:           schemas.Gemini,
+		APIKey:             "test-key",
+		APIURL:             backend.URL,
+		DefaultModel:       "gemini-3.8-flash",
+		StreamingTimeout:   10 * time.Second,
+		EnabledNativeTools: []string{llm.NativeToolWebSearch},
+	})
+	require.NoError(t, err)
+	defer llmClient.Shutdown()
+
+	result, err := llmClient.ChatCompletion(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "who won?"}},
+	})
+	require.NoError(t, err)
+
+	var text strings.Builder
+	var final []llm.ServerToolUse
+	for event := range result.Stream {
+		switch event.Type {
+		case llm.EventTypeText:
+			text.WriteString(event.Value.(string))
+		case llm.EventTypeServerToolUse:
+			uses := event.Value.([]llm.ServerToolUse)
+			require.NotEmpty(t, uses)
+			assert.True(t, uses[0].Retroactive, "every snapshot must carry the flag; the first one positions the invocation")
+			final = uses
+		case llm.EventTypeError:
+			t.Fatalf("unexpected stream error: %v", event.Value)
+		}
+	}
+
+	assert.Equal(t, "Norris won the race.", text.String())
+	require.Len(t, final, 1)
+	assert.Equal(t, llm.NativeToolWebSearch, final[0].Tool)
+	assert.Equal(t, llm.ServerToolStatusSuccess, final[0].Status)
+	assert.Equal(t, "latest f1 winner", final[0].Query)
+}
+
+func TestReportsSearchAfterOutput(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider schemas.ModelProvider
+		model    string
+		want     bool
+	}{
+		{name: "gemini", provider: schemas.Gemini, model: "gemini-3.8-flash", want: true},
+		{name: "gemini model on vertex", provider: schemas.Vertex, model: "gemini-3.8-flash", want: true},
+		{name: "claude on vertex streams searches in order", provider: schemas.Vertex, model: "claude-sonnet-4-6", want: false},
+		{name: "anthropic", provider: schemas.Anthropic, model: "claude-sonnet-4-6", want: false},
+		{name: "openai", provider: schemas.OpenAI, model: "gpt-5.5", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+			assert.Equal(t, tt.want, reportsSearchAfterOutput(ctx, tt.provider, tt.model))
+		})
+	}
+}
+
 func TestStreamResponsesCapturesFallbackFileRoute(t *testing.T) {
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, `{"type":"error","error":{"type":"overloaded_error"}}`, http.StatusServiceUnavailable)
