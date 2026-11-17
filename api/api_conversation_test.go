@@ -5,6 +5,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1321,4 +1322,221 @@ func TestTurnsToResponseIncludesStatus(t *testing.T) {
 	require.Len(t, resp, 2)
 	require.Equal(t, store.TurnStatusStreaming, resp[0].Status)
 	require.Equal(t, store.TurnStatusComplete, resp[1].Status)
+}
+
+const (
+	secretEditedAway   = "MARKER-ALPHA pasted secret"
+	secretDeletedReply = "MARKER-BETA pasted secret"
+	editedReplacement  = "edited text without the secret"
+	threadRootMessage  = "root question"
+	secretReplyPostID  = "replypost123456789012345a"
+)
+
+// anchoredThread seeds a channel conversation owned by testUserID with one
+// user turn per entry of posts, anchored to that post, and arms the post
+// lookup so each post returns as given.
+func anchoredThread(t *testing.T, e *TestEnvironment, conversationID, title string, stored map[string]string, posts []*model.Post) {
+	t.Helper()
+
+	channelID := testChannelID
+	e.conversationStore.conversations[conversationID] = &store.Conversation{
+		ID:        conversationID,
+		UserID:    testUserID,
+		BotID:     testBotUserID,
+		ChannelID: &channelID,
+		Title:     title,
+		Operation: "conversation",
+	}
+
+	var turns []store.Turn
+	for i, post := range posts {
+		postID := post.Id
+		turns = append(turns, store.Turn{
+			ID:             fmt.Sprintf("turn-%d", i),
+			ConversationID: conversationID,
+			PostID:         &postID,
+			Role:           "user",
+			Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+				{Type: conversation.BlockTypeText, Text: stored[post.Id]},
+			}),
+			Sequence: i + 1,
+		})
+		e.mockAPI.On("GetPost", post.Id).Return(post, nil).Maybe()
+	}
+	e.conversationStore.turns[conversationID] = turns
+	allowAnyPostLookup(e.mockAPI)
+}
+
+func getConversationResponse(t *testing.T, e *TestEnvironment, conversationID, userID string) (int, []byte) {
+	t.Helper()
+
+	request := httptest.NewRequest(http.MethodGet, "/conversations/"+conversationID, nil)
+	request.Header.Add("Mattermost-User-ID", userID)
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+
+	resp := recorder.Result()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	return resp.StatusCode, body
+}
+
+func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	livePost := func(id, rootID, message string) *model.Post {
+		return &model.Post{Id: id, UserId: testUserID, ChannelId: testChannelID, RootId: rootID, Message: message}
+	}
+	deletedPost := func(id, rootID, message string) *model.Post {
+		post := livePost(id, rootID, message)
+		post.DeleteAt = model.GetMillis()
+		return post
+	}
+
+	tests := []struct {
+		name           string
+		conversationID string
+		userID         string
+		// member is false for a user without read access to the channel.
+		member bool
+		setup  func(t *testing.T, e *TestEnvironment)
+		status int
+		// absent are strings that must not appear anywhere in the response body.
+		absent []string
+		// texts are the expected turn texts, in order, when the request succeeds.
+		texts []string
+	}{
+		{
+			name:           "text edited out of the root post is absent from the whole body",
+			conversationID: "conv-edited",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-edited", "Edited", map[string]string{anchoredUserPostID: secretEditedAway},
+					[]*model.Post{livePost(anchoredUserPostID, "", editedReplacement)})
+			},
+			status: http.StatusOK,
+			absent: []string{secretEditedAway},
+			texts:  []string{editedReplacement},
+		},
+		{
+			name:           "deleted mid-thread reply is absent while the root stays readable",
+			conversationID: "conv-reply-deleted",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-reply-deleted", "Thread", map[string]string{
+					anchoredUserPostID: threadRootMessage,
+					secretReplyPostID:  secretDeletedReply,
+				}, []*model.Post{
+					livePost(anchoredUserPostID, "", threadRootMessage),
+					deletedPost(secretReplyPostID, anchoredUserPostID, secretDeletedReply),
+				})
+			},
+			status: http.StatusOK,
+			absent: []string{secretDeletedReply},
+			texts:  []string{threadRootMessage, ""},
+		},
+		{
+			name:           "reply that no longer exists is absent from the whole body",
+			conversationID: "conv-reply-gone",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-reply-gone", "Thread", map[string]string{
+					anchoredUserPostID: threadRootMessage,
+					secretReplyPostID:  secretDeletedReply,
+				}, []*model.Post{livePost(anchoredUserPostID, "", threadRootMessage)})
+				postID := secretReplyPostID
+				e.conversationStore.turns["conv-reply-gone"] = append(e.conversationStore.turns["conv-reply-gone"], store.Turn{
+					ID: "turn-gone", ConversationID: "conv-reply-gone", PostID: &postID, Role: "user", Sequence: 2,
+					Content: mustMarshalBlocks(t, []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: secretDeletedReply}}),
+				})
+			},
+			status: http.StatusOK,
+			absent: []string{secretDeletedReply},
+			texts:  []string{threadRootMessage, ""},
+		},
+		{
+			name:           "auto-reply thread keeps the post text, not a blank turn",
+			conversationID: "conv-auto-reply",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-auto-reply", "Auto reply", map[string]string{anchoredUserPostID: "@agent " + threadRootMessage},
+					[]*model.Post{livePost(anchoredUserPostID, "", threadRootMessage)})
+			},
+			status: http.StatusOK,
+			texts:  []string{threadRootMessage},
+		},
+		{
+			name:           "loop-in thread keeps the post text, not a blank turn",
+			conversationID: "conv-loop-in",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-loop-in", "Loop in", map[string]string{anchoredUserPostID: "@other-agent " + threadRootMessage},
+					[]*model.Post{livePost(anchoredUserPostID, "", threadRootMessage)})
+			},
+			status: http.StatusOK,
+			texts:  []string{threadRootMessage},
+		},
+		{
+			name:           "non-member gets 403 and no turn text",
+			conversationID: "conv-nonmember",
+			userID:         testOtherUserID,
+			member:         false,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-nonmember", "Edited", map[string]string{anchoredUserPostID: secretEditedAway},
+					[]*model.Post{livePost(anchoredUserPostID, "", editedReplacement)})
+			},
+			status: http.StatusForbidden,
+			absent: []string{secretEditedAway, editedReplacement},
+		},
+		{
+			name:           "owner still gets the stored text of an edited and a deleted post",
+			conversationID: "conv-owner",
+			userID:         testUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-owner", "Owner", map[string]string{
+					anchoredUserPostID: secretEditedAway,
+					secretReplyPostID:  secretDeletedReply,
+				}, []*model.Post{
+					livePost(anchoredUserPostID, "", editedReplacement),
+					deletedPost(secretReplyPostID, anchoredUserPostID, secretDeletedReply),
+				})
+			},
+			status: http.StatusOK,
+			texts:  []string{secretEditedAway, secretDeletedReply},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			tt.setup(t, e)
+			e.mockAPI.On("HasPermissionToChannel", tt.userID, testChannelID, model.PermissionReadChannel).Return(tt.member)
+
+			status, body := getConversationResponse(t, e, tt.conversationID, tt.userID)
+			require.Equal(t, tt.status, status)
+			for _, absent := range tt.absent {
+				assert.NotContains(t, string(body), absent)
+			}
+			if tt.status != http.StatusOK {
+				return
+			}
+
+			var response ConversationResponse
+			require.NoError(t, json.Unmarshal(body, &response))
+			require.Len(t, response.Turns, len(tt.texts))
+			for i, want := range tt.texts {
+				assert.Equal(t, want, textOfTurn(t, response.Turns[i]))
+			}
+		})
+	}
 }
