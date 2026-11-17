@@ -133,6 +133,9 @@ export const AIThreadsReceived = 'AI_THREADS_RECEIVED';
 export const AIThreadsFailed = 'AI_THREADS_FAILED';
 export const AIThreadTitleSet = 'AI_THREAD_TITLE_SET';
 
+// An archive takes the chat out of the list at once; a failed archive puts it back.
+export const AIThreadRemoved = 'AI_THREAD_REMOVED';
+
 export interface AIThreadsState {
 
     // null until the first successful load.
@@ -181,6 +184,8 @@ export function aiThreads(state: AIThreadsState = initialAIThreadsState, action:
             threads: state.threads?.map((t) => (t.id === action.conversationId ? {...t, title: action.title} : t)) ?? null,
             titles: state.loading ? {...state.titles, [action.conversationId]: action.title} : state.titles,
         };
+    case AIThreadRemoved:
+        return {...state, threads: state.threads?.filter((t) => t.id !== action.conversationId) ?? null};
     default:
         return state;
     }

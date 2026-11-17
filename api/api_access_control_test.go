@@ -1159,6 +1159,61 @@ func TestUpdateAgentUnchangedDeniedServiceSucceeds(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 }
 
+// System admins author MCP server policies, so they may assign a server whose
+// policy denies them; everyone else is still rejected.
+func TestUpdateAgentAssigningDeniedMCPServer(t *testing.T) {
+	const deniedOrigin = "https://mcp-denied.example.com"
+	mcpServerID := model.NewId()
+
+	tests := []struct {
+		name       string
+		isAdmin    bool
+		wantStatus int
+	}{
+		{name: "system admin may assign it", isAdmin: true, wantStatus: http.StatusOK},
+		{name: "non-admin creator is forbidden", wantStatus: http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			serviceID := model.NewId()
+			userID := model.NewId()
+			agentID := model.NewId()
+
+			e := setupAccessControlTestEnvironment(t)
+			defer e.Cleanup(t)
+			seedServiceConfig(e, serviceID)
+			e.api.accessChecker = accesscontrol.New(
+				perIDDecisionClient{denied: map[string]bool{mcpServerID: true}},
+				e.mockAPI,
+				func() map[string]string { return map[string]string{deniedOrigin: mcpServerID} },
+				nil,
+			)
+
+			e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageSystem).Return(tt.isAdmin).Maybe()
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+			stored := &llm.BotConfig{
+				ID: agentID, CreatorID: userID, BotUserID: "bot-1",
+				DisplayName: "Agent", Name: "agent", ServiceID: serviceID,
+			}
+			e.agentStore.agents[agentID] = stored
+
+			body := updateAgentBodyFromStored(stored, map[string]any{
+				"enabledMCPTools": []llm.EnabledMCPTool{{ServerOrigin: deniedOrigin, ToolName: "some_tool"}},
+			})
+			recorder := doRequest(e.api, http.MethodPut, "/agents/"+agentID, body, userID)
+			require.Equal(t, tt.wantStatus, recorder.Result().StatusCode)
+
+			wantTools := []llm.EnabledMCPTool(nil)
+			if tt.wantStatus == http.StatusOK {
+				wantTools = []llm.EnabledMCPTool{{ServerOrigin: deniedOrigin, ToolName: "some_tool"}}
+			}
+			assert.Equal(t, wantTools, e.agentStore.agents[agentID].EnabledMCPTools)
+		})
+	}
+}
+
 // GET /agents: non-sysadmins need agent access and CanUseService; sysadmins
 // still see agents whose service policy would deny them.
 func TestListAgentsAppliesServicePolicies(t *testing.T) {
