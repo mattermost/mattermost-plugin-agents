@@ -22,6 +22,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/customprompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/dictation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
@@ -77,7 +78,8 @@ type Plugin struct {
 	autoreplyService     channelAutoReplyRefresher
 	configMigrated       bool
 
-	accessChecker *accesscontrol.Checker
+	accessChecker    *accesscontrol.Checker
+	dictationService *dictation.Service
 
 	// licenseChangeListeners re-apply license-dependent runtime state (active
 	// agents, embedding search, MCP connections) when the server license
@@ -644,6 +646,14 @@ func (p *Plugin) OnActivate() error {
 
 	apiService.SetConversationService(convService)
 
+	// Config updates and license changes reach every node, so each node
+	// drops a minter built from a stale service configuration.
+	dictationService := dictation.New(&p.configuration, licenseChecker, accessChecker, &pluginAPI.Log)
+	p.configuration.RegisterUpdateListener(dictationService.Reconcile)
+	p.licenseChangeListeners = append(p.licenseChangeListeners, dictationService.Reconcile)
+	apiService.SetDictationService(dictationService)
+	p.dictationService = dictationService
+
 	// Apply OpenTelemetry config now and re-apply on every config change so
 	// admins don't need to restart the plugin to switch modes.
 	p.applyTelemetryConfig()
@@ -691,6 +701,9 @@ func (p *Plugin) OnDeactivate() error {
 	// fail before bots is assigned, so guard against a nil registry.
 	if p.bots != nil {
 		p.bots.ShutdownServiceLLMs()
+	}
+	if p.dictationService != nil {
+		p.dictationService.Shutdown()
 	}
 
 	p.mcpLifecycle.close()

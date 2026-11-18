@@ -24,6 +24,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/v2/dictation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
@@ -77,6 +78,20 @@ type testConfigImpl struct {
 	services                        []llm.ServiceConfig
 	defaultBotUserID                string
 	defaultBotName                  string
+	dictation                       config.DictationConfig
+}
+
+func (tc *testConfigImpl) Dictation() config.DictationConfig {
+	return tc.dictation
+}
+
+func (tc *testConfigImpl) GetServiceByID(id string) (llm.ServiceConfig, bool) {
+	for _, svc := range tc.services {
+		if svc.ID == id {
+			return svc, true
+		}
+	}
+	return llm.ServiceConfig{}, false
 }
 
 func (tc *testConfigImpl) GetDefaultBotUserID() string {
@@ -1093,6 +1108,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		autoReplyStore,
 		newPassthroughAccessChecker(),
 	)
+	api.SetDictationService(dictation.New(cfg, enterprise.NewLicenseChecker(client), api.accessChecker, &client.Log))
 
 	return &TestEnvironment{
 		api:               api,

@@ -56,6 +56,20 @@ type Config struct {
 	// AgentVersionsToKeep is how many versions of each agent's history are
 	// kept; older versions are deleted. 0 keeps every version.
 	AgentVersionsToKeep int `json:"agentVersionsToKeep"`
+	// Dictation picks the transcription service for live dictation,
+	// independently of any agent. The zero value means disabled.
+	Dictation DictationConfig `json:"dictation"`
+}
+
+// DictationConfig configures live dictation in the message box.
+type DictationConfig struct {
+	Enabled bool `json:"enabled"`
+	// ServiceID is an llm.ServiceConfig.ID, never a service name.
+	ServiceID string `json:"serviceID"`
+	// Model is an OpenAI model name, or an Azure deployment name.
+	Model string `json:"model"`
+	// Language is an optional ISO-639-1 hint, e.g. "en".
+	Language string `json:"language,omitempty"`
 }
 
 type WebSearchConfig struct {
@@ -212,6 +226,10 @@ func (c *Container) EnableChannelMentionToolCalling() bool {
 // auto-reply modes may be configured and may fire.
 func (c *Container) EnableAmbientAutoReply() bool {
 	return c.Config().EnableAmbientAutoReply
+}
+
+func (c *Container) Dictation() DictationConfig {
+	return c.Config().Dictation
 }
 
 func (c *Container) AllowNativeWebSearchInChannels() bool {

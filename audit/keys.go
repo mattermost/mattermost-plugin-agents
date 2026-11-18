@@ -21,6 +21,8 @@ var (
 	KeyConversationID   = string(telemetry.ConversationID)
 	KeyAgentID          = string(telemetry.AgentID)
 	KeyAgentName        = string(telemetry.AgentName)
+	KeyServiceID        = string(telemetry.ServiceID)
+	KeyModel            = string(telemetry.LLMModel)
 	KeyToolName         = string(telemetry.ToolName)
 	KeyToolID           = string(telemetry.ToolID)
 	KeyMCPServer        = string(telemetry.MCPServer)

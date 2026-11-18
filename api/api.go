@@ -28,6 +28,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/customprompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/dictation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
@@ -68,6 +69,7 @@ type Config interface {
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
 	EnableAmbientAutoReply() bool
+	Dictation() config.DictationConfig
 
 	// GetServices returns a snapshot of the stored service configurations, in
 	// configuration order. The bridge service endpoints operate on this
@@ -218,6 +220,7 @@ type API struct {
 	autoReplyStore        ChannelAutoReplyStore
 	accessChecker         *accesscontrol.Checker
 	mcpRequestLimiter     *mcpRequestLimiter
+	dictationService      *dictation.Service
 
 	// artifactSecretCache caches the HTML artifact bridge secret after
 	// its first load from the KV store.
@@ -431,6 +434,10 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	agentRouter.DELETE("/:agentid/access_policy", a.handleDeleteAgentPolicy)
 
 	router.GET("/services", a.handleListServices)
+
+	// Dictation involves no agent, so a server with none can still dictate.
+	router.GET("/dictation/availability", a.handleGetDictationAvailability)
+	router.POST("/dictation/session", a.capabilityRequired(enterprise.CapDictation), a.handleCreateDictationSession)
 
 	// Raw search endpoint returns enriched semantic search results without LLM processing.
 	// Used by the MCP server for external search callbacks. Semantic search is
