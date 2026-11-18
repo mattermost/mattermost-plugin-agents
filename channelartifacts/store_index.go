@@ -258,22 +258,25 @@ type retentionCursor struct {
 }
 
 // RetentionChannelIDs returns at most limit channel indexes, resuming from the
-// cursor saved by the previous call. A short page wraps the cursor to the
-// start, so a channel is not left behind once the listing is scanned again.
-// limit <= 0 uses defaultRetentionBatch. Each call reads at most limit KV pages.
-func (s *Store) RetentionChannelIDs(limit int) ([]string, error) {
+// cursor saved by the previous committed call. commit stores that cursor.
+// Until commit runs, the next call returns the same batch, so a caller that
+// stops on an error does not skip the channels it has not finished. A short
+// page wraps the cursor to the start once committed. limit <= 0 uses
+// defaultRetentionBatch. Each call reads at most limit KV pages.
+func (s *Store) RetentionChannelIDs(limit int) (ids []string, commit func() error, err error) {
 	if limit <= 0 {
 		limit = defaultRetentionBatch
 	}
 	var cursor retentionCursor
-	if err := s.kv.KVGet(keyRetentionCursor, &cursor); err != nil && !mmapi.IsKVNotFound(err) {
-		return nil, err
+	if err = s.kv.KVGet(keyRetentionCursor, &cursor); err != nil && !mmapi.IsKVNotFound(err) {
+		return nil, nil, err
 	}
-	ids := make([]string, 0, limit)
+	ids = make([]string, 0, limit)
 	for pages := 0; len(ids) < limit && pages < limit; pages++ {
-		keys, err := s.kv.KVList(cursor.Page, retentionPageSize)
+		var keys []string
+		keys, err = s.kv.KVList(cursor.Page, retentionPageSize)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if len(keys) == 0 {
 			cursor = retentionCursor{}
@@ -300,10 +303,11 @@ func (s *Store) RetentionChannelIDs(limit int) ([]string, error) {
 			break
 		}
 	}
-	if err := s.kv.KVSet(keyRetentionCursor, cursor); err != nil {
-		return nil, err
+	next := cursor
+	commit = func() error {
+		return s.kv.KVSet(keyRetentionCursor, next)
 	}
-	return ids, nil
+	return ids, commit, nil
 }
 
 func channelIDFromIndexKey(key string) (string, bool) {
@@ -432,6 +436,54 @@ func (s *Store) finishPurgeIndex(entry *Entry) (bool, error) {
 		return true, nil
 	}
 	return false, ErrConflict
+}
+
+// dropIndexID removes id from the channel index and does not change the site
+// count. The count was already decremented, and putting the id back failed
+// to increment it, so the id must leave again or the next purge decrements twice.
+func (s *Store) dropIndexID(channelID, id string) error {
+	if id == "" {
+		return nil
+	}
+	for range 8 {
+		idx, oldRaw, err := s.getIndex(channelID)
+		if err != nil {
+			return err
+		}
+		if oldRaw == nil {
+			return nil
+		}
+		next := make([]string, 0, len(idx.IDs))
+		removed := false
+		for _, existing := range idx.IDs {
+			if existing == id {
+				removed = true
+				continue
+			}
+			next = append(next, existing)
+		}
+		if !removed {
+			return nil
+		}
+		if len(next) == 0 {
+			if err := s.deleteIndexCAS(channelID, oldRaw); err != nil {
+				if errors.Is(err, ErrConflict) {
+					continue
+				}
+				return err
+			}
+			return nil
+		}
+		idx.IDs = next
+		if err := s.setIndexCAS(channelID, oldRaw, idx); err != nil {
+			if errors.Is(err, ErrConflict) {
+				continue
+			}
+			return err
+		}
+		return nil
+	}
+	return ErrConflict
 }
 
 func (s *Store) restorePurgedIndexID(channelID, id string) error {
