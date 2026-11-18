@@ -182,11 +182,18 @@ func (s *Service) VersionOf(entry *Entry, version int) (*VersionRecord, error) {
 		return &VersionRecord{
 			Version: entry.Version, SHA256: entry.SHA256, Size: entry.Size,
 			SourcePostID: entry.SourcePostID, SourceFileID: entry.SourceFileID,
-			SourceBotUserID: entry.SourceBotUserID, CreatedBy: entry.CreatedBy,
+			SourceBotUserID: entry.SourceBotUserID, SourceAgentDisplayName: entry.SourceAgentDisplayName, CreatedBy: entry.CreatedBy,
 			Head: true, Available: entry.Available,
 		}, nil
 	}
-	return s.store.Version(entry.ID, version)
+	rec, err := s.store.Version(entry.ID, version)
+	if err != nil {
+		return nil, err
+	}
+	if s.bots != nil {
+		rec.SourceAgentDisplayName = s.bots.AgentDisplayName(rec.SourceBotUserID)
+	}
+	return rec, nil
 }
 
 // IsHTMLFile reports whether the file is an HTML document by extension.
@@ -341,7 +348,7 @@ func (s *Service) Save(userID string, reader mmapi.Client, req SaveRequest, lim 
 	}
 	version := NewVersion{
 		PostID: req.PostID, FileID: req.FileID, SHA256: src.sha256, Size: src.size,
-		SourceBotUserID: src.botID, UserID: userID, At: model.GetMillis(),
+		SourceBotUserID: src.botID, UserID: userID, At: model.GetMillis(), Title: title,
 	}
 	id := req.ArtifactID
 	if id == "" {
@@ -352,9 +359,6 @@ func (s *Service) Save(userID string, reader mmapi.Client, req SaveRequest, lim 
 		err = s.store.Create(id, req.ChannelID, title, version, resolveMax(lim.MaxPerChannel, DefaultMaxPerChannel))
 	} else {
 		err = s.store.AddVersion(id, version, resolveMax(lim.VersionsToKeep, DefaultVersionsToKeep))
-		if err == nil && title != "" {
-			err = s.store.Rename(id, title, userID, version.At)
-		}
 	}
 	if err != nil {
 		return nil, err

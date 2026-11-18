@@ -11,6 +11,7 @@ import {createChannelArtifact, listChannelArtifacts, type ChannelArtifactEntry, 
 import manifest from '@/manifest';
 import {pluginReducer} from '@/redux';
 
+import {canAddChannelBookmarks, pinLibraryArtifactBookmark} from './bookmark';
 import SaveToChannelButton from './save_to_channel_button';
 
 jest.mock('@/client', () => ({
@@ -183,5 +184,25 @@ describe('SaveToChannelButton', () => {
         expect(createChannelArtifact).toHaveBeenCalledWith({channel_id: channelId, post_id: postId, file_id: fileId, title: 'dashboard'});
         const state = store.getState() as unknown as Record<string, {channelArtifactLibrary: Record<string, {entries: ChannelArtifactEntry[]}>}>;
         expect(state[`plugins-${manifest.id}`].channelArtifactLibrary[channelId].entries).toHaveLength(1);
+    });
+
+    test('retries only the pin, not the save, when pinning fails after a save', async () => {
+        jest.mocked(canAddChannelBookmarks).mockReturnValue(true);
+        jest.mocked(pinLibraryArtifactBookmark).mockReset();
+        jest.mocked(pinLibraryArtifactBookmark).mockRejectedValueOnce(new Error('bookmarks down')).mockResolvedValue({id: 'bm1'} as never);
+        jest.mocked(listChannelArtifacts).mockResolvedValue(permissions({entries: [entry({source_file_id: fileId})]}));
+        jest.mocked(createChannelArtifact).mockResolvedValue(entry({version: 2}));
+        renderButton();
+
+        trustedClick(await screen.findByTestId('html-artifact-save-to-channel'));
+        fireEvent.click(await screen.findByTestId('channel-artifact-update-ack'));
+        fireEvent.click(screen.getByTestId('channel-artifact-pin-bookmark'));
+        fireEvent.click(screen.getByTestId('channel-artifact-save-confirm'));
+        expect(await screen.findByText('Saved the artifact, but could not pin it to bookmarks.')).toBeTruthy();
+
+        fireEvent.click(screen.getByTestId('channel-artifact-save-confirm'));
+        await waitFor(() => expect(screen.queryByTestId('channel-artifact-save-modal')).toBeNull());
+        expect(createChannelArtifact).toHaveBeenCalledTimes(1);
+        expect(pinLibraryArtifactBookmark).toHaveBeenCalledTimes(2);
     });
 });

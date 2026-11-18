@@ -74,14 +74,38 @@ func (m *MCPChannelArtifacts) Get(ctx context.Context, userID, artifactID string
 	if err != nil {
 		return tools.ChannelArtifactContent{}, err
 	}
+	viewed := entry
+	if opts.Version > 0 && opts.Version != entry.Version {
+		rec, recErr := m.svc.VersionOf(entry, opts.Version)
+		if recErr != nil {
+			return tools.ChannelArtifactContent{}, recErr
+		}
+		viewed = entryAtVersion(entry, rec)
+	}
 	if !opts.IncludeContent {
-		return tools.ChannelArtifactContent{Entry: entry}, nil
+		return tools.ChannelArtifactContent{Entry: viewed}, nil
 	}
 	body, err := m.svc.ReadContent(auth.SessionIDFromContext(ctx), entry, opts.Version, artifactRenderLimit(m.mm.GetConfig()))
 	if err != nil {
 		return tools.ChannelArtifactContent{}, err
 	}
 	out := tools.ChannelArtifactWindow(string(body), opts.Offset, opts.Limit)
-	out.Entry = entry
+	out.Entry = viewed
 	return out, nil
+}
+
+// entryAtVersion describes the entry as it was at one version, so the metadata
+// returned beside a version's HTML (number, hash, size, source) is that
+// version's, not the current one's.
+func entryAtVersion(entry *channelartifacts.Entry, rec *channelartifacts.VersionRecord) *channelartifacts.Entry {
+	at := *entry
+	at.Version = rec.Version
+	at.SHA256 = rec.SHA256
+	at.Size = rec.Size
+	at.SourcePostID = rec.SourcePostID
+	at.SourceFileID = rec.SourceFileID
+	at.SourceBotUserID = rec.SourceBotUserID
+	at.SourceAgentDisplayName = rec.SourceAgentDisplayName
+	at.Available = rec.Available
+	return &at
 }

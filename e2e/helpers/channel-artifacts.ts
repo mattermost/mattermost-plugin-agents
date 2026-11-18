@@ -159,7 +159,7 @@ export async function saveArtifactToChannel(
     }
     if (options?.replaceId) {
         await modal.getByTestId('channel-artifact-replace-select').selectOption(options.replaceId);
-        await modal.getByRole('checkbox', {name: /supersedes the current library copy/i}).check();
+        await modal.getByRole('checkbox', {name: /replaces the current version/i}).check();
     } else if (options?.title !== undefined) {
         // Opening for a new file may auto-suggest an existing title match — force create.
         const replace = modal.getByTestId('channel-artifact-replace-select');

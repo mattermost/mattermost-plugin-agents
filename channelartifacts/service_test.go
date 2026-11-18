@@ -333,3 +333,25 @@ func TestServiceRollbackRefusesAnUnavailableVersion(t *testing.T) {
 	assert.True(t, versions[0].Available)
 	assert.False(t, versions[1].Available)
 }
+
+func TestServiceVersionOfNamesTheSourceAgentForEveryVersion(t *testing.T) {
+	e := newServiceEnv(t)
+	e.expectSource(e.botID, e.htmlInfo(), e.channelID, []string{e.fileID})
+	entry, err := e.svc.Save(e.userID, e.mm, channelartifacts.SaveRequest{ChannelID: e.channelID, PostID: e.postID, FileID: e.fileID}, channelartifacts.Limits{MaxSize: 1 << 20})
+	require.NoError(t, err)
+
+	secondPost, secondFile := model.NewId(), model.NewId()
+	seedSource(t, e.db, secondPost, secondFile)
+	require.NoError(t, e.store.AddVersion(entry.ID, channelartifacts.NewVersion{
+		PostID: secondPost, FileID: secondFile, SHA256: hashHex([]byte("v2")), Size: 2,
+		SourceBotUserID: e.botID, UserID: e.userID, At: model.GetMillis(),
+	}, 5))
+	current, err := e.svc.GetReadable(e.userID, entry.ID)
+	require.NoError(t, err)
+
+	for _, version := range []int{0, 1, 2} {
+		rec, recErr := e.svc.VersionOf(current, version)
+		require.NoError(t, recErr)
+		assert.Equal(t, "Helper", rec.SourceAgentDisplayName, "version %d", version)
+	}
+}
