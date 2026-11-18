@@ -5,6 +5,7 @@ package conversations_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -212,7 +213,7 @@ func TestRegenerateRechecksRootAfterBuildingRequest(t *testing.T) {
 	rootID := *convs[0].RootPostID
 	// The root is read at the entry gates and again at the recheck; it is
 	// deleted just before the recheck read.
-	const rootReadsBeforeToolLoop = 4
+	const rootReadsBeforeToolLoop = 5
 	reads := 0
 	env.mmClient.onGetPost = func(id string) {
 		if id != rootID {
@@ -229,6 +230,36 @@ func TestRegenerateRechecksRootAfterBuildingRequest(t *testing.T) {
 	require.ErrorIs(t, err, conversation.ErrRootPostDeleted)
 	assert.Empty(t, env.llmRequests(), "the provider must not be called for a deleted root")
 	assert.Zero(t, env.executions.Load(), "no tool may run for a deleted root")
+}
+
+// TestRegenerateRootLookupFailureKeepsResponseTurns pins that a failed root
+// lookup stops regenerate before the saved response turns are deleted.
+func TestRegenerateRootLookupFailureKeepsResponseTurns(t *testing.T) {
+	env := setupInvariantEnv(t, policyBotConfig(), dmMakeTextStream("answer"))
+	botPost := env.seedRun(t, env.dm, nil, humanPost("what is the weather"), earlierAnswer(), nil)
+	convs := allConversations(env.convStore)
+	require.Len(t, convs, 1)
+	require.NotNil(t, convs[0].RootPostID)
+	rootID := *convs[0].RootPostID
+	// The root is read at the entry gates; the lookup fails on the read just
+	// before the request is built.
+	const rootReadsBeforeBuild = 4
+	reads := 0
+	env.mmClient.onGetPost = func(id string) {
+		if id != rootID {
+			return
+		}
+		reads++
+		if reads >= rootReadsBeforeBuild {
+			env.mmClient.postErrors = map[string]error{rootID: errors.New("lookup failed")}
+		}
+	}
+	before := env.state()
+
+	err := env.conversations.HandleRegenerate(context.Background(), autoReplyUserID, botPost, env.dm)
+
+	require.Error(t, err)
+	requireNothingRan(t, env, before)
 }
 
 // TestRefusedResumeLeavesConversationArchived pins that a stale tool click, a
