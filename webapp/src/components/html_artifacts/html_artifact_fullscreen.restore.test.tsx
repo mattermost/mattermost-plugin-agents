@@ -36,9 +36,14 @@ jest.mock('react-intl', () => {
     };
 });
 
+const mockFrameMounts = {count: 0};
+
 jest.mock('./artifact_frame', () => {
-    const {forwardRef} = jest.requireActual('react') as typeof import('react');
+    const {forwardRef, useEffect} = jest.requireActual('react') as typeof import('react');
     const MockFrame = forwardRef(() => {
+        useEffect(() => {
+            mockFrameMounts.count++;
+        }, []);
         return <div data-testid='artifact-frame'/>;
     });
     return {
@@ -178,5 +183,15 @@ describe('HTMLArtifactFullscreen restore', () => {
         await screen.findByTestId('html-artifact-version-select');
         fireEvent.click(screen.getByTestId('html-artifact-remove-version'));
         expect((await screen.findByTestId('html-artifact-remove-version-error')).textContent).toBe('Could not remove this version.');
+    });
+
+    test('picking another version starts a fresh frame so a stopped or failed one is not kept', async () => {
+        renderViewer();
+        const select = await screen.findByTestId('html-artifact-version-select');
+        const before = mockFrameMounts.count;
+        fireEvent.change(select, {target: {value: '1'}});
+        await waitFor(() => expect(screen.getByTestId('artifact-frame')).toBeTruthy());
+        expect(mockFrameMounts.count).toBeGreaterThan(before);
+        expect(screen.getAllByTestId('artifact-frame')).toHaveLength(1);
     });
 });

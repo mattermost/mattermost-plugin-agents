@@ -333,6 +333,7 @@ const HTMLArtifactFullscreen = ({
             </Header>
             <Body>
                 <ArtifactFrame
+                    key={artifactKind === 'library' ? viewVersion : 'file'}
                     ref={frameRef}
                     fileId={fileId}
                     fileName={fileName}
